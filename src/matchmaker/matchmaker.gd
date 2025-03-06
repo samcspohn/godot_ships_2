@@ -2,6 +2,9 @@
 extends Node
 
 var available_servers = []
+var min_players = 4
+var connecting_clients = []
+
 
 func _ready():
 	# Setup UDP beacon for server discovery
@@ -16,10 +19,19 @@ func _ready():
 			
 			# Simple matchmaking logic
 			var server_info = find_best_game_server()
+			var info = {"ip": sender_ip,"port": sender_port, "server": server_info}
+			connecting_clients.append(info)
 			
-			# Reply with server connection details
-			udp.set_dest_address(sender_ip, sender_port)
-			udp.put_packet(var_to_bytes(server_info))
+			if connecting_clients.size() >= min_players:
+				for i in range(min_players):
+					var client = connecting_clients[i]
+					# Reply with server connection details
+					udp.set_dest_address(client["ip"], client["port"])
+					udp.put_packet(var_to_bytes(client["server"]))
+				for i in range(min_players):
+					connecting_clients.pop_front()
+				
+			
 
 func find_best_game_server():
 	return {
