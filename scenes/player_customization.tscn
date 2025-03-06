@@ -1,0 +1,30 @@
+[gd_scene format=3 uid="uid://3kxkr5450tb"]
+
+[node name="PlayerCustomization" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="TextEdit" type="TextEdit" parent="VBoxContainer"]
+layout_mode = 2
+text = "Name"
+placeholder_text = "p"
+
+[node name="ColorPickerButton" type="ColorPickerButton" parent="VBoxContainer"]
+layout_mode = 2
+text = "color"
+
+[node name="OptionButton" type="OptionButton" parent="VBoxContainer"]
+layout_mode = 2
+item_count = 2
+popup/item_0/text = "a"
+popup/item_1/text = "b"
+popup/item_1/id = 1
+
+[node name="Button" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "confirm"

@@ -1,0 +1,125 @@
+[gd_scene load_steps=2 format=3 uid="uid://d3228p810w0a8"]
+
+[sub_resource type="GDScript" id="GDScript_5glcx"]
+script/source = "extends Node
+
+# Matchmaking configuration
+const MATCH_PLAYER_COUNT: int = 4
+const MATCH_PORT: int = 8910
+const GAME_SERVER_PORT_RANGE_START: int = 10000
+const GAME_SERVER_PORT_RANGE_END: int = 20000
+
+# Matchmaking state
+var waiting_players: Array[Dictionary] = []
+var active_matches: Array[Dictionary] = []
+
+func _ready() -> void:
+	# Start matchmaker server
+	var peer = ENetMultiplayerPeer.new()
+	var error = peer.create_server(MATCH_PORT, 32)  # Allow more connections
+	
+	if error != OK:
+		print(\"Failed to create matchmaker server\")
+		return
+	
+	multiplayer.multiplayer_peer = peer
+	print(\"Matchmaker server started on port \", MATCH_PORT)
+	
+	# Connect player signals
+	multiplayer.peer_connected.connect(_on_player_connected)
+	multiplayer.peer_disconnected.connect(_on_player_disconnected)
+
+func _on_player_connected(peer_id: int) -> void:
+	print(\"Player connected to matchmaker: \", peer_id)
+
+func _on_player_disconnected(peer_id: int) -> void:
+	# Remove player from waiting list if disconnected
+	waiting_players = waiting_players.filter(func(player): return player.id != peer_id)
+	print(\"Player disconnected from matchmaker: \", peer_id)
+
+@rpc(\"any_peer\", \"reliable\")
+func register_player(player_data: Dictionary) -> void:
+	var sender_id = multiplayer.get_remote_sender_id()
+	
+	# Create player entry
+	var player_entry = {
+		\"id\": sender_id,
+		\"data\": player_data,
+		\"timestamp\": Time.get_unix_time_from_system()
+	}
+	
+	waiting_players.append(player_entry)
+	
+	# Check if we have enough players to start a match
+	_try_create_match()
+
+func _try_create_match() -> void:
+	# Check if enough players are waiting
+	if waiting_players.size() >= MATCH_PLAYER_COUNT:
+		# Select players for the match
+		var match_players = waiting_players.slice(0, MATCH_PLAYER_COUNT - 1)
+		
+		# Remove selected players from waiting list
+		for player in match_players:
+			waiting_players = waiting_players.filter(func(p): return p.id != player.id)
+		
+		# Create match
+		_create_match(match_players)
+
+func _create_match(match_players: Array) -> void:
+	# Generate unique match ID
+	var match_id = randi()
+	
+	# Select an available port for the game server
+	var game_server_port = _find_available_port()
+	
+	# Prepare match details
+	var match_details = {
+		\"match_id\": match_id,
+		\"server_port\": game_server_port,
+		\"players\": match_players
+	}
+	
+	# Store active match
+	active_matches.append(match_details)
+	
+	# Notify each selected player about the match
+	for player in match_players:
+		rpc_id(player.id, \"start_match\", match_details)
+
+func _find_available_port() -> int:
+	# Find an available port in the specified range
+	for port in range(GAME_SERVER_PORT_RANGE_START, GAME_SERVER_PORT_RANGE_END):
+		var socket = PacketPeerUDP.new()
+		var err = socket.bind(port)
+		socket.close()
+		
+		if err == OK:
+			return port
+	
+	# Fallback if no port is available
+	return GAME_SERVER_PORT_RANGE_START + randi() % (GAME_SERVER_PORT_RANGE_END - GAME_SERVER_PORT_RANGE_START)
+"
+
+[node name="MatchLobby" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+script = SubResource("GDScript_5glcx")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="ItemList" type="ItemList" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "status
+"
+
+[node name="Button" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "confirm
+"

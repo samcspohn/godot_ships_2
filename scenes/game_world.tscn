@@ -1,0 +1,47 @@
+[gd_scene load_steps=2 format=3 uid="uid://hgkcpyif6x47"]
+
+[ext_resource type="Script" path="res://src/shared/game_world.gd" id="2_dk2s4"]
+
+[node name="GameWorld" type="Node3D"]
+script = ExtResource("2_dk2s4")
+
+[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../SpawnPlayers")
+
+[node name="SpawnPlayers" type="Node" parent="."]
+
+[node name="Env" type="Node" parent="."]
+
+[node name="CSGBox3D" type="CSGBox3D" parent="Env"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.319893, 0)
+use_collision = true
+size = Vector3(100, 1, 100)
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="Env"]
+transform = Transform3D(0.867331, -0.324899, 0.377064, 0.497731, 0.566159, -0.65706, 0, 0.757565, 0.65276, 0, 0.145623, -2.86605)
+use_collision = true
+
+[node name="CSGBox3D5" type="CSGBox3D" parent="Env"]
+transform = Transform3D(0.867331, -0.324899, 0.377064, 0.497731, 0.566159, -0.65706, 0, 0.757565, 0.65276, -1.8021, 0.145623, 1.49942)
+use_collision = true
+
+[node name="CSGBox3D6" type="CSGBox3D" parent="Env"]
+transform = Transform3D(0.867331, -0.324899, 0.377064, 0.497731, 0.566159, -0.65706, 0, 0.757565, 0.65276, -0.462677, 0.0559467, 2.12426)
+use_collision = true
+size = Vector3(0.733521, 0.747803, 0.919434)
+
+[node name="CSGBox3D3" type="CSGBox3D" parent="Env"]
+transform = Transform3D(0.867331, -0.324899, 0.377064, 0.497731, 0.566159, -0.65706, 0, 0.757565, 0.65276, -3.46872, 0.215183, -0.91217)
+use_collision = true
+size = Vector3(1.29382, 1.49023, 1.48047)
+
+[node name="CSGBox3D4" type="CSGBox3D" parent="Env"]
+transform = Transform3D(0.867331, -0.324899, 0.377064, 0.497731, 0.566159, -0.65706, 0, 0.757565, 0.65276, 2.45661, 0.215183, -0.91217)
+use_collision = true
+size = Vector3(1.29382, 1.49023, 1.48047)
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.893324, 0.449413, 0, -0.449413, 0.893324, 0, 2.42073, 3.73578)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.203424, 0.384232, -0.900547, 0.0119864, 0.918733, 0.394699, 0.979017, -0.0910854, 0.182287, 0, 3.46307, 0)
