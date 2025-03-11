@@ -1,0 +1,49 @@
+[gd_scene load_steps=4 format=3 uid="uid://5diwy5owyxuo"]
+
+[ext_resource type="Texture2D" uid="uid://5w55g61hjuy6" path="res://icon.svg" id="1_84jc3"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_d7ckp"]
+bg_color = Color(0.61, 0.61, 0.61, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5pcis"]
+bg_color = Color(0.964647, 0.98, 0.5194, 1)
+
+[node name="PlayerCam" type="Node3D"]
+
+[node name="Pitch" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.19209e-07, -1.19209e-07)
+
+[node name="Camera3D" type="Camera3D" parent="Pitch"]
+transform = Transform3D(1, 0, 0, 0, 0.914981, 0.403497, 0, -0.403497, 0.914981, 0, 4.10221, 4.01212)
+doppler_tracking = 2
+current = true
+
+[node name="RayCast3D" type="RayCast3D" parent="Pitch/Camera3D"]
+target_position = Vector3(0, 0, -1000)
+collide_with_areas = true
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+follow_viewport_enabled = true
+
+[node name="CenterContainer" type="CenterContainer" parent="CanvasLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="TextureRect" type="TextureRect" parent="CanvasLayer/CenterContainer"]
+custom_minimum_size = Vector2(20, 10)
+layout_mode = 2
+texture = ExtResource("1_84jc3")
+expand_mode = 1
+
+[node name="ProgressBar" type="ProgressBar" parent="CanvasLayer"]
+visible = false
+offset_right = 284.0
+offset_bottom = 27.0
+theme_override_styles/background = SubResource("StyleBoxFlat_d7ckp")
+theme_override_styles/fill = SubResource("StyleBoxFlat_5pcis")
+value = 50.0

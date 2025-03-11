@@ -31,3 +31,8 @@ text = "name"
 
 [node name="StatusLabel" type="Label" parent="VBoxContainer"]
 layout_mode = 2
+
+[node name="LeaveQueue" type="Button" parent="VBoxContainer"]
+visible = false
+layout_mode = 2
+text = "Leave"

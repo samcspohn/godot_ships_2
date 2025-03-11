@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="New Game Project"
+config/name="ships2"
 run/main_scene="res://scenes/root.tscn"
 config/features=PackedStringArray("4.3", "Forward Plus")
 config/icon="res://icon.svg"
@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 LaunchModes="*res://launch_modes.gd"
+ProjectileManager="*res://projectile_manager.gd"
 
 [editor]
 

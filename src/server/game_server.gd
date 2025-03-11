@@ -58,7 +58,7 @@ func spawn_player(id, player_name):
 	if players.has(id):
 		return
 		
-	var player = preload("res://scenes/player.tscn").instantiate()
+	var player = preload("res://player.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
 	player.set_multiplayer_authority(id)
@@ -72,13 +72,14 @@ func spawn_player(id, player_name):
 	players[id] = player
 	
 	# Randomize spawn position
-	var spawn_pos = Vector3(randf_range(-10, 10), 1, randf_range(-10, 10))
-	player.global_position = spawn_pos
+	var spawn_pos = Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
+	player.position = spawn_pos
+	spawn_pos = player.global_position
 	
 	#join_game.rpc_id(id)
 	for pid in players:
 		var p = players[pid]
-		spawn_players_client.rpc_id(id, pid,p.name, p.position, false)
+		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, false)
 		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, false)
 	
 	spawn_players_client.rpc_id(id, id,player_name,spawn_pos, true)
@@ -88,7 +89,7 @@ func spawn_players_client(id, player_name, pos, auth):
 	if players.has(id):
 		return
 		
-	var player = preload("res://scenes/player.tscn").instantiate()
+	var player = preload("res://player.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
 	if auth:

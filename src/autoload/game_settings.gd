@@ -2,6 +2,7 @@
 extends Node
 
 const DEFAULT_PORT = 28960
+const DEFAULT_SERVER_PORT = 28970
 const MAX_PLAYERS = 16
 
 var player_name = "Player"

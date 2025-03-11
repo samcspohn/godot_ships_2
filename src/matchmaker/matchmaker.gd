@@ -1,7 +1,7 @@
 extends Node
 
 var available_servers = []
-var min_players = 4
+var min_players = 2
 var connecting_clients = []
 var available_ports = []  # List to track available ports
 var port_range_start = 28970  # Starting port for game servers
@@ -21,9 +21,13 @@ func _ready():
 			var sender_ip = udp.get_packet_ip()
 			var sender_port = udp.get_packet_port()
 			
-			# Track this connecting client
 			var info = {"ip": sender_ip, "port": sender_port}
-			connecting_clients.append(info)
+			if packet.get_string_from_utf8() == "request_server":
+				# Track this connecting client
+				connecting_clients.append(info)
+			elif packet.get_string_from_utf8() == "leave_queue":
+				connecting_clients.erase(info)
+				
 			
 			if connecting_clients.size() >= min_players:
 				# Find an available port for the server
@@ -33,7 +37,7 @@ func _ready():
 					continue
 					
 				# Start server with the selected port as an argument
-				var server = OS.create_process(OS.get_executable_path(), ["--server", "--port", str(server_port)])
+				#var server = OS.create_process(OS.get_executable_path(), ["--server", "--port", str(server_port)])
 				
 				# Get server info with the newly assigned port
 				var server_info = {

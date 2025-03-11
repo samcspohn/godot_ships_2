@@ -32,7 +32,8 @@ func _ready():
 				if args[i] == "--port" and i + 1 < args.size():
 					var port = int(args[i + 1])
 					setup_dedicated_server(port)
-					break
+					return
+			setup_dedicated_server(GameSettings.DEFAULT_SERVER_PORT)
 		LaunchMode.MATCHMAKER:
 			print("matchmaker")
 			setup_matchmaker()
