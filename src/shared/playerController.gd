@@ -1,4 +1,6 @@
 extends CharacterBody3D
+class_name PlayerController
+
 @export var speed: float = 5
 @export var rotation_speed: float = 4
 var _movementInput: Vector3
@@ -31,6 +33,8 @@ var view_port_size: Vector2i = Vector2i(0, 0)
 func setName(_name: String):
 	playerName.text = _name
 
+var _input_dir: Vector2
+var _aim_point: Vector3
 @export var gravity_value = 9.8
 #var gravity_value = ProjectSettings.get_setting("physics/3d/default_gravity", gravity)
 
@@ -40,47 +44,49 @@ func setColor(_color: Color):
 	#modulate = color
 
 func _ready() -> void:
-	set_multiplayer_authority(name.to_int())
+	#if multiplayer.is_server():
+	var gun_id = 0
+	for ch in self.get_child(1).get_children():
+		if ch is Gun:
+			ch.gun_id = gun_id
+			gun_id += 1
+			self.guns.append(ch)
+	if name.to_int() != multiplayer.get_unique_id():
+		return
+	cam_boom_yaw = load("res://scenes/player_cam.tscn").instantiate()
+	cam_boom_pitch = cam_boom_yaw.get_child(0)
+	add_child(cam_boom_yaw)
+	var c: Node3D = cam_boom_pitch.get_child(0)
+	# var mp: MultiplayerSynchronizer = self.get_child(0)
+	var canvas: CanvasLayer = cam_boom_yaw.get_child(1)
+	for g in guns:
+		var progress_bar: ProgressBar = canvas.get_child(1).duplicate()
+		progress_bar.visible = true
+		progress_bar.show_percentage = false
+		progress_bar.max_value = 1.0
+		canvas.add_child(progress_bar)
+		gun_reloads.append(progress_bar)
+	self.ray = c.get_child(0)
 	
-	if is_multiplayer_authority():
-		cam_boom_yaw = load("res://player_cam.tscn").instantiate()
-		cam_boom_pitch = cam_boom_yaw.get_child(0)
-		add_child(cam_boom_yaw)
-		var c: Node3D = cam_boom_pitch.get_child(0)
-		# var mp: MultiplayerSynchronizer = self.get_child(0)
-		var canvas: CanvasLayer = cam_boom_yaw.get_child(1)
-		for ch in self.get_child(2).get_children():
-			if ch is Gun:
-				self.guns.append(ch)
-				var progress_bar: ProgressBar = canvas.get_child(1).duplicate()
-				progress_bar.visible = true
-				progress_bar.show_percentage = false
-				progress_bar.max_value = 1.0
-				#progress_bar.add_theme_stylebox_override("Fill", load())
-				canvas.add_child(progress_bar)
-				gun_reloads.append(progress_bar)
-				#progress_bar
-		self.ray = c.get_child(0)
-		
-		var num_guns = guns.size()
-		var viewport_size = get_viewport().size
-		var y_pos = viewport_size.y * 0.75
-		var w = 60
-		var spc = 10
-		var total_width = (w * num_guns) + (spc * (num_guns - 1))
-		
-		var start = (viewport_size.x - total_width) / 2.0
-		
-		for p in range(num_guns):
-			var x = start + (p * (w + spc))
-			gun_reloads[p].position = Vector2(x, y_pos)
-			gun_reloads[p].custom_minimum_size = Vector2(w, 8)
-			gun_reloads[p].size = Vector2(w, 8)
-		#mp.replication_config.add_property()
+	var num_guns = guns.size()
+	var viewport_size = get_viewport().size
+	var y_pos = viewport_size.y * 0.75
+	var w = 60
+	var spc = 10
+	var total_width = (w * num_guns) + (spc * (num_guns - 1))
+	
+	var start = (viewport_size.x - total_width) / 2.0
+	
+	for p in range(num_guns):
+		var x = start + (p * (w + spc))
+		gun_reloads[p].position = Vector2(x, y_pos)
+		gun_reloads[p].custom_minimum_size = Vector2(w, 8)
+		gun_reloads[p].size = Vector2(w, 8)
+	#mp.replication_config.add_property()
 		
 		
 func _input(event: InputEvent):
-	if is_multiplayer_authority():
+	if name.to_int() == multiplayer.get_unique_id():
 		if event is InputEventKey:
 			var horizontal = 1 if Input.is_key_pressed(KEY_A) else 0 - 1 if Input.is_key_pressed(KEY_D) else 0
 			var vertical = 1 if Input.is_key_pressed(KEY_W) else 0 - 1 if Input.is_key_pressed(KEY_S) else 0
@@ -97,48 +103,59 @@ func _input(event: InputEvent):
 				var current_time = Time.get_ticks_msec() / 1000.0
 				if current_time - last_click_time < double_click_timer:
 					click_count = 2
-					handle_double_click()
+					handle_double_click.rpc_id(1)
 				else:
 					click_count = 1
-					handle_single_click()
+					handle_single_click.rpc_id(1)
 				
 				last_click_time = current_time
 			else:
 				# Mouse button released
 				is_holding = false
 
-			
-func _physics_process(delta: float) -> void:
-	if not is_multiplayer_authority():
-		return
+@rpc("any_peer", "call_remote")
+func send_input(input_dir: Vector2, aim_point: Vector3):
+	if multiplayer.is_server():
+		_input_dir = input_dir
+		_aim_point = aim_point
+	
+@rpc("any_peer", "call_remote")
+func sync(d: Dictionary):
+	#print(name)
+	#print(d)
+	self.global_position = d.position
+	self.global_basis = d.basis
+	var i = 0
+	for g in guns:
+		g.basis = d.guns[i].basis
+		g.barrel.basis = d.guns[i].barrel
+		i += 1
+		#pass
 
+func _physics_process(delta: float) -> void:
+	if name.to_int() == multiplayer.get_unique_id():
+		for i in range(guns.size()):
+			gun_reloads[i].value = guns[i].reload
+		var input_dir = Input.get_vector("move_right", "move_left", "move_forward", "move_back")
+		var aim_point
+		if ray.is_colliding():
+			aim_point = ray.get_collision_point()
+		else:
+			aim_point = ray.global_position + Vector3(ray.global_basis.z.x,0,ray.global_basis.z.z).normalized() * -100
+			#aim_point = ray.global_position + ray.global_basis.z * -100
+		send_input.rpc_id(1, input_dir, aim_point)
+		
+		
+	if not multiplayer.is_server():
+		return
 		# Add gravity
 	if not is_on_floor():
 		velocity.y -= gravity_value * delta
-		
-	# Get the input direction
-	var input_dir = Input.get_vector("move_right", "move_left", "move_forward", "move_back")
+
+	rotate(Vector3.UP, _input_dir.x * rotation_speed * delta)
 	
-	# Get the forward and right directions relative to the camera
-	#var forward = -transform.basis.z
-	#var right = transform.basis.x
-	#
-	## Calculate the movement direction based on camera orientation
-	#var direction = (right * input_dir.x - forward * input_dir.y).normalized()
-	
-	# Handle movement
-	#if direction:
-		#velocity.x = direction.x * speed
-	rotate(Vector3.UP, input_dir.x * rotation_speed * delta)
-		#velocity.z = direction.z * speed
-	#else:
-	var dir = global_basis.z * speed * input_dir.y
+	var dir = global_basis.z * speed * _input_dir.y
 	velocity.x = move_toward(velocity.x, 0, speed)
-	#velocity = global_basis.z * speed * input_dir.y
-		#velocity.x = move_toward(global_basis.z.x,0,speed)
-		#velocity.z = move_toward(global_basis.z.z,0,speed)
-		#velocity.x = move_toward(velocity.x, 0, speed)
-		#velocity.z = move_toward(velocity.z, 0, speed)
 		
 			# Handle movement
 	if not dir.is_zero_approx():
@@ -147,18 +164,22 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x = move_toward(velocity.x, 0, speed)
 		velocity.z = move_toward(velocity.z, 0, speed)
+		
 	
 	move_and_slide()
-
-	for i in range(guns.size()):
-		gun_reloads[i].value = guns[i].reload
-		
+	
 	for g in guns:
-		g._aim(ray.get_collision_point(), delta)
-
+		g._aim(_aim_point, delta)
+	
+	var d = {'basis': global_basis, 'position': global_position, 'guns': []}
+	for g in guns:
+		d.guns.append({'basis': g.basis, 'barrel': g.barrel.basis})
+		
+	sync.rpc(d)
+	
 
 func _process(dt):
-	if not is_multiplayer_authority():
+	if name.to_int() != multiplayer.get_unique_id():
 		return
 		
 	# Handle double click timer
@@ -172,7 +193,7 @@ func _process(dt):
 		sequential_fire_timer += dt
 		if sequential_fire_timer >= sequential_fire_delay:
 			sequential_fire_timer = 0.0
-			fire_next_gun()
+			fire_next_gun.rpc_id(1)
 	
 	if get_viewport().size != view_port_size:
 		view_port_size = get_viewport().size
@@ -201,26 +222,31 @@ func _process(dt):
 	cam_boom_pitch.global_rotation_degrees.x = clamp(pitch, -75, 90)
 	_cameraInput = Vector2.ZERO
 
-
+@rpc("any_peer", "call_remote")
 func handle_single_click() -> void:
 	# Fire just one gun
-	if guns.size() > 0:
-		for gun in guns:
-			# Find first gun that's ready to fire
-			if gun.reload >= 1.0:
-				gun.fire()
-				break
+	if multiplayer.is_server():
+		if guns.size() > 0:
+			for gun in guns:
+				# Find first gun that's ready to fire
+				if gun.reload >= 1.0:
+					gun.fire()
+					break
 
+@rpc("any_peer", "call_remote")
 func handle_double_click() -> void:
 	# Fire all guns that are ready
-	for gun in guns:
-		gun.fire()
+	if multiplayer.is_server():
+		for gun in guns:
+			gun.fire()
 		#if gun.is_ready_to_fire():
 			#gun.fire()
 			
-		
+
+@rpc("any_peer", "call_remote")
 func fire_next_gun() -> void:
-	for g in guns:
-		if g.reload >= 1:
-			g.fire()
-			return
+	if multiplayer.is_server():
+		for g in guns:
+			if g.reload >= 1:
+				g.fire()
+				return

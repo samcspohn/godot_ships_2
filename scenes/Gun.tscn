@@ -1,0 +1,32 @@
+[gd_scene load_steps=3 format=3 uid="uid://bf40i2xf8jkn6"]
+
+[ext_resource type="Script" path="res://src/shared/Gun.gd" id="1_4cd25"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]
+size = Vector3(0.5, 0.2, 0.5)
+
+[node name="Gun" type="CSGBox3D"]
+size = Vector3(0.5, 0.2, 0.5)
+script = ExtResource("1_4cd25")
+
+[node name="Barrels" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.199505)
+
+[node name="CSGBox3D" type="CSGBox3D" parent="Barrels"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1, 0, 0.284904)
+size = Vector3(0.1, 0.1, 0.6)
+
+[node name="Node3D" type="Node3D" parent="Barrels/CSGBox3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.294309)
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="Barrels"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1, 0, 0.284904)
+size = Vector3(0.1, 0.1, 0.6)
+
+[node name="Node3D" type="Node3D" parent="Barrels/CSGBox3D2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.294309)
+
+[node name="Area3D" type="Area3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D"]
+shape = SubResource("BoxShape3D_hpvvm")

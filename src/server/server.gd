@@ -19,6 +19,9 @@ func _ready():
 
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
+	
+	#join_game.rpc_id(id)
+	#spawn_player(id, str(id))
 	# Wait for them to register before spawning
 
 func _on_peer_disconnected(id):
@@ -58,18 +61,17 @@ func spawn_player(id, player_name):
 	if players.has(id):
 		return
 		
-	var player = preload("res://player.tscn").instantiate()
+	var player = preload("res://scenes/player.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
-	player.set_multiplayer_authority(id)
-	
+
 	# Set player name
 	if player.has_node("NameLabel"):
 		player.get_node("NameLabel").text = player_name
 	
 	# Add to world - note game_world is a child of this node
-	spawn_point.add_child(player)
 	players[id] = player
+	spawn_point.add_child(player)
 	
 	# Randomize spawn position
 	var spawn_pos = Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
@@ -79,21 +81,23 @@ func spawn_player(id, player_name):
 	#join_game.rpc_id(id)
 	for pid in players:
 		var p = players[pid]
-		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, false)
-		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, false)
+		# notify new client of current players
+		spawn_players_client.rpc_id(id, pid,p.name, p.global_position)
+		#notify current players of new player
+		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos)
 	
-	spawn_players_client.rpc_id(id, id,player_name,spawn_pos, true)
+	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
 
-@rpc("authority", "call_remote")
-func spawn_players_client(id, player_name, pos, auth):
+@rpc("authority", "call_remote", "reliable")
+func spawn_players_client(id, player_name, pos):
 	if players.has(id):
 		return
 		
-	var player = preload("res://player.tscn").instantiate()
+	var player = preload("res://scenes/player.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
-	if auth:
-		player.set_multiplayer_authority(id)
+	#if auth:
+		#player.set_multiplayer_authority(id)
 	
 	# Set player name
 	if player.has_node("NameLabel"):
@@ -103,10 +107,10 @@ func spawn_players_client(id, player_name, pos, auth):
 	spawn_point.add_child(player)
 	players[id] = player
 	
-	player.global_position = pos
+	#player.global_position = pos
 	
 
-@rpc
+@rpc("any_peer", "call_remote")
 func join_game():
 	# Called on client to switch to game world
 	get_tree().change_scene_to_file("res://scenes/server.tscn")

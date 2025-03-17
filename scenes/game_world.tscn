@@ -10,7 +10,6 @@ albedo_color = Color(0.000622908, 0.264822, 0.864985, 1)
 script = ExtResource("2_dk2s4")
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
-spawn_path = NodePath("../SpawnPlayers")
 
 [node name="SpawnPlayers" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.99, 0)

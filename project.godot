@@ -20,12 +20,16 @@ config/icon="res://icon.svg"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 LaunchModes="*res://launch_modes.gd"
-ProjectileManager="*res://projectile_manager.gd"
+ProjectileManager="*res://src/autoload/projectile_manager.gd"
 
 [editor]
 
 version_control/plugin_name="GitPlugin"
 version_control/autoload_on_startup=true
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/GPUTrail/plugin.cfg")
 
 [input]
 
