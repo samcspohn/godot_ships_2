@@ -7,8 +7,8 @@ var id: int
 # Projectile properties
 @export var initial_velocity: float = 10.0
 static var gravity: float = .98
-static  var drag_coefficient: float = 0.05
-static var mass: float = 1.0
+static var drag_factor: float = 0.05
+static var mass: float = 50.0
 @export var damage: float = 10.0
 @export var lifetime: float = 10.0  # Maximum lifetime in seconds
 
@@ -223,10 +223,10 @@ func _apply_forces(delta):
 	# Apply gravity
 	velocity.y -= gravity * delta
 	
-	# Apply air resistance (drag force = drag_coefficient * velocity^2)
+	# Apply air resistance (drag force = drag_factor * velocity^2)
 	var speed = velocity.length()
 	if speed > 0:
-		var drag_force = velocity.normalized() * drag_coefficient * speed * speed / mass
+		var drag_force = velocity.normalized() * drag_factor * speed * speed / mass
 		velocity -= drag_force * delta
 
 func _check_collisions():
@@ -259,10 +259,11 @@ func _destroy(with_delay: bool = false):
 		# visible = false
 		# $ImpactEffect.visible = true
 		var expl = Node3D.new()
-		expl.global_position = global_position
+		get_tree().root.add_child(expl)
 		var emitter = get_child(0)
 		remove_child(emitter)
 		expl.add_child(emitter)
+		expl.global_position = global_position
 		# Create a timer to delay the queue_free
 		var timer = Timer.new()
 		timer.one_shot = true

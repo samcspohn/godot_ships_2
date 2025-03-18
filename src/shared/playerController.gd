@@ -168,8 +168,10 @@ func _physics_process(delta: float) -> void:
 	
 	move_and_slide()
 	
+	var elevation = guns[0]._elavation(_aim_point, delta)
+
 	for g in guns:
-		g._aim(_aim_point, delta)
+		g._aim(_aim_point, elevation, delta)
 	
 	var d = {'basis': global_basis, 'position': global_position, 'guns': []}
 	for g in guns:
