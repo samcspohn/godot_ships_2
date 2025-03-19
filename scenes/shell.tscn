@@ -20,7 +20,7 @@ render_priority = 0
 shader = ExtResource("3_rp8u4")
 shader_parameter/uv_offset = Vector2(0, 0)
 shader_parameter/emmission_transform = Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
-shader_parameter/flags = 44
+shader_parameter/flags = 4
 shader_parameter/tex = ExtResource("4_jb1ql")
 shader_parameter/color_ramp = ExtResource("4_jb1ql")
 shader_parameter/curve = ExtResource("5_x6api")
@@ -30,7 +30,6 @@ material = SubResource("ShaderMaterial_05myg")
 size = Vector2(0.2, 0.2)
 
 [node name="Shell" type="CSGSphere3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0185786, 0.00526375, 0)
 material_override = SubResource("StandardMaterial3D_0ilfn")
 radius = 0.1
 radial_segments = 10
@@ -38,15 +37,16 @@ rings = 5
 script = ExtResource("1_g2qt8")
 
 [node name="GPUTrail3D" type="GPUParticles3D" parent="."]
-amount = 60
-lifetime = 60.0
+amount = 40
+lifetime = 40.0
 explosiveness = 1.0
 fixed_fps = 20
+visibility_aabb = AABB(-100, -100, -100, 200, 200, 200)
 process_material = SubResource("ShaderMaterial_sdu7s")
 draw_pass_1 = SubResource("QuadMesh_yl1t2")
 script = ExtResource("6_qlbwl")
-length = 60
-length_seconds = 3.0
+length = 40
+length_seconds = 2.0
 color_ramp = ExtResource("4_jb1ql")
 curve = ExtResource("5_x6api")
 billboard = true

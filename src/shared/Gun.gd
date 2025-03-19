@@ -74,7 +74,8 @@ func _ready() -> void:
 	max_range = calculate_max_range()
 	# Set up muzzles
 	for b in barrel.get_children():
-		muzzles.append(b.get_child(0))
+		if b.name.contains("Barrel"):
+			muzzles.append(b.get_child(0))
 	
 	# Set processing mode based on authority
 	if multiplayer.is_server():
@@ -93,180 +94,14 @@ func _physics_process(delta: float) -> void:
 		if reload < 1.0:
 			reload += delta / reload_time
 			_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
-
-
-func _elavation(aim_point: Vector3, delta: float) -> float:
-	
-	# Cache constants
-	const BARREL_ELEVATION_SPEED_DEG: float = 40.0
-	
-	# Calculate average muzzle position more efficiently
-	var muzzle_count: int = muzzles.size()
-	var muzzle: Vector3 = Vector3.ZERO
-	for m in muzzles:
-		muzzle += m.global_position
-	muzzle /= muzzle_count
-	var ap1 = aim_point - muzzle
-	var ap: Vector2 = Vector2(sqrt(ap1.x * ap1.x + ap1.z * ap1.z), ap1.y)
-	if ap.x > max_range:
-		ap = Vector2(max_range, 0)
-	
-	var dir = self.barrel.global_basis.z
-	var sim_shell = Vector2(0,0)
-	var sim_time = 0.0
-	var sim_vel = Vector2(sqrt(dir.x * dir.x + dir.z * dir.z), dir.y) * Shell.shell_speed
-	var diff = ap
-	var prev_diff = diff
-	var shell_drag = Shell.drag_factor / Shell.mass
-	
-	var time_step2 = ap.length() / Shell.shell_speed * 0.7 / 2
-	var min_time_step2 = time_step2 / 5
-	var time_step = time_step2 / 15
-	var min_time_step = 1.0 / 30
-	var speed: float
-	var drag_force: Vector2
-	var sim_vel2: Vector2
-	
-	while true:
-		speed = sim_vel.length()
-		drag_force = sim_vel.normalized() * shell_drag * speed * speed
-		
-		sim_vel2 = sim_vel - drag_force * time_step
-		sim_vel2.y -= Shell.gravity * time_step
-		var sim_shell2 = sim_shell + sim_vel2 * time_step
-		if sim_shell2.x > ap.x or sim_shell2.y < 0:
-			break
-		
-		sim_vel = sim_vel2
-		sim_shell = sim_shell2
-		sim_time += time_step2
-		if time_step2 > min_time_step2:
-			time_step2 /= 2
-		
-	diff = ap - sim_shell
-	prev_diff = diff
-	
-	while diff.length_squared() <= prev_diff.length_squared():
-		speed = sim_vel.length()
-		drag_force = sim_vel.normalized() * shell_drag * speed * speed
-		sim_vel -= drag_force * time_step
-		sim_vel.y -= Shell.gravity * time_step
-		sim_shell += sim_vel * time_step
-		sim_time += time_step
-		if time_step > min_time_step:
-			time_step /= 2
-		prev_diff = diff
-		diff = ap - sim_shell
-		
-		if sim_time > 120:
-			break
-		
-	
-	# Calculate barrel elevation - IMPROVED SECTION
-	var barrel_speed_rad: float = deg_to_rad(BARREL_ELEVATION_SPEED_DEG)
-	var max_barrel_angle: float = barrel_speed_rad * delta
-
-	# Use a weighted combination of x and y error components with proportional control
-	#var adjustment_factor: float = 0.5 # Adjustment sensitivity factor
-	var adjustment_factor: float = prev_diff.length() / ap.length()
-	var error_y_weight: float = 0.7 # Weight for vertical error (higher priority)
-	var error_x_weight: float = 0.3 # Weight for horizontal error
-
-	# Calculate weighted error
-	var weighted_error: float = (-prev_diff.y * error_y_weight) + (-prev_diff.x * error_x_weight)
-
-
-	# Calculate vectors from the aim point to both error positions
-	var vector_to_prev_offset = prev_offset - ap
-	var vector_to_prev_diff = prev_diff - ap
-
-	# Check if they're pointing in opposite directions using dot product
-	var dot_product = vector_to_prev_offset.dot(vector_to_prev_diff)
-
-	var desired_angle: float
-	# If dot product is negative, vectors are pointing in opposite directions
-	var is_oscillating = dot_product < 0
-	if is_oscillating:
-		desired_angle = clamp(weighted_error * adjustment_factor, -max_barrel_angle, max_barrel_angle) * vector_to_prev_diff.length() / prev_offset.length()
-	else:
-		desired_angle = clamp(weighted_error * adjustment_factor, -max_barrel_angle, max_barrel_angle)
-	prev_offset = prev_diff
-	
-	return desired_angle
 		
 # implement on server
-func _aim(aim_point: Vector3, elavation:float, delta: float) -> void:
+func _aim(aim_point: Vector3, delta: float) -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		return
 	
 	# Cache constants
 	const TURRET_ROT_SPEED_DEG: float = 40.0
-	# const BARREL_ELEVATION_SPEED_DEG: float = 40.0
-	# const BARREL_DEADZONE: float = 0.01  # Deadzone to prevent micro-adjustments
-	
-	# Calculate average muzzle position more efficiently
-	# var muzzle_count: int = muzzles.size()
-	# var muzzle: Vector3 = Vector3.ZERO
-	# for m in muzzles:
-	# 	muzzle += m.global_position
-	# muzzle /= muzzle_count
-	# var ap1 = aim_point - muzzle
-	# var ap: Vector2 = Vector2(sqrt(ap1.x * ap1.x + ap1.z * ap1.z), ap1.y)
-	# if ap.x > max_range:
-	# 	ap = Vector2(max_range, 0)
-	
-	# var dir = self.barrel.global_basis.z
-	# var sim_shell = Vector2(0,0)
-	# var sim_time = 0.0
-	# var sim_vel = Vector2(sqrt(dir.x * dir.x + dir.z * dir.z), dir.y) * Shell.shell_speed
-	# var diff = ap
-	# var prev_diff = diff
-	# var shell_drag = Shell.drag_factor / Shell.mass
-	# var time_step = 1.0 / 15
-	
-	# var time_step2 = ap.length() / Shell.shell_speed * 0.7 / 2
-	# var min_time_step2 = time_step2 / 5
-	# var speed: float
-	# var drag_force: Vector2
-	# var sim_vel2: Vector2
-	
-	# while true:
-	# 	speed = sim_vel.length()
-	# 	drag_force = sim_vel.normalized() * shell_drag * speed * speed
-		
-	# 	sim_vel2 = sim_vel - drag_force * time_step
-	# 	sim_vel2.y -= Shell.gravity * time_step
-	# 	var sim_shell2 = sim_shell + sim_vel2 * time_step
-	# 	if sim_shell2.x > ap.x or sim_shell2.y < 0:
-	# 		break
-		
-	# 	sim_vel = sim_vel2
-	# 	sim_shell = sim_shell2
-	# 	sim_time += time_step2
-	# 	if time_step2 > min_time_step2:
-	# 		time_step2 /= 2
-		
-	# diff = ap - sim_shell
-	# prev_diff = diff
-	
-	# while diff.length_squared() <= prev_diff.length_squared():
-	# 	speed = sim_vel.length()
-	# 	drag_force = sim_vel.normalized() * shell_drag * speed * speed
-	# 	sim_vel -= drag_force * time_step
-	# 	sim_vel.y -= Shell.gravity * time_step
-	# 	sim_shell += sim_vel * time_step
-	# 	sim_time += time_step
-	# 	prev_diff = diff
-	# 	diff = ap - sim_shell
-		
-	# 	if sim_time > 120:
-	# 		break
-		
-	# Set can_fire based on precision threshold
-	#if diff.length_squared() < 0.1:
-		#can_fire = true
-	#else:
-		#can_fire = false
 	
 	# Calculate turret rotation
 	var turret_rot_speed_rad: float = deg_to_rad(TURRET_ROT_SPEED_DEG)
@@ -276,46 +111,43 @@ func _aim(aim_point: Vector3, elavation:float, delta: float) -> void:
 	# Calculate desired rotation angle in the horizontal plane
 	var desired_angle: float = atan2(local_target.x, local_target.z)
 
+	var result = rotation_degrees.y + rad_to_deg(desired_angle)
+#
+	if result > 180 and rotation_degrees.y <= 150 or result < -180 and rotation_degrees.y >= -150:
+		desired_angle = -desired_angle
+		
+	#if gun_id == 0:
+		#print("rotation", rotation_degrees.y)
+		#print("angle", desired_angle)
+
 	# Apply proportional control with a dampening factor
-	var rotation_dampening: float = 0.7  # Adjust this value to control responsiveness
-	var turret_angle: float = clamp(desired_angle * rotation_dampening, -max_turret_angle, max_turret_angle)
+	var turret_angle: float = clamp(desired_angle, -max_turret_angle, max_turret_angle)
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
+	rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
+	#$ArtilleryPlotter._elavate(aim_point, 40, delta)
+	# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only($ArtilleryPlotter.muzzle.global_position,aim_point,Shell.shell_speed)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector($ArtilleryPlotter.muzzle.global_position,aim_point, Shell.shell_speed)
+	var elevation_delta: float = max_turret_angle
+	if sol[1] != -1:
+		var barrel_dir = sol[0]
+		var elevation = Vector2(sqrt(barrel_dir.x * barrel_dir.x + barrel_dir.z * barrel_dir.z), barrel_dir.y)
+		var curr_elevation = Vector2(sqrt(barrel.global_basis.z.x * barrel.global_basis.z.x + barrel.global_basis.z.z * barrel.global_basis.z.z), barrel.global_basis.z.y)
+		var elevation_angle = elevation.angle_to(curr_elevation)
+		elevation_delta = clamp(elevation_angle, -max_turret_angle, max_turret_angle)
 	
-	# Calculate barrel elevation - IMPROVED SECTION
-	# var barrel_speed_rad: float = deg_to_rad(BARREL_ELEVATION_SPEED_DEG)
-	# var max_barrel_angle: float = barrel_speed_rad * delta
-
-	# # Use a weighted combination of x and y error components with proportional control
-	# #var adjustment_factor: float = 0.5 # Adjustment sensitivity factor
-	# var adjustment_factor: float = prev_diff.length() / ap.length()
-	# var error_y_weight: float = 0.7 # Weight for vertical error (higher priority)
-	# var error_x_weight: float = 0.3 # Weight for horizontal error
-
-	# # Calculate weighted error
-	# var weighted_error: float = (-prev_diff.y * error_y_weight) + (-prev_diff.x * error_x_weight)
-
-
-	# # Calculate vectors from the aim point to both error positions
-	# var vector_to_prev_offset = prev_offset - ap
-	# var vector_to_prev_diff = prev_diff - ap
-
-	# # Check if they're pointing in opposite directions using dot product
-	# var dot_product = vector_to_prev_offset.dot(vector_to_prev_diff)
-
-	# # If dot product is negative, vectors are pointing in opposite directions
-	# var is_oscillating = dot_product < 0
-	# if is_oscillating:
-	# 	desired_angle = clamp(weighted_error * adjustment_factor, -max_barrel_angle, max_barrel_angle) * vector_to_prev_diff.length() / prev_offset.length()
-	# else:
-	# 	desired_angle = clamp(weighted_error * adjustment_factor, -max_barrel_angle, max_barrel_angle)
-	barrel.rotate(Vector3.RIGHT, elavation)
+	if is_nan(elevation_delta):
+		elevation_delta = 0.0
+	barrel.rotate(Vector3.RIGHT, elevation_delta)
 	
-	if elavation < 0.01 && abs(turret_angle) < 0.01:
+	# var offset: Vector2 = $ArtilleryPlotter.prev_offset
+	# var elevation_delta = $ArtilleryPlotter.elevation_delta
+	
+	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
 		can_fire = true
 	else:
-		can_fire = false
+		can_fire = true
 
 	# Ensure we stay within allowed elevation range
 	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)

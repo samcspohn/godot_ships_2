@@ -34,22 +34,22 @@ func CalculateLaunchVector(startPos: Vector3, targetPos: Vector3, launchSpeed: f
 
 	return launchDirection.normalized() * launchSpeed;
 
-# Called when the node enters the scene tree for the first time.
-func _ready() -> void:
-	pass # Replace with function body.
+# # Called when the node enters the scene tree for the first time.
+# func _ready() -> void:
+# 	pass # Replace with function body.
 
 
-# Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta: float) -> void:
-	pass
+# # Called every frame. 'delta' is the elapsed time since the previous frame.
+# func _process(delta: float) -> void:
+# 	pass
 
 @rpc("any_peer", "reliable")
-func fireBulletClient(dir,speed,pos,id) -> void:
+func fireBulletClient(pos, vel,_t,id) -> void:
 	var bullet: Shell = load("res://scenes/shell.tscn").instantiate()
 	bullet.id = id
 	get_node("/root").add_child(bullet)
-	bullet.global_position = pos
-	bullet.initialize(dir, speed)
+	var t = float(Time.get_ticks_msec()) / 1000.0
+	bullet.initialize(pos, vel, t)
 	self.projectiles.get_or_add(id, bullet)
 	#var shell = bullet.get_script()
 	#pass
@@ -70,12 +70,11 @@ func fireBullet(dir,pos) -> void:
 	bullet.id = id
 	get_node("/root").add_child(bullet)
 	var t = float(Time.get_ticks_msec()) / 1000.0
-	bullet.global_position = pos
-	bullet.initialize(dir, Shell.shell_speed)
+	bullet.initialize(pos, dir * Shell.shell_speed, t)
 	#bullet.vel = dir * Shell.shell_speed
 	self.projectiles.get_or_add(id, bullet)
 	for p in multiplayer.get_peers():
-		self.fireBulletClient.rpc_id(p, dir, Shell.shell_speed, pos, id)
+		self.fireBulletClient.rpc_id(p, pos, dir * Shell.shell_speed, t, id)
 		#self.destroyBulletRpc2.rpc_id(p,id)
 	
 

@@ -11,6 +11,11 @@ static var drag_factor: float = 0.05
 static var mass: float = 50.0
 @export var damage: float = 10.0
 @export var lifetime: float = 10.0  # Maximum lifetime in seconds
+var start_pos: Vector3
+var launch_velocity: Vector3
+var start_time: float
+
+
 
 # Internal variables
 var velocity: Vector3 = Vector3.ZERO
@@ -22,162 +27,6 @@ var space_state: PhysicsDirectSpaceState3D
 # Signal emitted when projectile hits something
 signal hit(collision_info)
 signal destroyed()
-
-# Static method for calculating launch vector
-static func calculate_launch_vector(
-	start_position: Vector3, 
-	target_position: Vector3, 
-	target_velocity: Vector3, 
-	projectile_speed: float, 
-	gravity: float, 
-	drag_coefficient: float,
-	projectile_mass: float,
-	max_iterations: int = 20,
-	tolerance: float = 0.1
-) -> Vector3:
-	# This is a complex problem with drag, so we'll use an iterative approach
-	
-	# First attempt - ignore drag and use a simple first-order prediction
-	var time_to_target = start_position.distance_to(target_position) / projectile_speed
-	var predicted_target = target_position + target_velocity * time_to_target
-	
-	# Initial guess - direct vector to predicted position
-	var direction = (predicted_target - start_position).normalized()
-	var launch_vector = direction * projectile_speed
-	
-	# Iterative refinement
-	var iteration = 0
-	var error = Vector3.ONE * 999
-	
-	while iteration < max_iterations and error.length() > tolerance:
-		iteration += 1
-		
-		# Simulate projectile path with current launch vector
-		var simulated_position = start_position
-		var simulated_velocity = launch_vector
-		var simulated_time = 0.0
-		var time_step = 0.05  # Small time step for simulation
-		var max_sim_steps = 200  # Prevent infinite loops
-		var sim_steps = 0
-		
-		while sim_steps < max_sim_steps:
-			sim_steps += 1
-			
-			# Update position
-			simulated_position += simulated_velocity * time_step
-			
-			# Apply forces
-			# Gravity
-			simulated_velocity.y -= gravity * time_step
-			
-			# Air resistance
-			var speed = simulated_velocity.length()
-			if speed > 0:
-				var drag_force = simulated_velocity.normalized() * drag_coefficient * speed * speed / projectile_mass
-				simulated_velocity -= drag_force * time_step
-			
-			simulated_time += time_step
-			
-			# Check if we're close to the target's predicted position at this time
-			var target_at_time = target_position + target_velocity * simulated_time
-			var distance_to_target = simulated_position.distance_to(target_at_time)
-			
-			if distance_to_target < 1.0:  # Hit within 1 unit
-				break
-			
-			# Stop if we're clearly missing
-			if simulated_position.y < min(start_position.y, target_position.y) - 50:
-				break
-		
-		# Calculate error and adjust launch vector
-		var final_target_pos = target_position + target_velocity * simulated_time
-		error = final_target_pos - simulated_position
-		
-		# Adjust launch vector based on error
-		launch_vector += error * 0.3 * (1.0 / (iteration + 1))
-		
-		# Ensure we maintain the desired initial speed
-		launch_vector = launch_vector.normalized() * projectile_speed
-	
-	return launch_vector
-	
-# Static method for calculating launch vector
-static func calculate_launch_vector2(
-	start_position: Vector3, 
-	target_position: Vector3, 
-	target_velocity: Vector3, 
-	projectile_speed: float, 
-	#gravity: float, 
-	drag_coefficient: float,
-	projectile_mass: float,
-	max_iterations: int = 20,
-	tolerance: float = 0.1
-) -> Vector3:
-	# This is a complex problem with drag, so we'll use an iterative approach
-	
-	# First attempt - ignore drag and use a simple first-order prediction
-	var time_to_target = start_position.distance_to(target_position) / projectile_speed
-	var predicted_target = target_position + target_velocity * time_to_target
-	
-	# Initial guess - direct vector to predicted position
-	var direction = (predicted_target - start_position).normalized()
-	var launch_vector = direction * projectile_speed
-	
-	# Iterative refinement
-	var iteration = 0
-	var error = Vector3.ONE * 999
-	
-	while iteration < max_iterations and error.length() > tolerance:
-		iteration += 1
-		
-		# Simulate projectile path with current launch vector
-		var simulated_position = start_position
-		var simulated_velocity = launch_vector
-		var simulated_time = 0.0
-		var time_step = 0.05  # Small time step for simulation
-		var max_sim_steps = 200  # Prevent infinite loops
-		var sim_steps = 0
-		
-		while sim_steps < max_sim_steps:
-			sim_steps += 1
-			
-			# Update position
-			simulated_position += simulated_velocity * time_step
-			
-			# Apply forces
-			# Gravity
-			simulated_velocity.y -= gravity * time_step
-			
-			# Air resistance
-			var speed = simulated_velocity.length()
-			if speed > 0:
-				var drag_force = simulated_velocity.normalized() * drag_coefficient * speed * speed / projectile_mass
-				simulated_velocity -= drag_force * time_step
-			
-			simulated_time += time_step
-			
-			# Check if we're close to the target's predicted position at this time
-			var target_at_time = target_position + target_velocity * simulated_time
-			var distance_to_target = simulated_position.distance_to(target_at_time)
-			
-			if distance_to_target < 1.0:  # Hit within 1 unit
-				break
-			
-			# Stop if we're clearly missing
-			if simulated_position.y < min(start_position.y, target_position.y) - 50:
-				break
-		
-		# Calculate error and adjust launch vector
-		var final_target_pos = target_position + target_velocity * simulated_time
-		error = final_target_pos - simulated_position
-		
-		# Adjust launch vector based on error
-		launch_vector += error * 0.3 * (1.0 / (iteration + 1))
-		
-		# Ensure we maintain the desired initial speed
-		launch_vector = launch_vector.normalized() * projectile_speed
-	
-	return launch_vector
 	
 func _ready():
 	previous_position = global_position
@@ -190,30 +39,39 @@ func _ready():
 	# Get the physics space state for raycasting
 	space_state = get_world_3d().direct_space_state
 
-func initialize(direction: Vector3, spawn_velocity: float = initial_velocity):
-	velocity = direction.normalized() * spawn_velocity
+func initialize(pos: Vector3, vel: Vector3, t: float):
+	global_position = pos
+	start_pos = pos
+	self.start_time = t
+	self.launch_velocity = vel
 	previous_position = global_position
 
 	
 func _physics_process(delta):
-	time_alive += delta
-	
-	# Destroy if lifetime exceeded
-	if time_alive > lifetime:
-		_destroy()
-		return
+	#time_alive += delta
+	#
+	## Destroy if lifetime exceeded
+	#if time_alive > lifetime:
+		#_destroy()
+		#return
 	
 	# Store current position for raycast start
 	previous_position = global_position
 	
 	# Apply forces (gravity and air resistance)
-	_apply_forces(delta)
+	# _apply_forces(delta)
 	
-	# Move the projectile
-	global_position += velocity * delta
+	# # Move the projectile
+	# global_position += velocity * delta
+	var t = Time.get_ticks_msec() / 1000.0 - start_time
+	# global_position = AnalyticalProjectileSystem.calculate_position_gravity_only(start_pos, launch_velocity, t)
+	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
+
 	
 	# Check for collisions
 	_check_collisions()
+	# if global_position.y < 0:
+	# 	_destroy()
 	
 	# Update the rotation to face movement direction
 	if velocity.length_squared() > 0.01:
@@ -258,20 +116,22 @@ func _destroy(with_delay: bool = false):
 		# For example:
 		# visible = false
 		# $ImpactEffect.visible = true
-		var expl = Node3D.new()
-		get_tree().root.add_child(expl)
-		var emitter = get_child(0)
-		remove_child(emitter)
-		expl.add_child(emitter)
-		expl.global_position = global_position
+		#var expl = Node3D.new()
+		#get_tree().root.add_child(expl)
+		#var emitter = get_child(0)
+		#remove_child(emitter)
+		#expl.add_child(emitter)
+		#expl.visible = true
+		#expl.global_position = global_position
 		# Create a timer to delay the queue_free
+		scale = Vector3(0.001,0.001,0.001)
 		var timer = Timer.new()
 		timer.one_shot = true
-		timer.wait_time = 3.0
-		timer.timeout.connect(func(): expl.queue_free())
-		expl.add_child(timer)
+		timer.wait_time = 2.0
+		timer.timeout.connect(func(): queue_free())
+		add_child(timer)
 		timer.start()
-		queue_free()
+		#queue_free()
 	else:
 		# Immediate destruction
 		queue_free()

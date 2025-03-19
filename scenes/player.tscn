@@ -1,7 +1,8 @@
-[gd_scene load_steps=4 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=5 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Gun.tscn" id="2_05ryi"]
 [ext_resource type="Script" path="res://src/shared/playerController.gd" id="2_j85uk"]
+[ext_resource type="PackedScene" uid="uid://cn2h7n6dp4fi1" path="res://scenes/artillery_plotter.tscn" id="3_tsy2v"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
 size = Vector3(1, 1, 4)
@@ -20,20 +21,24 @@ offset_bottom = -71.0
 text = "PlayerName"
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
-size = Vector3(1, 1, 4)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.228271, 0)
+size = Vector3(1, 0.543457, 4)
 
 [node name="Gun" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.520819, 0.946964)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.375814, 1.10918)
 
 [node name="Gun2" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.658395, 0.238382)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.51339, 0.400601)
 
 [node name="Gun3" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.658395, -0.755678)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.51339, -0.593459)
 
 [node name="Gun4" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.542116, -1.49138)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.397111, -1.32916)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)
 shape = SubResource("BoxShape3D_hcvt1")
+
+[node name="ArtilleryPlotter" parent="." instance=ExtResource("3_tsy2v")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.539615, 0)

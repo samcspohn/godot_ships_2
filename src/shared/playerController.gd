@@ -6,9 +6,9 @@ class_name PlayerController
 var _movementInput: Vector3
 var _cameraInput: Vector2
 @export var playerName: Label
-# @onready var player_object: Node3D = $"CSGBox3D"
-var cam_boom_yaw: Node3D
+var cam_boom_yaw: NavalThirdPersonCamera
 var cam_boom_pitch: Node3D
+#var time_to_target: Label
 
 var yaw: float = 0
 var pitch: float = 0
@@ -35,6 +35,8 @@ func setName(_name: String):
 
 var _input_dir: Vector2
 var _aim_point: Vector3
+var artillery_plotter: ArtilleryPlotter
+
 @export var gravity_value = 9.8
 #var gravity_value = ProjectSettings.get_setting("physics/3d/default_gravity", gravity)
 
@@ -44,7 +46,8 @@ func setColor(_color: Color):
 	#modulate = color
 
 func _ready() -> void:
-	#if multiplayer.is_server():
+
+	artillery_plotter = $ArtilleryPlotter
 	var gun_id = 0
 	for ch in self.get_child(1).get_children():
 		if ch is Gun:
@@ -54,13 +57,15 @@ func _ready() -> void:
 	if name.to_int() != multiplayer.get_unique_id():
 		return
 	cam_boom_yaw = load("res://scenes/player_cam.tscn").instantiate()
+	cam_boom_yaw.follow_ship(self)
 	cam_boom_pitch = cam_boom_yaw.get_child(0)
-	add_child(cam_boom_yaw)
+	get_tree().root.add_child(cam_boom_yaw)
+	#add_child(cam_boom_yaw)
 	var c: Node3D = cam_boom_pitch.get_child(0)
-	# var mp: MultiplayerSynchronizer = self.get_child(0)
 	var canvas: CanvasLayer = cam_boom_yaw.get_child(1)
+	#time_to_target = canvas.get_node("CenterContainer/VBoxContainer/TimeToTarget")
 	for g in guns:
-		var progress_bar: ProgressBar = canvas.get_child(1).duplicate()
+		var progress_bar: ProgressBar = canvas.get_node("ProgressBar").duplicate()
 		progress_bar.visible = true
 		progress_bar.show_percentage = false
 		progress_bar.max_value = 1.0
@@ -82,7 +87,6 @@ func _ready() -> void:
 		gun_reloads[p].position = Vector2(x, y_pos)
 		gun_reloads[p].custom_minimum_size = Vector2(w, 8)
 		gun_reloads[p].size = Vector2(w, 8)
-	#mp.replication_config.add_property()
 		
 		
 func _input(event: InputEvent):
@@ -132,6 +136,7 @@ func sync(d: Dictionary):
 		i += 1
 		#pass
 
+var prev_offset = Vector2(0, 0)
 func _physics_process(delta: float) -> void:
 	if name.to_int() == multiplayer.get_unique_id():
 		for i in range(guns.size()):
@@ -144,6 +149,19 @@ func _physics_process(delta: float) -> void:
 			aim_point = ray.global_position + Vector3(ray.global_basis.z.x,0,ray.global_basis.z.z).normalized() * -100
 			#aim_point = ray.global_position + ray.global_basis.z * -100
 		send_input.rpc_id(1, input_dir, aim_point)
+
+		# artillery_plotter._elavate(aim_point)
+		# var elevation_time = artillery_plotter.flight_time
+		# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only(artillery_plotter.global_position, aim_point, Shell.shell_speed)
+		# var max_range = ProjectilePhysics.calculate_max_range_from_angle(deg_to_rad(30), Shell.shell_speed)
+		var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(artillery_plotter.global_position, aim_point, Shell.shell_speed)
+		if sol[1] != -1:
+			if is_nan(sol[1]):
+				print("reachable but nan")
+				sol[1] = 0.0
+			var flight_time = sol[1]
+			cam_boom_yaw.update_time_to_target(flight_time)
+		#time_to_target.text = str(snappedf(elevation.time, 0.01))
 		
 		
 	if not multiplayer.is_server():
@@ -167,11 +185,15 @@ func _physics_process(delta: float) -> void:
 		
 	
 	move_and_slide()
-	
-	var elevation = guns[0]._elavation(_aim_point, delta)
 
 	for g in guns:
-		g._aim(_aim_point, elevation, delta)
+		#var muzzle_count: int = g.muzzles.size()
+		#var muzzle: Vector3 = Vector3.ZERO
+		#for m in g.muzzles:
+			#muzzle += m.global_position
+		#muzzle /= muzzle_count
+		#var elevation = g._elavation(muzzle, _aim_point, delta, 40, g.prev_offset)
+		g._aim(_aim_point, delta)
 	
 	var d = {'basis': global_basis, 'position': global_position, 'guns': []}
 	for g in guns:
@@ -218,11 +240,11 @@ func _process(dt):
 	# var forw: Vector3 = -player_object.transform.basis.z
 	# global_translate(forw * _movementInput.z * speed * dt)
 	
-	yaw += -_cameraInput.x * yaw_sensitivity
-	pitch += -_cameraInput.y * pitch_sensitivty
-	cam_boom_yaw.global_rotation_degrees.y = yaw
-	cam_boom_pitch.global_rotation_degrees.x = clamp(pitch, -75, 90)
-	_cameraInput = Vector2.ZERO
+	#yaw += -_cameraInput.x * yaw_sensitivity
+	#pitch += -_cameraInput.y * pitch_sensitivty
+	#cam_boom_yaw.global_rotation_degrees.y = yaw
+	#cam_boom_pitch.global_rotation_degrees.x = clamp(pitch, -75, 90)
+	#_cameraInput = Vector2.ZERO
 
 @rpc("any_peer", "call_remote")
 func handle_single_click() -> void:
