@@ -2,7 +2,8 @@ extends Node3D
 
 class_name ProjectilePhysics
 
-const GRAVITY = -0.98
+const GRAVITY = -9.8
+
 
 ## Calculates the launch vector needed to hit a stationary target from a given position
 ## with a specified projectile speed

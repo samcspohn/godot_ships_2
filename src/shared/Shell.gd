@@ -2,15 +2,10 @@ class_name Shell
 extends Node3D
 
 
-const shell_speed = 10.0
+const shell_speed = 820.0
 var id: int
 # Projectile properties
 @export var initial_velocity: float = 10.0
-static var gravity: float = .98
-static var drag_factor: float = 0.05
-static var mass: float = 50.0
-@export var damage: float = 10.0
-@export var lifetime: float = 10.0  # Maximum lifetime in seconds
 var start_pos: Vector3
 var launch_velocity: Vector3
 var start_time: float
@@ -48,6 +43,8 @@ func initialize(pos: Vector3, vel: Vector3, t: float):
 
 	
 func _physics_process(delta):
+	if !multiplayer.is_server():
+		return
 	#time_alive += delta
 	#
 	## Destroy if lifetime exceeded
@@ -63,7 +60,7 @@ func _physics_process(delta):
 	
 	# # Move the projectile
 	# global_position += velocity * delta
-	var t = Time.get_ticks_msec() / 1000.0 - start_time
+	var t = (Time.get_ticks_msec() / 1000.0 - start_time) * 3.0
 	# global_position = AnalyticalProjectileSystem.calculate_position_gravity_only(start_pos, launch_velocity, t)
 	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
 
@@ -76,16 +73,46 @@ func _physics_process(delta):
 	# Update the rotation to face movement direction
 	if velocity.length_squared() > 0.01:
 		look_at(global_position + velocity.normalized(), Vector3.UP)
-
-func _apply_forces(delta):
-	# Apply gravity
-	velocity.y -= gravity * delta
+func _process(delta: float) -> void:
+	if multiplayer.is_server():
+		return
+	#time_alive += delta
+	#
+	## Destroy if lifetime exceeded
+	#if time_alive > lifetime:
+		#_destroy()
+		#return
 	
-	# Apply air resistance (drag force = drag_factor * velocity^2)
-	var speed = velocity.length()
-	if speed > 0:
-		var drag_force = velocity.normalized() * drag_factor * speed * speed / mass
-		velocity -= drag_force * delta
+	# Store current position for raycast start
+	previous_position = global_position
+	
+	# Apply forces (gravity and air resistance)
+	# _apply_forces(delta)
+	
+	# # Move the projectile
+	# global_position += velocity * delta
+	var t = (Time.get_ticks_msec() / 1000.0 - start_time) * 2.0
+	# global_position = AnalyticalProjectileSystem.calculate_position_gravity_only(start_pos, launch_velocity, t)
+	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
+
+	
+	# Check for collisions
+	#_check_collisions()
+	# if global_position.y < 0:
+	# 	_destroy()
+	
+	# Update the rotation to face movement direction
+	if velocity.length_squared() > 0.01:
+		look_at(global_position + velocity.normalized(), Vector3.UP)
+#func _apply_forces(delta):
+	## Apply gravity
+	#velocity.y -= gravity * delta
+	#
+	## Apply air resistance (drag force = drag_factor * velocity^2)
+	#var speed = velocity.length()
+	#if speed > 0:
+		#var drag_force = velocity.normalized() * drag_factor * speed * speed / mass
+		#velocity -= drag_force * delta
 
 func _check_collisions():
 	# Set up raycast between previous and current position
@@ -107,23 +134,13 @@ func _check_collisions():
 		
 		# Destroy the projectile with a delay
 		_destroy(true)
+		
+		ProjectileManager.destroyBulletRpc2(id)
 
 func _destroy(with_delay: bool = false):
 	emit_signal("destroyed")
 	
 	if with_delay:
-		# Optionally make the projectile invisible or switch to impact effect
-		# For example:
-		# visible = false
-		# $ImpactEffect.visible = true
-		#var expl = Node3D.new()
-		#get_tree().root.add_child(expl)
-		#var emitter = get_child(0)
-		#remove_child(emitter)
-		#expl.add_child(emitter)
-		#expl.visible = true
-		#expl.global_position = global_position
-		# Create a timer to delay the queue_free
 		scale = Vector3(0.001,0.001,0.001)
 		var timer = Timer.new()
 		timer.one_shot = true

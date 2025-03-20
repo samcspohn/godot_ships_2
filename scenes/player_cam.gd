@@ -12,9 +12,9 @@ enum ViewMode {NORMAL, SNIPER}
 var current_mode: int = ViewMode.NORMAL
 
 # Camera parameters
-@export var distance: float = 10.0
-@export var min_distance: float = 5.0
-@export var max_distance: float = 20.0
+@export var distance: float = 300.0
+@export var min_distance: float = 50.0
+@export var max_distance: float = 300.0
 
 # FOV parameters
 @export var normal_fov: float = 70.0
@@ -41,6 +41,7 @@ var target_pitch: float = 20.0
 # UI elements
 var crosshair: Control
 var time_to_target_label: Label
+var distance_label: Label
 
 # Reference to the ship we're following
 var ship_ref: Node3D = null
@@ -57,7 +58,7 @@ func _ready():
 
 func _setup_camera():
 	# Position camera at initial distance
-	camera.transform.origin = Vector3(0, 0, distance)
+	camera.transform.origin = Vector3(0, 100, distance)
 	camera.fov = normal_fov
 
 func _setup_ui():
@@ -102,6 +103,16 @@ func _setup_ui():
 	time_to_target_label.add_theme_color_override("font_color", Color(1, 0.8, 0, 1))
 	time_to_target_label.add_theme_font_size_override("font_size", 16)
 	crosshair.add_child(time_to_target_label)
+
+	# Distance label
+	distance_label = Label.new()
+	distance_label.text = "Distance: --"
+	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	distance_label.position = Vector2(0, 50)
+	distance_label.add_theme_color_override("font_color", Color(1, 0.8, 0, 1))
+	distance_label.add_theme_font_size_override("font_size", 16)
+	crosshair.add_child(distance_label)
+
 	
 	# Update UI positions on window resize
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
@@ -136,7 +147,7 @@ func _update_camera_transform(delta: float):
 	pitch_node.rotation.x = target_pitch
 	
 	# Update camera distance
-	camera.transform.origin = Vector3(0, 10, distance)
+	camera.transform.origin = Vector3(0, distance * 0.5 + 100, distance)
 
 func _input(event):
 	if event is InputEventMouseMotion:
@@ -156,6 +167,8 @@ func _input(event):
 			else: # ViewMode.SNIPER
 				# In sniper mode, adjust FOV
 				target_fov = clamp(target_fov - zoom_speed, sniper_fov * 0.5, sniper_fov * 1.5)
+				target_distance = clamp(target_distance - zoom_step, min_distance, max_distance)
+				
 		
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			# Zoom out
@@ -165,6 +178,8 @@ func _input(event):
 			else: # ViewMode.SNIPER
 				# In sniper mode, adjust FOV
 				target_fov = clamp(target_fov + zoom_speed, sniper_fov * 0.5, sniper_fov * 1.5)
+				target_distance = clamp(target_distance + zoom_step, min_distance, max_distance)
+				
 	
 	elif event is InputEventKey:
 		if event.keycode == KEY_SHIFT and event.pressed:
@@ -192,3 +207,7 @@ func update_time_to_target(seconds: float):
 			time_to_target_label.text = "-- s"
 		else:
 			time_to_target_label.text = "%.1f s" % seconds
+
+func update_distance(dist: float):
+	if distance_label:
+		distance_label.text = "%.1f m" % dist

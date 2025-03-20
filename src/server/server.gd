@@ -74,7 +74,7 @@ func spawn_player(id, player_name):
 	spawn_point.add_child(player)
 	
 	# Randomize spawn position
-	var spawn_pos = Vector3(randf_range(-10, 10), 0, randf_range(-10, 10))
+	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000))
 	player.position = spawn_pos
 	spawn_pos = player.global_position
 	

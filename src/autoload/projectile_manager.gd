@@ -80,8 +80,8 @@ func fireBullet(dir,pos) -> void:
 
 @rpc("call_remote", "reliable")
 func destroyBulletRpc2(id) -> void:
-	var bullet = self.projectiles.get(id)
-	bullet.queue_free()
+	var bullet: Shell = self.projectiles.get(id)
+	bullet._destroy(true)
 	self.projectiles.erase(id)
 	
 @rpc("authority", "reliable")

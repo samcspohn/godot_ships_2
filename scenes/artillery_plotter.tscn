@@ -1,6 +1,3 @@
-[gd_scene load_steps=2 format=3 uid="uid://cn2h7n6dp4fi1"]
-
-[ext_resource type="Script" path="res://src/shared/artillery_plotter.gd" id="1_p3586"]
+[gd_scene format=3 uid="uid://cn2h7n6dp4fi1"]
 
 [node name="ArtilleryPlotter" type="Node3D"]
-script = ExtResource("1_p3586")

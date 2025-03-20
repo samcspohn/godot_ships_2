@@ -12,54 +12,6 @@ var reload_time: float = 1
 var gun_id: int
 var prev_offset: Vector2
 
-func calculate_max_range() -> float:
-	# Get the shell's initial speed
-	var initial_speed = Shell.shell_speed
-	var gravity = Shell.gravity
-	var drag_factor = Shell.drag_factor
-	var mass = Shell.mass
-	
-	# For maximum range in a vacuum (no drag), we use the 45-degree angle formula
-	var theoretical_vacuum_range = (initial_speed * initial_speed) / gravity
-	
-	# But with drag, we need to simulate the trajectory
-	
-	# Start with the optimal launch angle (usually around 45° without drag,
-	# but lower with drag - typically 30-40° depending on drag amount)
-	var optimal_angles = [deg_to_rad(30)]
-	var max_range = 0.0
-	
-	for test_angle in optimal_angles:
-		# Initialize simulation variables
-		var sim_pos = Vector2(0, 0)
-		var sim_vel = Vector2(cos(test_angle), sin(test_angle)) * initial_speed
-		var shell_drag = drag_factor / mass
-		var time_step = 0.05
-		var max_sim_time = 120.0  # Maximum simulation time in seconds
-		var sim_time = 0.0
-		var highest_range = 0.0
-		
-		# Simulate until shell hits ground or max time reached
-		while sim_pos.y >= 0 && sim_time < max_sim_time:
-			var speed = sim_vel.length()
-			var drag_force = sim_vel.normalized() * shell_drag * speed * speed
-			
-			sim_vel -= drag_force * time_step
-			sim_vel.y -= gravity * time_step
-			
-			sim_pos += sim_vel * time_step
-			sim_time += time_step
-			
-			# Update highest range if shell is still flying
-			if sim_pos.y >= 0 && sim_pos.x > highest_range:
-				highest_range = sim_pos.x
-		
-		# Keep track of the best range across different angles
-		if highest_range > max_range:
-			max_range = highest_range
-	
-	return max_range
-	
 var max_range
 func _ready() -> void:
 	# Configure synchronizer
@@ -71,7 +23,7 @@ func _ready() -> void:
 	
 	# Set server as authority
 	#get_node("MultiplayerSynchronizer").set_multiplayer_authority(1)
-	max_range = calculate_max_range()
+	max_range = ProjectilePhysicsWithDrag.calculate_max_range_from_angle(30, Shell.shell_speed)
 	# Set up muzzles
 	for b in barrel.get_children():
 		if b.name.contains("Barrel"):
@@ -128,7 +80,7 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
 	#$ArtilleryPlotter._elavate(aim_point, 40, delta)
 	# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only($ArtilleryPlotter.muzzle.global_position,aim_point,Shell.shell_speed)
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector($ArtilleryPlotter.muzzle.global_position,aim_point, Shell.shell_speed)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, Shell.shell_speed)
 	var elevation_delta: float = max_turret_angle
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
@@ -136,6 +88,8 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 		var curr_elevation = Vector2(sqrt(barrel.global_basis.z.x * barrel.global_basis.z.x + barrel.global_basis.z.z * barrel.global_basis.z.z), barrel.global_basis.z.y)
 		var elevation_angle = elevation.angle_to(curr_elevation)
 		elevation_delta = clamp(elevation_angle, -max_turret_angle, max_turret_angle)
+	if sol[2]:
+		elevation_delta = -max_turret_angle
 	
 	if is_nan(elevation_delta):
 		elevation_delta = 0.0

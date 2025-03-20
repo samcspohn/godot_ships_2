@@ -1,16 +1,15 @@
-[gd_scene load_steps=5 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=4 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Gun.tscn" id="2_05ryi"]
 [ext_resource type="Script" path="res://src/shared/playerController.gd" id="2_j85uk"]
-[ext_resource type="PackedScene" uid="uid://cn2h7n6dp4fi1" path="res://scenes/artillery_plotter.tscn" id="3_tsy2v"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
-size = Vector3(1, 1, 4)
+size = Vector3(36, 9.3, 250)
 
 [node name="Player" type="CharacterBody3D" node_paths=PackedStringArray("playerName")]
 script = ExtResource("2_j85uk")
-speed = 2.0
-rotation_speed = 1.0
+speed = 20.0
+rotation_speed = 0.5
 playerName = NodePath("PlayerName")
 
 [node name="PlayerName" type="Label" parent="."]
@@ -22,23 +21,20 @@ text = "PlayerName"
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.228271, 0)
-size = Vector3(1, 0.543457, 4)
+size = Vector3(36, 9.3, 250)
 
 [node name="Gun" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.375814, 1.10918)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.063, 66.623)
 
 [node name="Gun2" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.51339, 0.400601)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.88287, 42.6622)
 
 [node name="Gun3" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.51339, -0.593459)
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 12.006, -30.9456)
 
 [node name="Gun4" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.397111, -1.32916)
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 6.08429, -55.3292)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)
 shape = SubResource("BoxShape3D_hcvt1")
-
-[node name="ArtilleryPlotter" parent="." instance=ExtResource("3_tsy2v")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.539615, 0)
