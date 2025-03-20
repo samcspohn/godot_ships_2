@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=6 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Gun.tscn" id="2_05ryi"]
 [ext_resource type="Script" path="res://src/shared/playerController.gd" id="2_j85uk"]
 [ext_resource type="PackedScene" uid="uid://bq366sefcs7cu" path="res://scenes/ai-gun.tscn" id="3_v1kns"]
+[ext_resource type="Script" path="res://src/artillary/dispersion_calculator.gd" id="4_d2n6i"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
 size = Vector3(36, 9.3, 250)
@@ -47,3 +48,6 @@ transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)
 shape = SubResource("BoxShape3D_hcvt1")
+
+[node name="DispersionCalculator" type="Node" parent="."]
+script = ExtResource("4_d2n6i")

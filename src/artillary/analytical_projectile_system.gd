@@ -22,7 +22,7 @@ const DEFAULT_DRAG_COEFFICIENT = SHELL_380MM_DRAG_COEFFICIENT  # Default drag co
 # Target position tolerance (in meters)
 const POSITION_TOLERANCE = 0.05  
 # Maximum iterations for binary search
-const MAX_ITERATIONS = 20  
+const MAX_ITERATIONS = 10  
 # Angle adjustment step for binary search (in radians)
 const INITIAL_ANGLE_STEP = 0.1  
 
@@ -187,7 +187,7 @@ static func calculate_position_at_time(start_pos: Vector3, launch_vector: Vector
 	return position
 
 ## Calculate launch vector to lead a moving target with drag effects
-## Returns [launch_vector, time_to_target, is_max_range] where:
+## Returns [launch_vector, time_to_target, is_max_range, final_position] where:
 ## - is_max_range = false if target can be reached
 ## - is_max_range = true if target is unreachable and max range vector is returned instead
 static func calculate_leading_launch_vector(start_pos: Vector3, target_pos: Vector3, target_velocity: Vector3, 
@@ -223,7 +223,8 @@ static func calculate_leading_launch_vector(start_pos: Vector3, target_pos: Vect
 	
 	# Final calculation with the best time estimate
 	var final_target_pos = target_pos + target_velocity * time_estimate
-	return calculate_launch_vector(start_pos, final_target_pos, projectile_speed, drag_coefficient)
+	var final = calculate_launch_vector(start_pos, final_target_pos, projectile_speed, drag_coefficient)
+	return [final[0],final[1], final[2], final_target_pos]
 
 ## Calculate the maximum horizontal range given a launch angle, accounting for drag
 static func calculate_max_range_from_angle(angle: float, projectile_speed: float, 

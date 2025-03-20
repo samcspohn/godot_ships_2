@@ -158,6 +158,7 @@ func _handle_mouse_motion(event):
 		var range_mod2 = log(sniper_range / 100 + 1) / log(10) + 1
 		var range_mod3 = sqrt(sniper_range / 32)
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.1 / range_mod2 * deg_to_rad(current_fov)
+		#rotation_degrees_vertical -= event.relative.y * mouse_sensitivity * 0.1 * y_factor
 		sniper_range += event.relative.y * mouse_sensitivity * -range_mod3 * deg_to_rad(current_fov)
 		sniper_range = clamp(sniper_range, 1, 38280)
 	
@@ -218,7 +219,7 @@ func _update_camera_transform():
 		# Calculate the orbit position
 		var orbit_pos = Vector3(
 			sin(horizontal_rad) * -sniper_range * 0.7,
-			camera_height + sniper_range / 10,
+			camera_height + sniper_range / 15,
 			cos(horizontal_rad) * -sniper_range * 0.7
 		)
 		global_position = ship_position + orbit_pos

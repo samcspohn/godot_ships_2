@@ -14,144 +14,113 @@ var start_time: float
 
 # Internal variables
 var velocity: Vector3 = Vector3.ZERO
-var time_alive: float = 0.0
-var previous_position: Vector3
 var ray_query: PhysicsRayQueryParameters3D
-var space_state: PhysicsDirectSpaceState3D
+#var space_state: PhysicsDirectSpaceState3D
 
 # Signal emitted when projectile hits something
 signal hit(collision_info)
 signal destroyed()
 	
 func _ready():
-	previous_position = global_position
-	
 	# Create persistent ray query
 	ray_query = PhysicsRayQueryParameters3D.new()
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	
 	# Get the physics space state for raycasting
-	space_state = get_world_3d().direct_space_state
+	#space_state = get_world_3d().direct_space_state
 
 func initialize(pos: Vector3, vel: Vector3, t: float):
 	global_position = pos
 	start_pos = pos
 	self.start_time = t
 	self.launch_velocity = vel
-	previous_position = global_position
-
+	ray_query.from = global_position
+	ray_query.to = global_position
+	
+	
+func _update_position():
+	var t = (Time.get_unix_time_from_system() - start_time) * 2.0
+	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
 	
 func _physics_process(delta):
 	if !multiplayer.is_server():
 		return
-	#time_alive += delta
-	#
-	## Destroy if lifetime exceeded
-	#if time_alive > lifetime:
-		#_destroy()
-		#return
+		
+	_check_collisions()
 	
 	# Store current position for raycast start
-	previous_position = global_position
-	
-	# Apply forces (gravity and air resistance)
-	# _apply_forces(delta)
-	
 	# # Move the projectile
-	# global_position += velocity * delta
-	var t = (Time.get_ticks_msec() / 1000.0 - start_time) * 3.0
-	# global_position = AnalyticalProjectileSystem.calculate_position_gravity_only(start_pos, launch_velocity, t)
-	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
+	_update_position()
 
-	
-	# Check for collisions
-	_check_collisions()
-	# if global_position.y < 0:
-	# 	_destroy()
-	
-	# Update the rotation to face movement direction
-	if velocity.length_squared() > 0.01:
-		look_at(global_position + velocity.normalized(), Vector3.UP)
+		
 func _process(delta: float) -> void:
 	if multiplayer.is_server():
 		return
-	#time_alive += delta
-	#
-	## Destroy if lifetime exceeded
-	#if time_alive > lifetime:
-		#_destroy()
-		#return
-	
-	# Store current position for raycast start
-	previous_position = global_position
-	
-	# Apply forces (gravity and air resistance)
-	# _apply_forces(delta)
-	
 	# # Move the projectile
-	# global_position += velocity * delta
-	var t = (Time.get_ticks_msec() / 1000.0 - start_time) * 2.0
-	# global_position = AnalyticalProjectileSystem.calculate_position_gravity_only(start_pos, launch_velocity, t)
-	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
 
-	
-	# Check for collisions
-	#_check_collisions()
-	# if global_position.y < 0:
-	# 	_destroy()
+	_update_position()
 	
 	# Update the rotation to face movement direction
 	if velocity.length_squared() > 0.01:
 		look_at(global_position + velocity.normalized(), Vector3.UP)
-#func _apply_forces(delta):
-	## Apply gravity
-	#velocity.y -= gravity * delta
-	#
-	## Apply air resistance (drag force = drag_factor * velocity^2)
-	#var speed = velocity.length()
-	#if speed > 0:
-		#var drag_force = velocity.normalized() * drag_factor * speed * speed / mass
-		#velocity -= drag_force * delta
+
 
 func _check_collisions():
 	# Set up raycast between previous and current position
-	ray_query.from = previous_position
+	ray_query.from = ray_query.to
 	ray_query.to = global_position
 	
 	# Perform the raycast
-	var collision = space_state.intersect_ray(ray_query)
+	var collision: Dictionary = get_world_3d().direct_space_state.intersect_ray(ray_query)
 	
 	if not collision.is_empty():
+		print("hit", collision)
 		# Position the projectile at the collision point
 		global_position = collision.position
 		
 		# Stop physics processing
-		set_physics_process(false)
+		#set_physics_process(false)
 		
 		# Emit hit signal with collision information
 		emit_signal("hit", collision)
 		
 		# Destroy the projectile with a delay
-		_destroy(true)
+		#_destroy(true)
+		ProjectileManager.destroyBulletRpc(id)
 		
-		ProjectileManager.destroyBulletRpc2(id)
+		#ProjectileManager.destroyBulletRpc2(id)
 
-func _destroy(with_delay: bool = false):
+func _destroy(with_delay: bool = true):
 	emit_signal("destroyed")
 	
-	if with_delay:
-		scale = Vector3(0.001,0.001,0.001)
-		var timer = Timer.new()
-		timer.one_shot = true
-		timer.wait_time = 2.0
-		timer.timeout.connect(func(): queue_free())
-		add_child(timer)
-		timer.start()
+	#if with_delay:
+	set_process(false)
+	set_physics_process(false)
+	scale = Vector3(0.0001,0.0001,0.0001)
+	var timer = Timer.new()
+	timer.one_shot = true
+	timer.wait_time = 4.0
+	timer.timeout.connect(func(): queue_free())
+	add_child(timer)
+	timer.start()
+	
+	#var timer2 = Timer.new()
+	#timer2.one_shot = true
+	#timer2.wait_time = 0.001
+	#timer2.timeout.connect(func():
+		#set_process(false)
+		#)
+	#add_child(timer2)
+	#timer2.start()
+	
+	var expl = preload("res://scenes/explosion.tscn").instantiate()
+	get_tree().root.add_child(expl)
+	expl.global_position = global_position
+	#queue_free()
+	#else:
+		## Immediate destruction
 		#queue_free()
-	else:
-		# Immediate destruction
-		queue_free()
 #var vel: Vector3 = Vector3(0,0,0)
 #var id: int
 #const shell_speed = 10

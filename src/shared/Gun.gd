@@ -2,6 +2,8 @@ class_name Gun
 extends Node3D
 
 @onready var barrel: Node3D = $Barrels
+@onready var dispersion_calculator: ArtilleryDispersion = $"../../DispersionCalculator"
+var _aim_point: Vector3
 #@onready var ms: MultiplayerSynchronizer = $MultiplayerSynchronizer
 
 # Mark synchronized properties with @export 
@@ -10,19 +12,9 @@ var can_fire: bool = false
 var muzzles: Array[Node3D] = []
 var reload_time: float = 1
 var gun_id: int
-var prev_offset: Vector2
 
 var max_range
 func _ready() -> void:
-	# Configure synchronizer
-	#var config = ms.replication_config
-	
-	# The "." prefix is important - it means "this node"
-	#if not config.has_property(".:reload"):
-		#config.add_property(".:reload")
-	
-	# Set server as authority
-	#get_node("MultiplayerSynchronizer").set_multiplayer_authority(1)
 	max_range = ProjectilePhysicsWithDrag.calculate_max_range_from_angle(30, Shell.shell_speed)
 	# Set up muzzles
 	for b in barrel.get_children():
@@ -49,6 +41,7 @@ func _physics_process(delta: float) -> void:
 		
 # implement on server
 func _aim(aim_point: Vector3, delta: float) -> void:
+	self._aim_point = aim_point
 	#if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		#return
 	
@@ -78,8 +71,6 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
 	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
-	#$ArtilleryPlotter._elavate(aim_point, 40, delta)
-	# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only($ArtilleryPlotter.muzzle.global_position,aim_point,Shell.shell_speed)
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, Shell.shell_speed)
 	var elevation_delta: float = max_turret_angle
 	if sol[1] != -1:
@@ -101,13 +92,16 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
 		can_fire = true
 	else:
-		can_fire = true
+		can_fire = false
 
 	# Ensure we stay within allowed elevation range
 	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
-func _aim_towards(launch_angle: Vector3, delta: float):
-	launch_angle = launch_angle.normalized()
+func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, Shell.shell_speed)
+	if !sol[2]:
+		self._aim_point = sol[3]
+	var launch_angle = sol[0]
 	const TURRET_ROT_SPEED_DEG: float = 40.0
 	# Calculate turret rotation
 	var turret_rot_speed_rad: float = deg_to_rad(TURRET_ROT_SPEED_DEG)
@@ -157,7 +151,7 @@ func _aim_towards(launch_angle: Vector3, delta: float):
 	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
 		can_fire = true
 	else:
-		can_fire = true
+		can_fire = false
 
 	# Ensure we stay within allowed elevation range
 	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
@@ -169,6 +163,7 @@ func fire():
 	if multiplayer.is_server():
 		if reload >= 1.0 and can_fire:
 			for m in muzzles:
-			#var id = multiplayer.get_unique_id()
-				ProjectileManager.request_fire(m.global_basis.z.normalized(), m.global_position)
+				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
+				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position,dispersion_point, Shell.shell_speed)
+				ProjectileManager.request_fire(aim[0].normalized(), m.global_position)
 			reload = 0

@@ -44,11 +44,11 @@ func CalculateLaunchVector(startPos: Vector3, targetPos: Vector3, launchSpeed: f
 # 	pass
 
 @rpc("any_peer", "reliable")
-func fireBulletClient(pos, vel,_t,id) -> void:
+func fireBulletClient(pos, vel,t,id) -> void:
 	var bullet: Shell = load("res://scenes/shell.tscn").instantiate()
 	bullet.id = id
 	get_node("/root").add_child(bullet)
-	var t = float(Time.get_ticks_msec()) / 1000.0
+	#var t = float(Time.get_ticks_msec()) / 1000.0
 	bullet.initialize(pos, vel, t)
 	self.projectiles.get_or_add(id, bullet)
 	#var shell = bullet.get_script()
@@ -57,7 +57,7 @@ func fireBulletClient(pos, vel,_t,id) -> void:
 	
 	# Adding the request_spawn RPC function
 #@rpc("any_peer", "call_remote")
-func request_fire(dir, pos):
+func request_fire(dir: Vector3, pos: Vector3):
 	#if multiplayer.is_server():
 		# Get the game server node - adjust path as needed
 		fireBullet(dir,pos)
@@ -69,7 +69,7 @@ func fireBullet(dir,pos) -> void:
 	self.nextId += 1
 	bullet.id = id
 	get_node("/root").add_child(bullet)
-	var t = float(Time.get_ticks_msec()) / 1000.0
+	var t = float(Time.get_unix_time_from_system())
 	bullet.initialize(pos, dir * Shell.shell_speed, t)
 	#bullet.vel = dir * Shell.shell_speed
 	self.projectiles.get_or_add(id, bullet)
@@ -79,16 +79,17 @@ func fireBullet(dir,pos) -> void:
 	
 
 @rpc("call_remote", "reliable")
-func destroyBulletRpc2(id) -> void:
+func destroyBulletRpc2(id, pos: Vector3) -> void:
 	var bullet: Shell = self.projectiles.get(id)
+	bullet.global_position = pos
 	bullet._destroy(true)
 	self.projectiles.erase(id)
 	
 @rpc("authority", "reliable")
 func destroyBulletRpc(id) -> void:
 	var bullet = self.projectiles.get(id)
-	bullet.queue_free()
+	bullet._destroy(true)
 	self.projectiles.erase(id)
 	#if multiplayer.is_server():
 	for p in multiplayer.get_peers():
-		self.destroyBulletRpc2.rpc_id(p,id)
+		self.destroyBulletRpc2.rpc_id(p,id, bullet.global_position)
