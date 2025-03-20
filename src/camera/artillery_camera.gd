@@ -281,7 +281,8 @@ func _calculate_target_info():
 	# Extract results
 	var launch_vector = launch_result[0]
 	time_to_target = launch_result[1]
-	max_range_reached = launch_result[2]
+	#max_range_reached = launch_result[2]
+	max_range_reached = (target_position - ship_position).length() > 38280
 	
 	# Calculate distance
 	distance_to_target = (target_position - ship_position).length() / 1000.0  # Convert to km

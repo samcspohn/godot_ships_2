@@ -7,6 +7,7 @@ var _movementInput: Vector3
 var _cameraInput: Vector2
 @export var playerName: Label
 var artillery_cam: ArtilleryCamera
+var previous_position: Vector3
 # var cam_boom_pitch: Node3D
 #var time_to_target: Label
 
@@ -45,7 +46,7 @@ func setColor(_color: Color):
 	#modulate = color
 
 func _ready() -> void:
-
+	previous_position = global_position
 	var gun_id = 0
 	for ch in self.get_child(1).get_children():
 		if ch is Gun:
@@ -134,7 +135,13 @@ func sync(d: Dictionary):
 		g.basis = d.guns[i].basis
 		g.barrel.basis = d.guns[i].barrel
 		i += 1
-		#pass
+	var _s = get_node("Secondaries")
+	i = 0
+	for s: Gun in _s.get_children():
+		s.basis = d.secondaries[i].basis
+		s.barrel.basis = d.secondaries[i].barrel
+		i += 1
+		
 
 var prev_offset = Vector2(0, 0)
 func _physics_process(delta: float) -> void:
@@ -153,6 +160,7 @@ func _physics_process(delta: float) -> void:
 		
 	if not multiplayer.is_server():
 		return
+	previous_position = global_position
 		# Add gravity
 	if not is_on_floor():
 		velocity.y -= gravity_value * delta
@@ -176,9 +184,14 @@ func _physics_process(delta: float) -> void:
 	for g in guns:
 		g._aim(_aim_point, delta)
 	
-	var d = {'basis': global_basis, 'position': global_position, 'guns': []}
+	var d = {'basis': global_basis, 'position': global_position, 'guns': [], 'secondaries': []}
 	for g in guns:
 		d.guns.append({'basis': g.basis, 'barrel': g.barrel.basis})
+	var secondaries = get_node("Secondaries")
+	for s: Gun in secondaries.get_children():
+		d.secondaries.append({'basis': s.basis,'barrel': s.barrel.basis})
+		
+	
 		
 	sync.rpc(d)
 	

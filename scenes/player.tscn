@@ -1,7 +1,8 @@
-[gd_scene load_steps=4 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=5 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Gun.tscn" id="2_05ryi"]
 [ext_resource type="Script" path="res://src/shared/playerController.gd" id="2_j85uk"]
+[ext_resource type="PackedScene" uid="uid://bq366sefcs7cu" path="res://scenes/ai-gun.tscn" id="3_v1kns"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
 size = Vector3(36, 9.3, 250)
@@ -34,6 +35,14 @@ transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 12.
 
 [node name="Gun4" parent="CSGBox3D" instance=ExtResource("2_05ryi")]
 transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 6.08429, -55.3292)
+
+[node name="Secondaries" type="Node3D" parent="."]
+
+[node name="AI_Gun" parent="Secondaries" instance=ExtResource("3_v1kns")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 5.94685, -11.6112)
+
+[node name="AI_Gun2" parent="Secondaries" instance=ExtResource("3_v1kns")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 5.94685, -11.6112)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)

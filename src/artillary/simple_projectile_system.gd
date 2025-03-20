@@ -97,7 +97,7 @@ static func calculate_leading_launch_vector(start_pos: Vector3, target_pos: Vect
 	var time_estimate = result[1]
 	
 	# Refine the estimate a few times
-	for i in range(3):  # Just a few iterations should be sufficient
+	for i in range(1):  # Just a few iterations should be sufficient
 		var predicted_pos = target_pos + target_velocity * time_estimate
 		result = calculate_launch_vector(start_pos, predicted_pos, projectile_speed)
 		

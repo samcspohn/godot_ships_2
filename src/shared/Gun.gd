@@ -49,8 +49,8 @@ func _physics_process(delta: float) -> void:
 		
 # implement on server
 func _aim(aim_point: Vector3, delta: float) -> void:
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		return
+	#if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		#return
 	
 	# Cache constants
 	const TURRET_ROT_SPEED_DEG: float = 40.0
@@ -63,10 +63,10 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Calculate desired rotation angle in the horizontal plane
 	var desired_angle: float = atan2(local_target.x, local_target.z)
 
-	var result = rotation_degrees.y + rad_to_deg(desired_angle)
-#
-	if result > 180 and rotation_degrees.y <= 150 or result < -180 and rotation_degrees.y >= -150:
-		desired_angle = -desired_angle
+	#var result = rotation_degrees.y + rad_to_deg(desired_angle)
+##
+	#if result > 180 and rotation_degrees.y <= 150 or result < -180 and rotation_degrees.y >= -150:
+		#desired_angle = -desired_angle
 		
 	#if gun_id == 0:
 		#print("rotation", rotation_degrees.y)
@@ -77,15 +77,15 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
-	rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
+	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
 	#$ArtilleryPlotter._elavate(aim_point, 40, delta)
 	# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only($ArtilleryPlotter.muzzle.global_position,aim_point,Shell.shell_speed)
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, Shell.shell_speed)
 	var elevation_delta: float = max_turret_angle
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
-		var elevation = Vector2(sqrt(barrel_dir.x * barrel_dir.x + barrel_dir.z * barrel_dir.z), barrel_dir.y)
-		var curr_elevation = Vector2(sqrt(barrel.global_basis.z.x * barrel.global_basis.z.x + barrel.global_basis.z.z * barrel.global_basis.z.z), barrel.global_basis.z.y)
+		var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y)
+		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
 		var elevation_angle = elevation.angle_to(curr_elevation)
 		elevation_delta = clamp(elevation_angle, -max_turret_angle, max_turret_angle)
 	if sol[2]:
@@ -106,6 +106,62 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Ensure we stay within allowed elevation range
 	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
+func _aim_towards(launch_angle: Vector3, delta: float):
+	launch_angle = launch_angle.normalized()
+	const TURRET_ROT_SPEED_DEG: float = 40.0
+	# Calculate turret rotation
+	var turret_rot_speed_rad: float = deg_to_rad(TURRET_ROT_SPEED_DEG)
+	var max_turret_angle: float = turret_rot_speed_rad * delta
+	#var local_target: Vector3 = to_local(launch_angle)
+
+	# Calculate desired rotation angle in the horizontal plane
+	var desired_angle: float = atan2(launch_angle.x, launch_angle.z)
+	var turret_angle: float = global_rotation.y
+	var turret_delta: float = desired_angle - global_rotation.y
+	if turret_delta > PI:
+		turret_delta -= 2 * PI
+	elif turret_delta < -PI:
+		turret_delta += 2 * PI
+
+	#var result = rotation_degrees.y + rad_to_deg(desired_angle)
+##
+	#if result > 180 and rotation_degrees.y <= 150 or result < -180 and rotation_degrees.y >= -150:
+		#desired_angle = -desired_angle
+		
+	#if gun_id == 0:
+		#print("rotation", rotation_degrees.y)
+		#print("angle", desired_angle)
+
+	# Apply proportional control with a dampening factor
+	turret_angle = clamp(turret_delta, -max_turret_angle, max_turret_angle)
+
+	# Apply rotation
+	rotate(Vector3.UP, turret_angle)
+	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
+	#$ArtilleryPlotter._elavate(aim_point, 40, delta)
+	# var sol = AnalyticalProjectileSystem.calculate_launch_vector_gravity_only($ArtilleryPlotter.muzzle.global_position,aim_point,Shell.shell_speed)
+	var elevation_delta: float = max_turret_angle
+
+	var elevation = Vector2(Vector2(launch_angle.x, launch_angle.z).length(), launch_angle.y)
+	var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
+	var elevation_angle = elevation.angle_to(curr_elevation)
+	elevation_delta = clamp(elevation_angle, -max_turret_angle, max_turret_angle)
+
+	if is_nan(elevation_delta):
+		elevation_delta = 0.0
+	barrel.rotate(Vector3.RIGHT, elevation_delta)
+	
+	# var offset: Vector2 = $ArtilleryPlotter.prev_offset
+	# var elevation_delta = $ArtilleryPlotter.elevation_delta
+	
+	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
+		can_fire = true
+	else:
+		can_fire = true
+
+	# Ensure we stay within allowed elevation range
+	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
+	
 	# Store current diff for next frame
 	# prev_offset = prev_diff
 
@@ -114,5 +170,5 @@ func fire():
 		if reload >= 1.0 and can_fire:
 			for m in muzzles:
 			#var id = multiplayer.get_unique_id()
-				ProjectileManager.request_fire(m.global_basis.z, m.global_position)
+				ProjectileManager.request_fire(m.global_basis.z.normalized(), m.global_position)
 			reload = 0
