@@ -44,8 +44,8 @@ func CalculateLaunchVector(startPos: Vector3, targetPos: Vector3, launchSpeed: f
 # 	pass
 
 @rpc("any_peer", "reliable")
-func fireBulletClient(pos, vel,t,id) -> void:
-	var bullet: Shell = load("res://scenes/shell.tscn").instantiate()
+func fireBulletClient(pos, vel,t,id, shell) -> void:
+	var bullet: Shell = load(shell).instantiate()
 	bullet.id = id
 	get_node("/root").add_child(bullet)
 	#var t = float(Time.get_ticks_msec()) / 1000.0
@@ -57,24 +57,24 @@ func fireBulletClient(pos, vel,t,id) -> void:
 	
 	# Adding the request_spawn RPC function
 #@rpc("any_peer", "call_remote")
-func request_fire(dir: Vector3, pos: Vector3):
+func request_fire(dir: Vector3, pos: Vector3, shell):
 	#if multiplayer.is_server():
 		# Get the game server node - adjust path as needed
-		fireBullet(dir,pos)
+		fireBullet(dir,pos, shell)
 
 @rpc("authority","reliable")
-func fireBullet(dir,pos) -> void:
-	var bullet: Shell = load("res://scenes/shell.tscn").instantiate()
+func fireBullet(vel,pos, shell) -> void:
+	var bullet: Shell = load(shell).instantiate()
 	var id = self.nextId
 	self.nextId += 1
 	bullet.id = id
 	get_node("/root").add_child(bullet)
 	var t = float(Time.get_unix_time_from_system())
-	bullet.initialize(pos, dir * Shell.shell_speed, t)
+	bullet.initialize(pos, vel, t)
 	#bullet.vel = dir * Shell.shell_speed
 	self.projectiles.get_or_add(id, bullet)
 	for p in multiplayer.get_peers():
-		self.fireBulletClient.rpc_id(p, pos, dir * Shell.shell_speed, t, id)
+		self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell)
 		#self.destroyBulletRpc2.rpc_id(p,id)
 	
 

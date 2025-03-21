@@ -1,0 +1,40 @@
+[gd_scene load_steps=5 format=3 uid="uid://bf40i2xf8jkn6"]
+
+[ext_resource type="Script" path="res://scenes/Guns/Gun.gd" id="1_dkebo"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Shells/normal_shell.tres" id="2_bhot8"]
+[ext_resource type="PackedScene" uid="uid://c7fdcm52rmryb" path="res://scenes/Shells/shell.tscn" id="3_6sff4"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]
+size = Vector3(10, 4, 19)
+
+[node name="Gun" type="CSGBox3D"]
+size = Vector3(10, 4, 19.6)
+script = ExtResource("1_dkebo")
+shell = ExtResource("2_bhot8")
+shell2 = ExtResource("3_6sff4")
+reload_time = 15.0
+
+[node name="Barrels" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.48264)
+
+[node name="Barrel" type="CSGBox3D" parent="Barrels"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.1, 0, 8.2849)
+size = Vector3(1.5, 1.5, 18)
+
+[node name="Node3D" type="Node3D" parent="Barrels/Barrel"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.29431)
+
+[node name="Barrel2" type="CSGBox3D" parent="Barrels"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.1, 0, 8.2849)
+size = Vector3(1.5, 1.5, 18)
+
+[node name="Node3D" type="Node3D" parent="Barrels/Barrel2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.29431)
+
+[node name="Muzzles" type="Node3D" parent="Barrels"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.578994)
+
+[node name="Area3D" type="Area3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D"]
+shape = SubResource("BoxShape3D_hpvvm")

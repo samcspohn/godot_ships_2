@@ -8,8 +8,6 @@ var _cameraInput: Vector2
 @export var playerName: Label
 var artillery_cam: ArtilleryCamera
 var previous_position: Vector3
-# var cam_boom_pitch: Node3D
-#var time_to_target: Label
 
 var yaw: float = 0
 var pitch: float = 0
@@ -57,7 +55,7 @@ func _ready() -> void:
 		return
 	artillery_cam = load("res://scenes/player_cam.tscn").instantiate()
 	artillery_cam.target_ship = self
-	artillery_cam.projectile_speed = Shell.shell_speed
+	artillery_cam.projectile_speed = guns[0].shell.speed
 	#artillery_cam.
 
 	get_tree().root.add_child(artillery_cam)

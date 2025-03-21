@@ -1,11 +1,10 @@
 class_name Shell
-extends Node3D
+extends CSGSphere3D
 
 
-const shell_speed = 820.0
+#const shell_speed = 820.0
+@export var params: ShellParams
 var id: int
-# Projectile properties
-@export var initial_velocity: float = 10.0
 var start_pos: Vector3
 var launch_velocity: Vector3
 var start_time: float
@@ -41,7 +40,7 @@ func initialize(pos: Vector3, vel: Vector3, t: float):
 	
 func _update_position():
 	var t = (Time.get_unix_time_from_system() - start_time) * 2.0
-	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t)
+	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t, params.drag)
 	
 func _physics_process(delta):
 	if !multiplayer.is_server():
@@ -105,57 +104,8 @@ func _destroy(with_delay: bool = true):
 	add_child(timer)
 	timer.start()
 	
-	#var timer2 = Timer.new()
-	#timer2.one_shot = true
-	#timer2.wait_time = 0.001
-	#timer2.timeout.connect(func():
-		#set_process(false)
-		#)
-	#add_child(timer2)
-	#timer2.start()
-	
-	var expl = preload("res://scenes/explosion.tscn").instantiate()
+	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
+	var s = self.radius * 10
+	expl.scale = Vector3(s,s,s)
 	get_tree().root.add_child(expl)
 	expl.global_position = global_position
-	#queue_free()
-	#else:
-		## Immediate destruction
-		#queue_free()
-#var vel: Vector3 = Vector3(0,0,0)
-#var id: int
-#const shell_speed = 10
-##var init = false
-###var prev_pos: Vector3
-#var query: PhysicsRayQueryParameters3D
-## Called when the node enters the scene tree for the first time.
-#func _ready() -> void:
-	##prev_pos = position
-	#query = PhysicsRayQueryParameters3D.create(position, position)
-	#query.collide_with_areas = true
-	#self.position += self.vel * 0.01
-	##var p = ParticleProcessMaterial.new()
-	##var p: ParticleProcessMaterial = $GPUParticles3D.process_material
-	##p.direction = vel
-	##p.initial_velocity_min = vel.length()
-	##$GPUParticles3D.process_material = p
-	#
-#
-#
-## Called every frame. 'delta' is the elapsed time since the previous frame.
-#func _physics_process(delta: float) -> void:
-	#self.position += delta * self.vel
-	#self.vel += Vector3(0,-.981,0) * delta
-	#if multiplayer.is_server():
-		##if position.y < 0:
-		##var query = PhysicsRayQueryParameters3D.create(prev_pos, position)
-		#query.from = query.to
-		#query.to = position
-		#if not init:
-			#init = true
-		#else:
-			#var a = get_world_3d().direct_space_state.intersect_ray(query)
-			#if not a.is_empty():
-				#ProjectileManager.destroyBulletRpc(self.id)
-	#elif not init:
-		#init = true
-		##$GPUParticles3D.emitting = true

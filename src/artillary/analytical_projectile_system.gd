@@ -32,7 +32,7 @@ const INITIAL_ANGLE_STEP = 0.1
 ## - is_max_range = false if target can be reached
 ## - is_max_range = true if target is unreachable and max range vector is returned instead
 static func calculate_launch_vector(start_pos: Vector3, target_pos: Vector3, projectile_speed: float, 
-								  drag_coefficient: float = DEFAULT_DRAG_COEFFICIENT) -> Array:
+								  drag_coefficient: float) -> Array:
 	# Start with the non-drag physics as initial approximation
 	var initial_result = ProjectilePhysics.calculate_launch_vector(start_pos, target_pos, projectile_speed)
 	
@@ -164,7 +164,7 @@ static func estimate_time_of_flight(start_pos: Vector3, launch_vector: Vector3, 
 
 ## Calculate projectile position at any time with drag effects
 static func calculate_position_at_time(start_pos: Vector3, launch_vector: Vector3, time: float, 
-									 drag_coefficient: float = DEFAULT_DRAG_COEFFICIENT) -> Vector3:
+									 drag_coefficient: float) -> Vector3:
 	# Extract components
 	var v0x = launch_vector.x
 	var v0y = launch_vector.y
@@ -192,7 +192,7 @@ static func calculate_position_at_time(start_pos: Vector3, launch_vector: Vector
 ## - is_max_range = true if target is unreachable and max range vector is returned instead
 static func calculate_leading_launch_vector(start_pos: Vector3, target_pos: Vector3, target_velocity: Vector3, 
 										  projectile_speed: float, 
-										  drag_coefficient: float = DEFAULT_DRAG_COEFFICIENT) -> Array:
+										  drag_coefficient: float) -> Array:
 	# Start with the time it would take to hit the current position (non-drag estimation)
 	var result = ProjectilePhysics.calculate_launch_vector(start_pos, target_pos, projectile_speed)
 	
@@ -253,16 +253,16 @@ static func calculate_max_range_from_angle(angle: float, projectile_speed: float
 	
 	# Calculate horizontal distance using drag formula:
 	# x = (v₀x/β) * (1-e^(-βt))
-	var range = (v0x / beta) * (1.0 - exp(-beta * time_of_flight))
+	var _range = (v0x / beta) * (1.0 - exp(-beta * time_of_flight))
 	
 	# Ensure non-negative result
-	return max(0.0, range)
+	return max(0.0, _range)
 
 ## Calculate the required launch angle to achieve a specific range with drag
 static func calculate_angle_from_max_range(max_range: float, projectile_speed: float, 
 										 drag_coefficient: float = DEFAULT_DRAG_COEFFICIENT) -> float:
 	var beta = drag_coefficient
-	var g = abs(GRAVITY)
+	# var g = abs(GRAVITY)
 	
 	# With drag, we need to search for the angle that gives desired range
 	# Binary search through angles to find best match
@@ -302,106 +302,106 @@ static func calculate_angle_from_max_range(max_range: float, projectile_speed: f
 	# Return best approximation after max iterations
 	return (min_angle + max_angle) / 2.0
 
-## Example usage implementation
-func _ready():
-	# Basic parameters
-	var start = Vector3(0, 1, 0)
-	var target = Vector3(10, 5, 5)
-	var unreachable_target = Vector3(500, 10, 200)  # Likely unreachable
-	var speed = 20.0
-	
-	print("---- PROJECTILE WITH DRAG TESTS ----")
-	
-	# Test standard launch vector calculation with drag
-	var result = calculate_launch_vector(start, target, speed)
-	if !result[2]:  # Not at max range
-		print("Launch Vector with drag: ", result[0])
-		print("Time to Target with drag: ", result[1])
-		
-		# Verify final position
-		var final_pos = calculate_position_at_time(start, result[0], result[1])
-		print("Final position: ", final_pos)
-		print("Distance to target: ", (final_pos - target).length())
-		
-		# Calculate position at midpoint
-		var mid_time = result[1] / 2.0
-		var mid_pos = calculate_position_at_time(start, result[0], mid_time)
-		print("Position at midpoint: ", mid_pos)
-	else:
-		print("Target is out of range!")
-		print("Max range launch vector: ", result[0])
-		print("Time to max range: ", result[1])
-	
-	# Test unreachable target
-	print("\n--- Testing Unreachable Target ---")
-	var unreachable_result = calculate_launch_vector(start, unreachable_target, speed)
-	if unreachable_result[2]:  # This should be true - at max range
-		print("Unreachable target. Maximum range vector provided.")
-		print("Launch vector for max range: ", unreachable_result[0])
-		print("Time to max range: ", unreachable_result[1])
-		
-		# Calculate the actual maximum range achieved
-		var dir_to_target = unreachable_target - start
-		dir_to_target.y = 0  # Horizontal direction only
-		dir_to_target = dir_to_target.normalized()
-		
-		var time = unreachable_result[1]
-		var max_pos = calculate_position_at_time(start, unreachable_result[0], time)
-		var horiz_dist = Vector2(max_pos.x - start.x, max_pos.z - start.z).length()
-		
-		print("Max achievable range: ", horiz_dist, " meters")
-		print("Max elevation: ", max_pos.y, " meters")
-	else:
-		print("Target is surprisingly reachable!")
-	
-	# Test leading launch vector with drag
-	print("\n--- Testing Moving Target ---")
-	var target_vel = Vector3(2, 0, 1)  # Target moving right and forward
-	var lead_result = calculate_leading_launch_vector(start, target, target_vel, speed)
-	if !lead_result[2]:  # Not at max range
-		print("Leading Vector with drag: ", lead_result[0])
-		print("Time to Moving Target with drag: ", lead_result[1])
-	else:
-		print("Moving target cannot be hit!")
-		print("Max range vector in target direction: ", lead_result[0])
-	
-	# Test range calculations with drag
-	print("\n--- Testing Range Calculations ---")
-	var angle = PI/4  # 45 degrees
-	var max_range = calculate_max_range_from_angle(angle, speed)
-	print("Maximum range at 45 degrees with drag: ", max_range)
-	
-	var target_range = 30.0
-	var needed_angle = calculate_angle_from_max_range(target_range, speed)
-	if needed_angle >= 0:
-		print("Angle needed for range of ", target_range, " with drag: ", rad_to_deg(needed_angle), " degrees")
-	else:
-		print("Target range exceeds physical limits with drag!")
-		
-	# Test different projectile types
-	print("\n--- Testing Different Projectiles ---")
-	
-	print("Ping Pong Ball:")
-	var ping_pong_result = calculate_launch_vector(start, Vector3(5, 2, 0), 10.0, PING_PONG_DRAG_COEFFICIENT)
-	if !ping_pong_result[2]:
-		print("  Reachable! Time to target: ", ping_pong_result[1])
-	else:
-		print("  Unreachable! Max range time: ", ping_pong_result[1])
-		
-	print("Bowling Ball:")
-	var bowling_result = calculate_launch_vector(start, Vector3(20, 5, 0), 15.0, BOWLING_BALL_DRAG_COEFFICIENT)
-	if !bowling_result[2]:
-		print("  Reachable! Time to target: ", bowling_result[1])
-	else:
-		print("  Unreachable! Max range time: ", bowling_result[1])
-		
-	print("380mm Shell:")
-	max_range = calculate_max_range_from_angle(deg_to_rad(30), Shell.shell_speed,SHELL_380MM_DRAG_COEFFICIENT)
-	print("max range: ", max_range)
-	max_range = ProjectilePhysics.calculate_max_range_from_angle(deg_to_rad(30),Shell.shell_speed)
-	print("max range no drag: ", max_range)
-	var shell_result = calculate_launch_vector(start, Vector3(200, 50, 0), 100.0, SHELL_380MM_DRAG_COEFFICIENT)
-	if !shell_result[2]:
-		print("  Reachable! Time to target: ", shell_result[1])
-	else:
-		print("  Unreachable! Max range time: ", shell_result[1])
+### Example usage implementation
+#func _ready():
+	## Basic parameters
+	#var start = Vector3(0, 1, 0)
+	#var target = Vector3(10, 5, 5)
+	#var unreachable_target = Vector3(500, 10, 200)  # Likely unreachable
+	#var speed = 20.0
+	#
+	#print("---- PROJECTILE WITH DRAG TESTS ----")
+	#
+	## Test standard launch vector calculation with drag
+	#var result = calculate_launch_vector(start, target, speed)
+	#if !result[2]:  # Not at max range
+		#print("Launch Vector with drag: ", result[0])
+		#print("Time to Target with drag: ", result[1])
+		#
+		## Verify final position
+		#var final_pos = calculate_position_at_time(start, result[0], result[1])
+		#print("Final position: ", final_pos)
+		#print("Distance to target: ", (final_pos - target).length())
+		#
+		## Calculate position at midpoint
+		#var mid_time = result[1] / 2.0
+		#var mid_pos = calculate_position_at_time(start, result[0], mid_time)
+		#print("Position at midpoint: ", mid_pos)
+	#else:
+		#print("Target is out of range!")
+		#print("Max range launch vector: ", result[0])
+		#print("Time to max range: ", result[1])
+	#
+	## Test unreachable target
+	#print("\n--- Testing Unreachable Target ---")
+	#var unreachable_result = calculate_launch_vector(start, unreachable_target, speed)
+	#if unreachable_result[2]:  # This should be true - at max range
+		#print("Unreachable target. Maximum range vector provided.")
+		#print("Launch vector for max range: ", unreachable_result[0])
+		#print("Time to max range: ", unreachable_result[1])
+		#
+		## Calculate the actual maximum range achieved
+		#var dir_to_target = unreachable_target - start
+		#dir_to_target.y = 0  # Horizontal direction only
+		#dir_to_target = dir_to_target.normalized()
+		#
+		#var time = unreachable_result[1]
+		#var max_pos = calculate_position_at_time(start, unreachable_result[0], time)
+		#var horiz_dist = Vector2(max_pos.x - start.x, max_pos.z - start.z).length()
+		#
+		#print("Max achievable range: ", horiz_dist, " meters")
+		#print("Max elevation: ", max_pos.y, " meters")
+	#else:
+		#print("Target is surprisingly reachable!")
+	#
+	## Test leading launch vector with drag
+	#print("\n--- Testing Moving Target ---")
+	#var target_vel = Vector3(2, 0, 1)  # Target moving right and forward
+	#var lead_result = calculate_leading_launch_vector(start, target, target_vel, speed)
+	#if !lead_result[2]:  # Not at max range
+		#print("Leading Vector with drag: ", lead_result[0])
+		#print("Time to Moving Target with drag: ", lead_result[1])
+	#else:
+		#print("Moving target cannot be hit!")
+		#print("Max range vector in target direction: ", lead_result[0])
+	#
+	## Test range calculations with drag
+	#print("\n--- Testing Range Calculations ---")
+	#var angle = PI/4  # 45 degrees
+	#var max_range = calculate_max_range_from_angle(angle, speed)
+	#print("Maximum range at 45 degrees with drag: ", max_range)
+	#
+	#var target_range = 30.0
+	#var needed_angle = calculate_angle_from_max_range(target_range, speed)
+	#if needed_angle >= 0:
+		#print("Angle needed for range of ", target_range, " with drag: ", rad_to_deg(needed_angle), " degrees")
+	#else:
+		#print("Target range exceeds physical limits with drag!")
+		#
+	## Test different projectile types
+	#print("\n--- Testing Different Projectiles ---")
+	#
+	#print("Ping Pong Ball:")
+	#var ping_pong_result = calculate_launch_vector(start, Vector3(5, 2, 0), 10.0, PING_PONG_DRAG_COEFFICIENT)
+	#if !ping_pong_result[2]:
+		#print("  Reachable! Time to target: ", ping_pong_result[1])
+	#else:
+		#print("  Unreachable! Max range time: ", ping_pong_result[1])
+		#
+	#print("Bowling Ball:")
+	#var bowling_result = calculate_launch_vector(start, Vector3(20, 5, 0), 15.0, BOWLING_BALL_DRAG_COEFFICIENT)
+	#if !bowling_result[2]:
+		#print("  Reachable! Time to target: ", bowling_result[1])
+	#else:
+		#print("  Unreachable! Max range time: ", bowling_result[1])
+		#
+	##print("380mm Shell:")
+	##max_range = calculate_max_range_from_angle(deg_to_rad(30), Shell.shell_speed,SHELL_380MM_DRAG_COEFFICIENT)
+	##print("max range: ", max_range)
+	##max_range = ProjectilePhysics.calculate_max_range_from_angle(deg_to_rad(30),Shell.shell_speed)
+	#print("max range no drag: ", max_range)
+	#var shell_result = calculate_launch_vector(start, Vector3(200, 50, 0), 100.0, SHELL_380MM_DRAG_COEFFICIENT)
+	#if !shell_result[2]:
+		#print("  Reachable! Time to target: ", shell_result[1])
+	#else:
+		#print("  Unreachable! Max range time: ", shell_result[1])

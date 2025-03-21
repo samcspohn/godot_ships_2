@@ -1,8 +1,9 @@
-[gd_scene load_steps=12 format=3 uid="uid://c7fdcm52rmryb"]
+[gd_scene load_steps=13 format=3 uid="uid://c7fdcm52rmryb"]
 
 [ext_resource type="Material" uid="uid://05wlpmfaoxa7" path="res://bright.tres" id="1_8qhqx"]
-[ext_resource type="Script" path="res://src/shared/Shell.gd" id="1_g2qt8"]
+[ext_resource type="Script" path="res://scenes/Shells/Shell.gd" id="1_g2qt8"]
 [ext_resource type="Shader" path="res://addons/GPUTrail/shaders/trail.gdshader" id="2_plynq"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Shells/normal_shell.tres" id="3_818jo"]
 [ext_resource type="Shader" path="res://addons/GPUTrail/shaders/trail_draw_pass.gdshader" id="3_rp8u4"]
 [ext_resource type="Texture2D" uid="uid://crk6pkb7e5rwc" path="res://addons/GPUTrail/defaults/texture.tres" id="4_jb1ql"]
 [ext_resource type="Texture2D" uid="uid://ct31fhxvcragr" path="res://addons/GPUTrail/defaults/curve.tres" id="5_x6api"]
@@ -21,7 +22,7 @@ render_priority = 0
 shader = ExtResource("3_rp8u4")
 shader_parameter/uv_offset = Vector2(0, 0)
 shader_parameter/emmission_transform = Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
-shader_parameter/flags = 4
+shader_parameter/flags = 44
 shader_parameter/tex = ExtResource("4_jb1ql")
 shader_parameter/color_ramp = ExtResource("4_jb1ql")
 shader_parameter/curve = ExtResource("5_x6api")
@@ -36,6 +37,7 @@ radial_segments = 10
 rings = 5
 material = ExtResource("1_8qhqx")
 script = ExtResource("1_g2qt8")
+params = ExtResource("3_818jo")
 
 [node name="GPUTrail3D" type="GPUParticles3D" parent="."]
 amount = 160

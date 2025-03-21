@@ -6,11 +6,11 @@ class_name ArtilleryDispersion
 
 # Base dispersion values at 0.5 km (500 meters)
 @export var base_horizontal_dispersion: float = 10.0  # Meters perpendicular to aim direction
-@export var base_vertical_dispersion: float = 100.0    # Meters in line with aim direction
+@export var base_vertical_dispersion: float = 120.0    # Meters in line with aim direction
 
 # Linear dispersion growth with range (meters per kilometer)
 @export var horizontal_dispersion_modifier: float = 13.56  # Additional meters of dispersion per km
-@export var vertical_dispersion_modifier: float = 50.12    # Additional meters of dispersion per km (typically 1.5-2x horizontal)
+@export var vertical_dispersion_modifier: float = 13.56    # Additional meters of dispersion per km (typically 1.5-2x horizontal)
 
 # Sigma values control how tightly shells group within the ellipse
 @export var horizontal_sigma: float = 3.0  # Standard deviations within horizontal dispersion

@@ -4,18 +4,20 @@ extends Node3D
 @onready var barrel: Node3D = $Barrels
 @onready var dispersion_calculator: ArtilleryDispersion = $"../../DispersionCalculator"
 var _aim_point: Vector3
+@export var shell: ShellParams
+@export var shell2: Resource
 #@onready var ms: MultiplayerSynchronizer = $MultiplayerSynchronizer
 
-# Mark synchronized properties with @export 
+# Mark synchronized properties with @export
 var reload: float = 0.0
 var can_fire: bool = false
 var muzzles: Array[Node3D] = []
-var reload_time: float = 1
+@export var reload_time: float = 1
 var gun_id: int
 
 var max_range
 func _ready() -> void:
-	max_range = ProjectilePhysicsWithDrag.calculate_max_range_from_angle(30, Shell.shell_speed)
+	max_range = ProjectilePhysicsWithDrag.calculate_max_range_from_angle(30, shell.speed)
 	# Set up muzzles
 	for b in barrel.get_children():
 		if b.name.contains("Barrel"):
@@ -71,7 +73,7 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
 	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, Shell.shell_speed)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, shell.speed, shell.drag)
 	var elevation_delta: float = max_turret_angle
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
@@ -98,7 +100,7 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, Shell.shell_speed)
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, shell.speed, shell.drag)
 	if !sol[2]:
 		self._aim_point = sol[3]
 	var launch_angle = sol[0]
@@ -164,6 +166,6 @@ func fire():
 		if reload >= 1.0 and can_fire:
 			for m in muzzles:
 				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
-				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position,dispersion_point, Shell.shell_speed)
-				ProjectileManager.request_fire(aim[0].normalized(), m.global_position)
+				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, shell.speed, shell.drag)
+				ProjectileManager.request_fire(aim[0], m.global_position, shell2.resource_path)
 			reload = 0
