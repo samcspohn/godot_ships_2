@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://bg8ewplv43885"]
 
 [ext_resource type="Material" uid="uid://05wlpmfaoxa7" path="res://bright.tres" id="1_jpmam"]
-[ext_resource type="Script" path="res://scenes/Shells/explosion.gd" id="1_rkvij"]
+[ext_resource type="Script" uid="uid://du18fbr6xjde6" path="res://scenes/Shells/explosion.gd" id="1_rkvij"]
 
 [node name="Explosion" type="CSGSphere3D"]
 material_override = ExtResource("1_jpmam")

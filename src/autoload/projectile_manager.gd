@@ -44,12 +44,12 @@ func CalculateLaunchVector(startPos: Vector3, targetPos: Vector3, launchSpeed: f
 # 	pass
 
 @rpc("any_peer", "reliable")
-func fireBulletClient(pos, vel,t,id, shell) -> void:
+func fireBulletClient(pos, vel,t,id, shell, end_pos, total_time) -> void:
 	var bullet: Shell = load(shell).instantiate()
 	bullet.id = id
 	get_node("/root").add_child(bullet)
 	#var t = float(Time.get_ticks_msec()) / 1000.0
-	bullet.initialize(pos, vel, t)
+	bullet.initialize(pos, vel, t, end_pos, total_time)
 	self.projectiles.get_or_add(id, bullet)
 	#var shell = bullet.get_script()
 	#pass
@@ -57,24 +57,24 @@ func fireBulletClient(pos, vel,t,id, shell) -> void:
 	
 	# Adding the request_spawn RPC function
 #@rpc("any_peer", "call_remote")
-func request_fire(dir: Vector3, pos: Vector3, shell):
+func request_fire(dir: Vector3, pos: Vector3, shell, end_pos: Vector3, total_time: float) -> void:
 	#if multiplayer.is_server():
 		# Get the game server node - adjust path as needed
-		fireBullet(dir,pos, shell)
+		fireBullet(dir,pos, shell, end_pos, total_time)
 
 @rpc("authority","reliable")
-func fireBullet(vel,pos, shell) -> void:
+func fireBullet(vel,pos, shell, end_pos, total_time) -> void:
 	var bullet: Shell = load(shell).instantiate()
 	var id = self.nextId
 	self.nextId += 1
 	bullet.id = id
 	get_node("/root").add_child(bullet)
 	var t = float(Time.get_unix_time_from_system())
-	bullet.initialize(pos, vel, t)
+	bullet.initialize(pos, vel, t, end_pos, total_time)
 	#bullet.vel = dir * Shell.shell_speed
 	self.projectiles.get_or_add(id, bullet)
 	for p in multiplayer.get_peers():
-		self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell)
+		self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
 		#self.destroyBulletRpc2.rpc_id(p,id)
 	
 
@@ -82,13 +82,13 @@ func fireBullet(vel,pos, shell) -> void:
 func destroyBulletRpc2(id, pos: Vector3) -> void:
 	var bullet: Shell = self.projectiles.get(id)
 	bullet.global_position = pos
-	bullet._destroy(true)
+	bullet._destroy()
 	self.projectiles.erase(id)
 	
 @rpc("authority", "reliable")
 func destroyBulletRpc(id) -> void:
 	var bullet = self.projectiles.get(id)
-	bullet._destroy(true)
+	bullet._destroy()
 	self.projectiles.erase(id)
 	#if multiplayer.is_server():
 	for p in multiplayer.get_peers():

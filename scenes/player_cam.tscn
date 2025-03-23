@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://5diwy5owyxuo"]
 
-[ext_resource type="Script" path="res://src/camera/artillery_camera.gd" id="1_eru7b"]
+[ext_resource type="Script" uid="uid://chcmxyf6tdfh2" path="res://src/camera/artillery_camera.gd" id="1_eru7b"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_d7ckp"]
 bg_color = Color(0.61, 0.61, 0.61, 1)

@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://d3228p810w0a8"]
 
-[ext_resource type="Script" path="res://scenes/lobby.gd" id="1_oti6y"]
+[ext_resource type="Script" uid="uid://dcc5qqctxeoub" path="res://scenes/lobby.gd" id="1_oti6y"]
 
 [node name="MatchLobby" type="Control"]
 layout_mode = 3

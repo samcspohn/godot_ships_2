@@ -1,18 +1,18 @@
 [gd_scene load_steps=7 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Guns/Gun.tscn" id="2_05ryi"]
-[ext_resource type="Script" path="res://src/shared/playerController.gd" id="2_j85uk"]
-[ext_resource type="Script" path="res://src/artillary/secondary_controller.gd" id="3_lycv3"]
+[ext_resource type="Script" uid="uid://bisd7weplagn8" path="res://src/shared/playerController.gd" id="2_j85uk"]
+[ext_resource type="Script" uid="uid://cx1f7vlowd3nn" path="res://src/artillary/secondary_controller.gd" id="3_lycv3"]
 [ext_resource type="PackedScene" uid="uid://de7wvvgfltyco" path="res://scenes/Guns/SmallGun.tscn" id="3_v1kns"]
-[ext_resource type="Script" path="res://src/artillary/dispersion_calculator.gd" id="4_d2n6i"]
+[ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="4_d2n6i"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
 size = Vector3(36, 9.3, 250)
 
 [node name="Player" type="CharacterBody3D" node_paths=PackedStringArray("playerName")]
 script = ExtResource("2_j85uk")
-speed = 20.0
-rotation_speed = 0.5
+speed = 45.0
+rotation_speed = 0.2
 playerName = NodePath("PlayerName")
 
 [node name="PlayerName" type="Label" parent="."]

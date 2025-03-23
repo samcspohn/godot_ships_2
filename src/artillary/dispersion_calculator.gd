@@ -34,10 +34,10 @@ func calculate_dispersion_point(aim_point: Vector3, gun_position: Vector3) -> Ve
 	var aim_point_2d = Vector2(aim_point.x, aim_point.z)
 	
 	# Get 2D direction and distance
-	var direction_2d = (aim_point_2d - gun_position_2d).normalized()
+	var y_dir = (aim_point_2d - gun_position_2d).normalized()
 	
 	# Calculate perpendicular vector in 2D (90 degrees counterclockwise)
-	var perpendicular_2d = Vector2(-direction_2d.y, direction_2d.x)
+	var x_dir = Vector2(-y_dir.y, y_dir.x)
 	
 	# Generate point within elliptical distribution with normal distribution
 	#var u = randf() * TAU  # Random angle around the ellipse (0 to 2π)
@@ -46,38 +46,58 @@ func calculate_dispersion_point(aim_point: Vector3, gun_position: Vector3) -> Ve
 	# We use 0.99 to avoid potential log(0) issues
 	#var r = inverse_normal_cdf(randf() * 0.99)
 	
-	var rho: float = randf_range(0.0, 1.0)
-	var phi: float = randf_range(0.0, TAU)
+	# var rho: float = randf_range(0.0, 1.0)
+	# var phi: float = randf_range(0.0, TAU)
 	
-	perpendicular_2d *= sqrt(rho) * cos(phi)
-	direction_2d *= sqrt(rho) * sin(phi)
-	#direction_2d *= 0.9
-	#perpendicular_2d *= 0.6
+	# perpendicular_2d *= sqrt(rho) * cos(phi) * random_normal(horizontal_sigma)
+	# direction_2d *= sqrt(rho) * sin(phi) * random_normal(vertical_sigma)
+	# #direction_2d *= 0.9
+	# #perpendicular_2d *= 0.6
 	
 	
-	# Scale by dispersion values and apply to aim point
-	var horizontal_offset = horizontal_dispersion * perpendicular_2d
-	var vertical_offset = vertical_dispersion * direction_2d
+	# # Scale by dispersion values and apply to aim point
+	# var horizontal_offset = horizontal_dispersion * perpendicular_2d
+	# var vertical_offset = vertical_dispersion * direction_2d
 	
-	# Apply offsets in 2D
-	# Horizontal is perpendicular to aim direction
-	# Vertical is along aim direction
-	var dispersed_point_2d = aim_point_2d + horizontal_offset + vertical_offset
+	# # Apply offsets in 2D
+	# # Horizontal is perpendicular to aim direction
+	# # Vertical is along aim direction
+	# var dispersed_point_2d = aim_point_2d + horizontal_offset + vertical_offset
+	var p = random_point_in_ellipse(horizontal_dispersion, vertical_dispersion, 1.8, 1.8)
+	var dispersed_point_2d = aim_point_2d + y_dir * p.y + x_dir * p.x
 	
 	# Convert back to 3D, preserving original height
 	return Vector3(dispersed_point_2d.x, aim_point.y, dispersed_point_2d.y)
-
-## Simplified approximation of the inverse normal CDF
-# This transforms a uniform random value (0-1) to follow normal distribution
-func inverse_normal_cdf(p: float) -> float:
-	# Simple approximation using Box-Muller transform concept
-	# This creates a bell curve-like distribution with most points near the center
-	return sqrt(-2.0 * log(1.0 - p * 0.9))
-
-## Alternative method for generating normally distributed random points
-func random_normal() -> float:
-	# Box-Muller transform - generates normally distributed random numbers
-	var u1 = max(randf(), 0.0001)  # Avoid log(0)
-	var u2 = randf()
+# Function to generate a random 2D point within an ellipse with adjustable distribution
+# Parameters:
+# - width: Width of the ellipse (x-axis radius * 2)
+# - height: Height of the ellipse (y-axis radius * 2)
+# - h_grouping: Controls horizontal distribution (1.0 = uniform, >1.0 = increasingly clustered toward center)
+# - v_grouping: Controls vertical distribution (1.0 = uniform, >1.0 = increasingly clustered toward center)
+# Returns: Vector2 representing a point inside the ellipse with origin at (0,0)
+func random_point_in_ellipse(width: float, height: float, h_grouping: float = 1.0, v_grouping: float = 1.0) -> Vector2:
+	# Get the semi-major and semi-minor axes
+	var a = width / 2.0
+	var b = height / 2.0
 	
-	return sqrt(-2.0 * log(u1)) * cos(TAU * u2)
+	# Step 1: Calculate a random angle
+	var angle = randf() * 2.0 * PI
+	
+	# Step 2: Find the point on the ellipse that corresponds to that angle
+	# For an ellipse, the point (a*cos(t), b*sin(t)) gives us a point on the boundary
+	var ellipse_x = a * cos(angle)
+	var ellipse_y = b * sin(angle)
+	
+	# Step 3: Multiply by randf() for uniform distribution within the ellipse
+	var scale_factor = randf()
+	var x = ellipse_x * scale_factor
+	var y = ellipse_y * scale_factor
+	
+	# Step 4: Apply grouping to cluster points toward the center
+	if h_grouping > 1.0:
+		x = sign(x) * pow(abs(x) / a, h_grouping) * a
+	
+	if v_grouping > 1.0:
+		y = sign(y) * pow(abs(y) / b, v_grouping) * b
+	
+	return Vector2(x, y)

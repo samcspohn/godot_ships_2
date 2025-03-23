@@ -6,3 +6,6 @@
 [node name="Shell" instance=ExtResource("1_5bnvr")]
 radius = 1.5
 params = ExtResource("2_scfgl")
+
+[node name="GPUParticles3D" parent="." index="1"]
+visibility_aabb = AABB(-10000, -10000, -10000, 10000, 10000, 10000)

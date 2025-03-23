@@ -47,6 +47,12 @@ var crosshair_container: Control
 var time_label: Label
 var distance_label: Label
 
+# Speedometer
+var speed_label: Label
+var previous_position: Vector3 = Vector3.ZERO
+var ship_speed: float = 0.0
+
+
 func _ready():
 	# Initial setup
 	current_fov = default_fov
@@ -66,6 +72,8 @@ func _setup_ui():
 	# Create CanvasLayer for UI
 	ui_canvas = CanvasLayer.new()
 	add_child(ui_canvas)
+
+	
 	
 	# Create Control for UI elements
 	crosshair_container = Control.new()
@@ -90,6 +98,14 @@ func _setup_ui():
 	
 	# Connect to draw
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
+
+	# Add speed label
+	speed_label = Label.new()
+	speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	speed_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	speed_label.add_theme_font_size_override("font_size", 16)
+	speed_label.add_theme_color_override("font_color", Color(0.2, 0.8, 1.0, 1.0))
+	crosshair_container.add_child(speed_label)
 
 func _input(event):
 	# Handle mouse movement for rotation
@@ -121,6 +137,15 @@ func _process(delta):
 	# Calculate target information
 	_calculate_target_info()
 	
+	 # Calculate ship speed
+	if target_ship:
+		if previous_position == Vector3.ZERO:
+			previous_position = target_ship.global_position
+
+		var velocity = (target_ship.global_position - previous_position) / delta
+		ship_speed = velocity.length() * 1.94384  # Convert m/s to knots
+		previous_position = target_ship.global_position
+
 	# Update UI
 	_update_ui()
 	crosshair_container.queue_redraw()
@@ -302,6 +327,9 @@ func _update_ui():
 	
 	time_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 25)
 	distance_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 45)
+
+	speed_label.text = "Speed: %.1f knots" % ship_speed
+	speed_label.position = Vector2(20, viewport_size.y - 40)  # Position at bottom left
 
 func _on_crosshair_container_draw():
 	var viewport_size = get_viewport().get_visible_rect().size

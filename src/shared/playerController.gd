@@ -116,7 +116,7 @@ func _input(event: InputEvent):
 				# Mouse button released
 				is_holding = false
 
-@rpc("any_peer", "call_remote")
+@rpc("any_peer", "call_remote", "reliable")
 func send_input(input_dir: Vector2, aim_point: Vector3):
 	if multiplayer.is_server():
 		_input_dir = input_dir
@@ -156,25 +156,26 @@ func _physics_process(delta: float) -> void:
 		send_input.rpc_id(1, input_dir, aim_point)
 		
 		
-	if not multiplayer.is_server():
+	if !multiplayer.is_server():
 		return
 	previous_position = global_position
 		# Add gravity
-	if not is_on_floor():
+	if !is_on_floor():
 		velocity.y -= gravity_value * delta
 
 	rotate(Vector3.UP, _input_dir.x * rotation_speed * delta)
 	
-	var dir = global_basis.z * speed * _input_dir.y
-	velocity.x = move_toward(velocity.x, 0, speed)
+	var dir = global_basis.z * _input_dir.y
 		
 			# Handle movement
-	if not dir.is_zero_approx():
+	if !dir.is_zero_approx():
 		velocity.x = dir.x * speed
 		velocity.z = dir.z * speed
 	else:
 		velocity.x = move_toward(velocity.x, 0, speed)
 		velocity.z = move_toward(velocity.z, 0, speed)
+	
+	#print(velocity)
 		
 	
 	move_and_slide()

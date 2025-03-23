@@ -15,9 +15,13 @@ var muzzles: Array[Node3D] = []
 @export var reload_time: float = 1
 var gun_id: int
 
-var max_range
+var max_range: float
+var max_flight: float
 func _ready() -> void:
-	max_range = ProjectilePhysicsWithDrag.calculate_max_range_from_angle(30, shell.speed)
+	var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(shell.speed, shell.drag)
+	max_range = a[0]
+	max_flight = a[2]
+	print("max range: ", a)
 	# Set up muzzles
 	for b in barrel.get_children():
 		if b.name.contains("Barrel"):
@@ -43,7 +47,7 @@ func _physics_process(delta: float) -> void:
 		
 # implement on server
 func _aim(aim_point: Vector3, delta: float) -> void:
-	self._aim_point = aim_point
+
 	#if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		#return
 	
@@ -72,8 +76,18 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
-	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
+	
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, shell.speed, shell.drag)
+	if sol[0] != null:
+		self._aim_point = aim_point
+	else:
+		var g = Vector3(global_position.x, 0, global_position.z)
+		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (max_range - 500)
+		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,self._aim_point, shell.speed, shell.drag)
+		
+	
+	#rotation_degrees.y = clamp(rotation_degrees.y, -150, 150)
+	#var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position,aim_point, shell.speed, shell.drag)
 	var elevation_delta: float = max_turret_angle
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
@@ -81,7 +95,7 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
 		var elevation_angle = elevation.angle_to(curr_elevation)
 		elevation_delta = clamp(elevation_angle, -max_turret_angle, max_turret_angle)
-	if sol[2]:
+	if sol[0] == null:
 		elevation_delta = -max_turret_angle
 	
 	if is_nan(elevation_delta):
@@ -101,8 +115,11 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, shell.speed, shell.drag)
-	if !sol[2]:
-		self._aim_point = sol[3]
+	#print(sol)
+	if sol[0] == null:
+		can_fire = false
+		return
+	_aim_point = sol[2]
 	var launch_angle = sol[0]
 	const TURRET_ROT_SPEED_DEG: float = 40.0
 	# Calculate turret rotation
@@ -167,5 +184,8 @@ func fire():
 			for m in muzzles:
 				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, shell.speed, shell.drag)
-				ProjectileManager.request_fire(aim[0], m.global_position, shell2.resource_path)
+				if aim[0] != null:
+					ProjectileManager.request_fire(aim[0], m.global_position, shell2.resource_path, dispersion_point, aim[1])
+				else:
+					print(aim)
 			reload = 0

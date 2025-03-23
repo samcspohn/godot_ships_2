@@ -12,7 +12,7 @@ func _ready():
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	
 	# Create the game world as a separate entity
-	game_world = preload("res://scenes/game_world.tscn").instantiate()
+	game_world = preload("res://scenes/Maps/game_world.tscn").instantiate()
 	add_child(game_world)
 	spawn_point = game_world.get_child(1)
 	print("Game server started and world loaded")

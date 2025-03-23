@@ -1,6 +1,6 @@
 [gd_scene load_steps=5 format=3 uid="uid://bf40i2xf8jkn6"]
 
-[ext_resource type="Script" path="res://scenes/Guns/Gun.gd" id="1_dkebo"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://scenes/Guns/Gun.gd" id="1_dkebo"]
 [ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Shells/normal_shell.tres" id="2_bhot8"]
 [ext_resource type="PackedScene" uid="uid://c7fdcm52rmryb" path="res://scenes/Shells/shell.tscn" id="3_6sff4"]
 
@@ -12,7 +12,6 @@ size = Vector3(10, 4, 19.6)
 script = ExtResource("1_dkebo")
 shell = ExtResource("2_bhot8")
 shell2 = ExtResource("3_6sff4")
-reload_time = 15.0
 
 [node name="Barrels" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.48264)

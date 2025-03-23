@@ -6,9 +6,10 @@ extends CSGSphere3D
 @export var params: ShellParams
 var id: int
 var start_pos: Vector3
+var end_pos: Vector3
 var launch_velocity: Vector3
 var start_time: float
-
+var total_time: float
 
 
 # Internal variables
@@ -29,9 +30,11 @@ func _ready():
 	# Get the physics space state for raycasting
 	#space_state = get_world_3d().direct_space_state
 
-func initialize(pos: Vector3, vel: Vector3, t: float):
+func initialize(pos: Vector3, vel: Vector3, t: float, ep: Vector3, t2: float):
 	global_position = pos
 	start_pos = pos
+	end_pos = ep
+	total_time = t2
 	self.start_time = t
 	self.launch_velocity = vel
 	ray_query.from = global_position
@@ -41,7 +44,10 @@ func initialize(pos: Vector3, vel: Vector3, t: float):
 func _update_position():
 	var t = (Time.get_unix_time_from_system() - start_time) * 2.0
 	global_position = ProjectilePhysicsWithDrag.calculate_position_at_time(start_pos, launch_velocity, t, params.drag)
-	
+	#global_position = ProjectilePhysicsWithDrag.calculate_precise_shell_position(start_pos, end_pos, launch_velocity, t, total_time, params.drag)
+	if is_nan(global_position.x) or is_nan(global_position.y) or is_nan(global_position.z) or !global_position.is_finite():
+		global_position = Vector3.ZERO
+
 func _physics_process(delta):
 	if !multiplayer.is_server():
 		return
@@ -77,10 +83,7 @@ func _check_collisions():
 		print("hit", collision)
 		# Position the projectile at the collision point
 		global_position = collision.position
-		
-		# Stop physics processing
-		#set_physics_process(false)
-		
+
 		# Emit hit signal with collision information
 		emit_signal("hit", collision)
 		
@@ -90,13 +93,17 @@ func _check_collisions():
 		
 		#ProjectileManager.destroyBulletRpc2(id)
 
-func _destroy(with_delay: bool = true):
+func _destroy():
 	emit_signal("destroyed")
 	
 	#if with_delay:
 	set_process(false)
 	set_physics_process(false)
-	scale = Vector3(0.0001,0.0001,0.0001)
+	var hit_marker = preload("res://scenes/Shells/hit_marker.tscn").instantiate()
+	get_tree().root.add_child(hit_marker)
+	hit_marker.global_position = global_position
+	
+	material_override = null
 	var timer = Timer.new()
 	timer.one_shot = true
 	timer.wait_time = 4.0
@@ -106,6 +113,6 @@ func _destroy(with_delay: bool = true):
 	
 	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
 	var s = self.radius * 10
-	expl.scale = Vector3(s,s,s)
+	expl.scale = Vector3(s, s, s)
 	get_tree().root.add_child(expl)
 	expl.global_position = global_position
