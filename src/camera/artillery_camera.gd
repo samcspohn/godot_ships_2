@@ -26,7 +26,7 @@ var current_zoom: float = 200.0  # Default zoom
 
 # Sniper mode properties
 @export var default_fov: float = 70.0
-@export var min_fov: float = 8.0  # Very narrow for extreme distance aiming
+@export var min_fov: float = 2.0  # Very narrow for extreme distance aiming
 @export var max_fov: float = 60.0  # Wide enough for general aiming
 @export var fov_zoom_speed: float = 2.0
 var current_fov: float = default_fov
@@ -47,8 +47,12 @@ var crosshair_container: Control
 var time_label: Label
 var distance_label: Label
 
-# Speedometer
+# Ship status indicators
 var speed_label: Label
+var throttle_label: Label
+var rudder_label: Label
+var rudder_slider: HSlider
+var throttle_slider: VSlider
 var previous_position: Vector3 = Vector3.ZERO
 var ship_speed: float = 0.0
 
@@ -72,8 +76,6 @@ func _setup_ui():
 	# Create CanvasLayer for UI
 	ui_canvas = CanvasLayer.new()
 	add_child(ui_canvas)
-
-	
 	
 	# Create Control for UI elements
 	crosshair_container = Control.new()
@@ -99,13 +101,53 @@ func _setup_ui():
 	# Connect to draw
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
 
+	# Add ship status labels
+	var status_color = Color(0.2, 0.8, 1.0, 1.0)
+	var font_size = 16
+	
 	# Add speed label
 	speed_label = Label.new()
 	speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	speed_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	speed_label.add_theme_font_size_override("font_size", 16)
-	speed_label.add_theme_color_override("font_color", Color(0.2, 0.8, 1.0, 1.0))
+	speed_label.add_theme_font_size_override("font_size", font_size)
+	speed_label.add_theme_color_override("font_color", status_color)
 	crosshair_container.add_child(speed_label)
+	
+	# Add throttle label
+	throttle_label = Label.new()
+	throttle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	throttle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	throttle_label.add_theme_font_size_override("font_size", font_size)
+	throttle_label.add_theme_color_override("font_color", status_color)
+	crosshair_container.add_child(throttle_label)
+	
+	# Add rudder label
+	rudder_label = Label.new()
+	rudder_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	rudder_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	rudder_label.add_theme_font_size_override("font_size", font_size)
+	rudder_label.add_theme_color_override("font_color", status_color)
+	crosshair_container.add_child(rudder_label)
+	
+	# Add rudder slider (horizontal)
+	rudder_slider = HSlider.new()
+	rudder_slider.min_value = -1.0
+	rudder_slider.max_value = 1.0
+	rudder_slider.step = 0.01
+	rudder_slider.value = 0
+	rudder_slider.custom_minimum_size = Vector2(150, 20)
+	rudder_slider.editable = false  # Read-only display
+	crosshair_container.add_child(rudder_slider)
+	
+	# Add throttle slider (vertical)
+	throttle_slider = VSlider.new()
+	throttle_slider.min_value = -1.0  # Reverse
+	throttle_slider.max_value = 4.0   # Full ahead
+	throttle_slider.step = 0.1
+	throttle_slider.value = 0
+	throttle_slider.custom_minimum_size = Vector2(20, 100)
+	throttle_slider.editable = false  # Read-only display
+	crosshair_container.add_child(throttle_slider)
 
 func _input(event):
 	# Handle mouse movement for rotation
@@ -123,12 +165,21 @@ func _input(event):
 	elif event is InputEventKey:
 		if event.pressed and event.keycode == KEY_SHIFT:
 			toggle_camera_mode()
-		# Escape key to release mouse
-		elif event.pressed and event.keycode == KEY_ESCAPE:
-			if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		 # Control key to toggle mouse capture
+		elif event.keycode == KEY_CTRL:
+			if event.pressed:
+				# When pressing control, release mouse and center it
+				_center_mouse()
 				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			else:
+				# When releasing control, capture the mouse again
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+# Center the mouse cursor on the screen
+func _center_mouse():
+	var viewport_size = get_viewport().get_visible_rect().size
+	var center = viewport_size / 2
+	Input.warp_mouse(center)
 
 func _process(delta):
 	# Update camera position and rotation
@@ -182,9 +233,9 @@ func _handle_mouse_motion(event):
 		#var range_mod = sqrt(sniper_range / 100)
 		var range_mod2 = log(sniper_range / 100 + 1) / log(10) + 1
 		var range_mod3 = sqrt(sniper_range / 32)
-		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.1 / range_mod2 * deg_to_rad(current_fov)
+		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.3 / range_mod2 * deg_to_rad(current_fov)
 		#rotation_degrees_vertical -= event.relative.y * mouse_sensitivity * 0.1 * y_factor
-		sniper_range += event.relative.y * mouse_sensitivity * -range_mod3 * deg_to_rad(current_fov)
+		sniper_range += event.relative.y * mouse_sensitivity * sniper_range * -0.02 * deg_to_rad(current_fov)
 		sniper_range = clamp(sniper_range, 1, 38280)
 	
 	# Clamp vertical rotation to prevent flipping over
@@ -207,11 +258,6 @@ func _update_camera_transform():
 		var height_offset = camera_offset.y * cos(vertical_rad)
 		
 		# Calculate the orbit position
-		#var orbit_pos = Vector3(
-			#sin(horizontal_rad) * orbit_distance * cos(vertical_rad),
-			#height_offset + orbit_distance * sin(vertical_rad),
-			#cos(horizontal_rad) * orbit_distance * cos(vertical_rad)
-		#)
 		var orbit_pos = Vector3(
 			sin(horizontal_rad) * orbit_distance,
 			camera_offset.y + cos(vertical_rad) * orbit_distance / 2.0,
@@ -220,17 +266,13 @@ func _update_camera_transform():
 		
 		# Set camera position relative to ship
 		global_position = ship_position + orbit_pos
-		
-		# Look at the ship while keeping camera upright
-		#look_at(ship_position, Vector3.UP)
-		#rotate(Vector3.RIGHT, vertical_rad)
-		#look_at(basis.z)
+
 		rotation.y = horizontal_rad
 		rotation.x = vertical_rad
 		
 	else: # SNIPER mode
 		# In sniper mode, position camera on the ship
-		var camera_height = 30.0  # Position camera high enough on large ship
+		var camera_height = 10.0  # Position camera high enough on large ship
 		var forward_offset = 20.0
 		
 		# Calculate camera position in orbit around ship
@@ -243,9 +285,9 @@ func _update_camera_transform():
 			a *= a
 		# Calculate the orbit position
 		var orbit_pos = Vector3(
-			sin(horizontal_rad) * -sniper_range * 0.7,
+			sin(horizontal_rad) * -sniper_range * 0.1,
 			camera_height + sniper_range / 15,
-			cos(horizontal_rad) * -sniper_range * 0.7
+			cos(horizontal_rad) * -sniper_range * 0.1
 		)
 		global_position = ship_position + orbit_pos
 		var l = ship_position + Vector3(sin(horizontal_rad) * -sniper_range, 0, cos(horizontal_rad) * -sniper_range)
@@ -328,8 +370,93 @@ func _update_ui():
 	time_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 25)
 	distance_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 45)
 
+	# Update ship status labels
 	speed_label.text = "Speed: %.1f knots" % ship_speed
-	speed_label.position = Vector2(20, viewport_size.y - 40)  # Position at bottom left
+	
+	# Get throttle and rudder information from the ship
+	var throttle_text = "Throttle: Stop"
+	var rudder_text = "Rudder: Center"
+	
+	if target_ship is PlayerController:
+		# Get throttle setting
+		var throttle_level = target_ship.throttle_level
+		var throttle_display = ""
+		
+		match throttle_level:
+			-1: throttle_display = "Reverse"
+			0: throttle_display = "Stop"
+			1: throttle_display = "1/4"
+			2: throttle_display = "1/2"
+			3: throttle_display = "3/4"
+			4: throttle_display = "Full"
+		
+		throttle_text = "Throttle: " + throttle_display
+		throttle_slider.value = throttle_level
+		
+		# Get rudder setting
+		var rudder_value = target_ship.rudder_value
+		var rudder_display = ""
+		
+		if abs(rudder_value) < 0.1:
+			rudder_display = "Center"
+		elif rudder_value > 0:
+			if rudder_value > 0.75:
+				rudder_display = "Hard Port"
+			elif rudder_value > 0.25:
+				rudder_display = "Port"
+			else:
+				rudder_display = "Slight Port"
+		else:
+			if rudder_value < -0.75:
+				rudder_display = "Hard Starboard"
+			elif rudder_value < -0.25:
+				rudder_display = "Starboard"
+			else:
+				rudder_display = "Slight Starboard"
+		
+		rudder_text = "Rudder: " + rudder_display
+		rudder_slider.value = rudder_value
+	
+	throttle_label.text = throttle_text
+	rudder_label.text = rudder_text
+	
+	# Position the status labels and sliders in bottom left corner
+	var control_panel_x = 20
+	var control_panel_y = viewport_size.y - 180  # Moved up to make room for the control layout
+	
+	# Position labels
+	speed_label.position = Vector2(control_panel_x, control_panel_y)
+	throttle_label.position = Vector2(control_panel_x, control_panel_y + 25)
+	rudder_label.position = Vector2(control_panel_x, control_panel_y + 50)
+	
+	# Position sliders in a non-overlapping layout
+	# Rudder slider (horizontal) at the bottom
+	rudder_slider.position = Vector2(control_panel_x, control_panel_y + 75)
+	rudder_slider.custom_minimum_size = Vector2(180, 20)
+	
+	# Throttle slider (vertical) positioned at the right end of the rudder slider
+	throttle_slider.position = Vector2(control_panel_x + 180, control_panel_y - 25)  # Position at the right end of rudder slider
+	throttle_slider.custom_minimum_size = Vector2(20, 100)  # Keep the same height
+	
+	# Add custom styling to sliders based on values
+	if target_ship is PlayerController:
+		# Set color for rudder slider based on port/starboard
+		var rudder_value = rudder_slider.value
+		if rudder_value > 0:  # Port (left)
+			rudder_slider.modulate = Color(1, 0.5, 0.5)  # Red tint for port
+		elif rudder_value < 0:  # Starboard (right)
+			rudder_slider.modulate = Color(0.5, 1, 0.5)  # Green tint for starboard
+		else:
+			rudder_slider.modulate = Color(1, 1, 1)  # White for center
+			
+		# Set color for throttle slider based on direction
+		var throttle_level = throttle_slider.value
+		if throttle_level > 0:  # Forward
+			throttle_slider.modulate = Color(0.5, 0.8, 1.0)  # Blue for forward
+		elif throttle_level < 0:  # Reverse
+			throttle_slider.modulate = Color(1.0, 0.8, 0.5)  # Orange for reverse
+		else:
+			throttle_slider.modulate = Color(1, 1, 1)  # White for stop
 
 func _on_crosshair_container_draw():
 	var viewport_size = get_viewport().get_visible_rect().size

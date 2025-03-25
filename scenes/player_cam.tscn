@@ -28,3 +28,10 @@ offset_bottom = 27.0
 theme_override_styles/background = SubResource("StyleBoxFlat_d7ckp")
 theme_override_styles/fill = SubResource("StyleBoxFlat_5pcis")
 value = 50.0
+
+[node name="HSlider" type="HSlider" parent="CanvasLayer"]
+visible = false
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 436.0
+offset_bottom = 97.0
