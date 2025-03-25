@@ -53,7 +53,6 @@ func register_player(player_name):
 	# Spawn player for all clients including the newly registered one
 	spawn_player.rpc(id, player_name)
 
-#@rpc("authority", "call_local")
 func spawn_player(id, player_name):
 	
 	#join_game.rpc_id(id)
@@ -64,6 +63,11 @@ func spawn_player(id, player_name):
 	var player = preload("res://scenes/player.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
+	var controller = preload("res://scenes/player_control.tscn").instantiate()
+	# controller.name = str(id)
+	player.add_child(controller)
+
+	# player.get_node("PlayerController").setName(str(id))
 
 	# Set player name
 	if player.has_node("NameLabel"):
@@ -92,13 +96,14 @@ func spawn_player(id, player_name):
 func spawn_players_client(id, player_name, pos):
 	if players.has(id):
 		return
-		
+
 	var player = preload("res://scenes/player.tscn").instantiate()
-	#print(player_name)
 	player.name = str(id)
-	#if auth:
-		#player.set_multiplayer_authority(id)
-	
+	if id == multiplayer.get_unique_id():
+		var controller = preload("res://scenes/player_control.tscn").instantiate()
+		# controller.name = str(id)
+		player.add_child(controller)
+
 	# Set player name
 	if player.has_node("NameLabel"):
 		player.get_node("NameLabel").text = player_name

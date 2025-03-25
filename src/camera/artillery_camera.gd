@@ -3,7 +3,7 @@ extends Camera3D
 class_name ArtilleryCamera
 
 # Ship to follow
-@export var target_ship: Node3D
+@export var target_ship: ShipMotion
 @export var projectile_speed: float = 800.0  # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT  # 380mm shell drag
 
@@ -377,7 +377,7 @@ func _update_ui():
 	var throttle_text = "Throttle: Stop"
 	var rudder_text = "Rudder: Center"
 	
-	if target_ship is PlayerController:
+	if target_ship is ShipMotion:
 		# Get throttle setting
 		var throttle_level = target_ship.throttle_level
 		var throttle_display = ""
@@ -439,7 +439,7 @@ func _update_ui():
 	throttle_slider.custom_minimum_size = Vector2(20, 100)  # Keep the same height
 	
 	# Add custom styling to sliders based on values
-	if target_ship is PlayerController:
+	if target_ship is ShipMotion:
 		# Set color for rudder slider based on port/starboard
 		var rudder_value = rudder_slider.value
 		if rudder_value > 0:  # Port (left)

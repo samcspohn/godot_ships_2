@@ -1,7 +1,7 @@
 extends Node
 
 var guns: Array[Gun]
-var target: PlayerController
+var target: ShipMotion
 var parent_name: StringName
 var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
