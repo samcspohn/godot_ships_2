@@ -270,6 +270,10 @@ static func estimate_time_of_flight(start_pos: Vector3, launch_vector: Vector3, 
 ## Calculate projectile position at any time with drag effects
 static func calculate_position_at_time(start_pos: Vector3, launch_vector: Vector3, time: float,
 									 drag_coefficient: float) -> Vector3:
+	
+	if time <= 0.0:
+		return start_pos
+		
 	# Extract components
 	var v0x = launch_vector.x
 	var v0y = launch_vector.y
@@ -282,6 +286,8 @@ static func calculate_position_at_time(start_pos: Vector3, launch_vector: Vector
 	# For x and z (horizontal components with drag)
 	# x = (v₀/β) * (1-e^(-βt))
 	var drag_factor = 1.0 - exp(-beta * time)
+	if is_nan(drag_factor):
+		drag_factor = 0.0
 	position.x = start_pos.x + (v0x / beta) * drag_factor
 	position.z = start_pos.z + (v0z / beta) * drag_factor
 	

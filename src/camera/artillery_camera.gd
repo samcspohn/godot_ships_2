@@ -56,6 +56,8 @@ var throttle_slider: VSlider
 var previous_position: Vector3 = Vector3.ZERO
 var ship_speed: float = 0.0
 
+# FPS counter
+var fps_label: Label
 
 func _ready():
 	# Initial setup
@@ -149,6 +151,14 @@ func _setup_ui():
 	throttle_slider.editable = false  # Read-only display
 	crosshair_container.add_child(throttle_slider)
 
+	# Add FPS counter in top right
+	fps_label = Label.new()
+	fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	fps_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	fps_label.add_theme_font_size_override("font_size", 16)
+	fps_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0, 1.0)) # Yellow for visibility
+	crosshair_container.add_child(fps_label)
+
 func _input(event):
 	# Handle mouse movement for rotation
 	if event is InputEventMouseMotion:
@@ -199,6 +209,7 @@ func _process(delta):
 
 	# Update UI
 	_update_ui()
+	_update_fps()
 	crosshair_container.queue_redraw()
 
 func _zoom_camera(zoom_amount):
@@ -457,6 +468,14 @@ func _update_ui():
 			throttle_slider.modulate = Color(1.0, 0.8, 0.5)  # Orange for reverse
 		else:
 			throttle_slider.modulate = Color(1, 1, 1)  # White for stop
+
+func _update_fps():
+	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
+	
+	# Position in top right corner
+	# var viewport_size = get_viewport().get_visible_rect().size
+	fps_label.size = Vector2(100, 25)
+	fps_label.position = Vector2(10, 10)
 
 func _on_crosshair_container_draw():
 	var viewport_size = get_viewport().get_visible_rect().size

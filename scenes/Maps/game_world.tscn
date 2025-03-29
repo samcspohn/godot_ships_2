@@ -11,7 +11,7 @@ script = ExtResource("2_dk2s4")
 
 [node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
 
-[node name="SpawnPlayers" type="Node3D" parent="."]
+[node name="Players" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.0586, 0)
 
 [node name="Env" type="Node3D" parent="."]

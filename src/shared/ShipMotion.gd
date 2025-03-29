@@ -1,6 +1,8 @@
 extends RigidBody3D
 class_name ShipMotion
 
+var initialized: bool = false
+
 # Physics properties
 @export var speed: float = 5
 @export var time_to_full_speed: float = 10.0  # Time in seconds to reach full speed from stop
@@ -48,6 +50,10 @@ func _ready() -> void:
 	
 	# Setup debug visualization
 	setup_debug_visualization()
+	
+	initialized = true
+	if !multiplayer.is_server():
+		initialized_client.rpc_id(1)
 
 func setup_debug_visualization() -> void:
 	debug_mesh = ImmediateMesh.new()
@@ -57,7 +63,7 @@ func setup_debug_visualization() -> void:
 	material.albedo_color = Color(1, 0, 0)  # Red color
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.CULL_BACK = BaseMaterial3D.CULL_DISABLED
+	#material.CULL_BACK = BaseMaterial3D.CULL_DISABLED
 	material.no_depth_test = true
 	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_ALWAYS
 	material.render_priority = -100
@@ -203,7 +209,7 @@ func _physics_process(delta: float) -> void:
 		apply_force(side_force, stern_position)
 		
 		# Apply a smaller counter-force at bow to stabilize
-		apply_force(-side_force * 0.3, bow_position)
+		apply_force(-side_force * 0.15, bow_position)
 	
 	# Cap maximum velocity for safety
 	if linear_velocity.length() > speed * 1.5:
@@ -228,8 +234,14 @@ func sync_ship_data() -> void:
 		
 	sync.rpc(d)
 
+@rpc("any_peer","reliable")
+func initialized_client():
+	self.initialized = true
+
 @rpc("any_peer", "call_remote")
 func sync(d: Dictionary):
+	if !self.initialized:
+		return
 	self.global_position = d.p
 	self.global_basis = d.b
 	self.rudder_value = d.r

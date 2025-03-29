@@ -60,7 +60,7 @@ func spawn_player(id, player_name):
 	if players.has(id):
 		return
 		
-	var player = preload("res://scenes/player.tscn").instantiate()
+	var player = preload("res://scenes/ship.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
 	var controller = preload("res://scenes/player_control.tscn").instantiate()
@@ -97,7 +97,7 @@ func spawn_players_client(id, player_name, pos):
 	if players.has(id):
 		return
 
-	var player = preload("res://scenes/player.tscn").instantiate()
+	var player = preload("res://scenes/ship.tscn").instantiate()
 	player.name = str(id)
 	if id == multiplayer.get_unique_id():
 		var controller = preload("res://scenes/player_control.tscn").instantiate()

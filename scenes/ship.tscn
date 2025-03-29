@@ -1,0 +1,92 @@
+[gd_scene load_steps=9 format=3 uid="uid://duionhqlb8aak"]
+
+[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/shared/ShipMotion.gd" id="1_gudjc"]
+[ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Guns/Gun.tscn" id="2_7j21i"]
+[ext_resource type="Script" uid="uid://cx1f7vlowd3nn" path="res://src/artillary/secondary_controller.gd" id="3_3m36u"]
+[ext_resource type="PackedScene" uid="uid://de7wvvgfltyco" path="res://scenes/Guns/SmallGun.tscn" id="4_8qiel"]
+[ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="5_itrim"]
+[ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://scenes/wake_emitter.tscn" id="6_7j21i"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_qlg0r"]
+friction = 0.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
+size = Vector3(36, 9.3, 250)
+
+[node name="Ship" type="RigidBody3D" node_paths=PackedStringArray("rudder_node")]
+mass = 5.03e+07
+physics_material_override = SubResource("PhysicsMaterial_qlg0r")
+script = ExtResource("1_gudjc")
+speed = 45.0
+time_to_full_speed = 50.0
+rudder_node = NodePath("Rudder")
+turning_circle = 500.0
+
+[node name="PlayerName" type="Label" parent="."]
+offset_left = -51.0
+offset_top = -94.0
+offset_right = -11.0
+offset_bottom = -71.0
+text = "PlayerName"
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.228271, 0)
+size = Vector3(36, 9.3, 250)
+
+[node name="Gun" parent="CSGBox3D" instance=ExtResource("2_7j21i")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.063, 66.623)
+
+[node name="Gun2" parent="CSGBox3D" instance=ExtResource("2_7j21i")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.88287, 42.6622)
+
+[node name="Gun3" parent="CSGBox3D" instance=ExtResource("2_7j21i")]
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 12.006, -30.9456)
+
+[node name="Gun4" parent="CSGBox3D" instance=ExtResource("2_7j21i")]
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 6.08429, -55.3292)
+
+[node name="Secondaries" type="Node3D" parent="."]
+script = ExtResource("3_3m36u")
+
+[node name="Sec" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 5.94685, -11.6112)
+
+[node name="Sec2" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 5.94685, -11.6112)
+
+[node name="Sec7" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, 12.6933, 5.94685, 22.2888)
+
+[node name="Sec8" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, -11.9067, 5.94685, 22.2888)
+
+[node name="Sec3" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 7.74685, -1.7112)
+
+[node name="Sec4" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 7.74685, -1.7112)
+
+[node name="Sec5" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, 12.6933, 7.74685, 12.3888)
+
+[node name="Sec6" parent="Secondaries" instance=ExtResource("4_8qiel")]
+transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, -11.9067, 7.74685, 12.3888)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)
+shape = SubResource("BoxShape3D_hcvt1")
+
+[node name="DispersionCalculator" type="Node" parent="."]
+script = ExtResource("5_itrim")
+
+[node name="Rudder" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 112.701)
+
+[node name="WakeEmitter" parent="." instance=ExtResource("6_7j21i")]
+transform = Transform3D(0.925739, 0, -0.378164, 0, 1, 0, 0.378164, 0, 0.925739, -17.5703, -2.20763, 125)
+
+[node name="WakeEmitter2" parent="." instance=ExtResource("6_7j21i")]
+transform = Transform3D(0.969544, 0, 0.244918, 0, 1, 0, -0.244918, 0, 0.969544, 15.7965, -2.20763, 125)
+
+[node name="WakeEmitter3" parent="." instance=ExtResource("6_7j21i")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -134.869)

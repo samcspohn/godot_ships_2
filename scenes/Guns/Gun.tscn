@@ -12,6 +12,7 @@ size = Vector3(10, 4, 19.6)
 script = ExtResource("1_dkebo")
 shell = ExtResource("2_bhot8")
 shell2 = ExtResource("3_6sff4")
+reload_time = 0.1
 
 [node name="Barrels" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.48264)

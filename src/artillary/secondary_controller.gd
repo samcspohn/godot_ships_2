@@ -22,13 +22,14 @@ func _process(delta: float) -> void:
 		return
 
 	if target == null:
-		var spawn_players = get_tree().root.get_node("/root/Server/GameWorld/SpawnPlayers")
+		var spawn_players = get_tree().root.get_node("/root/Server/GameWorld/Players")
 		for child in spawn_players.get_children():
 			if child.name != parent_name:
 				target = child
 	if target == null:
 		return
-	var target_vel = (target.global_position - target.previous_position) / delta * 0.5
+	#var target_vel = (target.global_position - target.previous_position) / delta
+	var target_vel = target.linear_velocity / 2.0
 
 	for g in guns:
 		g._aim_leading(target.global_position, target_vel, delta)

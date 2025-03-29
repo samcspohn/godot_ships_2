@@ -47,6 +47,7 @@ func setup_artillery_camera() -> void:
 		artillery_cam.current = true
 	if guns.size() > 0:
 		artillery_cam.projectile_speed = guns[0].shell.speed
+		artillery_cam.projectile_drag_coefficient = guns[0].shell.drag
 	get_tree().root.add_child(artillery_cam)
 	
 	# Get ray from camera
@@ -152,8 +153,11 @@ func _process(dt: float) -> void:
 	# Handle sequential firing when holding
 	if is_holding:
 		sequential_fire_timer += dt
-		if sequential_fire_timer >= sequential_fire_delay:
-			sequential_fire_timer = 0.0
+		var reload = guns[0].reload_time
+		var min_reload = reload / guns.size() - 0.01
+		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		while sequential_fire_timer >= adjusted_sequential_fire_delay:
+			sequential_fire_timer -= adjusted_sequential_fire_delay
 			ship_motion.fire_next_ready_gun.rpc_id(1)
 	
 	# Update UI layout if viewport size changes
@@ -206,13 +210,13 @@ func process_player_input() -> void:
 	# Send input to server
 	send_input.rpc_id(1, input_array, aim_point)
 	
-	# Visualize thrust vector if desired
-	if ship_motion.rudder_node and ship_motion._thrust_vector != Vector3.ZERO:
-		ship_motion.draw_debug_arrow(
-			ship_motion.rudder_node.global_position, 
-			ship_motion.rudder_node.global_position + ship_motion._thrust_vector, 
-			Color(1,0,0)
-		)
+	# # Visualize thrust vector if desired
+	# if ship_motion.rudder_node and ship_motion._thrust_vector != Vector3.ZERO:
+	# 	ship_motion.draw_debug_arrow(
+	# 		ship_motion.rudder_node.global_position, 
+	# 		ship_motion.rudder_node.global_position + ship_motion._thrust_vector, 
+	# 		Color(1,0,0)
+	# 	)
 
 @rpc("any_peer", "call_remote", "reliable")
 func send_input(input_array: Array, aim_point: Vector3) -> void:

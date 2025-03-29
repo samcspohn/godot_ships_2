@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3 uid="uid://w2v4b6ew4rhr"]
+
+[ext_resource type="Script" uid="uid://dmlg412vj6el4" path="res://scenes/wake.gd" id="1_ixeen"]
+
+[node name="Wake" type="CSGSphere3D"]
+radius = 4.0
+script = ExtResource("1_ixeen")
+
+[node name="Timer" type="Timer" parent="."]
+wait_time = 10.0
+one_shot = true
+autostart = true
