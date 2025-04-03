@@ -1,0 +1,8 @@
+[gd_scene load_steps=3 format=3 uid="uid://cu5k2f8wwteam"]
+
+[ext_resource type="PackedScene" uid="uid://c7fdcm52rmryb" path="res://Shells/shell.tscn" id="1_5bnvr"]
+[ext_resource type="Resource" uid="uid://bisdkbb6844tg" path="res://Shells/small_shell.tres" id="2_scfgl"]
+
+[node name="Shell" instance=ExtResource("1_5bnvr")]
+radius = 1.5
+params = ExtResource("2_scfgl")

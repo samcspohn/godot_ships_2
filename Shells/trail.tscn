@@ -1,6 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://bxcsn6t0mgyuf"]
-
-[ext_resource type="Script" uid="uid://dsef4o7d8tpob" path="res://scenes/Shells/trail.gd" id="1_muk2f"]
+[gd_scene load_steps=9 format=3 uid="uid://bxcsn6t0mgyuf"]
 
 [sub_resource type="Gradient" id="Gradient_8jdep"]
 offsets = PackedFloat32Array(0, 0.979275)
@@ -171,10 +169,7 @@ shader_parameter/particle_spacing = 5.0
 material = SubResource("ShaderMaterial_sa4bl")
 size = Vector2(1, 10)
 
-[node name="Trail" type="Node3D"]
-script = ExtResource("1_muk2f")
-
-[node name="GPUParticles3D" type="GPUParticles3D" parent="."]
+[node name="GPUParticles3D" type="GPUParticles3D"]
 cast_shadow = 0
 emitting = false
 amount = 1000000

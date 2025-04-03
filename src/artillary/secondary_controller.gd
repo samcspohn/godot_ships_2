@@ -22,7 +22,9 @@ func _process(delta: float) -> void:
 		return
 
 	if target == null:
-		var spawn_players = get_tree().root.get_node("/root/Server/GameWorld/Players")
+		var spawn_players = get_tree().root.get_node_or_null("/root/Server/GameWorld/Players")
+		if spawn_players == null:
+			return
 		for child in spawn_players.get_children():
 			if child.name != parent_name:
 				target = child

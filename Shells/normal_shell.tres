@@ -1,9 +1,10 @@
 [gd_resource type="Resource" script_class="ShellParams" load_steps=2 format=3 uid="uid://clkhcp88wnsn5"]
 
-[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://scenes/Shells/shell_params.gd" id="1_jyixw"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://Shells/shell_params.gd" id="1_svjww"]
 
 [resource]
-script = ExtResource("1_jyixw")
+script = ExtResource("1_svjww")
 speed = 820.0
 drag = 0.009
 damage = 10000.0
+size = 3.0

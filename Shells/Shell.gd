@@ -1,5 +1,5 @@
 class_name Shell
-extends Node3D
+extends CSGSphere3D
 
 
 #const shell_speed = 820.0
@@ -31,9 +31,7 @@ func _ready():
 	if !multiplayer.is_server():
 		set_physics_process(false)
 		if particles == null:
-			var t = preload("res://scenes/Shells/trail.tscn").instantiate()
-			particles = t.get_child(0).duplicate()
-			particles.process_material.particle_flag_align_y = true
+			particles = preload("res://Shells/trail.tscn").instantiate()
 			get_tree().root.add_child(particles)
 	else:
 		set_process(false)
@@ -46,7 +44,7 @@ func initialize(pos: Vector3, vel: Vector3, t: float, ep: Vector3, t2: float):
 	global_position = pos
 	start_pos = pos
 	end_pos = ep
-	last_pos = pos + vel.normalized() * 22.5
+	last_pos = pos + vel.normalized() * 25
 	total_time = t2
 	self.start_time = t
 	self.launch_velocity = vel
@@ -67,7 +65,7 @@ func _update_position():
 	
 	if !multiplayer.is_server():
 		var offset = global_position - last_pos
-		if offset.dot(global_position - last_pos) < 0:
+		if (global_position - start_pos).length_squared() < 25 * 25:
 			return
 		#if offset == Vector3.ZERO:
 			#return

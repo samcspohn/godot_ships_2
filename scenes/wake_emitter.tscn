@@ -6,7 +6,3 @@
 [node name="WakeEmitter" type="Node3D"]
 script = ExtResource("1_mwxet")
 wake = ExtResource("2_lm58u")
-
-[node name="Timer" type="Timer" parent="."]
-wait_time = 0.4
-autostart = true

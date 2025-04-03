@@ -40,46 +40,63 @@ static func calculate_absolute_max_range(projectile_speed: float,
 	# Increased iterations for better precision
 	for i in range(MAX_ITERATIONS):
 		var test_range = (min_range + max_range) / 2.0
+		var target_pos = Vector3(test_range, 0, 0)
+		## Returns [launch_vector, time_to_target] or [null, -1] if no solution exists
+		var result = calculate_launch_vector(Vector3.ZERO, target_pos, projectile_speed, drag_coefficient)
 		
-		# Test range at various angles to ensure we find the best one
-		var angles_to_test = [PI/6, PI/5, PI/4, PI/3]
-		var valid_solution_found = false
-		var best_solution_angle = 0.0
-		var best_solution_time = 0.0
-		
-		for angle in angles_to_test:
-			# Create a target position at the test range along the horizontal
-			var target_pos = Vector3(test_range, 0, 0)
-			
-			# Use calculate_launch_vector to check if this range is achievable
-			var result = calculate_launch_vector(Vector3.ZERO, target_pos, projectile_speed, drag_coefficient)
-			
-			if result[0] != null and result[1] > 0:
-				valid_solution_found = true
-				
-				# Store the angle of this valid solution
+		if result[0] != null and result[1] > 0:
+			if test_range > best_range:
+				best_range = test_range
 				var velocity = result[0]
-				var launch_angle = atan2(velocity.y, sqrt(velocity.x * velocity.x + velocity.z * velocity.z))
-				
-				# Update best angle and time for this range
-				best_solution_angle = launch_angle
-				best_solution_time = result[1]
-				break
-		
-		# Adjust search range based on whether we found a solution
-		if valid_solution_found:
-			# This range is achievable, so update best values and try farther
-			best_range = test_range
-			best_angle = best_solution_angle
-			best_time = best_solution_time
-			min_range = test_range
+				best_angle = atan2(velocity.y, sqrt(velocity.x * velocity.x + velocity.z * velocity.z))
+				best_time = result[1]
+				min_range = best_range
 		else:
-			# This range is too far, try a shorter range
 			max_range = test_range
-		
-		# Break if our search interval is small enough
-		if max_range - min_range < 0.01:  # 1cm tolerance, increased precision
+			
+		if max_range - min_range < 0.01:  # 1cm tolerance
 			break
+		
+		## Test range at various angles to ensure we find the best one
+		#var angles_to_test = [PI/6, PI/5, PI/4, PI/3]
+		#var valid_solution_found = false
+		#var best_solution_angle = 0.0
+		#var best_solution_time = 0.0
+		#
+		##for angle in angles_to_test:
+		## Create a target position at the test range along the horizontal
+		#var target_pos = Vector3(test_range, 0, 0)
+		#
+		## Use calculate_launch_vector to check if this range is achievable
+		#var result = calculate_launch_vector(Vector3.ZERO, target_pos, projectile_speed, drag_coefficient)
+		#
+		#if result[0] != null and result[1] > 0:
+			#
+			#valid_solution_found = true
+			#
+			## Store the angle of this valid solution
+			#var velocity = result[0]
+			#var launch_angle = atan2(velocity.y, sqrt(velocity.x * velocity.x + velocity.z * velocity.z))
+			#
+			## Update best angle and time for this range
+			#best_solution_angle = launch_angle
+			#best_solution_time = result[1]
+			##break
+		#
+		## Adjust search range based on whether we found a solution
+		#if valid_solution_found:
+			## This range is achievable, so update best values and try farther
+			#best_range = test_range
+			#best_angle = best_solution_angle
+			#best_time = best_solution_time
+			#min_range = test_range
+		#else:
+			## This range is too far, try a shorter range
+			#max_range = test_range
+		#
+		## Break if our search interval is small enough
+		#if max_range - min_range < 0.01:  # 1cm tolerance, increased precision
+			#break
 	
 	# Return the best range, angle, and flight time found
 	return [best_range, best_angle, best_time]

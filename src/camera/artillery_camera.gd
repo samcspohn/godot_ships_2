@@ -4,6 +4,7 @@ class_name ArtilleryCamera
 
 # Ship to follow
 @export var target_ship: ShipMotion
+@export var ship_movement: ShipMovement
 @export var projectile_speed: float = 800.0  # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT  # 380mm shell drag
 
@@ -203,7 +204,7 @@ func _process(delta):
 		if previous_position == Vector3.ZERO:
 			previous_position = target_ship.global_position
 
-		var velocity = (target_ship.global_position - previous_position) / delta
+		var velocity = target_ship.linear_velocity
 		ship_speed = velocity.length() * 1.94384  # Convert m/s to knots
 		previous_position = target_ship.global_position
 
@@ -297,7 +298,7 @@ func _update_camera_transform():
 		# Calculate the orbit position
 		var orbit_pos = Vector3(
 			sin(horizontal_rad) * -sniper_range * 0.1,
-			camera_height + sniper_range / 15,
+			camera_height + sniper_range / 20,
 			cos(horizontal_rad) * -sniper_range * 0.1
 		)
 		global_position = ship_position + orbit_pos
@@ -361,7 +362,7 @@ func _calculate_target_info():
 	var launch_vector = launch_result[0]
 	time_to_target = launch_result[1]
 	#max_range_reached = launch_result[2]
-	max_range_reached = (target_position - ship_position).length() > 38280
+	max_range_reached = (target_position - ship_position).length() > 39909
 	
 	# Calculate distance
 	distance_to_target = (target_position - ship_position).length() / 1000.0  # Convert to km
@@ -388,9 +389,9 @@ func _update_ui():
 	var throttle_text = "Throttle: Stop"
 	var rudder_text = "Rudder: Center"
 	
-	if target_ship is ShipMotion:
+	if ship_movement is ShipMovement:
 		# Get throttle setting
-		var throttle_level = target_ship.throttle_level
+		var throttle_level = ship_movement.throttle_level
 		var throttle_display = ""
 		
 		match throttle_level:
@@ -405,7 +406,7 @@ func _update_ui():
 		throttle_slider.value = throttle_level
 		
 		# Get rudder setting
-		var rudder_value = target_ship.rudder_value
+		var rudder_value = ship_movement.rudder_value
 		var rudder_display = ""
 		
 		if abs(rudder_value) < 0.1:
