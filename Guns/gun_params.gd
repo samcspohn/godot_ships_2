@@ -6,6 +6,12 @@ class_name GunParams
 @export var elevation_speed: float
 @export var range: float
 @export var shell: ShellParams
+@export var hor_dispersion: float
+@export var vert_dispersion: float
+@export var vert_sigma: float
+@export var hor_sigma: float
+@export var hor_dispersion_rate: float
+@export var vert_dispersion_rate: float
 
 func _init() -> void:
 	reload_time = 1

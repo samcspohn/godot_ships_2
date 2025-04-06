@@ -5,7 +5,7 @@
 
 [resource]
 script = ExtResource("1_wnyxw")
-reload_time = 26.0
+reload_time = 0.1
 traverse_speed = 40.0
 elevation_speed = 40.0
 range = 20.0

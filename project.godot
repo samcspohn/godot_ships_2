@@ -25,9 +25,10 @@ config/icon="res://icon.svg"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 LaunchModes="*res://launch_modes.gd"
-ProjectileManager="*res://src/autoload/projectile_manager.gd"
+ProjectileManager="res://src/autoload/projectile_manager.gd"
 AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd"
 SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"
+ProjectileManager1="*res://src/autoload/ProjectileManager.tscn"
 
 [editor]
 
@@ -36,7 +37,7 @@ version_control/autoload_on_startup=true
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/GPUTrail/plugin.cfg", "res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg")
+enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg")
 
 [input]
 

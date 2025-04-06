@@ -191,10 +191,10 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	var desired_local_angle: float = atan2(local_target.x, local_target.z)
 	
 	# Apply rotation limits
-	desired_local_angle = apply_rotation_limits(rotation.y, desired_local_angle)
+	var adjusted_angle = apply_rotation_limits(rotation.y, desired_local_angle)
 	
 	# Apply proportional control with a dampening factor
-	var turret_angle: float = clamp(desired_local_angle, -max_turret_angle, max_turret_angle)
+	var turret_angle: float = clamp(adjusted_angle, -max_turret_angle, max_turret_angle)
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
@@ -225,13 +225,13 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 		elevation_delta = 0.0
 	barrel.rotate(Vector3.RIGHT, elevation_delta)
 	
-	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
+	if abs(elevation_delta) < 0.01 && abs(desired_local_angle) < 0.01:
 		can_fire = true
 	else:
 		can_fire = false
 
-	# Ensure we stay within allowed elevation range
-	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
+	# # Ensure we stay within allowed elevation range
+	# barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
 # Normalize angle to the range [-PI, PI]
 func normalize_angle(angle: float) -> float:
@@ -255,10 +255,10 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var desired_local_angle: float = atan2(local_target.x, local_target.z)
 	
 	# Apply rotation limits
-	desired_local_angle = apply_rotation_limits(rotation.y, desired_local_angle)
+	var adjusted_angle = apply_rotation_limits(rotation.y, desired_local_angle)
 	
 	# Apply proportional control with a dampening factor
-	var turret_angle: float = clamp(desired_local_angle, -max_turret_angle, max_turret_angle)
+	var turret_angle: float = clamp(adjusted_angle, -max_turret_angle, max_turret_angle)
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle)
@@ -277,13 +277,13 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 		elevation_delta = 0.0
 	barrel.rotate(Vector3.RIGHT, elevation_delta)
 	
-	if elevation_delta < 0.01 && abs(turret_angle) < 0.01:
+	if abs(elevation_delta) < 0.01 && abs(desired_local_angle) < 0.01:
 		can_fire = true
 	else:
 		can_fire = false
 
-	# Ensure we stay within allowed elevation range
-	barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
+	# # Ensure we stay within allowed elevation range
+	# barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
 func fire():
 	if multiplayer.is_server():
@@ -292,7 +292,7 @@ func fire():
 				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, params.shell.speed, params.shell.drag)
 				if aim[0] != null:
-					ProjectileManager.request_fire(aim[0], m.global_position, params.shell.id, dispersion_point, aim[1])
+					ProjectileManager1.request_fire(aim[0], m.global_position, params.shell.id, dispersion_point, aim[1])
 				else:
 					print(aim)
 			reload = 0

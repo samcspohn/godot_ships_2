@@ -127,7 +127,7 @@ func _check_collisions():
 		
 		# Destroy the projectile with a delay
 		#_destroy(true)
-		ProjectileManager.destroyBulletRpc(id)
+		#ProjectileManager.destroyBulletRpc(id)
 		
 		#ProjectileManager.destroyBulletRpc2(id)
 

@@ -8,6 +8,6 @@ func _ready() -> void:
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta: float) -> void:
-	scale -= Vector3(delta,delta,delta) * 20
+	scale -= Vector3(delta,delta,delta) * 2
 	if scale.x < 0.05:
 		queue_free() 

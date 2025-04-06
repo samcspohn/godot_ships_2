@@ -63,49 +63,46 @@ script = ExtResource("3_3m36u")
 [node name="Sec" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 5.94685, -11.6112)
 rotation_limits_enabled = true
-min_rotation_angle = 0.32918
+min_rotation_angle = 0.366519
 max_rotation_angle = 3.14159
 
 [node name="Sec2" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 5.94685, -11.6112)
 rotation_limits_enabled = true
 min_rotation_angle = 3.14159
-max_rotation_angle = 5.89894
+max_rotation_angle = 5.77704
 
 [node name="Sec7" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, 12.6933, 5.94684, 22.2888)
 rotation_limits_enabled = true
-max_rotation_angle = 2.86076
+max_rotation_angle = 2.75762
 
 [node name="Sec8" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, -11.9067, 5.94685, 22.2888)
 rotation_limits_enabled = true
-min_rotation_angle = 3.45785
-max_rotation_angle = 0.0
+min_rotation_angle = 3.45575
 
 [node name="Sec3" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 7.74685, -1.7112)
 rotation_limits_enabled = true
-min_rotation_angle = 0.355882
+min_rotation_angle = 0.366519
 max_rotation_angle = 3.14159
 
 [node name="Sec4" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 7.74685, -1.7112)
 rotation_limits_enabled = true
 min_rotation_angle = 3.14159
-max_rotation_angle = 6.04336
+max_rotation_angle = 5.88176
 
 [node name="Sec5" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, 12.6933, 7.74685, 12.3888)
 rotation_limits_enabled = true
-min_rotation_angle = 6.28052
-max_rotation_angle = 2.75201
+max_rotation_angle = 2.75762
 
 [node name="Sec6" parent="Secondaries" instance=ExtResource("4_8qiel")]
 transform = Transform3D(0.3, 0, 5.24536e-08, 0, 0.3, 0, -5.24536e-08, 0, 0.3, -11.9067, 7.74685, 12.3888)
 rotation_limits_enabled = true
-min_rotation_angle = 3.40342
-max_rotation_angle = 0.0
+min_rotation_angle = 3.40339
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)

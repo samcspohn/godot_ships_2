@@ -35,8 +35,10 @@ func _process(delta: float) -> void:
 
 	for g in guns:
 		g._aim_leading(target.global_position, target_vel, delta)
+	var g: Gun = guns[0]
+	var reload_time = g.params.reload_time
 	sequential_fire_timer += delta
-	if sequential_fire_timer >= sequential_fire_delay:
+	if sequential_fire_timer >= min(sequential_fire_delay, reload_time / guns.size()):
 		sequential_fire_timer = 0.0
 		fire_next_gun()
 
@@ -44,6 +46,6 @@ func _process(delta: float) -> void:
 func fire_next_gun() -> void:
 	if multiplayer.is_server():
 		for g in guns:
-			if g.reload >= 1:
+			if g.reload >= 1 and g.can_fire:
 				g.fire()
 				return

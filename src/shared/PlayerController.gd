@@ -143,6 +143,10 @@ func _process(dt: float) -> void:
 			needs_initialization = true
 			return  # Skip processing until initialized
 	
+	if guns.size() > 0:
+		artillery_cam.projectile_speed = guns[0].params.shell.speed
+		artillery_cam.projectile_drag_coefficient = guns[0].params.shell.drag
+		
 	# Update gun reload UI
 	for i in range(guns.size()):
 		if i < gun_reloads.size():

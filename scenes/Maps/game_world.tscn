@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3 uid="uid://hgkcpyif6x47"]
+[gd_scene load_steps=5 format=3 uid="uid://hgkcpyif6x47"]
 
 [ext_resource type="Script" uid="uid://cmysga848xkvq" path="res://src/shared/game_world.gd" id="2_dk2s4"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_sjx2r"]
 [ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="2_xp4g7"]
+[ext_resource type="Script" uid="uid://dsmr8gp0wckmu" path="res://scenes/Maps/camera_3d.gd" id="4_28v7m"]
 
 [node name="GameWorld" type="Node3D"]
 script = ExtResource("2_dk2s4")
@@ -79,6 +80,7 @@ size = Vector3(1300, 1500, 1500)
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, 15000, 0)
 near = 10.0
 far = 50000.0
+script = ExtResource("4_28v7m")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.203424, 0.384232, -0.900547, 0.0119864, 0.918733, 0.394699, 0.979017, -0.0910854, 0.182287, 0, 3.46307, 0)

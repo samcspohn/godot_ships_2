@@ -9,6 +9,7 @@ size = Vector3(10, 4, 19)
 [node name="Gun" type="CSGBox3D"]
 size = Vector3(10, 4, 19.6)
 script = ExtResource("1_sh8f8")
+max_rotation_angle = 0.0
 params = ExtResource("2_dat54")
 
 [node name="Barrels" type="Node3D" parent="."]

@@ -248,7 +248,7 @@ func _handle_mouse_motion(event):
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.3 / range_mod2 * deg_to_rad(current_fov)
 		#rotation_degrees_vertical -= event.relative.y * mouse_sensitivity * 0.1 * y_factor
 		sniper_range += event.relative.y * mouse_sensitivity * sniper_range * -0.02 * deg_to_rad(current_fov)
-		sniper_range = clamp(sniper_range, 1, 38280)
+		sniper_range = clamp(sniper_range, 1, 39900)
 	
 	# Clamp vertical rotation to prevent flipping over
 	rotation_degrees_vertical = clamp(rotation_degrees_vertical, -85.0, 85.0)
@@ -291,7 +291,7 @@ func _update_camera_transform():
 		var orbit_distance = current_zoom
 		var height_offset = camera_height * cos(vertical_rad)
 		
-		var max_range = 38000
+		var max_range = 39900
 		var a = sniper_range / 10
 		if sniper_range < 100:
 			a *= a

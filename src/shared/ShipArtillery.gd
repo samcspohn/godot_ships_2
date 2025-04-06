@@ -33,11 +33,11 @@ func fire_gun(gun_id: int) -> void:
 @rpc("any_peer", "call_remote")
 func fire_all_guns() -> void:
 	for gun in guns:
-		if gun.reload >= 1.0:
+		if gun.reload >= 1.0 and gun.can_fire:
 			gun.fire()
 @rpc("any_peer", "call_remote")
 func fire_next_ready_gun() -> void:
 	for g in guns:
-		if g.reload >= 1:
+		if g.reload >= 1 and g.can_fire:
 			g.fire()
 			return
