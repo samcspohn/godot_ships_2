@@ -17,6 +17,7 @@ var reload: float = 0.0
 var can_fire: bool = false
 var muzzles: Array[Node3D] = []
 var gun_id: int
+var disabled: bool = true
 
 var max_range: float
 var max_flight: float
@@ -65,7 +66,7 @@ func _set_reload(r):
 
 func _physics_process(delta: float) -> void:
 	if multiplayer.is_server():
-		if reload < 1.0:
+		if !disabled && reload < 1.0:
 			reload += delta / params.reload_time
 			_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
 
@@ -179,6 +180,8 @@ func clamp_to_rotation_limits() -> void:
 
 # Implement on server
 func _aim(aim_point: Vector3, delta: float) -> void:
+	if disabled:
+		return
 	# Cache constants
 	const TURRET_ROT_SPEED_DEG: float = 40.0
 	
@@ -287,7 +290,7 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 
 func fire():
 	if multiplayer.is_server():
-		if reload >= 1.0 and can_fire:
+		if !disabled && reload >= 1.0 and can_fire:
 			for m in muzzles:
 				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, params.shell.speed, params.shell.drag)

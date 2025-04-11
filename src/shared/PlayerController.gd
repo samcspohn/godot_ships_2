@@ -1,15 +1,21 @@
 extends Node
 class_name PlayerController
 
-var ship_motion: ShipMotion
+var ship: Ship
 var ship_movement: ShipMovement
 var ship_artillery: ShipArtillery
+var secondary_controller: SecondaryController
+var hp_manager: HitPointsManager
 var _cameraInput: Vector2
 @export var playerName: Label
 var artillery_cam: ArtilleryCamera
 var ray: RayCast3D
 var guns: Array[Gun] = []
 var gun_reloads: Array[ProgressBar] = []
+
+# Mouse control variables
+var mouse_captured: bool = true    # True when mouse is controlling camera
+var targeting_enabled: bool = false  # True when mouse can select targets
 
 # Timing variables
 var double_click_timer: float = 0.3 # Maximum time between clicks to register as double click
@@ -33,19 +39,29 @@ var needs_initialization: bool = true
 
 func _ready() -> void:
 	# Get reference to the ship components
-	ship_motion = get_parent() as ShipMotion
-	ship_movement = ship_motion.get_node("ShipMovement")
-	ship_artillery = ship_motion.get_node("ArtilleryController")
+	ship = get_parent() as Ship
+	ship_movement = ship.get_node("ShipMovement")
+	ship_artillery = ship.get_node("ArtilleryController")
+	hp_manager = ship.get_node("HitPointsManager")
+	secondary_controller = ship.get_node_or_null("Secondaries")
+	
+	# Initialize secondary controller if it exists
+	
 
 	if multiplayer.is_server():
 		set_process(false)
 		set_process_input(false)
 		set_physics_process(false)
+	else:
+		# Capture mouse by default for camera control
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		mouse_captured = true
 
 func setup_artillery_camera() -> void:
 	artillery_cam = load("res://scenes/player_cam.tscn").instantiate()
-	artillery_cam.target_ship = ship_motion
+	artillery_cam.target_ship = ship
 	artillery_cam.ship_movement = ship_movement
+	artillery_cam.hp_manager = hp_manager
 	
 	if artillery_cam is Camera3D:
 		artillery_cam.current = true
@@ -90,28 +106,70 @@ func setName(_name: String):
 	playerName.text = _name
 
 func _input(event: InputEvent) -> void:
+		
 	if event is InputEventMouseMotion:
-		_cameraInput = event.relative
+		if mouse_captured:
+			_cameraInput = event.relative
 	elif event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			if event.pressed:
-				# Mouse button pressed
-				is_holding = true
-				sequential_fire_timer = 0.0
-				
-				# Handle click counting for double click detection
-				var current_time = Time.get_ticks_msec() / 1000.0
-				if current_time - last_click_time < double_click_timer:
-					click_count = 2
-					ship_artillery.fire_all_guns.rpc_id(1)
+		if not mouse_captured:  # Only handle mouse clicks when cursor is released
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					# Mouse target selection with left click
+					var camera = get_viewport().get_camera_3d()
+					if camera:
+						var mouse_pos = get_viewport().get_mouse_position()
+						var from = camera.project_ray_origin(mouse_pos)
+						var to = from + camera.project_ray_normal(mouse_pos) * 50000
+						
+
+						handle_target_selection.rpc_id(1, from, to)
+			
+		elif mouse_captured:  # Handle normal camera-based shooting
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					# Mouse button pressed
+					is_holding = true
+					sequential_fire_timer = 0.0
+					
+					# Handle click counting for double click detection
+					var current_time = Time.get_ticks_msec() / 1000.0
+					if current_time - last_click_time < double_click_timer:
+						click_count = 2
+						ship_artillery.fire_all_guns.rpc_id(1)
+					else:
+						click_count = 1
+						handle_single_click()
+					
+					last_click_time = current_time
 				else:
-					click_count = 1
-					handle_single_click()
-				
-				last_click_time = current_time
+					# Mouse button released
+					is_holding = false
+		# Toggle camera mode manually with Tab key
+	elif event is InputEventKey:
+		 # Control key to toggle mouse capture
+		if event.keycode == KEY_CTRL:
+			if event.pressed:
+				# When pressing control, release mouse and center it
+				_center_mouse()
+				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+				mouse_captured = false
 			else:
-				# Mouse button released
-				is_holding = false
+				# When releasing control, capture the mouse again
+				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+				mouse_captured = true
+
+# Center the mouse cursor on the screen
+func _center_mouse():
+	var viewport_size = get_viewport().get_visible_rect().size
+	var center = viewport_size / 2
+	Input.warp_mouse(center)
+	#
+#func toggle_mouse_capture() -> void:
+	#mouse_captured = not mouse_captured
+	#if mouse_captured:
+		#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	#else:
+		#Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 func handle_single_click() -> void:
 	if guns.size() > 0:
@@ -119,6 +177,51 @@ func handle_single_click() -> void:
 			if guns[i].reload >= 1.0:
 				ship_artillery.fire_gun.rpc_id(1, i)
 				break
+
+@rpc("any_peer","call_remote", "reliable")
+func handle_target_selection(from: Vector3, to: Vector3) -> void:
+	print("select target")
+	# This uses the mouse cursor position for targeting
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	var space_state = get_tree().root.get_world_3d().direct_space_state
+	var result = space_state.intersect_ray(query)
+	
+	if result:
+		var collider = result.collider
+		var target_ship = get_ship_from_collider(collider)
+		if target_ship and target_ship != ship:  # Don't target self
+			select_target_ship(target_ship)
+
+func get_ship_from_collider(collider: Object) -> Ship:
+	# If the collider itself is a ship
+	if collider is Ship:
+		return collider
+	
+	# Check if the collider is part of a ship
+	var parent = collider.get_parent()
+	while parent:
+		if parent is Ship:
+			return parent
+		parent = parent.get_parent()
+	
+	return null
+
+func select_target_ship(target_ship: Ship) -> void:
+	if secondary_controller:
+		# Set the target in the secondary controller
+		secondary_controller.target = target_ship
+		print("Selected target: " + target_ship.name)
+		
+		# Optional: Add a visual indicator for the selected target
+		show_target_indicator(target_ship)
+	else:
+		print("Warning: secondary_controller not initialized")
+		
+func show_target_indicator(target_ship: Ship) -> void:
+	# You can implement visual feedback here
+	# For example, create a temporary effect or UI element
+	# showing which ship is targeted
+	pass
 
 func _process(dt: float) -> void:
 	# Check if we need to initialize guns - do it only once

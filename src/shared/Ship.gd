@@ -1,16 +1,24 @@
 extends RigidBody3D
-class_name ShipMotion
+class_name Ship
 
 var initialized: bool = false
 # Child components
 var movement_controller: ShipMovement
 var artillery_controller: ShipArtillery
+var health_controller
+
+func _enable_guns():
+	for g: Gun in get_node("CSGBox3D").get_children():
+		g.disabled = false
+	for g: Gun in get_node("Secondaries").get_children():
+		g.disabled = false
 
 func _ready() -> void:
 	
 	# Get references to child components
 	movement_controller = $ShipMovement
 	artillery_controller = $ArtilleryController
+	health_controller = $HitPointsManager
 	
 	initialized = true
 	if !multiplayer.is_server():
@@ -34,7 +42,8 @@ func sync_ship_data() -> void:
 		'r': movement_controller.rudder_value,
 		'v': linear_velocity,
 		'b': global_basis, 
-		'p': global_position, 
+		'p': global_position,
+		'h': health_controller.current_hp,
 		'g': [], 
 		's': []
 	}
@@ -63,6 +72,7 @@ func sync(d: Dictionary):
 	movement_controller.thrust_vector = d.t
 	movement_controller.throttle_level = d.y
 	linear_velocity = d.v
+	health_controller.current_hp = d.h
 	
 	var i = 0
 	for g in artillery_controller.guns:

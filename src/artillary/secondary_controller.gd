@@ -1,7 +1,8 @@
 extends Node
+class_name SecondaryController
 
 var guns: Array[Gun]
-var target: ShipMotion
+var target: Ship
 var parent_name: StringName
 var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
@@ -17,17 +18,17 @@ func _ready() -> void:
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if !multiplayer.is_server():
 		return
 
-	if target == null:
-		var spawn_players = get_tree().root.get_node_or_null("/root/Server/GameWorld/Players")
-		if spawn_players == null:
-			return
-		for child in spawn_players.get_children():
-			if child.name != parent_name:
-				target = child
+	# if target == null:
+	# 	var spawn_players = get_tree().root.get_node_or_null("/root/Server/GameWorld/Players")
+	# 	if spawn_players == null:
+	# 		return
+	# 	for child in spawn_players.get_children():
+	# 		if child.name != parent_name:
+	# 			target = child
 	if target == null:
 		return
 	#var target_vel = (target.global_position - target.previous_position) / delta

@@ -185,6 +185,10 @@ func _physics_process(_delta: float) -> void:
 		if not collision.is_empty():
 			#global_position = collision.position
 			self.destroyBulletRpc(id, collision.position)
+			if collision.collider is Ship:
+				var ship: Ship = collision.collider
+				var hp: HitPointsManager = ship.get_node("HitPointsManager")
+				hp.take_damage(p.params.damage / 3.0, collision.position)
 		id += 1
 		
 		

@@ -3,8 +3,9 @@ extends Camera3D
 class_name ArtilleryCamera
 
 # Ship to follow
-@export var target_ship: ShipMotion
+@export var target_ship: Ship
 @export var ship_movement: ShipMovement
+@export var hp_manager: HitPointsManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0  # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT  # 380mm shell drag
 
@@ -60,6 +61,14 @@ var ship_speed: float = 0.0
 # FPS counter
 var fps_label: Label
 
+# Hit point display
+var hp_bar: ProgressBar
+var hp_label: Label
+
+# Add these variables near the top with other variable declarations
+var tracked_ships = {}  # Dictionary to store ships and their UI elements
+var ship_ui_elements = {}  # Dictionary to store UI elements for each ship
+
 func _ready():
 	# Initial setup
 	current_fov = default_fov
@@ -73,7 +82,7 @@ func _ready():
 	_setup_ui()
 	
 	# Capture mouse
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _setup_ui():
 	# Create CanvasLayer for UI
@@ -159,6 +168,23 @@ func _setup_ui():
 	fps_label.add_theme_font_size_override("font_size", 16)
 	fps_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0, 1.0)) # Yellow for visibility
 	crosshair_container.add_child(fps_label)
+	
+	# Add hit points bar
+	hp_bar = ProgressBar.new()
+	hp_bar.custom_minimum_size = Vector2(200, 20)
+	hp_bar.value = 100
+	hp_bar.show_percentage = false
+	hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Green color for health
+	crosshair_container.add_child(hp_bar)
+	
+	# Add hit points label overlay
+	hp_label = Label.new()
+	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp_label.add_theme_font_size_override("font_size", 14)
+	hp_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0)) # White text
+	hp_label.text = "100/100"
+	crosshair_container.add_child(hp_label)
 
 func _input(event):
 	# Handle mouse movement for rotation
@@ -176,21 +202,7 @@ func _input(event):
 	elif event is InputEventKey:
 		if event.pressed and event.keycode == KEY_SHIFT:
 			toggle_camera_mode()
-		 # Control key to toggle mouse capture
-		elif event.keycode == KEY_CTRL:
-			if event.pressed:
-				# When pressing control, release mouse and center it
-				_center_mouse()
-				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-			else:
-				# When releasing control, capture the mouse again
-				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-# Center the mouse cursor on the screen
-func _center_mouse():
-	var viewport_size = get_viewport().get_visible_rect().size
-	var center = viewport_size / 2
-	Input.warp_mouse(center)
 
 func _process(delta):
 	# Update camera position and rotation
@@ -211,6 +223,7 @@ func _process(delta):
 	# Update UI
 	_update_ui()
 	_update_fps()
+	update_ship_ui()  # Add this line to update ship UI elements
 	crosshair_container.queue_redraw()
 
 func _zoom_camera(zoom_amount):
@@ -451,7 +464,7 @@ func _update_ui():
 	throttle_slider.custom_minimum_size = Vector2(20, 100)  # Keep the same height
 	
 	# Add custom styling to sliders based on values
-	if target_ship is ShipMotion:
+	if target_ship is Ship:
 		# Set color for rudder slider based on port/starboard
 		var rudder_value = rudder_slider.value
 		if rudder_value > 0:  # Port (left)
@@ -469,6 +482,35 @@ func _update_ui():
 			throttle_slider.modulate = Color(1.0, 0.8, 0.5)  # Orange for reverse
 		else:
 			throttle_slider.modulate = Color(1, 1, 1)  # White for stop
+
+	# Update hit points display
+	if hp_manager:
+		var current_hp = hp_manager.current_hp
+		var max_hp = hp_manager.max_hp
+		var hp_percent = (float(current_hp) / max_hp) * 100.0
+		
+		# Update progress bar
+		hp_bar.value = hp_percent
+		hp_label.text = "%d/%d" % [current_hp, max_hp]
+		
+		# Change color based on health level
+		if hp_percent > 60:
+			hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Green for high health
+		elif hp_percent > 30:
+			hp_bar.modulate = Color(0.9, 0.9, 0.2)  # Yellow for medium health
+		else:
+			hp_bar.modulate = Color(0.9, 0.2, 0.2)  # Red for low health
+			
+		# Position the health bar at the bottom center of screen
+		hp_bar.position = Vector2(viewport_size.x / 2 - hp_bar.custom_minimum_size.x / 2, 
+								 viewport_size.y - hp_bar.custom_minimum_size.y - 20)
+		# Position label over the progress bar
+		hp_label.size = hp_bar.custom_minimum_size
+		hp_label.position = hp_bar.position
+	else:
+		# Hide if no hp_manager is available
+		hp_bar.visible = false
+		hp_label.visible = false
 
 func _update_fps():
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
@@ -524,3 +566,119 @@ func _on_crosshair_container_draw():
 	crosshair_container.draw_rect(bottom_rect, color)
 	crosshair_container.draw_rect(left_rect, color)
 	crosshair_container.draw_rect(right_rect, color)
+
+func setup_ship_ui(ship):
+	if ship == target_ship or ship in ship_ui_elements:
+		return  # Skip own ship or already tracked ships
+	
+	# Create a container for the ship's UI
+	var ship_container = Control.new()
+	ship_container.visible = false  # Start hidden until positioned
+	crosshair_container.add_child(ship_container)
+	
+	# Create ship name label
+	var name_label = Label.new()
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 12)
+	name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.9))
+	name_label.text = ship.name
+	ship_container.add_child(name_label)
+	
+	# Create HP progress bar
+	var ship_hp_bar = ProgressBar.new()
+	ship_hp_bar.custom_minimum_size = Vector2(90, 10)
+	ship_hp_bar.value = 100
+	ship_hp_bar.show_percentage = false
+	ship_hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Default green
+	ship_container.add_child(ship_hp_bar)
+	
+	# Create HP text label
+	var ship_hp_label = Label.new()
+	ship_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ship_hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ship_hp_label.add_theme_font_size_override("font_size", 10)
+	ship_hp_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.9))
+	ship_hp_label.text = "100/100"
+	ship_container.add_child(ship_hp_label)
+	
+	# Store the UI elements for this ship
+	ship_ui_elements[ship] = {
+		"container": ship_container,
+		"name_label": name_label,
+		"hp_bar": ship_hp_bar,
+		"hp_label": ship_hp_label
+	}
+
+func update_ship_ui():
+	# Find all ships in the scene if not already tracked
+	if tracked_ships.is_empty():
+		# var ships = get_tree().get_nodes_in_group("ships")
+		var ships = get_node("/root/Server/GameWorld/Players").get_children()
+		for ship in ships:
+			if ship != target_ship and ship is Ship:
+				tracked_ships[ship] = true
+				setup_ship_ui(ship)
+	
+	# Update each ship's UI
+	for ship in tracked_ships.keys():
+		if is_instance_valid(ship) and ship in ship_ui_elements:
+			var ui = ship_ui_elements[ship]
+			
+			# Get ship's HP if it has an HP manager
+			var ship_hp_manager = ship.get_node_or_null("HitPointsManager")
+			if ship_hp_manager:
+				var current_hp = ship_hp_manager.current_hp
+				var max_hp = ship_hp_manager.max_hp
+				var hp_percent = (float(current_hp) / max_hp) * 100.0
+				
+				# Update progress bar and label
+				ui.hp_bar.value = hp_percent
+				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
+				
+				# Update color based on health
+				if hp_percent > 60:
+					ui.hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Green
+				elif hp_percent > 30:
+					ui.hp_bar.modulate = Color(0.9, 0.9, 0.2)  # Yellow
+				else:
+					ui.hp_bar.modulate = Color(0.9, 0.2, 0.2)  # Red
+			
+			# Position UI above ship in the world
+			var ship_position = ship.global_position + Vector3(0, 20, 0)  # Add height offset
+			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
+			
+			# Check if ship is visible on screen
+			var is_visible = is_position_visible_on_screen(ship_position)
+			ui.container.visible = is_visible
+			
+			if is_visible:
+				# Position the UI elements
+				ui.container.position = screen_pos - Vector2(ui.hp_bar.custom_minimum_size.x / 2, 50)
+				ui.name_label.position = Vector2(0, -20)
+				ui.hp_bar.position = Vector2(0, 0)
+				ui.hp_label.size = ui.hp_bar.custom_minimum_size
+				ui.hp_label.position = Vector2(0, -1)
+		else:
+			# Ship no longer valid, remove it
+			if ship in ship_ui_elements:
+				for element in ship_ui_elements[ship].values():
+					if is_instance_valid(element):
+						element.queue_free()
+				ship_ui_elements.erase(ship)
+			tracked_ships.erase(ship)
+
+func is_position_visible_on_screen(world_position):
+	var camera = get_viewport().get_camera_3d()
+	
+	# Check if position is in front of camera
+	var camera_direction = -camera.global_transform.basis.z.normalized()
+	var to_position = (world_position - camera.global_position).normalized()
+	if camera_direction.dot(to_position) <= 0:
+		return false
+		
+	# Get screen position
+	var screen_position = camera.unproject_position(world_position)
+	
+	# Check if position is on screen
+	var viewport_rect = get_viewport().get_visible_rect()
+	return viewport_rect.has_point(screen_position)

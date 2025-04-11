@@ -63,6 +63,8 @@ func spawn_player(id, player_name):
 	var player = preload("res://scenes/ship.tscn").instantiate()
 	#print(player_name)
 	player.name = str(id)
+	player._enable_guns()
+		
 	var controller = preload("res://scenes/player_control.tscn").instantiate()
 	# controller.name = str(id)
 	player.add_child(controller)
@@ -75,10 +77,10 @@ func spawn_player(id, player_name):
 	
 	# Add to world - note game_world is a child of this node
 	players[id] = player
-	spawn_point.add_child(player)
 	
 	# Randomize spawn position
 	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000))
+	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
 	
@@ -99,9 +101,10 @@ func spawn_players_client(id, player_name, pos):
 
 	var player = preload("res://scenes/ship.tscn").instantiate()
 	player.name = str(id)
+	player._enable_guns()
+	
 	if id == multiplayer.get_unique_id():
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
-		# controller.name = str(id)
 		player.add_child(controller)
 
 	# Set player name
@@ -109,8 +112,8 @@ func spawn_players_client(id, player_name, pos):
 		player.get_node("NameLabel").text = player_name
 	
 	# Add to world - note game_world is a child of this node
-	spawn_point.add_child(player)
 	players[id] = player
+	spawn_point.add_child(player)
 	
 	#player.global_position = pos
 	

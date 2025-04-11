@@ -1,12 +1,13 @@
-[gd_scene load_steps=11 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=12 format=3 uid="uid://duionhqlb8aak"]
 
-[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/shared/ShipMotion.gd" id="1_gudjc"]
+[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/shared/Ship.gd" id="1_gudjc"]
 [ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://Guns/main_gun1/Gun.tscn" id="2_7j21i"]
 [ext_resource type="Script" uid="uid://cx1f7vlowd3nn" path="res://src/artillary/secondary_controller.gd" id="3_3m36u"]
 [ext_resource type="PackedScene" uid="uid://de7wvvgfltyco" path="res://Guns/sec_gun1/SmallGun.tscn" id="4_8qiel"]
 [ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="5_itrim"]
 [ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://scenes/wake_emitter.tscn" id="6_7j21i"]
-[ext_resource type="PackedScene" uid="uid://dgvbfjlhdgg7f" path="res://src/shared/artillery_controller.tscn" id="7_8qiel"]
+[ext_resource type="PackedScene" uid="uid://dgvbfjlhdgg7f" path="res://src/artillary/artillery_controller.tscn" id="7_8qiel"]
+[ext_resource type="PackedScene" uid="uid://dmabeflns107f" path="res://src/shared/HitPointsManager.tscn" id="7_itrim"]
 [ext_resource type="PackedScene" uid="uid://bpa424xhggvk2" path="res://src/shared/ship_movement.tscn" id="8_itrim"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_qlg0r"]
@@ -46,7 +47,7 @@ max_rotation_angle = 2.61799
 turret_orientation = 1
 
 [node name="Gun3" parent="CSGBox3D" instance=ExtResource("2_7j21i")]
-transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 12.006, -30.9456)
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0, 9.29123, -30.9456)
 rotation_limits_enabled = true
 min_rotation_angle = 0.523599
 max_rotation_angle = 5.75959
@@ -122,6 +123,9 @@ transform = Transform3D(0.969544, 0, 0.244918, 0, 1, 0, -0.244918, 0, 0.969544, 
 
 [node name="WakeEmitter3" parent="." instance=ExtResource("6_7j21i")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -134.869)
+
+[node name="HitPointsManager" parent="." instance=ExtResource("7_itrim")]
+max_hp = 56000.0
 
 [node name="ArtilleryController" parent="." instance=ExtResource("7_8qiel")]
 
