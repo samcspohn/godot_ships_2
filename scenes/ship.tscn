@@ -132,6 +132,7 @@ max_hp = 56000.0
 [node name="ShipMovement" parent="." instance=ExtResource("8_itrim")]
 speed = 45.0
 time_to_full_speed = 40.0
+linear_damping = 0.1
 rudder_shift_time = 8.0
 turning_circle = 600.0
 

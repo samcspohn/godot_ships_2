@@ -14,9 +14,6 @@ var _current_speed := speed_normal
 var _target_velocity := Vector3.ZERO
 var _mouse_captured := false
 
-func _ready() -> void:
-	capture_mouse()
-
 func capture_mouse() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	_mouse_captured = true

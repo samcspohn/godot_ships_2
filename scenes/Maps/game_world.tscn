@@ -1,8 +1,6 @@
-[gd_scene load_steps=5 format=3 uid="uid://hgkcpyif6x47"]
+[gd_scene load_steps=3 format=3 uid="uid://hgkcpyif6x47"]
 
 [ext_resource type="Script" uid="uid://cmysga848xkvq" path="res://src/shared/game_world.gd" id="2_dk2s4"]
-[ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_sjx2r"]
-[ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="2_xp4g7"]
 [ext_resource type="Script" uid="uid://dsmr8gp0wckmu" path="res://scenes/Maps/camera_3d.gd" id="4_28v7m"]
 
 [node name="GameWorld" type="Node3D"]
@@ -12,69 +10,7 @@ script = ExtResource("2_dk2s4")
 spawn_path = NodePath("../Players")
 
 [node name="Players" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.0586, 0)
-
-[node name="Env" type="Node3D" parent="."]
-transform = Transform3D(10, 0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0)
-
-[node name="CSGBox3D" type="CSGBox3D" parent="Env"]
-use_collision = true
-size = Vector3(25000, 1, 25000)
-material = ExtResource("2_xp4g7")
-
-[node name="CSGBox3D2" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, 0, -453.777, 2000)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(1000, 1000, 1000)
-
-[node name="CSGBox3D7" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, 2602.14, -386.081, -170.077)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(1000, 1000, 1000)
-
-[node name="CSGBox3D8" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -271.732, -17.2257, -1297.69)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(300, 300, 300)
-
-[node name="CSGBox3D9" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -540.757, -17.2256, -1086.37)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(300, 300, 300)
-
-[node name="CSGBox3D10" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -630.879, -17.2257, -717.11)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(300, 300, 300)
-
-[node name="CSGBox3D5" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -2978.78, -395.881, 761.089)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(1000, 1000, 1000)
-
-[node name="CSGBox3D6" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -1000, -256.017, 1361.09)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(700, 700, 700)
-
-[node name="CSGBox3D3" type="CSGBox3D" parent="Env"]
-transform = Transform3D(1.07983, -0.404499, 0.469444, 0.619675, 0.704868, -0.81804, -1.11312e-07, 0.943168, 0.812686, -2599.34, -595.032, -2161.25)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(1300, 1500, 1500)
-
-[node name="CSGBox3D4" type="CSGBox3D" parent="Env"]
-transform = Transform3D(-0.565959, -0.591238, -0.938165, 0.619675, 0.704868, -0.81804, 0.919629, -0.838823, -0.026145, 1176.15, -120.904, -3217.82)
-material_override = ExtResource("2_sjx2r")
-use_collision = true
-size = Vector3(1300, 1500, 1500)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 20, 0)
 
 [node name="Camera3D" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, 15000, 0)
@@ -84,3 +20,5 @@ script = ExtResource("4_28v7m")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.203424, 0.384232, -0.900547, 0.0119864, 0.918733, 0.394699, 0.979017, -0.0910854, 0.182287, 0, 3.46307, 0)
+
+[node name="Env" type="Node3D" parent="."]

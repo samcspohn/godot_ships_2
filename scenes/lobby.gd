@@ -17,7 +17,11 @@ func _ready() -> void:
 	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
 	
 	# Send request for server
-	var err = udp.put_packet("request_server".to_utf8_buffer())
+	var packet = {
+		"request": "request_server",
+		"player_name": GameSettings.player_name,
+	}
+	var err = udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
 
 	
 	status_label.text = "Connecting to matchmaker..."
@@ -26,7 +30,12 @@ func _ready() -> void:
 
 func _on_leave_queue():
 	if udp:
-		udp.put_packet("leave_queue".to_utf8_buffer())
+		var packet = {
+			"leave": "leave_queue",
+			"player_name": GameSettings.player_name,
+		}
+		udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+		udp = null
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 func _on_connection_succeeded():
@@ -53,6 +62,7 @@ func _process(delta: float) -> void:
 		if server_info:
 			print(server_info)
 			status_label.text = "Server allocated. Connecting to game server..."
+			GameSettings.player_name = server_info.player_id
 			
 			# Connect to the assigned server
 			NetworkManager.create_client(server_info.ip, server_info.port)

@@ -161,7 +161,7 @@ func _process(_delta: float) -> void:
 			p.trail_pos += offset
 			offset_length -= step_size
 		
-	self.multi_mesh.multimesh.instance_count = transforms.size() / 12
+	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
 	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
 	self.multi_mesh.multimesh.buffer = transforms
 

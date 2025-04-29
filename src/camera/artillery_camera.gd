@@ -631,24 +631,45 @@ func update_ship_ui():
 				var max_hp = ship_hp_manager.max_hp
 				var hp_percent = (float(current_hp) / max_hp) * 100.0
 				
+					# Determine team color
+				var team_color = null
+				var my_team_id = -1
+				if target_ship.has_node("TeamEntity"):
+					var my_team_entity = target_ship.get_node("TeamEntity")
+					if my_team_entity.has_method("get_team_info"):
+						my_team_id = my_team_entity.get_team_info()["team_id"]
+				var ship_team_id = -2
+				if ship.has_node("TeamEntity"):
+					var ship_team_entity = ship.get_node("TeamEntity")
+					if ship_team_entity.has_method("get_team_info"):
+						ship_team_id = ship_team_entity.get_team_info()["team_id"]
+				if my_team_id != -1 and ship_team_id != -2:
+					if my_team_id == ship_team_id:
+						team_color = Color(0.2, 0.9, 1.0) # Teal for same team
+					else:
+						team_color = Color(0.9, 0.2, 0.2) # Red for enemy team
+				
 				# Update progress bar and label
 				ui.hp_bar.value = hp_percent
 				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
 				
-				# Update color based on health
-				if hp_percent > 60:
-					ui.hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Green
-				elif hp_percent > 30:
-					ui.hp_bar.modulate = Color(0.9, 0.9, 0.2)  # Yellow
+				# Update color based on health and team
+				if team_color:
+					ui.hp_bar.modulate = team_color
 				else:
-					ui.hp_bar.modulate = Color(0.9, 0.2, 0.2)  # Red
+					if hp_percent > 60:
+						ui.hp_bar.modulate = Color(0.2, 0.9, 0.2)  # Green
+					elif hp_percent > 30:
+						ui.hp_bar.modulate = Color(0.9, 0.9, 0.2)  # Yellow
+					else:
+						ui.hp_bar.modulate = Color(0.9, 0.2, 0.2)  # Red
 			
 			# Position UI above ship in the world
 			var ship_position = ship.global_position + Vector3(0, 20, 0)  # Add height offset
 			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
 			
 			# Check if ship is visible on screen
-			var is_visible = is_position_visible_on_screen(ship_position)
+			var is_visible = is_position_visible_on_screen(ship_position) and ship.visible
 			ui.container.visible = is_visible
 			
 			if is_visible:

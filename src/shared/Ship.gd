@@ -35,7 +35,7 @@ func _physics_process(delta: float) -> void:
 	# Sync ship data to all clients
 	sync_ship_data()
 
-func sync_ship_data() -> void:
+func sync_ship_data() -> Dictionary:
 	var d = {
 		'y': movement_controller.throttle_level, 
 		't': movement_controller.thrust_vector, 
@@ -55,7 +55,7 @@ func sync_ship_data() -> void:
 	for s: Gun in secondaries.get_children():
 		d.s.append({'b': s.basis,'c': s.barrel.basis})
 		
-	sync.rpc(d)
+	return d
 
 @rpc("any_peer","reliable")
 func initialized_client():
@@ -65,7 +65,7 @@ func initialized_client():
 func sync(d: Dictionary):
 	if !self.initialized:
 		return
-	
+	self.visible = true
 	self.global_position = d.p
 	self.global_basis = d.b
 	movement_controller.rudder_value = d.r
@@ -86,3 +86,7 @@ func sync(d: Dictionary):
 		s.basis = d.s[i].b
 		s.barrel.basis = d.s[i].c
 		i += 1
+
+@rpc("any_peer", "reliable")
+func _hide():
+	self.visible = false

@@ -22,11 +22,19 @@ func _ready():
 			var sender_port = udp.get_packet_port()
 			
 			var info = {"ip": sender_ip, "port": sender_port}
-			if packet.get_string_from_utf8() == "request_server":
+			var packet_str = packet.get_string_from_utf8()
+			var json = JSON.new()
+			var err = json.parse(packet_str)
+			if err != OK:
+				push_error("Failed to parse packet data")
+				continue
+			var packet_result = json.data
+			if packet_result["request"] == "request_server":
 				# Track this connecting client
 				connecting_clients.append(info)
-			elif packet.get_string_from_utf8() == "leave_queue":
+			elif packet_result["leave"] == "leave_queue":
 				connecting_clients.erase(info)
+			
 				
 			
 			if connecting_clients.size() >= min_players:
@@ -38,20 +46,42 @@ func _ready():
 					
 				# Start server with the selected port as an argument
 				#var server = OS.create_process(OS.get_executable_path(), ["--server", "--port", str(server_port)])
-				
-				# Get server info with the newly assigned port
-				var server_info = {
-					"ip": "127.0.0.1",
-					"port": server_port,
-					"max_players": GameSettings.MAX_PLAYERS
+
+				# Send team info to the server (as a file for simplicity)
+				var team = {}
+				for i in range(min_players):
+					var client = connecting_clients[i]
+					# Assign a team ID to each client
+					var team_id = i % 2  # Simple round-robin assignment
+					team[i] = {
+						"team": str(team_id),
+						"player_id": str(i),
+						"ship": "res://scenes/ship.tscn"
+					}
+				var team_info = {
+					"team": team
 				}
-				
+				var team_file_path = "user://team_info.json"
+				var file = FileAccess.open(team_file_path, FileAccess.WRITE)
+				file.store_string(JSON.stringify(team_info))
+				file.close()
+			
+
 				# Mark this port as in use
 				mark_port_as_used(server_port)
 				
 				# Notify all connecting clients
 				for i in range(min_players):
 					var client = connecting_clients[i]
+					
+									# Get server info with the newly assigned port
+					var server_info = {
+						"ip": "127.0.0.1",
+						"port": server_port,
+						"player_id": str(i),
+						"max_players": GameSettings.MAX_PLAYERS
+					}
+					
 					# Reply with server connection details
 					udp.set_dest_address(client["ip"], client["port"])
 					udp.put_packet(var_to_bytes(server_info))

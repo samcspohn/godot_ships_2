@@ -12,6 +12,13 @@
 - [x] Basic multiplayer framework
   - [x] Added network synchronization for ship position and rotation
   - [x] Implemented client-server RPC calls for input and actions
+- [x] damage and health
+  - [x] ui
+  - [ ] track damage
+- [ ] ship classes
+- [ ] concealment
+- [ ] upgrade/module/customization
+  - [ ] structure scene-tree for stat tracking shell hits/potential damage
 - [ ] Implement collision system for ships and terrain
 - [ ] Create a proper game state management system
 - [ ] Develop a spawn/respawn system
