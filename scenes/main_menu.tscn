@@ -1,14 +1,17 @@
-[gd_scene load_steps=5 format=3 uid="uid://c3vlws8iqpvej"]
+[gd_scene load_steps=4 format=3 uid="uid://c3vlws8iqpvej"]
 
-[ext_resource type="Script" uid="uid://b2qduulvak5ev" path="res://src/client/client_ui_manager.gd" id="1_de0ta"]
+[ext_resource type="Script" uid="uid://budq4bhs6x0g0" path="res://src/client/main_menu.gd" id="1_bqqt6"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
 [ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="2_ekxnf"]
-[ext_resource type="PackedScene" uid="uid://duionhqlb8aak" path="res://scenes/ship.tscn" id="4_wu84c"]
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
-anchors_preset = 0
-script = ExtResource("1_de0ta")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_bqqt6")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="."]
 layout_mode = 0
@@ -42,9 +45,6 @@ text = "Leave"
 
 [node name="Camera3D" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.933343, 0.358987, 0, -0.358987, 0.933343, 0, 147.097, 272.065)
-
-[node name="Ship" parent="." instance=ExtResource("4_wu84c")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.99847, 6.04615, -5.086)
 
 [node name="Port" type="Node3D" parent="."]
 
@@ -115,3 +115,29 @@ size = Vector3(3000, 1, 3000)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="Port"]
 transform = Transform3D(0.0106649, 0.202565, 0.979211, 0.00220607, -0.979269, 0.202553, 0.999941, 0, -0.0108907, 47.8757, 163.892, 0)
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -40.0
+offset_right = 1151.0
+grow_vertical = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="ScrollContainer"]
+layout_mode = 2
+
+[node name="Battleship" type="Button" parent="ScrollContainer/HBoxContainer"]
+layout_mode = 2
+text = "Battleship"
+
+[node name="Cruiser" type="Button" parent="ScrollContainer/HBoxContainer"]
+layout_mode = 2
+text = "Cruiser"
+
+[node name="Destroyer" type="Button" parent="ScrollContainer/HBoxContainer"]
+layout_mode = 2
+text = "Destroyer"
+
+[node name="Dock" type="Node3D" parent="."]

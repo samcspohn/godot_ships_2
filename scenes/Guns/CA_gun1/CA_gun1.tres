@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="GunParams" load_steps=3 format=3 uid="uid://bbj87u4g0sahg"]
+
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://scenes/Guns/gun_params.gd" id="1_e0ko1"]
+[ext_resource type="Resource" uid="uid://cniv837noxsil" path="res://Shells/CA_shell.tres" id="2_ooxbs"]
+
+[resource]
+script = ExtResource("1_e0ko1")
+reload_time = 4.0
+traverse_speed = 60.0
+elevation_speed = 60.0
+range = 20.0
+shell = ExtResource("2_ooxbs")
+hor_dispersion = 0.0
+vert_dispersion = 0.0
+vert_sigma = 0.0
+hor_sigma = 0.0
+hor_dispersion_rate = 0.0
+vert_dispersion_rate = 0.0
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

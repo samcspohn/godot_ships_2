@@ -1,7 +1,7 @@
 [gd_scene load_steps=5 format=3 uid="uid://co64l5smsfyl5"]
 
 [ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="1_klv7y"]
-[ext_resource type="PackedScene" uid="uid://duionhqlb8aak" path="res://scenes/ship.tscn" id="2_7kt6i"]
+[ext_resource type="PackedScene" uid="uid://duionhqlb8aak" path="res://scenes/Ships/Battleship.tscn" id="2_7kt6i"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="3_jcs4q"]
 
 [sub_resource type="PrismMesh" id="PrismMesh_m8itd"]

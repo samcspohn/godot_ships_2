@@ -1,16 +1,16 @@
-[gd_scene load_steps=4 format=3 uid="uid://de7wvvgfltyco"]
+[gd_scene load_steps=4 format=3 uid="uid://bf40i2xf8jkn6"]
 
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://Guns/Gun.gd" id="1_sh8f8"]
-[ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://Guns/sec_gun1/sec_gun1.tres" id="2_dat54"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://scenes/Guns/Gun.gd" id="1_6cvuf"]
+[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://scenes/Guns/BB_gun1/BB_gun1.tres" id="2_yrulw"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]
 size = Vector3(10, 4, 19)
 
 [node name="Gun" type="CSGBox3D"]
 size = Vector3(10, 4, 19.6)
-script = ExtResource("1_sh8f8")
+script = ExtResource("1_6cvuf")
 max_rotation_angle = 0.0
-params = ExtResource("2_dat54")
+params = ExtResource("2_yrulw")
 
 [node name="Barrels" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.48264)

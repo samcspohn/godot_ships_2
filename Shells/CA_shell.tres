@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ShellParams" load_steps=2 format=3 uid="uid://cniv837noxsil"]
+
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://Shells/shell_params.gd" id="1_bdv77"]
+
+[resource]
+script = ExtResource("1_bdv77")
+speed = 760.0
+drag = 0.016
+damage = 5000.0
+size = 5.0
+metadata/_custom_type_script = "uid://d0r4vucnli08f"

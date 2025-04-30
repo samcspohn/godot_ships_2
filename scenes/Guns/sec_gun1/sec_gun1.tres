@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="GunParams" load_steps=3 format=3 uid="uid://8cp40uc7e88c"]
 
-[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://Guns/gun_params.gd" id="1_nupa2"]
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://scenes/Guns/gun_params.gd" id="1_nupa2"]
 [ext_resource type="Resource" uid="uid://bisdkbb6844tg" path="res://Shells/small_shell.tres" id="2_usx3h"]
 
 [resource]

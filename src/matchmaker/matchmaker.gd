@@ -2,7 +2,7 @@ extends Node
 
 var available_servers = []
 var min_players = 2
-var connecting_clients = []
+var connecting_clients = {}
 var available_ports = []  # List to track available ports
 var port_range_start = 28970  # Starting port for game servers
 var port_range_end = 29000    # Ending port for game servers
@@ -31,8 +31,8 @@ func _ready():
 			var packet_result = json.data
 			if packet_result["request"] == "request_server":
 				# Track this connecting client
-				connecting_clients.append(info)
-			elif packet_result["leave"] == "leave_queue":
+				connecting_clients[info] = packet_result['selected_ship']
+			elif packet_result["request"] == "leave_queue":
 				connecting_clients.erase(info)
 			
 				
@@ -50,13 +50,16 @@ func _ready():
 				# Send team info to the server (as a file for simplicity)
 				var team = {}
 				for i in range(min_players):
-					var client = connecting_clients[i]
+					# var client = connecting_clients[i]
+					var client = connecting_clients.keys()[i]
+					# Get the ship type from the client
+					var ship_type = connecting_clients[client]
 					# Assign a team ID to each client
 					var team_id = i % 2  # Simple round-robin assignment
 					team[i] = {
 						"team": str(team_id),
 						"player_id": str(i),
-						"ship": "res://scenes/ship.tscn"
+						"ship": ship_type
 					}
 				var team_info = {
 					"team": team
@@ -72,7 +75,9 @@ func _ready():
 				
 				# Notify all connecting clients
 				for i in range(min_players):
-					var client = connecting_clients[i]
+					var client = connecting_clients.keys()[i]
+					# Get the ship type from the client
+					# var ship_type = connecting_clients[client]
 					
 									# Get server info with the newly assigned port
 					var server_info = {
@@ -88,7 +93,8 @@ func _ready():
 				
 				# Remove the clients that have been assigned to a server
 				for i in range(min_players):
-					connecting_clients.pop_front()
+					var client = connecting_clients.keys()[0]
+					connecting_clients.erase(client)
 
 # Initialize the list of available ports
 func initialize_available_ports():

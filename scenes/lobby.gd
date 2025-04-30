@@ -20,6 +20,7 @@ func _ready() -> void:
 	var packet = {
 		"request": "request_server",
 		"player_name": GameSettings.player_name,
+		"selected_ship": GameSettings.selected_ship
 	}
 	var err = udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
 
@@ -31,7 +32,7 @@ func _ready() -> void:
 func _on_leave_queue():
 	if udp:
 		var packet = {
-			"leave": "leave_queue",
+			"request": "leave_queue",
 			"player_name": GameSettings.player_name,
 		}
 		udp.put_packet(JSON.stringify(packet).to_utf8_buffer())

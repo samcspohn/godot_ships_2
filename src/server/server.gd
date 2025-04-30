@@ -2,7 +2,7 @@
 extends Node
 
 class_name GameServer
-var players: Dictionary[int,Ship] = {}
+var players = {}
 var player_info = {}
 var game_world = null
 var spawn_point = null
@@ -34,7 +34,7 @@ func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
 	# Remove player
 	if players.has(id):
-		players[id].queue_free()
+		players[id][0].queue_free()
 		players.erase(id)
 		player_info.erase(id)
 
@@ -91,22 +91,23 @@ func spawn_player(id, player_name):
 	# 		}
 	# 	}
 	# }
-	
-	#join_game.rpc_id(id)
-	
 	if players.has(id):
 		return
-		
-	var player = preload("res://scenes/ship.tscn").instantiate()
+	
+	#join_game.rpc_id(id)
+	var team_data = team_info["team"][player_name]
+
+	var ship = team_data["ship"]
+	var player = load(ship).instantiate()
 	#print(player_name)
 	player.name = str(id)
 	player._enable_guns()
-
-	var team_data = team_info["team"][player_name]
-
+	
 	if !team.has(team_data["team"]):
 		team[team_data["team"]] = {}
 	team[team_data["team"]][id] = player
+
+	
 	var team_id = int(team_data["team"])
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = team_id
@@ -124,7 +125,7 @@ func spawn_player(id, player_name):
 		player.get_node("NameLabel").text = player_name
 	
 	# Add to world - note game_world is a child of this node
-	players[id] = player
+	players[id] = [player, ship]
 	
 	# Randomize spawn position
 	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000))
@@ -134,20 +135,21 @@ func spawn_player(id, player_name):
 	
 	#join_game.rpc_id(id)
 	for pid in players:
-		var p: Ship = players[pid]
+		var p: Ship = players[pid][0]
+		var p_ship = players[pid][1]
 		# notify new client of current players
-		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, (p.get_node("TeamEntity") as TeamEntity).team_id)
+		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, (p.get_node("TeamEntity") as TeamEntity).team_id, p_ship)
 		#notify current players of new player
-		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id)
+		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
 	
 	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
 
 @rpc("call_remote", "reliable")
-func spawn_players_client(id, player_name, pos, team_id):
+func spawn_players_client(id, player_name, pos, team_id, ship):
 	if players.has(id):
 		return
 
-	var player = preload("res://scenes/ship.tscn").instantiate()
+	var player = load(ship).instantiate()
 	player.name = str(id)
 	player._enable_guns()
 	
@@ -165,7 +167,7 @@ func spawn_players_client(id, player_name, pos, team_id):
 		player.get_node("NameLabel").text = player_name
 	
 	# Add to world - note game_world is a child of this node
-	players[id] = player
+	players[id] = [player, ship]
 	spawn_point.add_child(player)
 	
 	#player.global_position = pos
@@ -183,15 +185,19 @@ func _physics_process(delta: float) -> void:
 	var ray_query = PhysicsRayQueryParameters3D.new()
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
+	ray_query.hit_from_inside = false
 	for p_id in players:
-		var p: Ship = players[p_id]
+		var p: Ship = players[p_id][0]
 		ray_query.from = p.global_position
 		var d = p.sync_ship_data()
 		for p_id2 in players:
-			var p2: Ship  = players[p_id2]
+			if p_id == p_id2:
+				p.sync.rpc_id(p_id2, d)
+				continue
+			var p2: Ship = players[p_id2][0]
 			ray_query.to = p2.global_position
 			var collision: Dictionary = space_state.intersect_ray(ray_query)
-			if p_id == p_id2 or !collision.is_empty() and collision.collider is Ship:
+			if !collision.is_empty() and collision.collider is Ship && collision.collider != p:
 				p.sync.rpc_id(p_id2, d)
 			else:
 				p._hide.rpc_id(p_id2)

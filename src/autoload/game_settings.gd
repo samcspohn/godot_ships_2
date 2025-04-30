@@ -8,6 +8,7 @@ const MAX_PLAYERS = 16
 var player_name = "Player"
 var server_ip = "127.0.0.1"
 var matchmaker_ip = "127.0.0.1"
+var selected_ship = "Battleship"
 
 func save_settings():
 	var config = ConfigFile.new()
