@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3 uid="uid://bf40i2xf8jkn6"]
 
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://scenes/Guns/Gun.gd" id="1_6cvuf"]
-[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://scenes/Guns/BB_gun1/BB_gun1.tres" id="2_yrulw"]
+[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://scenes/Ships/Battleship/BB_gun1/BB_gun1.tres" id="2_yrulw"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]
 size = Vector3(10, 4, 19)
@@ -28,9 +28,6 @@ size = Vector3(1.5, 1.5, 18)
 
 [node name="Node3D" type="Node3D" parent="Barrels/Barrel2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9.29431)
-
-[node name="Muzzles" type="Node3D" parent="Barrels"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.578994)
 
 [node name="Area3D" type="Area3D" parent="."]
 

@@ -174,4 +174,5 @@ auto_translate_mode = 2
 multimesh = SubResource("MultiMesh_xoeb4")
 
 [node name="GPUParticles3D" parent="." instance=ExtResource("2_1coyq")]
+lifetime = 2.0
 draw_pass_1 = SubResource("QuadMesh_1coyq")

@@ -5,13 +5,13 @@ var projectiles: Array[ProjectileData] = [];
 var ids_reuse: Array[int] = []
 var shell_param_ids: Dictionary[int, ShellParams] = {}
 var bulletId: int = 0
-var shell_resource_path = "res://Shells/"
+#var shell_resource_path = "res://Shells/"
 @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
 
 var transforms = PackedFloat32Array()
-
+var camera: Camera3D = null
 
 signal resource_registered(id: int, resource: ShellParams)
 
@@ -42,7 +42,7 @@ class ProjectileData:
 
 func _ready():
 	# Auto-register all bullet resources in the directory
-	register_all_bullet_resources()
+	#register_all_bullet_resources()
 	particles = get_node("/root/ProjectileManager1/GPUParticles3D")
 	multi_mesh = get_node("/root/ProjectileManager1/MultiMeshInstance3D")
 	if OS.get_cmdline_args().find("--server") != -1:
@@ -55,38 +55,6 @@ func _ready():
 		transforms.resize(12)
 		projectiles.resize(1)
 	
-func register_all_bullet_resources() -> void:
-	var dir = DirAccess.open(shell_resource_path)
-	if dir:
-		dir.list_dir_begin()
-		var file_name = dir.get_next()
-		
-		while file_name != "":
-			if not dir.current_is_dir() and file_name.ends_with(".tres"):
-				var bullet_res = load(shell_resource_path + file_name)
-				if bullet_res is ShellParams:
-					register_bullet_resource(bullet_res)
-			file_name = dir.get_next()
-	else:
-		push_error("Could not access bullet resources directory")
-
-
-# Register a bullet resource and assign it an ID
-func register_bullet_resource(bullet_params: ShellParams) -> int:
-	## If this resource is already registered, return its ID
-	#for id in shell_param_ids.keys():
-		#if shell_param_ids[id] == bullet_params:
-			#return id
-	
-	# Assign a new ID
-	var assigned_id = bulletId
-	bullet_params.id = assigned_id
-	shell_param_ids[assigned_id] = bullet_params
-	bulletId += 1
-	
-	emit_signal("resource_registered", assigned_id, bullet_params)
-	return assigned_id
-
 # Returns the next power of 2 that is >= value
 func next_pow_of_2(value: int) -> int:
 	if value <= 0:
@@ -133,9 +101,39 @@ func update_transform_pos(idx, pos):
 	transforms[offset + 7] = pos.y
 	transforms[offset + 11] = pos.z
 
-func _process(_delta: float) -> void:
+func update_transform_scale(idx, scale: float):
+	# Calculate offset in the transforms array for this instance
+	var offset = idx * 12
+	
+	# Get current x-basis direction and normalize it
+	var x_basis = Vector3(transforms[offset + 0], transforms[offset + 1], transforms[offset + 2])
+	if x_basis.length_squared() > 0.0001:  # Avoid normalizing zero vectors
+		x_basis = x_basis.normalized() * scale
+	else:
+		x_basis = Vector3(scale, 0, 0)  # Default x-axis if current basis is effectively zero
+	
+	# Get current y-basis direction and normalize it
+	var y_basis = Vector3(transforms[offset + 4], transforms[offset + 5], transforms[offset + 6])
+	if y_basis.length_squared() > 0.0001:
+		y_basis = y_basis.normalized() * scale
+	else:
+		y_basis = Vector3(0, scale, 0)  # Default y-axis if current basis is effectively zero
+	
+	# Store the new scaled basis vectors
+	transforms[offset + 0] = x_basis.x
+	transforms[offset + 1] = x_basis.y
+	transforms[offset + 2] = x_basis.z
+	
+	transforms[offset + 4] = y_basis.x
+	transforms[offset + 5] = y_basis.y
+	transforms[offset + 6] = y_basis.z
+	
+	# We don't modify z-basis as per billboard requirements
+	
+func __process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 	
+	var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
 	var id = 0
 	for p in self.projectiles:
 		if p == null:
@@ -145,6 +143,14 @@ func _process(_delta: float) -> void:
 		var t = current_time - p.start_time
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		update_transform_pos(id, p.position)
+
+		# Calculate distance-based scale to counter perspective shrinking
+		var distance = camera.global_position.distance_to(p.position)
+		var base_scale = p.params.size # Normal scale at close range
+		var max_scale_factor = INF # Cap the maximum scale increase
+		var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
+		update_transform_scale(id, scale_factor)
+			
 		id += 1
 		var offset = p.position - p.trail_pos
 		if (p.position - p.start_position).length_squared() < 80:
@@ -187,7 +193,7 @@ func _physics_process(_delta: float) -> void:
 			self.destroyBulletRpc(id, collision.position)
 			if collision.collider is Ship:
 				var ship: Ship = collision.collider
-				var hp: HitPointsManager = ship.get_node("HitPointsManager")
+				var hp: HitPointsManager = ship.health_controller
 				hp.take_damage(p.params.damage / 3.0, collision.position)
 		id += 1
 		
@@ -210,7 +216,7 @@ func update_transform(idx, trans):
 	transforms[offset + 11] = trans.origin.z
 		
 @rpc("any_peer", "reliable")
-func fireBulletClient(pos, vel, t, id, shell: int, end_pos, total_time) -> void:
+func fireBulletClient(pos, vel, t, id, shell: ShellParams, end_pos, total_time) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var bullet = ProjectileData.new()
 	#bullet.params = shell_param_ids[shell]
@@ -221,25 +227,25 @@ func fireBulletClient(pos, vel, t, id, shell: int, end_pos, total_time) -> void:
 		transforms.resize(np2 * 12)
 		self.projectiles.resize(np2)
 	
-	var s = sqrt(shell_param_ids[shell].damage / 100)
+	var s = shell.size # sqrt(shell.damage / 100)
 	var trans = Transform3D.IDENTITY.scaled(Vector3(s,s,s)).translated(pos)
 	update_transform(id,trans)
 	
-	bullet.initialize(pos, vel, t, end_pos, total_time, shell_param_ids[shell])
+	bullet.initialize(pos, vel, t, end_pos, total_time, shell)
 	self.projectiles.set(id, bullet)
 
 	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
-	expl.radius = shell_param_ids[shell].damage / 500
+	expl.radius = shell.damage / 500
 	get_tree().root.add_child(expl)
 	expl.global_position = pos
 	#var shell = bullet.get_script()
 	#pass
 	
-func request_fire(dir: Vector3, pos: Vector3, shell: int, end_pos: Vector3, total_time: float) -> void:
-		fireBullet(dir,pos, shell, end_pos, total_time)
+#func request_fire(dir: Vector3, pos: Vector3, shell: int, end_pos: Vector3, total_time: float) -> void:
+		#fireBullet(dir,pos, shell, end_pos, total_time)
 
 #@rpc("authority","reliable")
-func fireBullet(vel,pos, shell: int, end_pos, total_time) -> void:
+func fireBullet(vel,pos, shell: ShellParams, end_pos, total_time, t) -> int:
 	#var bullet: Shell = preload("res://Shells/shell.tscn").instantiate()
 	#bullet.params = shell_param_ids[shell]
 	#bullet.radius = bullet.params.size
@@ -247,22 +253,22 @@ func fireBullet(vel,pos, shell: int, end_pos, total_time) -> void:
 	if id == null:
 		id = self.nextId
 		self.nextId += 1
-	var t = float(Time.get_unix_time_from_system())
 	
 	if id >= projectiles.size():
 		var np2 = next_pow_of_2(id + 1)
 		self.projectiles.resize(np2)
 
 	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
-	expl.radius = shell_param_ids[shell].damage / 500
+	expl.radius = shell.damage / 500
 	get_tree().root.add_child(expl)
 	expl.global_position = pos
 		
 	var bullet: ProjectileData = ProjectileData.new()
-	bullet.initialize(pos, vel, t, end_pos, total_time, shell_param_ids[shell])
+	bullet.initialize(pos, vel, t, end_pos, total_time, shell)
 	self.projectiles.set(id, bullet)
-	for p in multiplayer.get_peers():
-		self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
+	return id
+	#for p in multiplayer.get_peers():
+		#self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
 	
 
 @rpc("call_remote", "reliable")

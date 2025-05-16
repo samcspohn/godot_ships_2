@@ -1,14 +1,14 @@
 [gd_resource type="Resource" script_class="GunParams" load_steps=3 format=3 uid="uid://f4vy1bfecssd"]
 
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://scenes/Guns/gun_params.gd" id="1_rwivs"]
-[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://Shells/BB_shell.tres" id="2_xupva"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Ships/Battleship/BB_gun1/BB_shell.tres" id="2_xupva"]
 
 [resource]
 script = ExtResource("1_rwivs")
 reload_time = 12.0
 traverse_speed = 40.0
 elevation_speed = 40.0
-range = 20.0
+range = 17000.0
 shell = ExtResource("2_xupva")
 hor_dispersion = 0.0
 vert_dispersion = 0.0

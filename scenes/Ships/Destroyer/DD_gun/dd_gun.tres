@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="GunParams" load_steps=3 format=3 uid="uid://gejcx56mxjtd"]
+
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://scenes/Guns/gun_params.gd" id="1_3ypt5"]
+[ext_resource type="Resource" uid="uid://dnwmndixvnnlp" path="res://scenes/Ships/Destroyer/DD_gun/DD_shell.tres" id="2_3ypt5"]
+
+[resource]
+script = ExtResource("1_3ypt5")
+reload_time = 3.0
+traverse_speed = 60.0
+elevation_speed = 60.0
+range = 11000.0
+shell = ExtResource("2_3ypt5")
+hor_dispersion = 0.0
+vert_dispersion = 0.0
+vert_sigma = 0.0
+hor_sigma = 0.0
+hor_dispersion_rate = 0.0
+vert_dispersion_rate = 0.0
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

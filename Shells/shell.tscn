@@ -2,7 +2,7 @@
 
 [ext_resource type="Material" uid="uid://05wlpmfaoxa7" path="res://bright.tres" id="1_8qhqx"]
 [ext_resource type="Script" uid="uid://dugex7gvulbu2" path="res://Shells/Shell.gd" id="1_g2qt8"]
-[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://Shells/BB_shell.tres" id="3_818jo"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Ships/Battleship/BB_gun1/BB_shell.tres" id="3_818jo"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0ilfn"]
 emission_enabled = true

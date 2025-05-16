@@ -2,13 +2,13 @@ extends Node
 class_name PlayerController
 
 var ship: Ship
-var ship_movement: ShipMovement
-var ship_artillery: ShipArtillery
+#var ship_movement: ShipMovement
+#var ship_artillery: ShipArtillery
 var secondary_controller: SecondaryController
-var hp_manager: HitPointsManager
+#var hp_manager: HitPointsManager
 var _cameraInput: Vector2
 @export var playerName: Label
-var artillery_cam: ArtilleryCamera
+var cam: BattleCamera
 var ray: RayCast3D
 var guns: Array[Gun] = []
 var gun_reloads: Array[ProgressBar] = []
@@ -39,10 +39,10 @@ var needs_initialization: bool = true
 
 func _ready() -> void:
 	# Get reference to the ship components
-	ship = get_parent() as Ship
-	ship_movement = ship.get_node("ShipMovement")
-	ship_artillery = ship.get_node("ArtilleryController")
-	hp_manager = ship.get_node("HitPointsManager")
+	#ship = get_node("../..") as Ship
+	#ship_movement = ship.get_node("ShipMovement")
+	#ship_artillery = ship.get_node("ArtilleryController")
+	#hp_manager = ship.get_node("HPManager")
 	secondary_controller = ship.get_node_or_null("Secondaries")
 	
 	# Initialize secondary controller if it exists
@@ -58,23 +58,23 @@ func _ready() -> void:
 		mouse_captured = true
 
 func setup_artillery_camera() -> void:
-	artillery_cam = load("res://scenes/player_cam.tscn").instantiate()
-	artillery_cam.target_ship = ship
-	artillery_cam.ship_movement = ship_movement
-	artillery_cam.hp_manager = hp_manager
+	cam = load("res://scenes/player_cam.tscn").instantiate()
+	cam._ship = ship
+	#cam.ship_movement = ship_movement
+	#cam.hp_manager = hp_manager
 	
-	if artillery_cam is Camera3D:
-		artillery_cam.current = true
+	if cam is Camera3D:
+		cam.current = true
 	if guns.size() > 0:
-		artillery_cam.projectile_speed = guns[0].params.shell.speed
-		artillery_cam.projectile_drag_coefficient = guns[0].params.shell.drag
-	get_tree().root.add_child(artillery_cam)
+		cam.projectile_speed = guns[0].params.shell.speed
+		cam.projectile_drag_coefficient = guns[0].params.shell.drag
+	get_tree().root.add_child(cam)
 	
 	# Get ray from camera
-	self.ray = artillery_cam.get_child(0)
+	self.ray = cam.get_child(0)
 
 func setup_gun_reload_ui() -> void:
-	var canvas: CanvasLayer = artillery_cam.get_child(1)
+	var canvas: CanvasLayer = cam.get_child(1)
 	
 	for g in guns:
 		var progress_bar: ProgressBar = canvas.get_node("ProgressBar").duplicate()
@@ -135,10 +135,11 @@ func _input(event: InputEvent) -> void:
 					var current_time = Time.get_ticks_msec() / 1000.0
 					if current_time - last_click_time < double_click_timer:
 						click_count = 2
-						ship_artillery.fire_all_guns.rpc_id(1)
+						ship.artillery_controller.fire_all_guns.rpc_id(1)
 					else:
 						click_count = 1
-						handle_single_click()
+						ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+						# handle_single_click()
 					
 					last_click_time = current_time
 				else:
@@ -175,7 +176,7 @@ func handle_single_click() -> void:
 	if guns.size() > 0:
 		for i in range(guns.size()):
 			if guns[i].reload >= 1.0:
-				ship_artillery.fire_gun.rpc_id(1, i)
+				ship.artillery_controller.fire_gun.rpc_id(1, i)
 				break
 
 @rpc("any_peer","call_remote", "reliable")
@@ -229,9 +230,9 @@ func _process(dt: float) -> void:
 		needs_initialization = false
 		
 		# Check if guns are available in ShipArtillery
-		if ship_artillery.guns.size() > 0:
+		if ship.artillery_controller.guns.size() > 0:
 			# Copy guns from ship to local array
-			guns = ship_artillery.guns
+			guns = ship.artillery_controller.guns
 			
 			# Setup artillery camera
 			setup_artillery_camera()
@@ -247,8 +248,8 @@ func _process(dt: float) -> void:
 			return  # Skip processing until initialized
 	
 	if guns.size() > 0:
-		artillery_cam.projectile_speed = guns[0].params.shell.speed
-		artillery_cam.projectile_drag_coefficient = guns[0].params.shell.drag
+		cam.projectile_speed = guns[0].params.shell.speed
+		cam.projectile_drag_coefficient = guns[0].params.shell.drag
 		
 	# Update gun reload UI
 	for i in range(guns.size()):
@@ -269,7 +270,7 @@ func _process(dt: float) -> void:
 		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
 		while sequential_fire_timer >= adjusted_sequential_fire_delay:
 			sequential_fire_timer -= adjusted_sequential_fire_delay
-			ship_artillery.fire_next_ready_gun.rpc_id(1)
+			ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
 	
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
@@ -312,24 +313,24 @@ func process_player_input() -> void:
 	var movement_input = [float(throttle_level), target_rudder_value]
 	
 	# Get aiming point from ray
-	var aim_point: Vector3
-	if ray.is_colliding():
-		aim_point = ray.get_collision_point()
-	else:
-		aim_point = ray.global_position + Vector3(ray.global_basis.z.x, 0, ray.global_basis.z.z).normalized() * -50000
+	#var aim_point: Vector3
+	#if ray.is_colliding():
+		#aim_point = ray.get_collision_point()
+	#else:
+		#aim_point = ray.global_position + Vector3(ray.global_basis.z.x, 0, ray.global_basis.z.z).normalized() * -50000
 	
 	# Send separated inputs to server
 	send_movement_input.rpc_id(1, movement_input)
-	send_aim_input.rpc_id(1, aim_point)
+	send_aim_input.rpc_id(1, cam.aim_position)
 
 @rpc("any_peer", "call_remote", "reliable")
 func send_movement_input(movement_input: Array) -> void:
 	if multiplayer.is_server():
 		# Forward movement input to ship movement controller
-		ship_movement.set_movement_input(movement_input)
+		ship.movement_controller.set_movement_input(movement_input)
 
 @rpc("any_peer", "call_remote", "reliable")
 func send_aim_input(aim_point: Vector3) -> void:
 	if multiplayer.is_server():
 		# Forward aim input to ship artillery controller
-		ship_artillery.set_aim_input(aim_point)
+		ship.artillery_controller.set_aim_input(aim_point)

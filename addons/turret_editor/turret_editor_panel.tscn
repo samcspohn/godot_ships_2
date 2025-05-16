@@ -29,66 +29,6 @@ horizontal_alignment = 1
 [node name="HSeparator" type="HSeparator" parent="VBoxContainer"]
 layout_mode = 2
 
-[node name="BarrelSettings" type="VBoxContainer" parent="VBoxContainer"]
-layout_mode = 2
-
-[node name="SectionLabel" type="Label" parent="VBoxContainer/BarrelSettings"]
-layout_mode = 2
-text = "Barrel Settings"
-
-[node name="BarrelCountContainer" type="HBoxContainer" parent="VBoxContainer/BarrelSettings"]
-layout_mode = 2
-
-[node name="Label" type="Label" parent="VBoxContainer/BarrelSettings/BarrelCountContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Barrel Count:"
-
-[node name="BarrelCountSpinner" type="SpinBox" parent="VBoxContainer/BarrelSettings/BarrelCountContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = 1.0
-max_value = 8.0
-value = 1.0
-rounded = true
-
-[node name="BarrelSpacingContainer" type="HBoxContainer" parent="VBoxContainer/BarrelSettings"]
-layout_mode = 2
-
-[node name="Label" type="Label" parent="VBoxContainer/BarrelSettings/BarrelSpacingContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Barrel Spacing:"
-
-[node name="BarrelSpacingSlider" type="HSlider" parent="VBoxContainer/BarrelSettings/BarrelSpacingContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 1
-min_value = 0.1
-max_value = 2.0
-step = 0.05
-value = 0.5
-
-[node name="BarrelSceneContainer" type="HBoxContainer" parent="VBoxContainer/BarrelSettings"]
-layout_mode = 2
-
-[node name="Label" type="Label" parent="VBoxContainer/BarrelSettings/BarrelSceneContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Barrel Scene:"
-
-[node name="BarrelSceneSelector" type="FileDialog" parent="VBoxContainer/BarrelSettings"]
-title = "Open a File"
-initial_position = 2
-size = Vector2i(600, 400)
-ok_button_text = "Open"
-file_mode = 0
-filters = PackedStringArray("*.tscn, *.scn ; Scene Files")
-
-[node name="BarrelSceneButton" type="Button" parent="VBoxContainer/BarrelSettings"]
-layout_mode = 2
-text = "Select Barrel Scene"
-
 [node name="HSeparator2" type="HSeparator" parent="VBoxContainer"]
 layout_mode = 2
 

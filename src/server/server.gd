@@ -22,6 +22,13 @@ func _ready():
 	game_world.get_node("Env").add_child(map)
 	
 	print("Game server started and world loaded")
+	
+	# # Wait a frame for the world to fully initialize
+	# await get_tree().process_frame
+	
+	# # Take the map snapshot only on the server
+	# if multiplayer.is_server():
+	# 	await Minimap.server_take_map_snapshot(get_viewport())
 
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
@@ -98,7 +105,7 @@ func spawn_player(id, player_name):
 	var team_data = team_info["team"][player_name]
 
 	var ship = team_data["ship"]
-	var player = load(ship).instantiate()
+	var player: Ship = load(ship).instantiate()
 	#print(player_name)
 	player.name = str(id)
 	player._enable_guns()
@@ -106,23 +113,22 @@ func spawn_player(id, player_name):
 	if !team.has(team_data["team"]):
 		team[team_data["team"]] = {}
 	team[team_data["team"]][id] = player
-
+	
 	
 	var team_id = int(team_data["team"])
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = team_id
 	team_.is_bot = false
-	player.add_child(team_)
+	player.get_node("Modules").add_child(team_)
+	player.team = team_
+	
+	
 		
 	var controller = preload("res://scenes/player_control.tscn").instantiate()
 	# controller.name = str(id)
-	player.add_child(controller)
-
-	# player.get_node("PlayerController").setName(str(id))
-
-	# Set player name
-	if player.has_node("NameLabel"):
-		player.get_node("NameLabel").text = player_name
+	player.get_node("Modules").add_child(controller)
+	player.control = controller
+	controller.ship = player
 	
 	# Add to world - note game_world is a child of this node
 	players[id] = [player, ship]
@@ -138,7 +144,7 @@ func spawn_player(id, player_name):
 		var p: Ship = players[pid][0]
 		var p_ship = players[pid][1]
 		# notify new client of current players
-		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, (p.get_node("TeamEntity") as TeamEntity).team_id, p_ship)
+		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.team.team_id, p_ship)
 		#notify current players of new player
 		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
 	
@@ -146,25 +152,28 @@ func spawn_player(id, player_name):
 
 @rpc("call_remote", "reliable")
 func spawn_players_client(id, player_name, pos, team_id, ship):
+
+	if !Minimap.is_initialized:
+		Minimap.server_take_map_snapshot(get_viewport())
 	if players.has(id):
 		return
 
-	var player = load(ship).instantiate()
+	var player: Ship = load(ship).instantiate()
 	player.name = str(id)
 	player._enable_guns()
 	
 	if id == multiplayer.get_unique_id():
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
-		player.add_child(controller)
+		player.get_node("Modules").add_child(controller)
+		player.control = controller
+		controller.ship = player
+		
 	
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = int(team_id)
 	team_.is_bot = false
-	player.add_child(team_)
-	
-	# Set player name
-	if player.has_node("NameLabel"):
-		player.get_node("NameLabel").text = player_name
+	player.get_node("Modules").add_child(team_)
+	player.team = team_
 	
 	# Add to world - note game_world is a child of this node
 	players[id] = [player, ship]
@@ -186,18 +195,41 @@ func _physics_process(delta: float) -> void:
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
-	for p_id in players:
-		var p: Ship = players[p_id][0]
+	
+	for p in players.values():
+		(p[0] as Ship).visible_to_enemy = false
+	
+	for p_id in players.size() - 1:
+		var p: Ship = players[players.keys()[p_id]][0]
 		ray_query.from = p.global_position
 		var d = p.sync_ship_data()
-		for p_id2 in players:
-			if p_id == p_id2:
-				p.sync.rpc_id(p_id2, d)
-				continue
-			var p2: Ship = players[p_id2][0]
-			ray_query.to = p2.global_position
-			var collision: Dictionary = space_state.intersect_ray(ray_query)
-			if !collision.is_empty() and collision.collider is Ship && collision.collider != p:
-				p.sync.rpc_id(p_id2, d)
+		for p_id2 in range(p_id + 1,players.size()):
+			var p2: Ship = players[players.keys()[p_id2]][0]
+			if p.team.team_id != p2.team.team_id: # other team
+				ray_query.to = p2.global_position
+				var collision: Dictionary = space_state.intersect_ray(ray_query)
+				if !collision.is_empty() and collision.collider is Ship: # can see each other (add concealment)
+					p.visible_to_enemy = true
+					p2.visible_to_enemy = true
+		
+	for pid in players: # for every player, synchronize self with others
+		var p: Ship = players[pid][0]
+		var d = p.sync_ship_data()
+		for pid2 in players: # every other player
+			var p2: Ship = players[pid2][0]
+			if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
+				p.sync.rpc_id(pid2, d) # sync self to other player
 			else:
-				p._hide.rpc_id(p_id2)
+				p._hide.rpc_id(pid2) # hide from other player
+				
+		
+			#if p_id == p_id2:
+				#p.sync.rpc_id(p_id2, d)
+				#continue
+			#var p2: Ship = players[p_id2][0]
+			#ray_query.to = p2.global_position
+			#var collision: Dictionary = space_state.intersect_ray(ray_query)
+			#if !collision.is_empty() and collision.collider is Ship && collision.collider != p:
+				#p.sync.rpc_id(p_id2, d)
+			#else:
+				#p._hide.rpc_id(p_id2)

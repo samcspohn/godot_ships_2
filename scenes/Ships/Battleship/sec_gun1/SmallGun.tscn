@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3 uid="uid://de7wvvgfltyco"]
 
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://scenes/Guns/Gun.gd" id="1_sh8f8"]
-[ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://scenes/Guns/sec_gun1/sec_gun1.tres" id="2_dat54"]
+[ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://scenes/Ships/Battleship/sec_gun1/sec_gun1.tres" id="2_dat54"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]
 size = Vector3(10, 4, 19)

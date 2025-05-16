@@ -7,4 +7,4 @@ script = ExtResource("1_ppbhq")
 speed = 900.0
 drag = 0.05
 damage = 3000.0
-size = 1.5
+size = 3.0

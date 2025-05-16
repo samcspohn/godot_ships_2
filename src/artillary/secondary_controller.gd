@@ -22,14 +22,7 @@ func _physics_process(delta: float) -> void:
 	if !multiplayer.is_server():
 		return
 
-	# if target == null:
-	# 	var spawn_players = get_tree().root.get_node_or_null("/root/Server/GameWorld/Players")
-	# 	if spawn_players == null:
-	# 		return
-	# 	for child in spawn_players.get_children():
-	# 		if child.name != parent_name:
-	# 			target = child
-	if target == null:
+	if target == null or guns.size() == 0:
 		return
 	#var target_vel = (target.global_position - target.previous_position) / delta
 	var target_vel = target.linear_velocity / 2.0

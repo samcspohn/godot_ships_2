@@ -128,16 +128,4 @@ grow_vertical = 0
 [node name="HBoxContainer" type="HBoxContainer" parent="ScrollContainer"]
 layout_mode = 2
 
-[node name="Battleship" type="Button" parent="ScrollContainer/HBoxContainer"]
-layout_mode = 2
-text = "Battleship"
-
-[node name="Cruiser" type="Button" parent="ScrollContainer/HBoxContainer"]
-layout_mode = 2
-text = "Cruiser"
-
-[node name="Destroyer" type="Button" parent="ScrollContainer/HBoxContainer"]
-layout_mode = 2
-text = "Destroyer"
-
 [node name="Dock" type="Node3D" parent="."]

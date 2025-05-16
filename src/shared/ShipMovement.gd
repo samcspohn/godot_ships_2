@@ -19,10 +19,10 @@ var target_rudder_value: float = 0.0
 
 # Movement data
 var thrust_vector: Vector3 = Vector3(0,0,0)
-var ship_body: RigidBody3D
+@onready var ship_body: RigidBody3D = $"../.."
 
 func _ready() -> void:
-	ship_body = get_parent() as RigidBody3D
+	#ship_body = get_parent() as RigidBody3D
 	
 	# Set up RigidBody properties
 	ship_body.linear_damp = linear_damping

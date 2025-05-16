@@ -7,7 +7,7 @@ var aim_point: Vector3
 
 func _ready() -> void:
 	# Find all guns in the ship
-	var parent_model = get_parent().get_child(1)
+	var parent_model = get_parent().get_parent().get_child(1)
 	var gun_id = 0
 	for ch in parent_model.get_children():
 		if ch is Gun:

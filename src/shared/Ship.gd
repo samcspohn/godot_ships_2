@@ -5,20 +5,33 @@ var initialized: bool = false
 # Child components
 var movement_controller: ShipMovement
 var artillery_controller: ShipArtillery
-var health_controller
+var health_controller: HitPointsManager
+var control
+var team: TeamEntity
+var visible_to_enemy: bool = false
 
 func _enable_guns():
-	for g: Gun in get_node("CSGBox3D").get_children():
+	for g: Gun in get_node("Hull").get_children():
 		g.disabled = false
 	for g: Gun in get_node("Secondaries").get_children():
 		g.disabled = false
+		
+func _disable_guns():
+	for g: Gun in get_node("Hull").get_children():
+		g.disabled = true
+	for g: Gun in get_node("Secondaries").get_children():
+		g.disabled = true
 
 func _ready() -> void:
 	
 	# Get references to child components
-	movement_controller = $ShipMovement
-	artillery_controller = $ArtilleryController
-	health_controller = $HitPointsManager
+	movement_controller = $Modules/ShipMovement
+	artillery_controller = $Modules/ArtilleryController
+	health_controller = $Modules/HPManager
+	#team = $Modules/TeamEntity
+	#control = $Modules/PlayerController
+	#if control == null:
+		#control = $Modules/AIController
 	
 	initialized = true
 	if !multiplayer.is_server():

@@ -1,9 +1,10 @@
-extends Node3D
+extends Node
 class_name HitPointsManager
 
 @export var max_hp: float
 var current_hp: float
 var sunk: bool = false
+@onready var ship: Ship = $"../.."
 
 func _ready() -> void:
 	current_hp = max_hp
@@ -22,9 +23,8 @@ func sink():
 		var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
 		expl.radius = 300
 		get_tree().root.add_child(expl)
-		expl.position = self.global_position
+		expl.position = ship.global_position
 	#get_parent().queue_free()
-	var ship: Ship = get_parent()
 	ship.artillery_controller.set_physics_process(false)
 	ship.movement_controller.set_physics_process(false)
 	ship.get_node("Secondaries").set_physics_process(false)
@@ -32,6 +32,7 @@ func sink():
 	if pc != null:
 		pc.set_physics_process(false)
 		pc.set_process_input(false)
+	ship._disable_guns()
 	#ship.set_physics_process(false)
 	if multiplayer.is_server():
 		sink.rpc()

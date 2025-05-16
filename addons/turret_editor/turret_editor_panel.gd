@@ -9,13 +9,9 @@ var last_min_angle: float = 0.0
 var last_max_angle: float = 0.0
 
 # UI Elements
-@onready var barrel_count_spinner = $VBoxContainer/BarrelSettings/BarrelCountContainer/BarrelCountSpinner
-@onready var barrel_spacing_slider = $VBoxContainer/BarrelSettings/BarrelSpacingContainer/BarrelSpacingSlider
 @onready var rotation_limits_enabled = $VBoxContainer/RotationLimits/EnabledContainer/EnabledCheckBox
 @onready var min_angle_spinner = $VBoxContainer/RotationLimits/MinAngleContainer/MinAngleSpinBox
 @onready var max_angle_spinner = $VBoxContainer/RotationLimits/MaxAngleContainer/MaxAngleSpinBox
-@onready var barrel_scene_selector = $VBoxContainer/BarrelSettings/BarrelSceneSelector
-@onready var barrel_scene_button = $VBoxContainer/BarrelSettings/BarrelSceneButton
 @onready var apply_button = $VBoxContainer/ApplyButton
 @onready var debug_info = $VBoxContainer/DebugContainer/DebugInfo
 
@@ -30,13 +26,9 @@ func _ready():
 	max_angle_spinner.max_value = 360
 	
 	# Initialize UI
-	barrel_count_spinner.value_changed.connect(_on_barrel_count_changed)
-	barrel_spacing_slider.value_changed.connect(_on_barrel_spacing_changed)
 	rotation_limits_enabled.toggled.connect(_on_rotation_limits_toggled)
 	min_angle_spinner.value_changed.connect(_on_min_angle_changed)
 	max_angle_spinner.value_changed.connect(_on_max_angle_changed)
-	barrel_scene_button.pressed.connect(_on_barrel_scene_button_pressed)
-	barrel_scene_selector.file_selected.connect(_on_barrel_scene_selected)
 	apply_button.pressed.connect(_on_apply_pressed)
 
 func _process(delta):
@@ -88,8 +80,6 @@ func update_editor():
 		return
 	
 	# Update UI based on turret properties
-	barrel_count_spinner.value = turret.barrel_count
-	barrel_spacing_slider.value = turret.barrel_spacing
 	rotation_limits_enabled.button_pressed = turret.rotation_limits_enabled
 	
 	# Update angles and store their values (convert to 0-360 range)
@@ -106,10 +96,6 @@ func update_editor():
 	min_angle_spinner.editable = rotation_limits_enabled.button_pressed
 	max_angle_spinner.editable = rotation_limits_enabled.button_pressed
 	
-	# Update barrel scene path if available
-	if turret.barrel_scene:
-		var scene_path = turret.barrel_scene.resource_path
-		barrel_scene_selector.current_path = scene_path
 
 func update_debug_info(text: String):
 	if debug_info:
@@ -188,9 +174,6 @@ func _on_max_angle_changed(value):
 	
 	# Update last known value
 	last_max_angle = value
-
-func _on_barrel_scene_button_pressed():
-	barrel_scene_selector.popup_centered()
 
 func _on_barrel_scene_selected(path):
 	if not is_instance_valid(turret):
