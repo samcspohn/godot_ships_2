@@ -47,6 +47,10 @@ var ship_ui_elements = {} # Dictionary to store UI elements for each ship
 
 var minimap: Minimap # Reference to the minimap node
 
+# Weapon selection UI
+var weapon_buttons: Array[Button] = []
+var weapon_names: Array[String] = ["Shell 1", "Shell 2", "Torpedo"]
+
 func _ready():
 
 	
@@ -177,6 +181,19 @@ func _setup_ui():
 
 	await get_tree().process_frame
 	minimap.take_map_snapshot(get_viewport())
+
+	# Add weapon selection buttons
+	var button_panel = HBoxContainer.new()
+	button_panel.position = Vector2(20, get_viewport().get_visible_rect().size.y - 60)
+	ui_canvas.add_child(button_panel)
+	for i in range(weapon_names.size()):
+		var btn = Button.new()
+		btn.text = weapon_names[i]
+		btn.toggle_mode = true
+		btn.button_pressed = i == 0  # Default to Shell 1
+		btn.connect("pressed", Callable(self, "_on_weapon_button_pressed").bind(i))
+		weapon_buttons.append(btn)
+		button_panel.add_child(btn)
 
 
 func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad: float) -> Vector3:
@@ -607,3 +624,13 @@ func is_position_visible_on_screen(world_position):
 	# Check if position is on screen
 	var viewport_rect = get_viewport().get_visible_rect()
 	return viewport_rect.has_point(screen_position)
+	
+func _on_weapon_button_pressed(idx):
+	for i in range(weapon_buttons.size()):
+		weapon_buttons[i].button_pressed = (i == idx)
+	if camera_controller:
+		camera_controller._ship.get_node("Modules").get_node("PlayerControl").select_weapon(idx)
+
+func set_weapon_button_pressed(idx: int):
+	for i in range(weapon_buttons.size()):
+		weapon_buttons[i].button_pressed = (i == idx)

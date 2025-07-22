@@ -22,7 +22,10 @@ func _physics_process(delta: float) -> void:
 	if !multiplayer.is_server():
 		return
 
-	if target == null or guns.size() == 0:
+	if target == null or guns.size() == 0 or !target.visible_to_enemy:
+		return
+	if target.health_controller.current_hp <= 0:
+		target = null
 		return
 	#var target_vel = (target.global_position - target.previous_position) / delta
 	var target_vel = target.linear_velocity / 2.0

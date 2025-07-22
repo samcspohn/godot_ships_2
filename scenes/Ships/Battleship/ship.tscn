@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://duionhqlb8aak"]
+[gd_scene load_steps=13 format=3 uid="uid://duionhqlb8aak"]
 
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/shared/Ship.gd" id="1_fumsd"]
 [ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="2_pqvyb"]
@@ -9,11 +9,12 @@
 [ext_resource type="Script" uid="uid://cx1f7vlowd3nn" path="res://src/artillary/secondary_controller.gd" id="7_4auyi"]
 [ext_resource type="PackedScene" uid="uid://de7wvvgfltyco" path="res://scenes/Ships/Battleship/sec_gun1/SmallGun.tscn" id="8_37rmj"]
 [ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://scenes/wake_emitter.tscn" id="9_5xmkw"]
+[ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://scenes/Fire/Fire.tscn" id="10_pqvyb"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_qlg0r"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
-size = Vector3(21, 9.3, 205)
+size = Vector3(36, 9.3, 250)
 
 [node name="Ship" type="RigidBody3D"]
 mass = 50300.0
@@ -122,3 +123,15 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -134.86
 [node name="CSGBox3D2" type="CSGBox3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.27155, 108.356)
 size = Vector3(5, 5, 5)
+
+[node name="Fire" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, -64.384)
+
+[node name="Fire2" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, -13.8199)
+
+[node name="Fire3" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, 29.5706)
+
+[node name="Fire4" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, 91.9842)

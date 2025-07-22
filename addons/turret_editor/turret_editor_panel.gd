@@ -105,30 +105,7 @@ func update_debug_info(text: String):
 func update_gizmos():
 	if plugin:
 		plugin.update_gizmos()
-
-# UI Signal handlers with undo/redo support
-func _on_barrel_count_changed(value):
-	if not is_instance_valid(turret):
-		return
-	
-	undo_redo.create_action("Change Barrel Count")
-	undo_redo.add_do_property(turret, "barrel_count", value)
-	undo_redo.add_undo_property(turret, "barrel_count", turret.barrel_count)
-	undo_redo.add_do_method(self, "update_gizmos")
-	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
-
-func _on_barrel_spacing_changed(value):
-	if not is_instance_valid(turret):
-		return
-	
-	undo_redo.create_action("Change Barrel Spacing")
-	undo_redo.add_do_property(turret, "barrel_spacing", value)
-	undo_redo.add_undo_property(turret, "barrel_spacing", turret.barrel_spacing)
-	undo_redo.add_do_method(self, "update_gizmos")
-	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
-
+		
 func _on_rotation_limits_toggled(enabled):
 	if not is_instance_valid(turret):
 		return
@@ -174,19 +151,6 @@ func _on_max_angle_changed(value):
 	
 	# Update last known value
 	last_max_angle = value
-
-func _on_barrel_scene_selected(path):
-	if not is_instance_valid(turret):
-		return
-	
-	var new_scene = load(path)
-	
-	undo_redo.create_action("Change Barrel Scene")
-	undo_redo.add_do_property(turret, "barrel_scene", new_scene)
-	undo_redo.add_undo_property(turret, "barrel_scene", turret.barrel_scene)
-	undo_redo.add_do_method(self, "update_gizmos")
-	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
 
 func _on_apply_pressed():
 	if is_instance_valid(turret):

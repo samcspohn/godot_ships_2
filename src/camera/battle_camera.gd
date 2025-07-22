@@ -36,7 +36,7 @@ var just_changed_mode: bool = false
 @export var min_fov: float = 2.0 # Very narrow for extreme distance aiming
 @export var max_fov: float = 60.0 # Wide enough for general aiming
 var last_fov: float = 10.0
-@export var fov_zoom_speed: float = 2.0
+@export var fov_zoom_speed: float = 0.07
 var current_fov: float = default_fov
 
 # Mouse settings
@@ -83,7 +83,9 @@ func _ready():
 	#get_tree().root.add_child(aim)
 	aim = third_person_view
 	ProjectileManager1.camera = self
+	TorpedoManager.camera = self
 	processed.connect(ProjectileManager1.__process)
+	processed.connect(TorpedoManager.__process)
 	
 	# Make sure we have necessary references
 	if not _ship:
@@ -179,7 +181,7 @@ func _zoom_camera(zoom_amount):
 			set_camera_mode(CameraMode.SNIPER)
 	elif current_mode == CameraMode.SNIPER:
 		# In sniper mode, adjust FOV
-		sniper_view.current_fov = clamp(sniper_view.current_fov + zoom_amount * fov_zoom_speed / 10.0, min_fov, max_fov)
+		sniper_view.current_fov = clamp(sniper_view.current_fov + zoom_amount * fov_zoom_speed, min_fov, max_fov)
 		fov = current_fov
 		
 		# Switch back to third-person if zoomed out enough

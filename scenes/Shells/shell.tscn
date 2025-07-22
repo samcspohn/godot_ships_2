@@ -1,4 +1,14 @@
-class_name Shell
+[gd_scene load_steps=5 format=3 uid="uid://bmplhg34eou7b"]
+
+[ext_resource type="Material" uid="uid://05wlpmfaoxa7" path="res://bright.tres" id="1_8qhqx"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://scenes/Ships/Battleship/BB_gun1/BB_shell.tres" id="3_818jo"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0ilfn"]
+emission_enabled = true
+emission = Color(1, 0.923625, 0.408631, 1)
+
+[sub_resource type="GDScript" id="GDScript_xpcvq"]
+script/source = "class_name Shell
 extends CSGSphere3D
 
 
@@ -31,7 +41,7 @@ func _ready():
 	if !multiplayer.is_server():
 		set_physics_process(false)
 		if particles == null:
-			particles = preload("res://Shells/trail.tscn").instantiate()
+			particles = preload(\"res://Shells/trail.tscn\").instantiate()
 			get_tree().root.add_child(particles)
 	else:
 		set_process(false)
@@ -52,7 +62,7 @@ func initialize(pos: Vector3, vel: Vector3, t: float, ep: Vector3, t2: float):
 	ray_query.to = global_position
 	
 	#if !multiplayer.is_server():
-		#trail = preload("res://scenes/Shells/trail.tscn").instantiate()
+		#trail = preload(\"res://scenes/Shells/trail.tscn\").instantiate()
 		#trail.set_process(false)
 		#get_tree().root.add_child(trail)
 		#trail.global_position = global_position
@@ -118,12 +128,12 @@ func _check_collisions():
 	var collision: Dictionary = get_world_3d().direct_space_state.intersect_ray(ray_query)
 	
 	if not collision.is_empty():
-		#print("hit", collision)
+		#print(\"hit\", collision)
 		# Position the projectile at the collision point
 		global_position = collision.position
 
 		# Emit hit signal with collision information
-		#emit_signal("hit", collision)
+		#emit_signal(\"hit\", collision)
 		
 		# Destroy the projectile with a delay
 		#_destroy(true)
@@ -132,7 +142,7 @@ func _check_collisions():
 		#ProjectileManager.destroyBulletRpc2(id)
 
 func _destroy():
-	emit_signal("destroyed")
+	emit_signal(\"destroyed\")
 	
 	set_process(false)
 	set_physics_process(false)
@@ -165,10 +175,21 @@ func _destroy():
 		trail.timeout = Time.get_ticks_msec() + 2000
 		trail.set_process(true)
 	
-	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
+	var expl: CSGSphere3D = preload(\"res://scenes/explosion.tscn\").instantiate()
 	var s = self.params.damage / 500
 	expl.scale = Vector3(s, s, s)
 	get_tree().root.add_child(expl)
 	expl.global_position = global_position
 
 	queue_free()
+"
+
+[node name="Shell" type="CSGSphere3D"]
+top_level = true
+material_override = SubResource("StandardMaterial3D_0ilfn")
+radius = 3.0
+radial_segments = 10
+rings = 5
+material = ExtResource("1_8qhqx")
+script = SubResource("GDScript_xpcvq")
+params = ExtResource("3_818jo")

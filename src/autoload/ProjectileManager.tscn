@@ -1,151 +1,74 @@
-[gd_scene load_steps=9 format=3 uid="uid://cj32a1kjmd61g"]
+[gd_scene load_steps=14 format=3 uid="uid://cj32a1kjmd61g"]
 
 [ext_resource type="Script" uid="uid://jcsciny5qrj7" path="res://src/autoload/projectile_manager.gd" id="1_ickow"]
-[ext_resource type="PackedScene" uid="uid://bxcsn6t0mgyuf" path="res://Shells/trail.tscn" id="2_1coyq"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1coyq"]
-shading_mode = 0
-billboard_mode = 3
-billboard_keep_scale = true
-particles_anim_h_frames = 1
-particles_anim_v_frames = 1
-particles_anim_loop = false
+[ext_resource type="PackedScene" uid="uid://bxcsn6t0mgyuf" path="res://scenes/Shells/trail.tscn" id="2_1coyq"]
+[ext_resource type="Material" uid="uid://c8q8usurtptru" path="res://src/autoload/ProjectileManagerMaterial.tres" id="2_wm87v"]
+[ext_resource type="Shader" uid="uid://boy6lwvbcv4qj" path="res://src/autoload/ProjectileManagerTrailShader.gdshader" id="4_d12p8"]
+[ext_resource type="Shader" uid="uid://bobk81d11sx4f" path="res://src/autoload/ProjectileManagerProcessMaterial.gdshader" id="4_l6klx"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://src/autoload/particle.png" id="4_xoeb4"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_wm87v"]
-material = SubResource("StandardMaterial3D_1coyq")
+material = ExtResource("2_wm87v")
 
 [sub_resource type="MultiMesh" id="MultiMesh_xoeb4"]
 transform_format = 1
+use_colors = true
 mesh = SubResource("QuadMesh_wm87v")
-physics_interpolation_quality = 1
 
-[sub_resource type="Shader" id="Shader_in6d1"]
-code = "// NOTE: Shader automatically converted from Godot Engine 4.4.stable's StandardMaterial3D.
-shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx, unshaded;
-uniform vec4 albedo : source_color;
-uniform sampler2D texture_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform ivec2 albedo_texture_size;
-uniform float point_size : hint_range(0.1, 128.0, 0.1);
-uniform float roughness : hint_range(0.0, 1.0);
-uniform sampler2D texture_metallic : hint_default_white, filter_linear_mipmap, repeat_enable;
-uniform vec4 metallic_texture_channel;
-uniform sampler2D texture_roughness : hint_roughness_r, filter_linear_mipmap, repeat_enable;
-uniform float specular : hint_range(0.0, 1.0, 0.01);
-uniform float metallic : hint_range(0.0, 1.0, 0.01);
-uniform int particles_anim_h_frames : hint_range(1, 128);
-uniform int particles_anim_v_frames : hint_range(1, 128);
-uniform bool particles_anim_loop;
-uniform vec3 uv1_scale;
-uniform vec3 uv1_offset;
-uniform vec3 uv2_scale;
-uniform vec3 uv2_offset;
-uniform float particle_spacing = 10.0; // Base spacing between particles
+[sub_resource type="Curve" id="Curve_l6klx"]
+_data = [Vector2(0, 0.989396), 0.0, -0.114004, 0, 0, Vector2(1, 0.32137), -2.33043, 0.0, 0, 0]
+point_count = 2
 
-void vertex() {
-    UV = UV * uv1_scale.xy + uv1_offset.xy;
-    
-    // Extract the current particle scale (assuming uniform scaling)
-    float particle_scale = length(MODEL_MATRIX[1].xyz) / 5.0; // Normalize by original height
-    
-    // Get the vertex position in model space
-    vec3 vertex_local = VERTEX;
-    
-    // Adjust the y-coordinate based on scale to prevent overlap
-    // Map UV.y from [0,1] to [-0.5,0.5] to work with the center of the particle
-    float local_y_offset = (UV.y - 0.5);
-    
-    // Create a modified local vertex position with corrected y-scaling
-    // Keep x and z scaling as is, but adjust y to maintain proper spacing
-    vertex_local.y = vertex_local.y * (particle_spacing / 5.0);
-    
-    // Get the particle's model matrix which has y aligned to velocity
-    mat4 particle_matrix = MODEL_MATRIX;
-    
-    // Extract the y-axis (already aligned to velocity)
-    vec3 y_axis = normalize(particle_matrix[1].xyz);
-    
-    // Get camera direction
-    vec3 to_camera = normalize(INV_VIEW_MATRIX[3].xyz - particle_matrix[3].xyz);
-    
-    // Project camera direction onto plane perpendicular to y_axis
-    vec3 to_camera_projected = normalize(to_camera - dot(to_camera, y_axis) * y_axis);
-    
-    // Calculate the x-axis perpendicular to y_axis and camera direction
-    vec3 x_axis = normalize(cross(y_axis, to_camera_projected));
-    
-    // Calculate z-axis to complete orthonormal basis
-    vec3 z_axis = normalize(cross(x_axis, y_axis));
-    
-    // Create orientation matrix that faces camera while keeping y aligned to velocity
-    mat4 orient_matrix = mat4(
-        vec4(x_axis, 0.0),
-        vec4(y_axis, 0.0),
-        vec4(z_axis, 0.0),
-        vec4(0.0, 0.0, 0.0, 1.0)
-    );
-    
-    // Apply scaling - keep x and z scaling, but use our adjusted y scaling
-    mat4 scale_matrix = mat4(
-        vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
-        vec4(0.0, particle_spacing, 0.0, 0.0), // Use constant spacing for height
-        vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
-        vec4(0.0, 0.0, 0.0, 1.0)
-    );
-    
-    // Create world matrix that preserves position but uses our custom orientation and scaling
-    mat4 mat_world = mat4(
-        vec4(orient_matrix[0].xyz, 0.0),
-        vec4(orient_matrix[1].xyz, 0.0),
-        vec4(orient_matrix[2].xyz, 0.0),
-        MODEL_MATRIX[3]
-    ) * scale_matrix;
-    
-    // Apply particle rotation around its y-axis
-    mat_world = mat_world * mat4(
-        vec4(cos(INSTANCE_CUSTOM.x), 0.0, -sin(INSTANCE_CUSTOM.x), 0.0),
-        vec4(0.0, 1.0, 0.0, 0.0),
-        vec4(sin(INSTANCE_CUSTOM.x), 0.0, cos(INSTANCE_CUSTOM.x), 0.0),
-        vec4(0.0, 0.0, 0.0, 1.0)
-    );
-    
-    // Set the modelview matrix
-    MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
-    MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
-    
-    // Animation (unchanged)
-    float h_frames = float(particles_anim_h_frames);
-    float v_frames = float(particles_anim_v_frames);
-    float particle_total_frames = float(particles_anim_h_frames * particles_anim_v_frames);
-    float particle_frame = floor(INSTANCE_CUSTOM.z * float(particle_total_frames));
-    if (!particles_anim_loop) {
-        particle_frame = clamp(particle_frame, 0.0, particle_total_frames - 1.0);
-    } else {
-        particle_frame = mod(particle_frame, particle_total_frames);
-    }
-    UV /= vec2(h_frames, v_frames);
-    UV += vec2(mod(particle_frame, h_frames) / h_frames, floor((particle_frame + 0.5) / h_frames) / v_frames);
-}
+[sub_resource type="CurveTexture" id="CurveTexture_mg0yf"]
+curve = SubResource("Curve_l6klx")
 
-void fragment() {
-    vec2 base_uv = UV;
-    vec4 albedo_tex = texture(texture_albedo, base_uv);
-    // Vertex Color Use as Albedo: Enabled
-    albedo_tex *= COLOR;
-    ALBEDO = albedo.rgb * albedo_tex.rgb;
-    float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);
-    METALLIC = metallic_tex * metallic;
-    SPECULAR = specular;
-    vec4 roughness_texture_channel = vec4(1.0, 0.0, 0.0, 0.0);
-    float roughness_tex = dot(texture(texture_roughness, base_uv), roughness_texture_channel);
-    ROUGHNESS = roughness_tex * roughness;
-    ALPHA *= albedo.a * albedo_tex.a;
-}"
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_l6klx"]
+shader = ExtResource("4_l6klx")
+shader_parameter/direction = Vector3(1, 0, 0)
+shader_parameter/spread = 45.0
+shader_parameter/flatness = 0.0
+shader_parameter/inherit_emitter_velocity_ratio = 0.0
+shader_parameter/initial_linear_velocity_min = 0.0
+shader_parameter/initial_linear_velocity_max = 0.0
+shader_parameter/directional_velocity_min = 1.0
+shader_parameter/directional_velocity_max = 1.0
+shader_parameter/angular_velocity_min = 0.0
+shader_parameter/angular_velocity_max = 0.0
+shader_parameter/orbit_velocity_min = 0.0
+shader_parameter/orbit_velocity_max = 0.0
+shader_parameter/radial_velocity_min = 0.0
+shader_parameter/radial_velocity_max = 0.0
+shader_parameter/linear_accel_min = 0.0
+shader_parameter/linear_accel_max = 0.0
+shader_parameter/radial_accel_min = 0.0
+shader_parameter/radial_accel_max = 0.0
+shader_parameter/tangent_accel_min = 0.0
+shader_parameter/tangent_accel_max = 0.0
+shader_parameter/damping_min = 0.0
+shader_parameter/damping_max = 0.0
+shader_parameter/initial_angle_min = 0.0
+shader_parameter/initial_angle_max = 0.0
+shader_parameter/scale_min = 1.0
+shader_parameter/scale_max = 1.0
+shader_parameter/hue_variation_min = 0.0
+shader_parameter/hue_variation_max = 0.0
+shader_parameter/anim_speed_min = 0.0
+shader_parameter/anim_speed_max = 0.0
+shader_parameter/anim_offset_min = 0.0
+shader_parameter/anim_offset_max = 0.0
+shader_parameter/lifetime_randomness = 0.0
+shader_parameter/emission_shape_offset = Vector3(0, 0, 0)
+shader_parameter/emission_shape_scale = Vector3(1, 1, 1)
+shader_parameter/velocity_pivot = Vector3(0, 0, 0)
+shader_parameter/color_value = Color(1, 1, 1, 1)
+shader_parameter/gravity = Vector3(0, -1e-06, 0)
+shader_parameter/scale_curve = SubResource("CurveTexture_mg0yf")
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_sa4bl"]
 render_priority = 0
-shader = SubResource("Shader_in6d1")
+shader = ExtResource("4_d12p8")
 shader_parameter/albedo = Color(1, 1, 1, 1)
+shader_parameter/texture_albedo = ExtResource("4_xoeb4")
 shader_parameter/albedo_texture_size = Vector2i(0, 0)
 shader_parameter/point_size = 1.0
 shader_parameter/roughness = 1.0
@@ -163,9 +86,9 @@ shader_parameter/particle_spacing = 5.0
 
 [sub_resource type="QuadMesh" id="QuadMesh_1coyq"]
 material = SubResource("ShaderMaterial_sa4bl")
-size = Vector2(1, 4)
+size = Vector2(1, 7)
 
-[node name="ProjectileManager" type="Node3D"]
+[node name="ProjectileManager" type="Node"]
 script = ExtResource("1_ickow")
 
 [node name="MultiMeshInstance3D" type="MultiMeshInstance3D" parent="."]
@@ -175,4 +98,5 @@ multimesh = SubResource("MultiMesh_xoeb4")
 
 [node name="GPUParticles3D" parent="." instance=ExtResource("2_1coyq")]
 lifetime = 2.0
+process_material = SubResource("ShaderMaterial_l6klx")
 draw_pass_1 = SubResource("QuadMesh_1coyq")

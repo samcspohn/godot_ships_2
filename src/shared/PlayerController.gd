@@ -12,6 +12,7 @@ var cam: BattleCamera
 var ray: RayCast3D
 var guns: Array[Gun] = []
 var gun_reloads: Array[ProgressBar] = []
+var selected_weapon: int = 0  # 0 = shell1, 1 = shell2, 2 = torpedo
 
 # Mouse control variables
 var mouse_captured: bool = true    # True when mouse is controlling camera
@@ -44,7 +45,6 @@ func _ready() -> void:
 	#ship_artillery = ship.get_node("ArtilleryController")
 	#hp_manager = ship.get_node("HPManager")
 	secondary_controller = ship.get_node_or_null("Secondaries")
-	
 	# Initialize secondary controller if it exists
 	
 
@@ -111,6 +111,8 @@ func _input(event: InputEvent) -> void:
 		if mouse_captured:
 			_cameraInput = event.relative
 	elif event is InputEventMouseButton:
+
+
 		if not mouse_captured:  # Only handle mouse clicks when cursor is released
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
@@ -135,17 +137,31 @@ func _input(event: InputEvent) -> void:
 					var current_time = Time.get_ticks_msec() / 1000.0
 					if current_time - last_click_time < double_click_timer:
 						click_count = 2
-						ship.artillery_controller.fire_all_guns.rpc_id(1)
+						if selected_weapon == 0 or selected_weapon == 1:
+							# Use your existing firing logic for guns
+							ship.artillery_controller.fire_all_guns.rpc_id(1)
+						elif selected_weapon == 2:
+							# Use your existing firing logic for torpedos
+							if ship.torpedo_launcher:
+								ship.torpedo_launcher.fire.rpc_id(1)
+						# ship.artillery_controller.fire_all_guns.rpc_id(1)
 					else:
 						click_count = 1
-						ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+						if selected_weapon == 0 or selected_weapon == 1:
+							# Use your existing firing logic for guns
+							ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+						elif selected_weapon == 2:
+							# Use your existing firing logic for torpedos
+							if ship.torpedo_launcher:
+								ship.torpedo_launcher.fire.rpc_id(1)
+						# ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
 						# handle_single_click()
 					
 					last_click_time = current_time
 				else:
 					# Mouse button released
 					is_holding = false
-		# Toggle camera mode manually with Tab key
+
 	elif event is InputEventKey:
 		 # Control key to toggle mouse capture
 		if event.keycode == KEY_CTRL:
@@ -158,6 +174,15 @@ func _input(event: InputEvent) -> void:
 				# When releasing control, capture the mouse again
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 				mouse_captured = true
+		if event.keycode == KEY_T:
+			if ship.torpedo_launcher:
+				ship.torpedo_launcher.fire.rpc_id(1)
+		if event.keycode == KEY_1:
+			select_weapon(0)
+		elif event.keycode == KEY_2:
+			select_weapon(1)
+		elif event.keycode == KEY_3:
+			select_weapon(2)
 
 # Center the mouse cursor on the screen
 func _center_mouse():
@@ -190,7 +215,7 @@ func handle_target_selection(from: Vector3, to: Vector3) -> void:
 	if result:
 		var collider = result.collider
 		var target_ship = get_ship_from_collider(collider)
-		if target_ship and target_ship != ship:  # Don't target self
+		if target_ship and target_ship != ship && target_ship.health_controller.current_hp > 0.0:  # Don't target self
 			select_target_ship(target_ship)
 
 func get_ship_from_collider(collider: Object) -> Ship:
@@ -264,13 +289,18 @@ func _process(dt: float) -> void:
 	
 	# Handle sequential firing when holding
 	if is_holding:
-		sequential_fire_timer += dt
-		var reload = guns[0].params.reload_time
-		var min_reload = reload / guns.size() - 0.01
-		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
-		while sequential_fire_timer >= adjusted_sequential_fire_delay:
-			sequential_fire_timer -= adjusted_sequential_fire_delay
-			ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+		if selected_weapon == 0 or selected_weapon == 1:
+			sequential_fire_timer += dt
+			var reload = guns[0].params.reload_time
+			var min_reload = reload / guns.size() - 0.01
+			var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+			while sequential_fire_timer >= adjusted_sequential_fire_delay:
+				sequential_fire_timer -= adjusted_sequential_fire_delay
+				ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+		elif selected_weapon == 2:
+			# Use your existing firing logic for torpedos
+			if ship.torpedo_launcher:
+				ship.torpedo_launcher.fire.rpc_id(1)
 	
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
@@ -334,3 +364,30 @@ func send_aim_input(aim_point: Vector3) -> void:
 	if multiplayer.is_server():
 		# Forward aim input to ship artillery controller
 		ship.artillery_controller.set_aim_input(aim_point)
+
+func select_weapon(idx: int) -> void:
+	selected_weapon = idx
+	if cam:
+		cam.ui.set_weapon_button_pressed(idx)
+	if idx == 0 or idx == 1:
+		ship.artillery_controller.select_shell.rpc_id(1, idx)
+	print("Selected weapon: %d" % idx)
+
+# func fire_selected_weapon() -> void:
+# 	if selected_weapon == 0:
+# 		# Fire shell1 from all guns
+# 		if guns.size() > 0:
+# 			for i in range(guns.size()):
+# 				if guns[i].reload >= 1.0 and guns[i].can_fire:
+# 					ship.artillery_controller.fire_gun.rpc_id(1, i)
+# 	elif selected_weapon == 1:
+# 		# Fire shell2 from all guns (assume shell2 logic is handled in Gun)
+# 		if guns.size() > 0:
+# 			for i in range(guns.size()):
+# 				if guns[i].reload >= 1.0 and guns[i].can_fire:
+# 					guns[i].params.shell = guns[i].params.shell2
+# 					ship.artillery_controller.fire_gun.rpc_id(1, i)
+# 	elif selected_weapon == 2:
+# 		# Fire torpedo if available
+# 		if ship.torpedo_launcher and ship.torpedo_launcher.reload >= 1.0 and ship.torpedo_launcher.can_fire:
+# 			ship.torpedo_launcher.fire.rpc_id(1)

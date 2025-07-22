@@ -29,7 +29,8 @@ func _physics_process(delta: float) -> void:
 @rpc("any_peer", "call_remote")
 func fire_gun(gun_id: int) -> void:
 	if gun_id < guns.size():
-		guns[gun_id].fire()
+		if guns[gun_id].reload >= 1.0 and guns[gun_id].can_fire:
+			guns[gun_id].fire()
 @rpc("any_peer", "call_remote")
 func fire_all_guns() -> void:
 	for gun in guns:
@@ -41,3 +42,24 @@ func fire_next_ready_gun() -> void:
 		if g.reload >= 1 and g.can_fire:
 			g.fire()
 			return
+
+@rpc("any_peer", "call_remote")
+func select_shell(shell_index: int) -> void:
+	if !multiplayer.is_server():
+		return
+	for gun in guns:
+		if shell_index == 1:
+			gun.my_params.shell = gun.my_params.shell2
+		else:
+			gun.my_params.shell = gun.my_params.shell1
+	
+	select_shell_client.rpc(shell_index)
+
+# todo: only broadcast if shooting or detected
+@rpc("authority", "call_remote")
+func select_shell_client(shell_index: int) -> void:
+	for gun in guns:
+		if shell_index == 1:
+			gun.my_params.shell = gun.my_params.shell2
+		else:
+			gun.my_params.shell = gun.my_params.shell1

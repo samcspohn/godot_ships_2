@@ -22,7 +22,7 @@ var mouse_sensitivity: float = 0.1
 var target_lock_enabled: bool = false
 var locked_target
 var sniper_height_mod: float = 200.0
-var sniper_angle_x: float = deg_to_rad(-2.0)
+var sniper_angle_x: float = deg_to_rad(-1.0)
 
 func handle_mouse_motion(event):
 	# Only handle mouse motion if captured

@@ -22,8 +22,12 @@ uniform vec3 uv2_offset;
 void vertex() {
     UV = UV * uv1_scale.xy + uv1_offset.xy;
 
-    // Extract the scale factor from INSTANCE_CUSTOM
-    // Assuming INSTANCE_CUSTOM.w contains the scale curve value
+    // Extract the width scale from COLOR.r (red channel from color parameter)
+    float width_scale = COLOR.r;
+    // Default to 1.0 if not set
+    if (width_scale <= 0.0) width_scale = 1.0;
+
+    // Extract the scale factor from INSTANCE_CUSTOM.w for height adjustment
     float scale_factor = INSTANCE_CUSTOM.w;
 
     // Get the particle's model matrix with y aligned to velocity
@@ -44,8 +48,8 @@ void vertex() {
     // Calculate the z-axis to complete the orthonormal basis
     vec3 z_axis = normalize(cross(x_axis, y_axis));
 
-    // Calculate the x and z scales (for width)
-    float x_scale = length(MODEL_MATRIX[0].xyz);
+    // Calculate the x and z scales (for width) - apply width_scale to x and z
+    float x_scale = length(MODEL_MATRIX[0].xyz) * width_scale;
     float z_scale = length(MODEL_MATRIX[2].xyz);
 
     // Calculate original y scale (height)
@@ -69,11 +73,11 @@ void vertex() {
         particle_matrix[3]
     );
 
-    // Apply the particle's own rotation around its y-axis
+// Apply the particle's own rotation around its y-axis
     mat4 mat_world = orient_matrix * mat4(
-        vec4(cos(INSTANCE_CUSTOM.x), 0.0, -sin(INSTANCE_CUSTOM.x), 0.0),
+        vec4(cos(INSTANCE_CUSTOM.y), 0.0, -sin(INSTANCE_CUSTOM.y), 0.0),
         vec4(0.0, 1.0, 0.0, 0.0),
-        vec4(sin(INSTANCE_CUSTOM.x), 0.0, cos(INSTANCE_CUSTOM.x), 0.0),
+        vec4(sin(INSTANCE_CUSTOM.y), 0.0, cos(INSTANCE_CUSTOM.y), 0.0),
         vec4(0.0, 0.0, 0.0, 1.0));
 
     MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
@@ -96,9 +100,11 @@ void vertex() {
 void fragment() {
     vec2 base_uv = UV;
     vec4 albedo_tex = texture(texture_albedo, base_uv);
-    // Vertex Color Use as Albedo: Enabled
-    albedo_tex *= COLOR;
+    
+    // Don't use COLOR for visual color since we're using it for data
+    // Instead, use white or any desired color
     ALBEDO = albedo.rgb * albedo_tex.rgb;
+    
     float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);
     METALLIC = metallic_tex * metallic;
     SPECULAR = specular;

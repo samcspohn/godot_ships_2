@@ -1,11 +1,28 @@
-[gd_scene load_steps=4 format=3 uid="uid://h4kwpb1mjno3"]
+[gd_scene load_steps=9 format=3 uid="uid://h4kwpb1mjno3"]
 
 [ext_resource type="PackedScene" uid="uid://bxyqwfp6k866f" path="res://scenes/Ships/ShipBase.tscn" id="1_0dtcp"]
 [ext_resource type="PackedScene" uid="uid://cqjalxbffaahq" path="res://scenes/Ships/Destroyer/DD_gun/gun.tscn" id="2_murmj"]
+[ext_resource type="PackedScene" uid="uid://cjdyt0x8vrtfc" path="res://scenes/Torpedo/TorpedoLauncher.tscn" id="3_murmj"]
+[ext_resource type="Script" uid="uid://cq5883re36gh7" path="res://scenes/Torpedo/torpedo_launcher_params.gd" id="4_g5uyf"]
+[ext_resource type="Script" uid="uid://ckumdqdogqvlk" path="res://src/torpedo/torpedo_params.gd" id="5_cvtan"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_nqcqh"]
 margin = 0.0
 size = Vector3(12, 6, 113)
+
+[sub_resource type="Resource" id="Resource_g5uyf"]
+script = ExtResource("5_cvtan")
+speed = 23.0
+damage = 12000.0
+metadata/_custom_type_script = "uid://ckumdqdogqvlk"
+
+[sub_resource type="Resource" id="Resource_xhq0c"]
+script = ExtResource("4_g5uyf")
+traverse_speed = 60.0
+reload_time = 0.4
+range = 9.0
+torpedo_params = SubResource("Resource_g5uyf")
+metadata/_custom_type_script = "uid://cq5883re36gh7"
 
 [node name="Ship" instance=ExtResource("1_0dtcp")]
 mass = 2500.0
@@ -56,3 +73,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -59.418
 
 [node name="CSGBox3D2" parent="." index="8"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.00816441, 52.1193)
+
+[node name="TorpedoLauncher" parent="." index="9" instance=ExtResource("3_murmj")]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, -0.609951, 4.50332, 1.13709)
+params = SubResource("Resource_xhq0c")

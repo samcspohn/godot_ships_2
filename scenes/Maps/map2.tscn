@@ -19,6 +19,7 @@ material_override = ExtResource("1_klv7y")
 size = Vector3(100000, 1, 100000)
 
 [node name="StaticBody3D" type="StaticBody3D" parent="Water"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 physics_material_override = SubResource("PhysicsMaterial_klv7y")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Water/StaticBody3D"]

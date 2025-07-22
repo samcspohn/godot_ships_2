@@ -109,6 +109,10 @@ func spawn_player(id, player_name):
 	#print(player_name)
 	player.name = str(id)
 	player._enable_guns()
+	var tl = player.get_node_or_null("TorpedoLauncher")
+	if tl:
+		(tl as TorpedoLauncher).disabled = false
+	
 	
 	if !team.has(team_data["team"]):
 		team[team_data["team"]] = {}

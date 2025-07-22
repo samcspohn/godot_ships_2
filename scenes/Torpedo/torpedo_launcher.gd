@@ -1,16 +1,11 @@
-class_name Gun
+class_name TorpedoLauncher
 extends Node3D
 
 # Properties for editor
-@export var barrel_count: int = 1
-@export var barrel_spacing: float = 0.5
 @export var rotation_limits_enabled: bool = true
-@export var min_rotation_angle: float = deg_to_rad(90)
-@export var max_rotation_angle: float = deg_to_rad(180)
-@export_enum("Forward", "Aftward") var turret_orientation: int = 0
+@export var min_rotation_angle: float = deg_to_rad(45)
+@export var max_rotation_angle: float = deg_to_rad(180 + 45)
 
-@onready var barrel: Node3D = $Barrels
-@onready var dispersion_calculator: ArtilleryDispersion = $"../../Modules/DispersionCalculator"
 var _aim_point: Vector3
 var reload: float = 0.0
 var can_fire: bool = false
@@ -21,22 +16,21 @@ var disabled: bool = true
 var max_range: float
 var max_flight: float
 
-@export var params: GunParams
-var my_params: GunParams = GunParams.new()
+@export var params: TorpedoLauncherParams
+var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
 
 func _ready() -> void:
-	params.shell = params.shell2
 	my_params.from_params(params)
-	
-	var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
-	max_range = min(a[0], my_params.range)
-	max_flight = a[2]
+	max_range = my_params.range
+	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
+	#max_range = min(a[0], my_params.range)
+	#max_flight = a[2]
 
-	if max_range < a[0]:
-		max_flight = ProjectilePhysicsWithDrag.calculate_launch_vector(Vector3.ZERO, Vector3(0, 0, max_range), my_params.shell.speed, my_params.shell.drag)[1]
-
-
-	print("max range: ", a)
+	#if max_range < a[0]:
+		#max_flight = ProjectilePhysicsWithDrag.calculate_launch_vector(Vector3.ZERO, Vector3(0, 0, max_range), my_params.shell.speed, my_params.shell.drag)[1]
+		#
+#
+	#print("max range: ", a)
 	
 	# Set up muzzles
 	update_barrels()
@@ -57,16 +51,10 @@ func update_barrels() -> void:
 	# Clear existing muzzles array
 	muzzles.clear()
 	
-	# Check if barrel exists
-	if not is_node_ready() or not has_node("Barrels"):
-		# We might be in the editor, just return
-		return
-	
 	# Set up muzzles from existing barrels
-	for b in barrel.get_children():
-		if b.name.contains("Barrel"):
-			if b.get_child_count() > 0:
-				muzzles.append(b.get_child(0))
+	for t in get_children():
+		if t.name.contains("Tube"):
+				muzzles.append(t)
 
 @rpc("any_peer", "call_remote")
 func _set_reload(r):
@@ -211,32 +199,32 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Ensure rotation is within limits
 	clamp_to_rotation_limits()
 	
-	# Existing aiming logic for elevation
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, my_params.shell.speed, my_params.shell.drag)
-	if sol[0] != null and (aim_point - global_position).length() < max_range:
-		self._aim_point = aim_point
-	else:
-		var g = Vector3(global_position.x, 0, global_position.z)
-		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (max_range - 500)
-		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, self._aim_point, my_params.shell.speed, my_params.shell.drag)
+	## Existing aiming logic for elevation
+	#var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, my_params.shell.speed, my_params.shell.drag)
+	#if sol[0] != null and (aim_point - global_position).length() < max_range:
+		#self._aim_point = aim_point
+	#else:
+		#var g = Vector3(global_position.x, 0, global_position.z)
+		#self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (max_range - 500)
+		#sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, self._aim_point, my_params.shell.speed, my_params.shell.drag)
+	#
+	#var turret_elev_speed_rad: float = deg_to_rad(my_params.elevation_speed)
+	#var max_elev_angle: float = turret_elev_speed_rad * delta
+	#var elevation_delta: float = max_elev_angle
+	#if sol[1] != -1:
+		#var barrel_dir = sol[0]
+		#var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y)
+		#var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
+		#var elevation_angle = elevation.angle_to(curr_elevation)
+		#elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
+	#if sol[0] == null:
+		#elevation_delta = -max_elev_angle
+	#
+	#if is_nan(elevation_delta):
+		#elevation_delta = 0.0
+	#barrel.rotate(Vector3.RIGHT, elevation_delta)
 	
-	var turret_elev_speed_rad: float = deg_to_rad(my_params.elevation_speed)
-	var max_elev_angle: float = turret_elev_speed_rad * delta
-	var elevation_delta: float = max_elev_angle
-	if sol[1] != -1:
-		var barrel_dir = sol[0]
-		var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y)
-		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
-		var elevation_angle = elevation.angle_to(curr_elevation)
-		elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
-	if sol[0] == null:
-		elevation_delta = -max_elev_angle
-	
-	if is_nan(elevation_delta):
-		elevation_delta = 0.0
-	barrel.rotate(Vector3.RIGHT, elevation_delta)
-	
-	if abs(elevation_delta) < 0.01 && abs(desired_local_angle) < 0.01:
+	if abs(desired_local_angle) < 0.01:
 		can_fire = true
 	else:
 		can_fire = false
@@ -248,71 +236,76 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 func normalize_angle(angle: float) -> float:
 	return wrapf(angle, -PI, PI)
 
-func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, params.shell.speed, params.shell.drag)
-	if sol[0] == null or (aim_point - barrel.global_position).length() > max_range:
-		can_fire = false
-		return
-	_aim_point = sol[2]
-	var launch_angle = sol[0]
-	# Calculate turret rotation
-	var turret_rot_speed_rad: float = deg_to_rad(my_params.traverse_speed)
-	var max_turret_angle: float = turret_rot_speed_rad * delta
-	
-	var local_target: Vector3 = to_local(aim_point)
+#func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
+	#var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, params.shell.speed, params.shell.drag)
+	#if sol[0] == null or (aim_point - barrel.global_position).length() > max_range:
+		#can_fire = false
+		#return
+	#_aim_point = sol[2]
+	#var launch_angle = sol[0]
+	## Calculate turret rotation
+	#var turret_rot_speed_rad: float = deg_to_rad(my_params.traverse_speed)
+	#var max_turret_angle: float = turret_rot_speed_rad * delta
+	#
+	#var local_target: Vector3 = to_local(aim_point)
+#
+	## Calculate desired rotation angle in the horizontal plane
+	#var desired_local_angle: float = atan2(local_target.x, local_target.z)
+	#
+	## Apply rotation limits
+	#var adjusted_angle = apply_rotation_limits(rotation.y, desired_local_angle)
+	#
+	## Apply proportional control with a dampening factor
+	#var turret_angle: float = clamp(adjusted_angle, -max_turret_angle, max_turret_angle)
+#
+	## Apply rotation
+	#rotate(Vector3.UP, turret_angle)
+	#
+	## Ensure rotation is within limits
+	#clamp_to_rotation_limits()
+	#
+	#var turret_elev_speed_rad: float = deg_to_rad(my_params.elevation_speed)
+	#var max_elev_angle: float = turret_elev_speed_rad * delta
+	#var elevation_delta: float = max_elev_angle
+#
+	#var elevation = Vector2(Vector2(launch_angle.x, launch_angle.z).length(), launch_angle.y)
+	#var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
+	#var elevation_angle = elevation.angle_to(curr_elevation)
+	#elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
+#
+	#if is_nan(elevation_delta):
+		#elevation_delta = 0.0
+	#barrel.rotate(Vector3.RIGHT, elevation_delta)
+	#
+	#if abs(elevation_delta) < 0.01 && abs(desired_local_angle) < 0.01:
+		#can_fire = true
+	#else:
+		#can_fire = false
+#
+	## # Ensure we stay within allowed elevation range
+	## barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
 
-	# Calculate desired rotation angle in the horizontal plane
-	var desired_local_angle: float = atan2(local_target.x, local_target.z)
-	
-	# Apply rotation limits
-	var adjusted_angle = apply_rotation_limits(rotation.y, desired_local_angle)
-	
-	# Apply proportional control with a dampening factor
-	var turret_angle: float = clamp(adjusted_angle, -max_turret_angle, max_turret_angle)
-
-	# Apply rotation
-	rotate(Vector3.UP, turret_angle)
-	
-	# Ensure rotation is within limits
-	clamp_to_rotation_limits()
-	
-	var turret_elev_speed_rad: float = deg_to_rad(my_params.elevation_speed)
-	var max_elev_angle: float = turret_elev_speed_rad * delta
-	var elevation_delta: float = max_elev_angle
-
-	var elevation = Vector2(Vector2(launch_angle.x, launch_angle.z).length(), launch_angle.y)
-	var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
-	var elevation_angle = elevation.angle_to(curr_elevation)
-	elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
-
-	if is_nan(elevation_delta):
-		elevation_delta = 0.0
-	barrel.rotate(Vector3.RIGHT, elevation_delta)
-	
-	if abs(elevation_delta) < 0.01 && abs(desired_local_angle) < 0.01:
-		can_fire = true
-	else:
-		can_fire = false
-
-	# # Ensure we stay within allowed elevation range
-	# barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
-
-func fire():
+@rpc("any_peer", "call_remote")
+func fire() -> void:
 	if multiplayer.is_server():
-		if !disabled && reload >= 1.0 and can_fire:
+		if !disabled and reload >= 1.0 and can_fire:
+			# Fire torpedo
+			reload = 0.0
+			can_fire = false
+			var offset:Vector3 = -muzzles[0].global_basis.x * 0.1
 			for m in muzzles:
-				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
-				var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
-				if aim[0] != null:
-					var t = float(Time.get_unix_time_from_system())
-					print("shell params: ", my_params.shell)
-					var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, t)
-					for p in multiplayer.get_peers():
-						self.fire_client.rpc_id(p, aim[0],m.global_position, t, id)
-				else:
-					print(aim)
+				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
+				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
+				#if aim[0] != null:
+				var t = float(Time.get_unix_time_from_system())
+				var id = (TorpedoManager as _TorpedoManager).fireTorpedo(m.global_basis.z + offset,m.global_position, params.torpedo_params, t)
+				#var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, dispersion_point, aim[1], t)
+				for p in multiplayer.get_peers():
+					self.fire_client.rpc_id(p, m.global_position, m.global_basis.z + offset, t, id)
+				offset += muzzles[0].global_basis.x * 0.05
+					#self.fire_client.rpc_id(p, aim[0],m.global_position, t, aim[1], dispersion_point, id)
 			reload = 0
 
 @rpc("any_peer","reliable")
-func fire_client(vel, pos, t, id):
-	ProjectileManager1.fireBulletClient(pos, vel, t, id, my_params.shell)
+func fire_client(pos, vel, t, id):
+	(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, id, params.torpedo_params)

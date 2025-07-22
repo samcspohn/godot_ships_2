@@ -6,6 +6,7 @@ var initialized: bool = false
 var movement_controller: ShipMovement
 var artillery_controller: ShipArtillery
 var health_controller: HitPointsManager
+var torpedo_launcher: TorpedoLauncher
 var control
 var team: TeamEntity
 var visible_to_enemy: bool = false
@@ -28,6 +29,7 @@ func _ready() -> void:
 	movement_controller = $Modules/ShipMovement
 	artillery_controller = $Modules/ArtilleryController
 	health_controller = $Modules/HPManager
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	#team = $Modules/TeamEntity
 	#control = $Modules/PlayerController
 	#if control == null:
@@ -45,6 +47,8 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 func _physics_process(delta: float) -> void:
 	if !multiplayer.is_server():
 		return
+	if torpedo_launcher != null:
+		torpedo_launcher._aim(artillery_controller.aim_point, delta)
 	# Sync ship data to all clients
 	sync_ship_data()
 
@@ -67,6 +71,9 @@ func sync_ship_data() -> Dictionary:
 	var secondaries = get_node("Secondaries")
 	for s: Gun in secondaries.get_children():
 		d.s.append({'b': s.basis,'c': s.barrel.basis})
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	if torpedo_launcher != null:
+		d['tl'] = torpedo_launcher.global_basis
 		
 	return d
 
@@ -99,6 +106,10 @@ func sync(d: Dictionary):
 		s.basis = d.s[i].b
 		s.barrel.basis = d.s[i].c
 		i += 1
+		
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	if torpedo_launcher != null:
+		torpedo_launcher.global_basis = d.tl
 
 @rpc("any_peer", "reliable")
 func _hide():

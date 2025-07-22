@@ -20,6 +20,10 @@ run/main_scene="res://scenes/root.tscn"
 config/features=PackedStringArray("4.4", "Forward Plus")
 config/icon="res://icon.svg"
 
+[audio]
+
+driver/driver="ALSA"
+
 [autoload]
 
 GameSettings="*res://src/autoload/game_settings.gd"
@@ -29,6 +33,7 @@ ProjectileManager="res://src/autoload/projectile_manager.gd"
 AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd"
 SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"
 ProjectileManager1="*res://src/autoload/ProjectileManager.tscn"
+TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
 
 [editor]
 

@@ -45,7 +45,7 @@ func _edit(object):
 func _make_visible(visible):
 	# Show or hide the editor panel
 	if editor_panel:
-		if visible:
+		if visible and current_turret is Gun:
 			editor_panel.show()
 		else:
 			editor_panel.hide()
