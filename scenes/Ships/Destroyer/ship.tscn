@@ -28,7 +28,7 @@ metadata/_custom_type_script = "uid://cq5883re36gh7"
 mass = 2500.0
 
 [node name="HPManager" parent="Modules" index="3"]
-max_hp = 2500.0
+max_hp = 7300.0
 
 [node name="Hull" parent="." index="1"]
 size = Vector3(12, 6, 113)

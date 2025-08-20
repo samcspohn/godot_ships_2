@@ -19,6 +19,11 @@ func _ready():
 func _load_ship_buttons():
 	_scan_directory("res://scenes/Ships/")
 
+	var button = Button.new()
+	button.text = "Bismarck"
+	button.pressed.connect(_on_ship_button_pressed.bind("res://ShipModels/Bismarck2.tscn"))
+	ship_button_container.add_child(button)
+
 func _scan_directory(path: String):
 	var dir = DirAccess.open(path)
 	if dir:

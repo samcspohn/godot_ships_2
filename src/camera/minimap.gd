@@ -203,8 +203,8 @@ func _on_canvas_draw() -> void:
 	# draw gun ranges
 	var ship = player_ship as Ship
 	draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.guns[0].max_range, Color(1, 1, 1, 0.5))
-	if ship.get_node("Secondaries") != null:
-		for gun in ship.get_node("Secondaries").get_children():
+	if ship.secondary_controllers.size() > 0:
+		for gun in ship.secondary_controllers[0].get_children():
 			var col = Color.DARK_KHAKI
 			col.a = 0.5
 			draw_range_circle_on_minimap(ship.global_position, gun.max_range, col)

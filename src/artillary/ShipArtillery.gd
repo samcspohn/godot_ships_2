@@ -2,18 +2,22 @@ extends Node
 class_name ShipArtillery
 
 # Gun-related variables
-var guns: Array[Gun] = []
+@export var guns: Array[Gun] = []
 var aim_point: Vector3
 
 func _ready() -> void:
 	# Find all guns in the ship
-	var parent_model = get_parent().get_parent().get_child(1)
-	var gun_id = 0
-	for ch in parent_model.get_children():
-		if ch is Gun:
-			ch.gun_id = gun_id
-			gun_id += 1
-			self.guns.append(ch)
+	#var parent_model = get_parent().get_parent().get_child(1)
+	#var gun_id = 0
+	#for ch in parent_model.get_children():
+		#if ch is Gun:
+			#ch.gun_id = gun_id
+			#gun_id += 1
+			#self.guns.append(ch)
+	var i = 0
+	for g in guns:
+		g.gun_id = i
+		i += 1
 
 func set_aim_input(target_point: Vector3) -> void:
 	aim_point = target_point

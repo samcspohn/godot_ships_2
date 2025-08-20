@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://brqxpgkcq8jh5"]
+
+[ext_resource type="Script" path="res://test_armor_system.gd" id="1_4k5jv"]
+
+[node name="ArmorSystemTest" type="Node"]
+script = ExtResource("1_4k5jv")

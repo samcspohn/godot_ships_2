@@ -16,6 +16,8 @@ script = ExtResource("1_eru7b")
 
 [node name="RayCast3D" type="RayCast3D" parent="."]
 target_position = Vector3(0, 0, -60000)
+collision_mask = 3
+hit_back_faces = false
 collide_with_areas = true
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]

@@ -41,6 +41,9 @@ var fps_label: Label
 var hp_bar: ProgressBar
 var hp_label: Label
 
+# Camera angle display
+var camera_angle_label: Label
+
 # Add these variables near the top with other variable declarations
 var tracked_ships = {} # Dictionary to store ships and their UI elements
 var ship_ui_elements = {} # Dictionary to store UI elements for each ship
@@ -156,6 +159,14 @@ func _setup_ui():
 	fps_label.add_theme_font_size_override("font_size", 16)
 	fps_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0, 1.0)) # Yellow for visibility
 	crosshair_container.add_child(fps_label)
+	
+	# Add camera angle display
+	camera_angle_label = Label.new()
+	camera_angle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	camera_angle_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	camera_angle_label.add_theme_font_size_override("font_size", 14)
+	camera_angle_label.add_theme_color_override("font_color", Color(0.8, 0.8, 1.0, 1.0)) # Light blue for visibility
+	crosshair_container.add_child(camera_angle_label)
 	
 	# Add hit points bar
 	hp_bar = ProgressBar.new()
@@ -405,6 +416,9 @@ func _update_ui():
 		hp_bar.visible = false
 		hp_label.visible = false
 
+	# Update camera angle display
+	_update_camera_angle_display()
+
 func _update_fps():
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
 	
@@ -412,6 +426,27 @@ func _update_fps():
 	# var viewport_size = get_viewport().get_visible_rect().size
 	fps_label.size = Vector2(100, 25)
 	fps_label.position = Vector2(10, 10)
+
+func _update_camera_angle_display():
+	if camera_controller and camera_controller._ship:
+		# Get camera forward vector on XZ plane (ignore Y component)
+		var camera_forward = -global_transform.basis.z
+		var camera_forward_xz = Vector2(camera_forward.x, camera_forward.z).normalized()
+		
+		# Get ship forward vector on XZ plane
+		var ship_forward = -camera_controller._ship.global_transform.basis.z
+		var ship_forward_xz = Vector2(ship_forward.x, ship_forward.z).normalized()
+		
+		# Calculate angle between the vectors
+		var angle_rad = camera_forward_xz.angle_to(ship_forward_xz)
+		var angle_deg = rad_to_deg(angle_rad)
+		
+		# Format the angle (positive = port/left, negative = starboard/right)
+		camera_angle_label.text = "Camera: %.1f°" % angle_deg
+		
+		# Position in top left corner, below FPS
+		camera_angle_label.size = Vector2(120, 25)
+		camera_angle_label.position = Vector2(10, 40)
 
 # Modify the existing draw function to show locked target indicator
 func _on_crosshair_container_draw():
@@ -590,10 +625,10 @@ func update_ship_ui():
 			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
 			
 			# Check if ship is visible on screen
-			var is_visible = is_position_visible_on_screen(ship_position) and ship.visible
-			ui.container.visible = is_visible
+			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
+			ui.container.visible = ship_visible
 			
-			if is_visible:
+			if ship_visible:
 				# Position the UI elements
 				ui.container.position = screen_pos - Vector2(ui.hp_bar.custom_minimum_size.x / 2, 50)
 				ui.name_label.position = Vector2(0, -20)

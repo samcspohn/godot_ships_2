@@ -1,7 +1,7 @@
 [gd_scene load_steps=14 format=3 uid="uid://cj32a1kjmd61g"]
 
 [ext_resource type="Script" uid="uid://jcsciny5qrj7" path="res://src/autoload/projectile_manager.gd" id="1_ickow"]
-[ext_resource type="PackedScene" uid="uid://bxcsn6t0mgyuf" path="res://scenes/Shells/trail.tscn" id="2_1coyq"]
+[ext_resource type="PackedScene" uid="uid://l6clh04vt1ec" path="res://scenes/Shells/trail.tscn" id="2_1coyq"]
 [ext_resource type="Material" uid="uid://c8q8usurtptru" path="res://src/autoload/ProjectileManagerMaterial.tres" id="2_wm87v"]
 [ext_resource type="Shader" uid="uid://boy6lwvbcv4qj" path="res://src/autoload/ProjectileManagerTrailShader.gdshader" id="4_d12p8"]
 [ext_resource type="Shader" uid="uid://bobk81d11sx4f" path="res://src/autoload/ProjectileManagerProcessMaterial.gdshader" id="4_l6klx"]

@@ -100,11 +100,11 @@ void vertex() {
 void fragment() {
     vec2 base_uv = UV;
     vec4 albedo_tex = texture(texture_albedo, base_uv);
-    
+
     // Don't use COLOR for visual color since we're using it for data
     // Instead, use white or any desired color
     ALBEDO = albedo.rgb * albedo_tex.rgb;
-    
+
     float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);
     METALLIC = metallic_tex * metallic;
     SPECULAR = specular;

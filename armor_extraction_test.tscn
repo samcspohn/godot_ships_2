@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bk8l8wn0qe5x5"]
+
+[ext_resource type="Script" path="res://test_armor_extraction.gd" id="1_2n7b8"]
+
+[node name="ArmorExtractionTest" type="Node"]
+script = ExtResource("1_2n7b8")

@@ -1,0 +1,30 @@
+[gd_scene load_steps=6 format=3 uid="uid://5qbpr6jjvoj6"]
+
+[ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="1_h5dn7"]
+[ext_resource type="PackedScene" uid="uid://dmabeflns107f" path="res://src/shared/HitPointsManager.tscn" id="2_dniq6"]
+[ext_resource type="PackedScene" uid="uid://dgvbfjlhdgg7f" path="res://src/artillary/artillery_controller.tscn" id="3_j72gg"]
+[ext_resource type="PackedScene" uid="uid://bpa424xhggvk2" path="res://src/shared/ship_movement.tscn" id="4_1t3ll"]
+[ext_resource type="PackedScene" uid="uid://5i3h4gyrrmjv" path="res://src/artillary/SecondaryController.tscn" id="5_l3md2"]
+
+[node name="Modules" type="Node"]
+
+[node name="DispersionCalculator" type="Node" parent="."]
+script = ExtResource("1_h5dn7")
+
+[node name="HPManager" parent="." instance=ExtResource("2_dniq6")]
+max_hp = 56000.0
+
+[node name="ArtilleryController" parent="." node_paths=PackedStringArray("guns") instance=ExtResource("3_j72gg")]
+guns = [null, null, null, null]
+
+[node name="ShipMovement" parent="." instance=ExtResource("4_1t3ll")]
+speed = 45.0
+time_to_full_speed = 40.0
+rudder_shift_time = 8.0
+turning_circle = 600.0
+
+[node name="SecondaryController" parent="." node_paths=PackedStringArray("guns") instance=ExtResource("5_l3md2")]
+guns = [null, null, null, null]
+
+[node name="SecondaryController2" parent="." node_paths=PackedStringArray("guns") instance=ExtResource("5_l3md2")]
+guns = [null, null, null, null]

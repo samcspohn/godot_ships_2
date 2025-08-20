@@ -191,7 +191,7 @@ func join_game():
 	# Called on client to switch to game world
 	get_tree().change_scene_to_file("res://scenes/server.tscn")
 	
-func _physics_process(delta: float) -> void:
+func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state
@@ -199,6 +199,7 @@ func _physics_process(delta: float) -> void:
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
+	ray_query.collision_mask = 1 # only terrain
 	
 	for p in players.values():
 		(p[0] as Ship).visible_to_enemy = false
@@ -206,13 +207,15 @@ func _physics_process(delta: float) -> void:
 	for p_id in players.size() - 1:
 		var p: Ship = players[players.keys()[p_id]][0]
 		ray_query.from = p.global_position
-		var d = p.sync_ship_data()
+		ray_query.from.y = 1.0
+		# var d = p.sync_ship_data() 
 		for p_id2 in range(p_id + 1,players.size()):
 			var p2: Ship = players[players.keys()[p_id2]][0]
 			if p.team.team_id != p2.team.team_id: # other team
 				ray_query.to = p2.global_position
+				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
-				if !collision.is_empty() and collision.collider is Ship: # can see each other (add concealment)
+				if collision.is_empty(): # can see each other no obstacles (add concealment)
 					p.visible_to_enemy = true
 					p2.visible_to_enemy = true
 		

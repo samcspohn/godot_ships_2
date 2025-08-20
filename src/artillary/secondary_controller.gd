@@ -1,20 +1,17 @@
 extends Node
 class_name SecondaryController
 
-var guns: Array[Gun]
+@export var guns: Array[Gun]
 var target: Ship
-var parent_name: StringName
 var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 
 # Called when the node enters the scene tree for the first time.
-func _ready() -> void:
-	var player = get_node("..")
-	parent_name = player.name
+# func _ready() -> void:
 
-	for ch in get_children():
-		if ch is Gun:
-			guns.append(ch)
+	# for ch in get_children():
+	# 	if ch is Gun:
+	# 		guns.append(ch)
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.

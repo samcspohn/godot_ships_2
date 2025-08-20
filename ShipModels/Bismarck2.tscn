@@ -1,0 +1,59 @@
+[gd_scene load_steps=8 format=3 uid="uid://c6xi64fk1yjgo"]
+
+[ext_resource type="PackedScene" uid="uid://4swpyskhruop" path="res://ShipModels/bismark_low_poly.glb" id="1_xo0eu"]
+[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/shared/Ship.gd" id="2_d36us"]
+[ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://modules.tscn" id="2_sui2j"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://scenes/Guns/Gun.gd" id="3_nf7q3"]
+[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://scenes/Ships/Battleship/BB_gun1/BB_gun1.tres" id="4_v35k7"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_d36us"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_e1c0o"]
+size = Vector3(36, 30.3156, 251.893)
+
+[node name="Ship" instance=ExtResource("1_xo0eu")]
+collision_layer = 4
+collision_mask = 5
+mass = 5.6e+07
+physics_material_override = SubResource("PhysicsMaterial_d36us")
+script = ExtResource("2_d36us")
+ship_model_glb_path = "uid://4swpyskhruop"
+
+[node name="Modules" parent="." index="0" instance=ExtResource("2_sui2j")]
+
+[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+guns = [NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
+
+[node name="380mmTurret" parent="Hull" index="20" node_paths=PackedStringArray("dispersion_calculator")]
+script = ExtResource("3_nf7q3")
+min_rotation_angle = 3.72649
+max_rotation_angle = 2.54094
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+params = ExtResource("4_v35k7")
+
+[node name="380mmTurret_001" parent="Hull" index="21" node_paths=PackedStringArray("dispersion_calculator")]
+script = ExtResource("3_nf7q3")
+min_rotation_angle = 3.62804
+max_rotation_angle = 2.65652
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+params = ExtResource("4_v35k7")
+
+[node name="380mmTurret_002" parent="Hull" index="22" node_paths=PackedStringArray("dispersion_calculator")]
+script = ExtResource("3_nf7q3")
+min_rotation_angle = 0.80693
+max_rotation_angle = 5.38773
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+params = ExtResource("4_v35k7")
+
+[node name="380mmTurret_003" parent="Hull" index="23" node_paths=PackedStringArray("dispersion_calculator")]
+script = ExtResource("3_nf7q3")
+min_rotation_angle = 0.596585
+max_rotation_angle = 5.67705
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+params = ExtResource("4_v35k7")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.0682, -2.76855)
+shape = SubResource("BoxShape3D_e1c0o")
+
+[editable path="Modules"]

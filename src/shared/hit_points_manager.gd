@@ -27,7 +27,7 @@ func sink():
 	#get_parent().queue_free()
 	ship.artillery_controller.set_physics_process(false)
 	ship.movement_controller.set_physics_process(false)
-	ship.get_node("Secondaries").set_physics_process(false)
+	#ship.get_node("Secondaries").set_physics_process(false)
 	var pc = ship.get_node_or_null("PlayerController")
 	if pc != null:
 		pc.set_physics_process(false)

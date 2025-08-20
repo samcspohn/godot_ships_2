@@ -4,7 +4,6 @@ class_name PlayerController
 var ship: Ship
 #var ship_movement: ShipMovement
 #var ship_artillery: ShipArtillery
-var secondary_controller: SecondaryController
 #var hp_manager: HitPointsManager
 var _cameraInput: Vector2
 @export var playerName: Label
@@ -44,7 +43,7 @@ func _ready() -> void:
 	#ship_movement = ship.get_node("ShipMovement")
 	#ship_artillery = ship.get_node("ArtilleryController")
 	#hp_manager = ship.get_node("HPManager")
-	secondary_controller = ship.get_node_or_null("Secondaries")
+	#secondary_controller = ship.get_node_or_null("Secondaries")
 	# Initialize secondary controller if it exists
 	
 
@@ -233,15 +232,15 @@ func get_ship_from_collider(collider: Object) -> Ship:
 	return null
 
 func select_target_ship(target_ship: Ship) -> void:
-	if secondary_controller:
+	for secondary_controller in ship.secondary_controllers:
 		# Set the target in the secondary controller
 		secondary_controller.target = target_ship
 		print("Selected target: " + target_ship.name)
 		
 		# Optional: Add a visual indicator for the selected target
 		show_target_indicator(target_ship)
-	else:
-		print("Warning: secondary_controller not initialized")
+	# else:
+	# 	print("Warning: secondary_controller not initialized")
 		
 func show_target_indicator(target_ship: Ship) -> void:
 	# You can implement visual feedback here

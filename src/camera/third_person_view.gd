@@ -2,11 +2,11 @@ extends Node3D
 class_name ThirdPersonView
 # Third Person Camera
 
-var current_fov: float = 60
-var default_fov: float = 60.0
-var min_fov: float = 2.0
-var max_fov: float = 60.0
-var last_fov: float = 60.0
+var current_fov: float = 40
+var default_fov: float = 40.0
+# var min_fov: float = 2.0
+# var max_fov: float = 60.0
+# var last_fov: float = 60.0
 
 var horizontal_rot: float = 0.0
 var vertical_rot: float = 0.0
@@ -25,17 +25,17 @@ var mouse_sensitivity: float = 0.3
 var target_lock_enabled: bool = false
 var _ship: Node3D
 var locked_target
-
-func copy_to_free_look(fl: FreeLookView):
-	# Copy camera settings to FreeLookView
-	fl.current_zoom = current_zoom
-	fl.current_fov = current_fov
-	fl.rotation_degrees_horizontal = rotation_degrees_horizontal
-	fl.rotation_degrees_vertical = rotation_degrees_vertical
-	fl.camera_offset = camera_offset
-	fl.invert_y = invert_y
-	fl.mouse_sensitivity = mouse_sensitivity
-	fl.target_lock_enabled = target_lock_enabled
+#
+#func copy_to_free_look(fl: FreeLookView):
+	## Copy camera settings to FreeLookView
+	#fl.current_zoom = current_zoom
+	#fl.current_fov = current_fov
+	#fl.rotation_degrees_horizontal = rotation_degrees_horizontal
+	#fl.rotation_degrees_vertical = rotation_degrees_vertical
+	#fl.camera_offset = camera_offset
+	#fl.invert_y = invert_y
+	#fl.mouse_sensitivity = mouse_sensitivity
+	#fl.target_lock_enabled = target_lock_enabled
 
 func handle_mouse_motion(event):
 	# Only handle mouse motion if captured
@@ -44,11 +44,11 @@ func handle_mouse_motion(event):
 	
 	# Convert mouse motion to rotation (with potential y-inversion)
 	var y_factor = -1.0 if invert_y else 1.0
-	var ship_position = _ship.global_position
-	var vertical_rad = deg_to_rad(rotation_degrees_vertical)
-	var orbit_distance = current_zoom
+	# var ship_position = _ship.global_position
+	# var vertical_rad = deg_to_rad(rotation_degrees_vertical)
+	# var orbit_distance = current_zoom
 		
-	var cam_height = ship_position.y + camera_offset.y + cos(vertical_rad) * orbit_distance / 2.0
+	# var cam_height = ship_position.y + camera_offset.y + cos(vertical_rad) * orbit_distance / 2.0
 	var vert_rad = deg_to_rad(rotation_degrees_vertical)
 	
 	if target_lock_enabled:
@@ -108,8 +108,8 @@ func _get_angles_to_target(cam_pos, target_pos):
 	return [target_angle_horizontal, target_angle_vertical]
 
 func _get_orbit():
-	var ship_position = _ship.global_position
-	var vertical_rad = deg_to_rad(rotation_degrees_vertical)
+	# var ship_position = _ship.global_position
+	# var vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	var horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
 	var orbit_distance = current_zoom
 	#var adj = tan(PI / 2.0 + vertical_rad)
@@ -119,14 +119,14 @@ func _get_orbit():
 	#print("cos PI/2 vertical ", cos(PI / 2.0 + vertical_rad))
 	var sh = sin(horizontal_rad)
 	var ch = cos(horizontal_rad)
-	var sv = sin(vertical_rad)
-	var cv = cos(vertical_rad)
-	var cp2v = cos(PI/2.0 + vertical_rad)
-	var sp2v = sin(PI/2.0 + vertical_rad)
-	var cam_height_offset = orbit_distance / 2.0
+	# var sv = sin(vertical_rad)
+	# var cv = cos(vertical_rad)
+	# var cp2v = cos(PI/2.0 + vertical_rad)
+	# var sp2v = sin(PI/2.0 + vertical_rad)
+	# var cam_height_offset = orbit_distance / 2.0
 	var cam_pos = Vector3(
 		sh * (orbit_distance),
-		current_zoom / 2.0,
+		5 + current_zoom * 0.2,
 		#max(cam_height_offset / 2.0 + cam_height_offset * cp2v, 1),
 		ch * (orbit_distance)
 	)
@@ -138,8 +138,8 @@ func _get_orbit():
 	return cam_pos
 
 func _get_orbit2():
-	var ship_position = _ship.global_position
-	var vertical_rad = deg_to_rad(rotation_degrees_vertical)
+	# var ship_position = _ship.global_position
+	# var vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	var horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
 	var orbit_distance = current_zoom
 	#var adj = tan(PI / 2.0 + vertical_rad)
@@ -149,14 +149,14 @@ func _get_orbit2():
 	#print("cos PI/2 vertical ", cos(PI / 2.0 + vertical_rad))
 	var sh = sin(horizontal_rad)
 	var ch = cos(horizontal_rad)
-	var sv = sin(vertical_rad)
-	var cv = cos(vertical_rad)
-	var cp2v = cos(PI/2.0 + vertical_rad)
-	var sp2v = sin(PI/2.0 + vertical_rad)
-	var cam_height_offset = orbit_distance
+	# var sv = sin(vertical_rad)
+	# var cv = cos(vertical_rad)
+	# var cp2v = cos(PI/2.0 + vertical_rad)
+	# var sp2v = sin(PI/2.0 + vertical_rad)
+	var cam_height_offset = orbit_distance * 0.4
 	var cam_pos = Vector3(
 		sh * orbit_distance,
-		15.0 + cam_height_offset,
+		cam_height_offset,
 		ch * orbit_distance
 	)
 	#var cam_pos = Vector3(
@@ -174,8 +174,8 @@ func _update_camera_transform():
 	# var cam_pos = global_position
 	var vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	var horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
-	var orbit_distance = current_zoom
-	var adj = tan(PI / 2.0 + vertical_rad)
+	# var orbit_distance = current_zoom
+	# var adj = tan(PI / 2.0 + vertical_rad)
 	var cam_pos_3rd = ship_position + _get_orbit()
 
 	var cam_pos = cam_pos_3rd
@@ -206,7 +206,7 @@ func _update_camera_transform():
 	# Use the existing camera positioning logic with updated rotation values
 	horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
 	vertical_rad = deg_to_rad(rotation_degrees_vertical)
-	adj = tan(PI / 2.0 + vertical_rad)
+	# adj = tan(PI / 2.0 + vertical_rad)
 	# var dist = adj * cam_pos.y
 	
 	var orbit_pos = _get_orbit()

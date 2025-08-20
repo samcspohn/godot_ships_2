@@ -62,6 +62,17 @@ var ui: CameraUI
 var third_person_view: ThirdPersonView
 var free_look_view: ThirdPersonView
 var sniper_view: SniperView
+var ray_exclude: Array = [] # Nodes to exclude from raycasting
+
+
+func recurs_collision_bodies(node: Node) -> Array:
+	"""Recursively find all collision bodies in the node tree, excluding specified nodes."""
+	var bodies = []
+	if node is CollisionObject3D:
+		bodies.append(node)
+	for child in node.get_children():
+		bodies += recurs_collision_bodies(child)
+	return bodies
 
 func _ready():
 	# Initial setup
@@ -82,15 +93,17 @@ func _ready():
 	get_parent().add_child(sniper_view)
 	#get_tree().root.add_child(aim)
 	aim = third_person_view
-	ProjectileManager1.camera = self
+	ProjectileManager.camera = self
 	TorpedoManager.camera = self
-	processed.connect(ProjectileManager1.__process)
+	processed.connect(ProjectileManager.__process)
 	processed.connect(TorpedoManager.__process)
 	
 	# Make sure we have necessary references
 	if not _ship:
 		push_error("ArtilleryCamera requires a _ship node!")
-	
+
+	ray_exclude = recurs_collision_bodies(_ship)
+
 	# Capture mouse
 	#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
@@ -366,8 +379,8 @@ func _calculate_target_info():
 		var ray_params = PhysicsRayQueryParameters3D.create(
 			ray_origin,
 			ray_origin + aim_direction * ray_length,
-			1, # Set to your proper collision mask
-			[] # Array of objects to exclude
+			1 | (1 << 1), # Set to your proper collision mask
+			ray_exclude
 		)
 		ray_params.collide_with_areas = true
 		ray_params.collide_with_bodies = true

@@ -13,8 +13,10 @@ size = 4.0
 caliber = 127.0
 mass = 31.75
 fire_buildup = 6.0
+fuze_delay = 0.035
 type = 0
 penetration_modifier = 1.0
+auto_bounce = 1.0472
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]

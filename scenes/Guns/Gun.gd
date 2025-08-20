@@ -7,10 +7,9 @@ extends Node3D
 @export var rotation_limits_enabled: bool = true
 @export var min_rotation_angle: float = deg_to_rad(90)
 @export var max_rotation_angle: float = deg_to_rad(180)
-@export_enum("Forward", "Aftward") var turret_orientation: int = 0
 
-@onready var barrel: Node3D = $Barrels
-@onready var dispersion_calculator: ArtilleryDispersion = $"../../Modules/DispersionCalculator"
+@onready var barrel: Node3D = get_children()[0]
+@export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
 var can_fire: bool = false
@@ -58,15 +57,15 @@ func update_barrels() -> void:
 	muzzles.clear()
 	
 	# Check if barrel exists
-	if not is_node_ready() or not has_node("Barrels"):
+	if not is_node_ready():
 		# We might be in the editor, just return
 		return
 	
-	# Set up muzzles from existing barrels
-	for b in barrel.get_children():
-		if b.name.contains("Barrel"):
-			if b.get_child_count() > 0:
-				muzzles.append(b.get_child(0))
+	for muzzle in barrel.get_children():
+		# if muzzle.name.contains("Muzzle"):
+		muzzles.append(muzzle)
+
+	print("Muzzles updated: ", muzzles.size())
 
 @rpc("any_peer", "call_remote")
 func _set_reload(r):
@@ -88,6 +87,7 @@ func normalize_angle_0_2pi(angle: float) -> float:
 		angle -= TAU
 	
 	return angle
+
 
 # Apply rotation limits to a desired rotation
 func apply_rotation_limits(current_angle: float, desired_delta: float) -> float:
@@ -196,7 +196,7 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	# Calculate turret rotation
 	var turret_rot_speed_rad: float = deg_to_rad(my_params.traverse_speed)
 	var max_turret_angle: float = turret_rot_speed_rad * delta
-	var local_target: Vector3 = to_local(aim_point)
+	var local_target: Vector3 = -to_local(aim_point)
 
 	# Calculate desired rotation angle in the horizontal plane
 	var desired_local_angle: float = atan2(local_target.x, local_target.z)
@@ -225,9 +225,9 @@ func _aim(aim_point: Vector3, delta: float) -> void:
 	var elevation_delta: float = max_elev_angle
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
-		var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y)
-		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
-		var elevation_angle = elevation.angle_to(curr_elevation)
+		var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y).normalized()
+		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), -barrel.global_basis.z.y).normalized()
+		var elevation_angle = curr_elevation.angle_to(elevation)
 		elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
 	if sol[0] == null:
 		elevation_delta = -max_elev_angle
@@ -259,7 +259,7 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var turret_rot_speed_rad: float = deg_to_rad(my_params.traverse_speed)
 	var max_turret_angle: float = turret_rot_speed_rad * delta
 	
-	var local_target: Vector3 = to_local(aim_point)
+	var local_target: Vector3 = -to_local(aim_point)
 
 	# Calculate desired rotation angle in the horizontal plane
 	var desired_local_angle: float = atan2(local_target.x, local_target.z)
@@ -280,9 +280,9 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var max_elev_angle: float = turret_elev_speed_rad * delta
 	var elevation_delta: float = max_elev_angle
 
-	var elevation = Vector2(Vector2(launch_angle.x, launch_angle.z).length(), launch_angle.y)
-	var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), barrel.global_basis.z.y)
-	var elevation_angle = elevation.angle_to(curr_elevation)
+	var elevation = Vector2(Vector2(launch_angle.x, launch_angle.z).length(), launch_angle.y).normalized()
+	var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), -barrel.global_basis.z.y).normalized()
+	var elevation_angle = curr_elevation.angle_to(elevation)
 	elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
 
 	if is_nan(elevation_delta):
@@ -306,7 +306,7 @@ func fire():
 				if aim[0] != null:
 					var t = float(Time.get_unix_time_from_system())
 					print("shell params: ", my_params.shell)
-					var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, t)
+					var id = ProjectileManager.fireBullet(aim[0], m.global_position, my_params.shell, t)
 					for p in multiplayer.get_peers():
 						self.fire_client.rpc_id(p, aim[0],m.global_position, t, id)
 				else:
@@ -315,4 +315,4 @@ func fire():
 
 @rpc("any_peer","reliable")
 func fire_client(vel, pos, t, id):
-	ProjectileManager1.fireBulletClient(pos, vel, t, id, my_params.shell)
+	ProjectileManager.fireBulletClient(pos, vel, t, id, my_params.shell)
