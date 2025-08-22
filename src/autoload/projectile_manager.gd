@@ -136,7 +136,7 @@ func get_armor_thickness_at_point(ship: Ship, ray_from: Vector3, ray_to: Vector3
 	var detailed_collision = space_state.intersect_ray(mesh_ray_query)
 	
 	if detailed_collision.is_empty():
-		print("⚠️ No detailed mesh collision found - ray passed through bounding box but missed armor")
+		# print("⚠️ No detailed mesh collision found - ray passed through bounding box but missed armor")
 		# Return NOHIT indicator - ray intersected bounding box but no actual armor
 		return {"thickness": - 1, "node_path": "NOHIT", "face_index": - 1, "hit_node": null, "detailed_collision": detailed_collision}
 
@@ -145,14 +145,14 @@ func get_armor_thickness_at_point(ship: Ship, ray_from: Vector3, ray_to: Vector3
 	var face_index = detailed_collision.get("face_index", 0)
 	
 	if hit_node == null:
-		print("⚠️ No hit node found in detailed collision")
+		# print("⚠️ No hit node found in detailed collision")
 		return {"thickness": - 1, "node_path": "NOHIT", "face_index": - 1, "hit_node": null, "detailed_collision": detailed_collision}
 
 	# Get armor thickness using ship's armor system
 	var armor_thickness = ship.get_armor_at_hit_point(hit_node, face_index)
 	var node_path = ship.armor_system.get_node_path_from_scene(hit_node, ship.name) if ship.armor_system else "unknown"
 	
-	print("🛡️ Armor hit: ", node_path, " face ", face_index, " = ", armor_thickness, "mm")
+	# print("🛡️ Armor hit: ", node_path, " face ", face_index, " = ", armor_thickness, "mm")
 	
 	return {
 		"thickness": armor_thickness,
@@ -201,7 +201,7 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 
 	# Check for NOHIT case - ray passed through bounding box but missed actual armor
 	if armor_data.node_path == "NOHIT":
-		print("🌊 NOHIT: Ray passed through ship bounding box but missed armor mesh")
+		# print("🌊 NOHIT: Ray passed through ship bounding box but missed armor mesh")
 		return {
 			"result_type": HitResult.NOHIT,
 			"damage": 0.0,
@@ -270,6 +270,8 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 	if ret.result_type == HitResult.RICOCHET:
 		shell_velocity = shell_velocity.bounce(collision.normal)
 	shell_position += shell_velocity.normalized() * 0.01
+
+	print_armor_debug(ret, ship)
 	while fuse_time < shell_params.fuze_delay:
 
 		armor_data = get_armor_thickness_at_point(ship, shell_position, shell_position + shell_velocity * (shell_params.fuze_delay - fuse_time))
@@ -277,7 +279,7 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 			var space_state = get_tree().root.get_world_3d().direct_space_state
 			var end_position = armor_data.detailed_collision.get("position", shell_position + shell_velocity * (shell_params.fuze_delay - fuse_time))
 			var ray_query_penetration = PhysicsRayQueryParameters3D.new()
-			ray_query_penetration.from = end_position + ship.global_transform.basis.x * 50
+			ray_query_penetration.from = end_position + ship.global_transform.basis.x * 200 # only raycast ship ojects
 			ray_query_penetration.to = end_position
 			ray_query_penetration.collide_with_areas = false
 			ray_query_penetration.collide_with_bodies = true
@@ -285,12 +287,12 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 			var point_results = space_state.intersect_ray(ray_query_penetration)
 
 			var is_inside_ship = point_results.is_empty() == false
-			ray_query_penetration.from = end_position - ship.global_transform.basis.x * 100
+			ray_query_penetration.from = end_position - ship.global_transform.basis.x * 200
 			ray_query_penetration.to = end_position
 			point_results = space_state.intersect_ray(ray_query_penetration)
 			is_inside_ship = is_inside_ship and point_results.is_empty() == false
 			if is_inside_ship:
-				return {
+				ret = {
 					"result_type": HitResult.PENETRATION,
 					"damage": shell_params.damage, # Full damage potential (may be reduced later based on fuze location)
 					"penetration_power": penetration_power,
@@ -300,6 +302,8 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 					"armor_data": armor_data,
 					"explosion_position": end_position,
 				}
+				print_armor_debug(ret, ship)
+				return ret
 			else:
 				return ret
 
@@ -365,6 +369,7 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 				"armor_data": armor_data,
 				"explosion_position": armor_data.detailed_collision.get("position", shell_position + shell_velocity * (shell_params.fuze_delay - fuse_time))
 			}
+		print_armor_debug(ret, ship)
 
 		shell_position = armor_data.detailed_collision.get("position", shell_position + shell_velocity * (shell_params.fuze_delay - fuse_time))
 		shell_velocity = impact_vel * (1.0 - (effective_armor_thickness / penetration_power))
@@ -568,21 +573,21 @@ func _physics_process(_delta: float) -> void:
 				var armor_result = calculate_armor_interaction(p.params, current_velocity, ship, ray_query.from, ray_query.to)
 
 				match armor_result.result_type:
-					HitResult.NOHIT:
+					# HitResult.NOHIT:
 						# Ray passed through bounding box but missed armor - projectile continues
-						print("🌊 Projectile passed through ship without hitting armor - continuing flight")
+						# print("🌊 Projectile passed through ship without hitting armor - continuing flight")
 						# Don't destroy projectile, let it continue
 						
 					HitResult.PENETRATION:
 						# var armor_collision = armor_result.armor_data.detailed_collision
 
 						# Shell penetrates - simulate fuze delay within this frame
-						var explosion_position = ProjectilePhysicsWithDrag.calculate_position_at_time(
-							armor_result.explosion_position,
-							current_velocity,
-							p.params.fuze_delay, # Use full time to account for drag
-							p.params.drag
-						)
+						#var explosion_position = ProjectilePhysicsWithDrag.calculate_position_at_time(
+							#armor_result.explosion_position,
+							#current_velocity,
+							#p.params.fuze_delay, # Use full time to account for drag
+							#p.params.drag
+						#)
 						
 						# # Check if shell is inside ship at explosion time using point query
 						# var point_query = PhysicsPointQueryParameters3D.new()
@@ -621,8 +626,8 @@ func _physics_process(_delta: float) -> void:
 						final_damage = armor_result.damage * 0.33
 						hit_type = HitResult.PENETRATION
 						armor_result.result_type = HitResult.PENETRATION
-						apply_fire_damage(p, ship, explosion_position)
-						print("Shell exploded INSIDE ship after ", p.params.fuze_delay, "s - full damage: ", final_damage)
+						apply_fire_damage(p, ship, armor_result.explosion_position)
+						# print("Shell exploded INSIDE ship after ", p.params.fuze_delay, "s - full damage: ", final_damage)
 						# else:
 						# 	# Shell explodes outside ship - overpenetration
 						# 	final_damage = armor_result.damage * 0.1
@@ -630,9 +635,9 @@ func _physics_process(_delta: float) -> void:
 						# 	armor_result.result_type = HitResult.OVERPENETRATION
 						# 	print("Shell exploded OUTSIDE ship after ", p.params.fuze_delay, "s - overpenetration: ", final_damage)
 						
-						ship.health_controller.take_damage(final_damage, explosion_position)
-						destroyBulletRpc(id, explosion_position, hit_type)
-						print_armor_debug(armor_result, ship)
+						ship.health_controller.take_damage(final_damage, armor_result.explosion_position)
+						destroyBulletRpc(id, armor_result.explosion_position, hit_type)
+						# print_armor_debug(armor_result, ship)
 					HitResult.OVERPENETRATION:
 						# Shell overpenetrates - apply reduced damage
 						var armor_collision = armor_result.armor_data.detailed_collision
@@ -640,7 +645,7 @@ func _physics_process(_delta: float) -> void:
 						ship.health_controller.take_damage(final_damage, armor_collision.position)
 						apply_fire_damage(p, ship, armor_collision.position)
 						destroyBulletRpc(id, armor_collision.position, HitResult.OVERPENETRATION)
-						print_armor_debug(armor_result, ship)
+						# print_armor_debug(armor_result, ship)
 					
 					HitResult.RICOCHET:
 						var armor_collision = armor_result.armor_data.detailed_collision
@@ -656,9 +661,9 @@ func _physics_process(_delta: float) -> void:
 							createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
 
 						# Destroy the original shell
-						destroyBulletRpc(id, collision.position, HitResult.RICOCHET)
-						print_armor_debug(armor_result, ship)
-						print("armor normal: ", collision.normal, " ricochet velocity: ", ricochet_velocity)
+						destroyBulletRpc(id, armor_collision.position, HitResult.RICOCHET)
+						# print_armor_debug(armor_result, ship)
+						#print("armor normal: ", collision.normal, " ricochet velocity: ", ricochet_velocity)
 					
 					HitResult.SHATTER:
 						var armor_collision = armor_result.armor_data.detailed_collision
@@ -667,7 +672,7 @@ func _physics_process(_delta: float) -> void:
 						ship.health_controller.take_damage(armor_result.damage, armor_collision.position)
 						apply_fire_damage(p, ship, armor_collision.position)
 						destroyBulletRpc(id, armor_collision.position, HitResult.SHATTER)
-						print_armor_debug(armor_result, ship)
+						# print_armor_debug(armor_result, ship)
 			else:
 				# Hit something that's not a ship (water, terrain)
 				destroyBulletRpc(id, collision.position)
@@ -703,8 +708,8 @@ func fireBullet(vel, pos, shell: ShellParams, t) -> int:
 	#var bullet: Shell = preload("res://Shells/shell.tscn").instantiate()
 	#bullet.params = shell_param_ids[shell]
 	#bullet.radius = bullet.params.size
-	print("params.fire_buildup ", shell.fire_buildup)
-	print("type server ", shell.type)
+	#print("params.fire_buildup ", shell.fire_buildup)
+	#print("type server ", shell.type)
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -730,7 +735,7 @@ func fireBullet(vel, pos, shell: ShellParams, t) -> int:
 func fireBulletClient(pos, vel, t, id, shell: ShellParams) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var bullet = ProjectileData.new()
-	print("type client ", shell.type)
+	#print("type client ", shell.type)
 
 	if id * 16 >= transforms.size():
 		var np2 = next_pow_of_2(id + 1)
@@ -747,7 +752,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams) -> void:
 		
 	bullet.initialize(pos, vel, t, shell)
 	self.projectiles.set(id, bullet)
-	print("shell type: ", shell.type)
+	#print("shell type: ", shell.type)
 
 	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
 	expl.radius = shell.damage / 500

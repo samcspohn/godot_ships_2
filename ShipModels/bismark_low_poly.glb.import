@@ -69,6 +69,11 @@ _subresources={
 "physics/layer": 2,
 "physics/mask": 0
 },
+"PATH:Hull/Citadel": {
+"generate/physics": true,
+"physics/layer": 2,
+"physics/mask": 0
+},
 "PATH:Hull/For-Barbette": {
 "generate/physics": true,
 "physics/layer": 2,

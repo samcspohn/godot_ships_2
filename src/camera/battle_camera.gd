@@ -121,7 +121,6 @@ func _input(event):
 		# activate free look while holding right mouse button
 	
 		
-	
 	# Toggle camera mode with Shift key
 	elif event is InputEventKey:
 		if event.pressed and event.keycode == KEY_SHIFT:
@@ -134,12 +133,9 @@ func _input(event):
 	# 	third_person_view.input(event)
 
 
-
-
 func _process(delta):
 	# Update camera position and rotation
-	
-	_update_target_lock()	
+	_update_target_lock()
 	if last_non_free_look_mode == CameraMode.THIRD_PERSON:
 		third_person_view._update_camera_transform()
 	else:
@@ -182,8 +178,6 @@ func _process(delta):
 	processed.emit(delta)
 	
 
-
-
 func _zoom_camera(zoom_amount):
 	if current_mode == CameraMode.THIRD_PERSON:
 		# Adjust zoom in third-person mode
@@ -204,7 +198,6 @@ func _zoom_camera(zoom_amount):
 		# In free look mode, adjust zoom
 		free_look_view.current_zoom = clamp(free_look_view.current_zoom + zoom_amount, free_look_view.min_zoom_distance, free_look_view.max_zoom_distance)
 		
-
 
 func _handle_mouse_motion(event):
 	# Only handle mouse motion if captured
@@ -269,7 +262,7 @@ func _update_target_lock():
 	
 func _update_camera_transform():
 	if !_ship:
-		return	
+		return
 	if current_mode == CameraMode.FREE_LOOK:
 		free_look_view._update_camera_transform()
 		self.global_position = free_look_view.global_position
@@ -301,6 +294,36 @@ func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool
 	else:
 		return angle_rad
 
+# Add a debug sphere at global location.
+func draw_debug_sphere(location, size, color = Color(1, 0, 0)):
+	# Will usually work, but you might need to adjust this.
+	var scene_root = get_tree().root
+	# Create sphere with low detail of size.
+	var sphere = SphereMesh.new()
+	sphere.radial_segments = 4
+	sphere.rings = 4
+	sphere.radius = size
+	sphere.height = size * 2
+	# Bright red material (unshaded).
+	var material = StandardMaterial3D.new()
+	material.albedo_color = color
+	material.flags_unshaded = true
+	sphere.surface_set_material(0, material)
+	
+	# Add to meshinstance in the right place.
+	var node = MeshInstance3D.new()
+	node.mesh = sphere
+	var t = Timer.new()
+	t.wait_time = 3
+	t.timeout.connect(func():
+		node.queue_free()
+		)
+	t.autostart = true
+	node.add_child(t)
+	scene_root.add_child(node)
+	node.global_transform.origin = location
+	
+	
 func set_camera_mode(mode):
 	current_mode = mode
 
@@ -311,7 +334,7 @@ func set_camera_mode(mode):
 		third_person_view.rotation_degrees_horizontal = sniper_view.rotation_degrees_horizontal
 		var sniper_range = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
 		var adj = sniper_range + third_person_view.current_zoom
-		var opp = third_person_view.current_zoom / 2.0 - aim_position.y
+		var opp = third_person_view.current_zoom * 0.2 - aim_position.y + 5
 		print("DEBUG: THIRD_PERSON")
 		#print(sniper_view.sniper_range)
 		print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
@@ -331,6 +354,7 @@ func set_camera_mode(mode):
 		# Switch to sniper mode if zoomed in enough
 		current_mode = CameraMode.SNIPER
 		last_non_free_look_mode = CameraMode.SNIPER
+		draw_debug_sphere(aim_position, 5)
 		print("DEBUG: SNIPER")
 		print(aim_position.y)
 		var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
@@ -342,9 +366,12 @@ func set_camera_mode(mode):
 		#sniper_view.sniper_range = clamp(sniper_range, 0.0, _ship.artillery_controller.guns[0].max_range)
 		sniper_view.camera_offset_horizontal = third_person_view.camera_offset_horizontal
 		sniper_view.camera_offset_vertical = third_person_view.camera_offset_vertical
-		sniper_height = clamp(sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
+		# sniper_height = clamp(sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
 
 		sniper_view.sniper_height = sniper_height
+		var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
+		var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
+		draw_debug_sphere(intersection_point, 5, Color.GREEN)
 		#sniper_view.rotation.x = angle
 		aim = sniper_view
 				

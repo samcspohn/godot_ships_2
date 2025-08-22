@@ -33,8 +33,8 @@ params = ExtResource("4_v35k7")
 
 [node name="380mmTurret_001" parent="Hull" index="21" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_nf7q3")
-min_rotation_angle = 3.62804
-max_rotation_angle = 2.65652
+min_rotation_angle = 3.63028
+max_rotation_angle = 2.6529
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 params = ExtResource("4_v35k7")
 

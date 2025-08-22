@@ -21,7 +21,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
 script = ExtResource("1_rwivs")
-reload_time = 12.0
+reload_time = 3.0
 traverse_speed = 40.0
 elevation_speed = 40.0
 range = 17000.0

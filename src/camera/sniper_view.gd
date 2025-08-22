@@ -1,10 +1,10 @@
 extends Node3D
 class_name SniperView
 
-var current_fov: float = 60
-var default_fov: float = 60.0
+var current_fov: float = 35.0
+var default_fov: float = 35.0
 var min_fov: float = 2.0
-var max_fov: float = 60.0
+var max_fov: float = 35.0
 var _ship: Node3D
 var free_look: bool = false
 var current_zoom: float = 100.0
@@ -22,7 +22,7 @@ var mouse_sensitivity: float = 0.1
 var target_lock_enabled: bool = false
 var locked_target
 var sniper_height_mod: float = 200.0
-var sniper_angle_x: float = deg_to_rad(-1.0)
+const sniper_angle_x: float = deg_to_rad(-1.0)
 
 func handle_mouse_motion(event):
 	# Only handle mouse motion if captured
@@ -57,7 +57,7 @@ func handle_mouse_motion(event):
 		# Apply horizontal rotation with FOV adjustment
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.6 * deg_to_rad(current_fov)  / deg_to_rad(max_fov)
 
-		sniper_height -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.1 * sniper_height
+		sniper_height -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.3 * sniper_height * 0.2
 		sniper_height = clamp(sniper_height, 0.005, -tan(sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
 		#sniper_range -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.1 * sniper_range
 		#sniper_range = clamp(sniper_range, 10.0, _ship.artillery_controller.guns[0].max_range)
@@ -126,7 +126,7 @@ func _update_camera_transform():
 	#var adj = tan(PI / 2.0 + vertical_rad)
 	var cam_pos_sniper = ship_position + Vector3(
 		0.0,
-		max(sniper_height, 15.0),
+		max(sniper_height, 35.0),
 		0.0
 	)
 
@@ -171,13 +171,14 @@ func _update_camera_transform():
 	
 	#_print(vertical_rad)
 	#_print(adj)
-	_print(_ship.artillery_controller.guns[0].max_range)
-	_print(deg_to_rad(camera_offset_vertical))
+	# _print(_ship.artillery_controller.guns[0].max_range)
+	# _print(deg_to_rad(camera_offset_vertical))
 	
 	
 	var sniper_pos = Vector3(
 		0.0,
-		max(sniper_height, 15.0) - ship_position.y,
+		max(sniper_height, 35.0) - ship_position.y,
+		# sniper_height - ship_position.y,
 		0.0
 	)
 	global_position = ship_position + sniper_pos
@@ -189,4 +190,4 @@ func _update_camera_transform():
 	var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * sniper_range, -_ship.global_position.y, cos(horizontal_rad) * sniper_range)
 
 	## Look at the intersection point
-	look_at(intersection_point)
+	look_at(intersection_point, Vector3.UP)
