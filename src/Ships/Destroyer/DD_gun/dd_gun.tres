@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="GunParams" load_steps=5 format=3 uid="uid://gejcx56mxjtd"]
+
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/Guns/gun_params.gd" id="1_3ypt5"]
+[ext_resource type="Resource" uid="uid://dnwmndixvnnlp" path="res://src/Ships/Destroyer/DD_gun/DD_shell.tres" id="2_3ypt5"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/Shells/shell_params.gd" id="3_bldm5"]
+
+[sub_resource type="Resource" id="Resource_64fdf"]
+script = ExtResource("3_bldm5")
+speed = 790.0
+drag = 0.04
+damage = 700.0
+size = 4.0
+caliber = 127.0
+mass = 31.75
+fire_buildup = 6.0
+fuze_delay = 0.035
+type = 0
+penetration_modifier = 1.0
+auto_bounce = 1.0472
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[resource]
+script = ExtResource("1_3ypt5")
+reload_time = 3.0
+traverse_speed = 60.0
+elevation_speed = 60.0
+range = 11000.0
+shell1 = ExtResource("2_3ypt5")
+shell2 = SubResource("Resource_64fdf")
+hor_dispersion = 0.0
+vert_dispersion = 0.0
+vert_sigma = 0.0
+hor_sigma = 0.0
+hor_dispersion_rate = 0.0
+vert_dispersion_rate = 0.0
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

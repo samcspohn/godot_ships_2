@@ -1,0 +1,143 @@
+[gd_scene load_steps=9 format=3 uid="uid://duionhqlb8aak"]
+
+[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="1_fumsd"]
+[ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://modules.tscn" id="2_43kap"]
+[ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://src/Ships/Battleship/BB_gun1/Gun.tscn" id="6_02yh6"]
+[ext_resource type="PackedScene" uid="uid://de7wvvgfltyco" path="res://src/Ships/Battleship/sec_gun1/SmallGun.tscn" id="8_37rmj"]
+[ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://src/ship/wake/wake_emitter.tscn" id="9_5xmkw"]
+[ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_pqvyb"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_qlg0r"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_hcvt1"]
+size = Vector3(36, 9.3, 250)
+
+[node name="Ship" type="RigidBody3D" node_paths=PackedStringArray("secondary_controllers")]
+mass = 50300.0
+physics_material_override = SubResource("PhysicsMaterial_qlg0r")
+script = ExtResource("1_fumsd")
+secondary_controllers = [NodePath("Modules/SecondaryController"), null]
+
+[node name="Modules" parent="." instance=ExtResource("2_43kap")]
+
+[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+guns = [NodePath("../../Hull/Gun4"), NodePath("../../Hull/Gun3"), NodePath("../../Hull/Gun2"), NodePath("../../Hull/Gun")]
+
+[node name="SecondaryController" parent="Modules" index="4" node_paths=PackedStringArray("guns")]
+guns = [NodePath("../../Secondaries/Sec2"), NodePath("../../Secondaries/Sec4"), NodePath("../../Secondaries/Sec6"), NodePath("../../Secondaries/Sec8")]
+
+[node name="Hull" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.228271, 0)
+size = Vector3(36, 9.3, 250)
+
+[node name="Gun" parent="Hull" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("6_02yh6")]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 6.063, 66.623)
+min_rotation_angle = 0.569051
+max_rotation_angle = 5.69599
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Gun2" parent="Hull" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("6_02yh6")]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 9.88287, 42.6622)
+min_rotation_angle = 0.767804
+max_rotation_angle = 5.53485
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Gun3" parent="Hull" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("6_02yh6")]
+transform = Transform3D(1.00173, 0, 0, 0, 1.00173, 0, 0, 0, 1.00173, 0, 9.29123, -30.9456)
+min_rotation_angle = 3.76991
+max_rotation_angle = 2.51327
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Barrels" parent="Hull/Gun3" index="0"]
+transform = Transform3D(0.897315, 0, 0, 0, 0.781753, -0.440495, 0, 0.440495, 0.781753, 0, 0, -9.483)
+
+[node name="Gun4" parent="Hull" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("6_02yh6")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.08429, -55.3292)
+min_rotation_angle = 3.71111
+max_rotation_angle = 2.68039
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Secondaries" type="Node3D" parent="."]
+
+[node name="Sec" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(0.3, 0, 0, 0, 0.3, 0, 0, 0, 0.3, 12.6933, 5.94685, -11.6112)
+min_rotation_angle = 0.0698132
+max_rotation_angle = 2.72271
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec2" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(0.3, 0, 0, 0, 0.3, 0, 0, 0, 0.3, -11.9067, 5.94685, -11.6112)
+min_rotation_angle = 3.59538
+max_rotation_angle = 6.26573
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec7" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, 12.6933, 5.94684, 22.2888)
+min_rotation_angle = 0.314159
+max_rotation_angle = 3.12414
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec8" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 5.94685, 22.2888)
+min_rotation_angle = 3.21141
+max_rotation_angle = 5.88176
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec3" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(0.3, 0, 0, 0, 0.3, 0, 0, 0, 0.3, 12.6933, 7.74685, -1.7112)
+min_rotation_angle = 0.0523599
+max_rotation_angle = 2.89725
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec4" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(0.3, 0, 0, 0, 0.3, 0, 0, 0, 0.3, -11.9067, 7.74685, -1.7112)
+min_rotation_angle = 3.36849
+max_rotation_angle = 6.26573
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec5" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 3.41925e-10, 0.299974, -0.00391117, 2.62246e-08, -0.00391117, -0.299974, 12.6933, 7.74685, 12.3888)
+min_rotation_angle = 0.349066
+max_rotation_angle = 3.14159
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="Sec6" parent="Secondaries" node_paths=PackedStringArray("dispersion_calculator") instance=ExtResource("8_37rmj")]
+transform = Transform3D(-0.3, 0, -2.62268e-08, 0, 0.3, 0, 2.62268e-08, 0, -0.3, -11.9067, 7.74685, 12.3888)
+min_rotation_angle = 3.14159
+max_rotation_angle = 5.68977
+dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.000305176)
+shape = SubResource("BoxShape3D_hcvt1")
+
+[node name="Rudder" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 112.701)
+
+[node name="WakeEmitter" parent="." instance=ExtResource("9_5xmkw")]
+transform = Transform3D(0.925739, 0, -0.378164, 0, 1, 0, 0.378164, 0, 0.925739, -17.5703, -2.20763, 125)
+
+[node name="WakeEmitter2" parent="." instance=ExtResource("9_5xmkw")]
+transform = Transform3D(0.969544, 0, 0.244918, 0, 1, 0, -0.244918, 0, 0.969544, 15.7965, -2.20763, 125)
+
+[node name="WakeEmitter3" parent="." instance=ExtResource("9_5xmkw")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -134.869)
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.27155, 108.356)
+size = Vector3(5, 5, 5)
+
+[node name="Fire" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, -64.384)
+
+[node name="Fire2" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, -13.8199)
+
+[node name="Fire3" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, 29.5706)
+
+[node name="Fire4" parent="." instance=ExtResource("10_pqvyb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.436096, 4.65, 91.9842)
+
+[editable path="Modules"]
+[editable path="Hull/Gun3"]

@@ -2,7 +2,7 @@ extends Node
 
 class_name TeamEntity
 
-var team_id: int = -1  # Default to -1 indicating no team
+@export var team_id: int = -1  # Default to -1 indicating no team
 var is_bot: bool = false
 
 # Method to join a team

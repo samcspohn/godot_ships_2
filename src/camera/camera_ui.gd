@@ -439,9 +439,12 @@ func _update_camera_angle_display():
 		
 		# Calculate angle between the vectors
 		var angle_rad = camera_forward_xz.angle_to(ship_forward_xz)
-		var angle_deg = rad_to_deg(angle_rad)
-		
-		# Format the angle (positive = port/left, negative = starboard/right)
+		var angle_deg = abs(rad_to_deg(angle_rad))
+			
+		if angle_deg > 90.0:
+			angle_deg = 180.0 - angle_deg
+
+		# Format the angle
 		camera_angle_label.text = "Camera: %.1f°" % angle_deg
 		
 		# Position in top left corner, below FPS

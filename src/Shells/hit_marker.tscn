@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3 uid="uid://cmttgi8fmlvno"]
+
+[ext_resource type="Script" uid="uid://cj7u0wcue1anj" path="res://src/Shells/hit_marker.gd" id="1_rq8g5"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vxrvg"]
+emission_enabled = true
+emission = Color(0.867154, 0, 0.134098, 1)
+
+[node name="HitMarker" type="CSGSphere3D"]
+radius = 5.0
+material = SubResource("StandardMaterial3D_vxrvg")
+script = ExtResource("1_rq8g5")

@@ -56,47 +56,6 @@ static func calculate_absolute_max_range(projectile_speed: float,
 			
 		if max_range - min_range < 0.01:  # 1cm tolerance
 			break
-		
-		## Test range at various angles to ensure we find the best one
-		#var angles_to_test = [PI/6, PI/5, PI/4, PI/3]
-		#var valid_solution_found = false
-		#var best_solution_angle = 0.0
-		#var best_solution_time = 0.0
-		#
-		##for angle in angles_to_test:
-		## Create a target position at the test range along the horizontal
-		#var target_pos = Vector3(test_range, 0, 0)
-		#
-		## Use calculate_launch_vector to check if this range is achievable
-		#var result = calculate_launch_vector(Vector3.ZERO, target_pos, projectile_speed, drag_coefficient)
-		#
-		#if result[0] != null and result[1] > 0:
-			#
-			#valid_solution_found = true
-			#
-			## Store the angle of this valid solution
-			#var velocity = result[0]
-			#var launch_angle = atan2(velocity.y, sqrt(velocity.x * velocity.x + velocity.z * velocity.z))
-			#
-			## Update best angle and time for this range
-			#best_solution_angle = launch_angle
-			#best_solution_time = result[1]
-			##break
-		#
-		## Adjust search range based on whether we found a solution
-		#if valid_solution_found:
-			## This range is achievable, so update best values and try farther
-			#best_range = test_range
-			#best_angle = best_solution_angle
-			#best_time = best_solution_time
-			#min_range = test_range
-		#else:
-			## This range is too far, try a shorter range
-			#max_range = test_range
-		#
-		## Break if our search interval is small enough
-		#if max_range - min_range < 0.01:  # 1cm tolerance, increased precision
-			#break
 	
 	# Return the best range, angle, and flight time found
 	return [best_range, best_angle, best_time]
@@ -193,16 +152,15 @@ static func calculate_precise_shell_position(start_pos: Vector3, target_pos: Vec
 ## Returns [launch_vector, time_to_target] or [null, -1] if no solution exists
 static func calculate_launch_vector(start_pos: Vector3, target_pos: Vector3, projectile_speed: float,
 								  drag_coefficient: float) -> Array:
-	# Start with the non-drag physics as initial approximation
+# Start with the non-drag physics as initial approximation
 	var initial_result = ProjectilePhysics.calculate_launch_vector(start_pos, target_pos, projectile_speed)
 	
 	if initial_result[0] == null:
 		return [null, -1] # Target is out of range even without drag
 	
 	var initial_vector = initial_result[0]
-	var initial_time = initial_result[1]
 	
-	# Calculate direction to target (for azimuth angle)
+	# Calculate direction to target (azimuth angle - remains constant)
 	var disp = target_pos - start_pos
 	var horiz_dist = Vector2(disp.x, disp.z).length()
 	var horiz_dir = Vector2(disp.x, disp.z).normalized()
@@ -211,52 +169,198 @@ static func calculate_launch_vector(start_pos: Vector3, target_pos: Vector3, pro
 	var initial_speed_xz = Vector2(initial_vector.x, initial_vector.z).length()
 	var elevation_angle = atan2(initial_vector.y, initial_speed_xz)
 	
-	# Binary search for the correct elevation angle with drag
-	var min_angle = elevation_angle - PI / 4 # Lower bound
-	var max_angle = elevation_angle + PI / 4 # Upper bound
-	var error_distance = INF
-	for i in range(MAX_ITERATIONS):
-		var test_angle = (min_angle + max_angle) / 2.0
-		
-		# Create launch vector with current test angle
-		var launch_vector = Vector3(
-			projectile_speed * cos(test_angle) * horiz_dir.x,
-			projectile_speed * sin(test_angle),
-			projectile_speed * cos(test_angle) * horiz_dir.y
-		)
-		
-		# Estimate time of flight with drag
-		var flight_time = estimate_time_of_flight(start_pos, launch_vector, horiz_dist, drag_coefficient)
-		# Calculate final position using analytical drag approximation
-		var final_pos = calculate_position_at_time(start_pos, launch_vector, flight_time, drag_coefficient)
-		
-		# Calculate error to target
-		var error_vector = target_pos - final_pos
-		error_distance = error_vector.length()
-		
-		# If we're within tolerance, we've found a solution
-		if error_distance < POSITION_TOLERANCE:
-			return [launch_vector, flight_time]
-		
-		# Adjust search bounds based on vertical error
-		if final_pos.y < target_pos.y:
-			min_angle = test_angle # Need to increase angle
-		else:
-			max_angle = test_angle # Need to decrease angle
+	var beta = drag_coefficient
+	var g = abs(GRAVITY)
+	var theta = elevation_angle
 	
-	# If we reach here, we've hit maximum iterations but haven't converged
-	# Return the best approximation we have
-	var best_angle = (min_angle + max_angle) / 2.0
-	var best_launch_vector = Vector3(
-		projectile_speed * cos(best_angle) * horiz_dir.x,
-		projectile_speed * sin(best_angle),
-		projectile_speed * cos(best_angle) * horiz_dir.y
+	# Newton-Raphson refinement - Step 1
+	# Calculate current trajectory error
+	var v0_horiz = projectile_speed * cos(theta)
+	var v0y = projectile_speed * sin(theta)
+	
+	# Calculate flight time using horizontal constraint: horiz_dist = (v₀/β)(1-e^(-βt))
+	var drag_factor = beta * horiz_dist / v0_horiz
+	if drag_factor >= 0.99:
+		return [null, -1] # Too much drag
+	
+	var flight_time = -log(1.0 - drag_factor) / beta
+	
+	# Calculate vertical position at this flight time
+	var drag_decay = 1.0 - exp(-beta * flight_time)
+	var calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
+	var f_val = calc_y - target_pos.y
+	
+	# Calculate derivative numerically
+	var delta_theta = 0.0001
+	var theta_plus = theta + delta_theta
+	var v0_horiz_plus = projectile_speed * cos(theta_plus)
+	var v0y_plus = projectile_speed * sin(theta_plus)
+	
+	var drag_factor_plus = beta * horiz_dist / v0_horiz_plus
+	if drag_factor_plus < 0.99:
+		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
+		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
+		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
+		var f_prime = (calc_y_plus - calc_y) / delta_theta
+		
+		if abs(f_prime) > 1e-10:
+			theta = theta - f_val / f_prime
+	
+	# Newton-Raphson refinement - Step 2
+	v0_horiz = projectile_speed * cos(theta)
+	v0y = projectile_speed * sin(theta)
+	
+	drag_factor = beta * horiz_dist / v0_horiz
+	if drag_factor >= 0.99:
+		return [null, -1]
+	
+	flight_time = -log(1.0 - drag_factor) / beta
+	drag_decay = 1.0 - exp(-beta * flight_time)
+	calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
+	f_val = calc_y - target_pos.y
+	
+	theta_plus = theta + delta_theta
+	v0_horiz_plus = projectile_speed * cos(theta_plus)
+	v0y_plus = projectile_speed * sin(theta_plus)
+	
+	drag_factor_plus = beta * horiz_dist / v0_horiz_plus
+	if drag_factor_plus < 0.99:
+		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
+		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
+		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
+		var f_prime = (calc_y_plus - calc_y) / delta_theta
+		
+		if abs(f_prime) > 1e-10:
+			theta = theta - f_val / f_prime
+	
+	# Newton-Raphson refinement - Step 3 (final)
+	v0_horiz = projectile_speed * cos(theta)
+	v0y = projectile_speed * sin(theta)
+	
+	drag_factor = beta * horiz_dist / v0_horiz
+	if drag_factor >= 0.99:
+		return [null, -1]
+	
+	flight_time = -log(1.0 - drag_factor) / beta
+	drag_decay = 1.0 - exp(-beta * flight_time)
+	calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
+	f_val = calc_y - target_pos.y
+	
+	theta_plus = theta + delta_theta  
+	v0_horiz_plus = projectile_speed * cos(theta_plus)
+	v0y_plus = projectile_speed * sin(theta_plus)
+	
+	drag_factor_plus = beta * horiz_dist / v0_horiz_plus
+	if drag_factor_plus < 0.99:
+		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
+		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
+		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
+		var f_prime = (calc_y_plus - calc_y) / delta_theta
+		
+		if abs(f_prime) > 1e-10:
+			theta = theta - f_val / f_prime
+	
+	# Create final launch vector
+	var final_launch_vector = Vector3(
+		projectile_speed * cos(theta) * horiz_dir.x,
+		projectile_speed * sin(theta),
+		projectile_speed * cos(theta) * horiz_dir.y
 	)
 	
-	var best_flight_time = estimate_time_of_flight(start_pos, best_launch_vector, horiz_dist, drag_coefficient)
-	if error_distance >= POSITION_TOLERANCE:
+	# Calculate final flight time
+	var final_v0_horiz = projectile_speed * cos(theta)
+	var final_drag_factor = beta * horiz_dist / final_v0_horiz
+	
+	if final_drag_factor >= 0.99:
 		return [null, -1]
-	return [best_launch_vector, best_flight_time]
+	
+	var final_flight_time = -log(1.0 - final_drag_factor) / beta
+	
+	# Verify accuracy - check if we hit close enough to target
+	var final_drag_decay = 1.0 - exp(-beta * final_flight_time)
+	var final_y = start_pos.y + (projectile_speed * sin(theta) / beta) * final_drag_decay - (g / beta) * final_flight_time + (g / (beta * beta)) * final_drag_decay
+	
+	var error_distance = abs(final_y - target_pos.y)
+	if error_distance > POSITION_TOLERANCE:
+		return [null, -1] # Solution not accurate enough
+	
+	return [final_launch_vector, final_flight_time]
+## Calculate the impact position where y = 0 using advanced analytical approximation
+## This function uses Newton-Raphson refinement with a high-accuracy initial guess
+## to solve the transcendental equation for projectile motion with drag
+##
+## Parameters:
+## - start_pos: Starting position (Vector3)
+## - launch_velocity: Initial velocity vector (Vector3)
+## - drag_coefficient: Drag coefficient (float)
+##
+## Returns: Vector3 impact position where y = 0, or Vector3.ZERO if no solution
+static func calculate_impact_position(start_pos: Vector3, launch_velocity: Vector3, 
+									drag_coefficient: float) -> Vector3:
+	# Safety checks
+	if start_pos.y <= 0.0:
+		return start_pos # Already at or below ground level
+		
+	if drag_coefficient <= 0.0:
+		push_error("Invalid drag coefficient: must be positive")
+		return Vector3.ZERO
+	
+	# Extract components
+	var y0 = start_pos.y
+	var v0y = launch_velocity.y
+	var v0x = launch_velocity.x
+	var v0z = launch_velocity.z
+	var beta = drag_coefficient
+	var g = abs(GRAVITY)
+	
+	# First, get a very good initial guess using the ballistic formula (no drag)
+	# This provides an excellent starting point even for high drag cases
+	var no_drag_time = 0.0
+	if v0y >= 0:
+		# Upward trajectory: t = (v₀y + sqrt(v₀y² + 2gy₀))/g
+		no_drag_time = (v0y + sqrt(v0y * v0y + 2.0 * g * y0)) / g
+	else:
+		# Downward trajectory: t = (-v₀y + sqrt(v₀y² + 2gy₀))/g
+		var discriminant = v0y * v0y + 2.0 * g * y0
+		if discriminant < 0:
+			return Vector3.ZERO # No solution
+		no_drag_time = (-v0y + sqrt(discriminant)) / g
+	
+	# Refine using Newton-Raphson method (analytically - fixed number of steps)
+	# The function we're solving is: f(t) = y₀ + (v₀y/β)(1-e^(-βt)) - (g/β)t + (g/β²)(1-e^(-βt))
+	# Its derivative is: f'(t) = (v₀y + g/β)e^(-βt) - g/β
+	
+	var t = no_drag_time
+	
+	# Apply 2 Newton-Raphson steps for high accuracy (still analytical - no loops)
+	# Step 1
+	var exp_term = exp(-beta * t)
+	var f_val = y0 + (v0y/beta) * (1.0 - exp_term) - (g/beta) * t + (g/(beta*beta)) * (1.0 - exp_term)
+	var f_prime = (v0y + g/beta) * exp_term - g/beta
+	
+	if abs(f_prime) > 1e-10: # Avoid division by zero
+		t = t - f_val / f_prime
+	
+	# Step 2 (refinement)
+	exp_term = exp(-beta * t)
+	f_val = y0 + (v0y/beta) * (1.0 - exp_term) - (g/beta) * t + (g/(beta*beta)) * (1.0 - exp_term)
+	f_prime = (v0y + g/beta) * exp_term - g/beta
+	
+	if abs(f_prime) > 1e-10:
+		t = t - f_val / f_prime
+	
+	# Ensure positive time
+	if t <= 0:
+		return Vector3.ZERO
+	
+	# Calculate final horizontal positions using analytical drag formula
+	var drag_factor = 1.0 - exp(-beta * t)
+	
+	var final_x = start_pos.x + (v0x / beta) * drag_factor
+	var final_z = start_pos.z + (v0z / beta) * drag_factor
+	
+	# Return impact position (y = 0 by definition)
+	return Vector3(final_x, 0.0, final_z)
 
 ## Estimate time of flight with drag effects
 static func estimate_time_of_flight(start_pos: Vector3, launch_vector: Vector3, horiz_dist: float,

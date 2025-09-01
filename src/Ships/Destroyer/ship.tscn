@@ -1,0 +1,82 @@
+[gd_scene load_steps=9 format=3 uid="uid://h4kwpb1mjno3"]
+
+[ext_resource type="PackedScene" uid="uid://bxyqwfp6k866f" path="res://src/Ships/ShipBase.tscn" id="1_0dtcp"]
+[ext_resource type="PackedScene" uid="uid://cqjalxbffaahq" path="res://src/Ships/Destroyer/DD_gun/gun.tscn" id="2_murmj"]
+[ext_resource type="PackedScene" uid="uid://cjdyt0x8vrtfc" path="res://src/torpedo/TorpedoLauncher.tscn" id="3_murmj"]
+[ext_resource type="Script" uid="uid://cq5883re36gh7" path="res://src/torpedo/torpedo_launcher_params.gd" id="4_g5uyf"]
+[ext_resource type="Script" uid="uid://ckumdqdogqvlk" path="res://src/torpedo/torpedo_params.gd" id="5_cvtan"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_nqcqh"]
+margin = 0.0
+size = Vector3(12, 6, 113)
+
+[sub_resource type="Resource" id="Resource_g5uyf"]
+script = ExtResource("5_cvtan")
+speed = 23.0
+damage = 12000.0
+metadata/_custom_type_script = "uid://ckumdqdogqvlk"
+
+[sub_resource type="Resource" id="Resource_xhq0c"]
+script = ExtResource("4_g5uyf")
+traverse_speed = 60.0
+reload_time = 0.4
+range = 9.0
+torpedo_params = SubResource("Resource_g5uyf")
+metadata/_custom_type_script = "uid://cq5883re36gh7"
+
+[node name="Ship" instance=ExtResource("1_0dtcp")]
+mass = 2500.0
+
+[node name="ArtilleryController" parent="Modules" index="1" node_paths=PackedStringArray("guns")]
+guns = [NodePath("../../Hull/Gun5"), NodePath("../../Hull/Gun4"), NodePath("../../Hull/Gun3"), NodePath("../../Hull/Gun2"), NodePath("../../Hull/Gun")]
+
+[node name="HPManager" parent="Modules" index="3"]
+max_hp = 7300.0
+
+[node name="Hull" parent="." index="1"]
+size = Vector3(12, 6, 113)
+
+[node name="Gun" parent="Hull" index="0" instance=ExtResource("2_murmj")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.23261, 34.5015)
+min_rotation_angle = 3.63028
+max_rotation_angle = 2.61799
+
+[node name="Gun2" parent="Hull" index="1" instance=ExtResource("2_murmj")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.226547, 8.21504, 23.2632)
+min_rotation_angle = 3.61283
+max_rotation_angle = 2.63545
+
+[node name="Gun3" parent="Hull" index="2" instance=ExtResource("2_murmj")]
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0.226547, 8.21504, 10.4174)
+min_rotation_angle = 0.593412
+max_rotation_angle = 5.77704
+
+[node name="Gun4" parent="Hull" index="3" instance=ExtResource("2_murmj")]
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0.226547, 8.21504, -26.0889)
+min_rotation_angle = 0.575959
+max_rotation_angle = 5.8294
+
+[node name="Gun5" parent="Hull" index="4" instance=ExtResource("2_murmj")]
+transform = Transform3D(-1, 0, 8.74228e-08, 0, 1, 0, -8.74228e-08, 0, -1, 0.175193, 5.13085, -35.0577)
+min_rotation_angle = 0.593412
+max_rotation_angle = 5.77704
+
+[node name="CollisionShape3D" parent="." index="3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
+shape = SubResource("BoxShape3D_nqcqh")
+
+[node name="WakeEmitter" parent="." index="5"]
+transform = Transform3D(0.925739, 0, -0.378164, 0, 1, 0, 0.378164, 0, 0.925739, -6.08082, -2.20763, 57.4084)
+
+[node name="WakeEmitter2" parent="." index="6"]
+transform = Transform3D(0.969544, 0, 0.244918, 0, 1, 0, -0.244918, 0, 0.969544, 6.51565, -2.20763, 56.7597)
+
+[node name="WakeEmitter3" parent="." index="7"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.809441, -0.765186, -59.4185)
+
+[node name="CSGBox3D2" parent="." index="8"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.00816441, 52.1193)
+
+[node name="TorpedoLauncher" parent="." index="9" instance=ExtResource("3_murmj")]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, -0.609951, 4.50332, 1.13709)
+params = SubResource("Resource_xhq0c")

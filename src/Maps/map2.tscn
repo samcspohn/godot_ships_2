@@ -1,0 +1,302 @@
+[gd_scene load_steps=6 format=3 uid="uid://co64l5smsfyl5"]
+
+[ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="1_2llvm"]
+[ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_8oaqw"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_klv7y"]
+friction = 0.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_7kt6i"]
+size = Vector3(100000, 1, 100000)
+
+[sub_resource type="PrismMesh" id="PrismMesh_m8itd"]
+
+[node name="Map2" type="Node3D"]
+
+[node name="Water" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+material_override = ExtResource("1_2llvm")
+size = Vector3(100000, 1, 100000)
+
+[node name="StaticBody3D" type="StaticBody3D" parent="Water"]
+physics_material_override = SubResource("PhysicsMaterial_klv7y")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Water/StaticBody3D"]
+shape = SubResource("BoxShape3D_7kt6i")
+
+[node name="Land" type="Node" parent="."]
+
+[node name="Island" type="Node3D" parent="Land"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2464.03, 0, 0)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island2" type="Node3D" parent="Land"]
+transform = Transform3D(0.89792, 0, 0.440159, 0, 1, 0, -0.440159, 0, 0.89792, -2240.12, 0, 1149.07)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island2"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island2"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island5" type="Node3D" parent="Land"]
+transform = Transform3D(0.527089, 0, -0.84981, 0, 1, 0, 0.84981, 0, 0.527089, -8356.04, 0, 3416.35)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island5"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island5"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island6" type="Node3D" parent="Land"]
+transform = Transform3D(0.847335, 0, -0.531058, 0, 1, 0, 0.531058, 0, 0.847335, -9214.51, 0, 4212.3)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island6"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island6"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island7" type="Node3D" parent="Land"]
+transform = Transform3D(-0.651662, 0, -0.75851, 0, 1, 0, 0.75851, 0, -0.651662, -8783.15, 0, -696.848)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island7"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island7"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island8" type="Node3D" parent="Land"]
+transform = Transform3D(-0.251275, 0, -0.967916, 0, 1, 0, 0.967916, 0, -0.251275, -9800.65, 0, -1275.81)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island8"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island8"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island9" type="Node3D" parent="Land"]
+transform = Transform3D(-0.651662, 0, -0.75851, 0, 1, 0, 0.75851, 0, -0.651662, 10246, 0, -1151.63)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island9"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island9"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island10" type="Node3D" parent="Land"]
+transform = Transform3D(-0.251275, 0, -0.967916, 0, 1, 0, 0.967916, 0, -0.251275, 9228.49, 0, -1730.59)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island10"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island10"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island11" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 10173.3, 0, 2570.84)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island11"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island11"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island12" type="Node3D" parent="Land"]
+transform = Transform3D(0.730258, 0, -0.683172, 0, 1, 0, 0.683172, 0, 0.730258, 9051.89, 0, 3188.1)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island12"]
+transform = Transform3D(1682.07, -1.6248, -891.616, 26.3647, 174.916, 5.48391, 1081.64, -1.73679, 1386.42, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island12"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island13" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 382.479, 0, 3543.29)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island13"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island13"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island14" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 6841.78, 0, 6175.99)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island14"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island14"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 664.435, 0.603902, 191.71)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island15" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -3868.32, 0, 6175.99)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island15"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island15"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 486.131, 0.603902, 124)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island16" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -3868.32, 0, -4213.52)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island16"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, -551.566, 0.781157, -270.059)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island16"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island17" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 384.297, 0, -2591.81)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island17"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island17"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island18" type="Node3D" parent="Land"]
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 5413.86, -0.0205078, -4239.04)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island18"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, -375.321, 0.781157, -203.131)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island18"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island3" type="Node3D" parent="Land"]
+transform = Transform3D(-0.988589, 0, 0.15064, 0, 1, 0, -0.15064, 0, -0.988589, 3246.35, 0, 1159.38)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island3"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island3"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="Island4" type="Node3D" parent="Land"]
+transform = Transform3D(-0.953979, 0, -0.299874, 0, 1, 0, 0.299874, 0, -0.953979, 3198.08, 0, -10.3091)
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island4"]
+transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island4"]
+transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
+material_override = ExtResource("2_8oaqw")
+use_collision = true
+mesh = SubResource("PrismMesh_m8itd")
+
+[node name="CSGSphere3D" type="CSGSphere3D" parent="Land"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1365.79, 1996.91, 0)
+use_collision = true
+radius = 100.0

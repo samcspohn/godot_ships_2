@@ -81,13 +81,13 @@ func _redraw(gizmo):
 		var angle_current = i * TAU / segments
 		var angle_next = ((i + 1) % segments) * TAU / segments
 		
-		# Add 180 degrees to match Godot's -Z forward convention
-		var display_angle_current = angle_current + PI
-		var display_angle_next = angle_next + PI
+		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
+		var display_angle_current = angle_current
+		var display_angle_next = angle_next
 		
 		# Use world coordinates, not turret's local coordinates
-		var current_point = Vector3(-sin(display_angle_current) * base_radius, 0, cos(display_angle_current) * base_radius)
-		var next_point = Vector3(-sin(display_angle_next) * base_radius, 0, cos(display_angle_next) * base_radius)
+		var current_point = Vector3(sin(display_angle_current) * base_radius, 0, cos(display_angle_current) * base_radius)
+		var next_point = Vector3(sin(display_angle_next) * base_radius, 0, cos(display_angle_next) * base_radius)
 		
 		# Transform to world position but keep world orientation
 		current_point = turret.global_position + current_point
@@ -106,8 +106,19 @@ func _redraw(gizmo):
 	
 	# Draw rotation limits if enabled
 	if turret.rotation_limits_enabled:
-		var min_angle_rad = turret.min_rotation_angle
-		var max_angle_rad = turret.max_rotation_angle
+		# Convert stored angles to display angles by subtracting 180 degrees (π radians)
+		var min_angle_rad = turret.min_rotation_angle - PI
+		var max_angle_rad = turret.max_rotation_angle - PI
+		
+		# Normalize display angles to [0, 2π] range
+		while min_angle_rad < 0:
+			min_angle_rad += TAU
+		while min_angle_rad >= TAU:
+			min_angle_rad -= TAU
+		while max_angle_rad < 0:
+			max_angle_rad += TAU
+		while max_angle_rad >= TAU:
+			max_angle_rad -= TAU
 		
 		var arc_radius = scale_factor * 4.0
 		var height = scale_factor * 0.1
@@ -124,14 +135,14 @@ func _redraw(gizmo):
 			_add_arc_segment_world_relative(arc_lines, min_angle_rad, TAU, arc_radius, height, 16, turret)
 			_add_arc_segment_world_relative(arc_lines, 0, max_angle_rad, arc_radius, height, 16, turret)
 		
-		# Add lines to arc ends with 180-degree offset
-		var min_display_angle = min_angle_rad + PI
-		var max_display_angle = max_angle_rad + PI
+		# Add lines to arc ends - use gun's coordinate system
+		var min_display_angle = min_angle_rad
+		var max_display_angle = max_angle_rad
 		
 		# Create points in world space then convert to local
 		var center_world = turret.global_position + Vector3(0, height, 0)
-		var min_point_world = turret.global_position + Vector3(-sin(min_display_angle) * arc_radius, height, cos(min_display_angle) * arc_radius)
-		var max_point_world = turret.global_position + Vector3(-sin(max_display_angle) * arc_radius, height, cos(max_display_angle) * arc_radius)
+		var min_point_world = turret.global_position + Vector3(sin(min_display_angle) * arc_radius, height, cos(min_display_angle) * arc_radius)
+		var max_point_world = turret.global_position + Vector3(sin(max_display_angle) * arc_radius, height, cos(max_display_angle) * arc_radius)
 		
 		# Convert to local space
 		var center = turret.global_transform.affine_inverse() * center_world
@@ -171,24 +182,24 @@ func get_editor_camera():
 # Add arc segment vertices in pairs
 func _add_arc_segment(lines: PackedVector3Array, start_angle: float, end_angle: float, radius: float, height: float, segments: int):
 	# This function will be replaced by _add_arc_segment_transformed, but we'll keep it for backward compatibility
-	_add_arc_segment_transformed(lines, start_angle, end_angle, radius, height, segments, Basis())
+	_add_arc_segment_transformed(lines, start_angle, end_angle, radius, height, segments)
 
 # Add a new function to add transformed arc segments
 func _add_arc_segment_transformed(lines: PackedVector3Array, start_angle: float, end_angle: float, 
-	radius: float, height: float, segments: int, transform_basis: Basis):
+	radius: float, height: float, segments: int):
 	var angle_step = (end_angle - start_angle) / segments
 	
 	for i in range(segments):
 		var angle = start_angle + i * angle_step
 		var next_angle = start_angle + (i + 1) * angle_step
 		
-		# Add 180 degrees to match Godot's -Z forward convention
-		var display_angle = angle + PI
-		var display_next_angle = next_angle + PI
+		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
+		var display_angle = angle
+		var display_next_angle = next_angle
 		
-		# Use consistent coordinate mapping with the offset
-		var point = transform_basis * Vector3(-sin(display_angle) * radius, height, cos(display_angle) * radius)
-		var next_point = transform_basis * Vector3(-sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
+		# Use gun's coordinate system
+		var point = Vector3(sin(display_angle) * radius, height, cos(display_angle) * radius)
+		var next_point = Vector3(sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
 		
 		# Add points as a pair
 		lines.append(point)
@@ -196,7 +207,7 @@ func _add_arc_segment_transformed(lines: PackedVector3Array, start_angle: float,
 		
 		# Add radial lines (fewer to avoid crowding)
 		if i % 8 == 0:
-			var center = transform_basis * Vector3(0, height, 0)
+			var center = Vector3(0, height, 0)
 			lines.append(center)
 			lines.append(point)
 
@@ -209,13 +220,13 @@ func _add_arc_segment_world_relative(lines: PackedVector3Array, start_angle: flo
 		var angle = start_angle + i * angle_step
 		var next_angle = start_angle + (i + 1) * angle_step
 		
-		# Add 180 degrees to match Godot's -Z forward convention
-		var display_angle = angle + PI
-		var display_next_angle = next_angle + PI
+		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
+		var display_angle = angle
+		var display_next_angle = next_angle
 		
 		# Create points in world space
-		var point_world = turret.global_position + Vector3(-sin(display_angle) * radius, height, cos(display_angle) * radius)
-		var next_point_world = turret.global_position + Vector3(-sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
+		var point_world = turret.global_position + Vector3(sin(display_angle) * radius, height, cos(display_angle) * radius)
+		var next_point_world = turret.global_position + Vector3(sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
 		
 		# Convert to local space for gizmo
 		var point = turret.global_transform.affine_inverse() * point_world
@@ -242,22 +253,36 @@ func _commit_handle(gizmo, handle_id, secondary, restore, cancel):
 	var turret = gizmo.get_node_3d() as Gun
 	
 	if cancel:
+		# restore is a display angle, convert it to storage angle
+		var storage_angle = restore + PI
+		while storage_angle < 0:
+			storage_angle += TAU
+		while storage_angle >= TAU:
+			storage_angle -= TAU
+		
 		if handle_id == 0:
-			turret.min_rotation_angle = restore
+			turret.min_rotation_angle = storage_angle
 		else:
-			turret.max_rotation_angle = restore
+			turret.max_rotation_angle = storage_angle
 		return
 	
 	var undo_redo = EditorInterface.get_editor_undo_redo()
 	
+	# Convert restore (display angle) to storage angle for undo
+	var restore_storage_angle = restore + PI
+	while restore_storage_angle < 0:
+		restore_storage_angle += TAU
+	while restore_storage_angle >= TAU:
+		restore_storage_angle -= TAU
+	
 	if handle_id == 0:
 		undo_redo.create_action("Change Min Angle")
 		undo_redo.add_do_property(turret, "min_rotation_angle", turret.min_rotation_angle)
-		undo_redo.add_undo_property(turret, "min_rotation_angle", restore)
+		undo_redo.add_undo_property(turret, "min_rotation_angle", restore_storage_angle)
 	else:
 		undo_redo.create_action("Change Max Angle")
 		undo_redo.add_do_property(turret, "max_rotation_angle", turret.max_rotation_angle)
-		undo_redo.add_undo_property(turret, "max_rotation_angle", restore)
+		undo_redo.add_undo_property(turret, "max_rotation_angle", restore_storage_angle)
 	
 	undo_redo.commit_action()
 
@@ -278,29 +303,42 @@ func _set_handle(gizmo, handle_id, secondary, camera, screen_pos):
 	# Intersect ray with plane
 	var intersection = plane.intersects_ray(ray_origin, ray_direction)
 	if intersection == null:
-		return turret.min_rotation_angle if (handle_id == 0) else turret.max_rotation_angle
+		# Return display angle (stored angle minus 180 degrees)
+		var stored_angle = turret.min_rotation_angle if (handle_id == 0) else turret.max_rotation_angle
+		var display_angle = stored_angle - PI
+		while display_angle < 0:
+			display_angle += TAU
+		while display_angle >= TAU:
+			display_angle -= TAU
+		return display_angle
 	
 	# Calculate vector from turret origin to intersection point in world space
 	var world_dir = intersection - turret.global_position
 	
-	# Calculate the angle in world coordinates
-	var angle = -atan2(world_dir.x, world_dir.z)
+	# Calculate the angle using gun's coordinate system: atan2(x, z) where 0 = +Z
+	var display_angle = atan2(world_dir.x, world_dir.z)
 	
-	# Subtract 180 degrees to account for the display offset
-	angle -= PI
+	# Normalize display angle to [0, 2π] range
+	while display_angle < 0:
+		display_angle += TAU
+	while display_angle >= TAU:
+		display_angle -= TAU
 	
-	# Normalize to [0, 2π] range
-	while angle < 0:
-		angle += TAU
-	while angle >= TAU:
-		angle -= TAU
+	# Convert display angle to storage angle by adding 180 degrees (π radians)
+	var storage_angle = display_angle + PI
+	
+	# Normalize storage angle to [0, 2π] range
+	while storage_angle < 0:
+		storage_angle += TAU
+	while storage_angle >= TAU:
+		storage_angle -= TAU
 	
 	if handle_id == 0:
-		turret.min_rotation_angle = angle
+		turret.min_rotation_angle = storage_angle
 	else:
-		turret.max_rotation_angle = angle
+		turret.max_rotation_angle = storage_angle
 	
-	return turret.min_rotation_angle if (handle_id == 0) else turret.max_rotation_angle
+	return display_angle
 
 # Create a mesh consisting of quads for each line segment
 func _create_quad_mesh_from_lines(lines: PackedVector3Array, camera: Camera3D, width: float) -> ArrayMesh:

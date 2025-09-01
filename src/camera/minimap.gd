@@ -184,9 +184,6 @@ func _on_canvas_draw() -> void:
 	# Draw a border around the minimap for visibility
 	ship_markers_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])), Color(1, 1, 1, 0.5), false, 2.0)
 
-
-			
-	
 	# Draw tracked ships
 	for ship in tracked_ships:
 		if is_instance_valid(ship):
@@ -204,7 +201,7 @@ func _on_canvas_draw() -> void:
 	var ship = player_ship as Ship
 	draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.guns[0].max_range, Color(1, 1, 1, 0.5))
 	if ship.secondary_controllers.size() > 0:
-		for gun in ship.secondary_controllers[0].get_children():
+		for gun in (ship.secondary_controllers[0] as SecondaryController).guns:
 			var col = Color.DARK_KHAKI
 			col.a = 0.5
 			draw_range_circle_on_minimap(ship.global_position, gun.max_range, col)

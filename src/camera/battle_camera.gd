@@ -295,9 +295,8 @@ func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool
 		return angle_rad
 
 # Add a debug sphere at global location.
-func draw_debug_sphere(location, size, color = Color(1, 0, 0)):
+static func draw_debug_sphere(scene_root: Node, location, size, color = Color(1, 0, 0), duration: float = 3.0):
 	# Will usually work, but you might need to adjust this.
-	var scene_root = get_tree().root
 	# Create sphere with low detail of size.
 	var sphere = SphereMesh.new()
 	sphere.radial_segments = 4
@@ -314,7 +313,7 @@ func draw_debug_sphere(location, size, color = Color(1, 0, 0)):
 	var node = MeshInstance3D.new()
 	node.mesh = sphere
 	var t = Timer.new()
-	t.wait_time = 3
+	t.wait_time = duration
 	t.timeout.connect(func():
 		node.queue_free()
 		)
@@ -354,13 +353,23 @@ func set_camera_mode(mode):
 		# Switch to sniper mode if zoomed in enough
 		current_mode = CameraMode.SNIPER
 		last_non_free_look_mode = CameraMode.SNIPER
-		draw_debug_sphere(aim_position, 5)
+		draw_debug_sphere(get_tree().root, aim_position, 5)
 		print("DEBUG: SNIPER")
 		print(aim_position.y)
 		var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
 		# var sniper_height = 
 		var sniper_range = aim_dist + (aim_position.y) / -tan(sniper_view.sniper_angle_x)
 		var sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
+		if sniper_height <= 35:
+			var start_point = Vector3(_ship.global_position.x, 35, _ship.global_position.z)
+			var a = aim_position - start_point
+			var b = Vector3(0, -start_point.y, 0)
+			var angle = a.angle_to(b) - PI / 2
+			print(rad_to_deg(angle))
+			print(a)
+			var ground_intersection = calculate_ground_intersection(start_point, deg_to_rad(third_person_view.rotation_degrees_horizontal), angle)
+			sniper_range = Vector2(ground_intersection.x, ground_intersection.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+			sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
 
 		sniper_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
 		#sniper_view.sniper_range = clamp(sniper_range, 0.0, _ship.artillery_controller.guns[0].max_range)
@@ -371,7 +380,7 @@ func set_camera_mode(mode):
 		sniper_view.sniper_height = sniper_height
 		var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
 		var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
-		draw_debug_sphere(intersection_point, 5, Color.GREEN)
+		draw_debug_sphere(get_tree().root, intersection_point, 5, Color.GREEN)
 		#sniper_view.rotation.x = angle
 		aim = sniper_view
 				

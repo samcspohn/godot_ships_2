@@ -181,7 +181,7 @@ func _update_camera_transform():
 	var cam_pos = cam_pos_3rd
 	
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		_print("DEBUG")
+		# _print("DEBUG")
 		# Calculate direction to target
 		var target_position = locked_target.global_position
 		var direction_to_target = (target_position - cam_pos).normalized()
@@ -191,7 +191,7 @@ func _update_camera_transform():
 		var target_distance = cam_pos.distance_to(target_position)
 		var height_diff = target_position.y - cam_pos.y
 		var target_angle_vertical = atan2(height_diff, sqrt(pow(direction_to_target.x, 2) + pow(direction_to_target.z, 2)) * target_distance)
-		_print(target_angle_vertical)
+		# _print(target_angle_vertical)
 		
 		var max_range_angle = rad_to_deg(tan(-cam_pos.y / _ship.artillery_controller.guns[0].max_range))
 		var target_angle_vert_deg = rad_to_deg(target_angle_vertical)

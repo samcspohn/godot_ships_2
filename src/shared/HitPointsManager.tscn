@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://dmabeflns107f"]
-
-[ext_resource type="Script" uid="uid://sfvkyiqvuc5x" path="res://src/shared/hit_points_manager.gd" id="1_qa0lh"]
-
-[node name="HPManager" type="Node"]
-script = ExtResource("1_qa0lh")

@@ -1,9 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://ke48e4ha18c2"]
-
-[ext_resource type="PackedScene" uid="uid://bjpxjuvx01fvn" path="res://scenes/Guns/GunBase/Barrel.tscn" id="1_6d4cf"]
-
-[node name="Barrel" instance=ExtResource("1_6d4cf")]
-size = Vector3(0.5, 0.5, 4)
-
-[node name="Node3D" parent="." index="0"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2.3179)

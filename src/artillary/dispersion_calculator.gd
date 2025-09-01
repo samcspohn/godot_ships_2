@@ -5,69 +5,97 @@ class_name ArtilleryDispersion
 ## Parameters for shell dispersion
 
 # Base dispersion values at 0.5 km (500 meters)
-@export var base_horizontal_dispersion: float = 10.0  # Meters perpendicular to aim direction
-@export var base_vertical_dispersion: float = 120.0    # Meters in line with aim direction
+@export var base_horizontal_dispersion: float = 10.0 # Meters perpendicular to aim direction
+@export var base_vertical_dispersion: float = 120.0 # Meters in line with aim direction
 
 # Linear dispersion growth with range (meters per kilometer)
-@export var horizontal_dispersion_modifier: float = 13.56  # Additional meters of dispersion per km
-@export var vertical_dispersion_modifier: float = 13.56    # Additional meters of dispersion per km (typically 1.5-2x horizontal)
+@export var horizontal_dispersion_modifier: float = 13.56 # Additional meters of dispersion per km
+@export var vertical_dispersion_modifier: float = 13.56 # Additional meters of dispersion per km (typically 1.5-2x horizontal)
 
 # Sigma values control how tightly shells group within the ellipse
-@export var horizontal_sigma: float = 3.0  # Standard deviations within horizontal dispersion
-@export var vertical_sigma: float = 3.0    # Standard deviations within vertical dispersion 
+@export var h_grouping: float = 3.0 # Standard deviations within horizontal dispersion
+@export var v_grouping: float = 3.0 # Standard deviations within vertical dispersion
+
+@export var base_spread: float = 0.01
 
 ## Calculate a point within the dispersion ellipse
 # aim_point: The precise point being aimed at
 # gun_position: The position of the gun firing the shell
 # Returns: A new point representing where the shell will actually go due to dispersion
-func calculate_dispersion_point(aim_point: Vector3, gun_position: Vector3) -> Vector3:
-	# Calculate range to target in kilometers
-	var range_to_target_km = gun_position.distance_to(aim_point) / 1000.0
+func calculate_dispersion_point(aim_point: Vector3, gun_position: Vector3, speed: float, drag: float) -> Vector3:
+	var a = ProjectilePhysicsWithDrag.calculate_launch_vector(gun_position, aim_point, speed, drag)
+	var launch_velocity = a[0]
+
+
+	var dist = gun_position.distance_to(aim_point)
+	# var horizontal_dispersion = base_horizontal_dispersion + dist * horizontal_dispersion_modifier
+	# var vertical_dispersion = base_vertical_dispersion + dist * vertical_dispersion_modifier
+	var p = random_point_in_ellipse(1, 1, h_grouping, v_grouping)
+
+	# p = Vector2(randf_range(-1, 1), randf_range(-1, 1))
+
+	var r = launch_velocity.cross(Vector3.UP).normalized()
+	var u = launch_velocity.cross(r).normalized()
+	# var base_spread = 0.01
+	var new_launch_velocity = (launch_velocity.normalized() + (r * p.x + u * p.y) * base_spread) * speed
+
+	# var dispersed_position = ProjectilePhysicsWithDrag.calculate_impact_position(gun_position, new_launch_velocity, drag)
+	# print("aim_point: ", aim_point)
+	# print("dispersed_position: ", dispersed_position)
+	# return dispersed_position
+	return new_launch_velocity
+
+	# # return aim_point
+	# # Calculate range to target in kilometers
+	# var range_to_target_km = gun_position.distance_to(aim_point) / 1000.0
 	
-	# Calculate actual dispersion values based on range using the formula:
-	# dispersion = base_dispersion + dispersion_modifier * range_in_km
-	var horizontal_dispersion = base_horizontal_dispersion + (horizontal_dispersion_modifier * range_to_target_km)
-	var vertical_dispersion = base_vertical_dispersion + (vertical_dispersion_modifier * range_to_target_km)
+	# # Calculate actual dispersion values based on range using the formula:
+	# # dispersion = base_dispersion + dispersion_modifier * range_in_km
+	# var horizontal_dispersion = base_horizontal_dispersion + (horizontal_dispersion_modifier * range_to_target_km)
+	# var vertical_dispersion = base_vertical_dispersion + (vertical_dispersion_modifier * range_to_target_km)
 	
-	# Project positions to horizontal plane (XZ plane, Y is up)
-	var gun_position_2d = Vector2(gun_position.x, gun_position.z) 
-	var aim_point_2d = Vector2(aim_point.x, aim_point.z)
+	# # Project positions to horizontal plane (XZ plane, Y is up)
+	# var gun_position_2d = Vector2(gun_position.x, gun_position.z) 
+	# var aim_point_2d = Vector2(aim_point.x, aim_point.z)
 	
-	# Get 2D direction and distance
-	var y_dir = (aim_point_2d - gun_position_2d).normalized()
+	# # Get 2D direction and distance
+	# var y_dir = (aim_point_2d - gun_position_2d).normalized()
 	
-	# Calculate perpendicular vector in 2D (90 degrees counterclockwise)
-	var x_dir = Vector2(-y_dir.y, y_dir.x)
+	# # Calculate perpendicular vector in 2D (90 degrees counterclockwise)
+	# var _x_dir = Vector3(y_dir.x, 0, y_dir.y).cross(Vector3.UP)
+	# var x_dir = Vector2(_x_dir.x, _x_dir.z).normalized()
 	
-	# Generate point within elliptical distribution with normal distribution
-	#var u = randf() * TAU  # Random angle around the ellipse (0 to 2π)
+	# # Generate point within elliptical distribution with normal distribution
+	# #var u = randf() * TAU  # Random angle around the ellipse (0 to 2π)
 	
-	# Create radius with bell curve distribution (more shots near center)
-	# We use 0.99 to avoid potential log(0) issues
-	#var r = inverse_normal_cdf(randf() * 0.99)
+	# # Create radius with bell curve distribution (more shots near center)
+	# # We use 0.99 to avoid potential log(0) issues
+	# #var r = inverse_normal_cdf(randf() * 0.99)
 	
-	# var rho: float = randf_range(0.0, 1.0)
-	# var phi: float = randf_range(0.0, TAU)
+	# # var rho: float = randf_range(0.0, 1.0)
+	# # var phi: float = randf_range(0.0, TAU)
 	
-	# perpendicular_2d *= sqrt(rho) * cos(phi) * random_normal(horizontal_sigma)
-	# direction_2d *= sqrt(rho) * sin(phi) * random_normal(vertical_sigma)
-	# #direction_2d *= 0.9
-	# #perpendicular_2d *= 0.6
+	# # perpendicular_2d *= sqrt(rho) * cos(phi) * random_normal(h_grouping)
+	# # direction_2d *= sqrt(rho) * sin(phi) * random_normal(v_grouping)
+	# # #direction_2d *= 0.9
+	# # #perpendicular_2d *= 0.6
 	
 	
-	# # Scale by dispersion values and apply to aim point
-	# var horizontal_offset = horizontal_dispersion * perpendicular_2d
-	# var vertical_offset = vertical_dispersion * direction_2d
+	# # # Scale by dispersion values and apply to aim point
+	# # var horizontal_offset = horizontal_dispersion * perpendicular_2d
+	# # var vertical_offset = vertical_dispersion * direction_2d
 	
-	# # Apply offsets in 2D
-	# # Horizontal is perpendicular to aim direction
-	# # Vertical is along aim direction
-	# var dispersed_point_2d = aim_point_2d + horizontal_offset + vertical_offset
-	var p = random_point_in_ellipse(horizontal_dispersion, vertical_dispersion, 1.8, 1.8)
-	var dispersed_point_2d = aim_point_2d + y_dir * p.y + x_dir * p.x
+	# # # Apply offsets in 2D
+	# # # Horizontal is perpendicular to aim direction
+	# # # Vertical is along aim direction
+	# # var dispersed_point_2d = aim_point_2d + horizontal_offset + vertical_offset
+	# var p = random_point_in_ellipse(horizontal_dispersion, vertical_dispersion, h_grouping, v_grouping)
+	# var dispersed_point_2d = aim_point_2d + y_dir * p.y + x_dir * p.x
 	
-	# Convert back to 3D, preserving original height
-	return Vector3(dispersed_point_2d.x, aim_point.y, dispersed_point_2d.y)
+	# # Convert back to 3D, preserving original height
+	# return Vector3(dispersed_point_2d.x, aim_point.y, dispersed_point_2d.y)
+
+
 # Function to generate a random 2D point within an ellipse with adjustable distribution
 # Parameters:
 # - width: Width of the ellipse (x-axis radius * 2)

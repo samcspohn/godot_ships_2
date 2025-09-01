@@ -36,6 +36,7 @@ func _ready():
 		set_process(false)
 		ray_query.collide_with_areas = true
 		ray_query.collide_with_bodies = true
+		ray_query.collision_mask = 1 | (1 << 1)
 	else:
 		set_physics_process(false)
 		transforms.resize(12)
@@ -130,8 +131,8 @@ func __process(_delta: float) -> void:
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		var prev_pos = p.position
 		p.position += p.direction * p.params.speed * _delta * 3.0
-		if p.position.y > 0:
-			p.position.y = max(p.position.y - _delta * 30, 0.0)
+		if p.position.y > 0.01:
+			p.position.y = max(p.position.y - _delta * 10, 0.01)
 		update_transform_pos(id, p.position)
 
 		## Calculate distance-based scale to counter perspective shrinking
@@ -175,8 +176,8 @@ func _physics_process(_delta: float) -> void:
 		ray_query.from = p.position
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position += p.direction * p.params.speed * _delta * 3.0
-		if p.position.y > 0:
-			p.position.y = max(p.position.y - _delta * 10, 0.0)
+		if p.position.y > 0.01:
+			p.position.y = max(p.position.y - _delta * 10, 0.01)
 		ray_query.to = p.position
 		
 		# Perform the raycast
@@ -185,8 +186,8 @@ func _physics_process(_delta: float) -> void:
 		if not collision.is_empty():
 			#global_position = collision.position
 			self.destroyTorpedoRpc(id, collision.position)
-			if collision.collider is Ship:
-				var ship: Ship = collision.collider
+			var ship = ProjectileManager.find_ship(collision.collider)
+			if ship != null:
 				var hp: HitPointsManager = ship.health_controller
 				hp.take_damage(p.params.damage, collision.position)
 		id += 1
@@ -272,7 +273,7 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	var expl: CSGSphere3D = preload("res://scenes/explosion.tscn").instantiate()
+	var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
 	get_tree().root.add_child(expl)
 	expl.global_position = pos
 	expl.radius = radius

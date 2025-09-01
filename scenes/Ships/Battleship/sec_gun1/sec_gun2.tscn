@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://bogfvbu1wjdy"]
-
-[ext_resource type="PackedScene" uid="uid://bf40i2xf8jkn6" path="res://scenes/Ships/Battleship/BB_gun1/Gun.tscn" id="1_gn7vx"]
-
-[node name="Gun" instance=ExtResource("1_gn7vx")]
-transform = Transform3D(0.4, 0, 0, 0, 0.4, 0, 0, 0, 0.4, 0, 0, 0)

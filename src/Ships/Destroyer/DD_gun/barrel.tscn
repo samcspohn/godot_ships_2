@@ -1,0 +1,7 @@
+[gd_scene format=3 uid="uid://ke48e4ha18c2"]
+
+[node name="Barrel"]
+size = Vector3(0.5, 0.5, 4)
+
+[node name="Node3D" parent="." index="0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2.3179)
