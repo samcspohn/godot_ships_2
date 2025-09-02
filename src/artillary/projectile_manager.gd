@@ -30,7 +30,7 @@ func _ready():
 
 	if OS.get_cmdline_args().find("--server") != -1:
 		print("running server")
-		set_process(false)
+		# set_process(false)
 		ray_query.collide_with_areas = true
 		ray_query.collide_with_bodies = true
 		ray_query.collision_mask = 1 | (1 << 1) # world and detailed mesh collision

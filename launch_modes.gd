@@ -25,7 +25,7 @@ func _ready():
 	match launch_mode:
 		LaunchMode.CLIENT:
 			print("client")
-			get_tree().call_deferred("change_scene_to_file", "res://scenes/main_menu.tscn")
+			get_tree().call_deferred("change_scene_to_file", "res://src/client/main_menu.tscn")
 		LaunchMode.DEDICATED_SERVER:
 			print("server")
 			for i in range(args.size()):
@@ -42,14 +42,8 @@ func _ready():
 
 func setup_dedicated_server(port):
 	NetworkManager.create_server(port, GameSettings.MAX_PLAYERS)
-	get_tree().call_deferred("change_scene_to_file", "res://scenes/server.tscn")
+	get_tree().call_deferred("change_scene_to_file", "res://src/server/server.tscn")
 
 func setup_matchmaker():
 	var matchmaker = preload("res://src/matchmaker/matchmaker.gd").new()
 	add_child(matchmaker)
-
-#func setup_local_host():
-	## Run everything locally for testing
-	#setup_matchmaker()
-	#setup_dedicated_server()
-	#get_tree().call_deferred("change_scene_to_file", "res://scenes/main_menu.tscn")

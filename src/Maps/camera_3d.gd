@@ -3,7 +3,7 @@ extends Camera3D
 # Camera sensitivity and speed settings
 @export var mouse_sensitivity := 0.002
 @export var speed_normal := 100.0
-@export var speed_fast := 500.0
+@export var speed_fast := 2000.0
 @export var speed_slow := 1.0
 @export var acceleration := 4.0
 @export var deceleration := 8.0

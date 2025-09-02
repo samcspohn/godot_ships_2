@@ -2,6 +2,8 @@ extends Node3D
 
 class_name NavalThirdPersonCamera
 
+
+signal processed
 # Camera components
 @onready var camera: Camera3D = $"./Pitch/Camera3D"
 @onready var yaw_node: Node3D = $"."
@@ -55,6 +57,9 @@ func _ready():
 	
 	# Set initial transforms
 	_update_camera_transform(0.0)
+
+	processed.connect(ProjectileManager.__process)
+	processed.connect(TorpedoManager.__process)
 
 func _setup_camera():
 	# Position camera at initial distance
@@ -135,6 +140,8 @@ func _process(delta):
 	
 	# Update camera transform
 	_update_camera_transform(delta)
+	
+	processed.emit(delta)
 
 func _physics_process(delta):
 	if ship_ref != null:

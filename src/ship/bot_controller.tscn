@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bk1ycf7n2lxjr"]
+
+[ext_resource type="Script" path="res://src/ship/bot_controller.gd" id="1_8x3vq"]
+
+[node name="BotController" type="Node"]
+script = ExtResource("1_8x3vq")

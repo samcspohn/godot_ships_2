@@ -9,6 +9,7 @@ var spawn_point = null
 var team_info = null
 var team_file_path = ""
 var team = {}
+var players_spawned_bots = false  # Track if bots have been spawned for single player
 
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -45,32 +46,12 @@ func _on_peer_disconnected(id):
 		players.erase(id)
 		player_info.erase(id)
 
-@rpc("any_peer")
-func register_player(player_name):
-	var id = multiplayer.get_remote_sender_id()
-	player_info[id] = {
-		"name": player_name
-	}
-	
-	# Tell other clients about this player
-	for peer_id in player_info:
-		if peer_id != id:
-			# Tell new player about existing player
-			register_player.rpc_id(id, player_info[peer_id].name)
-			# Tell existing player about new player
-			register_player.rpc_id(peer_id, player_name)
-	
-	# Tell client to start game
-	join_game.rpc_id(id)
-	
-	# Spawn player for all clients including the newly registered one
-	spawn_player.rpc(id, player_name)
-
 func spawn_player(id, player_name):
+	print("spawn_player called with ID: ", id, ", player_name: ", player_name)
 
 	# Check for team file argument
 	if team_info == null:
-		var team_file_path = "user://team_info.json"
+		team_file_path = "user://team_info.json"
 		if FileAccess.file_exists(team_file_path):
 			var file = FileAccess.open(team_file_path, FileAccess.READ)
 			var content = file.get_as_text()
@@ -83,6 +64,7 @@ func spawn_player(id, player_name):
 			team_info = json.get_data()
 			file.close()
 			print("Loaded team info: ", team_info)
+			print("Team info keys: ", team_info["team"].keys() if team_info.has("team") else "No team key")
 
 	# team_info = {
 	# 	"team": {
@@ -102,9 +84,19 @@ func spawn_player(id, player_name):
 		return
 	
 	#join_game.rpc_id(id)
+	
+	if not team_info or not team_info.has("team"):
+		push_error("No team info available for player: " + str(player_name))
+		return
+		
+	if not team_info["team"].has(player_name):
+		push_error("Player " + str(player_name) + " not found in team info. Available keys: " + str(team_info["team"].keys()))
+		return
+		
 	var team_data = team_info["team"][player_name]
 
 	var ship = team_data["ship"]
+	var is_bot = team_data.get("is_bot", false)
 	var player: Ship = load(ship).instantiate()
 	#print(player_name)
 	player.name = str(id)
@@ -122,23 +114,32 @@ func spawn_player(id, player_name):
 	var team_id = int(team_data["team"])
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = team_id
-	team_.is_bot = false
+	team_.is_bot = is_bot
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
 	
 	
-		
-	var controller = preload("res://scenes/player_control.tscn").instantiate()
-	# controller.name = str(id)
-	player.get_node("Modules").add_child(controller)
-	player.control = controller
-	controller.ship = player
+	# If it's a bot, add bot AI controller instead of player controller
+	if is_bot:
+		var bot_controller = preload("res://src/ship/bot_controller.tscn").instantiate()
+		player.get_node("Modules").add_child(bot_controller)
+		bot_controller.ship = player
+	else:
+		# Only add player control for human players
+		var controller = preload("res://scenes/player_control.tscn").instantiate()
+		# controller.name = str(id)
+		player.get_node("Modules").add_child(controller)
+		player.control = controller
+		controller.ship = player
 	
 	# Add to world - note game_world is a child of this node
 	players[id] = [player, ship]
-	
+
+	var map = get_node("GameWorld/Env").get_child(0)
+	var team_spawn_point: Vector3 = (map.get_node("Spawn").get_child(team_id) as Node3D).global_position
+
 	# Randomize spawn position
-	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000))
+	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000)) + team_spawn_point
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
@@ -148,14 +149,40 @@ func spawn_player(id, player_name):
 		var p: Ship = players[pid][0]
 		var p_ship = players[pid][1]
 		# notify new client of current players
-		spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.team.team_id, p_ship)
+		if not is_bot:
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.team.team_id, p_ship)
 		#notify current players of new player
-		spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
-	
+		if not p.team.is_bot:
+			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
+
 	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
+	
+	# Check if this is single player and spawn bots (only for human players, not bots)
+	if team_info and team_info.has("team") and not is_bot:
+		var is_single_player = false
+		var bot_count = 0
+		
+		# Check if any team member is a bot to determine if this is single player
+		for team_player_id in team_info["team"]:
+			var player_data = team_info["team"][team_player_id]
+			if player_data.get("is_bot", false):
+				is_single_player = true
+				bot_count += 1
+		
+		# If this is single player mode and this is the human player, spawn all bots
+		if is_single_player and not players_spawned_bots:
+			print("Spawning ", bot_count, " bots for single player mode")
+			for team_player_id in team_info["team"]:
+				var player_data = team_info["team"][team_player_id]
+				if player_data.get("is_bot", false):
+					# Spawn bot with unique ID
+					var bot_id = int(team_player_id) + 1000  # Use high IDs for bots
+					print("Spawning bot: ID=", bot_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
+					spawn_player(bot_id, team_player_id)
+			players_spawned_bots = true
 
 @rpc("call_remote", "reliable")
-func spawn_players_client(id, player_name, pos, team_id, ship):
+func spawn_players_client(id, _player_name, _pos, team_id, ship):
 
 	if !Minimap.is_initialized:
 		Minimap.server_take_map_snapshot(get_viewport())
@@ -166,16 +193,28 @@ func spawn_players_client(id, player_name, pos, team_id, ship):
 	player.name = str(id)
 	player._enable_guns()
 	
-	if id == multiplayer.get_unique_id():
+	# Check if this is the local player or a bot by checking team info
+	var is_local_player = (id == multiplayer.get_unique_id())
+	var is_bot = false
+	
+	# Check team info for bot status
+	if team_info and team_info.has("team"):
+		for team_player_id in team_info["team"]:
+			if str(id) == str(int(team_player_id) + 1000) or team_player_id == str(id):  # Check both bot ID mapping and regular ID
+				var player_data = team_info["team"][team_player_id]
+				is_bot = player_data.get("is_bot", false)
+				break
+	
+	# Only add player control for local human player
+	if is_local_player and not is_bot:
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
-		
 	
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = int(team_id)
-	team_.is_bot = false
+	team_.is_bot = is_bot
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
 	
@@ -189,7 +228,7 @@ func spawn_players_client(id, player_name, pos, team_id, ship):
 @rpc("any_peer", "call_remote")
 func join_game():
 	# Called on client to switch to game world
-	get_tree().change_scene_to_file("res://scenes/server.tscn")
+	get_tree().change_scene_to_file("res://src/server/server.tscn")
 	
 func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
@@ -224,10 +263,11 @@ func _physics_process(_delta: float) -> void:
 		var d = p.sync_ship_data()
 		for pid2 in players: # every other player
 			var p2: Ship = players[pid2][0]
-			if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
-				p.sync.rpc_id(pid2, d) # sync self to other player
-			else:
-				p._hide.rpc_id(pid2) # hide from other player
+			if not p2.team.is_bot:
+				if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
+					p.sync.rpc_id(pid2, d) # sync self to other player
+				else:
+					p._hide.rpc_id(pid2) # hide from other player
 				
 		
 			#if p_id == p_id2:

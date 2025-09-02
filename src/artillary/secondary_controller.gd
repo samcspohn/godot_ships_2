@@ -20,7 +20,7 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if !multiplayer.is_server():
 		return
-	var server: GameServer = get_tree().root.get_node("Server")
+	var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
 		return
 	if not _ship.team:
@@ -43,16 +43,17 @@ func _physics_process(delta: float) -> void:
 		else:
 			return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position))
 
+	# if enemies_in_range.size() > 0:
+	for g in guns:
+		var found_target = false
+		for e in enemies_in_range:
+			if g.valid_target_leading(e.global_position, e.linear_velocity / 2.0):
+				g._aim_leading(e.global_position, e.linear_velocity / 2.0, delta)
+				found_target = true
+				break
+		if not found_target:
+			g.return_to_base(delta)
 	if enemies_in_range.size() > 0:
-		for g in guns:
-			var found_target = false
-			for e in enemies_in_range:
-				if g.valid_target_leading(e.global_position, e.linear_velocity / 2.0):
-					g._aim_leading(e.global_position, e.linear_velocity / 2.0, delta)
-					found_target = true
-					break
-			if not found_target:
-				g.return_to_base(delta)
 		var g: Gun = guns[0]
 		var reload_time = g.params.reload_time
 		sequential_fire_timer += delta

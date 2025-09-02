@@ -41,7 +41,7 @@ func _disable_guns():
 
 func _ready() -> void:
 	# Get references to child components
-	movement_controller = $Modules/ShipMovement
+	movement_controller = $Modules/MovementController
 	artillery_controller = $Modules/ArtilleryController
 	health_controller = $Modules/HPManager
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")

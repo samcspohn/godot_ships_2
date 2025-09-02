@@ -20,7 +20,8 @@ func _ready() -> void:
 	var packet = {
 		"request": "request_server",
 		"player_name": GameSettings.player_name,
-		"selected_ship": GameSettings.selected_ship
+		"selected_ship": GameSettings.selected_ship,
+		"single_player": GameSettings.is_single_player
 	}
 	var err = udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
 
@@ -37,11 +38,14 @@ func _on_leave_queue():
 		}
 		udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
 		udp = null
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	get_tree().change_scene_to_file("res://src/client/main_menu.tscn")
 
 func _on_connection_succeeded():
 	status_label.text = "Connected to server!"
-	get_tree().change_scene_to_file("res://scenes/server.tscn")
+	# Reset single player flag after successful connection
+	GameSettings.is_single_player = false
+	GameSettings.save_settings()
+	get_tree().change_scene_to_file("res://src/server/server.tscn")
 
 func _on_connection_failed():
 	status_label.text = "Failed to connect to server."
@@ -49,7 +53,7 @@ func _on_connection_failed():
 func _on_server_disconnected():
 	status_label.text = "Disconnected from server."
 	# Return to main menu
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	get_tree().change_scene_to_file("res://src/client/main_menu.tscn")
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.

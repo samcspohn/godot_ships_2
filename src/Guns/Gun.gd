@@ -20,6 +20,7 @@ var base_rotation: float
 
 var max_range: float
 var max_flight: float
+var _ship: Ship
 
 @export var params: GunParams
 var my_params: GunParams = GunParams.new()
@@ -51,8 +52,8 @@ func _ready() -> void:
 
 	base_rotation = rotation.y
 	print(rad_to_deg(base_rotation))
-	#min_rotation_angle = deg_to_rad(90 - 60)
-	#max_rotation_angle = deg_to_rad(270 + 60)
+	
+	_ship = get_parent().get_parent() as Ship
 
 # Function to update barrels based on editor properties
 func update_barrels() -> void:
@@ -78,7 +79,8 @@ func _physics_process(delta: float) -> void:
 	if multiplayer.is_server():
 		if !disabled && reload < 1.0:
 			reload += delta / params.reload_time
-			_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
+			if not _ship.team.is_bot:
+				_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
 
 
 # Normalize angle to the range [0, 2π]

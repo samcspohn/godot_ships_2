@@ -31,35 +31,113 @@ func _ready():
 			var packet_result = json.data
 			if packet_result["request"] == "request_server":
 				# Track this connecting client
-				connecting_clients[info] = packet_result['selected_ship']
+				var client_data = {
+					"ship": packet_result['selected_ship'],
+					"single_player": packet_result.get('single_player', false)
+				}
+				connecting_clients[info] = client_data
 			elif packet_result["request"] == "leave_queue":
 				connecting_clients.erase(info)
 			
-				
+			# Check if we have a single player request
+			var single_player_client = null
+			for client in connecting_clients:
+				if connecting_clients[client]["single_player"]:
+					single_player_client = client
+					break
 			
-			if connecting_clients.size() >= min_players:
+			# Handle single player mode
+			if single_player_client != null:
 				# Find an available port for the server
 				var server_port = find_available_port()
 				if server_port == -1:
 					push_error("No available ports for game server!")
 					continue
 					
-				# Start server with the selected port as an argument
-				#var server = OS.create_process(OS.get_executable_path(), ["--server", "--port", str(server_port)])
-
+				# Create team info for single player vs 4 bots
+				var team = {}
+				var client_data = connecting_clients[single_player_client]
+				
+				# Player team (team 0)
+				team["0"] = {
+					"team": "0",
+					"player_id": "0", 
+					"ship": client_data["ship"],
+					"is_bot": false
+				}
+				
+				# Bot team (team 1) - 4 bots
+				var bot_ships = ["res://ShipModels/Bismarck3.tscn"]
+				for i in range(4):
+					var bot_id = str(i + 1)
+					team[bot_id] = {
+						"team": "1",
+						"player_id": bot_id,
+						"ship": bot_ships[i % bot_ships.size()],
+						"is_bot": true
+					}
+				
+				var team_info = {
+					"team": team
+				}
+				
+				print("Single player team info created: ", team_info)
+				
+				# Save team info
+				var team_file_path = "user://team_info.json"
+				var file = FileAccess.open(team_file_path, FileAccess.WRITE)
+				file.store_string(JSON.stringify(team_info))
+				file.close()
+				
+				# Mark this port as in use
+				mark_port_as_used(server_port)
+				
+				# Send server info to the single player
+				var server_info = {
+					"ip": "127.0.0.1",
+					"port": server_port,
+					"player_id": "0",
+					"max_players": GameSettings.MAX_PLAYERS
+				}
+				
+				udp.set_dest_address(single_player_client["ip"], single_player_client["port"])
+				udp.put_packet(var_to_bytes(server_info))
+				
+				# Remove the single player client from queue
+				connecting_clients.erase(single_player_client)
+				continue
+			
+				
+			
+			if connecting_clients.size() >= min_players:
+				# Check if all clients are multiplayer (not single player)
+				var multiplayer_clients = []
+				for client in connecting_clients:
+					if not connecting_clients[client]["single_player"]:
+						multiplayer_clients.append(client)
+				
+				if multiplayer_clients.size() < min_players:
+					continue  # Not enough multiplayer clients yet
+				
+				# Find an available port for the server
+				var server_port = find_available_port()
+				if server_port == -1:
+					push_error("No available ports for game server!")
+					continue
+					
 				# Send team info to the server (as a file for simplicity)
 				var team = {}
 				for i in range(min_players):
-					# var client = connecting_clients[i]
-					var client = connecting_clients.keys()[i]
+					var client = multiplayer_clients[i]
 					# Get the ship type from the client
-					var ship_type = connecting_clients[client]
+					var ship_type = connecting_clients[client]["ship"]
 					# Assign a team ID to each client
 					var team_id = i % 2  # Simple round-robin assignment
-					team[i] = {
+					team[str(i)] = {
 						"team": str(team_id),
 						"player_id": str(i),
-						"ship": ship_type
+						"ship": ship_type,
+						"is_bot": false
 					}
 				var team_info = {
 					"team": team
@@ -75,11 +153,9 @@ func _ready():
 				
 				# Notify all connecting clients
 				for i in range(min_players):
-					var client = connecting_clients.keys()[i]
-					# Get the ship type from the client
-					# var ship_type = connecting_clients[client]
+					var client = multiplayer_clients[i]
 					
-									# Get server info with the newly assigned port
+					# Get server info with the newly assigned port
 					var server_info = {
 						"ip": "127.0.0.1",
 						"port": server_port,
@@ -93,7 +169,7 @@ func _ready():
 				
 				# Remove the clients that have been assigned to a server
 				for i in range(min_players):
-					var client = connecting_clients.keys()[0]
+					var client = multiplayer_clients[i]
 					connecting_clients.erase(client)
 
 # Initialize the list of available ports

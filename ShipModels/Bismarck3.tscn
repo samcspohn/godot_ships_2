@@ -29,7 +29,7 @@ h_grouping = 1.8
 v_grouping = 1.8
 
 [node name="HPManager" parent="Modules" index="1"]
-max_hp = 65000.0
+max_hp = 650000.0
 
 [node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
 guns = [NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]

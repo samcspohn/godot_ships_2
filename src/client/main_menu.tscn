@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3 uid="uid://c3vlws8iqpvej"]
+[gd_scene load_steps=4 format=3 uid="uid://ct23uvcdgwrfw"]
 
 [ext_resource type="Script" uid="uid://budq4bhs6x0g0" path="res://src/client/main_menu.gd" id="1_bqqt6"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
@@ -24,7 +24,11 @@ text = "Game"
 
 [node name="ConnectButton" type="Button" parent="VBoxContainer"]
 layout_mode = 2
-text = "Connect"
+text = "Multiplayer"
+
+[node name="SinglePlayerButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Single Player"
 
 [node name="IPInput" type="LineEdit" parent="VBoxContainer"]
 layout_mode = 2

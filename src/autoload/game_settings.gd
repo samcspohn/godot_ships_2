@@ -9,12 +9,14 @@ var player_name = "Player"
 var server_ip = "127.0.0.1"
 var matchmaker_ip = "127.0.0.1"
 var selected_ship = ""
+var is_single_player = false
 
 func save_settings():
 	var config = ConfigFile.new()
 	config.set_value("network", "player_name", player_name)
 	config.set_value("network", "server_ip", server_ip)
 	config.set_value("network", "matchmaker_ip", matchmaker_ip)
+	config.set_value("game", "is_single_player", is_single_player)
 	config.save("user://game_settings.cfg")
 
 func load_settings():
@@ -25,3 +27,4 @@ func load_settings():
 		player_name = config.get_value("network", "player_name", "Player")
 		server_ip = config.get_value("network", "server_ip", "127.0.0.1")
 		matchmaker_ip = config.get_value("network", "matchmaker_ip", "127.0.0.1")
+		is_single_player = config.get_value("game", "is_single_player", false)
