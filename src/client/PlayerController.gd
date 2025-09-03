@@ -10,7 +10,6 @@ var _cameraInput: Vector2
 var cam: BattleCamera
 var ray: RayCast3D
 var guns: Array[Gun] = []
-var gun_reloads: Array[ProgressBar] = []
 var selected_weapon: int = 0 # 0 = shell1, 1 = shell2, 2 = torpedo
 
 # Mouse control variables
@@ -57,6 +56,8 @@ func _ready() -> void:
 func setup_artillery_camera() -> void:
 	cam = load("res://scenes/player_cam.tscn").instantiate()
 	cam._ship = ship
+	cam.call_deferred("set_angle", ship.global_position.angle_to(-ship.global_transform.basis.z))
+	# cam.aim.rotation_degrees_horizontal = ship.global_position.angle_to(ship.global_transform.basis.z)
 	#cam.ship_movement = ship_movement
 	#cam.hp_manager = hp_manager
 	
@@ -69,35 +70,6 @@ func setup_artillery_camera() -> void:
 	
 	# Get ray from camera
 	self.ray = cam.get_child(0)
-
-func setup_gun_reload_ui() -> void:
-	var canvas: CanvasLayer = cam.get_child(1)
-	
-	for g in guns:
-		var progress_bar: ProgressBar = canvas.get_node("ProgressBar").duplicate()
-		progress_bar.visible = true
-		progress_bar.show_percentage = false
-		progress_bar.max_value = 1.0
-		canvas.add_child(progress_bar)
-		gun_reloads.append(progress_bar)
-	
-	update_ui_layout()
-
-func update_ui_layout() -> void:
-	var num_guns = guns.size()
-	var viewport_size = get_viewport().size
-	var y_pos = viewport_size.y * 0.75
-	var w = 60
-	var spc = 10
-	var total_width = (w * num_guns) + (spc * (num_guns - 1))
-	
-	var start = (viewport_size.x - total_width) / 2.0
-	
-	for p in range(num_guns):
-		var x = start + (p * (w + spc))
-		gun_reloads[p].position = Vector2(x, y_pos)
-		gun_reloads[p].custom_minimum_size = Vector2(w, 8)
-		gun_reloads[p].size = Vector2(w, 8)
 
 func setName(_name: String):
 	playerName.text = _name
@@ -240,7 +212,7 @@ func select_target_ship(target_ship: Ship) -> void:
 	# else:
 	# 	print("Warning: secondary_controller not initialized")
 		
-func show_target_indicator(target_ship: Ship) -> void:
+func show_target_indicator(_target_ship: Ship) -> void:
 	# You can implement visual feedback here
 	# For example, create a temporary effect or UI element
 	# showing which ship is targeted
@@ -259,9 +231,6 @@ func _process(dt: float) -> void:
 			# Setup artillery camera
 			setup_artillery_camera()
 			
-			# Setup UI elements
-			setup_gun_reload_ui()
-			
 			print("Successfully initialized player guns: ", guns.size())
 		else:
 			print("Warning: No guns found in ship. This might be an initialization order issue.")
@@ -272,11 +241,6 @@ func _process(dt: float) -> void:
 	if guns.size() > 0:
 		cam.projectile_speed = guns[0].params.shell.speed
 		cam.projectile_drag_coefficient = guns[0].params.shell.drag
-		
-	# Update gun reload UI
-	for i in range(guns.size()):
-		if i < gun_reloads.size():
-			gun_reloads[i].value = guns[i].reload
 		
 	# Handle double click timer
 	if click_count == 1:
@@ -302,7 +266,6 @@ func _process(dt: float) -> void:
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
 		view_port_size = get_viewport().size
-		update_ui_layout()
 		
 	# Handle player input and send to server
 	process_player_input()

@@ -58,6 +58,7 @@ func _ready():
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 				
+				var bot_ships = ["res://ShipModels/Bismarck3.tscn"]
 				# Player team (team 0)
 				team["0"] = {
 					"team": "0",
@@ -65,11 +66,19 @@ func _ready():
 					"ship": client_data["ship"],
 					"is_bot": false
 				}
-				
-				# Bot team (team 1) - 4 bots
-				var bot_ships = ["res://ShipModels/Bismarck3.tscn"]
-				for i in range(4):
+				# Bot team (team 1) - 3 bots
+				for i in range(3):
 					var bot_id = str(i + 1)
+					team[bot_id] = {
+						"team": "0",
+						"player_id": bot_id,
+						"ship": bot_ships[i % bot_ships.size()],
+						"is_bot": true
+					}
+
+				# Bot team (team 1) - 4 bots
+				for i in range(4):
+					var bot_id = str(i + 4)
 					team[bot_id] = {
 						"team": "1",
 						"player_id": bot_id,

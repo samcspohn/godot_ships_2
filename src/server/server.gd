@@ -143,7 +143,8 @@ func spawn_player(id, player_name):
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
-	
+	player.rotate(Vector3.UP,spawn_pos.angle_to(player.global_transform.basis.z))
+
 	#join_game.rpc_id(id)
 	for pid in players:
 		var p: Ship = players[pid][0]
@@ -241,7 +242,11 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collision_mask = 1 # only terrain
 	
 	for p in players.values():
-		(p[0] as Ship).visible_to_enemy = false
+		var ship: Ship = p[0]
+		if ship.health_controller.current_hp <= 0:
+			ship.visible_to_enemy = true
+		else:
+			ship.visible_to_enemy = false
 	
 	for p_id in players.size() - 1:
 		var p: Ship = players[players.keys()[p_id]][0]
@@ -250,7 +255,7 @@ func _physics_process(_delta: float) -> void:
 		# var d = p.sync_ship_data() 
 		for p_id2 in range(p_id + 1,players.size()):
 			var p2: Ship = players[players.keys()[p_id2]][0]
-			if p.team.team_id != p2.team.team_id: # other team
+			if p.team.team_id != p2.team.team_id and p.health_controller.current_hp > 0 and p2.health_controller.current_hp > 0: # other team
 				ray_query.to = p2.global_position
 				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)

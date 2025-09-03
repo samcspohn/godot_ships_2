@@ -58,12 +58,14 @@ var tracked_ships = {} # Dictionary to store ships and their UI elements
 var ship_ui_elements = {} # Dictionary to store UI elements for each ship
 
 var aim: Node3D
-var ui: CameraUI
+var ui # Will be CameraUIScene instance
 var third_person_view: ThirdPersonView
 var free_look_view: ThirdPersonView
 var sniper_view: SniperView
 var ray_exclude: Array = [] # Nodes to exclude from raycasting
 
+func set_angle(angle: float):
+	aim.rotation_degrees_horizontal = angle
 
 func recurs_collision_bodies(node: Node) -> Array:
 	"""Recursively find all collision bodies in the node tree, excluding specified nodes."""
@@ -78,8 +80,20 @@ func _ready():
 	# Initial setup
 	current_fov = default_fov
 	fov = current_fov
-	ui = CameraUI.new()
+	
+	# Load the UI scene instead of creating it programmatically
+	var ui_scene = preload("res://scenes/camera_ui.tscn")
+	ui = ui_scene.instantiate()
 	ui.camera_controller = self
+	add_child(ui)
+	
+	# Setup gun reload bars after camera controller is assigned
+	ui.call_deferred("setup_gun_reload_bars")
+	
+	# Initialize UI for the ship after it's added to the scene tree
+	if _ship:
+		ui.call_deferred("initialize_for_ship")
+	
 	third_person_view = ThirdPersonView.new()
 	third_person_view._ship = _ship
 	free_look_view = ThirdPersonView.new()
@@ -87,7 +101,6 @@ func _ready():
 	free_look_view._ship = _ship
 	sniper_view = SniperView.new()
 	sniper_view._ship = _ship
-	add_child(ui)
 	get_parent().add_child(third_person_view)
 	get_parent().add_child(free_look_view)
 	get_parent().add_child(sniper_view)
@@ -259,7 +272,12 @@ func _update_target_lock():
 	sniper_view.target_lock_enabled = target_lock_enabled
 	third_person_view.locked_target = locked_target
 	sniper_view.locked_target = locked_target
-	
+
+	if target_lock_enabled and (!locked_target.visible_to_enemy or locked_target.health_controller.is_dead()):
+		# If target is not visible, disable target lock
+		target_lock_enabled = false
+		locked_target = null
+
 func _update_camera_transform():
 	if !_ship:
 		return
@@ -346,7 +364,8 @@ func set_camera_mode(mode):
 		#third_person_view.sniper_range = sniper_view.sniper_range
 
 		third_person_view.camera_offset_horizontal = sniper_view.camera_offset_horizontal
-		third_person_view.camera_offset_vertical = sniper_view.camera_offset_vertical
+		third_person_view.camera_offset_vertical = rad_to_deg(atan(-(opp + sniper_view.camera_offset_vertical) / adj))
+		# third_person_view.camera_offset_vertical = sniper_view.camera_offset_vertical
 		aim = third_person_view
 
 	else: # SNIPER mode
@@ -512,7 +531,7 @@ func find_lockable_target():
 				ship_team_id = ship.team.get_team_info()["team_id"]
 				
 			# Prioritize enemy ships
-			if my_team_id != ship_team_id:
+			if my_team_id != ship_team_id and ship.health_controller.is_alive() and ship.visible_to_enemy:
 				# Calculate screen position and center distance
 				var screen_pos = get_viewport().get_camera_3d().unproject_position(ship.global_position)
 				var screen_center = get_viewport().get_visible_rect().size / 2.0

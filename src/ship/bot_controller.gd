@@ -15,7 +15,7 @@ var desired_heading: float = 0.0
 var turn_speed: float = 0.5
 
 # Collision avoidance parameters
-var collision_avoidance_distance: float = 1000.0  # Distance to start avoiding obstacles
+var collision_avoidance_distance: float = 2000.0  # Distance to start avoiding obstacles
 var collision_check_rays: int = 12  # Number of rays to cast for collision detection
 var collision_ray_spread: float = TAU  # 360 degrees spread for collision rays (full circle)
 var emergency_stop_distance: float = 500.0  # Distance to emergency stop

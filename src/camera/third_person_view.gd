@@ -200,8 +200,13 @@ func _update_camera_transform():
 		rotation_degrees_horizontal = rad_to_deg(target_angle_horizontal) + camera_offset_horizontal
 		rotation_degrees_vertical = rad_to_deg(target_angle_vertical) + camera_offset_vertical
 
+	else:
+		camera_offset_horizontal = 0.0
+		camera_offset_vertical = 0.0
+
 		# Clamp vertical rotation to prevent flipping over
 	rotation_degrees_vertical = clamp(rotation_degrees_vertical, -85.0, 85)
+
 	
 	# Use the existing camera positioning logic with updated rotation values
 	horizontal_rad = deg_to_rad(rotation_degrees_horizontal)

@@ -105,6 +105,7 @@ func sync(d: Dictionary):
 	if !self.initialized:
 		return
 	self.visible = true
+	self.visible_to_enemy = true
 	self.global_position = d.p
 	self.global_basis = d.b
 	movement_controller.rudder_value = d.r
@@ -133,6 +134,7 @@ func sync(d: Dictionary):
 @rpc("any_peer", "reliable")
 func _hide():
 	self.visible = false
+	self.visible_to_enemy = false
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""

@@ -14,6 +14,7 @@ func take_damage(dmg: float, pos: Vector3):
 		return
 	current_hp -= dmg
 	if current_hp <= 0 && !sunk:
+		current_hp = 0
 		sink()
 
 @rpc("any_peer", "reliable", "call_remote")
@@ -36,3 +37,9 @@ func sink():
 	#ship.set_physics_process(false)
 	if multiplayer.is_server():
 		sink.rpc()
+
+func is_alive() -> bool:
+	return current_hp > 0
+
+func is_dead() -> bool:
+	return current_hp <= 0

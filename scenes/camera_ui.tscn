@@ -1,0 +1,397 @@
+[gd_scene load_steps=10 format=3 uid="uid://b8j0h3k7w5u2e"]
+
+[ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_camera_ui"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_throttle"]
+bg_color = Color(0.3, 0.3, 0.3, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_rudder"]
+bg_color = Color(0.3, 0.3, 0.3, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_bg"]
+bg_color = Color(0.3, 0.3, 0.3, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.5, 0.5, 0.5, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_fill"]
+bg_color = Color(0.9, 0.9, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp_bg"]
+bg_color = Color(0.2, 0.2, 0.2, 0.8)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.5, 0.5, 0.5, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp_fill"]
+bg_color = Color(0.2, 0.9, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ship_enemy_fill"]
+bg_color = Color(0.9, 0.2, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ship_friendly_fill"]
+bg_color = Color(0.2, 0.9, 0.4, 1)
+
+[node name="CameraUI" type="CanvasLayer"]
+script = ExtResource("1_camera_ui")
+
+[node name="MainContainer" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="CrosshairContainer" type="Control" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="CrosshairCenter" type="Control" parent="MainContainer/CrosshairContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="HorizontalLine" type="ColorRect" parent="MainContainer/CrosshairContainer/CrosshairCenter"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -10.0
+offset_top = -1.0
+offset_right = 10.0
+offset_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 0.8)
+
+[node name="VerticalLine" type="ColorRect" parent="MainContainer/CrosshairContainer/CrosshairCenter"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -1.0
+offset_top = -10.0
+offset_right = 1.0
+offset_bottom = 10.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 0.8)
+
+[node name="Circle" type="ColorRect" parent="MainContainer/CrosshairContainer/CrosshairCenter"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -3.0
+offset_top = -3.0
+offset_right = 3.0
+offset_bottom = 3.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 1, 0.3)
+
+[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -50.0
+offset_top = 25.0
+offset_right = 50.0
+offset_bottom = 75.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+layout_mode = 2
+text = "-- s"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+layout_mode = 2
+text = "-- m"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -150.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 100.0
+grow_horizontal = 0
+
+[node name="TopLeftPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+offset_right = 190.0
+offset_bottom = 90.0
+
+[node name="FPSLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 0, 1)
+theme_override_font_sizes/font_size = 16
+text = "FPS: --"
+
+[node name="CameraAngleLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "Angle: --"
+
+[node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -153.0
+offset_right = 220.0
+offset_bottom = -20.0
+grow_vertical = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/BottomLeftPanel"]
+layout_mode = 2
+
+[node name="ShipStatusContainer" type="VBoxContainer" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="SpeedLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Speed: -- knots"
+
+[node name="ThrottleLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Throttle: Stop"
+
+[node name="RudderLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Rudder: Center"
+
+[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+custom_minimum_size = Vector2(20, 100)
+layout_mode = 2
+theme_override_styles/slider = SubResource("StyleBoxFlat_throttle")
+min_value = -1.0
+max_value = 4.0
+step = 0.1
+editable = false
+
+[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel"]
+custom_minimum_size = Vector2(150, 20)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/slider = SubResource("StyleBoxFlat_rudder")
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+editable = false
+
+[node name="BottomCenterPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -110.0
+offset_top = -120.0
+offset_right = 110.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel"]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer"]
+custom_minimum_size = Vector2(60, 8)
+layout_mode = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_reload_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_reload_fill")
+max_value = 1.0
+value = 1.0
+show_percentage = false
+
+[node name="HPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer"]
+custom_minimum_size = Vector2(200, 20)
+layout_mode = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_hp_fill")
+value = 100.0
+show_percentage = false
+
+[node name="HPLabel" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/HPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel"]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+layout_mode = 2
+toggle_mode = true
+button_pressed = true
+text = "Shell 1"
+
+[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+layout_mode = 2
+toggle_mode = true
+text = "Shell 2"
+
+[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+layout_mode = 2
+toggle_mode = true
+text = "Torpedo"
+
+[node name="ShipUITemplates" type="Control" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 100.0
+offset_top = 100.0
+offset_right = 200.0
+offset_bottom = 200.0
+
+[node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+anchors_preset = 0
+offset_right = 90.0
+offset_bottom = 40.0
+
+[node name="EnemyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 12
+text = "Enemy Ship"
+horizontal_alignment = 1
+
+[node name="EnemyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -25.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_ship_enemy_fill")
+value = 100.0
+show_percentage = false
+
+[node name="EnemyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyHPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 10
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+anchors_preset = 0
+offset_left = 100.0
+offset_right = 190.0
+offset_bottom = 40.0
+
+[node name="FriendlyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 12
+text = "Friendly Ship"
+horizontal_alignment = 1
+
+[node name="FriendlyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -25.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_ship_friendly_fill")
+value = 100.0
+show_percentage = false
+
+[node name="FriendlyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyHPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 10
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1

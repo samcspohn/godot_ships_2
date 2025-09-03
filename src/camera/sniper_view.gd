@@ -48,16 +48,16 @@ func handle_mouse_motion(event):
 	if target_lock_enabled:
 		# When locked on target, mouse movements create offset
 		#var vert_rad = deg_to_rad(rotation_degrees_vertical + camera_offset_vertical)
-		var offset_sensitivity = mouse_sensitivity * deg_to_rad(current_fov) / deg_to_rad(max_fov)
-		camera_offset_vertical -= event.relative.y * offset_sensitivity * y_factor * 0.2
+		# var offset_sensitivity = mouse_sensitivity * deg_to_rad(current_fov) / deg_to_rad(max_fov)
+		camera_offset_vertical -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.3 * sniper_height * 0.4
 		
-		camera_offset_horizontal -= event.relative.x * offset_sensitivity * 0.6
+		camera_offset_horizontal -= event.relative.x * mouse_sensitivity * 0.6 * deg_to_rad(current_fov)  / deg_to_rad(max_fov)
 		
 	else:
 		# Apply horizontal rotation with FOV adjustment
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.6 * deg_to_rad(current_fov)  / deg_to_rad(max_fov)
 
-		sniper_height -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.3 * sniper_height * 0.2
+		sniper_height -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.3 * sniper_height * 0.4
 		sniper_height = clamp(sniper_height, 0.005, -tan(sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
 		#sniper_range -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.1 * sniper_range
 		#sniper_range = clamp(sniper_range, 10.0, _ship.artillery_controller.guns[0].max_range)
@@ -134,28 +134,16 @@ func _update_camera_transform():
 	
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
 		_print("DEBUG")
-		# Calculate direction to target
+		#Calculate direction to target
 		var target_position = locked_target.global_position
 		var direction_to_target = (target_position - cam_pos).normalized()
-		
-		# Calculate base angle to target (without lerping for responsive movement)
 		var target_angle_horizontal = atan2(direction_to_target.x, direction_to_target.z) + PI
-		var target_distance = cam_pos.distance_to(target_position)
-		var height_diff = target_position.y - cam_pos.y
-		var target_angle_vertical = atan2(height_diff, sqrt(pow(direction_to_target.x, 2) + pow(direction_to_target.z, 2)) * target_distance)
-		_print(target_angle_vertical)
-		
-		var max_range_angle = rad_to_deg(tan(-cam_pos.y / _ship.artillery_controller.guns[0].max_range))
-		var target_angle_vert_deg = rad_to_deg(target_angle_vertical)
-		camera_offset_vertical = clamp(camera_offset_vertical, -30 - target_angle_vert_deg, max_range_angle - target_angle_vert_deg)
-		
-		# Apply the player's offset to the camera direction - immediately, no lerping
 		rotation_degrees_horizontal = rad_to_deg(target_angle_horizontal) + camera_offset_horizontal
-		#rotation_degrees_vertical = rad_to_deg(target_angle_vertical) + camera_offset_vertical
+		sniper_height = (target_position - ship_position).length() * -tan(sniper_angle_x)
 
-		# Clamp vertical rotation to prevent flipping over
-		#rotation_degrees_vertical = clamp(rotation_degrees_vertical, -30, max_range_angle)
-	# Use the existing camera positioning logic with updated rotation values
+	else:
+		camera_offset_horizontal = 0.0
+		camera_offset_vertical = 0.0
 	horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
 	#vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	#adj = tan(PI / 2.0 + vertical_rad)
@@ -177,7 +165,7 @@ func _update_camera_transform():
 	
 	var sniper_pos = Vector3(
 		0.0,
-		max(sniper_height, 35.0) - ship_position.y,
+		max(sniper_height + camera_offset_vertical, 35.0) - ship_position.y,
 		# sniper_height - ship_position.y,
 		0.0
 	)
@@ -186,7 +174,7 @@ func _update_camera_transform():
 	rotation.x = sniper_angle_x
 	_update_t()
 	# Calculate where the ray from camera intersects the ground
-	var sniper_range = sniper_height / tan(sniper_angle_x)
+	var sniper_range = (sniper_height + camera_offset_vertical) / tan(sniper_angle_x)
 	var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * sniper_range, -_ship.global_position.y, cos(horizontal_rad) * sniper_range)
 
 	## Look at the intersection point

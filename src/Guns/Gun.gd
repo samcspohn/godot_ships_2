@@ -322,14 +322,13 @@ func fire():
 	if multiplayer.is_server():
 		if !disabled && reload >= 1.0 and can_fire:
 			for m in muzzles:
-				var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position, my_params.shell.speed, my_params.shell.drag)
+				var dispersed_velocity = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position, my_params.shell.speed, my_params.shell.drag)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, my_params.shell.speed, my_params.shell.drag)
-				if dispersion_point != null:
+				if dispersed_velocity != null:
 					var t = float(Time.get_unix_time_from_system())
-					print("shell params: ", my_params.shell)
-					var id = ProjectileManager.fireBullet(dispersion_point, m.global_position, my_params.shell, t)
+					var id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, my_params.shell, t)
 					for p in multiplayer.get_peers():
-						self.fire_client.rpc_id(p, dispersion_point, m.global_position, t, id)
+						self.fire_client.rpc_id(p, dispersed_velocity, m.global_position, t, id)
 				else:
 					pass
 					# print(aim)
