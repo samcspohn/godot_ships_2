@@ -139,7 +139,7 @@ void fragment() {
 
     // Create a fade-out effect: start opaque, fade to transparent
     // You can adjust this curve as needed
-    float life_alpha = 1.0 - particle_age; // Linear fade out
+    float life_alpha = min(1.0 - particle_age, 0.1); // Linear fade out
     // Alternative: more gradual fade: float life_alpha = 1.0 - (particle_age * particle_age);
 
     float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);

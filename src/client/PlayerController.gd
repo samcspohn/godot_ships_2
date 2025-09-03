@@ -83,14 +83,8 @@ func _input(event: InputEvent) -> void:
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					# Mouse target selection with left click
-					var camera = get_viewport().get_camera_3d()
-					if camera:
-						var mouse_pos = get_viewport().get_mouse_position()
-						var from = camera.project_ray_origin(mouse_pos)
-						var to = from + camera.project_ray_normal(mouse_pos) * 200000
-						
-
-						handle_target_selection.rpc_id(1, from, to)
+					var mouse_pos = get_viewport().get_mouse_position()
+					select_target_at_mouse_position(mouse_pos)
 			
 		elif mouse_captured: # Handle normal camera-based shooting
 			if event.button_index == MOUSE_BUTTON_LEFT:
@@ -155,13 +149,55 @@ func _center_mouse():
 	var viewport_size = get_viewport().get_visible_rect().size
 	var center = viewport_size / 2
 	Input.warp_mouse(center)
-	#
-#func toggle_mouse_capture() -> void:
-	#mouse_captured = not mouse_captured
-	#if mouse_captured:
-		#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	#else:
-		#Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
+	"""Select a ship target at the given mouse position (client-side selection)"""
+	if not cam:
+		print("No camera available for target selection")
+		return
+	
+	var closest_ship: Ship = null
+	var closest_distance: float = INF
+	var selection_radius: float = 80.0  # Radius in pixels for ship selection
+	
+	# Get all ships from the server's player list
+	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	if not server:
+		print("No server found for target selection")
+		return
+	
+	# Check each ship to find the closest one to mouse cursor
+	for pid in server.players:
+		var potential_ship: Ship = server.players[pid][0]
+		if not (potential_ship is Ship):
+			continue
+		if potential_ship == ship:  # Don't target self
+			continue
+		if potential_ship.health_controller.current_hp <= 0.0:  # Don't target dead ships
+			continue
+		if potential_ship.team.team_id == ship.team.team_id:  # Don't target friendly ships
+			continue
+		if not potential_ship.visible_to_enemy:  # Don't target invisible ships
+			continue
+		
+		# Get ship's screen position using the camera
+		var ship_screen_pos = cam.unproject_position(potential_ship.global_position)
+		var distance_to_cursor = mouse_pos.distance_to(ship_screen_pos)
+		
+		# Debug output
+		print("Ship: ", potential_ship.name, " Screen: ", ship_screen_pos, " Distance: ", distance_to_cursor)
+		
+		# Check if this ship is closer to the cursor and within selection radius
+		if distance_to_cursor <= selection_radius and distance_to_cursor < closest_distance:
+			closest_ship = potential_ship
+			closest_distance = distance_to_cursor
+	
+	# Send the selected target to the server
+	if closest_ship:
+		print("Client selected ship: ", closest_ship.name, " at distance: ", closest_distance)
+		set_target_ship.rpc_id(1, closest_ship.get_path())
+	else:
+		print("No ship found within selection radius of ", selection_radius, " pixels")
 
 func handle_single_click() -> void:
 	if guns.size() > 0:
@@ -171,35 +207,17 @@ func handle_single_click() -> void:
 				break
 
 @rpc("any_peer", "call_remote", "reliable")
-func handle_target_selection(from: Vector3, to: Vector3) -> void:
-	print("select target")
-	# This uses the mouse cursor position for targeting
-	var query = PhysicsRayQueryParameters3D.create(from, to)
-	query.collide_with_areas = true
-	query.collide_with_bodies = true
-	query.collision_mask = 1 << 1 | 1 << 2
-	var space_state = get_tree().root.get_world_3d().direct_space_state
-	var result = space_state.intersect_ray(query)
-	
-	if result:
-		var collider = result.collider
-		var target_ship = get_ship_from_collider(collider)
-		if target_ship and target_ship != ship && target_ship.health_controller.current_hp > 0.0: # Don't target self
-			select_target_ship(target_ship)
-
-func get_ship_from_collider(collider: Object) -> Ship:
-	# If the collider itself is a ship
-	if collider is Ship:
-		return collider
-	
-	# Check if the collider is part of a ship
-	var parent = collider.get_parent()
-	while parent:
-		if parent is Ship:
-			return parent
-		parent = parent.get_parent()
-	
-	return null
+func set_target_ship(ship_path: NodePath) -> void:
+	"""Server-side RPC to set the target ship"""
+	if not multiplayer.is_server():
+		return
+		
+	var target_ship = get_node_or_null(ship_path)
+	if target_ship and target_ship is Ship:
+		print("Server setting target ship: ", target_ship.name)
+		select_target_ship(target_ship)
+	else:
+		print("Invalid ship path received: ", ship_path)
 
 func select_target_ship(target_ship: Ship) -> void:
 	for secondary_controller in ship.secondary_controllers:

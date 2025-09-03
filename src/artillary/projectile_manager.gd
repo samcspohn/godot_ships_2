@@ -243,18 +243,18 @@ func calc_armor_interaction(shell: ShellData, armor: ArmorData) -> ShellData:
 	var full_dist = (end_position - shell.position).length()
 	shell.fuse += hit_dist / full_dist * fuse_left
 
-	print("🎯 Hit Details: speed: %.1f, shell velocity: (%.2f, %.2f, %.2f),  shell_position: (%.2f, %.2f, %.2f), fuse: %.3f/%.3f, power: %.1f" % [
-			shell.velocity.length(),
-			shell.velocity.x,
-			shell.velocity.y,
-			shell.velocity.z,
-			shell.position.x,
-			shell.position.y,
-			shell.position.z,
-			shell.fuse,
-			shell.params.fuze_delay,
-			penetration_power,
-		])
+	# print("🎯 Hit Details: speed: %.1f, shell velocity: (%.2f, %.2f, %.2f),  shell_position: (%.2f, %.2f, %.2f), fuse: %.3f/%.3f, power: %.1f" % [
+	# 		shell.velocity.length(),
+	# 		shell.velocity.x,
+	# 		shell.velocity.y,
+	# 		shell.velocity.z,
+	# 		shell.position.x,
+	# 		shell.position.y,
+	# 		shell.position.z,
+	# 		shell.fuse,
+	# 		shell.params.fuze_delay,
+	# 		penetration_power,
+	# 	])
 
 	if shell.params.type == 0:
 		if armor.thickness <= shell.params.overmatch:
@@ -283,17 +283,17 @@ func calc_armor_interaction(shell: ShellData, armor: ArmorData) -> ShellData:
 			shell.hit_result = HitResult.OVERPENETRATION
 			shell.velocity *= (1.0 - effective_armor_thickness / penetration_power)
 
-	print("🛡️ Armor Details: thickness: %s/%.2f, normal: (%.2f, %.2f, %.2f), angle: %.2f, node: %s, face: %s, result: %s" % [
-			armor.thickness,
-			effective_armor_thickness,
-			armor.detailed_collision.normal.x,
-			armor.detailed_collision.normal.y,
-			armor.detailed_collision.normal.z,
-			impact_angle,
-			armor.node_path,
-			armor.face_index,
-			_hit_result(shell.hit_result)
-		])
+	# print("🛡️ Armor Details: thickness: %s/%.2f, normal: (%.2f, %.2f, %.2f), angle: %.2f, node: %s, face: %s, result: %s" % [
+	# 		armor.thickness,
+	# 		effective_armor_thickness,
+	# 		armor.detailed_collision.normal.x,
+	# 		armor.detailed_collision.normal.y,
+	# 		armor.detailed_collision.normal.z,
+	# 		impact_angle,
+	# 		armor.node_path,
+	# 		armor.face_index,
+	# 		_hit_result(shell.hit_result)
+	# 	])
 
 	shell.position = hit_position + shell.velocity.normalized() * 0.001
 	shell.end_position = shell.position + shell.velocity * (shell.params.fuze_delay - shell.fuse)
@@ -314,15 +314,15 @@ func _armor_result(shell: ShellData, explosion_position: Vector3) -> Dictionary:
 		HitResult.CITADEL:
 			damage *= 1.0
 
-	print("🎯 Result: %s, shell velocity: (%.2f, %.2f, %.2f), shell_position: (%.2f, %.2f, %.2f)" % [
-			_hit_result(shell.hit_result),
-			shell.velocity.x,
-			shell.velocity.y,
-			shell.velocity.z,
-			shell.position.x,
-			shell.position.y,
-			shell.position.z
-		])
+	# print("🎯 Result: %s, shell velocity: (%.2f, %.2f, %.2f), shell_position: (%.2f, %.2f, %.2f)" % [
+	# 		_hit_result(shell.hit_result),
+	# 		shell.velocity.x,
+	# 		shell.velocity.y,
+	# 		shell.velocity.z,
+	# 		shell.position.x,
+	# 		shell.position.y,
+	# 		shell.position.z
+	# 	])
 
 	return {
 		"result_type": shell.hit_result,
@@ -376,7 +376,7 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 		return {
 			"result_type": HitResult.NOHIT,
 		}
-	print("processing shell")
+	# print("processing shell")
 
 	var shell = ShellData.new()
 	shell.params = shell_params
@@ -600,7 +600,7 @@ func _physics_process(_delta: float) -> void:
 				if not collision.is_empty():
 					ship = find_ship(collision.collider)
 					if ship != null:
-						print("hit water ")
+						# print("hit water ")
 						var dist = (ray_query.from - collision.position).length()
 						var full_dist = (ray_query.from - fuse_position).length()
 						var _t = dist / full_dist * p.params.fuze_delay
@@ -611,7 +611,6 @@ func _physics_process(_delta: float) -> void:
 				ray_query.exclude = []
 
 			if ship != null:
-				print()
 				# var ship: Ship = collision.collider
 				var armor_result = calculate_armor_interaction(p.params, current_velocity, ship, ray_query.from, ray_query.to, fuse)
 

@@ -34,6 +34,8 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer
 @onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate
 
+@onready var bottom_right_panel: Control = $MainContainer/BottomRightPanel
+
 @onready var ship_ui_templates: Control = $MainContainer/ShipUITemplates
 @onready var enemy_ship_template: Control = $MainContainer/ShipUITemplates/EnemyShipTemplate
 @onready var friendly_ship_template: Control = $MainContainer/ShipUITemplates/FriendlyShipTemplate
@@ -71,9 +73,11 @@ func _ready():
 	# Connect crosshair drawing
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
 	
-	# Setup minimap
+	# Setup minimap in the bottom right panel with automatic anchoring
 	minimap = Minimap.new()
-	add_child(minimap)
+	minimap.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	minimap.position = Vector2(0, 0)  # Position at top-left of the panel
+	bottom_right_panel.add_child(minimap)
 	
 	# Hide ship UI templates (they're visible in editor for design purposes)
 	ship_ui_templates.visible = false
