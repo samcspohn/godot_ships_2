@@ -105,7 +105,8 @@ func sync(d: Dictionary):
 	if !self.initialized:
 		return
 	self.visible = true
-	self.visible_to_enemy = true
+	# self.visible_to_enemy = true
+	self.visible_to_enemy = d.vs
 	self.global_position = d.p
 	self.global_basis = d.b
 	movement_controller.rudder_value = d.r

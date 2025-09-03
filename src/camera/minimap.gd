@@ -3,13 +3,13 @@ extends Node
 class_name Minimap
 
 # Constants
-const SHIP_MARKER_SIZE = 10
-const PLAYER_COLOR = Color(1, 1, 1, 1)  # White
-const FRIENDLY_COLOR = Color(0, 1, 0, 1)  # Green
-const ENEMY_COLOR = Color(1, 0, 0, 1)  # Red
+const SHIP_MARKER_SIZE = 18
+const PLAYER_COLOR = Color(1, 1, 1, 1) # White
+const FRIENDLY_COLOR = Color(0, 1, 0, 1) # Green
+const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
 
 # Static minimap texture shared across all instances
-static var map_texture: ImageTexture = null
+static var map_texture: ViewportTexture = null
 static var is_initialized: bool = false
 
 # Minimap properties
@@ -17,18 +17,20 @@ static var is_initialized: bool = false
 var mm_idx = 2
 var minimap_sizes: Array[float] = [100, 200, 300, 400, 500, 600, 800]
 const w_s: float = 35000.0 / 2.0
-@export var world_rect: Rect2 = Rect2(-w_s, -w_s, 2*w_s, 2*w_s)  # World boundaries
+@export var world_rect: Rect2 = Rect2(-w_s, -w_s, 2 * w_s, 2 * w_s) # World boundaries
 
 # Node references
 var background: TextureRect
 var ship_markers_canvas: Control
 var player_ship: Node3D = null
-var tracked_ships: Array[Node3D] = []
+var tracked_ships: Array[Dictionary] = []
 var container: Control
 
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
 var aim_point: Vector3
+static var snapshot_camera: Camera3D
+static var minimap_viewport: SubViewport
 
 func _ready():
 	setup_minimap()
@@ -51,11 +53,10 @@ func setup_minimap():
 	
 	# Background texture with gray color for debugging
 	background = TextureRect.new()
-	background.stretch_mode = TextureRect.STRETCH_SCALE
+	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	background.size = Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])
-	#background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED  # Ensure aspect ratio
-	background.modulate = Color(1.0,1.0,1.0,0.5)
+	background.modulate = Color(1.0, 1.0, 1.0, 0.6)
 	container.add_child(background)
 	
 	# Canvas for ship markers
@@ -74,47 +75,72 @@ func setup_minimap():
 
 # Server should call this to take a map snapshot once
 static func server_take_map_snapshot(viewport: Viewport) -> void:
-	# Store current camera position and zoom
-	var camera = viewport.get_camera_3d()
-	if not camera:
-		print("Error: No 3D camera found in viewport")
-		return
-		
-	# Store original camera transform
-	var original_transform = camera.global_transform
-	var original_projection = camera.projection
+	# Create a dedicated viewport for minimap rendering
+	minimap_viewport = SubViewport.new()
+	minimap_viewport.size = Vector2i(1024, 1024) # Square resolution for 1:1 aspect ratio
+	
+	# Make the minimap viewport share the same world as the main viewport
+	minimap_viewport.world_3d = viewport.world_3d
+	
+	# Create a new camera specifically for taking the snapshot
+	snapshot_camera = Camera3D.new()
+	snapshot_camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	
 	# Set camera to capture the entire world from top-down view
 	var center_position = Vector3(
-		0.0,  # Center X
-		10000, # Height above water
-		0.0   # Center Z
+		0.0, # Center X
+		1000, # Height above water
+		0.0 # Center Z
 	)
 	
 	# Position camera looking down
-	camera.global_transform = Transform3D(
-		Basis(Vector3.RIGHT, Vector3.FORWARD, Vector3.DOWN),
-		center_position
-	)
+	# snapshot_camera.global_transform = Transform3D(
+	# 	Basis(Vector3.RIGHT, Vector3.FORWARD, Vector3.DOWN),
+	# 	center_position
+	# )
+	
+	# Set aspect ratio to 1:1 for square minimap
+	snapshot_camera.keep_aspect = Camera3D.KEEP_WIDTH
 	
 	# Use orthogonal projection for map view
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = 35000.0  # Match the world boundaries
+	snapshot_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	snapshot_camera.size = 35000.0 # Match the world boundaries
+	snapshot_camera.far = 1000.0
+	snapshot_camera.far = 100000.0
 	
-	# Wait for frame to update camera position
-	await viewport.get_tree().process_frame
+	# Configure camera to capture all geometry (reset cull mask to default)
+	snapshot_camera.cull_mask = 0xFFFFF # Enable all layers initially for testing
 	
-	# Take screenshot
-	var img = viewport.get_texture().get_image()
-	map_texture = ImageTexture.create_from_image(img)
+	# Add the viewport and camera to the scene temporarily
+	viewport.get_tree().root.add_child(minimap_viewport)
+	minimap_viewport.add_child(snapshot_camera)
+	snapshot_camera.make_current()
+	snapshot_camera.global_position = center_position
+	snapshot_camera.look_at(Vector3.ZERO, Vector3.FORWARD)
+
+	# Wait multiple frames to ensure rendering is fully updated
+	# await viewport.get_tree().process_frame
+	# await viewport.get_tree().process_frame
+	#await viewport.get_tree().process_frame
+	minimap_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	
+	# Force a render update
+	RenderingServer.force_sync()
+	
+	# Take screenshot from the dedicated viewport
+	# var img = minimap_viewport.get_texture().get_image()
+	# map_texture = ImageTexture.create_from_image(img)
+	map_texture = minimap_viewport.get_texture()
 	print("Server captured minimap texture")
 	
 	# Mark as initialized
 	is_initialized = true
+	#await viewport.get_tree().process_frame
+	# await viewport.get_tree().process_frame
+	# await viewport.get_tree().process_frame
 	
-	# Restore camera
-	camera.global_transform = original_transform
-	camera.projection = original_projection
+	# Clean up - remove the dedicated viewport (which also removes the camera)
+	#minimap_viewport.queue_free()
 
 # Use this instead of the old take_map_snapshot
 func take_map_snapshot(viewport: Viewport) -> void:
@@ -140,11 +166,12 @@ func world_to_minimap_position(world_pos: Vector3) -> Vector2:
 
 func register_player_ship(ship: Node3D) -> void:
 	player_ship = ship
-	print("Player ship registered at: ", ship.global_position)  # Debug info
+	print("Player ship registered at: ", ship.global_position) # Debug info
 
 func register_ship(ship: Node3D) -> void:
-	if not tracked_ships.has(ship):
-		tracked_ships.append(ship)
+	if tracked_ships.find_custom(func (a): return a.ship == ship) == -1:
+		var a = {"ship": ship, "init": null}
+		tracked_ships.append(a)
 		# Connect to ship's tree_exiting signal to remove it when destroyed
 		if not ship.is_connected("tree_exiting", _on_ship_destroyed):
 			ship.connect("tree_exiting", _on_ship_destroyed.bind(ship))
@@ -179,20 +206,57 @@ func _input(event: InputEvent) -> void:
 	if map_texture != null:
 		background.texture = map_texture
 
+enum ShipState {
+	ALLY,
+	ENEMY,
+	UNDETECTED,
+	DETECTED,
+	DEAD
+}
+
 # Draw signal handler
 func _on_canvas_draw() -> void:
 	# Draw a border around the minimap for visibility
 	ship_markers_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])), Color(1, 1, 1, 0.5), false, 2.0)
 
 	# Draw tracked ships
-	for ship in tracked_ships:
+	for dict in tracked_ships:
+		var ship = dict["ship"] as Ship
 		if is_instance_valid(ship):
+			if ship.visible_to_enemy and ship.team.team_id != player_ship.team.team_id:
+				dict.init = true
+			if !dict.init and ship.team.team_id != player_ship.team.team_id:
+				continue
 			var is_friendly = false
 			is_friendly = ship.team.team_id == player_ship.team.team_id if is_instance_valid(player_ship) and is_instance_valid(ship.team) and is_instance_valid(player_ship.team) else false
+
+			# var color = FRIENDLY_COLOR if is_friendly else ENEMY_COLOR
+			var ship_state = ShipState.ALLY if is_friendly else ShipState.ENEMY
 			
-			var color = FRIENDLY_COLOR if is_friendly else ENEMY_COLOR
+			if ship.health_controller.is_dead():
+				ship_state = ShipState.DEAD
+			elif ship.visible_to_enemy and is_friendly:
+				ship_state = ShipState.DETECTED
+			elif !is_friendly and !ship.visible_to_enemy:
+				ship_state = ShipState.UNDETECTED
+
+			var color
+			match ship_state:
+				ShipState.ALLY:
+					color = FRIENDLY_COLOR
+				ShipState.ENEMY: color = ENEMY_COLOR
+				ShipState.UNDETECTED: color = Color(0.4, 0.4, 0.4, 1) # Gray for undetected
+				ShipState.DETECTED: color = FRIENDLY_COLOR # Orange for detected
+				ShipState.DEAD: color = Color(0.2, 0.2, 0.2, 1) # Dark gray for dead
+				_: color = Color(1, 1, 1, 1) # Default to white
+
+			# if (ship as Ship).visible_to_enemy:
+			if ship_state == ShipState.DETECTED:
+				var col = Color.DARK_GOLDENROD
+				col.a = 0.5
+				draw_ship_aura_on_minimap(ship.global_position, -ship.rotation.y, col, 1.3)
 			draw_ship_on_minimap(ship.global_position, -ship.rotation.y, color)
-	
+
 	# Draw player ship on top if it exists
 	if is_instance_valid(player_ship):
 		draw_ship_on_minimap(player_ship.global_position, -player_ship.rotation.y, PLAYER_COLOR)
@@ -212,16 +276,25 @@ func _on_canvas_draw() -> void:
 		return
 	_draw_aim_point(minimap_pos)
 
+func draw_ship_aura_on_minimap(global_position: Vector3, rotation: float, color: Color, size: float = 1.0) -> void:
+	var minimap_pos = world_to_minimap_position(global_position)
+	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
+		return
+	_draw_ship_aura(minimap_pos, rotation, color, size)
+
+func _draw_ship_aura(minimap_pos: Vector2, rotation: float, color: Color, scaling: float) -> void:
+	var size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	ship_markers_canvas.draw_circle(minimap_pos, size * scaling / 2.0, color)
+
 # Public function to draw a single ship
-func draw_ship_on_minimap(global_position: Vector3, rotation: float, color: Color) -> void:
+func draw_ship_on_minimap(global_position: Vector3, rotation: float, color: Color, size: float = 1.0) -> void:
 	var minimap_pos = world_to_minimap_position(global_position)
 	
 	# Skip drawing if outside minimap boundaries
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
 		return
-		
-	_draw_ship_marker(minimap_pos, rotation, color)
 
+	_draw_ship_marker(minimap_pos, rotation, color, size)
 
 
 # Calculate intersections between a circle and a line segment
@@ -229,7 +302,7 @@ func draw_ship_on_minimap(global_position: Vector3, rotation: float, color: Colo
 # radius: The radius of the circle (float)
 # line_start, line_end: The two endpoints of the line segment (Vector2)
 # Returns: Array of Vector2 points where the circle and line segment intersect
-func get_circle_line_segment_intersections(circle_center: Vector2, radius: float, 
+func get_circle_line_segment_intersections(circle_center: Vector2, radius: float,
 										   line_start: Vector2, line_end: Vector2) -> Array[Vector2]:
 	var intersections: Array[Vector2] = []
 	
@@ -288,16 +361,16 @@ func draw_range_circle_on_minimap(global_position: Vector3, range: float, color:
 	var minimap_radius = range * scale_factor.x
 	
 	# Skip if the circle would be completely outside the minimap
-	if (minimap_pos.x + minimap_radius < 0 || 
+	if (minimap_pos.x + minimap_radius < 0 ||
 		minimap_pos.x - minimap_radius > minimap_sizes[mm_idx] ||
-		minimap_pos.y + minimap_radius < 0 || 
+		minimap_pos.y + minimap_radius < 0 ||
 		minimap_pos.y - minimap_radius > minimap_sizes[mm_idx]):
 		return
 	
 	# If circle is completely inside, draw full circle
-	if (minimap_pos.x - minimap_radius >= 0 && 
+	if (minimap_pos.x - minimap_radius >= 0 &&
 		minimap_pos.x + minimap_radius <= minimap_sizes[mm_idx] &&
-		minimap_pos.y - minimap_radius >= 0 && 
+		minimap_pos.y - minimap_radius >= 0 &&
 		minimap_pos.y + minimap_radius <= minimap_sizes[mm_idx]):
 		ship_markers_canvas.draw_arc(minimap_pos, minimap_radius, 0, TAU, 64, color, 2.0)
 		return
@@ -353,11 +426,12 @@ func draw_range_circle_on_minimap(global_position: Vector3, range: float, color:
 		
 
 # Private function to handle the actual drawing
-func _draw_ship_marker(position: Vector2, rotation: float, color: Color) -> void:
+func _draw_ship_marker(position: Vector2, rotation: float, color: Color, scaling: float = 1.0) -> void:
+	var size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
 	var points = PackedVector2Array([
-		Vector2(0, -SHIP_MARKER_SIZE/2.0),               # Tip
-		Vector2(-SHIP_MARKER_SIZE/2.0, SHIP_MARKER_SIZE/2.0),  # Left corner
-		Vector2(SHIP_MARKER_SIZE/2.0, SHIP_MARKER_SIZE/2.0),   # Right corner
+		Vector2(0, -size / 2.0) * scaling, # Tip
+		Vector2(-size / 3.0, size / 2.0) * scaling, # Left corner
+		Vector2(size / 3.0, size / 2.0) * scaling, # Right corner
 	])
 	
 	# Apply rotation
@@ -369,4 +443,4 @@ func _draw_ship_marker(position: Vector2, rotation: float, color: Color) -> void
 	ship_markers_canvas.draw_colored_polygon(points, color)
 
 func _draw_aim_point(position: Vector2):
-	ship_markers_canvas.draw_circle(position,2, Color.WHITE, false)
+	ship_markers_canvas.draw_circle(position, 2, Color.WHITE, false)

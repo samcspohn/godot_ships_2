@@ -57,6 +57,12 @@ var ship_ui_elements = {}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 
+func recurs_set_vis(n: Node):
+	if n is CanvasItem:
+		n.visibility_layer = 1 << 1
+	for child in n.get_children():
+		recurs_set_vis(child)
+
 func _ready():
 	# Connect weapon button signals
 	for i in range(weapon_buttons.size()):
@@ -293,7 +299,7 @@ func update_ship_ui():
 			var players_node = get_node_or_null(path)
 			if players_node:
 				ships = players_node.get_children()
-				print("Found ships at: ", path, " - Count: ", ships.size())
+				# print("Found ships at: ", path, " - Count: ", ships.size())
 				break
 		
 		if ships.is_empty():
@@ -334,7 +340,7 @@ func update_ship_ui():
 			
 			# Check if ship is visible on screen
 			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
-			ui.container.visible = ship_visible
+			ui.container.visible = ship_visible && (ship as Ship).health_controller.is_alive()
 			
 			if ship_visible:
 				# Position the container above the ship, centered

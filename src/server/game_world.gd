@@ -8,6 +8,8 @@ func _ready():
 	else:
 		# Client-side setup
 		print("Game world initialized on client")
+
+		get_node("Camera3D").queue_free()
 		
 		# Request to spawn our player
 		var client_id = multiplayer.get_unique_id()

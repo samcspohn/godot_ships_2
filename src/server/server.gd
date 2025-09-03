@@ -266,6 +266,7 @@ func _physics_process(_delta: float) -> void:
 	for pid in players: # for every player, synchronize self with others
 		var p: Ship = players[pid][0]
 		var d = p.sync_ship_data()
+		d['vs'] = p.visible_to_enemy
 		for pid2 in players: # every other player
 			var p2: Ship = players[pid2][0]
 			if not p2.team.is_bot:

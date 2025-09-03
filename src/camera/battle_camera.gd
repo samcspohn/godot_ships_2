@@ -187,6 +187,7 @@ func _process(delta):
 	ui.time_to_target = time_to_target
 	ui.max_range_reached = max_range_reached
 	
+	# self.make_current()
 	#ProjectileManager1.__process(delta)
 	processed.emit(delta)
 	

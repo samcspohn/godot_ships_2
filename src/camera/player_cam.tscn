@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3 uid="uid://5diwy5owyxuo"]
+
+[ext_resource type="Script" uid="uid://chcmxyf6tdfh2" path="res://src/camera/battle_camera.gd" id="1_eru7b"]
+
+[node name="PlayerCam" type="Camera3D"]
+current = true
+near = 5.0
+far = 60000.0
+script = ExtResource("1_eru7b")
+
+[node name="RayCast3D" type="RayCast3D" parent="."]
+target_position = Vector3(0, 0, -60000)
+collision_mask = 3
+hit_back_faces = false
+collide_with_areas = true

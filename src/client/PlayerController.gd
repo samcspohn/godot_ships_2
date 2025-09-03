@@ -54,7 +54,7 @@ func _ready() -> void:
 		mouse_captured = true
 
 func setup_artillery_camera() -> void:
-	cam = load("res://scenes/player_cam.tscn").instantiate()
+	cam = load("res://src/camera/player_cam.tscn").instantiate()
 	cam._ship = ship
 	cam.call_deferred("set_angle", ship.global_position.angle_to(-ship.global_transform.basis.z))
 	# cam.aim.rotation_degrees_horizontal = ship.global_position.angle_to(ship.global_transform.basis.z)
