@@ -8,6 +8,7 @@ var artillery_controller: ShipArtillery
 @export var secondary_controllers: Array[SecondaryController]
 var health_controller: HitPointsManager
 var torpedo_launcher: TorpedoLauncher
+var stats: Stats
 var control
 var team: TeamEntity
 var visible_to_enemy: bool = false
@@ -45,6 +46,8 @@ func _ready() -> void:
 	artillery_controller = $Modules/ArtilleryController
 	health_controller = $Modules/HPManager
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	stats = Stats.new()
+	$Modules.add_child(stats)
 	
 	# Initialize armor system
 	initialize_armor_system()
@@ -68,18 +71,18 @@ func _physics_process(delta: float) -> void:
 	if torpedo_launcher != null:
 		torpedo_launcher._aim(artillery_controller.aim_point, delta)
 	# Sync ship data to all clients
-	sync_ship_data()
+	# sync_ship_data()
 
 func sync_ship_data() -> Dictionary:
 	var d = {
-		'y': movement_controller.throttle_level, 
-		't': movement_controller.thrust_vector, 
+		'y': movement_controller.throttle_level,
+		't': movement_controller.thrust_vector,
 		'r': movement_controller.rudder_value,
 		'v': linear_velocity,
-		'b': global_basis, 
+		'b': global_basis,
 		'p': global_position,
 		'h': health_controller.current_hp,
-		'g': [], 
+		'g': [],
 		's': []
 	}
 	
@@ -93,10 +96,13 @@ func sync_ship_data() -> Dictionary:
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
 		d['tl'] = torpedo_launcher.global_basis
-		
+	# d['vs'] = self.visible_to_enemy
+	d['p_id'] = multiplayer.get_unique_id()
+	d['stats'] = stats.to_dict()
+
 	return d
 
-@rpc("any_peer","reliable")
+@rpc("any_peer", "reliable")
 func initialized_client():
 	self.initialized = true
 
@@ -131,6 +137,9 @@ func sync(d: Dictionary):
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
 		torpedo_launcher.global_basis = d.tl
+	
+	var s = d.stats
+	stats.from_dict(s)
 
 @rpc("any_peer", "reliable")
 func _hide():

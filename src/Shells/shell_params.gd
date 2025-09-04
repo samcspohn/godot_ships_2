@@ -13,6 +13,7 @@ class_name ShellParams
 @export var penetration_modifier: float = 1.0 # Multiplier for penetration calculations
 @export var auto_bounce: float = deg_to_rad(60)  # Angle at which shells automatically bounce
 @export var overmatch: int = 0
+@export var secondary: bool = false # Is this a secondary shell type (for damage tracking)?
 var id: int = -1
 
 func _init() -> void:
@@ -27,3 +28,4 @@ func _init() -> void:
 	penetration_modifier = 1.0
 	auto_bounce = deg_to_rad(60)  # Default auto-bounce angle
 	overmatch = 0
+	secondary = false

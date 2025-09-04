@@ -326,7 +326,7 @@ func fire():
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, my_params.shell.speed, my_params.shell.drag)
 				if dispersed_velocity != null:
 					var t = float(Time.get_unix_time_from_system())
-					var id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, my_params.shell, t)
+					var id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, my_params.shell, t, _ship)
 					for p in multiplayer.get_peers():
 						self.fire_client.rpc_id(p, dispersed_velocity, m.global_position, t, id)
 				else:
@@ -336,4 +336,4 @@ func fire():
 
 @rpc("any_peer", "reliable")
 func fire_client(vel, pos, t, id):
-	ProjectileManager.fireBulletClient(pos, vel, t, id, my_params.shell)
+	ProjectileManager.fireBulletClient(pos, vel, t, id, my_params.shell, _ship)

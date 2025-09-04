@@ -22,6 +22,14 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var fps_label: Label = $MainContainer/TopLeftPanel/FPSLabel
 @onready var camera_angle_label: Label = $MainContainer/TopLeftPanel/CameraAngleLabel
 
+@onready var secondary_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondaryCount
+@onready var penetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/PenetrationCounter/PenetrationContainer/PenetrationCount
+@onready var overpenetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/OverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
+@onready var shatter_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/ShatterCounter/ShatterContainer/ShatterCount
+@onready var ricochet_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/RicochetCounter/RicochetContainer/RicochetCount
+@onready var citadel_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/CitadelCounter/CitadelContainer/CitadelCount
+@onready var damage_value_label: Label = $MainContainer/TopRightPanel/HBoxContainer/DamageCounter/DamageValue
+
 @onready var speed_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/SpeedLabel
 @onready var throttle_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/ThrottleLabel
 @onready var rudder_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderLabel
@@ -105,6 +113,15 @@ func _process(_delta):
 	_update_camera_angle_display()
 	update_ship_ui()
 	update_gun_reload_bars()
+	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
+		var stats = camera_controller._ship.stats
+		update_counter(damage_value_label, stats.total_damage)
+		update_counter(penetration_count_label, stats.penetration_count)
+		update_counter(overpenetration_count_label, stats.overpen_count)
+		update_counter(ricochet_count_label, stats.ricochet_count)
+		update_counter(shatter_count_label, stats.shatter_count)
+		update_counter(citadel_count_label, stats.citadel_count)
+		update_counter(secondary_count_label, stats.secondary_count)
 	crosshair_container.queue_redraw()
 
 func _update_ui():
@@ -454,6 +471,8 @@ func set_locked_target(value):
 
 func set_target_lock_enabled(value: bool):
 	target_lock_enabled = value
-	# Trigger redraw of crosshair for target indicators
-	if crosshair_container:
-		crosshair_container.queue_redraw()
+	# Update crosshair drawing to show lock indicator
+
+func update_counter(label: Label, count):
+	if label:
+		label.text = str(int(count))

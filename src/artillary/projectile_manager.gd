@@ -17,6 +17,30 @@ var camera: Camera3D = null
 
 # signal resource_registered(id: int, resource: ShellParams)
 
+class ProjectileData:
+	var position: Vector3
+	var start_position: Vector3
+	var start_time: float
+	var launch_velocity: Vector3
+	#var p_position: Vector3
+	var params: ShellParams
+	var trail_pos: Vector3
+	var type: int
+	var active: bool
+	var owner: Ship
+
+	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship):
+		self.position = pos
+		self.start_position = pos
+		#end_pos = ep
+		trail_pos = pos + vel.normalized() * 25
+		#total_time = t2
+		self.params = p
+		self.start_time = t
+		self.launch_velocity = vel
+		self.owner = _owner
+
+
 func _ready():
 	# Run penetration formula validation on startup
 	validate_penetration_formula()
@@ -409,26 +433,6 @@ func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship:
 			return _armor_result(shell, explosion_position)
 	return {}
 
-class ProjectileData:
-	var position: Vector3
-	var start_position: Vector3
-	var start_time: float
-	var launch_velocity: Vector3
-	#var p_position: Vector3
-	var params: ShellParams
-	var trail_pos: Vector3
-	var type: int
-	var active: bool
-
-	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams):
-		self.position = pos
-		self.start_position = pos
-		#end_pos = ep
-		trail_pos = pos + vel.normalized() * 25
-		#total_time = t2
-		self.params = p
-		self.start_time = t
-		self.launch_velocity = vel
 
 #var active_projectiles: Array[ProjectileData] = []
 
@@ -627,12 +631,25 @@ func _physics_process(_delta: float) -> void:
 						apply_fire_damage(p, ship, armor_result.explosion_position)
 
 						ship.health_controller.take_damage(final_damage, armor_result.explosion_position)
+						
+						# Track damage dealt for player's camera UI
+						track_damage_dealt(p.owner, final_damage)
+						if armor_result.result_type == HitResult.CITADEL:
+							track_citadel(p)
+						else:
+							track_penetration(p)
+
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.PENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
 					HitResult.OVERPENETRATION:
 						# Shell overpenetrates - apply reduced damage
 						ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
 						apply_fire_damage(p, ship, armor_result.explosion_position)
+						
+						# Track damage dealt for player's camera UI
+						track_damage_dealt(p.owner, armor_result.damage)
+						track_overpenetration(p)
+						
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.OVERPENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
 
@@ -641,9 +658,12 @@ func _physics_process(_delta: float) -> void:
 						var ricochet_position = armor_result.explosion_position + ricochet_velocity.normalized() * 0.1 # Offset slightly to avoid z-fighting
 
 						# ricochet_velocity = collision.normal * ricochet_velocity.length()  # Ensure ricochet is in the correct direction
-						var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time)
+						var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, p.owner)
 						for client in multiplayer.get_peers():
 							createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
+
+						# Track ricochet
+						track_ricochet(p)
 
 						# Destroy the original shell
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.RICOCHET)
@@ -651,6 +671,11 @@ func _physics_process(_delta: float) -> void:
 					HitResult.SHATTER:
 						ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
 						apply_fire_damage(p, ship, armor_result.explosion_position)
+						
+						# Track damage dealt for player's camera UI
+						track_damage_dealt(p.owner, armor_result.damage)
+						track_shatter(p)
+						
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.SHATTER)
 			else:
 				# Hit something that's not a ship (water, terrain)
@@ -683,7 +708,7 @@ func set_color(idx, color: Color):
 	transforms[offset + 15] = color.a
 
 #@rpc("authority","reliable")
-func fireBullet(vel, pos, shell: ShellParams, t) -> int:
+func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -699,14 +724,13 @@ func fireBullet(vel, pos, shell: ShellParams, t) -> int:
 	expl.global_position = pos
 
 	var bullet: ProjectileData = ProjectileData.new()
-	bullet.initialize(pos, vel, t, shell)
+	bullet.initialize(pos, vel, t, shell, _owner)
 
 	self.projectiles.set(id, bullet)
 
 	return id
 
-@rpc("any_peer", "reliable")
-func fireBulletClient(pos, vel, t, id, shell: ShellParams) -> void:
+func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var bullet = ProjectileData.new()
 	#print("type client ", shell.type)
@@ -724,7 +748,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams) -> void:
 	else:
 		set_color(id, Color(1.0, 0.8, 0.5, 1.0)) # Red for HE shells
 
-	bullet.initialize(pos, vel, t, shell)
+	bullet.initialize(pos, vel, t, shell, _owner)
 	self.projectiles.set(id, bullet)
 	#print("shell type: ", shell.type)
 
@@ -864,7 +888,7 @@ func validate_penetration_formula():
 
 	var bb_penetration = calculate_penetration_power(bb_shell, 820.0)
 	print("380mm AP shell at 820 m/s, 0° impact: ", bb_penetration, "mm penetration")
-	print("Expected: ~500-600mm for battleship shells")
+	print("Expected: ~700-800mm for battleship shells")
 
 	# Test 203mm CA shell (similar to 8" shells)
 	var ca_shell = ShellParams.new()
@@ -893,7 +917,65 @@ func validate_penetration_formula():
 	print("380mm AP shell at 820 m/s, 45° impact: ", oblique_penetration, "mm penetration")
 	print("Expected: ~70% of normal impact due to angle")
 
-	print("=== End Validation ===")
+func track_damage_dealt(owner_ship: Ship, damage: float):
+	"""Track damage dealt using the ship's stats module"""
+	if not owner_ship or not is_instance_valid(owner_ship):
+		return
+	
+	# Add damage to the ship's stats module
+	if owner_ship.stats:
+		owner_ship.stats.total_damage += damage
+
+func track_penetration(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add penetration to the ship's stats module
+	if p.owner.stats and !p.params.secondary:
+		p.owner.stats.penetration_count += 1
+	elif p.owner.stats and p.params.secondary:
+		p.owner.stats.secondary_count += 1
+
+
+func track_citadel(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add citadel hits to the ship's stats module
+	if p.owner.stats and !p.params.secondary:
+		p.owner.stats.citadel_count += 1
+	elif p.owner.stats and p.params.secondary:
+		p.owner.stats.secondary_count += 1
+
+func track_overpenetration(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add overpenetration to the ship's stats module
+	if p.owner.stats and !p.params.secondary:
+		p.owner.stats.overpen_count += 1
+	elif p.owner.stats and p.params.secondary:
+		p.owner.stats.secondary_count += 1
+
+func track_shatter(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add shatter to the ship's stats module
+	if p.owner.stats and !p.params.secondary:
+		p.owner.stats.shatter_count += 1
+	elif p.owner.stats and p.params.secondary:
+		p.owner.stats.secondary_count += 1
+
+func track_ricochet(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add ricochet to the ship's stats module
+	if p.owner.stats and !p.params.secondary:
+		p.owner.stats.ricochet_count += 1
+	elif p.owner.stats and p.params.secondary:
+		p.owner.stats.secondary_count += 1
 
 @rpc("any_peer", "call_local", "reliable")
 func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_position: Vector3, ricochet_velocity: Vector3, ricochet_time: float):
@@ -902,4 +984,4 @@ func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_posit
 		print("Warning: Could not find original shell with ID ", original_shell_id, " for ricochet")
 		return
 
-	fireBulletClient(ricochet_position, ricochet_velocity, ricochet_time, new_shell_id, p.params)
+	fireBulletClient(ricochet_position, ricochet_velocity, ricochet_time, new_shell_id, p.params, p.owner)

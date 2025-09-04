@@ -8,7 +8,7 @@ script = ExtResource("2_2me4r")
 speed = 875.0
 drag = 0.03
 damage = 3000.0
-size = 2.0
+size = 2.5
 caliber = 150.0
 mass = 45.3
 fire_buildup = 0.0
@@ -17,13 +17,14 @@ type = 1
 penetration_modifier = 1.0
 auto_bounce = 1.0472
 overmatch = 10
+secondary = true
 
 [sub_resource type="Resource" id="Resource_2kkbv"]
 script = ExtResource("2_2me4r")
 speed = 875.0
 drag = 0.03
 damage = 1000.0
-size = 4.0
+size = 2.5
 caliber = 150.0
 mass = 45.3
 fire_buildup = 5.0
@@ -32,6 +33,7 @@ type = 0
 penetration_modifier = 1.0
 auto_bounce = 1.571
 overmatch = 38
+secondary = true
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]

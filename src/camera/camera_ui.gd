@@ -52,7 +52,7 @@ var minimap: Minimap # Reference to the minimap node
 
 # Weapon selection UI
 var weapon_buttons: Array[Button] = []
-var weapon_names: Array[String] = ["Shell 1", "Shell 2", "Torpedo"]
+var weapon_names: Array[String] = ["AP", "HE", "Torpedo"]
 
 func _ready():
 

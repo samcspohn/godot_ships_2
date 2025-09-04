@@ -17,13 +17,14 @@ class TorpedoData:
 	var direction: Vector3
 	var t: float
 	var params: TorpedoParams
+	var owner: Ship
 	
-	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float):
+	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship):
 		self.position = pos
 		self.direction = dir.normalized()
 		self.t = _t
 		self.params = _params
-		
+		self.owner = _owner
 
 
 func _ready():
@@ -190,6 +191,9 @@ func _physics_process(_delta: float) -> void:
 			if ship != null:
 				var hp: HitPointsManager = ship.health_controller
 				hp.take_damage(p.params.damage, collision.position)
+				
+				# Track torpedo damage dealt
+				track_torpedo_damage_dealt(p.owner, p.params.damage)
 		id += 1
 		
 		
@@ -211,7 +215,7 @@ func update_transform(idx, trans):
 	transforms[offset + 11] = trans.origin.z
 		
 @rpc("any_peer", "reliable")
-func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams) -> void:
+func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var torp = TorpedoData.new()
 	#bullet.params = shell_param_ids[shells]
@@ -234,11 +238,11 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams) -> void:
 	var trans = Transform3D(basis, pos)
 	update_transform(id, trans)
 
-	torp.initialize(pos, vel, params, t)
+	torp.initialize(pos, vel, params, t, owner)
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
-func fireTorpedo(vel,pos, params: TorpedoParams, t) -> int:
+func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -249,7 +253,7 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t) -> int:
 		self.torpedos.resize(np2)
 
 	var torp: TorpedoData = TorpedoData.new()
-	torp.initialize(pos, vel, params, t)
+	torp.initialize(pos, vel, params, t, owner)
 	self.torpedos.set(id, torp)
 	return id
 	#for p in multiplayer.get_peers():
@@ -284,5 +288,12 @@ func destroyTorpedoRpc(id, position) -> void:
 	self.torpedos.set(id, null)
 	#self.projectiles.erase(id)
 	self.ids_reuse.append(id)
-	for p in multiplayer.get_peers():
-		self.destroyTorpedoRpc2.rpc_id(p,id, position)
+
+func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
+	"""Track torpedo damage dealt using the ship's stats module"""
+	if not owner_ship or not is_instance_valid(owner_ship):
+		return
+	
+	# Add damage to the ship's stats module
+	if owner_ship.stats:
+		owner_ship.stats.total_damage += damage

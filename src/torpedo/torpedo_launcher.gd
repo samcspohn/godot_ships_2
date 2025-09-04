@@ -15,6 +15,7 @@ var disabled: bool = true
 
 var max_range: float
 var max_flight: float
+var _ship: Ship
 
 @export var params: TorpedoLauncherParams
 var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
@@ -22,6 +23,7 @@ var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
 func _ready() -> void:
 	my_params.from_params(params)
 	max_range = my_params.range
+	_ship = ProjectileManager.find_ship(self)
 	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
 	#max_range = min(a[0], my_params.range)
 	#max_flight = a[2]
@@ -298,7 +300,7 @@ func fire() -> void:
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
 				#if aim[0] != null:
 				var t = float(Time.get_unix_time_from_system())
-				var id = (TorpedoManager as _TorpedoManager).fireTorpedo(m.global_basis.z + offset,m.global_position, params.torpedo_params, t)
+				var id = (TorpedoManager as _TorpedoManager).fireTorpedo(m.global_basis.z + offset,m.global_position, params.torpedo_params, t, _ship)
 				#var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, dispersion_point, aim[1], t)
 				for p in multiplayer.get_peers():
 					self.fire_client.rpc_id(p, m.global_position, m.global_basis.z + offset, t, id)
@@ -308,4 +310,4 @@ func fire() -> void:
 
 @rpc("any_peer","reliable")
 func fire_client(pos, vel, t, id):
-	(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, id, params.torpedo_params)
+	(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, id, params.torpedo_params, _ship)

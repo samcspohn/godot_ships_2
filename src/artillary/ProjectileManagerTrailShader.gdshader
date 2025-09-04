@@ -19,6 +19,8 @@ uniform vec3 uv1_offset;
 uniform vec3 uv2_scale;
 uniform vec3 uv2_offset;
 uniform float particle_spacing = 10.0; // Base spacing between particles
+uniform sampler2D alpha_over_lifetime_texture : hint_default_white, filter_linear_mipmap, repeat_disable;
+uniform bool use_alpha_over_lifetime = true;
 
 // Varying to pass particle lifetime from vertex to fragment shader
 varying float particle_lifetime;
@@ -137,10 +139,16 @@ void fragment() {
     // particle_lifetime contains the normalized particle age (0.0 to 1.0) from vertex shader
     float particle_age = particle_lifetime;
 
-    // Create a fade-out effect: start opaque, fade to transparent
-    // You can adjust this curve as needed
-    float life_alpha = min(1.0 - particle_age, 0.1); // Linear fade out
-    // Alternative: more gradual fade: float life_alpha = 1.0 - (particle_age * particle_age);
+    float life_alpha = 1.0;
+    if (use_alpha_over_lifetime) {
+        // Sample the alpha over lifetime texture using particle age as UV.x coordinate
+        // The texture should be a 1D gradient where x represents time (0=birth, 1=death)
+        vec2 lifetime_uv = vec2(particle_age, 0.5);
+        life_alpha = texture(alpha_over_lifetime_texture, lifetime_uv).r;
+    } else {
+        // Fallback to simple linear fade out
+        life_alpha = min(1.0 - particle_age, 0.08);
+    }
 
     float metallic_tex = dot(texture(texture_metallic, base_uv), metallic_texture_channel);
     METALLIC = metallic_tex * metallic;
