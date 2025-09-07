@@ -92,6 +92,14 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 
 @onready var top_right_panel: VBoxContainer = $MainContainer/TopRightPanel
 
+# Visibility indicator
+@onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
+
+# Team tracker references
+@onready var top_center_panel: Control = $MainContainer/TopCenterPanel
+@onready var friendly_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/FriendlyShipsContainer
+@onready var enemy_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/EnemyShipsContainer
+
 @onready var speed_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/SpeedLabel
 @onready var throttle_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/ThrottleLabel
 @onready var rudder_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderLabel
@@ -109,6 +117,7 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var ship_ui_templates: Control = $MainContainer/ShipUITemplates
 @onready var enemy_ship_template: Control = $MainContainer/ShipUITemplates/EnemyShipTemplate
 @onready var friendly_ship_template: Control = $MainContainer/ShipUITemplates/FriendlyShipTemplate
+@onready var team_tracker_template: Control = $MainContainer/ShipUITemplates/TeamTrackerTemplate
 
 @onready var weapon_buttons: Array[Button] = [
 	$MainContainer/BottomCenterPanel/WeaponPanel/Shell1Button,
@@ -128,6 +137,10 @@ var tracked_ships = {}
 var ship_ui_elements = {}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
+
+# Team tracker
+var team_ship_indicators = {}  # Maps ship to its indicator ColorRect
+var friendly_team_id: int = -1  # Will be set when camera_controller is available
 
 # Hit counter system for temporary display
 var active_hit_counters = {}
@@ -175,12 +188,17 @@ func _ready():
 func initialize_for_ship():
 	# Call this after camera_controller is set and ship is available
 	if camera_controller and camera_controller._ship:
+		# Initialize team tracker
+		if camera_controller._ship.team:
+			friendly_team_id = camera_controller._ship.team.team_id
+		
 		minimap.register_player_ship(camera_controller._ship)
 		await get_tree().process_frame
 		minimap.take_map_snapshot(get_viewport())
 		
 		# Force an initial search for other ships
 		update_ship_ui()
+		update_team_tracker()  # Initialize team tracker
 
 func setup_counter_hover_functionality():
 	print("Setting up hover functionality...")
@@ -290,6 +308,15 @@ func update_hit_counters(delta: float):
 	main_counter_temp.visible = main_has_active
 	sec_counter_temp.visible = sec_has_active
 
+func update_visibility_indicator():
+	"""Update the visibility indicator based on ship's visible_to_enemy flag"""
+	if not camera_controller or not camera_controller._ship:
+		visibility_indicator.visible = false
+		return
+	
+	# Show the yellow indicator when the ship is visible to enemies
+	visibility_indicator.visible = camera_controller._ship.visible_to_enemy
+
 func process_damage_events(damage_events: Array):
 	"""Process damage events and show appropriate hit counters"""
 	for event in damage_events:
@@ -371,9 +398,12 @@ func _process(_delta):
 	_update_fps()
 	_update_camera_angle_display()
 	update_ship_ui()
+	update_team_tracker()  # Update team tracker
+	# cleanup_team_indicators()  # Clean up invalid indicators
 	update_gun_reload_bars()
 	check_hover_detection()  # Add manual hover detection
 	update_hit_counters(_delta)  # Update hit counter timers
+	update_visibility_indicator()  # Update visibility indicator
 	
 	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
 		var stats = camera_controller._ship.stats
@@ -679,6 +709,163 @@ func is_position_visible_on_screen(world_position):
 	# Check if position is on screen
 	var viewport_rect = get_viewport().get_visible_rect()
 	return viewport_rect.has_point(screen_position)
+
+func update_team_tracker():
+	"""Update the team tracker with current ship status"""
+	if not camera_controller or not camera_controller._ship:
+		return
+	
+	# Set friendly team ID if not already set
+	if friendly_team_id == -1 and camera_controller._ship.team:
+		friendly_team_id = camera_controller._ship.team.team_id
+	
+	# Get server reference
+	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	if not server:
+		return
+	
+	# Get all ships from server (including dead ones)
+	var friendly_ships = server.get_team_ships(friendly_team_id)
+	var enemy_ships = server._get_enemy_ships(friendly_team_id)
+	#print("Friendly ships count: ", friendly_ships.size(), " | Enemy ships count: ", enemy_ships.size())
+	
+	# Update friendly ships display
+	update_team_container(friendly_ships_container, friendly_ships, true)
+	
+	# Update enemy ships display
+	update_team_container(enemy_ships_container, enemy_ships, false)
+	
+	# Resize the team tracker panel to fit content
+	resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+
+func update_team_container(container: HBoxContainer, ships: Array, is_friendly: bool):
+	"""Update a team container with ship indicators using templates"""
+	# Get current indicators in container
+	var existing_indicators = []
+	for child in container.get_children():
+		existing_indicators.append(child)
+	
+	# Remove indicators for ships that are no longer in the server's ship list
+	for indicator in existing_indicators:
+		var associated_ship = null
+		
+		# Find which ship this indicator belongs to
+		for ship in team_ship_indicators.keys():
+			if team_ship_indicators[ship] == indicator:
+				associated_ship = ship
+				break
+		
+		if associated_ship:
+			# Check if ship is still in current ships list from server
+			var still_in_server_list = false
+			for ship in ships:
+				if ship == associated_ship:
+					still_in_server_list = true
+					break
+			
+			# Remove if not in server list or if ship object is invalid
+			if not still_in_server_list or not is_instance_valid(associated_ship):
+				team_ship_indicators.erase(associated_ship)
+				indicator.queue_free()
+	
+	# Add or update indicators for current ships from server
+	for ship in ships:
+		if not is_instance_valid(ship):
+			continue
+			
+		var indicator: Control
+		
+		if ship in team_ship_indicators:
+			indicator = team_ship_indicators[ship]
+			# Make sure it's in the right container
+			if indicator.get_parent() != container:
+				indicator.reparent(container)
+		else:
+			# Create new indicator from template
+			indicator = team_tracker_template.duplicate()
+			indicator.visible = true
+			container.add_child(indicator)
+			team_ship_indicators[ship] = indicator
+		
+		# Update indicator appearance
+		update_team_indicator(indicator, ship, is_friendly)
+
+func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
+	"""Update the appearance of a team indicator based on ship status"""
+	var ship_indicator: ColorRect = indicator.get_node("ShipIndicator")
+	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
+	
+	# Check if ship is alive
+	var is_alive = ship.health_controller and ship.health_controller.is_alive()
+	var health_percent = 1.0
+	
+	if ship.health_controller:
+		health_percent = float(ship.health_controller.current_hp) / ship.health_controller.max_hp
+		hp_indicator.value = health_percent * 100.0
+	
+	if is_alive:
+		# Ship is alive - use team colors
+		if is_friendly:
+			ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
+			# Create friendly HP bar style
+			var friendly_style = StyleBoxFlat.new()
+			friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
+			hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+		else:
+			ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
+			# Create enemy HP bar style
+			var enemy_style = StyleBoxFlat.new()
+			enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
+			hp_indicator.add_theme_stylebox_override("fill", enemy_style)
+	else:
+		# Ship is dead - use dark gray
+		ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
+		# Create dead HP bar style
+		var dead_style = StyleBoxFlat.new()
+		dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
+		hp_indicator.add_theme_stylebox_override("fill", dead_style)
+		hp_indicator.value = 0.0
+
+func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
+	"""Resize the team tracker panel to fit all ships"""
+	if not top_center_panel:
+		return
+	
+	# Calculate required width:
+	# - Each ship indicator: 50px wide
+	# - Spacing between indicators: 5px (handled by HBoxContainer)
+	# - VSeparator: ~20px
+	# - Padding: 20px (10px on each side)
+	# - Minimum width: 200px
+	
+	var friendly_width = friendly_count * 55  # 50px + 5px spacing per ship
+	var enemy_width = enemy_count * 55
+	var separator_width = 20
+	var padding = 20
+	var min_width = 200
+	
+	var total_width = max(min_width, friendly_width + enemy_width + separator_width + padding)
+	
+	# Update the panel size (height is now 50px to accommodate HP bars)
+	var half_width = total_width / 2
+	top_center_panel.offset_left = -half_width
+	top_center_panel.offset_right = half_width
+	top_center_panel.offset_bottom = 60  # Increased height for HP bars
+
+func cleanup_team_indicators():
+	"""Clean up team indicators for invalid ships"""
+	var ships_to_remove = []
+	
+	for ship in team_ship_indicators.keys():
+		if not is_instance_valid(ship) or not ship.health_controller.is_alive():
+			ships_to_remove.append(ship)
+	
+	for ship in ships_to_remove:
+		if ship in team_ship_indicators:
+			var indicator = team_ship_indicators[ship]
+			if is_instance_valid(indicator):
+				indicator.queue_free()
+			team_ship_indicators.erase(ship)
 
 func _on_weapon_button_pressed(idx: int):
 	# Deselect all other weapon buttons

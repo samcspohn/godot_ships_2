@@ -26,14 +26,6 @@
             "project": "${workspaceFolder}",
             // "launch_game_instance": true,
             // "launch_scene": false
-        },
-        {
-            "name": "Client 2",
-            "type": "godot",
-            "request": "launch",
-            "project": "${workspaceFolder}",
-            // "launch_game_instance": true,
-            // "launch_scene": false
         }
     ],
     "compounds": [

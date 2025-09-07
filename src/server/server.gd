@@ -42,9 +42,10 @@ func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
 	# Remove player
 	if players.has(id):
-		players[id][0].queue_free()
-		players.erase(id)
-		player_info.erase(id)
+		pass
+		# players[id][0].queue_free()
+		# players.erase(id)
+		# player_info.erase(id)
 
 func spawn_player(id, player_name):
 	print("spawn_player called with ID: ", id, ", player_name: ", player_name)
@@ -75,7 +76,7 @@ func spawn_player(id, player_name):
 	# 		},
 	# 		"2": {
 	# 			"team": 2,
-	#			"player_id": 1, // player_nma
+	#			"player_id": 1, // player_name
 	# 			"ship": "res://scenes/ship.tscn"
 	# 		}
 	# 	}
@@ -115,6 +116,7 @@ func spawn_player(id, player_name):
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = team_id
 	team_.is_bot = is_bot
+	print("server: Assigning team ID ", team_id, " team.team_id ", team_.team_id, " to player ID ", id, " (is_bot=", is_bot, ")")
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
 	
@@ -217,6 +219,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = int(team_id)
+	print("Assigning team ID ", team_id, " team.team_id ", team_.team_id, " to player ID ", id, " (is_bot=", is_bot, ")")
 	team_.is_bot = is_bot
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
@@ -232,7 +235,52 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 func join_game():
 	# Called on client to switch to game world
 	get_tree().change_scene_to_file("res://src/server/server.tscn")
-	
+
+
+func _get_enemy_ships(team_id: int) -> Array:
+	var enemies: Array = []
+	for p in players:
+		# print("Checking player ID: ", p, (players[p][0] as Ship).health_controller.current_hp)
+		var ship: Ship = players[p][0]
+		if is_instance_valid(ship) and ship.team.team_id != team_id:
+			enemies.append(ship)
+	return enemies
+
+func get_team_ships(team_id: int) -> Array:
+	var team_ships: Array = []
+	for p in players:
+		# print("Checking player ID: ", p, " current HP: ", (players[p][0] as Ship).health_controller.current_hp)
+		var ship: Ship = players[p][0]
+		if is_instance_valid(ship) and ship.team.team_id == team_id:
+			team_ships.append(ship)
+	return team_ships
+
+func get_valid_targets(team_id: int) -> Array:
+	var targets: Array = []
+	for p in players.values():
+		var ship: Ship = p[0]
+		if ship.team.team_id != team_id and ship.health_controller.is_alive() and ship.visible_to_enemy:
+			targets.append(ship)
+	return targets
+
+func get_all_ships() -> Array:
+	var all_ships: Array = []
+	for p in players.values():
+		var ship: Ship = p[0]
+		if is_instance_valid(ship):
+			all_ships.append(ship)
+	return all_ships
+
+# func sync_players(player_data: Array[Dictionary]) -> void:
+# 	for data in player_data:
+# 		var id = data.get("id", -1)
+# 		if id == -1 or not players.has(id):
+# 			continue
+# 		var ship: Ship = players[id][0]
+# 		if not is_instance_valid(ship):
+# 			continue
+# 		# ship.set_input(data.get("input", [0,0]), data.get("aim_point", Vector3.ZERO))
+
 func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
 		return
@@ -245,7 +293,7 @@ func _physics_process(_delta: float) -> void:
 	
 	for p in players.values():
 		var ship: Ship = p[0]
-		if ship.health_controller.current_hp <= 0:
+		if ship.health_controller.is_dead():
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
@@ -257,7 +305,7 @@ func _physics_process(_delta: float) -> void:
 		# var d = p.sync_ship_data() 
 		for p_id2 in range(p_id + 1,players.size()):
 			var p2: Ship = players[players.keys()[p_id2]][0]
-			if p.team.team_id != p2.team.team_id and p.health_controller.current_hp > 0 and p2.health_controller.current_hp > 0: # other team
+			if p.team.team_id != p2.team.team_id and p.health_controller.is_alive() and p2.health_controller.is_alive(): # other team
 				ray_query.to = p2.global_position
 				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
@@ -271,7 +319,7 @@ func _physics_process(_delta: float) -> void:
 		d['vs'] = p.visible_to_enemy
 		for pid2 in players: # every other player
 			var p2: Ship = players[pid2][0]
-			if not p2.team.is_bot:
+			if not p2.team.is_bot: # player to sync with is not bot
 				if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
 					p.sync.rpc_id(pid2, d) # sync self to other player
 				else:

@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://b8j0h3k7w5u2e"]
+[gd_scene load_steps=20 format=3 uid="uid://b8j0h3k7w5u2e"]
 
 [ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_camera_ui"]
 
@@ -51,6 +51,13 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_tracker_bg"]
+bg_color = Color(0.1, 0.1, 0.1, 0.8)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_throttle"]
 bg_color = Color(0.3, 0.3, 0.3, 0.8)
 
@@ -85,6 +92,16 @@ bg_color = Color(0.9, 0.2, 0.2, 1)
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ship_friendly_fill"]
 bg_color = Color(0.2, 0.9, 0.4, 1)
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_bg"]
+bg_color = Color(0.15, 0.15, 0.15, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_friendly"]
+bg_color = Color(0.2, 0.9, 0.4, 1)
+
 [node name="CameraUI" type="CanvasLayer"]
 script = ExtResource("1_camera_ui")
 
@@ -96,6 +113,20 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="VisibilityIndicator" type="ColorRect" parent="MainContainer"]
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.75
+anchor_top = 0.25
+anchor_right = 0.75
+anchor_bottom = 0.25
+offset_left = -60.0
+offset_top = -10.0
+offset_right = -30.0
+offset_bottom = 20.0
+color = Color(1, 1, 0, 0.8)
 
 [node name="CrosshairContainer" type="Control" parent="MainContainer"]
 layout_mode = 1
@@ -1568,6 +1599,52 @@ theme_override_colors/font_color = Color(0.8, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 14
 text = "Angle: --"
 
+[node name="TopCenterPanel" type="Control" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_right = 200.0
+offset_bottom = 55.0
+grow_horizontal = 2
+
+[node name="TeamTrackerBackground" type="Panel" parent="MainContainer/TopCenterPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_team_tracker_bg")
+
+[node name="TeamTrackerContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="FriendlyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+alignment = 2
+
+[node name="VSeparator" type="VSeparator" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="EnemyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+
 [node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer"]
 layout_mode = 1
 anchors_preset = 2
@@ -1706,18 +1783,16 @@ offset_top = -10.0
 grow_horizontal = 0
 grow_vertical = 0
 
-[node name="ShipUITemplates" type="Control" parent="MainContainer"]
+[node name="ShipUITemplates" type="GridContainer" parent="MainContainer"]
 layout_mode = 1
-anchors_preset = 0
 offset_left = 100.0
 offset_top = 100.0
 offset_right = 200.0
 offset_bottom = 200.0
 
 [node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
-anchors_preset = 0
-offset_right = 90.0
-offset_bottom = 40.0
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
 
 [node name="EnemyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
 layout_mode = 1
@@ -1759,10 +1834,8 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
-anchors_preset = 0
-offset_left = 100.0
-offset_right = 190.0
-offset_bottom = 40.0
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
 
 [node name="FriendlyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
 layout_mode = 1
@@ -1802,3 +1875,36 @@ theme_override_font_sizes/font_size = 10
 text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="TeamTrackerTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+custom_minimum_size = Vector2(50, 35)
+layout_mode = 2
+size_flags_horizontal = 0
+size_flags_vertical = 0
+
+[node name="ShipIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 20.0
+grow_horizontal = 2
+color = Color(0.2, 0.9, 0.4, 0.8)
+
+[node name="HPIndicator" type="ProgressBar" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+custom_minimum_size = Vector2(50, 8)
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -25.0
+offset_top = -10.0
+offset_right = 25.0
+offset_bottom = -2.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_team_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_team_hp_friendly")
+value = 100.0
+show_percentage = false

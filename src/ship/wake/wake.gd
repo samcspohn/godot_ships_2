@@ -7,5 +7,5 @@ func _ready() -> void:
 	t.timeout.connect(queue_free)
 
 func _physics_process(delta: float) -> void:
-	self.global_position += Vector3(vel.x, -4.5, vel.y) * delta
+	self.global_position += Vector3(0, -4.5, 0) * delta
 	self.scale += Vector3.ONE * delta
