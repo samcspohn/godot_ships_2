@@ -306,7 +306,7 @@ func _update_ui():
 	var throttle_text = "Throttle: Stop"
 	var rudder_text = "Rudder: Center"
 	
-	if camera_controller._ship.movement_controller is ShipMovementV2:
+	if camera_controller._ship.movement_controller is ShipMovement:
 		# Get throttle setting
 		var throttle_level = camera_controller._ship.movement_controller.throttle_level
 		var throttle_display = ""

@@ -90,7 +90,7 @@ func _physics_process(delta: float) -> void:
 	
 	# Apply movement
 	_apply_movement(delta)
-
+	
 
 func _update_target_speed() -> void:
 	if throttle_level >= -1 and throttle_level <= 4:
@@ -151,8 +151,8 @@ func _apply_movement(_delta: float) -> void:
 	# Store thrust vector for compatibility (represents desired movement direction and magnitude)
 	thrust_vector = desired_velocity * ship_body.mass
 	
-	# Apply additional resistance to prevent sliding
-	_apply_drift_resistance()
+	# # Apply additional resistance to prevent sliding
+	# _apply_drift_resistance()
 
 func _apply_turning() -> void:
 	# Calculate turn rate based on current speed and turning circle

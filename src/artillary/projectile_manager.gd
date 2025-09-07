@@ -1,6 +1,6 @@
 extends Node
 
-var shell_time_multiplier: float = 1.5 # Adjust to calibrate shell speed display
+var shell_time_multiplier: float = 2.0 # Adjust to calibrate shell speed display
 var nextId: int = 0;
 var projectiles: Array[ProjectileData] = [];
 var ids_reuse: Array[int] = []
@@ -632,7 +632,7 @@ func _physics_process(_delta: float) -> void:
 								track_penetration(p)
 							if sunk:
 								track_frag(p)
-							track_damage_event(p, dmg, ship.global_position)
+							track_damage_event(p, dmg, ship.global_position, armor_result.result_type)
 
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.PENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
@@ -647,7 +647,7 @@ func _physics_process(_delta: float) -> void:
 							track_overpenetration(p)
 							if dmg_sunk[1]:
 								track_frag(p)
-							track_damage_event(p, armor_result.damage, ship.global_position)
+							track_damage_event(p, armor_result.damage, ship.global_position, armor_result.result_type)
 
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.OVERPENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
@@ -677,7 +677,7 @@ func _physics_process(_delta: float) -> void:
 							track_shatter(p)
 							if dmg_sunk[1]:
 								track_frag(p)
-							track_damage_event(p, armor_result.damage, ship.global_position)
+							track_damage_event(p, armor_result.damage, ship.global_position, armor_result.result_type)
 
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.SHATTER)
 			else:
@@ -935,12 +935,12 @@ func track_damage_dealt(p: ProjectileData, damage: float):
 		else:
 			p.owner.stats.main_damage += damage
 
-func track_damage_event(p: ProjectileData, damage: float, position: Vector3):
+func track_damage_event(p: ProjectileData, damage: float, position: Vector3, type: HitResult):
 	if not p or not is_instance_valid(p):
 		return
 
 	if p.owner.stats:
-		p.owner.stats.damage_events.append({"damage": damage, "position": position})
+		p.owner.stats.damage_events.append({"type": type, "sec": p.params.secondary, "damage": damage, "position": position})
 
 func track_penetration(p: ProjectileData):
 	if not p or not is_instance_valid(p):

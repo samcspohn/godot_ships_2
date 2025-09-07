@@ -297,8 +297,7 @@ func _process(dt: float) -> void:
 				cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
 			else:
 				print("Warning: cam.ui not available for floating damage")
-		# Clear damage events after processing to avoid showing them multiple times
-		ship.stats.damage_events.clear()
+		# Note: damage_events are now cleared by the camera UI after processing hit counters
 
 func process_player_input() -> void:
 	# Handle throttle input with continuous adjustment

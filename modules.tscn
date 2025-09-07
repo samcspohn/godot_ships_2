@@ -17,9 +17,5 @@ max_hp = 56000.0
 [node name="ArtilleryController" parent="." instance=ExtResource("3_j72gg")]
 
 [node name="MovementController" parent="." instance=ExtResource("4_1t3ll")]
-speed = 45.0
-time_to_full_speed = 40.0
-rudder_shift_time = 8.0
-turning_circle = 600.0
 
 [node name="SecondaryController" parent="." instance=ExtResource("5_l3md2")]

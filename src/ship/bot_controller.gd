@@ -8,7 +8,7 @@ var target_ship: Ship = null
 var target_scan_timer: float = 0.0
 var target_scan_interval: float = 2.0
 var attack_range: float = 100000.0
-var preferred_distance: float = 15000.0
+var preferred_distance: float = 10000.0
 
 # Movement state
 var desired_heading: float = 0.0

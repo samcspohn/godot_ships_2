@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://test_hit_counter"]
+
+[ext_resource type="Script" path="res://test/test_hit_counter_system.gd" id="1"]
+
+[node name="HitCounterTest" type="Node"]
+script = ExtResource("1")

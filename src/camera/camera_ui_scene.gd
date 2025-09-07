@@ -51,12 +51,46 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var secondary_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox
 @onready var main_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox
 
+# Temporary hit counter containers
+@onready var main_counter_temp: HBoxContainer = $MainContainer/TopRightPanel/MainCounterTemp
+@onready var sec_counter_temp: HBoxContainer = $MainContainer/TopRightPanel/SecCounterTemp
+
+# Temporary main hit counter references
+@onready var temp_penetration_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter
+@onready var temp_overpenetration_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter
+@onready var temp_shatter_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter
+@onready var temp_ricochet_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter
+@onready var temp_citadel_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter
+
+# Temporary main hit counter labels
+@onready var temp_penetration_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer/PenetrationCount
+@onready var temp_overpenetration_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
+@onready var temp_shatter_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer/ShatterCount
+@onready var temp_ricochet_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer/RicochetCount
+@onready var temp_citadel_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer/CitadelCount
+
+# Temporary secondary hit counter references
+@onready var temp_sec_penetration_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter
+@onready var temp_sec_overpenetration_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter
+@onready var temp_sec_shatter_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter
+@onready var temp_sec_ricochet_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter
+@onready var temp_sec_citadel_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter
+
+# Temporary secondary hit counter labels
+@onready var temp_sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
+@onready var temp_sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
+@onready var temp_sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer/SecShatterCount
+@onready var temp_sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer/SecRicochetCount
+@onready var temp_sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer/SecCitadelCount
+
 # Main counter labels for hover detection
 @onready var secondary_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondarySec
 @onready var main_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer/MainMain
 
 @onready var secondary_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter
 @onready var main_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/MainCounter
+
+@onready var top_right_panel: VBoxContainer = $MainContainer/TopRightPanel
 
 @onready var speed_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/SpeedLabel
 @onready var throttle_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/ThrottleLabel
@@ -95,6 +129,13 @@ var ship_ui_elements = {}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 
+# Hit counter system for temporary display
+var active_hit_counters = {}
+var hit_counter_display_time: float = 5.0  # Display for 5 seconds
+
+# Hit counter references mapping
+var hit_counter_styles = {}
+
 func recurs_set_vis(n: Node):
 	if n is CanvasItem:
 		n.visibility_layer = 1 << 1
@@ -114,6 +155,9 @@ func _ready():
 	
 	# Setup hover functionality for counters
 	setup_counter_hover_functionality()
+	
+	# Setup hit counter display system
+	setup_hit_counter_system()
 	
 	# Setup minimap in the bottom right panel with automatic anchoring
 	minimap = Minimap.new()
@@ -152,6 +196,124 @@ func setup_counter_hover_functionality():
 	
 	# Instead of using signals, we'll check mouse position manually in _process
 	print("Hover functionality setup complete - using manual detection")
+
+func setup_hit_counter_system():
+	"""Initialize the hit counter display system"""
+	print("Setting up hit counter system...")
+	
+	# The hit counter containers are already created in the scene file
+	# Just ensure they start hidden
+	main_counter_temp.visible = false
+	sec_counter_temp.visible = false
+	
+	# Map hit types to their counter references for easy access
+	hit_counter_styles = {
+		"penetration": {"main": temp_penetration_counter, "sec": temp_sec_penetration_counter, "main_label": temp_penetration_count_label, "sec_label": temp_sec_penetration_count_label},
+		"overpenetration": {"main": temp_overpenetration_counter, "sec": temp_sec_overpenetration_counter, "main_label": temp_overpenetration_count_label, "sec_label": temp_sec_overpenetration_count_label},
+		"shatter": {"main": temp_shatter_counter, "sec": temp_sec_shatter_counter, "main_label": temp_shatter_count_label, "sec_label": temp_sec_shatter_count_label},
+		"ricochet": {"main": temp_ricochet_counter, "sec": temp_sec_ricochet_counter, "main_label": temp_ricochet_count_label, "sec_label": temp_sec_ricochet_count_label},
+		"citadel": {"main": temp_citadel_counter, "sec": temp_sec_citadel_counter, "main_label": temp_citadel_count_label, "sec_label": temp_sec_citadel_count_label}
+	}
+	
+	print("Hit counter system setup complete")
+
+func setup_hit_counter_styles():
+	"""Setup style resources for different hit types"""
+	# This function is no longer needed since we duplicate existing UI elements
+	# The styles are already defined in the scene file
+	pass
+
+func show_hit_counter(hit_type: String, is_secondary: bool):
+	"""Show or update a hit counter for the specified type"""
+	if hit_type not in hit_counter_styles:
+		print("Warning: Unknown hit type: ", hit_type)
+		return
+		
+	var counter_key = hit_type + ("_sec" if is_secondary else "_main")
+	var counter_refs = hit_counter_styles[hit_type]
+	
+	# Get the appropriate counter and label
+	var counter: Control = counter_refs["sec"] if is_secondary else counter_refs["main"]
+	var count_label: Label = counter_refs["sec_label"] if is_secondary else counter_refs["main_label"]
+	var container: HBoxContainer = sec_counter_temp if is_secondary else main_counter_temp
+	
+	# Check if counter already exists in active tracking
+	if counter_key in active_hit_counters:
+		# Update existing counter
+		var counter_data = active_hit_counters[counter_key]
+		counter_data.count += 1
+		counter_data.timer = hit_counter_display_time  # Reset timer
+		count_label.text = str(counter_data.count)
+	else:
+		# Show new counter
+		counter.visible = true
+		container.visible = true
+		count_label.text = "1"
+		
+		# Store counter data
+		active_hit_counters[counter_key] = {
+			"counter": counter,
+			"container": container,
+			"label": count_label,
+			"count": 1,
+			"timer": hit_counter_display_time,
+			"is_secondary": is_secondary
+		}
+
+func update_hit_counters(delta: float):
+	"""Update hit counter timers and hide expired ones"""
+	var keys_to_remove = []
+	
+	for key in active_hit_counters:
+		var counter_data = active_hit_counters[key]
+		counter_data.timer -= delta
+		
+		if counter_data.timer <= 0.0:
+			# Hide expired counter
+			counter_data.counter.visible = false
+			keys_to_remove.append(key)
+	
+	# Remove expired counters from tracking
+	for key in keys_to_remove:
+		active_hit_counters.erase(key)
+	
+	# Hide containers if no counters are active
+	var main_has_active = false
+	var sec_has_active = false
+	
+	for key in active_hit_counters:
+		if active_hit_counters[key].is_secondary:
+			sec_has_active = true
+		else:
+			main_has_active = true
+	
+	main_counter_temp.visible = main_has_active
+	sec_counter_temp.visible = sec_has_active
+
+func process_damage_events(damage_events: Array):
+	"""Process damage events and show appropriate hit counters"""
+	for event in damage_events:
+		var hit_type = get_hit_type_from_event(event)
+		var is_secondary = event.get("sec", false)
+		
+		if hit_type != "":
+			show_hit_counter(hit_type, is_secondary)
+	
+	# Clear damage events after processing to prevent duplicate processing
+	damage_events.clear()
+
+func get_hit_type_from_event(event: Dictionary) -> String:
+	"""Convert damage event type to hit counter type"""
+	var event_type = event.get("type", -1)
+	
+	# Map HitResult enum values to strings
+	match event_type:
+		0: return "penetration"    # HitResult.PENETRATION
+		1: return "ricochet"       # HitResult.RICOCHET
+		2: return "overpenetration" # HitResult.OVERPENETRATION
+		3: return "shatter"        # HitResult.SHATTER
+		5: return "citadel"        # HitResult.CITADEL
+		_: return ""               # Unknown or no hit
 
 # Manual hover detection in _process
 var was_hovering_secondary = false
@@ -211,8 +373,15 @@ func _process(_delta):
 	update_ship_ui()
 	update_gun_reload_bars()
 	check_hover_detection()  # Add manual hover detection
+	update_hit_counters(_delta)  # Update hit counter timers
+	
 	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
 		var stats = camera_controller._ship.stats
+		
+		# Process damage events for hit counters
+		if stats.damage_events.size() > 0:
+			process_damage_events(stats.damage_events)
+		
 		update_counter(damage_value_label, stats.total_damage)
 		update_counter(main_count_label, stats.main_hits)
 		update_counter(frag_count_label, stats.frags)
