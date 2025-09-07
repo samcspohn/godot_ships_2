@@ -1,6 +1,6 @@
 [gd_resource type="StandardMaterial3D" load_steps=2 format=3 uid="uid://c8q8usurtptru"]
 
-[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://src/artillary/particle.png" id="1_rbuuj"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="1_rbuuj"]
 
 [resource]
 render_priority = -1

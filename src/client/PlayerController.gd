@@ -31,6 +31,10 @@ var rudder_mode: String = "continuous" # "continuous" or "discrete"
 var discrete_rudder_positions: Array = [-1.0, -0.5, 0.0, 0.5, 1.0]
 var discrete_rudder_index: int = 2 # Start at 0.0 (middle index)
 
+# Throttle timing variables
+var throttle_timer: float = 0.0
+var throttle_repeat_interval: float = 0.25 # Throttle adjustment every 0.25 seconds
+
 var view_port_size: Vector2i = Vector2i(0, 0)
 
 # Flag to check if initialization is needed
@@ -56,18 +60,15 @@ func _ready() -> void:
 func setup_artillery_camera() -> void:
 	cam = load("res://src/camera/player_cam.tscn").instantiate()
 	cam._ship = ship
-	cam.call_deferred("set_angle", ship.global_position.angle_to(-ship.global_transform.basis.z))
-	# cam.aim.rotation_degrees_horizontal = ship.global_position.angle_to(ship.global_transform.basis.z)
-	#cam.ship_movement = ship_movement
-	#cam.hp_manager = hp_manager
-	
+
 	if cam is Camera3D:
 		cam.current = true
 	if guns.size() > 0:
 		cam.projectile_speed = guns[0].params.shell.speed
 		cam.projectile_drag_coefficient = guns[0].params.shell.drag
 	get_tree().root.add_child(cam)
-	
+	cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
+
 	# Get ray from camera
 	self.ray = cam.get_child(0)
 
@@ -257,9 +258,9 @@ func _process(dt: float) -> void:
 			return # Skip processing until initialized
 	
 	if guns.size() > 0:
-		cam.projectile_speed = guns[0].params.shell.speed
-		cam.projectile_drag_coefficient = guns[0].params.shell.drag
-		
+		cam.projectile_speed = guns[0].my_params.shell.speed
+		cam.projectile_drag_coefficient = guns[0].my_params.shell.drag
+
 	# Handle double click timer
 	if click_count == 1:
 		if Time.get_ticks_msec() / 1000.0 - last_click_time > double_click_timer:
@@ -288,12 +289,50 @@ func _process(dt: float) -> void:
 	# Handle player input and send to server
 	process_player_input()
 
+	# Show floating damage for the ship
+	if ship.stats.damage_events.size() > 0:
+		print("Processing ", ship.stats.damage_events.size(), " damage events")
+		for damage_event in ship.stats.damage_events:
+			if cam.ui:
+				cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
+			else:
+				print("Warning: cam.ui not available for floating damage")
+		# Clear damage events after processing to avoid showing them multiple times
+		ship.stats.damage_events.clear()
+
 func process_player_input() -> void:
-	# Handle throttle input
-	if Input.is_action_just_pressed("move_forward"): # W key
-		throttle_level = min(throttle_level + 1, 4) # Max is 4 (full speed)
-	elif Input.is_action_just_pressed("move_back"): # S key
-		throttle_level = max(throttle_level - 1, -1) # Min is -1 (reverse)
+	# Handle throttle input with continuous adjustment
+	var throttle_input_active = false
+	
+	if Input.is_action_pressed("move_forward"): # W key held
+		throttle_input_active = true
+		throttle_timer += get_process_delta_time()
+		
+		# Immediate response on first press
+		if Input.is_action_just_pressed("move_forward"):
+			throttle_level = min(throttle_level + 1, 4) # Max is 4 (full speed)
+			throttle_timer = 0.0
+		# Continuous adjustment every 0.5 seconds
+		elif throttle_timer >= throttle_repeat_interval:
+			throttle_level = min(throttle_level + 1, 4) # Max is 4 (full speed)
+			throttle_timer = 0.0
+			
+	elif Input.is_action_pressed("move_back"): # S key held
+		throttle_input_active = true
+		throttle_timer += get_process_delta_time()
+		
+		# Immediate response on first press
+		if Input.is_action_just_pressed("move_back"):
+			throttle_level = max(throttle_level - 1, -1) # Min is -1 (reverse)
+			throttle_timer = 0.0
+		# Continuous adjustment every 0.5 seconds
+		elif throttle_timer >= throttle_repeat_interval:
+			throttle_level = max(throttle_level - 1, -1) # Min is -1 (reverse)
+			throttle_timer = 0.0
+	
+	# Reset timer when no throttle input is active
+	if not throttle_input_active:
+		throttle_timer = 0.0
 	
 	# Handle discrete rudder input with Q and E
 	if Input.is_action_just_pressed("ui_q"): # Q key
@@ -351,6 +390,7 @@ func select_weapon(idx: int) -> void:
 	if cam:
 		cam.ui.set_weapon_button_pressed(idx)
 	if idx == 0 or idx == 1:
+		ship.artillery_controller.select_shell(idx)
 		ship.artillery_controller.select_shell.rpc_id(1, idx)
 	print("Selected weapon: %d" % idx)
 

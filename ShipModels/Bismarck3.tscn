@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=13 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://ShipModels/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -9,6 +9,7 @@
 [ext_resource type="Resource" uid="uid://ppinkghgx71y" path="res://src/Ships/Battleship/sec_gun1/sec_gun2.tres" id="6_4ubhj"]
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/Ships/Battleship/sec_gun1/sec_gun1.tres" id="7_jay6y"]
 [ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://src/ship/wake/wake_emitter.tscn" id="9_dyl6l"]
+[ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
@@ -33,6 +34,13 @@ max_hp = 65000.0
 
 [node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
 guns = [NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
+
+[node name="MovementController" parent="Modules" index="3"]
+max_speed = 31.5
+acceleration_time = 15.0
+deceleration_time = 15.0
+turning_circle_radius = 500.0
+rudder_response_time = 7.0
 
 [node name="SecondaryController" parent="Modules" index="4" node_paths=PackedStringArray("guns")]
 guns = [NodePath("../../Hull/105mmTurret"), NodePath("../../Hull/105mmTurret_001"), NodePath("../../Hull/105mmTurret_002"), NodePath("../../Hull/105mmTurret_003"), NodePath("../../Hull/105mmTurret_004"), NodePath("../../Hull/105mmTurret_005"), NodePath("../../Hull/105mmTurret_006"), NodePath("../../Hull/105mmTurret_007"), NodePath("../../Hull/150mmTurret"), NodePath("../../Hull/150mmTurret_001"), NodePath("../../Hull/150mmTurret_002"), NodePath("../../Hull/150mmTurret_003"), NodePath("../../Hull/150mmTurret_004"), NodePath("../../Hull/150mmTurret_005")]
@@ -186,5 +194,21 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.081, -122.317)
 
 [node name="WakeEmitter2" parent="." index="5" instance=ExtResource("9_dyl6l")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13.1809, -3.08133, 76.8465)
+
+[node name="Fire" parent="." index="6" instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.16089, -84.116)
+buildUp = 170.0
+
+[node name="Fire2" parent="." index="7" instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.08068, -26.3775)
+buildUp = 170.0
+
+[node name="Fire3" parent="." index="8" instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.21839, 29.8215)
+buildUp = 170.0
+
+[node name="Fire4" parent="." index="9" instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.16078, 92.8848)
+buildUp = 170.0
 
 [editable path="Modules"]

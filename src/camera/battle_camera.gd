@@ -1,7 +1,7 @@
 extends Camera3D
 
 class_name BattleCamera
-
+var ship_speed_modifier: float = 2.0 # Adjust to calibrate ship speed display
 signal processed
 # Ship to follow
 @export var _ship: Ship
@@ -162,7 +162,7 @@ func _process(delta):
 	# Calculate ship speed
 	if _ship:
 		var velocity = _ship.linear_velocity
-		ship_speed = velocity.length() * 1.94384 / 3.0 # Convert m/s to knots
+		ship_speed = velocity.length() * 1.94384 / ship_speed_modifier # Convert m/s to knots
 
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
@@ -463,7 +463,7 @@ func _calculate_target_info():
 	
 	# Extract results
 	var launch_vector = launch_result[0]
-	time_to_target = launch_result[1]
+	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
 	#max_range_reached = launch_result[2]
 	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.guns[0].max_range
 	

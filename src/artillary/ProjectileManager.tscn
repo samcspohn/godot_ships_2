@@ -4,7 +4,7 @@
 [ext_resource type="Material" uid="uid://c8q8usurtptru" path="res://src/artillary/ProjectileManagerMaterial.tres" id="2_wm87v"]
 [ext_resource type="Shader" uid="uid://boy6lwvbcv4qj" path="res://src/artillary/ProjectileManagerTrailShader.gdshader" id="4_d12p8"]
 [ext_resource type="Shader" uid="uid://bobk81d11sx4f" path="res://src/artillary/ProjectileManagerProcessMaterial.gdshader" id="4_l6klx"]
-[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://src/artillary/particle.png" id="4_xoeb4"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="4_xoeb4"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_wm87v"]
 material = ExtResource("2_wm87v")

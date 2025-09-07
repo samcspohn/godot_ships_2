@@ -138,8 +138,10 @@ func spawn_player(id, player_name):
 	var map = get_node("GameWorld/Env").get_child(0)
 	var team_spawn_point: Vector3 = (map.get_node("Spawn").get_child(team_id) as Node3D).global_position
 
+	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
+
 	# Randomize spawn position
-	var spawn_pos = Vector3(randf_range(-1000, 1000), 0, randf_range(-1000, 1000)) + team_spawn_point
+	var spawn_pos = right_of_spawn * randf_range(-5000, 5000) + team_spawn_point
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position

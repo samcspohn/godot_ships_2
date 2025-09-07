@@ -9,13 +9,16 @@ var sunk: bool = false
 func _ready() -> void:
 	current_hp = max_hp
 	
-func take_damage(dmg: float, pos: Vector3):
+func take_damage(dmg: float, _pos: Vector3) -> Array:
 	if sunk:
-		return
+		return [0, false]
 	current_hp -= dmg
 	if current_hp <= 0 && !sunk:
+		dmg -= current_hp
 		current_hp = 0
 		sink()
+		return [dmg, true]
+	return [dmg, false]
 
 @rpc("any_peer", "reliable", "call_remote")
 func sink():

@@ -1,6 +1,7 @@
-[gd_scene load_steps=24 format=3 uid="uid://be3y5hstfsrig"]
+[gd_scene load_steps=25 format=3 uid="uid://be3y5hstfsrig"]
 
 [ext_resource type="Script" uid="uid://cb1wugmybyocw" path="res://src/Fire/fire.gd" id="1_kikl1"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2_oe25v"]
 
 [sub_resource type="Gradient" id="Gradient_7e4f1"]
 offsets = PackedFloat32Array(0.0227273, 0.131818, 0.231818, 0.340909, 0.468182, 0.863636, 1)
@@ -52,6 +53,7 @@ blend_mode = 1
 shading_mode = 0
 specular_mode = 2
 vertex_color_use_as_albedo = true
+albedo_texture = ExtResource("2_oe25v")
 billboard_mode = 3
 billboard_keep_scale = true
 particles_anim_h_frames = 1
@@ -62,8 +64,8 @@ particles_anim_loop = false
 material = SubResource("StandardMaterial3D_7e4f1")
 
 [sub_resource type="Gradient" id="Gradient_kikl1"]
-offsets = PackedFloat32Array(0, 0.227273, 0.686364, 1)
-colors = PackedColorArray(0.346419, 0.216988, 0.0229613, 0.172549, 0, 0, 0, 0, 0, 0, 0, 0.976471, 0, 0, 0, 0)
+offsets = PackedFloat32Array(0, 0.0872483, 0.228188, 0.731544, 1)
+colors = PackedColorArray(0.346419, 0.216988, 0.0229613, 0.172549, 0, 0, 0, 0, 0, 0, 0, 0.879855, 0, 0, 0, 0.976471, 0, 0, 0, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_6l01i"]
 gradient = SubResource("Gradient_kikl1")
@@ -112,6 +114,7 @@ transparency = 1
 shading_mode = 0
 specular_mode = 2
 vertex_color_use_as_albedo = true
+albedo_texture = ExtResource("2_oe25v")
 billboard_mode = 3
 billboard_keep_scale = true
 particles_anim_h_frames = 1

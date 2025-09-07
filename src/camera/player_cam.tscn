@@ -1,8 +1,13 @@
-[gd_scene load_steps=2 format=3 uid="uid://5diwy5owyxuo"]
+[gd_scene load_steps=3 format=3 uid="uid://5diwy5owyxuo"]
 
 [ext_resource type="Script" uid="uid://chcmxyf6tdfh2" path="res://src/camera/battle_camera.gd" id="1_eru7b"]
 
+[sub_resource type="Environment" id="Environment_bp804"]
+background_mode = 1
+background_color = Color(0.409483, 0.709723, 0.857173, 1)
+
 [node name="PlayerCam" type="Camera3D"]
+environment = SubResource("Environment_bp804")
 current = true
 near = 5.0
 far = 60000.0

@@ -1,5 +1,6 @@
 extends Node
 
+var shell_time_multiplier: float = 1.5 # Adjust to calibrate shell speed display
 var nextId: int = 0;
 var projectiles: Array[ProjectileData] = [];
 var ids_reuse: Array[int] = []
@@ -25,8 +26,6 @@ class ProjectileData:
 	#var p_position: Vector3
 	var params: ShellParams
 	var trail_pos: Vector3
-	var type: int
-	var active: bool
 	var owner: Ship
 
 	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship):
@@ -120,7 +119,7 @@ func calculate_penetration_power(shell_params: ShellParams, velocity: float) -> 
 	var base_penetration = naval_constant_metric * pow(weight_kg, 0.55) * pow(velocity_ms, 1.1) / pow(caliber_mm, 0.65)
 	# Apply shell type modifiers
 	var shell_quality_factor = 1.0
-	if shell_params.type == 1: # AP shell
+	if shell_params.type == ShellParams.ShellType.AP: # AP shell
 		shell_quality_factor = 1.0 # AP shells are the baseline
 	else: # HE shell
 		shell_quality_factor = 0.4 # HE shells have much reduced penetration
@@ -280,7 +279,7 @@ func calc_armor_interaction(shell: ShellData, armor: ArmorData) -> ShellData:
 	# 		penetration_power,
 	# 	])
 
-	if shell.params.type == 0:
+	if shell.params.type == ShellParams.ShellType.HE: # HE shell
 		if armor.thickness <= shell.params.overmatch:
 			shell.hit_result = HitResult.PENETRATION
 		else:
@@ -334,7 +333,7 @@ func _armor_result(shell: ShellData, explosion_position: Vector3) -> Dictionary:
 		HitResult.OVERPENETRATION:
 			damage *= 0.1
 		HitResult.PENETRATION:
-			damage *= 0.333333
+			damage *= 1.0 / 3.0
 		HitResult.CITADEL:
 			damage *= 1.0
 
@@ -521,7 +520,7 @@ func __process(_delta: float) -> void:
 			id += 1
 			continue
 
-		var t = (current_time - p.start_time) * 2.0
+		var t = (current_time - p.start_time) * shell_time_multiplier
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		update_transform_pos(id, p.position)
 
@@ -571,7 +570,7 @@ func _physics_process(_delta: float) -> void:
 			id += 1
 			continue
 
-		var t = (current_time - p.start_time) * 2.0
+		var t = (current_time - p.start_time) * shell_time_multiplier
 		ray_query.from = p.position
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		ray_query.to = p.position
@@ -617,39 +616,39 @@ func _physics_process(_delta: float) -> void:
 			if ship != null:
 				# var ship: Ship = collision.collider
 				var armor_result = calculate_armor_interaction(p.params, current_velocity, ship, ray_query.from, ray_query.to, fuse)
-
+				
 				match armor_result.result_type:
 					HitResult.PENETRATION, HitResult.CITADEL:
-						var final_damage = armor_result.damage
-						#var hit_type = HitResult.PENETRATION
-
-						# if is_inside_ship:
-							# Shell explodes inside ship - full penetration damage
-						final_damage = armor_result.damage
-						#hit_type = HitResult.PENETRATION
-						#hit_result_dict.result_type = HitResult.PENETRATION
-						apply_fire_damage(p, ship, armor_result.explosion_position)
-
-						ship.health_controller.take_damage(final_damage, armor_result.explosion_position)
-						
-						# Track damage dealt for player's camera UI
-						track_damage_dealt(p.owner, final_damage)
-						if armor_result.result_type == HitResult.CITADEL:
-							track_citadel(p)
-						else:
-							track_penetration(p)
+						if ship.health_controller.is_alive():
+							apply_fire_damage(p, ship, armor_result.explosion_position)
+							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
+							var sunk = dmg_sunk[1]
+							var dmg = dmg_sunk[0]
+							# Track damage dealt for player's camera UI
+							track_damage_dealt(p, dmg)
+							if armor_result.result_type == HitResult.CITADEL:
+								track_citadel(p)
+							else:
+								track_penetration(p)
+							if sunk:
+								track_frag(p)
+							track_damage_event(p, dmg, ship.global_position)
 
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.PENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
 					HitResult.OVERPENETRATION:
 						# Shell overpenetrates - apply reduced damage
-						ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
-						apply_fire_damage(p, ship, armor_result.explosion_position)
-						
-						# Track damage dealt for player's camera UI
-						track_damage_dealt(p.owner, armor_result.damage)
-						track_overpenetration(p)
-						
+						if ship.health_controller.is_alive():
+							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
+							apply_fire_damage(p, ship, armor_result.explosion_position)
+							
+							# Track damage dealt for player's camera UI
+							track_damage_dealt(p, dmg_sunk[0])
+							track_overpenetration(p)
+							if dmg_sunk[1]:
+								track_frag(p)
+							track_damage_event(p, armor_result.damage, ship.global_position)
+
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.OVERPENETRATION)
 						# print_armor_debug(hit_result_dict, ship)
 
@@ -661,21 +660,25 @@ func _physics_process(_delta: float) -> void:
 						var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, p.owner)
 						for client in multiplayer.get_peers():
 							createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
-
-						# Track ricochet
-						track_ricochet(p)
+						
+						if ship.health_controller.is_alive():
+							track_ricochet(p)
 
 						# Destroy the original shell
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.RICOCHET)
 
 					HitResult.SHATTER:
-						ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
-						apply_fire_damage(p, ship, armor_result.explosion_position)
-						
-						# Track damage dealt for player's camera UI
-						track_damage_dealt(p.owner, armor_result.damage)
-						track_shatter(p)
-						
+						if ship.health_controller.is_alive():
+							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
+							apply_fire_damage(p, ship, armor_result.explosion_position)
+
+							# Track damage dealt for player's camera UI
+							track_damage_dealt(p, dmg_sunk[0])
+							track_shatter(p)
+							if dmg_sunk[1]:
+								track_frag(p)
+							track_damage_event(p, armor_result.damage, ship.global_position)
+
 						destroyBulletRpc(id, armor_result.explosion_position, HitResult.SHATTER)
 			else:
 				# Hit something that's not a ship (water, terrain)
@@ -718,10 +721,10 @@ func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship) -> int:
 		var np2 = next_pow_of_2(id + 1)
 		self.projectiles.resize(np2)
 
-	var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
-	expl.radius = shell.damage / 500
-	get_tree().root.add_child(expl)
-	expl.global_position = pos
+	# var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
+	# expl.radius = shell.damage / 500
+	# get_tree().root.add_child(expl)
+	# expl.global_position = pos
 
 	var bullet: ProjectileData = ProjectileData.new()
 	bullet.initialize(pos, vel, t, shell, _owner)
@@ -743,10 +746,10 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship) -> void
 	var trans = Transform3D.IDENTITY.scaled(Vector3(s, s, s)).translated(pos)
 	update_transform(id, trans)
 
-	if shell.type == 1: # AP Shell
+	if shell.type == ShellParams.ShellType.AP: # AP Shell
 		set_color(id, Color(0.6, 0.6, 1.0, 1.0)) # Blue for AP shells
 	else:
-		set_color(id, Color(1.0, 0.8, 0.5, 1.0)) # Red for HE shells
+		set_color(id, Color(1.0, 0.8, 0.5, 1.0)) # Orange for HE shells
 
 	bullet.initialize(pos, vel, t, shell, _owner)
 	self.projectiles.set(id, bullet)
@@ -846,7 +849,9 @@ func apply_fire_damage(projectile: ProjectileData, ship: Ship, hit_position: Vec
 				closest_fire_dist = dist
 				closest_fire = f
 		if closest_fire:
-			closest_fire._apply_build_up(projectile.params.fire_buildup)
+			if closest_fire._apply_build_up(projectile.params.fire_buildup, projectile.owner):
+				# increment fire stats
+				pass
 
 func print_armor_debug(armor_result: Dictionary, ship: Ship):
 	var ship_class = "Unknown"
@@ -883,7 +888,7 @@ func validate_penetration_formula():
 	var bb_shell = ShellParams.new()
 	bb_shell.caliber = 380.0
 	bb_shell.mass = 800.0 # Historical 380mm AP shell mass in kg
-	bb_shell.type = 1 # AP
+	bb_shell.type = ShellParams.ShellType.AP # AP
 	bb_shell.penetration_modifier = 1.0
 
 	var bb_penetration = calculate_penetration_power(bb_shell, 820.0)
@@ -894,7 +899,7 @@ func validate_penetration_formula():
 	var ca_shell = ShellParams.new()
 	ca_shell.caliber = 203.0
 	ca_shell.mass = 118.0 # Historical 203mm AP shell mass in kg
-	ca_shell.type = 1 # AP
+	ca_shell.type = ShellParams.ShellType.AP # AP
 	ca_shell.penetration_modifier = 1.0
 
 	var ca_penetration = calculate_penetration_power(ca_shell, 760.0)
@@ -905,7 +910,7 @@ func validate_penetration_formula():
 	var sec_shell = ShellParams.new()
 	sec_shell.caliber = 152.0
 	sec_shell.mass = 45.3 # Historical 152mm AP shell mass in kg
-	sec_shell.type = 1 # AP
+	sec_shell.type = ShellParams.ShellType.AP # AP
 	sec_shell.penetration_modifier = 1.0
 
 	var sec_penetration = calculate_penetration_power(sec_shell, 900.0)
@@ -917,24 +922,38 @@ func validate_penetration_formula():
 	print("380mm AP shell at 820 m/s, 45° impact: ", oblique_penetration, "mm penetration")
 	print("Expected: ~70% of normal impact due to angle")
 
-func track_damage_dealt(owner_ship: Ship, damage: float):
+func track_damage_dealt(p: ProjectileData, damage: float):
 	"""Track damage dealt using the ship's stats module"""
-	if not owner_ship or not is_instance_valid(owner_ship):
+	if not p or not is_instance_valid(p):
 		return
 	
 	# Add damage to the ship's stats module
-	if owner_ship.stats:
-		owner_ship.stats.total_damage += damage
+	if p.owner.stats:
+		p.owner.stats.total_damage += damage
+		if p.params.secondary:
+			p.owner.stats.sec_damage += damage
+		else:
+			p.owner.stats.main_damage += damage
+
+func track_damage_event(p: ProjectileData, damage: float, position: Vector3):
+	if not p or not is_instance_valid(p):
+		return
+
+	if p.owner.stats:
+		p.owner.stats.damage_events.append({"damage": damage, "position": position})
 
 func track_penetration(p: ProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
 	# Add penetration to the ship's stats module
-	if p.owner.stats and !p.params.secondary:
-		p.owner.stats.penetration_count += 1
-	elif p.owner.stats and p.params.secondary:
-		p.owner.stats.secondary_count += 1
+	if p.owner.stats:
+		if !p.params.secondary:
+			p.owner.stats.penetration_count += 1
+			p.owner.stats.main_hits += 1
+		else:
+			p.owner.stats.sec_penetration_count += 1
+			p.owner.stats.secondary_count += 1
 
 
 func track_citadel(p: ProjectileData):
@@ -942,40 +961,60 @@ func track_citadel(p: ProjectileData):
 		return
 
 	# Add citadel hits to the ship's stats module
-	if p.owner.stats and !p.params.secondary:
-		p.owner.stats.citadel_count += 1
-	elif p.owner.stats and p.params.secondary:
-		p.owner.stats.secondary_count += 1
+	if p.owner.stats:
+		if !p.params.secondary:
+			p.owner.stats.citadel_count += 1
+			p.owner.stats.main_hits += 1
+		else:
+			p.owner.stats.sec_citadel_count += 1
+			p.owner.stats.secondary_count += 1
 
 func track_overpenetration(p: ProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
 	# Add overpenetration to the ship's stats module
-	if p.owner.stats and !p.params.secondary:
-		p.owner.stats.overpen_count += 1
-	elif p.owner.stats and p.params.secondary:
-		p.owner.stats.secondary_count += 1
+	if p.owner.stats:
+		if !p.params.secondary:
+			p.owner.stats.overpen_count += 1
+			p.owner.stats.main_hits += 1
+		else:
+			p.owner.stats.sec_overpen_count += 1
+			p.owner.stats.secondary_count += 1
 
 func track_shatter(p: ProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
 	# Add shatter to the ship's stats module
-	if p.owner.stats and !p.params.secondary:
-		p.owner.stats.shatter_count += 1
-	elif p.owner.stats and p.params.secondary:
-		p.owner.stats.secondary_count += 1
+	if p.owner.stats:
+		if !p.params.secondary:
+			p.owner.stats.shatter_count += 1
+			p.owner.stats.main_hits += 1
+		else:
+			p.owner.stats.sec_shatter_count += 1
+			p.owner.stats.secondary_count += 1
 
 func track_ricochet(p: ProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
 	# Add ricochet to the ship's stats module
-	if p.owner.stats and !p.params.secondary:
-		p.owner.stats.ricochet_count += 1
-	elif p.owner.stats and p.params.secondary:
-		p.owner.stats.secondary_count += 1
+	if p.owner.stats:
+		if !p.params.secondary:
+			p.owner.stats.ricochet_count += 1
+			p.owner.stats.main_hits += 1
+		else:
+			p.owner.stats.sec_ricochet_count += 1
+			p.owner.stats.secondary_count += 1
+
+func track_frag(p: ProjectileData):
+	if not p or not is_instance_valid(p):
+		return
+
+	# Add frag to the ship's stats module
+	if p.owner.stats:
+		p.owner.stats.frags += 1
 
 @rpc("any_peer", "call_local", "reliable")
 func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_position: Vector3, ricochet_velocity: Vector3, ricochet_time: float):

@@ -2,6 +2,9 @@ extends CanvasLayer
 
 class_name CameraUIScene
 
+# Preload the floating damage scene
+const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
+
 # Camera controller reference
 var camera_controller: BattleCamera
 
@@ -23,12 +26,37 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var camera_angle_label: Label = $MainContainer/TopLeftPanel/CameraAngleLabel
 
 @onready var secondary_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondaryCount
-@onready var penetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/PenetrationCounter/PenetrationContainer/PenetrationCount
-@onready var overpenetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/OverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
-@onready var shatter_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/ShatterCounter/ShatterContainer/ShatterCount
-@onready var ricochet_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/RicochetCounter/RicochetContainer/RicochetCount
-@onready var citadel_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/CitadelCounter/CitadelContainer/CitadelCount
+@onready var main_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer/MainCount
+@onready var frag_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer/FragCount
+
+# Main hit counter labels (shown when hovering over MAIN)
+@onready var penetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer/PenetrationCount
+@onready var overpenetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
+@onready var shatter_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer/ShatterCount
+@onready var ricochet_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer/RicochetCount
+@onready var citadel_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer/CitadelCount
+@onready var main_damage_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox/DamageCounter/DamageValue
+
+# Secondary hit counter labels (shown when hovering over SEC)
+@onready var sec_penetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
+@onready var sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
+@onready var sec_shatter_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer/SecShatterCount
+@onready var sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer/SecRicochetCount
+@onready var sec_citadel_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer/SecCitadelCount
+@onready var sec_damage_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/DamageCounter/DamageValue
+
 @onready var damage_value_label: Label = $MainContainer/TopRightPanel/HBoxContainer/DamageCounter/DamageValue
+
+# Hit counter containers for hover functionality
+@onready var secondary_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox
+@onready var main_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainVBox
+
+# Main counter labels for hover detection
+@onready var secondary_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondarySec
+@onready var main_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer/MainMain
+
+@onready var secondary_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter
+@onready var main_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/MainCounter
 
 @onready var speed_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/SpeedLabel
 @onready var throttle_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/ThrottleLabel
@@ -74,12 +102,18 @@ func recurs_set_vis(n: Node):
 		recurs_set_vis(child)
 
 func _ready():
+	# Add to camera_ui group for easy access
+	add_to_group("camera_ui")
+	
 	# Connect weapon button signals
 	for i in range(weapon_buttons.size()):
 		weapon_buttons[i].connect("pressed", _on_weapon_button_pressed.bind(i))
 	
 	# Connect crosshair drawing
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
+	
+	# Setup hover functionality for counters
+	setup_counter_hover_functionality()
 	
 	# Setup minimap in the bottom right panel with automatic anchoring
 	minimap = Minimap.new()
@@ -104,6 +138,69 @@ func initialize_for_ship():
 		# Force an initial search for other ships
 		update_ship_ui()
 
+func setup_counter_hover_functionality():
+	print("Setting up hover functionality...")
+	
+	# Enable mouse input for the counter containers
+	secondary_counter.mouse_filter = Control.MOUSE_FILTER_PASS
+	main_counter.mouse_filter = Control.MOUSE_FILTER_PASS
+	
+	print("Secondary counter: ", secondary_counter)
+	print("Main counter: ", main_counter)
+	print("Secondary hit counters: ", secondary_hit_counters)
+	print("Main hit counters: ", main_hit_counters)
+	
+	# Instead of using signals, we'll check mouse position manually in _process
+	print("Hover functionality setup complete - using manual detection")
+
+# Manual hover detection in _process
+var was_hovering_secondary = false
+var was_hovering_main = false
+
+func check_hover_detection():
+	if not secondary_counter or not main_counter:
+		return
+		
+	var mouse_pos = get_viewport().get_mouse_position()
+	
+	# Check secondary counter hover
+	var sec_rect = Rect2(secondary_counter.global_position, secondary_counter.size)
+	var is_hovering_secondary = sec_rect.has_point(mouse_pos)
+	
+	if is_hovering_secondary != was_hovering_secondary:
+		was_hovering_secondary = is_hovering_secondary
+		if is_hovering_secondary:
+			_on_secondary_hover_enter()
+		else:
+			_on_secondary_hover_exit()
+	
+	# Check main counter hover
+	var main_rect = Rect2(main_counter.global_position, main_counter.size)
+	var is_hovering_main = main_rect.has_point(mouse_pos)
+	
+	if is_hovering_main != was_hovering_main:
+		was_hovering_main = is_hovering_main
+		if is_hovering_main:
+			_on_main_hover_enter()
+		else:
+			_on_main_hover_exit()
+
+func _on_secondary_hover_enter():
+	print("Secondary hover enter!")
+	secondary_hit_counters.visible = true
+
+func _on_secondary_hover_exit():
+	print("Secondary hover exit!")
+	secondary_hit_counters.visible = false
+
+func _on_main_hover_enter():
+	print("Main hover enter!")
+	main_hit_counters.visible = true
+
+func _on_main_hover_exit():
+	print("Main hover exit!")
+	main_hit_counters.visible = false
+
 func _process(_delta):
 	if not camera_controller:
 		return
@@ -113,15 +210,29 @@ func _process(_delta):
 	_update_camera_angle_display()
 	update_ship_ui()
 	update_gun_reload_bars()
+	check_hover_detection()  # Add manual hover detection
 	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
 		var stats = camera_controller._ship.stats
 		update_counter(damage_value_label, stats.total_damage)
+		update_counter(main_count_label, stats.main_hits)
+		update_counter(frag_count_label, stats.frags)
+		update_counter(secondary_count_label, stats.secondary_count)
+		update_counter(sec_citadel_count_label, stats.sec_citadel_count)
+		update_counter(sec_damage_label, stats.sec_damage)
+		
+		# Update main hit counters
 		update_counter(penetration_count_label, stats.penetration_count)
 		update_counter(overpenetration_count_label, stats.overpen_count)
 		update_counter(ricochet_count_label, stats.ricochet_count)
 		update_counter(shatter_count_label, stats.shatter_count)
 		update_counter(citadel_count_label, stats.citadel_count)
-		update_counter(secondary_count_label, stats.secondary_count)
+		update_counter(main_damage_label, stats.main_damage)
+
+		# Update secondary hit counters
+		update_counter(sec_penetration_count_label, stats.sec_penetration_count)
+		update_counter(sec_overpenetration_count_label, stats.sec_overpen_count)
+		update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
+		update_counter(sec_shatter_count_label, stats.sec_shatter_count)
 	crosshair_container.queue_redraw()
 
 func _update_ui():
@@ -130,7 +241,7 @@ func _update_ui():
 	# Update ship status
 	speed_label.text = "Speed: %.1f knots" % ship_speed
 	
-	if camera_controller._ship.movement_controller is ShipMovement:
+	if camera_controller._ship.movement_controller is ShipMovementV2:
 		# Update throttle display
 		var throttle_level = camera_controller._ship.movement_controller.throttle_level
 		var throttle_display = ""
@@ -147,7 +258,7 @@ func _update_ui():
 		throttle_slider.value = throttle_level
 		
 		# Update rudder display
-		var rudder_value = camera_controller._ship.movement_controller.rudder_value
+		var rudder_value = camera_controller._ship.movement_controller.rudder_input
 		var rudder_display = ""
 		
 		if abs(rudder_value) < 0.1:
@@ -447,7 +558,7 @@ func update_gun_reload_bars():
 func set_time_to_target(value: float):
 	time_to_target = value
 	if time_label:
-		time_label.text = "%.1f s" % (value / 2.0)
+		time_label.text = "%.1f s" % (value)
 
 func set_distance_to_target(value: float):
 	distance_to_target = value
@@ -476,3 +587,24 @@ func set_target_lock_enabled(value: bool):
 func update_counter(label: Label, count):
 	if label:
 		label.text = str(int(count))
+
+# Function to create floating damage at a world position
+func create_floating_damage(damage: int, world_position: Vector3):
+	"""
+	Creates a floating damage label that appears above the hit point.
+	
+	Args:
+		damage: The damage amount to display
+		world_position: World position where the damage occurred
+	"""
+	# Instantiate the floating damage scene
+	var floating_damage = FloatingDamageScene.instantiate()
+	
+	# Configure the floating damage
+	floating_damage.damage_amount = damage
+	floating_damage.world_position = world_position
+	
+	# Add to the scene
+	add_child(floating_damage)
+	
+	print("Created floating damage: ", damage, " at ", world_position)

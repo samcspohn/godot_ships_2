@@ -6,7 +6,7 @@ class_name ShipMovement
 @export var time_to_full_speed: float = 10.0  # Time in seconds to reach full speed from stop
 @export var linear_damping: float = 1.0
 @export var angular_damping: float = 3.0
-@export var drift_coefficient: float = 0.85  # Lower values = more drift
+@export var drift_coefficient: float = 0.75  # Lower values = more drift
 
 # Ship movement variables
 @export var rudder_shift_time: float = 2.0  # Time to move rudder from center to max

@@ -47,8 +47,8 @@ func _physics_process(delta: float) -> void:
 	for g in guns:
 		var found_target = false
 		for e in enemies_in_range:
-			if g.valid_target_leading(e.global_position, e.linear_velocity / 2.0):
-				g._aim_leading(e.global_position, e.linear_velocity / 2.0, delta)
+			if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier):
+				g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 				found_target = true
 				break
 		if not found_target:

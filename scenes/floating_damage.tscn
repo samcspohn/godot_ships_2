@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://bvkj8n5q2x3y4"]
+
+[ext_resource type="Script" path="res://scenes/floating_damage.gd" id="1_floating_damage"]
+
+[node name="FloatingDamage" type="Label"]
+text = "0"
+script = ExtResource("1_floating_damage")

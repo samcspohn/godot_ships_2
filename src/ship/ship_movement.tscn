@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://bpa424xhggvk2"]
 
-[ext_resource type="Script" uid="uid://coe34k6xq31yt" path="res://src/ship/ShipMovement.gd" id="1_ncqei"]
+[ext_resource type="Script" uid="uid://dhc1epu8yye16" path="res://src/ship/ShipMovementV2.gd" id="1_j7fsr"]
 
 [node name="ShipMovement" type="Node"]
-script = ExtResource("1_ncqei")
+script = ExtResource("1_j7fsr")

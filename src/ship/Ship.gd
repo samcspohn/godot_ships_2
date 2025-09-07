@@ -3,7 +3,7 @@ class_name Ship
 
 var initialized: bool = false
 # Child components
-var movement_controller: ShipMovement
+var movement_controller: ShipMovementV2
 var artillery_controller: ShipArtillery
 @export var secondary_controllers: Array[SecondaryController]
 var health_controller: HitPointsManager
@@ -76,8 +76,8 @@ func _physics_process(delta: float) -> void:
 func sync_ship_data() -> Dictionary:
 	var d = {
 		'y': movement_controller.throttle_level,
-		't': movement_controller.thrust_vector,
-		'r': movement_controller.rudder_value,
+		#'t': movement_controller.thrust_vector,
+		'r': movement_controller.rudder_input,
 		'v': linear_velocity,
 		'b': global_basis,
 		'p': global_position,
@@ -115,8 +115,8 @@ func sync(d: Dictionary):
 	self.visible_to_enemy = d.vs
 	self.global_position = d.p
 	self.global_basis = d.b
-	movement_controller.rudder_value = d.r
-	movement_controller.thrust_vector = d.t
+	movement_controller.rudder_input = d.r
+	#movement_controller.thrust_vector = d.t
 	movement_controller.throttle_level = d.y
 	linear_velocity = d.v
 	health_controller.current_hp = d.h

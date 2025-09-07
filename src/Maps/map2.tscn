@@ -1315,7 +1315,14 @@ radius = 100.0
 [node name="Spawn" type="Node" parent="."]
 
 [node name="spawn0" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5352.04)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -7006.08)
 
 [node name="spawn1" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7234.61)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9719.97)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.812084, -0.453497, 0.367234, 0, 0.62932, 0.777146, -0.583541, -0.631107, 0.511061, 0, 0, 0)
+light_color = Color(0.663439, 0.668751, 0.504524, 1)
+shadow_enabled = true
+directional_shadow_blend_splits = true
+directional_shadow_max_distance = 30000.0
