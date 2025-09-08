@@ -255,8 +255,8 @@ func get_team_ships(team_id: int) -> Array:
 			team_ships.append(ship)
 	return team_ships
 
-func get_valid_targets(team_id: int) -> Array:
-	var targets: Array = []
+func get_valid_targets(team_id: int) -> Array[Ship]:
+	var targets: Array[Ship] = []
 	for p in players.values():
 		var ship: Ship = p[0]
 		if ship.team.team_id != team_id and ship.health_controller.is_alive() and ship.visible_to_enemy:

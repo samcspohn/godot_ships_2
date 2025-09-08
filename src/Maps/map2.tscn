@@ -1315,10 +1315,10 @@ radius = 100.0
 [node name="Spawn" type="Node" parent="."]
 
 [node name="spawn0" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -7006.08)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5825.62)
 
 [node name="spawn1" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 9719.97)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8167.37)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.812084, -0.453497, 0.367234, 0, 0.62932, 0.777146, -0.583541, -0.631107, 0.511061, 0, 0, 0)

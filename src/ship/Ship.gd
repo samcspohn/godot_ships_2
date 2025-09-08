@@ -4,7 +4,7 @@ class_name Ship
 var initialized: bool = false
 # Child components
 var movement_controller: ShipMovementV2
-var artillery_controller: ShipArtillery
+var artillery_controller: ArtilleryController
 @export var secondary_controllers: Array[SecondaryController]
 var health_controller: HitPointsManager
 var torpedo_launcher: TorpedoLauncher
@@ -83,13 +83,15 @@ func sync_ship_data() -> Dictionary:
 		'p': global_position,
 		'h': health_controller.current_hp,
 		'g': [],
-		's': []
+		's': [],
+		'sc': []
 	}
 	
 	for g in artillery_controller.guns:
 		d.g.append({'b': g.basis, 'c': g.barrel.basis})
 	
 	for controller in secondary_controllers:
+		d.sc.append(controller._my_gun_params.to_dict())
 		for s: Gun in controller.guns:
 			d.s.append({'b': s.basis, 'c': s.barrel.basis})
 
@@ -127,8 +129,11 @@ func sync(d: Dictionary):
 		g.barrel.basis = d.g[i].c
 		i += 1
 		
+	i = 0
+	var k = 0
 	for controller in secondary_controllers:
-		i = 0
+		controller._my_gun_params.from_dict(d.sc[k])
+		k += 1
 		for s: Gun in controller.guns:
 			s.basis = d.s[i].b
 			s.barrel.basis = d.s[i].c

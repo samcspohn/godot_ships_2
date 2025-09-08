@@ -3,7 +3,7 @@ class_name PlayerController
 
 var ship: Ship
 #var ship_movement: ShipMovement
-#var ship_artillery: ShipArtillery
+#var ship_artillery: ArtilleryController
 #var hp_manager: HitPointsManager
 var _cameraInput: Vector2
 @export var playerName: Label
@@ -52,10 +52,18 @@ func _ready() -> void:
 		set_process(false)
 		set_process_input(false)
 		set_physics_process(false)
+
+		call_deferred("apply_buff")
 	else:
 		# Capture mouse by default for camera control
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		mouse_captured = true
+
+
+func apply_buff():
+	for c in ship.secondary_controllers:
+		c._my_gun_params.range *= 2.0
+		c._my_gun_params.reload_time *= 0.6
 
 func setup_artillery_camera() -> void:
 	cam = load("res://src/camera/player_cam.tscn").instantiate()
@@ -64,8 +72,8 @@ func setup_artillery_camera() -> void:
 	if cam is Camera3D:
 		cam.current = true
 	if guns.size() > 0:
-		cam.projectile_speed = guns[0].params.shell.speed
-		cam.projectile_drag_coefficient = guns[0].params.shell.drag
+		cam.projectile_speed = ship.artillery_controller._my_gun_params.shell.speed
+		cam.projectile_drag_coefficient = ship.artillery_controller._my_gun_params.shell.drag
 	get_tree().root.add_child(cam)
 	cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
 
@@ -242,7 +250,7 @@ func _process(dt: float) -> void:
 	if needs_initialization:
 		needs_initialization = false
 		
-		# Check if guns are available in ShipArtillery
+		# Check if guns are available in ArtilleryController
 		if ship.artillery_controller.guns.size() > 0:
 			# Copy guns from ship to local array
 			guns = ship.artillery_controller.guns
@@ -258,8 +266,8 @@ func _process(dt: float) -> void:
 			return # Skip processing until initialized
 	
 	if guns.size() > 0:
-		cam.projectile_speed = guns[0].my_params.shell.speed
-		cam.projectile_drag_coefficient = guns[0].my_params.shell.drag
+		cam.projectile_speed = ship.artillery_controller._my_gun_params.shell.speed
+		cam.projectile_drag_coefficient = ship.artillery_controller._my_gun_params.shell.drag
 
 	# Handle double click timer
 	if click_count == 1:
@@ -271,7 +279,7 @@ func _process(dt: float) -> void:
 	if is_holding:
 		if selected_weapon == 0 or selected_weapon == 1:
 			sequential_fire_timer += dt
-			var reload = guns[0].params.reload_time
+			var reload = ship.artillery_controller._my_gun_params.reload_time
 			var min_reload = reload / guns.size() - 0.01
 			var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
 			while sequential_fire_timer >= adjusted_sequential_fire_delay:

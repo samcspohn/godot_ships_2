@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=14 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://ShipModels/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/Guns/Gun.gd" id="3_1wuss"]
 [ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="4_e85dw"]
 [ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/Ships/Battleship/BB_gun1/BB_gun1.tres" id="4_rb316"]
+[ext_resource type="PackedScene" uid="uid://5i3h4gyrrmjv" path="res://src/artillary/SecondaryController.tscn" id="5_dyl6l"]
 [ext_resource type="Resource" uid="uid://ppinkghgx71y" path="res://src/Ships/Battleship/sec_gun1/sec_gun2.tres" id="6_4ubhj"]
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/Ships/Battleship/sec_gun1/sec_gun1.tres" id="7_jay6y"]
 [ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://src/ship/wake/wake_emitter.tscn" id="9_dyl6l"]
@@ -20,7 +21,7 @@ size = Vector3(36, 28.971, 251.893)
 mass = 5.6e+07
 physics_material_override = SubResource("PhysicsMaterial_4pvtd")
 script = ExtResource("2_4pvtd")
-secondary_controllers = [NodePath("Modules/SecondaryController")]
+secondary_controllers = [NodePath("Modules/SecondaryController"), NodePath("Modules/SecondaryController2")]
 ship_model_glb_path = "uid://btam5g21aiiqg"
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_5bir6")]
@@ -30,9 +31,10 @@ h_grouping = 1.8
 v_grouping = 1.8
 
 [node name="HPManager" parent="Modules" index="1"]
-max_hp = 65000.0
+max_hp = 650000.0
 
 [node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+gun_params = ExtResource("4_rb316")
 guns = [NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
 
 [node name="MovementController" parent="Modules" index="3"]
@@ -43,9 +45,14 @@ turning_circle_radius = 500.0
 rudder_response_time = 7.0
 
 [node name="SecondaryController" parent="Modules" index="4" node_paths=PackedStringArray("guns")]
-guns = [NodePath("../../Hull/105mmTurret"), NodePath("../../Hull/105mmTurret_001"), NodePath("../../Hull/105mmTurret_002"), NodePath("../../Hull/105mmTurret_003"), NodePath("../../Hull/105mmTurret_004"), NodePath("../../Hull/105mmTurret_005"), NodePath("../../Hull/105mmTurret_006"), NodePath("../../Hull/105mmTurret_007"), NodePath("../../Hull/150mmTurret"), NodePath("../../Hull/150mmTurret_001"), NodePath("../../Hull/150mmTurret_002"), NodePath("../../Hull/150mmTurret_003"), NodePath("../../Hull/150mmTurret_004"), NodePath("../../Hull/150mmTurret_005")]
+gun_params = ExtResource("6_4ubhj")
+guns = [NodePath("../../Hull/105mmTurret"), NodePath("../../Hull/105mmTurret_001"), NodePath("../../Hull/105mmTurret_002"), NodePath("../../Hull/105mmTurret_003"), NodePath("../../Hull/105mmTurret_004"), NodePath("../../Hull/105mmTurret_005"), NodePath("../../Hull/105mmTurret_006"), NodePath("../../Hull/105mmTurret_007")]
 
-[node name="DispersionCalculator2" type="Node" parent="Modules" index="5"]
+[node name="SecondaryController2" parent="Modules" index="5" node_paths=PackedStringArray("guns") instance=ExtResource("5_dyl6l")]
+gun_params = ExtResource("7_jay6y")
+guns = [NodePath("../../Hull/150mmTurret"), NodePath("../../Hull/150mmTurret_001"), NodePath("../../Hull/150mmTurret_002"), NodePath("../../Hull/150mmTurret_003"), NodePath("../../Hull/150mmTurret_004"), NodePath("../../Hull/150mmTurret_005")]
+
+[node name="DispersionCalculator2" type="Node" parent="Modules" index="6"]
 script = ExtResource("4_e85dw")
 base_horizontal_dispersion = 0.0
 base_vertical_dispersion = 0.0
@@ -57,115 +64,98 @@ base_spread = 0.02
 
 [node name="105mmTurret" parent="Hull" index="0" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.36059
-max_rotation_angle = 0.0558631
+min_rotation_angle = 3.36849
+max_rotation_angle = 0.0523599
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_001" parent="Hull" index="1" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 6.24067
-max_rotation_angle = 2.87806
+min_rotation_angle = 6.24828
+max_rotation_angle = 2.87979
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_002" parent="Hull" index="2" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 3.38131
 max_rotation_angle = 6.12939
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_003" parent="Hull" index="3" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 0.214946
 max_rotation_angle = 2.97083
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_004" parent="Hull" index="4" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 3.31454
 max_rotation_angle = 6.08279
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_005" parent="Hull" index="5" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 0.236242
 max_rotation_angle = 3.01535
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_006" parent="Hull" index="6" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 3.16594
 max_rotation_angle = 5.88536
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="105mmTurret_007" parent="Hull" index="7" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 0.391551
 max_rotation_angle = 3.16563
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("6_4ubhj")
 
 [node name="150mmTurret" parent="Hull" index="14" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.29425
-max_rotation_angle = 0.00620186
+min_rotation_angle = 3.29867
+max_rotation_angle = 0.0
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="150mmTurret_001" parent="Hull" index="15" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.78042
-max_rotation_angle = 6.26322
+min_rotation_angle = 3.78736
+max_rotation_angle = 6.26573
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="150mmTurret_002" parent="Hull" index="16" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.16146
-max_rotation_angle = 6.01142
+min_rotation_angle = 3.15905
+max_rotation_angle = 6.00393
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="150mmTurret_003" parent="Hull" index="17" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 0.00707329
-max_rotation_angle = 2.54019
+min_rotation_angle = 0.0
+max_rotation_angle = 2.54818
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="150mmTurret_004" parent="Hull" index="18" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 0.0180895
-max_rotation_angle = 3.00451
+min_rotation_angle = 0.0174533
+max_rotation_angle = 3.00197
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="150mmTurret_005" parent="Hull" index="19" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 0.221523
-max_rotation_angle = 3.1397
+min_rotation_angle = 0.226893
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator2")
-params = ExtResource("7_jay6y")
 
 [node name="380mmTurret" parent="Hull" index="20" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.6786
-max_rotation_angle = 2.59039
+min_rotation_angle = 3.68264
+max_rotation_angle = 2.54818
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("4_rb316")
 
 [node name="380mmTurret_001" parent="Hull" index="21" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 3.53257
 max_rotation_angle = 2.73764
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("4_rb316")
 
 [node name="380mmTurret_002" parent="Hull" index="22" node_paths=PackedStringArray("dispersion_calculator")]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.00826359, 6.31443, 55.6975)
@@ -173,14 +163,12 @@ script = ExtResource("3_1wuss")
 min_rotation_angle = 0.663225
 max_rotation_angle = 5.63741
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("4_rb316")
 
 [node name="380mmTurret_003" parent="Hull" index="23" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
 min_rotation_angle = 0.523599
 max_rotation_angle = 5.76474
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("4_rb316")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.7234, -2.76855)

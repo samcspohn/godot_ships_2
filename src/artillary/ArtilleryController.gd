@@ -1,9 +1,12 @@
 extends Node
-class_name ShipArtillery
+class_name ArtilleryController
 
 # Gun-related variables
+@export var gun_params: GunParams
+var _my_gun_params: GunParams
 @export var guns: Array[Gun] = []
 var aim_point: Vector3
+var _ship: Ship
 
 func _ready() -> void:
 	# Find all guns in the ship
@@ -14,9 +17,15 @@ func _ready() -> void:
 			#ch.gun_id = gun_id
 			#gun_id += 1
 			#self.guns.append(ch)
+	_ship = get_parent().get_parent() as Ship
 	var i = 0
+	_my_gun_params = gun_params.duplicate(true)
+	_my_gun_params.shell = _my_gun_params.shell1
+
 	for g in guns:
 		g.gun_id = i
+		g.controller = self
+		g._ship = _ship
 		i += 1
 
 func set_aim_input(target_point: Vector3) -> void:
@@ -51,19 +60,31 @@ func fire_next_ready_gun() -> void:
 func select_shell(shell_index: int) -> void:
 	if !multiplayer.is_server():
 		return
-	for gun in guns:
-		if shell_index == 1:
-			gun.my_params.shell = gun.my_params.shell2
-		else:
-			gun.my_params.shell = gun.my_params.shell1
+	if shell_index == 0:
+		_my_gun_params.shell = _my_gun_params.shell1
+	elif shell_index == 1:
+		_my_gun_params.shell = _my_gun_params.shell2
+	else:
+		return
+	#for gun in guns:
+		#if shell_index == 1:
+			#gun.my_params.shell = gun.my_params.shell2
+		#else:
+			#gun.my_params.shell = gun.my_params.shell1
 	
 	select_shell_client.rpc(shell_index)
 
 # todo: only broadcast if shooting or detected
 @rpc("authority", "call_remote")
 func select_shell_client(shell_index: int) -> void:
-	for gun in guns:
-		if shell_index == 1:
-			gun.my_params.shell = gun.my_params.shell2
-		else:
-			gun.my_params.shell = gun.my_params.shell1
+	if shell_index == 0:
+		_my_gun_params.shell = _my_gun_params.shell1
+	elif shell_index == 1:
+		_my_gun_params.shell = _my_gun_params.shell2
+	else:
+		return
+	# for gun in guns:
+	# 	if shell_index == 1:
+	# 		gun.my_params.shell = gun.my_params.shell2
+	# 	else:
+	# 		gun.my_params.shell = gun.my_params.shell1

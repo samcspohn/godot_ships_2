@@ -58,7 +58,7 @@ func handle_mouse_motion(event):
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.6 * deg_to_rad(current_fov)  / deg_to_rad(max_fov)
 
 		sniper_height -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.3 * sniper_height * 0.4
-		sniper_height = clamp(sniper_height, 0.005, -tan(sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
+		sniper_height = clamp(sniper_height, 0.005, -tan(sniper_angle_x) * _ship.artillery_controller._my_gun_params.range)
 		#sniper_range -= event.relative.y * mouse_sensitivity * y_factor * deg_to_rad(current_fov) / deg_to_rad(max_fov) * 0.1 * sniper_range
 		#sniper_range = clamp(sniper_range, 10.0, _ship.artillery_controller.guns[0].max_range)
 		#

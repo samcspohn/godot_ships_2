@@ -144,6 +144,7 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 
 # Hit counter system for temporary display
 var active_hit_counters = {}
+var active_hit_timer = 0.0
 var hit_counter_display_time: float = 5.0  # Display for 5 seconds
 
 # Hit counter references mapping
@@ -254,13 +255,14 @@ func show_hit_counter(hit_type: String, is_secondary: bool):
 	var counter: Control = counter_refs["sec"] if is_secondary else counter_refs["main"]
 	var count_label: Label = counter_refs["sec_label"] if is_secondary else counter_refs["main_label"]
 	var container: HBoxContainer = sec_counter_temp if is_secondary else main_counter_temp
-	
+	active_hit_timer = hit_counter_display_time  # Reset global timer whenever a hit is registered
+
 	# Check if counter already exists in active tracking
 	if counter_key in active_hit_counters:
 		# Update existing counter
 		var counter_data = active_hit_counters[counter_key]
 		counter_data.count += 1
-		counter_data.timer = hit_counter_display_time  # Reset timer
+		# counter_data.timer = hit_counter_display_time  # Reset timer
 		count_label.text = str(counter_data.count)
 	else:
 		# Show new counter
@@ -274,22 +276,30 @@ func show_hit_counter(hit_type: String, is_secondary: bool):
 			"container": container,
 			"label": count_label,
 			"count": 1,
-			"timer": hit_counter_display_time,
+			# "timer": hit_counter_display_time,
 			"is_secondary": is_secondary
 		}
 
 func update_hit_counters(delta: float):
 	"""Update hit counter timers and hide expired ones"""
 	var keys_to_remove = []
-	
-	for key in active_hit_counters:
-		var counter_data = active_hit_counters[key]
-		counter_data.timer -= delta
-		
-		if counter_data.timer <= 0.0:
-			# Hide expired counter
+
+	active_hit_timer -= delta
+	if active_hit_timer <= 0.0:
+		# Hide all active counters
+		for key in active_hit_counters:
+			var counter_data = active_hit_counters[key]
 			counter_data.counter.visible = false
 			keys_to_remove.append(key)
+
+	# for key in active_hit_counters:
+	# 	var counter_data = active_hit_counters[key]
+	# 	counter_data.timer -= delta
+		
+	# 	if counter_data.timer <= 0.0:
+	# 		# Hide expired counter
+	# 		counter_data.counter.visible = false
+	# 		keys_to_remove.append(key)
 	
 	# Remove expired counters from tracking
 	for key in keys_to_remove:
@@ -953,6 +963,8 @@ func create_floating_damage(damage: int, world_position: Vector3):
 		damage: The damage amount to display
 		world_position: World position where the damage occurred
 	"""
+	if damage <= 0:
+		return
 	# Instantiate the floating damage scene
 	var floating_damage = FloatingDamageScene.instantiate()
 	

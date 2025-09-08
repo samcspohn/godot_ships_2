@@ -11,7 +11,7 @@ enum ShellType {
 @export var drag: float
 @export var damage: float
 @export var size: float  # Visual rendering size
-@export var caliber: float  # Shell caliber in mm for penetration calculations
+@export var caliber: float # Shell caliber in mm for penetration calculations
 @export var mass: float  # Shell mass in kg for penetration calculations
 @export var fire_buildup: float
 @export var fuze_delay: float = 0.035  # Fuse delay in seconds after impact
@@ -19,8 +19,10 @@ enum ShellType {
 @export var penetration_modifier: float = 1.0 # Multiplier for penetration calculations
 @export var auto_bounce: float = deg_to_rad(60)  # Angle at which shells automatically bounce
 @export var overmatch: int = 0
-@export var secondary: bool = false # Is this a secondary shell type (for damage tracking)?
+var _secondary: bool = false # Is this a secondary shell type (for damage tracking)?
+@export var arming_threshold: int = 0 # Minimum armor thickness to arm the shell
 var id: int = -1
+
 
 func _init() -> void:
 	speed = 0
@@ -34,4 +36,7 @@ func _init() -> void:
 	penetration_modifier = 1.0
 	auto_bounce = deg_to_rad(60)  # Default auto-bounce angle
 	overmatch = 0
-	secondary = false
+	_secondary = false
+	arming_threshold = ceil(caliber * 1.0 / 6.0)
+
+
