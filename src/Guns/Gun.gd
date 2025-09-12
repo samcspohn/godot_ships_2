@@ -13,6 +13,7 @@ extends Node3D
 var _aim_point: Vector3
 var reload: float = 0.0
 var can_fire: bool = false
+var _valid_target: bool = false
 var muzzles: Array[Node3D] = []
 var gun_id: int
 var disabled: bool = true
@@ -26,6 +27,20 @@ var _ship: Ship
 # var my_params: GunParams = GunParams.new()
 
 var controller
+
+func to_dict() -> Dictionary:
+	return {
+		"r": basis,
+		"e": barrel.basis,
+		"c": can_fire,
+		"v": _valid_target,
+	}
+
+func from_dict(d: Dictionary) -> void:
+	basis = d.r
+	barrel.basis = d.e
+	can_fire = d.c
+	_valid_target = d.v
 
 func get_params() -> GunParams:
 	return controller.get("_my_gun_params")
@@ -59,7 +74,7 @@ func _ready() -> void:
 		set_physics_process(false)
 
 	base_rotation = rotation.y
-	print(rad_to_deg(base_rotation))
+	# print(rad_to_deg(base_rotation))
 	
 	#_ship = get_parent().get_parent() as Ship
 
@@ -77,7 +92,7 @@ func update_barrels() -> void:
 		# if muzzle.name.contains("Muzzle"):
 		muzzles.append(muzzle)
 
-	print("Muzzles updated: ", muzzles.size())
+	# print("Muzzles updated: ", muzzles.size())
 
 @rpc("any_peer", "call_remote")
 func _set_reload(r):
@@ -309,7 +324,7 @@ func return_to_base(delta: float) -> void:
 	var turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
-	clamp_to_rotation_limits()
+	# clamp_to_rotation_limits()
 	can_fire = false
 
 func get_angle_to_target(target: Vector3) -> float:
@@ -360,23 +375,23 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 	# Apply rotation limits
 	var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 	var adjusted_angle: float = a[0]
-	var is_invalid: bool = a[1]
+	_valid_target = not a[1]
 	# var adjusted_angle = desired_local_angle
 	var turret_angle_delta: float = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
-	if _return_to_base and is_invalid:
+	if _return_to_base and not _valid_target:
 		# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
 		adjusted_angle = base_rotation - rotation.y
 		if abs(adjusted_angle) > PI:
 			adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
-		is_invalid = a[1]
+		_valid_target = not a[1]
 		turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
 	
 	# Ensure rotation is within limits
-	if not _return_to_base:
-		clamp_to_rotation_limits()
+	# if not _return_to_base:
+	clamp_to_rotation_limits()
 
 	# Existing aiming logic for elevation
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, get_shell().speed, get_shell().drag)
@@ -403,7 +418,7 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 		elevation_delta = 0.0
 	barrel.rotate(Vector3.RIGHT, elevation_delta)
 	
-	if abs(elevation_delta) < 0.02 && abs(desired_local_angle_delta) < 0.02 and not is_invalid:
+	if abs(elevation_delta) < 0.02 && abs(desired_local_angle_delta) < 0.02 and _valid_target:
 		can_fire = true
 	else:
 		can_fire = false

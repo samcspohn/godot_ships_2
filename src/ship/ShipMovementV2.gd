@@ -49,6 +49,7 @@ func _on_collision(_body):
 	# Immediately stop the ship's internal speed for instant response
 	current_speed = 0.0
 	target_speed = 0.0
+	print("Collision detected - stopping ship movement control")
 	
 	# Let physics handle movement briefly after collision
 	collision_override_timer = collision_override_duration

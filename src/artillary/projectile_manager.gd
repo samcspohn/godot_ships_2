@@ -1,4 +1,5 @@
 extends Node
+class_name _ProjectileManager
 
 var shell_time_multiplier: float = 1.5 # Adjust to calibrate shell speed display
 var nextId: int = 0;
@@ -22,11 +23,13 @@ class ProjectileData:
 	var position: Vector3
 	var start_position: Vector3
 	var start_time: float
+	# var time_elapsed: float
 	var launch_velocity: Vector3
 	#var p_position: Vector3
 	var params: ShellParams
 	var trail_pos: Vector3
 	var owner: Ship
+	var frame_count: int = 0
 
 	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship):
 		self.position = pos
@@ -38,6 +41,8 @@ class ProjectileData:
 		self.start_time = t
 		self.launch_velocity = vel
 		self.owner = _owner
+		self.frame_count = 0
+		# self.time_elapsed = 0.0
 
 
 func _ready():
@@ -88,6 +93,7 @@ enum HitResult {
 	SHATTER,
 	NOHIT,
 	CITADEL,
+	WATER,
 }
 
 # Armor calculation functions
@@ -134,88 +140,11 @@ func calculate_penetration_power(shell_params: ShellParams, velocity: float) -> 
 	return final_penetration
 
 
+# return radians
 func calculate_impact_angle(velocity: Vector3, surface_normal: Vector3) -> float:
 	# Calculate angle between velocity vector and surface normal
 	var angle_rad = velocity.normalized().angle_to(surface_normal)
-	# Convert to degrees and get acute angle
-	var angle_deg = rad_to_deg(angle_rad)
-	return min(angle_deg, 180.0 - angle_deg)
-
-func get_armor_thickness_at_point(ship: Ship, ray_from: Vector3, ray_to: Vector3) -> ArmorData:
-	"""Get armor thickness using the ship's integrated armor system with mesh-level precision"""
-
-	# First check if ship has armor system
-	if ship.armor_system == null:
-		print("⚠️ Ship has no armor system, using fallback values")
-		var dict = get_fallback_armor_thickness(ship, ray_to)
-		return ArmorData.new(dict.thickness, dict.node_path, dict.face_index, dict.hit_node, dict.detailed_collision)
-
-	# Use the original projectile ray positions for detailed mesh raycast
-	var space_state = get_tree().root.get_world_3d().direct_space_state
-	mesh_ray_query.from = ray_from
-	mesh_ray_query.to = ray_to
-
-	var detailed_collision = space_state.intersect_ray(mesh_ray_query)
-
-	if detailed_collision.is_empty():
-		# print("⚠️ No detailed mesh collision found - ray passed through bounding box but missed armor")
-		# Return NOHIT indicator - ray intersected bounding box but no actual armor
-		# return {"thickness": - 1, "node_path": "NOHIT", "face_index": - 1, "hit_node": null, "detailed_collision": detailed_collision}
-		return ArmorData.new(-1, "NOHIT", -1, null, detailed_collision)
-
-	# Get the hit node and face index from collision
-	var hit_node = detailed_collision.get("collider")
-	var face_index = detailed_collision.get("face_index", 0)
-
-	if hit_node == null:
-		# print("⚠️ No hit node found in detailed collision")
-		return ArmorData.new(-1, "NOHIT", -1, null, detailed_collision)
-
-	# Get armor thickness using ship's armor system
-	var armor_thickness = ship.get_armor_at_hit_point(hit_node, face_index)
-	var node_path = ship.armor_system.get_node_path_from_scene(hit_node, ship.name) if ship.armor_system else "unknown"
-
-	# print("🛡️ Armor hit: ", node_path, " face ", face_index, " = ", armor_thickness, "mm")
-
-	return ArmorData.new(armor_thickness, node_path, face_index, hit_node, detailed_collision)
-
-func get_fallback_armor_thickness(ship: Ship, hit_position: Vector3) -> Dictionary:
-	"""Fallback armor calculation when ship has no armor system"""
-	var base_armor = 0.0
-
-	# Determine base armor by ship class (based on HP as a rough indicator)
-	var max_hp = ship.health_controller.max_hp
-	if max_hp > 40000: # Battleship
-		base_armor = 300.0 # 300mm base armor
-	elif max_hp > 15000: # Cruiser
-		base_armor = 150.0 # 150mm base armor
-	else: # Destroyer
-		base_armor = 20.0 # 20mm base armor
-
-	# Apply location modifiers
-	var ship_local_pos = ship.to_local(hit_position)
-	var armor_modifier = 1.0
-
-	# Check if hit is on the sides (citadel area)
-	if abs(ship_local_pos.x) < ((ship.get_node("CollisionShape3D") as CollisionShape3D).shape as BoxShape3D).size.x * 0.3:
-		armor_modifier = 1.5 # Citadel armor is thicker
-
-	# Check if hit is on bow/stern
-	if abs(ship_local_pos.z) > ((ship.get_node("CollisionShape3D") as CollisionShape3D).shape as BoxShape3D).size.z * 0.3:
-		armor_modifier = 0.6 # Bow/stern armor is thinner
-
-	return {
-		"thickness": base_armor * armor_modifier,
-		"node_path": "fallback_hull",
-		"face_index": 0
-	}
-
-func hit_result_dict(result_type, damage, penetration_power) -> Dictionary:
-	return {
-		"result_type": result_type,
-		"damage": damage,
-		"penetration_power": penetration_power
-	}
+	return min(angle_rad, PI - angle_rad)
 
 class ShellData:
 	var params: ShellParams
@@ -224,219 +153,6 @@ class ShellData:
 	var end_position: Vector3
 	var fuse: float
 	var hit_result: HitResult
-
-class ArmorData:
-	var thickness: float
-	var node_path: String
-	var face_index: int
-	var hit_node: Node3D
-	var detailed_collision: Dictionary
-	func _init(p_thickness: float, p_node_path: String, p_face_index: int, p_hit_node: Node3D, p_detailed_collision: Dictionary) -> void:
-		self.thickness = p_thickness
-		self.node_path = p_node_path
-		self.face_index = p_face_index
-		self.hit_node = p_hit_node
-		self.detailed_collision = p_detailed_collision
-
-func _hit_result(hit: HitResult):
-	match hit:
-		HitResult.PENETRATION:
-			return "PENETRATION"
-		HitResult.RICOCHET:
-			return "RICOCHET"
-		HitResult.OVERPENETRATION:
-			return "OVERPENETRATION"
-		HitResult.SHATTER:
-			return "SHATTER"
-		HitResult.NOHIT:
-			return "NOHIT"
-		HitResult.CITADEL:
-			return "CITADEL"
-		_:
-			return "UNKNOWN"
-func calc_armor_interaction(shell: ShellData, armor: ArmorData) -> ShellData:
-	var impact_angle = calculate_impact_angle(shell.velocity.normalized(), armor.detailed_collision.normal)
-	var penetration_power = calculate_penetration_power(shell.params, shell.velocity.length())
-	var angle_factor = 1.0 / cos(deg_to_rad(impact_angle))
-	var effective_armor_thickness = armor.thickness * angle_factor
-	var fuse_left = shell.params.fuze_delay - shell.fuse
-	var end_position = shell.position + shell.velocity * fuse_left
-	var hit_position = armor.detailed_collision.get("position", end_position)
-	var hit_dist = (hit_position - shell.position).length()
-	var full_dist = (end_position - shell.position).length()
-	shell.fuse += hit_dist / full_dist * fuse_left
-
-	# print("🎯 Hit Details: speed: %.1f, shell velocity: (%.2f, %.2f, %.2f),  shell_position: (%.2f, %.2f, %.2f), fuse: %.3f/%.3f, power: %.1f" % [
-	# 		shell.velocity.length(),
-	# 		shell.velocity.x,
-	# 		shell.velocity.y,
-	# 		shell.velocity.z,
-	# 		shell.position.x,
-	# 		shell.position.y,
-	# 		shell.position.z,
-	# 		shell.fuse,
-	# 		shell.params.fuze_delay,
-	# 		penetration_power,
-	# 	])
-
-	if shell.params.type == ShellParams.ShellType.HE: # HE shell
-		if armor.thickness <= shell.params.overmatch:
-			shell.hit_result = HitResult.PENETRATION
-		else:
-			shell.hit_result = HitResult.SHATTER
-	else:
-		if effective_armor_thickness > shell.params.arming_threshold and shell.fuse == -1:
-			shell.fuse = 0.0 # Arm the shell if it hit thick armor
-
-		if armor.thickness < shell.params.overmatch:
-			shell.hit_result = HitResult.OVERPENETRATION
-			if effective_armor_thickness < penetration_power:
-				shell.velocity *= (1.0 - effective_armor_thickness / penetration_power)
-			else:
-				shell.velocity = Vector3.ZERO
-		elif (impact_angle > 45.0 and penetration_power < effective_armor_thickness) or deg_to_rad(impact_angle) > shell.params.auto_bounce:
-			shell.hit_result = HitResult.RICOCHET
-			# Calculate velocity reduction based on real-world ricochet physics
-			# Energy loss during ricochet depends on impact angle and armor interaction
-			var energy_loss_factor = 0.15 + (impact_angle / 90.0) * 0.25 # 15-40% energy loss based on angle
-			var velocity_retention = sqrt(1.0 - energy_loss_factor) # Kinetic energy is proportional to velocity squared
-
-			shell.velocity = shell.velocity.bounce(armor.detailed_collision.normal) * velocity_retention
-		elif penetration_power < effective_armor_thickness:
-			shell.hit_result = HitResult.SHATTER
-			shell.velocity = Vector3.ZERO
-		else:
-			shell.hit_result = HitResult.OVERPENETRATION
-			shell.velocity *= (1.0 - effective_armor_thickness / penetration_power)
-
-	# print("🛡️ Armor Details: thickness: %s/%.2f, normal: (%.2f, %.2f, %.2f), angle: %.2f, node: %s, face: %s, result: %s" % [
-	# 		armor.thickness,
-	# 		effective_armor_thickness,
-	# 		armor.detailed_collision.normal.x,
-	# 		armor.detailed_collision.normal.y,
-	# 		armor.detailed_collision.normal.z,
-	# 		impact_angle,
-	# 		armor.node_path,
-	# 		armor.face_index,
-	# 		_hit_result(shell.hit_result)
-	# 	])
-
-	shell.position = hit_position + shell.velocity.normalized() * 0.001
-	shell.end_position = shell.position + shell.velocity * ((shell.params.fuze_delay - shell.fuse) if shell.fuse >= 0.0 else 3000.0)
-
-	return shell
-
-func _armor_result(shell: ShellData, explosion_position: Vector3) -> Dictionary:
-	var damage = shell.params.damage
-	match shell.hit_result:
-		HitResult.SHATTER:
-			damage *= 0.05
-		HitResult.RICOCHET:
-			damage *= 0.0
-		HitResult.OVERPENETRATION:
-			damage *= 0.1
-		HitResult.PENETRATION:
-			damage *= 1.0 / 3.0
-		HitResult.CITADEL:
-			damage *= 1.0
-
-	# print("🎯 Result: %s, shell velocity: (%.2f, %.2f, %.2f), shell_position: (%.2f, %.2f, %.2f)" % [
-	# 		_hit_result(shell.hit_result),
-	# 		shell.velocity.x,
-	# 		shell.velocity.y,
-	# 		shell.velocity.z,
-	# 		shell.position.x,
-	# 		shell.position.y,
-	# 		shell.position.z
-	# 	])
-
-	return {
-		"result_type": shell.hit_result,
-		"damage": damage,
-		"explosion_position": explosion_position,
-		"shell": shell
-	}
-
-func check_shell_inside(shell: ShellData, ship: Ship, part: Node = null) -> bool:
-	var space_state = get_tree().root.get_world_3d().direct_space_state
-	# end_position = armor_data.detailed_collision.get("position", end_position)
-	var ray_query_penetration = PhysicsRayQueryParameters3D.new()
-	ray_query_penetration.from = shell.end_position + ship.global_transform.basis.x * 200 # only raycast ship objects
-	ray_query_penetration.to = shell.end_position
-	ray_query_penetration.collide_with_areas = false
-	ray_query_penetration.collide_with_bodies = true
-	ray_query_penetration.hit_back_faces = true
-	ray_query_penetration.collision_mask = (1 << 1) # Check against ship layer
-	var ray_res = space_state.intersect_ray(ray_query_penetration)
-	var is_inside = false
-
-	if part == null:
-		is_inside = not ray_res.is_empty()
-		ray_query_penetration.from = shell.end_position - ship.global_transform.basis.x * 200
-		ray_res = space_state.intersect_ray(ray_query_penetration)
-		return is_inside and not ray_res.is_empty()
-	else:
-		var exclude = []
-		while not ray_res.is_empty() and ray_res.collider != part:
-			exclude.append(ray_res.collider)
-			ray_query_penetration.exclude = exclude
-			ray_res = space_state.intersect_ray(ray_query_penetration)
-		is_inside = not ray_res.is_empty() and ray_res.collider == part
-		ray_query_penetration.from = shell.end_position - ship.global_transform.basis.x * 200
-		while not ray_res.is_empty() and ray_res.collider != part:
-			exclude.append(ray_res.collider)
-			ray_query_penetration.exclude = exclude
-			# ray_query_penetration.exclude.append(ray_res.collider)
-			ray_res = space_state.intersect_ray(ray_query_penetration)
-		return is_inside and not ray_res.is_empty() and ray_res.collider == part
-
-func calculate_armor_interaction(params: ShellParams, impact_vel: Vector3, ship: Ship, ray_from: Vector3, ray_to: Vector3, fuse: float = -1) -> Dictionary:
-	var shell_params = params
-	# Use integrated armor system for precise armor calculation with original ray positions
-	var armor_data = get_armor_thickness_at_point(ship, ray_from, ray_to)
-	var explosion_position = armor_data.detailed_collision.get("position", ray_to)
-	# var collision = armor_data.detailed_collision
-
-	# Check for NOHIT case - ray passed through bounding box but missed actual armor
-	if armor_data.node_path == "NOHIT":
-		return {
-			"result_type": HitResult.NOHIT,
-		}
-	# print("processing shell")
-
-	var shell = ShellData.new()
-	shell.params = shell_params
-	shell.velocity = impact_vel
-	shell.position = armor_data.detailed_collision.get("position", ray_from)
-	shell.fuse = fuse
-
-	shell = calc_armor_interaction(shell, armor_data)
-	if shell.hit_result == HitResult.SHATTER:
-		return _armor_result(shell, explosion_position)
-
-	while true:
-
-		armor_data = get_armor_thickness_at_point(ship, shell.position, shell.end_position)
-
-		if armor_data.node_path == "NOHIT":
-			var is_inside_ship = check_shell_inside(shell, ship)
-			if is_inside_ship:
-				shell.hit_result = HitResult.PENETRATION
-				var is_inside_citadel = check_shell_inside(shell, ship, ship.citadel)
-				if is_inside_citadel:
-					shell.hit_result = HitResult.CITADEL
-				return _armor_result(shell, explosion_position)
-			else:
-				return _armor_result(shell, explosion_position)
-
-		shell = calc_armor_interaction(shell, armor_data)
-
-		if shell.hit_result == HitResult.SHATTER:
-			return _armor_result(shell, explosion_position)
-	return {}
-
-
-#var active_projectiles: Array[ProjectileData] = []
 
 # Returns the next power of 2 that is >= value
 func next_pow_of_2(value: int) -> int:
@@ -564,7 +280,9 @@ func find_ship(node: Node):
 		return node
 	return find_ship(node.get_parent())
 
-func _physics_process(_delta: float) -> void:
+# var time_elapsed: float = 0.0
+
+func _physics_process(delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var id = 0
@@ -573,122 +291,83 @@ func _physics_process(_delta: float) -> void:
 			id += 1
 			continue
 
+		p.frame_count += 1
+
 		var t = (current_time - p.start_time) * shell_time_multiplier
+		# while p.time_elapsed < current_time - p.start_time:
+			# var t = (p.time_elapsed + delta) * shell_time_multiplier
 		ray_query.from = p.position
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		ray_query.to = p.position
 
-		# Perform the raycast
-		var collision: Dictionary = space_state.intersect_ray(ray_query)
+		var hit_result = ArmorInteraction.process_travel(p, ray_query.from, t, space_state)
 
+		if hit_result == null:
+			id += 1
+			continue
 
-		# if p.position.y < 0:
-		# 	# If the projectile is below the waterline, destroy it
-		# 	destroyBulletRpc(id, p.position)
-		# 	id += 1
-		# 	continue
-		# else:
-		# 	id += 1
-		# 	continue
+		if hit_result.ship != null and p.owner != null:
+			# var ship: Ship = collision.collider
+			var ship: Ship = hit_result.ship
+			var damage = 0.0
+			# var sunk = false
+			match hit_result.result_type:
+				ArmorInteraction.HitResult.PENETRATION:
+					damage = p.params.damage / 3.0
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
+				ArmorInteraction.HitResult.CITADEL:
+					damage = p.params.damage
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.CITADEL)
+				ArmorInteraction.HitResult.CITADEL_OVERPEN:
+					damage = p.params.damage * 0.5
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
+					pass # todo
+				ArmorInteraction.HitResult.OVERPENETRATION:
+					damage = p.params.damage * 0.1
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.OVERPENETRATION)
+				ArmorInteraction.HitResult.SHATTER:
+					damage = p.params.damage * 0.025
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.SHATTER)
+				ArmorInteraction.HitResult.RICOCHET:
+					damage = 0.0
+					var ricochet_velocity = hit_result.velocity
+					var ricochet_position = hit_result.explosion_position + ricochet_velocity.normalized() * 0.1 # Offset slightly to avoid z-fighting
 
-		if not collision.is_empty():
-			var ship: Ship = find_ship(collision.collider)
-			var splash_position = collision.position
-			var current_velocity = ProjectilePhysicsWithDrag.calculate_velocity_at_time(p.launch_velocity, t, p.params.drag)
-			var fuse = -1.0
-			if ship == null:
-				var fuse_position = ProjectilePhysicsWithDrag.calculate_position_at_time(collision.position, current_velocity, p.params.fuze_delay, p.params.drag * 800)
+					var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, null)
+					for client in multiplayer.get_peers():
+						createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
+					
+					if ship.health_controller.is_alive():
+						track_ricochet(p)
+						track_damage_event(p, 0, ship.global_position, hit_result.result_type)
 
-				ray_query.from = collision.position
-				ray_query.to = fuse_position
-				ray_query.exclude = [collision.collider]
-				collision = space_state.intersect_ray(ray_query)
-				if not collision.is_empty():
-					ship = find_ship(collision.collider)
-					if ship != null:
-						# print("hit water ")
-						var dist = (ray_query.from - collision.position).length()
-						var full_dist = (ray_query.from - fuse_position).length()
-						var _t = dist / full_dist * p.params.fuze_delay
-						fuse = _t
-						var fused_velocity = ProjectilePhysicsWithDrag.calculate_velocity_at_time(current_velocity, _t, p.params.drag * 800)
-						current_velocity = fused_velocity
-						ray_query.to = fuse_position + fused_velocity.normalized() * 0.001
-				ray_query.exclude = []
+					# Destroy the original shell
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.RICOCHET)
+			if ship.health_controller.is_alive():
+				var dmg_sunk = ship.health_controller.take_damage(damage, hit_result.explosion_position)
+				apply_fire_damage(p, ship, hit_result.explosion_position)
 
-			if ship != null:
-				# var ship: Ship = collision.collider
-				var armor_result = calculate_armor_interaction(p.params, current_velocity, ship, ray_query.from, ray_query.to, fuse)
-				
-				match armor_result.result_type:
-					HitResult.PENETRATION, HitResult.CITADEL:
-						if ship.health_controller.is_alive():
-							apply_fire_damage(p, ship, armor_result.explosion_position)
-							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
-							var sunk = dmg_sunk[1]
-							var dmg = dmg_sunk[0]
-							# Track damage dealt for player's camera UI
-							track_damage_dealt(p, dmg)
-							if armor_result.result_type == HitResult.CITADEL:
-								track_citadel(p)
-							else:
-								track_penetration(p)
-							if sunk:
-								track_frag(p)
-							track_damage_event(p, dmg, ship.global_position, armor_result.result_type)
-
-						destroyBulletRpc(id, armor_result.explosion_position, HitResult.PENETRATION)
-						# print_armor_debug(hit_result_dict, ship)
-					HitResult.OVERPENETRATION:
-						# Shell overpenetrates - apply reduced damage
-						if ship.health_controller.is_alive():
-							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
-							apply_fire_damage(p, ship, armor_result.explosion_position)
-							
-							# Track damage dealt for player's camera UI
-							track_damage_dealt(p, dmg_sunk[0])
-							track_overpenetration(p)
-							if dmg_sunk[1]:
-								track_frag(p)
-							track_damage_event(p, armor_result.damage, ship.global_position, armor_result.result_type)
-
-						destroyBulletRpc(id, armor_result.explosion_position, HitResult.OVERPENETRATION)
-						# print_armor_debug(hit_result_dict, ship)
-
-					HitResult.RICOCHET:
-						var ricochet_velocity = armor_result.shell.velocity
-						var ricochet_position = armor_result.explosion_position + ricochet_velocity.normalized() * 0.1 # Offset slightly to avoid z-fighting
-
-						# ricochet_velocity = collision.normal * ricochet_velocity.length()  # Ensure ricochet is in the correct direction
-						var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, p.owner)
-						for client in multiplayer.get_peers():
-							createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
-						
-						if ship.health_controller.is_alive():
-							track_ricochet(p)
-						track_damage_event(p, 0, ship.global_position, armor_result.result_type)
-
-						# Destroy the original shell
-						destroyBulletRpc(id, armor_result.explosion_position, HitResult.RICOCHET)
-
-					HitResult.SHATTER:
-						if ship.health_controller.is_alive():
-							var dmg_sunk = ship.health_controller.take_damage(armor_result.damage, armor_result.explosion_position)
-							apply_fire_damage(p, ship, armor_result.explosion_position)
-
-							# Track damage dealt for player's camera UI
-							track_damage_dealt(p, dmg_sunk[0])
-							track_shatter(p)
-							if dmg_sunk[1]:
-								track_frag(p)
-							track_damage_event(p, armor_result.damage, ship.global_position, armor_result.result_type)
-
-						destroyBulletRpc(id, armor_result.explosion_position, HitResult.SHATTER)
-			else:
-				# Hit something that's not a ship (water, terrain)
-				destroyBulletRpc(id, splash_position)
-
+				# Track damage dealt for player's camera UI
+				track_damage_dealt(p, dmg_sunk[0])
+				if hit_result.result_type == ArmorInteraction.HitResult.PENETRATION:
+					track_penetration(p)
+				elif hit_result.result_type == ArmorInteraction.HitResult.CITADEL:
+					track_citadel(p)
+				elif hit_result.result_type == ArmorInteraction.HitResult.OVERPENETRATION:
+					track_overpenetration(p)
+				elif hit_result.result_type == ArmorInteraction.HitResult.SHATTER:
+					track_shatter(p)
+				if dmg_sunk[1]:
+					track_frag(p)
+				track_damage_event(p, dmg_sunk[0], ship.global_position, hit_result.result_type)
+			# end process ship hit
+		elif hit_result.result_type == ArmorInteraction.HitResult.WATER:
+			destroyBulletRpc(id, hit_result.explosion_position, HitResult.WATER)
+		elif hit_result.result_type == ArmorInteraction.HitResult.TERRAIN:
+			destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
 		id += 1
+
+
 func update_transform(idx, trans):
 	# Fill buffer at correct position
 	var offset = idx * 16
@@ -792,6 +471,12 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	expl.global_position = pos
 
 	match hit_result:
+		HitResult.WATER:
+			expl.radius = radius # Smaller explosion for water impact
+			expl.scale = Vector3(1,3.5,1)
+			var water_material = StandardMaterial3D.new()
+			water_material.albedo_color = Color.WHITE_SMOKE
+			expl.material_override = water_material
 		HitResult.PENETRATION:
 			expl.radius = radius
 			var pen_material = StandardMaterial3D.new()
@@ -799,6 +484,13 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 			pen_material.emission_enabled = true
 			pen_material.emission = Color.YELLOW * 8.0
 			expl.material_override = pen_material
+		HitResult.CITADEL:
+			expl.radius = radius * 2
+			var citadel_material = StandardMaterial3D.new()
+			citadel_material.albedo_color = Color.LIGHT_YELLOW
+			citadel_material.emission_enabled = true
+			citadel_material.emission = Color.YELLOW * 8.0
+			expl.material_override = citadel_material
 		HitResult.RICOCHET:
 			expl.radius = radius * 0.3 # Smaller explosion for ricochet
 			var ricochet_material = StandardMaterial3D.new()
@@ -943,7 +635,7 @@ func track_damage_dealt(p: ProjectileData, damage: float):
 		else:
 			p.owner.stats.main_damage += damage
 
-func track_damage_event(p: ProjectileData, damage: float, position: Vector3, type: HitResult):
+func track_damage_event(p: ProjectileData, damage: float, position: Vector3, type: ArmorInteraction.HitResult):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -1031,4 +723,4 @@ func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_posit
 		print("Warning: Could not find original shell with ID ", original_shell_id, " for ricochet")
 		return
 
-	fireBulletClient(ricochet_position, ricochet_velocity, ricochet_time, new_shell_id, p.params, p.owner, false)
+	fireBulletClient(ricochet_position, ricochet_velocity, ricochet_time, new_shell_id, p.params, null, false)

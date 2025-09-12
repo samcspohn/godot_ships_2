@@ -33,6 +33,7 @@ AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd
 SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"
 ProjectileManager="*res://src/artillary/ProjectileManager.tscn"
 TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
+ArmorInteraction="*res://src/artillary/ArmorInteraction.gd"
 
 [editor]
 

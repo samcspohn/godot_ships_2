@@ -39,11 +39,11 @@ func _physics_process(delta: float) -> void:
 	for g in guns:
 		g._aim(aim_point, delta)
 		
-@rpc("any_peer", "call_remote")
-func fire_gun(gun_id: int) -> void:
-	if gun_id < guns.size():
-		if guns[gun_id].reload >= 1.0 and guns[gun_id].can_fire:
-			guns[gun_id].fire()
+# @rpc("any_peer", "call_remote")
+# func fire_gun(gun_id: int) -> void:
+# 	if gun_id < guns.size():
+# 		if guns[gun_id].reload >= 1.0 and guns[gun_id].can_fire:
+# 			guns[gun_id].fire()
 @rpc("any_peer", "call_remote")
 func fire_all_guns() -> void:
 	for gun in guns:

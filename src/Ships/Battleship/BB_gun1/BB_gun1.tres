@@ -23,10 +23,10 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
 script = ExtResource("1_rwivs")
-reload_time = 26.0
-traverse_speed = 40.0
-elevation_speed = 40.0
-range = 17000.0
+reload_time = 1.0
+traverse_speed = 20.0
+elevation_speed = 10.0
+range = 15000.0
 shell1 = ExtResource("2_xupva")
 shell2 = SubResource("Resource_2muxd")
 hor_dispersion = 0.0

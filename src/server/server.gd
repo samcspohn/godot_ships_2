@@ -143,7 +143,7 @@ func spawn_player(id, player_name):
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
 
 	# Randomize spawn position
-	var spawn_pos = right_of_spawn * randf_range(-5000, 5000) + team_spawn_point
+	var spawn_pos = right_of_spawn * randf_range(-3000, 3000) + team_spawn_point
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
@@ -292,7 +292,7 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collision_mask = 1 # only terrain
 	
 	for p in players.values():
-		var ship: Ship = p[0]
+		var ship: Ship = p[0]			
 		if ship.health_controller.is_dead():
 			ship.visible_to_enemy = true
 		else:

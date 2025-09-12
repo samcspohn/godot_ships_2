@@ -20,6 +20,7 @@ size = Vector3(36, 28.971, 251.893)
 [node name="bismark_low_poly2" node_paths=PackedStringArray("secondary_controllers") instance=ExtResource("1_3klas")]
 mass = 5.6e+07
 physics_material_override = SubResource("PhysicsMaterial_4pvtd")
+gravity_scale = 4.0
 script = ExtResource("2_4pvtd")
 secondary_controllers = [NodePath("Modules/SecondaryController"), NodePath("Modules/SecondaryController2")]
 ship_model_glb_path = "uid://btam5g21aiiqg"
@@ -38,9 +39,9 @@ gun_params = ExtResource("4_rb316")
 guns = [NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
 
 [node name="MovementController" parent="Modules" index="3"]
-max_speed = 31.5
-acceleration_time = 15.0
-deceleration_time = 15.0
+max_speed = 31.0
+acceleration_time = 20.0
+deceleration_time = 20.0
 turning_circle_radius = 500.0
 rudder_response_time = 7.0
 
@@ -54,13 +55,7 @@ guns = [NodePath("../../Hull/150mmTurret"), NodePath("../../Hull/150mmTurret_001
 
 [node name="DispersionCalculator2" type="Node" parent="Modules" index="6"]
 script = ExtResource("4_e85dw")
-base_horizontal_dispersion = 0.0
-base_vertical_dispersion = 0.0
-horizontal_dispersion_modifier = 150.0
-vertical_dispersion_modifier = 1000.0
-h_grouping = 1.4
-v_grouping = 2.2
-base_spread = 0.02
+base_spread = 0.05
 
 [node name="105mmTurret" parent="Hull" index="0" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_1wuss")
@@ -169,6 +164,10 @@ script = ExtResource("3_1wuss")
 min_rotation_angle = 0.523599
 max_rotation_angle = 5.76474
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
+
+[node name="StaticBody3D" parent="Hull/Citadel" index="0"]
+collision_layer = 2
+collision_mask = 0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.7234, -2.76855)

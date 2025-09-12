@@ -10,7 +10,7 @@
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_d36us"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_e1c0o"]
-size = Vector3(36, 28.971, 251.893)
+size = Vector3(36, 30.6378, 251.893)
 
 [node name="Ship" node_paths=PackedStringArray("citadel", "hull") instance=ExtResource("1_xo0eu")]
 collision_layer = 4
@@ -30,6 +30,9 @@ max_hp = 560000.0
 [node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
 gun_params = ExtResource("4_7wtee")
 guns = [NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
+
+[node name="MovementController" parent="Modules" index="3"]
+max_speed = 100.0
 
 [node name="SecondaryController" parent="Modules" index="4"]
 gun_params = ExtResource("5_f0ayv")
@@ -59,7 +62,7 @@ max_rotation_angle = 5.67232
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.6927, -2.76855)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.8593, -2.76855)
 shape = SubResource("BoxShape3D_e1c0o")
 
 [editable path="Modules"]

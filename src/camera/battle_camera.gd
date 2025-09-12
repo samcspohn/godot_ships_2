@@ -114,9 +114,6 @@ func _ready():
 	# Make sure we have necessary references
 	if not _ship:
 		push_error("ArtilleryCamera requires a _ship node!")
-
-	ray_exclude = recurs_collision_bodies(_ship)
-
 	# Capture mouse
 	#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
@@ -353,14 +350,14 @@ func set_camera_mode(mode):
 		var sniper_range = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
 		var adj = sniper_range + third_person_view.current_zoom
 		var opp = third_person_view.current_zoom * 0.2 - aim_position.y + 5
-		print("DEBUG: THIRD_PERSON")
+		# print("DEBUG: THIRD_PERSON")
 		#print(sniper_view.sniper_range)
-		print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
-		print(adj)
-		print(opp)
+		# print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
+		# print(adj)
+		# print(opp)
 		third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
-		print(sniper_view.rotation.x)
-		print(third_person_view.rotation_degrees_vertical)
+		# print(sniper_view.rotation.x)
+		# print(third_person_view.rotation_degrees_vertical)
 
 		#third_person_view.sniper_range = sniper_view.sniper_range
 
@@ -374,8 +371,8 @@ func set_camera_mode(mode):
 		current_mode = CameraMode.SNIPER
 		last_non_free_look_mode = CameraMode.SNIPER
 		draw_debug_sphere(get_tree().root, aim_position, 5)
-		print("DEBUG: SNIPER")
-		print(aim_position.y)
+		# print("DEBUG: SNIPER")
+		# print(aim_position.y)
 		var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
 		# var sniper_height = 
 		var sniper_range = aim_dist + (aim_position.y) / -tan(sniper_view.sniper_angle_x)
@@ -385,8 +382,8 @@ func set_camera_mode(mode):
 			var a = aim_position - start_point
 			var b = Vector3(0, -start_point.y, 0)
 			var angle = a.angle_to(b) - PI / 2
-			print(rad_to_deg(angle))
-			print(a)
+			# print(rad_to_deg(angle))
+			# print(a)
 			var ground_intersection = calculate_ground_intersection(start_point, deg_to_rad(third_person_view.rotation_degrees_horizontal), angle)
 			sniper_range = Vector2(ground_intersection.x, ground_intersection.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
 			sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
@@ -432,12 +429,14 @@ func _calculate_target_info():
 		var space_state = get_world_3d().direct_space_state
 		var ray_origin = aim.global_position
 		
-		var ray_params = PhysicsRayQueryParameters3D.create(
-			ray_origin,
-			ray_origin + aim_direction * ray_length,
-			1 | (1 << 1), # Set to your proper collision mask
-			ray_exclude
-		)
+		var ray_params = PhysicsRayQueryParameters3D.new()
+		ray_params.from = ray_origin
+		ray_params.to = ray_origin + aim_direction * ray_length
+		ray_params.collision_mask = 1 | (1 << 1) # Set to your proper collision mask
+		if ray_exclude.size() == 0:
+			ray_exclude = recurs_collision_bodies(_ship)
+		ray_params.exclude = ray_exclude
+		
 		ray_params.collide_with_areas = true
 		ray_params.collide_with_bodies = true
 		

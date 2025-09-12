@@ -6,8 +6,8 @@
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_klv7y"]
 friction = 0.0
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_7kt6i"]
-size = Vector3(100000, 1, 100000)
+[sub_resource type="WorldBoundaryShape3D" id="WorldBoundaryShape3D_2llvm"]
+margin = 0.0
 
 [sub_resource type="PrismMesh" id="PrismMesh_m8itd"]
 
@@ -22,7 +22,7 @@ size = Vector3(100000, 1, 100000)
 physics_material_override = SubResource("PhysicsMaterial_klv7y")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Water/StaticBody3D"]
-shape = SubResource("BoxShape3D_7kt6i")
+shape = SubResource("WorldBoundaryShape3D_2llvm")
 
 [node name="Land" type="Node" parent="."]
 
@@ -1315,10 +1315,10 @@ radius = 100.0
 [node name="Spawn" type="Node" parent="."]
 
 [node name="spawn0" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5825.62)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4868.44)
 
 [node name="spawn1" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8167.37)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7844.78)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.812084, -0.453497, 0.367234, 0, 0.62932, 0.777146, -0.583541, -0.631107, 0.511061, 0, 0, 0)

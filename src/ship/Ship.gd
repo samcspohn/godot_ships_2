@@ -3,7 +3,7 @@ class_name Ship
 
 var initialized: bool = false
 # Child components
-var movement_controller: ShipMovementV2
+var movement_controller
 var artillery_controller: ArtilleryController
 @export var secondary_controllers: Array[SecondaryController]
 var health_controller: HitPointsManager
@@ -15,6 +15,8 @@ var visible_to_enemy: bool = false
 var armor_system: ArmorSystemV2
 @export var citadel: StaticBody3D
 @export var hull: StaticBody3D
+var armor_parts: Array[ArmorPart] = []
+var aabb: AABB
 
 # Armor system configuration
 @export_file("*.glb") var ship_model_glb_path: String
@@ -88,12 +90,12 @@ func sync_ship_data() -> Dictionary:
 	}
 	
 	for g in artillery_controller.guns:
-		d.g.append({'b': g.basis, 'c': g.barrel.basis})
+		d.g.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
 	
 	for controller in secondary_controllers:
 		d.sc.append(controller._my_gun_params.to_dict())
-		for s: Gun in controller.guns:
-			d.s.append({'b': s.basis, 'c': s.barrel.basis})
+		for g: Gun in controller.guns:
+			d.s.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
 
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
@@ -108,7 +110,7 @@ func sync_ship_data() -> Dictionary:
 func initialized_client():
 	self.initialized = true
 
-@rpc("any_peer", "call_remote")
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func sync(d: Dictionary):
 	if !self.initialized:
 		return
@@ -125,8 +127,7 @@ func sync(d: Dictionary):
 	
 	var i = 0
 	for g in artillery_controller.guns:
-		g.basis = d.g[i].b
-		g.barrel.basis = d.g[i].c
+		g.from_dict(d.g[i])
 		i += 1
 		
 	i = 0
@@ -135,8 +136,7 @@ func sync(d: Dictionary):
 		controller._my_gun_params.from_dict(d.sc[k])
 		k += 1
 		for s: Gun in controller.guns:
-			s.basis = d.s[i].b
-			s.barrel.basis = d.s[i].c
+			s.from_dict(d.s[i])
 			i += 1
 		
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
@@ -151,6 +151,29 @@ func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
 
+
+'''	if armor_system.armor_data.has(path) and node is MeshInstance3D:
+		var static_body: StaticBody3D = node.find_child("StaticBody3D", false)
+		var collision_shape: CollisionShape3D = static_body.find_child("CollisionShape3D", false)
+		if collision_shape.shape is ConcavePolygonShape3D:
+			collision_shape.shape.backface_collision = true
+		static_body.queue_free()
+		var armor_part = ArmorPart.new()
+		armor_part.add_child(collision_shape)
+		armor_part.collision_layer = 1 << 1
+		armor_part.collision_mask = 0
+		armor_part.armor_system = armor_system
+		armor_part.armor_path = path
+		node.add_child(armor_part)
+		# static_body.collision_layer = 1 << 1
+		# static_body.collision_mask = 0
+		if node.name == "Hull":
+			hull = armor_part
+			print("armor_part.collision_layer: ", armor_part.collision_layer)
+			print("armor_part.collision_mask: ", armor_part.collision_mask)
+		elif node.name == "Citadel":
+			citadel = armor_part
+			'''
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
 	var n = node
@@ -161,31 +184,29 @@ func enable_backface_collision_recursive(node: Node) -> void:
 	if armor_system.armor_data.has(path) and node is MeshInstance3D:
 		var static_body: StaticBody3D = node.find_child("StaticBody3D", false)
 		var collision_shape: CollisionShape3D = static_body.find_child("CollisionShape3D", false)
-		#curr_static.queue_free()
-		# Set up physics body and collision shape
-		#var collision_mesh = (node as MeshInstance3D).mesh.create_trimesh_shape()
-		#var collision_shape = CollisionShape3D.new()
-		#collision_shape.shape = collision_mesh
-		#var collision_shape = create_ordered_collision(node as MeshInstance3D)
-		#var static_body = StaticBody3D.new()
-		#static_body.get_child(0).queue_free()
-		#static_body.add_child(collision_shape)
-		# Enable backface collision for better hit detection
+		static_body.remove_child(collision_shape)
 		if collision_shape.shape is ConcavePolygonShape3D:
 			collision_shape.shape.backface_collision = true
-		#static_body.add_child(collision_shape)
-		#node.add_child(static_body)
-		# Enable physics processing for the static body
-		static_body.collision_layer = 1 << 1
-		static_body.collision_mask = 0
-		#static_body.set_collision_layer(1 << 1)
-		#static_body.set_collision_mask(0)
+		static_body.queue_free()
+
+		var armor_part = ArmorPart.new()
+		armor_part.add_child(collision_shape)
+		armor_part.collision_layer = 1 << 1
+		armor_part.collision_mask = 0
+		armor_part.armor_system = armor_system
+		armor_part.armor_path = path
+		armor_part.ship = self
+		node.add_child(armor_part)
+		armor_parts.append(armor_part)
+		self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
+		# static_body.collision_layer = 1 << 1
+		# static_body.collision_mask = 0
 		if node.name == "Hull":
-			hull = static_body
-			print("static_body.collision_layer: ", static_body.collision_layer)
-			print("static_body.collision_mask: ", static_body.collision_mask)
+			hull = armor_part
+			print("armor_part.collision_layer: ", armor_part.collision_layer)
+			print("armor_part.collision_mask: ", armor_part.collision_mask)
 		elif node.name == "Citadel":
-			citadel = static_body
+			citadel = armor_part
 		
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)

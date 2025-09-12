@@ -27,10 +27,10 @@
 - [x] Damage indicators (HP bars, color-coded health states)
 - [x] Settings menu (basic configuration options)
 - [ ] Audio (engines, guns, ambient)
-- [ ] Damage numbers on enemy hit (floating damage text)
+- [x] Damage numbers on enemy hit (floating damage text)
 - [x] Shell hit ribbons (visual feedback for different hit types)
 - [x] Total damage counters (player statistics tracking)
-- [ ] Team display (team scores, player list)
+- [x] Team display (team scores, player list)
 - [ ] Sniper reticle (enhanced crosshair for precision aiming)
 - [ ] Handle battle end (match results, victory/defeat screens)
 

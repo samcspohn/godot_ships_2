@@ -341,15 +341,15 @@ func process_damage_events(damage_events: Array):
 
 func get_hit_type_from_event(event: Dictionary) -> String:
 	"""Convert damage event type to hit counter type"""
-	var event_type = event.get("type", -1)
+	var event_type: ArmorInteraction.HitResult = event.get("type", -1)
 	
 	# Map HitResult enum values to strings
 	match event_type:
-		0: return "penetration"    # HitResult.PENETRATION
-		1: return "ricochet"       # HitResult.RICOCHET
-		2: return "overpenetration" # HitResult.OVERPENETRATION
-		3: return "shatter"        # HitResult.SHATTER
-		5: return "citadel"        # HitResult.CITADEL
+		ArmorInteraction.HitResult.PENETRATION: return "penetration"    # HitResult.PENETRATION
+		ArmorInteraction.HitResult.RICOCHET: return "ricochet"       # HitResult.RICOCHET
+		ArmorInteraction.HitResult.OVERPENETRATION: return "overpenetration" # HitResult.OVERPENETRATION
+		ArmorInteraction.HitResult.SHATTER: return "shatter"        # HitResult.SHATTER
+		ArmorInteraction.HitResult.CITADEL: return "citadel"        # HitResult.CITADEL
 		_: return ""               # Unknown or no hit
 
 # Manual hover detection in _process
@@ -450,7 +450,7 @@ func _update_ui():
 	# Update ship status
 	speed_label.text = "Speed: %.1f knots" % ship_speed
 	
-	if camera_controller._ship.movement_controller is ShipMovementV2:
+	if true:
 		# Update throttle display
 		var throttle_level = camera_controller._ship.movement_controller.throttle_level
 		var throttle_display = ""
@@ -918,7 +918,50 @@ func update_gun_reload_bars():
 	# Update reload progress for each gun
 	for i in range(min(guns.size(), gun_reload_bars.size())):
 		if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
-			gun_reload_bars[i].value = guns[i].reload
+			var gun = guns[i]
+			var bar = gun_reload_bars[i]
+			
+			# Update reload progress
+			bar.value = gun.reload
+			
+			# Update color based on reload status and can_fire state
+			# if gun.reload >= 1.0:  # Gun is fully reloaded
+			# 	if gun.can_fire:
+			# 		bar.modulate = Color(0.2, 0.9, 0.8)  # Bright teal - ready to fire
+			# 	else:
+			# 		bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
+			# else:
+			# 	if gun.can_fire:
+			# 		bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
+			# 	else:
+			# 		bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
+
+			# if gun._valid_target:
+			# 	if gun.reload >= 1.0:
+			# 		bar.modulate = Color(0.2, 0.9, 0.8)  # Bright teal - ready to fire
+			# 	# else:
+			# else:
+			# 	if gun.reload >= 1.0:
+			# 		bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
+			# 	# 	bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
+			# 	else:
+			# 		bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
+			
+			# dull if no valid target
+			# bright if valid target
+			# teal if reloaded
+			# yellow if reloading
+			# brighter teal if reloaded and can fire and valid target
+			if gun._valid_target and gun.reload >= 1.0 and gun.can_fire:
+				bar.modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
+			elif gun._valid_target and gun.reload >= 1.0:
+				bar.modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
+			elif gun._valid_target:
+				bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
+			elif gun.reload >= 1.0:
+				bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
+			else:
+				bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):
@@ -974,5 +1017,3 @@ func create_floating_damage(damage: int, world_position: Vector3):
 	
 	# Add to the scene
 	add_child(floating_damage)
-	
-	print("Created floating damage: ", damage, " at ", world_position)

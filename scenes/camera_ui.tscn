@@ -73,7 +73,7 @@ border_width_bottom = 1
 border_color = Color(0.5, 0.5, 0.5, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_fill"]
-bg_color = Color(0.9, 0.9, 0.2, 1)
+bg_color = Color(1, 1, 1, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp_bg"]
 bg_color = Color(0.2, 0.2, 0.2, 0.8)
@@ -519,11 +519,11 @@ text = "0"
 horizontal_alignment = 1
 vertical_alignment = 2
 
-[node name="CitadelCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters"]
+[node name="SecCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters"]
 custom_minimum_size = Vector2(50, 40)
 layout_mode = 2
 
-[node name="CitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/CitadelCounter"]
+[node name="SecCitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -532,7 +532,7 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
 
-[node name="CitadelContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/CitadelCounter"]
+[node name="SecCitadelContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -540,7 +540,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="CitadelC" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/CitadelCounter/CitadelContainer"]
+[node name="SecCitadelC" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
 layout_mode = 2
 offset_left = 3.0
 offset_top = 3.0
@@ -554,7 +554,7 @@ text = "C"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="CitadelCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/CitadelCounter/CitadelContainer"]
+[node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0

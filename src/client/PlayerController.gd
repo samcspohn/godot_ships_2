@@ -209,11 +209,12 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 		print("No ship found within selection radius of ", selection_radius, " pixels")
 
 func handle_single_click() -> void:
-	if guns.size() > 0:
-		for i in range(guns.size()):
-			if guns[i].reload >= 1.0:
-				ship.artillery_controller.fire_gun.rpc_id(1, i)
-				break
+	ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
+	# if guns.size() > 0:
+	# 	for i in range(guns.size()):
+	# 		if guns[i].reload >= 1.0:
+	# 			ship.artillery_controller.fire_gun.rpc_id(1, i)
+	# 			break
 
 @rpc("any_peer", "call_remote", "reliable")
 func set_target_ship(ship_path: NodePath) -> void:
@@ -299,7 +300,6 @@ func _process(dt: float) -> void:
 
 	# Show floating damage for the ship
 	if ship.stats.damage_events.size() > 0:
-		print("Processing ", ship.stats.damage_events.size(), " damage events")
 		for damage_event in ship.stats.damage_events:
 			if cam.ui:
 				cam.ui.create_floating_damage(damage_event.damage, damage_event.position)

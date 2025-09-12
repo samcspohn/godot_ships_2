@@ -18,6 +18,7 @@ enum ShellType {
 @export var type: ShellType = ShellType.AP
 @export var penetration_modifier: float = 1.0 # Multiplier for penetration calculations
 @export var auto_bounce: float = deg_to_rad(60)  # Angle at which shells automatically bounce
+@export var ricochet_angle: float = deg_to_rad(45)  # Angle at which shells may ricochet
 @export var overmatch: int = 0
 var _secondary: bool = false # Is this a secondary shell type (for damage tracking)?
 @export var arming_threshold: int = 0 # Minimum armor thickness to arm the shell
