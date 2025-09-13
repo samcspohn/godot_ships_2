@@ -94,7 +94,7 @@ func update_barrels() -> void:
 
 	# print("Muzzles updated: ", muzzles.size())
 
-@rpc("any_peer", "call_remote")
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func _set_reload(r):
 	reload = r
 
@@ -103,7 +103,7 @@ func _physics_process(delta: float) -> void:
 		if !disabled && reload < 1.0:
 			reload += delta / get_params().reload_time
 			if not _ship.team.is_bot:
-				_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
+				_set_reload.rpc_id(int(_ship.name), reload)
 
 
 # Normalize angle to the range [0, 2π]

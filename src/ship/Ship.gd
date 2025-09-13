@@ -151,29 +151,6 @@ func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
 
-
-'''	if armor_system.armor_data.has(path) and node is MeshInstance3D:
-		var static_body: StaticBody3D = node.find_child("StaticBody3D", false)
-		var collision_shape: CollisionShape3D = static_body.find_child("CollisionShape3D", false)
-		if collision_shape.shape is ConcavePolygonShape3D:
-			collision_shape.shape.backface_collision = true
-		static_body.queue_free()
-		var armor_part = ArmorPart.new()
-		armor_part.add_child(collision_shape)
-		armor_part.collision_layer = 1 << 1
-		armor_part.collision_mask = 0
-		armor_part.armor_system = armor_system
-		armor_part.armor_path = path
-		node.add_child(armor_part)
-		# static_body.collision_layer = 1 << 1
-		# static_body.collision_mask = 0
-		if node.name == "Hull":
-			hull = armor_part
-			print("armor_part.collision_layer: ", armor_part.collision_layer)
-			print("armor_part.collision_mask: ", armor_part.collision_mask)
-		elif node.name == "Citadel":
-			citadel = armor_part
-			'''
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
 	var n = node

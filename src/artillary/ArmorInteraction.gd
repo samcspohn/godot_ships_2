@@ -253,6 +253,19 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	events.append("Ship: %s pos=(%.1f, %.1f, %.1f), rot=(%.1f, %.1f, %.1f)" % [ship.name, ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z, rad_to_deg(ship.global_transform.basis.get_euler().x), rad_to_deg(ship.global_transform.basis.get_euler().y), rad_to_deg(ship.global_transform.basis.get_euler().z)])
 	if hit_water:
 		events.append(" - Hit water first, fuze: %.3f s" % [shell.fuze])
+		if shell.params.type == ShellParams.ShellType.HE:
+			return ArmorResultData.new(HitResult.WATER, shell.position, null, shell.velocity, null)
+
+	if shell.params.type == ShellParams.ShellType.HE:
+		var armor = hit_node.get_armor(face_index)
+		if shell.params.overmatch >= armor:
+			var hit_result = HitResult.PENETRATION
+			if hit_node.is_citadel:
+				hit_result = HitResult.CITADEL
+			return ArmorResultData.new(hit_result, shell.position, hit_node, shell.velocity, ship)
+		else:
+			return ArmorResultData.new(HitResult.SHATTER, shell.position, hit_node, Vector3.ZERO, ship)
+
 	while shell.fuze <= params.fuze_delay and result != ArmorResult.SHATTER and hit_node.ship == ship:
 		var armor = hit_node.get_armor(face_index)
 		var impact_angle = ProjectileManager.calculate_impact_angle(shell.velocity.normalized(), hit_normal)
@@ -270,7 +283,7 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		events.append("Shell: speed=%.1f vel=(%.1f, %.1f, %.1f) m/s, fuze=%.3f s, pos=(%.1f, %.1f, %.1f), pen: %.1f" % [shell.velocity.length(), shell.velocity.x, shell.velocity.y, shell.velocity.z, shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
 
 		if armor < params.overmatch:
-			if hit_node.armor_path.find("Citadel") != -1: # todo, better citadel check, flags?
+			if hit_node.is_citadel:
 				hit_cit = true
 			result = ArmorResult.OVERPEN
 			over_pen = true
@@ -288,7 +301,7 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 			shell.velocity = Vector3.ZERO
 			
 		else:
-			if hit_node.armor_path.find("Citadel") != -1:
+			if hit_node.is_citadel:
 				hit_cit = true
 			result = ArmorResult.OVERPEN
 			over_pen = true

@@ -194,7 +194,7 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 		var distance_to_cursor = mouse_pos.distance_to(ship_screen_pos)
 		
 		# Debug output
-		print("Ship: ", potential_ship.name, " Screen: ", ship_screen_pos, " Distance: ", distance_to_cursor)
+		# print("Ship: ", potential_ship.name, " Screen: ", ship_screen_pos, " Distance: ", distance_to_cursor)
 		
 		# Check if this ship is closer to the cursor and within selection radius
 		if distance_to_cursor <= selection_radius and distance_to_cursor < closest_distance:
