@@ -22,10 +22,10 @@ var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
 
 func _ready() -> void:
 	my_params.from_params(params)
-	max_range = my_params.range
+	max_range = my_params._range
 	_ship = ProjectileManager.find_ship(self)
 	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
-	#max_range = min(a[0], my_params.range)
+	#max_range = min(a[0], my_params._range)
 	#max_flight = a[2]
 
 	#if max_range < a[0]:

@@ -464,7 +464,7 @@ func _calculate_target_info():
 	var launch_vector = launch_result[0]
 	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
 	#max_range_reached = launch_result[2]
-	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller._my_gun_params.range
+	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
 	
 	# Calculate distance
 	distance_to_target = (aim_position - ship_position).length() # Convert to km

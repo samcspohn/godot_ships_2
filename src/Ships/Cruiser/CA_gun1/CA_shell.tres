@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="ShellParams" load_steps=2 format=3 uid="uid://cniv837noxsil"]
 
-[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/Shells/shell_params.gd" id="1_bdv77"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="1_bdv77"]
 
 [resource]
 script = ExtResource("1_bdv77")

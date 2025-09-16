@@ -354,8 +354,8 @@ func fire_at_target():
 			ship.global_position,
 			target_ship.global_position,
 			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,
-			artillery._my_gun_params.shell.speed,
-			artillery._my_gun_params.shell.drag
+			artillery.get_shell_params().speed,
+			artillery.get_shell_params().drag
 		)[2]
 
 		# Set aim input like player controller does

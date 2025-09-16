@@ -5,17 +5,24 @@ class_name Fire
 @onready var smoke: GPUParticles3D = $GPUParticles3D2
 var _ship: Ship
 var hp: HitPointsManager
-@export var duration: float = 50.0
-@export var buildUp: float = 100.0
-@export var total_dmg_p: float = .1
+# @export var duration: float = 50.0
+# @export var buildUp: float = 100.0
+# @export var total_dmg_p: float = .1
+# var dps: float
 var curr_buildup: float = 0
 var lifetime: float = 0
+var manager: FireManager = null
+var _params: FireParams:
+	get:
+		return manager.params.params() as FireParams
+	set(value): 
+		pass
 var _owner: Ship = null
 
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a
-		if curr_buildup >= buildUp:
+		if curr_buildup >= _params.max_buildup:
 			_owner = __owner
 			fire.emitting = true
 			smoke.emitting = true
@@ -26,9 +33,10 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	return false
 
 func _ready():
-	#var csgbox = get_parent().get_node("Hull") as CSGBox3D
-	_ship = get_parent()
-	hp = _ship.get_node("Modules").get_node("HPManager")
+
+	_ship = get_parent().get_parent() as Ship
+	await _ship.ready
+	hp = _ship.health_controller
 	var s = _ship.get_node("Hull").get_aabb().size.length() / 10.0
 	fire.scale = Vector3(s,s,s)
 	smoke.scale = Vector3(s,s,s)
@@ -44,18 +52,21 @@ func _physics_process(delta: float) -> void:
 		if lifetime > 0:
 			_sync.rpc(lifetime)
 			damage(delta)
-			lifetime -= delta / duration
+			var d = _params.dur
+			lifetime -= delta / d
 			if lifetime <= 0:
 				fire.emitting = false
 				smoke.emitting = false
 				_sync_deactivate.rpc()
-		elif curr_buildup < buildUp:
-			curr_buildup -= delta * 0.5
+		elif curr_buildup < _params.max_buildup:
+			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate
+			curr_buildup = max(curr_buildup, 0.0)
 
 func damage(delta):
 	if hp.is_alive():
 		var max_hp = hp.max_hp
-		var dmg = max_hp * total_dmg_p / duration
+		var dmg_rate = _params.dmg_rate
+		var dmg = max_hp * dmg_rate
 		var dmg_sunk = hp.take_damage(dmg * delta, position)
 		_owner.stats.fire_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]

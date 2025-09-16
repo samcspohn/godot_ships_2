@@ -52,18 +52,27 @@ func _ready() -> void:
 		set_process(false)
 		set_process_input(false)
 		set_physics_process(false)
-
-		call_deferred("apply_buff")
+		
+		await get_tree().process_frame
+		ship.add_static_mod(secondary_upgrade)
+		
 	else:
 		# Capture mouse by default for camera control
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		mouse_captured = true
 
 
-func apply_buff():
+func secondary_upgrade(ship: Ship) -> void:
+	# Implement secondary upgrade logic here
+	# For example, you might want to increase the range and reload time of secondary guns
 	for c in ship.secondary_controllers:
-		c._my_gun_params.range *= 2.0
-		c._my_gun_params.reload_time *= 0.6
+		c.params.static_mod._range *= 2.0
+		c.params.static_mod.reload_time *= 0.6
+
+#func apply_buff():
+	#for c in ship.secondary_controllers:
+		#c._my_gun_params._range *= 2.0
+		#c._my_gun_params.reload_time *= 0.6
 
 func setup_artillery_camera() -> void:
 	cam = load("res://src/camera/player_cam.tscn").instantiate()
@@ -72,8 +81,8 @@ func setup_artillery_camera() -> void:
 	if cam is Camera3D:
 		cam.current = true
 	if guns.size() > 0:
-		cam.projectile_speed = ship.artillery_controller._my_gun_params.shell.speed
-		cam.projectile_drag_coefficient = ship.artillery_controller._my_gun_params.shell.drag
+		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
+		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
 	get_tree().root.add_child(cam)
 	cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
 
@@ -146,12 +155,23 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_T:
 			if ship.torpedo_launcher:
 				ship.torpedo_launcher.fire.rpc_id(1)
+		# if event.keycode == KEY_X:
+		# 	# Clear secondary target
+		# 	clear_secondary_target()
 		if event.keycode == KEY_1:
 			select_weapon(0)
 		elif event.keycode == KEY_2:
 			select_weapon(1)
 		elif event.keycode == KEY_3:
 			select_weapon(2)
+		
+			# Consumable hotkeys
+	if event.is_action_pressed("consumable_1"):
+		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 0)
+	elif event.is_action_pressed("consumable_2"):
+		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 1)
+	elif event.is_action_pressed("consumable_3"):
+		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 2)
 
 # Center the mouse cursor on the screen
 func _center_mouse():
@@ -226,25 +246,52 @@ func set_target_ship(ship_path: NodePath) -> void:
 	if target_ship and target_ship is Ship:
 		print("Server setting target ship: ", target_ship.name)
 		select_target_ship(target_ship)
+		#notify the calling client to set the target visually
+		c_set_target_ship.rpc_id(multiplayer.get_remote_sender_id(), ship_path)
 	else:
 		print("Invalid ship path received: ", ship_path)
 
+@rpc("authority", "call_remote", "reliable")
+func c_set_target_ship(ship_path: NodePath) -> void:
+	"""Client-side RPC to set the target ship"""
+	if not multiplayer.is_server():
+		var target_ship = get_node_or_null(ship_path)
+		if target_ship and target_ship is Ship:
+			print("Client setting target ship: ", target_ship.name)
+			select_target_ship(target_ship)
+		else:
+			print("Invalid ship path received: ", ship_path)
+
+		
 func select_target_ship(target_ship: Ship) -> void:
 	for secondary_controller in ship.secondary_controllers:
 		# Set the target in the secondary controller
 		secondary_controller.target = target_ship
 		print("Selected target: " + target_ship.name)
 		
-		# Optional: Add a visual indicator for the selected target
+		# Add a visual indicator for the selected target
 		show_target_indicator(target_ship)
 	# else:
 	# 	print("Warning: secondary_controller not initialized")
 		
-func show_target_indicator(_target_ship: Ship) -> void:
-	# You can implement visual feedback here
-	# For example, create a temporary effect or UI element
-	# showing which ship is targeted
-	pass
+func show_target_indicator(target_ship: Ship) -> void:
+	# Update the UI to show the target indicator
+	if cam and cam.ui:
+		cam.ui.set_secondary_target(target_ship)
+	else:
+		print("Warning: cam.ui not available for target indicator")
+
+func clear_secondary_target() -> void:
+	"""Clear the secondary target for all secondary controllers"""
+	for secondary_controller in ship.secondary_controllers:
+		secondary_controller.target = null
+		print("Cleared secondary target")
+	
+	# Update the UI to clear the target indicator
+	if cam and cam.ui:
+		cam.ui.clear_secondary_target()
+	else:
+		print("Warning: cam.ui not available for clearing target indicator")
 
 func _process(dt: float) -> void:
 	# Check if we need to initialize guns - do it only once
@@ -267,8 +314,8 @@ func _process(dt: float) -> void:
 			return # Skip processing until initialized
 	
 	if guns.size() > 0:
-		cam.projectile_speed = ship.artillery_controller._my_gun_params.shell.speed
-		cam.projectile_drag_coefficient = ship.artillery_controller._my_gun_params.shell.drag
+		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
+		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
 
 	# Handle double click timer
 	if click_count == 1:
@@ -280,7 +327,7 @@ func _process(dt: float) -> void:
 	if is_holding:
 		if selected_weapon == 0 or selected_weapon == 1:
 			sequential_fire_timer += dt
-			var reload = ship.artillery_controller._my_gun_params.reload_time
+			var reload = ship.artillery_controller.get_params().reload_time
 			var min_reload = reload / guns.size() - 0.01
 			var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
 			while sequential_fire_timer >= adjusted_sequential_fire_delay:
@@ -380,13 +427,13 @@ func process_player_input() -> void:
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
-@rpc("any_peer", "call_remote", "reliable")
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func send_movement_input(movement_input: Array) -> void:
 	if multiplayer.is_server():
 		# Forward movement input to ship movement controller
 		ship.movement_controller.set_movement_input(movement_input)
 
-@rpc("any_peer", "call_remote", "reliable")
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func send_aim_input(aim_point: Vector3) -> void:
 	if multiplayer.is_server():
 		# Forward aim input to ship artillery controller

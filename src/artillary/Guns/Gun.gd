@@ -34,6 +34,7 @@ func to_dict() -> Dictionary:
 		"e": barrel.basis,
 		"c": can_fire,
 		"v": _valid_target,
+		"rl": reload
 	}
 
 func from_dict(d: Dictionary) -> void:
@@ -41,19 +42,20 @@ func from_dict(d: Dictionary) -> void:
 	barrel.basis = d.e
 	can_fire = d.c
 	_valid_target = d.v
+	reload = d.rl
 
 func get_params() -> GunParams:
-	return controller.get("_my_gun_params")
+	return controller.get_params()
 
 func get_shell() -> ShellParams:
-	return controller.get("_my_gun_params").shell
+	return controller.get_shell_params()
 
 func _ready() -> void:
 	# params.shell = params.shell2
 	# my_params.from_params(params)
 
 	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(get_shell().speed, get_shell().drag)
-	#max_range = min(a[0], controller.get("_my_gun_params").range)
+	#max_range = min(a[0], controller.get("_my_gun_params")._range)
 	#max_flight = a[2]
 #
 	#if max_range < a[0]:
@@ -94,16 +96,14 @@ func update_barrels() -> void:
 
 	# print("Muzzles updated: ", muzzles.size())
 
-@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func _set_reload(r):
-	reload = r
+# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+# func _set_reload(r):
+# 	reload = r
 
 func _physics_process(delta: float) -> void:
 	if multiplayer.is_server():
 		if !disabled && reload < 1.0:
 			reload += delta / get_params().reload_time
-			if not _ship.team.is_bot:
-				_set_reload.rpc_id(int(_ship.name), reload)
 
 
 # Normalize angle to the range [0, 2π]
@@ -337,7 +337,7 @@ func get_angle_to_target(target: Vector3) -> float:
 
 func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, target, get_shell().speed, get_shell().drag)
-	if sol[0] != null and (target - global_position).length() < get_params().range:
+	if sol[0] != null and (target - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
@@ -347,7 +347,7 @@ func valid_target(target: Vector3) -> bool:
 
 func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell().speed, get_shell().drag)
-	if sol[0] != null and (sol[2] - global_position).length() < get_params().range:
+	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(sol[2])
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
@@ -395,11 +395,11 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 
 	# Existing aiming logic for elevation
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, get_shell().speed, get_shell().drag)
-	if sol[0] != null and (aim_point - global_position).length() < get_params().range:
+	if sol[0] != null and (aim_point - global_position).length() < get_params()._range:
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)
-		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params().range - 500)
+		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params()._range - 500)
 		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, self._aim_point, get_shell().speed, get_shell().drag)
 
 	var turret_elev_speed_rad: float = deg_to_rad(get_params().elevation_speed)
@@ -433,7 +433,7 @@ func normalize_angle(angle: float) -> float:
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, get_shell().speed, get_shell().drag)
-	if sol[0] == null or (aim_point - barrel.global_position).length() > get_params().range:
+	if sol[0] == null or (aim_point - barrel.global_position).length() > get_params()._range:
 		can_fire = false
 		return
 	_aim(sol[2], delta, true)

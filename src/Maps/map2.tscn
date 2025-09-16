@@ -207,7 +207,7 @@ use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
 [node name="Island15" type="Node3D" parent="Land"]
-transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -3868.32, 0, 6175.99)
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -4009.49, 0, 5082.83)
 
 [node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island15"]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
@@ -237,7 +237,7 @@ use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
 [node name="Island17" type="Node3D" parent="Land"]
-transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 384.297, 0, -2591.81)
+transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 323.134, 0, -3087.67)
 
 [node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island17"]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
@@ -1315,10 +1315,10 @@ radius = 100.0
 [node name="Spawn" type="Node" parent="."]
 
 [node name="spawn0" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4868.44)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -6249.41)
 
 [node name="spawn1" type="Node3D" parent="Spawn"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7844.78)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 6335.11)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.812084, -0.453497, 0.367234, 0, 0.62932, 0.777146, -0.583541, -0.631107, 0.511061, 0, 0, 0)

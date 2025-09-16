@@ -1,7 +1,7 @@
 [gd_scene load_steps=120 format=4 uid="uid://b1udmin5coa0a"]
 
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="1_y5iv2"]
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/Guns/Gun.gd" id="2_bnwro"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_bnwro"]
 [ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/Ships/Battleship/BB_gun1/BB_gun1.tres" id="3_c267j"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://modules.tscn" id="4_qpdxu"]
 

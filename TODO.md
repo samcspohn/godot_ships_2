@@ -44,3 +44,10 @@
 - [ ] Ship progression/unlocks
 - [ ] Customization options
 - [ ] Performance optimization
+- [ ] Optimize ship synchronization to update less frequently at long distances and offscreen
+- [ ] don't sync enemy consumables/weapon reloads
+- [ ] don't sync fire lifetime
+- [ ] Spectator mode
+- [ ] More maps
+- [ ] More ship classes (Cruiser, Destroyer, Carrier)
+- [ ] More consumables (smoke screens, speed boosts)

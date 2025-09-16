@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bi65dj6qt0g8g"]
+
+[ext_resource type="Script" uid="uid://d4nhn3dtrfet3" path="res://src/Consumable/consumable_manager.gd" id="1_v5gms"]
+
+[node name="ConsumableManager" type="Node"]
+script = ExtResource("1_v5gms")

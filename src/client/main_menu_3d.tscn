@@ -1,0 +1,81 @@
+[gd_scene load_steps=3 format=3 uid="uid://dq5u2vcdgwrfw"]
+
+[ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
+[ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="2_ekxnf"]
+[ext_resource type="PackedScene" uid="uid://orbit_cam_scene" path="res://src/camera/orbit_camera.tscn" id="1_orbit_cam"]
+
+[node name="MainMenu3D" type="Node3D"]
+
+[node name="OrbitCam" parent="." instance=ExtResource("1_orbit_cam")]
+
+[node name="Port" type="Node3D" parent="."]
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.759328, -0.567246, 0.318831, 0.650708, 0.661934, -0.372052, 0, 0.489976, 0.871736, -187.342, -22.559, -151.324)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D3" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.759328, -0.567246, 0.318831, 0.650708, 0.661934, -0.372052, 0, 0.489976, 0.871736, -209.998, -22.559, -236.842)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D4" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.759328, -0.567246, 0.318831, 0.650708, 0.661934, -0.372052, 0, 0.489976, 0.871736, -149.634, -22.559, -288.719)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D5" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.759328, -0.567246, 0.318831, 0.650708, 0.661934, -0.372052, 0, 0.489976, 0.871736, -125.105, -22.559, -361.841)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D6" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.642743, -0.741039, -0.194275, 0.650708, 0.661934, -0.372053, 0.404303, 0.112718, 0.907653, 166.624, -22.559, 335.441)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D7" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.642743, -0.741039, -0.194275, 0.650708, 0.661934, -0.372053, 0.404303, 0.112718, 0.907653, 192.98, -22.559, 250.99)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D8" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.642743, -0.741039, -0.194275, 0.650708, 0.661934, -0.372053, 0.404303, 0.112718, 0.907653, 271.698, -22.559, 239.22)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D9" type="CSGBox3D" parent="Port"]
+transform = Transform3D(0.642743, -0.741039, -0.194275, 0.650708, 0.661934, -0.372053, 0.404303, 0.112718, 0.907653, 331.395, -22.559, 190.385)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D10" type="CSGBox3D" parent="Port"]
+transform = Transform3D(1.04861, -0.52457, 1.31308, 1.04618, 1.46927, -0.678284, -0.625145, 1.57892, 1.06743, -187.672, 4.96478, 411.745)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D11" type="CSGBox3D" parent="Port"]
+transform = Transform3D(1.04861, -0.52457, 1.31308, 1.04618, 1.46927, -0.678284, -0.625145, 1.57892, 1.06743, -348.987, 4.96478, 286.841)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D12" type="CSGBox3D" parent="Port"]
+transform = Transform3D(1.04861, -0.52457, 1.31308, 1.04618, 1.46927, -0.678284, -0.625145, 1.57892, 1.06743, -322.356, 4.96478, 173.153)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D13" type="CSGBox3D" parent="Port"]
+transform = Transform3D(1.04861, -0.52457, 1.31308, 1.04618, 1.46927, -0.678284, -0.625145, 1.57892, 1.06743, -386.543, 4.96478, 43.8903)
+size = Vector3(100, 100, 100)
+material = ExtResource("2_bqqt6")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="Port"]
+material_override = ExtResource("2_ekxnf")
+use_collision = true
+size = Vector3(3000, 1, 3000)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="Port"]
+transform = Transform3D(0.0106649, 0.202565, 0.979211, 0.00220607, -0.979269, 0.202553, 0.999941, 0, -0.0108907, 47.8757, 163.892, 0)
+
+[node name="Dock" type="Node3D" parent="."]

@@ -1,7 +1,7 @@
 [gd_resource type="Resource" script_class="GunParams" load_steps=5 format=3 uid="uid://8cp40uc7e88c"]
 
-[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/Guns/gun_params.gd" id="1_mmiue"]
-[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/Shells/shell_params.gd" id="2_2me4r"]
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_mmiue"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_2me4r"]
 
 [sub_resource type="Resource" id="Resource_lv0yt"]
 script = ExtResource("2_2me4r")
@@ -16,6 +16,7 @@ fuze_delay = 0.035
 type = 1
 penetration_modifier = 1.0
 auto_bounce = 1.0472
+ricochet_angle = 0.785398
 overmatch = 10
 arming_threshold = 25
 
@@ -32,6 +33,7 @@ fuze_delay = 0.001
 type = 0
 penetration_modifier = 1.0
 auto_bounce = 1.571
+ricochet_angle = 0.785398
 overmatch = 38
 arming_threshold = 0
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
@@ -41,7 +43,7 @@ script = ExtResource("1_mmiue")
 reload_time = 7.5
 traverse_speed = 50.0
 elevation_speed = 50.0
-range = 4500.0
+_range = 5000.0
 shell1 = SubResource("Resource_lv0yt")
 shell2 = SubResource("Resource_2kkbv")
 hor_dispersion = 0.0

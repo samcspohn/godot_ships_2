@@ -193,7 +193,7 @@ func _update_camera_transform():
 		var target_angle_vertical = atan2(height_diff, sqrt(pow(direction_to_target.x, 2) + pow(direction_to_target.z, 2)) * target_distance)
 		# _print(target_angle_vertical)
 
-		var max_range_angle = rad_to_deg(tan(-cam_pos.y / _ship.artillery_controller._my_gun_params.range))
+		var max_range_angle = rad_to_deg(tan(-cam_pos.y / _ship.artillery_controller.get_params()._range))
 		var target_angle_vert_deg = rad_to_deg(target_angle_vertical)
 		camera_offset_vertical = clamp(camera_offset_vertical, -85 - target_angle_vert_deg, max_range_angle - target_angle_vert_deg)
 		# Apply the player's offset to the camera direction - immediately, no lerping

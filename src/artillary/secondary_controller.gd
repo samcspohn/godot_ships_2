@@ -2,9 +2,9 @@ extends Node
 class_name SecondaryController
 
 
-@export var gun_params: GunParams
-var _my_gun_params: GunParams
+@export var params: GunParams
 @export var guns: Array[Gun]
+var shell_index: int = 1 # default HE
 var _ship: Ship
 var target: Ship
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
@@ -16,13 +16,21 @@ var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 	# for ch in get_children():
 	# 	if ch is Gun:
 	# 		guns.append(ch)
+
+func to_dict() -> Dictionary:
+	return {
+		"params": params.dynamic_mod.to_dict(),
+	}
+func from_dict(d: Dictionary) -> void:
+	params.dynamic_mod.from_dict(d.get("params", {}))
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
-	_my_gun_params = gun_params.duplicate(true)
-	_my_gun_params.shell1._secondary = true
-	_my_gun_params.shell2._secondary = true
-	# Default to shell2 (HE) for secondary guns
-	_my_gun_params.shell = _my_gun_params.shell2
+
+	params = params.duplicate(true)
+	(params.shell1 as ShellParams)._secondary = true
+	(params.shell2 as ShellParams)._secondary = true
+	params.init(_ship)
+
 	for g in guns:
 		g.controller = self
 		g._ship = _ship
@@ -38,7 +46,7 @@ func _physics_process(delta: float) -> void:
 	if not _ship.team:
 		return
 
-	var max_range = _my_gun_params.range
+	var max_range = params.params()._range
 	# if _my_gun_params.shell.caliber == 150:
 	# 	print("ArtilleryController: 150mm gun range: ", max_range)
 	# print("Max range: ", max_range)
@@ -72,7 +80,7 @@ func _physics_process(delta: float) -> void:
 			# pass
 
 	if enemies_in_range.size() > 0:
-		var reload_time = _my_gun_params.reload_time
+		var reload_time = params.params().reload_time
 		sequential_fire_timer += delta
 		if sequential_fire_timer >= min(sequential_fire_delay, reload_time / guns.size()):
 			sequential_fire_timer = 0.0
@@ -104,3 +112,13 @@ func fire_next_gun() -> void:
 			if g.reload >= 1 and g.can_fire:
 				g.fire()
 				return
+
+func get_shell_params() -> ShellParams:
+	if shell_index == 0:
+		return params.shell1
+	else:
+		return params.shell2
+
+func get_params() -> GunParams:
+	return params.params() as GunParams
+	

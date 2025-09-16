@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://bycl7fsp2fuqa"]
 
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/Guns/Gun.gd" id="1_nahkm"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="1_nahkm"]
 [ext_resource type="Resource" uid="uid://bbj87u4g0sahg" path="res://src/Ships/Cruiser/CA_gun1/CA_gun1.tres" id="2_c6bmi"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_hpvvm"]

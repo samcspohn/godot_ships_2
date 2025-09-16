@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="FireParams" load_steps=2 format=3 uid="uid://cgmx8b43b3tfn"]
+
+[ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="1_icpme"]
+
+[resource]
+script = ExtResource("1_icpme")
+dmg_rate = 0.002
+dur = 50.0
+max_buildup = 150.0
+buildup_reduction_rate = 0.005
+metadata/_custom_type_script = "uid://dr60dh6rgv4fp"

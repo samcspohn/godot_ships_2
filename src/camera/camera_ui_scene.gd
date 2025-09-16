@@ -103,7 +103,7 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var speed_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/SpeedLabel
 @onready var throttle_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/ThrottleLabel
 @onready var rudder_label: Label = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderLabel
-@onready var rudder_slider: HSlider = $MainContainer/BottomLeftPanel/RudderSlider
+@onready var rudder_slider: HSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderSlider
 @onready var throttle_slider: VSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ThrottleSlider
 
 @onready var hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBar
@@ -120,10 +120,34 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var team_tracker_template: Control = $MainContainer/ShipUITemplates/TeamTrackerTemplate
 
 @onready var weapon_buttons: Array[Button] = [
-	$MainContainer/BottomCenterPanel/WeaponPanel/Shell1Button,
-	$MainContainer/BottomCenterPanel/WeaponPanel/Shell2Button,
-	$MainContainer/BottomCenterPanel/WeaponPanel/TorpedoButton
+	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell1Button,
+	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell2Button,
+	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/TorpedoButton
 ]
+
+@onready var consumable_container: HBoxContainer = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer
+@onready var consumable_template: TextureButton = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate
+var consumable_buttons: Array[TextureButton] = []
+var consumable_cooldown_bars: Array[ProgressBar] = []
+var consumable_shortcut_labels: Array[Label] = []
+var consumable_count_labels: Array[Label] = []
+
+# Consumable action names for getting shortcuts from InputMap
+var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consumable_4", "consumable_5"]
+
+# Get the keyboard shortcut letter for a given action
+func get_keyboard_shortcut_for_action(action_name: String) -> String:
+	if not InputMap.has_action(action_name):
+		return ""
+	
+	var events = InputMap.action_get_events(action_name)
+	for event in events:
+		if event is InputEventKey:
+			var key_event = event as InputEventKey
+			# Convert physical keycode to character
+			return OS.get_keycode_string(key_event.physical_keycode)
+	
+	return ""
 
 # Gun reload tracking
 var gun_reload_bars: Array[ProgressBar] = []
@@ -138,13 +162,16 @@ var ship_ui_elements = {}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 
+# Target tracking for secondaries
+var current_secondary_target: Ship = null
+
 # Team tracker
 var team_ship_indicators = {}  # Maps ship to its indicator ColorRect
 var friendly_team_id: int = -1  # Will be set when camera_controller is available
 
 # Hit counter system for temporary display
 var active_hit_counters = {}
-var active_hit_timer = 0.0
+var active_hit_timers = {}
 var hit_counter_display_time: float = 5.0  # Display for 5 seconds
 
 # Hit counter references mapping
@@ -172,6 +199,9 @@ func _ready():
 	
 	# Setup hit counter display system
 	setup_hit_counter_system()
+
+	# Setup consumable buttons
+	setup_consumable_ui()
 	
 	# Setup minimap in the bottom right panel with automatic anchoring
 	minimap = Minimap.new()
@@ -255,7 +285,7 @@ func show_hit_counter(hit_type: String, is_secondary: bool):
 	var counter: Control = counter_refs["sec"] if is_secondary else counter_refs["main"]
 	var count_label: Label = counter_refs["sec_label"] if is_secondary else counter_refs["main_label"]
 	var container: HBoxContainer = sec_counter_temp if is_secondary else main_counter_temp
-	active_hit_timer = hit_counter_display_time  # Reset global timer whenever a hit is registered
+	active_hit_timers[container] = hit_counter_display_time  # Reset global timer whenever a hit is registered
 
 	# Check if counter already exists in active tracking
 	if counter_key in active_hit_counters:
@@ -284,13 +314,15 @@ func update_hit_counters(delta: float):
 	"""Update hit counter timers and hide expired ones"""
 	var keys_to_remove = []
 
-	active_hit_timer -= delta
-	if active_hit_timer <= 0.0:
-		# Hide all active counters
-		for key in active_hit_counters:
-			var counter_data = active_hit_counters[key]
-			counter_data.counter.visible = false
-			keys_to_remove.append(key)
+	for container in active_hit_timers.keys():
+		active_hit_timers[container] -= delta
+		if active_hit_timers[container] <= 0.0:
+			# Hide all active counters
+			for key in active_hit_counters:
+				var counter_data = active_hit_counters[key]
+				if counter_data.container == container:
+					counter_data.counter.visible = false
+					keys_to_remove.append(key)
 
 	# for key in active_hit_counters:
 	# 	var counter_data = active_hit_counters[key]
@@ -414,7 +446,20 @@ func _process(_delta):
 	check_hover_detection()  # Add manual hover detection
 	update_hit_counters(_delta)  # Update hit counter timers
 	update_visibility_indicator()  # Update visibility indicator
+	update_consumable_ui()
 	
+	# Automatically detect current secondary target from ship's secondary controllers
+	if camera_controller._ship and camera_controller._ship.secondary_controllers.size() > 0:
+		var detected_target = null
+		for secondary_controller in camera_controller._ship.secondary_controllers:
+			if secondary_controller.target and secondary_controller.target is Ship:
+				detected_target = secondary_controller.target
+				break
+		
+		# Update the target if it has changed
+		if detected_target != current_secondary_target:
+			current_secondary_target = detected_target
+
 	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
 		var stats = camera_controller._ship.stats
 		
@@ -599,15 +644,18 @@ func setup_ship_ui(ship):
 	var name_label: Label
 	var ship_hp_bar: ProgressBar
 	var ship_hp_label: Label
+	var target_indicator: ColorRect
 	
 	if is_enemy:
 		name_label = ship_container.get_node("EnemyNameLabel")
 		ship_hp_bar = ship_container.get_node("EnemyHPBar")
 		ship_hp_label = ship_hp_bar.get_node("EnemyHPLabel")
+		target_indicator = ship_container.get_node("EnemyTargetIndicator")
 	else:
 		name_label = ship_container.get_node("FriendlyNameLabel")
 		ship_hp_bar = ship_container.get_node("FriendlyHPBar")
 		ship_hp_label = ship_hp_bar.get_node("FriendlyHPLabel")
+		target_indicator = ship_container.get_node("FriendlyTargetIndicator")
 	
 	# Set the ship name
 	name_label.text = ship.name
@@ -617,7 +665,8 @@ func setup_ship_ui(ship):
 		"container": ship_container,
 		"name_label": name_label,
 		"hp_bar": ship_hp_bar,
-		"hp_label": ship_hp_label
+		"hp_label": ship_hp_label,
+		"target_indicator": target_indicator
 	}
 
 func update_ship_ui():
@@ -674,6 +723,16 @@ func update_ship_ui():
 				# Update progress bar and label (colors are already set by template)
 				ui.hp_bar.value = hp_percent
 				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
+			
+			# Update target indicator visibility
+			var is_targeted = (ship == current_secondary_target)
+			ui.target_indicator.visible = is_targeted
+			
+			# # Add pulsing animation to target indicator if targeted
+			# if is_targeted:
+			# 	var pulse_value = (sin(Time.get_ticks_msec() / 1000.0 * 4.0) + 1.0) / 2.0  # Oscillates between 0 and 1
+			# 	var base_color = Color(1, 0.6, 0, 0.9)  # Orange color
+			# 	ui.target_indicator.color = base_color.lerp(Color(1, 1, 0, 1), pulse_value * 0.5)  # Pulse to yellow
 			
 			# Position UI above ship in the world
 			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
@@ -924,29 +983,6 @@ func update_gun_reload_bars():
 			# Update reload progress
 			bar.value = gun.reload
 			
-			# Update color based on reload status and can_fire state
-			# if gun.reload >= 1.0:  # Gun is fully reloaded
-			# 	if gun.can_fire:
-			# 		bar.modulate = Color(0.2, 0.9, 0.8)  # Bright teal - ready to fire
-			# 	else:
-			# 		bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
-			# else:
-			# 	if gun.can_fire:
-			# 		bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
-			# 	else:
-			# 		bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
-
-			# if gun._valid_target:
-			# 	if gun.reload >= 1.0:
-			# 		bar.modulate = Color(0.2, 0.9, 0.8)  # Bright teal - ready to fire
-			# 	# else:
-			# else:
-			# 	if gun.reload >= 1.0:
-			# 		bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
-			# 	# 	bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
-			# 	else:
-			# 		bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
-			
 			# dull if no valid target
 			# bright if valid target
 			# teal if reloaded
@@ -1017,3 +1053,89 @@ func create_floating_damage(damage: int, world_position: Vector3):
 	
 	# Add to the scene
 	add_child(floating_damage)
+
+func setup_consumable_ui():
+	if not camera_controller or not camera_controller._ship:
+		return
+	consumable_template.visible = false
+	
+	var consumable_manager = camera_controller._ship.consumable_manager
+
+	# Create buttons for each consumable slot
+	for i in consumable_manager.equipped_consumables.size():
+		var button: TextureButton = consumable_template.duplicate()
+		button.visible = true
+		button.disabled = false
+		button.connect("pressed", _on_consumable_pressed.bind(i))
+		
+		# Set up initial icon and state
+		var item = consumable_manager.equipped_consumables[i]
+		button.texture_normal = item.icon
+		button.texture_disabled = item.disabled_icon
+
+
+		# Set keyboard shortcut text
+		var shortcut_label: Label = button.get_node("KeyboardShortcutLabel") as Label
+		if i < consumable_actions.size():
+			shortcut_label.text = get_keyboard_shortcut_for_action(consumable_actions[i])
+		else:
+			shortcut_label.text = ""
+
+		consumable_container.add_child(button)
+		
+		consumable_buttons.append(button)
+		consumable_cooldown_bars.append(button.get_node("ProgressBar") as ProgressBar)
+		consumable_shortcut_labels.append(shortcut_label)
+		var count_label: Label = button.get_node("CountLabel") as Label
+		count_label.text = ""
+		consumable_count_labels.append(count_label)
+
+func _on_consumable_pressed(slot: int):
+	if camera_controller and camera_controller._ship:
+		camera_controller._ship.consumable_manager.use_consumable_rpc.rpc_id(1, slot)
+
+func update_consumable_ui():
+	if not camera_controller or not camera_controller._ship:
+		return
+	
+	var consumable_manager = camera_controller._ship.consumable_manager
+	
+	for i in range(consumable_buttons.size()):
+		var button = consumable_buttons[i]
+		var cooldown_bar = consumable_cooldown_bars[i]
+		
+		if i < consumable_manager.equipped_consumables.size():
+			var item: ConsumableItem = consumable_manager.equipped_consumables[i]
+			if item:
+				# Only update dynamic properties
+				# button.disabled = not consumable_manager.can_use_item(item)
+				if item.max_stack != -1:
+					consumable_count_labels[i].text = str(item.current_stack)
+
+				var cooldown_remaining = consumable_manager.cooldowns.get(item.id, 0.0)
+				var effect_remaining = consumable_manager.active_effects.get(item.id, 0.0)
+				# Disable button if no stacks left and no active effect
+				button.disabled = item.current_stack <= 0 and effect_remaining <= 0
+				# Update cooldown display
+				if cooldown_remaining > 0:
+					cooldown_bar.value = (cooldown_remaining / item.cooldown_time) * 100
+					cooldown_bar.modulate = Color(1.0, 1.0, 0.0) # Yellow tint during cooldown
+					cooldown_bar.visible = true
+				elif effect_remaining > 0:
+					cooldown_bar.value = 100 - (effect_remaining / item.duration) * 100
+					cooldown_bar.modulate = Color(0.2, 0.8, 1.0) # Blue tint during effect
+					cooldown_bar.visible = true
+				else:
+					cooldown_bar.visible = false
+			else:
+				button.disabled = true
+
+# Function to set the current secondary target
+func set_secondary_target(target_ship: Ship) -> void:
+	current_secondary_target = target_ship
+	# Target indicators will be updated in the next frame during update_ship_ui()
+
+# Function to clear the current secondary target
+func clear_secondary_target() -> void:
+	current_secondary_target = null
+	# Target indicators will be updated in the next frame during update_ship_ui()

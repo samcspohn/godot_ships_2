@@ -326,7 +326,7 @@ func _physics_process(delta: float) -> void:
 					damage = p.params.damage * 0.1
 					destroyBulletRpc(id, hit_result.explosion_position, HitResult.OVERPENETRATION)
 				ArmorInteraction.HitResult.SHATTER:
-					damage = p.params.damage * 0.025
+					damage = p.params.damage * 0.0
 					destroyBulletRpc(id, hit_result.explosion_position, HitResult.SHATTER)
 				ArmorInteraction.HitResult.RICOCHET:
 					damage = 0.0
@@ -438,7 +438,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 	self.projectiles.set(id, bullet)
 	#print("shell type: ", shell.type)
 	if muzzle_blast:
-		var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
+		var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 		expl.radius = shell.damage / 500
 		get_tree().root.add_child(expl)
 		expl.global_position = pos
@@ -466,7 +466,7 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
 	# Create appropriate visual effects based on hit result
-	var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
+	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 	get_tree().root.add_child(expl)
 	expl.global_position = pos
 
@@ -531,19 +531,9 @@ func resize_multimesh_buffers(new_count: int):
 func apply_fire_damage(projectile: ProjectileData, ship: Ship, hit_position: Vector3):
 	# Apply fire damage (only for HE shells or normal penetrations)
 	if projectile.params.fire_buildup > 0:
-		var fires: Array[Fire] = []
-		for i in range(4):
-			if i == 0:
-				var f = ship.get_node_or_null("Fire")
-				if f:
-					fires.append(f)
-			else:
-				var f = ship.get_node_or_null("Fire" + str(i + 1))
-				if f:
-					fires.append(f)
 		var closest_fire: Fire = null
 		var closest_fire_dist = 1000000000.0
-		for f in fires:
+		for f in ship.fire_manager.fires:
 			var dist = f.global_position.distance_squared_to(hit_position)
 			if dist < closest_fire_dist:
 				closest_fire_dist = dist

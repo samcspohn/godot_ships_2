@@ -1,17 +1,13 @@
-extends Resource
+extends Moddable
 class_name GunParams
 
 @export var reload_time: float
 @export var traverse_speed: float
 @export var elevation_speed: float
-@export var range: float
+@export var _range: float
 @export var shell1: ShellParams
 @export var shell2: ShellParams
-var shell: ShellParams:
-	get:
-		return shell
-	set(value):
-		shell = value
+
 @export var hor_dispersion: float
 @export var vert_dispersion: float
 @export var vert_sigma: float
@@ -23,17 +19,15 @@ func _init() -> void:
 	reload_time = 1
 	traverse_speed = deg_to_rad(40)
 	elevation_speed = deg_to_rad(40)
-	range = 20
-	shell = shell2
+	_range = 20
 
 func from_params(gun_params: GunParams) -> void:
 	reload_time = gun_params.reload_time
 	traverse_speed = gun_params.traverse_speed
 	elevation_speed = gun_params.elevation_speed
-	range = gun_params.range
+	_range = gun_params._range
 	shell1 = gun_params.shell1
 	shell2 = gun_params.shell2
-	shell = gun_params.shell
 	hor_dispersion = gun_params.hor_dispersion
 	vert_dispersion = gun_params.vert_dispersion
 	vert_sigma = gun_params.vert_sigma
@@ -46,7 +40,7 @@ func to_dict() -> Dictionary:
 		"reload_time": reload_time,
 		"traverse_speed": traverse_speed,
 		"elevation_speed": elevation_speed,
-		"range": range,
+		"range": _range,
 		"shell1": {
 			"speed": shell1.speed,
 			"drag": shell1.drag,
@@ -57,7 +51,6 @@ func to_dict() -> Dictionary:
 			"drag": shell2.drag,
 			"damage": shell2.damage
 		},
-		"shell": 0 if shell.type == shell1.type else 1,
 		"hor_dispersion": hor_dispersion,
 		"vert_dispersion": vert_dispersion,
 		"vert_sigma": vert_sigma,
@@ -70,7 +63,7 @@ func from_dict(d: Dictionary) -> void:
 	reload_time = d.get("reload_time", 1)
 	traverse_speed = d.get("traverse_speed", deg_to_rad(40))
 	elevation_speed = d.get("elevation_speed", deg_to_rad(40))
-	range = d.get("range", 20)
+	_range = d.get("range", 20)
 	var s1 = d.get("shell1", {})
 	# shell1 = ShellParams.new()
 	shell1.speed = s1.get("speed", 820)
@@ -81,11 +74,6 @@ func from_dict(d: Dictionary) -> void:
 	shell2.speed = s2.get("speed", 820)
 	shell2.drag = s2.get("drag", 0.00895)
 	shell2.damage = s2.get("damage", 10000)
-	var shell_index = d.get("shell", 0)
-	if shell_index == 0:
-		shell = shell1
-	else:
-		shell = shell2
 	hor_dispersion = d.get("hor_dispersion", 0.001)
 	vert_dispersion = d.get("vert_dispersion", 0.001)
 	vert_sigma = d.get("vert_sigma", 1.0)

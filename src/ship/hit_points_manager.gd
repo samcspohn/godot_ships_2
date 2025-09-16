@@ -20,11 +20,19 @@ func take_damage(dmg: float, _pos: Vector3) -> Array:
 		return [dmg, true]
 	return [dmg, false]
 
+func heal(amount: float) -> float:
+	if sunk:
+		return 0.0
+	if current_hp + amount > max_hp:
+		amount = max_hp - current_hp
+	current_hp += amount
+	return amount
+
 @rpc("any_peer", "reliable", "call_remote")
 func sink():
 	sunk = true
 	if !multiplayer.is_server():
-		var expl: CSGSphere3D = preload("res://src/Shells/explosion.tscn").instantiate()
+		var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 		expl.radius = 300
 		get_tree().root.add_child(expl)
 		expl.position = ship.global_position

@@ -294,11 +294,13 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		elif impact_angle > params.auto_bounce or (impact_angle > params.ricochet_angle and shell.pen < e_armor):
 			result = ArmorResult.RICOCHET
 			shell.velocity = shell.velocity.bounce(hit_normal.normalized())
-			shell.velocity *= cos(impact_angle) # Lose some velocity on ricochet
+			shell.velocity *= cos(PI / 2.0 - impact_angle) # Lose some velocity on ricochet
+			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
 		elif shell.pen < e_armor:
 			result = ArmorResult.SHATTER
 			shell.position -= -shell.velocity.normalized() * 0.01
 			shell.velocity = Vector3.ZERO
+			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
 			
 		else:
 			if hit_node.is_citadel:

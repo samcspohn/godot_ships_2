@@ -1,6 +1,7 @@
-[gd_scene load_steps=20 format=3 uid="uid://b8j0h3k7w5u2e"]
+[gd_scene load_steps=19 format=3 uid="uid://b8j0h3k7w5u2e"]
 
 [ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_camera_ui"]
+[ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="2_ro4ow"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_secondary_bg"]
 bg_color = Color(0.134, 0.212, 0.178, 0.9)
@@ -57,12 +58,6 @@ corner_radius_top_left = 8
 corner_radius_top_right = 8
 corner_radius_bottom_right = 8
 corner_radius_bottom_left = 8
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_throttle"]
-bg_color = Color(0.3, 0.3, 0.3, 0.8)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_rudder"]
-bg_color = Color(0.3, 0.3, 0.3, 0.8)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_bg"]
 bg_color = Color(0.3, 0.3, 0.3, 0.8)
@@ -1682,23 +1677,21 @@ theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 16
 text = "Rudder: Center"
 
-[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
-custom_minimum_size = Vector2(20, 100)
-layout_mode = 2
-theme_override_styles/slider = SubResource("StyleBoxFlat_throttle")
-min_value = -1.0
-max_value = 4.0
-step = 0.1
-editable = false
-
-[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel"]
+[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
 custom_minimum_size = Vector2(150, 20)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_styles/slider = SubResource("StyleBoxFlat_rudder")
 min_value = -1.0
 max_value = 1.0
 step = 0.01
+editable = false
+
+[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+custom_minimum_size = Vector2(20, 100)
+layout_mode = 2
+min_value = -1.0
+max_value = 4.0
+step = 0.1
 editable = false
 
 [node name="BottomCenterPanel" type="VBoxContainer" parent="MainContainer"]
@@ -1751,25 +1744,93 @@ text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel"]
+[node name="UsableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel"]
+layout_mode = 2
+
+[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
 layout_mode = 2
 size_flags_vertical = 8
 
-[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
 button_pressed = true
-text = "Shell 1"
+text = "AP"
 
-[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
-text = "Shell 2"
+text = "HE"
 
-[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/WeaponPanel"]
+[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
-text = "Torpedo"
+text = "TP"
+
+[node name="ConsumableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="ConsumableTemplate" type="TextureButton" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+texture_normal = ExtResource("2_ro4ow")
+ignore_texture_size = true
+stretch_mode = 0
+
+[node name="ProgressBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+value = 50.0
+rounded = true
+fill_mode = 3
+
+[node name="KeyboardShortcutLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -13.0
+offset_bottom = 14.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 10
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CountLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -14.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 10
+text = "3"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="BottomRightPanel" type="Control" parent="MainContainer"]
 layout_mode = 1
@@ -1833,6 +1894,31 @@ text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
 
+[node name="EnemyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = 5.0
+offset_top = -5.0
+offset_right = 25.0
+offset_bottom = 15.0
+grow_horizontal = 0
+color = Color(1, 1, 1, 0)
+
+[node name="EnemyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyTargetIndicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "◉"
+horizontal_alignment = 1
+vertical_alignment = 1
+
 [node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
 custom_minimum_size = Vector2(100, 50)
 layout_mode = 2
@@ -1873,6 +1959,32 @@ grow_vertical = 2
 theme_override_colors/font_color = Color(1, 1, 1, 0.9)
 theme_override_font_sizes/font_size = 10
 text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FriendlyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = 5.0
+offset_top = -5.0
+offset_right = 25.0
+offset_bottom = 15.0
+grow_horizontal = 0
+color = Color(1, 0.6, 0, 0.9)
+
+[node name="FriendlyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyTargetIndicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 12
+text = "◉"
 horizontal_alignment = 1
 vertical_alignment = 1
 

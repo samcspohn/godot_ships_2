@@ -9,5 +9,5 @@ class_name TorpedoLauncherParams
 func from_params(params: TorpedoLauncherParams) -> void:
 	traverse_speed = params.traverse_speed
 	reload_time = params.reload_time
-	range = params.range
+	range = params._range
 	torpedo_params = params.torpedo_params

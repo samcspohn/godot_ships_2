@@ -3,10 +3,12 @@ class_name Ship
 
 var initialized: bool = false
 # Child components
-var movement_controller
-var artillery_controller: ArtilleryController
+@onready var movement_controller: ShipMovementV2 = $Modules/MovementController
+@onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @export var secondary_controllers: Array[SecondaryController]
-var health_controller: HitPointsManager
+@onready var health_controller: HitPointsManager = $Modules/HPManager
+@onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
+@onready var fire_manager: FireManager = $Modules/FireManager
 var torpedo_launcher: TorpedoLauncher
 var stats: Stats
 var control
@@ -17,10 +19,31 @@ var armor_system: ArmorSystemV2
 @export var hull: StaticBody3D
 var armor_parts: Array[ArmorPart] = []
 var aabb: AABB
+var static_mods: Array = [] # applied on _init and when reset_static_mods signal is emitted
+var dynamic_mods: Array = [] # checked every frame for changes, affects _params
+
+# @export var fires: Array[Fire] = []
 
 # Armor system configuration
 @export_file("*.glb") var ship_model_glb_path: String
 @export var auto_extract_armor: bool = true
+
+signal reset_mods # resets static and dynamic to base
+signal reset_dynamic_mods
+
+func add_static_mod(mod_func):
+	static_mods.append(mod_func)
+	_update_static_mods()
+
+func remove_static_mod(mod_func):
+	static_mods.erase(mod_func)
+	_update_static_mods()
+
+func add_dynamic_mod(mod_func):
+	dynamic_mods.append(mod_func)
+	
+func remove_dynamic_mod(mod_func):
+	dynamic_mods.erase(mod_func)
 
 
 func _enable_guns():
@@ -41,16 +64,35 @@ func _disable_guns():
 		for g: Gun in c.guns:
 			g.disabled = true
 
+func _update_static_mods(): # called when changed
+	reset_mods.emit()
+	for mod in static_mods:
+		mod.call(self)
+	#reset_dynamic_mods.emit()
+	_update_dynamic_mods()
+	# update_static_mods.emit()
+
+func _update_dynamic_mods(): # called when updated by signal
+	reset_dynamic_mods.emit()
+	for mod in dynamic_mods:
+		mod.call(self)
+	# update_static_mods.emit()
 
 func _ready() -> void:
 	# Get references to child components
-	movement_controller = $Modules/MovementController
-	artillery_controller = $Modules/ArtilleryController
-	health_controller = $Modules/HPManager
+	# movement_controller = $Modules/MovementController
+	# artillery_controller = $Modules/ArtilleryController
+	# health_controller = $Modules/HPManager
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# consumable_manager = $Modules/ConsumableManager
+	consumable_manager.ship = self
+	# fire_manager = $Modules/FireManager
+	fire_manager._ship = self
 	stats = Stats.new()
 	$Modules.add_child(stats)
 	
+	# for f in fires:
+	# 	f._ship = self
 	# Initialize armor system
 	initialize_armor_system()
 	
@@ -75,6 +117,8 @@ func _physics_process(delta: float) -> void:
 	# Sync ship data to all clients
 	# sync_ship_data()
 
+	#_update_dynamic_mods()
+
 func sync_ship_data() -> Dictionary:
 	var d = {
 		'y': movement_controller.throttle_level,
@@ -84,16 +128,18 @@ func sync_ship_data() -> Dictionary:
 		'b': global_basis,
 		'p': global_position,
 		'h': health_controller.current_hp,
+		'a': {}, # artillery
 		'g': [],
 		's': [],
 		'sc': []
 	}
 	
+	d['a'] = artillery_controller.to_dict()
 	for g in artillery_controller.guns:
 		d.g.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
 	
 	for controller in secondary_controllers:
-		d.sc.append(controller._my_gun_params.to_dict())
+		d.sc.append(controller.to_dict())
 		for g: Gun in controller.guns:
 			d.s.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
 
@@ -126,6 +172,7 @@ func sync(d: Dictionary):
 	health_controller.current_hp = d.h
 	
 	var i = 0
+	artillery_controller.from_dict(d.a)
 	for g in artillery_controller.guns:
 		g.from_dict(d.g[i])
 		i += 1
@@ -133,7 +180,7 @@ func sync(d: Dictionary):
 	i = 0
 	var k = 0
 	for controller in secondary_controllers:
-		controller._my_gun_params.from_dict(d.sc[k])
+		controller.from_dict(d.sc[k])
 		k += 1
 		for s: Gun in controller.guns:
 			s.from_dict(d.s[i])
