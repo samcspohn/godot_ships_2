@@ -34,7 +34,7 @@ func set_movement_input(input_array: Array) -> void:
 	self.target_rudder_value = input_array[1]
 
 func _physics_process(delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 		
 	# Gradually move rudder toward target value

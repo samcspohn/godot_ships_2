@@ -48,7 +48,7 @@ func _ready():
 	smoke.emitting = false
 
 func _physics_process(delta: float) -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		if lifetime > 0:
 			_sync.rpc(lifetime)
 			damage(delta)

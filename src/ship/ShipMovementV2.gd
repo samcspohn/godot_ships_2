@@ -61,7 +61,7 @@ func set_movement_input(input_array: Array) -> void:
 		target_rudder = clamp(float(input_array[1]), -1.0, 1.0)
 
 func _physics_process(delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	
 	# Check for sudden velocity changes (collision detection)

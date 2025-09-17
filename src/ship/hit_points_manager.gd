@@ -31,7 +31,7 @@ func heal(amount: float) -> float:
 @rpc("any_peer", "reliable", "call_remote")
 func sink():
 	sunk = true
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 		expl.radius = 300
 		get_tree().root.add_child(expl)
@@ -46,7 +46,7 @@ func sink():
 		pc.set_process_input(false)
 	ship._disable_guns()
 	#ship.set_physics_process(false)
-	if multiplayer.is_server():
+	if _Utils.authority():
 		sink.rpc()
 
 func is_alive() -> bool:

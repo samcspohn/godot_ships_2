@@ -37,7 +37,7 @@ func _ready() -> void:
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _physics_process(delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	# _my_gun_params.shell = _my_gun_params.shell1
 	var server: GameServer = get_tree().root.get_node_or_null("Server")
@@ -107,7 +107,7 @@ func _physics_process(delta: float) -> void:
 
 # @rpc("any_peer", "call_remote")
 func fire_next_gun() -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		for g in guns:
 			if g.reload >= 1 and g.can_fire:
 				g.fire()

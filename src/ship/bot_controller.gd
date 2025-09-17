@@ -181,7 +181,7 @@ func _physics_process(delta: float):
 	if !ship:
 		return
 	
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	
 	# Scan for targets periodically

@@ -4,6 +4,8 @@ extends Node
 class_name GameServer
 var players = {}
 var player_info = {}
+var disconnected_players = {}  # Store controllers of disconnected players by persistent_id
+var persistent_id_map = {}     # Map persistent IDs to peer IDs
 var game_world = null
 var spawn_point = null
 var team_info = null
@@ -28,7 +30,7 @@ func _ready():
 	# await get_tree().process_frame
 	
 	# # Take the map snapshot only on the server
-	# if multiplayer.is_server():
+	# if _Utils.authority():
 	# 	await Minimap.server_take_map_snapshot(get_viewport())
 
 func _on_peer_connected(id):
@@ -40,32 +42,103 @@ func _on_peer_connected(id):
 
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
-	# Remove player
+	# Store player info for reconnection but don't remove the player entity
 	if players.has(id):
-		pass
-		# players[id][0].queue_free()
-		# players.erase(id)
-		# player_info.erase(id)
+		print("Storing player controller for possible reconnection: ID=" + str(id))
+		
+		# Check if we have a persistent ID for this player
+		var persistent_id = ""
+		for pid in persistent_id_map:
+			if persistent_id_map[pid] == id:
+				persistent_id = pid
+				break
+		
+		if persistent_id != "":
+			var player_ship = players[id][0]
+			var ship_path = players[id][1]
+			var controller = player_ship.control
+			
+			# Store player's last position and ship info
+			disconnected_players[persistent_id] = {
+				"ship": player_ship,
+				"ship_path": ship_path,
+				"position": player_ship.global_position,
+				"controller": controller,
+				"disconnect_time": Time.get_ticks_msec()
+			}
+			
+			print("Stored disconnected player with persistent ID: " + persistent_id)
+			
+			# Disable player input but keep the ship in the world
+			if controller:
+				controller.set_process(false)
+				controller.set_physics_process(false)
+				controller.set_process_input(false)
+		else:
+			print("No persistent ID found for disconnected player " + str(id))
 
-@rpc("any_peer", "call_remote", "reliable")
-func reconnect(id, player_name):
-	# Handle player reconnection
-	if players.has(player_name):
-		var player_data = players[player_name]
-		var player: Ship = player_data[0]
-		player.peer_id = id
-		players[player_name][2] = id  # Update stored peer ID
-		# Notify other players of the reconnection if needed
-		print("Player ", player_name, " reconnected with ID ", id)
-		validate_connection.rpc_id(id)
+# Handle reconnection of a player to their existing ship/controller
+func handle_reconnect(peer_id: int, persistent_id: String, player_name: String):
+	print("Handling reconnection for peer_id=" + str(peer_id) + ", persistent_id=" + persistent_id)
+	
+	# Check if we have this disconnected player stored
+	if disconnected_players.has(persistent_id):
+		var player_data = disconnected_players[persistent_id]
+		var ship = player_data["ship"]
+		var controller = player_data["controller"]
+		
+		if is_instance_valid(ship) and is_instance_valid(controller):
+			print("Found valid ship and controller for reconnection")
+			
+			# Update the ID mapping
+			persistent_id_map[persistent_id] = peer_id
+			
+			# Update player entry with new peer ID if the old entry exists
+			var old_peer_id = -1
+			for pid in players:
+				if players[pid][0] == ship:
+					old_peer_id = pid
+					break
+			
+			if old_peer_id != -1:
+				var ship_data = players[old_peer_id]
+				players.erase(old_peer_id)
+				players[peer_id] = ship_data
+			else:
+				players[peer_id] = [ship, player_data["ship_path"]]
+			
+			# Re-enable the controller for the new connection
+			controller.set_process(true)
+			controller.set_physics_process(true)
+			controller.set_process_input(true)
+			
+			# Remove from disconnected players
+			disconnected_players.erase(persistent_id)
+			
+			# Notify the client of successful reconnection
+			reconnect_success.rpc_id(peer_id, player_name)
+			
+			# Notify client about current player states for sync
+			for pid in players:
+				var p: Ship = players[pid][0]
+				var p_ship = players[pid][1]
+				if p != ship:  # Don't need to tell about own ship
+					spawn_players_client.rpc_id(peer_id, pid, p.name, p.global_position, p.team.team_id, p_ship)
+			
+			return true
+		else:
+			print("Ship or controller is no longer valid for reconnection")
 	else:
-		print("No existing player data for ", player_name)
-		# spawn_player(id, player_name)
+		print("No disconnected player found with persistent ID: " + persistent_id)
+	
+	# If reconnection failed, spawn as a new player
+	print("Reconnection failed. Spawning as new player")
+	spawn_player(peer_id, player_name)
+	return false
 
-@rpc("authority", "call_remote", "reliable")
-func validate_connection():
-	# Implement validation logic if needed
-	NetworkManager.player_controller_connected = true
+@rpc("call_remote", "reliable")
+func reconnect_success(player_name: String):
+	print("Successfully reconnected player: " + player_name)
 
 func spawn_player(id, player_name):
 	print("spawn_player called with ID: ", id, ", player_name: ", player_name)
@@ -101,7 +174,7 @@ func spawn_player(id, player_name):
 	# 		}
 	# 	}
 	# }
-	if players.has(player_name):
+	if players.has(id):
 		return
 	
 	#join_game.rpc_id(id)
@@ -119,9 +192,8 @@ func spawn_player(id, player_name):
 	var ship = team_data["ship"]
 	var is_bot = team_data.get("is_bot", false)
 	var player: Ship = load(ship).instantiate()
-	player.peer_id = id
 	#print(player_name)
-	player.name = player_name
+	player.name = str(id)
 	player._enable_guns()
 	var tl = player.get_node_or_null("TorpedoLauncher")
 	if tl:
@@ -154,9 +226,14 @@ func spawn_player(id, player_name):
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
+		
+		# Store persistent ID mapping for reconnection
+		var persistent_id = str(id) + "_" + player_name
+		persistent_id_map[persistent_id] = id
+		print("Stored persistent ID mapping: " + persistent_id + " -> " + str(id))
 	
 	# Add to world - note game_world is a child of this node
-	players[player_name] = [player, ship, id]
+	players[id] = [player, ship]
 
 	var map = get_node("GameWorld/Env").get_child(0)
 	var team_spawn_point: Vector3 = (map.get_node("Spawn").get_child(team_id) as Node3D).global_position
@@ -171,10 +248,9 @@ func spawn_player(id, player_name):
 	player.rotate(Vector3.UP,spawn_pos.angle_to(player.global_transform.basis.z))
 
 	#join_game.rpc_id(id)
-	for p_name in players:
-		var p: Ship = players[p_name][0]
-		var p_ship = players[p_name][1]
-		var pid = players[p_name][2]
+	for pid in players:
+		var p: Ship = players[pid][0]
+		var p_ship = players[pid][1]
 		# notify new client of current players
 		if not is_bot:
 			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.team.team_id, p_ship)
@@ -213,13 +289,13 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 
 	if !Minimap.is_initialized:
 		Minimap.server_take_map_snapshot(get_viewport())
-	if players.has(_player_name):
+	if players.has(id):
 		return
 
 	var player: Ship = load(ship).instantiate()
-	player.name = _player_name
-	
+	player.name = str(id)
 	player._enable_guns()
+	
 	
 	# Check if this is the local player or a bot by checking team info
 	var is_local_player = (id == multiplayer.get_unique_id())
@@ -235,8 +311,6 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	
 	# Only add player control for local human player
 	if is_local_player and not is_bot:
-		NetworkManager.player_controller_connected = true
-
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
@@ -250,7 +324,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	player.team = team_
 	
 	# Add to world - note game_world is a child of this node
-	players[_player_name] = [player, ship, id]
+	players[id] = [player, ship]
 	spawn_point.add_child(player)
 	
 	#player.global_position = pos
@@ -264,18 +338,18 @@ func join_game():
 
 func _get_enemy_ships(team_id: int) -> Array:
 	var enemies: Array = []
-	for p_name in players:
+	for p in players:
 		# print("Checking player ID: ", p, (players[p][0] as Ship).health_controller.current_hp)
-		var ship: Ship = players[p_name][0]
+		var ship: Ship = players[p][0]
 		if is_instance_valid(ship) and ship.team.team_id != team_id:
 			enemies.append(ship)
 	return enemies
 
 func get_team_ships(team_id: int) -> Array:
 	var team_ships: Array = []
-	for p_name in players:
+	for p in players:
 		# print("Checking player ID: ", p, " current HP: ", (players[p][0] as Ship).health_controller.current_hp)
-		var ship: Ship = players[p_name][0]
+		var ship: Ship = players[p][0]
 		if is_instance_valid(ship) and ship.team.team_id == team_id:
 			team_ships.append(ship)
 	return team_ships
@@ -307,7 +381,7 @@ func get_all_ships() -> Array:
 # 		# ship.set_input(data.get("input", [0,0]), data.get("aim_point", Vector3.ZERO))
 
 func _physics_process(_delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var ray_query = PhysicsRayQueryParameters3D.new()
@@ -323,15 +397,13 @@ func _physics_process(_delta: float) -> void:
 		else:
 			ship.visible_to_enemy = false
 	
-	for p_name in players.size() - 1:
-		var p: Ship = players[players.keys()[p_name]][0]
-		var p_id = players[players.keys()[p_name]][2]
+	for p_id in players.size() - 1:
+		var p: Ship = players[players.keys()[p_id]][0]
 		ray_query.from = p.global_position
 		ray_query.from.y = 1.0
 		# var d = p.sync_ship_data() 
-		for p_name2 in range(p_id + 1,players.size()):
-			var p2: Ship = players[players.keys()[p_name2]][0]
-			var _p2_id = players[players.keys()[p_name2]][2]
+		for p_id2 in range(p_id + 1,players.size()):
+			var p2: Ship = players[players.keys()[p_id2]][0]
 			if p.team.team_id != p2.team.team_id and p.health_controller.is_alive() and p2.health_controller.is_alive(): # other team
 				ray_query.to = p2.global_position
 				ray_query.to.y = 1.0
@@ -340,14 +412,12 @@ func _physics_process(_delta: float) -> void:
 					p.visible_to_enemy = true
 					p2.visible_to_enemy = true
 		
-	for p_name in players: # for every player, synchronize self with others
-		var p: Ship = players[p_name][0]
-		var _p_id = players[p_name][2]
+	for pid in players: # for every player, synchronize self with others
+		var p: Ship = players[pid][0]
 		var d = p.sync_ship_data()
 		d['vs'] = p.visible_to_enemy
-		for p_name2 in players: # every other player
-			var p2: Ship = players[p_name2][0]
-			var pid2 = players[p_name2][2]
+		for pid2 in players: # every other player
+			var p2: Ship = players[pid2][0]
 			if not p2.team.is_bot: # player to sync with is not bot
 				if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
 					p.sync.rpc_id(pid2, d) # sync self to other player

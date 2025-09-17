@@ -1,0 +1,191 @@
+# src/autoload/network_manager.gd
+extends Node
+
+enum ConnectionType {
+	DISCONNECTED,
+	CONNECTING,
+	CONNECTED,
+	SERVER,
+	MATCHMAKER
+}
+
+var current_connection_type = ConnectionType.DISCONNECTED
+var network_peer: ENetMultiplayerPeer = null
+var persistent_player_id = ""  # Store a persistent ID for reconnection
+# src/autoload/network_manager.gd
+extends Node
+
+enum ConnectionType {
+	DISCONNECTED,
+	CONNECTING,
+	CONNECTED,
+	SERVER,
+	MATCHMAKER
+}
+
+var current_connection_type = ConnectionType.DISCONNECTED
+var network_peer: ENetMultiplayerPeer = null
+var player_name = ""  # Player name is our permanent identifier
+var reconnect_info = {
+    "address": "",
+    "port": 0,
+    "ship": "",
+    "was_connected": false,
+    "reconnect_attempts": 0,
+    "max_reconnect_attempts": 5,
+    "reconnect_delay": 2.0  # Seconds between reconnect attempts
+}
+
+signal connection_failed
+signal connection_succeeded
+signal server_disconnected
+signal reconnection_failed
+signal reconnection_succeeded
+
+signal connection_failed
+signal connection_succeeded
+signal server_disconnected
+signal reconnection_failed
+signal reconnection_succeeded
+
+var reconnect_timer: Timer
+
+func _ready():
+	# Setup signal connections for the multiplayer system
+	multiplayer.connected_to_server.connect(_on_connected_to_server)
+	multiplayer.connection_failed.connect(_on_connection_failed)
+	multiplayer.server_disconnected.connect(_on_server_disconnected)
+	
+	# Create a timer for reconnection attempts
+	reconnect_timer = Timer.new()
+	reconnect_timer.one_shot = true
+	reconnect_timer.timeout.connect(_attempt_reconnect)
+	add_child(reconnect_timer)
+
+func create_client(address: String, port: int):
+	print("Attempting to connect to: ", address, ":", port)
+	network_peer = ENetMultiplayerPeer.new()
+	var error = network_peer.create_client(address, port)
+	
+	if error != OK:
+		print("Failed to create client: ", error)
+		emit_signal("connection_failed")
+		
+		# If this was a reconnection attempt, try again after delay
+		if reconnect_info.was_connected and reconnect_info.reconnect_attempts < reconnect_info.max_reconnect_attempts:
+			reconnect_timer.wait_time = reconnect_info.reconnect_delay
+			reconnect_timer.start()
+		return
+	
+	# Store connection info for potential reconnection
+	reconnect_info.address = address
+	reconnect_info.port = port
+	
+	multiplayer.multiplayer_peer = network_peer
+	current_connection_type = ConnectionType.CONNECTING
+	print("Client created, connecting...")
+
+func create_server(port: int, max_players: int):
+	network_peer = ENetMultiplayerPeer.new()
+	var error = network_peer.create_server(port, max_players)
+	
+	if error != OK:
+		print("Failed to create server: ", error)
+		return
+	
+	multiplayer.multiplayer_peer = network_peer
+	current_connection_type = ConnectionType.SERVER
+	print("Server created on port: ", port)
+
+func disconnect_network():
+	if network_peer:
+		network_peer.close()
+	current_connection_type = ConnectionType.DISCONNECTED
+	print("Network disconnected")
+	
+	# Reset reconnection status - don't clear persistent_player_id
+	reconnect_info.was_connected = false
+	reconnect_info.reconnect_attempts = 0
+	
+	if reconnect_timer.is_stopped() == false:
+		reconnect_timer.stop()
+
+# Signal handlers
+func _on_connected_to_server():
+	print("Successfully connected to server")
+	current_connection_type = ConnectionType.CONNECTED
+	
+	reconnect_info.was_connected = true
+	reconnect_info.reconnect_attempts = 0
+	
+	if persistent_player_id != "":
+		# If we have a persistent ID, this is a reconnection
+		print("Reconnected to server with persistent ID: " + persistent_player_id)
+		request_reconnect.rpc_id(1, persistent_player_id, reconnect_info.player_name)
+		emit_signal("reconnection_succeeded")
+	else:
+		# This is a first-time connection
+		emit_signal("connection_succeeded")
+
+func _on_connection_failed():
+	print("Connection failed")
+	current_connection_type = ConnectionType.DISCONNECTED
+	emit_signal("connection_failed")
+
+func _on_server_disconnected():
+	print("Server disconnected")
+	current_connection_type = ConnectionType.DISCONNECTED
+	emit_signal("server_disconnected")
+	
+	# Start reconnection process if we have reconnect info
+	if reconnect_info.was_connected and reconnect_info.address != "" and reconnect_info.port != 0:
+		print("Attempting to reconnect in " + str(reconnect_info.reconnect_delay) + " seconds...")
+		reconnect_info.reconnect_attempts = 0
+		reconnect_timer.wait_time = reconnect_info.reconnect_delay
+		reconnect_timer.start()
+
+func _attempt_reconnect():
+	if reconnect_info.reconnect_attempts >= reconnect_info.max_reconnect_attempts:
+		print("Maximum reconnection attempts reached. Giving up.")
+		emit_signal("reconnection_failed")
+		return
+	
+	reconnect_info.reconnect_attempts += 1
+	print("Reconnection attempt " + str(reconnect_info.reconnect_attempts) + "/" + 
+		str(reconnect_info.max_reconnect_attempts))
+	
+	create_client(reconnect_info.address, reconnect_info.port)
+	# Wait for connection result
+
+# Function to store player information for reconnection
+func store_player_info(player_name: String, ship: String = ""):
+	persistent_player_id = str(multiplayer.get_unique_id()) + "_" + player_name
+	reconnect_info.player_name = player_name
+	reconnect_info.ship = ship
+	print("Stored persistent player ID: " + persistent_player_id)
+
+# Adding the request_spawn RPC function
+@rpc("any_peer", "call_remote")
+func request_spawn(id, player_name):
+	if _Utils.authority():
+		# Get the game server node - adjust path as needed
+		var server: GameServer = get_tree().root.get_node_or_null("Server")
+		if server:
+			server.spawn_player(id, player_name)
+		else:
+			print(ConnectionType.keys()[current_connection_type])
+			print("ERROR: GameServer node not found")
+
+# Adding the request_reconnect RPC function
+@rpc("any_peer", "call_remote")
+func request_reconnect(persistent_id, player_name):
+	if _Utils.authority():
+		# Get the game server node - adjust path as needed
+		var server: GameServer = get_tree().root.get_node_or_null("Server")
+		if server:
+			var peer_id = multiplayer.get_remote_sender_id()
+			print("Reconnection request received from peer " + str(peer_id) + 
+				" with persistent ID: " + str(persistent_id))
+			server.handle_reconnect(peer_id, persistent_id, player_name)
+		else:
+			print("ERROR: GameServer node not found for reconnection")

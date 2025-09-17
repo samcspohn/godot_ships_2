@@ -41,7 +41,7 @@ func set_aim_input(target_point: Vector3) -> void:
 	aim_point = target_point
 
 func _physics_process(delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 		
 	# Aim all guns toward the target point
@@ -67,7 +67,7 @@ func fire_next_ready_gun() -> void:
 
 @rpc("any_peer", "call_remote")
 func select_shell(_shell_index: int) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	shell_index = clamp(_shell_index, 0, 1)
 	#for gun in guns:

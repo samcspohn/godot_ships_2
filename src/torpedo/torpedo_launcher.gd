@@ -38,7 +38,7 @@ func _ready() -> void:
 	update_barrels()
 	
 	# Set processing mode based on authority
-	if multiplayer.is_server():
+	if _Utils.authority():
 		process_mode = Node.PROCESS_MODE_INHERIT
 	else:
 		# We still need to receive updates, just not run physics
@@ -63,7 +63,7 @@ func _set_reload(r):
 	reload = r
 
 func _physics_process(delta: float) -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		if !disabled && reload < 1.0:
 			reload += delta / params.reload_time
 			_set_reload.rpc_id(int(str(get_parent().get_parent().name)), reload)
@@ -289,7 +289,7 @@ func normalize_angle(angle: float) -> float:
 
 @rpc("any_peer", "call_remote")
 func fire() -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		if !disabled and reload >= 1.0 and can_fire:
 			# Fire torpedo
 			reload = 0.0

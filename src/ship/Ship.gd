@@ -22,6 +22,8 @@ var aabb: AABB
 var static_mods: Array = [] # applied on _init and when reset_static_mods signal is emitted
 var dynamic_mods: Array = [] # checked every frame for changes, affects _params
 
+var peer_id: int = -1 # our unique peer ID assigned by server
+
 # @export var fires: Array[Fire] = []
 
 # Armor system configuration
@@ -97,7 +99,7 @@ func _ready() -> void:
 	initialize_armor_system()
 	
 	initialized = true
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
 	
 	self.collision_layer = 1 << 2
@@ -110,7 +112,7 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 	artillery_controller.set_aim_input(aim_point)
 
 func _physics_process(delta: float) -> void:
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	if torpedo_launcher != null:
 		torpedo_launcher._aim(artillery_controller.aim_point, delta)
@@ -131,7 +133,8 @@ func sync_ship_data() -> Dictionary:
 		'a': {}, # artillery
 		'g': [],
 		's': [],
-		'sc': []
+		'sc': [],
+		'cons': consumable_manager.to_dict(),
 	}
 	
 	d['a'] = artillery_controller.to_dict()
@@ -170,6 +173,7 @@ func sync(d: Dictionary):
 	movement_controller.throttle_level = d.y
 	linear_velocity = d.v
 	health_controller.current_hp = d.h
+	consumable_manager.from_dict(d.cons)
 	
 	var i = 0
 	artillery_controller.from_dict(d.a)

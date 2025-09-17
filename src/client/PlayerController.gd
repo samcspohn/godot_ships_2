@@ -48,7 +48,7 @@ func _ready() -> void:
 	#hp_manager = ship.get_node("HPManager")
 	#secondary_controller = ship.get_node_or_null("Secondaries")
 	# Initialize secondary controller if it exists
-	if multiplayer.is_server():
+	if _Utils.authority():
 		set_process(false)
 		set_process_input(false)
 		set_physics_process(false)
@@ -62,10 +62,10 @@ func _ready() -> void:
 		mouse_captured = true
 
 
-func secondary_upgrade(ship: Ship) -> void:
+func secondary_upgrade(_ship: Ship) -> void:
 	# Implement secondary upgrade logic here
 	# For example, you might want to increase the range and reload time of secondary guns
-	for c in ship.secondary_controllers:
+	for c in _ship.secondary_controllers:
 		c.params.static_mod._range *= 2.0
 		c.params.static_mod.reload_time *= 0.6
 
@@ -411,7 +411,7 @@ func process_player_input() -> void:
 		target_rudder_value = 0.0
 	
 	# Create movement input array
-	var movement_input = [float(throttle_level), target_rudder_value]
+	var input_array = [float(throttle_level), target_rudder_value, cam.aim_position]
 	
 	# Get aiming point from ray
 	#var aim_point: Vector3
@@ -421,23 +421,27 @@ func process_player_input() -> void:
 		#aim_point = ray.global_position + Vector3(ray.global_basis.z.x, 0, ray.global_basis.z.z).normalized() * -50000
 	
 	# Send separated inputs to server
-	send_movement_input.rpc_id(1, movement_input)
-	send_aim_input.rpc_id(1, cam.aim_position)
+
+	# if NetworkManager.is_connected:
+	if _Utils.is_multiplayer_active():
+		send_input.rpc_id(1, input_array)
+	# send_aim_input.rpc_id(1, cam.aim_position)
 	
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func send_movement_input(movement_input: Array) -> void:
-	if multiplayer.is_server():
+func send_input(movement_input: Array) -> void:
+	if _Utils.authority():
 		# Forward movement input to ship movement controller
-		ship.movement_controller.set_movement_input(movement_input)
+		ship.movement_controller.set_movement_input([movement_input[0], movement_input[1]])
+		ship.artillery_controller.set_aim_input(movement_input[2])
 
-@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func send_aim_input(aim_point: Vector3) -> void:
-	if multiplayer.is_server():
-		# Forward aim input to ship artillery controller
-		ship.artillery_controller.set_aim_input(aim_point)
+# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+# func send_aim_input(aim_point: Vector3) -> void:
+# 	if _Utils.authority():
+# 		# Forward aim input to ship artillery controller
+# 		ship.artillery_controller.set_aim_input(aim_point)
 
 func select_weapon(idx: int) -> void:
 	selected_weapon = idx

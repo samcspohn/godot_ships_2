@@ -21,21 +21,32 @@ func _ready():
 		i += 1
 
 
+func to_dict() -> Dictionary:
+	var equipped_list = []
+	for item in equipped_consumables:
+		if item:
+			equipped_list.append(item.to_dict())
+		else:
+			equipped_list.append(null)
+	return {
+		"equipped_consumables": equipped_list,
+		"cooldowns": cooldowns,
+		"active_effects": active_effects
+	}
+
+func from_dict(data: Dictionary) -> void:
+	var equipped_list = data.get("equipped_consumables", [])
+	for i in range(equipped_list.size()):
+		if i < equipped_consumables.size() and equipped_list[i]:
+			equipped_consumables[i].from_dict(equipped_list[i])
+	cooldowns = data.get("cooldowns", {})
+	active_effects = data.get("active_effects", {})
+
 func _process(delta):
-	if !multiplayer.is_server():
+	if !(_Utils.authority()):
 		return
 	update_cooldowns(delta)
 	update_active_effects(delta)
-	if ship and ship.team and !ship.team.is_bot:
-		var _equipped = []
-		for item in equipped_consumables:
-			if item:
-				_equipped.append(item.to_dict())
-		_sync.rpc_id(int(ship.name), {
-			"cooldowns": cooldowns,
-			"active_effects": active_effects,
-			"equipped_consumables": _equipped
-		})
 
 func equip_consumable(item: ConsumableItem, slot: int):
 	if slot < equipped_consumables.size():
@@ -87,14 +98,5 @@ func update_active_effects(delta: float):
 
 @rpc("any_peer", "call_local", "reliable")
 func use_consumable_rpc(slot: int):
-	if multiplayer.is_server():
+	if _Utils.authority():
 		use_consumable(slot)
-	
-@rpc("authority", "call_remote", "unreliable_ordered")
-func _sync(data: Dictionary):
-	cooldowns = data.get("cooldowns", cooldowns)
-	active_effects = data.get("active_effects", active_effects)
-	var _equipped = data.get("equipped_consumables", [])
-
-	for i in range(_equipped.size()):
-		equipped_consumables[i].from_dict(_equipped[i])

@@ -1,22 +1,32 @@
 # src/client/main_menu_ui.gd
 extends Control
 
-@onready var connect_button = $VBoxContainer/ConnectButton
-@onready var single_player_button = $VBoxContainer/SinglePlayerButton
-@onready var ip_input = $VBoxContainer/IPInput
-@onready var name_input = $VBoxContainer/NameInput
-@onready var status_label = $VBoxContainer/StatusLabel
+@onready var connect_button: Button = $VBoxContainer/ConnectButton
+@onready var single_player_button: Button = $VBoxContainer/SinglePlayerButton
+@onready var ip_input: LineEdit = $VBoxContainer/IPInput
+@onready var name_input: LineEdit = $VBoxContainer/NameInput
+@onready var status_label: Label = $VBoxContainer/StatusLabel
 @onready var ship_button_container = $ScrollContainer/HBoxContainer
 var dock_node  # Will be set by the main scene
-var udp
+var udp: PacketPeerUDP = null
 var lobby
 var selected_ship
 var ship_scenes = []
+var waiting: bool = false
+var pulse_time: float = 0.0
+var original_modulate: Color
 
 func _ready():
 	connect_button.pressed.connect(_on_connect_pressed)
 	single_player_button.pressed.connect(_on_single_player_pressed)
 	_load_ship_buttons()
+	original_modulate = connect_button.modulate
+
+	# Hook up network signals similar to the old lobby
+	# if Engine.has_singleton("NetworkManager"):
+	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
+	NetworkManager.connection_failed.connect(_on_connection_failed)
+	# NetworkManager.server_disconnected.connect(_on_server_disconnected)
 
 func set_dock_node(dock: Node3D):
 	dock_node = dock
@@ -64,17 +74,48 @@ func _on_ship_button_pressed(ship_path):
 func _on_connect_pressed():
 	if GameSettings.selected_ship == "":
 		return
-	# Update game settings
+
+	if waiting:
+		# Leave queue
+		if udp:
+			var leave_packet = {
+				"request": "leave_queue",
+				"player_name": GameSettings.player_name,
+			}
+			udp.put_packet(JSON.stringify(leave_packet).to_utf8_buffer())
+			udp = null
+		_stop_waiting()
+		status_label.text = "Left queue."
+		return
+
+	# Start waiting
 	GameSettings.player_name = name_input.text
 	GameSettings.matchmaker_ip = ip_input.text
-	GameSettings.is_single_player = false  # Explicitly set to false for multiplayer
+	GameSettings.is_single_player = false
 	GameSettings.save_settings()
-	
+
+	udp = PacketPeerUDP.new()
+	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
+
+	var packet = {
+		"request": "request_server",
+		"player_name": GameSettings.player_name,
+		"selected_ship": GameSettings.selected_ship,
+		"single_player": GameSettings.is_single_player
+	}
+	udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+
 	status_label.text = "Connecting to matchmaker..."
-	get_tree().change_scene_to_file("res://scenes/lobby.tscn")
+	waiting = true
+	single_player_button.disabled = true
+	connect_button.text = "waiting..."
+	connect_button.modulate = Color(1,0.5,0,1)
+	pulse_time = 0.0
 
 func _on_single_player_pressed():
 	if GameSettings.selected_ship == "":
+		return
+	if waiting:
 		return
 	# Update game settings for single player
 	GameSettings.player_name = name_input.text
@@ -83,4 +124,44 @@ func _on_single_player_pressed():
 	GameSettings.save_settings()
 	
 	status_label.text = "Starting single player game..."
-	get_tree().change_scene_to_file("res://scenes/lobby.tscn")
+	get_tree().change_scene_to_file("res://src/server/server.tscn")
+
+func _process(delta: float) -> void:
+	if waiting:
+		pulse_time += delta
+		var pulse = (sin(pulse_time * 4.0) + 1.0) * 0.5
+		var orange = Color(1.0, 0.5, 0.0)
+		connect_button.modulate = orange.lerp(original_modulate, 1.0 - pulse)
+
+	if not udp:
+		return
+
+	if udp.get_available_packet_count() != 0:
+		var server_info = bytes_to_var(udp.get_packet())
+		if server_info:
+			print(server_info)
+			status_label.text = "Server allocated. Connecting to game server..."
+			GameSettings.player_name = server_info.player_id
+			NetworkManager.create_client(server_info.ip, server_info.port)
+			GameSettings.is_single_player = false
+			GameSettings.save_settings()
+		else:
+			status_label.text = "Failed to connect to server."
+		udp = null
+		_stop_waiting()
+
+func _on_connection_succeeded():
+	status_label.text = "Connected to server!"
+	GameSettings.is_single_player = false
+	GameSettings.save_settings()
+	get_tree().call_deferred("change_scene_to_file", "res://src/server/server.tscn")
+
+func _on_connection_failed():
+	status_label.text = "Failed to connect to server."
+
+
+func _stop_waiting():
+	waiting = false
+	single_player_button.disabled = false
+	connect_button.text = "Connect"
+	connect_button.modulate = original_modulate

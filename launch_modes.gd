@@ -9,6 +9,7 @@ enum LaunchMode {
 }
 
 var launch_mode = LaunchMode.CLIENT
+var player_name = ""
 
 func _ready():
 	# Parse command-line arguments
@@ -20,6 +21,12 @@ func _ready():
 		launch_mode = LaunchMode.MATCHMAKER
 	#elif "--local" in args:
 		#launch_mode = LaunchMode.LOCAL_HOST
+		
+	# Check for name parameter
+	for i in range(args.size()):
+		if args[i] == "--name" and i + 1 < args.size():
+			player_name = args[i + 1]
+			GameSettings.player_name = player_name
 	
 	# Initialize based on launch mode
 	match launch_mode:

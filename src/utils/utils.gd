@@ -63,3 +63,9 @@ func draw_debug_arrow(start: Vector3, end: Vector3, color: Color) -> void:
 	
 	# Update the material color
 	debug_instance.material_override.albedo_color = color
+
+func authority() -> bool:
+	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server()
+
+func is_multiplayer_active() -> bool:
+	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED

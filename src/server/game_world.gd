@@ -2,7 +2,7 @@ extends Node
 
 
 func _ready():
-	if multiplayer.is_server():
+	if _Utils.authority():
 		# Server-side setup
 		print("Game world initialized on server")
 	else:
@@ -11,7 +11,9 @@ func _ready():
 
 		get_node("Camera3D").queue_free()
 		
-		# Request to spawn our player
-		var client_id = multiplayer.get_unique_id()
-		NetworkManager.request_spawn.rpc_id(1, client_id, GameSettings.player_name)
+		# Request to spawn our player - no need to send client_id, server will use the sender ID
+		NetworkManager.request_spawn.rpc_id(1, multiplayer.get_unique_id(), GameSettings.player_name)
+		
+		# Also store player info for potential reconnection
+		#NetworkManager.store_player_info(GameSettings.player_name, GameSettings.selected_ship)
 		

@@ -68,7 +68,7 @@ func _ready() -> void:
 	update_barrels()
 	
 	# Set processing mode based on authority
-	if multiplayer.is_server():
+	if _Utils.authority():
 		process_mode = Node.PROCESS_MODE_INHERIT
 	else:
 		# We still need to receive updates, just not run physics
@@ -101,7 +101,7 @@ func update_barrels() -> void:
 # 	reload = r
 
 func _physics_process(delta: float) -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		if !disabled && reload < 1.0:
 			reload += delta / get_params().reload_time
 
@@ -439,7 +439,7 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	_aim(sol[2], delta, true)
 
 func fire():
-	if multiplayer.is_server():
+	if _Utils.authority():
 		if !disabled && reload >= 1.0 and can_fire:
 			for m in muzzles:
 				var dispersed_velocity = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position, get_shell().speed, get_shell().drag)
