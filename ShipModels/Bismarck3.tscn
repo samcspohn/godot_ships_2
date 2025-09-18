@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=19 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://ShipModels/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -15,6 +15,7 @@
 [ext_resource type="Resource" uid="uid://cgmx8b43b3tfn" path="res://src/Fire/Fire.tres" id="9_7aqce"]
 [ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://src/ship/wake/wake_emitter.tscn" id="9_dyl6l"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
+[ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/ship/Upgrades/upgrade.gd" id="13_5tc2e"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
@@ -67,6 +68,9 @@ guns = [NodePath("../../Hull/150mmTurret"), NodePath("../../Hull/150mmTurret_001
 [node name="DispersionCalculator2" type="Node" parent="Modules" index="8"]
 script = ExtResource("4_e85dw")
 base_spread = 0.05
+
+[node name="Upgrades" parent="Modules" index="9"]
+upgrades = Array[ExtResource("13_5tc2e")]([null, null, null])
 
 [node name="FireNodes" type="Node3D" parent="." index="1"]
 

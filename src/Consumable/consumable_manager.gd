@@ -11,14 +11,23 @@ signal consumable_used(item: ConsumableItem)
 signal consumable_ready(item: ConsumableItem)
 
 func _ready():
-	# ship = get_parent().get_parent()
-	var i = 0
-	for item in equipped_consumables:
-		item.id = i
-		item.current_stack = item.max_stack
-		if item.max_stack == -1:
-			item.current_stack = 1  # Infinite uses, but show as 1
-		i += 1
+	ship = get_parent().get_parent()
+	for i in range(equipped_consumables.size()):
+		if equipped_consumables[i]:
+			equipped_consumables[i] = equipped_consumables[i].duplicate(true)
+			equipped_consumables[i].init(ship)
+			equipped_consumables[i].id = i
+			equipped_consumables[i].current_stack = equipped_consumables[i].max_stack
+			if equipped_consumables[i].max_stack == -1:
+				equipped_consumables[i].current_stack = 1  # Infinite uses, but show as 1
+	# for item in equipped_consumables:
+	# 	item = item.duplicate(true)
+	# 	item.init(ship)
+	# 	item.id = i
+	# 	item.current_stack = item.max_stack
+	# 	if item.max_stack == -1:
+	# 		item.current_stack = 1  # Infinite uses, but show as 1
+	# 	i += 1
 
 
 func to_dict() -> Dictionary:

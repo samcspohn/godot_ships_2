@@ -300,7 +300,7 @@ func _load_and_apply_player_upgrades(ship: Ship, player_name: String) -> void:
 	for slot_str in upgrades:
 		var upgrade_path = upgrades[slot_str]
 		if upgrade_path and not upgrade_path.is_empty():
-			var success = UpgradeManager.apply_upgrade_to_ship(ship, upgrade_path)
+			var success = UpgradeManager.apply_upgrade_to_ship(ship, int(slot_str), upgrade_path)
 			if success:
 				print("Applied upgrade to ship: ", upgrade_path)
 			else:

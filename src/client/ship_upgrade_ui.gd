@@ -188,7 +188,7 @@ func _on_upgrade_item_pressed(upgrade_index: int):
 	
 	# Apply the upgrade to the ship through the upgrade manager
 	if ship_ref:
-		upgrade_manager.apply_upgrade_to_ship(ship_ref, upgrade.path)
+		upgrade_manager.apply_upgrade_to_ship(ship_ref, current_slot_selected, upgrade.path)
 	
 	# Update the button text
 	_update_slot_buttons()

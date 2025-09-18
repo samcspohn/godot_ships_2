@@ -226,12 +226,12 @@ func _on_upgrade_removed(slot_index: int):
 	# Note: The UI now directly removes the upgrade from the ship via UpgradeManager
 	# so we don't need to remove it here
 
-func _apply_upgrade_to_ship(ship: Ship, _slot_index: int, upgrade_path: String):
+func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
 	# Use the UpgradeManager to apply the upgrade
 	if upgrade_path.is_empty():
 		return
 		
-	var success = upgrade_manager.apply_upgrade_to_ship(ship, upgrade_path)
+	var success = upgrade_manager.apply_upgrade_to_ship(ship, slot_index, upgrade_path)
 	if success:
 		print("Applied upgrade to ship: ", upgrade_path)
 	else:
