@@ -27,6 +27,7 @@ func _ready():
 		if args[i] == "--name" and i + 1 < args.size():
 			player_name = args[i + 1]
 			GameSettings.player_name = player_name
+			GameSettings.load_settings()
 	
 	# Initialize based on launch mode
 	match launch_mode:

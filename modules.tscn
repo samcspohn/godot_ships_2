@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://5qbpr6jjvoj6"]
+[gd_scene load_steps=9 format=3 uid="uid://5qbpr6jjvoj6"]
 
 [ext_resource type="Script" uid="uid://c8na862s28shq" path="res://src/artillary/dispersion_calculator.gd" id="1_h5dn7"]
 [ext_resource type="PackedScene" uid="uid://dmabeflns107f" path="res://src/ship/HitPointsManager.tscn" id="2_dniq6"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" uid="uid://5i3h4gyrrmjv" path="res://src/artillary/SecondaryController.tscn" id="5_l3md2"]
 [ext_resource type="PackedScene" uid="uid://bi65dj6qt0g8g" path="res://src/Consumable/ConsumableManager.tscn" id="6_dniq6"]
 [ext_resource type="PackedScene" uid="uid://blvke4gmq0asw" path="res://src/Fire/fireManager.tscn" id="7_j72gg"]
+[ext_resource type="PackedScene" uid="uid://ds67u3dqvrwk2" path="res://src/ship/Upgrades/Upgrades.tscn" id="8_1t3ll"]
 
 [node name="Modules" type="Node"]
 
@@ -25,3 +26,5 @@ max_hp = 56000.0
 [node name="ConsumableManager" parent="." instance=ExtResource("6_dniq6")]
 
 [node name="FireManager" parent="." instance=ExtResource("7_j72gg")]
+
+[node name="Upgrades" parent="." instance=ExtResource("8_1t3ll")]

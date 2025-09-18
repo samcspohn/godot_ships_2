@@ -9,6 +9,7 @@ var initialized: bool = false
 @onready var health_controller: HitPointsManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
+@onready var upgrades: Upgrades = $Modules/Upgrades
 var torpedo_launcher: TorpedoLauncher
 var stats: Stats
 var control
@@ -33,19 +34,26 @@ var peer_id: int = -1 # our unique peer ID assigned by server
 signal reset_mods # resets static and dynamic to base
 signal reset_dynamic_mods
 
+var update_static_mods: bool = false
+var update_dynamic_mods: bool = false
+
 func add_static_mod(mod_func):
 	static_mods.append(mod_func)
-	_update_static_mods()
+	update_static_mods = true
+	#_update_static_mods()
 
 func remove_static_mod(mod_func):
 	static_mods.erase(mod_func)
-	_update_static_mods()
+	update_static_mods = true
+	#_update_static_mods()
 
 func add_dynamic_mod(mod_func):
 	dynamic_mods.append(mod_func)
+	update_dynamic_mods = true
 	
 func remove_dynamic_mod(mod_func):
 	dynamic_mods.erase(mod_func)
+	update_dynamic_mods = true
 
 
 func _enable_guns():
@@ -116,6 +124,13 @@ func _physics_process(delta: float) -> void:
 		return
 	if torpedo_launcher != null:
 		torpedo_launcher._aim(artillery_controller.aim_point, delta)
+		
+	if update_static_mods:
+		_update_static_mods()
+		update_static_mods = false
+	if update_dynamic_mods:
+		_update_dynamic_mods()
+		update_dynamic_mods = false
 	# Sync ship data to all clients
 	# sync_ship_data()
 

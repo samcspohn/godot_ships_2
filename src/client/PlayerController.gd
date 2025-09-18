@@ -53,8 +53,8 @@ func _ready() -> void:
 		set_process_input(false)
 		set_physics_process(false)
 		
-		await get_tree().process_frame
-		ship.add_static_mod(secondary_upgrade)
+		# await get_tree().process_frame
+		# ship.add_static_mod(secondary_upgrade)
 		
 	else:
 		# Capture mouse by default for camera control
@@ -62,12 +62,12 @@ func _ready() -> void:
 		mouse_captured = true
 
 
-func secondary_upgrade(_ship: Ship) -> void:
-	# Implement secondary upgrade logic here
-	# For example, you might want to increase the range and reload time of secondary guns
-	for c in _ship.secondary_controllers:
-		c.params.static_mod._range *= 2.0
-		c.params.static_mod.reload_time *= 0.6
+# func secondary_upgrade(_ship: Ship) -> void:
+# 	# Implement secondary upgrade logic here
+# 	# For example, you might want to increase the range and reload time of secondary guns
+# 	for c in _ship.secondary_controllers:
+# 		c.params.static_mod._range *= 2.0
+# 		c.params.static_mod.reload_time *= 0.6
 
 #func apply_buff():
 	#for c in ship.secondary_controllers:

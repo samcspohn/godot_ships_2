@@ -28,6 +28,7 @@ driver/driver="ALSA"
 
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
+UpgradeManager="*res://src/autoload/upgrade_manager.gd"
 LaunchModes="*res://launch_modes.gd"
 AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd"
 SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"

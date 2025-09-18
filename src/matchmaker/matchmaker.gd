@@ -33,7 +33,8 @@ func _ready():
 				# Track this connecting client
 				var client_data = {
 					"ship": packet_result['selected_ship'],
-					"single_player": packet_result.get('single_player', false)
+					"single_player": packet_result.get('single_player', false),
+					"player_name": packet_result.get('player_name', 'Player')
 				}
 				connecting_clients[info] = client_data
 			elif packet_result["request"] == "leave_queue":
@@ -141,11 +142,12 @@ func _ready():
 					var client = multiplayer_clients[i]
 					# Get the ship type from the client
 					var ship_type = connecting_clients[client]["ship"]
+					var player_name = connecting_clients[client]["player_name"]
 					# Assign a team ID to each client
 					var team_id = i % 2  # Simple round-robin assignment
-					team[str(i)] = {
+					team[player_name] = {
 						"team": str(team_id),
-						"player_id": str(i),
+						"player_id": player_name,
 						"ship": ship_type,
 						"is_bot": false
 					}

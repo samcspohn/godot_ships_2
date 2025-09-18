@@ -24,6 +24,16 @@
             "type": "godot",
             "request": "launch",
             "project": "${workspaceFolder}",
+            "additional_options": "--name 1"
+            // "launch_game_instance": true,
+            // "launch_scene": false
+        },
+                {
+            "name": "Client 2",
+            "type": "godot",
+            "request": "launch",
+            "project": "${workspaceFolder}",
+            "additional_options": "--name 2"
             // "launch_game_instance": true,
             // "launch_scene": false
         }

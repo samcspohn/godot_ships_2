@@ -12,7 +12,7 @@ damage = 4000.0
 size = 3.8
 caliber = 380.0
 mass = 800.0
-fire_buildup = 200.0
+fire_buildup = 20.0
 fuze_delay = 0.001
 type = 0
 penetration_modifier = 1.0
@@ -24,7 +24,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
 script = ExtResource("1_twqco")
-reload_time = 1.0
+reload_time = 26.0
 traverse_speed = 20.0
 elevation_speed = 10.0
 _range = 15000.0

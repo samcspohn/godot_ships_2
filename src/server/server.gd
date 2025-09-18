@@ -2,6 +2,8 @@
 extends Node
 
 class_name GameServer
+
+# Use GameSettings for player ship configs
 var players = {}
 var player_info = {}
 var game_world = null
@@ -126,6 +128,10 @@ func spawn_player(id, player_name):
 	var tl = player.get_node_or_null("TorpedoLauncher")
 	if tl:
 		(tl as TorpedoLauncher).disabled = false
+		
+	# Load and apply player upgrades (skip for bots)
+	if not is_bot:
+		call_deferred("_load_and_apply_player_upgrades", player, player_name)
 	
 	
 	if !team.has(team_data["team"]):
@@ -241,6 +247,22 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
+		
+		# # Apply any saved upgrades to the local player's ship
+		# # This ensures the client-side ship has the same upgrades as configured in the menu
+		# if GameSettings.player_name == _player_name and not GameSettings.ship_config.is_empty():
+		# 	# Use the UpgradeManager to apply upgrades from GameSettings
+		# 	var upgrade_manager = get_node_or_null("/root/UpgradeManager")
+		# 	if upgrade_manager:
+		# 		print("Applying client-side upgrades for player: ", _player_name)
+		# 		for slot_str in GameSettings.ship_config:
+		# 			var upgrade_path = GameSettings.ship_config[slot_str]
+		# 			if not upgrade_path.is_empty():
+		# 				var success = upgrade_manager.apply_upgrade_to_ship(player, upgrade_path)
+		# 				if success:
+		# 					print("Applied client-side upgrade: ", upgrade_path)
+		# 				else:
+		# 					push_error("Failed to apply client-side upgrade: " + upgrade_path)
 	
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = int(team_id)
@@ -254,7 +276,41 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	spawn_point.add_child(player)
 	
 	#player.global_position = pos
+
+			
+# Function to load and apply player upgrades
+func _load_and_apply_player_upgrades(ship: Ship, player_name: String) -> void:
+	# Skip for bots or empty player names
+	if player_name.is_empty() or not ship:
+		return
+		
+	print("Loading upgrades for player: ", player_name)
 	
+	var player_settings = _GameSettings.new()
+	player_settings.player_name = player_name
+	player_settings.load_settings()
+	# if player_name == GameSettings.player_name:
+	# Get the ship path
+	var ship_path = player_settings.selected_ship
+	
+	# Apply each upgrade to the ship
+	var upgrades = player_settings.ship_config[ship_path]
+	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
+	
+	for slot_str in upgrades:
+		var upgrade_path = upgrades[slot_str]
+		if upgrade_path and not upgrade_path.is_empty():
+			var success = UpgradeManager.apply_upgrade_to_ship(ship, upgrade_path)
+			if success:
+				print("Applied upgrade to ship: ", upgrade_path)
+			else:
+				push_error("Failed to apply upgrade: " + upgrade_path)
+	# else:
+	# 	print("Player name mismatch. Cannot load upgrades for player: ", player_name)
+	# 			#p.sync.rpc_id(p_id2, d)
+	# 		#else:
+	# 			#p._hide.rpc_id(p_id2)
+
 
 @rpc("any_peer", "call_remote")
 func join_game():
@@ -322,16 +378,15 @@ func _physics_process(_delta: float) -> void:
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
-	
-	for p_name in players.size() - 1:
-		var p: Ship = players[players.keys()[p_name]][0]
-		var p_id = players[players.keys()[p_name]][2]
+	for p_idx in players.size() - 1:
+		var p_name = players.keys()[p_idx]
+		var p: Ship = players[p_name][0]
 		ray_query.from = p.global_position
 		ray_query.from.y = 1.0
 		# var d = p.sync_ship_data() 
-		for p_name2 in range(p_id + 1,players.size()):
-			var p2: Ship = players[players.keys()[p_name2]][0]
-			var _p2_id = players[players.keys()[p_name2]][2]
+		for p2_idx in range(p_idx + 1,players.size()):
+			var p2_name = players.keys()[p2_idx]
+			var p2: Ship = players[p2_name][0]
 			if p.team.team_id != p2.team.team_id and p.health_controller.is_alive() and p2.health_controller.is_alive(): # other team
 				ray_query.to = p2.global_position
 				ray_query.to.y = 1.0
@@ -362,6 +417,4 @@ func _physics_process(_delta: float) -> void:
 			#ray_query.to = p2.global_position
 			#var collision: Dictionary = space_state.intersect_ray(ray_query)
 			#if !collision.is_empty() and collision.collider is Ship && collision.collider != p:
-				#p.sync.rpc_id(p_id2, d)
-			#else:
-				#p._hide.rpc_id(p_id2)
+	

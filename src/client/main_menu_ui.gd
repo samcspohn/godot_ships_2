@@ -1,12 +1,16 @@
 # src/client/main_menu_ui.gd
 extends Control
 
+# Get reference to global UpgradeManager
+@onready var upgrade_manager = get_node("/root/UpgradeManager")
+
 @onready var connect_button: Button = $VBoxContainer/ConnectButton
 @onready var single_player_button: Button = $VBoxContainer/SinglePlayerButton
 @onready var ip_input: LineEdit = $VBoxContainer/IPInput
 @onready var name_input: LineEdit = $VBoxContainer/NameInput
 @onready var status_label: Label = $VBoxContainer/StatusLabel
 @onready var ship_button_container = $ScrollContainer/HBoxContainer
+@onready var ship_upgrade_ui = $ShipUpgradeUI
 var dock_node  # Will be set by the main scene
 var udp: PacketPeerUDP = null
 var lobby
@@ -15,6 +19,7 @@ var ship_scenes = []
 var waiting: bool = false
 var pulse_time: float = 0.0
 var original_modulate: Color
+# Ship upgrades are now managed by the ship.upgrades module
 
 func _ready():
 	connect_button.pressed.connect(_on_connect_pressed)
@@ -27,6 +32,21 @@ func _ready():
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
 	# NetworkManager.server_disconnected.connect(_on_server_disconnected)
+	
+	# Initialize the upgrade UI
+	ship_upgrade_ui.upgrade_selected.connect(_on_upgrade_selected)
+	ship_upgrade_ui.upgrade_removed.connect(_on_upgrade_removed)
+	
+	# Load saved upgrades from GameSettings
+	# for slot_str in GameSettings.ship_config:
+	# 	var slot_index = slot_str.to_int()
+	# 	var upgrade_path = GameSettings.ship_config[slot_str]
+	# 	selected_upgrades[slot_index] = upgrade_path
+
+	name_input.text = GameSettings.player_name
+	if GameSettings.selected_ship != "":
+		call_deferred("_on_ship_button_pressed", GameSettings.selected_ship)
+
 
 func set_dock_node(dock: Node3D):
 	dock_node = dock
@@ -70,6 +90,17 @@ func _on_ship_button_pressed(ship_path):
 	if dock_node:
 		dock_node.add_child(selected_ship)
 		selected_ship.position = Vector3(0,6,0)
+	
+	# Update the upgrade UI with the selected ship
+	if selected_ship is Ship:
+		ship_upgrade_ui.set_ship(selected_ship)
+		
+		# Apply any previously selected upgrades for this specific ship
+		if GameSettings.ship_config.has(ship_path):
+			for slot_str in GameSettings.ship_config[ship_path]:
+				var slot_index = slot_str.to_int()
+				var upgrade_path = GameSettings.ship_config[ship_path][slot_str]
+				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_path)
 
 func _on_connect_pressed():
 	if GameSettings.selected_ship == "":
@@ -89,7 +120,8 @@ func _on_connect_pressed():
 		return
 
 	# Start waiting
-	GameSettings.player_name = name_input.text
+	name_input.text = GameSettings.player_name
+	# GameSettings.player_name = name_input.text
 	GameSettings.matchmaker_ip = ip_input.text
 	GameSettings.is_single_player = false
 	GameSettings.save_settings()
@@ -118,7 +150,7 @@ func _on_single_player_pressed():
 	if waiting:
 		return
 	# Update game settings for single player
-	GameSettings.player_name = name_input.text
+	# GameSettings.player_name = name_input.text
 	GameSettings.matchmaker_ip = ip_input.text
 	GameSettings.is_single_player = true
 	GameSettings.save_settings()
@@ -141,7 +173,7 @@ func _process(delta: float) -> void:
 		if server_info:
 			print(server_info)
 			status_label.text = "Server allocated. Connecting to game server..."
-			GameSettings.player_name = server_info.player_id
+			# GameSettings.player_name = server_info.player_id
 			NetworkManager.create_client(server_info.ip, server_info.port)
 			GameSettings.is_single_player = false
 			GameSettings.save_settings()
@@ -165,3 +197,56 @@ func _stop_waiting():
 	single_player_button.disabled = false
 	connect_button.text = "Connect"
 	connect_button.modulate = original_modulate
+	
+func _on_upgrade_selected(slot_index: int, upgrade_path: String):
+	# Check if this is the first upgrade for this ship
+	if not GameSettings.ship_config.has(GameSettings.selected_ship):
+		GameSettings.ship_config[GameSettings.selected_ship] = {}
+	
+	# Save upgrade to game settings under the current ship
+	GameSettings.ship_config[GameSettings.selected_ship][str(slot_index)] = upgrade_path
+	GameSettings.save_settings()
+	
+	print("Upgrade selected: ", upgrade_path, " for slot ", slot_index)
+	
+	# Note: The UI now directly applies the upgrade to the ship via UpgradeManager
+	# so we don't need to apply it here
+
+func _on_upgrade_removed(slot_index: int):
+	# Check if this ship has any upgrades saved
+	if GameSettings.ship_config.has(GameSettings.selected_ship):
+		# Check if the slot exists in this ship's config
+		if GameSettings.ship_config[GameSettings.selected_ship].has(str(slot_index)):
+			print("Upgrade removed from slot ", slot_index)
+			
+			# Remove the upgrade from this slot
+			GameSettings.ship_config[GameSettings.selected_ship].erase(str(slot_index))
+			GameSettings.save_settings()
+	
+	# Note: The UI now directly removes the upgrade from the ship via UpgradeManager
+	# so we don't need to remove it here
+
+func _apply_upgrade_to_ship(ship: Ship, _slot_index: int, upgrade_path: String):
+	# Use the UpgradeManager to apply the upgrade
+	if upgrade_path.is_empty():
+		return
+		
+	var success = upgrade_manager.apply_upgrade_to_ship(ship, upgrade_path)
+	if success:
+		print("Applied upgrade to ship: ", upgrade_path)
+	else:
+		print("Failed to apply upgrade: ", upgrade_path)
+	
+	ship_upgrade_ui._update_slot_buttons()
+
+func _remove_upgrade_from_ship(ship: Ship, _slot_index: int, upgrade_path: String):
+	# Use the UpgradeManager to remove the upgrade
+	if upgrade_path.is_empty():
+		return
+		
+	var success = upgrade_manager.remove_upgrade_from_ship(ship, upgrade_path)
+	if success:
+		print("Removed upgrade from ship: ", upgrade_path)
+	else:
+		print("Failed to remove upgrade: ", upgrade_path)
+	ship_upgrade_ui._update_slot_buttons()

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://n0re66c1wpog"]
+
+[ext_resource type="Script" uid="uid://bs2u7f2b22305" path="res://src/utils/test_player_upgrades.gd" id="1_j1s8b"]
+
+[node name="TestPlayerUpgrades" type="Node"]
+script = ExtResource("1_j1s8b")
