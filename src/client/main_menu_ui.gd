@@ -102,6 +102,19 @@ func _on_ship_button_pressed(ship_path):
 				var upgrade_path = GameSettings.ship_config[ship_path][slot_str]
 				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_path)
 
+func submit_to_matchmaker():
+	if not udp:
+		udp = PacketPeerUDP.new()
+	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
+
+	var packet = {
+		"request": "request_server",
+		"player_name": GameSettings.player_name,
+		"selected_ship": GameSettings.selected_ship,
+		"single_player": GameSettings.is_single_player
+	}
+	udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+
 func _on_connect_pressed():
 	if GameSettings.selected_ship == "":
 		return
@@ -126,16 +139,17 @@ func _on_connect_pressed():
 	GameSettings.is_single_player = false
 	GameSettings.save_settings()
 
-	udp = PacketPeerUDP.new()
-	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
+	# udp = PacketPeerUDP.new()
+	# udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
 
-	var packet = {
-		"request": "request_server",
-		"player_name": GameSettings.player_name,
-		"selected_ship": GameSettings.selected_ship,
-		"single_player": GameSettings.is_single_player
-	}
-	udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+	# var packet = {
+	# 	"request": "request_server",
+	# 	"player_name": GameSettings.player_name,
+	# 	"selected_ship": GameSettings.selected_ship,
+	# 	"single_player": GameSettings.is_single_player
+	# }
+	# udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+	submit_to_matchmaker()
 
 	status_label.text = "Connecting to matchmaker..."
 	waiting = true
@@ -156,7 +170,8 @@ func _on_single_player_pressed():
 	GameSettings.save_settings()
 	
 	status_label.text = "Starting single player game..."
-	get_tree().change_scene_to_file("res://src/server/server.tscn")
+	submit_to_matchmaker()
+	#get_tree().change_scene_to_file("res://src/server/server.tscn")
 
 func _process(delta: float) -> void:
 	if waiting:
@@ -184,7 +199,7 @@ func _process(delta: float) -> void:
 
 func _on_connection_succeeded():
 	status_label.text = "Connected to server!"
-	GameSettings.is_single_player = false
+	#GameSettings.is_single_player = false
 	GameSettings.save_settings()
 	get_tree().call_deferred("change_scene_to_file", "res://src/server/server.tscn")
 

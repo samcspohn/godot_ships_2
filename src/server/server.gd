@@ -209,7 +209,7 @@ func spawn_player(id, player_name):
 				var player_data = team_info["team"][team_player_id]
 				if player_data.get("is_bot", false):
 					# Spawn bot with unique ID
-					var bot_id = int(team_player_id) + 1000  # Use high IDs for bots
+					var bot_id = team_player_id
 					print("Spawning bot: ID=", bot_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
@@ -228,7 +228,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	player._enable_guns()
 	
 	# Check if this is the local player or a bot by checking team info
-	var is_local_player = (id == multiplayer.get_unique_id())
+	var is_local_player = (int(id) == multiplayer.get_unique_id())
 	var is_bot = false
 	
 	# Check team info for bot status

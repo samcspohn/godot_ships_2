@@ -61,16 +61,16 @@ func _ready():
 				
 				var bot_ships = ["res://ShipModels/Bismarck3.tscn"]
 				# Player team (team 0)
-				team["0"] = {
+				team[client_data["player_name"]] = {
 					"team": "0",
-					"player_id": "0", 
+					"player_id": client_data["player_name"], 
 					"ship": client_data["ship"],
 					"is_bot": false
 				}
 				# Bot team (team 1) - 3 bots
 				var num_in_team = 10
 				for i in range(1, num_in_team):
-					var bot_id = str(i + 1)
+					var bot_id = str(i + 1 + 1000)
 					team[bot_id] = {
 						"team": "0",
 						"player_id": bot_id,
@@ -80,7 +80,7 @@ func _ready():
 
 				# Bot team (team 1) - 4 bots
 				for i in range(num_in_team):
-					var bot_id = str(i + 1 + num_in_team)
+					var bot_id = str(i + 1 + num_in_team + 1000)
 					team[bot_id] = {
 						"team": "1",
 						"player_id": bot_id,
@@ -117,9 +117,8 @@ func _ready():
 				# Remove the single player client from queue
 				connecting_clients.erase(single_player_client)
 				continue
-			
-				
-			
+
+			# Check if we have enough multiplayer clients to start a game	
 			if connecting_clients.size() >= min_players:
 				# Check if all clients are multiplayer (not single player)
 				var multiplayer_clients = []

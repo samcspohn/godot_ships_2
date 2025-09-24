@@ -43,3 +43,8 @@ func remove_upgrade(slot_index: int) -> void:
 	# if upgrade and upgrades.has(upgrade):
 	# 	upgrades.erase(upgrade)
 	upgrades[slot_index] = null
+
+func get_upgrade(slot_index: int) -> Upgrade:
+	if slot_index >= 0 and slot_index < upgrades.size():
+		return upgrades[slot_index]
+	return null

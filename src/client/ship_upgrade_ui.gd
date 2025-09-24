@@ -205,7 +205,7 @@ func _on_remove_upgrade_pressed():
 		var upgrade = ship_ref.upgrades.upgrades[current_slot_selected]
 		if upgrade:
 			# Remove the upgrade from the ship
-			upgrade_manager.remove_upgrade_from_ship(ship_ref, upgrade_manager.get_path_from_upgrade(upgrade))
+			upgrade_manager.remove_upgrade_from_ship(ship_ref, current_slot_selected)
 	
 	# Update the button text
 	_update_slot_buttons()
