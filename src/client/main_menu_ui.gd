@@ -4,103 +4,79 @@ extends Control
 # Get reference to global UpgradeManager
 @onready var upgrade_manager = get_node("/root/UpgradeManager")
 
-@onready var connect_button: Button = $VBoxContainer/ConnectButton
-@onready var single_player_button: Button = $VBoxContainer/SinglePlayerButton
-@onready var ip_input: LineEdit = $VBoxContainer/IPInput
-@onready var name_input: LineEdit = $VBoxContainer/NameInput
-@onready var status_label: Label = $VBoxContainer/StatusLabel
-@onready var ship_button_container = $ScrollContainer/HBoxContainer
-@onready var ship_upgrade_ui = $ShipUpgradeUI
+@onready var connect_button: Button = $TopBar/HBoxContainer/ConnectButton
+@onready var single_player_button: Button = $TopBar/HBoxContainer/SinglePlayerButton
+@onready var name_value_label: Label = $TopBar/HBoxContainer/NameValue
+@onready var status_label: Label = $TopBar/StatusLabel
+@onready var tab_container: TabContainer = $TabContainer
+@onready var ship_tab = $HBoxContainer/TabContainer/Ship
+@onready var upgrade_tab = $HBoxContainer/TabContainer/Upgrades
+@onready var commander_skills_tab = $"HBoxContainer/TabContainer/Commander Skills"
+
 var dock_node  # Will be set by the main scene
 var udp: PacketPeerUDP = null
 var lobby
 var selected_ship
-var ship_scenes = []
 var waiting: bool = false
 var pulse_time: float = 0.0
 var original_modulate: Color
-# Ship upgrades are now managed by the ship.upgrades module
 
 func _ready():
 	connect_button.pressed.connect(_on_connect_pressed)
 	single_player_button.pressed.connect(_on_single_player_pressed)
-	_load_ship_buttons()
 	original_modulate = connect_button.modulate
 
-	# Hook up network signals similar to the old lobby
-	# if Engine.has_singleton("NetworkManager"):
+	# Hook up network signals
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
-	# NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	
-	# Initialize the upgrade UI
-	ship_upgrade_ui.upgrade_selected.connect(_on_upgrade_selected)
-	ship_upgrade_ui.upgrade_removed.connect(_on_upgrade_removed)
+	# Connect ship_selected signal from ship_tab
+	ship_tab.ship_selected.connect(_on_ship_selected)
 	
-	# Load saved upgrades from GameSettings
-	# for slot_str in GameSettings.ship_config:
-	# 	var slot_index = slot_str.to_int()
-	# 	var upgrade_path = GameSettings.ship_config[slot_str]
-	# 	selected_upgrades[slot_index] = upgrade_path
+	# Connect upgrade signals from upgrade_tab
+	upgrade_tab.upgrade_selected.connect(_on_upgrade_selected)
+	upgrade_tab.upgrade_removed.connect(_on_upgrade_removed)
 
-	name_input.text = GameSettings.player_name
+	commander_skills_tab.skill_toggled.connect(_on_skill_toggled)
+
+	# Load saved player name
+	name_value_label.text = GameSettings.player_name
+	
+	# If there's a previously selected ship, restore it
 	if GameSettings.selected_ship != "":
-		call_deferred("_on_ship_button_pressed", GameSettings.selected_ship)
-
+		ship_tab.call_deferred("_on_ship_button_pressed", GameSettings.selected_ship)
 
 func set_dock_node(dock: Node3D):
 	dock_node = dock
+	ship_tab.set_dock_node(dock)
 
-func _load_ship_buttons():
-	_scan_directory("res://scenes/Ships/")
+# Handle ship selection from the ship tab
+func _on_ship_selected(ship_node):
+	selected_ship = ship_node
 
-	var button = Button.new()
-	button.text = "Bismarck"
-	button.pressed.connect(_on_ship_button_pressed.bind("res://ShipModels/Bismarck2.tscn"))
-	ship_button_container.add_child(button)
-
-	button = Button.new()
-	button.text = "Bismarck2"
-	button.pressed.connect(_on_ship_button_pressed.bind("res://ShipModels/Bismarck3.tscn"))
-	ship_button_container.add_child(button)
-
-func _scan_directory(path: String):
-	var dir = DirAccess.open(path)
-	if dir:
-		dir.list_dir_begin()
-		var file_name = dir.get_next()
-		while file_name != "":
-			if dir.current_is_dir() and file_name != "." and file_name != "..":
-				#_scan_directory(path + file_name + "/")
-			#elif file_name.ends_with(".tscn"):
-				var ship_path = path + file_name + "/" + "ship.tscn"
-				ship_scenes.append(ship_path)
-				var button = Button.new()
-				button.text = file_name.get_basename()
-				button.pressed.connect(_on_ship_button_pressed.bind(ship_path))
-				ship_button_container.add_child(button)
-			file_name = dir.get_next()
-		dir.list_dir_end()
-
-func _on_ship_button_pressed(ship_path):
-	if selected_ship != null:
-		selected_ship.queue_free()
-	selected_ship = load(ship_path).instantiate()
-	GameSettings.selected_ship = ship_path
-	if dock_node:
-		dock_node.add_child(selected_ship)
-		selected_ship.position = Vector3(0,6,0)
 	
-	# Update the upgrade UI with the selected ship
-	if selected_ship is Ship:
-		ship_upgrade_ui.set_ship(selected_ship)
-		
-		# Apply any previously selected upgrades for this specific ship
-		if GameSettings.ship_config.has(ship_path):
-			for slot_str in GameSettings.ship_config[ship_path]:
+	# Apply any previously selected upgrades for this specific ship
+	if selected_ship is Ship and GameSettings.ship_config.has(GameSettings.selected_ship):
+		for slot_str in GameSettings.ship_config[GameSettings.selected_ship]:
+			if slot_str != "skills":
 				var slot_index = slot_str.to_int()
-				var upgrade_path = GameSettings.ship_config[ship_path][slot_str]
+				var upgrade_path = GameSettings.ship_config[GameSettings.selected_ship][slot_str]
 				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_path)
+		var skills = GameSettings.ship_config[GameSettings.selected_ship].get("skills", [])
+		for skill_path in skills:
+			var skill = load(skill_path)
+			if skill == null:
+				push_error("Failed to load skill resource: " + skill_path)
+				continue
+			var skill_instance = skill.new()
+			if not skill_instance is Skill:
+				push_error("Loaded resource is not a Skill: " + skill_path)
+				continue
+			selected_ship.skills.add_skill(skill_instance)
+
+	# Pass the selected ship to the upgrade and commander tabs
+	upgrade_tab.set_ship(selected_ship)
+	commander_skills_tab.set_ship(selected_ship)
 
 func submit_to_matchmaker():
 	if not udp:
@@ -133,22 +109,9 @@ func _on_connect_pressed():
 		return
 
 	# Start waiting
-	name_input.text = GameSettings.player_name
-	# GameSettings.player_name = name_input.text
-	GameSettings.matchmaker_ip = ip_input.text
 	GameSettings.is_single_player = false
 	GameSettings.save_settings()
-
-	# udp = PacketPeerUDP.new()
-	# udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
-
-	# var packet = {
-	# 	"request": "request_server",
-	# 	"player_name": GameSettings.player_name,
-	# 	"selected_ship": GameSettings.selected_ship,
-	# 	"single_player": GameSettings.is_single_player
-	# }
-	# udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+	
 	submit_to_matchmaker()
 
 	status_label.text = "Connecting to matchmaker..."
@@ -163,15 +126,13 @@ func _on_single_player_pressed():
 		return
 	if waiting:
 		return
+		
 	# Update game settings for single player
-	# GameSettings.player_name = name_input.text
-	GameSettings.matchmaker_ip = ip_input.text
 	GameSettings.is_single_player = true
 	GameSettings.save_settings()
 	
 	status_label.text = "Starting single player game..."
 	submit_to_matchmaker()
-	#get_tree().change_scene_to_file("res://src/server/server.tscn")
 
 func _process(delta: float) -> void:
 	if waiting:
@@ -199,7 +160,6 @@ func _process(delta: float) -> void:
 
 func _on_connection_succeeded():
 	status_label.text = "Connected to server!"
-	#GameSettings.is_single_player = false
 	GameSettings.save_settings()
 	get_tree().call_deferred("change_scene_to_file", "res://src/server/server.tscn")
 
@@ -210,7 +170,7 @@ func _on_connection_failed():
 func _stop_waiting():
 	waiting = false
 	single_player_button.disabled = false
-	connect_button.text = "Connect"
+	connect_button.text = "Multiplayer"
 	connect_button.modulate = original_modulate
 	
 func _on_upgrade_selected(slot_index: int, upgrade_path: String):
@@ -223,9 +183,6 @@ func _on_upgrade_selected(slot_index: int, upgrade_path: String):
 	GameSettings.save_settings()
 	
 	print("Upgrade selected: ", upgrade_path, " for slot ", slot_index)
-	
-	# Note: The UI now directly applies the upgrade to the ship via UpgradeManager
-	# so we don't need to apply it here
 
 func _on_upgrade_removed(slot_index: int):
 	# Check if this ship has any upgrades saved
@@ -237,9 +194,6 @@ func _on_upgrade_removed(slot_index: int):
 			# Remove the upgrade from this slot
 			GameSettings.ship_config[GameSettings.selected_ship].erase(str(slot_index))
 			GameSettings.save_settings()
-	
-	# Note: The UI now directly removes the upgrade from the ship via UpgradeManager
-	# so we don't need to remove it here
 
 func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
 	# Use the UpgradeManager to apply the upgrade
@@ -252,16 +206,35 @@ func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
 	else:
 		print("Failed to apply upgrade: ", upgrade_path)
 	
-	ship_upgrade_ui._update_slot_buttons()
+	# Update the upgrade tab UI
+	upgrade_tab.ship_upgrade_ui._update_slot_buttons()
 
-func _remove_upgrade_from_ship(ship: Ship, _slot_index: int, upgrade_path: String):
-	# Use the UpgradeManager to remove the upgrade
-	if upgrade_path.is_empty():
+func _on_skill_toggled(skill_path: String, enabled: bool):
+	if selected_ship == null or skill_path == "":
 		return
-		
-	var success = upgrade_manager.remove_upgrade_from_ship(ship, upgrade_path)
-	if success:
-		print("Removed upgrade from ship: ", upgrade_path)
-	else:
-		print("Failed to remove upgrade: ", upgrade_path)
-	ship_upgrade_ui._update_slot_buttons()
+
+	var skill_resource = load(skill_path)
+	if skill_resource == null:
+		print("Failed to load skill resource: ", skill_path)
+		return
+	
+	var skill_instance = skill_resource.new()
+	if skill_instance is Skill:
+		if enabled:
+			selected_ship.skills.add_skill(skill_instance)
+			if not GameSettings.ship_config.has(GameSettings.selected_ship):
+				GameSettings.ship_config[GameSettings.selected_ship] = {}
+			if not GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
+				GameSettings.ship_config[GameSettings.selected_ship]["skills"] = []
+			var skills_array = GameSettings.ship_config[GameSettings.selected_ship]["skills"]
+			if skill_path not in skills_array:
+				skills_array.append(skill_path)
+			GameSettings.save_settings()
+
+		else:
+			if GameSettings.ship_config.has(GameSettings.selected_ship) and GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
+				var skills_array = GameSettings.ship_config[GameSettings.selected_ship]["skills"]
+				if skill_path in skills_array:
+					skills_array.erase(skill_path)
+					GameSettings.save_settings()
+			selected_ship.skills.remove_skill(skill_instance)

@@ -5,6 +5,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="1_ym5my"]
 
 [resource]
+resource_local_to_scene = true
 script = ExtResource("1_bm5ij")
 heal_percent = 0.2
 name = ""

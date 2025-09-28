@@ -15,7 +15,7 @@ var available_upgrades = []
 # We'll use ship.upgrades instead of this array
 var current_slot_selected = -1
 
-@onready var upgrade_slots_container = $UpgradeSlotsContainer
+@onready var upgrade_slots_container = $UpgradeSlotsPanel/UpgradeSlotsContainer
 @onready var upgrade_selection_panel = $UpgradeSelectionPanel
 @onready var upgrade_list = $UpgradeSelectionPanel/ScrollContainer/UpgradeList
 @onready var upgrade_details = $UpgradeSelectionPanel/UpgradeDetails

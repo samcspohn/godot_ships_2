@@ -1,5 +1,5 @@
 extends Node
-class_name SecondaryController
+class_name __SecondaryController
 
 
 @export var params: GunParams
@@ -9,6 +9,9 @@ var _ship: Ship
 var target: Ship
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
+var gun_targets: Array[Ship] = []
+
+var target_mod: TargetMod = TargetMod.new()
 
 # Called when the node enters the scene tree for the first time.
 # func _ready() -> void:
@@ -18,22 +21,27 @@ var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 	# 		guns.append(ch)
 
 func to_dict() -> Dictionary:
-	return {
-		"params": params.dynamic_mod.to_dict(),
-	}
+	return params.dynamic_mod.to_dict()
+
 func from_dict(d: Dictionary) -> void:
-	params.dynamic_mod.from_dict(d.get("params", {}))
+	params.dynamic_mod.from_dict(d)
+	
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 
-	params = params.duplicate(true)
-	(params.shell1 as ShellParams)._secondary = true
-	(params.shell2 as ShellParams)._secondary = true
+	# params = params.duplicate(true)
 	params.init(_ship)
+	params.base.shell1._secondary = true
+	params.base.shell2._secondary = true
+
+	target_mod.init(_ship)
+	# (params.shell1 as ShellParams)._secondary = true
+	# (params.shell2 as ShellParams)._secondary = true
 
 	for g in guns:
 		g.controller = self
 		g._ship = _ship
+		gun_targets.append(null)
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _physics_process(delta: float) -> void:
@@ -68,14 +76,17 @@ func _physics_process(delta: float) -> void:
 			return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position))
 
 	# if enemies_in_range.size() > 0:
-	for g in guns:
+	for gi in guns.size():
+		var g: Gun = guns[gi]
 		var found_target = false
 		for e in enemies_in_range:
 			if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier):
 				g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
+				gun_targets[gi] = e
 				found_target = true
 				break
 		if not found_target:
+			gun_targets[gi] = null
 			g.return_to_base(delta)
 			# pass
 
@@ -84,7 +95,15 @@ func _physics_process(delta: float) -> void:
 		sequential_fire_timer += delta
 		if sequential_fire_timer >= min(sequential_fire_delay, reload_time / guns.size()):
 			sequential_fire_timer = 0.0
-			fire_next_gun()
+			if _Utils.authority():
+				for gi in guns.size():
+					var g: Gun = guns[gi]
+					if g.reload >= 1 and g.can_fire:
+						if gun_targets[gi] == target:
+							g.fire(target_mod)
+						else:
+							g.fire()
+						return
 
 	# if target == null or guns.size() == 0 or !target.visible_to_enemy:
 	# 	for g in guns:

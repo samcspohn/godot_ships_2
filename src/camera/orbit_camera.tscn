@@ -1,6 +1,6 @@
-[gd_scene load_steps=3 format=3 uid="uid://orbit_camera_scene"]
+[gd_scene load_steps=2 format=3 uid="uid://mrcj2wrwni75"]
 
-[ext_resource type="Script" uid="uid://orbit_camera_script" path="res://src/camera/orbit_camera.gd" id="1_orbit"]
+[ext_resource type="Script" uid="uid://cd1ctnb0w5e5p" path="res://src/camera/orbit_camera.gd" id="1_orbit"]
 
 [node name="OrbitCam" type="Node3D"]
 script = ExtResource("1_orbit")
@@ -8,6 +8,5 @@ script = ExtResource("1_orbit")
 [node name="Pitch" type="Node3D" parent="."]
 
 [node name="Camera3D" type="Camera3D" parent="Pitch"]
-current = false
 near = 1.0
 far = 60000.0

@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="1_tj6jp"]
 
 [resource]
+resource_local_to_scene = true
 script = ExtResource("1_tj6jp")
 name = ""
 description = ""

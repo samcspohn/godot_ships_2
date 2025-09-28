@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_kndud"]
 
 [sub_resource type="Resource" id="Resource_4w3ul"]
+resource_local_to_scene = true
 script = ExtResource("2_kndud")
 speed = 900.0
 drag = 0.043
@@ -21,6 +22,7 @@ overmatch = 7
 arming_threshold = 17
 
 [sub_resource type="Resource" id="Resource_2kkbv"]
+resource_local_to_scene = true
 script = ExtResource("2_kndud")
 speed = 900.0
 drag = 0.043
@@ -39,6 +41,7 @@ arming_threshold = 0
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
+resource_local_to_scene = true
 script = ExtResource("1_kndud")
 reload_time = 3.3
 traverse_speed = 50.0
@@ -46,10 +49,7 @@ elevation_speed = 50.0
 _range = 4400.0
 shell1 = SubResource("Resource_4w3ul")
 shell2 = SubResource("Resource_2kkbv")
-hor_dispersion = 0.0
-vert_dispersion = 0.0
-vert_sigma = 0.0
-hor_sigma = 0.0
-hor_dispersion_rate = 0.0
-vert_dispersion_rate = 0.0
+h_grouping = 1.0
+v_grouping = 1.0
+base_spread = 0.06
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

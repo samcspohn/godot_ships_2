@@ -151,6 +151,7 @@ func get_keyboard_shortcut_for_action(action_name: String) -> String:
 
 # Gun reload tracking
 var gun_reload_bars: Array[ProgressBar] = []
+var gun_reload_timers: Array[Label] = []
 var guns: Array[Gun] = []
 
 # Minimap
@@ -215,6 +216,60 @@ func _ready():
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
 		setup_gun_reload_bars()
+
+
+func _process(_delta):
+	if not camera_controller:
+		return
+		
+	_update_ui()
+	_update_fps()
+	_update_camera_angle_display()
+	update_ship_ui()
+	update_team_tracker()  # Update team tracker
+	# cleanup_team_indicators()  # Clean up invalid indicators
+	update_gun_reload_bars()
+	check_hover_detection()  # Add manual hover detection
+	update_hit_counters(_delta)  # Update hit counter timers
+	update_visibility_indicator()  # Update visibility indicator
+	update_consumable_ui()
+	
+	# Automatically detect current secondary target from ship's secondary controllers
+	if camera_controller._ship and camera_controller._ship.secondary_controller:
+		var detected_target = camera_controller._ship.secondary_controller.target
+
+		# Update the target if it has changed
+		if detected_target != current_secondary_target:
+			current_secondary_target = detected_target
+
+	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
+		var stats = camera_controller._ship.stats
+		
+		# Process damage events for hit counters
+		if stats.damage_events.size() > 0:
+			process_damage_events(stats.damage_events)
+		
+		update_counter(damage_value_label, stats.total_damage)
+		update_counter(main_count_label, stats.main_hits)
+		update_counter(frag_count_label, stats.frags)
+		update_counter(secondary_count_label, stats.secondary_count)
+		update_counter(sec_citadel_count_label, stats.sec_citadel_count)
+		update_counter(sec_damage_label, stats.sec_damage)
+		
+		# Update main hit counters
+		update_counter(penetration_count_label, stats.penetration_count)
+		update_counter(overpenetration_count_label, stats.overpen_count)
+		update_counter(ricochet_count_label, stats.ricochet_count)
+		update_counter(shatter_count_label, stats.shatter_count)
+		update_counter(citadel_count_label, stats.citadel_count)
+		update_counter(main_damage_label, stats.main_damage)
+
+		# Update secondary hit counters
+		update_counter(sec_penetration_count_label, stats.sec_penetration_count)
+		update_counter(sec_overpenetration_count_label, stats.sec_overpen_count)
+		update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
+		update_counter(sec_shatter_count_label, stats.sec_shatter_count)
+	crosshair_container.queue_redraw()
 
 func initialize_for_ship():
 	# Call this after camera_controller is set and ship is available
@@ -432,62 +487,6 @@ func _on_main_hover_exit():
 	print("Main hover exit!")
 	main_hit_counters.visible = false
 
-func _process(_delta):
-	if not camera_controller:
-		return
-		
-	_update_ui()
-	_update_fps()
-	_update_camera_angle_display()
-	update_ship_ui()
-	update_team_tracker()  # Update team tracker
-	# cleanup_team_indicators()  # Clean up invalid indicators
-	update_gun_reload_bars()
-	check_hover_detection()  # Add manual hover detection
-	update_hit_counters(_delta)  # Update hit counter timers
-	update_visibility_indicator()  # Update visibility indicator
-	update_consumable_ui()
-	
-	# Automatically detect current secondary target from ship's secondary controllers
-	if camera_controller._ship and camera_controller._ship.secondary_controllers.size() > 0:
-		var detected_target = null
-		for secondary_controller in camera_controller._ship.secondary_controllers:
-			if secondary_controller.target and secondary_controller.target is Ship:
-				detected_target = secondary_controller.target
-				break
-		
-		# Update the target if it has changed
-		if detected_target != current_secondary_target:
-			current_secondary_target = detected_target
-
-	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
-		var stats = camera_controller._ship.stats
-		
-		# Process damage events for hit counters
-		if stats.damage_events.size() > 0:
-			process_damage_events(stats.damage_events)
-		
-		update_counter(damage_value_label, stats.total_damage)
-		update_counter(main_count_label, stats.main_hits)
-		update_counter(frag_count_label, stats.frags)
-		update_counter(secondary_count_label, stats.secondary_count)
-		update_counter(sec_citadel_count_label, stats.sec_citadel_count)
-		update_counter(sec_damage_label, stats.sec_damage)
-		
-		# Update main hit counters
-		update_counter(penetration_count_label, stats.penetration_count)
-		update_counter(overpenetration_count_label, stats.overpen_count)
-		update_counter(ricochet_count_label, stats.ricochet_count)
-		update_counter(shatter_count_label, stats.shatter_count)
-		update_counter(citadel_count_label, stats.citadel_count)
-		update_counter(main_damage_label, stats.main_damage)
-
-		# Update secondary hit counters
-		update_counter(sec_penetration_count_label, stats.sec_penetration_count)
-		update_counter(sec_overpenetration_count_label, stats.sec_overpen_count)
-		update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
-		update_counter(sec_shatter_count_label, stats.sec_shatter_count)
-	crosshair_container.queue_redraw()
 
 func _update_ui():
 	# Time and distance are updated by setters, so we only need to update ship-specific UI here
@@ -958,6 +957,7 @@ func setup_gun_reload_bars():
 		if is_instance_valid(bar):
 			bar.queue_free()
 	gun_reload_bars.clear()
+	gun_reload_timers.clear()
 	reload_bar_template.visible = false
 
 	# Get guns from ship artillery controller
@@ -972,32 +972,39 @@ func setup_gun_reload_bars():
 			
 			gun_reload_container.add_child(progress_bar)
 			gun_reload_bars.append(progress_bar)
+			gun_reload_timers.append(progress_bar.get_child(0))
 
 func update_gun_reload_bars():
 	# Update reload progress for each gun
 	for i in range(min(guns.size(), gun_reload_bars.size())):
 		if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
-			var gun = guns[i]
+			var gun: Gun = guns[i]
 			var bar = gun_reload_bars[i]
+			var timer_label = gun_reload_timers[i]
+			var gun_params: GunParams = (gun.controller as ArtilleryController).params.params() as GunParams
 			
 			# Update reload progress
 			bar.value = gun.reload
-			
+			if gun.reload >= 1.0:
+				timer_label.text = "%.1f" % (gun.reload * gun_params.reload_time)
+			else:
+				timer_label.text = "%.1f s" % ((1.0 - gun.reload) * gun_params.reload_time)
+
 			# dull if no valid target
 			# bright if valid target
 			# teal if reloaded
 			# yellow if reloading
 			# brighter teal if reloaded and can fire and valid target
 			if gun._valid_target and gun.reload >= 1.0 and gun.can_fire:
-				bar.modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
+				bar.self_modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
 			elif gun._valid_target and gun.reload >= 1.0:
-				bar.modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
+				bar.self_modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
 			elif gun._valid_target:
-				bar.modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
+				bar.self_modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
 			elif gun.reload >= 1.0:
-				bar.modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
+				bar.self_modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
 			else:
-				bar.modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
+				bar.self_modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):

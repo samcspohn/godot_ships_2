@@ -7,7 +7,7 @@ func _init():
 	icon = preload("res://icons/auto-repair.png")
 
 func _a(_ship: Ship) -> void:
-	_ship.artillery_controller.params.static_mod.reload_time *= 0.8
+	_ship.artillery_controller.params.static_mod.reload_time *= 0.9
 
 func apply(_ship: Ship) -> void:
 	# Apply the upgrade effect to the ship

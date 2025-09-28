@@ -1725,6 +1725,18 @@ max_value = 1.0
 value = 1.0
 show_percentage = false
 
+[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -20.0
+offset_top = -22.0
+offset_right = 20.0
+offset_bottom = 1.0
+grow_horizontal = 2
+text = "10.0"
+
 [node name="HPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer"]
 custom_minimum_size = Vector2(200, 20)
 layout_mode = 2

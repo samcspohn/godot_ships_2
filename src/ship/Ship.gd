@@ -5,11 +5,12 @@ var initialized: bool = false
 # Child components
 @onready var movement_controller: ShipMovementV2 = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
-@export var secondary_controllers: Array[SecondaryController]
+@onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
 @onready var health_controller: HitPointsManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
 @onready var upgrades: Upgrades = $Modules/Upgrades
+@onready var skills: SkillsManager = $Modules/Skills
 var torpedo_launcher: TorpedoLauncher
 var stats: Stats
 var control
@@ -61,7 +62,7 @@ func _enable_guns():
 		await Engine.get_main_loop().process_frame
 	for g: Gun in artillery_controller.guns:
 		g.disabled = false
-	for c in secondary_controllers:
+	for c in secondary_controller.sub_controllers:
 		for g: Gun in c.guns:
 			g.disabled = false
 
@@ -70,7 +71,7 @@ func _disable_guns():
 		await Engine.get_main_loop().process_frame
 	for g: Gun in artillery_controller.guns:
 		g.disabled = true
-	for c in secondary_controllers:
+	for c in secondary_controller.sub_controllers:
 		for g: Gun in c.guns:
 			g.disabled = true
 
@@ -98,8 +99,10 @@ func _ready() -> void:
 	consumable_manager.ship = self
 	# fire_manager = $Modules/FireManager
 	fire_manager._ship = self
+	skills._ship = self
 	stats = Stats.new()
 	$Modules.add_child(stats)
+	
 	
 	# for f in fires:
 	# 	f._ship = self
@@ -124,13 +127,16 @@ func _physics_process(delta: float) -> void:
 		return
 	if torpedo_launcher != null:
 		torpedo_launcher._aim(artillery_controller.aim_point, delta)
-		
+
+	for skill in skills.skills:
+		skill._proc(delta)		
 	if update_static_mods:
 		_update_static_mods()
 		update_static_mods = false
 	if update_dynamic_mods:
 		_update_dynamic_mods()
 		update_dynamic_mods = false
+
 	# Sync ship data to all clients
 	# sync_ship_data()
 
@@ -156,7 +162,7 @@ func sync_ship_data() -> Dictionary:
 	for g in artillery_controller.guns:
 		d.g.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
 	
-	for controller in secondary_controllers:
+	for controller in secondary_controller.sub_controllers:
 		d.sc.append(controller.to_dict())
 		for g: Gun in controller.guns:
 			d.s.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
@@ -198,7 +204,7 @@ func sync(d: Dictionary):
 		
 	i = 0
 	var k = 0
-	for controller in secondary_controllers:
+	for controller in secondary_controller.sub_controllers:
 		controller.from_dict(d.sc[k])
 		k += 1
 		for s: Gun in controller.guns:

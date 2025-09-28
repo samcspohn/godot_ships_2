@@ -12,6 +12,9 @@ var team_info = null
 var team_file_path = ""
 var team = {}
 var players_spawned_bots = false  # Track if bots have been spawned for single player
+var team_0_valid_targets = []
+var team_1_valid_targets = []
+
 
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -131,7 +134,7 @@ func spawn_player(id, player_name):
 		
 	# Load and apply player upgrades (skip for bots)
 	if not is_bot:
-		call_deferred("_load_and_apply_player_upgrades", player, player_name)
+		call_deferred("_load_and_apply_player_config", player, player_name)
 	
 	
 	if !team.has(team_data["team"]):
@@ -277,19 +280,18 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	
 	#player.global_position = pos
 
-			
-# Function to load and apply player upgrades
-func _load_and_apply_player_upgrades(ship: Ship, player_name: String) -> void:
+
+# Function to load and apply player config
+func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 	# Skip for bots or empty player names
 	if player_name.is_empty() or not ship:
 		return
-		
-	print("Loading upgrades for player: ", player_name)
+
+	print("Loading config for player: ", player_name)
 	
 	var player_settings = _GameSettings.new()
 	player_settings.player_name = player_name
 	player_settings.load_settings()
-	# if player_name == GameSettings.player_name:
 	# Get the ship path
 	var ship_path = player_settings.selected_ship
 	
@@ -298,6 +300,8 @@ func _load_and_apply_player_upgrades(ship: Ship, player_name: String) -> void:
 	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
 	
 	for slot_str in upgrades:
+		if slot_str == "skills":  # Skip skills section
+			continue
 		var upgrade_path = upgrades[slot_str]
 		if upgrade_path and not upgrade_path.is_empty():
 			var success = UpgradeManager.apply_upgrade_to_ship(ship, int(slot_str), upgrade_path)
@@ -305,12 +309,24 @@ func _load_and_apply_player_upgrades(ship: Ship, player_name: String) -> void:
 				print("Applied upgrade to ship: ", upgrade_path)
 			else:
 				push_error("Failed to apply upgrade: " + upgrade_path)
-	# else:
-	# 	print("Player name mismatch. Cannot load upgrades for player: ", player_name)
-	# 			#p.sync.rpc_id(p_id2, d)
-	# 		#else:
-	# 			#p._hide.rpc_id(p_id2)
 
+	# Apply each skill to the ship
+	if not player_settings.ship_config[ship_path].has("skills"):
+		return
+	var skills = player_settings.ship_config[ship_path]["skills"]
+	print("Applying ", skills.size(), " skills to ship for player: ", player_name)
+
+	for skill_path in skills:
+		if skill_path and not skill_path.is_empty():
+			var skill = load(skill_path)
+			if skill == null:
+				push_error("Failed to load skill resource: " + skill_path)
+				continue
+			var skill_instance = skill.new()
+			if not skill_instance is Skill:
+				push_error("Loaded resource is not a Skill: " + skill_path)
+				continue
+			ship.skills.add_skill(skill_instance)
 
 @rpc("any_peer", "call_remote")
 func join_game():
@@ -336,13 +352,19 @@ func get_team_ships(team_id: int) -> Array:
 			team_ships.append(ship)
 	return team_ships
 
-func get_valid_targets(team_id: int) -> Array[Ship]:
+func _get_valid_targets(team_id: int) -> Array[Ship]:
 	var targets: Array[Ship] = []
 	for p in players.values():
 		var ship: Ship = p[0]
 		if ship.team.team_id != team_id and ship.health_controller.is_alive() and ship.visible_to_enemy:
 			targets.append(ship)
 	return targets
+
+func get_valid_targets(team_id: int) -> Array[Ship]:
+	if team_id == 0:
+		return team_0_valid_targets
+	else:
+		return team_1_valid_targets
 
 func get_all_ships() -> Array:
 	var all_ships: Array = []
@@ -371,6 +393,7 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 # only terrain
+
 	
 	for p in players.values():
 		var ship: Ship = p[0]			
@@ -409,7 +432,8 @@ func _physics_process(_delta: float) -> void:
 				else:
 					p._hide.rpc_id(pid2) # hide from other player
 				
-		
+	team_0_valid_targets = _get_valid_targets(0)
+	team_1_valid_targets = _get_valid_targets(1)
 			#if p_id == p_id2:
 				#p.sync.rpc_id(p_id2, d)
 				#continue

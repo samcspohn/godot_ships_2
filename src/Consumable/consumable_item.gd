@@ -2,7 +2,7 @@
 extends Moddable
 class_name ConsumableItem
 
-var id: int = -1
+@export_storage var id: int = -1
 @export var name: String
 @export var description: String
 @export var icon: Texture2D

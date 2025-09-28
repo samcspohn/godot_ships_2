@@ -122,7 +122,6 @@ func _input(event: InputEvent) -> void:
 							# Use your existing firing logic for torpedos
 							if ship.torpedo_launcher:
 								ship.torpedo_launcher.fire.rpc_id(1)
-						# ship.artillery_controller.fire_all_guns.rpc_id(1)
 					else:
 						click_count = 1
 						if selected_weapon == 0 or selected_weapon == 1:
@@ -132,8 +131,6 @@ func _input(event: InputEvent) -> void:
 							# Use your existing firing logic for torpedos
 							if ship.torpedo_launcher:
 								ship.torpedo_launcher.fire.rpc_id(1)
-						# ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
-						# handle_single_click()
 					
 					last_click_time = current_time
 				else:
@@ -264,13 +261,14 @@ func c_set_target_ship(ship_path: NodePath) -> void:
 
 		
 func select_target_ship(target_ship: Ship) -> void:
-	for secondary_controller in ship.secondary_controllers:
-		# Set the target in the secondary controller
-		secondary_controller.target = target_ship
-		print("Selected target: " + target_ship.name)
-		
+	ship.secondary_controller.target = target_ship
+	#for secondary_controller in ship.secondary_controller.target:
+		## Set the target in the secondary controller
+		#secondary_controller.target = target_ship
+		#print("Selected target: " + target_ship.name)
+		#
 		# Add a visual indicator for the selected target
-		show_target_indicator(target_ship)
+	show_target_indicator(target_ship)
 	# else:
 	# 	print("Warning: secondary_controller not initialized")
 		
@@ -283,9 +281,10 @@ func show_target_indicator(target_ship: Ship) -> void:
 
 func clear_secondary_target() -> void:
 	"""Clear the secondary target for all secondary controllers"""
-	for secondary_controller in ship.secondary_controllers:
-		secondary_controller.target = null
-		print("Cleared secondary target")
+	#for secondary_controller in ship.secondary_controllers:
+		#secondary_controller.target = null
+		#print("Cleared secondary target")
+	ship.secondary_controller.target = null
 	
 	# Update the UI to clear the target indicator
 	if cam and cam.ui:
@@ -437,12 +436,6 @@ func send_input(movement_input: Array) -> void:
 		ship.movement_controller.set_movement_input([movement_input[0], movement_input[1]])
 		ship.artillery_controller.set_aim_input(movement_input[2])
 
-# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-# func send_aim_input(aim_point: Vector3) -> void:
-# 	if _Utils.authority():
-# 		# Forward aim input to ship artillery controller
-# 		ship.artillery_controller.set_aim_input(aim_point)
-
 func select_weapon(idx: int) -> void:
 	selected_weapon = idx
 	if cam:
@@ -451,22 +444,3 @@ func select_weapon(idx: int) -> void:
 		ship.artillery_controller.select_shell(idx)
 		ship.artillery_controller.select_shell.rpc_id(1, idx)
 	print("Selected weapon: %d" % idx)
-
-# func fire_selected_weapon() -> void:
-# 	if selected_weapon == 0:
-# 		# Fire shell1 from all guns
-# 		if guns.size() > 0:
-# 			for i in range(guns.size()):
-# 				if guns[i].reload >= 1.0 and guns[i].can_fire:
-# 					ship.artillery_controller.fire_gun.rpc_id(1, i)
-# 	elif selected_weapon == 1:
-# 		# Fire shell2 from all guns (assume shell2 logic is handled in Gun)
-# 		if guns.size() > 0:
-# 			for i in range(guns.size()):
-# 				if guns[i].reload >= 1.0 and guns[i].can_fire:
-# 					guns[i].params.shell = guns[i].params.shell2
-# 					ship.artillery_controller.fire_gun.rpc_id(1, i)
-# 	elif selected_weapon == 2:
-# 		# Fire torpedo if available
-# 		if ship.torpedo_launcher and ship.torpedo_launcher.reload >= 1.0 and ship.torpedo_launcher.can_fire:
-# 			ship.torpedo_launcher.fire.rpc_id(1)

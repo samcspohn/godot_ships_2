@@ -8,12 +8,13 @@ class_name GunParams
 @export var shell1: ShellParams
 @export var shell2: ShellParams
 
-@export var hor_dispersion: float
-@export var vert_dispersion: float
-@export var vert_sigma: float
-@export var hor_sigma: float
-@export var hor_dispersion_rate: float
-@export var vert_dispersion_rate: float
+@export var h_grouping: float = 1.8
+@export var v_grouping: float = 1.8
+@export var base_spread: float = 0.01
+
+# @export var h_grouping_mod: float = 1.0
+# @export var v_grouping_mod: float = 1.0
+# @export var base_spread_mod: float = 1.0
 
 func _init() -> void:
 	reload_time = 1
@@ -28,12 +29,9 @@ func from_params(gun_params: GunParams) -> void:
 	_range = gun_params._range
 	shell1 = gun_params.shell1
 	shell2 = gun_params.shell2
-	hor_dispersion = gun_params.hor_dispersion
-	vert_dispersion = gun_params.vert_dispersion
-	vert_sigma = gun_params.vert_sigma
-	hor_sigma = gun_params.hor_sigma
-	hor_dispersion_rate = gun_params.hor_dispersion_rate
-	vert_dispersion_rate = gun_params.vert_dispersion_rate
+	h_grouping = gun_params.h_grouping
+	v_grouping = gun_params.v_grouping
+	base_spread = gun_params.base_spread
 
 func to_dict() -> Dictionary:
 	return {
@@ -51,12 +49,9 @@ func to_dict() -> Dictionary:
 			"drag": shell2.drag,
 			"damage": shell2.damage
 		},
-		"hor_dispersion": hor_dispersion,
-		"vert_dispersion": vert_dispersion,
-		"vert_sigma": vert_sigma,
-		"hor_sigma": hor_sigma,
-		"hor_dispersion_rate": hor_dispersion_rate,
-		"vert_dispersion_rate": vert_dispersion_rate
+		"h_grouping": h_grouping,
+		"v_grouping": v_grouping,
+		"base_spread": base_spread
 	}
 
 func from_dict(d: Dictionary) -> void:
@@ -74,23 +69,19 @@ func from_dict(d: Dictionary) -> void:
 	shell2.speed = s2.get("speed", 820)
 	shell2.drag = s2.get("drag", 0.00895)
 	shell2.damage = s2.get("damage", 10000)
-	hor_dispersion = d.get("hor_dispersion", 0.001)
-	vert_dispersion = d.get("vert_dispersion", 0.001)
-	vert_sigma = d.get("vert_sigma", 1.0)
-	hor_sigma = d.get("hor_sigma", 1.0)
-	hor_dispersion_rate = d.get("hor_dispersion_rate", 0.0)
-	vert_dispersion_rate = d.get("vert_dispersion_rate", 0.0)
+	h_grouping = d.get("h_grouping", 1.8)
+	v_grouping = d.get("v_grouping", 1.8)
+	base_spread = d.get("base_spread", 0.01)
 
-#func set_shell(new_shell: ShellParams) -> void:
-	#shell = new_shell
-#extends Resource
-#class_name ShellParams
-#
-#@export var speed: float
-#@export var drag: float
-#@export var damage: float
-#
-#func _init() -> void:
-	#speed = 820
-	#drag = 0.00895
-	#damage = 10000
+
+func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell_index: int, target_mod: TargetMod) -> Vector3:
+	var shell: ShellParams = shell1 if shell_index == 0 else shell2
+	return ArtilleryDispersion.calculate_dispersed_launch(
+		aim_point, 
+		gun_position, 
+		shell.speed, 
+		shell.drag, 
+		h_grouping * (target_mod.h_grouping if target_mod else 1.0),
+		v_grouping * (target_mod.v_grouping if target_mod else 1.0),
+		base_spread * (target_mod.base_spread if target_mod else 1.0)
+	)

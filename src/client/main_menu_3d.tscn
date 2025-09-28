@@ -1,8 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://dq5u2vcdgwrfw"]
+[gd_scene load_steps=4 format=3 uid="uid://dq5u2vcdgwrfw"]
 
+[ext_resource type="PackedScene" uid="uid://mrcj2wrwni75" path="res://src/camera/orbit_camera.tscn" id="1_orbit_cam"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
 [ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="2_ekxnf"]
-[ext_resource type="PackedScene" uid="uid://orbit_cam_scene" path="res://src/camera/orbit_camera.tscn" id="1_orbit_cam"]
 
 [node name="MainMenu3D" type="Node3D"]
 

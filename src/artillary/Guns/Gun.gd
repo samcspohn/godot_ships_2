@@ -9,7 +9,7 @@ extends Node3D
 @export var max_rotation_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_children()[0]
-@export var dispersion_calculator: ArtilleryDispersion
+# @export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
 var can_fire: bool = false
@@ -96,15 +96,10 @@ func update_barrels() -> void:
 
 	# print("Muzzles updated: ", muzzles.size())
 
-# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-# func _set_reload(r):
-# 	reload = r
-
 func _physics_process(delta: float) -> void:
 	if _Utils.authority():
 		if !disabled && reload < 1.0:
-			reload += delta / get_params().reload_time
-
+			reload = min(reload + delta / get_params().reload_time, 1.0)
 
 # Normalize angle to the range [0, 2π]
 func normalize_angle_0_2pi(angle: float) -> float:
@@ -438,11 +433,12 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 		return
 	_aim(sol[2], delta, true)
 
-func fire():
+
+func fire(mod: TargetMod = null) -> void:
 	if _Utils.authority():
 		if !disabled && reload >= 1.0 and can_fire:
 			for m in muzzles:
-				var dispersed_velocity = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position, get_shell().speed, get_shell().drag)
+				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, self.global_position, controller.shell_index, mod)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = float(Time.get_unix_time_from_system())
@@ -454,6 +450,6 @@ func fire():
 					# print(aim)
 			reload = 0
 
-@rpc("any_peer", "reliable")
+@rpc("authority", "reliable")
 func fire_client(vel, pos, t, id):
 	ProjectileManager.fireBulletClient(pos, vel, t, id, get_shell(), _ship)

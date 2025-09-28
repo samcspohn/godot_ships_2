@@ -7,9 +7,9 @@ func _init():
 	icon = preload("res://icons/auto-repair (1).png")
 
 func _a(_ship: Ship):
-	for sec: SecondaryController in _ship.secondary_controllers:
-		(sec.params.static_mod as GunParams).reload_time *= 0.8
-		(sec.params.static_mod as GunParams)._range *= 2.0
+	for sec: SecSubController in _ship.secondary_controller.sub_controllers:
+		(sec.p.static_mod as GunParams).reload_time *= 0.8
+		(sec.p.static_mod as GunParams)._range *= 2.0
 
 func apply(_ship: Ship):
 	# Apply the upgrade effect to the ship

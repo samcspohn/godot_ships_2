@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://u8nxnlqk5vo8"]
+
+[ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://Skills/skills_manager.gd" id="1_lykvs"]
+
+[node name="SkillManager" type="Node"]
+script = ExtResource("1_lykvs")

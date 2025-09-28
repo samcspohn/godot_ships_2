@@ -6,6 +6,9 @@ var current_hp: float
 var sunk: bool = false
 @onready var ship: Ship = $"../.."
 
+signal hp_changed(new_hp: float)
+signal ship_sunk()
+
 func _ready() -> void:
 	current_hp = max_hp
 	
@@ -17,7 +20,10 @@ func take_damage(dmg: float, _pos: Vector3) -> Array:
 		dmg -= current_hp
 		current_hp = 0
 		sink()
+		ship_sunk.emit()
+		hp_changed.emit(current_hp)
 		return [dmg, true]
+	hp_changed.emit(current_hp)
 	return [dmg, false]
 
 func heal(amount: float) -> float:
@@ -26,6 +32,7 @@ func heal(amount: float) -> float:
 	if current_hp + amount > max_hp:
 		amount = max_hp - current_hp
 	current_hp += amount
+	hp_changed.emit(current_hp)
 	return amount
 
 @rpc("any_peer", "reliable", "call_remote")
