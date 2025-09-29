@@ -416,7 +416,7 @@ func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship) -> int:
 
 	return id
 
-func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_blast: bool = true) -> void:
+func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_blast: bool = true, basis: Basis = Basis()) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var bullet = ProjectileData.new()
 	#print("type client ", shell.type)
@@ -436,14 +436,17 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 
 	bullet.initialize(pos, vel, t, shell, _owner)
 	self.projectiles.set(id, bullet)
-	#print("shell type: ", shell.type)
+
 	if muzzle_blast:
-		var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-		expl.radius = shell.damage / 500
-		get_tree().root.add_child(expl)
-		expl.global_position = pos
-		#var shell = bullet.get_script()
-		#pass
+		HitEffects.muzzle_blast_effect(pos, basis, s * 1.2)
+	#print("shell type: ", shell.type)
+	# if muzzle_blast:
+	# 	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
+	# 	expl.radius = shell.damage / 500
+	# 	get_tree().root.add_child(expl)
+	# 	expl.global_position = pos
+	# 	#var shell = bullet.get_script()
+	# 	#pass
 
 #func request_fire(dir: Vector3, pos: Vector3, shell: int, end_pos: Vector3, total_time: float) -> void:
 		#fireBullet(dir,pos, shell, end_pos, total_time)
@@ -454,7 +457,7 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	if bullet == null:
 		print("bullet is null: ", id)
 		return
-	var radius = bullet.params.size * 5
+	var radius = bullet.params.size
 	self.projectiles.set(id, null)
 	#self.projectiles.erase(id)
 	var b = Basis()
@@ -465,50 +468,67 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	# Create appropriate visual effects based on hit result
-	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-	get_tree().root.add_child(expl)
-	expl.global_position = pos
+	# # Create appropriate visual effects based on hit result
+	# var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
+	# get_tree().root.add_child(expl)
+	# expl.global_position = pos
+
+	# match hit_result:
+	# 	HitResult.WATER:
+	# 		expl.radius = radius # Smaller explosion for water impact
+	# 		expl.scale = Vector3(1,3.5,1)
+	# 		var water_material = StandardMaterial3D.new()
+	# 		water_material.albedo_color = Color.WHITE_SMOKE
+	# 		expl.material_override = water_material
+	# 	HitResult.PENETRATION:
+	# 		expl.radius = radius
+	# 		var pen_material = StandardMaterial3D.new()
+	# 		pen_material.albedo_color = Color.LIGHT_YELLOW
+	# 		pen_material.emission_enabled = true
+	# 		pen_material.emission = Color.YELLOW * 8.0
+	# 		expl.material_override = pen_material
+	# 	HitResult.CITADEL:
+	# 		expl.radius = radius * 2
+	# 		var citadel_material = StandardMaterial3D.new()
+	# 		citadel_material.albedo_color = Color.LIGHT_YELLOW
+	# 		citadel_material.emission_enabled = true
+	# 		citadel_material.emission = Color.YELLOW * 8.0
+	# 		expl.material_override = citadel_material
+	# 	HitResult.RICOCHET:
+	# 		expl.radius = radius * 0.3 # Smaller explosion for ricochet
+	# 		var ricochet_material = StandardMaterial3D.new()
+	# 		ricochet_material.albedo_color = Color.BLUE
+	# 		expl.material_override = ricochet_material
+	# 	HitResult.OVERPENETRATION:
+	# 		expl.radius = radius * 0.6 # Medium explosion
+	# 		var overpen_material = StandardMaterial3D.new()
+	# 		overpen_material.albedo_color = Color.CYAN
+	# 		expl.material_override = overpen_material
+	# 	HitResult.SHATTER:
+	# 		expl.radius = radius * 0.5 # Very small explosion
+	# 		var shatter_material = StandardMaterial3D.new()
+	# 		shatter_material.albedo_color = Color.RED
+	# 		expl.material_override = shatter_material
+	# 	HitResult.NOHIT:
+	# 		# No explosion for NOHIT - projectile passed through without hitting armor
+	# 		expl.queue_free() # Remove the explosion visual
 
 	match hit_result:
 		HitResult.WATER:
-			expl.radius = radius # Smaller explosion for water impact
-			expl.scale = Vector3(1,3.5,1)
-			var water_material = StandardMaterial3D.new()
-			water_material.albedo_color = Color.WHITE_SMOKE
-			expl.material_override = water_material
+			HitEffects.splash_effect(pos, radius)
 		HitResult.PENETRATION:
-			expl.radius = radius
-			var pen_material = StandardMaterial3D.new()
-			pen_material.albedo_color = Color.LIGHT_YELLOW
-			pen_material.emission_enabled = true
-			pen_material.emission = Color.YELLOW * 8.0
-			expl.material_override = pen_material
+			HitEffects.he_explosion_effect(pos, radius)
 		HitResult.CITADEL:
-			expl.radius = radius * 2
-			var citadel_material = StandardMaterial3D.new()
-			citadel_material.albedo_color = Color.LIGHT_YELLOW
-			citadel_material.emission_enabled = true
-			citadel_material.emission = Color.YELLOW * 8.0
-			expl.material_override = citadel_material
+			HitEffects.he_explosion_effect(pos, radius * 1.5)
 		HitResult.RICOCHET:
-			expl.radius = radius * 0.3 # Smaller explosion for ricochet
-			var ricochet_material = StandardMaterial3D.new()
-			ricochet_material.albedo_color = Color.BLUE
-			expl.material_override = ricochet_material
+			HitEffects.sparks_effect(pos, radius * 0.5)
 		HitResult.OVERPENETRATION:
-			expl.radius = radius * 0.6 # Medium explosion
-			var overpen_material = StandardMaterial3D.new()
-			overpen_material.albedo_color = Color.CYAN
-			expl.material_override = overpen_material
+			HitEffects.sparks_effect(pos, radius * 0.5)
 		HitResult.SHATTER:
-			expl.radius = radius * 0.5 # Very small explosion
-			var shatter_material = StandardMaterial3D.new()
-			shatter_material.albedo_color = Color.RED
-			expl.material_override = shatter_material
+			HitEffects.sparks_effect(pos, radius * 0.5)
 		HitResult.NOHIT:
 			# No explosion for NOHIT - projectile passed through without hitting armor
-			expl.queue_free() # Remove the explosion visual
+			pass
 
 func destroyBulletRpc(id, position, hit_result: int = HitResult.PENETRATION) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)

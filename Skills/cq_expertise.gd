@@ -8,6 +8,9 @@ func _a(ship: Ship):
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.p.dynamic_mod as GunParams
 		sec_params.reload_time *= 0.9
+		sec_params.base_spread *= 0.9
+		sec_params.h_grouping *= 0.9
+		sec_params.v_grouping *= 0.9
 
 var enabled = false
 func _proc(_delta: float) -> void:

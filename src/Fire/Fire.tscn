@@ -59,6 +59,8 @@ billboard_keep_scale = true
 particles_anim_h_frames = 1
 particles_anim_v_frames = 1
 particles_anim_loop = false
+proximity_fade_enabled = true
+proximity_fade_distance = 40.0
 
 [sub_resource type="QuadMesh" id="QuadMesh_46jq1"]
 material = SubResource("StandardMaterial3D_7e4f1")
@@ -120,6 +122,8 @@ billboard_keep_scale = true
 particles_anim_h_frames = 1
 particles_anim_v_frames = 1
 particles_anim_loop = false
+proximity_fade_enabled = true
+proximity_fade_distance = 40.0
 
 [sub_resource type="QuadMesh" id="QuadMesh_7k1qy"]
 material = SubResource("StandardMaterial3D_itxlh")

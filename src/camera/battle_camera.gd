@@ -110,7 +110,8 @@ func _ready():
 	TorpedoManager.camera = self
 	processed.connect(ProjectileManager.__process)
 	processed.connect(TorpedoManager.__process)
-	
+	processed.connect(ui.__process)
+
 	# Make sure we have necessary references
 	if not _ship:
 		push_error("ArtilleryCamera requires a _ship node!")

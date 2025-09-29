@@ -10,7 +10,6 @@ var shell_index: int:
 		return controller.shell_index
 
 func init(_ship: Ship) -> void:
-	p.reload_time *= 0.5
 	p.shell1._secondary = true
 	p.shell2._secondary = true
 	p.init(_ship)

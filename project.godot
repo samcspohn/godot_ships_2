@@ -36,6 +36,7 @@ ProjectileManager="*res://src/artillary/ProjectileManager.tscn"
 TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
 ArmorInteraction="*res://src/artillary/ArmorInteraction.gd"
 _Utils="*res://src/utils/utils.gd"
+HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
 
 [editor]
 

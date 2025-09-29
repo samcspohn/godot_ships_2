@@ -218,7 +218,7 @@ func _ready():
 		setup_gun_reload_bars()
 
 
-func _process(_delta):
+func __process(_delta):
 	if not camera_controller:
 		return
 		

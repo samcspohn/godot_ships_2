@@ -452,4 +452,4 @@ func fire(mod: TargetMod = null) -> void:
 
 @rpc("authority", "reliable")
 func fire_client(vel, pos, t, id):
-	ProjectileManager.fireBulletClient(pos, vel, t, id, get_shell(), _ship)
+	ProjectileManager.fireBulletClient(pos, vel, t, id, get_shell(), _ship, true, barrel.global_basis)
