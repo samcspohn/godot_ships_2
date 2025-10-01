@@ -14,7 +14,7 @@ var team = {}
 var players_spawned_bots = false  # Track if bots have been spawned for single player
 var team_0_valid_targets = []
 var team_1_valid_targets = []
-
+var players_size = 0
 
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -384,6 +384,18 @@ func get_all_ships() -> Array:
 # 			continue
 # 		# ship.set_input(data.get("input", [0,0]), data.get("aim_point", Vector3.ZERO))
 
+func find_all_guns(node: Node) -> Array:
+	var guns: Array = []
+	if node is Gun:
+		guns.append(node)
+	for child in node.get_children():
+		guns += find_all_guns(child)
+	return guns
+
+@rpc("authority", "reliable", "call_remote")
+func init_guns(gun_paths):
+	TcpThreadPool.initialize_guns(gun_paths)
+
 func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
 		return
@@ -394,6 +406,24 @@ func _physics_process(_delta: float) -> void:
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 # only terrain
 
+	if players_size != players.size():
+		players_size = players.size()
+		print("Players size changed, now: ", players_size)
+		var guns = find_all_guns(get_tree().root)
+		var i = 0
+		var gun_paths: Array[String] = []
+		for gun: Gun in guns:
+			var path = str(gun.get_path())
+			gun.id = i
+			gun_paths.push_back(path)
+			i += 1
+		#TcpThreadPool.initialize_guns(gun_paths)
+		for p in players.values():
+			var ship: Ship = p[0]
+			if ship.team.is_bot:
+				continue
+			var pid = p[2]
+			init_guns.rpc_id(pid, gun_paths)
 	
 	for p in players.values():
 		var ship: Ship = p[0]			

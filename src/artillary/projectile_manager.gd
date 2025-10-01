@@ -334,8 +334,22 @@ func _physics_process(delta: float) -> void:
 					var ricochet_position = hit_result.explosion_position + ricochet_velocity.normalized() * 0.1 # Offset slightly to avoid z-fighting
 
 					var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, null)
-					for client in multiplayer.get_peers():
-						createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
+					TcpThreadPool.send_ricochet(id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
+					# for client in multiplayer.get_peers():
+					# 		createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
+					# var stream = StreamPeerBuffer.new()
+					# stream.put_32(id)
+					# stream.put_32(ricochet_id)
+					# stream.put_float(ricochet_position.x)
+					# stream.put_float(ricochet_position.y)
+					# stream.put_float(ricochet_position.z)
+					# stream.put_float(ricochet_velocity.x)
+					# stream.put_float(ricochet_velocity.y)
+					# stream.put_float(ricochet_velocity.z)
+					# stream.put_double(current_time)
+					# var data = stream.data_array
+					# for client in multiplayer.get_peers():
+					# 	createRicochetRpc2.rpc_id(client, data)
 					
 					if ship.health_controller.is_alive():
 						track_ricochet(p)
@@ -438,7 +452,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 	self.projectiles.set(id, bullet)
 
 	if muzzle_blast:
-		HitEffects.muzzle_blast_effect(pos, basis, s * 1.2)
+		HitEffects.muzzle_blast_effect(pos, basis, s * s)
 	#print("shell type: ", shell.type)
 	# if muzzle_blast:
 	# 	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
@@ -451,7 +465,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 #func request_fire(dir: Vector3, pos: Vector3, shell: int, end_pos: Vector3, total_time: float) -> void:
 		#fireBullet(dir,pos, shell, end_pos, total_time)
 
-@rpc("call_remote", "reliable")
+# @rpc("authority", "call_remote", "reliable", 2)
 func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION) -> void:
 	var bullet: ProjectileData = self.projectiles.get(id)
 	if bullet == null:
@@ -468,58 +482,17 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	# # Create appropriate visual effects based on hit result
-	# var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-	# get_tree().root.add_child(expl)
-	# expl.global_position = pos
-
-	# match hit_result:
-	# 	HitResult.WATER:
-	# 		expl.radius = radius # Smaller explosion for water impact
-	# 		expl.scale = Vector3(1,3.5,1)
-	# 		var water_material = StandardMaterial3D.new()
-	# 		water_material.albedo_color = Color.WHITE_SMOKE
-	# 		expl.material_override = water_material
-	# 	HitResult.PENETRATION:
-	# 		expl.radius = radius
-	# 		var pen_material = StandardMaterial3D.new()
-	# 		pen_material.albedo_color = Color.LIGHT_YELLOW
-	# 		pen_material.emission_enabled = true
-	# 		pen_material.emission = Color.YELLOW * 8.0
-	# 		expl.material_override = pen_material
-	# 	HitResult.CITADEL:
-	# 		expl.radius = radius * 2
-	# 		var citadel_material = StandardMaterial3D.new()
-	# 		citadel_material.albedo_color = Color.LIGHT_YELLOW
-	# 		citadel_material.emission_enabled = true
-	# 		citadel_material.emission = Color.YELLOW * 8.0
-	# 		expl.material_override = citadel_material
-	# 	HitResult.RICOCHET:
-	# 		expl.radius = radius * 0.3 # Smaller explosion for ricochet
-	# 		var ricochet_material = StandardMaterial3D.new()
-	# 		ricochet_material.albedo_color = Color.BLUE
-	# 		expl.material_override = ricochet_material
-	# 	HitResult.OVERPENETRATION:
-	# 		expl.radius = radius * 0.6 # Medium explosion
-	# 		var overpen_material = StandardMaterial3D.new()
-	# 		overpen_material.albedo_color = Color.CYAN
-	# 		expl.material_override = overpen_material
-	# 	HitResult.SHATTER:
-	# 		expl.radius = radius * 0.5 # Very small explosion
-	# 		var shatter_material = StandardMaterial3D.new()
-	# 		shatter_material.albedo_color = Color.RED
-	# 		expl.material_override = shatter_material
-	# 	HitResult.NOHIT:
-	# 		# No explosion for NOHIT - projectile passed through without hitting armor
-	# 		expl.queue_free() # Remove the explosion visual
-
 	match hit_result:
 		HitResult.WATER:
 			HitEffects.splash_effect(pos, radius)
 		HitResult.PENETRATION:
+			# radius
 			HitEffects.he_explosion_effect(pos, radius)
+			HitEffects.sparks_effect(pos, radius * 0.6)
 		HitResult.CITADEL:
-			HitEffects.he_explosion_effect(pos, radius * 1.5)
+			radius *= 1.2
+			HitEffects.he_explosion_effect(pos, radius)
+			HitEffects.sparks_effect(pos, radius * 0.6)
 		HitResult.RICOCHET:
 			HitEffects.sparks_effect(pos, radius * 0.5)
 		HitResult.OVERPENETRATION:
@@ -535,8 +508,36 @@ func destroyBulletRpc(id, position, hit_result: int = HitResult.PENETRATION) -> 
 	self.projectiles.set(id, null)
 	#self.projectiles.erase(id)
 	self.ids_reuse.append(id)
-	for p in multiplayer.get_peers():
-		self.destroyBulletRpc2.rpc_id(p, id, position, hit_result)
+	# TcpThreadPool.enqueue_broadcast(JSON.stringify({
+	# 	"type": "1",
+	# 	"i": id,
+	# 	"p": position,
+	# 	"r": hit_result,
+	# }))
+	TcpThreadPool.send_destroy_shell(id, position, hit_result)
+	# for p in multiplayer.get_peers():
+	# 		self.destroyBulletRpc2.rpc_id(p, id, position, hit_result)
+	# var stream = StreamPeerBuffer.new()
+	# stream.put_32(id)
+	# stream.put_float(position.x)
+	# stream.put_float(position.y)
+	# stream.put_float(position.z)
+	# stream.put_8(hit_result)
+	# var data = stream.data_array
+	# for p in multiplayer.get_peers():
+	# 	destroyBulletRpc3.rpc_id(p, data)
+
+@rpc("authority", "call_remote", "reliable", 2)
+func destroyBulletRpc3(data: PackedByteArray) -> void:
+	if data.size() < 17:
+		print("Invalid data size for destroyBulletRpc3")
+		return
+	var stream = StreamPeerBuffer.new()
+	stream.data_array = data
+	var id = stream.get_32()
+	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	var hit_result = stream.get_8()
+	destroyBulletRpc2(id, pos, hit_result)
 
 func resize_multimesh_buffers(new_count: int):
 	# Resize transform and color arrays
@@ -726,7 +727,7 @@ func track_frag(p: ProjectileData):
 	if p.owner.stats:
 		p.owner.stats.frags += 1
 
-@rpc("any_peer", "call_local", "reliable")
+@rpc("authority", "call_remote", "reliable", 2)
 func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_position: Vector3, ricochet_velocity: Vector3, ricochet_time: float):
 	var p = projectiles.get(original_shell_id)
 	if p == null:
@@ -734,3 +735,17 @@ func createRicochetRpc(original_shell_id: int, new_shell_id: int, ricochet_posit
 		return
 
 	fireBulletClient(ricochet_position, ricochet_velocity, ricochet_time, new_shell_id, p.params, null, false)
+
+@rpc("authority", "call_remote", "reliable", 2)
+func createRicochetRpc2(data: PackedByteArray):
+	if data.size() < 32:
+		print("Warning: Invalid ricochet data size")
+		return
+	var stream = StreamPeerBuffer.new()
+	stream.data_array = data
+	var original_shell_id = stream.get_32()
+	var new_shell_id = stream.get_32()
+	var ricochet_position = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	var ricochet_velocity = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	var ricochet_time = stream.get_float()
+	createRicochetRpc(original_shell_id, new_shell_id, ricochet_position, ricochet_velocity, ricochet_time)

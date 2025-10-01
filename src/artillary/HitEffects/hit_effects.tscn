@@ -1,4 +1,4 @@
-[gd_scene load_steps=37 format=3 uid="uid://b2h05q4ej4xeb"]
+[gd_scene load_steps=39 format=3 uid="uid://b2h05q4ej4xeb"]
 
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="1_3knvb"]
 [ext_resource type="Script" uid="uid://bbibtirfdewu4" path="res://src/artillary/HitEffects/hit_effects.gd" id="1_ovioq"]
@@ -58,7 +58,8 @@ gradient = SubResource("Gradient_3knvb")
 [sub_resource type="Curve" id="Curve_3knvb"]
 
 [sub_resource type="Curve" id="Curve_ovioq"]
-_data = [Vector2(0, 0), 0.0, 2.39505, 0, 0, Vector2(0.12114, 0.504537), 0.0, 0.0, 0, 0, Vector2(0.881235, 0.486842), 0.0, 0.0, 0, 0]
+_limits = [-1.0, 0.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(0.087886, 0), -0.346495, -0.346495, 0, 0, Vector2(1, -0.625227), -1.33711, 0.0, 0, 0]
 point_count = 3
 
 [sub_resource type="Curve" id="Curve_7mfvt"]
@@ -79,9 +80,9 @@ curve = SubResource("Curve_emission")
 emission_shape = 1
 emission_sphere_radius = 0.5
 direction = Vector3(0, 1, 0)
-spread = 180.0
-initial_velocity_min = 5.0
-initial_velocity_max = 7.5
+spread = 161.6
+initial_velocity_min = 3.0
+initial_velocity_max = 6.0
 angular_velocity_min = -90.0
 angular_velocity_max = 90.0
 directional_velocity_min = 1.0
@@ -152,8 +153,8 @@ directional_velocity_min = 1.0
 directional_velocity_max = 1.0
 directional_velocity_curve = SubResource("CurveXYZTexture_8430b")
 gravity = Vector3(0, 0, 0)
-damping_min = 10.0
-damping_max = 10.0
+damping_min = 20.246
+damping_max = 20.246
 scale_curve = SubResource("CurveTexture_5l7oe")
 color_ramp = SubResource("GradientTexture1D_gswik")
 emission_curve = SubResource("CurveTexture_pjimd")
@@ -173,11 +174,18 @@ particles_anim_v_frames = 1
 particles_anim_loop = false
 
 [sub_resource type="Gradient" id="Gradient_4ncql"]
-offsets = PackedFloat32Array(0, 0.751899, 1)
-colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.946835, 1, 1, 1, 0)
+offsets = PackedFloat32Array(0, 0.582278, 1)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.721519, 1, 1, 1, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_5l7oe"]
 gradient = SubResource("Gradient_4ncql")
+
+[sub_resource type="Curve" id="Curve_5l7oe"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), -2.60645, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_gswik"]
+curve = SubResource("Curve_5l7oe")
 
 [sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_sparks"]
 emission_shape = 1
@@ -191,6 +199,7 @@ angular_velocity_max = 360.0
 gravity = Vector3(0, -20, 0)
 scale_min = 0.1
 scale_max = 0.3
+scale_curve = SubResource("CurveTexture_gswik")
 color = Color(1, 0.947231, 0.642962, 1)
 color_ramp = SubResource("GradientTexture1D_5l7oe")
 hue_variation_min = -0.1
@@ -211,7 +220,9 @@ amount = 20
 lifetime = 8.0
 one_shot = true
 explosiveness = 1.0
-fixed_fps = 15
+fixed_fps = 45
+interpolate = false
+visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 process_material = SubResource("ParticleProcessMaterial_3knvb")
 draw_pass_1 = SubResource("QuadMesh_ovioq")
 script = ExtResource("3_7mfvt")
@@ -227,7 +238,9 @@ lifetime = 2.0
 one_shot = true
 explosiveness = 0.9
 randomness = 0.53
-fixed_fps = 20
+fixed_fps = 45
+interpolate = false
+visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 draw_order = 3
 process_material = SubResource("ParticleProcessMaterial_explosion")
 draw_pass_1 = SubResource("QuadMesh_explosion")
@@ -239,11 +252,15 @@ transform = Transform3D(-0.722955, 0, -0.690895, 0, 1, 0, 0.690895, 0, -0.722955
 material_override = SubResource("StandardMaterial3D_7mfvt")
 cast_shadow = 0
 ignore_occlusion_culling = true
+emitting = false
 amount = 30
 lifetime = 2.5
+one_shot = true
 explosiveness = 0.95
 randomness = 0.53
+fixed_fps = 45
 interpolate = false
+visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 draw_order = 3
 process_material = SubResource("ParticleProcessMaterial_tf7yu")
 draw_pass_1 = SubResource("QuadMesh_explosion")
@@ -255,10 +272,13 @@ material_override = SubResource("StandardMaterial3D_sparks")
 cast_shadow = 0
 ignore_occlusion_culling = true
 emitting = false
-amount = 25
+amount = 45
 lifetime = 0.7
 one_shot = true
 explosiveness = 1.0
+fixed_fps = 45
+interpolate = false
+visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 process_material = SubResource("ParticleProcessMaterial_sparks")
 draw_pass_1 = SubResource("QuadMesh_sparks")
 script = ExtResource("3_7mfvt")

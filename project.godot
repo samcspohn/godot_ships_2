@@ -17,7 +17,7 @@ llm_api="ollama_api"
 
 config/name="ships2"
 run/main_scene="res://scenes/root.tscn"
-config/features=PackedStringArray("4.4", "Forward Plus")
+config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
 
 [audio]
@@ -37,6 +37,7 @@ TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
 ArmorInteraction="*res://src/artillary/ArmorInteraction.gd"
 _Utils="*res://src/utils/utils.gd"
 HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
+TcpThreadPool="*res://tcp_thread_pool.tscn"
 
 [editor]
 

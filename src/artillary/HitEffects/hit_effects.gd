@@ -30,10 +30,10 @@ const POOL_SIZE_SPARKS: int = 20
 const POOL_SIZE_MUZZLE_BLAST: int = 30
 
 func print_status() -> void:
-	print("Splash count: ", splash_count, " Pool size: ", splash_pool.size(), "Active: ", splash_count - splash_pool.size())
-	print("HE Explosion count: ", he_explosion_count, " Pool size: ", he_explosion_pool.size(), "Active: ", he_explosion_count - he_explosion_pool.size())
-	print("Sparks count: ", sparks_count, " Pool size: ", sparks_pool.size(), "Active: ", sparks_count - sparks_pool.size())
-	print("Muzzle Blast count: ", muzzle_blast_count, " Pool size: ", muzzle_blast_pool.size(), "Active: ", muzzle_blast_count - muzzle_blast_pool.size())
+	print("Splash count: ", splash_count, " Pool size: ", splash_pool.size(), " Active: ", splash_count - splash_pool.size())
+	print("HE Explosion count: ", he_explosion_count, " Pool size: ", he_explosion_pool.size(), " Active: ", he_explosion_count - he_explosion_pool.size())
+	print("Sparks count: ", sparks_count, " Pool size: ", sparks_pool.size(), " Active: ", sparks_count - sparks_pool.size())
+	print("Muzzle Blast count: ", muzzle_blast_count, " Pool size: ", muzzle_blast_pool.size(), " Active: ", muzzle_blast_count - muzzle_blast_pool.size())
 	get_tree().create_timer(5.0).timeout.connect(print_status)
 
 func _ready() -> void:
@@ -64,7 +64,7 @@ func _ready() -> void:
 
 	# Preallocate pools to avoid lag spikes during gameplay
 	_preallocate_pools()
-	get_tree().create_timer(5.0).timeout.connect(print_status)
+	# get_tree().create_timer(5.0).timeout.connect(print_status)
 
 func _preallocate_pools() -> void:
 	# Preallocate splash effects
@@ -132,7 +132,8 @@ func he_explosion_effect(pos: Vector3, size: float) -> void:
 		he_explosion_count += 1
 	
 	p.global_transform.origin = pos
-	p.scale = Vector3(size, size, size)
+	var s = pow(size, 1.5)
+	p.scale = Vector3(s, s, s)
 	if not he_explosion_material_cache.has(size):
 		var mat: ParticleProcessMaterial = he_explosion.process_material.duplicate() as ParticleProcessMaterial
 		mat.scale_min = size * size * 2
@@ -154,6 +155,7 @@ func sparks_effect(pos: Vector3, size: float) -> void:
 		sparks_count += 1
 
 	p.global_transform.origin = pos
+	# var s = pow(size, 1.5)
 	p.scale = Vector3(size, size, size)
 	if not sparks_material_cache.has(size):
 		var mat: ParticleProcessMaterial = sparks.process_material.duplicate() as ParticleProcessMaterial
@@ -175,13 +177,12 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 
 	p.global_transform.origin = pos
 	p.global_transform.basis = basis
-	p.speed_scale = 2.0 / size
-	var s = pow(size, 1.75)
-	p.scale = Vector3(s, s, s)
+	p.speed_scale = 5.0 / size
+	p.scale = Vector3(size, size, size)
 	if not muzzle_blast_material_cache.has(size):
 		var mat: ParticleProcessMaterial = muzzle_blast.process_material.duplicate() as ParticleProcessMaterial
-		mat.scale_min = s
-		mat.scale_max = s * 1.5
+		mat.scale_min = size
+		mat.scale_max = size * 1.5
 		muzzle_blast_material_cache[size] = mat
 	p.process_material = muzzle_blast_material_cache[size]
 	p.start_effect()

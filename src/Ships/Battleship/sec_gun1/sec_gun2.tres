@@ -12,10 +12,6 @@ damage = 1500.0
 size = 1.75
 caliber = 105.0
 mass = 15.1
-fire_buildup = 0.0
-fuze_delay = 0.035
-type = 1
-penetration_modifier = 1.0
 auto_bounce = 1.0472
 ricochet_angle = 0.785398
 overmatch = 7
@@ -37,7 +33,6 @@ penetration_modifier = 0.3
 auto_bounce = 1.571
 ricochet_angle = 0.785398
 overmatch = 26
-arming_threshold = 0
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]

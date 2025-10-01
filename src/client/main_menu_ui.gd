@@ -161,6 +161,7 @@ func _process(delta: float) -> void:
 func _on_connection_succeeded():
 	status_label.text = "Connected to server!"
 	GameSettings.save_settings()
+	TcpThreadPool.start_client()
 	get_tree().call_deferred("change_scene_to_file", "res://src/server/server.tscn")
 
 func _on_connection_failed():

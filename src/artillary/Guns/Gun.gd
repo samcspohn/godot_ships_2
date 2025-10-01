@@ -22,7 +22,7 @@ var base_rotation: float
 # var max_range: float
 # var max_flight: float
 var _ship: Ship
-
+var id: int = -1
 # @export var params: GunParams
 # var my_params: GunParams = GunParams.new()
 
@@ -441,15 +441,50 @@ func fire(mod: TargetMod = null) -> void:
 				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, self.global_position, controller.shell_index, mod)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
-					var t = float(Time.get_unix_time_from_system())
-					var id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
-					for p in multiplayer.get_peers():
-						self.fire_client.rpc_id(p, dispersed_velocity, m.global_position, t, id)
+					var t = Time.get_unix_time_from_system()
+					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
+					# for p in multiplayer.get_peers():
+					# 	self.fire_client.rpc_id(p, dispersed_velocity, m.global_position, t, id)
+
+					# TcpThreadPool.enqueue_broadcast(JSON.stringify({
+					# 	"type": "0",
+					# 	"v": dispersed_velocity,
+					# 	"p": m.global_position,
+					# 	"t": t,
+					# 	"i": _id,
+					# 	"ID": id,
+					# }))
+					TcpThreadPool.send_fire_gun(id, dispersed_velocity, m.global_position, t, _id)
+					# var stream = StreamPeerBuffer.new()
+					# stream.put_float(dispersed_velocity.x) # 4
+					# stream.put_float(dispersed_velocity.y) # 8
+					# stream.put_float(dispersed_velocity.z) # 12
+					# stream.put_float(m.global_position.x) # 16
+					# stream.put_float(m.global_position.y) # 20
+					# stream.put_float(m.global_position.z) # 24
+					# stream.put_double(t) # 32
+					# stream.put_32(_id) # 36
+
+					# for p in multiplayer.get_peers():
+					# 	self.fire_client2.rpc_id(p, stream.data_array)
 				else:
 					pass
 					# print(aim)
 			reload = 0
 
-@rpc("authority", "reliable")
-func fire_client(vel, pos, t, id):
-	ProjectileManager.fireBulletClient(pos, vel, t, id, get_shell(), _ship, true, barrel.global_basis)
+# @rpc("authority", "reliable")
+func fire_client(vel, pos, t, _id):
+	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
+
+@rpc("authority", "call_remote", "reliable", 2)
+func fire_client2(data: PackedByteArray) -> void:
+	if data.size() != 36:
+		print("Invalid fire_client2 data size: ", data.size())
+		return
+	var stream = StreamPeerBuffer.new()
+	stream.data_array = data
+	var vel = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	var t = stream.get_double()
+	var _id = stream.get_32()
+	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
