@@ -1,12 +1,14 @@
-[gd_scene load_steps=39 format=3 uid="uid://b2h05q4ej4xeb"]
+[gd_scene load_steps=41 format=3 uid="uid://b2h05q4ej4xeb"]
 
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="1_3knvb"]
 [ext_resource type="Script" uid="uid://bbibtirfdewu4" path="res://src/artillary/HitEffects/hit_effects.gd" id="1_ovioq"]
 [ext_resource type="Script" uid="uid://c5wo7k76mpia" path="res://src/artillary/HitEffects/hit_effect.gd" id="3_7mfvt"]
+[ext_resource type="Script" uid="uid://djw44v0aby41b" path="res://src/artillary/HitEffects/hit_effect_cpu.gd" id="4_4ncql"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_606xa"]
 transparency = 1
 cull_mode = 2
+depth_draw_mode = 2
 diffuse_mode = 2
 specular_mode = 2
 vertex_color_use_as_albedo = true
@@ -19,7 +21,7 @@ particles_anim_loop = false
 
 [sub_resource type="Gradient" id="Gradient_7mfvt"]
 offsets = PackedFloat32Array(0.0101266, 0.744304, 1)
-colors = PackedColorArray(0.791894, 0.998726, 1, 1, 0.792003, 0.999254, 1, 0.585678, 0.792157, 1, 1, 0)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.585678, 0.792157, 1, 1, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_4ncql"]
 gradient = SubResource("Gradient_7mfvt")
@@ -30,7 +32,7 @@ emission_sphere_radius = 1.0
 direction = Vector3(0, 1, 0)
 spread = 10.0
 initial_velocity_min = 1.0
-initial_velocity_max = 15.0
+initial_velocity_max = 13.0
 damping_min = 4.0
 damping_max = 5.0
 color_ramp = SubResource("GradientTexture1D_4ncql")
@@ -77,6 +79,7 @@ point_count = 2
 curve = SubResource("Curve_emission")
 
 [sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_explosion"]
+lifetime_randomness = 0.3
 emission_shape = 1
 emission_sphere_radius = 0.5
 direction = Vector3(0, 1, 0)
@@ -143,6 +146,7 @@ point_count = 2
 curve = SubResource("Curve_4ncql")
 
 [sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_tf7yu"]
+lifetime_randomness = 0.3
 direction = Vector3(0, 0, -1)
 spread = 8.0
 initial_velocity_min = 2.0
@@ -153,8 +157,8 @@ directional_velocity_min = 1.0
 directional_velocity_max = 1.0
 directional_velocity_curve = SubResource("CurveXYZTexture_8430b")
 gravity = Vector3(0, 0, 0)
-damping_min = 20.246
-damping_max = 20.246
+damping_min = 5.0
+damping_max = 10.0
 scale_curve = SubResource("CurveTexture_5l7oe")
 color_ramp = SubResource("GradientTexture1D_gswik")
 emission_curve = SubResource("CurveTexture_pjimd")
@@ -207,78 +211,127 @@ hue_variation_max = 0.1
 
 [sub_resource type="QuadMesh" id="QuadMesh_sparks"]
 
+[sub_resource type="QuadMesh" id="QuadMesh_7mfvt"]
+
 [node name="HitEffects" type="Node"]
 script = ExtResource("1_ovioq")
 
 [node name="Splash" type="GPUParticles3D" parent="."]
+process_thread_group = 2
+process_thread_group_order = 0
+process_thread_messages = 0
 physics_interpolation_mode = 2
 material_override = SubResource("StandardMaterial3D_606xa")
 cast_shadow = 0
 ignore_occlusion_culling = true
 emitting = false
-amount = 20
+amount = 15
 lifetime = 8.0
 one_shot = true
 explosiveness = 1.0
-fixed_fps = 45
-interpolate = false
-visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 process_material = SubResource("ParticleProcessMaterial_3knvb")
 draw_pass_1 = SubResource("QuadMesh_ovioq")
 script = ExtResource("3_7mfvt")
 
+[node name="VisibleOnScreenNotifier3D" type="VisibleOnScreenNotifier3D" parent="Splash"]
+process_thread_group = 1
+process_thread_group_order = 0
+process_thread_messages = 0
+
 [node name="HE_Explosion" type="GPUParticles3D" parent="."]
+process_thread_group = 2
+process_thread_group_order = 0
+process_thread_messages = 0
 physics_interpolation_mode = 2
 material_override = SubResource("StandardMaterial3D_explosion")
 cast_shadow = 0
 ignore_occlusion_culling = true
 emitting = false
-amount = 30
+amount = 10
 lifetime = 2.0
 one_shot = true
 explosiveness = 0.9
 randomness = 0.53
-fixed_fps = 45
-interpolate = false
-visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 draw_order = 3
 process_material = SubResource("ParticleProcessMaterial_explosion")
 draw_pass_1 = SubResource("QuadMesh_explosion")
 script = ExtResource("3_7mfvt")
 
+[node name="VisibleOnScreenNotifier3D" type="VisibleOnScreenNotifier3D" parent="HE_Explosion"]
+process_thread_group = 1
+process_thread_group_order = 0
+process_thread_messages = 0
+
 [node name="MuzzleBlast" type="GPUParticles3D" parent="."]
+process_thread_group = 2
+process_thread_group_order = 0
+process_thread_messages = 0
 physics_interpolation_mode = 2
 transform = Transform3D(-0.722955, 0, -0.690895, 0, 1, 0, 0.690895, 0, -0.722955, 0, 0, 0)
 material_override = SubResource("StandardMaterial3D_7mfvt")
 cast_shadow = 0
-ignore_occlusion_culling = true
 emitting = false
-amount = 30
+amount = 15
 lifetime = 2.5
 one_shot = true
 explosiveness = 0.95
 randomness = 0.53
-fixed_fps = 45
-interpolate = false
-visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
+visibility_aabb = AABB(-20, -20, -20, 40, 40, 40)
 draw_order = 3
 process_material = SubResource("ParticleProcessMaterial_tf7yu")
 draw_pass_1 = SubResource("QuadMesh_explosion")
 script = ExtResource("3_7mfvt")
 
+[node name="VisibleOnScreenNotifier3D" type="VisibleOnScreenNotifier3D" parent="MuzzleBlast"]
+process_thread_group = 1
+process_thread_group_order = 0
+process_thread_messages = 0
+
 [node name="Sparks" type="GPUParticles3D" parent="."]
+process_thread_group = 2
+process_thread_group_order = 0
+process_thread_messages = 0
 physics_interpolation_mode = 2
 material_override = SubResource("StandardMaterial3D_sparks")
 cast_shadow = 0
 ignore_occlusion_culling = true
 emitting = false
-amount = 45
+amount = 30
 lifetime = 0.7
 one_shot = true
 explosiveness = 1.0
-fixed_fps = 45
-interpolate = false
-visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 process_material = SubResource("ParticleProcessMaterial_sparks")
 draw_pass_1 = SubResource("QuadMesh_sparks")
 script = ExtResource("3_7mfvt")
+
+[node name="VisibleOnScreenNotifier3D" type="VisibleOnScreenNotifier3D" parent="Sparks"]
+process_thread_group = 1
+process_thread_group_order = 0
+process_thread_messages = 0
+
+[node name="Splash2" type="CPUParticles3D" parent="."]
+process_thread_group = 2
+process_thread_group_order = 0
+process_thread_messages = 0
+physics_interpolation_mode = 2
+material_override = SubResource("StandardMaterial3D_606xa")
+cast_shadow = 0
+ignore_occlusion_culling = true
+emitting = false
+amount = 15
+lifetime = 8.0
+one_shot = true
+explosiveness = 1.0
+mesh = SubResource("QuadMesh_7mfvt")
+direction = Vector3(0, 1, 0)
+spread = 10.0
+initial_velocity_min = 1.0
+initial_velocity_max = 15.0
+damping_min = 4.0
+damping_max = 5.0
+script = ExtResource("4_4ncql")
+
+[node name="VisibleOnScreenNotifier3D" type="VisibleOnScreenNotifier3D" parent="Splash2"]
+process_thread_group = 1
+process_thread_group_order = 0
+process_thread_messages = 0

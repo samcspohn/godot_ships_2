@@ -22,7 +22,7 @@
 size = Vector3(36, 28.971, 251.893)
 
 [node name="bismark_low_poly2" instance=ExtResource("1_3klas")]
-mass = 5.6e+07
+mass = 56000000.0
 physics_material_override = SubResource("PhysicsMaterial_4pvtd")
 gravity_scale = 4.0
 script = ExtResource("2_4pvtd")
@@ -31,7 +31,7 @@ ship_model_glb_path = "uid://btam5g21aiiqg"
 [node name="Modules" parent="." index="0" instance=ExtResource("2_5bir6")]
 
 [node name="HPManager" parent="Modules" index="0"]
-max_hp = 65000.0
+max_hp = 650000.0
 
 [node name="ArtilleryController" parent="Modules" index="1" node_paths=PackedStringArray("guns")]
 params = ExtResource("4_rb316")
@@ -85,7 +85,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.16078, 92.8848)
 
 [node name="105mmTurret" parent="Hull" index="0"]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.36849
+min_rotation_angle = 3.368485456349056
 max_rotation_angle = 0.0523599
 
 [node name="105mmTurret_001" parent="Hull" index="1"]
@@ -159,8 +159,8 @@ max_rotation_angle = 2.54818
 
 [node name="380mmTurret_001" parent="Hull" index="21"]
 script = ExtResource("3_1wuss")
-min_rotation_angle = 3.53257
-max_rotation_angle = 2.73764
+min_rotation_angle = 3.5255650890285457
+max_rotation_angle = 2.7401669256310974
 
 [node name="380mmTurret_002" parent="Hull" index="22"]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.00826359, 6.31443, 55.6975)

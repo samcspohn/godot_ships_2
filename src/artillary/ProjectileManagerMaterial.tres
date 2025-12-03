@@ -3,7 +3,7 @@
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="1_rbuuj"]
 
 [resource]
-render_priority = -1
+render_priority = 1
 transparency = 1
 blend_mode = 4
 depth_draw_mode = 2

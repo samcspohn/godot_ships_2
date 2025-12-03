@@ -1,14 +1,7 @@
-extends GPUParticles3D
-class_name HitEffect
+extends CPUParticles3D
+class_name HitEffectcpu
 
-enum EffectType {
-	SPLASH,
-	HE_EXPLOSION,
-	SPARKS,
-	MUZZLE_BLAST,
-}
-
-@export_storage var type: EffectType
+@export_storage var type: HitEffect.EffectType
 @onready var on_screen: VisibleOnScreenNotifier3D = $"VisibleOnScreenNotifier3D"
 var time: float = 0.0
 var _on_screen: bool = false
@@ -47,19 +40,18 @@ func start_effect() -> void:
 # # Keep invisible during reset
 # 	visible = false
 # 	emitting = false
-
+	
 # 	# Force clear the particle system
 # 	restart()
-
+	
 # 	# Wait one frame for GPU buffer to clear
 # 	await get_tree().process_frame
-
+	
 # 	# Now safe to show and emit
 # 	visible = true
 # 	emitting = true
 
 # 	# Set up the return timer based on actual duration
-	preprocess = 0.0
 	visible = true
 	restart()
 	time = Time.get_ticks_msec()

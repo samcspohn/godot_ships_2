@@ -64,7 +64,7 @@ func _ready() -> void:
 
 	# Preallocate pools to avoid lag spikes during gameplay
 	_preallocate_pools()
-	# get_tree().create_timer(5.0).timeout.connect(print_status)
+	get_tree().create_timer(5.0).timeout.connect(print_status)
 
 func _preallocate_pools() -> void:
 	# Preallocate splash effects
@@ -75,7 +75,7 @@ func _preallocate_pools() -> void:
 		add_child(p)
 		splash_pool.append(p)
 	splash_count = POOL_SIZE_SPLASH
-	
+
 	# Preallocate HE explosion effects
 	for i in range(POOL_SIZE_HE_EXPLOSION):
 		var p: HitEffect = he_explosion.duplicate() as HitEffect
@@ -84,7 +84,7 @@ func _preallocate_pools() -> void:
 		add_child(p)
 		he_explosion_pool.append(p)
 	he_explosion_count = POOL_SIZE_HE_EXPLOSION
-	
+
 	# Preallocate sparks effects
 	for i in range(POOL_SIZE_SPARKS):
 		var p: HitEffect = sparks.duplicate() as HitEffect
@@ -93,7 +93,7 @@ func _preallocate_pools() -> void:
 		add_child(p)
 		sparks_pool.append(p)
 	sparks_count = POOL_SIZE_SPARKS
-	
+
 	# Preallocate muzzle blast effects
 	for i in range(POOL_SIZE_MUZZLE_BLAST):
 		var p: HitEffect = muzzle_blast.duplicate() as HitEffect
@@ -109,6 +109,8 @@ func splash_effect(pos: Vector3, size: float) -> void:
 		p = splash_pool.pop_back()
 	else:
 		p = splash.duplicate() as HitEffect
+		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
+		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		add_child(p)
 		splash_count += 1
 
@@ -128,9 +130,11 @@ func he_explosion_effect(pos: Vector3, size: float) -> void:
 		p = he_explosion_pool.pop_back()
 	else:
 		p = he_explosion.duplicate() as HitEffect
+		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
+		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		add_child(p)
 		he_explosion_count += 1
-	
+
 	p.global_transform.origin = pos
 	var s = pow(size, 1.5)
 	p.scale = Vector3(s, s, s)
@@ -150,6 +154,8 @@ func sparks_effect(pos: Vector3, size: float) -> void:
 		p = sparks_pool.pop_back()
 	else:
 		p = sparks.duplicate() as HitEffect
+		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
+		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		# p.pool = sparks_pool
 		add_child(p)
 		sparks_count += 1
@@ -171,6 +177,8 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 		p = muzzle_blast_pool.pop_back()
 	else:
 		p = muzzle_blast.duplicate() as HitEffect
+		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
+		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		# p.pool = muzzle_blast_pool
 		add_child(p)
 		muzzle_blast_count += 1
@@ -187,7 +195,7 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	p.process_material = muzzle_blast_material_cache[size]
 	p.start_effect()
 
-func return_to_pool(effect: HitEffect) -> void:
+func return_to_pool(effect: Node) -> void:
 	match effect.type:
 		HitEffect.EffectType.SPLASH:
 			splash_pool.append(effect)

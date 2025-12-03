@@ -282,7 +282,7 @@ func find_ship(node: Node):
 
 # var time_elapsed: float = 0.0
 
-func _physics_process(delta: float) -> void:
+func _physics_process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var id = 0
@@ -487,8 +487,8 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 			HitEffects.splash_effect(pos, radius)
 		HitResult.PENETRATION:
 			# radius
-			HitEffects.he_explosion_effect(pos, radius)
-			HitEffects.sparks_effect(pos, radius * 0.6)
+			HitEffects.he_explosion_effect(pos, radius * 0.8)
+			HitEffects.sparks_effect(pos, radius * 0.5)
 		HitResult.CITADEL:
 			radius *= 1.2
 			HitEffects.he_explosion_effect(pos, radius)

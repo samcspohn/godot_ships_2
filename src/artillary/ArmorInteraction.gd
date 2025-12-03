@@ -276,9 +276,9 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		shell.position = hit_position
 
 
-		if shell.fuze < 0.0:
-			if e_armor > params.arming_threshold:
-				shell.fuze = 0.0
+		# if shell.fuze < 0.0:
+		# 	if (e_armor + armor) / 2.0 > params.arming_threshold:
+		# 		shell.fuze = 0.0
 				
 		events.append("Shell: speed=%.1f vel=(%.1f, %.1f, %.1f) m/s, fuze=%.3f s, pos=(%.1f, %.1f, %.1f), pen: %.1f" % [shell.velocity.length(), shell.velocity.x, shell.velocity.y, shell.velocity.z, shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
 
@@ -287,20 +287,27 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 				hit_cit = true
 			result = ArmorResult.OVERPEN
 			over_pen = true
-			if shell.pen > e_armor:
-				shell.velocity *= (1.0 - e_armor / shell.pen)
-			else:
-				shell.velocity = Vector3.ZERO
+			if shell.fuze < 0.0:
+				if e_armor > params.arming_threshold:
+					shell.fuze = 0.0 # Arm the fuze if over arming threshold
+			# if shell.pen > e_armor:
+			# 	shell.velocity *= (1.0 - e_armor / shell.pen) * 0.1
+			# else:
+			# 	shell.velocity = Vector3.ZERO
 		elif impact_angle > params.auto_bounce or (impact_angle > params.ricochet_angle and shell.pen < e_armor):
 			result = ArmorResult.RICOCHET
 			shell.velocity = shell.velocity.bounce(hit_normal.normalized())
 			shell.velocity *= cos(PI / 2.0 - impact_angle) # Lose some velocity on ricochet
 			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
+			if deg_to_rad(20) > (PI - impact_angle):
+				if shell.fuze < 0.0:
+					shell.fuze = 0.0 # Arm the fuze on ricochet if it was armed already
 		elif shell.pen < e_armor:
 			result = ArmorResult.SHATTER
 			shell.position -= -shell.velocity.normalized() * 0.01
 			shell.velocity = Vector3.ZERO
 			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
+			shell.fuze = params.fuze_delay
 			
 		else:
 			if hit_node.is_citadel:
@@ -308,6 +315,9 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 			result = ArmorResult.OVERPEN
 			over_pen = true
 			shell.velocity *= (1.0 - e_armor / shell.pen)
+			if shell.fuze < 0.0:
+				if e_armor > params.arming_threshold:
+					shell.fuze = 0.0 # Arm the fuze if over arming threshold
 		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°), normal: (%.1f, %.1f, %.1f), ship: %s" % [armor_result_to_string(result), hit_node.armor_path, armor, e_armor, rad_to_deg(impact_angle), hit_normal.x, hit_normal.y, hit_normal.z, hit_node.ship.name])
 
 		if result == ArmorResult.SHATTER or shell.velocity.length() < 0.5:
@@ -354,8 +364,9 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
 	if damage_result == HitResult.CITADEL:
-		# events.append("CITADEL HIT!")
+	# if true:
 		for e in events:
 			print(e)
 
+	# return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship)
 	return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship)
