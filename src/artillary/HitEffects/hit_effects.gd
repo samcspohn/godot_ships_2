@@ -7,11 +7,11 @@ var muzzle_blast: HitEffect
 # var ap_explosion: HitEffect = $"AP_Explosion"
 var sparks: HitEffect
 
-var splash_pool: Array[HitEffect] = []
-var he_explosion_pool: Array[HitEffect] = []
-var ap_explosion_pool: Array[HitEffect] = []
-var sparks_pool: Array[HitEffect] = []
-var muzzle_blast_pool: Array[HitEffect] = []
+var splash_pool: Dictionary[float, Array] = {}
+var he_explosion_pool: Dictionary[float, Array] = {}
+var ap_explosion_pool: Dictionary[float, Array] = {}
+var sparks_pool: Dictionary[float, Array] = {}
+var muzzle_blast_pool: Dictionary[float, Array] = {}
 
 var splash_material_cache: Dictionary[float, ParticleProcessMaterial] = {}
 var he_explosion_material_cache: Dictionary[float, ParticleProcessMaterial] = {}
@@ -36,7 +36,16 @@ func print_status() -> void:
 	print("Muzzle Blast count: ", muzzle_blast_count, " Pool size: ", muzzle_blast_pool.size(), " Active: ", muzzle_blast_count - muzzle_blast_pool.size())
 	get_tree().create_timer(5.0).timeout.connect(print_status)
 
+func print_(node: Node = null, indent: String = "") -> void:
+	if node == null:
+		node = self
+	print(indent + str(node))
+	for child in node.get_children():
+		print_(child, indent + "  ")
+
 func _ready() -> void:
+
+	print_(self)
 
 	if "--server" in OS.get_cmdline_args():
 		queue_free()
@@ -63,124 +72,136 @@ func _ready() -> void:
 	sparks.type = HitEffect.EffectType.SPARKS
 
 	# Preallocate pools to avoid lag spikes during gameplay
-	_preallocate_pools()
-	get_tree().create_timer(5.0).timeout.connect(print_status)
+	# _preallocate_pools()
+	# get_tree().create_timer(5.0).timeout.connect(print_status)
 
-func _preallocate_pools() -> void:
-	# Preallocate splash effects
-	for i in range(POOL_SIZE_SPLASH):
-		var p: HitEffect = splash.duplicate() as HitEffect
-		p.visible = false
-		p.emitting = false
-		add_child(p)
-		splash_pool.append(p)
-	splash_count = POOL_SIZE_SPLASH
+# func _preallocate_pools() -> void:
+# 	# Preallocate splash effects
+# 	for i in range(POOL_SIZE_SPLASH):
+# 		var p: HitEffect = splash.duplicate() as HitEffect
+# 		p.visible = false
+# 		p.emitting = false
+# 		add_child(p)
+# 		splash_pool.append(p)
+# 	splash_count = POOL_SIZE_SPLASH
 
-	# Preallocate HE explosion effects
-	for i in range(POOL_SIZE_HE_EXPLOSION):
-		var p: HitEffect = he_explosion.duplicate() as HitEffect
-		p.visible = false
-		p.emitting = false
-		add_child(p)
-		he_explosion_pool.append(p)
-	he_explosion_count = POOL_SIZE_HE_EXPLOSION
+# 	# Preallocate HE explosion effects
+# 	for i in range(POOL_SIZE_HE_EXPLOSION):
+# 		var p: HitEffect = he_explosion.duplicate() as HitEffect
+# 		p.visible = false
+# 		p.emitting = false
+# 		add_child(p)
+# 		he_explosion_pool.append(p)
+# 	he_explosion_count = POOL_SIZE_HE_EXPLOSION
 
-	# Preallocate sparks effects
-	for i in range(POOL_SIZE_SPARKS):
-		var p: HitEffect = sparks.duplicate() as HitEffect
-		p.visible = false
-		p.emitting = false
-		add_child(p)
-		sparks_pool.append(p)
-	sparks_count = POOL_SIZE_SPARKS
+# 	# Preallocate sparks effects
+# 	for i in range(POOL_SIZE_SPARKS):
+# 		var p: HitEffect = sparks.duplicate() as HitEffect
+# 		p.visible = false
+# 		p.emitting = false
+# 		add_child(p)
+# 		sparks_pool.append(p)
+# 	sparks_count = POOL_SIZE_SPARKS
 
-	# Preallocate muzzle blast effects
-	for i in range(POOL_SIZE_MUZZLE_BLAST):
-		var p: HitEffect = muzzle_blast.duplicate() as HitEffect
-		p.visible = false
-		p.emitting = false
-		add_child(p)
-		muzzle_blast_pool.append(p)
-	muzzle_blast_count = POOL_SIZE_MUZZLE_BLAST
+# 	# Preallocate muzzle blast effects
+# 	for i in range(POOL_SIZE_MUZZLE_BLAST):
+# 		var p: HitEffect = muzzle_blast.duplicate() as HitEffect
+# 		p.visible = false
+# 		p.emitting = false
+# 		add_child(p)
+# 		muzzle_blast_pool.append(p)
+# 	muzzle_blast_count = POOL_SIZE_MUZZLE_BLAST
 
 func splash_effect(pos: Vector3, size: float) -> void:
 	var p: HitEffect
-	if splash_pool.size() > 0:
-		p = splash_pool.pop_back()
+	if splash_pool.get(size) == null:
+		splash_pool[size] = []
+	if splash_pool.get(size).size() > 0:
+		p = splash_pool.get(size).pop_back()
 	else:
 		p = splash.duplicate() as HitEffect
 		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
 		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
+		p.scale = Vector3(size, size, size)
+		if not splash_material_cache.has(size):
+			var mat: ParticleProcessMaterial = splash.process_material.duplicate() as ParticleProcessMaterial
+			mat.scale_min = size * 4
+			splash_material_cache[size] = mat
+		p.process_material = splash_material_cache[size]
+		p.speed_scale = 4 / size
+		p.size = size
 		add_child(p)
 		splash_count += 1
 
 	p.global_transform.origin = pos
-	p.scale = Vector3(size, size, size)
-	if not splash_material_cache.has(size):
-		var mat: ParticleProcessMaterial = splash.process_material.duplicate() as ParticleProcessMaterial
-		mat.scale_min = size * 4
-		splash_material_cache[size] = mat
-	p.process_material = splash_material_cache[size]
-	p.speed_scale = 4 / size
 	p.start_effect()
 
 func he_explosion_effect(pos: Vector3, size: float) -> void:
 	var p: HitEffect
-	if he_explosion_pool.size() > 0:
-		p = he_explosion_pool.pop_back()
+	if he_explosion_pool.get(size) == null:
+		he_explosion_pool[size] = []
+	if he_explosion_pool.get(size).size() > 0:
+		p = he_explosion_pool.get(size).pop_back()
 	else:
 		p = he_explosion.duplicate() as HitEffect
 		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
 		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
+		var s = pow(size, 1.5)
+		p.scale = Vector3(s, s, s)
+		if not he_explosion_material_cache.has(size):
+			var mat: ParticleProcessMaterial = he_explosion.process_material.duplicate() as ParticleProcessMaterial
+			mat.scale_min = size * size * 2
+			mat.scale_max = size * size * 3
+			he_explosion_material_cache[size] = mat
+		p.process_material = he_explosion_material_cache[size]
+		p.size = size
 		add_child(p)
 		he_explosion_count += 1
 
 	p.global_transform.origin = pos
-	var s = pow(size, 1.5)
-	p.scale = Vector3(s, s, s)
-	if not he_explosion_material_cache.has(size):
-		var mat: ParticleProcessMaterial = he_explosion.process_material.duplicate() as ParticleProcessMaterial
-		mat.scale_min = size * size * 2
-		mat.scale_max = size * size * 3
-		he_explosion_material_cache[size] = mat
-	p.process_material = he_explosion_material_cache[size]
 	p.start_effect()
 
 # func ap_explosion_effect(pos: Vector3) -> void:
 
 func sparks_effect(pos: Vector3, size: float) -> void:
 	var p: HitEffect
-	if sparks_pool.size() > 0:
-		p = sparks_pool.pop_back()
+	if sparks_pool.get(size) == null:
+		sparks_pool[size] = []
+	if sparks_pool.get(size).size() > 0:
+		p = sparks_pool.get(size).pop_back()
 	else:
 		p = sparks.duplicate() as HitEffect
 		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
 		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		# p.pool = sparks_pool
+		p.scale = Vector3(size, size, size)
+		if not sparks_material_cache.has(size):
+			var mat: ParticleProcessMaterial = sparks.process_material.duplicate() as ParticleProcessMaterial
+			mat.scale_min = size * randf_range(0.3, 0.6)
+			sparks_material_cache[size] = mat
+		p.process_material = sparks_material_cache[size]
+		p.size = size
 		add_child(p)
 		sparks_count += 1
 
 	p.global_transform.origin = pos
 	# var s = pow(size, 1.5)
-	p.scale = Vector3(size, size, size)
-	if not sparks_material_cache.has(size):
-		var mat: ParticleProcessMaterial = sparks.process_material.duplicate() as ParticleProcessMaterial
-		mat.scale_min = size * randf_range(0.3, 0.6)
-		sparks_material_cache[size] = mat
-	p.process_material = sparks_material_cache[size]
 	p.start_effect()
 
 
 func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	var p: HitEffect
-	if muzzle_blast_pool.size() > 0:
-		p = muzzle_blast_pool.pop_back()
+	if muzzle_blast_pool.get(size) == null:
+		muzzle_blast_pool[size] = []
+	if muzzle_blast_pool.get(size).size() > 0:
+		p = muzzle_blast_pool.get(size).pop_back()
 	else:
 		p = muzzle_blast.duplicate() as HitEffect
 		# p.process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
 		# p.get_child(0).process_thread_group = Node.PROCESS_THREAD_GROUP_MAIN_THREAD
 		# p.pool = muzzle_blast_pool
 		add_child(p)
+		p.size = size
 		muzzle_blast_count += 1
 
 	p.global_transform.origin = pos
@@ -198,12 +219,12 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 func return_to_pool(effect: Node) -> void:
 	match effect.type:
 		HitEffect.EffectType.SPLASH:
-			splash_pool.append(effect)
+			splash_pool.get(effect.size).append(effect)
 		HitEffect.EffectType.HE_EXPLOSION:
-			he_explosion_pool.append(effect)
+			he_explosion_pool.get(effect.size).append(effect)
 		HitEffect.EffectType.SPARKS:
-			sparks_pool.append(effect)
+			sparks_pool.get(effect.size).append(effect)
 		HitEffect.EffectType.MUZZLE_BLAST:
-			muzzle_blast_pool.append(effect)
+			muzzle_blast_pool.get(effect.size).append(effect)
 		_:
 			print("Unknown effect type in return_to_pool")

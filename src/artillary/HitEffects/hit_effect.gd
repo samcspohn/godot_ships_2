@@ -9,18 +9,19 @@ enum EffectType {
 }
 
 @export_storage var type: EffectType
-@onready var on_screen: VisibleOnScreenNotifier3D = $"VisibleOnScreenNotifier3D"
+# @onready var on_screen: VisibleOnScreenNotifier3D = $"VisibleOnScreenNotifier3D"
 var time: float = 0.0
 var _on_screen: bool = false
+var size: float = 1.0
 
 func _ready() -> void:
 	emitting = false
-	visible = false
+	# visible = false
 	# finished.connect(_on_effect_finished)
 	# process_thread_group = Node.PROCESS_THREAD_GROUP_SUB_THREAD
-	on_screen.aabb = get_aabb()
-	on_screen.screen_entered.connect(_on_screen_entered)
-	on_screen.screen_exited.connect(_on_screen_exited)
+	# on_screen.aabb = get_aabb()
+	# on_screen.screen_entered.connect(_on_screen_entered)
+	# on_screen.screen_exited.connect(_on_screen_exited)
 
 func _on_screen_entered() -> void:
 	# print("Effect on screen: ", self)
@@ -65,7 +66,7 @@ func start_effect() -> void:
 	time = Time.get_ticks_msec()
 	# end_time = Time.get_ticks_msec() + int(lifetime * 1000 / speed_scale)
 	get_tree().create_timer(lifetime / speed_scale).timeout.connect(_on_effect_finished)
-	# emitting = true
+	emitting = true
 
 # func _process(_delta: float) -> void:
 # 	if emitting and Time.get_ticks_msec() >= end_time:

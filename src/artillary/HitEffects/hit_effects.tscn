@@ -237,6 +237,7 @@ script = ExtResource("3_7mfvt")
 process_thread_group = 1
 process_thread_group_order = 0
 process_thread_messages = 0
+visible = false
 
 [node name="HE_Explosion" type="GPUParticles3D" parent="."]
 process_thread_group = 2
@@ -261,6 +262,7 @@ script = ExtResource("3_7mfvt")
 process_thread_group = 1
 process_thread_group_order = 0
 process_thread_messages = 0
+visible = false
 
 [node name="MuzzleBlast" type="GPUParticles3D" parent="."]
 process_thread_group = 2
@@ -286,6 +288,7 @@ script = ExtResource("3_7mfvt")
 process_thread_group = 1
 process_thread_group_order = 0
 process_thread_messages = 0
+visible = false
 
 [node name="Sparks" type="GPUParticles3D" parent="."]
 process_thread_group = 2
@@ -308,6 +311,7 @@ script = ExtResource("3_7mfvt")
 process_thread_group = 1
 process_thread_group_order = 0
 process_thread_messages = 0
+visible = false
 
 [node name="Splash2" type="CPUParticles3D" parent="."]
 process_thread_group = 2
@@ -335,3 +339,4 @@ script = ExtResource("4_4ncql")
 process_thread_group = 1
 process_thread_group_order = 0
 process_thread_messages = 0
+visible = false
