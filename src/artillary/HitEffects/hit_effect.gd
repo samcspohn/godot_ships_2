@@ -1,6 +1,10 @@
 extends GPUParticles3D
 class_name HitEffect
 
+## DEPRECATED: This class is deprecated and replaced by the new ParticleEmitter system
+## See src/particles/particle_emitter.gd and HitEffects (hit_effects.gd) for the new implementation
+## This file is kept for backward compatibility only
+
 enum EffectType {
 	SPLASH,
 	HE_EXPLOSION,

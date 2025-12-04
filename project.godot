@@ -38,6 +38,7 @@ ArmorInteraction="*res://src/artillary/ArmorInteraction.gd"
 _Utils="*res://src/utils/utils.gd"
 HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
 TcpThreadPool="*res://tcp_thread_pool.tscn"
+ParticleSystemInit="*res://src/particles/particle_system_init.gd"
 
 [editor]
 
