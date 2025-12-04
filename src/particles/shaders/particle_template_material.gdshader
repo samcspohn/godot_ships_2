@@ -70,8 +70,15 @@ void fragment() {
 	// Combine texture with color ramp
 	vec4 final_color = tex_color * ramp_color;
 
+	// Fade out at end of life to prevent flashing
+	float fade_start = 0.95;
+	float alpha_fade = 1.0;
+	if (lifetime_percent > fade_start) {
+		alpha_fade = 1.0 - ((lifetime_percent - fade_start) / (1.0 - fade_start));
+	}
+
 	ALBEDO = final_color.rgb;
-	ALPHA = final_color.a;
+	ALPHA = final_color.a * alpha_fade;
 
 	// Alpha scissor for performance
 	if (use_alpha_scissor && ALPHA < alpha_scissor_threshold) {

@@ -23,8 +23,8 @@ func _ready() -> void:
 	one_shot = false
 	explosiveness = 0.0
 	randomness = 0.0
-	fixed_fps = 30
-	interpolate = true
+	fixed_fps = 60
+	interpolate = false
 	fract_delta = false
 
 	# Set visibility AABB to be very large

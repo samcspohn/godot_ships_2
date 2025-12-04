@@ -222,6 +222,8 @@ void process() {
 	uint alt_seed = hash(base_number + uint(1) + RANDOM_SEED);
 
 	int template_id = int(COLOR.r * 255.0 + 0.5);
+	float size_multiplier = COLOR.g;
+
 
 	// Fetch template properties
 	vec4 props0 = get_template_property(template_id, 0); // velocity, lifetime
@@ -270,6 +272,8 @@ void process() {
 	// Apply forces
 	vec3 force = gravity;
 
+	VELOCITY /= size_multiplier; // Normalize velocity for force calculations
+
 	// Linear acceleration
 	if (length(VELOCITY) > 0.0) {
 		force += normalize(VELOCITY) * linear_accel;
@@ -296,14 +300,14 @@ void process() {
 	// Damping
 	if (damping > 0.0) {
 		float v = length(VELOCITY);
-		v -= damping * DELTA;
+		v -= damping * DELTA ;
 		if (v < 0.0) {
 			VELOCITY = vec3(0.0);
 		} else {
 			VELOCITY = normalize(VELOCITY) * v;
 		}
 	}
-
+	VELOCITY *= size_multiplier; // Re-apply size multiplier
 	// Update position
 	TRANSFORM[3].xyz += VELOCITY * DELTA;
 
