@@ -142,7 +142,7 @@ func he_explosion_effect(pos: Vector3, size: float) -> void:
 	# No specific direction (explosion radiates outward via template spread)
 	var direction = Vector3.ZERO
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size * size, count, 1.0)
+	_particle_system.emit_particles(pos, direction, template.template_id, size * 3.0, count, 4.0 / size)
 
 func sparks_effect(pos: Vector3, size: float) -> void:
 	"""

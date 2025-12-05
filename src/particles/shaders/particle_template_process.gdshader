@@ -282,18 +282,18 @@ void process() {
 		force += normalize(VELOCITY) * linear_accel;
 	}
 
-	// // Radial acceleration
-	// vec3 org = EMISSION_TRANSFORM[3].xyz;
-	// vec3 diff = TRANSFORM[3].xyz - org;
-	// if (length(diff) > 0.0) {
-	// 	force += normalize(diff) * radial_accel;
-	// }
+	// Radial acceleration
+	vec3 org = EMISSION_TRANSFORM[3].xyz;
+	vec3 diff = TRANSFORM[3].xyz - org;
+	if (length(diff) > 0.0) {
+		force += normalize(diff) * radial_accel;
+	}
 
-	// // Tangential acceleration
-	// vec3 crossDiff = cross(normalize(diff), normalize(gravity));
-	// if (length(crossDiff) > 0.0) {
-	// 	force += normalize(crossDiff) * tangent_accel;
-	// }
+	// Tangential acceleration
+	vec3 crossDiff = cross(normalize(diff), normalize(gravity));
+	if (length(crossDiff) > 0.0) {
+		force += normalize(crossDiff) * tangent_accel;
+	}
 
 	force += ATTRACTOR_FORCE;
 
@@ -312,7 +312,7 @@ void process() {
 	}
 	// VELOCITY *= size_multiplier; // Re-apply size multiplier
 	// Update position
-	TRANSFORM[3].xyz += VELOCITY * DELTA * size_multiplier;
+	TRANSFORM[3].xyz += VELOCITY * dt * size_multiplier;
 
 	// Update rotation
 	float pi = 3.14159;
