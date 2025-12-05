@@ -15,7 +15,7 @@ uniform float inherit_emitter_velocity_ratio = 0.0;
 // COLOR channel usage (on emission):
 // COLOR.r = template_id (0-255, will be decoded)
 // COLOR.g = size_multiplier (0-1 range)
-// COLOR.b = unused (reserved)
+// COLOR.b = speed_scale
 // COLOR.a = unused (reserved)
 
 // CUSTOM channel usage (runtime):
@@ -129,6 +129,7 @@ void start() {
 	// template_id is encoded in COLOR.r (0-1 range maps to 0-255)
 	int template_id = int(COLOR.r * 255.0 + 0.5);
 	float size_multiplier = COLOR.g;
+	float speed_scale = COLOR.b;
 
 	// Store template_id in CUSTOM.z for use in process()
 	// CUSTOM.z = float(template_id);
@@ -187,9 +188,9 @@ void start() {
 		// Calculate initial speed from template
 		float initial_speed = mix(initial_vel_min, initial_vel_max, rand_from_seed(alt_seed));
 
-		// Scale speed by size_multiplier (embedded in COLOR.g)
-		// This allows larger particles to move faster, smaller to move slower
-		initial_speed *= size_multiplier;
+		// // Scale speed by size_multiplier (embedded in COLOR.g)
+		// // This allows larger particles to move faster, smaller to move slower
+		// initial_speed *= size_multiplier;
 
 		// Apply spread to the direction
 		vec3 vel_dir = get_random_direction_from_spread(alt_seed, emission_direction, spread, 0.0);
@@ -206,7 +207,7 @@ void start() {
 
 	// Transform scale (apply size_multiplier from emission)
 	if (RESTART_ROT_SCALE) {
-		float initial_scale = mix(scale_min, scale_max, rand_from_seed(alt_seed)) * size_multiplier;
+		float initial_scale = mix(scale_min, scale_max, rand_from_seed(alt_seed));
 		TRANSFORM[0].xyz = vec3(initial_scale, 0.0, 0.0);
 		TRANSFORM[1].xyz = vec3(0.0, initial_scale, 0.0);
 		TRANSFORM[2].xyz = vec3(0.0, 0.0, initial_scale);
@@ -223,6 +224,8 @@ void process() {
 
 	int template_id = int(COLOR.r * 255.0 + 0.5);
 	float size_multiplier = COLOR.g;
+	float speed_scale = COLOR.b;
+	float dt = DELTA * speed_scale;
 
 
 	// Fetch template properties
@@ -258,7 +261,7 @@ void process() {
 	float angular_velocity = mix(angular_vel_min, angular_vel_max, rand_from_seed(alt_seed));
 
 	// Update age
-	CUSTOM.y += DELTA;
+	CUSTOM.y += dt;
 	CUSTOM.y = min(CUSTOM.y, CUSTOM.w);
 	float lifetime_percent = CUSTOM.y / CUSTOM.w;
 
@@ -272,44 +275,44 @@ void process() {
 	// Apply forces
 	vec3 force = gravity;
 
-	VELOCITY /= size_multiplier; // Normalize velocity for force calculations
+	// VELOCITY /= size_multiplier; // Normalize velocity for force calculations
 
 	// Linear acceleration
 	if (length(VELOCITY) > 0.0) {
 		force += normalize(VELOCITY) * linear_accel;
 	}
 
-	// Radial acceleration
-	vec3 org = EMISSION_TRANSFORM[3].xyz;
-	vec3 diff = TRANSFORM[3].xyz - org;
-	if (length(diff) > 0.0) {
-		force += normalize(diff) * radial_accel;
-	}
+	// // Radial acceleration
+	// vec3 org = EMISSION_TRANSFORM[3].xyz;
+	// vec3 diff = TRANSFORM[3].xyz - org;
+	// if (length(diff) > 0.0) {
+	// 	force += normalize(diff) * radial_accel;
+	// }
 
-	// Tangential acceleration
-	vec3 crossDiff = cross(normalize(diff), normalize(gravity));
-	if (length(crossDiff) > 0.0) {
-		force += normalize(crossDiff) * tangent_accel;
-	}
+	// // Tangential acceleration
+	// vec3 crossDiff = cross(normalize(diff), normalize(gravity));
+	// if (length(crossDiff) > 0.0) {
+	// 	force += normalize(crossDiff) * tangent_accel;
+	// }
 
 	force += ATTRACTOR_FORCE;
 
-	VELOCITY += force * DELTA;
-	VELOCITY += velocity_modifier * DELTA;
+	VELOCITY += force * dt;
+	VELOCITY += velocity_modifier * dt;
 
 	// Damping
 	if (damping > 0.0) {
 		float v = length(VELOCITY);
-		v -= damping * DELTA ;
+		v -= damping * dt;
 		if (v < 0.0) {
 			VELOCITY = vec3(0.0);
 		} else {
 			VELOCITY = normalize(VELOCITY) * v;
 		}
 	}
-	VELOCITY *= size_multiplier; // Re-apply size multiplier
+	// VELOCITY *= size_multiplier; // Re-apply size multiplier
 	// Update position
-	TRANSFORM[3].xyz += VELOCITY * DELTA;
+	TRANSFORM[3].xyz += VELOCITY * DELTA * size_multiplier;
 
 	// Update rotation
 	float pi = 3.14159;
@@ -321,7 +324,9 @@ void process() {
 	// COLOR = sample_color_ramp(template_id, lifetime_percent);
 
 	// Update scale from curve
-	float scale_value = sample_scale_curve(template_id, lifetime_percent);
+	// float scale_value = sample_scale_curve(template_id, lifetime_percent);
+	vec3 scale_value = vec3(length(TRANSFORM[0].xyz), length(TRANSFORM[1].xyz), length(TRANSFORM[2].xyz));
+	// scale_value = vec3(1.0, 1.0, 1.0);
 
 	// Align to velocity if moving
 	if (length(VELOCITY) > 0.0) {
@@ -349,7 +354,7 @@ void process() {
 	TRANSFORM[3] = origin;
 
 	// Apply scale
-	TRANSFORM[0].xyz *= max(abs(scale_value), 0.001);
-	TRANSFORM[1].xyz *= max(abs(scale_value), 0.001);
-	TRANSFORM[2].xyz *= max(abs(scale_value), 0.001);
+	TRANSFORM[0].xyz *= scale_value.x;
+	TRANSFORM[1].xyz *= scale_value.y;
+	TRANSFORM[2].xyz *= scale_value.z;
 }

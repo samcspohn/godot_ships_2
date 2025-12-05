@@ -21,10 +21,9 @@ material = SubResource("ShaderMaterial_g4tbt")
 [node name="UnifiedParticleSystem" type="GPUParticles3D"]
 cast_shadow = 0
 amount = 1000000
-lifetime = 10.0
+lifetime = 0.01
 fixed_fps = 60
 interpolate = false
-fract_delta = false
 visibility_aabb = AABB(-100000, -100000, -100000, 200000, 200000, 200000)
 draw_order = 3
 process_material = SubResource("ShaderMaterial_process")

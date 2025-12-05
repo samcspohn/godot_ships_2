@@ -19,7 +19,7 @@ enum EffectType {
 }
 
 # Particle counts per effect type
-const SPLASH_PARTICLES: int = 15
+const SPLASH_PARTICLES: int = 20
 const HE_EXPLOSION_PARTICLES: int = 10
 const SPARKS_PARTICLES: int = 30
 const MUZZLE_BLAST_PARTICLES: int = 15
@@ -119,7 +119,7 @@ func splash_effect(pos: Vector3, size: float) -> void:
 	# Direction for splash (upward)
 	var direction = Vector3(0, 1.0, 0)
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size * 4, count)
+	_particle_system.emit_particles(pos, direction, template.template_id, size, count, 4.0 / size)
 
 func he_explosion_effect(pos: Vector3, size: float) -> void:
 	"""
@@ -142,7 +142,7 @@ func he_explosion_effect(pos: Vector3, size: float) -> void:
 	# No specific direction (explosion radiates outward via template spread)
 	var direction = Vector3.ZERO
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size * size * 2.5, count)
+	_particle_system.emit_particles(pos, direction, template.template_id, size * size, count, 1.0)
 
 func sparks_effect(pos: Vector3, size: float) -> void:
 	"""
@@ -165,7 +165,7 @@ func sparks_effect(pos: Vector3, size: float) -> void:
 	# No specific direction (sparks emit in all directions via template spread)
 	var direction = Vector3.ZERO
 
-	_particle_system.emit_particles(pos, direction, template.template_id,  size * 0.5, count)
+	_particle_system.emit_particles(pos, direction, template.template_id,  size, count, 1.0)
 
 func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	"""
@@ -190,7 +190,7 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	var forward = -basis.z  # Gun forward direction
 	var direction = forward.normalized()
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size * 1.25, count)
+	_particle_system.emit_particles(pos, direction, template.template_id, size, count, 5.0 / size)
 
 # Legacy compatibility methods (for old pool-based system)
 func return_to_pool(effect: Node) -> void:
@@ -220,58 +220,3 @@ func print_status() -> void:
 			print("    %s: template_id=%d" % [template.template_name, template.template_id])
 		else:
 			print("    Effect type %d: MISSING" % type)
-
-# Helper method for direct emission by effect name
-func emit_effect(effect_name: String, pos: Vector3, size: float = 1.0, velocity: Vector3 = Vector3.ZERO) -> void:
-	"""
-	Generic emission method by effect name
-
-	Args:
-		effect_name: Name of the effect template ("splash", "explosion", "sparks", "muzzle_blast")
-		pos: World position
-		size: Size multiplier
-		velocity: Base velocity
-	"""
-
-	if not _initialized or _particle_system == null:
-		return
-
-	# Map effect name to type
-	var effect_type: EffectType
-	match effect_name.to_lower():
-		"splash":
-			effect_type = EffectType.SPLASH
-		"explosion", "he_explosion":
-			effect_type = EffectType.HE_EXPLOSION
-		"sparks":
-			effect_type = EffectType.SPARKS
-		"muzzle_blast", "muzzle":
-			effect_type = EffectType.MUZZLE_BLAST
-		_:
-			push_error("HitEffects: Unknown effect name '%s'" % effect_name)
-			return
-
-	var template = _templates.get(effect_type)
-	if template == null or template.template_id < 0:
-		return
-
-	var count = _get_default_count(effect_type)
-	count = int(count * (1.0 + size * SIZE_COUNT_SCALE))
-
-	# velocity parameter is now treated as direction
-	var direction = velocity.normalized() if velocity.length() > 0.0 else Vector3.ZERO
-	_particle_system.emit_particles(pos, direction, template.template_id, size, count)
-
-func _get_default_count(effect_type: EffectType) -> int:
-	"""Get default particle count for effect type"""
-	match effect_type:
-		EffectType.SPLASH:
-			return SPLASH_PARTICLES
-		EffectType.HE_EXPLOSION:
-			return HE_EXPLOSION_PARTICLES
-		EffectType.SPARKS:
-			return SPARKS_PARTICLES
-		EffectType.MUZZLE_BLAST:
-			return MUZZLE_BLAST_PARTICLES
-		_:
-			return 10

@@ -8,6 +8,10 @@ uniform sampler2DArray texture_atlas : source_color, filter_linear_mipmap;
 // Width = CURVE_RESOLUTION (256), Height = MAX_TEMPLATES
 uniform sampler2D color_ramp_atlas : source_color, filter_linear_mipmap;
 
+// Scale curve atlas - 2D texture where each row is a template's scale curve
+// Width = CURVE_RESOLUTION (256), Height = MAX_TEMPLATES
+uniform sampler2D scale_curve_atlas : filter_linear_mipmap;
+
 // Alpha settings
 uniform bool use_alpha_scissor = false;
 uniform float alpha_scissor_threshold = 0.5;
@@ -33,6 +37,10 @@ void vertex() {
 
 	float size = COLOR.g;
 
+	// Sample scale curve from atlas
+	float v_coord = (float(template_id) + 0.5) / 16.0; // 16 = MAX_TEMPLATES
+	float scale_multiplier = texture(scale_curve_atlas, vec2(lifetime_percent, v_coord)).r;
+
 	// Manual billboarding for particles
 	// Make the particle always face the camera
 
@@ -48,9 +56,9 @@ void vertex() {
 
 	// Build billboard matrix in world space
 	mat4 mat_world = mat4(1.0);
-	mat_world[0].xyz = camera_right * scale_x * size;
-	mat_world[1].xyz = camera_up * scale_y * size;
-	mat_world[2].xyz = camera_forward * scale_z * size;
+	mat_world[0].xyz = camera_right * scale_x * size * scale_multiplier;
+	mat_world[1].xyz = camera_up * scale_y * size * scale_multiplier;
+	mat_world[2].xyz = camera_forward * scale_z * size * scale_multiplier;
 	mat_world[3] = MODEL_MATRIX[3]; // Preserve position
 
 	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;

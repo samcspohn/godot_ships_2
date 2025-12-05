@@ -19,13 +19,13 @@ func _ready() -> void:
 
 	# Set up particle system properties
 	amount = 100000  # Large pool of particles
-	lifetime = 10.0  # Max lifetime
+	lifetime = 100.0  # Max lifetime
 	one_shot = false
 	explosiveness = 0.0
 	randomness = 0.0
-	fixed_fps = 60
+	fixed_fps = 30
 	interpolate = false
-	fract_delta = false
+	fract_delta = true
 
 	# Set visibility AABB to be very large
 	visibility_aabb = AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000))
@@ -76,6 +76,10 @@ func _setup_shaders() -> void:
 	if uniforms.has("color_ramp_atlas"):
 		draw_material_shader.set_shader_parameter("color_ramp_atlas", uniforms["color_ramp_atlas"])
 
+	# Apply scale curve atlas to draw material
+	if uniforms.has("scale_curve_atlas"):
+		draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
+
 	# Create a quad mesh for particles
 	var quad = QuadMesh.new()
 	quad.size = Vector2(1, 1)
@@ -84,8 +88,8 @@ func _setup_shaders() -> void:
 
 	print("UnifiedParticleSystem: Shaders configured")
 
-func emit_particles(pos: Vector3, direction: Vector3 = Vector3.ZERO,
-					template_id: int = 0, size_multiplier: float = 1.0, count: int = 1) -> void:
+func emit_particles(pos: Vector3, direction: Vector3,
+					template_id, size_multiplier, count, speed_mod) -> void:
 	"""
 	Emit particles with a specific template using emit_particle().
 
@@ -111,12 +115,12 @@ func emit_particles(pos: Vector3, direction: Vector3 = Vector3.ZERO,
 	# Encode template_id and size in COLOR
 	# COLOR.r = template_id (normalized to 0-1)
 	# COLOR.g = size_multiplier (0-1)
-	# COLOR.b = unused (set to 0)
+	# COLOR.b = speed_scale	(0-1)
 	# COLOR.a = unused (set to 1)
 	var encoded_color := Color(
 		float(template_id) / 255.0,
 		size_multiplier,
-		0.0,
+		speed_mod,
 		1.0
 	)
 
@@ -149,6 +153,8 @@ func update_shader_uniforms() -> void:
 				draw_material_shader.set_shader_parameter("texture_atlas", uniforms["texture_atlas"])
 			if uniforms.has("color_ramp_atlas"):
 				draw_material_shader.set_shader_parameter("color_ramp_atlas", uniforms["color_ramp_atlas"])
+			if uniforms.has("scale_curve_atlas"):
+				draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
 
 		print("UnifiedParticleSystem: Shader uniforms updated")
 

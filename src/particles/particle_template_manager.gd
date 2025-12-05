@@ -60,8 +60,8 @@ func get_template_by_id(id: int) -> ParticleTemplate:
 		return null
 	return templates[id]
 
-func get_template_by_name(name: String) -> ParticleTemplate:
-	return template_by_name.get(name, null)
+func get_template_by_name(_name: String) -> ParticleTemplate:
+	return template_by_name.get(_name, null)
 
 func _initialize_textures() -> void:
 	# Properties texture: stores scalar properties for each template
