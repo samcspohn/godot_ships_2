@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=7 format=3 uid="uid://l1hirsugnu58"]
+[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=9 format=3 uid="uid://l1hirsugnu58"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
@@ -9,6 +9,13 @@ colors = PackedColorArray(3, 3, 3, 1, 2, 1.5, 0.5, 1, 1, 0.5, 0.2, 1, 0.615686, 
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_muzzle"]
 gradient = SubResource("Gradient_muzzle")
+
+[sub_resource type="Curve" id="Curve_emission_muzzle"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(1, 0.49578416), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_emission_muzzle"]
+curve = SubResource("Curve_emission_muzzle")
 
 [sub_resource type="Curve" id="Curve_scale_muzzle"]
 _limits = [0.0, 1.5, 0.0, 1.0]
@@ -24,6 +31,8 @@ template_name = "muzzle_blast"
 texture = ExtResource("2")
 color_over_life = SubResource("GradientTexture1D_muzzle")
 scale_over_life = SubResource("CurveTexture_scale_muzzle")
+emission_over_life = SubResource("CurveTexture_emission_muzzle")
+emission_energy = 2.0
 initial_velocity_min = 2.0
 initial_velocity_max = 10.0
 direction = Vector3(0, 0, -1)

@@ -197,10 +197,11 @@ func _process(_delta: float) -> void:
 
 func _input(_event: InputEvent) -> void:
 	var prev_mmidx = mm_idx
-	if Input.is_key_pressed(KEY_EQUAL):
+	if _event.is_action_pressed("map_up"):
 		mm_idx = clamp(mm_idx + 1, 0, 6)
-	elif Input.is_key_pressed(KEY_MINUS):
+	elif _event.is_action_pressed("map_down"):
 		mm_idx = clamp(mm_idx - 1, 0, 6)
+
 	
 	if prev_mmidx == mm_idx:
 		return

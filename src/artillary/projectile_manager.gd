@@ -229,9 +229,11 @@ func update_transform_scale(idx, scale: float):
 
 	# We don't modify z-basis as per billboard requirements
 
-func __process(_delta: float) -> void:
+func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 
+	if camera == null:
+		return
 	var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
 	var id = 0
 	for p in self.projectiles:
@@ -350,7 +352,7 @@ func _physics_process(_delta: float) -> void:
 					# var data = stream.data_array
 					# for client in multiplayer.get_peers():
 					# 	createRicochetRpc2.rpc_id(client, data)
-					
+
 					if ship.health_controller.is_alive():
 						track_ricochet(p)
 						track_damage_event(p, 0, ship.global_position, hit_result.result_type)
@@ -478,7 +480,7 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 	b.x = Vector3.ZERO
 	b.y = Vector3.ZERO
 	b.z = Vector3.ZERO
-	var t = Transform3D(b, Vector3.ZERO)
+	var t = Transform3D(b, Vector3(0.0, INF, 0.0))
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
@@ -637,7 +639,7 @@ func track_damage_dealt(p: ProjectileData, damage: float):
 	"""Track damage dealt using the ship's stats module"""
 	if not p or not is_instance_valid(p):
 		return
-	
+
 	# Add damage to the ship's stats module
 	if p.owner.stats:
 		p.owner.stats.total_damage += damage

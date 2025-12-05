@@ -7,6 +7,7 @@ background_mode = 1
 background_color = Color(0.409483, 0.709723, 0.857173, 1)
 
 [node name="PlayerCam" type="Camera3D"]
+process_priority = -3
 environment = SubResource("Environment_bp804")
 current = true
 near = 5.0

@@ -10,6 +10,7 @@ class_name ParticleTemplate
 @export var texture: Texture2D
 @export var color_over_life: GradientTexture1D
 @export var scale_over_life: CurveTexture
+@export var emission_over_life: CurveTexture
 @export var emission_color: Color = Color.WHITE
 @export var emission_energy: float = 0.0
 
@@ -79,6 +80,14 @@ func _init() -> void:
 		curve.add_point(Vector2(1, 1))
 		scale_over_life = CurveTexture.new()
 		scale_over_life.curve = curve
+
+	# Set up default emission curve if none provided
+	if emission_over_life == null:
+		var curve = Curve.new()
+		curve.add_point(Vector2(0, 0))
+		curve.add_point(Vector2(1, 0))
+		emission_over_life = CurveTexture.new()
+		emission_over_life.curve = curve
 
 func is_valid() -> bool:
 	return template_id >= 0 and texture != null

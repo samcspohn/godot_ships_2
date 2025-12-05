@@ -15,12 +15,13 @@ var next_template_id: int = 0
 var template_properties_texture: ImageTexture
 var color_ramp_atlas: ImageTexture
 var scale_curve_atlas: ImageTexture
+var emission_curve_atlas: ImageTexture
 var velocity_curve_atlas: ImageTexture
 var texture_array: Texture2DArray
 
 # Texture dimensions
 const CURVE_RESOLUTION = 256
-const PROPERTIES_HEIGHT = 8  # Number of property rows per template
+const PROPERTIES_HEIGHT = 9  # Number of property rows per template (increased for emission properties)
 
 signal templates_updated()
 
@@ -81,6 +82,11 @@ func _initialize_textures() -> void:
 	scale_image.fill(Color(1, 1, 1, 1))
 	scale_curve_atlas = ImageTexture.create_from_image(scale_image)
 
+	# Emission curve atlas: stores emission curves
+	var emission_image = Image.create(CURVE_RESOLUTION, MAX_TEMPLATES, false, Image.FORMAT_RF)
+	emission_image.fill(Color(0, 0, 0, 1))
+	emission_curve_atlas = ImageTexture.create_from_image(emission_image)
+
 	# Velocity curve atlas: stores velocity curves (XYZ)
 	var velocity_image = Image.create(CURVE_RESOLUTION, MAX_TEMPLATES, false, Image.FORMAT_RGBF)
 	velocity_image.fill(Color(0, 0, 0, 0))
@@ -100,6 +106,9 @@ func _encode_template(template: ParticleTemplate, id: int) -> void:
 
 	# Encode scale curve
 	_encode_scale_curve(template, id)
+
+	# Encode emission curve
+	_encode_emission_curve(template, id)
 
 	# Encode velocity curve
 	_encode_velocity_curve(template, id)
@@ -165,12 +174,20 @@ func _encode_properties(template: ParticleTemplate, id: int) -> void:
 		template.initial_angle_max
 	))
 
-	# Row 7: scale, hue variation, lifetime randomness
+	# Row 7: scale, hue variation
 	image.set_pixel(id, 7, Color(
 		template.scale_min,
 		template.scale_max,
 		template.hue_variation_min,
 		template.hue_variation_max
+	))
+
+	# Row 8: emission color (RGB), emission energy (A)
+	image.set_pixel(id, 8, Color(
+		template.emission_color.r,
+		template.emission_color.g,
+		template.emission_color.b,
+		template.emission_energy
 	))
 
 	template_properties_texture.update(image)
@@ -210,6 +227,24 @@ func _encode_scale_curve(template: ParticleTemplate, id: int) -> void:
 		image.set_pixel(x, id, Color(value, value, value, 1.0))
 
 	scale_curve_atlas.update(image)
+
+func _encode_emission_curve(template: ParticleTemplate, id: int) -> void:
+	if template.emission_over_life == null:
+		return
+
+	var image = emission_curve_atlas.get_image()
+	var curve = template.emission_over_life.curve
+
+	if curve == null:
+		return
+
+	# Sample the curve and store in row 'id'
+	for x in range(CURVE_RESOLUTION):
+		var t = float(x) / float(CURVE_RESOLUTION - 1)
+		var value = curve.sample(t)
+		image.set_pixel(x, id, Color(value, value, value, 1.0))
+
+	emission_curve_atlas.update(image)
 
 func _encode_velocity_curve(template: ParticleTemplate, id: int) -> void:
 	if template.velocity_over_life == null:
@@ -294,6 +329,7 @@ func get_shader_uniforms() -> Dictionary:
 		"template_properties": template_properties_texture,
 		"color_ramp_atlas": color_ramp_atlas,
 		"scale_curve_atlas": scale_curve_atlas,
+		"emission_curve_atlas": emission_curve_atlas,
 		"velocity_curve_atlas": velocity_curve_atlas,
 		"texture_atlas": texture_array,
 		"max_templates": MAX_TEMPLATES

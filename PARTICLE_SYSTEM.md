@@ -17,7 +17,7 @@ A GPU-accelerated, template-based particle system for Godot 4.x that consolidate
 **Resource class** that defines a particle type's behavior and appearance.
 
 **Key Properties:**
-- **Appearance**: texture, color_over_life (gradient), scale_over_life (curve), emission color/energy
+- **Appearance**: texture, color_over_life (gradient), scale_over_life (curve), emission_over_life (curve), emission color/energy
 - **Motion**: velocity range, direction, spread angle, gravity
 - **Physics**: damping, linear/radial/tangent acceleration
 - **Lifetime**: min/max lifetime with randomness
@@ -39,6 +39,7 @@ A GPU-accelerated, template-based particle system for Godot 4.x that consolidate
   - **template_properties_texture**: RGBAF texture (16×8 pixels) - scalar properties per template
   - **color_ramp_atlas**: RGBA8 texture (256×16) - color gradients over lifetime
   - **scale_curve_atlas**: RF texture (256×16) - scale curves over lifetime
+  - **emission_curve_atlas**: RF texture (256×16) - emission/brightness curves over lifetime
   - **velocity_curve_atlas**: RGBF texture (256×16) - velocity modifiers over lifetime
   - **texture_array**: Texture2DArray - visual textures for each template
 
@@ -51,7 +52,7 @@ A GPU-accelerated, template-based particle system for Godot 4.x that consolidate
 
 **Encoding Details:**
 - Properties stored in 8 rows per template (velocity, damping, direction, gravity, etc.)
-- Color/scale/velocity curves sampled at 256 points for smooth interpolation
+- Color/scale/emission/velocity curves sampled at 256 points for smooth interpolation
 - All data uploaded to GPU via shader uniforms
 
 ### 3. UnifiedParticleSystem (`unified_particle_system.gd`)
@@ -170,20 +171,26 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
 
 **Uniforms:**
 - `texture_atlas` (Texture2DArray) - particle textures
-- `color_ramp_atlas` - color gradients
+- `color_ramp_atlas` - color gradients over lifetime
+- `scale_curve_atlas` - scale curves over lifetime
+- `emission_curve_atlas` - emission/brightness curves over lifetime
 
 **vertex() Function:**
 - Decode template_id from COLOR.r
 - Calculate lifetime_percent from INSTANCE_CUSTOM
+- Sample scale curve: `texture(scale_curve_atlas, vec2(lifetime_percent, v_coord)).r`
 - Manual billboarding:
   - Extract camera right/up vectors from INV_VIEW_MATRIX
   - Build billboard matrix preserving scale
   - Apply size_multiplier from COLOR.g
+  - Apply scale_multiplier from scale curve atlas
 
 **fragment() Function:**
 - Sample texture from array: `texture(texture_atlas, vec3(UV, template_id))`
 - Sample color ramp: `texture(color_ramp_atlas, vec2(lifetime_percent, v_coord))`
+- Sample emission curve: `texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r`
 - Multiply texture × color ramp
+- Apply emission based on emission curve multiplier
 - Apply fade-out at end of life (95-100% lifetime)
 - Optional alpha scissor for performance
 
@@ -249,10 +256,16 @@ func splash_effect(pos: Vector3, size: float):
 # 1. Create new ParticleTemplate resource (.tres file)
 # 2. Configure properties in inspector:
 #    - Load texture image
-#    - Set up color gradient (GradientTexture1D)
-#    - Configure scale curve (CurveTexture)
+#    - Set up color gradient (GradientTexture1D) for color_over_life
+#    - Configure scale curve (CurveTexture) for scale_over_life
+#    - Configure emission curve (CurveTexture) for emission_over_life
 #    - Set velocity ranges, spread, lifetime, etc.
 # 3. Save to res://src/particles/templates/my_template.tres
+#
+# Note: color_over_life, scale_over_life, and emission_over_life are optional.
+# - If color_over_life is not set, particles will use white color
+# - If scale_over_life is not set, particles will maintain constant scale (1.0)
+# - If emission_over_life is not set, particles will have no emission/glow (0.0)
 ```
 
 ### Step 2: Register in ParticleSystemInit
@@ -274,6 +287,27 @@ func _load_templates():
 ```gdscript
 var template = get_node("/root/ParticleSystemInit").get_template_by_name("my_template_name")
 particle_system.emit_particles(position, direction, template.template_id, 1.0, 10, 1.0)
+```
+
+### Example: Explosion Template with Scale Animation
+```gdscript
+# explosion_template.tres structure:
+# - color_over_life: White-hot (3,3,3) → Orange (2,1.5,0.5) → Red (1,0.5,0.2) → Dark red → Black transparent
+# - scale_over_life: Starts at 1.0, fades to 0.0 by 25% lifetime (rapid shrink)
+# - emission_over_life: Bright (1.0) at start, fades to 0 by 25% lifetime (glowing flash)
+# - This creates an explosive flash that quickly dims, shrinks, and stops glowing
+
+# muzzle_blast_template.tres structure:
+# - color_over_life: White-hot → Orange → Red → Dark → Transparent (similar to explosion)
+# - scale_over_life: Grows from ~0.58 to ~1.42 over lifetime (expanding blast)
+# - emission_over_life: Bright (1.0) at start, fades to 0 by 25% lifetime (glowing flash)
+# - This creates a muzzle flash that expands outward with initial bright glow
+
+# sparks_template.tres structure:
+# - color_over_life: White → Slightly transparent → Fully transparent
+# - scale_over_life: Linear fade from 1.0 to 0.0 (shrinking sparks)
+# - emission_over_life: Not set (no glow, defaults to 0.0)
+# - This creates sparks that fade out as they shrink without emission
 ```
 
 ## Performance Characteristics
@@ -427,3 +461,85 @@ src/particles/
 9. **Performance First**: System designed for thousands of particles - don't hesitate to emit aggressively.
 
 10. **Legacy Compatibility**: Old `HitEffects` class wraps new system - prefer direct `emit_particles()` calls in new code.
+
+11. **Scale Over Life**: The `scale_curve_atlas` is sampled in the material shader's vertex function and applied to the billboard matrix, enabling smooth scale animation over particle lifetime. This is independent of the `size_multiplier` emission parameter.
+
+12. **Shader Uniform Updates**: When templates are registered or modified, both the process shader AND draw material shader must receive updated atlas textures. The `UnifiedParticleSystem.update_shader_uniforms()` method handles this for `texture_atlas`, `color_ramp_atlas`, `scale_curve_atlas`, and `emission_curve_atlas`.
+
+13. **Emission Over Life**: The `emission_curve_atlas` is sampled in the material shader's fragment function and applied to the EMISSION output, enabling particles to glow/emit light that fades over their lifetime. This is independent of the `emission_color` and `emission_energy` template properties.
+
+## Recent Implementation Updates
+
+### Scale Over Life & Emission Over Life Features (Added)
+
+**What Changed:**
+- Added `scale_curve_atlas` uniform to `particle_template_material.gdshader`
+- Added `emission_curve_atlas` uniform to `particle_template_material.gdshader`
+- Material shader now samples scale curves and applies them in the vertex function
+- Material shader now samples emission curves and applies them to EMISSION in fragment function
+- All effect templates updated with appropriate scale and emission curves from legacy `hit_effects.tscn`
+- `UnifiedParticleSystem` now passes both `scale_curve_atlas` and `emission_curve_atlas` to draw material shader
+
+**Technical Details:**
+Both features use the same atlas-based approach as color over life:
+
+**Scale Over Life:**
+1. Each template's `scale_over_life` CurveTexture is sampled at 256 points by `ParticleTemplateManager`
+2. Samples are stored in the `scale_curve_atlas` texture (RF format, 256×16 pixels)
+3. Material shader samples in vertex(): `texture(scale_curve_atlas, vec2(lifetime_percent, v_coord)).r`
+4. Scale value multiplies the billboard matrix dimensions alongside `size_multiplier`
+
+**Emission Over Life:**
+1. Each template's `emission_over_life` CurveTexture is sampled at 256 points by `ParticleTemplateManager`
+2. Samples are stored in the `emission_curve_atlas` texture (RF format, 256×16 pixels)
+3. Template's `emission_color` and `emission_energy` are encoded in `template_properties` texture (Row 8)
+4. Material shader samples in fragment(): `texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r`
+5. Material shader fetches emission properties: `texelFetch(template_properties, ivec2(template_id, 8), 0)`
+6. Emission calculated as: `EMISSION = ALBEDO * emission_color * emission_curve_sample * emission_energy`
+
+**Formulas:**
+```gdscript
+# Scale calculation (vertex shader)
+final_scale = base_scale * size_multiplier * scale_curve_sample
+
+# Emission calculation (fragment shader)
+EMISSION = ALBEDO * emission_color * emission_curve_sample * emission_energy
+```
+
+Where:
+- `base_scale` = initial scale from MODEL_MATRIX
+- `size_multiplier` = per-emission size parameter (COLOR.g)
+- `scale_curve_sample` = sampled value from scale_over_life curve at current lifetime
+- `emission_color` = RGB color tint for emission (from template property)
+- `emission_energy` = brightness multiplier for emission (from template property, typically 1.0-5.0)
+- `emission_curve_sample` = sampled value from emission_over_life curve at current lifetime (0.0-1.0)
+
+**Template Configurations:**
+- **explosion_template**: 
+  - Scale: Constant (no animated shrinking in current version)
+  - Emission: Rapid fade from 1.0 to 0.0 (first 25% of lifetime) with emission_energy=2.0 - bright flash effect
+- **muzzle_blast_template**: 
+  - Scale: Expansion from 0.58 to 1.42 over lifetime - growing blast
+  - Emission: Rapid fade from 1.0 to 0.0 (first 25% of lifetime) with emission_energy=2.0 - bright flash effect
+- **sparks_template**: 
+  - Scale: Linear shrink from 1.0 to 0.0 - fading sparks
+  - Emission: Not set (defaults to emission_energy=0.0, no glow)
+- **splash_template**: 
+  - Scale: No curve (constant size maintained)
+  - Emission: Not set (defaults to emission_energy=0.0, no glow)
+
+**Files Modified:**
+- `src/particles/particle_template.gd` - Added `emission_over_life` property
+- `src/particles/particle_template_manager.gd` - Added `emission_curve_atlas` encoding and Row 8 for emission properties (increased PROPERTIES_HEIGHT to 9)
+- `src/particles/shaders/particle_template_material.gdshader` - Added emission_curve_atlas, template_properties uniforms and full emission calculation
+- `src/particles/unified_particle_system.gd` - Added template_properties and emission_curve_atlas to shader initialization
+- `src/particles/templates/explosion_template.tres` - Added scale curve, emission curve, and emission_energy=2.0
+- `src/particles/templates/muzzle_blast_template.tres` - Added scale curve, emission curve, and emission_energy=2.0
+- `src/particles/templates/sparks_template.tres` - Added scale curve
+
+**Migration Notes:**
+Existing templates without these properties will use defaults with no breaking changes:
+- `scale_over_life`: defaults to constant scale (1.0) - `scale_curve_atlas` initialized with 1.0 values
+- `emission_over_life`: defaults to no emission (0.0) - `emission_curve_atlas` initialized with 0.0 values
+- `emission_energy`: defaults to 0.0, so particles won't emit light unless explicitly set to a value > 0.0
+- Template properties texture expanded from 8 to 9 rows to accommodate emission_color and emission_energy

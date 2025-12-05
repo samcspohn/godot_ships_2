@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled, unshaded;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley;
 
 // Texture array containing all particle textures
 uniform sampler2DArray texture_atlas : source_color, filter_linear_mipmap;
@@ -11,6 +11,14 @@ uniform sampler2D color_ramp_atlas : source_color, filter_linear_mipmap;
 // Scale curve atlas - 2D texture where each row is a template's scale curve
 // Width = CURVE_RESOLUTION (256), Height = MAX_TEMPLATES
 uniform sampler2D scale_curve_atlas : filter_linear_mipmap;
+
+// Emission curve atlas - 2D texture where each row is a template's emission curve
+// Width = CURVE_RESOLUTION (256), Height = MAX_TEMPLATES
+uniform sampler2D emission_curve_atlas : filter_linear_mipmap;
+
+// Template properties texture - stores scalar properties for each template
+// Width = MAX_TEMPLATES (16), Height = PROPERTIES_HEIGHT (9)
+uniform sampler2D template_properties : filter_nearest;
 
 // Alpha settings
 uniform bool use_alpha_scissor = false;
@@ -93,8 +101,15 @@ void fragment() {
 		discard;
 	}
 
-	// // Emission for bright particles (optional, based on COLOR intensity)
-	// if (length(COLOR.rgb) > 1.0) {
-	// 	EMISSION = ALBEDO * (length(COLOR.rgb) - 1.0);
-	// }
+	// Fetch emission properties from template_properties (Row 8)
+	vec4 emission_props = texelFetch(template_properties, ivec2(template_id, 8), 0);
+	vec3 emission_color = emission_props.rgb;
+	float emission_energy = emission_props.a;
+
+	// Sample emission curve and apply to EMISSION
+	float emission_multiplier = texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r;
+	if (emission_multiplier > 0.0 && emission_energy > 0.0) {
+		// Apply emission with color tint and energy multiplier
+		EMISSION = ALBEDO * emission_color * emission_multiplier * emission_energy;
+	}
 }

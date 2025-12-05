@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=17 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://ShipModels/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -12,7 +12,6 @@
 [ext_resource type="Resource" uid="uid://cj43pm5o6aibf" path="res://src/Consumable/DamageControl.tres" id="7_opj4s"]
 [ext_resource type="Resource" uid="uid://cmt02tuklbcpb" path="res://src/Consumable/RepairParty.tres" id="8_7aqce"]
 [ext_resource type="Resource" uid="uid://cgmx8b43b3tfn" path="res://src/Fire/Fire.tres" id="9_7aqce"]
-[ext_resource type="PackedScene" uid="uid://psoivfcd8yg8" path="res://src/ship/wake/wake_emitter.tscn" id="9_dyl6l"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/ship/Upgrades/upgrade.gd" id="13_5tc2e"]
 
@@ -180,14 +179,5 @@ collision_mask = 0
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="3"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.7234, -2.76855)
 shape = SubResource("BoxShape3D_3klas")
-
-[node name="WakeEmitter" parent="." index="4" instance=ExtResource("9_dyl6l")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -13.0254, -3.08133, 76.8465)
-
-[node name="WakeEmitter3" parent="." index="5" instance=ExtResource("9_dyl6l")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3.081, -122.317)
-
-[node name="WakeEmitter2" parent="." index="6" instance=ExtResource("9_dyl6l")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13.1809, -3.08133, 76.8465)
 
 [editable path="Modules"]

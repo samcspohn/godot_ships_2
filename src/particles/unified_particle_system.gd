@@ -68,6 +68,10 @@ func _setup_shaders() -> void:
 	draw_material_shader = ShaderMaterial.new()
 	draw_material_shader.shader = material_shader
 
+	# Apply template properties to draw material
+	if uniforms.has("template_properties"):
+		draw_material_shader.set_shader_parameter("template_properties", uniforms["template_properties"])
+
 	# Apply texture atlas to draw material
 	if uniforms.has("texture_atlas"):
 		draw_material_shader.set_shader_parameter("texture_atlas", uniforms["texture_atlas"])
@@ -79,6 +83,10 @@ func _setup_shaders() -> void:
 	# Apply scale curve atlas to draw material
 	if uniforms.has("scale_curve_atlas"):
 		draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
+
+	# Apply emission curve atlas to draw material
+	if uniforms.has("emission_curve_atlas"):
+		draw_material_shader.set_shader_parameter("emission_curve_atlas", uniforms["emission_curve_atlas"])
 
 	# Create a quad mesh for particles
 	var quad = QuadMesh.new()
@@ -149,12 +157,16 @@ func update_shader_uniforms() -> void:
 			process_material_shader.set_shader_parameter(key, uniforms[key])
 
 		if draw_material_shader:
+			if uniforms.has("template_properties"):
+				draw_material_shader.set_shader_parameter("template_properties", uniforms["template_properties"])
 			if uniforms.has("texture_atlas"):
 				draw_material_shader.set_shader_parameter("texture_atlas", uniforms["texture_atlas"])
 			if uniforms.has("color_ramp_atlas"):
 				draw_material_shader.set_shader_parameter("color_ramp_atlas", uniforms["color_ramp_atlas"])
 			if uniforms.has("scale_curve_atlas"):
 				draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
+			if uniforms.has("emission_curve_atlas"):
+				draw_material_shader.set_shader_parameter("emission_curve_atlas", uniforms["emission_curve_atlas"])
 
 		print("UnifiedParticleSystem: Shader uniforms updated")
 
