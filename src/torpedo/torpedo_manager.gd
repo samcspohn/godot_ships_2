@@ -18,7 +18,7 @@ class TorpedoData:
 	var t: float
 	var params: TorpedoParams
 	var owner: Ship
-	
+
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship):
 		self.position = pos
 		self.direction = dir.normalized()
@@ -42,12 +42,12 @@ func _ready():
 		set_physics_process(false)
 		transforms.resize(12)
 		torpedos.resize(1)
-	
+
 # Returns the next power of 2 that is >= value
 func next_pow_of_2(value: int) -> int:
 	if value <= 0:
 		return 1
-	
+
 	# Bit manipulation to find next power of 2
 	var result = value
 	result -= 1
@@ -63,7 +63,7 @@ func transform_to_packed_float32array(transform: Transform3D) -> PackedFloat32Ar
 	# Create a PackedFloat32Array with 12 elements (3x4 matrix)
 	var array = PackedFloat32Array()
 	array.resize(12)
-	
+
 	# Extract basis (3x3 rotation matrix)
 	array[0] = transform.basis.x.x
 	array[1] = transform.basis.x.y
@@ -74,12 +74,12 @@ func transform_to_packed_float32array(transform: Transform3D) -> PackedFloat32Ar
 	array[6] = transform.basis.z.x
 	array[7] = transform.basis.z.y
 	array[8] = transform.basis.z.z
-	
+
 	# Extract origin (translation)
 	array[9] = transform.origin.x
 	array[10] = transform.origin.y
 	array[11] = transform.origin.z
-	
+
 	return array
 
 func update_transform_pos(idx, pos):
@@ -92,42 +92,44 @@ func update_transform_pos(idx, pos):
 func update_transform_scale(idx, scale: float):
 	# Calculate offset in the transforms array for this instance
 	var offset = idx * 12
-	
+
 	# Get current x-basis direction and normalize it
 	var x_basis = Vector3(transforms[offset + 0], transforms[offset + 1], transforms[offset + 2])
 	if x_basis.length_squared() > 0.0001:  # Avoid normalizing zero vectors
 		x_basis = x_basis.normalized() * scale
 	else:
 		x_basis = Vector3(scale, 0, 0)  # Default x-axis if current basis is effectively zero
-	
+
 	# Get current y-basis direction and normalize it
 	var y_basis = Vector3(transforms[offset + 4], transforms[offset + 5], transforms[offset + 6])
 	if y_basis.length_squared() > 0.0001:
 		y_basis = y_basis.normalized() * scale
 	else:
 		y_basis = Vector3(0, scale, 0)  # Default y-axis if current basis is effectively zero
-	
+
 	# Store the new scaled basis vectors
 	transforms[offset + 0] = x_basis.x
 	transforms[offset + 1] = x_basis.y
 	transforms[offset + 2] = x_basis.z
-	
+
 	transforms[offset + 4] = y_basis.x
 	transforms[offset + 5] = y_basis.y
 	transforms[offset + 6] = y_basis.z
-	
+
 	# We don't modify z-basis as per billboard requirements
-	
-func __process(_delta: float) -> void:
+
+func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 	
-	var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
+	if camera == null:
+		return
+	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
 	var id = 0
 	for p in self.torpedos:
 		if p == null:
 			id += 1
 			continue
-			
+
 		#var t = (current_time - p.start_time) * 2.0
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		var prev_pos = p.position
@@ -142,7 +144,7 @@ func __process(_delta: float) -> void:
 		#var max_scale_factor = INF # Cap the maximum scale increase
 		#var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
 		#update_transform_scale(id, scale_factor)
-			
+
 		id += 1
 		#var offset = p.position - p.trail_pos
 		#if (p.position - p.start_position).length_squared() < 80:
@@ -158,7 +160,7 @@ func __process(_delta: float) -> void:
 		#trans = trans.translated(p.position)
 		#p.trail_pos += offset
 		#offset_length -= step_size
-		
+
 	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
 	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
 	self.multi_mesh.multimesh.buffer = transforms
@@ -180,10 +182,10 @@ func _physics_process(_delta: float) -> void:
 		if p.position.y > 0.01:
 			p.position.y = max(p.position.y - _delta * 10, 0.01)
 		ray_query.to = p.position
-		
+
 		# Perform the raycast
 		collision = space_state.intersect_ray(ray_query)
-		
+
 		if not collision.is_empty():
 			#global_position = collision.position
 			self.destroyTorpedoRpc(id, collision.position)
@@ -191,12 +193,12 @@ func _physics_process(_delta: float) -> void:
 			if ship != null:
 				var hp: HitPointsManager = ship.health_controller
 				hp.take_damage(p.params.damage, collision.position)
-				
+
 				# Track torpedo damage dealt
 				track_torpedo_damage_dealt(p.owner, p.params.damage)
 		id += 1
-		
-		
+
+
 func update_transform(idx, trans):
 	# Fill buffer at correct position
 	var offset = idx * 12
@@ -213,7 +215,7 @@ func update_transform(idx, trans):
 	transforms[offset + 9] = trans.basis.y.z
 	transforms[offset + 10] = trans.basis.z.z
 	transforms[offset + 11] = trans.origin.z
-		
+
 @rpc("any_peer", "reliable")
 func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
@@ -225,7 +227,7 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> v
 		var np2 = next_pow_of_2(id + 1)
 		transforms.resize(np2 * 12)
 		self.torpedos.resize(np2)
-	
+
 	#var s = shell.size # sqrt(shell.damage / 100)
 	var vel_norm = vel.normalized()
 	# Create basis with Y axis aligned to velocity
@@ -247,7 +249,7 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship) -> int:
 	if id == null:
 		id = self.nextId
 		self.nextId += 1
-	
+
 	if id >= torpedos.size():
 		var np2 = next_pow_of_2(id + 1)
 		self.torpedos.resize(np2)
@@ -258,7 +260,7 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship) -> int:
 	return id
 	#for p in multiplayer.get_peers():
 		#self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
-	
+
 
 @rpc("call_remote", "reliable")
 func destroyTorpedoRpc2(id, pos: Vector3) -> void:
@@ -281,7 +283,7 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	get_tree().root.add_child(expl)
 	expl.global_position = pos
 	expl.radius = radius
-	
+
 @rpc("authority", "reliable")
 func destroyTorpedoRpc(id, position) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)
@@ -293,7 +295,7 @@ func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
 	"""Track torpedo damage dealt using the ship's stats module"""
 	if not owner_ship or not is_instance_valid(owner_ship):
 		return
-	
+
 	# Add damage to the ship's stats module
 	if owner_ship.stats:
 		owner_ship.stats.total_damage += damage
