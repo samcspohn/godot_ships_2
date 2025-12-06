@@ -32,7 +32,7 @@ func _ready() -> void:
 
 	# Configure particle rendering
 	draw_order = DRAW_ORDER_VIEW_DEPTH
-	transform_align = TRANSFORM_ALIGN_Y_TO_VELOCITY
+	# transform_align = TRANSFORM_ALIGN_Y_TO_VELOCITY
 
 	# Create and configure shaders
 	_setup_shaders()

@@ -169,11 +169,14 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
 ### Material Shader (`particle_template_material.gdshader`)
 **Visual rendering** (runs per pixel per particle).
 
+**Render Mode:** `unshaded` - no lighting calculations, HDR colors bloom naturally
+
 **Uniforms:**
 - `texture_atlas` (Texture2DArray) - particle textures
 - `color_ramp_atlas` - color gradients over lifetime
 - `scale_curve_atlas` - scale curves over lifetime
 - `emission_curve_atlas` - emission/brightness curves over lifetime
+- `template_properties` - template properties including emission_color and emission_energy
 
 **vertex() Function:**
 - Decode template_id from COLOR.r
@@ -189,10 +192,18 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
 - Sample texture from array: `texture(texture_atlas, vec3(UV, template_id))`
 - Sample color ramp: `texture(color_ramp_atlas, vec2(lifetime_percent, v_coord))`
 - Sample emission curve: `texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r`
+- Fetch emission properties: `texelFetch(template_properties, ivec2(template_id, 8), 0)`
 - Multiply texture × color ramp
-- Apply emission based on emission curve multiplier
+- Apply HDR brightness multiplier: `brightness = 1.0 + (emission_multiplier * emission_energy)`
+- Final ALBEDO with glow: `final_color.rgb * brightness * emission_color`
 - Apply fade-out at end of life (95-100% lifetime)
 - Optional alpha scissor for performance
+
+**Emission Strategy:**
+Instead of using the EMISSION output channel, emission effects are achieved by multiplying ALBEDO by HDR values (>1.0). This works in `unshaded` mode because:
+- Colors with values >1.0 are HDR and will bloom/glow with post-processing
+- No lighting calculations means consistent appearance regardless of camera angle
+- Similar approach to StandardMaterial3D's unshaded particles
 
 ## Usage Patterns
 
@@ -352,6 +363,40 @@ particle_system.emit_particles(position, direction, template.template_id, 1.0, 1
 
 ## Debugging
 
+### Glow/Bloom Configuration
+
+The particle system uses **unshaded rendering with HDR brightness values** to create glowing effects. This requires proper glow/bloom configuration in your Environment.
+
+**Required Settings:**
+```gdscript
+# In your WorldEnvironment or Camera3D's Environment:
+glow_enabled = true
+glow_hdr_threshold = 2.5  # Only colors above 2.5 brightness will bloom
+glow_hdr_scale = 2.0      # How much HDR colors bloom
+glow_intensity = 0.5      # Overall bloom intensity
+glow_strength = 1.2       # Bloom spread amount
+glow_bloom = 0.05         # Additional bloom boost
+glow_blend_mode = 0       # Additive (best for particles)
+```
+
+**Understanding the Threshold:**
+- Particles with `emission_energy = 2.0` and color `(3,3,3)` reach brightness ~9.0
+- Normal scene objects typically have brightness 0.5-1.5
+- `glow_hdr_threshold = 2.5` means only very bright particles bloom, not the scene
+
+**Tuning Guidelines:**
+- **Too much bloom on everything?** → Increase `glow_hdr_threshold` to 3.0-4.0
+- **Particles not glowing enough?** → Increase template `emission_energy` to 3.0-5.0
+- **Bloom too intense?** → Decrease `glow_intensity` to 0.3-0.4
+- **Bloom too subtle?** → Increase `glow_hdr_scale` to 3.0-4.0
+
+**Brightness Calculation:**
+```gdscript
+# Per particle at birth (emission_multiplier = 1.0):
+brightness = 1.0 + (1.0 * emission_energy)  # e.g., 1.0 + 2.0 = 3.0
+final_color = base_color * brightness       # e.g., (3,3,3) * 3.0 = (9,9,9)
+```
+
 ### Common Issues
 
 **"Template not found" error:**
@@ -366,11 +411,23 @@ particle_system.emit_particles(position, direction, template.template_id, 1.0, 1
 - Ensure texture is assigned in template
 - Verify camera can see emission position
 
+**Particles glowing but scene washed out:**
+- Increase `glow_hdr_threshold` to 2.5 or higher
+- Decrease `glow_intensity` to 0.4-0.5
+- Ensure normal scene materials use colors < 1.5
+
+**No glow/bloom visible:**
+- Enable `glow_enabled = true` in Environment
+- Check `glow_hdr_threshold` isn't too high (try 2.0)
+- Verify particles have `emission_energy > 0`
+- Ensure color_over_life gradient has bright colors (e.g., 3,3,3)
+
 **Performance issues:**
 - Reduce particle count (100k pool is very large)
 - Enable alpha_scissor
 - Check for excessive emit_particles() calls
 - Profile with Godot's profiler (GPU time)
+- Disable glow for better performance (use emission_energy = 0)
 
 ### Useful Debug Commands
 ```gdscript
@@ -466,7 +523,7 @@ src/particles/
 
 12. **Shader Uniform Updates**: When templates are registered or modified, both the process shader AND draw material shader must receive updated atlas textures. The `UnifiedParticleSystem.update_shader_uniforms()` method handles this for `texture_atlas`, `color_ramp_atlas`, `scale_curve_atlas`, and `emission_curve_atlas`.
 
-13. **Emission Over Life**: The `emission_curve_atlas` is sampled in the material shader's fragment function and applied to the EMISSION output, enabling particles to glow/emit light that fades over their lifetime. This is independent of the `emission_color` and `emission_energy` template properties.
+13. **Emission Over Life**: The `emission_curve_atlas` is sampled in the material shader's fragment function and applied as an HDR brightness multiplier to ALBEDO (in unshaded mode), enabling particles to glow that fades over their lifetime. This works with `emission_color` and `emission_energy` template properties to create view-independent glowing effects.
 
 ## Recent Implementation Updates
 
@@ -495,24 +552,34 @@ Both features use the same atlas-based approach as color over life:
 3. Template's `emission_color` and `emission_energy` are encoded in `template_properties` texture (Row 8)
 4. Material shader samples in fragment(): `texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r`
 5. Material shader fetches emission properties: `texelFetch(template_properties, ivec2(template_id, 8), 0)`
-6. Emission calculated as: `EMISSION = ALBEDO * emission_color * emission_curve_sample * emission_energy`
+6. Brightness calculated as: `brightness = 1.0 + (emission_curve_sample * emission_energy)`
+7. HDR glow applied to ALBEDO: `ALBEDO = final_color.rgb * brightness * emission_color`
+
+**Unshaded HDR Approach:**
+The shader uses `render_mode unshaded` and achieves glowing effects by multiplying ALBEDO with HDR brightness values (>1.0) rather than using the EMISSION channel. This approach:
+- Provides consistent appearance regardless of camera position/rotation
+- Eliminates lighting-related view-dependent artifacts on billboarded particles
+- Works naturally with bloom/glow post-processing effects
+- Matches the technique used in Godot's StandardMaterial3D for particle effects
 
 **Formulas:**
 ```gdscript
 # Scale calculation (vertex shader)
 final_scale = base_scale * size_multiplier * scale_curve_sample
 
-# Emission calculation (fragment shader)
-EMISSION = ALBEDO * emission_color * emission_curve_sample * emission_energy
+# HDR brightness calculation (fragment shader)
+brightness = 1.0 + (emission_curve_sample * emission_energy)
+ALBEDO = final_color.rgb * brightness * emission_color
 ```
 
 Where:
 - `base_scale` = initial scale from MODEL_MATRIX
 - `size_multiplier` = per-emission size parameter (COLOR.g)
 - `scale_curve_sample` = sampled value from scale_over_life curve at current lifetime
-- `emission_color` = RGB color tint for emission (from template property)
-- `emission_energy` = brightness multiplier for emission (from template property, typically 1.0-5.0)
+- `emission_color` = RGB color tint for emission (from template property, default WHITE)
+- `emission_energy` = HDR brightness multiplier (from template property, typically 1.0-5.0 for glow effects)
 - `emission_curve_sample` = sampled value from emission_over_life curve at current lifetime (0.0-1.0)
+- `brightness` = combined HDR multiplier applied to ALBEDO (1.0 = normal, >1.0 = glowing)
 
 **Template Configurations:**
 - **explosion_template**: 

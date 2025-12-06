@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley;
+render_mode blend_mix, depth_draw_opaque, cull_back, unshaded;
 
 // Texture array containing all particle textures
 uniform sampler2DArray texture_atlas : source_color, filter_linear_mipmap;
@@ -49,27 +49,48 @@ void vertex() {
 	float v_coord = (float(template_id) + 0.5) / 16.0; // 16 = MAX_TEMPLATES
 	float scale_multiplier = texture(scale_curve_atlas, vec2(lifetime_percent, v_coord)).r;
 
-	// Manual billboarding for particles
-	// Make the particle always face the camera
+	// // Manual billboarding for particles
+	// // Make the particle always face the camera
 
-	// Get camera right and up vectors in world space from INV_VIEW_MATRIX
-	vec3 camera_right = normalize(INV_VIEW_MATRIX[0].xyz);
-	vec3 camera_up = normalize(INV_VIEW_MATRIX[1].xyz);
-	vec3 camera_forward = normalize(INV_VIEW_MATRIX[2].xyz);
+	// // Get camera right and up vectors in world space from INV_VIEW_MATRIX
+	// vec3 camera_right = normalize(INV_VIEW_MATRIX[0].xyz);
+	// vec3 camera_up = normalize(INV_VIEW_MATRIX[1].xyz);
+	// vec3 camera_forward = normalize(INV_VIEW_MATRIX[2].xyz);
 
-	// Extract and preserve scale from original MODEL_MATRIX
-	float scale_x = length(MODEL_MATRIX[0].xyz);
-	float scale_y = length(MODEL_MATRIX[1].xyz);
-	float scale_z = length(MODEL_MATRIX[2].xyz);
+	// // Extract and preserve scale from original MODEL_MATRIX
+	// float scale_x = length(MODEL_MATRIX[0].xyz);
+	// float scale_y = length(MODEL_MATRIX[1].xyz);
+	// float scale_z = length(MODEL_MATRIX[2].xyz);
 
-	// Build billboard matrix in world space
-	mat4 mat_world = mat4(1.0);
-	mat_world[0].xyz = camera_right * scale_x * size * scale_multiplier;
-	mat_world[1].xyz = camera_up * scale_y * size * scale_multiplier;
-	mat_world[2].xyz = camera_forward * scale_z * size * scale_multiplier;
-	mat_world[3] = MODEL_MATRIX[3]; // Preserve position
+	// // Build billboard matrix in world space
+	// mat4 mat_world = mat4(1.0);
+	// mat_world[0].xyz = camera_right * scale_x * size * scale_multiplier;
+	// mat_world[1].xyz = camera_up * scale_y * size * scale_multiplier;
+	// mat_world[2].xyz = camera_forward * scale_z * size * scale_multiplier;
+	// mat_world[3] = MODEL_MATRIX[3]; // Preserve position
 
-	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+	// MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+	// Billboard Mode: Particles
+		mat4 mat_world = mat4(
+				normalize(INV_VIEW_MATRIX[0]),
+				normalize(INV_VIEW_MATRIX[1]),
+				normalize(INV_VIEW_MATRIX[2]),
+				MODEL_MATRIX[3]);
+		mat_world = mat_world * mat4(
+				vec4(cos(INSTANCE_CUSTOM.x), -sin(INSTANCE_CUSTOM.x), 0.0, 0.0),
+				vec4(sin(INSTANCE_CUSTOM.x), cos(INSTANCE_CUSTOM.x), 0.0, 0.0),
+				vec4(0.0, 0.0, 1.0, 0.0),
+				vec4(0.0, 0.0, 0.0, 1.0));
+		MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+
+		// Billboard Keep Scale: Enabled
+		MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
+				vec4(length(MODEL_MATRIX[0].xyz) * size * scale_multiplier, 0.0, 0.0, 0.0),
+				vec4(0.0, length(MODEL_MATRIX[1].xyz) * size * scale_multiplier, 0.0, 0.0),
+				vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz) * size * scale_multiplier, 0.0),
+				vec4(0.0, 0.0, 0.0, 1.0));
+
+		MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
 }
 
 void fragment() {
@@ -86,6 +107,20 @@ void fragment() {
 	// Combine texture with color ramp
 	vec4 final_color = tex_color * ramp_color;
 
+	// Fetch emission properties from template_properties (Row 8)
+	vec4 emission_props = texelFetch(template_properties, ivec2(template_id, 8), 0);
+	vec3 emission_color = emission_props.rgb;
+	float emission_energy = emission_props.a;
+
+	// Sample emission curve and apply as HDR brightness multiplier
+	float emission_multiplier = texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r;
+
+	// Calculate brightness multiplier (1.0 = normal, >1.0 = HDR glow)
+	float brightness = 1.0 + (emission_multiplier * emission_energy);
+
+	// Apply brightness to create HDR glow effect in unshaded mode
+	vec3 final_albedo = final_color.rgb * brightness * emission_color;
+
 	// Fade out at end of life to prevent flashing
 	float fade_start = 0.95;
 	float alpha_fade = 1.0;
@@ -93,23 +128,11 @@ void fragment() {
 		alpha_fade = 1.0 - ((lifetime_percent - fade_start) / (1.0 - fade_start));
 	}
 
-	ALBEDO = final_color.rgb;
+	ALBEDO = final_albedo;
 	ALPHA = final_color.a * alpha_fade;
 
 	// Alpha scissor for performance
 	if (use_alpha_scissor && ALPHA < alpha_scissor_threshold) {
 		discard;
-	}
-
-	// Fetch emission properties from template_properties (Row 8)
-	vec4 emission_props = texelFetch(template_properties, ivec2(template_id, 8), 0);
-	vec3 emission_color = emission_props.rgb;
-	float emission_energy = emission_props.a;
-
-	// Sample emission curve and apply to EMISSION
-	float emission_multiplier = texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r;
-	if (emission_multiplier > 0.0 && emission_energy > 0.0) {
-		// Apply emission with color tint and energy multiplier
-		EMISSION = ALBEDO * emission_color * emission_multiplier * emission_energy;
 	}
 }

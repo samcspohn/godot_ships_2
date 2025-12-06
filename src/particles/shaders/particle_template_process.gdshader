@@ -302,13 +302,14 @@ void process() {
 
 	// Damping
 	if (damping > 0.0) {
-		float v = length(VELOCITY);
-		v -= damping * dt;
-		if (v < 0.0) {
-			VELOCITY = vec3(0.0);
-		} else {
-			VELOCITY = normalize(VELOCITY) * v;
-		}
+		// float v = length(VELOCITY);
+		// v -= damping * dt;
+		// if (v < 0.0) {
+		// 	VELOCITY = vec3(0.0);
+		// } else {
+		// 	VELOCITY = normalize(VELOCITY) * v;
+		// }
+		VELOCITY *= pow(max(0.0, 1.0 - damping), dt);
 	}
 	// VELOCITY *= size_multiplier; // Re-apply size multiplier
 	// Update position

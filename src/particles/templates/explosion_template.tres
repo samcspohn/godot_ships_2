@@ -5,13 +5,14 @@
 
 [sub_resource type="Gradient" id="Gradient_explosion"]
 offsets = PackedFloat32Array(0, 0.149367, 0.26076, 0.367089, 0.443038, 1)
-colors = PackedColorArray(3, 3, 3, 1, 2, 1.5, 0.5, 1, 1, 0.5, 0.2, 1, 0.615686, 0.105882, 0.117647, 0.937255, 0.0901961, 0.0901961, 0.0901961, 0.788235, 0, 0, 0, 0)
+colors = PackedColorArray(3, 3, 3, 1, 2, 1.5, 0.5, 1, 1, 0.5, 0.2, 1, 0.615686, 0.105882, 0.117647, 0.937255, 0.41568628, 0.32941177, 0.18039216, 0.7882353, 0, 0, 0, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_explosion"]
 gradient = SubResource("Gradient_explosion")
+use_hdr = true
 
 [sub_resource type="Curve" id="Curve_emission_explosion"]
-_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.247031, 0), 0.0, 0.0, 0, 0]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.4988864, 0), 0.0, 0.0, 0, 0]
 point_count = 2
 
 [sub_resource type="CurveTexture" id="CurveTexture_emission_explosion"]
@@ -31,16 +32,13 @@ texture = ExtResource("2")
 color_over_life = SubResource("GradientTexture1D_explosion")
 scale_over_life = SubResource("CurveTexture_scale_explosion")
 emission_over_life = SubResource("CurveTexture_emission_explosion")
-emission_energy = 2.0
+emission_energy = 4.0
 initial_velocity_min = 2.0
 initial_velocity_max = 6.0
 spread = 161.6
 gravity = Vector3(0, 0, 0)
-angular_velocity_min = -90.0
-angular_velocity_max = 90.0
-initial_angle_max = 360.0
-damping_min = 10.0
-damping_max = 10.0
+damping_min = 0.85
+damping_max = 0.9
 lifetime_min = 1.8
 lifetime_max = 2.5
 lifetime_randomness = 0.3
