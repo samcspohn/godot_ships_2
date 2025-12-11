@@ -5,10 +5,9 @@
 [resource]
 render_priority = 1
 transparency = 1
-blend_mode = 4
-depth_draw_mode = 2
 shading_mode = 0
 vertex_color_use_as_albedo = true
+albedo_color = Color(2.1168277, 2.1087549, 2.1087549, 1)
 albedo_texture = ExtResource("1_rbuuj")
 billboard_mode = 1
 billboard_keep_scale = true

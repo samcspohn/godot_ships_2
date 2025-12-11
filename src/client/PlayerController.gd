@@ -344,14 +344,14 @@ func _process(dt: float) -> void:
 	# Handle player input and send to server
 	process_player_input()
 
-	# Show floating damage for the ship
-	if ship.stats.damage_events.size() > 0:
-		for damage_event in ship.stats.damage_events:
-			if cam.ui:
-				cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
-			else:
-				print("Warning: cam.ui not available for floating damage")
-		# Note: damage_events are now cleared by the camera UI after processing hit counters
+	# # Show floating damage for the ship
+	# if ship.stats.damage_events.size() > 0:
+	# 	for damage_event in ship.stats.damage_events:
+	# 		if cam.ui:
+	# 			cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
+	# 		else:
+	# 			print("Warning: cam.ui not available for floating damage")
+	# 	# Note: damage_events are now cleared by the camera UI after processing hit counters
 
 func process_player_input() -> void:
 	# Handle throttle input with continuous adjustment

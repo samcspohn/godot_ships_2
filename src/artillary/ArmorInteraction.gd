@@ -27,12 +27,15 @@ class ArmorResultData:
 	var armor_part: ArmorPart
 	var velocity: Vector3
 	var ship: Ship
-	func _init(_result_type: HitResult, _explosion_position: Vector3, _armor_part: ArmorPart, _velocity: Vector3, _ship: Ship) -> void:
+	var collision_normal: Vector3
+	
+	func _init(_result_type: HitResult, _explosion_position: Vector3, _armor_part: ArmorPart, _velocity: Vector3, _ship: Ship, _collision_normal: Vector3) -> void:
 		result_type = _result_type
 		explosion_position = _explosion_position
 		armor_part = _armor_part
 		velocity = _velocity
 		ship = _ship
+		collision_normal = _collision_normal
 
 func process_travel(projectile: ProjectileManager.ProjectileData, prev_pos: Vector3, t: float, space_state: PhysicsDirectSpaceState3D) -> ArmorResultData:
 	var ray_query = PhysicsRayQueryParameters3D.new()
@@ -64,9 +67,9 @@ func process_travel(projectile: ProjectileManager.ProjectileData, prev_pos: Vect
 		# No owner do not process ship hits, do terrain and water only
 		if !result.is_empty():
 			if result.get('position').y <= 0.0001:
-				return ArmorResultData.new(HitResult.WATER, result.get('position'), null, Vector3.ZERO, null)
+				return ArmorResultData.new(HitResult.WATER, result.get('position'), null, Vector3.ZERO, null, Vector3.ZERO)
 			else:
-				return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null)
+				return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 		else:
 			return null
 				
@@ -96,7 +99,7 @@ func process_travel(projectile: ProjectileManager.ProjectileData, prev_pos: Vect
 			ship_ray_query.collision_mask = 1 << 1 # 1<<1 = armor
 			var ship_result = space_state.intersect_ray(ship_ray_query)
 			if ship_result.is_empty():
-				return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null)
+				return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
 			else:
 				var hit_pos = ship_result.get('position')
 				var total_dist = (fuzed_position - water_hit_pos).length()
@@ -135,9 +138,9 @@ func process_travel(projectile: ProjectileManager.ProjectileData, prev_pos: Vect
 			false
 			)
 		elif result.get('position').y <= 0.0001:
-			return ArmorResultData.new(HitResult.WATER, result.get('position'), null, Vector3.ZERO, null)
+			return ArmorResultData.new(HitResult.WATER, result.get('position'), null, Vector3.ZERO, null, Vector3.ZERO)
 		else:
-			return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null)
+			return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 	return null
 
 class ShellData:
@@ -180,40 +183,85 @@ func get_next_hit(ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDi
 	return {}
 
 func get_part_hit(_ship: Ship, shell_pos: Vector3, space_state: PhysicsDirectSpaceState3D) -> ArmorPart:
+	# Cast rays from left and right (port/starboard) to determine what's at this position
+	# The shell is "inside" a part only if BOTH sides hit it (or deeper)
 	var ray_query = PhysicsRayQueryParameters3D.new()
-	ray_query.from = shell_pos + _ship.global_basis.x.normalized() * 60.0
 	ray_query.to = shell_pos
 	ray_query.hit_back_faces = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 << 1 # 1<<1 = armor
 
-	var exclude = []
-	var armor_hit = space_state.intersect_ray(ray_query)
-	var right_armor_list = []
-	while !armor_hit.is_empty():
-		right_armor_list.append(armor_hit.get('collider') as ArmorPart)
-		exclude.append(armor_hit.get('collider'))
-		ray_query.exclude = exclude
-		armor_hit = space_state.intersect_ray(ray_query)
-	
-	if right_armor_list.size() == 0:
-		return null # outside ship
-	else:
-		var left_armor_list = []
-		ray_query.from = shell_pos + _ship.global_basis.x.normalized() * -60.0
-		ray_query.to = shell_pos
-		exclude = []
-		ray_query.exclude = exclude # Reset the ray query's exclude list
-		armor_hit = space_state.intersect_ray(ray_query)
+	var directions = [_ship.global_basis.x.normalized(),
+	 -_ship.global_basis.x.normalized(),
+	 _ship.global_basis.y.normalized(),
+	 -_ship.global_basis.y.normalized(),
+	 _ship.global_basis.z.normalized(),
+	 -_ship.global_basis.z.normalized()]
+
+	var hits = []
+	for dir in directions:
+		ray_query.from = shell_pos + dir * 400.0
+		ray_query.exclude = []
+		var side_hits = []
+		var armor_hit = space_state.intersect_ray(ray_query)
+		var exclude = []
 		while !armor_hit.is_empty():
-			left_armor_list.append(armor_hit.get('collider') as ArmorPart)
+			var armor_part = armor_hit.get('collider') as ArmorPart
+			if armor_part != null and armor_part.ship == _ship:
+				side_hits.append(armor_part)
 			exclude.append(armor_hit.get('collider'))
 			ray_query.exclude = exclude
 			armor_hit = space_state.intersect_ray(ray_query)
-		if left_armor_list.size() == 0:
-			return null # outside ship
-		var a = right_armor_list if right_armor_list.size() < left_armor_list.size() else left_armor_list
-		return a[a.size() - 1] if a.size() > 0 else null
+		hits.append(side_hits)
+
+	var hit_part = null
+	for side_hits in hits:
+		if side_hits.size() == 0:
+			return null # Outside ship
+
+	var min_hits = INF
+	for side_hits in hits:
+		if side_hits.size() < min_hits:
+			min_hits = side_hits.size()
+			hit_part = side_hits[-1]
+	
+	return hit_part
+	
+	# # Cast from right (starboard)
+	# ray_query.from = shell_pos + _ship.global_basis.x.normalized() * 60.0
+	# ray_query.exclude = []
+	# var right_hits = []
+	# var armor_hit = space_state.intersect_ray(ray_query)
+	# var exclude = []
+	# while !armor_hit.is_empty():
+	# 	var armor_part = armor_hit.get('collider') as ArmorPart
+	# 	if armor_part != null and armor_part.ship == _ship:
+	# 		right_hits.append(armor_part)
+	# 	exclude.append(armor_hit.get('collider'))
+	# 	ray_query.exclude = exclude
+	# 	armor_hit = space_state.intersect_ray(ray_query)
+	
+	# # Cast from left (port)
+	# ray_query.from = shell_pos + _ship.global_basis.x.normalized() * -60.0
+	# ray_query.exclude = []
+	# var left_hits = []
+	# armor_hit = space_state.intersect_ray(ray_query)
+	# exclude = []
+	# while !armor_hit.is_empty():
+	# 	var armor_part = armor_hit.get('collider') as ArmorPart
+	# 	if armor_part != null and armor_part.ship == _ship:
+	# 		left_hits.append(armor_part)
+	# 	exclude.append(armor_hit.get('collider'))
+	# 	ray_query.exclude = exclude
+	# 	armor_hit = space_state.intersect_ray(ray_query)
+	
+	# # Must hit armor from both sides to be inside
+	# if right_hits.size() == 0 or left_hits.size() == 0:
+	# 	return null # Outside ship
+	
+	# # Return the deepest common part (the side with fewer hits is deeper inside)
+	# var deeper_list = right_hits if right_hits.size() < left_hits.size() else left_hits
+	# return deeper_list[-1] if deeper_list.size() > 0 else null
 
 func armor_result_to_string(result: ArmorResult) -> String:
 	match result:
@@ -230,6 +278,7 @@ func armor_result_to_string(result: ArmorResult) -> String:
 	return "UNKNOWN"
 
 func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3, projectile: ProjectileManager.ProjectileData, impact_velocity: Vector3, face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D, hit_water: bool) -> ArmorResultData:
+	var first_hit_normal = hit_normal
 	var armor_ray = PhysicsRayQueryParameters3D.new()
 	armor_ray.hit_back_faces = true
 	armor_ray.hit_from_inside = false
@@ -248,13 +297,17 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	var over_pen = false
 	var ship = hit_node.ship
 
+	# if shell.params.type == ShellParams.ShellType.AP:
+	# 	params.overmatch = 0.0
+	# 	params.auto_bounce = PI / 2.0 # 90 degrees
+
 	var events = []
 	events.append("Processing Shell: %s %s " % [projectile.params.caliber, projectile.params.type])
 	events.append("Ship: %s pos=(%.1f, %.1f, %.1f), rot=(%.1f, %.1f, %.1f)" % [ship.name, ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z, rad_to_deg(ship.global_transform.basis.get_euler().x), rad_to_deg(ship.global_transform.basis.get_euler().y), rad_to_deg(ship.global_transform.basis.get_euler().z)])
 	if hit_water:
 		events.append(" - Hit water first, fuze: %.3f s" % [shell.fuze])
 		if shell.params.type == ShellParams.ShellType.HE:
-			return ArmorResultData.new(HitResult.WATER, shell.position, null, shell.velocity, null)
+			return ArmorResultData.new(HitResult.WATER, shell.position, null, shell.velocity, null, first_hit_normal)
 
 	if shell.params.type == ShellParams.ShellType.HE:
 		var armor = hit_node.get_armor(face_index)
@@ -262,9 +315,9 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 			var hit_result = HitResult.PENETRATION
 			if hit_node.is_citadel:
 				hit_result = HitResult.CITADEL
-			return ArmorResultData.new(hit_result, shell.position, hit_node, shell.velocity, ship)
+			return ArmorResultData.new(hit_result, shell.position, hit_node, shell.velocity, ship, first_hit_normal)
 		else:
-			return ArmorResultData.new(HitResult.SHATTER, shell.position, hit_node, Vector3.ZERO, ship)
+			return ArmorResultData.new(HitResult.SHATTER, shell.position, hit_node, Vector3.ZERO, ship, first_hit_normal)
 
 	while shell.fuze <= params.fuze_delay and result != ArmorResult.SHATTER and hit_node.ship == ship:
 		var armor = hit_node.get_armor(face_index)
@@ -297,16 +350,16 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		elif impact_angle > params.auto_bounce or (impact_angle > params.ricochet_angle and shell.pen < e_armor):
 			result = ArmorResult.RICOCHET
 			shell.velocity = shell.velocity.bounce(hit_normal.normalized())
-			shell.velocity *= cos(PI / 2.0 - impact_angle) # Lose some velocity on ricochet
-			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
+			shell.velocity *= sin(impact_angle) # Lose some velocity on ricochet
+			shell.position += hit_normal * 0.001 # Back off a bit to avoid immediate re-hit
 			if deg_to_rad(20) > (PI - impact_angle):
 				if shell.fuze < 0.0:
 					shell.fuze = 0.0 # Arm the fuze on ricochet if it was armed already
 		elif shell.pen < e_armor:
 			result = ArmorResult.SHATTER
-			shell.position -= -shell.velocity.normalized() * 0.01
+			shell.position -= shell.velocity.normalized() * 0.001
 			shell.velocity = Vector3.ZERO
-			shell.position += hit_normal * 0.01 # Back off a bit to avoid immediate re-hit
+			shell.position += hit_normal * 0.001 # Back off a bit to avoid immediate re-hit
 			shell.fuze = params.fuze_delay
 			
 		else:
@@ -318,13 +371,13 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 			if shell.fuze < 0.0:
 				if e_armor > params.arming_threshold:
 					shell.fuze = 0.0 # Arm the fuze if over arming threshold
-		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°), normal: (%.1f, %.1f, %.1f), ship: %s" % [armor_result_to_string(result), hit_node.armor_path, armor, e_armor, rad_to_deg(impact_angle), hit_normal.x, hit_normal.y, hit_normal.z, hit_node.ship.name])
+		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°), normal: (%.1f, %.1f, %.1f), ship: %s, is_citadel: %s" % [armor_result_to_string(result), hit_node.armor_path, armor, e_armor, rad_to_deg(impact_angle), hit_normal.x, hit_normal.y, hit_normal.z, hit_node.ship.name, hit_node.is_citadel])
 
 		if result == ArmorResult.SHATTER or shell.velocity.length() < 0.5:
 			shell.calc_end_position()
 			break
 
-		armor_ray.from = shell.position + shell.velocity.normalized() * 0.1
+		armor_ray.from = shell.position + shell.velocity.normalized() * 0.001
 		shell.calc_end_position()
 		armor_ray.to = shell.end_position
 
@@ -348,8 +401,19 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	# final processing
 	var d: ArmorPart = get_part_hit(hit_node.ship, shell.end_position, space_state)
 	
+	events.append("get_part_hit result: %s (citadel=%s)" % [d.armor_path if d != null else "null", str(d.armor_path.find("Citadel") != -1) if d != null else "N/A"])
+	events.append("hit_cit flag: %s, over_pen flag: %s" % [hit_cit, over_pen])
+	
 	var damage_result = HitResult.WATER
-	if d != null and d.armor_path.find("Citadel") != -1:
+	# Check definitive outcomes first (shatter/ricochet)
+	if over_pen:
+		damage_result = HitResult.OVERPENETRATION
+	elif result == ArmorResult.SHATTER:
+		damage_result = HitResult.SHATTER
+	elif result == ArmorResult.RICOCHET:
+		damage_result = HitResult.RICOCHET
+	# Then check penetration depth
+	if d != null and (d.is_citadel or d.armor_path.find("Citadel") != -1):
 		damage_result = HitResult.CITADEL
 	elif hit_cit: # overpen citadel but still could be inside hull
 		damage_result = HitResult.CITADEL_OVERPEN
@@ -357,16 +421,12 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		damage_result = HitResult.PENETRATION
 	elif over_pen: # not ricochet but outside hull
 		damage_result = HitResult.OVERPENETRATION
-	elif result == ArmorResult.RICOCHET:
-		damage_result = HitResult.RICOCHET
-	elif result == ArmorResult.SHATTER:
-		damage_result = HitResult.SHATTER
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if damage_result == HitResult.CITADEL:
+	if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
 	# if true:
 		for e in events:
 			print(e)
 
 	# return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship)
-	return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship)
+	return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship, first_hit_normal)

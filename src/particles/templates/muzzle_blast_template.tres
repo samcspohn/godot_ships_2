@@ -4,8 +4,8 @@
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_muzzle"]
-offsets = PackedFloat32Array(0, 0.0481013, 0.101266, 0.15443, 0.212658, 1)
-colors = PackedColorArray(3, 3, 3, 1, 2, 1.5, 0.5, 1, 1, 0.5, 0.2, 1, 0.615686, 0.105882, 0.117647, 0.878431, 0.21176471, 0.18039216, 0.07058824, 0.6509804, 0.0121427, 0.0107278, 0.0107278, 0)
+offsets = PackedFloat32Array(0, 0.035460994, 0.08747045, 0.15443, 0.212658, 1)
+colors = PackedColorArray(3, 3, 3, 1, 2, 1.5, 0.5, 1, 1, 0.5, 0.2, 1, 0.615686, 0.105882, 0.117647, 0.878431, 0.21176471, 0.18039216, 0.07058824, 0.41960785, 0.0121427, 0.0107278, 0.0107278, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_muzzle"]
 gradient = SubResource("Gradient_muzzle")
@@ -33,7 +33,7 @@ texture = ExtResource("2")
 color_over_life = SubResource("GradientTexture1D_muzzle")
 scale_over_life = SubResource("CurveTexture_scale_muzzle")
 emission_over_life = SubResource("CurveTexture_emission_muzzle")
-emission_energy = 4.0
+emission_energy = 2.5
 initial_velocity_min = 0.5
 initial_velocity_max = 15.0
 direction = Vector3(0, 0, -1)
@@ -41,7 +41,7 @@ spread = 8.0
 gravity = Vector3(0, 0, 0)
 damping_min = 0.8
 damping_max = 0.8
-lifetime_min = 1.8
-lifetime_max = 2.5
+lifetime_min = 2.5
+lifetime_max = 3.5
 lifetime_randomness = 0.3
 scale_max = 1.5

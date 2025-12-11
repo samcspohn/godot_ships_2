@@ -51,8 +51,8 @@ func print_scene_tree(node: Node, indent: String = ""):
 func _on_fire_gun(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	fire_gun_client(gun_id, v, p, t, i)
 
-func _on_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
-	destroy_shell_client(shell_id, pos, hit_result)
+func _on_destroy_shell(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
+	destroy_shell_client(shell_id, pos, hit_result, normal)
 
 func _on_ricochet(_original_id: int, _ricochet_id: int, _position: Vector3, _velocity: Vector3, _time: float):
 	# Handle ricochet event
@@ -178,7 +178,7 @@ func send_fire_gun(gun_id: int, velocity: Vector3, position: Vector3, time: floa
 	enqueue_broadcast(stream.data_array)
 
 # Send despawn shell command as binary
-func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
+func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	var stream = StreamPeerBuffer.new()
 	stream.put_u8(1)  # type 1 for destroy shell
 	stream.put_u32(shell_id)
@@ -186,6 +186,9 @@ func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
 	stream.put_float(pos.y)
 	stream.put_float(pos.z)
 	stream.put_u32(hit_result)
+	stream.put_float(normal.x)
+	stream.put_float(normal.y)
+	stream.put_float(normal.z)
 	enqueue_broadcast(stream.data_array)
 
 func send_ricochet(original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float):
@@ -252,13 +255,14 @@ func start_client():
 				var i = stream.get_u32()
 				fire_gun_client(gun_id, v, p, t, i)
 			elif type == 1:
-				if stream.get_available_bytes() < 4 + 12 + 4:  # 20 bytes
+				if stream.get_available_bytes() < 4 + 12 + 4 + 12:  # 32 bytes
 					print("Corrupted destroy shell data received")
 					continue
 				var shell_id = stream.get_u32()
 				var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 				var hit_result = stream.get_u32()
-				destroy_shell_client(shell_id, pos, hit_result)
+				var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+				destroy_shell_client(shell_id, pos, hit_result, normal)
 			elif type == 2:
 				if stream.get_available_bytes() < 4 + 4 + 12 + 12 + 8:  # 44 bytes
 					print("Corrupted ricochet data received")
@@ -298,13 +302,13 @@ func _receive_loop():
 	print("Disconnected from server")
 	client_running = false
 
-func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int):
+func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	# print("Destroying shell with data: ", shell_id, pos, hit_result)
 	if shell_id == -1:
 		print("No shell ID in data")
 		return
 	# Find the shell by ID and destroy it
-	ProjectileManager.destroyBulletRpc2(shell_id, pos, hit_result)
+	ProjectileManager.destroyBulletRpc2(shell_id, pos, hit_result, normal)
 
 func fire_gun_client(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	# print("Firing gun with data: ", gun_id, v, p, t, i)

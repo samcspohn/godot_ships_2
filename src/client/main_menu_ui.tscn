@@ -57,6 +57,10 @@ text = "Multiplayer"
 layout_mode = 2
 text = "Single Player"
 
+[node name="ReplayButton" type="Button" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Replay"
+
 [node name="StatusLabel" type="Label" parent="TopBar"]
 layout_mode = 1
 anchors_preset = 7

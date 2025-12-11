@@ -24,10 +24,6 @@ config/icon="res://icon.svg"
 
 driver/driver="ALSA"
 
-[display]
-
-window/vsync/vsync_mode=0
-
 [autoload]
 
 GameSettings="*res://src/autoload/game_settings.gd"
@@ -44,6 +40,10 @@ HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
 TcpThreadPool="*res://tcp_thread_pool.tscn"
 ParticleSystemInit="*res://src/particles/particle_system_init.gd"
 
+[display]
+
+window/vsync/vsync_mode=0
+
 [editor]
 
 version_control/plugin_name="GitPlugin"
@@ -51,7 +51,7 @@ version_control/autoload_on_startup=true
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg")
+enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
 
 [input]
 

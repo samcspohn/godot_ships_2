@@ -121,7 +121,7 @@ func splash_effect(pos: Vector3, size: float) -> void:
 
 	_particle_system.emit_particles(pos, direction, template.template_id, size, count, 4.0 / size)
 
-func he_explosion_effect(pos: Vector3, size: float) -> void:
+func he_explosion_effect(pos: Vector3, size: float, dir: Vector3) -> void:
 	"""
 	Create a high-explosive explosion effect
 
@@ -140,11 +140,11 @@ func he_explosion_effect(pos: Vector3, size: float) -> void:
 	var count = int(HE_EXPLOSION_PARTICLES)
 
 	# No specific direction (explosion radiates outward via template spread)
-	var direction = Vector3.ZERO
+	# var direction = Vector3.ZERO
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size * 3.0, count, 4.0 / size)
+	_particle_system.emit_particles(pos, dir, template.template_id, size * 3.0, count, 3.0 / size)
 
-func sparks_effect(pos: Vector3, size: float) -> void:
+func sparks_effect(pos: Vector3, size: float, normal: Vector3) -> void:
 	"""
 	Create a metal sparks effect
 
@@ -163,7 +163,7 @@ func sparks_effect(pos: Vector3, size: float) -> void:
 	var count = int(SPARKS_PARTICLES)
 
 	# No specific direction (sparks emit in all directions via template spread)
-	var direction = Vector3.ZERO
+	var direction = normal.normalized()
 
 	_particle_system.emit_particles(pos, direction, template.template_id,  size, count, 1.0)
 
@@ -190,7 +190,7 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	var forward = -basis.z  # Gun forward direction
 	var direction = forward.normalized()
 
-	_particle_system.emit_particles(pos, direction, template.template_id, size, count, 5.0 / size)
+	_particle_system.emit_particles(pos, direction, template.template_id, size, count, 2.0 / sqrt(size))
 
 # Legacy compatibility methods (for old pool-based system)
 func return_to_pool(effect: Node) -> void:

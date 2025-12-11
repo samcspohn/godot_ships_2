@@ -30,8 +30,9 @@ class ProjectileData:
 	var trail_pos: Vector3
 	var owner: Ship
 	var frame_count: int = 0
+	var exclude: Array[Ship] = []
 
-	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship):
+	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship, _exclude: Array[Ship] = []):
 		self.position = pos
 		self.start_position = pos
 		#end_pos = ep
@@ -42,6 +43,7 @@ class ProjectileData:
 		self.launch_velocity = vel
 		self.owner = _owner
 		self.frame_count = 0
+		self.exclude = _exclude
 		# self.time_elapsed = 0.0
 
 
@@ -234,7 +236,7 @@ func _process(_delta: float) -> void:
 
 	if camera == null:
 		return
-	var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
+	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
 	var id = 0
 	for p in self.projectiles:
 		if p == null:
@@ -245,12 +247,12 @@ func _process(_delta: float) -> void:
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		update_transform_pos(id, p.position)
 
-		# Calculate distance-based scale to counter perspective shrinking
-		var distance = camera.global_position.distance_to(p.position)
-		var base_scale = p.params.size # Normal scale at close range
-		var max_scale_factor = INF # Cap the maximum scale increase
-		var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
-		update_transform_scale(id, scale_factor)
+		# # Calculate distance-based scale to counter perspective shrinking
+		# var distance = camera.global_position.distance_to(p.position)
+		# var base_scale = p.params.size # Normal scale at close range
+		# var max_scale_factor = INF # Cap the maximum scale increase
+		# var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
+		# update_transform_scale(id, scale_factor)
 
 		id += 1
 		var offset = p.position - p.trail_pos
@@ -308,7 +310,9 @@ func _physics_process(_delta: float) -> void:
 			id += 1
 			continue
 
-		if hit_result.ship != null and p.owner != null:
+		if hit_result.ship != null and p.owner != null and hit_result.ship not in p.exclude and hit_result.ship != p.owner:
+			if p.exclude.size() >= 1:
+				print("ricochet exclude ships: ", p.exclude.size())
 			# var ship: Ship = collision.collider
 			var ship: Ship = hit_result.ship
 			var damage = 0.0
@@ -316,71 +320,62 @@ func _physics_process(_delta: float) -> void:
 			match hit_result.result_type:
 				ArmorInteraction.HitResult.PENETRATION:
 					damage = p.params.damage / 3.0
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION, hit_result.collision_normal)
 				ArmorInteraction.HitResult.CITADEL:
 					damage = p.params.damage
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.CITADEL)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.CITADEL, hit_result.collision_normal)
 				ArmorInteraction.HitResult.CITADEL_OVERPEN:
 					damage = p.params.damage * 0.5
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION, hit_result.collision_normal)
 					pass # todo
 				ArmorInteraction.HitResult.OVERPENETRATION:
 					damage = p.params.damage * 0.1
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.OVERPENETRATION)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.OVERPENETRATION, hit_result.collision_normal)
 				ArmorInteraction.HitResult.SHATTER:
 					damage = p.params.damage * 0.0
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.SHATTER)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.SHATTER, hit_result.collision_normal)
 				ArmorInteraction.HitResult.RICOCHET:
 					damage = 0.0
 					var ricochet_velocity = hit_result.velocity
-					var ricochet_position = hit_result.explosion_position + ricochet_velocity.normalized() * 0.1 # Offset slightly to avoid z-fighting
+					var normal = hit_result.collision_normal
+					var ricochet_position = hit_result.explosion_position + normal * 0.2 + ricochet_velocity.normalized() * 0.2 # Offset slightly
 
-					var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, null)
+					var exclude = p.exclude.duplicate()
+					exclude.append(ship)
+					var ricochet_id = fireBullet(ricochet_velocity, ricochet_position, p.params, current_time, null, exclude)
 					TcpThreadPool.send_ricochet(id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
-					# for client in multiplayer.get_peers():
-					# 		createRicochetRpc.rpc_id(client, id, ricochet_id, ricochet_position, ricochet_velocity, current_time)
-					# var stream = StreamPeerBuffer.new()
-					# stream.put_32(id)
-					# stream.put_32(ricochet_id)
-					# stream.put_float(ricochet_position.x)
-					# stream.put_float(ricochet_position.y)
-					# stream.put_float(ricochet_position.z)
-					# stream.put_float(ricochet_velocity.x)
-					# stream.put_float(ricochet_velocity.y)
-					# stream.put_float(ricochet_velocity.z)
-					# stream.put_double(current_time)
-					# var data = stream.data_array
-					# for client in multiplayer.get_peers():
-					# 	createRicochetRpc2.rpc_id(client, data)
 
-					if ship.health_controller.is_alive():
-						track_ricochet(p)
-						track_damage_event(p, 0, ship.global_position, hit_result.result_type)
+					# if ship.health_controller.is_alive():
+					# 	track_ricochet(p)
+					# 	# track_damage_event(p, 0, ship.global_position, hit_result.result_type)
 
 					# Destroy the original shell
-					destroyBulletRpc(id, hit_result.explosion_position, HitResult.RICOCHET)
+					destroyBulletRpc(id, hit_result.explosion_position, HitResult.RICOCHET, hit_result.collision_normal)
 			if ship.health_controller.is_alive():
 				var dmg_sunk = ship.health_controller.take_damage(damage, hit_result.explosion_position)
 				apply_fire_damage(p, ship, hit_result.explosion_position)
 
 				# Track damage dealt for player's camera UI
 				track_damage_dealt(p, dmg_sunk[0])
-				if hit_result.result_type == ArmorInteraction.HitResult.PENETRATION:
-					track_penetration(p)
-				elif hit_result.result_type == ArmorInteraction.HitResult.CITADEL:
-					track_citadel(p)
-				elif hit_result.result_type == ArmorInteraction.HitResult.OVERPENETRATION:
-					track_overpenetration(p)
-				elif hit_result.result_type == ArmorInteraction.HitResult.SHATTER:
-					track_shatter(p)
+				match hit_result.result_type:
+					ArmorInteraction.HitResult.PENETRATION:
+						track_penetration(p)
+					ArmorInteraction.HitResult.CITADEL:
+						track_citadel(p)
+					ArmorInteraction.HitResult.OVERPENETRATION:
+						track_overpenetration(p)
+					ArmorInteraction.HitResult.SHATTER:
+						track_shatter(p)
+					ArmorInteraction.HitResult.RICOCHET:
+						track_ricochet(p)
 				if dmg_sunk[1]:
 					track_frag(p)
 				track_damage_event(p, dmg_sunk[0], ship.global_position, hit_result.result_type)
 			# end process ship hit
 		elif hit_result.result_type == ArmorInteraction.HitResult.WATER:
-			destroyBulletRpc(id, hit_result.explosion_position, HitResult.WATER)
+			destroyBulletRpc(id, hit_result.explosion_position, HitResult.WATER, hit_result.collision_normal)
 		elif hit_result.result_type == ArmorInteraction.HitResult.TERRAIN:
-			destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION)
+			destroyBulletRpc(id, hit_result.explosion_position, HitResult.PENETRATION, hit_result.collision_normal)
 		id += 1
 
 
@@ -410,7 +405,7 @@ func set_color(idx, color: Color):
 	transforms[offset + 15] = color.a
 
 #@rpc("authority","reliable")
-func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship) -> int:
+func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship, exclude: Array[Ship] = []) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -426,7 +421,7 @@ func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship) -> int:
 	# expl.global_position = pos
 
 	var bullet: ProjectileData = ProjectileData.new()
-	bullet.initialize(pos, vel, t, shell, _owner)
+	bullet.initialize(pos, vel, t, shell, _owner, exclude)
 
 	self.projectiles.set(id, bullet)
 
@@ -446,9 +441,9 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 	update_transform(id, trans)
 
 	if shell.type == ShellParams.ShellType.AP: # AP Shell
-		set_color(id, Color(0.6, 0.6, 1.0, 1.0)) # Blue for AP shells
+		set_color(id, Color(0.05, 0.1, 1.0, 1.0)) # Blue for AP shells
 	else:
-		set_color(id, Color(1.0, 0.8, 0.5, 1.0)) # Orange for HE shells
+		set_color(id, Color(1.0, 0.2, 0.05, 1.0)) # Orange for HE shells
 
 	bullet.initialize(pos, vel, t, shell, _owner)
 	self.projectiles.set(id, bullet)
@@ -468,7 +463,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 		#fireBullet(dir,pos, shell, end_pos, total_time)
 
 # @rpc("authority", "call_remote", "reliable", 2)
-func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION) -> void:
+func destroyBulletRpc2(id, pos: Vector3, hit_result: int, normal: Vector3) -> void:
 	var bullet: ProjectileData = self.projectiles.get(id)
 	if bullet == null:
 		print("bullet is null: ", id)
@@ -489,23 +484,23 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int = HitResult.PENETRATION
 			HitEffects.splash_effect(pos, radius)
 		HitResult.PENETRATION:
 			# radius
-			HitEffects.he_explosion_effect(pos, radius * 0.8)
-			HitEffects.sparks_effect(pos, radius * 0.5)
+			HitEffects.he_explosion_effect(pos, radius * 0.8, normal)
+			HitEffects.sparks_effect(pos, radius * 0.5, normal)
 		HitResult.CITADEL:
 			radius *= 1.2
-			HitEffects.he_explosion_effect(pos, radius)
-			HitEffects.sparks_effect(pos, radius * 0.6)
+			HitEffects.he_explosion_effect(pos, radius, normal)
+			HitEffects.sparks_effect(pos, radius * 0.6, normal)
 		HitResult.RICOCHET:
-			HitEffects.sparks_effect(pos, radius * 0.5)
+			HitEffects.sparks_effect(pos, radius * 0.5, normal)
 		HitResult.OVERPENETRATION:
-			HitEffects.sparks_effect(pos, radius * 0.5)
+			HitEffects.sparks_effect(pos, radius * 0.5, normal)
 		HitResult.SHATTER:
-			HitEffects.sparks_effect(pos, radius * 0.5)
+			HitEffects.sparks_effect(pos, radius * 0.5, normal)
 		HitResult.NOHIT:
 			# No explosion for NOHIT - projectile passed through without hitting armor
 			pass
 
-func destroyBulletRpc(id, position, hit_result: int = HitResult.PENETRATION) -> void:
+func destroyBulletRpc(id, position, hit_result: int, normal: Vector3) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)
 	self.projectiles.set(id, null)
 	#self.projectiles.erase(id)
@@ -516,7 +511,7 @@ func destroyBulletRpc(id, position, hit_result: int = HitResult.PENETRATION) -> 
 	# 	"p": position,
 	# 	"r": hit_result,
 	# }))
-	TcpThreadPool.send_destroy_shell(id, position, hit_result)
+	TcpThreadPool.send_destroy_shell(id, position, hit_result, normal)
 	# for p in multiplayer.get_peers():
 	# 		self.destroyBulletRpc2.rpc_id(p, id, position, hit_result)
 	# var stream = StreamPeerBuffer.new()
@@ -539,7 +534,8 @@ func destroyBulletRpc3(data: PackedByteArray) -> void:
 	var id = stream.get_32()
 	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 	var hit_result = stream.get_8()
-	destroyBulletRpc2(id, pos, hit_result)
+	var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+	destroyBulletRpc2(id, pos, hit_result, normal)
 
 func resize_multimesh_buffers(new_count: int):
 	# Resize transform and color arrays
@@ -749,5 +745,5 @@ func createRicochetRpc2(data: PackedByteArray):
 	var new_shell_id = stream.get_32()
 	var ricochet_position = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 	var ricochet_velocity = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-	var ricochet_time = stream.get_float()
+	var ricochet_time = stream.get_double()
 	createRicochetRpc(original_shell_id, new_shell_id, ricochet_position, ricochet_velocity, ricochet_time)

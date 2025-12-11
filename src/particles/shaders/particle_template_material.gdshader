@@ -29,6 +29,11 @@ uniform float alpha_scissor_threshold = 0.5;
 varying flat int template_id;
 varying float lifetime_percent;
 
+const vec3 dir_light_color = vec3(0.66,0.66,0.5);
+
+// euler angles = x: -51, y: 35.77, z: 0
+const vec3 dir_light_direction = normalize(vec3(0.5736, 0.8192, -0.0));
+
 void vertex() {
 	// Extract template_id from COLOR.r (encoded at emission time)
 	// Decode from normalized float (0.0-1.0) back to int (0-255)
@@ -119,7 +124,7 @@ void fragment() {
 	float brightness = 1.0 + (emission_multiplier * emission_energy);
 
 	// Apply brightness to create HDR glow effect in unshaded mode
-	vec3 final_albedo = final_color.rgb * brightness * emission_color;
+	vec3 final_albedo = final_color.rgb * brightness * emission_color + dir_light_color * 0.1;
 
 	// Fade out at end of life to prevent flashing
 	float fade_start = 0.95;

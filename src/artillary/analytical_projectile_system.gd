@@ -20,7 +20,7 @@ const PING_PONG_DRAG_COEFFICIENT = 0.233
 const BOWLING_BALL_DRAG_COEFFICIENT = 0.00267
 
 # Target position tolerance (in meters)
-const POSITION_TOLERANCE = 0.5
+const POSITION_TOLERANCE = 0.05
 # Maximum iterations for binary search
 const MAX_ITERATIONS = 16
 # Angle adjustment step for binary search (in radians)
@@ -152,7 +152,8 @@ static func calculate_precise_shell_position(start_pos: Vector3, target_pos: Vec
 ## Returns [launch_vector, time_to_target] or [null, -1] if no solution exists
 static func calculate_launch_vector(start_pos: Vector3, target_pos: Vector3, projectile_speed: float,
 								  drag_coefficient: float) -> Array:
-# Start with the non-drag physics as initial approximation
+
+	# Start with the non-drag physics as initial approximation
 	var initial_result = ProjectilePhysics.calculate_launch_vector(start_pos, target_pos, projectile_speed)
 	
 	if initial_result[0] == null:
@@ -173,92 +174,49 @@ static func calculate_launch_vector(start_pos: Vector3, target_pos: Vector3, pro
 	var g = abs(GRAVITY)
 	var theta = elevation_angle
 	
-	# Newton-Raphson refinement - Step 1
-	# Calculate current trajectory error
-	var v0_horiz = projectile_speed * cos(theta)
-	var v0y = projectile_speed * sin(theta)
+	# Newton-Raphson refinement loop
+	const REFINEMENT_ITERATIONS = 3
+	const DELTA_THETA = 0.0001
 	
-	# Calculate flight time using horizontal constraint: horiz_dist = (v₀/β)(1-e^(-βt))
-	var drag_factor = beta * horiz_dist / v0_horiz
-	if drag_factor >= 0.99:
-		return [null, -1] # Too much drag
+	var v0_horiz: float
+	var v0y: float
+	var drag_factor: float
+	var flight_time: float
+	var drag_decay: float
+	var calc_y: float
+	var f_val: float
 	
-	var flight_time = -log(1.0 - drag_factor) / beta
-	
-	# Calculate vertical position at this flight time
-	var drag_decay = 1.0 - exp(-beta * flight_time)
-	var calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
-	var f_val = calc_y - target_pos.y
-	
-	# Calculate derivative numerically
-	var delta_theta = 0.0001
-	var theta_plus = theta + delta_theta
-	var v0_horiz_plus = projectile_speed * cos(theta_plus)
-	var v0y_plus = projectile_speed * sin(theta_plus)
-	
-	var drag_factor_plus = beta * horiz_dist / v0_horiz_plus
-	if drag_factor_plus < 0.99:
-		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
-		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
-		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
-		var f_prime = (calc_y_plus - calc_y) / delta_theta
+	for iteration in range(REFINEMENT_ITERATIONS):
+		# Calculate current trajectory error
+		v0_horiz = projectile_speed * cos(theta)
+		v0y = projectile_speed * sin(theta)
 		
-		if abs(f_prime) > 1e-10:
-			theta = theta - f_val / f_prime
-	
-	# Newton-Raphson refinement - Step 2
-	v0_horiz = projectile_speed * cos(theta)
-	v0y = projectile_speed * sin(theta)
-	
-	drag_factor = beta * horiz_dist / v0_horiz
-	if drag_factor >= 0.99:
-		return [null, -1]
-	
-	flight_time = -log(1.0 - drag_factor) / beta
-	drag_decay = 1.0 - exp(-beta * flight_time)
-	calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
-	f_val = calc_y - target_pos.y
-	
-	theta_plus = theta + delta_theta
-	v0_horiz_plus = projectile_speed * cos(theta_plus)
-	v0y_plus = projectile_speed * sin(theta_plus)
-	
-	drag_factor_plus = beta * horiz_dist / v0_horiz_plus
-	if drag_factor_plus < 0.99:
-		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
-		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
-		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
-		var f_prime = (calc_y_plus - calc_y) / delta_theta
+		# Calculate flight time using horizontal constraint: horiz_dist = (v₀/β)(1-e^(-βt))
+		drag_factor = beta * horiz_dist / v0_horiz
+		if drag_factor >= 0.99:
+			return [null, -1] # Too much drag
 		
-		if abs(f_prime) > 1e-10:
-			theta = theta - f_val / f_prime
-	
-	# Newton-Raphson refinement - Step 3 (final)
-	v0_horiz = projectile_speed * cos(theta)
-	v0y = projectile_speed * sin(theta)
-	
-	drag_factor = beta * horiz_dist / v0_horiz
-	if drag_factor >= 0.99:
-		return [null, -1]
-	
-	flight_time = -log(1.0 - drag_factor) / beta
-	drag_decay = 1.0 - exp(-beta * flight_time)
-	calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
-	f_val = calc_y - target_pos.y
-	
-	theta_plus = theta + delta_theta  
-	v0_horiz_plus = projectile_speed * cos(theta_plus)
-	v0y_plus = projectile_speed * sin(theta_plus)
-	
-	drag_factor_plus = beta * horiz_dist / v0_horiz_plus
-	if drag_factor_plus < 0.99:
-		var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
-		var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
-		var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
-		var f_prime = (calc_y_plus - calc_y) / delta_theta
+		flight_time = -log(1.0 - drag_factor) / beta
 		
-		if abs(f_prime) > 1e-10:
-			theta = theta - f_val / f_prime
+		# Calculate vertical position at this flight time
+		drag_decay = 1.0 - exp(-beta * flight_time)
+		calc_y = start_pos.y + (v0y / beta) * drag_decay - (g / beta) * flight_time + (g / (beta * beta)) * drag_decay
+		f_val = calc_y - target_pos.y
+		
+		# Calculate derivative numerically
+		var theta_plus = theta + DELTA_THETA
+		var v0_horiz_plus = projectile_speed * cos(theta_plus)
+		var v0y_plus = projectile_speed * sin(theta_plus)
+		
+		var drag_factor_plus = beta * horiz_dist / v0_horiz_plus
+		if drag_factor_plus < 0.99:
+			var flight_time_plus = -log(1.0 - drag_factor_plus) / beta
+			var drag_decay_plus = 1.0 - exp(-beta * flight_time_plus)
+			var calc_y_plus = start_pos.y + (v0y_plus / beta) * drag_decay_plus - (g / beta) * flight_time_plus + (g / (beta * beta)) * drag_decay_plus
+			var f_prime = (calc_y_plus - calc_y) / DELTA_THETA
+			
+			if abs(f_prime) > 1e-10:
+				theta = theta - f_val / f_prime
 	
 	# Create final launch vector
 	var final_launch_vector = Vector3(

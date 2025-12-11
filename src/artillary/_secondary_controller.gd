@@ -54,6 +54,7 @@ func from_dict(d: Dictionary) -> void:
 			sub_controllers[i].from_dict(sub_list[i])
 
 func _physics_process(delta: float) -> void:
+	# return
 	if !(_Utils.authority()):
 		return
 	# _my_gun_params.shell = _my_gun_params.shell1

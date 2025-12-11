@@ -154,7 +154,7 @@ func _process(delta):
 		var zoom_delta = zoom_accumulator * zoom_smoothing
 		_zoom_camera(zoom_delta)
 		zoom_accumulator -= zoom_delta
-	
+
 	# Update camera position and rotation
 	_update_target_lock()
 	if last_non_free_look_mode == CameraMode.THIRD_PERSON:

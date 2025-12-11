@@ -3,18 +3,18 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://btam5g21aiiqg"
-path="res://.godot/imported/bismark_low_poly2.glb-44000a53dd28f1bbe5cff2c4b714b06d.scn"
+uid="uid://d07rdsi83nr6f"
+path="res://.godot/imported/GER_150mm_2b_rf.glb-535442a0a43fa20378643d6814faa0de.scn"
 
 [deps]
 
-source_file="res://ShipModels/bismark_low_poly2.glb"
-dest_files=["res://.godot/imported/bismark_low_poly2.glb-44000a53dd28f1bbe5cff2c4b714b06d.scn"]
+source_file="res://turrets/glb/GER_150mm_2b_rf.glb"
+dest_files=["res://.godot/imported/GER_150mm_2b_rf.glb-535442a0a43fa20378643d6814faa0de.scn"]
 
 [params]
 
-nodes/root_type="RigidBody3D"
-nodes/root_name="Ship"
+nodes/root_type=""
+nodes/root_name=""
 nodes/root_script=null
 nodes/apply_root_scale=true
 nodes/root_scale=1.0
@@ -37,30 +37,6 @@ import_script/path=""
 materials/extract=0
 materials/extract_format=0
 materials/extract_path=""
-_subresources={
-"nodes": {
-"PATH:Aft-Barbette": {
-"generate/physics": true
-},
-"PATH:Aft-Barbette_001": {
-"generate/physics": true
-},
-"PATH:For-Barbette": {
-"generate/physics": true
-},
-"PATH:For-Barbette_001": {
-"generate/physics": true
-},
-"PATH:Hull": {
-"generate/physics": true
-},
-"PATH:Hull_Citadel": {
-"generate/physics": true
-},
-"PATH:SuperStructure": {
-"generate/physics": true
-}
-}
-}
-gltf/naming_version=1
+_subresources={}
+gltf/naming_version=2
 gltf/embedded_image_handling=1

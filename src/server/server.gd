@@ -177,7 +177,7 @@ func spawn_player(id, player_name):
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
-	player.rotate(Vector3.UP,spawn_pos.angle_to(player.global_transform.basis.z))
+	player.rotate(Vector3.UP,-spawn_pos.angle_to(player.global_transform.basis.z))
 
 	#join_game.rpc_id(id)
 	for p_name in players:

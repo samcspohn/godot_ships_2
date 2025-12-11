@@ -8,7 +8,7 @@ extends Node3D
 @export var min_rotation_angle: float = deg_to_rad(90)
 @export var max_rotation_angle: float = deg_to_rad(180)
 
-@onready var barrel: Node3D = get_children()[0]
+@onready var barrel: Node3D = get_child(0).get_child(0)
 # @export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
@@ -350,6 +350,13 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 		return true
 	return false
 
+func get_muzzles_position() -> Vector3:
+	var muzzles_pos: Vector3 = Vector3.ZERO
+	for m in muzzles:
+		muzzles_pos += m.global_position
+	muzzles_pos /= muzzles.size()
+	return muzzles_pos
+
 # Implement on server
 func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> void:
 	if disabled:
@@ -388,14 +395,16 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 	# if not _return_to_base:
 	clamp_to_rotation_limits()
 
+	var muzzles_pos = get_muzzles_position()
+
 	# Existing aiming logic for elevation
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, get_shell().speed, get_shell().drag)
-	if sol[0] != null and (aim_point - global_position).length() < get_params()._range:
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	if sol[0] != null and (aim_point - muzzles_pos).length() < get_params()._range:
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)
 		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params()._range - 500)
-		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, self._aim_point, get_shell().speed, get_shell().drag)
+		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, self._aim_point, get_shell().speed, get_shell().drag)
 
 	var turret_elev_speed_rad: float = deg_to_rad(get_params().elevation_speed)
 	var max_elev_angle: float = turret_elev_speed_rad * delta
@@ -427,8 +436,9 @@ func normalize_angle(angle: float) -> float:
 	return wrapf(angle, -PI, PI)
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, get_shell().speed, get_shell().drag)
-	if sol[0] == null or (aim_point - barrel.global_position).length() > get_params()._range:
+	var muzzles_pos = get_muzzles_position()
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(muzzles_pos, aim_point, vel, get_shell().speed, get_shell().drag)
+	if sol[0] == null or (aim_point - muzzles_pos).length() > get_params()._range:
 		can_fire = false
 		return
 	_aim(sol[2], delta, true)
@@ -437,8 +447,9 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 func fire(mod: TargetMod = null) -> void:
 	if _Utils.authority():
 		if !disabled && reload >= 1.0 and can_fire:
+			var muzzles_pos = get_muzzles_position()
 			for m in muzzles:
-				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, self.global_position, controller.shell_index, mod)
+				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, controller.shell_index, mod)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = Time.get_unix_time_from_system()
