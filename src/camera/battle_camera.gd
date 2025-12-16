@@ -47,6 +47,7 @@ var free_look: bool = false
 # Target information
 var time_to_target: float = 0.0
 var distance_to_target: float = 0.0
+var terrain_hit: bool = false
 var aim_position: Vector3 = Vector3.ZERO
 var max_range_reached: bool = false
 
@@ -192,6 +193,7 @@ func _process(delta):
 	ui.ship_speed = ship_speed
 	ui.distance_to_target = distance_to_target
 	ui.time_to_target = time_to_target
+	ui.terrain_hit = terrain_hit
 	ui.max_range_reached = max_range_reached
 
 	# self.make_current()
@@ -372,7 +374,7 @@ func set_camera_mode(mode):
 		#third_person_view.sniper_range = sniper_view.sniper_range
 
 		third_person_view.camera_offset_horizontal = sniper_view.camera_offset_horizontal
-		third_person_view.camera_offset_vertical = rad_to_deg(atan(-(opp + sniper_view.camera_offset_vertical) / adj))
+		third_person_view.camera_offset_vertical = rad_to_deg(atan(- (opp + sniper_view.camera_offset_vertical) / adj))
 		# third_person_view.camera_offset_vertical = sniper_view.camera_offset_vertical
 		aim = third_person_view
 
@@ -473,6 +475,17 @@ func _calculate_target_info():
 	# Extract results
 	var launch_vector = launch_result[0]
 	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+	
+	if launch_vector != null:
+		terrain_hit = not Gun.sim_can_shoot_over_terrain_static(
+			ship_position,
+			launch_vector,
+			launch_result[1],
+			projectile_drag_coefficient
+			)
+	else:
+		terrain_hit = false
+
 	#max_range_reached = launch_result[2]
 	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
 

@@ -228,10 +228,10 @@ vertical_alignment = 1
 
 [node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer"]
 layout_mode = 0
-offset_left = 176.0
-offset_top = -106.0
-offset_right = 206.0
-offset_bottom = -76.0
+offset_left = 85.0
+offset_top = -17.0
+offset_right = 105.0
+offset_bottom = 3.0
 rotation = 0.7853982
 
 [node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]

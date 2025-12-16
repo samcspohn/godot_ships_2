@@ -11,6 +11,7 @@ var camera_controller: BattleCamera
 # Properties that BattleCamera sets directly - these need to match the interface
 var time_to_target: float = 0.0 : set = set_time_to_target
 var distance_to_target: float = 0.0 : set = set_distance_to_target
+var terrain_hit: bool = false : set = update_terrain_hit_indicator
 var aim_position: Vector3 = Vector3.ZERO : set = set_aim_position
 var max_range_reached: bool = false
 var ship_speed: float = 0.0 : set = set_ship_speed
@@ -94,6 +95,9 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 
 # Visibility indicator
 @onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
+
+# Terrain hit indicator
+@onready var terrain_hit_indicator: ColorRect = $MainContainer/CrosshairContainer/TerrainIndicator
 
 # Team tracker references
 @onready var top_center_panel: Control = $MainContainer/TopCenterPanel
@@ -435,6 +439,10 @@ func update_visibility_indicator():
 
 	# Show the yellow indicator when the ship is visible to enemies
 	visibility_indicator.visible = camera_controller._ship.visible_to_enemy
+
+func update_terrain_hit_indicator(is_hitting_terrain: bool):
+	"""Show or hide the terrain hit indicator"""
+	terrain_hit_indicator.visible = is_hitting_terrain
 
 func update_secondaries_disabled_indicator():
 	"""Show or hide the secondaries disabled indicator"""

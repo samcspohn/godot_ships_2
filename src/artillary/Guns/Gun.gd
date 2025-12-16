@@ -644,8 +644,10 @@ func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 	var flight_time = sol[1]
 	var space_state = get_world_3d().direct_space_state
 	var ray = PhysicsRayQueryParameters3D.new()
+	ray.collide_with_bodies = true
+	ray.collision_mask = 1
 	var t = 1.0
-	while t < flight_time:
+	while t < flight_time + 1.0:
 		ray.from = shell_sim.position
 		ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
 			shell_sim.start_position,
@@ -657,8 +659,35 @@ func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 		# ray.collide_with_areas = false
 		# ray.collision_mask # Collide with terrain only
 		var result = space_state.intersect_ray(ray)
-		if result.size() > 0:
+		if result.size() > 0 and result["position"].y > 0.00001:
 			return false
 		shell_sim.position = ray.to
+		t += 1.0
+	return true
+
+static func sim_can_shoot_over_terrain_static(
+	pos: Vector3,
+	launch_vector: Vector3,
+	flight_time: float,
+	drag: float,
+) -> bool:
+	var shell_sim_position: Vector3 = pos
+	var space_state = Engine.get_main_loop().get_root().get_world_3d().direct_space_state
+	var ray = PhysicsRayQueryParameters3D.new()
+	ray.collide_with_bodies = true
+	ray.collision_mask = 1
+	var t = 1.0
+	while t < flight_time + 1.0:
+		ray.from = shell_sim_position
+		ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
+			pos,
+			launch_vector,
+			t,
+			drag,
+		)
+		var result = space_state.intersect_ray(ray)
+		if result.size() > 0 and result["position"].y > 0.00001:
+			return false
+		shell_sim_position = ray.to
 		t += 1.0
 	return true
