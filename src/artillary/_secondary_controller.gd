@@ -9,8 +9,9 @@ var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 var gun_targets: Array[Ship] = []
 
-var target_mod: TargetMod = TargetMod.new()
+var target_mod: TargetMod = TargetMod.new().duplicate(true)
 var target_mods: Dictionary[Ship, TargetMod] = {}
+var enabled: bool = true
 
 func _ready() -> void:
 	# for sc in sub_controllers:
@@ -57,6 +58,11 @@ func _physics_process(delta: float) -> void:
 	# return
 	if !(_Utils.authority()):
 		return
+	if not enabled:
+		for sc in sub_controllers:
+			for g in sc.guns:
+				g.return_to_base(delta)
+		return
 	# _my_gun_params.shell = _my_gun_params.shell1
 	var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
@@ -89,7 +95,7 @@ func _physics_process(delta: float) -> void:
 		for g in sc.guns:
 			var found_target = false
 			for e in enemies_in_range:
-				if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier):
+				if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier) and g.sim_can_shoot_over_terrain(e.global_position):
 					g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 					gun_targets[gi] = e
 					found_target = true

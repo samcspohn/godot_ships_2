@@ -220,6 +220,20 @@ text = "-- m"
 horizontal_alignment = 1
 vertical_alignment = 1
 
+[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+layout_mode = 2
+text = "--mm"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer"]
+layout_mode = 0
+offset_left = 176.0
+offset_top = -106.0
+offset_right = 206.0
+offset_bottom = -76.0
+rotation = 0.7853982
+
 [node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]
 layout_mode = 1
 anchors_preset = 1
@@ -1905,9 +1919,8 @@ layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = 8.279999
 offset_top = -24.9
-offset_right = 28.280014
+offset_right = 19.999512
 offset_bottom = -4.8999996
 grow_horizontal = 2
 color = Color(1, 1, 1, 0)
@@ -2026,3 +2039,17 @@ theme_override_styles/background = SubResource("StyleBoxFlat_team_hp_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_team_hp_friendly")
 value = 100.0
 show_percentage = false
+
+[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -160.0
+offset_top = -118.0
+offset_right = -145.0
+offset_bottom = -102.0
+grow_horizontal = 2
+grow_vertical = 0

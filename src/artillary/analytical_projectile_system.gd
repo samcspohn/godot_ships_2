@@ -1,4 +1,4 @@
-extends Node3D
+extends Node
 
 class_name ProjectilePhysicsWithDrag
 
@@ -9,7 +9,7 @@ const DEFAULT_DRAG_COEFFICIENT = 0.1 / 50.0 # Default drag coefficient
 # Specific object drag coefficients - formula: (Cd × Area) / Mass
 # German 380mm AP shell - recalculated with proper ballistic coefficient
 # Diameter: 380mm, Mass: 800kg, Cd: 0.17 (streamlined artillery shell)
-const SHELL_380MM_DRAG_COEFFICIENT = 0.0000241
+const SHELL_380MM_DRAG_COEFFICIENT = 0.009
 
 # Ping Pong Ball
 # Diameter: 40mm, Mass: 2.7g, Cd: 0.5 (sphere)

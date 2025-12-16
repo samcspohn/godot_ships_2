@@ -2,7 +2,7 @@ extends Node
 
 ## Test script for ArmorSystemV2 with simplified JSON structure
 
-const ArmorSystemV2 = preload("res://armor_system_v2.gd")
+# const ArmorSystemV2 = preload("res://src/armor/armor_system_v2.gd")
 
 func _ready():
 	test_armor_system_v2()

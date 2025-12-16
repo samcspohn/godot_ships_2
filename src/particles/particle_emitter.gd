@@ -114,7 +114,8 @@ func emit_particles(count: int = -1, custom_direction: Vector3 = Vector3.ZERO, c
 			final_direction,
 			template.template_id,
 			particle_size,
-			1
+			1,
+			1.0
 		)
 
 func emit_burst(count: int, direction: Vector3 = Vector3.ZERO, size: float = -1.0) -> void:

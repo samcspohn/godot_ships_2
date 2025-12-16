@@ -256,6 +256,30 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			print("armor_part.collision_mask: ", armor_part.collision_mask)
 		elif node.name == "Citadel":
 			citadel = armor_part
+
+	if armor_system.armor_data.has(path) and node is StaticBody3D:
+		var collision_shape: CollisionShape3D = node.find_child("CollisionShape3D", false)
+		if collision_shape.shape is ConcavePolygonShape3D:
+			collision_shape.shape.backface_collision = true
+
+		var armor_part = ArmorPart.new()
+		armor_part.add_child(collision_shape)
+		armor_part.collision_layer = 1 << 1
+		armor_part.collision_mask = 0
+		armor_part.armor_system = armor_system
+		armor_part.armor_path = path
+		armor_part.ship = self
+		node.get_parent().add_child(armor_part)
+		armor_parts.append(armor_part)
+		self.aabb = self.aabb.merge((node as StaticBody3D).get_aabb())
+		# node.collision_layer = 1 << 1
+		# node.collision_mask = 0
+		if node.name == "Hull":
+			hull = armor_part
+			print("armor_part.collision_layer: ", armor_part.collision_layer)
+			print("armor_part.collision_mask: ", armor_part.collision_mask)
+		elif node.name == "Citadel":
+			citadel = armor_part
 		
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
@@ -331,7 +355,7 @@ func resolve_glb_path(path: String) -> String:
 func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:
 	"""Extract armor data from GLB and save it locally"""
 	# Load the extractor
-	var extractor_script = load("res://enhanced_armor_extractor_v2.gd")
+	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
 	var extractor = extractor_script.new()
 	
 	print("      Extracting armor data from GLB...")

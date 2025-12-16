@@ -45,16 +45,16 @@ func process_turret_mounts(node: Node) -> int:
 	var turret_scene: PackedScene = load(turret_path)
 	var turret := turret_scene.instantiate()
 	turret.name = node.name.replace("TurretMount_", "")
-	turret.transform = node.transform
+	# turret.transform = node.transform
 	
-	var parent := node.get_parent()
+	var parent := node
 	var idx := node.get_index()
-	parent.remove_child(node)
-	parent.add_child(turret)
-	parent.move_child(turret, idx)
+	# parent.remove_child(node)
+	node.add_child(turret)
+	# parent.move_child(turret, idx)
 	turret.owner = get_scene_root(parent)
 	set_owner_recursive(turret, turret.owner)
-	node.queue_free()
+	# node.queue_free()
 	
 	return count + 1
 

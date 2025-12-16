@@ -1,7 +1,6 @@
-[gd_scene load_steps=3 format=3 uid="uid://5hngoy8op2hn"]
+[gd_scene load_steps=2 format=3 uid="uid://5hngoy8op2hn"]
 
 [ext_resource type="Script" uid="uid://dxga4o1qmv4jl" path="res://src/client/shell_replay.gd" id="1_replay"]
-[ext_resource type="PackedScene" uid="uid://dk3in5cberhsg" path="res://ShipModels/Bismarck3.tscn" id="2_bismarck"]
 
 [node name="ShellReplay" type="Node"]
 script = ExtResource("1_replay")
@@ -74,7 +73,5 @@ transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 50, 100
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D"]
 transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 10, 0)
 shadow_enabled = true
-
-[node name="Ship" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D" instance=ExtResource("2_bismarck")]
 
 [node name="ShellTrail" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D"]

@@ -1,0 +1,20 @@
+[gd_scene load_steps=5 format=3 uid="uid://31jgnxcyvi22"]
+
+[ext_resource type="PackedScene" uid="uid://geicgbdeyrwl" path="res://turrets/glb/GER_500mm_2b_rf.glb" id="1_wbeb2"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_goysy"]
+[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://ShipModels/Armor_viewer_material.tres" id="3_goysy"]
+[ext_resource type="Material" uid="uid://c8fru7de7r8lo" path="res://ShipModels/new_standard_material_3d.tres" id="3_k7la6"]
+
+[node name="GER_500mm_2b_rf" instance=ExtResource("1_wbeb2")]
+script = ExtResource("2_goysy")
+ship_model_glb_path = "uid://geicgbdeyrwl"
+
+[node name="500mmTurret" parent="." index="0"]
+material_override = ExtResource("3_k7la6")
+
+[node name="500mmDB" parent="500mmTurret" index="0"]
+material_override = ExtResource("3_k7la6")
+
+[node name="500mmTurret_col" parent="." index="1"]
+layers = 0
+material_override = ExtResource("3_goysy")

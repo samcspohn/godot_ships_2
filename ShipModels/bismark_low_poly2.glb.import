@@ -40,25 +40,32 @@ materials/extract_path=""
 _subresources={
 "nodes": {
 "PATH:Aft-Barbette": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:Aft-Barbette_001": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:For-Barbette": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:For-Barbette_001": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:Hull": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:Hull_Citadel": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
 "PATH:SuperStructure": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 }
 }
 }

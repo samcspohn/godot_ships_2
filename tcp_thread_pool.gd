@@ -10,6 +10,8 @@ var broadcast_mutex: Mutex = Mutex.new()
 var client_queue: Array[PackedByteArray] = []  # queue for background thread to main thread
 var client_queue_mutex: Mutex = Mutex.new()
 var guns = []
+var gun_paths = []
+var null_guns = []
 var initialized = false
 var client_ids: int = 0
 var server_running: bool = false
@@ -21,14 +23,18 @@ signal destroy_shell(data: PackedByteArray) # shell_id: int, pos: Vector3, hit_r
 signal ricochet(data: PackedByteArray) # original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float
 
 # @rpc("authority", "reliable", "call_remote")
-func initialize_guns(gun_paths: Array[String]) -> void:
+
+func initialize_guns(_gun_paths: Array[String]) -> void:
 	guns.clear()
+	gun_paths = _gun_paths
+	var i = 0
 	for path in gun_paths:
-		var gun = get_node(path) as Gun
-		if gun != null:
-			guns.append(gun)
-		else:
+		var gun = get_node_or_null(path) as Gun
+		guns.append(gun)
+		if gun == null:
+			null_guns.append(i)
 			print("Failed to find gun at path: ", path)
+		i += 1
 
 
 func _ready() -> void:
@@ -117,42 +123,25 @@ func start_server():
 		return
 	server_running = true
 	print("Server listening on port ", PORT)
-	# while server_running:
-	# 	await get_tree().process_frame
-	# 	if not server_running:
-	# 		break
-	# 	if server.is_connection_available():
-	# 		var peer = server.take_connection()
-	# 		print("New connection from ", peer.get_connected_host())
-	# 		var conn_thread = ConnectionThread.new(peer)
-	# 		conn_thread.id = client_ids
-	# 		client_ids += 1
-	# 		threads.append(conn_thread)
-	# 	var pending: Array[PackedByteArray] = []
-	# 	broadcast_mutex.lock()
-	# 	while broadcast_queue.size() > 0:
-	# 		pending.append(broadcast_queue.pop_front())
-	# 	broadcast_mutex.unlock()
-	# 	for data in pending:
-	# 		for t in threads:
-	# 			t.enqueue(data)
-	# 	for i in range(threads.size() - 1, -1, -1):
-	# 		if not (threads[i].thread as Thread).is_alive():
-	# 			threads.remove_at(i)
-	# 	OS.delay_msec(10)
-	# server_running = false
-	# server = null
 
 func _process(delta: float) -> void:
-	if not server_running:
-		return
-	if server.is_connection_available():
-		var peer = server.take_connection()
-		print("New connection from ", peer.get_connected_host())
-		var conn_thread = ConnectionThread.new(peer)
-		conn_thread.id = client_ids
-		client_ids += 1
-		threads.append(conn_thread)
+	if server_running:
+		if server.is_connection_available():
+			var peer = server.take_connection()
+			print("New connection from ", peer.get_connected_host())
+			var conn_thread = ConnectionThread.new(peer)
+			conn_thread.id = client_ids
+			client_ids += 1
+			threads.append(conn_thread)
+	
+	if client_running:
+		if null_guns.size() > 0:
+			for i in null_guns:
+				var path = gun_paths[i]
+				var gun = get_node_or_null(path) as Gun
+				if gun != null:
+					guns[i] = gun
+					null_guns.erase(i) 
 
 # Function to enqueue data to send to all clients (call this from server)
 func enqueue_broadcast(data: PackedByteArray):

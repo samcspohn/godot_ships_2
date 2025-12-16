@@ -9,7 +9,7 @@ extends Node
 
 # References to 3D world elements
 @onready var world_3d: Node3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D
-@onready var ship: Node3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D/Ship
+var ship: Node3D = null  # Will be dynamically spawned
 @onready var camera: Camera3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D/Camera3D
 @onready var shell_trail: Node3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D/ShellTrail
 
@@ -172,6 +172,31 @@ func start_replay():
 		push_warning("No events parsed from input")
 		return
 	
+	# Load the ship from the first Ship event
+	var ship_scene_path: String = ""
+	for event in events:
+		if event.event_type == "Ship" and event.data.has("scene_path"):
+			ship_scene_path = event.data["scene_path"]
+			break
+	
+	if ship_scene_path.is_empty():
+		push_warning("No ship scene path found in events")
+		return
+	
+	# Remove old ship if exists
+	if ship != null:
+		ship.queue_free()
+		ship = null
+	
+	# Load and instantiate the ship
+	var ship_scene = load(ship_scene_path)
+	if ship_scene == null:
+		push_error("Failed to load ship scene: " + ship_scene_path)
+		return
+	
+	ship = ship_scene.instantiate()
+	world_3d.add_child(ship)
+	
 	# Reset state
 	current_event_index = 0
 	trail_points.clear()
@@ -186,18 +211,19 @@ func start_replay():
 	result_label.text = "Result: Processing..."
 	
 	# Disable physics on the ship if it's a RigidBody3D
-	if ship is RigidBody3D:
+	if ship != null and ship is RigidBody3D:
 		ship.gravity_scale = 0.0
 		ship.freeze = true
 	
 	# Position ship if we have ship data
-	for event in events:
-		if event.event_type == "Ship":
-			ship.position = event.data["position"]
-			# Rotation is already in radians (x, y, z) = (pitch, yaw, roll)
-			var rot = event.data["rotation"]
-			ship.rotation = Vector3(rot.x, rot.y, rot.z)
-			break
+	if ship != null:
+		for event in events:
+			if event.event_type == "Ship":
+				ship.position = event.data["position"]
+				# Rotation is already in radians (x, y, z) = (pitch, yaw, roll)
+				var rot = event.data["rotation"]
+				ship.rotation = Vector3(rot.x, rot.y, rot.z)
+				break
 	
 	# Position camera to view the ship and shell trajectory
 	update_camera_position()
@@ -337,7 +363,7 @@ func update_camera_position():
 	var has_points = false
 	
 	# Get ship position
-	if ship:
+	if ship != null:
 		min_pos = ship.position
 		max_pos = ship.position
 		has_points = true
@@ -373,6 +399,10 @@ func calculate_final_result():
 	# This needs to match the exact logic from process_hit() around line 370-390
 	
 	var final_result = "UNKNOWN"
+	
+	if ship == null:
+		result_label.text = "Final Result: NO SHIP"
+		return
 	
 	# Get the final shell position
 	var final_shell_pos = trail_points[-1] if trail_points.size() > 0 else Vector3.ZERO
@@ -418,6 +448,9 @@ func calculate_final_result():
 			result_label.add_theme_color_override("font_color", Color.WHITE)
 
 func check_if_inside_citadel(pos: Vector3) -> bool:
+	if ship == null:
+		return false
+	
 	# Use the same logic as ArmorInteraction.get_part_hit()
 	# Cast rays from port and starboard to determine what's at this position
 	var space_state = world_3d.get_world_3d().direct_space_state
@@ -476,6 +509,9 @@ func check_if_inside_citadel(pos: Vector3) -> bool:
 	return right_has_citadel and left_has_citadel
 
 func check_if_inside_hull(pos: Vector3) -> bool:
+	if ship == null:
+		return false
+	
 	# Use the same logic as ArmorInteraction.get_part_hit()
 	# Must hit armor from both port and starboard to be inside hull
 	var space_state = world_3d.get_world_3d().direct_space_state

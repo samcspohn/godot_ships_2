@@ -10,7 +10,9 @@ func _apply_mods() -> void:
 	pass
 
 func _init() -> void:
-	self.resource_local_to_scene = true
+	var resource_type = get_script().get_global_name() if get_script() else "Unknown"
+	if self.resource_local_to_scene == false and resource_type != "TargetMod":
+		printerr("Moddable resource of type '" + resource_type + "' must be local to scene! Resource path: " + resource_path)
 
 # must be local to scene
 func init(_ship: Ship) -> void:

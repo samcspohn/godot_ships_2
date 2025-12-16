@@ -111,8 +111,8 @@ func calculate_penetration_power(shell_params: ShellParams, velocity: float) -> 
 	# This version uses empirically derived constants for realistic results
 	# Penetration (mm) = K * W^0.55 * V^1.1 / D^0.65
 	# Where W is weight in kg, V is velocity in m/s, D is caliber in mm
-	# var naval_constant = 0.0004282 # Update for metric units
-	var naval_constant_metric = 0.557
+	# 	var naval_constant = 0.000469 # Update for metric units
+	var naval_constant_metric = 0.55664
 	# Base penetration calculation
 	# var base_penetration = naval_constant * pow(weight_kg, 0.55) * pow(velocity_ms, 1.1) / pow(caliber_mm, 0.65)
 	# Convert metric to imperial for calculation (weight: kg -> lbs, caliber: mm -> inches, velocity: m/s -> ft/s)
@@ -604,6 +604,16 @@ func validate_penetration_formula():
 	print("380mm AP shell at 820 m/s, 0° impact: ", bb_penetration, "mm penetration")
 	print("Expected: ~700-800mm for battleship shells")
 
+	var super_bb_shell = ShellParams.new()
+	super_bb_shell.caliber = 500.0
+	super_bb_shell.mass = 1850.0 # Hypothetical 500mm AP shell
+	super_bb_shell.type = ShellParams.ShellType.AP # AP
+	super_bb_shell.penetration_modifier = 1.0
+
+	var super_bb_penetration = calculate_penetration_power(super_bb_shell, 810.0)
+	print("500mm AP shell at 810 m/s, 0° impact: ", super_bb_penetration, "mm penetration")
+	print("Expected: ~1200-1300mm for super battleship shells")
+
 	# Test 203mm CA shell (similar to 8" shells)
 	var ca_shell = ShellParams.new()
 	ca_shell.caliber = 203.0
@@ -630,6 +640,20 @@ func validate_penetration_formula():
 	var oblique_penetration = calculate_penetration_power(bb_shell, 820.0)
 	print("380mm AP shell at 820 m/s, 45° impact: ", oblique_penetration, "mm penetration")
 	print("Expected: ~70% of normal impact due to angle")
+
+
+	# test air drag vs water drag
+	print("=== End of Penetration Formula Validation ===")
+
+	var air_pos_after_0_035s = ProjectilePhysicsWithDrag.calculate_position_at_time(Vector3.ZERO, Vector3(0,0,820), 0.035, 0.009)
+	var water_pos_after_0_035s = ProjectilePhysicsWithDrag.calculate_position_at_time(Vector3.ZERO, Vector3(0,0,820), 0.035, 0.009 * ArmorInteraction.WATER_DRAG)
+	print("Position after 0.035s in air drag: ", air_pos_after_0_035s)
+	print("Position after 0.035s in water drag: ", water_pos_after_0_035s)
+
+	var speed_at_0_035s_air = ProjectilePhysicsWithDrag.calculate_velocity_at_time(Vector3(0,0,820), 0.035, 0.009)
+	var speed_at_0_035s_water = ProjectilePhysicsWithDrag.calculate_velocity_at_time(Vector3(0,0,820), 0.035, 0.009 * ArmorInteraction.WATER_DRAG)
+	print("Speed after 0.035s in air drag: ", speed_at_0_035s_air)
+	print("Speed after 0.035s in water drag: ", speed_at_0_035s_water)
 
 func track_damage_dealt(p: ProjectileData, damage: float):
 	"""Track damage dealt using the ship's stats module"""

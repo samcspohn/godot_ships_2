@@ -32,14 +32,14 @@ static func parse_events(text: String) -> Array:
 	return events
 
 # Parse ship position/rotation line
-# Format: Ship: 1016 pos=(-3276.7, -1.7, 6211.8), rot=(-0.0, 4.1, 0.0)
+# Format: Ship: 1016 pos=(-3276.7, -1.7, 6211.8), rot=(-0.0, 4.1, 0.0), scene=res://ShipModels/Bismarck.tscn
 static func parse_ship_event(line: String) -> ShellEvent:
 	var data = {}
 	
-	# Extract ship ID
-	var id_start = line.find(" ") + 1
-	var id_end = line.find(" ", id_start)
-	data["id"] = int(line.substr(id_start, id_end - id_start))
+	# Extract ship name (everything between "Ship: " and " pos=")
+	var name_start = line.find(" ") + 1
+	var name_end = line.find(" pos=")
+	data["name"] = line.substr(name_start, name_end - name_start).strip_edges()
 	
 	# Extract position
 	var pos_start = line.find("pos=(") + 5
@@ -54,6 +54,11 @@ static func parse_ship_event(line: String) -> ShellEvent:
 	var rot_degrees = parse_vector3(rot_str)
 	# Convert from degrees to radians for Godot
 	data["rotation"] = Vector3(deg_to_rad(rot_degrees.x), deg_to_rad(rot_degrees.y), deg_to_rad(rot_degrees.z))
+	
+	# Extract scene path if present
+	if line.find("scene=") != -1:
+		var scene_start = line.find("scene=") + 6
+		data["scene_path"] = line.substr(scene_start).strip_edges()
 	
 	return ShellEvent.new("Ship", data)
 

@@ -5,3 +5,4 @@
 
 [node name="GER_380mm_2b_rf" instance=ExtResource("1_tv6nr")]
 script = ExtResource("2_afgdy")
+ship_model_glb_path = "uid://b71yjgxa0vdoy"

@@ -37,12 +37,12 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var citadel_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer/CitadelCount
 @onready var main_damage_label: Label = $MainContainer/TopRightPanel/MainVBox/DamageCounter/DamageValue
 
-# Secondary hit counter labels (shown when hovering over SEC)
-@onready var sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
-@onready var sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
-@onready var sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer/SecShatterCount
-@onready var sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer/SecRicochetCount
-@onready var sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecondaryCounter/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer/SecCitadelCount
+# Secondary hit counter labels (shown when hovering over SEC)$MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCountw
+@onready var sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
+@onready var sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
+@onready var sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer/SecShatterCount
+@onready var sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer/SecRicochetCount
+@onready var sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer/SecCitadelCount
 @onready var sec_damage_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/DamageCounter/DamageValue
 
 @onready var damage_value_label: Label = $MainContainer/TopRightPanel/HBoxContainer/DamageCounter/DamageValue
@@ -134,6 +134,8 @@ var consumable_count_labels: Array[Label] = []
 
 # Consumable action names for getting shortcuts from InputMap
 var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consumable_4", "consumable_5"]
+
+@onready var secondaries_disabled = $MainContainer/SecondariesDisabled
 
 # Get the keyboard shortcut letter for a given action
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
@@ -267,6 +269,7 @@ func _physics_process(_delta):
 	check_hover_detection()  # Add manual hover detection
 	update_hit_counters(_delta)  # Update hit counter timers
 	update_visibility_indicator()  # Update visibility indicator
+	update_secondaries_disabled_indicator()  # Update secondaries disabled indicator
 	update_consumable_ui()
 
 	# Automatically detect current secondary target from ship's secondary controllers
@@ -283,9 +286,9 @@ func _physics_process(_delta):
 		# Process damage events for hit counters
 		if stats.damage_events.size() > 0:
 			process_damage_events(stats.damage_events)
-			# update_counters()
-			update_counter(frag_count_label, stats.frags)
-		update_counter(damage_value_label, stats.total_damage)
+			update_counters()
+		# 	update_counter(frag_count_label, stats.frags)
+		# update_counter(damage_value_label, stats.total_damage)
 		# update_counter(damage_value_label, stats.total_damage)
 		
 	
@@ -432,6 +435,15 @@ func update_visibility_indicator():
 
 	# Show the yellow indicator when the ship is visible to enemies
 	visibility_indicator.visible = camera_controller._ship.visible_to_enemy
+
+func update_secondaries_disabled_indicator():
+	"""Show or hide the secondaries disabled indicator"""
+	if not camera_controller or not camera_controller._ship:
+		secondaries_disabled.visible = false
+		return
+
+	var secondaries_disabled_flag = not camera_controller._ship.secondary_controller.enabled
+	secondaries_disabled.visible = secondaries_disabled_flag
 
 func process_damage_events(damage_events: Array):
 	"""Process damage events and show appropriate hit counters"""

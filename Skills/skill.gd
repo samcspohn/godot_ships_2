@@ -3,6 +3,9 @@ class_name Skill
 
 var _ship: Ship = null
 
+func _init() -> void:
+	setup_local_to_scene()
+
 func _a(_ship: Ship):
 	pass
 
