@@ -5,6 +5,14 @@
 [sub_resource type="Environment" id="Environment_bp804"]
 background_mode = 1
 background_color = Color(0.409483, 0.709723, 0.857173, 1)
+glow_enabled = true
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.40784314, 0.70980394, 0.85882354, 1)
+fog_density = 1.049
+fog_depth_curve = 0.57435
+fog_depth_begin = 0.0
+fog_depth_end = 50000.0
 
 [node name="PlayerCam" type="Camera3D"]
 process_priority = -3

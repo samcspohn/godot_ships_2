@@ -187,7 +187,7 @@ func clear_ships() -> void:
 	tracked_ships.clear()
 	player_ship = null
 
-func _process(_delta: float) -> void:
+func _physics_process(_delta: float) -> void:
 	# Clear previous drawing
 	ship_markers_canvas.queue_redraw()
 	

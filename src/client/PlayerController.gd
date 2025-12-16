@@ -170,6 +170,9 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("consumable_3"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 2)
 
+	if event.is_action_pressed("toggle_secondaries"):
+		c_toggle_secondaries_enabled.rpc_id(1)
+
 # Center the mouse cursor on the screen
 func _center_mouse():
 	var viewport_size = get_viewport().get_visible_rect().size
@@ -236,7 +239,7 @@ func handle_single_click() -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func set_target_ship(ship_path: NodePath) -> void:
 	"""Server-side RPC to set the target ship"""
-	if not multiplayer.is_server():
+	if not _Utils.authority():
 		return
 		
 	var target_ship = get_node_or_null(ship_path)
@@ -251,7 +254,7 @@ func set_target_ship(ship_path: NodePath) -> void:
 @rpc("authority", "call_remote", "reliable")
 func c_set_target_ship(ship_path: NodePath) -> void:
 	"""Client-side RPC to set the target ship"""
-	if not multiplayer.is_server():
+	if not _Utils.authority():
 		var target_ship = get_node_or_null(ship_path)
 		if target_ship and target_ship is Ship:
 			print("Client setting target ship: ", target_ship.name)
@@ -291,6 +294,20 @@ func clear_secondary_target() -> void:
 		cam.ui.clear_secondary_target()
 	else:
 		print("Warning: cam.ui not available for clearing target indicator")
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_toggle_secondaries_enabled() -> void:
+	if not _Utils.authority():
+		return
+	"""Client tell server to toggle secondaries enabled state"""
+	ship.secondary_controller.enabled = not ship.secondary_controller.enabled
+	print("Secondaries enabled set to: ", ship.secondary_controller.enabled)
+	toggle_secondaries_enabled.rpc_id(multiplayer.get_remote_sender_id(), ship.secondary_controller.enabled)
+
+@rpc("authority", "call_remote", "reliable")
+func toggle_secondaries_enabled(enabled: bool) -> void:
+	"""Server-side function to notify caller of state"""
+	ship.secondary_controller.enabled = enabled
 
 func _process(dt: float) -> void:
 	# Check if we need to initialize guns - do it only once
@@ -344,14 +361,14 @@ func _process(dt: float) -> void:
 	# Handle player input and send to server
 	process_player_input()
 
-	# Show floating damage for the ship
-	if ship.stats.damage_events.size() > 0:
-		for damage_event in ship.stats.damage_events:
-			if cam.ui:
-				cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
-			else:
-				print("Warning: cam.ui not available for floating damage")
-		# Note: damage_events are now cleared by the camera UI after processing hit counters
+	# # Show floating damage for the ship
+	# if ship.stats.damage_events.size() > 0:
+	# 	for damage_event in ship.stats.damage_events:
+	# 		if cam.ui:
+	# 			cam.ui.create_floating_damage(damage_event.damage, damage_event.position)
+	# 		else:
+	# 			print("Warning: cam.ui not available for floating damage")
+	# 	# Note: damage_events are now cleared by the camera UI after processing hit counters
 
 func process_player_input() -> void:
 	# Handle throttle input with continuous adjustment

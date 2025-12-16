@@ -10,6 +10,8 @@ var broadcast_mutex: Mutex = Mutex.new()
 var client_queue: Array[PackedByteArray] = []  # queue for background thread to main thread
 var client_queue_mutex: Mutex = Mutex.new()
 var guns = []
+var gun_paths = []
+var null_guns = []
 var initialized = false
 var client_ids: int = 0
 var server_running: bool = false
@@ -21,14 +23,18 @@ signal destroy_shell(data: PackedByteArray) # shell_id: int, pos: Vector3, hit_r
 signal ricochet(data: PackedByteArray) # original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float
 
 # @rpc("authority", "reliable", "call_remote")
-func initialize_guns(gun_paths: Array[String]) -> void:
+
+func initialize_guns(_gun_paths: Array[String]) -> void:
 	guns.clear()
+	gun_paths = _gun_paths
+	var i = 0
 	for path in gun_paths:
-		var gun = get_node(path) as Gun
-		if gun != null:
-			guns.append(gun)
-		else:
+		var gun = get_node_or_null(path) as Gun
+		guns.append(gun)
+		if gun == null:
+			null_guns.append(i)
 			print("Failed to find gun at path: ", path)
+		i += 1
 
 
 func _ready() -> void:
@@ -51,8 +57,8 @@ func print_scene_tree(node: Node, indent: String = ""):
 func _on_fire_gun(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	fire_gun_client(gun_id, v, p, t, i)
 
-func _on_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
-	destroy_shell_client(shell_id, pos, hit_result)
+func _on_destroy_shell(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
+	destroy_shell_client(shell_id, pos, hit_result, normal)
 
 func _on_ricochet(_original_id: int, _ricochet_id: int, _position: Vector3, _velocity: Vector3, _time: float):
 	# Handle ricochet event
@@ -117,42 +123,25 @@ func start_server():
 		return
 	server_running = true
 	print("Server listening on port ", PORT)
-	# while server_running:
-	# 	await get_tree().process_frame
-	# 	if not server_running:
-	# 		break
-	# 	if server.is_connection_available():
-	# 		var peer = server.take_connection()
-	# 		print("New connection from ", peer.get_connected_host())
-	# 		var conn_thread = ConnectionThread.new(peer)
-	# 		conn_thread.id = client_ids
-	# 		client_ids += 1
-	# 		threads.append(conn_thread)
-	# 	var pending: Array[PackedByteArray] = []
-	# 	broadcast_mutex.lock()
-	# 	while broadcast_queue.size() > 0:
-	# 		pending.append(broadcast_queue.pop_front())
-	# 	broadcast_mutex.unlock()
-	# 	for data in pending:
-	# 		for t in threads:
-	# 			t.enqueue(data)
-	# 	for i in range(threads.size() - 1, -1, -1):
-	# 		if not (threads[i].thread as Thread).is_alive():
-	# 			threads.remove_at(i)
-	# 	OS.delay_msec(10)
-	# server_running = false
-	# server = null
 
 func _process(delta: float) -> void:
-	if not server_running:
-		return
-	if server.is_connection_available():
-		var peer = server.take_connection()
-		print("New connection from ", peer.get_connected_host())
-		var conn_thread = ConnectionThread.new(peer)
-		conn_thread.id = client_ids
-		client_ids += 1
-		threads.append(conn_thread)
+	if server_running:
+		if server.is_connection_available():
+			var peer = server.take_connection()
+			print("New connection from ", peer.get_connected_host())
+			var conn_thread = ConnectionThread.new(peer)
+			conn_thread.id = client_ids
+			client_ids += 1
+			threads.append(conn_thread)
+	
+	if client_running:
+		if null_guns.size() > 0:
+			for i in null_guns:
+				var path = gun_paths[i]
+				var gun = get_node_or_null(path) as Gun
+				if gun != null:
+					guns[i] = gun
+					null_guns.erase(i) 
 
 # Function to enqueue data to send to all clients (call this from server)
 func enqueue_broadcast(data: PackedByteArray):
@@ -178,7 +167,7 @@ func send_fire_gun(gun_id: int, velocity: Vector3, position: Vector3, time: floa
 	enqueue_broadcast(stream.data_array)
 
 # Send despawn shell command as binary
-func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
+func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	var stream = StreamPeerBuffer.new()
 	stream.put_u8(1)  # type 1 for destroy shell
 	stream.put_u32(shell_id)
@@ -186,6 +175,9 @@ func send_destroy_shell(shell_id: int, pos: Vector3, hit_result: int):
 	stream.put_float(pos.y)
 	stream.put_float(pos.z)
 	stream.put_u32(hit_result)
+	stream.put_float(normal.x)
+	stream.put_float(normal.y)
+	stream.put_float(normal.z)
 	enqueue_broadcast(stream.data_array)
 
 func send_ricochet(original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float):
@@ -252,13 +244,14 @@ func start_client():
 				var i = stream.get_u32()
 				fire_gun_client(gun_id, v, p, t, i)
 			elif type == 1:
-				if stream.get_available_bytes() < 4 + 12 + 4:  # 20 bytes
+				if stream.get_available_bytes() < 4 + 12 + 4 + 12:  # 32 bytes
 					print("Corrupted destroy shell data received")
 					continue
 				var shell_id = stream.get_u32()
 				var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 				var hit_result = stream.get_u32()
-				destroy_shell_client(shell_id, pos, hit_result)
+				var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+				destroy_shell_client(shell_id, pos, hit_result, normal)
 			elif type == 2:
 				if stream.get_available_bytes() < 4 + 4 + 12 + 12 + 8:  # 44 bytes
 					print("Corrupted ricochet data received")
@@ -298,13 +291,13 @@ func _receive_loop():
 	print("Disconnected from server")
 	client_running = false
 
-func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int):
+func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	# print("Destroying shell with data: ", shell_id, pos, hit_result)
 	if shell_id == -1:
 		print("No shell ID in data")
 		return
 	# Find the shell by ID and destroy it
-	ProjectileManager.destroyBulletRpc2(shell_id, pos, hit_result)
+	ProjectileManager.destroyBulletRpc2(shell_id, pos, hit_result, normal)
 
 func fire_gun_client(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	# print("Firing gun with data: ", gun_id, v, p, t, i)

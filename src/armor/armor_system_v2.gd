@@ -289,3 +289,4 @@ func get_node_path_from_scene(node: Node3D, root: String) -> String:
 		if current_node == null or not current_node is Node3D:
 			break
 	return "/".join(path_parts)
+

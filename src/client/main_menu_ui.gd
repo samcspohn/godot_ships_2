@@ -6,6 +6,7 @@ extends Control
 
 @onready var connect_button: Button = $TopBar/HBoxContainer/ConnectButton
 @onready var single_player_button: Button = $TopBar/HBoxContainer/SinglePlayerButton
+@onready var replay_button: Button = $TopBar/HBoxContainer/ReplayButton
 @onready var name_value_label: Label = $TopBar/HBoxContainer/NameValue
 @onready var status_label: Label = $TopBar/StatusLabel
 @onready var tab_container: TabContainer = $TabContainer
@@ -24,6 +25,7 @@ var original_modulate: Color
 func _ready():
 	connect_button.pressed.connect(_on_connect_pressed)
 	single_player_button.pressed.connect(_on_single_player_pressed)
+	replay_button.pressed.connect(_on_replay_pressed)
 	original_modulate = connect_button.modulate
 
 	# Hook up network signals
@@ -238,4 +240,6 @@ func _on_skill_toggled(skill_path: String, enabled: bool):
 				if skill_path in skills_array:
 					skills_array.erase(skill_path)
 					GameSettings.save_settings()
-			selected_ship.skills.remove_skill(skill_instance)
+
+func _on_replay_pressed():
+	get_tree().change_scene_to_file("res://src/client/shell_replay.tscn")

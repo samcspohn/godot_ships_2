@@ -8,7 +8,7 @@ extends Node3D
 @export var min_rotation_angle: float = deg_to_rad(90)
 @export var max_rotation_angle: float = deg_to_rad(180)
 
-@onready var barrel: Node3D = get_children()[0]
+@onready var barrel: Node3D = get_child(0).get_child(0)
 # @export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
@@ -26,7 +26,23 @@ var id: int = -1
 # @export var params: GunParams
 # var my_params: GunParams = GunParams.new()
 
+# Armor system configuration
+var armor_system: ArmorSystemV2
+@export_file("*.glb") var ship_model_glb_path: String
+@export var auto_extract_armor: bool = true
+
+# var launch_vector: Vector3 = Vector3.ZERO
+# var flight_time: float = 0.0
+
 var controller
+
+
+class SimShell:
+	var start_position: Vector3 = Vector3.ZERO
+	var position: Vector3 = Vector3.ZERO
+
+var shell_sim: SimShell = SimShell.new()
+var sim_shell_in_flight: bool = false
 
 func to_dict() -> Dictionary:
 	return {
@@ -49,6 +65,33 @@ func get_params() -> GunParams:
 
 func get_shell() -> ShellParams:
 	return controller.get_shell_params()
+
+func notify_gun_updated():
+	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	if server != null and _Utils.authority():
+		server.gun_updated = true
+
+func cleanup():
+	# detach from parent for easier management
+	var grand_parent = self.get_parent().get_parent()
+	var parent = self.get_parent()
+	var saved_transform = self.global_transform
+	
+	# Remove self from parent first
+	parent.remove_child(self)
+	# Add self to grandparent
+	grand_parent.add_child(self)
+	# Now safe to remove and free the old parent
+	grand_parent.remove_child(parent)
+	parent.queue_free()
+	
+	# Restore transform and owner
+	self.global_transform = saved_transform
+	self.owner = grand_parent
+
+	base_rotation = rotation.y
+
+	notify_gun_updated.call_deferred()
 
 func _ready() -> void:
 	# params.shell = params.shell2
@@ -75,10 +118,14 @@ func _ready() -> void:
 		process_mode = Node.PROCESS_MODE_INHERIT
 		set_physics_process(false)
 
-	base_rotation = rotation.y
 	# print(rad_to_deg(base_rotation))
 	
 	#_ship = get_parent().get_parent() as Ship
+	initialize_armor_system.call_deferred()
+	cleanup.call_deferred()
+	
+
+
 
 # Function to update barrels based on editor properties
 func update_barrels() -> void:
@@ -350,6 +397,13 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 		return true
 	return false
 
+func get_muzzles_position() -> Vector3:
+	var muzzles_pos: Vector3 = Vector3.ZERO
+	for m in muzzles:
+		muzzles_pos += m.global_position
+	muzzles_pos /= muzzles.size()
+	return muzzles_pos
+
 # Implement on server
 func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> void:
 	if disabled:
@@ -388,14 +442,19 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 	# if not _return_to_base:
 	clamp_to_rotation_limits()
 
+	var muzzles_pos = get_muzzles_position()
+
 	# Existing aiming logic for elevation
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, aim_point, get_shell().speed, get_shell().drag)
-	if sol[0] != null and (aim_point - global_position).length() < get_params()._range:
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	if sol[0] != null and (aim_point - muzzles_pos).length() < get_params()._range:
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)
 		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params()._range - 500)
-		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, self._aim_point, get_shell().speed, get_shell().drag)
+		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, self._aim_point, get_shell().speed, get_shell().drag)
+
+	# launch_vector = sol[0]
+	# flight_time = sol[1]
 
 	var turret_elev_speed_rad: float = deg_to_rad(get_params().elevation_speed)
 	var max_elev_angle: float = turret_elev_speed_rad * delta
@@ -427,8 +486,9 @@ func normalize_angle(angle: float) -> float:
 	return wrapf(angle, -PI, PI)
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(barrel.global_position, aim_point, vel, get_shell().speed, get_shell().drag)
-	if sol[0] == null or (aim_point - barrel.global_position).length() > get_params()._range:
+	var muzzles_pos = get_muzzles_position()
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(muzzles_pos, aim_point, vel, get_shell().speed, get_shell().drag)
+	if sol[0] == null or (aim_point - muzzles_pos).length() > get_params()._range:
 		can_fire = false
 		return
 	_aim(sol[2], delta, true)
@@ -437,36 +497,14 @@ func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 func fire(mod: TargetMod = null) -> void:
 	if _Utils.authority():
 		if !disabled && reload >= 1.0 and can_fire:
+			var muzzles_pos = get_muzzles_position()
 			for m in muzzles:
-				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, self.global_position, controller.shell_index, mod)
+				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, controller.shell_index, mod)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = Time.get_unix_time_from_system()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
-					# for p in multiplayer.get_peers():
-					# 	self.fire_client.rpc_id(p, dispersed_velocity, m.global_position, t, id)
-
-					# TcpThreadPool.enqueue_broadcast(JSON.stringify({
-					# 	"type": "0",
-					# 	"v": dispersed_velocity,
-					# 	"p": m.global_position,
-					# 	"t": t,
-					# 	"i": _id,
-					# 	"ID": id,
-					# }))
 					TcpThreadPool.send_fire_gun(id, dispersed_velocity, m.global_position, t, _id)
-					# var stream = StreamPeerBuffer.new()
-					# stream.put_float(dispersed_velocity.x) # 4
-					# stream.put_float(dispersed_velocity.y) # 8
-					# stream.put_float(dispersed_velocity.z) # 12
-					# stream.put_float(m.global_position.x) # 16
-					# stream.put_float(m.global_position.y) # 20
-					# stream.put_float(m.global_position.z) # 24
-					# stream.put_double(t) # 32
-					# stream.put_32(_id) # 36
-
-					# for p in multiplayer.get_peers():
-					# 	self.fire_client2.rpc_id(p, stream.data_array)
 				else:
 					pass
 					# print(aim)
@@ -488,3 +526,139 @@ func fire_client2(data: PackedByteArray) -> void:
 	var t = stream.get_double()
 	var _id = stream.get_32()
 	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
+
+
+
+
+func initialize_armor_system() -> void:
+	"""Initialize the armor system - extract and load armor data"""
+	print("🛡️ Initializing armor system for ship...")
+	
+	# Validate and resolve the GLB path
+	var resolved_glb_path = _ship.resolve_glb_path(ship_model_glb_path)
+	if resolved_glb_path.is_empty():
+		print("   ❌ Invalid or missing GLB path: ", ship_model_glb_path)
+		return
+	
+	# Create armor system instance
+	armor_system = ArmorSystemV2.new()
+	add_child(armor_system)
+	
+	# Determine paths
+	var model_name = resolved_glb_path.get_file().get_basename()
+	var ship_dir = resolved_glb_path.get_base_dir()
+	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
+	
+	print("   Ship model: ", resolved_glb_path)
+	print("   Armor data: ", armor_json_path)
+	
+	# Check if armor JSON already exists
+	if FileAccess.file_exists(armor_json_path):
+		print("   ✅ Found existing armor data, loading...")
+		var success = armor_system.load_armor_data(armor_json_path)
+		if success:
+			print("   ✅ Armor system initialized successfully")
+		else:
+			print("   ❌ Failed to load existing armor data")
+	elif auto_extract_armor:
+		print("   🔧 No armor data found, extracting from GLB...")
+		extract_and_load_armor_data(resolved_glb_path, armor_json_path)
+	else:
+		print("   ⚠️ No armor data found and auto-extraction disabled")
+
+	enable_backface_collision_recursive(self)
+	print("done")
+
+
+func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:
+	"""Extract armor data from GLB and save it locally"""
+	# Load the extractor
+	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
+	var extractor = extractor_script.new()
+	
+	print("      Extracting armor data from GLB...")
+	var success = extractor.extract_armor_with_mapping_to_json(glb_path, armor_json_path)
+	
+	if success:
+		print("      ✅ Armor extraction completed")
+		print("      📁 Saved to: ", armor_json_path)
+		
+		# Load the newly extracted data
+		success = armor_system.load_armor_data(armor_json_path)
+		if success:
+			print("      ✅ Armor system initialized successfully")
+		else:
+			print("      ❌ Failed to load extracted armor data")
+	else:
+		print("      ❌ Armor extraction failed")
+
+
+func enable_backface_collision_recursive(node: Node) -> void:
+	var path: String = ""
+	var n = node
+	while n != self:
+		path = n.name + "/" + path
+		n = n.get_parent()
+	path = path.rstrip("/")
+	if armor_system.armor_data.has(path) and node is MeshInstance3D:
+		var static_body: StaticBody3D = node.find_child("StaticBody3D", false)
+		var collision_shape: CollisionShape3D = static_body.find_child("CollisionShape3D", false)
+		static_body.remove_child(collision_shape)
+		if collision_shape.shape is ConcavePolygonShape3D:
+			collision_shape.shape.backface_collision = true
+		static_body.queue_free()
+
+		var armor_part = ArmorPart.new()
+		armor_part.add_child(collision_shape)
+		armor_part.collision_layer = 1 << 1
+		armor_part.collision_mask = 0
+		armor_part.armor_system = armor_system
+		armor_part.armor_path = path
+		armor_part.ship = self._ship
+		self.add_child(armor_part)
+		self._ship.armor_parts.append(armor_part)
+		# self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
+		# static_body.collision_layer = 1 << 1
+		# static_body.collision_mask = 0
+		# if node.name == "Hull":
+		# 	hull = armor_part
+		# 	print("armor_part.collision_layer: ", armor_part.collision_layer)
+		# 	print("armor_part.collision_mask: ", armor_part.collision_mask)
+		# elif node.name == "Citadel":
+		# 	citadel = armor_part
+		
+	for child in node.get_children():
+		enable_backface_collision_recursive(child)
+
+
+func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
+	
+	var muzzles_pos = get_muzzles_position()
+	shell_sim.start_position = muzzles_pos
+	shell_sim.position = muzzles_pos
+	sim_shell_in_flight = true
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	if sol[0] == null:
+		return false
+	var launch_vector = sol[0]
+	var flight_time = sol[1]
+	var space_state = get_world_3d().direct_space_state
+	var ray = PhysicsRayQueryParameters3D.new()
+	var t = 1.0
+	while t < flight_time:
+		ray.from = shell_sim.position
+		ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
+			shell_sim.start_position,
+			launch_vector,
+			t,
+			get_shell().drag,
+		)
+		# ray.collide_with_bodies = true
+		# ray.collide_with_areas = false
+		# ray.collision_mask # Collide with terrain only
+		var result = space_state.intersect_ray(ray)
+		if result.size() > 0:
+			return false
+		shell_sim.position = ray.to
+		t += 1.0
+	return true

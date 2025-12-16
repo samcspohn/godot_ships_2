@@ -19,17 +19,17 @@ func set_dock_node(dock: Node3D):
 	dock_node = dock
 
 func _load_ship_buttons():
-	_scan_directory("res://scenes/Ships/")
-
-	var button = Button.new()
-	button.text = "Bismarck"
-	button.pressed.connect(_on_ship_button_pressed.bind("res://ShipModels/Bismarck2.tscn"))
-	ship_button_container.add_child(button)
-
-	button = Button.new()
-	button.text = "Bismarck2"
-	button.pressed.connect(_on_ship_button_pressed.bind("res://ShipModels/Bismarck3.tscn"))
-	ship_button_container.add_child(button)
+	# Only allow selection of Bismarck3 and H44
+	var available_ships = [
+		{"name": "Bismarck3", "path": "res://ShipModels/Bismarck3.tscn"},
+		{"name": "H44", "path": "res://ShipModels/H44.tscn"}
+	]
+	
+	for ship_data in available_ships:
+		var button = Button.new()
+		button.text = ship_data.name
+		button.pressed.connect(_on_ship_button_pressed.bind(ship_data.path))
+		ship_button_container.add_child(button)
 
 func _scan_directory(path: String):
 	var dir = DirAccess.open(path)
@@ -54,7 +54,7 @@ func _on_ship_button_pressed(ship_path):
 	GameSettings.selected_ship = ship_path
 	if dock_node:
 		dock_node.add_child(selected_ship)
-		selected_ship.position = Vector3(0,6,0)
+		selected_ship.position = Vector3(0,0,0)
 	
 	# Emit signal that ship was selected
 	ship_selected.emit(selected_ship)

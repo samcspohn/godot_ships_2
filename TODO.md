@@ -1,5 +1,10 @@
 # Ship Combat Game - TODO
 
+- [x] fix close(long?) range aiming too high
+- [ ] incorrect hit effect (explosion on ricochet)
+- [ ] hit ribbons not showing
+
+
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)
 - [x] Basic guns and shooting (reload timers, firing mechanics, aiming system)

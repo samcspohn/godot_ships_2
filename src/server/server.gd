@@ -16,6 +16,8 @@ var team_0_valid_targets = []
 var team_1_valid_targets = []
 var players_size = 0
 
+var gun_updated = false
+
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -174,10 +176,11 @@ func spawn_player(id, player_name):
 
 	# Randomize spawn position
 	var spawn_pos = right_of_spawn * randf_range(-6000, 6000) + team_spawn_point
+	spawn_pos.y = 0
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
-	player.rotate(Vector3.UP,spawn_pos.angle_to(player.global_transform.basis.z))
+	player.rotate(Vector3.UP,-spawn_pos.angle_to(player.global_transform.basis.z))
 
 	#join_game.rpc_id(id)
 	for p_name in players:
@@ -295,6 +298,9 @@ func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 	# Get the ship path
 	var ship_path = player_settings.selected_ship
 	
+	if not player_settings.ship_config.has(ship_path):
+		print("No upgrades configured for ship: ", ship_path, " for player: ", player_name)
+		return
 	# Apply each upgrade to the ship
 	var upgrades = player_settings.ship_config[ship_path]
 	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
@@ -396,6 +402,7 @@ func find_all_guns(node: Node) -> Array:
 func init_guns(gun_paths):
 	TcpThreadPool.initialize_guns(gun_paths)
 
+# var c = 0
 func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
 		return
@@ -405,8 +412,9 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 # only terrain
-
-	if players_size != players.size():
+	
+	if players_size != players.size() or gun_updated:
+		gun_updated = false
 		players_size = players.size()
 		print("Players size changed, now: ", players_size)
 		var guns = find_all_guns(get_tree().root)
@@ -424,7 +432,7 @@ func _physics_process(_delta: float) -> void:
 				continue
 			var pid = p[2]
 			init_guns.rpc_id(pid, gun_paths)
-	
+
 	for p in players.values():
 		var ship: Ship = p[0]			
 		if ship.health_controller.is_dead():

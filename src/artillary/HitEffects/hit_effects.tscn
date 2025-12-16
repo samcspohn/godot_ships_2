@@ -1,9 +1,11 @@
-[gd_scene load_steps=41 format=3 uid="uid://b2h05q4ej4xeb"]
+[gd_scene load_steps=40 format=3 uid="uid://b2h05q4ej4xeb"]
 
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="1_3knvb"]
 [ext_resource type="Script" uid="uid://bbibtirfdewu4" path="res://src/artillary/HitEffects/hit_effects.gd" id="1_ovioq"]
+[ext_resource type="Material" uid="uid://cejjopml01hrd" path="res://src/artillary/HitEffects/hit_effects_splash_process_mat.tres" id="3_5l7oe"]
 [ext_resource type="Script" uid="uid://c5wo7k76mpia" path="res://src/artillary/HitEffects/hit_effect.gd" id="3_7mfvt"]
 [ext_resource type="Script" uid="uid://djw44v0aby41b" path="res://src/artillary/HitEffects/hit_effect_cpu.gd" id="4_4ncql"]
+[ext_resource type="Shader" uid="uid://3w5mxa2ch452" path="res://src/artillary/HitEffects/hit_effects_muzzleblast_shader.gdshader" id="5_gswik"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_606xa"]
 transparency = 1
@@ -18,24 +20,6 @@ billboard_keep_scale = true
 particles_anim_h_frames = 1
 particles_anim_v_frames = 1
 particles_anim_loop = false
-
-[sub_resource type="Gradient" id="Gradient_7mfvt"]
-offsets = PackedFloat32Array(0.0101266, 0.744304, 1)
-colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.585678, 0.792157, 1, 1, 0)
-
-[sub_resource type="GradientTexture1D" id="GradientTexture1D_4ncql"]
-gradient = SubResource("Gradient_7mfvt")
-
-[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_3knvb"]
-emission_shape = 1
-emission_sphere_radius = 1.0
-direction = Vector3(0, 1, 0)
-spread = 10.0
-initial_velocity_min = 1.0
-initial_velocity_max = 13.0
-damping_min = 4.0
-damping_max = 5.0
-color_ramp = SubResource("GradientTexture1D_4ncql")
 
 [sub_resource type="QuadMesh" id="QuadMesh_ovioq"]
 
@@ -99,16 +83,24 @@ emission_curve = SubResource("CurveTexture_emission")
 
 [sub_resource type="QuadMesh" id="QuadMesh_explosion"]
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7mfvt"]
-transparency = 1
-shading_mode = 0
-vertex_color_use_as_albedo = true
-albedo_texture = ExtResource("1_3knvb")
-billboard_mode = 3
-billboard_keep_scale = true
-particles_anim_h_frames = 1
-particles_anim_v_frames = 1
-particles_anim_loop = false
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_gswik"]
+render_priority = 0
+shader = ExtResource("5_gswik")
+shader_parameter/albedo = Color(1, 1, 1, 1)
+shader_parameter/texture_albedo = ExtResource("1_3knvb")
+shader_parameter/albedo_texture_size = Vector2i(64, 64)
+shader_parameter/point_size = 1.0
+shader_parameter/roughness = 1.0
+shader_parameter/metallic_texture_channel = Vector4(1, 0, 0, 0)
+shader_parameter/specular = 0.5
+shader_parameter/metallic = 0.0
+shader_parameter/particles_anim_h_frames = 1
+shader_parameter/particles_anim_v_frames = 1
+shader_parameter/particles_anim_loop = false
+shader_parameter/uv1_scale = Vector3(1, 1, 1)
+shader_parameter/uv1_offset = Vector3(0, 0, 0)
+shader_parameter/uv2_scale = Vector3(1, 1, 1)
+shader_parameter/uv2_offset = Vector3(0, 0, 0)
 
 [sub_resource type="Gradient" id="Gradient_5l7oe"]
 offsets = PackedFloat32Array(0, 0.0481013, 0.101266, 0.15443, 0.212658, 1)
@@ -229,7 +221,7 @@ amount = 15
 lifetime = 8.0
 one_shot = true
 explosiveness = 1.0
-process_material = SubResource("ParticleProcessMaterial_3knvb")
+process_material = ExtResource("3_5l7oe")
 draw_pass_1 = SubResource("QuadMesh_ovioq")
 script = ExtResource("3_7mfvt")
 
@@ -270,7 +262,7 @@ process_thread_group_order = 0
 process_thread_messages = 0
 physics_interpolation_mode = 2
 transform = Transform3D(-0.722955, 0, -0.690895, 0, 1, 0, 0.690895, 0, -0.722955, 0, 0, 0)
-material_override = SubResource("StandardMaterial3D_7mfvt")
+material_override = SubResource("ShaderMaterial_gswik")
 cast_shadow = 0
 emitting = false
 amount = 15

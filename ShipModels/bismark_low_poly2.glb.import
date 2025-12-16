@@ -15,9 +15,11 @@ dest_files=["res://.godot/imported/bismark_low_poly2.glb-44000a53dd28f1bbe5cff2c
 
 nodes/root_type="RigidBody3D"
 nodes/root_name="Ship"
+nodes/root_script=null
 nodes/apply_root_scale=true
 nodes/root_scale=1.0
 nodes/import_as_skeleton_bones=false
+nodes/use_name_suffixes=true
 nodes/use_node_type_suffixes=true
 meshes/ensure_tangents=true
 meshes/generate_lods=true
@@ -32,40 +34,38 @@ animation/trimming=false
 animation/remove_immutable_tracks=true
 animation/import_rest_as_RESET=false
 import_script/path=""
+materials/extract=0
+materials/extract_format=0
+materials/extract_path=""
 _subresources={
 "nodes": {
+"PATH:Aft-Barbette": {
+"generate/physics": true,
+"node/script": null
+},
+"PATH:Aft-Barbette_001": {
+"generate/physics": true,
+"node/script": null
+},
+"PATH:For-Barbette": {
+"generate/physics": true,
+"node/script": null
+},
+"PATH:For-Barbette_001": {
+"generate/physics": true,
+"node/script": null
+},
 "PATH:Hull": {
-"generate/physics": true
+"generate/physics": true,
+"node/script": null
 },
-"PATH:Hull/380mmTurret": {
-"generate/physics": true
+"PATH:Hull_Citadel": {
+"generate/physics": true,
+"node/script": null
 },
-"PATH:Hull/380mmTurret_001": {
-"generate/physics": true
-},
-"PATH:Hull/380mmTurret_002": {
-"generate/physics": true
-},
-"PATH:Hull/380mmTurret_003": {
-"generate/physics": true
-},
-"PATH:Hull/Aft-Barbette": {
-"generate/physics": true
-},
-"PATH:Hull/Aft-Barbette_001": {
-"generate/physics": true
-},
-"PATH:Hull/Citadel": {
-"generate/physics": true
-},
-"PATH:Hull/For-Barbette": {
-"generate/physics": true
-},
-"PATH:Hull/For-Barbette_001": {
-"generate/physics": true
-},
-"PATH:Hull/SuperStructure": {
-"generate/physics": true
+"PATH:SuperStructure": {
+"generate/physics": true,
+"node/script": null
 }
 }
 }

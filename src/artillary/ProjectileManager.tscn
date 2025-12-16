@@ -1,13 +1,29 @@
-[gd_scene load_steps=15 format=3 uid="uid://cj32a1kjmd61g"]
+[gd_scene load_steps=16 format=3 uid="uid://cj32a1kjmd61g"]
 
 [ext_resource type="Script" uid="uid://jcsciny5qrj7" path="res://src/artillary/projectile_manager.gd" id="1_ickow"]
-[ext_resource type="Material" uid="uid://c8q8usurtptru" path="res://src/artillary/ProjectileManagerMaterial.tres" id="2_wm87v"]
+[ext_resource type="Shader" uid="uid://bq6ioy2i2tkf8" path="res://src/artillary/ProjectileManagerMaterialShader.gdshader" id="2_fkbgv"]
 [ext_resource type="Shader" uid="uid://boy6lwvbcv4qj" path="res://src/artillary/ProjectileManagerTrailShader.gdshader" id="4_d12p8"]
 [ext_resource type="Shader" uid="uid://bobk81d11sx4f" path="res://src/artillary/ProjectileManagerProcessMaterial.gdshader" id="4_l6klx"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="4_xoeb4"]
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_w7ivl"]
+render_priority = 1
+shader = ExtResource("2_fkbgv")
+shader_parameter/albedo = Color(3.2944162, 3.281966, 3.281966, 1)
+shader_parameter/texture_albedo = ExtResource("4_xoeb4")
+shader_parameter/albedo_texture_size = Vector2i(64, 64)
+shader_parameter/point_size = 1.0
+shader_parameter/roughness = 1.0
+shader_parameter/metallic_texture_channel = Vector4(1, 0, 0, 0)
+shader_parameter/specular = 0.5
+shader_parameter/metallic = 0.0
+shader_parameter/uv1_scale = Vector3(1, 1, 1)
+shader_parameter/uv1_offset = Vector3(0, 0, 0)
+shader_parameter/uv2_scale = Vector3(1, 1, 1)
+shader_parameter/uv2_offset = Vector3(0, 0, 0)
+
 [sub_resource type="QuadMesh" id="QuadMesh_wm87v"]
-material = ExtResource("2_wm87v")
+material = SubResource("ShaderMaterial_w7ivl")
 
 [sub_resource type="MultiMesh" id="MultiMesh_xoeb4"]
 transform_format = 1

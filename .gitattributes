@@ -1,0 +1,2 @@
+*.glb filter=lfs diff=lfs merge=lfs -text
+*_armor.json filter=lfs diff=lfs merge=lfs -text
