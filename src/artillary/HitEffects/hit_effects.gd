@@ -220,3 +220,4 @@ func print_status() -> void:
 			print("    %s: template_id=%d" % [template.template_name, template.template_id])
 		else:
 			print("    Effect type %d: MISSING" % type)
+ 

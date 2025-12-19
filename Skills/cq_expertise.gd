@@ -1,5 +1,11 @@
 extends Skill
 
+func _init():
+	name = "Advanced Secondary Training"
+	description = "Reduces secondary artillery spread, grouping, and reload time by 10%. Reduces main artillery spread when aiming at targets within secondary range."
+	# Set icon if you have one
+	# icon = preload("res://icons/auto-repair.png")
+
 var main_gun_bonus = 1.0
 func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams

@@ -1,6 +1,14 @@
 extends Skill
 
-var reload_modifier = 1.1
+
+func _init():
+	name = "CQ Zealot"
+	description = "Reduces reload time of all artillery based on number of nearby enemies."
+	# Set icon if you have one
+	# icon = preload("res://icons/auto-repair.png")
+
+const base_reload_modifier = 1.15
+var reload_modifier = base_reload_modifier
 func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
 	main.reload_time *= reload_modifier
@@ -28,11 +36,11 @@ func _proc(_delta: float) -> void:
 	if enemies.size() != num_enemies:
 		num_enemies = enemies.size()
 		if num_enemies == 0:
-			reload_modifier = 1.1
+			reload_modifier = base_reload_modifier
 		# elif num_enemies == 1:
 		# 	reload_modifier = 0.9
 		else:
-			reload_modifier = pow(0.95, num_enemies - 1) * 0.9
+			reload_modifier = pow(0.975, num_enemies - 1) * 0.9
 			
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)

@@ -2,6 +2,8 @@ extends Resource
 class_name Skill
 
 var _ship: Ship = null
+var description: String = ""
+var name: String = ""
 
 func _init() -> void:
 	setup_local_to_scene()

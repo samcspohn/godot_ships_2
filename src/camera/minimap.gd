@@ -15,7 +15,8 @@ static var is_initialized: bool = false
 # Minimap properties
 #@export var minimap_size: Vector2 = Vector2(200, 200)
 var mm_idx = 2
-var minimap_sizes: Array[float] = [100, 200, 300, 400, 500, 600, 800]
+const minimap_sizes: Array[float] = [100, 200, 300, 400, 500, 600, 700, 800]
+var num_sizes: int = minimap_sizes.size()
 const w_s: float = 35000.0 / 2.0
 @export var world_rect: Rect2 = Rect2(-w_s, -w_s, 2 * w_s, 2 * w_s) # World boundaries
 
@@ -198,9 +199,9 @@ func _physics_process(_delta: float) -> void:
 func _input(_event: InputEvent) -> void:
 	var prev_mmidx = mm_idx
 	if _event.is_action_pressed("map_up"):
-		mm_idx = clamp(mm_idx + 1, 0, 6)
+		mm_idx = clamp(mm_idx + 1, 0, num_sizes - 1)
 	elif _event.is_action_pressed("map_down"):
-		mm_idx = clamp(mm_idx - 1, 0, 6)
+		mm_idx = clamp(mm_idx - 1, 0, num_sizes - 1)
 
 	
 	if prev_mmidx == mm_idx:

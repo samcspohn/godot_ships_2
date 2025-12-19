@@ -63,6 +63,10 @@ func set_movement_input(input_array: Array) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
+
+	if ship_body.global_position.y > 0.1:
+		# Ship is airborne - let physics handle it
+		return
 	
 	# Check for sudden velocity changes (collision detection)
 	var forward_dir = -ship_body.global_transform.basis.z

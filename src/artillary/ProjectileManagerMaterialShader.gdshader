@@ -41,7 +41,7 @@ void vertex() {
     // vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
     // float distance_to_camera = length(camera_pos - world_pos);
 	float dist = length(MAIN_CAM_INV_VIEW_MATRIX[3].xyz - MODEL_MATRIX[3].xyz);
-	scale_distance_factor = 1.0 + dist * 0.0003 * -fov_y;
+	scale_distance_factor = 1.0 + dist * 0.00025 * -fov_y;
 	// Billboard Keep Scale: Enabled
 	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
 			vec4(length(MODEL_MATRIX[0].xyz) * scale_distance_factor, 0.0, 0.0, 0.0),

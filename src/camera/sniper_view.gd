@@ -31,9 +31,9 @@ func handle_mouse_motion(event):
 	
 	# Convert mouse motion to rotation (with potential y-inversion)
 	var y_factor = -1.0 if invert_y else 1.0
-	var ship_position = _ship.global_position
+	# var ship_position = _ship.global_position
 	#var vertical_rad = deg_to_rad(rotation_degrees_vertical)
-	var orbit_distance = current_zoom
+	# var orbit_distance = current_zoom
 		
 	#var cam_height = ship_position.y + camera_offset.y + cos(vertical_rad) * orbit_distance / 2.0
 	#print(cos(vertical_rad))

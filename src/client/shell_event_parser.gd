@@ -22,12 +22,16 @@ static func parse_events(text: String) -> Array:
 		if line.is_empty():
 			continue
 		
-		if line.begins_with("Ship:"):
+		if line.begins_with("Processing Shell:"):
+			events.append(parse_processing_shell_event(line))
+		elif line.begins_with("Ship:"):
 			events.append(parse_ship_event(line))
 		elif line.begins_with("Shell:"):
 			events.append(parse_shell_event(line))
 		elif line.begins_with("Armor:"):
 			events.append(parse_armor_event(line))
+		elif line.begins_with("Final Hit Result:"):
+			events.append(parse_final_result_event(line))
 	
 	return events
 
@@ -146,6 +150,28 @@ static func parse_armor_event(line: String) -> ShellEvent:
 		data["is_citadel"] = citadel_value == "true" or citadel_value == "True"
 	
 	return ShellEvent.new("Armor", data)
+
+# Parse "Processing Shell" line
+# Format: Processing Shell: 380 AP
+static func parse_processing_shell_event(line: String) -> ShellEvent:
+	var data = {}
+	
+	# Extract shell info (everything after "Processing Shell: ")
+	var info_start = line.find(": ") + 2
+	data["shell_info"] = line.substr(info_start).strip_edges()
+	
+	return ShellEvent.new("Processing Shell", data)
+
+# Parse "Final Hit Result" line
+# Format: Final Hit Result: CITADEL
+static func parse_final_result_event(line: String) -> ShellEvent:
+	var data = {}
+	
+	# Extract result (everything after "Final Hit Result: ")
+	var result_start = line.find(": ") + 2
+	data["result"] = line.substr(result_start).strip_edges()
+	
+	return ShellEvent.new("Final Hit Result", data)
 
 # Helper function to parse Vector3 from string "(x, y, z)"
 static func parse_vector3(vec_str: String) -> Vector3:

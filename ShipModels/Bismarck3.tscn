@@ -26,9 +26,8 @@ margin = 0.0
 size = Vector3(36, 30.216957, 251.893)
 
 [node name="bismark_low_poly2" instance=ExtResource("1_3klas")]
-mass = 56000000.0
+mass = 50300000.0
 physics_material_override = SubResource("PhysicsMaterial_4pvtd")
-gravity_scale = 4.0
 script = ExtResource("2_4pvtd")
 ship_model_glb_path = "uid://btam5g21aiiqg"
 

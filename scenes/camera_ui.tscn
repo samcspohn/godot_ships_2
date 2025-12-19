@@ -194,7 +194,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(1, 1, 1, 0.3)
 
-[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer"]
+[node name="TargetInfoContainer" type="HBoxContainer" parent="MainContainer/CrosshairContainer"]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -207,31 +207,39 @@ offset_right = 50.0
 offset_bottom = 75.0
 grow_horizontal = 2
 grow_vertical = 2
+alignment = 1
 
-[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+layout_mode = 2
+
+[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
 layout_mode = 2
 text = "-- s"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
 layout_mode = 2
 text = "-- m"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfo"]
+[node name="TargetInfo2" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+layout_mode = 2
+
+[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2"]
 layout_mode = 2
 text = "--mm"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer"]
+z_index = 1
 layout_mode = 0
 offset_left = 85.0
 offset_top = -17.0
-offset_right = 105.0
-offset_bottom = 3.0
+offset_right = 97.0
+offset_bottom = -5.0
 rotation = 0.7853982
 
 [node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]
@@ -1592,13 +1600,11 @@ offset_bottom = 90.0
 
 [node name="FPSLabel" type="Label" parent="MainContainer/TopLeftPanel"]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 0, 1)
 theme_override_font_sizes/font_size = 16
 text = "FPS: --"
 
 [node name="CameraAngleLabel" type="Label" parent="MainContainer/TopLeftPanel"]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.8, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 14
 text = "Angle: --"
 

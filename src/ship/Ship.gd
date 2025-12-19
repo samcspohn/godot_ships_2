@@ -286,7 +286,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system - extract and load armor data"""
-	print("🛡️ Initializing armor system for ship...")
+	# print("🛡️ Initializing armor system for ship...")
 	
 	# Validate and resolve the GLB path
 	var resolved_glb_path = resolve_glb_path(ship_model_glb_path)
@@ -303,22 +303,23 @@ func initialize_armor_system() -> void:
 	var ship_dir = resolved_glb_path.get_base_dir()
 	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
 	
-	print("   Ship model: ", resolved_glb_path)
-	print("   Armor data: ", armor_json_path)
+	# print("   Ship model: ", resolved_glb_path)
+	# print("   Armor data: ", armor_json_path)
 	
 	# Check if armor JSON already exists
 	if FileAccess.file_exists(armor_json_path):
-		print("   ✅ Found existing armor data, loading...")
+		# print("   ✅ Found existing armor data, loading...")
 		var success = armor_system.load_armor_data(armor_json_path)
 		if success:
-			print("   ✅ Armor system initialized successfully")
+			pass
+			# print("   ✅ Armor system initialized successfully")
 		else:
 			print("   ❌ Failed to load existing armor data")
 	elif auto_extract_armor:
-		print("   🔧 No armor data found, extracting from GLB...")
+		# print("   🔧 No armor data found, extracting from GLB...")
 		extract_and_load_armor_data(resolved_glb_path, armor_json_path)
-	else:
-		print("   ⚠️ No armor data found and auto-extraction disabled")
+	# else:
+		# print("   ⚠️ No armor data found and auto-extraction disabled")
 
 	enable_backface_collision_recursive(self)
 	print("done")
@@ -336,10 +337,10 @@ func resolve_glb_path(path: String) -> String:
 		if resource != null:
 			var resource_path = resource.resource_path
 			if resource_path.ends_with(".glb"):
-				print("   📂 Resolved UID to path: ", resource_path)
+				# print("   📂 Resolved UID to path: ", resource_path)
 				return resource_path
 			else:
-				print("   ⚠️ UID resolved to non-GLB resource: ", resource_path)
+				# print("   ⚠️ UID resolved to non-GLB resource: ", resource_path)
 				return ""
 		else:
 			print("   ❌ Failed to resolve UID: ", path)

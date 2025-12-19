@@ -10,7 +10,7 @@ script = ExtResource("1_replay")
 [node name="UIPanel" type="Panel" parent="CanvasLayer"]
 anchors_preset = 10
 anchor_right = 1.0
-offset_bottom = 150.0
+offset_bottom = 256.0
 grow_horizontal = 2
 
 [node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/UIPanel"]
@@ -31,6 +31,7 @@ text = "Shell Hit Replay"
 horizontal_alignment = 1
 
 [node name="TextInput" type="TextEdit" parent="CanvasLayer/UIPanel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 100)
 layout_mode = 2
 size_flags_vertical = 3
 placeholder_text = "Paste shell hit events here..."
@@ -42,6 +43,10 @@ layout_mode = 2
 layout_mode = 2
 text = "Play Replay"
 
+[node name="ValidateButton" type="Button" parent="CanvasLayer/UIPanel/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+text = "Validate"
+
 [node name="BackButton" type="Button" parent="CanvasLayer/UIPanel/VBoxContainer/HBoxContainer"]
 layout_mode = 2
 text = "Back to Menu"
@@ -51,18 +56,23 @@ layout_mode = 2
 text = "Result: N/A"
 horizontal_alignment = 1
 
+[node name="ValidationLabel" type="Label" parent="CanvasLayer/UIPanel/VBoxContainer"]
+layout_mode = 2
+text = "Validation: Not run"
+horizontal_alignment = 1
+
 [node name="SubViewportContainer" type="SubViewportContainer" parent="CanvasLayer"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = 150.0
+offset_top = 258.0
 grow_horizontal = 2
 grow_vertical = 2
 stretch = true
 
 [node name="SubViewport" type="SubViewport" parent="CanvasLayer/SubViewportContainer"]
 handle_input_locally = false
-size = Vector2i(1152, 498)
+size = Vector2i(1920, 822)
 render_target_update_mode = 4
 
 [node name="World3D" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport"]

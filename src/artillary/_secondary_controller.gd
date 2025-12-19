@@ -12,6 +12,7 @@ var gun_targets: Array[Ship] = []
 var target_mod: TargetMod = TargetMod.new().duplicate(true)
 var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
+var ammo_type: int = 1 # 0 = AP, 1 = HE
 
 func _ready() -> void:
 	# for sc in sub_controllers:
@@ -123,3 +124,14 @@ func _physics_process(delta: float) -> void:
 
 	# for g in guns:
 	# 	g._aim(aim_point, delta)
+
+func change_ammo_type(new_type: int) -> void:
+	ammo_type = new_type
+	if ammo_type == 0:
+		shell_index = 0
+	else:
+		shell_index = 1
+
+	for sc in sub_controllers:
+		for g in sc.guns:
+			g.reload = 0.0

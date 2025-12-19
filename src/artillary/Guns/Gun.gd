@@ -532,7 +532,7 @@ func fire_client2(data: PackedByteArray) -> void:
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system - extract and load armor data"""
-	print("🛡️ Initializing armor system for ship...")
+	# print("🛡️ Initializing armor system for ship...")
 	
 	# Validate and resolve the GLB path
 	var resolved_glb_path = _ship.resolve_glb_path(ship_model_glb_path)
@@ -549,19 +549,17 @@ func initialize_armor_system() -> void:
 	var ship_dir = resolved_glb_path.get_base_dir()
 	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
 	
-	print("   Ship model: ", resolved_glb_path)
-	print("   Armor data: ", armor_json_path)
-	
 	# Check if armor JSON already exists
 	if FileAccess.file_exists(armor_json_path):
-		print("   ✅ Found existing armor data, loading...")
+		# print("   ✅ Found existing armor data, loading...")
 		var success = armor_system.load_armor_data(armor_json_path)
 		if success:
-			print("   ✅ Armor system initialized successfully")
+			pass
+			# print("   ✅ Armor system initialized successfully")
 		else:
 			print("   ❌ Failed to load existing armor data")
 	elif auto_extract_armor:
-		print("   🔧 No armor data found, extracting from GLB...")
+		# print("   🔧 No armor data found, extracting from GLB...")
 		extract_and_load_armor_data(resolved_glb_path, armor_json_path)
 	else:
 		print("   ⚠️ No armor data found and auto-extraction disabled")
@@ -576,17 +574,15 @@ func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> v
 	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
 	var extractor = extractor_script.new()
 	
-	print("      Extracting armor data from GLB...")
+	# print("      Extracting armor data from GLB...")
 	var success = extractor.extract_armor_with_mapping_to_json(glb_path, armor_json_path)
 	
 	if success:
-		print("      ✅ Armor extraction completed")
-		print("      📁 Saved to: ", armor_json_path)
-		
 		# Load the newly extracted data
 		success = armor_system.load_armor_data(armor_json_path)
 		if success:
-			print("      ✅ Armor system initialized successfully")
+			pass
+			# print("      ✅ Armor system initialized successfully")
 		else:
 			print("      ❌ Failed to load extracted armor data")
 	else:
@@ -634,50 +630,66 @@ func enable_backface_collision_recursive(node: Node) -> void:
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 	
 	var muzzles_pos = get_muzzles_position()
-	shell_sim.start_position = muzzles_pos
-	shell_sim.position = muzzles_pos
-	sim_shell_in_flight = true
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
 	if sol[0] == null:
 		return false
 	var launch_vector = sol[0]
 	var flight_time = sol[1]
-	var space_state = get_world_3d().direct_space_state
-	var ray = PhysicsRayQueryParameters3D.new()
-	ray.collide_with_bodies = true
-	ray.collision_mask = 1
-	var t = 1.0
-	while t < flight_time + 1.0:
-		ray.from = shell_sim.position
-		ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
-			shell_sim.start_position,
-			launch_vector,
-			t,
-			get_shell().drag,
-		)
-		# ray.collide_with_bodies = true
-		# ray.collide_with_areas = false
-		# ray.collision_mask # Collide with terrain only
-		var result = space_state.intersect_ray(ray)
-		if result.size() > 0 and result["position"].y > 0.00001:
-			return false
-		shell_sim.position = ray.to
-		t += 1.0
-	return true
+	var can_shoot = sim_can_shoot_over_terrain_static(muzzles_pos, launch_vector, flight_time, get_shell().drag, _ship)
+	return can_shoot.can_shoot_over_terrain and can_shoot.can_shoot_over_ship
+	# shell_sim.start_position = muzzles_pos
+	# shell_sim.position = muzzles_pos
+	# sim_shell_in_flight = true
+	# var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	# if sol[0] == null:
+	# 	return false
+	# var launch_vector = sol[0]
+	# var flight_time = sol[1]
+	# var space_state = get_world_3d().direct_space_state
+	# var ray = PhysicsRayQueryParameters3D.new()
+	# ray.collide_with_bodies = true
+	# ray.collision_mask = 1
+	# var t = 1.0
+	# while t < flight_time + 1.0:
+	# 	ray.from = shell_sim.position
+	# 	ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
+	# 		shell_sim.start_position,
+	# 		launch_vector,
+	# 		t,
+	# 		get_shell().drag,
+	# 	)
+	# 	# ray.collide_with_bodies = true
+	# 	# ray.collide_with_areas = false
+	# 	# ray.collision_mask # Collide with terrain only
+	# 	var result = space_state.intersect_ray(ray)
+	# 	if result.size() > 0 and result["position"].y > 0.00001:
+	# 		return false
+	# 	shell_sim.position = ray.to
+	# 	t += 1.0
+	# return true
 
+class ShootOver:
+	var can_shoot_over_terrain: bool
+	var can_shoot_over_ship: bool
+
+	func _init(_terrain: bool, _ship: bool):
+		can_shoot_over_terrain = _terrain
+		can_shoot_over_ship = _ship
+		
 static func sim_can_shoot_over_terrain_static(
 	pos: Vector3,
 	launch_vector: Vector3,
 	flight_time: float,
 	drag: float,
-) -> bool:
+	ship: Ship
+) -> ShootOver:
 	var shell_sim_position: Vector3 = pos
 	var space_state = Engine.get_main_loop().get_root().get_world_3d().direct_space_state
 	var ray = PhysicsRayQueryParameters3D.new()
 	ray.collide_with_bodies = true
-	ray.collision_mask = 1
-	var t = 1.0
-	while t < flight_time + 1.0:
+	ray.collision_mask = 1 | (1 << 1) # Collide with terrain and armor parts
+	var t = 0.5
+	while t < flight_time + 0.5:
 		ray.from = shell_sim_position
 		ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
 			pos,
@@ -686,8 +698,27 @@ static func sim_can_shoot_over_terrain_static(
 			drag,
 		)
 		var result = space_state.intersect_ray(ray)
-		if result.size() > 0 and result["position"].y > 0.00001:
-			return false
+		if not result.is_empty():
+			if result.has("collider") and result["collider"] is ArmorPart:
+				var armor_part: ArmorPart = result["collider"] as ArmorPart
+				if armor_part.ship.team.team_id != ship.team.team_id:
+					return ShootOver.new(true, true)
+				elif armor_part.ship == ship:
+					# Hitting own ship, ignore
+					pass
+				elif armor_part.ship.team.team_id == ship.team.team_id:
+					return ShootOver.new(true, false)
+					# return false # dont hit friendly ships
+				# var armor_part: ArmorPart = result["collider"] as ArmorPart
+				# if armor_part.ship.team.team_id != ship.team.team_id:
+				# 	return true
+				# elif armor_part.ship.team.team_id == ship.team.team_id:
+				# 	return false # dont hit friendly ships
+				# elif armor_part.ship == ship:
+				# 	# Hitting own ship, ignore
+				# 	pass
+			elif result["position"].y > 0.00001: # Hit terrain
+				return ShootOver.new(false, true)
 		shell_sim_position = ray.to
-		t += 1.0
-	return true
+		t += 0.5
+	return ShootOver.new(true, true)

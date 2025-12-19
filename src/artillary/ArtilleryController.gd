@@ -83,4 +83,3 @@ func get_shell_params() -> ShellParams:
 
 func get_params() -> GunParams:
 	return params.dynamic_mod as GunParams
-	# return _gun_params --- IGNORE ---

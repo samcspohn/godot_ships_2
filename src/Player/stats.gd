@@ -67,5 +67,5 @@ func from_dict(data: Dictionary):
 	sec_citadel_count = data.get("sc", 0)
 	sec_damage = data.get("st", 0)
 	main_damage = data.get("mtd", 0)
-	damage_events = data.get("de", [])
+	damage_events += data.get("de", [])
 	fire_damage = data.get("fd", 0)

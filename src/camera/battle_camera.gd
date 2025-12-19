@@ -1,7 +1,7 @@
 extends Camera3D
 
 class_name BattleCamera
-var ship_speed_modifier: float = 2.0 # Adjust to calibrate ship speed display
+const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 signal processed
 # Ship to follow
 @export var _ship: Ship
@@ -48,6 +48,7 @@ var free_look: bool = false
 var time_to_target: float = 0.0
 var distance_to_target: float = 0.0
 var terrain_hit: bool = false
+var penetration_power: float = 0.0
 var aim_position: Vector3 = Vector3.ZERO
 var max_range_reached: bool = false
 
@@ -170,7 +171,7 @@ func _process(delta):
 	# Calculate ship speed
 	if _ship:
 		var velocity = _ship.linear_velocity
-		ship_speed = velocity.length() * 1.94384 / ship_speed_modifier # Convert m/s to knots
+		ship_speed = velocity.length() * 1.94384 / SHIP_SPEED_MODIFIER # Convert m/s to knots
 
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
@@ -194,6 +195,7 @@ func _process(delta):
 	ui.distance_to_target = distance_to_target
 	ui.time_to_target = time_to_target
 	ui.terrain_hit = terrain_hit
+	ui.penetration_power = penetration_power
 	ui.max_range_reached = max_range_reached
 
 	# self.make_current()
@@ -211,15 +213,16 @@ func _zoom_camera(zoom_amount):
 			set_camera_mode(CameraMode.SNIPER)
 	elif current_mode == CameraMode.SNIPER:
 		# In sniper mode, adjust FOV
-		sniper_view.current_fov = clamp(sniper_view.current_fov + zoom_amount * fov_zoom_speed, min_fov, max_fov)
-		fov = current_fov
+		sniper_view.current_fov = clamp(sniper_view.current_fov + zoom_amount * fov_zoom_speed, sniper_view.min_fov, sniper_view.max_fov)
+		# fov = current_fov
 
 		# Switch back to third-person if zoomed out enough
-		if sniper_view.current_fov >= max_fov:
+		if sniper_view.current_fov >= sniper_view.max_fov:
 			set_camera_mode(CameraMode.THIRD_PERSON)
 	else:
 		# In free look mode, adjust zoom
 		free_look_view.current_zoom = clamp(free_look_view.current_zoom + zoom_amount, free_look_view.min_zoom_distance, free_look_view.max_zoom_distance)
+		
 
 
 func _handle_mouse_motion(event):
@@ -474,23 +477,55 @@ func _calculate_target_info():
 
 	# Extract results
 	var launch_vector = launch_result[0]
-	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
-	
-	if launch_vector != null:
-		terrain_hit = not Gun.sim_can_shoot_over_terrain_static(
-			ship_position,
-			launch_vector,
-			launch_result[1],
-			projectile_drag_coefficient
-			)
-	else:
-		terrain_hit = false
 
 	#max_range_reached = launch_result[2]
 	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
 
 	# Calculate distance
 	distance_to_target = (aim_position - ship_position).length() # Convert to km
+	
+	if launch_vector != null:
+		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+		var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
+			ship_position,
+			launch_vector,
+			launch_result[1],
+			projectile_drag_coefficient,
+			_ship
+			)
+
+		terrain_hit = not can_shoot.can_shoot_over_terrain
+
+		var shell = _ship.artillery_controller.get_shell_params()
+		if shell.type == ShellParams.ShellType.HE:
+			penetration_power = shell.overmatch
+		else:
+			var velocity_at_impact_vec = ProjectilePhysicsWithDrag.calculate_velocity_at_time(
+				launch_vector,
+				launch_result[1],
+				projectile_drag_coefficient
+			)
+			var velocity_at_impact = velocity_at_impact_vec.length()
+			var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
+				shell.mass,
+				velocity_at_impact,
+				shell.caliber)
+			# var raw_pen = 1.0
+			
+			# Calculate impact angle (angle from vertical)
+			var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
+			
+			# Calculate effective penetration against vertical armor
+			# Effective penetration = raw penetration * cos(impact_angle)
+			penetration_power = raw_pen * cos(impact_angle)
+			
+	else:
+		terrain_hit = false
+		penetration_power = 0.0
+		time_to_target = -1.0
+		distance_to_target = -1.0
+
+	
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()

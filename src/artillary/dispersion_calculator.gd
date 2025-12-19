@@ -37,7 +37,7 @@ static func calculate_dispersed_launch(
 
 	var a = ProjectilePhysicsWithDrag.calculate_launch_vector(gun_position, aim_point, speed, drag)
 	var launch_velocity = a[0]
-	# return launch_velocity
+	return launch_velocity
 
 
 	var _dist = gun_position.distance_to(aim_point)

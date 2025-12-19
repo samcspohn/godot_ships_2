@@ -1,11 +1,15 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.2
-const max_spread_bonus = 0.6
+const max_grouping_bonus = 0.4
+const max_spread_bonus = 0.60 # temporary high value for simulating full skill build
 
 var grouping_multiplier: float = 1.0
 var spread_multiplier: float = 1.0
+
+func _init():
+	name = "CQ Expertise"
+	description = "Increases secondary artillery accuracy the longer they fire on a target, up to 30% grouping and 70% spread improvement. Accuracy resets after not firing for a short time."
 
 func _a(ship: Ship):
 	# for sec: SecSubController in ship.secondary_controller.sub_controllers:

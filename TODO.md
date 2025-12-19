@@ -1,9 +1,22 @@
 # Ship Combat Game - TODO
 
+// not weather effects
 - [x] fix close(long?) range aiming too high
 - [ ] incorrect hit effect (explosion on ricochet)
-- [ ] hit ribbons not showing
-
+- [x] hit ribbons not showing
+- [ ] auto lockon
+- [ ] sniper reticle
+- [ ] torpedo aiming indicator
+	- [ ] torpedo arming distance indicator
+	- [ ] torpedo spread indicator
+- [ ] part health system / saturation
+- [ ] concealment
+	- [ ] visual indicator for concealment range
+	- [ ] radio transmitter/reciever system for spotting
+- [ ] ship movement overhaul
+- [ ] ship sound effects
+- [ ] match end handling (victory/defeat screens/stats/back to port)
+- [ ] friendly consumable use visuals
 
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)

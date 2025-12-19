@@ -11,7 +11,7 @@ func apply(ship: Ship):
 		var curr_hp = new_hp
 		var max_hp = ship.health_controller.max_hp
 		var hp_ratio = curr_hp / max_hp
-		const modifier = 0.25
+		const modifier = 0.2
 		bonus = 1.0 - (1.0 - hp_ratio) * modifier
 
 		ship.remove_dynamic_mod(_a)

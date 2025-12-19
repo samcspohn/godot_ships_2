@@ -12,6 +12,7 @@ var camera_controller: BattleCamera
 var time_to_target: float = 0.0 : set = set_time_to_target
 var distance_to_target: float = 0.0 : set = set_distance_to_target
 var terrain_hit: bool = false : set = update_terrain_hit_indicator
+var penetration_power: float = 0.0 : set = set_penetration_power
 var aim_position: Vector3 = Vector3.ZERO : set = set_aim_position
 var max_range_reached: bool = false
 var ship_speed: float = 0.0 : set = set_ship_speed
@@ -20,8 +21,14 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 
 # UI node references - these will be populated from the scene
 @onready var crosshair_container: Control = $MainContainer/CrosshairContainer
-@onready var time_label: Label = $MainContainer/CrosshairContainer/TargetInfo/TimeLabel
-@onready var distance_label: Label = $MainContainer/CrosshairContainer/TargetInfo/DistanceLabel
+@onready var crosshair_center: Control = $MainContainer/CrosshairContainer/CrosshairCenter
+@onready var time_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/TimeLabel
+@onready var distance_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/DistanceLabel
+@onready var penetration_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2/PenetrationLabel
+
+# Sniper reticle control (created programmatically)
+var sniper_reticle: Control = null
+var target_speed_label: Label = null  # Label to show locked target's speed
 
 @onready var fps_label: Label = $MainContainer/TopLeftPanel/FPSLabel
 @onready var camera_angle_label: Label = $MainContainer/TopLeftPanel/CameraAngleLabel
@@ -141,6 +148,8 @@ var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consu
 
 @onready var secondaries_disabled = $MainContainer/SecondariesDisabled
 
+var current_hp: float = 0.0
+
 # Get the keyboard shortcut letter for a given action
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
 	if not InputMap.has_action(action_name):
@@ -216,6 +225,9 @@ func _ready():
 	minimap.position = Vector2(0, 0)  # Position at top-left of the panel
 	bottom_right_panel.add_child(minimap)
 
+	# Setup sniper reticle
+	_setup_sniper_reticle()
+
 	# Hide ship UI templates (they're visible in editor for design purposes)
 	ship_ui_templates.visible = false
 
@@ -227,6 +239,8 @@ func _ready():
 
 func _process(_delta: float) -> void:
 	update_ship_ui()
+	_update_reticle_visibility()
+	# sniper_reticle.queue_redraw()
 
 func update_counters() -> void:
 	var stats = camera_controller._ship.stats
@@ -276,6 +290,8 @@ func _physics_process(_delta):
 	update_secondaries_disabled_indicator()  # Update secondaries disabled indicator
 	update_consumable_ui()
 
+
+
 	# Automatically detect current secondary target from ship's secondary controllers
 	if camera_controller._ship and camera_controller._ship.secondary_controller:
 		var detected_target = camera_controller._ship.secondary_controller.target
@@ -291,10 +307,18 @@ func _physics_process(_delta):
 		if stats.damage_events.size() > 0:
 			process_damage_events(stats.damage_events)
 			update_counters()
-		# 	update_counter(frag_count_label, stats.frags)
-		# update_counter(damage_value_label, stats.total_damage)
+		update_counter(frag_count_label, stats.frags)
+		update_counter(damage_value_label, stats.total_damage)
 		# update_counter(damage_value_label, stats.total_damage)
 		
+	if camera_controller._ship:
+		var hp = camera_controller._ship.health_controller.current_hp
+		if hp != current_hp:
+			var damage_taken = current_hp - hp
+			if damage_taken > 0.0:
+				# Show floating damage indicator
+				create_floating_damage(damage_taken, camera_controller._ship.global_position)
+			current_hp = hp
 	
 	crosshair_container.queue_redraw()
 
@@ -1094,12 +1118,26 @@ func update_gun_reload_bars():
 func set_time_to_target(value: float):
 	time_to_target = value
 	if time_label:
-		time_label.text = "%.1f s" % (value)
+		if value < 0.0:
+			time_label.text = "-- s"
+		else:
+			time_label.text = "%.1f s" % (value)
 
 func set_distance_to_target(value: float):
 	distance_to_target = value
 	if distance_label:
-		distance_label.text = "%.2f m" % value
+		if value < 0.0:
+			distance_label.text = "-- m"
+		else:
+			distance_label.text = "%.2f m" % value
+
+func set_penetration_power(value: float):
+	penetration_power = value
+	if penetration_label:
+		if value > 0.0:
+			penetration_label.text = "%.1f mm" % value
+		else:
+			penetration_label.text = "-- mm"
 
 func set_aim_position(value: Vector3):
 	aim_position = value
@@ -1230,3 +1268,192 @@ func set_secondary_target(target_ship: Ship) -> void:
 func clear_secondary_target() -> void:
 	current_secondary_target = null
 	# Target indicators will be updated in the next frame during update_ship_ui()
+
+# ============================================
+# region Sniper Reticle Functions
+# ============================================
+
+func _setup_sniper_reticle() -> void:
+	# Create a Control node for the sniper reticle
+	sniper_reticle = Control.new()
+	sniper_reticle.name = "SniperReticle"
+	sniper_reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sniper_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sniper_reticle.visible = false  # Start hidden
+	
+	# Add to the main container alongside the crosshair
+	$MainContainer.add_child(sniper_reticle)
+	
+	# Connect the draw signal
+	sniper_reticle.connect("draw", _on_sniper_reticle_draw)
+
+func _update_reticle_visibility() -> void:
+	if not camera_controller:
+		return
+	
+	var is_sniper_mode = camera_controller.current_mode == BattleCamera.CameraMode.SNIPER
+	
+	# Hide the standard crosshair in sniper mode, show in third person and free look
+	if crosshair_center:
+		crosshair_center.visible = not is_sniper_mode
+	
+	# Show the sniper reticle only in sniper mode
+	if sniper_reticle:
+		sniper_reticle.visible = is_sniper_mode
+		if is_sniper_mode:
+			sniper_reticle.queue_redraw()
+
+func _on_sniper_reticle_draw() -> void:
+	if not sniper_reticle or not camera_controller:
+		return
+
+	var viewport_size = get_viewport().get_visible_rect().size
+	var center = viewport_size / 2.0
+
+	var fov_rad = deg_to_rad(camera_controller.fov)
+	
+	# Calculate distance traveled by a target moving at 10 knots during shell flight time
+	var knot_10 = 10.0 * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
+	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
+	var distance_to_target_m = distance_to_target
+	
+	# Sniper reticle colors
+	var reticle_color = Color(1, 1, 1, 0.6)
+	var line_width = 1.5
+	
+	# Long horizontal line (extending across a significant portion of the screen)
+	var horizontal_length = viewport_size.x * 0.9  # 80% of screen width
+	var h_start = Vector2(center.x - horizontal_length / 2.0, center.y)
+	var h_end = Vector2(center.x + horizontal_length / 2.0, center.y)
+	sniper_reticle.draw_line(h_start, h_end, reticle_color, line_width)
+	
+	# Short vertical line at center
+	var vertical_length = 30.0
+	var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
+	var v_end = Vector2(center.x, center.y + vertical_length / 2.0)
+	sniper_reticle.draw_line(v_start, v_end, reticle_color, line_width)
+
+	# Draw tick marks for speeds - as many as will fit on the line
+	if distance_to_target_m > 0 and time_to_target > 0:
+		var tick_color = Color(1, 1, 1, 0.8)
+		
+		# Calculate pixels per radian for FOV conversion
+		var pixels_per_radian = (viewport_size.x / 2.0) / tan(fov_rad / 2.0)
+		
+		# Calculate the maximum horizontal distance from center to line end
+		var max_pixel_offset = horizontal_length / 2.0
+		
+		# Draw ticks for every 10 knots, as many as fit
+		var speed = 10
+		while true:
+			# Calculate distance traveled at this speed during shell flight time
+			var speed_ms = speed * 0.514444 * 1.07  # knots to m/s with empirical correction
+			var lead_distance = speed_ms * time_to_target
+			
+			# Convert world distance to screen pixels using FOV and distance
+			var angular_offset = atan(lead_distance / distance_to_target_m)
+			var pixel_offset = angular_offset * pixels_per_radian
+			
+			# Stop if tick would be beyond the line
+			if pixel_offset > max_pixel_offset:
+				break
+			
+			# Determine tick height based on speed (larger ticks for multiples of 30)
+			var tick_height = 6.0
+			if speed % 30 == 0:
+				tick_height = 10.0
+			elif speed % 10 == 0 and (speed == 10 or speed == 50 or speed % 50 == 0):
+				tick_height = 8.0
+			
+			# Draw tick on the right side (for targets moving left)
+			var tick_x_right = center.x + pixel_offset
+			sniper_reticle.draw_line(
+				Vector2(tick_x_right, center.y - tick_height),
+				Vector2(tick_x_right, center.y + tick_height),
+				tick_color, line_width
+			)
+			
+			# Draw tick on the left side (for targets moving right)
+			var tick_x_left = center.x - pixel_offset
+			sniper_reticle.draw_line(
+				Vector2(tick_x_left, center.y - tick_height),
+				Vector2(tick_x_left, center.y + tick_height),
+				tick_color, line_width
+			)
+			
+			speed += 10
+
+	# Draw locked target speed indicator
+	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
+		var target_velocity = locked_target.linear_velocity.length()
+		var target_speed_knots = target_velocity * 1.94384 / BattleCamera.SHIP_SPEED_MODIFIER
+		
+		# Draw target speed text below the reticle
+		var speed_text = "Target: %.0f kts" % target_speed_knots
+		var font = ThemeDB.fallback_font
+		var font_size = 16
+		var text_size = font.get_string_size(speed_text, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
+		var text_pos = Vector2(center.x - text_size.x / 2.0, center.y - 50)
+		sniper_reticle.draw_string(font, text_pos, speed_text, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, Color(1, 1, 1, 0.9))
+	
+	# Draw 3D world-space projected tick marks in red for comparison
+	# Uses aim_position and camera direction - no dependency on locked target
+	if time_to_target > 0 and distance_to_target_m > 0:
+		var red_tick_color = Color(1, 0.3, 0.3, 0.9)
+		
+		# Use aim position as the reference point
+		var reference_pos = aim_position
+		
+		# Get camera's right vector for horizontal lead direction
+		var camera_right = camera_controller.global_transform.basis.x.normalized()
+		
+		# Calculate the maximum horizontal distance from center to line end
+		var max_pixel_offset = horizontal_length / 2.0
+		
+		# Get reference screen position
+		var reference_screen_pos = camera_controller.unproject_position(reference_pos)
+		
+		# Draw ticks for every 10 knots, as many as fit
+		var speed = 10
+		while true:
+			# Calculate lead distance at this speed after time_to_target
+			var speed_ms = speed * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # Convert display knots to actual m/s
+			var lead_distance_3d = speed_ms * time_to_target
+			
+			# Calculate future position by moving along camera's right axis (perpendicular to view)
+			var future_pos = reference_pos + camera_right * lead_distance_3d
+			
+			# Project to screen space
+			var future_screen_pos = camera_controller.unproject_position(future_pos)
+			
+			# Calculate offset from reference position
+			var screen_offset = abs(future_screen_pos.x - reference_screen_pos.x)
+			
+			# Stop if tick would be beyond the line
+			if screen_offset > max_pixel_offset:
+				break
+			
+			# Determine tick height based on speed
+			var tick_height_3d = 6.0
+			if speed % 30 == 0:
+				tick_height_3d = 15.0
+			elif speed == 10 or speed == 50 or speed % 50 == 0:
+				tick_height_3d = 10.0
+			
+			# Draw red tick on the right side (offset slightly below the white ticks)
+			var tick_x_right = center.x + screen_offset
+			sniper_reticle.draw_line(
+				Vector2(tick_x_right, center.y + 12 - tick_height_3d / 2.0),
+				Vector2(tick_x_right, center.y + 12 + tick_height_3d / 2.0),
+				red_tick_color, line_width
+			)
+			
+			# Draw red tick on the left side
+			var tick_x_left = center.x - screen_offset
+			sniper_reticle.draw_line(
+				Vector2(tick_x_left, center.y + 12 - tick_height_3d / 2.0),
+				Vector2(tick_x_left, center.y + 12 + tick_height_3d / 2.0),
+				red_tick_color, line_width
+			)
+			
+			speed += 10

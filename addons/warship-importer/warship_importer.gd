@@ -26,8 +26,7 @@ func _on_apply_turrets() -> void:
 func process_turret_mounts(node: Node) -> int:
 	var count := 0
 	
-	var children := node.get_children()
-	for child in children:
+	for child in node.get_children():
 		count += process_turret_mounts(child)
 	
 	if not node.name.begins_with("TurretMount_"):
@@ -42,19 +41,15 @@ func process_turret_mounts(node: Node) -> int:
 		printerr("Turret scene not found: ", turret_path)
 		return count
 	
+	for child in node.get_children():
+		if child.scene_file_path == turret_path:
+			return count
+	
 	var turret_scene: PackedScene = load(turret_path)
 	var turret := turret_scene.instantiate()
 	turret.name = node.name.replace("TurretMount_", "")
-	# turret.transform = node.transform
-	
-	var parent := node
-	var idx := node.get_index()
-	# parent.remove_child(node)
 	node.add_child(turret)
-	# parent.move_child(turret, idx)
-	turret.owner = get_scene_root(parent)
-	set_owner_recursive(turret, turret.owner)
-	# node.queue_free()
+	turret.owner = get_scene_root(node)
 	
 	return count + 1
 
@@ -71,8 +66,3 @@ func get_scene_root(node: Node) -> Node:
 	while node.owner != null:
 		node = node.owner
 	return node
-
-func set_owner_recursive(node: Node, owner: Node) -> void:
-	for child in node.get_children():
-		child.owner = owner
-		set_owner_recursive(child, owner)
