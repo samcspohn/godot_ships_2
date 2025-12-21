@@ -176,6 +176,51 @@ func sync_ship_data() -> Dictionary:
 
 	return d
 
+func sync_ship_data2(vs: bool) -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+	
+	writer.put_32(movement_controller.throttle_level)
+	#writer.put_float_array(movement_controller.thrust_vector.to_array())
+	writer.put_float(movement_controller.rudder_input)
+	writer.put_var(linear_velocity)
+	writer.put_var(global_basis)
+	writer.put_var(global_position)
+	writer.put_float(health_controller.current_hp)
+
+	# Consumables data
+	writer.put_var(consumable_manager.to_bytes())
+	
+	# Artillery data
+	writer.put_var(artillery_controller.to_bytes())
+	# Guns data
+	writer.put_32(artillery_controller.guns.size())
+	for g in artillery_controller.guns:
+		writer.put_var(g.to_bytes())
+
+	# Secondary controllers data
+	writer.put_32(secondary_controller.sub_controllers.size())
+	for controller in secondary_controller.sub_controllers:
+		writer.put_var(controller.to_bytes())
+		writer.put_32(controller.guns.size())
+		for g: Gun in controller.guns:
+			writer.put_var(g.to_bytes())
+
+	# Torpedo launcher data
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	if torpedo_launcher != null:
+		writer.put_var(torpedo_launcher.global_basis)
+
+	writer.put_32(multiplayer.get_unique_id())
+
+	# Ship stats data
+	var stats_bytes = stats.to_bytes()
+	writer.put_var(stats_bytes)
+	writer.put_u8(1 if vs else 0)
+
+	pb = writer.get_data_array()
+	return pb
+
 @rpc("any_peer", "reliable")
 func initialized_client():
 	self.initialized = true
@@ -217,6 +262,56 @@ func sync(d: Dictionary):
 	
 	var s = d.stats
 	stats.from_dict(s)
+
+# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+func sync2(b: PackedByteArray):
+	if !self.initialized:
+		return
+	self.visible = true
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	
+	movement_controller.throttle_level = reader.get_32()
+	#movement_controller.thrust_vector = Vector3(reader.get_float_array())
+	movement_controller.rudder_input = reader.get_float()
+	linear_velocity = reader.get_var()
+	global_basis = reader.get_var()
+	global_position = reader.get_var()
+	health_controller.current_hp = reader.get_float()
+
+	# Consumables data
+	var cons_bytes: PackedByteArray = reader.get_var()
+	consumable_manager.from_bytes(cons_bytes) # bytes is broken
+	
+	# Artillery data
+	var art_bytes: PackedByteArray = reader.get_var()
+	artillery_controller.from_bytes(art_bytes)
+	
+	# Guns data
+	var gun_count: int = reader.get_32()
+	for g in artillery_controller.guns:
+		var gun_bytes: PackedByteArray = reader.get_var()
+		g.from_bytes(gun_bytes)
+
+	# Secondary controllers data
+	var sc_count: int = reader.get_32()
+	for controller in secondary_controller.sub_controllers:
+		var sc_bytes: PackedByteArray = reader.get_var()
+		controller.from_bytes(sc_bytes)
+		var sc_gun_count: int = reader.get_32()
+		for g: Gun in controller.guns:
+			var gun_bytes: PackedByteArray = reader.get_var()
+			g.from_bytes(gun_bytes)
+
+	# Torpedo launcher data
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	if torpedo_launcher != null:
+		torpedo_launcher.global_basis = reader.get_var()
+	var p_id: int = reader.get_32()
+	var stats_bytes: PackedByteArray = reader.get_var()
+	stats.from_bytes(stats_bytes)
+	self.visible_to_enemy = reader.get_u8() == 1
+
 
 @rpc("any_peer", "reliable")
 func _hide():

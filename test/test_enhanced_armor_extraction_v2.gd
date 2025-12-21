@@ -3,7 +3,7 @@ extends Node
 ## Test script for the Enhanced Armor Extractor V2
 ## Tests the proper GLTF hierarchy traversal
 
-const EnhancedArmorExtractorV2 = preload("res://enhanced_armor_extractor_v2.gd")
+const EnhancedArmorExtractorV2 = preload("res://src/armor/enhanced_armor_extractor_v2.gd")
 
 func _ready():
 	test_enhanced_armor_extraction_v2()

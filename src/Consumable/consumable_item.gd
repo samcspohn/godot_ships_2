@@ -40,9 +40,32 @@ func to_dict() -> Dictionary:
 		"current_stack": current_stack,
 		"type": type
 	}
+
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	
+	writer.put_32(id)
+	writer.put_float(cooldown_time)
+	writer.put_float(duration)
+	writer.put_32(max_stack)
+	writer.put_32(current_stack)
+	writer.put_32(type)
+	
+	return writer.data_array
+
 func from_dict(data: Dictionary) -> void:
 	id = data.get("id", id)
 	cooldown_time = data.get("cooldown_time", cooldown_time)
 	duration = data.get("duration", duration)
 	max_stack = data.get("max_stack", max_stack)
 	current_stack = data.get("current_stack", current_stack)
+
+func from_bytes(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	id = reader.get_32()
+	cooldown_time = reader.get_float()
+	duration = reader.get_float()
+	max_stack = reader.get_32()
+	current_stack = reader.get_32()
+	type = reader.get_32() as ConsumableType

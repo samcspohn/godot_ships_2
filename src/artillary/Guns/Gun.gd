@@ -53,12 +53,39 @@ func to_dict() -> Dictionary:
 		"rl": reload
 	}
 
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	
+	writer.put_float(rotation.y)
+
+	writer.put_float(barrel.rotation.x)
+	
+	writer.put_u8(1 if can_fire else 0)
+	writer.put_u8(1 if _valid_target else 0)
+	
+	writer.put_float(reload)
+	
+	return writer.get_data_array()
+
 func from_dict(d: Dictionary) -> void:
 	basis = d.r
 	barrel.basis = d.e
 	can_fire = d.c
 	_valid_target = d.v
 	reload = d.rl
+
+func from_bytes(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	
+	rotation.y = reader.get_float()
+	
+	barrel.rotation.x = reader.get_float()
+	
+	can_fire = reader.get_u8() == 1
+	_valid_target = reader.get_u8() == 1
+	
+	reload = reader.get_float()
 
 func get_params() -> GunParams:
 	return controller.get_params()

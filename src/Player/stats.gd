@@ -50,6 +50,46 @@ func to_dict() -> Dictionary:
 		"fd": fire_damage
 	}
 
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	
+	writer.put_float(total_damage)
+	writer.put_32(penetration_count)
+	writer.put_32(overpen_count)
+	writer.put_32(shatter_count)
+	writer.put_32(ricochet_count)
+	writer.put_32(citadel_count)
+	
+	writer.put_32(secondary_count)
+	writer.put_32(frags)
+	writer.put_32(main_hits)
+	
+	writer.put_32(sec_penetration_count)
+	writer.put_32(sec_overpen_count)
+	writer.put_32(sec_shatter_count)
+	writer.put_32(sec_ricochet_count)
+	writer.put_32(sec_citadel_count)
+	
+	writer.put_float(sec_damage)
+	writer.put_float(main_damage)
+	
+	# Damage events
+	writer.put_32(damage_events.size())
+	for event in damage_events:
+		# var event_dict = event
+		# var event_bytes = PackedByteArray()
+		# var event_writer = StreamPeerBuffer.new()
+		# event_writer.put_var(event_dict)
+		# event_bytes = event_writer.get_data_array()
+		# writer.put_32(event_bytes.size())
+		# writer.put_data(event_bytes)
+		writer.put_var(event)
+	damage_events.clear()
+	
+	writer.put_float(fire_damage)
+	
+	return writer.get_data_array()
+
 func from_dict(data: Dictionary):
 	total_damage = data.get("td", 0)
 	penetration_count = data.get("p", 0)
@@ -69,3 +109,37 @@ func from_dict(data: Dictionary):
 	main_damage = data.get("mtd", 0)
 	damage_events += data.get("de", [])
 	fire_damage = data.get("fd", 0)
+
+func from_bytes(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	total_damage = reader.get_float()
+	penetration_count = reader.get_32() # these could be u16 to save bandwidth
+	overpen_count = reader.get_32()
+	shatter_count = reader.get_32()
+	ricochet_count = reader.get_32()
+	citadel_count = reader.get_32()
+
+	secondary_count = reader.get_32()
+	frags = reader.get_32()
+	main_hits = reader.get_32()
+
+	sec_penetration_count = reader.get_32()
+	sec_overpen_count = reader.get_32()
+	sec_shatter_count = reader.get_32()
+	sec_ricochet_count = reader.get_32()
+	sec_citadel_count = reader.get_32()
+	sec_damage = reader.get_float()
+	main_damage = reader.get_float()
+	# Damage events
+	var de_size = reader.get_32()
+	for i in range(de_size):
+		var event_dict: Dictionary = reader.get_var()
+		damage_events.append(event_dict)
+		# var event_size = reader.get_32()
+		# var event_bytes = reader.get_data(event_size)
+		# var event_reader = StreamPeerBuffer.new()
+		# event_reader.data_array = event_bytes
+		# var event_dict = event_reader.get_var()
+		# damage_events.append(event_dict)
+	fire_damage = reader.get_float()

@@ -402,6 +402,31 @@ func find_all_guns(node: Node) -> Array:
 func init_guns(gun_paths):
 	TcpThreadPool.initialize_guns(gun_paths)
 
+
+
+@rpc("authority", "unreliable_ordered", "call_remote", 1)
+func sync_game_state(bytes: PackedByteArray):
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = bytes
+
+	while reader.get_available_bytes() > 0:
+		# var name_length = reader.get_32()
+		# var name_bytes: PackedByteArray = reader.get_data(name_length)
+		# var player_name = name_bytes.get_string_from_utf8()
+		var player_name = reader.get_var()
+		var ship_data = reader.get_var()
+		if not players.has(player_name):
+			continue
+		var ship: Ship = players[player_name][0]
+		if not is_instance_valid(ship):
+			continue
+		if ship_data == null:
+			ship._hide()
+			continue
+		else:
+			ship.sync2(ship_data)
+
+
 # var c = 0
 func _physics_process(_delta: float) -> void:
 	if !multiplayer.is_server():
@@ -455,20 +480,84 @@ func _physics_process(_delta: float) -> void:
 				if collision.is_empty(): # can see each other no obstacles (add concealment)
 					p.visible_to_enemy = true
 					p2.visible_to_enemy = true
-		
-	for p_name in players: # for every player, synchronize self with others
+	
+	
+	# TODO: accumulate all sync data first, then send to minimize rpc calls
+	var team_0_writer = StreamPeerBuffer.new()
+	var team_1_writer = StreamPeerBuffer.new()
+	# var teams = [[], []] # team_id -> [ships]
+	
+	for p_name: String in players: 
+		var p: Ship = players[p_name][0]
+		var team_id = p.team.team_id
+		var d = p.sync_ship_data2(p.visible_to_enemy)
+		if team_id == 0:
+			team_0_writer.put_var(p_name)
+			# team_0_writer.put_32(p_name.length())
+			# team_0_writer.put_data(p_name.to_utf8_buffer())
+			team_0_writer.put_var(d)
+			team_1_writer.put_var(p_name)
+			if p.visible_to_enemy:
+				# team_1_writer.put_32(p_name.length())
+				# team_1_writer.put_data(p_name.to_utf8_buffer())
+				team_1_writer.put_var(d)
+			else:
+				# team_1_writer.put_32(p_name.length())
+				# team_1_writer.put_data(p_name.to_utf8_buffer())
+				team_1_writer.put_var(null)
+		else:
+			team_1_writer.put_var(p_name)
+			# team_1_writer.put_32(p_name.length())
+			# team_1_writer.put_data(p_name.to_utf8_buffer())
+			team_1_writer.put_var(d)
+			team_0_writer.put_var(p_name)
+			if p.visible_to_enemy:
+				# team_0_writer.put_32(p_name.length())
+				# team_0_writer.put_data(p_name.to_utf8_buffer())
+				team_0_writer.put_var(d)
+			else:
+				# team_0_writer.put_32(p_name.length())
+				# team_0_writer.put_data(p_name.to_utf8_buffer())
+				team_0_writer.put_var(null)
+
+	# Send all team 0 data to team 0 players
+	var team_0_bytes = team_0_writer.data_array
+	for p_name in players:
 		var p: Ship = players[p_name][0]
 		var _p_id = players[p_name][2]
-		var d = p.sync_ship_data()
-		d['vs'] = p.visible_to_enemy
-		for p_name2 in players: # every other player
-			var p2: Ship = players[p_name2][0]
-			var pid2 = players[p_name2][2]
-			if not p2.team.is_bot: # player to sync with is not bot
-				if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
-					p.sync.rpc_id(pid2, d) # sync self to other player
-				else:
-					p._hide.rpc_id(pid2) # hide from other player
+		if p.team.team_id == 0 and not p.team.is_bot:
+			sync_game_state.rpc_id(_p_id, team_0_bytes)
+
+	# Send all team 1 data to team 1 players
+	var team_1_bytes = team_1_writer.data_array
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		var _p_id = players[p_name][2]
+		if p.team.team_id == 1 and not p.team.is_bot:
+			sync_game_state.rpc_id(_p_id, team_1_bytes)
+		
+			
+			
+
+
+	# for p_name in players: # for every player, synchronize self with others - TODO: sync all to self instead
+	# 	var p: Ship = players[p_name][0]
+	# 	var _p_id = players[p_name][2]
+	# 	# var d = p.sync_ship_data()
+	# 	# d['vs'] = p.visible_to_enemy
+	# 	var d = p.sync_ship_data2(p.visible_to_enemy)
+	# 	# writer.data_array = d
+	# 	# writer.put_u8(1 if p.visible_to_enemy else 0)
+	# 	# d = writer.get_data_array()		
+	# 	for p_name2 in players: # every other player
+	# 		var p2: Ship = players[p_name2][0]
+	# 		var pid2 = players[p_name2][2]
+	# 		if not p2.team.is_bot: # player to sync with is not bot
+	# 			if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
+	# 				# p.sync.rpc_id(pid2, d) # sync self to other player
+	# 				p.sync2.rpc_id(pid2, d)
+	# 			else:
+	# 				p._hide.rpc_id(pid2) # hide from other player
 				
 	team_0_valid_targets = _get_valid_targets(0)
 	team_1_valid_targets = _get_valid_targets(1)

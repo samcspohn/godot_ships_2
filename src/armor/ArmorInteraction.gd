@@ -318,7 +318,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# var events: Array[String] = []
 	events.append("Processing Shell: %s %s " % [params.caliber, params.type])
 	var ship_scene_path := ship.scene_file_path
-	events.append("Ship: %s pos=(%.1f, %.1f, %.1f), rot=(%.1f, %.1f, %.1f), scene=%s" % [
+	events.append("Ship: %s pos=(%f, %f, %f), rot=(%.1f, %.1f, %.1f), scene=%s" % [
 		ship.name, 
 		ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z,
 		rad_to_deg(ship.global_transform.basis.get_euler().x), 
@@ -362,10 +362,10 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		shell.pen = calculate_de_marre_penetration(params.mass, speed, params.caliber)
 		shell.position = hit_position
 		
-		events.append("Shell: speed=%.1f vel=(%.1f, %.1f, %.1f) m/s, fuze=%.3f s, pos=(%.1f, %.1f, %.1f), pen: %.1f" % [
+		events.append("Shell: speed=%f vel=(%f, %f, %f) m/s, fuze=%.3f s, pos=(%f, %f, %f), pen: %.1f" % [
 			shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
 			shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
-		
+		var offset = Vector3.ZERO
 		# Overmatch Check
 		if armor_mm < params.overmatch:
 			if hit_node.is_citadel:
@@ -386,7 +386,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			result = ArmorResult.RICOCHET
 			shell.velocity = calculate_ricochet_velocity(shell.velocity, hit_normal, impact_angle)
 			# shell.position += shell.velocity.normalized() * 0.001  # Small nudge forward
-			shell.position += hit_normal * 0.001  # Nudge out of armor
+			offset += hit_normal * 0.001  # Nudge out of armor
 			
 			if shell.fuze < 0.0 and impact_angle > deg_to_rad(70.0):
 				shell.fuze = 0.0
@@ -399,7 +399,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 				result = ArmorResult.PARTIAL_PEN
 				shell.velocity *= 0.1
 				shell.integrity *= 0.5
-				shell.position += shell.velocity.normalized() * 0.001  # Small nudge forward
+				offset += shell.velocity.normalized() * 0.001  # Small nudge forward
 			else:
 				result = ArmorResult.SHATTER
 				shell.velocity = Vector3.ZERO
@@ -419,7 +419,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			
 			shell.velocity = exit_dir * exit_speed
 			shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity)
-			shell.position += shell.velocity.normalized() * 0.001  # Small nudge forward
+			offset += shell.velocity.normalized() * 0.001  # Small nudge forward
 			
 			if shell.fuze < 0.0 and e_armor > params.arming_threshold:
 				shell.fuze = 0.0
@@ -439,7 +439,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		# 	break
 		
 		# Find next armor layer
-		armor_ray.from = shell.position + shell.velocity.normalized() * 0.001
+		armor_ray.from = shell.position + offset
 		shell.calc_end_position()
 		armor_ray.to = shell.end_position
 		
@@ -460,7 +460,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		if shell.fuze >= 0.0:
 			shell.fuze += fuze_elapsed
 	
-	events.append("Shell: speed=%.1f vel=(%.1f, %.1f, %.1f) m/s, fuze=%.3f s, pos=(%.1f, %.1f, %.1f), pen: %.1f" % [
+	events.append("Shell: speed=%.1f vel=(%f, %f, %f) m/s, fuze=%.3f s, pos=(%f, %f, %f), pen: %.1f" % [
 		shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
 		shell.fuze, shell.end_position.x, shell.end_position.y, shell.end_position.z, shell.pen])
 	
@@ -476,6 +476,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 	
 	if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
+	# if true:
 		for e in events:
 			print(e)
 	
@@ -562,35 +563,35 @@ func get_next_hit(ray_query: PhysicsRayQueryParameters3D,
 	var result := space_state.intersect_ray(ray_query)
 	if result.is_empty():
 		return {}
-	var armor: ArmorPart = result.get('collider') as ArmorPart
-	if armor != null:
-		return {
-			'armor': armor, 
-			'position': result.get('position'), 
-			'normal': result.get('normal'), 
-			'face_index': result.get('face_index')
-		}
-	# var closest_result := result
-	# var exclude: Array[RID] = []
+	# var armor: ArmorPart = result.get('collider') as ArmorPart
+	# if armor != null:
+	# 	return {
+	# 		'armor': armor, 
+	# 		'position': result.get('position'), 
+	# 		'normal': result.get('normal'), 
+	# 		'face_index': result.get('face_index')
+	# 	}
+	var closest_result := result
+	var exclude: Array[RID] = []
 	
-	# while not result.is_empty():
-	# 	exclude.append(result.get('rid'))
-	# 	ray_query.exclude = exclude
-	# 	result = space_state.intersect_ray(ray_query)
-	# 	if not result.is_empty():
-	# 		var new_dist: float = (result.get('position') - ray_query.from).length()
-	# 		var old_dist: float = (closest_result.get('position') - ray_query.from).length()
-	# 		if new_dist < old_dist:
-	# 			closest_result = result
+	while not result.is_empty():
+		exclude.append(result.get('rid'))
+		ray_query.exclude = exclude
+		result = space_state.intersect_ray(ray_query)
+		if not result.is_empty():
+			var new_dist: float = (result.get('position') - ray_query.from).length()
+			var old_dist: float = (closest_result.get('position') - ray_query.from).length()
+			if new_dist < old_dist:
+				closest_result = result
 	
-	# 	var armor: ArmorPart = closest_result.get('collider') as ArmorPart
-	# 	if armor != null:
-	# 		return {
-	# 			'armor': armor, 
-	# 			'position': closest_result.get('position'), 
-	# 			'normal': closest_result.get('normal'), 
-	# 			'face_index': closest_result.get('face_index')
-	# 		}
+		var armor: ArmorPart = closest_result.get('collider') as ArmorPart
+		if armor != null:
+			return {
+				'armor': armor, 
+				'position': closest_result.get('position'), 
+				'normal': closest_result.get('normal'), 
+				'face_index': closest_result.get('face_index')
+			}
 	return {}
 
 

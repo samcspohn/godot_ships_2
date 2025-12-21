@@ -14,8 +14,15 @@ func to_dict() -> Dictionary:
 	return {
 		"params": params.dynamic_mod.to_dict(),
 	}
+
+func to_bytes() -> PackedByteArray:
+	return params.dynamic_mod.to_bytes()
+
 func from_dict(d: Dictionary) -> void:
 	params.dynamic_mod.from_dict(d.get("params", {}))
+
+func from_bytes(b: PackedByteArray) -> void:
+	params.dynamic_mod.from_bytes(b)
 
 func _ready() -> void:
 	# Find all guns in the ship

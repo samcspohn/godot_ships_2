@@ -20,8 +20,16 @@ func init(_ship: Ship) -> void:
 func to_dict() -> Dictionary:
 	return p.dynamic_mod.to_dict()
 
+func to_bytes() -> PackedByteArray:
+	return p.dynamic_mod.to_bytes()
+
 func from_dict(d: Dictionary) -> void:
 	p.dynamic_mod.from_dict(d)
+
+func from_bytes(b: PackedByteArray) -> void:
+	# var reader = StreamPeerBuffer.new()
+	# reader.data_array = b
+	p.dynamic_mod.from_bytes(b)
 
 func get_params() -> GunParams:
 	return p.dynamic_mod as GunParams

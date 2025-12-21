@@ -54,6 +54,29 @@ func to_dict() -> Dictionary:
 		"base_spread": base_spread
 	}
 
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	
+	writer.put_float(reload_time)
+	writer.put_float(traverse_speed)
+	writer.put_float(elevation_speed)
+	writer.put_float(_range)
+	
+	writer.put_float(shell1.speed)
+	writer.put_float(shell1.drag)
+	writer.put_float(shell1.damage)
+	
+	writer.put_float(shell2.speed)
+	writer.put_float(shell2.drag)
+	writer.put_float(shell2.damage)
+	
+	writer.put_float(h_grouping)
+	writer.put_float(v_grouping)
+	writer.put_float(base_spread)
+	
+	return writer.get_data_array()
+	
+
 func from_dict(d: Dictionary) -> void:
 	reload_time = d.get("reload_time", 1)
 	traverse_speed = d.get("traverse_speed", deg_to_rad(40))
@@ -72,6 +95,23 @@ func from_dict(d: Dictionary) -> void:
 	h_grouping = d.get("h_grouping", 1.8)
 	v_grouping = d.get("v_grouping", 1.8)
 	base_spread = d.get("base_spread", 0.01)
+
+func from_bytes(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	reload_time = reader.get_float()
+	traverse_speed = reader.get_float()
+	elevation_speed = reader.get_float()
+	_range = reader.get_float()
+	shell1.speed = reader.get_float()
+	shell1.drag = reader.get_float()
+	shell1.damage = reader.get_float()
+	shell2.speed = reader.get_float()
+	shell2.drag = reader.get_float()
+	shell2.damage = reader.get_float()
+	h_grouping = reader.get_float()
+	v_grouping = reader.get_float()
+	base_spread = reader.get_float()
 
 
 func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell_index: int, target_mod: TargetMod) -> Vector3:

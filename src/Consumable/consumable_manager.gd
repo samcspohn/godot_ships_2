@@ -49,6 +49,37 @@ func to_dict() -> Dictionary:
 		"active_effects": active_effects
 	}
 
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	
+	# # Equipped consumables
+	# writer.put_32(equipped_consumables.size())
+	# for item in equipped_consumables:
+	# 	if item:
+	# 		var item_bytes = item.to_bytes()
+	# 		writer.put_32(item_bytes.size())
+	# 		writer.put_data(item_bytes)
+	# 	else:
+	# 		writer.put_32(0)  # No item
+	
+	# # Cooldowns
+	# writer.put_32(cooldowns.size())
+	# for item_id in cooldowns.keys():
+	# 	writer.put_32(item_id)
+	# 	writer.put_float(cooldowns[item_id])
+	
+	# # Active effects
+	# writer.put_32(active_effects.size())
+	# for item_id in active_effects.keys():
+	# 	writer.put_32(item_id)
+	# 	writer.put_float(active_effects[item_id])
+
+	# DEBUG: Use var serialization for simplicity
+	# Equipped consumables
+	writer.put_var(self.to_dict())
+	
+	return writer.data_array
+
 func from_dict(data: Dictionary) -> void:
 	var equipped_list = data.get("equipped_consumables", [])
 	for i in range(equipped_list.size()):
@@ -56,6 +87,34 @@ func from_dict(data: Dictionary) -> void:
 			equipped_consumables[i].from_dict(equipped_list[i])
 	cooldowns = data.get("cooldowns", {})
 	active_effects = data.get("active_effects", {})
+
+func from_bytes(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	var data: Dictionary = reader.get_var()
+	from_dict(data)
+	# # Equipped consumables
+	# var eq_size = reader.get_32()
+	# for i in range(eq_size):
+	# 	var item_size = reader.get_32()
+	# 	if item_size > 0:
+	# 		var item_bytes = reader.get_data(item_size)
+	# 		if i < equipped_consumables.size():
+	# 			equipped_consumables[i].from_bytes(item_bytes)
+	# # Cooldowns
+	# var cd_size = reader.get_32()
+	# cooldowns.clear()
+	# for i in range(cd_size):
+	# 	var item_id = reader.get_32()
+	# 	var time = reader.get_float()
+	# 	cooldowns[item_id] = time
+	# # Active effects
+	# var ae_size = reader.get_32()
+	# active_effects.clear()
+	# for i in range(ae_size):
+	# 	var item_id = reader.get_32()
+	# 	var duration = reader.get_float()
+	# 	active_effects[item_id] = duration
 
 func _process(delta):
 	if !(_Utils.authority()):

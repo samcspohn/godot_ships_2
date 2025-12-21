@@ -2,8 +2,8 @@ extends Node
 
 ## Complete demonstration of the enhanced armor extraction and analysis system
 
-const EnhancedArmorExtractorV2 = preload("res://enhanced_armor_extractor_v2.gd")
-const ArmorSystemV2 = preload("res://armor_system_v2.gd")
+const EnhancedArmorExtractorV2 = preload("res://src/armor/enhanced_armor_extractor_v2.gd")
+const ArmorSystemV2 = preload("res://src/armor/armor_system_v2.gd")
 
 func _ready():
 	demonstrate_complete_system()
