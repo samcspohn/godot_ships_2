@@ -249,6 +249,8 @@ func _process(_delta: float) -> void:
 
 func update_counters() -> void:
 	var stats = camera_controller._ship.stats
+	if not stats:
+		return
 
 	update_counter(damage_value_label, stats.total_damage)
 	update_counter(main_count_label, stats.main_hits)

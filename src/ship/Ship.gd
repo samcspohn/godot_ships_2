@@ -1,5 +1,5 @@
 extends RigidBody3D
-class_name Ship
+class_name _Ship
 
 var initialized: bool = false
 # Child components
@@ -98,10 +98,10 @@ func _ready() -> void:
 	# health_controller = $Modules/HPManager
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	# consumable_manager = $Modules/ConsumableManager
-	consumable_manager.ship = self
-	# fire_manager = $Modules/FireManager
-	fire_manager._ship = self
-	skills._ship = self
+	#consumable_manager.ship = self
+	## fire_manager = $Modules/FireManager
+	#fire_manager._ship = self
+	#skills._ship = self
 	stats = Stats.new()
 	$Modules.add_child(stats)
 
@@ -210,7 +210,7 @@ func sync_ship_transform() -> PackedByteArray:
 	writer.put_float(rotation.y)
 	writer.put_float(global_position.x)
 	writer.put_float(global_position.z)
-	
+
 	pb = writer.get_data_array()
 	return pb
 

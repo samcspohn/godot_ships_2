@@ -15,7 +15,7 @@ var manager: FireManager = null
 var _params: FireParams:
 	get:
 		return manager.params.params() as FireParams
-	set(value): 
+	set(value):
 		pass
 var _owner: Ship = null
 
@@ -32,10 +32,11 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			return true
 	return false
 
-func _ready():
-
+func init():
 	_ship = get_parent().get_parent() as Ship
-	await _ship.ready
+	# Only await if ship is not already ready
+	if not _ship.is_node_ready():
+		await _ship.ready
 	hp = _ship.health_controller
 	var s = _ship.get_node("Hull").get_aabb().size.length() / 10.0
 	fire.scale = Vector3(s,s,s)
@@ -46,6 +47,10 @@ func _ready():
 	(smoke.process_material as ParticleProcessMaterial).scale_max = s * 3
 	fire.emitting = false
 	smoke.emitting = false
+
+func _ready():
+	init.call_deferred()
+
 
 func _physics_process(delta: float) -> void:
 	if _Utils.authority():
@@ -72,7 +77,7 @@ func damage(delta):
 		_owner.stats.total_damage += dmg_sunk[0]
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
-	
+
 @rpc("any_peer")
 func _sync(l):
 	lifetime = l
@@ -81,9 +86,8 @@ func _sync(l):
 func _sync_activate():
 	fire.emitting = true
 	smoke.emitting = true
-	
+
 @rpc("any_peer", "reliable")
 func _sync_deactivate():
 	fire.emitting = false
 	smoke.emitting = false
-	

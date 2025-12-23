@@ -6,7 +6,7 @@ func _a(ship: Ship):
 
 func apply(ship: Ship):
 	_ship = ship
-	ship.health_controller.hp_changed.connect(func (new_hp: float) -> void:
+	ship.get_health_controller().hp_changed.connect(func (new_hp: float) -> void:
 
 		var curr_hp = new_hp
 		var max_hp = ship.health_controller.max_hp
@@ -17,4 +17,4 @@ func apply(ship: Ship):
 		ship.remove_dynamic_mod(_a)
 		ship.add_dynamic_mod(_a)
 	)
-	ship.dynamic_mods.append(_a)
+	ship.add_dynamic_mod(_a)

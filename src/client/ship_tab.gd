@@ -51,6 +51,9 @@ func _on_ship_button_pressed(ship_path):
 	if selected_ship != null:
 		selected_ship.queue_free()
 	selected_ship = load(ship_path).instantiate()
+	if not selected_ship:
+		printerr("selected ship %s" % [ship_path])
+		return
 	GameSettings.selected_ship = ship_path
 	if dock_node:
 		dock_node.add_child(selected_ship)

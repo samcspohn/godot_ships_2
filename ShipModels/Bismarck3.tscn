@@ -1,7 +1,6 @@
-[gd_scene load_steps=21 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=20 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://ShipModels/bismark_low_poly2.glb" id="1_3klas"]
-[ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://modules.tscn" id="2_5bir6"]
 [ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/Ships/Battleship/BB_gun1/BB_gun1.tres" id="4_rb316"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/sec_sub_controller.gd" id="5_5tc2e"]
@@ -26,10 +25,12 @@ margin = 0.0
 size = Vector3(36, 30.216957, 251.893)
 
 [node name="bismark_low_poly2" instance=ExtResource("1_3klas")]
+initialized = true
+ship_model_glb_path = "uid://btam5g21aiiqg"
+collision_layer = 4
+collision_mask = 5
 mass = 50300000.0
 physics_material_override = SubResource("PhysicsMaterial_4pvtd")
-script = ExtResource("2_4pvtd")
-ship_model_glb_path = "uid://btam5g21aiiqg"
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_5bir6")]
 
@@ -106,60 +107,72 @@ max_rotation_angle = 5.613594276363541
 min_rotation_angle = 0.5503835289087338
 max_rotation_angle = 5.695734908169539
 
-[node name="GER_150mm_2b_rf" parent="TurretMount_GER_150mm_2b_rf" index="0" instance=ExtResource("17_jx7aj")]
+[node name="GER_150mm_2b_rf" parent="TurretMount_GER_150mm_2b_rf" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("17_jx7aj")]
 min_rotation_angle = 3.416402039123504
 max_rotation_angle = 6.2768461891615575
+barrel = NodePath("150mmTurret/Cylinder")
 
-[node name="GER_150mm_2b_rf_001" parent="TurretMount_GER_150mm_2b_rf_001" index="0" instance=ExtResource("17_jx7aj")]
+[node name="GER_150mm_2b_rf_001" parent="TurretMount_GER_150mm_2b_rf_001" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("17_jx7aj")]
 min_rotation_angle = 0.0018859508715554
 max_rotation_angle = 2.9345538463017977
+barrel = NodePath("150mmTurret/Cylinder")
 
-[node name="GER_150mm_2b" parent="TurretMount_GER_150mm_2b" index="0" instance=ExtResource("18_hcq8l")]
+[node name="GER_150mm_2b" parent="TurretMount_GER_150mm_2b" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("18_hcq8l")]
 min_rotation_angle = 3.7312221275363617
 max_rotation_angle = 0.01012819121078401
+barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_001" parent="TurretMount_GER_150mm_2b_001" index="0" instance=ExtResource("18_hcq8l")]
+[node name="GER_150mm_2b_001" parent="TurretMount_GER_150mm_2b_001" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("18_hcq8l")]
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 6.1086523819801535
+barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_002" parent="TurretMount_GER_150mm_2b_002" index="0" instance=ExtResource("18_hcq8l")]
+[node name="GER_150mm_2b_002" parent="TurretMount_GER_150mm_2b_002" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("18_hcq8l")]
 min_rotation_angle = 0.2792526803190927
+barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" instance=ExtResource("18_hcq8l")]
+[node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("18_hcq8l")]
 min_rotation_angle = 0.00437897004486487
 max_rotation_angle = 2.6190116947630884
+barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 3.422434449473945
 max_rotation_angle = 0.004996498094882
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 3.36186195118043
 max_rotation_angle = 6.15304730352228
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_002" parent="TurretMount_GER_105mm_2b_002" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_002" parent="TurretMount_GER_105mm_2b_002" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 3.2585142140268153
 max_rotation_angle = 6.0817159007645785
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_003" parent="TurretMount_GER_105mm_2b_003" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_003" parent="TurretMount_GER_105mm_2b_003" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 3.1665003080596836
 max_rotation_angle = 5.973077247203072
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.32652345383915105
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.20248286862908405
 max_rotation_angle = 3.036455550222673
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_006" parent="TurretMount_GER_105mm_2b_006" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_006" parent="TurretMount_GER_105mm_2b_006" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.09748192736781648
 max_rotation_angle = 2.9638556402871927
+barrel = NodePath("105mmTurret/Barrels")
 
-[node name="GER_105mm_2b_007" parent="TurretMount_GER_105mm_2b_007" index="0" instance=ExtResource("19_1k3lc")]
+[node name="GER_105mm_2b_007" parent="TurretMount_GER_105mm_2b_007" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.00398590263774245
 max_rotation_angle = 2.8422316975614645
+barrel = NodePath("105mmTurret/Barrels")
 
 [editable path="Modules"]
-[editable path="TurretMount_GER_380mm_2b/GER_380mm_2b"]
-[editable path="TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"]

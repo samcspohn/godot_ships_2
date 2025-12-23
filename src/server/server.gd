@@ -126,7 +126,7 @@ func spawn_player(id, player_name):
 	var ship = team_data["ship"]
 	var is_bot = team_data.get("is_bot", false)
 	var player: Ship = load(ship).instantiate()
-	player.peer_id = id
+	player.peer_id = int(id)
 	#print(player_name)
 	player.name = player_name
 	player._enable_guns()
@@ -150,7 +150,7 @@ func spawn_player(id, player_name):
 	team_.is_bot = is_bot
 	print("server: Assigning team ID ", team_id, " team.team_id ", team_.team_id, " to player ID ", id, " (is_bot=", is_bot, ")")
 	player.get_node("Modules").add_child(team_)
-	player.team = team_
+	player.set_team(team_)
 
 
 	# If it's a bot, add bot AI controller instead of player controller
@@ -510,12 +510,12 @@ func _physics_process(_delta: float) -> void:
 				if collision.is_empty(): # can see each other no obstacles (add concealment)
 					p.visible_to_enemy = true
 					p2.visible_to_enemy = true
-			
+
 	for p_name in players:
 		var p: Ship = players[p_name][0]
 		if visible_toggled[p.name] == p.visible_to_enemy:
 			visible_toggled.erase(p.name)
-			
+
 
 
 
@@ -604,8 +604,8 @@ func _physics_process(_delta: float) -> void:
 			var team_0_bytes = writer1.data_array
 			if not team_0_bytes.is_empty():
 				sync_game_state.rpc_id(_p_id, team_0_bytes)
-					
-	
+
+
 	# c += 1
 	# Sync individual player data
 	for p_name in players:

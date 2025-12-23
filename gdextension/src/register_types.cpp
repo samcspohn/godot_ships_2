@@ -6,6 +6,8 @@
 
 // Include your custom classes here
 #include "example_class.h"
+#include "ship.h"
+#include "gun.h"
 
 using namespace godot;
 
@@ -16,6 +18,10 @@ void initialize_ships_module(ModuleInitializationLevel p_level) {
 
     // Register your classes here
     ClassDB::register_class<ExampleClass>();
+    ClassDB::register_class<Ship>();
+    ClassDB::register_class<Gun>();
+    ClassDB::register_class<SimShell>();
+    ClassDB::register_class<ShootOver>();
 }
 
 void uninitialize_ships_module(ModuleInitializationLevel p_level) {

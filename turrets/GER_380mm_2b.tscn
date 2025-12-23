@@ -1,8 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://bpyx8m6objcfv"]
+[gd_scene load_steps=2 format=3 uid="uid://bpyx8m6objcfv"]
 
 [ext_resource type="PackedScene" uid="uid://r0fpybnysu8t" path="res://turrets/glb/GER_380mm_2b.glb" id="1_jgr4h"]
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_dgeog"]
 
-[node name="GER_380mm_2b" instance=ExtResource("1_jgr4h")]
-script = ExtResource("2_dgeog")
+[node name="GER_380mm_2b" node_paths=PackedStringArray("barrel") instance=ExtResource("1_jgr4h")]
 ship_model_glb_path = "uid://r0fpybnysu8t"
+barrel = NodePath("380mmTurret/Guns_001")

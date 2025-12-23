@@ -66,19 +66,20 @@ func get_upgrade(path: String) -> Upgrade:
 func apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
 	var upgrade = get_upgrade(upgrade_path)
 	if upgrade:
-		if ship.upgrades.upgrades[slot_index] != null:
+		#if ship.upgrades.upgrades[slot_index] != null:
+		if ship.get_upgrades().upgrades[slot_index] != null:
 			remove_upgrade_from_ship(ship, slot_index)
-		ship.upgrades.add_upgrade(slot_index, upgrade)
+		ship.get_upgrades().add_upgrade(slot_index, upgrade)
 		upgrade.apply(ship)
 		return true
 	return false
 
 # Remove an upgrade from a ship
 func remove_upgrade_from_ship(ship: Ship, slot_index: int):
-	var upgrade = ship.upgrades.get_upgrade(slot_index)
+	var upgrade = ship.get_upgrades().get_upgrade(slot_index)
 	if upgrade:
 		upgrade.remove(ship)
-		ship.upgrades.remove_upgrade(slot_index)
+		ship.get_upgrades().remove_upgrade(slot_index)
 		return true
 	return false
 

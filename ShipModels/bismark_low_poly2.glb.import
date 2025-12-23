@@ -13,7 +13,7 @@ dest_files=["res://.godot/imported/bismark_low_poly2.glb-44000a53dd28f1bbe5cff2c
 
 [params]
 
-nodes/root_type="RigidBody3D"
+nodes/root_type="Ship"
 nodes/root_name="Ship"
 nodes/root_script=null
 nodes/apply_root_scale=true

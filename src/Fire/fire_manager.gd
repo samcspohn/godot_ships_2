@@ -21,13 +21,16 @@ var _ship: Ship
 # 	# _params.init(params)
 # 	params.reset_static_mod()
 
-func _ready() -> void:
-	await get_parent().get_parent().ready
+func init():
 	params.init(_ship)
+
+func _ready() -> void:
+	init.call_deferred()
 	# _params = params.duplicate(true)
 	# _params.init(params)
 	for f in fires:
 		f.manager = self
+	
 	
 	# _ship.reset_mods.connect(params.reset)
 	# _ship.reset_dynamic_mods.connect(params.reset_dynamic_mod)

@@ -1,12 +1,14 @@
-[gd_scene load_steps=4 format=3 uid="uid://31jgnxcyvi22"]
+[gd_scene load_steps=3 format=3 uid="uid://31jgnxcyvi22"]
 
 [ext_resource type="PackedScene" uid="uid://geicgbdeyrwl" path="res://turrets/glb/GER_500mm_2b_rf.glb" id="1_wbeb2"]
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_goysy"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://ShipModels/Armor_viewer_material.tres" id="3_goysy"]
 
-[node name="GER_500mm_2b_rf" instance=ExtResource("1_wbeb2")]
-script = ExtResource("2_goysy")
+[node name="GER_500mm_2b_rf" node_paths=PackedStringArray("barrel") instance=ExtResource("1_wbeb2")]
 ship_model_glb_path = "uid://geicgbdeyrwl"
+muzzles = Array[Node3D]([Object(Node3D,"_import_path":NodePath(""),"unique_name_in_owner":false,"process_mode":0,"process_priority":0,"process_physics_priority":0,"process_thread_group":0,"physics_interpolation_mode":0,"auto_translate_mode":0,"editor_description":"","transform":Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.8448079, -4.7683716e-06, -17.404926),"rotation_edit_mode":0,"rotation_order":2,"top_level":false,"visible":true,"visibility_parent":NodePath(""),"script":null)
+, Object(Node3D,"_import_path":NodePath(""),"unique_name_in_owner":false,"process_mode":0,"process_priority":0,"process_physics_priority":0,"process_thread_group":0,"physics_interpolation_mode":0,"auto_translate_mode":0,"editor_description":"","transform":Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.8448079, -4.7683716e-06, -17.404926),"rotation_edit_mode":0,"rotation_order":2,"top_level":false,"visible":true,"visibility_parent":NodePath(""),"script":null)
+])
+barrel = NodePath("500mmTurret/500mmDB")
 
 [node name="500mmTurret_col" parent="." index="1"]
 layers = 0

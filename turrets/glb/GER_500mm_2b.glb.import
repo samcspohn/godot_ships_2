@@ -13,7 +13,7 @@ dest_files=["res://.godot/imported/GER_500mm_2b.glb-0f5a7d3a6cead322f6af1cc22f39
 
 [params]
 
-nodes/root_type=""
+nodes/root_type="Gun"
 nodes/root_name=""
 nodes/root_script=null
 nodes/apply_root_scale=true

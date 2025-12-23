@@ -80,9 +80,9 @@ func _create_upgrade_slots():
 func set_ship(ship: Ship):
 	ship_ref = ship
 	# Print debug info about the ship's upgrades
-	print("Setting ship in UI. Ship has ", ship_ref.upgrades.upgrades.size(), " upgrades")
-	for i in range(ship_ref.upgrades.upgrades.size()):
-		var upgrade = ship_ref.upgrades.upgrades[i]
+	print("Setting ship in UI. Ship has ", ship_ref.get_upgrades().upgrades.size(), " upgrades")
+	for i in range(ship_ref.get_upgrades().upgrades.size()):
+		var upgrade = ship_ref.get_upgrades().upgrades[i]
 		if upgrade:
 			print("Slot ", i, " has upgrade: ", upgrade.name)
 		else:
@@ -219,7 +219,7 @@ func _on_remove_upgrade_pressed():
 func _update_slot_buttons():
 	print("Updating slot buttons. Ship ref exists: ", ship_ref != null)
 	if ship_ref:
-		print("Ship has ", ship_ref.upgrades.upgrades.size(), " upgrades")
+		print("Ship has ", ship_ref.get_upgrades().upgrades.size(), " upgrades")
 	
 	for i in range(max_slots):
 		var slot_button = upgrade_slots_container.get_child(i)
@@ -241,10 +241,10 @@ func _update_slot_buttons():
 		
 		if ship_ref:
 			# Make sure the upgrades array is properly initialized and has enough elements
-			while i >= ship_ref.upgrades.upgrades.size():
-				ship_ref.upgrades.upgrades.append(null)
+			while i >= ship_ref.get_upgrades().upgrades.size():
+				ship_ref.get_upgrades().upgrades.append(null)
 				
-			upgrade = ship_ref.upgrades.upgrades[i]
+			upgrade = ship_ref.get_upgrades().upgrades[i]
 			has_upgrade = upgrade != null
 			print("Slot ", i, " has upgrade: ", has_upgrade, " Name: ", upgrade.name if has_upgrade else "None")
 		

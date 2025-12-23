@@ -51,13 +51,9 @@ func _ready():
 func set_dock_node(dock: Node3D):
 	dock_node = dock
 	ship_tab.set_dock_node(dock)
-
-# Handle ship selection from the ship tab
-func _on_ship_selected(ship_node):
-	selected_ship = ship_node
-
 	
-	# Apply any previously selected upgrades for this specific ship
+func init_ship():
+# Apply any previously selected upgrades for this specific ship
 	if selected_ship is Ship and GameSettings.ship_config.has(GameSettings.selected_ship):
 		for slot_str in GameSettings.ship_config[GameSettings.selected_ship]:
 			if slot_str != "skills":
@@ -74,11 +70,16 @@ func _on_ship_selected(ship_node):
 			if not skill_instance is Skill:
 				push_error("Loaded resource is not a Skill: " + skill_path)
 				continue
-			selected_ship.skills.add_skill(skill_instance)
+			selected_ship.get_skills().add_skill(skill_instance)
 
 	# Pass the selected ship to the upgrade and commander tabs
 	upgrade_tab.set_ship(selected_ship)
 	commander_skills_tab.set_ship(selected_ship)
+# Handle ship selection from the ship tab
+func _on_ship_selected(ship_node):
+	selected_ship = ship_node
+	init_ship.call_deferred()
+
 
 func submit_to_matchmaker():
 	if not udp:
@@ -224,7 +225,7 @@ func _on_skill_toggled(skill_path: String, enabled: bool):
 	var skill_instance = skill_resource.new()
 	if skill_instance is Skill:
 		if enabled:
-			selected_ship.skills.add_skill(skill_instance)
+			selected_ship.get_skills().add_skill(skill_instance)
 			if not GameSettings.ship_config.has(GameSettings.selected_ship):
 				GameSettings.ship_config[GameSettings.selected_ship] = {}
 			if not GameSettings.ship_config[GameSettings.selected_ship].has("skills"):

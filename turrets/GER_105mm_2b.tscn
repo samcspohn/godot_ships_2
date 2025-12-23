@@ -1,7 +1,5 @@
-[gd_scene load_steps=3 format=3 uid="uid://d4mxymjiltp2p"]
+[gd_scene load_steps=2 format=3 uid="uid://d4mxymjiltp2p"]
 
 [ext_resource type="PackedScene" uid="uid://yi20grnd61n5" path="res://turrets/glb/GER_105mm_2b.glb" id="1_1ps4m"]
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_t1otf"]
 
 [node name="GER_105mm_2b" instance=ExtResource("1_1ps4m")]
-script = ExtResource("2_t1otf")
