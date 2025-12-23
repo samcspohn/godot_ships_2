@@ -150,6 +150,9 @@ var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consu
 
 var current_hp: float = 0.0
 
+var teams_hp = {}
+var num_players = -1
+
 # Get the keyboard shortcut letter for a given action
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
 	if not InputMap.has_action(action_name):
@@ -234,8 +237,10 @@ func _ready():
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
 		setup_gun_reload_bars()
-	
+
 	update_counters()
+
+	setup_team_tracker()
 
 func _process(_delta: float) -> void:
 	update_ship_ui()
@@ -307,7 +312,7 @@ func _physics_process(_delta):
 		update_counter(frag_count_label, stats.frags)
 		update_counter(damage_value_label, stats.total_damage)
 		# update_counter(damage_value_label, stats.total_damage)
-		
+
 	if camera_controller._ship:
 		var hp = camera_controller._ship.health_controller.current_hp
 		if hp != current_hp:
@@ -316,7 +321,7 @@ func _physics_process(_delta):
 				# Show floating damage indicator
 				create_floating_damage(damage_taken, camera_controller._ship.global_position)
 			current_hp = hp
-	
+
 	crosshair_container.queue_redraw()
 	t = Time.get_ticks_usec() / 1000000.0 - t
 	# print("Camera UI _physics_process time: %.3f ms" % [t * 1000.0])
@@ -351,6 +356,7 @@ func setup_counter_hover_functionality():
 	# Instead of using signals, we'll check mouse position manually in _process
 	print("Hover functionality setup complete - using manual detection")
 
+# region Hit Counter System
 func setup_hit_counter_system():
 	"""Initialize the hit counter display system"""
 	print("Setting up hit counter system...")
@@ -513,8 +519,8 @@ func process_damage_events(damage_events: Array):
 					update_counter(citadel_count_label, stats.citadel_count)
 			_:
 				print("Warning: Unhandled hit type: ", hit_type)
-				
-	
+
+
 		if is_secondary:
 			update_counter(sec_damage_label, stats.sec_damage)
 			update_counter(secondary_count_label, stats.secondary_count)
@@ -885,6 +891,29 @@ func is_position_visible_on_screen(world_position):
 	var viewport_rect = get_viewport().get_visible_rect()
 	return viewport_rect.has_point(screen_position)
 
+func setup_team_tracker():
+	"""Initial setup for the team tracker UI"""
+
+	if not camera_controller or not camera_controller._ship:
+		setup_team_tracker.call_deferred()
+		return
+
+	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	if not server:
+		setup_team_tracker.call_deferred()
+		return
+
+	var friendly_ships = server.get_team_ships(camera_controller._ship.team.team_id)
+	var enemy_ships = server._get_enemy_ships(camera_controller._ship.team.team_id)
+
+	update_team_container(friendly_ships_container, friendly_ships, true)
+	update_team_container(enemy_ships_container, enemy_ships, false)
+	# Resize the team tracker panel to fit content
+	resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+
+	num_players = friendly_ships.size() + enemy_ships.size()
+
+
 func update_team_tracker():
 	"""Update the team tracker with current ship status"""
 	if not camera_controller or not camera_controller._ship:
@@ -904,14 +933,20 @@ func update_team_tracker():
 	var enemy_ships = server._get_enemy_ships(friendly_team_id)
 	#print("Friendly ships count: ", friendly_ships.size(), " | Enemy ships count: ", enemy_ships.size())
 
-	# Update friendly ships display
-	update_team_container(friendly_ships_container, friendly_ships, true)
+	if num_players != friendly_ships.size() + enemy_ships.size():
+		num_players = friendly_ships.size() + enemy_ships.size()
+		# print("Total players updated: ", num_players)
+		# Update friendly ships display
+		update_team_container(friendly_ships_container, friendly_ships, true)
 
-	# Update enemy ships display
-	update_team_container(enemy_ships_container, enemy_ships, false)
+		# Update enemy ships display
+		update_team_container(enemy_ships_container, enemy_ships, false)
 
-	# Resize the team tracker panel to fit content
-	resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+		# Resize the team tracker panel to fit content
+		resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+		return
+	update_team_container2(friendly_ships_container, friendly_ships, true)
+	update_team_container2(enemy_ships_container, enemy_ships, false)
 
 func update_team_container(container: HBoxContainer, ships: Array, is_friendly: bool):
 	"""Update a team container with ship indicators using templates"""
@@ -964,6 +999,22 @@ func update_team_container(container: HBoxContainer, ships: Array, is_friendly: 
 
 		# Update indicator appearance
 		update_team_indicator(indicator, ship, is_friendly)
+
+func update_team_container2(container: HBoxContainer, ships: Array, is_friendly: bool):
+	"""Update a team container with ship indicators using templates"""
+
+	for ship in ships:
+		if not is_instance_valid(ship):
+			continue
+
+		if teams_hp.has(ship):
+			if ship.health_controller.current_hp != teams_hp[ship][0] or ship.health_controller.max_hp != teams_hp[ship][1]:
+				teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
+				update_team_indicator(team_ship_indicators[ship], ship, is_friendly)
+		else:
+			teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
+			update_team_indicator(team_ship_indicators[ship], ship, is_friendly)
+
 
 func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
 	"""Update the appearance of a team indicator based on ship status"""
@@ -1279,23 +1330,23 @@ func _setup_sniper_reticle() -> void:
 	sniper_reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	sniper_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sniper_reticle.visible = false  # Start hidden
-	
+
 	# Add to the main container alongside the crosshair
 	$MainContainer.add_child(sniper_reticle)
-	
+
 	# Connect the draw signal
 	sniper_reticle.connect("draw", _on_sniper_reticle_draw)
 
 func _update_reticle_visibility() -> void:
 	if not camera_controller:
 		return
-	
+
 	var is_sniper_mode = camera_controller.current_mode == BattleCamera.CameraMode.SNIPER
-	
+
 	# Hide the standard crosshair in sniper mode, show in third person and free look
 	if crosshair_center:
 		crosshair_center.visible = not is_sniper_mode
-	
+
 	# Show the sniper reticle only in sniper mode
 	if sniper_reticle:
 		sniper_reticle.visible = is_sniper_mode
@@ -1311,23 +1362,23 @@ func _on_sniper_reticle_draw() -> void:
 
 	var fovy_rad = deg_to_rad(camera_controller.fov)
 	var fov_rad = fovy_rad * (viewport_size.x / viewport_size.y)  # Adjust for aspect ratio
-	
-	
+
+
 	# Calculate distance traveled by a target moving at 10 knots during shell flight time
 	var knot_10 = 10.0 * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
 	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
 	var distance_to_target_m = distance_to_target
-	
+
 	# Sniper reticle colors
 	var reticle_color = Color(1, 1, 1, 0.6)
 	var line_width = 1.5
-	
+
 	# Long horizontal line (extending across a significant portion of the screen)
 	var horizontal_length = viewport_size.x * 0.9  # 80% of screen width
 	var h_start = Vector2(center.x - horizontal_length / 2.0, center.y)
 	var h_end = Vector2(center.x + horizontal_length / 2.0, center.y)
 	sniper_reticle.draw_line(h_start, h_end, reticle_color, line_width)
-	
+
 	# Short vertical line at center
 	var vertical_length = 30.0
 	var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
@@ -1337,35 +1388,35 @@ func _on_sniper_reticle_draw() -> void:
 	# Draw tick marks for speeds - as many as will fit on the line
 	if distance_to_target_m > 0 and time_to_target > 0:
 		var tick_color = Color(1, 1, 1, 0.8)
-		
+
 		# Calculate pixels per radian for FOV conversion
 		var pixels_per_radian = (viewport_size.x / 2.0) / tan(fov_rad / 2.0)
-		
+
 		# Calculate the maximum horizontal distance from center to line end
 		var max_pixel_offset = horizontal_length / 2.0
-		
+
 		# Draw ticks for every 10 knots, as many as fit
 		var speed = 10
 		while true:
 			# Calculate distance traveled at this speed during shell flight time
 			var speed_ms = speed * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
 			var lead_distance = speed_ms * time_to_target
-			
+
 			# Convert world distance to screen pixels using FOV and distance
 			var angular_offset = atan(lead_distance / distance_to_target_m)
 			var pixel_offset = angular_offset * pixels_per_radian
-			
+
 			# Stop if tick would be beyond the line
 			if pixel_offset > max_pixel_offset:
 				break
-			
+
 			# Determine tick height based on speed (larger ticks for multiples of 30)
 			var tick_height = 6.0
 			if speed % 30 == 0:
 				tick_height = 10.0
 			elif speed % 10 == 0 and (speed == 10 or speed == 50 or speed % 50 == 0):
 				tick_height = 8.0
-			
+
 			# Draw tick on the right side (for targets moving left)
 			var tick_x_right = center.x + pixel_offset
 			sniper_reticle.draw_line(
@@ -1373,7 +1424,7 @@ func _on_sniper_reticle_draw() -> void:
 				Vector2(tick_x_right, center.y + tick_height),
 				tick_color, line_width
 			)
-			
+
 			# Draw tick on the left side (for targets moving right)
 			var tick_x_left = center.x - pixel_offset
 			sniper_reticle.draw_line(
@@ -1381,7 +1432,7 @@ func _on_sniper_reticle_draw() -> void:
 				Vector2(tick_x_left, center.y + tick_height),
 				tick_color, line_width
 			)
-			
+
 			speed += 10
 
 # endregion

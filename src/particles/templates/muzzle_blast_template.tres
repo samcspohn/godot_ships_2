@@ -44,4 +44,4 @@ damping_max = 0.8
 lifetime_min = 2.5
 lifetime_max = 3.5
 lifetime_randomness = 0.3
-scale_max = 1.5
+scale_max = Vector2(1.5, 1.5)

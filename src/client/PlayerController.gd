@@ -84,7 +84,7 @@ func setup_artillery_camera() -> void:
 		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
 		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
 	get_tree().root.add_child(cam)
-	cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
+	# cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
 
 	# Get ray from camera
 	self.ray = cam.get_child(0)
@@ -370,6 +370,12 @@ func _process(dt: float) -> void:
 	# 			print("Warning: cam.ui not available for floating damage")
 	# 	# Note: damage_events are now cleared by the camera UI after processing hit counters
 
+class InputData:
+	var throttle_level: int
+	var rudder_value: float
+	var aim_position: Vector3
+	var frustum_planes: Array[Plane]
+
 func process_player_input() -> void:
 	# Handle throttle input with continuous adjustment
 	var throttle_input_active = false
@@ -427,7 +433,11 @@ func process_player_input() -> void:
 		target_rudder_value = 0.0
 	
 	# Create movement input array
-	var input_array = [float(throttle_level), target_rudder_value, cam.aim_position]
+	var input_data = InputData.new()
+	input_data.throttle_level = throttle_level
+	input_data.rudder_value = target_rudder_value
+	input_data.aim_position = cam.aim_position
+	input_data.frustum_planes = cam.get_frustum()
 	
 	# Get aiming point from ray
 	#var aim_point: Vector3
@@ -440,18 +450,22 @@ func process_player_input() -> void:
 
 	# if NetworkManager.is_connected:
 	if _Utils.is_multiplayer_active():
-		send_input.rpc_id(1, input_array)
+		send_input.rpc_id(1, input_data.throttle_level,
+								input_data.rudder_value,
+								input_data.aim_position,
+								input_data.frustum_planes)
 	# send_aim_input.rpc_id(1, cam.aim_position)
 	
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func send_input(movement_input: Array) -> void:
+func send_input(throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane]) -> void:
 	if _Utils.authority():
 		# Forward movement input to ship movement controller
-		ship.movement_controller.set_movement_input([movement_input[0], movement_input[1]])
-		ship.artillery_controller.set_aim_input(movement_input[2])
+		ship.movement_controller.set_movement_input([throttle_level, rudder_value])
+		ship.artillery_controller.set_aim_input(aim_position)
+		ship.frustum_planes = frustum_planes
 
 func select_weapon(idx: int) -> void:
 	selected_weapon = idx

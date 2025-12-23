@@ -21,26 +21,26 @@ var gun_updated = false
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	
+
 	# Create the game world as a separate entity
 	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
 	add_child(game_world)
 	spawn_point = game_world.get_child(1)
 	var map = load("res://src/Maps/map2.tscn").instantiate()
 	game_world.get_node("Env").add_child(map)
-	
+
 	print("Game server started and world loaded")
-	
+
 	# # Wait a frame for the world to fully initialize
 	# await get_tree().process_frame
-	
+
 	# # Take the map snapshot only on the server
 	# if multiplayer.is_server():
 	# 	await Minimap.server_take_map_snapshot(get_viewport())
 
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
-	
+
 	#join_game.rpc_id(id)
 	#spawn_player(id, str(id))
 	# Wait for them to register before spawning
@@ -110,17 +110,17 @@ func spawn_player(id, player_name):
 	# }
 	if players.has(player_name):
 		return
-	
+
 	#join_game.rpc_id(id)
-	
+
 	if not team_info or not team_info.has("team"):
 		push_error("No team info available for player: " + str(player_name))
 		return
-		
+
 	if not team_info["team"].has(player_name):
 		push_error("Player " + str(player_name) + " not found in team info. Available keys: " + str(team_info["team"].keys()))
 		return
-		
+
 	var team_data = team_info["team"][player_name]
 
 	var ship = team_data["ship"]
@@ -133,17 +133,17 @@ func spawn_player(id, player_name):
 	var tl = player.get_node_or_null("TorpedoLauncher")
 	if tl:
 		(tl as TorpedoLauncher).disabled = false
-		
+
 	# Load and apply player upgrades (skip for bots)
 	if not is_bot:
 		call_deferred("_load_and_apply_player_config", player, player_name)
-	
-	
+
+
 	if !team.has(team_data["team"]):
 		team[team_data["team"]] = {}
 	team[team_data["team"]][id] = player
-	
-	
+
+
 	var team_id = int(team_data["team"])
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = team_id
@@ -151,8 +151,8 @@ func spawn_player(id, player_name):
 	print("server: Assigning team ID ", team_id, " team.team_id ", team_.team_id, " to player ID ", id, " (is_bot=", is_bot, ")")
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
-	
-	
+
+
 	# If it's a bot, add bot AI controller instead of player controller
 	if is_bot:
 		var bot_controller = preload("res://src/ship/bot_controller.tscn").instantiate()
@@ -165,7 +165,7 @@ func spawn_player(id, player_name):
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
-	
+
 	# Add to world - note game_world is a child of this node
 	players[player_name] = [player, ship, id]
 
@@ -195,19 +195,19 @@ func spawn_player(id, player_name):
 			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
 
 	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
-	
+
 	# Check if this is single player and spawn bots (only for human players, not bots)
 	if team_info and team_info.has("team") and not is_bot:
 		var is_single_player = false
 		var bot_count = 0
-		
+
 		# Check if any team member is a bot to determine if this is single player
 		for team_player_id in team_info["team"]:
 			var player_data = team_info["team"][team_player_id]
 			if player_data.get("is_bot", false):
 				is_single_player = true
 				bot_count += 1
-		
+
 		# If this is single player mode and this is the human player, spawn all bots
 		if is_single_player and not players_spawned_bots:
 			print("Spawning ", bot_count, " bots for single player mode")
@@ -230,13 +230,13 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 
 	var player: Ship = load(ship).instantiate()
 	player.name = _player_name
-	
+
 	player._enable_guns()
-	
+
 	# Check if this is the local player or a bot by checking team info
 	var is_local_player = (int(id) == multiplayer.get_unique_id())
 	var is_bot = false
-	
+
 	# Check team info for bot status
 	if team_info and team_info.has("team"):
 		for team_player_id in team_info["team"]:
@@ -244,7 +244,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 				var player_data = team_info["team"][team_player_id]
 				is_bot = player_data.get("is_bot", false)
 				break
-	
+
 	# Only add player control for local human player
 	if is_local_player and not is_bot:
 		NetworkManager.player_controller_connected = true
@@ -253,7 +253,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
-		
+
 		# # Apply any saved upgrades to the local player's ship
 		# # This ensures the client-side ship has the same upgrades as configured in the menu
 		# if GameSettings.player_name == _player_name and not GameSettings.ship_config.is_empty():
@@ -269,18 +269,18 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 		# 					print("Applied client-side upgrade: ", upgrade_path)
 		# 				else:
 		# 					push_error("Failed to apply client-side upgrade: " + upgrade_path)
-	
+
 	var team_: TeamEntity = preload("res://src/teams/TeamEntity.tscn").instantiate()
 	team_.team_id = int(team_id)
 	print("Assigning team ID ", team_id, " team.team_id ", team_.team_id, " to player ID ", id, " (is_bot=", is_bot, ")")
 	team_.is_bot = is_bot
 	player.get_node("Modules").add_child(team_)
 	player.team = team_
-	
+
 	# Add to world - note game_world is a child of this node
 	players[_player_name] = [player, ship, id]
 	spawn_point.add_child(player)
-	
+
 	#player.global_position = pos
 
 
@@ -291,20 +291,20 @@ func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 		return
 
 	print("Loading config for player: ", player_name)
-	
+
 	var player_settings = _GameSettings.new()
 	player_settings.player_name = player_name
 	player_settings.load_settings()
 	# Get the ship path
 	var ship_path = player_settings.selected_ship
-	
+
 	if not player_settings.ship_config.has(ship_path):
 		print("No upgrades configured for ship: ", ship_path, " for player: ", player_name)
 		return
 	# Apply each upgrade to the ship
 	var upgrades = player_settings.ship_config[ship_path]
 	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
-	
+
 	for slot_str in upgrades:
 		if slot_str == "skills":  # Skip skills section
 			continue
@@ -403,33 +403,61 @@ func init_guns(gun_paths):
 	TcpThreadPool.initialize_guns(gun_paths)
 
 
-
-@rpc("authority", "unreliable_ordered", "call_remote", 1)
+@rpc("any_peer", "unreliable_ordered", "call_remote", 1)
 func sync_game_state(bytes: PackedByteArray):
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = bytes
-
+	# print("sync_game_state called with ", reader.get_available_bytes(), " bytes")
+	# var count = 0
 	while reader.get_available_bytes() > 0:
-		# var name_length = reader.get_32()
-		# var name_bytes: PackedByteArray = reader.get_data(name_length)
-		# var player_name = name_bytes.get_string_from_utf8()
+		var friendly = reader.get_u8()
 		var player_name = reader.get_var()
 		var ship_data = reader.get_var()
+		# count += 1
+		# print("sync_game_state processing ship %s friendly=%d" % [player_name, friendly])
 		if not players.has(player_name):
+			# print("player %s not registered on client" % [player_name])
 			continue
 		var ship: Ship = players[player_name][0]
 		if not is_instance_valid(ship):
+			# print("player ship %s not valid on client" % [player_name])
 			continue
 		if ship_data == null:
+			# print("hiding ship %s on client" % [player_name])
 			ship._hide()
 			continue
+		elif friendly == 2:
+			# partial update
+			var transform_data = ship_data
+			ship.parse_ship_transform(transform_data)
 		else:
-			ship.sync2(ship_data)
+			# print("syncing ship %s on client" % [player_name])
+			ship.sync2(ship_data, friendly == 1)
+			# ship.apply_parsed_data.call_deferred(parsed, friendly == 1)
+	# if count != 20:
+	# 	print("incorrect number of ships")
 
+func is_aabb_in_frustum(aabb: AABB, planes: Array[Plane]) -> bool:
+	if planes.is_empty():
+		return true  # No frustum data yet, include the ship
+	for plane in planes:
+		var positive_vertex = Vector3(
+			aabb.end.x if plane.normal.x >= 0 else aabb.position.x,
+			aabb.end.y if plane.normal.y >= 0 else aabb.position.y,
+			aabb.end.z if plane.normal.z >= 0 else aabb.position.z
+		)
+		if plane.is_point_over(positive_vertex):
+			return false
+	return true
 
-# var c = 0
+func is_point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
+	for plane in planes:
+		if plane.is_point_over(point):
+			return false
+	return true
+
 func _physics_process(_delta: float) -> void:
-	if !multiplayer.is_server():
+	if !_Utils.authority():
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var ray_query = PhysicsRayQueryParameters3D.new()
@@ -437,7 +465,7 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 # only terrain
-	
+
 	if players_size != players.size() or gun_updated:
 		gun_updated = false
 		players_size = players.size()
@@ -458,8 +486,10 @@ func _physics_process(_delta: float) -> void:
 			var pid = p[2]
 			init_guns.rpc_id(pid, gun_paths)
 
+	var visible_toggled = {}
 	for p in players.values():
-		var ship: Ship = p[0]			
+		var ship: Ship = p[0]
+		visible_toggled[ship.name] = ship.visible_to_enemy
 		if ship.health_controller.is_dead():
 			ship.visible_to_enemy = true
 		else:
@@ -469,7 +499,7 @@ func _physics_process(_delta: float) -> void:
 		var p: Ship = players[p_name][0]
 		ray_query.from = p.global_position
 		ray_query.from.y = 1.0
-		# var d = p.sync_ship_data() 
+		# var d = p.sync_ship_data()
 		for p2_idx in range(p_idx + 1,players.size()):
 			var p2_name = players.keys()[p2_idx]
 			var p2: Ship = players[p2_name][0]
@@ -480,64 +510,115 @@ func _physics_process(_delta: float) -> void:
 				if collision.is_empty(): # can see each other no obstacles (add concealment)
 					p.visible_to_enemy = true
 					p2.visible_to_enemy = true
-	
-	
-	# TODO: accumulate all sync data first, then send to minimize rpc calls
-	var team_0_writer = StreamPeerBuffer.new()
-	var team_1_writer = StreamPeerBuffer.new()
+			
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		if visible_toggled[p.name] == p.visible_to_enemy:
+			visible_toggled.erase(p.name)
+			
+
+
+
+	# if c > 2:
+	# 	c = 0
+	# 	# Prepare data for each team
+
+	# var team_0_writer = StreamPeerBuffer.new()
+	# var team_1_writer = StreamPeerBuffer.new()
 	# var teams = [[], []] # team_id -> [ships]
-	
-	for p_name: String in players: 
+
+	var team_0_bytes_list: Array = []
+	var team_1_bytes_list: Array = []
+	var partial_bytes_list: Array = []
+	var writer = StreamPeerBuffer.new()
+
+	for p_name: String in players:
 		var p: Ship = players[p_name][0]
 		var team_id = p.team.team_id
-		var d = p.sync_ship_data2(p.visible_to_enemy)
+		var d0 = p.sync_ship_data2(p.visible_to_enemy, true) # friendly view
+		var d1 = p.sync_ship_data2(p.visible_to_enemy, false) # enemy view
+		var dt = p.sync_ship_transform()
+
+		writer.put_u8(2) # partial update
+		writer.put_var(p_name)
+		writer.put_var(dt)
+		partial_bytes_list.push_back([p, writer.data_array])
+		writer.clear()
+
 		if team_id == 0:
-			team_0_writer.put_var(p_name)
-			# team_0_writer.put_32(p_name.length())
-			# team_0_writer.put_data(p_name.to_utf8_buffer())
-			team_0_writer.put_var(d)
-			team_1_writer.put_var(p_name)
+			# friendly
+			writer.put_u8(1)
+			writer.put_var(p_name)
+			writer.put_var(d0)
+			team_0_bytes_list.push_back([p, writer.data_array])
+			writer.clear()
+
+			# enemy
+			writer.put_u8(0)
+			writer.put_var(p_name)
 			if p.visible_to_enemy:
-				# team_1_writer.put_32(p_name.length())
-				# team_1_writer.put_data(p_name.to_utf8_buffer())
-				team_1_writer.put_var(d)
+				writer.put_var(d1)
 			else:
-				# team_1_writer.put_32(p_name.length())
-				# team_1_writer.put_data(p_name.to_utf8_buffer())
-				team_1_writer.put_var(null)
+				writer.put_var(null)
+			team_1_bytes_list.push_back([p, writer.data_array])
+			writer.clear()
 		else:
-			team_1_writer.put_var(p_name)
-			# team_1_writer.put_32(p_name.length())
-			# team_1_writer.put_data(p_name.to_utf8_buffer())
-			team_1_writer.put_var(d)
-			team_0_writer.put_var(p_name)
+			# friendly
+			writer.put_u8(1)
+			writer.put_var(p_name)
+			writer.put_var(d0)
+			team_1_bytes_list.push_back([p, writer.data_array])
+			writer.clear()
+
+			# enemy
+			writer.put_u8(0)
+			writer.put_var(p_name)
 			if p.visible_to_enemy:
-				# team_0_writer.put_32(p_name.length())
-				# team_0_writer.put_data(p_name.to_utf8_buffer())
-				team_0_writer.put_var(d)
+				writer.put_var(d1)
 			else:
-				# team_0_writer.put_32(p_name.length())
-				# team_0_writer.put_data(p_name.to_utf8_buffer())
-				team_0_writer.put_var(null)
+				writer.put_var(null)
+			team_0_bytes_list.push_back([p, writer.data_array])
+			writer.clear()
 
-	# Send all team 0 data to team 0 players
-	var team_0_bytes = team_0_writer.data_array
+
+	# Send all team data to appropriate players
+	# var team_0_bytes = team_0_writer.data_array
+	# var team_1_bytes = team_1_writer.data_array
+
 	for p_name in players:
 		var p: Ship = players[p_name][0]
 		var _p_id = players[p_name][2]
-		if p.team.team_id == 0 and not p.team.is_bot:
-			sync_game_state.rpc_id(_p_id, team_0_bytes)
-
-	# Send all team 1 data to team 1 players
-	var team_1_bytes = team_1_writer.data_array
+		var team_list = team_0_bytes_list if p.team.team_id == 0 else team_1_bytes_list
+		if not p.team.is_bot:
+			var writer1 = StreamPeerBuffer.new()
+			var i = 0
+			for b in team_list:
+				var b0: Ship = b[0]
+				if b0 == p:
+					continue
+				if visible_toggled.has(b0.name) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
+					writer1.data_array += b[1]
+				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
+					writer1.data_array += partial_bytes_list[i][1]
+				i += 1
+			var team_0_bytes = writer1.data_array
+			if not team_0_bytes.is_empty():
+				sync_game_state.rpc_id(_p_id, team_0_bytes)
+					
+	
+	# c += 1
+	# Sync individual player data
 	for p_name in players:
 		var p: Ship = players[p_name][0]
-		var _p_id = players[p_name][2]
-		if p.team.team_id == 1 and not p.team.is_bot:
-			sync_game_state.rpc_id(_p_id, team_1_bytes)
-		
-			
-			
+		var p_id = players[p_name][2]
+		if p.team.is_bot:
+			continue
+		var d = p.sync_player_data()
+		p.sync_player.rpc_id(p_id, d)
+
+
+	team_0_valid_targets = _get_valid_targets(0)
+	team_1_valid_targets = _get_valid_targets(1)
 
 
 	# for p_name in players: # for every player, synchronize self with others - TODO: sync all to self instead
@@ -548,7 +629,7 @@ func _physics_process(_delta: float) -> void:
 	# 	var d = p.sync_ship_data2(p.visible_to_enemy)
 	# 	# writer.data_array = d
 	# 	# writer.put_u8(1 if p.visible_to_enemy else 0)
-	# 	# d = writer.get_data_array()		
+	# 	# d = writer.get_data_array()
 	# 	for p_name2 in players: # every other player
 	# 		var p2: Ship = players[p_name2][0]
 	# 		var pid2 = players[p_name2][2]
@@ -558,9 +639,8 @@ func _physics_process(_delta: float) -> void:
 	# 				p.sync2.rpc_id(pid2, d)
 	# 			else:
 	# 				p._hide.rpc_id(pid2) # hide from other player
-				
-	team_0_valid_targets = _get_valid_targets(0)
-	team_1_valid_targets = _get_valid_targets(1)
+
+
 			#if p_id == p_id2:
 				#p.sync.rpc_id(p_id2, d)
 				#continue
@@ -568,4 +648,3 @@ func _physics_process(_delta: float) -> void:
 			#ray_query.to = p2.global_position
 			#var collision: Dictionary = space_state.intersect_ray(ray_query)
 			#if !collision.is_empty() and collision.collider is Ship && collision.collider != p:
-	

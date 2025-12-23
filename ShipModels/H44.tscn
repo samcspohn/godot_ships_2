@@ -45,9 +45,9 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_pnxfl"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
-reload_time = 29.0
-traverse_speed = 5.0
-elevation_speed = 5.0
+reload_time = 2.0
+traverse_speed = 40.0
+elevation_speed = 40.0
 _range = 15500.0
 shell1 = SubResource("Resource_apgp6")
 shell2 = SubResource("Resource_uu5mp")
@@ -57,7 +57,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 12000.0
-drag = 0.035
+drag = 0.037
 damage = 3500.0
 size = 2.25
 caliber = 150.0
@@ -71,7 +71,7 @@ arming_threshold = 25
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 1200.0
-drag = 0.035
+drag = 0.037
 damage = 1100.0
 size = 2.25
 caliber = 150.0
@@ -90,7 +90,7 @@ script = ExtResource("3_osjim")
 reload_time = 5.5
 traverse_speed = 50.0
 elevation_speed = 50.0
-_range = 5500.0
+_range = 5750.0
 shell1 = SubResource("Resource_5talp")
 shell2 = SubResource("Resource_mddhe")
 h_grouping = 1.0
@@ -124,7 +124,7 @@ params = SubResource("Resource_pnxfl")
 guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="MovementController" parent="Modules" index="2"]
-max_speed = 31.0
+max_speed = 100.0
 acceleration_time = 30.0
 deceleration_time = 30.0
 reverse_speed_ratio = 0.5
@@ -166,6 +166,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.055368304, 24.202316, -1.9565125)
+visible = false
 shape = SubResource("BoxShape3D_gc5ee")
 
 [node name="500mmBarbette_col" parent="Hull" index="18"]
@@ -260,6 +261,7 @@ min_rotation_angle = 0.5235987755982988
 max_rotation_angle = 5.759586531581287
 
 [node name="Hull_col" parent="." index="10"]
+visible = false
 layers = 0
 material_override = ExtResource("15_pnxfl")
 

@@ -121,9 +121,11 @@ script = ExtResource("1_ickow")
 [node name="MultiMeshInstance3D" type="MultiMeshInstance3D" parent="."]
 physics_interpolation_mode = 2
 auto_translate_mode = 2
+visible = false
 multimesh = SubResource("MultiMesh_xoeb4")
 
 [node name="GPUParticles3D" type="GPUParticles3D" parent="."]
+visible = false
 cast_shadow = 0
 emitting = false
 amount = 1000000

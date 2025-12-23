@@ -26,6 +26,8 @@ var dynamic_mods: Array = [] # checked every frame for changes, affects _params
 
 var peer_id: int = -1 # our unique peer ID assigned by server
 
+var frustum_planes: Array[Plane] = []
+
 # @export var fires: Array[Fire] = []
 
 # Armor system configuration
@@ -51,7 +53,7 @@ func remove_static_mod(mod_func):
 func add_dynamic_mod(mod_func):
 	dynamic_mods.append(mod_func)
 	update_dynamic_mods = true
-	
+
 func remove_dynamic_mod(mod_func):
 	dynamic_mods.erase(mod_func)
 	update_dynamic_mods = true
@@ -102,17 +104,24 @@ func _ready() -> void:
 	skills._ship = self
 	stats = Stats.new()
 	$Modules.add_child(stats)
-	
-	
+
+
 	# for f in fires:
 	# 	f._ship = self
 	# Initialize armor system
 	initialize_armor_system()
-	
+
 	initialized = true
 	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
-	
+		set_physics_process(false)
+		self.freeze = true
+		# Disable all collision shapes under the node
+		for child in get_children():
+			if child is CollisionShape3D:
+				child.disabled = true
+
+
 	self.collision_layer = 1 << 2
 	self.collision_mask = 1 | 1 << 2
 
@@ -129,7 +138,7 @@ func _physics_process(delta: float) -> void:
 		torpedo_launcher._aim(artillery_controller.aim_point, delta)
 
 	for skill in skills.skills:
-		skill._proc(delta)		
+		skill._proc(delta)
 	if update_static_mods:
 		_update_static_mods()
 		update_static_mods = false
@@ -142,175 +151,241 @@ func _physics_process(delta: float) -> void:
 
 	#_update_dynamic_mods()
 
-func sync_ship_data() -> Dictionary:
-	var d = {
-		'y': movement_controller.throttle_level,
-		#'t': movement_controller.thrust_vector,
-		'r': movement_controller.rudder_input,
-		'v': linear_velocity,
-		'b': global_basis,
-		'p': global_position,
-		'h': health_controller.current_hp,
-		'a': {}, # artillery
-		'g': [],
-		's': [],
-		'sc': [],
-		'cons': consumable_manager.to_dict(),
-	}
-	
-	d['a'] = artillery_controller.to_dict()
-	for g in artillery_controller.guns:
-		d.g.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
-	
-	for controller in secondary_controller.sub_controllers:
-		d.sc.append(controller.to_dict())
-		for g: Gun in controller.guns:
-			d.s.append(g.to_dict()) # rotation, elevation, can_fire, valid_target
+func get_aabb() -> AABB:
+	return self.aabb * global_transform
 
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	if torpedo_launcher != null:
-		d['tl'] = torpedo_launcher.global_basis
-	# d['vs'] = self.visible_to_enemy
-	d['p_id'] = multiplayer.get_unique_id()
-	d['stats'] = stats.to_dict()
-
-	return d
-
-func sync_ship_data2(vs: bool) -> PackedByteArray:
+func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	var pb = PackedByteArray()
 	var writer = StreamPeerBuffer.new()
+
+	# writer.put_32(movement_controller.throttle_level)
+	#writer.put_float_array(movement_controller.thrust_vector.to_array())
+	# writer.put_float(movement_controller.rudder_input)
+	writer.put_var(linear_velocity)
+	var euler = global_basis.get_euler()
+	writer.put_var(euler)
+	# writer.put_var(global_basis)
+	writer.put_var(global_position)
+	writer.put_float(health_controller.current_hp)
+
+	# Consumables data
+	if friendly:
+		writer.put_var(consumable_manager.to_bytes())
+
+	# Artillery data
+	# writer.put_var(artillery_controller.to_bytes())
+	# Guns data
+	writer.put_32(artillery_controller.guns.size())
+	for g in artillery_controller.guns:
+		writer.put_var(g.to_bytes(false))
+
+	# Secondary controllers data
+	writer.put_32(secondary_controller.sub_controllers.size())
+	for controller in secondary_controller.sub_controllers:
+		# writer.put_var(controller.to_bytes())
+		writer.put_32(controller.guns.size())
+		for g: Gun in controller.guns:
+			writer.put_var(g.to_bytes(false))
+
+	# Torpedo launcher data
+	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	writer.put_32(1 if torpedo_launcher != null else 0)
+	if torpedo_launcher != null:
+		var euler_tl = torpedo_launcher.global_basis.get_euler()
+		writer.put_var(euler_tl)
+
+	writer.put_32(multiplayer.get_unique_id())
+
+	# # Ship stats data
+	# var stats_bytes = stats.to_bytes()
+	# writer.put_var(stats_bytes)
+	writer.put_u8(1 if vs else 0)
+
+	pb = writer.get_data_array()
+	return pb
+
+func sync_ship_transform() -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+	writer.put_float(rotation.y)
+	writer.put_float(global_position.x)
+	writer.put_float(global_position.z)
 	
+	pb = writer.get_data_array()
+	return pb
+
+func parse_ship_transform(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	rotation.y = reader.get_float()
+	global_position.x = reader.get_float()
+	global_position.z = reader.get_float()
+
+func sync_player_data() -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+
 	writer.put_32(movement_controller.throttle_level)
 	#writer.put_float_array(movement_controller.thrust_vector.to_array())
 	writer.put_float(movement_controller.rudder_input)
 	writer.put_var(linear_velocity)
-	writer.put_var(global_basis)
+	var euler = global_basis.get_euler()
+	writer.put_var(euler)
+	# writer.put_var(global_basis)
 	writer.put_var(global_position)
 	writer.put_float(health_controller.current_hp)
 
 	# Consumables data
 	writer.put_var(consumable_manager.to_bytes())
-	
+
 	# Artillery data
 	writer.put_var(artillery_controller.to_bytes())
 	# Guns data
-	writer.put_32(artillery_controller.guns.size())
+	# writer.put_32(artillery_controller.guns.size())
 	for g in artillery_controller.guns:
-		writer.put_var(g.to_bytes())
+		writer.put_var(g.to_bytes(true))
 
 	# Secondary controllers data
-	writer.put_32(secondary_controller.sub_controllers.size())
+	# writer.put_32(secondary_controller.sub_controllers.size())
 	for controller in secondary_controller.sub_controllers:
 		writer.put_var(controller.to_bytes())
-		writer.put_32(controller.guns.size())
+		# writer.put_32(controller.guns.size())
 		for g: Gun in controller.guns:
-			writer.put_var(g.to_bytes())
+			writer.put_var(g.to_bytes(true))
 
 	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
-		writer.put_var(torpedo_launcher.global_basis)
+		var euler_tl = torpedo_launcher.global_basis.get_euler()
+		writer.put_var(euler_tl)
+		# writer.put_var(torpedo_launcher.global_basis)
 
 	writer.put_32(multiplayer.get_unique_id())
 
 	# Ship stats data
 	var stats_bytes = stats.to_bytes()
 	writer.put_var(stats_bytes)
-	writer.put_u8(1 if vs else 0)
 
 	pb = writer.get_data_array()
 	return pb
+
 
 @rpc("any_peer", "reliable")
 func initialized_client():
 	self.initialized = true
 
-@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func sync(d: Dictionary):
+# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+func sync2(b: PackedByteArray, friendly: bool):
+	# print("here")
+
 	if !self.initialized:
 		return
 	self.visible = true
-	# self.visible_to_enemy = true
-	self.visible_to_enemy = d.vs
-	self.global_position = d.p
-	self.global_basis = d.b
-	movement_controller.rudder_input = d.r
-	#movement_controller.thrust_vector = d.t
-	movement_controller.throttle_level = d.y
-	linear_velocity = d.v
-	health_controller.current_hp = d.h
-	consumable_manager.from_dict(d.cons)
-	
-	var i = 0
-	artillery_controller.from_dict(d.a)
+	# print("here2")
+
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+
+	# movement_controller.throttle_level = reader.get_32()
+	#movement_controller.thrust_vector = Vector3(reader.get_float_array())
+	# movement_controller.rudder_input = reader.get_float()
+	linear_velocity = reader.get_var()
+	# global_basis = reader.get_var()
+	var euler: Vector3 = reader.get_var()
+	global_basis = Basis.from_euler(euler)
+	global_position = reader.get_var()
+	health_controller.current_hp = reader.get_float()
+	# max hp
+
+	# Consumables data
+	if friendly:
+		var cons_bytes: PackedByteArray = reader.get_var()
+		consumable_manager.from_bytes(cons_bytes) # bytes is broken
+
+	# Artillery data
+	# var art_bytes: PackedByteArray = reader.get_var()
+	# artillery_controller.from_bytes(art_bytes)
+	# Guns data
+	var gun_count: int = reader.get_32()
 	for g in artillery_controller.guns:
-		g.from_dict(d.g[i])
-		i += 1
-		
-	i = 0
-	var k = 0
+		var gun_bytes: PackedByteArray = reader.get_var()
+		g.from_bytes(gun_bytes, false)
+
+	# Secondary controllers data
+	var sc_count: int = reader.get_32()
 	for controller in secondary_controller.sub_controllers:
-		controller.from_dict(d.sc[k])
-		k += 1
-		for s: Gun in controller.guns:
-			s.from_dict(d.s[i])
-			i += 1
-		
+		# var sc_bytes: PackedByteArray = reader.get_var()
+		# controller.from_bytes(sc_bytes)
+		var sc_gun_count: int = reader.get_32()
+		for g: Gun in controller.guns:
+			var gun_bytes: PackedByteArray = reader.get_var()
+			g.from_bytes(gun_bytes, false)
+
+	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
-		torpedo_launcher.global_basis = d.tl
-	
-	var s = d.stats
-	stats.from_dict(s)
+		var euler_tl: Vector3 = reader.get_var()
+		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+		# torpedo_launcher.global_basis = reader.get_var()
+	var p_id: int = reader.get_32()
+	# var stats_bytes: PackedByteArray = reader.get_var()
+	# stats.from_bytes(stats_bytes)
+	self.visible_to_enemy = reader.get_u8() == 1
 
-# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func sync2(b: PackedByteArray):
+
+@rpc("authority", "call_remote", "unreliable_ordered", 1)
+func sync_player(b: PackedByteArray):
 	if !self.initialized:
 		return
 	self.visible = true
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	
+
 	movement_controller.throttle_level = reader.get_32()
 	#movement_controller.thrust_vector = Vector3(reader.get_float_array())
 	movement_controller.rudder_input = reader.get_float()
 	linear_velocity = reader.get_var()
-	global_basis = reader.get_var()
+	# global_basis = reader.get_var()
+	var euler: Vector3 = reader.get_var()
+	global_basis = Basis.from_euler(euler)
 	global_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
+	# max hp
 
 	# Consumables data
 	var cons_bytes: PackedByteArray = reader.get_var()
 	consumable_manager.from_bytes(cons_bytes) # bytes is broken
-	
+
 	# Artillery data
 	var art_bytes: PackedByteArray = reader.get_var()
 	artillery_controller.from_bytes(art_bytes)
-	
+
 	# Guns data
-	var gun_count: int = reader.get_32()
+	# var gun_count: int = reader.get_32()
 	for g in artillery_controller.guns:
 		var gun_bytes: PackedByteArray = reader.get_var()
-		g.from_bytes(gun_bytes)
+		g.from_bytes(gun_bytes, true)
 
 	# Secondary controllers data
-	var sc_count: int = reader.get_32()
+	# var sc_count: int = reader.get_32()
 	for controller in secondary_controller.sub_controllers:
 		var sc_bytes: PackedByteArray = reader.get_var()
 		controller.from_bytes(sc_bytes)
-		var sc_gun_count: int = reader.get_32()
+		# var sc_gun_count: int = reader.get_32()
 		for g: Gun in controller.guns:
 			var gun_bytes: PackedByteArray = reader.get_var()
-			g.from_bytes(gun_bytes)
+			g.from_bytes(gun_bytes, true)
 
 	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	if torpedo_launcher != null:
-		torpedo_launcher.global_basis = reader.get_var()
+		var euler_tl: Vector3 = reader.get_var()
+		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+		# torpedo_launcher.global_basis = reader.get_var()
 	var p_id: int = reader.get_32()
 	var stats_bytes: PackedByteArray = reader.get_var()
 	stats.from_bytes(stats_bytes)
-	self.visible_to_enemy = reader.get_u8() == 1
+	# self.visible_to_enemy = reader.get_u8() == 1
 
 
 @rpc("any_peer", "reliable")
@@ -375,32 +450,32 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			print("armor_part.collision_mask: ", armor_part.collision_mask)
 		elif node.name == "Citadel":
 			citadel = armor_part
-		
+
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system - extract and load armor data"""
 	# print("🛡️ Initializing armor system for ship...")
-	
+
 	# Validate and resolve the GLB path
 	var resolved_glb_path = resolve_glb_path(ship_model_glb_path)
 	if resolved_glb_path.is_empty():
 		print("   ❌ Invalid or missing GLB path: ", ship_model_glb_path)
 		return
-	
+
 	# Create armor system instance
 	armor_system = ArmorSystemV2.new()
 	add_child(armor_system)
-	
+
 	# Determine paths
 	var model_name = resolved_glb_path.get_file().get_basename()
 	var ship_dir = resolved_glb_path.get_base_dir()
 	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
-	
+
 	# print("   Ship model: ", resolved_glb_path)
 	# print("   Armor data: ", armor_json_path)
-	
+
 	# Check if armor JSON already exists
 	if FileAccess.file_exists(armor_json_path):
 		# print("   ✅ Found existing armor data, loading...")
@@ -418,13 +493,13 @@ func initialize_armor_system() -> void:
 
 	enable_backface_collision_recursive(self)
 	print("done")
-	
+
 
 func resolve_glb_path(path: String) -> String:
 	"""Resolve GLB path from UID or direct path"""
 	if path.is_empty():
 		return ""
-	
+
 	# Check if it's a UID (starts with "uid://")
 	if path.begins_with("uid://"):
 		# Try to resolve the UID to actual path
@@ -440,7 +515,7 @@ func resolve_glb_path(path: String) -> String:
 		else:
 			print("   ❌ Failed to resolve UID: ", path)
 			return ""
-	
+
 	# Direct path - validate it exists and is GLB
 	if path.ends_with(".glb") and FileAccess.file_exists(path):
 		return path
@@ -453,14 +528,14 @@ func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> v
 	# Load the extractor
 	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
 	var extractor = extractor_script.new()
-	
+
 	print("      Extracting armor data from GLB...")
 	var success = extractor.extract_armor_with_mapping_to_json(glb_path, armor_json_path)
-	
+
 	if success:
 		print("      ✅ Armor extraction completed")
 		print("      📁 Saved to: ", armor_json_path)
-		
+
 		# Load the newly extracted data
 		success = armor_system.load_armor_data(armor_json_path)
 		if success:
@@ -474,7 +549,7 @@ func get_armor_at_hit_point(hit_node: Node3D, face_index: int) -> int:
 	"""Get armor thickness at a specific hit point"""
 	if armor_system == null:
 		return 0
-	
+
 	# Convert scene node to armor data path
 	var node_path = armor_system.get_node_path_from_scene(hit_node, self.name)
 	return armor_system.get_face_armor_thickness(node_path, face_index)

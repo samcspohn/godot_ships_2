@@ -2,14 +2,23 @@
 
 ## Overview
 
-A GPU-accelerated, template-based particle system for Godot 4.x that consolidates all particle effects into a single `GPUParticles3D` node. Uses shader-based particle processing with texture atlases to encode particle templates, enabling thousands of particles with minimal CPU overhead.
+A GPU-accelerated, template-based particle system for Godot 4.x that uses **compute shaders** for all particle simulation. The system enables efficient batch emission of particles with minimal CPU overhead, processing up to 100,000 particles entirely on the GPU with **zero CPU readback**.
 
 **Key Features:**
-- Single `GPUParticles3D` node handles all particle types (100,000 particle pool)
+- **Compute shader-based simulation**: All particle physics run on GPU via Vulkan compute shaders
+- **Zero-copy GPU rendering**: Particle data stays on GPU - no CPU readback per frame
+- **Batch emission API**: Emit multiple particles with a single call - no loops required
 - Template-based system: define particle behavior once, reuse everywhere
-- GPU-driven: compute shaders handle all particle physics/rendering
 - Texture atlases encode templates (properties, color ramps, scale curves, velocity curves)
-- Low CPU overhead: emit via `emit_particle()` API with encoded metadata
+- MultiMesh-based rendering with automatic billboarding via vertex shader
+- Minimal CPU overhead: only emission requests uploaded to GPU
+
+**Architecture (v3 - Zero Copy):**
+The system uses `ComputeParticleSystem` with RenderingDevice compute shaders and `Texture2DRD` for zero-copy GPU rendering:
+- Compute shader writes particle data to image textures (not storage buffers)
+- Render shader reads directly from those textures via `Texture2DRD` wrappers
+- No per-frame GPU→CPU data transfer
+- All 100k instances always "rendered" - shader culls inactive particles
 
 ## Architecture Components
 
@@ -36,7 +45,7 @@ A GPU-accelerated, template-based particle system for Godot 4.x that consolidate
 - Register up to 16 templates (MAX_TEMPLATES constant)
 - Assign unique template IDs (0-15)
 - Encode templates into texture atlases:
-  - **template_properties_texture**: RGBAF texture (16×8 pixels) - scalar properties per template
+  - **template_properties_texture**: RGBAF texture (16×9 pixels) - scalar properties per template
   - **color_ramp_atlas**: RGBA8 texture (256×16) - color gradients over lifetime
   - **scale_curve_atlas**: RF texture (256×16) - scale curves over lifetime
   - **emission_curve_atlas**: RF texture (256×16) - emission/brightness curves over lifetime
@@ -51,20 +60,31 @@ A GPU-accelerated, template-based particle system for Godot 4.x that consolidate
 - `build_texture_array() -> Texture2DArray`: Constructs texture array from registered templates
 
 **Encoding Details:**
-- Properties stored in 8 rows per template (velocity, damping, direction, gravity, etc.)
+- Properties stored in 9 rows per template (velocity, damping, direction, gravity, emission, etc.)
 - Color/scale/emission/velocity curves sampled at 256 points for smooth interpolation
 - All data uploaded to GPU via shader uniforms
 
-### 3. UnifiedParticleSystem (`unified_particle_system.gd`)
-**Main GPUParticles3D node** - the single particle emitter for all effects.
+### 3. ComputeParticleSystem (`compute_particle_system.gd`)
+**Core compute shader-based particle system** - handles all simulation and rendering with zero CPU readback.
 
 **Configuration:**
-- 100,000 particle pool
-- 100s max lifetime
-- Large visibility AABB (-100k to +100k on all axes)
-- Fixed 30 FPS processing
-- View depth draw order
-- Y-to-velocity transform alignment
+- 100,000 particle pool (MAX_PARTICLES)
+- 256 emission requests per frame (MAX_EMISSION_REQUESTS)
+- 64 threads per workgroup (WORKGROUP_SIZE)
+- 1024 × 98 particle data textures (1024 wide for efficient GPU access)
+- Automatic slot recycling when particles expire
+
+**Particle Data Layout (stored in 3 image textures):**
+```
+// particle_position_lifetime (1024×98 RGBA32F image)
+// xyz = position, w = remaining lifetime
+
+// particle_velocity_template (1024×98 RGBA32F image)  
+// xyz = velocity, w = template_id + size_multiplier * 0.001
+
+// particle_custom (1024×98 RGBA32F image)
+// x = angle, y = age, z = speed_scale, w = max_lifetime
+```
 
 **Key Method:**
 ```gdscript
@@ -72,20 +92,36 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
                size_multiplier: float, count: int, speed_mod: float)
 ```
 
-**Emission Encoding:**
-- Uses `emit_particle()` with metadata encoded in COLOR channel:
-  - `COLOR.r` = template_id / 255.0 (normalized)
-  - `COLOR.g` = size_multiplier (0-1, scales visual size and movement speed)
-  - `COLOR.b` = speed_mod (time scale multiplier)
-  - `COLOR.a` = unused (reserved)
-- Direction passed via velocity parameter (shader calculates final velocity)
-- Transform contains emission position
+**Processing Pipeline (per frame):**
+1. Queue emission requests from `emit_particles()` calls
+2. Upload emission buffer to GPU
+3. Run emission compute shader (mode=1) - writes to image textures
+4. Run simulation compute shader (mode=0) - updates image textures
+5. Render shader reads directly from textures via Texture2DRD (NO CPU READBACK)
 
-**Shaders:**
-- Process material: `particle_template_process.gdshader`
-- Draw material: `particle_template_material.gdshader`
+**GPU Resources:**
+- `particle_position_lifetime_tex`: Image texture for position + lifetime
+- `particle_velocity_template_tex`: Image texture for velocity + template
+- `particle_custom_tex`: Image texture for rotation, age, scale, max_lifetime
+- `emission_buffer`: Storage buffer for emission requests (256 × 48 bytes)
 
-### 4. ParticleEmitter (`particle_emitter.gd`)
+### 4. UnifiedParticleSystem (`unified_particle_system.gd`)
+**Wrapper class** that maintains backward compatibility with existing code.
+
+Internally delegates to `ComputeParticleSystem` while exposing the same API:
+
+```gdscript
+emit_particles(pos: Vector3, direction: Vector3, template_id: int, 
+               size_multiplier: float, count: int, speed_mod: float)
+```
+
+**Additional Methods:**
+- `clear_all_particles()`: Reset all particles
+- `get_active_particle_count()`: Current visible particles
+- `get_particles_emitted_this_frame()`: Emission count this frame
+- `update_shader_uniforms()`: Refresh after template changes
+
+### 5. ParticleEmitter (`particle_emitter.gd`)
 **Optional Node3D helper** for spawning particles at a specific location.
 
 **Properties:**
@@ -105,7 +141,7 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
 
 **Use Case:** Place in scenes for level-specific effects (fire, smoke, ambient particles).
 
-### 5. ParticleSystemInit (`particle_system_init.gd`)
+### 6. ParticleSystemInit (`particle_system_init.gd`)
 **Autoload singleton** that initializes the system at startup.
 
 **Responsibilities:**
@@ -127,83 +163,126 @@ emit_particles(pos: Vector3, direction: Vector3, template_id: int,
 
 ## Shader Pipeline
 
-### Process Shader (`particle_template_process.gdshader`)
-**Particle physics and lifecycle management** (runs on GPU per particle per frame).
+### Compute Shader (`compute_particle_simulate.glsl`)
+**Vulkan compute shader** for particle physics and emission (runs on GPU).
 
-**Uniforms:**
-- `template_properties`, `color_ramp_atlas`, `scale_curve_atlas`, `velocity_curve_atlas`
-- `max_templates` (16)
+**Workgroup Size:** 64 threads
 
-**start() Function:**
-- Decode template_id and size_multiplier from COLOR
-- Fetch template properties from texture (8 texelFetch calls)
-- Initialize particle:
+**Bindings (image-based for zero-copy rendering):**
+- `binding = 0`: particle_position_lifetime (image2D, rgba32f, read/write)
+- `binding = 1`: particle_velocity_template (image2D, rgba32f, read/write)
+- `binding = 2`: particle_custom (image2D, rgba32f, read/write)
+- `binding = 3`: emission_buffer (storage buffer, read only)
+- `binding = 4`: template_properties (sampler)
+- `binding = 5`: velocity_curve_atlas (sampler)
+
+**Push Constants:**
+- `delta_time`: Frame delta
+- `max_particles`: Total particle pool size
+- `emission_count`: Total particles to emit this frame
+- `mode`: 0 = simulate, 1 = emit
+
+**Texture Coordinate Mapping:**
+```glsl
+// Convert particle index to 2D texture coordinate (1024-wide textures)
+ivec2 idx_to_coord(uint idx) {
+    return ivec2(int(idx % 1024u), int(idx / 1024u));
+}
+```
+
+**Particle Data (stored in 3 image textures):**
+```glsl
+// Position + Lifetime texture (binding 0)
+vec4 pos_life = imageLoad(particle_position_lifetime, coord);
+// xyz = position, w = remaining lifetime
+
+// Velocity + Template texture (binding 1)
+vec4 vel_templ = imageLoad(particle_velocity_template, coord);
+// xyz = velocity, w = template_id + size_multiplier * 0.001
+
+// Custom data texture (binding 2)
+vec4 custom = imageLoad(particle_custom, coord);
+// x = angle, y = age, z = speed_scale, w = max_lifetime
+```
+
+**Emission Mode (mode=1):**
+- Each thread processes one particle to emit
+- Find which emission request the particle belongs to
+- Fetch template properties from texture
+- Initialize:
   - Random lifetime (from template range)
-  - Initial position (with emission shape offset)
-  - Initial velocity (direction × speed × spread)
+  - Position with emission shape offset
+  - Velocity with spread applied
   - Initial rotation angle
-  - Initial scale (from template range)
-- Store age/lifetime in CUSTOM channel:
-  - `CUSTOM.x` = rotation angle (degrees)
-  - `CUSTOM.y` = age (seconds)
-  - `CUSTOM.z` = unused
-  - `CUSTOM.w` = lifetime (seconds)
+  - Initial scale
 
-**process() Function:**
-- Update age: `CUSTOM.y += DELTA * speed_scale`
-- Calculate lifetime_percent (0.0 to 1.0)
-- Deactivate if age >= lifetime
-- Apply forces:
-  - Gravity
-  - Linear acceleration (along velocity)
-  - Velocity curve modifiers (sampled from atlas)
-  - Attractor forces
+**Simulation Mode (mode=0):**
+- Each thread processes one particle slot
+- Skip inactive particles (remaining lifetime <= 0)
+- Update age: `age += delta * speed_scale`
+- Apply forces (gravity, linear/radial/tangent acceleration)
+- Sample velocity curve modifier
 - Apply damping
-- Update position: `TRANSFORM[3].xyz += VELOCITY * DELTA * size_multiplier`
-- Update rotation (angular velocity)
-- Align transform to velocity direction (billboard effect)
-- Apply rotation around forward axis
+- Update position: `pos += velocity * dt * size_multiplier`
+- Update rotation
+- Mark expired particles as inactive
 
-**Optimization:** Particle is only active during its lifetime, then recycled by GPU.
+### Render Shader (`compute_particle_render.gdshader`)
+**Visual rendering** (spatial shader for MultiMesh instances).
 
-### Material Shader (`particle_template_material.gdshader`)
-**Visual rendering** (runs per pixel per particle).
+**Render Mode:** `blend_mix, depth_draw_opaque, cull_disabled, unshaded`
 
-**Render Mode:** `unshaded` - no lighting calculations, HDR colors bloom naturally
+**Particle Data Uniforms (from compute shader output via Texture2DRD):**
+- `particle_position_lifetime` (sampler2D) - xyz=position, w=remaining_lifetime
+- `particle_velocity_template` (sampler2D) - xyz=velocity, w=template_id+size_multiplier
+- `particle_custom` (sampler2D) - x=angle, y=age, z=speed_scale, w=max_lifetime
+- `particle_tex_width` (float) - texture width (1024)
+- `particle_tex_height` (float) - texture height (98)
 
-**Uniforms:**
+**Template Uniforms:**
 - `texture_atlas` (Texture2DArray) - particle textures
 - `color_ramp_atlas` - color gradients over lifetime
 - `scale_curve_atlas` - scale curves over lifetime
 - `emission_curve_atlas` - emission/brightness curves over lifetime
 - `template_properties` - template properties including emission_color and emission_energy
 
-**vertex() Function:**
-- Decode template_id from COLOR.r
-- Calculate lifetime_percent from INSTANCE_CUSTOM
-- Sample scale curve: `texture(scale_curve_atlas, vec2(lifetime_percent, v_coord)).r`
-- Manual billboarding:
-  - Extract camera right/up vectors from INV_VIEW_MATRIX
-  - Build billboard matrix preserving scale
-  - Apply size_multiplier from COLOR.g
-  - Apply scale_multiplier from scale curve atlas
+**vertex() Function - GPU-Only Particle Lookup:**
+```glsl
+// Calculate texture coordinate from instance ID
+int particle_idx = INSTANCE_ID;
+float tex_x = float(particle_idx % int(particle_tex_width)) / particle_tex_width;
+float tex_y = float(particle_idx / int(particle_tex_width)) / particle_tex_height;
+vec2 tex_coord = vec2(tex_x + 0.5 / particle_tex_width, tex_y + 0.5 / particle_tex_height);
+
+// Sample particle data from compute shader output - NO CPU INVOLVEMENT
+vec4 pos_life = texture(particle_position_lifetime, tex_coord);
+vec4 vel_templ = texture(particle_velocity_template, tex_coord);
+vec4 custom = texture(particle_custom, tex_coord);
+
+// Cull inactive particles by moving them offscreen
+if (remaining_lifetime <= 0.0) {
+    VERTEX = vec3(0.0, -99999.0, 0.0);
+    return;
+}
+```
+
+- Decode template_id and size_multiplier from vel_templ.w
+- Sample scale curve from atlas
+- Apply billboard transform with rotation
+- Apply size multiplier and scale curve
 
 **fragment() Function:**
-- Sample texture from array: `texture(texture_atlas, vec3(UV, template_id))`
-- Sample color ramp: `texture(color_ramp_atlas, vec2(lifetime_percent, v_coord))`
-- Sample emission curve: `texture(emission_curve_atlas, vec2(lifetime_percent, v_coord)).r`
-- Fetch emission properties: `texelFetch(template_properties, ivec2(template_id, 8), 0)`
-- Multiply texture × color ramp
-- Apply HDR brightness multiplier: `brightness = 1.0 + (emission_multiplier * emission_energy)`
-- Final ALBEDO with glow: `final_color.rgb * brightness * emission_color`
-- Apply fade-out at end of life (95-100% lifetime)
+- Discard inactive particles (belt-and-suspenders with vertex culling)
+- Sample texture from array by template_id
+- Sample color ramp by lifetime
+- Apply emission curve for HDR glow
+- Fade out at end of life (95-100%)
 - Optional alpha scissor for performance
 
-**Emission Strategy:**
-Instead of using the EMISSION output channel, emission effects are achieved by multiplying ALBEDO by HDR values (>1.0). This works in `unshaded` mode because:
-- Colors with values >1.0 are HDR and will bloom/glow with post-processing
-- No lighting calculations means consistent appearance regardless of camera angle
-- Similar approach to StandardMaterial3D's unshaded particles
+### Legacy Shaders (Deprecated)
+The following shaders are kept for reference but no longer used:
+- `particle_template_process.gdshader` - Old GPUParticles3D process shader
+- `particle_template_material.gdshader` - Old GPUParticles3D material shader
 
 ## Usage Patterns
 
@@ -215,6 +294,7 @@ var particle_system: UnifiedParticleSystem = get_node("/root/UnifiedParticleSyst
 var template = get_node("/root/ParticleSystemInit").get_template_by_name("explosion")
 
 # Emit 50 particles with size 2.0, speed 1.0
+# This is now a single batched call - no internal loop!
 particle_system.emit_particles(
     Vector3(0, 10, 0),      # position
     Vector3(0, 1, 0),       # direction
@@ -256,6 +336,7 @@ func splash_effect(pos: Vector3, size: float):
     var template = _templates[EffectType.SPLASH]
     var count = int(SPLASH_PARTICLES)
     var direction = Vector3(0, 1, 0)
+    # Batched emission - all particles queued in one call
     _particle_system.emit_particles(pos, direction, template.template_id, size, count, 4.0 / size)
 ```
 
@@ -481,15 +562,18 @@ unified_system.update_shader_uniforms()
 
 ```
 src/particles/
-├── unified_particle_system.gd          # Main particle system node
+├── compute_particle_system.gd          # Core compute shader particle system
+├── unified_particle_system.gd          # Wrapper for backward compatibility
 ├── particle_template.gd                # Template resource class
 ├── particle_template_manager.gd        # Template registry/encoder
 ├── particle_emitter.gd                 # Helper emitter node
 ├── particle_system_init.gd             # Autoload initializer
 ├── UnifiedParticleSystem.tscn          # Scene file (optional)
 ├── shaders/
-│   ├── particle_template_process.gdshader   # Physics shader
-│   └── particle_template_material.gdshader  # Rendering shader
+│   ├── compute_particle_simulate.glsl  # Vulkan compute shader (simulation + emission)
+│   ├── compute_particle_render.gdshader # MultiMesh rendering shader
+│   ├── particle_template_process.gdshader   # Legacy physics shader (deprecated)
+│   └── particle_template_material.gdshader  # Legacy rendering shader (deprecated)
 └── templates/
     ├── splash_template.tres
     ├── explosion_template.tres
@@ -499,13 +583,13 @@ src/particles/
 
 ## Key Takeaways for AI Agents
 
-1. **Single Particle System**: All particles go through `UnifiedParticleSystem` - never create separate GPUParticles3D nodes.
+1. **Compute Shader Backend**: All particles are now simulated via Vulkan compute shaders for maximum performance.
 
-2. **Template-Based**: Define behavior in `ParticleTemplate` resources, register once, use everywhere.
+2. **Batch Emission**: Use `emit_particles(pos, dir, template_id, size, count, speed)` - all particles are batched, no loops needed.
 
-3. **GPU Encoding**: Templates are baked into texture atlases at startup - modifications require re-encoding.
+3. **Template-Based**: Define behavior in `ParticleTemplate` resources, register once, use everywhere.
 
-4. **Emission API**: `emit_particles(pos, dir, template_id, size, count, speed)` - this is the primary interface.
+4. **GPU Encoding**: Templates are baked into texture atlases at startup - modifications require `update_shader_uniforms()`.
 
 5. **Size Multiplier**: Controls both visual size AND movement speed - use for variation without new templates.
 

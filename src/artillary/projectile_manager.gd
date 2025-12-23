@@ -17,6 +17,11 @@ var use_gpu_renderer: bool = true # Toggle for GPU vs legacy rendering
 var ray_query = PhysicsRayQueryParameters3D.new()
 var mesh_ray_query = PhysicsRayQueryParameters3D.new() # For detailed mesh intersection
 
+# Compute particle system for trails (optional upgrade path)
+var _compute_particle_system: UnifiedParticleSystem = null
+var _trail_template_id: int = -1  # Template ID for shell trails
+var use_compute_trails: bool = true  # Toggle between compute particles and GPUParticles3D
+
 var transforms = PackedFloat32Array()
 var colors = PackedColorArray()
 var camera: Camera3D = null
@@ -76,6 +81,7 @@ func _ready():
 		mesh_ray_query.collide_with_bodies = true
 		mesh_ray_query.collision_mask = 1 << 1 # Second physics layer for detailed mesh collision
 		mesh_ray_query.hit_back_faces = true
+		set_process(false)
 
 
 	else:
@@ -92,9 +98,64 @@ func _ready():
 		else:
 			print("Using legacy CPU-based projectile rendering")
 
+		# Initialize compute particle system for trails (deferred to ensure it exists)
+		if use_compute_trails:
+			# Wait a bit longer for ParticleSystemInit to finish
+			get_tree().create_timer(0.5).timeout.connect(_init_compute_trails)
+
 	transforms.resize(16)
 	projectiles.resize(1)
 	colors.resize(1)
+
+
+func _init_compute_trails() -> void:
+	print("ProjectileManager: Initializing compute trails...")
+
+	# Find the UnifiedParticleSystem in the scene tree
+	_compute_particle_system = _find_particle_system()
+
+	if _compute_particle_system == null:
+		push_warning("ProjectileManager: UnifiedParticleSystem not found, falling back to GPUParticles3D trails")
+		use_compute_trails = false
+		return
+
+	print("ProjectileManager: Found UnifiedParticleSystem")
+
+	# Get or register the shell trail template
+	# The template should be pre-registered by ParticleSystemInit with align_to_velocity = true
+	if _compute_particle_system.template_manager:
+		_trail_template_id = _compute_particle_system.template_manager.get_template_id("shell_trail")
+		print("ProjectileManager: shell_trail template_id = %d" % _trail_template_id)
+		if _trail_template_id < 0:
+			push_warning("ProjectileManager: 'shell_trail' template not found, falling back to GPUParticles3D trails")
+			use_compute_trails = false
+			return
+	else:
+		push_warning("ProjectileManager: Template manager not found, falling back to GPUParticles3D trails")
+		use_compute_trails = false
+		return
+
+	# Hide legacy GPUParticles3D when using compute trails
+	particles.visible = false
+	print("ProjectileManager: Using compute shader trails (template_id=%d)" % _trail_template_id)
+
+
+func _find_particle_system() -> UnifiedParticleSystem:
+	# Check common locations
+	if has_node("/root/UnifiedParticleSystem"):
+		return get_node("/root/UnifiedParticleSystem")
+
+	# Search in root children
+	var root = get_tree().root
+	for child in root.get_children():
+		if child is UnifiedParticleSystem:
+			return child
+		# Check one level deeper
+		for grandchild in child.get_children():
+			if grandchild is UnifiedParticleSystem:
+				return grandchild
+
+	return null
 
 
 # Historical naval armor penetration formula based on empirical data and ballistics research
@@ -250,13 +311,13 @@ func _process(_delta: float) -> void:
 
 	if camera == null:
 		return
-	
+
 	# GPU renderer handles shell position/rendering automatically via shader
 	# We only need to update trail particles here
 	if use_gpu_renderer and gpu_renderer != null:
 		_process_trails_only(current_time)
 		return
-	
+
 	# Legacy CPU-based rendering path
 	var id = 0
 	for p in self.projectiles:
@@ -293,6 +354,7 @@ func _process(_delta: float) -> void:
 
 ## Process only trail particles when using GPU renderer (shells are rendered by GPU)
 func _process_trails_only(current_time: float) -> void:
+	var total_emitted := 0
 	for p in self.projectiles:
 		if p == null:
 			continue
@@ -307,16 +369,39 @@ func _process_trails_only(current_time: float) -> void:
 		var offset_length = offset.length()
 		const step_size = 20
 		var vel = offset.normalized()
-		offset = vel * step_size
 
-		var trans = Transform3D.IDENTITY.translated(p.trail_pos)
-		while offset_length > step_size:
+		# Use compute particle system for trails if available
+		if use_compute_trails and _compute_particle_system != null and _trail_template_id >= 0:
+			# Emit trail using compute shader system
 			var width_scale = p.params.size * 0.9
-			var color_data = Color(width_scale, 1.0, 1.0, 1.0)
-			particles.emit_particle(trans, vel, color_data, Color.WHITE, 5 | 8)
-			trans = trans.translated(offset)
-			p.trail_pos += offset
-			offset_length -= step_size
+			var emitted = _compute_particle_system.emit_trail(
+				p.trail_pos,          # from_pos
+				p.position,           # to_pos
+				vel,                  # velocity_dir (for alignment)
+				_trail_template_id,   # template_id
+				width_scale,          # size_multiplier
+				step_size,            # step_size
+				1.0                   # speed_mod
+			)
+			# Update trail_pos to match emitted particles
+			if emitted > 0:
+				p.trail_pos += vel * step_size * emitted
+				total_emitted += emitted
+		else:
+			# Fall back to legacy GPUParticles3D
+			offset = vel * step_size
+			var trans = Transform3D.IDENTITY.translated(p.trail_pos)
+			while offset_length > step_size:
+				var width_scale = p.params.size * 0.9
+				var color_data = Color(width_scale, 1.0, 1.0, 1.0)
+				particles.emit_particle(trans, vel, color_data, Color.WHITE, 5 | 8)
+				trans = trans.translated(offset)
+				p.trail_pos += offset
+				offset_length -= step_size
+
+	# Debug: print once per second if using compute trails
+	# if use_compute_trails and total_emitted > 0 and Engine.get_frames_drawn() % 60 == 0:
+	# 	print("ProjectileManager: Emitted %d compute trail particles" % total_emitted)
 
 func find_ship(node: Node):
 	if node is Ship or node == null:
@@ -468,7 +553,7 @@ func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship, exclude: Array[Sh
 
 func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_blast: bool = true, basis: Basis = Basis()) -> void:
 	var bullet = ProjectileData.new()
-	
+
 	# Use GPU renderer if available
 	if use_gpu_renderer and gpu_renderer != null:
 		# Determine shell color based on type (matches original shell colors)
@@ -478,15 +563,15 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 			shell_color = Color(0.05, 0.1, 1.0, 1.0)  # Blue for AP
 		else:
 			shell_color = Color(1.0, 0.2, 0.05, 1.0)  # Orange for HE
-		
+
 		# Fire shell through GPU renderer (it manages its own IDs internally)
 		var gpu_id = gpu_renderer.fire_shell(pos, vel, shell.drag, shell.size, shell.type, shell_color)
-		
+
 		# Still track in projectiles array for trail emission and ID mapping
 		if id >= projectiles.size():
 			var np2 = next_pow_of_2(id + 1)
 			projectiles.resize(np2)
-		
+
 		bullet.initialize(pos, vel, t, shell, _owner)
 		bullet.frame_count = gpu_id  # Store GPU renderer ID in frame_count for mapping
 		self.projectiles.set(id, bullet)
@@ -529,7 +614,7 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int, normal: Vector3) -> vo
 		print("bullet is null: ", id)
 		return
 	var radius = bullet.params.size
-	
+
 	# Destroy in GPU renderer if using it
 	if use_gpu_renderer and gpu_renderer != null:
 		var gpu_id = bullet.frame_count  # GPU renderer ID was stored here
@@ -542,7 +627,7 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int, normal: Vector3) -> vo
 		b.z = Vector3.ZERO
 		var t = Transform3D(b, Vector3(0.0, INF, 0.0))
 		update_transform(id, t)
-	
+
 	self.projectiles.set(id, null)
 
 	match hit_result:

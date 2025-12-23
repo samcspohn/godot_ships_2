@@ -21,7 +21,7 @@ var texture_array: Texture2DArray
 
 # Texture dimensions
 const CURVE_RESOLUTION = 256
-const PROPERTIES_HEIGHT = 9  # Number of property rows per template (increased for emission properties)
+const PROPERTIES_HEIGHT = 11  # Number of property rows per template (row 10 = base color)
 
 signal templates_updated()
 
@@ -63,6 +63,13 @@ func get_template_by_id(id: int) -> ParticleTemplate:
 
 func get_template_by_name(_name: String) -> ParticleTemplate:
 	return template_by_name.get(_name, null)
+
+func get_template_id(_name: String) -> int:
+	"""Get template ID by name. Returns -1 if not found."""
+	var template = template_by_name.get(_name, null)
+	if template:
+		return template.template_id
+	return -1
 
 func _initialize_textures() -> void:
 	# Properties texture: stores scalar properties for each template
@@ -166,7 +173,7 @@ func _encode_properties(template: ParticleTemplate, id: int) -> void:
 		template.emission_box_extents.z
 	))
 
-	# Row 6: angular velocity, initial angle, scale
+	# Row 6: angular velocity, initial angle
 	image.set_pixel(id, 6, Color(
 		template.angular_velocity_min,
 		template.angular_velocity_max,
@@ -174,12 +181,12 @@ func _encode_properties(template: ParticleTemplate, id: int) -> void:
 		template.initial_angle_max
 	))
 
-	# Row 7: scale, hue variation
+	# Row 7: scale X (min/max), scale Y (min/max)
 	image.set_pixel(id, 7, Color(
-		template.scale_min,
-		template.scale_max,
-		template.hue_variation_min,
-		template.hue_variation_max
+		template.scale_min.x,
+		template.scale_max.x,
+		template.scale_min.y,
+		template.scale_max.y
 	))
 
 	# Row 8: emission color (RGB), emission energy (A)
@@ -189,6 +196,17 @@ func _encode_properties(template: ParticleTemplate, id: int) -> void:
 		template.emission_color.b,
 		template.emission_energy
 	))
+
+	# Row 9: alignment mode, velocity_stretch, is_trail, hue_variation_max
+	image.set_pixel(id, 9, Color(
+		1.0 if template.align_to_velocity else 0.0,
+		template.velocity_stretch,
+		1.0 if template.is_trail else 0.0,
+		template.hue_variation_max
+	))
+
+	# Row 10: base color (RGBA)
+	image.set_pixel(id, 10, template.color)
 
 	template_properties_texture.update(image)
 

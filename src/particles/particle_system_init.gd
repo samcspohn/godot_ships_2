@@ -11,6 +11,7 @@ var splash_template: ParticleTemplate
 var explosion_template: ParticleTemplate
 var sparks_template: ParticleTemplate
 var muzzle_blast_template: ParticleTemplate
+var shell_trail_template: ParticleTemplate
 
 func _ready() -> void:
 	print("ParticleSystemInit: Initializing particle system...")
@@ -55,6 +56,13 @@ func _load_templates() -> void:
 		template_manager.register_template(muzzle_blast_template)
 	else:
 		push_error("ParticleSystemInit: Failed to load muzzle_blast_template")
+
+	# Load shell trail template (velocity-aligned for projectile trails)
+	shell_trail_template = load("res://src/particles/templates/shell_trail_template.tres")
+	if shell_trail_template:
+		template_manager.register_template(shell_trail_template)
+	else:
+		push_error("ParticleSystemInit: Failed to load shell_trail_template")
 
 	print("ParticleSystemInit: Registered %d templates" % template_manager.next_template_id)
 
