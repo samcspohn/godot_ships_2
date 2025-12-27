@@ -120,7 +120,7 @@ func update_transform_scale(idx, scale: float):
 
 func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
-	
+
 	if camera == null:
 		return
 	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
@@ -189,13 +189,13 @@ func _physics_process(_delta: float) -> void:
 		if not collision.is_empty():
 			#global_position = collision.position
 			self.destroyTorpedoRpc(id, collision.position)
-			var ship = ProjectileManager.find_ship(collision.collider)
-			if ship != null:
-				var hp: HitPointsManager = ship.health_controller
-				hp.take_damage(p.params.damage, collision.position)
-
-				# Track torpedo damage dealt
-				track_torpedo_damage_dealt(p.owner, p.params.damage)
+			#var ship = ProjectileManager.find_ship(collision.collider)
+			#if ship != null:
+				#var hp: HitPointsManager = ship.health_controller
+				#hp.take_damage(p.params.damage, collision.position)
+#
+				## Track torpedo damage dealt
+				#track_torpedo_damage_dealt(p.owner, p.params.damage)
 		id += 1
 
 

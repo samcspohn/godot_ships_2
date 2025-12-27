@@ -63,7 +63,7 @@ func _physics_process(delta: float) -> void:
 				fire.emitting = false
 				smoke.emitting = false
 				_sync_deactivate.rpc()
-		elif curr_buildup < _params.max_buildup:
+		elif curr_buildup < _params.max_buildup if _params else false:
 			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
 

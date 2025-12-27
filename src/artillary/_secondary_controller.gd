@@ -76,7 +76,7 @@ func _physics_process(delta: float) -> void:
 		var r = sc.p.params()._range
 		if r > max_range:
 			max_range = r
-	
+
 	var enemies_in_range : Array[Ship] = server.get_valid_targets(_ship.team.team_id).filter(func(p):
 		return p.global_position.distance_to(_ship.global_position) <= max_range
 	)
@@ -92,12 +92,13 @@ func _physics_process(delta: float) -> void:
 	var gi = 0
 	for sc in sub_controllers:
 		var _range = sc.p.params()._range
-		var _gi = gi
+		# var _gi = gi
 		for g in sc.guns:
 			var found_target = false
+			var pm = get_node("/root/ProjectileManager")
 			for e in enemies_in_range:
-				if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier) and g.sim_can_shoot_over_terrain(e.global_position):
-					g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
+				if g.valid_target_leading(e.global_position, e.linear_velocity / pm.shell_time_multiplier) and g.sim_can_shoot_over_terrain(e.global_position):
+					g._aim_leading(e.global_position, e.linear_velocity / pm.shell_time_multiplier, delta)
 					gun_targets[gi] = e
 					found_target = true
 					break
@@ -105,20 +106,26 @@ func _physics_process(delta: float) -> void:
 				gun_targets[gi] = null
 				g.return_to_base(delta)
 			gi += 1
-		gi = _gi
-	
+		# gi = _gi
+		gi = 0
+
 		if enemies_in_range.size() > 0:
 			var reload_time = sc.p.params().reload_time
 			sc.sequential_fire_timer += delta
-			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
-				sc.sequential_fire_timer = 0.0
-				for g in sc.guns:
+			var delay = min(sequential_fire_delay, reload_time / sc.guns.size())
+			while sc.sequential_fire_timer >= delay:
+				sc.sequential_fire_timer -= delay
+				# Find next gun that can fire
+				# gi = 0
+				for _g in range(gi, sc.guns.size()):
+					var g = sc.guns[gi]
+					# var target = gun_targets[gi]
 					if g.reload >= 1 and g.can_fire:
 						if gun_targets[gi] == target:
 							g.fire(target_mod)
 						else:
 							g.fire()
-						gi = sc.guns.size()
+						# gi = sc.guns.size()
 						break
 					gi += 1
 

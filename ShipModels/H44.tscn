@@ -16,9 +16,10 @@
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="16_nfp68"]
 
 [sub_resource type="Resource" id="Resource_apgp6"]
+resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 810.0
-drag = 0.008
+drag = 0.0065
 damage = 20000.0
 size = 5.0
 caliber = 500.0
@@ -31,7 +32,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 810.0
-drag = 0.008
+drag = 0.0065
 damage = 5700.0
 size = 5.0
 caliber = 500.0
@@ -45,9 +46,9 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_pnxfl"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
-reload_time = 2.0
-traverse_speed = 40.0
-elevation_speed = 40.0
+reload_time = 29.0
+traverse_speed = 5.0
+elevation_speed = 5.0
 _range = 15500.0
 shell1 = SubResource("Resource_apgp6")
 shell2 = SubResource("Resource_uu5mp")
@@ -127,7 +128,7 @@ params = SubResource("Resource_pnxfl")
 guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="MovementController" parent="Modules" index="2"]
-max_speed = 100.0
+max_speed = 31.0
 acceleration_time = 30.0
 deceleration_time = 30.0
 reverse_speed_ratio = 0.5
@@ -277,12 +278,19 @@ max_rotation_angle = 2.6179938779914944
 min_rotation_angle = 0.5235987755982988
 max_rotation_angle = 5.759586531581287
 
-[node name="Hull_col" parent="." index="10"]
-visible = false
+[node name="Hull_Citadel_col" parent="." index="10"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Citadel_col" parent="." index="11"]
+[node name="Hull_Bow_col" parent="." index="12"]
+layers = 0
+material_override = ExtResource("15_pnxfl")
+
+[node name="Hull_Stern_col" parent="." index="14"]
+layers = 0
+material_override = ExtResource("15_pnxfl")
+
+[node name="Hull_CaseMate_col" parent="." index="16"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 

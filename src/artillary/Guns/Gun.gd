@@ -533,7 +533,8 @@ func fire(mod: TargetMod = null) -> void:
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = Time.get_unix_time_from_system()
-					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
+					var pm = get_node("/root/ProjectileManager")
+					var _id = pm.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
 					TcpThreadPool.send_fire_gun(id, dispersed_velocity, m.global_position, t, _id)
 				else:
 					pass
@@ -542,7 +543,8 @@ func fire(mod: TargetMod = null) -> void:
 
 # @rpc("authority", "reliable")
 func fire_client(vel, pos, t, _id):
-	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
+	var pm = get_node("/root/ProjectileManager")
+	pm.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
 
 @rpc("authority", "call_remote", "reliable", 2)
 func fire_client2(data: PackedByteArray) -> void:
@@ -555,7 +557,8 @@ func fire_client2(data: PackedByteArray) -> void:
 	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 	var t = stream.get_double()
 	var _id = stream.get_32()
-	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
+	var pm = get_node("/root/ProjectileManager")
+	pm.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
 
 
 

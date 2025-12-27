@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="1_svjww"]
 
 [resource]
+resource_local_to_scene = true
 script = ExtResource("1_svjww")
 speed = 820.0
 drag = 0.009
@@ -10,10 +11,6 @@ damage = 10000.0
 size = 3.8
 caliber = 380.0
 mass = 800.0
-fire_buildup = 0.0
-fuze_delay = 0.035
-type = 1
-penetration_modifier = 1.0
 auto_bounce = 1.0472
 overmatch = 27
 arming_threshold = 63

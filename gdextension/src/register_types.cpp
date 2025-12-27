@@ -3,11 +3,14 @@
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 // Include your custom classes here
 #include "example_class.h"
 #include "ship.h"
 #include "gun.h"
+#include "projectile_physics_with_drag.h"
+#include "projectile_manager.h"
 
 using namespace godot;
 
@@ -16,12 +19,20 @@ void initialize_ships_module(ModuleInitializationLevel p_level) {
         return;
     }
 
+    UtilityFunctions::print("=== SHIPS GDEXTENSION: Registering classes ===");
+
     // Register your classes here
     ClassDB::register_class<ExampleClass>();
     ClassDB::register_class<Ship>();
     ClassDB::register_class<Gun>();
     ClassDB::register_class<SimShell>();
     ClassDB::register_class<ShootOver>();
+    ClassDB::register_class<ProjectilePhysicsWithDrag>();
+    ClassDB::register_class<ProjectileData>();
+    ClassDB::register_class<ShellData>();
+    ClassDB::register_class<ProjectileManager>();
+
+    UtilityFunctions::print("=== SHIPS GDEXTENSION: ProjectileManager class registered ===");
 }
 
 void uninitialize_ships_module(ModuleInitializationLevel p_level) {

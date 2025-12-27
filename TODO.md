@@ -2,10 +2,13 @@
 
 ## Todo Soon ⏳
 - [x] fix close(long?) range aiming too high
-- [ ] incorrect hit effect (explosion on ricochet)
+- [x] incorrect hit effect (explosion on ricochet)
 - [x] hit ribbons not showing
 - [ ] auto lockon
 - [x] sniper reticle
+- [ ] minimap
+	- [ ] show radar/hydro ranges
+	- [ ] show view angle
 - [ ] torpedo aiming indicator
 	- [ ] torpedo arming distance indicator
 	- [ ] torpedo spread indicator

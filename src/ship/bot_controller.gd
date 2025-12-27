@@ -33,6 +33,8 @@ var current_patrol_target: Vector3 = Vector3.ZERO  # Current patrol destination
 var patrol_point_reach_distance: float = 500.0  # Distance to reach patrol point before selecting new one
 var has_patrol_target: bool = false  # Whether we have a valid patrol target
 
+var pm
+var ap
 var ray_query: PhysicsRayQueryParameters3D
 func _ready():
 	# Wait for ship reference to be set
@@ -60,6 +62,9 @@ func _ready():
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
+
+	pm = get_node("/root/ProjectileManager")
+	ap = get_node("/root/AnalyticalProjectileSystem")
 
 func get_ship_heading() -> float:
 	if !ship:
@@ -350,10 +355,10 @@ func fire_at_target():
 	# Get artillery controller and set aim then fire
 	var artillery = ship.get_node_or_null("Modules/ArtilleryController") as ArtilleryController
 	if artillery:
-		var target_position = AnalyticalProjectileSystem.calculate_leading_launch_vector(
+		var target_position = ap.calculate_leading_launch_vector(
 			ship.global_position,
 			target_ship.global_position,
-			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,
+			target_ship.linear_velocity / pm.shell_time_multiplier,
 			artillery.get_shell_params().speed,
 			artillery.get_shell_params().drag
 		)[2]
@@ -363,6 +368,7 @@ func fire_at_target():
 			artillery.set_aim_input(target_position)
 		# Fire guns
 		if artillery.has_method("fire_next_ready_gun"):
+			# print(artillery.params.dynamic_mod.reload_time)
 			artillery.fire_next_ready_gun()
 
 func apply_collision_avoidance(base_heading: float) -> float:

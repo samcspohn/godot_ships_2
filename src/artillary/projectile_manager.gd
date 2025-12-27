@@ -1,5 +1,5 @@
 extends Node
-class_name _ProjectileManager
+class_name _ProjectileManager_old
 
 const GPUProjectileRendererClass = preload("res://src/artillary/GPUProjectileRenderer.gd")
 
@@ -28,7 +28,7 @@ var camera: Camera3D = null
 
 # signal resource_registered(id: int, resource: ShellParams)
 
-class ProjectileData:
+class _ProjectileData:
 	var position: Vector3
 	var start_position: Vector3
 	var start_time: float
@@ -222,7 +222,7 @@ func calculate_impact_angle(velocity: Vector3, surface_normal: Vector3) -> float
 	var angle_rad = velocity.normalized().angle_to(surface_normal)
 	return min(angle_rad, PI - angle_rad)
 
-class ShellData:
+class _ShellData:
 	var params: ShellParams
 	var velocity: Vector3
 	var position: Vector3

@@ -4,6 +4,35 @@ import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
+# Add optimization flags based on platform and target
+is_release = env["target"] == "template_release"
+
+if env["platform"] == "linux":
+    if is_release:
+        env.Append(CCFLAGS=["-O3", "-flto", "-ffast-math", "-funroll-loops"])
+        # Note: GNU ld does not have ICF (Identical Code Folding) optimization.
+        # Only LLVM's lld and gold linker have ICF. If using lld, add: "-Wl,--icf=none"
+        env.Append(LINKFLAGS=["-flto"])
+    else:
+        env.Append(CCFLAGS=["-O3"])
+elif env["platform"] == "windows":
+    if is_release:
+        env.Append(CCFLAGS=["/O2", "/GL", "/fp:fast"])
+        # Disable ICF (Identical COMDAT Folding) to prevent identical functions from being merged.
+        # GDExtension uses function pointer comparison to register virtual methods, and ICF
+        # breaks this by giving identical functions (like empty _bind_methods) the same address.
+        env.Append(LINKFLAGS=["/LTCG", "/OPT:NOICF"])
+    else:
+        env.Append(CCFLAGS=["/O2"])
+elif env["platform"] == "macos":
+    if is_release:
+        env.Append(CCFLAGS=["-O3", "-flto", "-ffast-math", "-funroll-loops"])
+        # Note: macOS linker (ld64) does not have ICF enabled by default, so no flag needed.
+        # If using lld on macOS, you would add "-Wl,--no-icf"
+        env.Append(LINKFLAGS=["-flto"])
+    else:
+        env.Append(CCFLAGS=["-O3"])
+
 # Add source files
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")

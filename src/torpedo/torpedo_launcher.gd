@@ -23,7 +23,7 @@ var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
 func _ready() -> void:
 	my_params.from_params(params)
 	max_range = my_params._range
-	_ship = ProjectileManager.find_ship(self)
+	#_ship = ProjectileManager.find_ship(self)
 	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
 	#max_range = min(a[0], my_params._range)
 	#max_flight = a[2]
@@ -286,28 +286,28 @@ func normalize_angle(angle: float) -> float:
 #
 	## # Ensure we stay within allowed elevation range
 	## barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
-
-@rpc("any_peer", "call_remote")
-func fire() -> void:
-	if _Utils.authority():
-		if !disabled and reload >= 1.0 and can_fire:
-			# Fire torpedo
-			reload = 0.0
-			can_fire = false
-			var offset:Vector3 = -muzzles[0].global_basis.x * 0.1
-			for m in muzzles:
-				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
-				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
-				#if aim[0] != null:
-				var t = float(Time.get_unix_time_from_system())
-				var id = (TorpedoManager as _TorpedoManager).fireTorpedo(m.global_basis.z + offset,m.global_position, params.torpedo_params, t, _ship)
-				#var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, dispersion_point, aim[1], t)
-				for p in multiplayer.get_peers():
-					self.fire_client.rpc_id(p, m.global_position, m.global_basis.z + offset, t, id)
-				offset += muzzles[0].global_basis.x * 0.05
-					#self.fire_client.rpc_id(p, aim[0],m.global_position, t, aim[1], dispersion_point, id)
-			reload = 0
-
-@rpc("any_peer","reliable")
-func fire_client(pos, vel, t, id):
-	(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, id, params.torpedo_params, _ship)
+#
+#@rpc("any_peer", "call_remote")
+#func fire() -> void:
+	#if _Utils.authority():
+		#if !disabled and reload >= 1.0 and can_fire:
+			## Fire torpedo
+			#reload = 0.0
+			#can_fire = false
+			#var offset:Vector3 = -muzzles[0].global_basis.x * 0.1
+			#for m in muzzles:
+				##var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
+				##var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
+				##if aim[0] != null:
+				#var t = float(Time.get_unix_time_from_system())
+				#var id = (TorpedoManager as _TorpedoManager).fireTorpedo(m.global_basis.z + offset,m.global_position, params.torpedo_params, t, _ship)
+				##var id = ProjectileManager1.fireBullet(aim[0], m.global_position, my_params.shell, dispersion_point, aim[1], t)
+				#for p in multiplayer.get_peers():
+					#self.fire_client.rpc_id(p, m.global_position, m.global_basis.z + offset, t, id)
+				#offset += muzzles[0].global_basis.x * 0.05
+					##self.fire_client.rpc_id(p, aim[0],m.global_position, t, aim[1], dispersion_point, id)
+			#reload = 0
+#
+#@rpc("any_peer","reliable")
+#func fire_client(pos, vel, t, id):
+	#(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, id, params.torpedo_params, _ship)

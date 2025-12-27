@@ -18,6 +18,7 @@ llm_api="ollama_api"
 config/name="ships2"
 run/main_scene="res://scenes/root.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
+run/frame_delay_msec=1
 config/icon="res://icon.svg"
 
 [audio]
@@ -30,10 +31,10 @@ GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 UpgradeManager="*res://src/autoload/upgrade_manager.gd"
 LaunchModes="*res://launch_modes.gd"
-AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd"
-SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"
+AnalyticalProjectileSystem="*res://src/artillary/AnalyticalProjectileSystem.tscn"
+SimpleProjectileSystem="res://src/artillary/simple_projectile_system.gd"
 ProjectileManager="*res://src/artillary/ProjectileManager.tscn"
-TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
+TorpedoManager="res://src/torpedo/TorpedoManager.tscn"
 ArmorInteraction="*res://src/armor/ArmorInteraction.gd"
 _Utils="*res://src/utils/utils.gd"
 HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
@@ -53,7 +54,7 @@ version_control/autoload_on_startup=true
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
+enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
 
 [input]
 
@@ -140,5 +141,15 @@ toggle_secondaries={
 
 [physics]
 
-common/physics_ticks_per_second=20
+3d/run_on_separate_thread=true
+common/physics_ticks_per_second=16
+jolt_physics_3d/limits/world_boundary_shape_size=100000.0
+jolt_physics_3d/limits/max_linear_velocity=inf
+jolt_physics_3d/limits/max_angular_velocity=inf
 common/physics_interpolation=true
+
+[rendering]
+
+occlusion_culling/bvh_build_quality=0
+rendering_device/vsync/frame_queue_size=3
+driver/threads/thread_model=0

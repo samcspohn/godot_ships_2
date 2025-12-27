@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="3_n61w7"]
 
 [sub_resource type="Resource" id="Resource_2muxd"]
+resource_local_to_scene = true
 script = ExtResource("3_n61w7")
 speed = 820.0
 drag = 0.009

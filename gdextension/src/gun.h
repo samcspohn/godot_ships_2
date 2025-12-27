@@ -114,14 +114,15 @@ private:
     // Private helpers
     void _initialize_onready_vars();
     void _ensure_onready();
-    void _on_ready();  // Game logic called from notification
     
     // Helper to get ProjectilePhysicsWithDrag script for static method calls
     static Ref<GDScript> get_projectile_physics_script();
 
 protected:
     static void _bind_methods();
-    void _notification(int p_what);
+
+public:
+    void _ready() override;
 
 public:
     Gun();

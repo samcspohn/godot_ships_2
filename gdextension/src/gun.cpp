@@ -1,4 +1,5 @@
 #include "gun.h"
+#include "projectile_physics_with_drag.h"
 #include "ship.h"
 
 #include <godot_cpp/core/class_db.hpp>
@@ -212,27 +213,13 @@ Gun::Gun() {
 Gun::~Gun() {}
 
 // Handle notifications for proper initialization timing
-void Gun::_notification(int p_what) {
+void Gun::_ready() {
     if (Engine::get_singleton()->is_editor_hint()) {
         return;
     }
 
-    switch (p_what) {
-        case NOTIFICATION_ENTER_TREE:
-            // Nothing special needed on enter_tree for Gun currently
-            break;
-        case NOTIFICATION_READY:
-            _initialize_onready_vars();
-            _on_ready();
-            break;
-        case NOTIFICATION_PHYSICS_PROCESS:
-            _physics_process(get_physics_process_delta_time());
-            break;
-    }
-}
+    _initialize_onready_vars();
 
-// Game logic called from NOTIFICATION_READY
-void Gun::_on_ready() {
     // Enable physics processing first
     set_physics_process(true);
 
@@ -260,7 +247,7 @@ void Gun::_on_ready() {
 }
 
 void Gun::_initialize_onready_vars() {
-	UtilityFunctions::print("Gun::_initialize_onready_vars() called for: ", get_path());
+    UtilityFunctions::print("Gun::_initialize_onready_vars() called for: ", get_path());
     if (onready_initialized) {
         return;
     }
@@ -277,6 +264,10 @@ void Gun::_initialize_onready_vars() {
 }
 
 void Gun::_ensure_onready() {
+    // Don't initialize in editor
+    if (Engine::get_singleton()->is_editor_hint()) {
+        return;
+    }
     if (!onready_initialized && is_inside_tree()) {
         _initialize_onready_vars();
     }
@@ -754,17 +745,12 @@ bool Gun::valid_target(const Vector3& target) const {
         return false;
     }
 
-    // Call ProjectilePhysicsWithDrag.calculate_launch_vector via GDScript static method
-    Ref<GDScript> projectile_physics = get_projectile_physics_script();
-    if (projectile_physics.is_null()) {
-        return false;
-    }
-
     double speed = shell->get("speed");
     double drag = shell->get("drag");
     double range = params->get("_range");
 
-    Array sol = projectile_physics->call("calculate_launch_vector", get_global_position(), target, speed, drag);
+    // Use C++ ProjectilePhysicsWithDrag directly
+    Array sol = ProjectilePhysicsWithDrag::calculate_launch_vector(get_global_position(), target, speed, drag);
 
     if (sol.size() > 0 && sol[0].get_type() != Variant::NIL &&
         (target - get_global_position()).length() < range) {
@@ -785,17 +771,12 @@ bool Gun::valid_target_leading(const Vector3& target, const Vector3& target_velo
         return false;
     }
 
-    // Call ProjectilePhysicsWithDrag.calculate_leading_launch_vector via GDScript static method
-    Ref<GDScript> projectile_physics = get_projectile_physics_script();
-    if (projectile_physics.is_null()) {
-        return false;
-    }
-
     double speed = shell->get("speed");
     double drag = shell->get("drag");
     double range = params->get("_range");
 
-    Array sol = projectile_physics->call("calculate_leading_launch_vector", get_global_position(), target, target_velocity, speed, drag);
+    // Use C++ ProjectilePhysicsWithDrag directly
+    Array sol = ProjectilePhysicsWithDrag::calculate_leading_launch_vector(get_global_position(), target, target_velocity, speed, drag);
 
     if (sol.size() > 2 && sol[0].get_type() != Variant::NIL) {
         Vector3 aim_point = sol[2];

@@ -67,10 +67,11 @@ func draw_debug_arrow(start: Vector3, end: Vector3, color: Color) -> void:
 var num_frames: int = 0
 var cached_authority: bool = false
 func authority() -> bool:
-	if num_frames != Engine.get_process_frames():
-		num_frames = Engine.get_process_frames()
-		cached_authority = multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server()
-	return cached_authority
+	#if num_frames != Engine.get_process_frames():
+		#num_frames = Engine.get_process_frames()
+		#cached_authority = multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server()
+	#return cached_authority
+	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server()
 
 func is_multiplayer_active() -> bool:
 	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED

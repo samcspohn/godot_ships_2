@@ -8,6 +8,9 @@ func apply(ship: Ship):
 	_ship = ship
 	ship.get_health_controller().hp_changed.connect(func (new_hp: float) -> void:
 
+		if ship != _ship:
+			print("Adrenaline Rush connected to wrong ship!")
+			return
 		var curr_hp = new_hp
 		var max_hp = ship.health_controller.max_hp
 		var hp_ratio = curr_hp / max_hp

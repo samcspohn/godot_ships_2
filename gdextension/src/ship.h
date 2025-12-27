@@ -81,13 +81,13 @@ private:
     void _initialize_onready_vars();
     void _ensure_onready();  // Lazy initialization fallback
     void _set_ship_references_on_children();  // Sets ship ref on children during ENTER_TREE
-    void _on_ready();  // Game logic called from notification
 
 protected:
     static void _bind_methods();
-    void _notification(int p_what);
 
 public:
+    void _ready() override;
+
     Ship();
     ~Ship();
 

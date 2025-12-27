@@ -8,7 +8,7 @@ signal processed
 #@export var ship_movement: ShipMovement
 #@export var hp_manager: HitPointsManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
-@export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT # 380mm shell drag
+@export var projectile_drag_coefficient: float = 0.01 # 380mm shell drag
 
 # Camera mode
 enum CameraMode {THIRD_PERSON, SNIPER, FREE_LOOK}
@@ -112,8 +112,10 @@ func _ready():
 	get_parent().add_child(sniper_view)
 	#get_tree().root.add_child(aim)
 	aim = third_person_view
-	ProjectileManager.camera = self
-	TorpedoManager.camera = self
+	var pm = get_node("/root/ProjectileManager")
+	pm.camera = self
+	var tm = get_node("/root/TorpedoManager")
+	tm.camera = self
 	# processed.connect(ProjectileManager.__process)
 	# processed.connect(TorpedoManager.__process)
 	# processed.connect(ui.__process)
@@ -150,6 +152,11 @@ func _input(event):
 	# 	third_person_view.input(event)
 
 
+func _physics_process(_delta):
+	# Calculate target information (must be in _physics_process for direct_space_state access)
+	_calculate_target_info()
+
+
 func _process(delta):
 	# Apply accumulated zoom smoothly
 	if abs(zoom_accumulator) > 0.01:
@@ -164,9 +171,6 @@ func _process(delta):
 		sniper_view._update_camera_transform()
 
 	_update_camera_transform()
-
-	# Calculate target information
-	_calculate_target_info()
 
 	# Calculate ship speed
 	if _ship:
@@ -485,7 +489,8 @@ func _calculate_target_info():
 	distance_to_target = (aim_position - ship_position).length() # Convert to km
 
 	if launch_vector != null:
-		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+		var pm = get_node("/root/ProjectileManager")
+		time_to_target = launch_result[1] / pm.shell_time_multiplier
 		var can_shoot: ShootOver = Gun.sim_can_shoot_over_terrain_static(
 			ship_position,
 			launch_vector,

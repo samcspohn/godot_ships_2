@@ -133,7 +133,7 @@ func _process(delta: float) -> void:
 			conn_thread.id = client_ids
 			client_ids += 1
 			threads.append(conn_thread)
-	
+
 	if client_running:
 		if null_guns.size() > 0:
 			for i in null_guns:
@@ -141,7 +141,7 @@ func _process(delta: float) -> void:
 				var gun = get_node_or_null(path) as Gun
 				if gun != null:
 					guns[i] = gun
-					null_guns.erase(i) 
+					null_guns.erase(i)
 
 # Function to enqueue data to send to all clients (call this from server)
 func enqueue_broadcast(data: PackedByteArray):
@@ -297,7 +297,9 @@ func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: 
 		print("No shell ID in data")
 		return
 	# Find the shell by ID and destroy it
-	ProjectileManager.destroyBulletRpc2(shell_id, pos, hit_result, normal)
+	# Access via get_node to avoid ambiguity with C++ class name
+	var pm = get_node("/root/ProjectileManager")
+	pm.destroyBulletRpc2(shell_id, pos, hit_result, normal)
 
 func fire_gun_client(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	# print("Firing gun with data: ", gun_id, v, p, t, i)
@@ -315,8 +317,9 @@ func fire_gun_client(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	gun.fire_client(v, p, t, i)
 
 func ricochet_client(original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float):
-	
-	ProjectileManager.createRicochetRpc(original_id, ricochet_id, position, velocity, time)
+	# Access via get_node to avoid ambiguity with C++ class name
+	var pm = get_node("/root/ProjectileManager")
+	pm.createRicochetRpc(original_id, ricochet_id, position, velocity, time)
 
 func display_tree(node: Node, indent: String = "") -> void:
 	print(indent, node.name, " (", node.get_class(), ")")

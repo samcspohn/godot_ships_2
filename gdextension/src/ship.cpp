@@ -123,33 +123,15 @@ Ship::~Ship() {
 }
 
 // Called when node enters the scene tree
-// Handle notifications for proper initialization timing
-void Ship::_notification(int p_what) {
+// Called when node is ready
+void Ship::_ready() {
     if (Engine::get_singleton()->is_editor_hint()) {
         return;
     }
 
-    switch (p_what) {
-        case NOTIFICATION_ENTER_TREE:
-            // Set ship references on child modules BEFORE their _ready() is called
-            // This is critical because children's _ready() runs before parent's _ready()
-            // but ENTER_TREE fires on parent first, then propagates to children
-            // _set_ship_references_on_children();
-            break;
-        case NOTIFICATION_READY:
-            _initialize_onready_vars();
-            _set_ship_references_on_children();
+    _initialize_onready_vars();
+    _set_ship_references_on_children();
 
-            _on_ready();
-            break;
-        case NOTIFICATION_PHYSICS_PROCESS:
-            _physics_process(get_physics_process_delta_time());
-            break;
-    }
-}
-
-// Game logic called from NOTIFICATION_READY
-void Ship::_on_ready() {
     // Enable physics processing first
     set_physics_process(true);
 
@@ -158,6 +140,7 @@ void Ship::_on_ready() {
     // Ship references on children were already set during _enter_tree()
 
     UtilityFunctions::print("Ship::_ready() called for: ", get_path());
+    UtilityFunctions::print("double check onready vars:");
 
     // Configure RPC methods (equivalent to @rpc annotations in GDScript)
     // sync_player: @rpc("authority", "call_remote", "unreliable_ordered", 1)
@@ -553,8 +536,8 @@ PackedByteArray Ship::sync_ship_data2(bool vs, bool friendly) {
     if (health_controller != nullptr) {
         float current_hp = health_controller->get("current_hp");
         writer->put_float(current_hp);
-    } else {
-        writer->put_float(0.0f);
+        float max_hp = health_controller->get("max_hp");
+		writer->put_float(max_hp);
     }
 
     // Consumables data
@@ -632,7 +615,11 @@ PackedByteArray Ship::sync_ship_transform() {
 
     writer->put_float(get_rotation().y);
     writer->put_float(get_global_position().x);
+    writer->put_float(get_global_position().y);
     writer->put_float(get_global_position().z);
+    writer->put_float(health_controller->get("current_hp"));
+    writer->put_float(health_controller->get("max_hp"));
+    writer->put_u8(visible_to_enemy ? 1 : 0);
 
     return writer->get_data_array();
 }
@@ -648,8 +635,13 @@ void Ship::parse_ship_transform(const PackedByteArray& b) {
 
     Vector3 pos = get_global_position();
     pos.x = reader->get_float();
+    pos.y = reader->get_float();
     pos.z = reader->get_float();
+    health_controller->set("current_hp", reader->get_float());
+	health_controller->set("max_hp", reader->get_float());
     set_global_position(pos);
+
+    visible_to_enemy = reader->get_u8() != 0;
 }
 
 PackedByteArray Ship::sync_player_data() {
@@ -662,9 +654,6 @@ PackedByteArray Ship::sync_player_data() {
         float rudder_input = movement_controller->get("rudder_input");
         writer->put_32(throttle_level);
         writer->put_float(rudder_input);
-    } else {
-        writer->put_32(0);
-        writer->put_float(0.0f);
     }
 
     writer->put_var(get_linear_velocity());
@@ -675,8 +664,8 @@ PackedByteArray Ship::sync_player_data() {
     if (health_controller != nullptr) {
         float current_hp = health_controller->get("current_hp");
         writer->put_float(current_hp);
-    } else {
-        writer->put_float(0.0f);
+        float max_hp = health_controller->get("max_hp");
+		writer->put_float(max_hp);
     }
 
     // Consumables data
@@ -744,6 +733,8 @@ PackedByteArray Ship::sync_player_data() {
         writer->put_var(stats_bytes);
     }
 
+    writer->put_u8(visible_to_enemy ? 1 : 0);
+
     return writer->get_data_array();
 }
 
@@ -769,8 +760,7 @@ void Ship::sync2(const PackedByteArray& b, bool friendly) {
 
     if (health_controller != nullptr) {
         health_controller->set("current_hp", reader->get_float());
-    } else {
-        reader->get_float(); // consume the value
+        health_controller->set("max_hp", reader->get_float());
     }
 
     // Consumables data
@@ -843,9 +833,6 @@ void Ship::sync_player(const PackedByteArray& b) {
     if (movement_controller != nullptr) {
         movement_controller->set("throttle_level", reader->get_32());
         movement_controller->set("rudder_input", reader->get_float());
-    } else {
-        reader->get_32();
-        reader->get_float();
     }
 
     set_linear_velocity(reader->get_var());
@@ -855,8 +842,7 @@ void Ship::sync_player(const PackedByteArray& b) {
 
     if (health_controller != nullptr) {
         health_controller->set("current_hp", reader->get_float());
-    } else {
-        reader->get_float();
+        health_controller->set("max_hp", reader->get_float());
     }
 
     // Consumables data
@@ -917,6 +903,7 @@ void Ship::sync_player(const PackedByteArray& b) {
         PackedByteArray stats_bytes = reader->get_var();
         stats->call("from_bytes", stats_bytes);
     }
+    visible_to_enemy = reader->get_u8() == 1;
 }
 
 void Ship::_hide() {
@@ -1040,6 +1027,7 @@ void Ship:: initialize_armor_system() {
         return;
     }
 
+
     // Create armor system instance
     Ref<Script> armor_system_script = ResourceLoader::get_singleton()->load("res://src/armor/armor_system_v2.gd");
     if (armor_system_script.is_valid()) {
@@ -1111,8 +1099,8 @@ void Ship::extract_and_load_armor_data(const String& glb_path, const String& arm
         return;
     }
 
-    // Create extractor instance
-    Object* extractor = ClassDB::instantiate("RefCounted");
+    // Create extractor instance - must be Node since the script extends Node
+    Node* extractor = memnew(Node);
     if (extractor == nullptr) {
         return;
     }

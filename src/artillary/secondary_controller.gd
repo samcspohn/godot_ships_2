@@ -25,7 +25,7 @@ func to_dict() -> Dictionary:
 
 func from_dict(d: Dictionary) -> void:
 	params.dynamic_mod.from_dict(d)
-	
+
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 
@@ -79,9 +79,10 @@ func _physics_process(delta: float) -> void:
 	for gi in guns.size():
 		var g: Gun = guns[gi]
 		var found_target = false
+		var pm = get_node("/root/ProjectileManager")
 		for e in enemies_in_range:
-			if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier):
-				g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
+			if g.valid_target_leading(e.global_position, e.linear_velocity / pm.shell_time_multiplier):
+				g._aim_leading(e.global_position, e.linear_velocity / pm.shell_time_multiplier, delta)
 				gun_targets[gi] = e
 				found_target = true
 				break
@@ -140,4 +141,3 @@ func get_shell_params() -> ShellParams:
 
 func get_params() -> GunParams:
 	return params.params() as GunParams
-	
