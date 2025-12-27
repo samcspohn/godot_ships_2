@@ -193,74 +193,60 @@ material_override = ExtResource("15_pnxfl")
 layers = 0
 surface_material_override/0 = ExtResource("15_pnxfl")
 
-[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.0
 max_rotation_angle = 2.7317047340151284
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.329175703037788
 max_rotation_angle = 0.0
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5604716740684323
 max_rotation_angle = 5.846852994181004
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 5.97176069467047
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 6.256198206425091
 max_rotation_angle = 2.9572237882480756
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.22377577895065315
 max_rotation_angle = 2.671751901963866
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.4363323129985824
 max_rotation_angle = 2.722713633111154
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.3376336775548907
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5081117965086026
 max_rotation_angle = 0.0
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.1840767835667263
 max_rotation_angle = 6.18231848154694
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.03356267067948515
 max_rotation_angle = 2.7663898841263332
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.13962634015954636
 max_rotation_angle = 3.0892327760299634
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
-[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" index="0" node_paths=PackedStringArray("barrel") instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.490658503988659
 max_rotation_angle = 0.0
-barrel = NodePath("150mmTurret_001/Cylinder_001")
 
 [node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" index="0" instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.6302848441482056
