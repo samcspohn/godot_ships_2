@@ -93,7 +93,7 @@ func _ready():
 			gpu_renderer.set_time_multiplier(shell_time_multiplier)
 			add_child(gpu_renderer)
 			# Hide legacy multi_mesh when using GPU renderer
-			multi_mesh.visible = false
+			#multi_mesh.visible = false
 			print("Using GPU-based projectile rendering")
 		else:
 			print("Using legacy CPU-based projectile rendering")
@@ -136,7 +136,7 @@ func _init_compute_trails() -> void:
 		return
 
 	# Hide legacy GPUParticles3D when using compute trails
-	particles.visible = false
+	#particles.visible = false
 	print("ProjectileManager: Using compute shader trails (template_id=%d)" % _trail_template_id)
 
 

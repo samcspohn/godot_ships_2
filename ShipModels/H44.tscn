@@ -45,9 +45,9 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_pnxfl"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
-reload_time = 2.0
-traverse_speed = 40.0
-elevation_speed = 40.0
+reload_time = 29.0
+traverse_speed = 3.5
+elevation_speed = 3.5
 _range = 15500.0
 shell1 = SubResource("Resource_apgp6")
 shell2 = SubResource("Resource_uu5mp")
@@ -124,7 +124,7 @@ params = SubResource("Resource_pnxfl")
 guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="MovementController" parent="Modules" index="2"]
-max_speed = 100.0
+max_speed = 31.0
 acceleration_time = 30.0
 deceleration_time = 30.0
 reverse_speed_ratio = 0.5

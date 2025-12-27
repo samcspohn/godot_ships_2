@@ -140,5 +140,10 @@ toggle_secondaries={
 
 [physics]
 
+3d/run_on_separate_thread=true
 common/physics_ticks_per_second=20
 common/physics_interpolation=true
+
+[rendering]
+
+driver/threads/thread_model=0

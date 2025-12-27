@@ -115,11 +115,11 @@ func _ready() -> void:
 	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
 		set_physics_process(false)
-		self.freeze = true
-		# Disable all collision shapes under the node
-		for child in get_children():
-			if child is CollisionShape3D:
-				child.disabled = true
+		# self.freeze = true
+		# # Disable all collision shapes under the node
+		# for child in get_children():
+		# 	if child is CollisionShape3D:
+		# 		child.disabled = true
 
 
 	self.collision_layer = 1 << 2
@@ -210,7 +210,9 @@ func sync_ship_transform() -> PackedByteArray:
 	writer.put_float(rotation.y)
 	writer.put_float(global_position.x)
 	writer.put_float(global_position.z)
-	
+	writer.put_float(health_controller.current_hp)
+	writer.put_float(health_controller.max_hp)
+	writer.put_u8(1 if visible_to_enemy else 0)
 	pb = writer.get_data_array()
 	return pb
 
@@ -219,7 +221,11 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	reader.data_array = b
 	rotation.y = reader.get_float()
 	global_position.x = reader.get_float()
+	global_position.y = 0
 	global_position.z = reader.get_float()
+	health_controller.current_hp = reader.get_float()
+	health_controller.max_hp = reader.get_float()
+	visible_to_enemy = reader.get_u8() == 1
 
 func sync_player_data() -> PackedByteArray:
 	var pb = PackedByteArray()
