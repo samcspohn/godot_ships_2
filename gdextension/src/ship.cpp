@@ -343,6 +343,32 @@ void Ship::set_team(Node* p_team) {
     UtilityFunctions::print("Ship::set_team result - team is now: ", team);
 }
 
+void Ship::_process(double delta) {
+	if (!get_multiplayer()->is_server() && is_visible()) {
+		Vector3 pos = get_global_transform().origin;
+		if (server_position.distance_to(pos) > 50.0) {
+			set_global_position(server_position);
+			Basis rot = Basis().rotated(Vector3(1,0,0), server_rotation.x)
+				.rotated(Vector3(0,1,0), server_rotation.y)
+				.rotated(Vector3(0,0,1), server_rotation.z);
+			set_global_basis(rot);
+			return;
+		}
+		const double lerp_factor = 8.0 * delta;
+		// pos = lerp(pos, server_position, lerp_factor);
+		// pos = pos.linear_interpolate(server_position, lerp_factor);
+		pos = pos.lerp(server_position, lerp_factor);
+		set_global_position(pos);
+		Basis rot = get_global_transform().basis;
+		Basis server_basis = Basis().rotated(Vector3(1,0,0), server_rotation.x)
+			.rotated(Vector3(0,1,0), server_rotation.y)
+			.rotated(Vector3(0,0,1), server_rotation.z);
+		rot = rot.slerp(server_basis, lerp_factor);
+		set_global_basis(rot);
+
+	}
+}
+
 void Ship::_physics_process(double delta) {
     // Check if we're the authority
     Ref<MultiplayerAPI> mp = get_multiplayer();
@@ -629,17 +655,18 @@ void Ship::parse_ship_transform(const PackedByteArray& b) {
     reader.instantiate();
     reader->set_data_array(b);
 
-    Vector3 rot = get_rotation();
-    rot.y = reader->get_float();
-    set_rotation(rot);
+    // Vector3 rot = get_rotation();
+    // rot.y = reader->get_float();
+    server_rotation.y = reader->get_float();
+    // set_rotation(rot);
 
-    Vector3 pos = get_global_position();
-    pos.x = reader->get_float();
-    pos.y = reader->get_float();
-    pos.z = reader->get_float();
+    // Vector3 pos = get_global_position();
+    server_position.x = reader->get_float();
+    server_position.y = reader->get_float();
+    server_position.z = reader->get_float();
     health_controller->set("current_hp", reader->get_float());
 	health_controller->set("max_hp", reader->get_float());
-    set_global_position(pos);
+    // set_global_position(pos);
 
     visible_to_enemy = reader->get_u8() != 0;
 }
@@ -754,9 +781,11 @@ void Ship::sync2(const PackedByteArray& b, bool friendly) {
     reader->set_data_array(b);
 
     set_linear_velocity(reader->get_var());
-    Vector3 euler = reader->get_var();
-    set_global_basis(Basis::from_euler(euler));
-    set_global_position(reader->get_var());
+    server_rotation	= reader->get_var();
+	server_position = reader->get_var();
+    // Vector3 euler = reader->get_var();
+    // set_global_basis(Basis::from_euler(euler));
+    // set_global_position(reader->get_var());
 
     if (health_controller != nullptr) {
         health_controller->set("current_hp", reader->get_float());
@@ -836,9 +865,11 @@ void Ship::sync_player(const PackedByteArray& b) {
     }
 
     set_linear_velocity(reader->get_var());
-    Vector3 euler = reader->get_var();
-    set_global_basis(Basis::from_euler(euler));
-    set_global_position(reader->get_var());
+    // Vector3 euler = reader->get_var();
+    // set_global_basis(Basis::from_euler(euler));
+    // set_global_position(reader->get_var());
+    server_rotation	= reader->get_var();
+	server_position = reader->get_var();
 
     if (health_controller != nullptr) {
         health_controller->set("current_hp", reader->get_float());

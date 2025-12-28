@@ -7,6 +7,9 @@ const SHIP_MARKER_SIZE = 18
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White
 const FRIENDLY_COLOR = Color(0, 1, 0, 1) # Green
 const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
+const FOV_ARC_COLOR = Color(0.5, 0.8, 1.0, 0.25) # Translucent light blue
+const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
+const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
 
 # Static minimap texture shared across all instances
 static var map_texture: ViewportTexture = null
@@ -29,6 +32,7 @@ var tracked_ships: Array[Dictionary] = []
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
 var aim_point: Vector3
+var battle_camera: Camera3D = null
 static var snapshot_camera: Camera3D
 static var minimap_viewport: SubViewport
 
@@ -64,10 +68,11 @@ func setup_minimap():
 	background.modulate = Color(1.0, 1.0, 1.0, 0.6)
 	add_child(background)
 
-	# Canvas for ship markers
+	# Canvas for ship markers (clip_contents ensures all drawing stays within bounds)
 	ship_markers_canvas = Control.new()
 	ship_markers_canvas.size = Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])
 	ship_markers_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ship_markers_canvas.clip_contents = true
 	add_child(ship_markers_canvas)
 
 	# Calculate scale factor (ensure x and y scales are the same)
@@ -236,6 +241,9 @@ func _on_canvas_draw() -> void:
 	# Draw a border around the minimap for visibility
 	ship_markers_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])), Color(1, 1, 1, 0.5), false, 2.0)
 
+	# Draw camera FOV arc
+	draw_camera_fov_arc()
+
 	var ships_to_draw: Array = []
 	var ship_auras_to_draw: Array = []
 	# Draw tracked ships
@@ -323,132 +331,11 @@ func draw_ship_on_minimap(world_position: Vector3, ship_rotation: float, color: 
 	_draw_ship_marker(minimap_pos, ship_rotation, color, marker_size)
 
 
-# Calculate intersections between a circle and a line segment
-# circle_center: The center point of the circle (Vector2)
-# radius: The radius of the circle (float)
-# line_start, line_end: The two endpoints of the line segment (Vector2)
-# Returns: Array of Vector2 points where the circle and line segment intersect
-func get_circle_line_segment_intersections(circle_center: Vector2, radius: float,
-										   line_start: Vector2, line_end: Vector2) -> Array[Vector2]:
-	var intersections: Array[Vector2] = []
-
-	# Convert line segment to vector form
-	var segment_direction = line_end - line_start
-	var segment_length = segment_direction.length()
-
-	# Early exit if segment length is zero
-	if segment_length < 0.0001:
-		return intersections
-
-	# Normalize direction vector
-	segment_direction = segment_direction / segment_length
-
-	# Vector from line start to circle center
-	var start_to_center = circle_center - line_start
-
-	# Project this vector onto the line direction to find the closest point
-	var projection_length = start_to_center.dot(segment_direction)
-
-	# Calculate the closest point on the infinite line
-	var closest_point = line_start + segment_direction * projection_length
-
-	# Get the distance from the circle center to the closest point on the line
-	var distance_to_line = (closest_point - circle_center).length()
-
-	# If distance is greater than radius, no intersection with the infinite line
-	if distance_to_line > radius:
-		return intersections
-
-	# Calculate the half-chord distance (distance from closest point to either intersection)
-	var half_chord = sqrt(radius * radius - distance_to_line * distance_to_line)
-
-	# Calculate the two potential intersection points
-	var intersection1 = closest_point - segment_direction * half_chord
-	var intersection2 = closest_point + segment_direction * half_chord
-
-	# Check if intersections are within the line segment bounds
-	var t1 = (intersection1 - line_start).dot(segment_direction) / segment_length
-	if t1 >= 0 && t1 <= segment_length:
-		intersections.append(intersection1)
-
-	var t2 = (intersection2 - line_start).dot(segment_direction) / segment_length
-	if t2 >= 0 && t2 <= segment_length:
-		intersections.append(intersection2)
-
-	return intersections
-
-# draw range circle around ship
-# circle should be clipped to minimap
+# Draw range circle around ship (clipping handled by clip_contents on ship_markers_canvas)
 func draw_range_circle_on_minimap(world_position: Vector3, weapon_range: float, color: Color) -> void:
-	# Convert global position to minimap position
 	var minimap_pos = world_to_minimap_position(world_position)
-
-	# Convert range to minimap scale
 	var minimap_radius = weapon_range * scale_factor.x
-
-	# Skip if the circle would be completely outside the minimap
-	if (minimap_pos.x + minimap_radius < 0 ||
-		minimap_pos.x - minimap_radius > minimap_sizes[mm_idx] ||
-		minimap_pos.y + minimap_radius < 0 ||
-		minimap_pos.y - minimap_radius > minimap_sizes[mm_idx]):
-		return
-
-	# If circle is completely inside, draw full circle
-	if (minimap_pos.x - minimap_radius >= 0 &&
-		minimap_pos.x + minimap_radius <= minimap_sizes[mm_idx] &&
-		minimap_pos.y - minimap_radius >= 0 &&
-		minimap_pos.y + minimap_radius <= minimap_sizes[mm_idx]):
-		ship_markers_canvas.draw_arc(minimap_pos, minimap_radius, 0, TAU, 64, color, 2.0)
-		return
-
-	# Define minimap boundaries as line segments
-	var border_width = minimap_sizes[mm_idx]
-	var border_height = minimap_sizes[mm_idx]
-
-	var left_border = [Vector2(0, 0), Vector2(0, border_height)]
-	var right_border = [Vector2(border_width, 0), Vector2(border_width, border_height)]
-	var top_border = [Vector2(0, 0), Vector2(border_width, 0)]
-	var bottom_border = [Vector2(0, border_height), Vector2(border_width, border_height)]
-	var borders = [left_border, right_border, top_border, bottom_border]
-
-	# Find all intersection points
-	var all_intersections = []
-	for border in borders:
-		var points = get_circle_line_segment_intersections(
-			minimap_pos, minimap_radius, border[0], border[1])
-		for point in points:
-			# Calculate angle of this intersection
-			var angle = (point - minimap_pos).angle()
-			all_intersections.append({"point": point, "angle": angle})
-
-	# Early exit if no intersections (should not happen given our earlier checks)
-	if all_intersections.size() == 0:
-		return
-
-	# Sort intersections by angle
-	all_intersections.sort_custom(func(a, b): return a.angle < b.angle)
-
-	# Draw arcs between intersections
-	for i in range(all_intersections.size()):
-		var start = all_intersections[i]
-		var end = all_intersections[(i + 1) % all_intersections.size()]
-
-		var start_angle = start.angle
-		var end_angle = end.angle
-
-		# Ensure end angle is greater than start angle
-		if end_angle < start_angle:
-			end_angle += TAU
-
-		var mid_angle = (start_angle + end_angle) / 2
-		var test_point = Vector2(
-			minimap_pos.x + minimap_radius * cos(mid_angle),
-			minimap_pos.y + minimap_radius * sin(mid_angle)
-		)
-
-		# Draw arc if test point is inside minimap
-		if test_point.x >= 0 && test_point.x <= border_width && test_point.y >= 0 && test_point.y <= border_height:
-			ship_markers_canvas.draw_arc(minimap_pos, minimap_radius, start_angle, end_angle, 64, color, 2.0)
+	ship_markers_canvas.draw_arc(minimap_pos, minimap_radius, 0, TAU, 64, color, 2.0)
 
 
 # Private function to handle the actual drawing
@@ -470,3 +357,62 @@ func _draw_ship_marker(marker_position: Vector2, ship_rotation: float, color: Co
 
 func _draw_aim_point(aim_position: Vector2):
 	ship_markers_canvas.draw_circle(aim_position, 2, Color.WHITE, false)
+
+# Draw a translucent arc showing the camera's field of view
+func draw_camera_fov_arc() -> void:
+	# Get the camera from viewport if not cached
+	if not is_instance_valid(battle_camera):
+		battle_camera = get_viewport().get_camera_3d()
+
+	if not is_instance_valid(battle_camera) or not is_instance_valid(player_ship):
+		return
+
+	# Get camera properties
+	var camera_fov_vertical = battle_camera.fov # Vertical FOV in degrees
+	var camera_rotation_y = battle_camera.rotation.y # Horizontal rotation
+
+	# Calculate horizontal FOV based on aspect ratio
+	var viewport_size = get_viewport().get_visible_rect().size
+	var aspect_ratio = viewport_size.x / viewport_size.y
+	var fov_vertical_rad = deg_to_rad(camera_fov_vertical)
+	var fov_horizontal_rad = 2.0 * atan(tan(fov_vertical_rad / 2.0) * aspect_ratio)
+
+	# Get player position on minimap (camera follows player ship)
+	var minimap_center = world_to_minimap_position(player_ship.global_position)
+
+	# Calculate arc radius on minimap
+	var arc_radius = FOV_ARC_RANGE * scale_factor.x
+
+	# Calculate start and end angles for the arc
+	# Camera rotation.y is the horizontal look direction
+	# We need to flip it for the minimap coordinate system (Y is down)
+	# and adjust because 0 rotation means looking along -Z in Godot
+	var center_angle = -camera_rotation_y - PI / 2.0
+	var half_fov = fov_horizontal_rad / 2.0
+	var start_angle = center_angle - half_fov
+	var end_angle = center_angle + half_fov
+
+	# Build polygon points for the filled arc (pie slice)
+	var points = PackedVector2Array()
+	points.append(minimap_center) # Center point
+
+	# Add arc points
+	for i in range(FOV_ARC_SEGMENTS + 1):
+		var t = float(i) / float(FOV_ARC_SEGMENTS)
+		var angle = start_angle + t * (end_angle - start_angle)
+		var point = minimap_center + Vector2(cos(angle), sin(angle)) * arc_radius
+		points.append(point)
+
+	# Draw the filled arc
+	if points.size() >= 3:
+		ship_markers_canvas.draw_colored_polygon(points, FOV_ARC_COLOR)
+
+		# Draw arc outline for better visibility
+		var outline_color = Color(FOV_ARC_COLOR.r, FOV_ARC_COLOR.g, FOV_ARC_COLOR.b, 0.5)
+		ship_markers_canvas.draw_arc(minimap_center, arc_radius, start_angle, end_angle, FOV_ARC_SEGMENTS, outline_color, 1.5)
+
+		# Draw the two edge lines of the FOV cone
+		var start_point = minimap_center + Vector2(cos(start_angle), sin(start_angle)) * arc_radius
+		var end_point = minimap_center + Vector2(cos(end_angle), sin(end_angle)) * arc_radius
+		ship_markers_canvas.draw_line(minimap_center, start_point, outline_color, 1.5)
+		ship_markers_canvas.draw_line(minimap_center, end_point, outline_color, 1.5)

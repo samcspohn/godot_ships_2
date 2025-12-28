@@ -77,6 +77,8 @@ private:
     bool update_static_mods_flag = false;
     bool update_dynamic_mods_flag = false;
 
+    Vector3 server_position;
+    Vector3 server_rotation;
     // Private helper to initialize @onready equivalent variables
     void _initialize_onready_vars();
     void _ensure_onready();  // Lazy initialization fallback
@@ -93,6 +95,7 @@ public:
 
     // Godot lifecycle
     void _physics_process(double delta) override;
+    void _process(double delta) override;
 
     // Modifier system
     void add_static_mod(const Callable& mod_func);
