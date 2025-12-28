@@ -470,8 +470,8 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	# if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
-	if true:
+	if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
+	# if true:
 		for e in events:
 			print(e)
 
@@ -1119,10 +1119,10 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		damage_result = HitResult.RICOCHET
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
-	# if true:
-		for e in events:
-			print(e)
+	# if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
+	# # if true:
+	# 	for e in events:
+	# 		print(e)
 
 	# return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship)
 	return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship, first_hit_normal)

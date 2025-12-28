@@ -18,7 +18,7 @@
 [sub_resource type="Resource" id="Resource_apgp6"]
 script = ExtResource("4_ai21t")
 speed = 810.0
-drag = 0.008
+drag = 0.007
 damage = 20000.0
 size = 5.0
 caliber = 500.0
@@ -31,7 +31,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 810.0
-drag = 0.008
+drag = 0.007
 damage = 5700.0
 size = 5.0
 caliber = 500.0
@@ -260,12 +260,19 @@ max_rotation_angle = 2.6179938779914944
 min_rotation_angle = 0.5235987755982988
 max_rotation_angle = 5.759586531581287
 
-[node name="Hull_col" parent="." index="10"]
-visible = false
+[node name="Hull_Citadel_col" parent="." index="10"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Citadel_col" parent="." index="11"]
+[node name="Hull_Bow_col" parent="." index="12"]
+layers = 0
+material_override = ExtResource("15_pnxfl")
+
+[node name="Hull_Stern_col" parent="." index="14"]
+layers = 0
+material_override = ExtResource("15_pnxfl")
+
+[node name="Hull_CaseMate_col" parent="." index="16"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 

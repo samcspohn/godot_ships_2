@@ -30,8 +30,8 @@ class TorpedoData:
 func _ready():
 	# Auto-register all bullet resources in the directory
 	#register_all_bullet_resources()
-	particles = $GPUParticles3D
-	multi_mesh = $MultiMeshInstance3D
+	#particles = $GPUParticles3D
+	#multi_mesh = $MultiMeshInstance3D
 	if OS.get_cmdline_args().find("--server") != -1:
 		print("running server")
 		set_process(false)
@@ -120,7 +120,7 @@ func update_transform_scale(idx, scale: float):
 
 func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
-	
+
 	if camera == null:
 		return
 	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
@@ -161,9 +161,9 @@ func _process(_delta: float) -> void:
 		#p.trail_pos += offset
 		#offset_length -= step_size
 
-	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
-	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
-	self.multi_mesh.multimesh.buffer = transforms
+	# self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
+	# self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
+	# self.multi_mesh.multimesh.buffer = transforms
 
 
 func _physics_process(_delta: float) -> void:

@@ -152,6 +152,8 @@ var current_hp: float = 0.0
 
 var teams_hp = {}
 var num_players = -1
+var players_node: Node = null
+var server: GameServer = null
 
 # Get the keyboard shortcut letter for a given action
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
@@ -242,6 +244,9 @@ func _ready():
 
 	setup_team_tracker()
 
+	server = get_tree().root.get_node_or_null("Server")
+	players_node = server.get_node_or_null("GameWorld/Players") if server else null
+
 func _process(_delta: float) -> void:
 	update_ship_ui()
 	_update_reticle_visibility()
@@ -249,6 +254,8 @@ func _process(_delta: float) -> void:
 
 func update_counters() -> void:
 	var stats = camera_controller._ship.stats
+	if not stats:
+		return
 
 	update_counter(damage_value_label, stats.total_damage)
 	update_counter(main_count_label, stats.main_hits)
@@ -665,7 +672,7 @@ func _update_ui():
 
 	# Update HP display
 	if camera_controller._ship.health_controller:
-		var current_hp = camera_controller._ship.health_controller.current_hp
+		# var current_hp = camera_controller._ship.health_controller.current_hp
 		var max_hp = camera_controller._ship.health_controller.max_hp
 		var hp_percent = (float(current_hp) / max_hp) * 100.0
 
@@ -771,6 +778,7 @@ func setup_ship_ui(ship):
 
 	# Set the ship name
 	name_label.text = ship.name
+	ship_hp_label.text = "%d/%d" % [ship.health_controller.current_hp, ship.health_controller.max_hp]
 
 	# Store the UI elements for this ship
 	ship_ui_elements[ship] = {
@@ -785,60 +793,68 @@ func update_ship_ui():
 	# Periodically search for new ships
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var should_search = tracked_ships.is_empty() or (current_time - last_ship_search_time > ship_search_interval)
-
-	if should_search:
-		last_ship_search_time = current_time
-
-		# Try to find ships in different possible locations
-		var ships = []
-		var possible_paths = [
-			"/root/Server/GameWorld/Players",
-			"/root/GameWorld/Players",
-			"/root/Main/Players"
-		]
-
-		for path in possible_paths:
-			var players_node = get_node_or_null(path)
-			if players_node:
-				ships = players_node.get_children()
-				# print("Found ships at: ", path, " - Count: ", ships.size())
-				break
-
-		if ships.is_empty():
-			# Fallback: search for all ships in the scene
-			ships = get_tree().get_nodes_in_group("ships")
-			if ships.is_empty():
-				# Last resort: find all Ship nodes in the tree
-				ships = []
-				var root = get_tree().root
-				_find_ships_recursive(root, ships)
-
-		for ship in ships:
+	if num_players != players_node.get_child_count() or tracked_ships.size() < players_node.get_child_count():
+		for ship in players_node.get_children():
 			if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
 				tracked_ships[ship] = true
 				setup_ship_ui(ship)
 				minimap.register_ship(ship)
 				print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
+	# if should_search:
+	# 	last_ship_search_time = current_time
+
+	# 	# Try to find ships in different possible locations
+	# 	var ships = []
+	# 	var possible_paths = [
+	# 		"/root/Server/GameWorld/Players",
+	# 		"/root/GameWorld/Players",
+	# 		"/root/Main/Players"
+	# 	]
+
+	# 	for path in possible_paths:
+	# 		var players_node = get_node_or_null(path)
+	# 		if players_node:
+	# 			ships = players_node.get_children()
+	# 			# print("Found ships at: ", path, " - Count: ", ships.size())
+	# 			break
+
+	# 	if ships.is_empty():
+	# 		# Fallback: search for all ships in the scene
+	# 		ships = get_tree().get_nodes_in_group("ships")
+	# 		if ships.is_empty():
+	# 			# Last resort: find all Ship nodes in the tree
+	# 			ships = []
+	# 			var root = get_tree().root
+	# 			_find_ships_recursive(root, ships)
+
+	# 	for ship in ships:
+	# 		if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
+	# 			tracked_ships[ship] = true
+	# 			setup_ship_ui(ship)
+	# 			minimap.register_ship(ship)
+	# 			print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
 
 	# Update each ship's UI
 	for ship in tracked_ships.keys():
-		if is_instance_valid(ship) and ship in ship_ui_elements and ship is Ship:
+		if is_instance_valid(ship) and ship in ship_ui_elements:
 			var ui = ship_ui_elements[ship]
 
 			# Get ship's HP if it has an HP manager
 			var ship_hp_manager = ship.health_controller
 			if ship_hp_manager:
-				var current_hp = ship_hp_manager.current_hp
+				var ship_current_hp = ship_hp_manager.current_hp
 				var max_hp = ship_hp_manager.max_hp
-				var hp_percent = (float(current_hp) / max_hp) * 100.0
+				if teams_hp.has(ship) and (teams_hp[ship][0] != ship_current_hp or teams_hp[ship][1] != max_hp):
+					var hp_percent = (float(ship_current_hp) / max_hp) * 100.0
 
-				# Update progress bar and label (colors are already set by template)
-				ui.hp_bar.value = hp_percent
-				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
+					# Update progress bar and label (colors are already set by template)
+					ui.hp_bar.value = hp_percent
+					ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
 			# Update target indicator visibility
 			var is_targeted = (ship == current_secondary_target)
-			ui.target_indicator.visible = is_targeted
+			if ui.target_indicator.visible != is_targeted:
+				ui.target_indicator.visible = is_targeted
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -867,12 +883,6 @@ func update_ship_ui():
 				ship_ui_elements.erase(ship)
 			tracked_ships.erase(ship)
 
-func _find_ships_recursive(node: Node, ships: Array):
-	if node is Ship:
-		ships.append(node)
-	for child in node.get_children():
-		_find_ships_recursive(child, ships)
-
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()
 	if not camera:
@@ -898,7 +908,7 @@ func setup_team_tracker():
 		setup_team_tracker.call_deferred()
 		return
 
-	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	# var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
 		setup_team_tracker.call_deferred()
 		return
@@ -924,7 +934,7 @@ func update_team_tracker():
 		friendly_team_id = camera_controller._ship.team.team_id
 
 	# Get server reference
-	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	# var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
 		return
 
@@ -1009,14 +1019,15 @@ func update_team_container2(container: HBoxContainer, ships: Array, is_friendly:
 
 		if teams_hp.has(ship):
 			if ship.health_controller.current_hp != teams_hp[ship][0] or ship.health_controller.max_hp != teams_hp[ship][1]:
+				var prev_hp	= teams_hp[ship][0]
 				teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
-				update_team_indicator(team_ship_indicators[ship], ship, is_friendly)
+				update_team_indicator(team_ship_indicators[ship], ship, is_friendly, prev_hp > 0 and ship.health_controller.current_hp <= 0)
 		else:
 			teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
-			update_team_indicator(team_ship_indicators[ship], ship, is_friendly)
+			update_team_indicator(team_ship_indicators[ship], ship, is_friendly, true)
 
 
-func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
+func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, update_color: bool=false):
 	"""Update the appearance of a team indicator based on ship status"""
 	var ship_indicator: ColorRect = indicator.get_node("ShipIndicator")
 	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
@@ -1029,28 +1040,29 @@ func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
 		health_percent = float(ship.health_controller.current_hp) / ship.health_controller.max_hp
 		hp_indicator.value = health_percent * 100.0
 
-	if is_alive:
-		# Ship is alive - use team colors
-		if is_friendly:
-			ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
-			# Create friendly HP bar style
-			var friendly_style = StyleBoxFlat.new()
-			friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
-			hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+	if update_color:
+		if is_alive:
+			# Ship is alive - use team colors
+			if is_friendly:
+				ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
+				# Create friendly HP bar style
+				var friendly_style = StyleBoxFlat.new()
+				friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
+				hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+			else:
+				ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
+				# Create enemy HP bar style
+				var enemy_style = StyleBoxFlat.new()
+				enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
+				hp_indicator.add_theme_stylebox_override("fill", enemy_style)
 		else:
-			ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
-			# Create enemy HP bar style
-			var enemy_style = StyleBoxFlat.new()
-			enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
-			hp_indicator.add_theme_stylebox_override("fill", enemy_style)
-	else:
-		# Ship is dead - use dark gray
-		ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
-		# Create dead HP bar style
-		var dead_style = StyleBoxFlat.new()
-		dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
-		hp_indicator.add_theme_stylebox_override("fill", dead_style)
-		hp_indicator.value = 0.0
+			# Ship is dead - use dark gray
+			ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
+			# Create dead HP bar style
+			var dead_style = StyleBoxFlat.new()
+			dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
+			hp_indicator.add_theme_stylebox_override("fill", dead_style)
+			hp_indicator.value = 0.0
 
 func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
 	"""Resize the team tracker panel to fit all ships"""

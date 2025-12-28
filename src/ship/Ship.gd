@@ -28,6 +28,8 @@ var peer_id: int = -1 # our unique peer ID assigned by server
 
 var frustum_planes: Array[Plane] = []
 
+var server_position: Vector3
+var server_rotation: Vector3
 # @export var fires: Array[Fire] = []
 
 # Armor system configuration
@@ -131,6 +133,23 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 	movement_controller.set_movement_input([input_array[0], input_array[1]])
 	artillery_controller.set_aim_input(aim_point)
 
+func _process(delta: float) -> void:
+	# Smoothly interpolate position and rotation towards server values
+	if !(_Utils.authority()):
+		var lerp_factor = 6.0 * delta # Adjust the factor for smoother or snappier movement
+		if global_position.distance_to(server_position) > 50:
+			global_position = server_position
+		else:
+			global_position = global_position.lerp(server_position, lerp_factor)
+		# this causes flipping, need to update basis instead
+		# var current_euler = global_basis.get_euler()
+		# var target_euler = server_rotation
+		# var new_euler = current_euler.lerp(target_euler, lerp_factor)
+		# global_basis = Basis.from_euler(new_euler)
+		var current_basis = global_basis
+		var target_basis = Basis.from_euler(server_rotation)
+		global_basis = current_basis.slerp(target_basis, lerp_factor)
+
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
@@ -219,10 +238,14 @@ func sync_ship_transform() -> PackedByteArray:
 func parse_ship_transform(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	rotation.y = reader.get_float()
-	global_position.x = reader.get_float()
-	global_position.y = 0
-	global_position.z = reader.get_float()
+	# rotation.y = reader.get_float()
+	server_rotation.y = reader.get_float()
+	# global_position.x = reader.get_float()
+	# global_position.y = 0
+	# global_position.z = reader.get_float()
+	server_position.x = reader.get_float()
+	server_position.y = 0
+	server_position.z = reader.get_float()
 	health_controller.current_hp = reader.get_float()
 	health_controller.max_hp = reader.get_float()
 	visible_to_enemy = reader.get_u8() == 1
@@ -272,6 +295,8 @@ func sync_player_data() -> PackedByteArray:
 	var stats_bytes = stats.to_bytes()
 	writer.put_var(stats_bytes)
 
+	writer.put_u8(1 if visible_to_enemy else 0)
+
 	pb = writer.get_data_array()
 	return pb
 
@@ -298,8 +323,10 @@ func sync2(b: PackedByteArray, friendly: bool):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	global_basis = Basis.from_euler(euler)
-	global_position = reader.get_var()
+	# global_basis = Basis.from_euler(euler)
+	# global_position = reader.get_var()
+	server_rotation = euler
+	server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
 	# max hp
 
@@ -329,10 +356,11 @@ func sync2(b: PackedByteArray, friendly: bool):
 
 	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	if torpedo_launcher != null:
+	var has_torpedo_launcher: int = reader.get_32()
+	if has_torpedo_launcher == 1:
 		var euler_tl: Vector3 = reader.get_var()
-		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
-		# torpedo_launcher.global_basis = reader.get_var()
+		if torpedo_launcher != null:
+			torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
 	var p_id: int = reader.get_32()
 	# var stats_bytes: PackedByteArray = reader.get_var()
 	# stats.from_bytes(stats_bytes)
@@ -353,8 +381,10 @@ func sync_player(b: PackedByteArray):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	global_basis = Basis.from_euler(euler)
-	global_position = reader.get_var()
+	# global_basis = Basis.from_euler(euler)
+	# global_position = reader.get_var()
+	server_rotation = euler
+	server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
 	# max hp
 
@@ -391,7 +421,7 @@ func sync_player(b: PackedByteArray):
 	var p_id: int = reader.get_32()
 	var stats_bytes: PackedByteArray = reader.get_var()
 	stats.from_bytes(stats_bytes)
-	# self.visible_to_enemy = reader.get_u8() == 1
+	self.visible_to_enemy = reader.get_u8() == 1
 
 
 @rpc("any_peer", "reliable")
@@ -499,7 +529,6 @@ func initialize_armor_system() -> void:
 
 	enable_backface_collision_recursive(self)
 	print("done")
-
 
 func resolve_glb_path(path: String) -> String:
 	"""Resolve GLB path from UID or direct path"""

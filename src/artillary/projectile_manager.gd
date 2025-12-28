@@ -3,7 +3,7 @@ class_name _ProjectileManager
 
 const GPUProjectileRendererClass = preload("res://src/artillary/GPUProjectileRenderer.gd")
 
-var shell_time_multiplier: float = 1.5 # Adjust to calibrate shell speed display
+var shell_time_multiplier: float = 2.0 # Adjust to calibrate shell speed display
 var nextId: int = 0;
 var projectiles: Array[ProjectileData] = [];
 var ids_reuse: Array[int] = []
@@ -64,8 +64,8 @@ func _ready():
 	#register_all_bullet_resources()
 	#particles = get_node("/root/ProjectileManager1/GPUParticles3D")
 	#multi_mesh = get_node("/root/ProjectileManager1/MultiMeshInstance3D")
-	particles = $GPUParticles3D
-	multi_mesh = $MultiMeshInstance3D
+	#particles = $GPUParticles3D
+	#multi_mesh = $MultiMeshInstance3D
 
 	if OS.get_cmdline_args().find("--server") != -1:
 		print("running server")
