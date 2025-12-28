@@ -28,8 +28,8 @@ var peer_id: int = -1 # our unique peer ID assigned by server
 
 var frustum_planes: Array[Plane] = []
 
-var server_position: Vector3
-var server_rotation: Vector3
+# var server_position: Vector3
+# var server_rotation: Basis
 # @export var fires: Array[Fire] = []
 
 # Armor system configuration
@@ -122,6 +122,8 @@ func _ready() -> void:
 		# for child in get_children():
 		# 	if child is CollisionShape3D:
 		# 		child.disabled = true
+	else:
+		set_process(false)
 
 
 	self.collision_layer = 1 << 2
@@ -135,20 +137,23 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 
 func _process(delta: float) -> void:
 	# Smoothly interpolate position and rotation towards server values
-	if !(_Utils.authority()):
-		var lerp_factor = 6.0 * delta # Adjust the factor for smoother or snappier movement
-		if global_position.distance_to(server_position) > 50:
-			global_position = server_position
-		else:
-			global_position = global_position.lerp(server_position, lerp_factor)
-		# this causes flipping, need to update basis instead
-		# var current_euler = global_basis.get_euler()
-		# var target_euler = server_rotation
-		# var new_euler = current_euler.lerp(target_euler, lerp_factor)
-		# global_basis = Basis.from_euler(new_euler)
-		var current_basis = global_basis
-		var target_basis = Basis.from_euler(server_rotation)
-		global_basis = current_basis.slerp(target_basis, lerp_factor)
+	# if !(_Utils.authority()):
+	# if (Engine.get_process_frames() % 2 == 0):
+	# 	return
+	# var lerp_factor = 6.0 * delta # Adjust the factor for smoother or snappier movement
+	var cam = get_viewport().get_camera_3d()
+	if cam != null:
+		if cam.is_position_in_frustum((global_position)) and (cam.global_position.distance_to(global_position) < 4000 or cam.fov < 20):
+			global_position += linear_velocity * delta
+		# global_position = global_position.lerp(server_position, lerp_factor)
+	# this causes flipping, need to update basis instead
+	# var current_euler = global_basis.get_euler()
+	# var target_euler = server_rotation
+	# var new_euler = current_euler.lerp(target_euler, lerp_factor)
+	# global_basis = Basis.from_euler(new_euler)
+	# var current_basis = global_basis
+	# var target_basis = Basis.from_euler(server_rotation)
+	# global_basis = global_basis.slerp(server_rotation, lerp_factor)
 
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
@@ -199,12 +204,14 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 		writer.put_var(g.to_bytes(false))
 
 	# Secondary controllers data
-	writer.put_32(secondary_controller.sub_controllers.size())
-	for controller in secondary_controller.sub_controllers:
-		# writer.put_var(controller.to_bytes())
-		writer.put_32(controller.guns.size())
-		for g: Gun in controller.guns:
-			writer.put_var(g.to_bytes(false))
+	writer.put_u8(1 if secondary_controller.active else 0)
+	if secondary_controller.active:
+		writer.put_32(secondary_controller.sub_controllers.size())
+		for controller in secondary_controller.sub_controllers:
+			# writer.put_var(controller.to_bytes())
+			writer.put_32(controller.guns.size())
+			for g: Gun in controller.guns:
+				writer.put_var(g.to_bytes(false))
 
 	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
@@ -238,14 +245,17 @@ func sync_ship_transform() -> PackedByteArray:
 func parse_ship_transform(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	# rotation.y = reader.get_float()
-	server_rotation.y = reader.get_float()
-	# global_position.x = reader.get_float()
-	# global_position.y = 0
-	# global_position.z = reader.get_float()
-	server_position.x = reader.get_float()
-	server_position.y = 0
-	server_position.z = reader.get_float()
+	rotation.y = reader.get_float()
+	# server_rotation.y = reader.get_float()
+	global_position.x = reader.get_float()
+	global_position.z = reader.get_float()
+	global_position.y = 0
+	# server_rotation.y = reader.get_float()
+	# server_rotation = Basis.from_euler(Vector3(0, reader.get_float(), 0))
+
+	# server_position.x = reader.get_float()
+	# server_position.y = 0
+	# server_position.z = reader.get_float()
 	health_controller.current_hp = reader.get_float()
 	health_controller.max_hp = reader.get_float()
 	visible_to_enemy = reader.get_u8() == 1
@@ -323,10 +333,10 @@ func sync2(b: PackedByteArray, friendly: bool):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	# global_basis = Basis.from_euler(euler)
-	# global_position = reader.get_var()
-	server_rotation = euler
-	server_position = reader.get_var()
+	global_basis = Basis.from_euler(euler)
+	global_position = reader.get_var()
+	# server_rotation = Basis.from_euler(euler)
+	# server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
 	# max hp
 
@@ -345,14 +355,17 @@ func sync2(b: PackedByteArray, friendly: bool):
 		g.from_bytes(gun_bytes, false)
 
 	# Secondary controllers data
-	var sc_count: int = reader.get_32()
-	for controller in secondary_controller.sub_controllers:
-		# var sc_bytes: PackedByteArray = reader.get_var()
-		# controller.from_bytes(sc_bytes)
-		var sc_gun_count: int = reader.get_32()
-		for g: Gun in controller.guns:
-			var gun_bytes: PackedByteArray = reader.get_var()
-			g.from_bytes(gun_bytes, false)
+	var active: int = reader.get_u8()
+	secondary_controller.active = active == 1
+	if active:
+		var sc_count: int = reader.get_32()
+		for controller in secondary_controller.sub_controllers:
+			# var sc_bytes: PackedByteArray = reader.get_var()
+			# controller.from_bytes(sc_bytes)
+			var sc_gun_count: int = reader.get_32()
+			for g: Gun in controller.guns:
+				var gun_bytes: PackedByteArray = reader.get_var()
+				g.from_bytes(gun_bytes, false)
 
 	# Torpedo launcher data
 	torpedo_launcher = get_node_or_null("TorpedoLauncher")
@@ -381,10 +394,11 @@ func sync_player(b: PackedByteArray):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	# global_basis = Basis.from_euler(euler)
-	# global_position = reader.get_var()
-	server_rotation = euler
-	server_position = reader.get_var()
+	global_basis = Basis.from_euler(euler)
+	global_position = reader.get_var()
+	# server_rotation = euler
+	# server_rotation = Basis.from_euler(euler)
+	# server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
 	# max hp
 

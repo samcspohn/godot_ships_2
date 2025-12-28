@@ -386,18 +386,26 @@ func clamp_to_rotation_limits_simple() -> void:
 
 		rotation.y = min_rotation_angle if to_min <= to_max else max_rotation_angle
 
-func return_to_base(delta: float) -> void:
+# returns true if turning
+func return_to_base(delta: float) -> bool:
 	# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
+	if disabled:
+		return false
 	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
 	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
 	var adjusted_angle = base_rotation - rotation.y
 	if abs(adjusted_angle) > PI:
 		adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
 	var turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
+
+	if abs(turret_angle_delta) < 0.001:
+		can_fire = false
+		return false
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
 	# clamp_to_rotation_limits()
 	can_fire = false
+	return true
 
 func get_angle_to_target(target: Vector3) -> float:
 	var forward: Vector3 = - global_basis.z.normalized()
@@ -411,6 +419,21 @@ func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, target, get_shell().speed, get_shell().drag)
 	if sol[0] != null and (target - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
+		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
+		if a[1]:
+			return false
+		return true
+	return false
+
+func get_leading_position(target: Vector3, target_velocity: Vector3):
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell().speed, get_shell().drag)
+	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
+		return sol[2]
+	return null
+
+func is_aimpoint_valid(aim_point: Vector3) -> bool:
+	if aim_point.distance_to(global_position) < get_params()._range:
+		var desired_local_angle_delta: float = get_angle_to_target(aim_point)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
 			return false

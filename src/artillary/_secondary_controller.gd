@@ -14,6 +14,11 @@ var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
 var ammo_type: int = 1 # 0 = AP, 1 = HE
 
+# var _found_target: bool = false
+# var not_all_returned_to_base: bool
+
+var active: bool
+
 func _ready() -> void:
 	# for sc in sub_controllers:
 	# 	sc.controller = self
@@ -41,6 +46,10 @@ func _ready() -> void:
 	# 	g.controller = self
 	# 	g._ship = _ship
 	# 	gun_targets.append(null)
+	if _Utils.authority():
+		set_physics_process(true)
+	else:
+		set_physics_process(false)
 
 func to_dict() -> Dictionary:
 	var sub_list = []
@@ -76,7 +85,7 @@ func _physics_process(delta: float) -> void:
 		var r = sc.p.params()._range
 		if r > max_range:
 			max_range = r
-	
+
 	var enemies_in_range : Array[Ship] = server.get_valid_targets(_ship.team.team_id).filter(func(p):
 		return p.global_position.distance_to(_ship.global_position) <= max_range
 	)
@@ -88,7 +97,10 @@ func _physics_process(delta: float) -> void:
 		else:
 			return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
 	)
+	if enemies_in_range.size() == 0 and !active:
+		return
 
+	active = false
 	var gi = 0
 	for sc in sub_controllers:
 		var _range = sc.p.params()._range
@@ -96,24 +108,27 @@ func _physics_process(delta: float) -> void:
 		for g in sc.guns:
 			var found_target = false
 			for e in enemies_in_range:
-				if g.valid_target_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier) and g.sim_can_shoot_over_terrain(e.global_position):
-					g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
+				var lead_target = g.get_leading_position(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier)
+				if lead_target and g.is_aimpoint_valid(lead_target) and g.sim_can_shoot_over_terrain(lead_target):
+					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
+					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
 					gun_targets[gi] = e
 					found_target = true
+					active = true
 					break
 			if not found_target:
 				gun_targets[gi] = null
-				g.return_to_base(delta)
+				active = g.return_to_base(delta) || active
 			gi += 1
 		gi = _gi
-	
+
 		if enemies_in_range.size() > 0:
 			var reload_time = sc.p.params().reload_time
 			sc.sequential_fire_timer += delta
 			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
 				sc.sequential_fire_timer = 0.0
 				for g in sc.guns:
-					if g.reload >= 1 and g.can_fire:
+					if g.reload >= 1 and g.can_fire and gun_targets[gi] != null:
 						if gun_targets[gi] == target:
 							g.fire(target_mod)
 						else:

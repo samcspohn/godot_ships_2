@@ -15,7 +15,7 @@ var manager: FireManager = null
 var _params: FireParams:
 	get:
 		return manager.params.params() as FireParams
-	set(value): 
+	set(value):
 		pass
 var _owner: Ship = null
 
@@ -46,6 +46,10 @@ func _ready():
 	(smoke.process_material as ParticleProcessMaterial).scale_max = s * 3
 	fire.emitting = false
 	smoke.emitting = false
+	if _Utils.authority():
+		set_physics_process(true)
+	else:
+		set_physics_process(false)
 
 func _physics_process(delta: float) -> void:
 	if _Utils.authority():
@@ -72,7 +76,7 @@ func damage(delta):
 		_owner.stats.total_damage += dmg_sunk[0]
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
-	
+
 @rpc("any_peer")
 func _sync(l):
 	lifetime = l
@@ -81,9 +85,8 @@ func _sync(l):
 func _sync_activate():
 	fire.emitting = true
 	smoke.emitting = true
-	
+
 @rpc("any_peer", "reliable")
 func _sync_deactivate():
 	fire.emitting = false
 	smoke.emitting = false
-	
