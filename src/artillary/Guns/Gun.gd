@@ -142,10 +142,9 @@ func _ready() -> void:
 
 	# Set processing mode based on authority
 	if _Utils.authority():
-		process_mode = Node.PROCESS_MODE_INHERIT
+		set_physics_process(true)
 	else:
 		# We still need to receive updates, just not run physics
-		process_mode = Node.PROCESS_MODE_INHERIT
 		set_physics_process(false)
 
 	# print(rad_to_deg(base_rotation))

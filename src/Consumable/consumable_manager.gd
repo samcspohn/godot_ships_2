@@ -34,6 +34,10 @@ func _ready():
 	# 	if item.max_stack == -1:
 	# 		item.current_stack = 1  # Infinite uses, but show as 1
 	# 	i += 1
+	if _Utils.authority():
+		set_physics_process(true)
+	else:
+		set_physics_process(false)
 
 
 func to_dict() -> Dictionary:
@@ -51,7 +55,7 @@ func to_dict() -> Dictionary:
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
-	
+
 	# Equipped consumables
 	writer.put_32(equipped_consumables.size())
 	for item in equipped_consumables:
@@ -60,20 +64,20 @@ func to_bytes() -> PackedByteArray:
 			writer.put_var(item_bytes)
 		else:
 			writer.put_var(null)
-	
+
 	# Cooldowns
 	writer.put_32(cooldowns.size())
 	for item_id in cooldowns.keys():
 		writer.put_32(item_id)
 		writer.put_double(cooldowns[item_id])
-	
+
 	# Active effects
 	writer.put_32(active_effects.size())
 	for item_id in active_effects.keys():
 		writer.put_32(item_id)
 		writer.put_double(active_effects[item_id])
 
-	
+
 	return writer.data_array
 
 func from_dict(data: Dictionary) -> void:
@@ -110,7 +114,7 @@ func from_bytes(b: PackedByteArray) -> void:
 		var remaining_duration = reader.get_double()
 		active_effects[item_id] = remaining_duration
 
-func _process(delta):
+func _physics_process(delta):
 	if !(_Utils.authority()):
 		return
 	update_cooldowns(delta)
@@ -123,11 +127,11 @@ func equip_consumable(item: ConsumableItem, slot: int):
 func use_consumable(slot: int) -> bool:
 	if slot >= equipped_consumables.size():
 		return false
-	
+
 	var item = equipped_consumables[slot]
 	if not item or not can_use_item(item):
 		return false
-	
+
 	# Apply effect
 	item.apply_effect(ship)
 	if item.max_stack != -1:
@@ -136,7 +140,7 @@ func use_consumable(slot: int) -> bool:
 	# Track duration if applicable
 	if item.duration > 0:
 		active_effects[item.id] = item.duration
-	
+
 	consumable_used.emit(item)
 	return true
 
