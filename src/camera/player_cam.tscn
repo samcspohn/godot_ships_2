@@ -6,6 +6,10 @@
 background_mode = 1
 background_color = Color(0.409483, 0.709723, 0.857173, 1)
 glow_enabled = true
+glow_intensity = 0.25
+glow_blend_mode = 1
+glow_hdr_threshold = 1.2
+glow_hdr_luminance_cap = 256.0
 fog_enabled = true
 fog_mode = 1
 fog_light_color = Color(0.40784314, 0.70980394, 0.85882354, 1)

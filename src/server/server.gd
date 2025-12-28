@@ -596,30 +596,30 @@ func _physics_process(_delta: float) -> void:
 				var b0: Ship = b[0]
 				if b0 == p:
 					continue
-				if visible_toggled.has(b0.name):
-					if b0.team.team_id == p.team.team_id:
-						writer1.data_array += b[1]
-					else:
-						if p.visible_to_enemy:
-							writer1.data_array += b[1]
-						else:
-							writer1.data_array += partial_bytes_list[i][1]
-				elif b0.team.team_id == p.team.team_id:
-					if is_point_in_frustum(b0.global_position, p.frustum_planes):
-						writer1.data_array += b[1]
-					else:
-						writer1.data_array += partial_bytes_list[i][1]
-				else:
-					if p.visible_to_enemy:
-						if is_point_in_frustum(b0.global_position, p.frustum_planes):
-							writer1.data_array += b[1]
-						else:
-							writer1.data_array += partial_bytes_list[i][1]
+				# if visible_toggled.has(b0.name):
+				# 	if b0.team.team_id == p.team.team_id:
+				# 		writer1.data_array += b[1]
+				# 	else:
+				# 		if p.visible_to_enemy:
+				# 			writer1.data_array += b[1]
+				# 		else:
+				# 			writer1.data_array += partial_bytes_list[i][1]
+				# elif b0.team.team_id == p.team.team_id:
+				# 	if is_point_in_frustum(b0.global_position, p.frustum_planes):
+				# 		writer1.data_array += b[1]
+				# 	else:
+				# 		writer1.data_array += partial_bytes_list[i][1]
+				# else:
+				# 	if p.visible_to_enemy:
+				# 		if is_point_in_frustum(b0.global_position, p.frustum_planes):
+				# 			writer1.data_array += b[1]
+				# 		else:
+				# 			writer1.data_array += partial_bytes_list[i][1]
 
-				# if visible_toggled.has(b0.name) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
-				# 	writer1.data_array += b[1]
-				# elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
-				# 	writer1.data_array += partial_bytes_list[i][1]
+				if visible_toggled.has(b0.name) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
+					writer1.data_array += b[1]
+				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
+					writer1.data_array += partial_bytes_list[i][1]
 				i += 1
 			var team_0_bytes = writer1.data_array
 			if not team_0_bytes.is_empty():
