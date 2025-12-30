@@ -1,0 +1,213 @@
+[gd_scene load_steps=3 format=3 uid="uid://dtynepuhssiks"]
+
+[ext_resource type="Script" uid="uid://dyy8w8kods3qk" path="res://src/port/main_menu/commander_skills_tab.gd" id="1_wu82t"]
+[ext_resource type="Script" uid="uid://hjlge6u4v5g8" path="res://src/port/main_menu/skill_button.gd" id="2_lpce8"]
+
+[node name="CommanderSkillsTab" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_wu82t")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Commander Skills"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ScrollContainer" type="ScrollContainer" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="GridContainer" type="GridContainer" parent="VBoxContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 6
+size_flags_vertical = 6
+columns = 4
+
+[node name="Skill1" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+skill = "uid://b0x3taachp6li"
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill1"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Adrenaline Rush"
+
+[node name="Skill2" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+skill = "uid://dx547111lg2t7"
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill2"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "CQZealot"
+
+[node name="Skill3" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+skill = "uid://dhggoud4wmje1"
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill3"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "CQ Expertise"
+
+[node name="Skill4" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+skill = "uid://cmdrm26vbwqxu"
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill4"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Secendary
+ Priority
+Target Training"
+
+[node name="Skill5" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill5"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Skill Slot 5"
+
+[node name="Skill6" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill6"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Skill Slot 6"
+
+[node name="Skill7" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill7"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Skill Slot 7"
+
+[node name="Skill8" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+custom_minimum_size = Vector2(150, 150)
+layout_mode = 2
+toggle_mode = true
+script = ExtResource("2_lpce8")
+
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill8"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -13.0
+offset_right = 37.0
+offset_bottom = 13.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Skill Slot 8"

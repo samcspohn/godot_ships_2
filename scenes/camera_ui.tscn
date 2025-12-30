@@ -124,6 +124,7 @@ offset_bottom = 20.0
 color = Color(1, 1, 0, 0.8)
 
 [node name="CrosshairContainer" type="Control" parent="MainContainer"]
+z_index = -2
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -139,6 +140,7 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="CrosshairCenter" type="Control" parent="MainContainer/CrosshairContainer"]
+z_index = 2
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5

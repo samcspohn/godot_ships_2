@@ -225,16 +225,17 @@ func process_travel(projectile: _ProjectileManager.ProjectileData, prev_pos: Vec
 					if result.get('position').y > 0.0001:
 						return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 
-				armor_part = hit_node as ArmorPart
-				if armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude:
+				armor_part = hit_node as ArmorPart # null = water
+				if armor_part and (armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude):
 					return null
+	
+			if armor_part:
+				# Process the armor hit
+				var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
+					projectile.launch_velocity, t, projectile.params.drag)
 
-			# Process the armor hit
-			var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-				projectile.launch_velocity, t, projectile.params.drag)
-
-			return _process_hit(armor_part, result.get('position'), result.get('normal'),
-				projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
+				return _process_hit(armor_part, result.get('position'), result.get('normal'),
+					projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
 
 		# Hit non-armor objects
 		elif result.get('position').y > 0.0001:

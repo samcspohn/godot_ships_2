@@ -10,10 +10,10 @@ var available_upgrades = {}
 signal upgrades_loaded
 
 const UPGRADE_PATHS = [
-	"res://src/ship/Upgrades/health_upgrade.gd",
-	"res://src/ship/Upgrades/main_reload.gd",
-	"res://src/ship/Upgrades/secondary_upgrade.gd",
-	"res://src/ship/Upgrades/torpedo_upgrade.gd"
+	"res://src/Upgrades/health_upgrade.gd",
+	"res://src/Upgrades/main_reload.gd",
+	"res://src/Upgrades/secondary_upgrade.gd",
+	"res://src/Upgrades/torpedo_upgrade.gd"
 ]
 
 

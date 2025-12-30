@@ -92,6 +92,13 @@ func _update_dynamic_mods(): # called when updated by signal
 	for mod in dynamic_mods:
 		mod.call(self)
 	# update_static_mods.emit()
+	#
+
+func remove_physics_recurs(node: Node) -> void:
+	for child in node.get_children():
+		remove_physics_recurs(child)
+	if node is PhysicsBody3D or node is CollisionObject3D:
+		node.queue_free()
 
 func _ready() -> void:
 	# Get references to child components
@@ -117,11 +124,14 @@ func _ready() -> void:
 	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
 		set_physics_process(false)
-		# self.freeze = true
-		# # Disable all collision shapes under the node
+		self.freeze = true
+		# Disable all collision shapes under the node
 		# for child in get_children():
 		# 	if child is CollisionShape3D:
 		# 		child.disabled = true
+		# remove_physics_recurs(self)
+		# for child in get_children():
+		# 	remove_physics_recurs(child)
 	else:
 		set_process(false)
 

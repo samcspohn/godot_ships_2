@@ -279,10 +279,10 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-	get_tree().root.add_child(expl)
-	expl.global_position = pos
-	expl.radius = radius
+	#var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
+	#get_tree().root.add_child(expl)
+	#expl.global_position = pos
+	#expl.radius = radius
 
 @rpc("authority", "reliable")
 func destroyTorpedoRpc(id, position) -> void:

@@ -456,7 +456,7 @@ func _physics_process(_delta: float) -> void:
 					damage = p.params.damage * 0.1
 					destroyBulletRpc(id, hit_result.explosion_position, HitResult.OVERPENETRATION, hit_result.collision_normal)
 				ArmorInteraction.HitResult.SHATTER:
-					damage = p.params.damage * 0.0
+					damage = p.params.damage * 0.025
 					destroyBulletRpc(id, hit_result.explosion_position, HitResult.SHATTER, hit_result.collision_normal)
 				ArmorInteraction.HitResult.RICOCHET:
 					damage = 0.0

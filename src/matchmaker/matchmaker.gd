@@ -59,7 +59,7 @@ func _ready():
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 				
-				var bot_ships = ["res://ShipModels/Bismarck3.tscn"]
+				var bot_ships = ["res://Ships/Bismarck/Bismarck3.tscn"]
 				# Player team (team 0)
 				team[client_data["player_name"]] = {
 					"team": "0",

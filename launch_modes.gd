@@ -11,6 +11,8 @@ enum LaunchMode {
 var launch_mode = LaunchMode.CLIENT
 var player_name = ""
 
+@export var port_scene: PackedScene
+
 func _ready():
 	# Parse command-line arguments
 	var args = OS.get_cmdline_args()
@@ -33,7 +35,8 @@ func _ready():
 	match launch_mode:
 		LaunchMode.CLIENT:
 			print("client")
-			get_tree().call_deferred("change_scene_to_file", "res://src/client/main_menu.tscn")
+			#get_tree().call_deferred("change_scene_to_file", "res://src/client/main_menu.tscn")
+			get_tree().change_scene_to_packed.call_deferred(port_scene)
 		LaunchMode.DEDICATED_SERVER:
 			print("server")
 			for i in range(args.size()):
