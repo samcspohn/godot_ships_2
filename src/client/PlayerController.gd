@@ -4,7 +4,7 @@ class_name PlayerController
 var ship: Ship
 #var ship_movement: ShipMovement
 #var ship_artillery: ArtilleryController
-#var hp_manager: HitPointsManager
+#var hp_manager: HPManager
 var _cameraInput: Vector2
 @export var playerName: Label
 var cam: BattleCamera
@@ -52,10 +52,10 @@ func _ready() -> void:
 		set_process(false)
 		set_process_input(false)
 		set_physics_process(false)
-		
+
 		# await get_tree().process_frame
 		# ship.add_static_mod(secondary_upgrade)
-		
+
 	else:
 		# Capture mouse by default for camera control
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -84,7 +84,8 @@ func setup_artillery_camera() -> void:
 		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
 		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
 	get_tree().root.add_child(cam)
-	# cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
+	# cam.physics_interpolation_mode = PhysicsInterpolationMode.PHYSICS_INTERPOLATION_MODE_OFF
+	cam.call_deferred("set_angle", rad_to_deg(ship.global_rotation.y))
 
 	# Get ray from camera
 	self.ray = cam.get_child(0)
@@ -103,14 +104,14 @@ func _input(event: InputEvent) -> void:
 					# Mouse target selection with left click
 					var mouse_pos = get_viewport().get_mouse_position()
 					select_target_at_mouse_position(mouse_pos)
-			
+
 		elif mouse_captured: # Handle normal camera-based shooting
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					# Mouse button pressed
 					is_holding = true
 					sequential_fire_timer = 0.0
-					
+
 					# Handle click counting for double click detection
 					var current_time = Time.get_ticks_msec() / 1000.0
 					if current_time - last_click_time < double_click_timer:
@@ -131,7 +132,7 @@ func _input(event: InputEvent) -> void:
 							# Use your existing firing logic for torpedos
 							if ship.torpedo_launcher:
 								ship.torpedo_launcher.fire.rpc_id(1)
-					
+
 					last_click_time = current_time
 				else:
 					# Mouse button released
@@ -161,7 +162,7 @@ func _input(event: InputEvent) -> void:
 			select_weapon(1)
 		elif event.keycode == KEY_3:
 			select_weapon(2)
-		
+
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 0)
@@ -184,17 +185,17 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 	if not cam:
 		print("No camera available for target selection")
 		return
-	
+
 	var closest_ship: Ship = null
 	var closest_distance: float = INF
 	var selection_radius: float = 80.0  # Radius in pixels for ship selection
-	
+
 	# Get all ships from the server's player list
 	var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
 		print("No server found for target selection")
 		return
-	
+
 	# Check each ship to find the closest one to mouse cursor
 	for pid in server.players:
 		var potential_ship: Ship = server.players[pid][0]
@@ -208,19 +209,19 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 			continue
 		if not potential_ship.visible_to_enemy:  # Don't target invisible ships
 			continue
-		
+
 		# Get ship's screen position using the camera
 		var ship_screen_pos = cam.unproject_position(potential_ship.global_position)
 		var distance_to_cursor = mouse_pos.distance_to(ship_screen_pos)
-		
+
 		# Debug output
 		# print("Ship: ", potential_ship.name, " Screen: ", ship_screen_pos, " Distance: ", distance_to_cursor)
-		
+
 		# Check if this ship is closer to the cursor and within selection radius
 		if distance_to_cursor <= selection_radius and distance_to_cursor < closest_distance:
 			closest_ship = potential_ship
 			closest_distance = distance_to_cursor
-	
+
 	# Send the selected target to the server
 	if closest_ship:
 		print("Client selected ship: ", closest_ship.name, " at distance: ", closest_distance)
@@ -241,7 +242,7 @@ func set_target_ship(ship_path: NodePath) -> void:
 	"""Server-side RPC to set the target ship"""
 	if not _Utils.authority():
 		return
-		
+
 	var target_ship = get_node_or_null(ship_path)
 	if target_ship and target_ship is Ship:
 		print("Server setting target ship: ", target_ship.name)
@@ -262,7 +263,7 @@ func c_set_target_ship(ship_path: NodePath) -> void:
 		else:
 			print("Invalid ship path received: ", ship_path)
 
-		
+
 func select_target_ship(target_ship: Ship) -> void:
 	ship.secondary_controller.target = target_ship
 	#for secondary_controller in ship.secondary_controller.target:
@@ -274,7 +275,7 @@ func select_target_ship(target_ship: Ship) -> void:
 	show_target_indicator(target_ship)
 	# else:
 	# 	print("Warning: secondary_controller not initialized")
-		
+
 func show_target_indicator(target_ship: Ship) -> void:
 	# Update the UI to show the target indicator
 	if cam and cam.ui:
@@ -288,7 +289,7 @@ func clear_secondary_target() -> void:
 		#secondary_controller.target = null
 		#print("Cleared secondary target")
 	ship.secondary_controller.target = null
-	
+
 	# Update the UI to clear the target indicator
 	if cam and cam.ui:
 		cam.ui.clear_secondary_target()
@@ -313,22 +314,22 @@ func _process(dt: float) -> void:
 	# Check if we need to initialize guns - do it only once
 	if needs_initialization:
 		needs_initialization = false
-		
+
 		# Check if guns are available in ArtilleryController
 		if ship.artillery_controller.guns.size() > 0:
 			# Copy guns from ship to local array
 			guns = ship.artillery_controller.guns
-			
+
 			# Setup artillery camera
 			setup_artillery_camera()
-			
+
 			print("Successfully initialized player guns: ", guns.size())
 		else:
 			print("Warning: No guns found in ship. This might be an initialization order issue.")
 			# Try again next frame if no guns found
 			needs_initialization = true
 			return # Skip processing until initialized
-	
+
 	if guns.size() > 0:
 		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
 		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
@@ -338,7 +339,7 @@ func _process(dt: float) -> void:
 		if Time.get_ticks_msec() / 1000.0 - last_click_time > double_click_timer:
 			# Reset click count if double click timer expired
 			click_count = 0
-	
+
 	# Handle sequential firing when holding
 	if is_holding:
 		if selected_weapon == 0 or selected_weapon == 1:
@@ -353,11 +354,11 @@ func _process(dt: float) -> void:
 			# Use your existing firing logic for torpedos
 			if ship.torpedo_launcher:
 				ship.torpedo_launcher.fire.rpc_id(1)
-	
+
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
 		view_port_size = get_viewport().size
-		
+
 	# Handle player input and send to server
 	process_player_input()
 
@@ -379,11 +380,11 @@ class InputData:
 func process_player_input() -> void:
 	# Handle throttle input with continuous adjustment
 	var throttle_input_active = false
-	
+
 	if Input.is_action_pressed("move_forward"): # W key held
 		throttle_input_active = true
 		throttle_timer += get_process_delta_time()
-		
+
 		# Immediate response on first press
 		if Input.is_action_just_pressed("move_forward"):
 			throttle_level = min(throttle_level + 1, 4) # Max is 4 (full speed)
@@ -392,11 +393,11 @@ func process_player_input() -> void:
 		elif throttle_timer >= throttle_repeat_interval:
 			throttle_level = min(throttle_level + 1, 4) # Max is 4 (full speed)
 			throttle_timer = 0.0
-			
+
 	elif Input.is_action_pressed("move_back"): # S key held
 		throttle_input_active = true
 		throttle_timer += get_process_delta_time()
-		
+
 		# Immediate response on first press
 		if Input.is_action_just_pressed("move_back"):
 			throttle_level = max(throttle_level - 1, -1) # Min is -1 (reverse)
@@ -405,11 +406,11 @@ func process_player_input() -> void:
 		elif throttle_timer >= throttle_repeat_interval:
 			throttle_level = max(throttle_level - 1, -1) # Min is -1 (reverse)
 			throttle_timer = 0.0
-	
+
 	# Reset timer when no throttle input is active
 	if not throttle_input_active:
 		throttle_timer = 0.0
-	
+
 	# Handle discrete rudder input with Q and E
 	if Input.is_action_just_pressed("ui_q"): # Q key
 		rudder_mode = "discrete"
@@ -419,7 +420,7 @@ func process_player_input() -> void:
 		rudder_mode = "discrete"
 		discrete_rudder_index = min(discrete_rudder_index + 1, discrete_rudder_positions.size() - 1)
 		target_rudder_value = discrete_rudder_positions[discrete_rudder_index]
-	
+
 	# Handle continuous rudder input with A and D
 	if Input.is_action_pressed("move_left"): # A key
 		rudder_mode = "continuous"
@@ -431,21 +432,21 @@ func process_player_input() -> void:
 		discrete_rudder_index = 2
 	elif rudder_mode == "continuous":
 		target_rudder_value = 0.0
-	
+
 	# Create movement input array
 	var input_data = InputData.new()
 	input_data.throttle_level = throttle_level
 	input_data.rudder_value = target_rudder_value
 	input_data.aim_position = cam.aim_position
 	input_data.frustum_planes = cam.get_frustum()
-	
+
 	# Get aiming point from ray
 	#var aim_point: Vector3
 	#if ray.is_colliding():
 		#aim_point = ray.get_collision_point()
 	#else:
 		#aim_point = ray.global_position + Vector3(ray.global_basis.z.x, 0, ray.global_basis.z.z).normalized() * -50000
-	
+
 	# Send separated inputs to server
 
 	# if NetworkManager.is_connected:
@@ -455,15 +456,15 @@ func process_player_input() -> void:
 								input_data.aim_position,
 								input_data.frustum_planes)
 	# send_aim_input.rpc_id(1, cam.aim_position)
-	
+
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func send_input(throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane]) -> void:
+func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane]) -> void:
 	if _Utils.authority():
 		# Forward movement input to ship movement controller
-		ship.movement_controller.set_movement_input([throttle_level, rudder_value])
+		ship.movement_controller.set_movement_input([_throttle_level, rudder_value])
 		ship.artillery_controller.set_aim_input(aim_position)
 		ship.frustum_planes = frustum_planes
 

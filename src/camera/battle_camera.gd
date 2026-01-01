@@ -6,7 +6,7 @@ signal processed
 # Ship to follow
 @export var _ship: Ship
 #@export var ship_movement: ShipMovement
-#@export var hp_manager: HitPointsManager  # Add reference to hit points
+#@export var hp_manager: HPManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = 0.0 # 380mm shell drag
 

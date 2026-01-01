@@ -19,6 +19,7 @@ concealment, sound effects, damage saturation, clamp sniper range
 - [ ] match end handling (victory/defeat screens/stats/back to port)
 - [ ] friendly consumable use visuals
 - [ ] hover over/click ships on minimap to show radar/hydro range circles
+- [ ] stat sheet based module system for ships
 
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)

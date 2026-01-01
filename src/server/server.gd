@@ -180,7 +180,9 @@ func spawn_player(id, player_name):
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
-	player.rotate(Vector3.UP,-spawn_pos.angle_to(player.global_transform.basis.z))
+	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	var rot_y = (-spawn_pos).angle_to(-player.global_transform.basis.z)
+	player.rotate(Vector3.UP,rot_y)
 
 	#join_game.rpc_id(id)
 	for p_name in players:
@@ -189,10 +191,10 @@ func spawn_player(id, player_name):
 		var pid = players[p_name][2]
 		# notify new client of current players
 		if not is_bot:
-			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.team.team_id, p_ship)
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship)
 		#notify current players of new player
 		if not p.team.is_bot:
-			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, team_id, ship)
+			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship)
 
 	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
 
@@ -221,7 +223,7 @@ func spawn_player(id, player_name):
 			players_spawned_bots = true
 
 @rpc("call_remote", "reliable")
-func spawn_players_client(id, _player_name, _pos, team_id, ship):
+func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship):
 
 	if !Minimap.is_initialized:
 		Minimap.server_take_map_snapshot(get_viewport())
@@ -280,7 +282,7 @@ func spawn_players_client(id, _player_name, _pos, team_id, ship):
 	# Add to world - note game_world is a child of this node
 	players[_player_name] = [player, ship, id]
 	spawn_point.add_child(player)
-
+	player.rotation.y = rot_y
 	#player.global_position = pos
 
 

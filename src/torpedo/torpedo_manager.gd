@@ -191,8 +191,8 @@ func _physics_process(_delta: float) -> void:
 			self.destroyTorpedoRpc(id, collision.position)
 			var ship = ProjectileManager.find_ship(collision.collider)
 			if ship != null:
-				var hp: HitPointsManager = ship.health_controller
-				hp.take_damage(p.params.damage, collision.position)
+				var hp: HPManager = ship.health_controller
+				#hp.apply_damage(p.params.damage)
 
 				# Track torpedo damage dealt
 				track_torpedo_damage_dealt(p.owner, p.params.damage)

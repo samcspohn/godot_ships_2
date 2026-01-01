@@ -6,7 +6,7 @@ class_name CameraUI
 var camera_controller: BattleCamera
 #@export var _ship: Ship
 #@export var ship_movement: ShipMovement
-#@export var hp_manager: HitPointsManager  # Add reference to hit points
+#@export var hp_manager: HPManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT # 380mm shell drag
 
@@ -56,14 +56,14 @@ var weapon_names: Array[String] = ["AP", "HE", "Torpedo"]
 
 func _ready():
 
-	
+
 	# Make sure we have necessary references
 	if not camera_controller:
 		push_error("ArtilleryCamera requires a _ship node!")
-	
+
 	# Set up UI
 	_setup_ui()
-	
+
 	# Capture mouse
 	#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
@@ -79,12 +79,12 @@ func _setup_ui():
 	# Create CanvasLayer for UI
 	ui_canvas = CanvasLayer.new()
 	add_child(ui_canvas)
-	
+
 	# Create Control for UI elements
 	crosshair_container = Control.new()
 	crosshair_container.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui_canvas.add_child(crosshair_container)
-	
+
 	# Add time label
 	time_label = Label.new()
 	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -92,7 +92,7 @@ func _setup_ui():
 	time_label.position = Vector2(0, 25)
 	time_label.add_theme_font_size_override("font_size", 14)
 	crosshair_container.add_child(time_label)
-	
+
 	# Add distance label
 	distance_label = Label.new()
 	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -100,14 +100,14 @@ func _setup_ui():
 	distance_label.position = Vector2(0, 45)
 	distance_label.add_theme_font_size_override("font_size", 14)
 	crosshair_container.add_child(distance_label)
-	
+
 	# Connect to draw
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
 
 	# Add ship status labels
 	var status_color = Color(0.2, 0.8, 1.0, 1.0)
 	var font_size = 16
-	
+
 	# Add speed label
 	speed_label = Label.new()
 	speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -115,7 +115,7 @@ func _setup_ui():
 	speed_label.add_theme_font_size_override("font_size", font_size)
 	speed_label.add_theme_color_override("font_color", status_color)
 	crosshair_container.add_child(speed_label)
-	
+
 	# Add throttle label
 	throttle_label = Label.new()
 	throttle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -123,7 +123,7 @@ func _setup_ui():
 	throttle_label.add_theme_font_size_override("font_size", font_size)
 	throttle_label.add_theme_color_override("font_color", status_color)
 	crosshair_container.add_child(throttle_label)
-	
+
 	# Add rudder label
 	rudder_label = Label.new()
 	rudder_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -131,7 +131,7 @@ func _setup_ui():
 	rudder_label.add_theme_font_size_override("font_size", font_size)
 	rudder_label.add_theme_color_override("font_color", status_color)
 	crosshair_container.add_child(rudder_label)
-	
+
 	# Add rudder slider (horizontal)
 	rudder_slider = HSlider.new()
 	rudder_slider.min_value = -1.0
@@ -141,7 +141,7 @@ func _setup_ui():
 	rudder_slider.custom_minimum_size = Vector2(150, 20)
 	rudder_slider.editable = false # Read-only display
 	crosshair_container.add_child(rudder_slider)
-	
+
 	# Add throttle slider (vertical)
 	throttle_slider = VSlider.new()
 	throttle_slider.min_value = -1.0 # Reverse
@@ -159,7 +159,7 @@ func _setup_ui():
 	fps_label.add_theme_font_size_override("font_size", 16)
 	fps_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0, 1.0)) # Yellow for visibility
 	crosshair_container.add_child(fps_label)
-	
+
 	# Add camera angle display
 	camera_angle_label = Label.new()
 	camera_angle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -167,7 +167,7 @@ func _setup_ui():
 	camera_angle_label.add_theme_font_size_override("font_size", 14)
 	camera_angle_label.add_theme_color_override("font_color", Color(0.8, 0.8, 1.0, 1.0)) # Light blue for visibility
 	crosshair_container.add_child(camera_angle_label)
-	
+
 	# Add hit points bar
 	hp_bar = ProgressBar.new()
 	hp_bar.custom_minimum_size = Vector2(200, 20)
@@ -175,7 +175,7 @@ func _setup_ui():
 	hp_bar.show_percentage = false
 	hp_bar.modulate = Color(0.2, 0.9, 0.2) # Green color for health
 	crosshair_container.add_child(hp_bar)
-	
+
 	# Add hit points label overlay
 	hp_label = Label.new()
 	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -214,16 +214,16 @@ func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad
 		sin(v_rad), # y component
 		cos(h_rad) # z component
 	).normalized()
-	
+
 	# If direction is parallel to ground or pointing up, no intersection
 	if direction.y >= -0.0001:
 		# Return a fallback position at maximum visible distance
 		return origin_position + Vector3(sin(h_rad), 0, cos(h_rad)) * 10000.0
-	
+
 	# Calculate intersection parameter t using plane equation:
 	# For plane at y=0: t = -origin.y / direction.y
 	var t = - origin_position.y / direction.y
-	
+
 	# Calculate intersection point
 	return origin_position + direction * t
 
@@ -240,23 +240,23 @@ func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad
 # 			horizontal_rad + PI,
 # 			vertical_rad
 # 		)
-			
+
 # 	else:
 # 		var aim_direction = - aim.basis.z.normalized()
 # 		# Cast a ray to get target position (could be terrain, enemy, etc.)
 # 		var ray_length = 200000.0 # 50km range for naval artillery
 # 		var space_state = get_world_3d().direct_space_state
 # 		var ray_origin = aim.global_position + _ship.global_position
-		
+
 # 		var ray_params = PhysicsRayQueryParameters3D.create(
 # 			ray_origin,
 # 			ray_origin + aim_direction * ray_length,
 # 			1, # Set to your proper collision mask
 # 			[] # Array of objects to exclude
 # 		)
-		
+
 # 		var result = space_state.intersect_ray(ray_params)
-		
+
 # 		if result:
 # 			aim_position = result.position
 # 		else:
@@ -264,8 +264,8 @@ func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad
 # 			aim_position = ray_origin + aim_direction * ray_length
 
 # 	minimap.aim_point = aim_position
-	
-	
+
+
 # 	# Calculate launch vector using our projectile physics
 # 	var ship_position = _ship.global_position
 # 	var launch_result = ProjectilePhysicsWithDrag.calculate_launch_vector(
@@ -274,13 +274,13 @@ func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad
 # 		projectile_speed,
 # 		projectile_drag_coefficient
 # 	)
-	
+
 # 	# Extract results
 # 	var launch_vector = launch_result[0]
 # 	time_to_target = launch_result[1]
 # 	#max_range_reached = launch_result[2]
 # 	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.guns[0].max_range
-	
+
 # 	# Calculate distance
 # 	distance_to_target = (aim_position - ship_position).length() / 1000.0 # Convert to km
 
@@ -288,29 +288,29 @@ func _update_ui():
 	# Update info labels
 	time_label.text = "%.1f s" % (time_to_target / 2.0)
 	distance_label.text = "%.2f m" % distance_to_target
-	
+
 	# Center the labels
 	var viewport_size = get_viewport().get_visible_rect().size
 	var center_x = viewport_size.x / 2.0
-	
+
 	time_label.size = Vector2(100, 20)
 	distance_label.size = Vector2(100, 20)
-	
+
 	time_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 25)
 	distance_label.position = Vector2(center_x - 50, viewport_size.y / 2.0 + 45)
 
 	# Update ship status labels
 	speed_label.text = "Speed: %.1f knots" % ship_speed
-	
+
 	# Get throttle and rudder information from the ship
 	var throttle_text = "Throttle: Stop"
 	var rudder_text = "Rudder: Center"
-	
+
 	if camera_controller._ship.movement_controller is ShipMovementV2:
 		# Get throttle setting
 		var throttle_level = camera_controller._ship.movement_controller.throttle_level
 		var throttle_display = ""
-		
+
 		match throttle_level:
 			-1: throttle_display = "Reverse"
 			0: throttle_display = "Stop"
@@ -318,14 +318,14 @@ func _update_ui():
 			2: throttle_display = "1/2"
 			3: throttle_display = "3/4"
 			4: throttle_display = "Full"
-		
+
 		throttle_text = "Throttle: " + throttle_display
 		throttle_slider.value = throttle_level
-		
+
 		# Get rudder setting
 		var rudder_value = camera_controller._ship.movement_controller.rudder_value
 		var rudder_display = ""
-		
+
 		if abs(rudder_value) < 0.1:
 			rudder_display = "Center"
 		elif rudder_value > 0:
@@ -342,31 +342,31 @@ func _update_ui():
 				rudder_display = "Starboard"
 			else:
 				rudder_display = "Slight Starboard"
-		
+
 		rudder_text = "Rudder: " + rudder_display
 		rudder_slider.value = rudder_value
-	
+
 	throttle_label.text = throttle_text
 	rudder_label.text = rudder_text
-	
+
 	# Position the status labels and sliders in bottom left corner
 	var control_panel_x = 20
 	var control_panel_y = viewport_size.y - 180 # Moved up to make room for the control layout
-	
+
 	# Position labels
 	speed_label.position = Vector2(control_panel_x, control_panel_y)
 	throttle_label.position = Vector2(control_panel_x, control_panel_y + 25)
 	rudder_label.position = Vector2(control_panel_x, control_panel_y + 50)
-	
+
 	# Position sliders in a non-overlapping layout
 	# Rudder slider (horizontal) at the bottom
 	rudder_slider.position = Vector2(control_panel_x, control_panel_y + 75)
 	rudder_slider.custom_minimum_size = Vector2(180, 20)
-	
+
 	# Throttle slider (vertical) positioned at the right end of the rudder slider
 	throttle_slider.position = Vector2(control_panel_x + 180, control_panel_y - 25) # Position at the right end of rudder slider
 	throttle_slider.custom_minimum_size = Vector2(20, 100) # Keep the same height
-	
+
 	# Add custom styling to sliders based on values
 	if camera_controller._ship is Ship:
 		# Set color for rudder slider based on port/starboard
@@ -377,7 +377,7 @@ func _update_ui():
 			rudder_slider.modulate = Color(0.5, 1, 0.5) # Green tint for starboard
 		else:
 			rudder_slider.modulate = Color(1, 1, 1) # White for center
-			
+
 		# Set color for throttle slider based on direction
 		var throttle_level = throttle_slider.value
 		if throttle_level > 0: # Forward
@@ -392,11 +392,11 @@ func _update_ui():
 		var current_hp = camera_controller._ship.health_controller.current_hp
 		var max_hp = camera_controller._ship.health_controller.max_hp
 		var hp_percent = (float(current_hp) / max_hp) * 100.0
-		
+
 		# Update progress bar
 		hp_bar.value = hp_percent
 		hp_label.text = "%d/%d" % [current_hp, max_hp]
-		
+
 		# Change color based on health level
 		if hp_percent > 60:
 			hp_bar.modulate = Color(0.2, 0.9, 0.2) # Green for high health
@@ -404,7 +404,7 @@ func _update_ui():
 			hp_bar.modulate = Color(0.9, 0.9, 0.2) # Yellow for medium health
 		else:
 			hp_bar.modulate = Color(0.9, 0.2, 0.2) # Red for low health
-			
+
 		# Position the health bar at the bottom center of screen
 		hp_bar.position = Vector2(viewport_size.x / 2 - hp_bar.custom_minimum_size.x / 2,
 								 viewport_size.y - hp_bar.custom_minimum_size.y - 20)
@@ -421,7 +421,7 @@ func _update_ui():
 
 func _update_fps():
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
-	
+
 	# Position in top right corner
 	# var viewport_size = get_viewport().get_visible_rect().size
 	fps_label.size = Vector2(100, 25)
@@ -432,21 +432,21 @@ func _update_camera_angle_display():
 		# Get camera forward vector on XZ plane (ignore Y component)
 		var camera_forward = -global_transform.basis.z
 		var camera_forward_xz = Vector2(camera_forward.x, camera_forward.z).normalized()
-		
+
 		# Get ship forward vector on XZ plane
 		var ship_forward = -camera_controller._ship.global_transform.basis.z
 		var ship_forward_xz = Vector2(ship_forward.x, ship_forward.z).normalized()
-		
+
 		# Calculate angle between the vectors
 		var angle_rad = camera_forward_xz.angle_to(ship_forward_xz)
 		var angle_deg = abs(rad_to_deg(angle_rad))
-			
+
 		if angle_deg > 90.0:
 			angle_deg = 180.0 - angle_deg
 
 		# Format the angle
 		camera_angle_label.text = "Camera: %.1f°" % angle_deg
-		
+
 		# Position in top left corner, below FPS
 		camera_angle_label.size = Vector2(120, 25)
 		camera_angle_label.position = Vector2(10, 40)
@@ -455,16 +455,16 @@ func _update_camera_angle_display():
 func _on_crosshair_container_draw():
 	var viewport_size = get_viewport().get_visible_rect().size
 	var screen_center = viewport_size / 2.0
-	
+
 	# Crosshair properties
 	var crosshair_size = Vector2(2, 15)
 	var crosshair_gap = 5.0
-	
+
 	# Use red for out of range, green for in range
 	var color = Color(0, 1, 0, 0.8) # Default to green
 	if max_range_reached:
 		color = Color(1, 0, 0, 0.8) # Red for out of range
-	
+
 	# Draw standard crosshair
 	var top_rect = Rect2(
 		screen_center.x - crosshair_size.x / 2,
@@ -472,33 +472,33 @@ func _on_crosshair_container_draw():
 		crosshair_size.x,
 		crosshair_size.y
 	)
-	
+
 	var bottom_rect = Rect2(
 		screen_center.x - crosshair_size.x / 2,
 		screen_center.y + crosshair_gap,
 		crosshair_size.x,
 		crosshair_size.y
 	)
-	
+
 	var left_rect = Rect2(
 		screen_center.x - crosshair_size.y - crosshair_gap,
 		screen_center.y - crosshair_size.x / 2,
 		crosshair_size.y,
 		crosshair_size.x
 	)
-	
+
 	var right_rect = Rect2(
 		screen_center.x + crosshair_gap,
 		screen_center.y - crosshair_size.x / 2,
 		crosshair_size.y,
 		crosshair_size.x
 	)
-	
+
 	crosshair_container.draw_rect(top_rect, color)
 	crosshair_container.draw_rect(bottom_rect, color)
 	crosshair_container.draw_rect(left_rect, color)
 	crosshair_container.draw_rect(right_rect, color)
-	
+
 	# Draw target lock indicator when target is locked
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
 		var target_pos = get_viewport().get_camera_3d().unproject_position(locked_target.global_position)
@@ -512,10 +512,10 @@ func _on_crosshair_container_draw():
 				Vector2(target_pos.x - diamond_size, target_pos.y),
 				Vector2(target_pos.x, target_pos.y - diamond_size)
 			])
-			
+
 			# Draw lock indicator
 			crosshair_container.draw_polyline(diamond_points, Color.WHITE, 2.0, true)
-			
+
 			# Draw "LOCKED" text above diamond
 			if not is_position_visible_on_screen(locked_target.global_position):
 				target_lock_enabled = false
@@ -524,12 +524,12 @@ func _on_crosshair_container_draw():
 func setup_ship_ui(ship):
 	if ship == camera_controller._ship or ship in ship_ui_elements:
 		return # Skip own ship or already tracked ships
-	
+
 	# Create a container for the ship's UI
 	var ship_container = Control.new()
 	ship_container.visible = false # Start hidden until positioned
 	crosshair_container.add_child(ship_container)
-	
+
 	# Create ship name label
 	var name_label = Label.new()
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -537,7 +537,7 @@ func setup_ship_ui(ship):
 	name_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.9))
 	name_label.text = ship.name
 	ship_container.add_child(name_label)
-	
+
 	# Create HP progress bar
 	var ship_hp_bar = ProgressBar.new()
 	ship_hp_bar.custom_minimum_size = Vector2(90, 10)
@@ -545,7 +545,7 @@ func setup_ship_ui(ship):
 	ship_hp_bar.show_percentage = false
 	ship_hp_bar.modulate = Color(0.2, 0.9, 0.2) # Default green
 	ship_container.add_child(ship_hp_bar)
-	
+
 	# Create HP text label
 	var ship_hp_label = Label.new()
 	ship_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -554,7 +554,7 @@ func setup_ship_ui(ship):
 	ship_hp_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.9))
 	ship_hp_label.text = "100/100"
 	ship_container.add_child(ship_hp_label)
-	
+
 	# Store the UI elements for this ship
 	ship_ui_elements[ship] = {
 		"container": ship_container,
@@ -573,21 +573,21 @@ func update_ship_ui():
 				tracked_ships[ship] = true
 				setup_ship_ui(ship)
 				minimap.register_ship(ship)
-	
+
 	# minimap.draw_ship_on_minimap(_ship.global_position,_ship.rotation.y, Color.WHITE)
-	# 
+	#
 	# Update each ship's UI
 	for ship in tracked_ships.keys():
 		if is_instance_valid(ship) and ship in ship_ui_elements and ship is Ship:
 			var ui = ship_ui_elements[ship]
-			
+
 			# Get ship's HP if it has an HP manager
 			var ship_hp_manager = ship.health_controller
 			if ship_hp_manager:
 				var current_hp = ship_hp_manager.current_hp
 				var max_hp = ship_hp_manager.max_hp
 				var hp_percent = (float(current_hp) / max_hp) * 100.0
-				
+
 					# Determine team color
 				var team_color = null
 				var my_team_id = -1
@@ -607,11 +607,11 @@ func update_ship_ui():
 					else:
 						team_color = Color(0.9, 0.2, 0.2) # Red for enemy team
 						# minimap.draw_ship_on_minimap(ship.global_position,ship.rotation.y, Color(0.9, 0.2, 0.2))
-				
+
 				# Update progress bar and label
 				ui.hp_bar.value = hp_percent
 				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
-				
+
 				# Update color based on health and team
 				if team_color:
 					ui.hp_bar.modulate = team_color
@@ -622,15 +622,15 @@ func update_ship_ui():
 						ui.hp_bar.modulate = Color(0.9, 0.9, 0.2) # Yellow
 					else:
 						ui.hp_bar.modulate = Color(0.9, 0.2, 0.2) # Red
-			
+
 			# Position UI above ship in the world
 			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
 			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
-			
+
 			# Check if ship is visible on screen
 			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
 			ui.container.visible = ship_visible
-			
+
 			if ship_visible:
 				# Position the UI elements
 				ui.container.position = screen_pos - Vector2(ui.hp_bar.custom_minimum_size.x / 2, 50)
@@ -649,20 +649,20 @@ func update_ship_ui():
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()
-	
+
 	# Check if position is in front of camera
 	var camera_direction = - camera.global_transform.basis.z.normalized()
 	var to_position = (world_position - camera.global_position).normalized()
 	if camera_direction.dot(to_position) <= 0:
 		return false
-		
+
 	# Get screen position
 	var screen_position = camera.unproject_position(world_position)
-	
+
 	# Check if position is on screen
 	var viewport_rect = get_viewport().get_visible_rect()
 	return viewport_rect.has_point(screen_position)
-	
+
 func _on_weapon_button_pressed(idx):
 	for i in range(weapon_buttons.size()):
 		weapon_buttons[i].button_pressed = (i == idx)

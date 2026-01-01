@@ -1,8 +1,9 @@
-[gd_scene load_steps=22 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=28 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://Ships/Bismarck/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_5bir6"]
+[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_onxit"]
 [ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/artillary/Guns/BB_gun1.tres" id="4_rb316"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="5_5tc2e"]
 [ext_resource type="Resource" uid="uid://ppinkghgx71y" path="res://src/artillary/Guns/sec_gun2.tres" id="6_4ubhj"]
@@ -22,6 +23,41 @@
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
+[sub_resource type="Resource" id="Resource_w4pwy"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 150000.0
+pool2 = 150000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_nugjs"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 15000.0
+pool2 = 30000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_lcoqi"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 7500.0
+pool2 = 15000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_cdl2l"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 7500.0
+pool2 = 15000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_8qd2y"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 5500.0
+pool2 = 12000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
 [sub_resource type="BoxShape3D" id="BoxShape3D_3klas"]
 margin = 0.0
 size = Vector3(36, 30.216957, 251.893)
@@ -36,6 +72,11 @@ ship_model_glb_path = "uid://btam5g21aiiqg"
 
 [node name="HPManager" parent="Modules" index="0"]
 max_hp = 56100.0
+citadel = SubResource("Resource_w4pwy")
+casemate = SubResource("Resource_nugjs")
+bow = SubResource("Resource_lcoqi")
+stern = SubResource("Resource_cdl2l")
+superstructure = SubResource("Resource_8qd2y")
 
 [node name="ArtilleryController" parent="Modules" index="1" node_paths=PackedStringArray("guns")]
 params = ExtResource("4_rb316")
@@ -76,16 +117,16 @@ upgrades = Array[ExtResource("13_5tc2e")]([null, null, null])
 [node name="FireNodes" type="Node3D" parent="." index="1"]
 
 [node name="Fire" parent="FireNodes" index="0" instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.16089, -84.116)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.350202, -84.116)
 
 [node name="Fire2" parent="FireNodes" index="1" instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.08068, -26.3775)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.269992, -26.3775)
 
 [node name="Fire3" parent="FireNodes" index="2" instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.21839, 29.8215)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.4077015, 29.8215)
 
 [node name="Fire4" parent="FireNodes" index="3" instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.16078, 92.8848)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.350092, 92.8848)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 15.059022, -2.769)
@@ -95,41 +136,37 @@ shape = SubResource("BoxShape3D_3klas")
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_col" parent="." index="14"]
+[node name="For-Barbette_col" parent="." index="16"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col" parent="." index="17"]
+[node name="Aft-Barbette_col" parent="." index="17"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Aft-Barbette_col" parent="." index="18"]
+[node name="For-Barbette_col_001" parent="." index="18"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col_001" parent="." index="19"]
-layers = 0
-material_override = ExtResource("14_pww3p")
-
-[node name="Aft-Barbette_col_001" parent="." index="20"]
+[node name="Aft-Barbette_col_001" parent="." index="19"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
 [node name="GER_380mm_2b" parent="TurretMount_GER_380mm_2b" index="0" instance=ExtResource("14_5uw5v")]
-min_rotation_angle = 3.543018381548489
-max_rotation_angle = 2.722713633111154
+min_rotation_angle = 3.7524578917878086
+max_rotation_angle = 2.530727415391778
 
 [node name="GER_380mm_2b_rf" parent="TurretMount_GER_380mm_2b_rf" index="0" instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 3.717551306747922
-max_rotation_angle = 2.600540585471551
+min_rotation_angle = 3.7524578917878086
+max_rotation_angle = 2.530727415391778
 
 [node name="GER_380mm_2b_rf_001" parent="TurretMount_GER_380mm_2b_rf_001" index="0" instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 0.6962252876845412
-max_rotation_angle = 5.613594276363541
+min_rotation_angle = 0.6108652381980153
+max_rotation_angle = 5.672320068981571
 
 [node name="GER_380mm_2b_rf_002" parent="TurretMount_GER_380mm_2b_rf_002" index="0" instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 0.5503835289087338
-max_rotation_angle = 5.695734908169539
+min_rotation_angle = 0.6108652381980153
+max_rotation_angle = 5.672320068981571
 
 [node name="GER_150mm_2b_rf" parent="TurretMount_GER_150mm_2b_rf" index="0" instance=ExtResource("17_jx7aj")]
 min_rotation_angle = 3.416402039123504
@@ -185,19 +222,19 @@ max_rotation_angle = 2.9638556402871927
 min_rotation_angle = 0.00398590263774245
 max_rotation_angle = 2.8422316975614645
 
-[node name="Hull_Citadel_col" parent="." index="39"]
+[node name="Hull_Citadel_col" parent="." index="38"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Bow_col" parent="." index="41"]
+[node name="Hull_Bow_col" parent="." index="40"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Stern_col" parent="." index="43"]
+[node name="Hull_Stern_col" parent="." index="42"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Casemate_col" parent="." index="45"]
+[node name="Hull_Casemate_col" parent="." index="44"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 

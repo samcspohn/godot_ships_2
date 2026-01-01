@@ -9,7 +9,7 @@ var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 var gun_targets: Array[Ship] = []
 
-var target_mod: TargetMod = TargetMod.new().duplicate(true)
+var target_mod: TargetMod
 var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
 var ammo_type: int = 1 # 0 = AP, 1 = HE
@@ -25,6 +25,8 @@ func _ready() -> void:
 	# 	for g in sc.guns:
 	# 		g.controller = self
 	_ship = get_parent().get_parent() as Ship
+	target_mod = TargetMod.new()
+	target_mod.resource_local_to_scene = true
 	target_mod.init(_ship)
 
 	for sc in sub_controllers:

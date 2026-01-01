@@ -1,6 +1,6 @@
 [gd_scene load_steps=9 format=3 uid="uid://5qbpr6jjvoj6"]
 
-[ext_resource type="PackedScene" uid="uid://dmabeflns107f" path="res://src/hp_manager/HitPointsManager.tscn" id="2_dniq6"]
+[ext_resource type="PackedScene" uid="uid://dmabeflns107f" path="res://src/hp_manager/HP_Manager.tscn" id="2_dniq6"]
 [ext_resource type="PackedScene" uid="uid://dgvbfjlhdgg7f" path="res://src/artillary/main_controller/artillery_controller.tscn" id="3_j72gg"]
 [ext_resource type="PackedScene" uid="uid://bpa424xhggvk2" path="res://src/movement/ship_movement.tscn" id="4_1t3ll"]
 [ext_resource type="PackedScene" uid="uid://5i3h4gyrrmjv" path="res://src/artillary/secondary_controller/SecondaryController.tscn" id="5_l3md2"]

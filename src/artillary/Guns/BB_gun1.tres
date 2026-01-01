@@ -23,7 +23,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [resource]
 resource_local_to_scene = true
 script = ExtResource("1_twqco")
-reload_time = 26.0
+reload_time = 25.0
 traverse_speed = 6.0
 elevation_speed = 6.0
 _range = 15000.0
