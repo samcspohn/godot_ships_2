@@ -8,6 +8,8 @@ class_name HpPartMod
 var current_pool1: float
 var current_pool2: float
 
+var healable_damage: float = 0.0
+
 func init(_ship: Ship) -> void:
 	current_pool1 = pool1
 	current_pool2 = pool2
@@ -34,5 +36,7 @@ func apply_damage(dmg: float) -> float:
 			current_pool2 = 0
 	else:
 		dmg2 = 0.0
+
+	healable_damage += (dmg1 + dmg2) * 0.5 # TODO: account for light/medium/heavy damage
 
 	return dmg1 + dmg2
