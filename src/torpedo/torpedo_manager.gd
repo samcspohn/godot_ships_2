@@ -191,8 +191,8 @@ func _physics_process(_delta: float) -> void:
 			self.destroyTorpedoRpc(id, collision.position)
 			var ship = ProjectileManager.find_ship(collision.collider)
 			if ship != null:
-				var hp: HitPointsManager = ship.health_controller
-				hp.take_damage(p.params.damage, collision.position)
+				var hp: HPManager = ship.health_controller
+				#hp.apply_damage(p.params.damage)
 
 				# Track torpedo damage dealt
 				track_torpedo_damage_dealt(p.owner, p.params.damage)
@@ -279,10 +279,10 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-	get_tree().root.add_child(expl)
-	expl.global_position = pos
-	expl.radius = radius
+	#var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
+	#get_tree().root.add_child(expl)
+	#expl.global_position = pos
+	#expl.radius = radius
 
 @rpc("authority", "reliable")
 func destroyTorpedoRpc(id, position) -> void:

@@ -1,6 +1,7 @@
 # Ship Combat Game - TODO
 
 ## Todo Soon ⏳
+concealment, sound effects, damage saturation, clamp sniper range
 - [x] fix close(long?) range aiming too high
 - [ ] incorrect hit effect (explosion on ricochet)
 - [x] hit ribbons not showing
@@ -18,6 +19,7 @@
 - [ ] match end handling (victory/defeat screens/stats/back to port)
 - [ ] friendly consumable use visuals
 - [ ] hover over/click ships on minimap to show radar/hydro range circles
+- [ ] stat sheet based module system for ships
 
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)

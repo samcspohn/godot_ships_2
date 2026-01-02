@@ -25,7 +25,7 @@ func _process(delta):
 		var heal_per_sec = total_heal / duration
 		var heal_this_frame = heal_per_sec * delta
 		heal_accumulated += heal_this_frame
-		
+
 		# Apply healing
 		var _actual_heal = ship.health_controller.heal(heal_this_frame)
 

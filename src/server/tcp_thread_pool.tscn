@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bebqyjqsi7pnv"]
+
+[ext_resource type="Script" uid="uid://dc1mbryu87wyy" path="res://src/server/tcp_thread_pool.gd" id="1_q6oxv"]
+
+[node name="TcpThreadPool" type="Node"]
+script = ExtResource("1_q6oxv")

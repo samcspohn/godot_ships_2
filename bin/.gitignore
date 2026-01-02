@@ -1,0 +1,12 @@
+# Ignore all compiled binaries
+*.dll
+*.so
+*.dylib
+*.a
+*.wasm
+*.framework
+*.xcframework
+*.dblite
+
+# Keep the directory
+!.gitignore

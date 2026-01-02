@@ -76,18 +76,18 @@ Drag coefficient (air): β = 0.009
 **Air:**
 ```
 v_air(0.035) = 820 · e^(-0.009 · 0.035)
-             = 820 · e^(-0.000315)
-             = 820 · 0.9997
-             ≈ 819.74 m/s
+			 = 820 · e^(-0.000315)
+			 = 820 · 0.9997
+			 ≈ 819.74 m/s
 Distance: (820/0.009) · (1 - 0.9997) ≈ 28.7 m
 ```
 
 **Water (β×800 = 7.2):**
 ```
 v_water(0.035) = 820 · e^(-7.2 · 0.035)
-               = 820 · e^(-0.252)
-               = 820 · 0.777
-               ≈ 637 m/s
+			   = 820 · e^(-0.252)
+			   = 820 · 0.777
+			   ≈ 637 m/s
 Distance: (820/7.2) · (1 - 0.777) ≈ 25.4 m
 ```
 
@@ -104,9 +104,9 @@ k_water = k_air · 816.3 ≈ 0.00896 s/m
 **Water (quadratic):**
 ```
 v_water(0.035) = 820 / (1 + 0.00896 · 820 · 0.035)
-               = 820 / (1 + 0.257)
-               = 820 / 1.257
-               ≈ 652 m/s
+			   = 820 / (1 + 0.257)
+			   = 820 / 1.257
+			   ≈ 652 m/s
 Distance: ln(1.257)/0.00896 ≈ 25.6 m
 ```
 
@@ -131,16 +131,16 @@ A 380mm AP shell at 820 m/s hitting water would likely:
 Implement proper quadratic drag:
 ```gdscript
 static func calculate_velocity_at_time_quadratic(v0: Vector3, time: float, k: float) -> Vector3:
-    var v0_mag = v0.length()
-    var direction = v0.normalized()
-    var v_mag = v0_mag / (1.0 + k * v0_mag * time)
-    return direction * v_mag
+	var v0_mag = v0.length()
+	var direction = v0.normalized()
+	var v_mag = v0_mag / (1.0 + k * v0_mag * time)
+	return direction * v_mag
 
 static func calculate_position_at_time_quadratic(start_pos: Vector3, v0: Vector3, time: float, k: float) -> Vector3:
-    var v0_mag = v0.length()
-    var direction = v0.normalized()
-    var distance = log(1.0 + k * v0_mag * time) / k
-    return start_pos + direction * distance
+	var v0_mag = v0.length()
+	var direction = v0.normalized()
+	var distance = log(1.0 + k * v0_mag * time) / k
+	return start_pos + direction * distance
 ```
 
 ### Option 2: Empirical Water Drag Multiplier
@@ -153,13 +153,13 @@ var effective_drag = base_drag * 800.0 * (1.0 + velocity.length()/1000.0)
 For water, assume very rapid deceleration:
 ```gdscript
 if in_water:
-    # Water drag is extremely high - shell loses most velocity quickly
-    var water_drag_factor = 5000.0  # Much higher than 800
-    velocity = ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-        initial_velocity, 
-        time_in_water, 
-        base_drag * water_drag_factor
-    )
+	# Water drag is extremely high - shell loses most velocity quickly
+	var water_drag_factor = 5000.0  # Much higher than 800
+	velocity = ProjectilePhysicsWithDrag.calculate_velocity_at_time(
+		initial_velocity, 
+		time_in_water, 
+		base_drag * water_drag_factor
+	)
 ```
 
 ## Conclusion

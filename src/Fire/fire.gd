@@ -4,7 +4,7 @@ class_name Fire
 @onready var fire: GPUParticles3D = $GPUParticles3D
 @onready var smoke: GPUParticles3D = $GPUParticles3D2
 var _ship: Ship
-var hp: HitPointsManager
+var hp: HPManager
 # @export var duration: float = 50.0
 # @export var buildUp: float = 100.0
 # @export var total_dmg_p: float = .1
@@ -71,7 +71,7 @@ func damage(delta):
 		var max_hp = hp.max_hp
 		var dmg_rate = _params.dmg_rate
 		var dmg = max_hp * dmg_rate
-		var dmg_sunk = hp.take_damage(dmg * delta, position)
+		var dmg_sunk = hp.apply_light_damage(dmg * delta)
 		_owner.stats.fire_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
 		if dmg_sunk[1]:

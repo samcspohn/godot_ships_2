@@ -350,7 +350,7 @@ func fire_at_target():
 	# Get artillery controller and set aim then fire
 	var artillery = ship.get_node_or_null("Modules/ArtilleryController") as ArtilleryController
 	if artillery:
-		var target_position = AnalyticalProjectileSystem.calculate_leading_launch_vector(
+		var target_position = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
 			ship.global_position,
 			target_ship.global_position,
 			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,

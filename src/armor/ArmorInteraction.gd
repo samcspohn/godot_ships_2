@@ -225,16 +225,17 @@ func process_travel(projectile: _ProjectileManager.ProjectileData, prev_pos: Vec
 					if result.get('position').y > 0.0001:
 						return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 
-				armor_part = hit_node as ArmorPart
-				if armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude:
+				armor_part = hit_node as ArmorPart # null = water
+				if armor_part and (armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude):
 					return null
 
-			# Process the armor hit
-			var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-				projectile.launch_velocity, t, projectile.params.drag)
+			if armor_part:
+				# Process the armor hit
+				var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
+					projectile.launch_velocity, t, projectile.params.drag)
 
-			return _process_hit(armor_part, result.get('position'), result.get('normal'),
-				projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
+				return _process_hit(armor_part, result.get('position'), result.get('normal'),
+					projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
 
 		# Hit non-armor objects
 		elif result.get('position').y > 0.0001:
@@ -291,6 +292,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	var first_hit_pos := hit_position
 	var params:ShellParams = projectile.params
 	var ship := hit_node.ship
+	var first_hit_node := hit_node
 
 	var shell := ShellData.new()
 	shell.position = hit_position
@@ -479,7 +481,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# 	HitResult.keys()[HitResult.values().find(damage_result)],
 	# 	first_hit_pos.x, first_hit_pos.y, first_hit_pos.z,
 	# 	ship.name])
-	return ArmorResultData.new(damage_result, first_hit_pos, d, shell.velocity, ship, first_hit_normal, shell.integrity)
+	return ArmorResultData.new(damage_result, first_hit_pos, d if d else first_hit_node, shell.velocity, ship, first_hit_normal, shell.integrity)
 
 
 func _should_ricochet(shell: ShellData, params: ShellParams, impact_angle: float,
@@ -511,7 +513,7 @@ func _resolve_hit_result(armor_result: ArmorResult, final_part: ArmorPart,
 
 	# For ricochet and penetration, check where shell ended up
 	var in_citadel := final_part != null and \
-		(final_part.is_citadel or final_part.armor_path.find("Citadel") != -1)
+		(final_part.type == ArmorPart.Type.CITADAL)
 
 	if in_citadel:
 		return HitResult.CITADEL

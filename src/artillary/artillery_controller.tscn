@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://dgvbfjlhdgg7f"]
-
-[ext_resource type="Script" uid="uid://dyq8qw4pg6rpf" path="res://src/artillary/ArtilleryController.gd" id="1_aarvg"]
-
-[node name="ArtilleryController" type="Node"]
-script = ExtResource("1_aarvg")

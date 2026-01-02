@@ -6,7 +6,7 @@ var initialized: bool = false
 @onready var movement_controller: ShipMovementV2 = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
-@onready var health_controller: HitPointsManager = $Modules/HPManager
+@onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
 @onready var upgrades: Upgrades = $Modules/Upgrades
@@ -92,6 +92,13 @@ func _update_dynamic_mods(): # called when updated by signal
 	for mod in dynamic_mods:
 		mod.call(self)
 	# update_static_mods.emit()
+	#
+
+func remove_physics_recurs(node: Node) -> void:
+	for child in node.get_children():
+		remove_physics_recurs(child)
+	if node is PhysicsBody3D or node is CollisionObject3D:
+		node.queue_free()
 
 func _ready() -> void:
 	# Get references to child components
@@ -117,11 +124,15 @@ func _ready() -> void:
 	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
 		set_physics_process(false)
-		# self.freeze = true
-		# # Disable all collision shapes under the node
+		self.freeze = true
+		# physics_interpolation_mode = PhysicsInterpolationMode.PHYSICS_INTERPOLATION_MODE_OFF
+		# Disable all collision shapes under the node
 		# for child in get_children():
 		# 	if child is CollisionShape3D:
 		# 		child.disabled = true
+		# remove_physics_recurs(self)
+		# for child in get_children():
+		# 	remove_physics_recurs(child)
 	else:
 		set_process(false)
 
@@ -470,13 +481,24 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
 		# static_body.collision_layer = 1 << 1
 		# static_body.collision_mask = 0
-		if node.name == "Hull":
-			hull = armor_part
-			print("armor_part.collision_layer: ", armor_part.collision_layer)
-			print("armor_part.collision_mask: ", armor_part.collision_mask)
-		elif node.name == "Citadel":
-			citadel = armor_part
+		#if node.name == "Hull":
+			#hull = armor_part
+			#print("armor_part.collision_layer: ", armor_part.collision_layer)
+			#print("armor_part.collision_mask: ", armor_part.collision_mask)
+		#elif node.name == "Citadel":
+			#citadel = armor_part
+		if node.name.to_lower().contains("casemate"):
+			armor_part.type = ArmorPart.Type.CASEMATE
+		elif node.name.to_lower().contains("bow"):
+			armor_part.type = ArmorPart.Type.BOW
+		elif node.name.to_lower().contains("stern"):
+			armor_part.type = ArmorPart.Type.STERN
+		elif node.name.to_lower().contains("superstructure"):
+			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
+		elif node.name.to_lower().contains("citadel"):
+			armor_part.type = ArmorPart.Type.CITADAL
 
+	# handle colonly type
 	if armor_system.armor_data.has(path) and node is StaticBody3D:
 		var collision_shape: CollisionShape3D = node.find_child("CollisionShape3D", false)
 		if collision_shape.shape is ConcavePolygonShape3D:
@@ -494,12 +516,22 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		self.aabb = self.aabb.merge((node as StaticBody3D).get_aabb())
 		# node.collision_layer = 1 << 1
 		# node.collision_mask = 0
-		if node.name == "Hull":
-			hull = armor_part
-			print("armor_part.collision_layer: ", armor_part.collision_layer)
-			print("armor_part.collision_mask: ", armor_part.collision_mask)
-		elif node.name == "Citadel":
-			citadel = armor_part
+		# if node.name == "Hull":
+		# 	hull = armor_part
+		# 	print("armor_part.collision_layer: ", armor_part.collision_layer)
+		# 	print("armor_part.collision_mask: ", armor_part.collision_mask)
+		# elif node.name == "Citadel":
+		# 	citadel = armor_part
+		if node.name.to_lower().contains("casemate"):
+			armor_part.type = ArmorPart.Type.CASEMATE
+		elif node.name.to_lower().contains("bow"):
+			armor_part.type = ArmorPart.Type.BOW
+		elif node.name.to_lower().contains("stern"):
+			armor_part.type = ArmorPart.Type.STERN
+		elif node.name.to_lower().contains("superstructure"):
+			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
+		elif node.name.to_lower().contains("citadel"):
+			armor_part.type = ArmorPart.Type.CITADAL
 
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)

@@ -476,7 +476,26 @@ func _physics_process(_delta: float) -> void:
 					# Destroy the original shell
 					destroyBulletRpc(id, hit_result.explosion_position, HitResult.RICOCHET, hit_result.collision_normal)
 			if ship.health_controller.is_alive():
-				var dmg_sunk = ship.health_controller.take_damage(damage, hit_result.explosion_position)
+
+				# if hit_result.armor_part.hp:
+				# 	var dmg = hit_result.armor_part.hp.apply_damage(damage)
+				# 	if dmg <
+				# else:
+				# 	dmg_sunk = ship.health_controller.apply_damage(min(p.params.damage * 0.1, damage))
+				# var dmg = 0.0
+				# if hit_result.armor_part.hp:
+				# 	dmg = hit_result.armor_part.hp.apply_damage(damage)
+				# 	if hit_result.result_type == ArmorInteraction.HitResult.PENETRATION:
+				# 		dmg = max(dmg, p.params.damage * 0.1)
+				# 	else:
+				# 		dmg = damage # citadel, citadel_overpen, overpen, shatter always apply full damage to ship
+				# else:
+				# 	dmg = min(damage, p.params.damage * 0.1) # non-hull/gun parts apply max 10% of damage to ship
+				# var dmg_sunk = ship.health_controller.apply_damage(dmg)
+				var dmg_sunk = ship.health_controller.apply_damage(damage,
+					 p.params.damage, 
+					hit_result.armor_part, 
+					hit_result.result_type == ArmorInteraction.HitResult.PENETRATION)
 				apply_fire_damage(p, ship, hit_result.explosion_position)
 
 				# Track damage dealt for player's camera UI

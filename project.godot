@@ -29,16 +29,15 @@ driver/driver="ALSA"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 UpgradeManager="*res://src/autoload/upgrade_manager.gd"
-LaunchModes="*res://launch_modes.gd"
-AnalyticalProjectileSystem="*res://src/artillary/analytical_projectile_system.gd"
-SimpleProjectileSystem="*res://src/artillary/simple_projectile_system.gd"
+LaunchModes="res://launch_modes.gd"
 ProjectileManager="*res://src/artillary/ProjectileManager.tscn"
 TorpedoManager="*res://src/torpedo/TorpedoManager.tscn"
 ArmorInteraction="*res://src/armor/ArmorInteraction.gd"
 _Utils="*res://src/utils/utils.gd"
 HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
-TcpThreadPool="*res://tcp_thread_pool.tscn"
+TcpThreadPool="*res://src/server/tcp_thread_pool.tscn"
 ParticleSystemInit="*res://src/particles/particle_system_init.gd"
+LaunchModes_="*res://LaunchModes.tscn"
 
 [display]
 
@@ -142,7 +141,3 @@ toggle_secondaries={
 
 3d/run_on_separate_thread=true
 common/physics_ticks_per_second=20
-
-[rendering]
-
-driver/threads/thread_model=0
