@@ -99,7 +99,7 @@ func _input(event):
 		camera_rotation.x = clamp(camera_rotation.x + delta_mouse.y * rotate_speed, -PI / 2, PI / 2)
 		update_camera_transform()
 
-func _process(delta: float):
+func _physics_process(delta: float):
 	# Handle WASD camera movement
 	var move_input = Vector3.ZERO
 	
@@ -191,7 +191,7 @@ func _on_validate_pressed():
 		start_validation()
 
 func _on_back_pressed():
-	get_tree().change_scene_to_file("res://src/client/main_menu.tscn")
+	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")
 
 func start_replay():
 	# Parse the input text

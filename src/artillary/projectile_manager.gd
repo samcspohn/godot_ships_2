@@ -40,6 +40,7 @@ class ProjectileData:
 	var owner: Ship
 	var frame_count: int = 0
 	var exclude: Array[Ship] = []
+	var emitter_id: int = -1  # GPU emitter ID for trail emission
 
 	func initialize(pos: Vector3, vel: Vector3, t: float, p: ShellParams, _owner: Ship, _exclude: Array[Ship] = []):
 		self.position = pos
@@ -53,6 +54,7 @@ class ProjectileData:
 		self.owner = _owner
 		self.frame_count = 0
 		self.exclude = _exclude
+		self.emitter_id = -1
 		# self.time_elapsed = 0.0
 
 
@@ -347,14 +349,13 @@ func _process(_delta: float) -> void:
 			p.trail_pos += offset
 			offset_length -= step_size
 
-	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 16.0)
-	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
-	self.multi_mesh.multimesh.buffer = transforms
+	# self.multi_mesh.multimesh.instance_count = int(transforms.size() / 16.0)
+	# self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
+	# self.multi_mesh.multimesh.buffer = transforms
 	_t = Time.get_ticks_usec() / 1000000.0 - _t
 
 ## Process only trail particles when using GPU renderer (shells are rendered by GPU)
 func _process_trails_only(current_time: float) -> void:
-	var total_emitted := 0
 	for p in self.projectiles:
 		if p == null:
 			continue
@@ -363,32 +364,20 @@ func _process_trails_only(current_time: float) -> void:
 		# Calculate position for trail emission (still needed for trails)
 		p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 
-		var offset = p.position - p.trail_pos
+		# Skip trail emission near spawn point
 		if (p.position - p.start_position).length_squared() < 80:
 			continue
-		var offset_length = offset.length()
-		const step_size = 20
-		var vel = offset.normalized()
 
-		# Use compute particle system for trails if available
-		if use_compute_trails and _compute_particle_system != null and _trail_template_id >= 0:
-			# Emit trail using compute shader system
-			var width_scale = p.params.size * 0.9
-			var emitted = _compute_particle_system.emit_trail(
-				p.trail_pos,          # from_pos
-				p.position,           # to_pos
-				vel,                  # velocity_dir (for alignment)
-				_trail_template_id,   # template_id
-				width_scale,          # size_multiplier
-				step_size,            # step_size
-				1.0                   # speed_mod
-			)
-			# Update trail_pos to match emitted particles
-			if emitted > 0:
-				p.trail_pos += vel * step_size * emitted
-				total_emitted += emitted
+		# Use GPU emitter system for trails if available
+		if use_compute_trails and _compute_particle_system != null and p.emitter_id >= 0:
+			# Simply update the emitter position - GPU handles emission automatically
+			_compute_particle_system.update_emitter_position(p.emitter_id, p.position)
 		else:
 			# Fall back to legacy GPUParticles3D
+			var offset = p.position - p.trail_pos
+			var offset_length = offset.length()
+			const step_size = 20
+			var vel = offset.normalized()
 			offset = vel * step_size
 			var trans = Transform3D.IDENTITY.translated(p.trail_pos)
 			while offset_length > step_size:
@@ -493,8 +482,8 @@ func _physics_process(_delta: float) -> void:
 				# 	dmg = min(damage, p.params.damage * 0.1) # non-hull/gun parts apply max 10% of damage to ship
 				# var dmg_sunk = ship.health_controller.apply_damage(dmg)
 				var dmg_sunk = ship.health_controller.apply_damage(damage,
-					 p.params.damage, 
-					hit_result.armor_part, 
+					 p.params.damage,
+					hit_result.armor_part,
 					hit_result.result_type == ArmorInteraction.HitResult.PENETRATION)
 				apply_fire_damage(p, ship, hit_result.explosion_position)
 
@@ -593,6 +582,20 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 
 		bullet.initialize(pos, vel, t, shell, _owner)
 		bullet.frame_count = gpu_id  # Store GPU renderer ID in frame_count for mapping
+
+		# Allocate GPU emitter for trail emission
+		if use_compute_trails and _compute_particle_system != null and _trail_template_id >= 0:
+			var width_scale = shell.size * 0.9
+			# emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
+			bullet.emitter_id = _compute_particle_system.allocate_emitter(
+				_trail_template_id,  # template_id
+				pos,                 # starting_position
+				width_scale,         # size_multiplier
+				0.05,                # emit_rate (1/20 = 0.05 particles per unit)
+				1.0,                 # speed_scale
+				0.0                  # velocity_boost
+			)
+
 		self.projectiles.set(id, bullet)
 	else:
 		# Legacy path
@@ -633,6 +636,11 @@ func destroyBulletRpc2(id, pos: Vector3, hit_result: int, normal: Vector3) -> vo
 		print("bullet is null: ", id)
 		return
 	var radius = bullet.params.size
+
+	# Free the GPU emitter if one was allocated
+	if bullet.emitter_id >= 0 and _compute_particle_system != null:
+		_compute_particle_system.free_emitter(bullet.emitter_id)
+		bullet.emitter_id = -1
 
 	# Destroy in GPU renderer if using it
 	if use_gpu_renderer and gpu_renderer != null:
@@ -712,10 +720,10 @@ func resize_multimesh_buffers(new_count: int):
 	transforms.resize(new_count * 16)
 	colors.resize(new_count)
 	projectiles.resize(new_count)
-	multi_mesh.multimesh.instance_count = new_count
-	# Assign buffers after setting instance_count
-	multi_mesh.multimesh.buffer = transforms
-	multi_mesh.multimesh.color_array = colors
+	# multi_mesh.multimesh.instance_count = new_count
+	# # Assign buffers after setting instance_count
+	# multi_mesh.multimesh.buffer = transforms
+	# multi_mesh.multimesh.color_array = colors
 
 func apply_fire_damage(projectile: ProjectileData, ship: Ship, hit_position: Vector3):
 	# Apply fire damage (only for HE shells or normal penetrations)

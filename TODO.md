@@ -20,6 +20,7 @@ concealment, sound effects, damage saturation, clamp sniper range
 - [ ] friendly consumable use visuals
 - [ ] hover over/click ships on minimap to show radar/hydro range circles
 - [ ] stat sheet based module system for ships
+- [ ] fix max gpu shells and emitters to be dynamic
 
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)

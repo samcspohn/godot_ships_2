@@ -242,4 +242,4 @@ func _on_skill_toggled(skill_path: String, enabled: bool):
 					GameSettings.save_settings()
 
 func _on_replay_pressed():
-	get_tree().change_scene_to_file("res://src/client/shell_replay.tscn")
+	get_tree().change_scene_to_file("res://src/port/shell_replay.tscn")

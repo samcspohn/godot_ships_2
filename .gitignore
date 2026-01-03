@@ -16,3 +16,5 @@ mono_crash.*.json
 *.pck
 *.x86_64
 *.dblite
+*.so
+*.os

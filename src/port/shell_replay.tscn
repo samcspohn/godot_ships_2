@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://5hngoy8op2hn"]
+[gd_scene load_steps=3 format=3 uid="uid://5hngoy8op2hn"]
 
 [ext_resource type="Script" uid="uid://dxga4o1qmv4jl" path="res://src/port/shell_replay.gd" id="1_replay"]
+[ext_resource type="PackedScene" uid="uid://ct23uvcdgwrfw" path="res://src/port/main_menu/main_menu.tscn" id="2_51yn6"]
 
 [node name="ShellReplay" type="Node"]
 script = ExtResource("1_replay")
