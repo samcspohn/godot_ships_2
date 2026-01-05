@@ -253,8 +253,8 @@ func _ready():
 
 func _process(_delta: float) -> void:
 	update_ship_ui()
-	_update_reticle_visibility()
-	# sniper_reticle.queue_redraw()
+	# _update_reticle_visibility()
+	sniper_reticle.queue_redraw()
 
 func update_counters() -> void:
 	var stats = camera_controller._ship.stats
@@ -868,7 +868,9 @@ func update_ship_ui():
 
 			# Position UI above ship in the world
 			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
-			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
+			var screen_pos = Vector2.ZERO
+			if not camera_controller.is_position_behind(ship_position):
+				screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
 
 			# Check if ship is visible on screen
 			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
@@ -1452,7 +1454,7 @@ func _setup_sniper_reticle() -> void:
 	sniper_reticle.name = "SniperReticle"
 	sniper_reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	sniper_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	sniper_reticle.visible = false  # Start hidden
+	sniper_reticle.visible = true
 
 	# Add to the main container alongside the crosshair
 	$MainContainer.add_child(sniper_reticle)
@@ -1480,33 +1482,41 @@ func _on_sniper_reticle_draw() -> void:
 	if not sniper_reticle or not camera_controller:
 		return
 
+	var is_sniper_mode = camera_controller.current_mode == BattleCamera.CameraMode.SNIPER
 	var viewport_size = get_viewport().get_visible_rect().size
 	var center = viewport_size / 2.0
 
 	var fovy_rad = deg_to_rad(camera_controller.fov)
 	var fov_rad = fovy_rad * (viewport_size.x / viewport_size.y)  # Adjust for aspect ratio
 
+	# Sniper reticle colors
+	var reticle_color = Color(1, 1, 1, 0.6)
+	var line_width = 1.5
+
+	if not is_sniper_mode:
+		sniper_reticle.draw_circle(center, 2.0, reticle_color)
+		return  # Only draw in sniper mode
 
 	# Calculate distance traveled by a target moving at 10 knots during shell flight time
 	var knot_10 = 10.0 * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
 	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
 	var distance_to_target_m = distance_to_target
 
-	# Sniper reticle colors
-	var reticle_color = Color(1, 1, 1, 0.6)
-	var line_width = 1.5
 
 	# Long horizontal line (extending across a significant portion of the screen)
 	var horizontal_length = viewport_size.x * 0.9  # 80% of screen width
 	var h_start = Vector2(center.x - horizontal_length / 2.0, center.y)
 	var h_end = Vector2(center.x + horizontal_length / 2.0, center.y)
-	sniper_reticle.draw_line(h_start, h_end, reticle_color, line_width)
+	sniper_reticle.draw_line(h_start, Vector2(center.x - 20, center.y), reticle_color, line_width)
+	sniper_reticle.draw_line(Vector2(center.x + 20, center.y), h_end, reticle_color, line_width)
 
-	# Short vertical line at center
-	var vertical_length = 30.0
-	var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
-	var v_end = Vector2(center.x, center.y + vertical_length / 2.0)
-	sniper_reticle.draw_line(v_start, v_end, reticle_color, line_width)
+	# # Short vertical line at center
+	# var vertical_length = 30.0
+	# var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
+	# var v_end = Vector2(center.x, center.y + vertical_length / 2.0)
+	# sniper_reticle.draw_line(v_start, v_end, reticle_color, line_width)
+
+	sniper_reticle.draw_circle(center, 2.0, reticle_color)
 
 	# Draw tick marks for speeds - as many as will fit on the line
 	if distance_to_target_m > 0 and time_to_target > 0:
