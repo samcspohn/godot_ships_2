@@ -153,21 +153,6 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="Circle" type="ColorRect" parent="MainContainer/CrosshairContainer/CrosshairCenter"]
-visible = false
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -3.0
-offset_top = -3.0
-offset_right = 3.0
-offset_bottom = 3.0
-grow_horizontal = 2
-grow_vertical = 2
-
 [node name="TargetInfoContainer" type="HBoxContainer" parent="MainContainer/CrosshairContainer"]
 layout_mode = 1
 anchors_preset = 8
@@ -1899,6 +1884,7 @@ offset_bottom = 200.0
 
 [node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
 z_index = -1
+y_sort_enabled = true
 custom_minimum_size = Vector2(100, 50)
 layout_mode = 2
 
@@ -1967,6 +1953,7 @@ vertical_alignment = 1
 
 [node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
 z_index = -1
+y_sort_enabled = true
 custom_minimum_size = Vector2(100, 50)
 layout_mode = 2
 

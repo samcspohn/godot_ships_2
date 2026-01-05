@@ -171,7 +171,6 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 | (1 << 1)
 
-
 	var result := space_state.intersect_ray(ray_query)
 
 	# No owner = training/test mode, only hit terrain/water

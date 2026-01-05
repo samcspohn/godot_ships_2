@@ -19,7 +19,7 @@ fog_depth_begin = 0.0
 fog_depth_end = 50000.0
 
 [node name="PlayerCam" type="Camera3D"]
-process_priority = -3
+process_priority = 2
 environment = SubResource("Environment_bp804")
 current = true
 near = 5.0

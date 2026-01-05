@@ -147,24 +147,10 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 	artillery_controller.set_aim_input(aim_point)
 
 func _process(delta: float) -> void:
-	# Smoothly interpolate position and rotation towards server values
-	# if !(_Utils.authority()):
-	# if (Engine.get_process_frames() % 2 == 0):
-	# 	return
-	# var lerp_factor = 6.0 * delta # Adjust the factor for smoother or snappier movement
 	var cam = get_viewport().get_camera_3d()
 	if cam != null:
 		if cam.is_position_in_frustum((global_position)) and (cam.global_position.distance_to(global_position) < 4000 or cam.fov < 20):
 			global_position += linear_velocity * delta
-		# global_position = global_position.lerp(server_position, lerp_factor)
-	# this causes flipping, need to update basis instead
-	# var current_euler = global_basis.get_euler()
-	# var target_euler = server_rotation
-	# var new_euler = current_euler.lerp(target_euler, lerp_factor)
-	# global_basis = Basis.from_euler(new_euler)
-	# var current_basis = global_basis
-	# var target_basis = Basis.from_euler(server_rotation)
-	# global_basis = global_basis.slerp(server_rotation, lerp_factor)
 
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
