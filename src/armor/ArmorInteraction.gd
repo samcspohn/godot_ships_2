@@ -76,7 +76,7 @@ class ArmorResultData:
 		shell_integrity = _integrity
 
 
-class ShellData:
+class _ShellData:
 	var position: Vector3
 	var end_position: Vector3
 	var velocity: Vector3
@@ -157,10 +157,10 @@ static func calculate_ricochet_velocity(velocity: Vector3, normal: Vector3, impa
 
 #region Main Processing
 
-func process_travel(projectile: _ProjectileManager.ProjectileData, prev_pos: Vector3, t: float,
+func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 		space_state: PhysicsDirectSpaceState3D, events = []) -> ArmorResultData:
 
-	if prev_pos.y < -2.0:
+	if prev_pos.y < -1.2 or projectile.position.y < -1.2:
 		return ArmorResultData.new(HitResult.WATER, prev_pos, null, Vector3.ZERO, null, Vector3.ZERO)
 	var ray_query := PhysicsRayQueryParameters3D.new()
 	var ray_dir: Vector3 = (projectile.position - prev_pos).normalized()
@@ -284,7 +284,7 @@ func process_travel(projectile: _ProjectileManager.ProjectileData, prev_pos: Vec
 
 
 func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3,
-		projectile: _ProjectileManager.ProjectileData, impact_velocity: Vector3,
+		projectile: ProjectileData, impact_velocity: Vector3,
 		face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D,
 		hit_water: bool, events) -> ArmorResultData:
 
@@ -294,7 +294,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	var ship := hit_node.ship
 	var first_hit_node := hit_node
 
-	var shell := ShellData.new()
+	var shell := _ShellData.new()
 	shell.position = hit_position
 	shell.velocity = impact_velocity
 	shell.fuze = fuze
@@ -484,7 +484,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	return ArmorResultData.new(damage_result, first_hit_pos, d if d else first_hit_node, shell.velocity, ship, first_hit_normal, shell.integrity)
 
 
-func _should_ricochet(shell: ShellData, params: ShellParams, impact_angle: float,
+func _should_ricochet(shell: _ShellData, params: ShellParams, impact_angle: float,
 		e_armor: float, rng: RandomNumberGenerator) -> bool:
 	if impact_angle > params.auto_bounce:
 		return true
@@ -813,7 +813,7 @@ func get_part_hit(_ship: Ship, shell_pos: Vector3,
 # 			return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 # 	return null
 
-# class ShellData:
+# class _ShellData:
 # 	var position: Vector3
 # 	var end_position: Vector3
 # 	var velocity: Vector3
@@ -947,7 +947,7 @@ func get_part_hit(_ship: Ship, shell_pos: Vector3,
 # 			return "SHATTER"
 # 	return "UNKNOWN"
 
-func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3, projectile: _ProjectileManager.ProjectileData, impact_velocity: Vector3, face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D, hit_water: bool, events) -> ArmorResultData:
+func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3, projectile: ProjectileData, impact_velocity: Vector3, face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D, hit_water: bool, events) -> ArmorResultData:
 	var first_hit_normal = hit_normal
 	var armor_ray = PhysicsRayQueryParameters3D.new()
 	armor_ray.hit_back_faces = true
@@ -955,7 +955,7 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	armor_ray.collision_mask = 1 << 1 # 1<<1 = armor
 
 	var first_hit_pos = hit_position
-	var shell = ShellData.new()
+	var shell = _ShellData.new()
 	shell.position = hit_position # always starts on armor
 	shell.velocity = impact_velocity
 	shell.fuze = fuze

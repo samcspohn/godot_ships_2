@@ -404,40 +404,39 @@ func find_all_guns(node: Node) -> Array:
 func init_guns(gun_paths):
 	TcpThreadPool.initialize_guns(gun_paths)
 
+func defer_sync_ship(friendly: int, player_name: String, ship_data: Variant):
+	if not players.has(player_name):
+		return
+	var ship: Ship = players[player_name][0]
+	if not is_instance_valid(ship):
+		return
+	if ship_data == null:
+		ship._hide()
+		return
+	elif friendly == 2:
+		# partial update
+		var transform_data = ship_data
+		ship.parse_ship_transform(transform_data)
+	else:
+		ship.sync2(ship_data, friendly == 1)
 
 @rpc("any_peer", "unreliable_ordered", "call_remote", 1)
 func sync_game_state(bytes: PackedByteArray):
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = bytes
-	# print("sync_game_state called with ", reader.get_available_bytes(), " bytes")
-	# var count = 0
+	var frame_time = 1.0 / Engine.get_frames_per_second()
+	var phys_time = get_physics_process_delta_time()
+	var num_steps = phys_time / frame_time
+	var defer_time_step = frame_time / max(num_steps, 1)
+	var i := 0.0
 	while reader.get_available_bytes() > 0:
 		var friendly = reader.get_u8()
 		var player_name = reader.get_var()
 		var ship_data = reader.get_var()
-		# count += 1
-		# print("sync_game_state processing ship %s friendly=%d" % [player_name, friendly])
-		if not players.has(player_name):
-			# print("player %s not registered on client" % [player_name])
-			continue
-		var ship: Ship = players[player_name][0]
-		if not is_instance_valid(ship):
-			# print("player ship %s not valid on client" % [player_name])
-			continue
-		if ship_data == null:
-			# print("hiding ship %s on client" % [player_name])
-			ship._hide()
-			continue
-		elif friendly == 2:
-			# partial update
-			var transform_data = ship_data
-			ship.parse_ship_transform(transform_data)
-		else:
-			# print("syncing ship %s on client" % [player_name])
-			ship.sync2(ship_data, friendly == 1)
-			# ship.apply_parsed_data.call_deferred(parsed, friendly == 1)
-	# if count != 20:
-	# 	print("incorrect number of ships")
+		get_tree().create_timer(defer_time_step * i).timeout.connect(func ():
+			defer_sync_ship(friendly, player_name, ship_data)
+		)
+		# defer_sync_ship(friendly, player_name, ship_data)
 
 func is_aabb_in_frustum(aabb: AABB, planes: Array[Plane]) -> bool:
 	if planes.is_empty():

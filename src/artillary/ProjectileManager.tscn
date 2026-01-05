@@ -1,6 +1,3 @@
-[gd_scene load_steps=2 format=3 uid="uid://cj32a1kjmd61g"]
+[gd_scene format=3 uid="uid://cj32a1kjmd61g"]
 
-[ext_resource type="Script" uid="uid://jcsciny5qrj7" path="res://src/artillary/projectile_manager.gd" id="1_ickow"]
-
-[node name="ProjectileManager" type="Node"]
-script = ExtResource("1_ickow")
+[node name="ProjectileManager" type="_ProjectileManager"]

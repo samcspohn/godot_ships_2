@@ -1,5 +1,5 @@
 extends Node3D
-class_name ComputeParticleSystem
+class_name ComputeParticleSystemLegacy
 
 ## Compute shader-based particle system
 ## Uses RenderingDevice compute shaders for GPU-accelerated particle simulation

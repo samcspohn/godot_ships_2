@@ -88,7 +88,7 @@ func _ready():
 	fov = current_fov
 
 	# Load the UI scene instead of creating it programmatically
-	var ui_scene = preload("res://scenes/camera_ui.tscn")
+	var ui_scene = preload("res://src/camera/camera_ui.tscn")
 	ui = ui_scene.instantiate()
 	ui.camera_controller = self
 	add_child(ui)

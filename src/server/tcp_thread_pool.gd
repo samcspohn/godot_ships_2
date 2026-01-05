@@ -133,15 +133,18 @@ func _process(delta: float) -> void:
 			conn_thread.id = client_ids
 			client_ids += 1
 			threads.append(conn_thread)
-	
+
 	if client_running:
+		# Process pending messages from the receive thread
+		_process_client_messages()
+
 		if null_guns.size() > 0:
 			for i in null_guns:
 				var path = gun_paths[i]
 				var gun = get_node_or_null(path) as Gun
 				if gun != null:
 					guns[i] = gun
-					null_guns.erase(i) 
+					null_guns.erase(i)
 
 # Function to enqueue data to send to all clients (call this from server)
 func enqueue_broadcast(data: PackedByteArray):
@@ -219,52 +222,59 @@ func start_client():
 		client = null
 		return
 
-	while client_running:
-		await get_tree().process_frame
-		var pending: Array[PackedByteArray] = []
-		client_queue_mutex.lock()
-		while client_queue.size() > 0:
-			pending.append(client_queue.pop_front())
-		client_queue_mutex.unlock()
-		for bytes in pending:
-			var stream = StreamPeerBuffer.new()
-			stream.data_array = bytes
-			if stream.get_available_bytes() < 1:
-				print("Corrupted data received")
-				continue  # corrupted
-			var type = stream.get_u8()
-			if type == 0:
-				if stream.get_available_bytes() < 4 + 12 + 12 + 8 + 4:  # 40 bytes
-					print("Corrupted fire gun data received")
-					continue
-				var gun_id = stream.get_u32()
-				var v = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				var p = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				var t = stream.get_double()
-				var i = stream.get_u32()
-				fire_gun_client(gun_id, v, p, t, i)
-			elif type == 1:
-				if stream.get_available_bytes() < 4 + 12 + 4 + 12:  # 32 bytes
-					print("Corrupted destroy shell data received")
-					continue
-				var shell_id = stream.get_u32()
-				var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				var hit_result = stream.get_u32()
-				var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				destroy_shell_client(shell_id, pos, hit_result, normal)
-			elif type == 2:
-				if stream.get_available_bytes() < 4 + 4 + 12 + 12 + 8:  # 44 bytes
-					print("Corrupted ricochet data received")
-					continue
-				var original_id = stream.get_u32()
-				var ricochet_id = stream.get_u32()
-				var position = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				var velocity = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-				var time = stream.get_double()
-				ricochet_client(original_id, ricochet_id, position, velocity, time)
-		if not client or client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
-			client_running = false
+func _process_client_messages():
+	# Process pending messages from the receive thread (called from _process)
+	if not client_running:
+		return
 
+	var pending: Array[PackedByteArray] = []
+	client_queue_mutex.lock()
+	while client_queue.size() > 0:
+		pending.append(client_queue.pop_front())
+	client_queue_mutex.unlock()
+
+	for bytes in pending:
+		var stream = StreamPeerBuffer.new()
+		stream.data_array = bytes
+		if stream.get_available_bytes() < 1:
+			print("Corrupted data received")
+			continue  # corrupted
+		var type = stream.get_u8()
+		if type == 0:
+			if stream.get_available_bytes() < 4 + 12 + 12 + 8 + 4:  # 40 bytes
+				print("Corrupted fire gun data received")
+				continue
+			var gun_id = stream.get_u32()
+			var v = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			var p = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			var t = stream.get_double()
+			var i = stream.get_u32()
+			fire_gun_client(gun_id, v, p, t, i)
+		elif type == 1:
+			if stream.get_available_bytes() < 4 + 12 + 4 + 12:  # 32 bytes
+				print("Corrupted destroy shell data received")
+				continue
+			var shell_id = stream.get_u32()
+			var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			var hit_result = stream.get_u32()
+			var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			destroy_shell_client(shell_id, pos, hit_result, normal)
+		elif type == 2:
+			if stream.get_available_bytes() < 4 + 4 + 12 + 12 + 8:  # 44 bytes
+				print("Corrupted ricochet data received")
+				continue
+			var original_id = stream.get_u32()
+			var ricochet_id = stream.get_u32()
+			var position = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			var velocity = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
+			var time = stream.get_double()
+			ricochet_client(original_id, ricochet_id, position, velocity, time)
+
+	# Check for disconnection
+	if client and client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		_stop_client()
+
+func _stop_client():
 	client_running = false
 	if receive_thread and receive_thread.is_active():
 		receive_thread.wait_to_finish()
@@ -292,7 +302,6 @@ func _receive_loop():
 	client_running = false
 
 func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
-	# print("Destroying shell with data: ", shell_id, pos, hit_result)
 	if shell_id == -1:
 		print("No shell ID in data")
 		return
@@ -315,7 +324,7 @@ func fire_gun_client(gun_id: int, v: Vector3, p: Vector3, t: float, i: int):
 	gun.fire_client(v, p, t, i)
 
 func ricochet_client(original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float):
-	
+
 	ProjectileManager.createRicochetRpc(original_id, ricochet_id, position, velocity, time)
 
 func display_tree(node: Node, indent: String = "") -> void:

@@ -5,7 +5,8 @@ class_name UnifiedParticleSystem
 ## Now uses compute shader-based ComputeParticleSystem for GPU-accelerated simulation
 ## Maintains the same API for backward compatibility
 
-const ComputeParticleSystemClass = preload("res://src/particles/compute_particle_system.gd")
+# ComputeParticleSystem is now a C++ class registered via GDExtension
+# Legacy GDScript version available at: res://src/particles/compute_particle_system_legacy.gd
 
 var template_manager: ParticleTemplateManager
 var _compute_system: ComputeParticleSystem  # ComputeParticleSystem
@@ -16,8 +17,8 @@ func _ready() -> void:
 		queue_free()
 		return
 
-	# Create compute particle system
-	_compute_system = ComputeParticleSystemClass.new()
+	# Create compute particle system (now using C++ GDExtension class)
+	_compute_system = ComputeParticleSystem.new()
 	_compute_system.name = "ComputeParticleSystem"
 	add_child(_compute_system)
 

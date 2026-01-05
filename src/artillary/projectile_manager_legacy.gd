@@ -1,11 +1,11 @@
 extends Node
-class_name _ProjectileManager
+class_name _ProjectileManagerLegacy
 
 const GPUProjectileRendererClass = preload("res://src/artillary/GPUProjectileRenderer.gd")
 
 var shell_time_multiplier: float = 2.0 # Adjust to calibrate shell speed display
 var nextId: int = 0;
-var projectiles: Array[ProjectileData] = [];
+var projectiles: Array[LegacyProjectileData] = [];
 var ids_reuse: Array[int] = []
 var shell_param_ids: Dictionary[int, ShellParams] = {}
 var bulletId: int = 0
@@ -21,7 +21,7 @@ var camera: Camera3D = null
 
 # signal resource_registered(id: int, resource: ShellParams)
 
-class ProjectileData:
+class LegacyProjectileData:
 	var position: Vector3
 	var start_position: Vector3
 	var start_time: float
@@ -203,7 +203,7 @@ func calculate_impact_angle(velocity: Vector3, surface_normal: Vector3) -> float
 	var angle_rad = velocity.normalized().angle_to(surface_normal)
 	return min(angle_rad, PI - angle_rad)
 
-class ShellData:
+class LegacyShellData:
 	var params: ShellParams
 	var velocity: Vector3
 	var position: Vector3
@@ -391,7 +391,7 @@ func fireBullet(vel, pos, shell: ShellParams, t, _owner: Ship, exclude: Array[Sh
 	# get_tree().root.add_child(expl)
 	# expl.global_position = pos
 
-	var bullet: ProjectileData = ProjectileData.new()
+	var bullet: LegacyProjectileData = LegacyProjectileData.new()
 	bullet.initialize(pos, vel, t, shell, _owner, exclude)
 
 	self.projectiles.set(id, bullet)
@@ -451,7 +451,7 @@ func fireBulletClient(pos, vel, t, id, shell: ShellParams, _owner: Ship, muzzle_
 
 # @rpc("authority", "call_remote", "reliable", 2)
 func destroyBulletRpc2(id, pos: Vector3, hit_result: int, normal: Vector3) -> void:
-	var bullet: ProjectileData = self.projectiles.get(id)
+	var bullet: LegacyProjectileData = self.projectiles.get(id)
 	if bullet == null:
 		print("bullet is null: ", id)
 		return
@@ -526,7 +526,7 @@ func destroyBulletRpc3(data: PackedByteArray) -> void:
 	var normal = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
 	destroyBulletRpc2(id, pos, hit_result, normal)
 
-func apply_fire_damage(projectile: ProjectileData, ship: Ship, hit_position: Vector3):
+func apply_fire_damage(projectile: LegacyProjectileData, ship: Ship, hit_position: Vector3):
 	# Apply fire damage (only for HE shells or normal penetrations)
 	if projectile.params.fire_buildup > 0:
 		var closest_fire: Fire = null
@@ -634,7 +634,7 @@ func validate_penetration_formula():
 	print("Speed after 0.035s in air drag: ", speed_at_0_035s_air)
 	print("Speed after 0.035s in water drag: ", speed_at_0_035s_water)
 
-func track_damage_dealt(p: ProjectileData, damage: float):
+func track_damage_dealt(p: LegacyProjectileData, damage: float):
 	"""Track damage dealt using the ship's stats module"""
 	if not p or not is_instance_valid(p):
 		return
@@ -647,14 +647,14 @@ func track_damage_dealt(p: ProjectileData, damage: float):
 		else:
 			p.owner.stats.main_damage += damage
 
-func track_damage_event(p: ProjectileData, damage: float, position: Vector3, type: ArmorInteraction.HitResult):
+func track_damage_event(p: LegacyProjectileData, damage: float, position: Vector3, type: ArmorInteraction.HitResult):
 	if not p or not is_instance_valid(p):
 		return
 
 	if p.owner.stats:
 		p.owner.stats.damage_events.append({"type": type, "sec": p.params._secondary, "damage": damage, "position": position})
 
-func track_penetration(p: ProjectileData):
+func track_penetration(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -668,7 +668,7 @@ func track_penetration(p: ProjectileData):
 			p.owner.stats.secondary_count += 1
 
 
-func track_citadel(p: ProjectileData):
+func track_citadel(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -681,7 +681,7 @@ func track_citadel(p: ProjectileData):
 			p.owner.stats.sec_citadel_count += 1
 			p.owner.stats.secondary_count += 1
 
-func track_overpenetration(p: ProjectileData):
+func track_overpenetration(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -694,7 +694,7 @@ func track_overpenetration(p: ProjectileData):
 			p.owner.stats.sec_overpen_count += 1
 			p.owner.stats.secondary_count += 1
 
-func track_shatter(p: ProjectileData):
+func track_shatter(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -707,7 +707,7 @@ func track_shatter(p: ProjectileData):
 			p.owner.stats.sec_shatter_count += 1
 			p.owner.stats.secondary_count += 1
 
-func track_ricochet(p: ProjectileData):
+func track_ricochet(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
@@ -720,7 +720,7 @@ func track_ricochet(p: ProjectileData):
 			p.owner.stats.sec_ricochet_count += 1
 			p.owner.stats.secondary_count += 1
 
-func track_frag(p: ProjectileData):
+func track_frag(p: LegacyProjectileData):
 	if not p or not is_instance_valid(p):
 		return
 
