@@ -10,7 +10,7 @@ signal ship_selected(ship_node)
 
 func _ready():
 	_load_ship_buttons()
-	
+
 	# If there's a previously selected ship, select it
 	if GameSettings.selected_ship != "":
 		call_deferred("_on_ship_button_pressed", GameSettings.selected_ship)
@@ -22,9 +22,11 @@ func _load_ship_buttons():
 	# Only allow selection of Bismarck3 and H44
 	var available_ships = [
 		{"name": "Bismarck3", "path": "res://Ships/Bismarck/Bismarck3.tscn"},
-		{"name": "H44", "path": "res://Ships/H44/H44.tscn"}
+		{"name": "H44", "path": "res://Ships/H44/H44.tscn"},
+		{"name": "Shimakaze", "path": "res://Ships/Shimakaze/Shimakaze.tscn"},
+		{"name": "Des Moines", "path": "res://Ships/DesMoines/DesMoines.tscn"},
 	]
-	
+
 	for ship_data in available_ships:
 		var button = Button.new()
 		button.text = ship_data.name
@@ -58,6 +60,6 @@ func _on_ship_button_pressed(ship_path):
 	if dock_node:
 		dock_node.add_child(selected_ship)
 		selected_ship.position = Vector3(0,0,0)
-	
+
 	# Emit signal that ship was selected
 	ship_selected.emit(selected_ship)

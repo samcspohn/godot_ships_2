@@ -38,6 +38,7 @@ HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
 TcpThreadPool="*res://src/server/tcp_thread_pool.tscn"
 ParticleSystemInit="*res://src/particles/particle_system_init.gd"
 LaunchModes_="*res://LaunchModes.tscn"
+SoundEffectManager="*res://audio/SoundEffectManager.tscn"
 
 [display]
 

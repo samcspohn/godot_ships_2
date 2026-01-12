@@ -1,7 +1,6 @@
 extends Camera3D
 
 class_name BattleCamera
-const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 signal processed
 # Ship to follow
 @export var _ship: Ship
@@ -168,7 +167,7 @@ func _process(delta):
 	# Calculate ship speed
 	if _ship:
 		var velocity = _ship.linear_velocity
-		ship_speed = velocity.length() * 1.94384 / SHIP_SPEED_MODIFIER # Convert m/s to knots
+		ship_speed = velocity.length() * 1.94384 / ShipMovementV2.SHIP_SPEED_MODIFIER # Convert m/s to knots
 
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):

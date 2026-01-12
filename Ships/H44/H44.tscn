@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://744qchvory0k"]
+[gd_scene load_steps=31 format=3 uid="uid://744qchvory0k"]
 
 [ext_resource type="PackedScene" uid="uid://dledjetx004o1" path="res://Ships/H44/H44.glb" id="1_h0h40"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_wne81"]
@@ -12,6 +12,7 @@
 [ext_resource type="Resource" uid="uid://cj43pm5o6aibf" path="res://src/Consumable/DamageControl.tres" id="10_5talp"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="11_5talp"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="12_gc5ee"]
+[ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="12_n2r5a"]
 [ext_resource type="PackedScene" uid="uid://cyw7ae75lhjui" path="res://turrets/GER_150mm_2b_gerat60.tscn" id="14_nfp68"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="15_pnxfl"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="16_nfp68"]
@@ -51,6 +52,13 @@ pool1 = 15000.0
 pool2 = 35000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
+[sub_resource type="Resource" id="Resource_8j47w"]
+resource_local_to_scene = true
+script = ExtResource("12_n2r5a")
+radius = 15000.0
+bloom_duration = 20.0
+metadata/_custom_type_script = "uid://bmckcfm6ohb58"
+
 [sub_resource type="Resource" id="Resource_apgp6"]
 script = ExtResource("4_ai21t")
 speed = 810.0
@@ -72,13 +80,13 @@ damage = 5700.0
 size = 5.0
 caliber = 500.0
 mass = 1850.0
-fire_buildup = 25.0
+fire_buildup = 40.0
 fuze_delay = 0.001
 type = 0
 overmatch = 125
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_pnxfl"]
+[sub_resource type="Resource" id="Resource_pm07r"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
 reload_time = 29.0
@@ -115,7 +123,7 @@ damage = 1100.0
 size = 2.25
 caliber = 150.0
 mass = 42.0
-fire_buildup = 5.0
+fire_buildup = 6.0
 fuze_delay = 0.001
 type = 0
 auto_bounce = 1.571
@@ -147,7 +155,7 @@ metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_gc5ee"]
 margin = 0.0
-size = Vector3(52.79883, 48.434837, 360.296)
+size = Vector3(51.5, 48.4348, 359.6934)
 
 [node name="ship" instance=ExtResource("1_h0h40")]
 mass = 141000000.0
@@ -163,17 +171,12 @@ bow = SubResource("Resource_636pm")
 stern = SubResource("Resource_2gw4s")
 superstructure = SubResource("Resource_d6qea")
 
-[node name="ArtilleryController" parent="Modules" index="1" node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_pnxfl")
-guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
+[node name="Concealment" parent="Modules" index="1"]
+params = SubResource("Resource_8j47w")
 
-[node name="MovementController" parent="Modules" index="2"]
-max_speed = 31.0
-acceleration_time = 30.0
-deceleration_time = 30.0
-reverse_speed_ratio = 0.5
-turning_circle_radius = 800.0
-rudder_response_time = 10.0
+[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+params = SubResource("Resource_pm07r")
+guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="SecondaryController" parent="Modules" index="3" node_paths=PackedStringArray("sub_controllers")]
 sub_controllers = [NodePath("SecSubController")]
@@ -184,14 +187,22 @@ p = SubResource("Resource_mntgu")
 guns = [NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerrat60/GER_150mm_2b_gerrat60"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_001/GER_150mm_2b_gerat60_001"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_006/GER_150mm_2b_gerat60_006"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_002/GER_150mm_2b_gerat60_002"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_010/GER_150mm_2b_gerat60_010"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_012/GER_150mm_2b_gerat60_012"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_003/GER_150mm_2b_gerat60_003"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_007/GER_150mm_2b_gerat60_007"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_004/GER_150mm_2b_gerat60_004"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_008/GER_150mm_2b_gerat60_008"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_011/GER_150mm_2b_gerat60_011"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_013/GER_150mm_2b_gerat60_013"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_005/GER_150mm_2b_gerat60_005"), NodePath("../../../Hull/TurretMount_GER_150mm_2b_gerat60_009/GER_150mm_2b_gerat60_009")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="ConsumableManager" parent="Modules" index="4"]
-equipped_consumables = Array[ExtResource("8_047bu")]([ExtResource("10_5talp"), ExtResource("9_nfp68")])
+[node name="MovementController" parent="Modules" index="4"]
+max_speed_knots = 28.0
+acceleration_time = 30.0
+deceleration_time = 30.0
+reverse_speed_ratio = 0.5
+turning_circle_radius = 800.0
+rudder_response_time = 10.0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_gc5ee")
 fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
 
-[node name="Upgrades" parent="Modules" index="6"]
+[node name="ConsumableManager" parent="Modules" index="6"]
+equipped_consumables = Array[ExtResource("8_047bu")]([ExtResource("10_5talp"), ExtResource("9_nfp68")])
+
+[node name="Upgrades" parent="Modules" index="7"]
 upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
 
 [node name="fires" type="Node3D" parent="." index="1"]
@@ -209,8 +220,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 43.45572)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.055368304, 24.202316, -1.9565125)
-visible = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.002725482, 24.202316, -1.856369)
 shape = SubResource("BoxShape3D_gc5ee")
 
 [node name="500mmBarbette_col" parent="Hull" index="18"]
@@ -235,162 +245,75 @@ material_override = ExtResource("15_pnxfl")
 surface_material_override/0 = ExtResource("15_pnxfl")
 
 [node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.0
 max_rotation_angle = 2.7317047340151284
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.329175703037788
 max_rotation_angle = 0.0
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.665191429188092
 max_rotation_angle = 5.846852994181004
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 5.969026041820607
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 6.256198206425091
 max_rotation_angle = 2.9572237882480756
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.22377577895065315
 max_rotation_angle = 2.671751901963866
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.5235987755982988
 max_rotation_angle = 2.722713633111154
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.33161255787892263
-max_rotation_angle = null
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.5081117965086026
 max_rotation_angle = 0.0
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.17649923862968
 max_rotation_angle = 6.178465552059927
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.03356267067948515
 max_rotation_angle = 2.7663898841263332
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.13962634015954636
 max_rotation_angle = 3.0892327760299634
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" index="0" instance=ExtResource("14_nfp68")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.490658503988659
 max_rotation_angle = 0.0
-ship_model_glb_path = null
-auto_extract_armor = null
 
 [node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" index="0" instance=ExtResource("9_gdlp2")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.7524578917878086
 max_rotation_angle = 2.530727415391778
-auto_extract_armor = null
 
 [node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" index="0" instance=ExtResource("9_gdlp2")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
-auto_extract_armor = null
 
 [node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" index="0" instance=ExtResource("9_gdlp2")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.7524578917878086
 max_rotation_angle = 2.530727415391778
-auto_extract_armor = null
 
 [node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" index="0" instance=ExtResource("9_gdlp2")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
-auto_extract_armor = null
 
 [node name="Hull_Citadel_col" parent="." index="10"]
 layers = 0

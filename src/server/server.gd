@@ -495,12 +495,12 @@ func _physics_process(_delta: float) -> void:
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
+
 	for p_idx in players.size() - 1:
 		var p_name = players.keys()[p_idx]
 		var p: Ship = players[p_name][0]
 		ray_query.from = p.global_position
 		ray_query.from.y = 1.0
-		# var d = p.sync_ship_data()
 		for p2_idx in range(p_idx + 1,players.size()):
 			var p2_name = players.keys()[p2_idx]
 			var p2: Ship = players[p2_name][0]
@@ -509,8 +509,11 @@ func _physics_process(_delta: float) -> void:
 				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
 				if collision.is_empty(): # can see each other no obstacles (add concealment)
-					p.visible_to_enemy = true
-					p2.visible_to_enemy = true
+					var dist = p.global_position.distance_to(p2.global_position)
+					if p.concealment.get_concealment() > dist:
+						p.visible_to_enemy = true
+					if p2.concealment.get_concealment() > dist:
+						p2.visible_to_enemy = true
 
 	for p_name in players:
 		var p: Ship = players[p_name][0]

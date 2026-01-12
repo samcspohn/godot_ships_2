@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://5i3h4gyrrmjv"]
-
-[ext_resource type="Script" uid="uid://b112omat8o001" path="res://src/artillary/secondary_controller/_secondary_controller.gd" id="1_hn5ph"]
-
-[node name="SecondaryController" type="Node"]
-script = ExtResource("1_hn5ph")

@@ -34,7 +34,7 @@ max_value = 1.0
 value = 1.0
 fill_mode = 4
 texture_progress = ExtResource("1_circle")
-tint_progress = Color(0.47, 0.47, 0.47, 0.7647059)
+tint_progress = Color(0.5, 0.5, 0.5, 0.5568628)
 
 [node name="ProgressTexture" type="TextureProgressBar" parent="."]
 layout_mode = 1

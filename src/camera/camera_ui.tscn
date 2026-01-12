@@ -100,6 +100,10 @@ bg_color = Color(0.2, 0.9, 0.4, 1)
 
 [node name="CameraUI" type="CanvasLayer"]
 script = ExtResource("1_kk7j4")
+reloading_gun_color = Color(1, 0.95, 0, 1)
+ready_gun_color = Color(0, 0.96271867, 0.79062206, 1)
+valid_cannot_fire_color_mod = 0.85
+invalid_cannot_fire_color_mod = 0.65
 
 [node name="MainContainer" type="Control" parent="."]
 layout_mode = 3

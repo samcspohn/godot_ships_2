@@ -2,7 +2,7 @@ extends Skill
 
 var bonus = 1.0
 func _a(ship: Ship):
-	(ship.artillery_controller.params.params() as GunParams).reload_time *= bonus
+	(ship.artillery_controller.params.p() as GunParams).reload_time *= bonus
 
 func apply(ship: Ship):
 	_ship = ship

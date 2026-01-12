@@ -1,21 +1,24 @@
-[gd_scene load_steps=28 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=34 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://Ships/Bismarck/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_5bir6"]
 [ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_onxit"]
-[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/artillary/Guns/BB_gun1.tres" id="4_rb316"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="5_5tc2e"]
 [ext_resource type="Resource" uid="uid://ppinkghgx71y" path="res://src/artillary/Guns/sec_gun2.tres" id="6_4ubhj"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="6_id6nr"]
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="6_lcoqi"]
+[ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://src/artillary/Shells/BB_shell.tres" id="7_cdl2l"]
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/artillary/Guns/sec_gun1.tres" id="7_jay6y"]
 [ext_resource type="Resource" uid="uid://cj43pm5o6aibf" path="res://src/Consumable/DamageControl.tres" id="7_opj4s"]
 [ext_resource type="Resource" uid="uid://cmt02tuklbcpb" path="res://src/Consumable/RepairParty.tres" id="8_7aqce"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="8_8qd2y"]
 [ext_resource type="Resource" uid="uid://cgmx8b43b3tfn" path="res://src/Fire/Fire.tres" id="9_7aqce"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="13_5tc2e"]
 [ext_resource type="PackedScene" uid="uid://bpyx8m6objcfv" path="res://turrets/GER_380mm_2b.tscn" id="14_5uw5v"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="14_pww3p"]
+[ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="14_w4pwy"]
 [ext_resource type="PackedScene" uid="uid://dmnxpgxfiwlyb" path="res://turrets/GER_380mm_2b_rf.tscn" id="16_1b7x2"]
 [ext_resource type="PackedScene" uid="uid://ruv6mhxhqe6v" path="res://turrets/GER_150mm_2b_rf.tscn" id="17_jx7aj"]
 [ext_resource type="PackedScene" uid="uid://t8e3e7k1ebl0" path="res://turrets/GER_150mm_2b.tscn" id="18_hcq8l"]
@@ -58,6 +61,40 @@ pool1 = 5500.0
 pool2 = 12000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
+[sub_resource type="Resource" id="Resource_8gf5m"]
+resource_local_to_scene = true
+script = ExtResource("14_w4pwy")
+radius = 13000.0
+bloom_duration = 20.0
+metadata/_custom_type_script = "uid://bmckcfm6ohb58"
+
+[sub_resource type="Resource" id="Resource_2muxd"]
+script = ExtResource("8_8qd2y")
+speed = 820.0
+drag = 0.014
+damage = 3500.0
+size = 3.8
+caliber = 380.0
+mass = 800.0
+fire_buildup = 33.0
+fuze_delay = 0.001
+type = 0
+auto_bounce = 1.571
+ricochet_angle = 0.785398
+overmatch = 95
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[sub_resource type="Resource" id="Resource_c72ol"]
+resource_local_to_scene = true
+script = ExtResource("6_lcoqi")
+reload_time = 25.0
+traverse_speed = 6.0
+elevation_speed = 6.0
+_range = 15000.0
+shell1 = ExtResource("7_cdl2l")
+shell2 = SubResource("Resource_2muxd")
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
+
 [sub_resource type="BoxShape3D" id="BoxShape3D_3klas"]
 margin = 0.0
 size = Vector3(36, 30.216957, 251.893)
@@ -78,16 +115,12 @@ bow = SubResource("Resource_lcoqi")
 stern = SubResource("Resource_cdl2l")
 superstructure = SubResource("Resource_8qd2y")
 
-[node name="ArtilleryController" parent="Modules" index="1" node_paths=PackedStringArray("guns")]
-params = ExtResource("4_rb316")
-guns = [NodePath("../../TurretMount_GER_380mm_2b/GER_380mm_2b"), NodePath("../../TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"), NodePath("../../TurretMount_GER_380mm_2b_rf_001/GER_380mm_2b_rf_001"), NodePath("../../TurretMount_GER_380mm_2b_rf_002/GER_380mm_2b_rf_002")]
+[node name="Concealment" parent="Modules" index="1"]
+params = SubResource("Resource_8gf5m")
 
-[node name="MovementController" parent="Modules" index="2"]
-max_speed = 31.0
-acceleration_time = 20.0
-deceleration_time = 20.0
-turning_circle_radius = 400.0
-rudder_response_time = 7.0
+[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+params = SubResource("Resource_c72ol")
+guns = [NodePath("../../TurretMount_GER_380mm_2b/GER_380mm_2b"), NodePath("../../TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"), NodePath("../../TurretMount_GER_380mm_2b_rf_001/GER_380mm_2b_rf_001"), NodePath("../../TurretMount_GER_380mm_2b_rf_002/GER_380mm_2b_rf_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" node_paths=PackedStringArray("sub_controllers")]
 sub_controllers = [NodePath("SecSubController"), NodePath("SecSubController2")]
@@ -104,14 +137,21 @@ p = ExtResource("6_4ubhj")
 guns = [NodePath("../../../TurretMount_GER_105mm_2b/GER_105mm_2b"), NodePath("../../../TurretMount_GER_105mm_2b_007/GER_105mm_2b_007"), NodePath("../../../TurretMount_GER_105mm_2b_001/GER_105mm_2b_001"), NodePath("../../../TurretMount_GER_105mm_2b_006/GER_105mm_2b_006"), NodePath("../../../TurretMount_GER_105mm_2b_002/GER_105mm_2b_002"), NodePath("../../../TurretMount_GER_105mm_2b_005/GER_105mm_2b_005"), NodePath("../../../TurretMount_GER_105mm_2b_003/GER_105mm_2b_003"), NodePath("../../../TurretMount_GER_105mm_2b_004/GER_105mm_2b_004")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="ConsumableManager" parent="Modules" index="4"]
-equipped_consumables = Array[ExtResource("6_id6nr")]([ExtResource("7_opj4s"), ExtResource("8_7aqce")])
+[node name="MovementController" parent="Modules" index="4"]
+max_speed_knots = 30.5
+acceleration_time = 20.0
+deceleration_time = 20.0
+turning_circle_radius = 400.0
+rudder_response_time = 7.0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = ExtResource("9_7aqce")
 fires = [NodePath("../../FireNodes/Fire"), NodePath("../../FireNodes/Fire2"), NodePath("../../FireNodes/Fire3"), NodePath("../../FireNodes/Fire4")]
 
-[node name="Upgrades" parent="Modules" index="6"]
+[node name="ConsumableManager" parent="Modules" index="6"]
+equipped_consumables = Array[ExtResource("6_id6nr")]([ExtResource("7_opj4s"), ExtResource("8_7aqce")])
+
+[node name="Upgrades" parent="Modules" index="7"]
 upgrades = Array[ExtResource("13_5tc2e")]([null, null, null])
 
 [node name="FireNodes" type="Node3D" parent="." index="1"]

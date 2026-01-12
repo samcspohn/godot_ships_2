@@ -19,9 +19,9 @@ enum ShellType {
 @export var penetration_modifier: float = 1.0 # Multiplier for penetration calculations
 @export var auto_bounce: float = deg_to_rad(60)  # Angle at which shells automatically bounce
 @export var ricochet_angle: float = deg_to_rad(45)  # Angle at which shells may ricochet
-@export var overmatch: int = 0
+@export var overmatch: int = 1
 @export_storage var _secondary: bool = false # Is this a secondary shell type (for damage tracking)?
-@export var arming_threshold: int = 0 # Minimum armor thickness to arm the shell
+@export var arming_threshold: int = 1 # Minimum armor thickness to arm the shell
 
 func _init() -> void:
 	speed = 0
@@ -37,5 +37,3 @@ func _init() -> void:
 	overmatch = 0
 	_secondary = false
 	arming_threshold = ceil(caliber * 1.0 / 6.0)
-
-

@@ -14,7 +14,7 @@ var lifetime: float = 0
 var manager: FireManager = null
 var _params: FireParams:
 	get:
-		return manager.params.params() as FireParams
+		return manager.params.p() as FireParams
 	set(value):
 		pass
 var _owner: Ship = null

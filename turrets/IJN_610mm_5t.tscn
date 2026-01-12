@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3 uid="uid://b1v7uh5a6feq1"]
+
+[ext_resource type="PackedScene" uid="uid://bu7r7fnkmnj2n" path="res://turrets/glb/IJN_610mm_5t.glb" id="1_hkbk4"]
+
+[node name="IJN_610mm_5t" instance=ExtResource("1_hkbk4")]
+
+[node name="Launcher_col" parent="." index="1"]
+visible = false
+layers = 0
+
+[node name="StaticBody3D" parent="Launcher_col" index="0"]
+visible = false
+
+[node name="CollisionShape3D" parent="Launcher_col/StaticBody3D" index="0"]
+visible = false

@@ -1,0 +1,8 @@
+[gd_scene load_steps=3 format=3 uid="uid://dsuj4hyltujjc"]
+
+[ext_resource type="Script" uid="uid://dqk4cwd6ecvpl" path="res://audio/sound_effect_pool.gd" id="1_32187"]
+[ext_resource type="AudioStream" uid="uid://cuje38g7ibc1n" path="res://audio/explosion1.wav" id="2_ngjln"]
+
+[node name="SoundEffectManager" type="Node"]
+script = ExtResource("1_32187")
+explosion = ExtResource("2_ngjln")

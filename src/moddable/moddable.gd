@@ -55,5 +55,5 @@ func reset() -> void:
 func reset_dynamic_mod() -> void:
 	dynamic_mod = duplicate_as_copy(static_mod)
 
-func params() -> Variant:
+func p() -> Variant:
 	return dynamic_mod

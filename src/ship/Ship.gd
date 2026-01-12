@@ -11,6 +11,7 @@ var initialized: bool = false
 @onready var fire_manager: FireManager = $Modules/FireManager
 @onready var upgrades: Upgrades = $Modules/Upgrades
 @onready var skills: SkillsManager = $Modules/Skills
+@onready var concealment: Concealment = $Modules/Concealment
 var torpedo_launcher: TorpedoLauncher
 var stats: Stats
 var control
@@ -27,6 +28,7 @@ var dynamic_mods: Array = [] # checked every frame for changes, affects _params
 var peer_id: int = -1 # our unique peer ID assigned by server
 
 var frustum_planes: Array[Plane] = []
+var beam: float = 0.0
 
 # var server_position: Vector3
 # var server_rotation: Basis
@@ -115,10 +117,14 @@ func _ready() -> void:
 	$Modules.add_child(stats)
 
 
+
 	# for f in fires:
 	# 	f._ship = self
 	# Initialize armor system
 	initialize_armor_system()
+
+	beam = ((self.get_node("CollisionShape3D") as CollisionShape3D).shape as BoxShape3D).size.x
+	print("beam: ", beam)
 
 	initialized = true
 	if !(_Utils.authority()):
@@ -296,6 +302,8 @@ func sync_player_data() -> PackedByteArray:
 		writer.put_var(euler_tl)
 		# writer.put_var(torpedo_launcher.global_basis)
 
+	writer.put_var(concealment.to_bytes())
+
 	writer.put_32(multiplayer.get_unique_id())
 
 	# Ship stats data
@@ -303,6 +311,8 @@ func sync_player_data() -> PackedByteArray:
 	writer.put_var(stats_bytes)
 
 	writer.put_u8(1 if visible_to_enemy else 0)
+
+
 
 	pb = writer.get_data_array()
 	return pb
@@ -428,7 +438,9 @@ func sync_player(b: PackedByteArray):
 	if torpedo_launcher != null:
 		var euler_tl: Vector3 = reader.get_var()
 		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
-		# torpedo_launcher.global_basis = reader.get_var()
+
+	concealment.from_bytes(reader.get_var())
+
 	var p_id: int = reader.get_32()
 	var stats_bytes: PackedByteArray = reader.get_var()
 	stats.from_bytes(stats_bytes)

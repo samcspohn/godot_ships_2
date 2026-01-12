@@ -15,6 +15,7 @@ signal ship_sunk()
 @export var stern: HpPartMod
 @export var superstructure: HpPartMod
 
+const SHELL_DAMAGE_RADIUS_MOD: float = 12.5
 
 
 func _ready() -> void:
@@ -27,9 +28,14 @@ func _ready() -> void:
 	stern.init(ship)
 	superstructure.init(ship)
 
-func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool) -> Array:
+func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, shell_cal:float = 0) -> Array:
 	if sunk:
 		return [0, false]
+
+	var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
+	var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
+	dmg *= dmg_mod
+	base_dmg *= dmg_mod
 
 	# TODO: how to handle overpenetration/citadel overpen damage?
 	var _dmg: float = 0

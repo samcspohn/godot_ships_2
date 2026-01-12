@@ -9,6 +9,7 @@ extends Node3D
 @export var max_rotation_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
+var sound: AudioStreamPlayer3D
 # @export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
@@ -136,6 +137,13 @@ func _ready() -> void:
 
 
 	#print("max range: ", a)
+
+	if sound == null:
+		sound = AudioStreamPlayer3D.new()
+		sound.stream = preload("res://audio/explosion1.wav")
+		sound.max_polyphony = 1
+		add_child(sound)
+		# get_tree().root.add_child(sound)
 
 	# Set up muzzles
 	update_barrels()
@@ -560,27 +568,28 @@ func fire(mod: TargetMod = null) -> void:
 				else:
 					pass
 					# print(aim)
+			_ship.concealment.bloom(get_params()._range)
 			reload = 0
 
 # @rpc("authority", "reliable")
 func fire_client(vel, pos, t, _id):
 	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-
-@rpc("authority", "call_remote", "reliable", 2)
-func fire_client2(data: PackedByteArray) -> void:
-	if data.size() != 36:
-		print("Invalid fire_client2 data size: ", data.size())
-		return
-	var stream = StreamPeerBuffer.new()
-	stream.data_array = data
-	var vel = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-	var t = stream.get_double()
-	var _id = stream.get_32()
-	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-
-
-
+	sound.global_position = pos
+	var size_factor = get_shell().caliber * get_shell().caliber / 10000.0
+	# 380 -> 14.44
+	# 500 -> 25.0
+	# 150 -> 2.25
+	# 100 -> 1.0
+	var pitch_scale = 7.0 / size_factor
+	# 6 / 25 = 0.24
+	# 6 / 14.44 = 0.415
+	# 6 / 2.25 = 2.66
+	# 6 / 1 = 6.0
+	# smaller shells need more variance than larger ones
+	var dispersion
+	sound.pitch_scale = pitch_scale + (pitch_scale * pitch_scale) * randf_range(-0.1, 0.1)
+	sound.volume_linear = clamp(1.0 / pitch_scale + randf_range(-0.3, 0.3), 0.0, 10.0) + 1.0
+	sound.play()
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system - extract and load armor data"""
@@ -619,7 +628,6 @@ func initialize_armor_system() -> void:
 	enable_backface_collision_recursive(self)
 	print("done")
 
-
 func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:
 	"""Extract armor data from GLB and save it locally"""
 	# Load the extractor
@@ -639,7 +647,6 @@ func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> v
 			print("      ❌ Failed to load extracted armor data")
 	else:
 		print("      ❌ Armor extraction failed")
-
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
@@ -678,7 +685,6 @@ func enable_backface_collision_recursive(node: Node) -> void:
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
 
-
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 
 	var muzzles_pos = get_muzzles_position()
@@ -689,36 +695,6 @@ func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 	var flight_time = sol[1]
 	var can_shoot = sim_can_shoot_over_terrain_static(muzzles_pos, launch_vector, flight_time, get_shell().drag, _ship)
 	return can_shoot.can_shoot_over_terrain and can_shoot.can_shoot_over_ship
-	# shell_sim.start_position = muzzles_pos
-	# shell_sim.position = muzzles_pos
-	# sim_shell_in_flight = true
-	# var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
-	# if sol[0] == null:
-	# 	return false
-	# var launch_vector = sol[0]
-	# var flight_time = sol[1]
-	# var space_state = get_world_3d().direct_space_state
-	# var ray = PhysicsRayQueryParameters3D.new()
-	# ray.collide_with_bodies = true
-	# ray.collision_mask = 1
-	# var t = 1.0
-	# while t < flight_time + 1.0:
-	# 	ray.from = shell_sim.position
-	# 	ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
-	# 		shell_sim.start_position,
-	# 		launch_vector,
-	# 		t,
-	# 		get_shell().drag,
-	# 	)
-	# 	# ray.collide_with_bodies = true
-	# 	# ray.collide_with_areas = false
-	# 	# ray.collision_mask # Collide with terrain only
-	# 	var result = space_state.intersect_ray(ray)
-	# 	if result.size() > 0 and result["position"].y > 0.00001:
-	# 		return false
-	# 	shell_sim.position = ray.to
-	# 	t += 1.0
-	# return true
 
 class ShootOver:
 	var can_shoot_over_terrain: bool

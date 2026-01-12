@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://crqcxtlvo2tif"]
+
+[ext_resource type="PackedScene" uid="uid://baweb555vb2nb" path="res://turrets/glb/IJN_127mm_2b_3rd_yr.glb" id="1_bcq5c"]
+
+[node name="IJN_127mm_2b_3rd_yr" instance=ExtResource("1_bcq5c")]
+ship_model_glb_path = "uid://baweb555vb2nb"
+
+[node name="Turret_col" parent="." index="1"]
+layers = 0

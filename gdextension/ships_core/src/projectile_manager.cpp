@@ -159,6 +159,7 @@ _ProjectileManager::_ProjectileManager() {
 	camera = nullptr;
 	armor_interaction = nullptr;
 	tcp_thread_pool = nullptr;
+	sound_effect_manager = nullptr;
 
 	ray_query.instantiate();
 	mesh_ray_query.instantiate();
@@ -215,6 +216,14 @@ void _ProjectileManager::_ready() {
 	} else {
 		UtilityFunctions::print("running client");
 		set_physics_process(false);
+
+		// Cache SoundEffectManager autoload reference
+		if (has_node("/root/SoundEffectManager")) {
+			sound_effect_manager = get_node<Node>("/root/SoundEffectManager");
+			UtilityFunctions::print("Cached SoundEffectManager autoload");
+		} else {
+			UtilityFunctions::push_warning("SoundEffectManager autoload not found!");
+		}
 
 		// Initialize GPU-based renderer
 		Ref<Resource> gpu_renderer_script = ResourceLoader::get_singleton()->load(
@@ -563,6 +572,11 @@ void _ProjectileManager::_physics_process(double delta) {
 						rpc_result_type = PENETRATION;
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
+					case 1: // PARTIAL_PENETRATION
+						damage = base_damage / 6.0;
+						rpc_result_type = PENETRATION;
+						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
+						break;
 					case 5: // CITADEL
 						damage = base_damage;
 						rpc_result_type = CITADEL;
@@ -611,8 +625,8 @@ void _ProjectileManager::_physics_process(double delta) {
 				if (health_controller_var.get_type() != Variant::NIL) {
 					Object *health_controller = Object::cast_to<Object>(health_controller_var);
 					if (health_controller && health_controller->call("is_alive")) {
-						bool is_penetration = (armor_result_type == 0); // PENETRATION
-						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration);
+						bool is_penetration = (rpc_result_type == PENETRATION || rpc_result_type == CITADEL); // PENETRATION
+						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, p->get_params()->get("caliber"));
 
 						// Apply fire damage
 						apply_fire_damage(p, ship, explosion_position);
@@ -747,6 +761,24 @@ void _ProjectileManager::fire_bullet_client(const Vector3 &pos, const Vector3 &v
 			}
 			hit_effects->call("muzzle_blast_effect", pos, basis, size * size);
 		}
+
+		// // Play gun firing sound via SoundEffectManager
+		// if (sound_effect_manager != nullptr) {
+		// 	double caliber = 100.0;
+		// 	if (shell.is_valid()) {
+		// 		caliber = shell->get("caliber");
+		// 	}
+		// 	double size_factor = pow(caliber, 2.3) / 10000.0;
+		// 	double pitch_scale = 30.0 / size_factor;
+
+		// 	// Add some randomness to pitch
+		// 	double random_variation = (static_cast<double>(rand()) / RAND_MAX) * 0.2 - 0.1; // -0.1 to 0.1
+		// 	double final_pitch = pitch_scale + (pitch_scale * pitch_scale) * random_variation;
+		// 	// Calculate volume
+		// 	double vol_variation = (static_cast<double>(rand()) / RAND_MAX) * 0.6 - 0.3; // -0.3 to 0.3
+		// 	double final_vol = (caliber / 400 + vol_variation) / 30.0;
+		// 	sound_effect_manager->call("play_explosion", pos, final_pitch, final_vol);
+		// }
 	}
 }
 
@@ -813,15 +845,30 @@ void _ProjectileManager::destroy_bullet_rpc2(int id, const Vector3 &pos, int hit
 			case PENETRATION:
 				hit_effects->call("he_explosion_effect", pos, radius * 0.8, normal);
 				hit_effects->call("sparks_effect", pos, radius * 0.5, normal);
+				if (sound_effect_manager != nullptr) {
+					float volume = (radius) / 8.0 / 10.0;
+					float pitch = 1.3 / (radius * 0.4);
+					sound_effect_manager->call("play_explosion", pos, pitch, volume);
+				}
 				break;
 			case CITADEL:
 				hit_effects->call("he_explosion_effect", pos, radius * 1.2, normal);
 				hit_effects->call("sparks_effect", pos, radius * 0.6, normal);
+				if (sound_effect_manager != nullptr) {
+					float volume = (radius) / 4.0 / 10.0;
+					float pitch = 1.0 / (radius * 0.45);
+					sound_effect_manager->call("play_explosion", pos, pitch, volume);
+				}
 				break;
 			case RICOCHET:
 			case OVERPENETRATION:
 			case SHATTER:
 				hit_effects->call("sparks_effect", pos, radius * 0.5, normal);
+				if (sound_effect_manager != nullptr) {
+					float volume = (0.1 + (radius) / 15.0) / 15.0;
+					float pitch = 2.0 / (radius * 0.4);
+					sound_effect_manager->call("play_explosion", pos, pitch, volume);
+				}
 				break;
 			case NOHIT:
 				// No explosion for NOHIT

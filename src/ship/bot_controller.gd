@@ -8,7 +8,7 @@ var target_ship: Ship = null
 var target_scan_timer: float = 0.0
 var target_scan_interval: float = 2.0
 var attack_range: float = 100000.0
-var preferred_distance: float = 7000.0
+var preferred_distance: float = 8000.0
 
 # Movement state
 var desired_heading: float = 0.0
@@ -357,13 +357,14 @@ func fire_at_target():
 			artillery.get_shell_params().speed,
 			artillery.get_shell_params().drag
 		)[2]
-
-		# Set aim input like player controller does
-		if artillery.has_method("set_aim_input"):
-			artillery.set_aim_input(target_position)
-		# Fire guns
-		if artillery.has_method("fire_next_ready_gun"):
-			artillery.fire_next_ready_gun()
+		
+		if target_position:
+			# Set aim input like player controller does
+			if artillery.has_method("set_aim_input"):
+				artillery.set_aim_input(target_position)
+			# Fire guns
+			if artillery.has_method("fire_next_ready_gun"):
+				artillery.fire_next_ready_gun()
 
 func apply_collision_avoidance(base_heading: float) -> float:
 	if !ship:

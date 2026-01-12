@@ -5,7 +5,7 @@ class_name SecondaryController_
 var shell_index: int = 1 # default HE
 var _ship: Ship
 var target: Ship
-var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
+var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 var gun_targets: Array[Ship] = []
 
@@ -84,7 +84,7 @@ func _physics_process(delta: float) -> void:
 
 	var max_range = 0.0
 	for sc in sub_controllers:
-		var r = sc.p.params()._range
+		var r = sc.p.p()._range
 		if r > max_range:
 			max_range = r
 
@@ -105,7 +105,7 @@ func _physics_process(delta: float) -> void:
 	active = false
 	var gi = 0
 	for sc in sub_controllers:
-		var _range = sc.p.params()._range
+		var _range = sc.p.p()._range
 		var _gi = gi
 		for g in sc.guns:
 			var found_target = false
@@ -125,7 +125,7 @@ func _physics_process(delta: float) -> void:
 		gi = _gi
 
 		if enemies_in_range.size() > 0:
-			var reload_time = sc.p.params().reload_time
+			var reload_time = sc.p.p().reload_time
 			sc.sequential_fire_timer += delta
 			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
 				sc.sequential_fire_timer = 0.0

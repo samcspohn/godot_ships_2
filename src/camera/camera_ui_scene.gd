@@ -9,6 +9,13 @@ const GunIndicatorScene = preload("res://src/camera/gun_indicator.tscn")
 # Camera controller reference
 var camera_controller: BattleCamera
 
+@export var reloading_gun_color: Color = Color(1, 0, 0)
+@export var ready_gun_color: Color = Color(0, 1, 0)
+@export var disabled_gun_color: Color = Color(0.5, 0.5, 0.5)
+@export var valid_can_fire_color_mod: float = 1.0
+@export var valid_cannot_fire_color_mod: float = 0.7
+@export var invalid_cannot_fire_color_mod: float = 0.4
+
 # Properties that BattleCamera sets directly - these need to match the interface
 var time_to_target: float = 0.0 : set = set_time_to_target
 var distance_to_target: float = 0.0 : set = set_distance_to_target
@@ -1178,14 +1185,18 @@ func update_gun_reload_bars():
 			var bar = gun_reload_bars[i]
 			var indicator = gun_indicators[i]
 			var timer_label = gun_reload_timers[i]
-			var gun_params: GunParams = (gun.controller as ArtilleryController).params.params() as GunParams
+			var gun_params: GunParams = (gun.controller as ArtilleryController).params.p() as GunParams
 			var gun_pos = gun.global_position
 			gun_pos.y = 0.0
 			var aim_point = camera_controller.aim_position
 			aim_point.y = 0.0
 			var aim_dir = gun_pos.direction_to(aim_point).normalized()
+
+			var gun_forw = -gun.global_transform.basis.z
+			gun_forw.y = 0.0
+			gun_forw = gun_forw.normalized()
 			# Calculate angle between gun forward and aim direction
-			var angle_rad = aim_dir.signed_angle_to(-gun.global_transform.basis.z.normalized(), Vector3.UP)
+			var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
 			var angle = rad_to_deg(angle_rad)
 
 			# Update reload progress
@@ -1206,51 +1217,21 @@ func update_gun_reload_bars():
 
 			indicator.global_position = gun_indicator.global_position - Vector2(angle * 4.0, 0)
 
-			# dull if no valid target
-			# bright if valid target
-			# teal if reloaded
-			# yellow if reloading
-			# brighter teal if reloaded and can fire and valid target
-			if gun._valid_target and gun.reload >= 1.0 and gun.can_fire:
-				bar.self_modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
-				progress_tex.tint_progress = Color(0.4, 0.95, 0.9)
-			elif gun._valid_target and gun.reload >= 1.0:
-				bar.self_modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
-				progress_tex.tint_progress = Color(0.2, 0.7, 0.6)
-			elif gun._valid_target and gun.can_fire:
-				bar.self_modulate = Color(1.0, 1.0, 0.4)  # Brighter yellow - reloading but can fire
-				progress_tex.tint_progress = Color(1.0, 1.0, 0.4)
-			elif gun._valid_target:
-				bar.self_modulate = Color(0.85, 0.85, 0.2)  # Bright yellow - reloading but can fire
-				progress_tex.tint_progress = Color(0.85, 0.85, 0.2)
-			elif gun.reload >= 1.0:
-				bar.self_modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
-				progress_tex.tint_progress = Color(0.1, 0.45, 0.4)
+			var color_mod: float
+			var color: Color
+			if gun._valid_target:
+				if gun.can_fire:
+					color_mod = valid_can_fire_color_mod
+				else:
+					color_mod = valid_cannot_fire_color_mod
 			else:
-				bar.self_modulate = Color(0.4, 0.4, 0.0)  # Dull Yellow - still reloading
-				progress_tex.tint_progress = Color(0.4, 0.4, 0.0)
-			# if gun.valid_target:
-			# 	if gun.can_fire: # brightest
-			# 		if gun.reload >= 1.0:
-			# 			bar.self_modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
-			# 			indicator.tint_progress = Color(0.4, 0.95, 0.9)
-			# 		else:
-			# 			bar.self_modulate = Color(1.0, 1.0, 0.2)  # Brighter yellow - reloading but can fire
-			# 			indicator.tint_progress = Color(1.0, 1.0, 0.2)
-			# 	else:
-			# 		if gun.reload >= 1.0: # bright
-			# 			bar.self_modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
-			# 			indicator.tint_progress = Color(0.2, 0.7, 0.6)
-			# 		else:
-			# 			bar.self_modulate = Color(0.7, 0.7, 0.2)  # Bright yellow - reloading but can fire
-			# 			indicator.tint_progress = Color(0.7, 0.7, 0.2)
-			# else: # dull
-			# 	if gun.reload >= 1.0:
-			# 		bar.self_modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
-			# 		indicator.tint_progress = Color(0.1, 0.45, 0.4)
-			# 	else:
-			# 		bar.self_modulate = Color(0.2, 0.2, 0.0)  # Dull Yellow - still reloading
-			# 		indicator.tint_progress = Color(0.2, 0.2, 0.0)
+				color_mod = invalid_cannot_fire_color_mod
+			if gun.reload >= 1.0:
+				color = ready_gun_color * color_mod
+			else:
+				color = reloading_gun_color * color_mod
+			bar.self_modulate = color
+			progress_tex.tint_progress = color
 
 			var closest_indicator: Control = null
 			# Avoid overlapping indicators
@@ -1498,7 +1479,7 @@ func _on_sniper_reticle_draw() -> void:
 		return  # Only draw in sniper mode
 
 	# Calculate distance traveled by a target moving at 10 knots during shell flight time
-	var knot_10 = 10.0 * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
+	var knot_10 = 10.0 * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
 	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
 	var distance_to_target_m = distance_to_target
 
@@ -1532,7 +1513,7 @@ func _on_sniper_reticle_draw() -> void:
 		var speed = 10
 		while true:
 			# Calculate distance traveled at this speed during shell flight time
-			var speed_ms = speed * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
+			var speed_ms = speed * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
 			var lead_distance = speed_ms * time_to_target
 
 			# Convert world distance to screen pixels using FOV and distance

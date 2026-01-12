@@ -59,6 +59,7 @@ private:
 	// Cached autoload references
 	Node *armor_interaction;
 	Node *tcp_thread_pool;
+	Node *sound_effect_manager;
 
 protected:
 	static void _bind_methods();

@@ -1,8 +1,11 @@
 extends Node
 class_name ShipMovementV2
 
+const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
+
 # Direct movement properties
-@export var max_speed: float = 15.0  # Maximum speed in m/s
+@export var max_speed_knots: float
+var max_speed: float = 15.0  # Maximum speed in m/s
 @export var acceleration_time: float = 8.0  # Time to reach full speed from stop
 @export var deceleration_time: float = 4.0  # Time to stop from full speed
 @export var reverse_speed_ratio: float = 0.4  # Reverse speed as ratio of max speed
@@ -45,6 +48,9 @@ func _ready() -> void:
 	if ship_body.has_signal("body_entered"):
 		ship_body.body_entered.connect(_on_collision)
 
+	# Convert max speed from knots to m/s
+	max_speed = max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
+
 func _on_collision(_body):
 	# Immediately stop the ship's internal speed for instant response
 	current_speed = 0.0
@@ -64,7 +70,7 @@ func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
 
-	if ship_body.global_position.y > 2.0:
+	if ship_body.global_position.y > 3.0:
 		# Ship is airborne - let physics handle it
 		return
 

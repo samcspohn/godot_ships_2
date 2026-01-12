@@ -241,8 +241,9 @@ func _on_canvas_draw() -> void:
 	# Draw a border around the minimap for visibility
 	ship_markers_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])), Color(1, 1, 1, 0.5), false, 2.0)
 
+	var ship = player_ship as Ship
 	# Draw camera FOV arc
-	draw_camera_fov_arc()
+	draw_camera_fov_arc(ship.artillery_controller.get_params()._range)
 
 	var ships_to_draw: Array = []
 	var ship_auras_to_draw: Array = []
@@ -279,19 +280,21 @@ func _on_canvas_draw() -> void:
 
 			# if (ship as Ship).visible_to_enemy:
 			if ship_state == ShipState.DETECTED:
-				var col = Color.DARK_GOLDENROD
-				col.a = 0.5
+				var col = Color.GOLD
+				col.a = 0.7
 				ship_auras_to_draw.append({"pos": tracked_ship.global_position, "rot": -tracked_ship.rotation.y, "color": col})
 				# draw_ship_aura_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, col, 1.3)
 			ships_to_draw.append({"pos": tracked_ship.global_position, "rot": -tracked_ship.rotation.y, "color": color})
 			# draw_ship_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, color)
 
 	# draw gun ranges
-	var ship = player_ship as Ship
 	draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.get_params()._range, Color(1, 1, 1, 0.5))
 	if ship.secondary_controller.sub_controllers.size() > 0:
 		for controller in ship.secondary_controller.sub_controllers:
 			draw_range_circle_on_minimap(ship.global_position, controller.get_params()._range, Color.DARK_KHAKI)
+
+	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0)
+
 
 	# Draw ship auras first
 	for aura in ship_auras_to_draw:
@@ -309,6 +312,25 @@ func _on_canvas_draw() -> void:
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
 		return
 	_draw_aim_point(minimap_pos)
+
+func draw_dashed_circle_on_minimap(world_position: Vector3, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0) -> void:
+	var minimap_pos = world_to_minimap_position(world_position)
+	var minimap_radius = radius * scale_factor.x
+	_draw_dashed_circle(minimap_pos, minimap_radius, color, dash_length, gap_length)
+
+func _draw_dashed_circle(center: Vector2, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0) -> void:
+	var circumference = TAU * radius
+	var num_dashes = int(circumference / (dash_length + gap_length))
+	var angle_step = TAU / num_dashes
+
+	for i in range(num_dashes):
+		var start_angle = i * angle_step
+		var end_angle = start_angle + (dash_length / circumference) * TAU
+
+		var start_point = center + Vector2(cos(start_angle), sin(start_angle)) * radius
+		var end_point = center + Vector2(cos(end_angle), sin(end_angle)) * radius
+
+		ship_markers_canvas.draw_line(start_point, end_point, color, 2.0)
 
 func draw_ship_aura_on_minimap(world_position: Vector3, ship_rotation: float, color: Color, marker_size: float = 1.0) -> void:
 	var minimap_pos = world_to_minimap_position(world_position)
@@ -359,7 +381,7 @@ func _draw_aim_point(aim_position: Vector2):
 	ship_markers_canvas.draw_circle(aim_position, 2, Color.WHITE, false)
 
 # Draw a translucent arc showing the camera's field of view
-func draw_camera_fov_arc() -> void:
+func draw_camera_fov_arc(range: float) -> void:
 	# Get the camera from viewport if not cached
 	if not is_instance_valid(battle_camera):
 		battle_camera = get_viewport().get_camera_3d()
@@ -381,7 +403,7 @@ func draw_camera_fov_arc() -> void:
 	var minimap_center = world_to_minimap_position(player_ship.global_position)
 
 	# Calculate arc radius on minimap
-	var arc_radius = FOV_ARC_RANGE * scale_factor.x
+	var arc_radius = range * scale_factor.x
 
 	# Calculate start and end angles for the arc
 	# Camera rotation.y is the horizontal look direction
