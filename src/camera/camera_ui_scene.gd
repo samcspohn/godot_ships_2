@@ -4,9 +4,17 @@ class_name CameraUIScene
 
 # Preload the floating damage scene
 const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
+const GunIndicatorScene = preload("res://src/camera/gun_indicator.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera
+
+@export var reloading_gun_color: Color = Color(1, 0, 0)
+@export var ready_gun_color: Color = Color(0, 1, 0)
+@export var disabled_gun_color: Color = Color(0.5, 0.5, 0.5)
+@export var valid_can_fire_color_mod: float = 1.0
+@export var valid_cannot_fire_color_mod: float = 0.7
+@export var invalid_cannot_fire_color_mod: float = 0.4
 
 # Properties that BattleCamera sets directly - these need to match the interface
 var time_to_target: float = 0.0 : set = set_time_to_target
@@ -25,6 +33,8 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var time_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/TimeLabel
 @onready var distance_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/DistanceLabel
 @onready var penetration_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2/PenetrationLabel
+
+@onready var gun_indicator: Control = $MainContainer/CrosshairContainer/GunIndicator
 
 # Sniper reticle control (created programmatically)
 var sniper_reticle: Control = null
@@ -150,6 +160,11 @@ var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consu
 
 var current_hp: float = 0.0
 
+var teams_hp = {}
+var num_players = -1
+var players_node: Node = null
+var server: GameServer = null
+
 # Get the keyboard shortcut letter for a given action
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
 	if not InputMap.has_action(action_name):
@@ -166,6 +181,7 @@ func get_keyboard_shortcut_for_action(action_name: String) -> String:
 
 # Gun reload tracking
 var gun_reload_bars: Array[ProgressBar] = []
+var gun_indicators: Array[Control] = []
 var gun_reload_timers: Array[Label] = []
 var guns: Array[Gun] = []
 
@@ -233,17 +249,24 @@ func _ready():
 
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
-		setup_gun_reload_bars()
-	
+		setup_guns()
+
 	update_counters()
+
+	setup_team_tracker()
+
+	server = get_tree().root.get_node_or_null("Server")
+	players_node = server.get_node_or_null("GameWorld/Players") if server else null
 
 func _process(_delta: float) -> void:
 	update_ship_ui()
-	_update_reticle_visibility()
-	# sniper_reticle.queue_redraw()
+	# _update_reticle_visibility()
+	sniper_reticle.queue_redraw()
 
 func update_counters() -> void:
 	var stats = camera_controller._ship.stats
+	if not stats:
+		return
 
 	update_counter(damage_value_label, stats.total_damage)
 	update_counter(main_count_label, stats.main_hits)
@@ -307,7 +330,7 @@ func _physics_process(_delta):
 		update_counter(frag_count_label, stats.frags)
 		update_counter(damage_value_label, stats.total_damage)
 		# update_counter(damage_value_label, stats.total_damage)
-		
+
 	if camera_controller._ship:
 		var hp = camera_controller._ship.health_controller.current_hp
 		if hp != current_hp:
@@ -316,7 +339,7 @@ func _physics_process(_delta):
 				# Show floating damage indicator
 				create_floating_damage(damage_taken, camera_controller._ship.global_position)
 			current_hp = hp
-	
+
 	crosshair_container.queue_redraw()
 	t = Time.get_ticks_usec() / 1000000.0 - t
 	# print("Camera UI _physics_process time: %.3f ms" % [t * 1000.0])
@@ -351,6 +374,7 @@ func setup_counter_hover_functionality():
 	# Instead of using signals, we'll check mouse position manually in _process
 	print("Hover functionality setup complete - using manual detection")
 
+# region Hit Counter System
 func setup_hit_counter_system():
 	"""Initialize the hit counter display system"""
 	print("Setting up hit counter system...")
@@ -513,8 +537,8 @@ func process_damage_events(damage_events: Array):
 					update_counter(citadel_count_label, stats.citadel_count)
 			_:
 				print("Warning: Unhandled hit type: ", hit_type)
-				
-	
+
+
 		if is_secondary:
 			update_counter(sec_damage_label, stats.sec_damage)
 			update_counter(secondary_count_label, stats.secondary_count)
@@ -659,7 +683,7 @@ func _update_ui():
 
 	# Update HP display
 	if camera_controller._ship.health_controller:
-		var current_hp = camera_controller._ship.health_controller.current_hp
+		# var current_hp = camera_controller._ship.health_controller.current_hp
 		var max_hp = camera_controller._ship.health_controller.max_hp
 		var hp_percent = (float(current_hp) / max_hp) * 100.0
 
@@ -765,6 +789,7 @@ func setup_ship_ui(ship):
 
 	# Set the ship name
 	name_label.text = ship.name
+	ship_hp_label.text = "%d/%d" % [ship.health_controller.current_hp, ship.health_controller.max_hp]
 
 	# Store the UI elements for this ship
 	ship_ui_elements[ship] = {
@@ -779,60 +804,68 @@ func update_ship_ui():
 	# Periodically search for new ships
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var should_search = tracked_ships.is_empty() or (current_time - last_ship_search_time > ship_search_interval)
-
-	if should_search:
-		last_ship_search_time = current_time
-
-		# Try to find ships in different possible locations
-		var ships = []
-		var possible_paths = [
-			"/root/Server/GameWorld/Players",
-			"/root/GameWorld/Players",
-			"/root/Main/Players"
-		]
-
-		for path in possible_paths:
-			var players_node = get_node_or_null(path)
-			if players_node:
-				ships = players_node.get_children()
-				# print("Found ships at: ", path, " - Count: ", ships.size())
-				break
-
-		if ships.is_empty():
-			# Fallback: search for all ships in the scene
-			ships = get_tree().get_nodes_in_group("ships")
-			if ships.is_empty():
-				# Last resort: find all Ship nodes in the tree
-				ships = []
-				var root = get_tree().root
-				_find_ships_recursive(root, ships)
-
-		for ship in ships:
+	if num_players != players_node.get_child_count() or tracked_ships.size() < players_node.get_child_count():
+		for ship in players_node.get_children():
 			if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
 				tracked_ships[ship] = true
 				setup_ship_ui(ship)
 				minimap.register_ship(ship)
 				print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
+	# if should_search:
+	# 	last_ship_search_time = current_time
+
+	# 	# Try to find ships in different possible locations
+	# 	var ships = []
+	# 	var possible_paths = [
+	# 		"/root/Server/GameWorld/Players",
+	# 		"/root/GameWorld/Players",
+	# 		"/root/Main/Players"
+	# 	]
+
+	# 	for path in possible_paths:
+	# 		var players_node = get_node_or_null(path)
+	# 		if players_node:
+	# 			ships = players_node.get_children()
+	# 			# print("Found ships at: ", path, " - Count: ", ships.size())
+	# 			break
+
+	# 	if ships.is_empty():
+	# 		# Fallback: search for all ships in the scene
+	# 		ships = get_tree().get_nodes_in_group("ships")
+	# 		if ships.is_empty():
+	# 			# Last resort: find all Ship nodes in the tree
+	# 			ships = []
+	# 			var root = get_tree().root
+	# 			_find_ships_recursive(root, ships)
+
+	# 	for ship in ships:
+	# 		if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
+	# 			tracked_ships[ship] = true
+	# 			setup_ship_ui(ship)
+	# 			minimap.register_ship(ship)
+	# 			print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
 
 	# Update each ship's UI
 	for ship in tracked_ships.keys():
-		if is_instance_valid(ship) and ship in ship_ui_elements and ship is Ship:
+		if is_instance_valid(ship) and ship in ship_ui_elements:
 			var ui = ship_ui_elements[ship]
 
 			# Get ship's HP if it has an HP manager
 			var ship_hp_manager = ship.health_controller
 			if ship_hp_manager:
-				var current_hp = ship_hp_manager.current_hp
+				var ship_current_hp = ship_hp_manager.current_hp
 				var max_hp = ship_hp_manager.max_hp
-				var hp_percent = (float(current_hp) / max_hp) * 100.0
+				if teams_hp.has(ship) and (teams_hp[ship][0] != ship_current_hp or teams_hp[ship][1] != max_hp):
+					var hp_percent = (float(ship_current_hp) / max_hp) * 100.0
 
-				# Update progress bar and label (colors are already set by template)
-				ui.hp_bar.value = hp_percent
-				ui.hp_label.text = "%d/%d" % [current_hp, max_hp]
+					# Update progress bar and label (colors are already set by template)
+					ui.hp_bar.value = hp_percent
+					ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
 			# Update target indicator visibility
 			var is_targeted = (ship == current_secondary_target)
-			ui.target_indicator.visible = is_targeted
+			if ui.target_indicator.visible != is_targeted:
+				ui.target_indicator.visible = is_targeted
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -842,7 +875,9 @@ func update_ship_ui():
 
 			# Position UI above ship in the world
 			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
-			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
+			var screen_pos = Vector2.ZERO
+			if not camera_controller.is_position_behind(ship_position):
+				screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
 
 			# Check if ship is visible on screen
 			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
@@ -860,12 +895,6 @@ func update_ship_ui():
 						element.queue_free()
 				ship_ui_elements.erase(ship)
 			tracked_ships.erase(ship)
-
-func _find_ships_recursive(node: Node, ships: Array):
-	if node is Ship:
-		ships.append(node)
-	for child in node.get_children():
-		_find_ships_recursive(child, ships)
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()
@@ -885,6 +914,29 @@ func is_position_visible_on_screen(world_position):
 	var viewport_rect = get_viewport().get_visible_rect()
 	return viewport_rect.has_point(screen_position)
 
+func setup_team_tracker():
+	"""Initial setup for the team tracker UI"""
+
+	if not camera_controller or not camera_controller._ship:
+		setup_team_tracker.call_deferred()
+		return
+
+	# var server: GameServer = get_tree().root.get_node_or_null("Server")
+	if not server:
+		setup_team_tracker.call_deferred()
+		return
+
+	var friendly_ships = server.get_team_ships(camera_controller._ship.team.team_id)
+	var enemy_ships = server._get_enemy_ships(camera_controller._ship.team.team_id)
+
+	update_team_container(friendly_ships_container, friendly_ships, true)
+	update_team_container(enemy_ships_container, enemy_ships, false)
+	# Resize the team tracker panel to fit content
+	resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+
+	num_players = friendly_ships.size() + enemy_ships.size()
+
+
 func update_team_tracker():
 	"""Update the team tracker with current ship status"""
 	if not camera_controller or not camera_controller._ship:
@@ -895,7 +947,7 @@ func update_team_tracker():
 		friendly_team_id = camera_controller._ship.team.team_id
 
 	# Get server reference
-	var server: GameServer = get_tree().root.get_node_or_null("Server")
+	# var server: GameServer = get_tree().root.get_node_or_null("Server")
 	if not server:
 		return
 
@@ -904,14 +956,20 @@ func update_team_tracker():
 	var enemy_ships = server._get_enemy_ships(friendly_team_id)
 	#print("Friendly ships count: ", friendly_ships.size(), " | Enemy ships count: ", enemy_ships.size())
 
-	# Update friendly ships display
-	update_team_container(friendly_ships_container, friendly_ships, true)
+	if num_players != friendly_ships.size() + enemy_ships.size():
+		num_players = friendly_ships.size() + enemy_ships.size()
+		# print("Total players updated: ", num_players)
+		# Update friendly ships display
+		update_team_container(friendly_ships_container, friendly_ships, true)
 
-	# Update enemy ships display
-	update_team_container(enemy_ships_container, enemy_ships, false)
+		# Update enemy ships display
+		update_team_container(enemy_ships_container, enemy_ships, false)
 
-	# Resize the team tracker panel to fit content
-	resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+		# Resize the team tracker panel to fit content
+		resize_team_tracker_panel(friendly_ships.size(), enemy_ships.size())
+		return
+	update_team_container2(friendly_ships_container, friendly_ships, true)
+	update_team_container2(enemy_ships_container, enemy_ships, false)
 
 func update_team_container(container: HBoxContainer, ships: Array, is_friendly: bool):
 	"""Update a team container with ship indicators using templates"""
@@ -965,7 +1023,24 @@ func update_team_container(container: HBoxContainer, ships: Array, is_friendly: 
 		# Update indicator appearance
 		update_team_indicator(indicator, ship, is_friendly)
 
-func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
+func update_team_container2(container: HBoxContainer, ships: Array, is_friendly: bool):
+	"""Update a team container with ship indicators using templates"""
+
+	for ship in ships:
+		if not is_instance_valid(ship):
+			continue
+
+		if teams_hp.has(ship):
+			if ship.health_controller.current_hp != teams_hp[ship][0] or ship.health_controller.max_hp != teams_hp[ship][1]:
+				var prev_hp	= teams_hp[ship][0]
+				teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
+				update_team_indicator(team_ship_indicators[ship], ship, is_friendly, prev_hp > 0 and ship.health_controller.current_hp <= 0)
+		else:
+			teams_hp[ship] = [ship.health_controller.current_hp, ship.health_controller.max_hp]
+			update_team_indicator(team_ship_indicators[ship], ship, is_friendly, true)
+
+
+func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, update_color: bool=false):
 	"""Update the appearance of a team indicator based on ship status"""
 	var ship_indicator: ColorRect = indicator.get_node("ShipIndicator")
 	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
@@ -978,28 +1053,29 @@ func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool):
 		health_percent = float(ship.health_controller.current_hp) / ship.health_controller.max_hp
 		hp_indicator.value = health_percent * 100.0
 
-	if is_alive:
-		# Ship is alive - use team colors
-		if is_friendly:
-			ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
-			# Create friendly HP bar style
-			var friendly_style = StyleBoxFlat.new()
-			friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
-			hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+	if update_color:
+		if is_alive:
+			# Ship is alive - use team colors
+			if is_friendly:
+				ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
+				# Create friendly HP bar style
+				var friendly_style = StyleBoxFlat.new()
+				friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
+				hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+			else:
+				ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
+				# Create enemy HP bar style
+				var enemy_style = StyleBoxFlat.new()
+				enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
+				hp_indicator.add_theme_stylebox_override("fill", enemy_style)
 		else:
-			ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
-			# Create enemy HP bar style
-			var enemy_style = StyleBoxFlat.new()
-			enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
-			hp_indicator.add_theme_stylebox_override("fill", enemy_style)
-	else:
-		# Ship is dead - use dark gray
-		ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
-		# Create dead HP bar style
-		var dead_style = StyleBoxFlat.new()
-		dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
-		hp_indicator.add_theme_stylebox_override("fill", dead_style)
-		hp_indicator.value = 0.0
+			# Ship is dead - use dark gray
+			ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
+			# Create dead HP bar style
+			var dead_style = StyleBoxFlat.new()
+			dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
+			hp_indicator.add_theme_stylebox_override("fill", dead_style)
+			hp_indicator.value = 0.0
 
 func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
 	"""Resize the team tracker panel to fit all ships"""
@@ -1058,14 +1134,19 @@ func set_weapon_button_pressed(idx: int):
 			weapon_buttons[i].button_pressed = (i == idx)
 
 # Gun reload bar management
-func setup_gun_reload_bars():
+func setup_guns():
 	# Clear existing reload bars
 	for bar in gun_reload_bars:
 		if is_instance_valid(bar):
 			bar.queue_free()
+	for indicator in gun_indicators:
+		if is_instance_valid(indicator):
+			indicator.queue_free()
 	gun_reload_bars.clear()
+	gun_indicators.clear()
 	gun_reload_timers.clear()
 	reload_bar_template.visible = false
+	gun_indicator.visible = false
 
 	# Get guns from ship artillery controller
 	if camera_controller and camera_controller._ship and camera_controller._ship.artillery_controller:
@@ -1077,41 +1158,117 @@ func setup_gun_reload_bars():
 			progress_bar.visible = true
 			progress_bar.value = guns[i].reload if guns[i] else 1.0
 
+			var indicator = GunIndicatorScene.instantiate()
+			indicator.visible = true
+			crosshair_container.add_child(indicator)
+			gun_indicators.append(indicator)
+
 			gun_reload_container.add_child(progress_bar)
 			gun_reload_bars.append(progress_bar)
 			gun_reload_timers.append(progress_bar.get_child(0))
 
 func update_gun_reload_bars():
 	# Update reload progress for each gun
+	# var aim_dir = camera_controller._ship.global_position.direction_to(camera_controller._ship.artillery_controller.aim_point).normalized()
+	# var ship_pos = camera_controller._ship.global_position
+	# ship_pos.y = 0.0
+	# var aim_point = camera_controller.aim_position
+	# aim_point.y = 0.0
+	# var aim_dir = ship_pos.direction_to(aim_point).normalized()
+	var already_drawn_indicators = []
+	var overlapping_indicators = {}
+
+
 	for i in range(min(guns.size(), gun_reload_bars.size())):
 		if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
 			var gun: Gun = guns[i]
 			var bar = gun_reload_bars[i]
+			var indicator = gun_indicators[i]
 			var timer_label = gun_reload_timers[i]
-			var gun_params: GunParams = (gun.controller as ArtilleryController).params.params() as GunParams
+			var gun_params: GunParams = (gun.controller as ArtilleryController).params.p() as GunParams
+			var gun_pos = gun.global_position
+			gun_pos.y = 0.0
+			var aim_point = camera_controller.aim_position
+			aim_point.y = 0.0
+			var aim_dir = gun_pos.direction_to(aim_point).normalized()
+
+			var gun_forw = -gun.global_transform.basis.z
+			gun_forw.y = 0.0
+			gun_forw = gun_forw.normalized()
+			# Calculate angle between gun forward and aim direction
+			var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
+			var angle = rad_to_deg(angle_rad)
 
 			# Update reload progress
 			bar.value = gun.reload
+			var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
+			var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
+			progress_tex.value = gun.reload
 			if gun.reload >= 1.0:
 				timer_label.text = "%.1f" % (gun.reload * gun_params.reload_time)
 			else:
 				timer_label.text = "%.1f s" % ((1.0 - gun.reload) * gun_params.reload_time)
 
-			# dull if no valid target
-			# bright if valid target
-			# teal if reloaded
-			# yellow if reloading
-			# brighter teal if reloaded and can fire and valid target
-			if gun._valid_target and gun.reload >= 1.0 and gun.can_fire:
-				bar.self_modulate = Color(0.4, 0.95, 0.9)  # Brighter teal - ready to fire at valid target
-			elif gun._valid_target and gun.reload >= 1.0:
-				bar.self_modulate = Color(0.2, 0.7, 0.6)  # Bright teal - ready to fire
-			elif gun._valid_target:
-				bar.self_modulate = Color(1.0, 1.0, 0.2)  # Bright yellow - reloading but can fire
-			elif gun.reload >= 1.0:
-				bar.self_modulate = Color(0.1, 0.45, 0.4)  # Dull teal - reloaded but can't fire
+			indicator.visible = true
+			if abs(angle) > 0.9:
+				indicator.get_node("AngleLabel").text = "%.0f°" % abs(angle)
 			else:
-				bar.self_modulate = Color(0.5, 0.5, 0.1)  # Dull Yellow - still reloading
+				indicator.get_node("AngleLabel").text = ""
+
+			indicator.global_position = gun_indicator.global_position - Vector2(angle * 4.0, 0)
+
+			var color_mod: float
+			var color: Color
+			if gun._valid_target:
+				if gun.can_fire:
+					color_mod = valid_can_fire_color_mod
+				else:
+					color_mod = valid_cannot_fire_color_mod
+			else:
+				color_mod = invalid_cannot_fire_color_mod
+			if gun.reload >= 1.0:
+				color = ready_gun_color * color_mod
+			else:
+				color = reloading_gun_color * color_mod
+			bar.self_modulate = color
+			progress_tex.tint_progress = color
+
+			var closest_indicator: Control = null
+			# Avoid overlapping indicators
+			for other_indicator in already_drawn_indicators:
+				var dist = indicator.global_position.distance_to(other_indicator.global_position)
+				if dist < 6.0:
+					closest_indicator = other_indicator
+					break
+
+			if closest_indicator:
+				indicator.get_node("AngleLabel").visible = false
+				indicator.global_position = closest_indicator.global_position
+				if overlapping_indicators.has(closest_indicator):
+					overlapping_indicators[closest_indicator].append(indicator)
+				else:
+					overlapping_indicators[closest_indicator] = [closest_indicator, indicator]
+				var gap = 15
+				var num_indicators = overlapping_indicators[closest_indicator].size()
+				var step = (360.0 - (gap * num_indicators)) / num_indicators
+				var angle_idx = 0
+				var start = gap / 2.0
+				for k: Control in overlapping_indicators[closest_indicator]:
+					var k_under_tex = k.get_node("UnderTexture") as TextureProgressBar
+					var k_progress_tex = k.get_node("ProgressTexture") as TextureProgressBar
+					k_under_tex.radial_fill_degrees = step
+					k_under_tex.radial_initial_angle = start + angle_idx * (step + gap)
+					k_progress_tex.radial_fill_degrees = step
+					k_progress_tex.radial_initial_angle = start + angle_idx * (step + gap)
+					angle_idx += 1
+			else:
+				indicator.get_node("AngleLabel").visible = true
+				under_tex.radial_fill_degrees = 360
+				under_tex.radial_initial_angle = 0
+				progress_tex.radial_fill_degrees = 360
+				progress_tex.radial_initial_angle = 0
+
+			already_drawn_indicators.append(indicator)
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):
@@ -1278,24 +1435,24 @@ func _setup_sniper_reticle() -> void:
 	sniper_reticle.name = "SniperReticle"
 	sniper_reticle.set_anchors_preset(Control.PRESET_FULL_RECT)
 	sniper_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	sniper_reticle.visible = false  # Start hidden
-	
+	sniper_reticle.visible = true
+
 	# Add to the main container alongside the crosshair
 	$MainContainer.add_child(sniper_reticle)
-	
+
 	# Connect the draw signal
 	sniper_reticle.connect("draw", _on_sniper_reticle_draw)
 
 func _update_reticle_visibility() -> void:
 	if not camera_controller:
 		return
-	
+
 	var is_sniper_mode = camera_controller.current_mode == BattleCamera.CameraMode.SNIPER
-	
+
 	# Hide the standard crosshair in sniper mode, show in third person and free look
 	if crosshair_center:
 		crosshair_center.visible = not is_sniper_mode
-	
+
 	# Show the sniper reticle only in sniper mode
 	if sniper_reticle:
 		sniper_reticle.visible = is_sniper_mode
@@ -1306,66 +1463,74 @@ func _on_sniper_reticle_draw() -> void:
 	if not sniper_reticle or not camera_controller:
 		return
 
+	var is_sniper_mode = camera_controller.current_mode == BattleCamera.CameraMode.SNIPER
 	var viewport_size = get_viewport().get_visible_rect().size
 	var center = viewport_size / 2.0
 
 	var fovy_rad = deg_to_rad(camera_controller.fov)
 	var fov_rad = fovy_rad * (viewport_size.x / viewport_size.y)  # Adjust for aspect ratio
-	
-	
-	# Calculate distance traveled by a target moving at 10 knots during shell flight time
-	var knot_10 = 10.0 * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
-	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
-	var distance_to_target_m = distance_to_target
-	
+
 	# Sniper reticle colors
 	var reticle_color = Color(1, 1, 1, 0.6)
 	var line_width = 1.5
-	
+
+	if not is_sniper_mode:
+		sniper_reticle.draw_circle(center, 2.0, reticle_color)
+		return  # Only draw in sniper mode
+
+	# Calculate distance traveled by a target moving at 10 knots during shell flight time
+	var knot_10 = 10.0 * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # 10 knots in m/s (scaled)
+	var _distance_traveled = knot_10 * time_to_target  # Used for reference/debugging
+	var distance_to_target_m = distance_to_target
+
+
 	# Long horizontal line (extending across a significant portion of the screen)
 	var horizontal_length = viewport_size.x * 0.9  # 80% of screen width
 	var h_start = Vector2(center.x - horizontal_length / 2.0, center.y)
 	var h_end = Vector2(center.x + horizontal_length / 2.0, center.y)
-	sniper_reticle.draw_line(h_start, h_end, reticle_color, line_width)
-	
-	# Short vertical line at center
-	var vertical_length = 30.0
-	var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
-	var v_end = Vector2(center.x, center.y + vertical_length / 2.0)
-	sniper_reticle.draw_line(v_start, v_end, reticle_color, line_width)
+	sniper_reticle.draw_line(h_start, Vector2(center.x - 20, center.y), reticle_color, line_width)
+	sniper_reticle.draw_line(Vector2(center.x + 20, center.y), h_end, reticle_color, line_width)
+
+	# # Short vertical line at center
+	# var vertical_length = 30.0
+	# var v_start = Vector2(center.x, center.y - vertical_length / 2.0)
+	# var v_end = Vector2(center.x, center.y + vertical_length / 2.0)
+	# sniper_reticle.draw_line(v_start, v_end, reticle_color, line_width)
+
+	sniper_reticle.draw_circle(center, 2.0, reticle_color)
 
 	# Draw tick marks for speeds - as many as will fit on the line
 	if distance_to_target_m > 0 and time_to_target > 0:
 		var tick_color = Color(1, 1, 1, 0.8)
-		
+
 		# Calculate pixels per radian for FOV conversion
 		var pixels_per_radian = (viewport_size.x / 2.0) / tan(fov_rad / 2.0)
-		
+
 		# Calculate the maximum horizontal distance from center to line end
 		var max_pixel_offset = horizontal_length / 2.0
-		
+
 		# Draw ticks for every 10 knots, as many as fit
 		var speed = 10
 		while true:
 			# Calculate distance traveled at this speed during shell flight time
-			var speed_ms = speed * 0.514444 * BattleCamera.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
+			var speed_ms = speed * 0.514444 * ShipMovementV2.SHIP_SPEED_MODIFIER  # knots to m/s with empirical correction
 			var lead_distance = speed_ms * time_to_target
-			
+
 			# Convert world distance to screen pixels using FOV and distance
 			var angular_offset = atan(lead_distance / distance_to_target_m)
 			var pixel_offset = angular_offset * pixels_per_radian
-			
+
 			# Stop if tick would be beyond the line
 			if pixel_offset > max_pixel_offset:
 				break
-			
+
 			# Determine tick height based on speed (larger ticks for multiples of 30)
 			var tick_height = 6.0
 			if speed % 30 == 0:
 				tick_height = 10.0
 			elif speed % 10 == 0 and (speed == 10 or speed == 50 or speed % 50 == 0):
 				tick_height = 8.0
-			
+
 			# Draw tick on the right side (for targets moving left)
 			var tick_x_right = center.x + pixel_offset
 			sniper_reticle.draw_line(
@@ -1373,7 +1538,7 @@ func _on_sniper_reticle_draw() -> void:
 				Vector2(tick_x_right, center.y + tick_height),
 				tick_color, line_width
 			)
-			
+
 			# Draw tick on the left side (for targets moving right)
 			var tick_x_left = center.x - pixel_offset
 			sniper_reticle.draw_line(
@@ -1381,7 +1546,7 @@ func _on_sniper_reticle_draw() -> void:
 				Vector2(tick_x_left, center.y + tick_height),
 				tick_color, line_width
 			)
-			
+
 			speed += 10
 
 # endregion

@@ -1,14 +1,13 @@
 extends Camera3D
 
 class_name BattleCamera
-const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 signal processed
 # Ship to follow
 @export var _ship: Ship
 #@export var ship_movement: ShipMovement
-#@export var hp_manager: HitPointsManager  # Add reference to hit points
+#@export var hp_manager: HPManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
-@export var projectile_drag_coefficient: float = ProjectilePhysicsWithDrag.SHELL_380MM_DRAG_COEFFICIENT # 380mm shell drag
+@export var projectile_drag_coefficient: float = 0.0 # 380mm shell drag
 
 # Camera mode
 enum CameraMode {THIRD_PERSON, SNIPER, FREE_LOOK}
@@ -88,7 +87,7 @@ func _ready():
 	fov = current_fov
 
 	# Load the UI scene instead of creating it programmatically
-	var ui_scene = preload("res://scenes/camera_ui.tscn")
+	var ui_scene = preload("res://src/camera/camera_ui.tscn")
 	ui = ui_scene.instantiate()
 	ui.camera_controller = self
 	add_child(ui)
@@ -165,13 +164,10 @@ func _process(delta):
 
 	_update_camera_transform()
 
-	# Calculate target information
-	_calculate_target_info()
-
 	# Calculate ship speed
 	if _ship:
 		var velocity = _ship.linear_velocity
-		ship_speed = velocity.length() * 1.94384 / SHIP_SPEED_MODIFIER # Convert m/s to knots
+		ship_speed = velocity.length() * 1.94384 / ShipMovementV2.SHIP_SPEED_MODIFIER # Convert m/s to knots
 
 
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
@@ -202,6 +198,8 @@ func _process(delta):
 	#ProjectileManager1.__process(delta)
 	processed.emit(delta)
 
+func _physics_process(delta):
+	_calculate_target_info()
 
 func _zoom_camera(zoom_amount):
 	if current_mode == CameraMode.THIRD_PERSON:
@@ -222,7 +220,7 @@ func _zoom_camera(zoom_amount):
 	else:
 		# In free look mode, adjust zoom
 		free_look_view.current_zoom = clamp(free_look_view.current_zoom + zoom_amount, free_look_view.min_zoom_distance, free_look_view.max_zoom_distance)
-		
+
 
 
 func _handle_mouse_motion(event):
@@ -483,7 +481,7 @@ func _calculate_target_info():
 
 	# Calculate distance
 	distance_to_target = (aim_position - ship_position).length() # Convert to km
-	
+
 	if launch_vector != null:
 		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
 		var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
@@ -511,21 +509,21 @@ func _calculate_target_info():
 				velocity_at_impact,
 				shell.caliber)
 			# var raw_pen = 1.0
-			
+
 			# Calculate impact angle (angle from vertical)
 			var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
-			
+
 			# Calculate effective penetration against vertical armor
 			# Effective penetration = raw penetration * cos(impact_angle)
 			penetration_power = raw_pen * cos(impact_angle)
-			
+
 	else:
 		terrain_hit = false
 		penetration_power = 0.0
 		time_to_target = -1.0
 		distance_to_target = -1.0
 
-	
+
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()

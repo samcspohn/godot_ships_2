@@ -1,0 +1,88 @@
+[gd_scene load_steps=3 format=3 uid="uid://5hngoy8op2hn"]
+
+[ext_resource type="Script" uid="uid://dxga4o1qmv4jl" path="res://src/port/shell_replay.gd" id="1_replay"]
+[ext_resource type="PackedScene" uid="uid://ct23uvcdgwrfw" path="res://src/port/main_menu/main_menu.tscn" id="2_51yn6"]
+
+[node name="ShellReplay" type="Node"]
+script = ExtResource("1_replay")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="UIPanel" type="Panel" parent="CanvasLayer"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 256.0
+grow_horizontal = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/UIPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="CanvasLayer/UIPanel/VBoxContainer"]
+layout_mode = 2
+text = "Shell Hit Replay"
+horizontal_alignment = 1
+
+[node name="TextInput" type="TextEdit" parent="CanvasLayer/UIPanel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
+size_flags_vertical = 3
+placeholder_text = "Paste shell hit events here..."
+
+[node name="HBoxContainer" type="HBoxContainer" parent="CanvasLayer/UIPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="PlayButton" type="Button" parent="CanvasLayer/UIPanel/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+text = "Play Replay"
+
+[node name="ValidateButton" type="Button" parent="CanvasLayer/UIPanel/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+text = "Validate"
+
+[node name="BackButton" type="Button" parent="CanvasLayer/UIPanel/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+text = "Back to Menu"
+
+[node name="ResultLabel" type="Label" parent="CanvasLayer/UIPanel/VBoxContainer"]
+layout_mode = 2
+text = "Result: N/A"
+horizontal_alignment = 1
+
+[node name="ValidationLabel" type="Label" parent="CanvasLayer/UIPanel/VBoxContainer"]
+layout_mode = 2
+text = "Validation: Not run"
+horizontal_alignment = 1
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="CanvasLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 258.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="CanvasLayer/SubViewportContainer"]
+handle_input_locally = false
+size = Vector2i(1920, 822)
+render_target_update_mode = 4
+
+[node name="World3D" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport"]
+
+[node name="Camera3D" type="Camera3D" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D"]
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 50, 100)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D"]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 10, 0)
+shadow_enabled = true
+
+[node name="ShellTrail" type="Node3D" parent="CanvasLayer/SubViewportContainer/SubViewport/World3D"]

@@ -8,6 +8,7 @@ class_name ParticleTemplate
 
 @export_group("Appearance")
 @export var texture: Texture2D
+@export var color: Color = Color.WHITE  ## Base color multiplied with texture and color_over_life
 @export var color_over_life: GradientTexture1D
 @export var scale_over_life: CurveTexture
 @export var emission_over_life: CurveTexture
@@ -44,8 +45,8 @@ class_name ParticleTemplate
 @export var lifetime_randomness: float = 0.0
 
 @export_group("Scale")
-@export var scale_min: float = 1.0
-@export var scale_max: float = 1.0
+@export var scale_min: Vector2 = Vector2(1.0, 1.0)  ## X = width, Y = length (for trails)
+@export var scale_max: Vector2 = Vector2(1.0, 1.0)  ## X = width, Y = length (for trails)
 
 @export_group("Emission Shape")
 @export_enum("Point:0", "Sphere:1", "Box:2") var emission_shape: int = 0
@@ -61,6 +62,14 @@ class_name ParticleTemplate
 @export var anim_speed_max: float = 1.0
 @export var anim_offset_min: float = 0.0
 @export var anim_offset_max: float = 0.0
+
+@export_group("Alignment")
+## If true, particle Y-axis aligns to velocity direction (for trails)
+@export var align_to_velocity: bool = false
+## Stretch factor along velocity direction (for trails, typical: 3.0-7.0)
+@export var velocity_stretch: float = 1.0
+## If true, Y scale is not affected by scale_over_life curve (maintains consistent length for touching particles)
+@export var is_trail: bool = false
 
 # Internal - assigned by ParticleTemplateManager
 var template_id: int = -1
@@ -99,8 +108,11 @@ func get_random_lifetime() -> float:
 func get_random_initial_velocity() -> float:
 	return randf_range(initial_velocity_min, initial_velocity_max)
 
-func get_random_scale() -> float:
-	return randf_range(scale_min, scale_max)
+func get_random_scale() -> Vector2:
+	return Vector2(
+		randf_range(scale_min.x, scale_max.x),
+		randf_range(scale_min.y, scale_max.y)
+	)
 
 func get_random_angular_velocity() -> float:
 	return randf_range(angular_velocity_min, angular_velocity_max)

@@ -4,7 +4,7 @@ class_name Fire
 @onready var fire: GPUParticles3D = $GPUParticles3D
 @onready var smoke: GPUParticles3D = $GPUParticles3D2
 var _ship: Ship
-var hp: HitPointsManager
+var hp: HPManager
 # @export var duration: float = 50.0
 # @export var buildUp: float = 100.0
 # @export var total_dmg_p: float = .1
@@ -14,8 +14,8 @@ var lifetime: float = 0
 var manager: FireManager = null
 var _params: FireParams:
 	get:
-		return manager.params.params() as FireParams
-	set(value): 
+		return manager.params.p() as FireParams
+	set(value):
 		pass
 var _owner: Ship = null
 
@@ -46,6 +46,10 @@ func _ready():
 	(smoke.process_material as ParticleProcessMaterial).scale_max = s * 3
 	fire.emitting = false
 	smoke.emitting = false
+	if _Utils.authority():
+		set_physics_process(true)
+	else:
+		set_physics_process(false)
 
 func _physics_process(delta: float) -> void:
 	if _Utils.authority():
@@ -67,12 +71,12 @@ func damage(delta):
 		var max_hp = hp.max_hp
 		var dmg_rate = _params.dmg_rate
 		var dmg = max_hp * dmg_rate
-		var dmg_sunk = hp.take_damage(dmg * delta, position)
+		var dmg_sunk = hp.apply_light_damage(dmg * delta)
 		_owner.stats.fire_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
-	
+
 @rpc("any_peer")
 func _sync(l):
 	lifetime = l
@@ -81,9 +85,8 @@ func _sync(l):
 func _sync_activate():
 	fire.emitting = true
 	smoke.emitting = true
-	
+
 @rpc("any_peer", "reliable")
 func _sync_deactivate():
 	fire.emitting = false
 	smoke.emitting = false
-	

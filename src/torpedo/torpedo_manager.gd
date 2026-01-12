@@ -30,8 +30,8 @@ class TorpedoData:
 func _ready():
 	# Auto-register all bullet resources in the directory
 	#register_all_bullet_resources()
-	particles = $GPUParticles3D
-	multi_mesh = $MultiMeshInstance3D
+	#particles = $GPUParticles3D
+	#multi_mesh = $MultiMeshInstance3D
 	if OS.get_cmdline_args().find("--server") != -1:
 		print("running server")
 		set_process(false)
@@ -120,7 +120,7 @@ func update_transform_scale(idx, scale: float):
 
 func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
-	
+
 	if camera == null:
 		return
 	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
@@ -161,9 +161,9 @@ func _process(_delta: float) -> void:
 		#p.trail_pos += offset
 		#offset_length -= step_size
 
-	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
-	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
-	self.multi_mesh.multimesh.buffer = transforms
+	# self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
+	# self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
+	# self.multi_mesh.multimesh.buffer = transforms
 
 
 func _physics_process(_delta: float) -> void:
@@ -191,8 +191,8 @@ func _physics_process(_delta: float) -> void:
 			self.destroyTorpedoRpc(id, collision.position)
 			var ship = ProjectileManager.find_ship(collision.collider)
 			if ship != null:
-				var hp: HitPointsManager = ship.health_controller
-				hp.take_damage(p.params.damage, collision.position)
+				var hp: HPManager = ship.health_controller
+				#hp.apply_damage(p.params.damage)
 
 				# Track torpedo damage dealt
 				track_torpedo_damage_dealt(p.owner, p.params.damage)
@@ -279,10 +279,10 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	update_transform(id, t) # set to invisible
 	#self.multi_mesh.multimesh.set_instance_transform(id, t)
 
-	var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
-	get_tree().root.add_child(expl)
-	expl.global_position = pos
-	expl.radius = radius
+	#var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
+	#get_tree().root.add_child(expl)
+	#expl.global_position = pos
+	#expl.radius = radius
 
 @rpc("authority", "reliable")
 func destroyTorpedoRpc(id, position) -> void:

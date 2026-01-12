@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://jhc2wdyy4ksf"]
+
+[ext_resource type="Script" uid="uid://bigegwv2dexue" path="res://src/concealment/concealment.gd" id="1_yb086"]
+
+[node name="Concealment" type="Node"]
+script = ExtResource("1_yb086")

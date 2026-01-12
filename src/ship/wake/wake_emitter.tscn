@@ -1,8 +1,0 @@
-[gd_scene load_steps=3 format=3 uid="uid://psoivfcd8yg8"]
-
-[ext_resource type="Script" uid="uid://3p7kl880cyrh" path="res://src/ship/wake/wake_emitter.gd" id="1_mwxet"]
-[ext_resource type="PackedScene" uid="uid://w2v4b6ew4rhr" path="res://src/ship/wake/wake.tscn" id="2_lm58u"]
-
-[node name="WakeEmitter" type="Node3D"]
-script = ExtResource("1_mwxet")
-wake = ExtResource("2_lm58u")

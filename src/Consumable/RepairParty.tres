@@ -7,13 +7,10 @@
 [resource]
 resource_local_to_scene = true
 script = ExtResource("1_bm5ij")
-heal_percent = 0.2
-name = ""
-description = ""
+heal_percent = 0.4
 icon = ExtResource("1_ym5my")
 disabled_icon = ExtResource("1_x8x1x")
 cooldown_time = 10.0
 duration = 10.0
-max_stack = 3
-type = 0
+max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"

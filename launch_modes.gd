@@ -33,7 +33,8 @@ func _ready():
 	match launch_mode:
 		LaunchMode.CLIENT:
 			print("client")
-			get_tree().call_deferred("change_scene_to_file", "res://src/client/main_menu.tscn")
+			#get_tree().call_deferred("change_scene_to_file", "res://src/client/main_menu.tscn")
+			get_tree().change_scene_to_file.call_deferred("res://src/port/main_menu/main_menu.tscn")
 		LaunchMode.DEDICATED_SERVER:
 			print("server")
 			for i in range(args.size()):

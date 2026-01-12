@@ -1,8 +1,13 @@
-[gd_scene load_steps=3 format=3 uid="uid://dmnxpgxfiwlyb"]
+[gd_scene load_steps=4 format=3 uid="uid://dmnxpgxfiwlyb"]
 
 [ext_resource type="PackedScene" uid="uid://b71yjgxa0vdoy" path="res://turrets/glb/GER_380mm_2b_rf.glb" id="1_tv6nr"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_afgdy"]
+[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="3_hrcam"]
 
 [node name="GER_380mm_2b_rf" instance=ExtResource("1_tv6nr")]
 script = ExtResource("2_afgdy")
 ship_model_glb_path = "uid://b71yjgxa0vdoy"
+
+[node name="380mmTurret_col" parent="." index="1"]
+layers = 0
+material_override = ExtResource("3_hrcam")

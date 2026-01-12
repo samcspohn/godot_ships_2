@@ -11,7 +11,7 @@ func _init():
 	max_stack = 4
 
 func apply_effect(ship: Ship) -> void:
-	
+
 	# Create a healing over time effect
 	var heal_effect = HealEffect.new()
 	# var total_heal = ship.health_controller.max_hp * heal_percent

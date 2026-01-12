@@ -1,175 +1,155 @@
-extends GPUParticles3D
+extends Node3D
 class_name UnifiedParticleSystem
 
-## Unified particle system that handles all particle types using emit_particle()
-## Particles are emitted with template_id and size encoded in COLOR channel
+## Unified particle system that handles all particle types
+## Now uses compute shader-based ComputeParticleSystem for GPU-accelerated simulation
+## Maintains the same API for backward compatibility
+
+# ComputeParticleSystem is now a C++ class registered via GDExtension
+# Legacy GDScript version available at: res://src/particles/compute_particle_system_legacy.gd
 
 var template_manager: ParticleTemplateManager
-var process_material_shader: ShaderMaterial
-var draw_material_shader: ShaderMaterial
+var _compute_system: ComputeParticleSystem  # ComputeParticleSystem
+var _initialized: bool = false
 
 func _ready() -> void:
-	# Get or create template manager
-	# if not has_node("/root/ParticleTemplateManager"):
-	# 	template_manager = ParticleTemplateManager.new()
-	# 	template_manager.name = "ParticleTemplateManager"
-	# 	get_tree().root.add_child(template_manager)
-	# else:
-	# 	template_manager = get_node("/root/ParticleTemplateManager")
-
-	# Set up particle system properties
-	amount = 100000  # Large pool of particles
-	lifetime = 100.0  # Max lifetime
-	one_shot = false
-	explosiveness = 0.0
-	randomness = 0.0
-	fixed_fps = 30
-	interpolate = false
-	fract_delta = true
-
-	# Set visibility AABB to be very large
-	visibility_aabb = AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000))
-
-	# Configure particle rendering
-	draw_order = DRAW_ORDER_VIEW_DEPTH
-	# transform_align = TRANSFORM_ALIGN_Y_TO_VELOCITY
-
-	# Create and configure shaders
-	_setup_shaders()
-
-	# Start emitting (particles will be inactive until emission requests)
-	emitting = true
-
-	print("UnifiedParticleSystem: Initialized with %d max particles" % amount)
-
-func _setup_shaders() -> void:
-	# Load process shader
-	var process_shader = load("res://src/particles/shaders/particle_template_process.gdshader")
-	if process_shader == null:
-		push_error("UnifiedParticleSystem: Failed to load process shader")
+	if "--server" in OS.get_cmdline_args():
+		queue_free()
 		return
 
-	process_material_shader = ShaderMaterial.new()
-	process_material_shader.shader = process_shader
+	# Create compute particle system (now using C++ GDExtension class)
+	_compute_system = ComputeParticleSystem.new()
+	_compute_system.name = "ComputeParticleSystem"
+	add_child(_compute_system)
 
-	# Apply shader uniforms from template manager
-	var uniforms = template_manager.get_shader_uniforms()
-	for key in uniforms:
-		process_material_shader.set_shader_parameter(key, uniforms[key])
+	# Wait for template manager to be assigned
+	call_deferred("_deferred_init")
 
-	process_material = process_material_shader
-
-	# Load and set up draw material shader
-	var material_shader = load("res://src/particles/shaders/particle_template_material.gdshader")
-	if material_shader == null:
-		push_error("UnifiedParticleSystem: Failed to load material shader")
-		return
-
-	draw_material_shader = ShaderMaterial.new()
-	draw_material_shader.shader = material_shader
-
-	# Apply template properties to draw material
-	if uniforms.has("template_properties"):
-		draw_material_shader.set_shader_parameter("template_properties", uniforms["template_properties"])
-
-	# Apply texture atlas to draw material
-	if uniforms.has("texture_atlas"):
-		draw_material_shader.set_shader_parameter("texture_atlas", uniforms["texture_atlas"])
-
-	# Apply color ramp atlas to draw material
-	if uniforms.has("color_ramp_atlas"):
-		draw_material_shader.set_shader_parameter("color_ramp_atlas", uniforms["color_ramp_atlas"])
-
-	# Apply scale curve atlas to draw material
-	if uniforms.has("scale_curve_atlas"):
-		draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
-
-	# Apply emission curve atlas to draw material
-	if uniforms.has("emission_curve_atlas"):
-		draw_material_shader.set_shader_parameter("emission_curve_atlas", uniforms["emission_curve_atlas"])
-
-	# Create a quad mesh for particles
-	var quad = QuadMesh.new()
-	quad.size = Vector2(1, 1)
-	quad.material = draw_material_shader
-	draw_pass_1 = quad
-
-	print("UnifiedParticleSystem: Shaders configured")
+func _deferred_init() -> void:
+	if template_manager:
+		_compute_system.template_manager = template_manager
+		_initialized = true
+		print("UnifiedParticleSystem: Initialized with compute shader backend")
+	else:
+		push_error("UnifiedParticleSystem: No template manager assigned")
 
 func emit_particles(pos: Vector3, direction: Vector3,
 					template_id, size_multiplier, count, speed_mod) -> void:
 	"""
-	Emit particles with a specific template using emit_particle().
+	Emit particles with a specific template.
+
+	This is the primary emission API. All particle requests are batched and
+	processed efficiently on the GPU via compute shaders.
 
 	Args:
 		pos: World position to emit from
-		direction: Direction vector for particle emission (will be used with template velocity and size)
-		template_id: The ID of the particle template to use (0-255)
-		size_multiplier: Scale multiplier for this particle (0-1 range, also scales velocity)
+		direction: Direction vector for particle emission
+		template_id: The ID of the particle template to use (0-15)
+		size_multiplier: Scale multiplier for particles (also affects velocity)
 		count: Number of particles to emit
+		speed_mod: Time scale multiplier for particle animation
 	"""
-	if template_id < 0 or template_id >= ParticleTemplateManager.MAX_TEMPLATES:
-		push_error("UnifiedParticleSystem: Invalid template_id %d" % template_id)
+	if not _initialized or _compute_system == null:
+		push_warning("UnifiedParticleSystem: Not initialized, deferring emission")
+		call_deferred("emit_particles", pos, direction, template_id, size_multiplier, count, speed_mod)
 		return
 
-	var template = template_manager.get_template_by_id(template_id)
-	if template == null:
-		push_error("UnifiedParticleSystem: Template %d not found" % template_id)
-		return
+	_compute_system.emit_particles(pos, direction, template_id, size_multiplier, count, speed_mod)
 
-	# Clamp size multiplier
-	# size_multiplier = clampf(size_multiplier, 0.0, 1.0)
 
-	# Encode template_id and size in COLOR
-	# COLOR.r = template_id (normalized to 0-1)
-	# COLOR.g = size_multiplier (0-1)
-	# COLOR.b = speed_scale	(0-1)
-	# COLOR.a = unused (set to 1)
-	var encoded_color := Color(
-		float(template_id) / 255.0,
-		size_multiplier,
-		speed_mod,
-		1.0
-	)
+# ============================================================================
+# GPU EMITTER API - For trails and continuous emission from moving sources
+# ============================================================================
 
-	# Emit each particle
-	for i in count:
-		# Create transform at emission position
-		var xform := Transform3D.IDENTITY
-		xform.origin = pos
+func allocate_emitter(template_id: int, position: Vector3, size_multiplier: float = 1.0,
+					  emit_rate: float = 0.05, speed_scale: float = 1.0,
+					  velocity_boost: float = 0.0) -> int:
+	"""
+	Allocate a GPU emitter for trail emission.
 
-		# Emit the particle
-		# The process shader will decode COLOR.r and COLOR.g in start()
-		# Direction is passed via the velocity parameter - the shader will calculate actual velocity
-		emit_particle(
-			xform,           # Transform (position)
-			direction,       # Direction vector (shader will calculate velocity from this)
-			encoded_color,   # COLOR (encodes template_id and size)
-			Color.BLACK,     # CUSTOM (required parameter, not used by our shader)
-			EMIT_FLAG_POSITION | EMIT_FLAG_VELOCITY | EMIT_FLAG_COLOR
-		)
+	Instead of calling emit_trail each frame, allocate an emitter once and then
+	call update_emitter_position each frame. The GPU will automatically emit
+	particles along the path traveled.
+
+	Args:
+		template_id: The particle template to use
+		position: Starting position of the emitter (required for GPU initialization)
+		size_multiplier: Scale multiplier for emitted particles
+		emit_rate: Particles per unit distance traveled (default 0.05 = 1 particle per 20 units)
+		speed_scale: Time scale for particle simulation
+		velocity_boost: Extra velocity added in direction of travel
+
+	Returns:
+		Emitter ID (0 to MAX_EMITTERS-1), or -1 if no slots available
+	"""
+	if not _initialized or _compute_system == null:
+		push_warning("UnifiedParticleSystem: Not initialized, cannot allocate emitter")
+		return -1
+
+	return _compute_system.allocate_emitter(template_id, position, size_multiplier, emit_rate,
+											speed_scale, velocity_boost)
+
+
+func free_emitter(emitter_id: int) -> void:
+	"""
+	Free a GPU emitter, returning it to the pool.
+
+	Args:
+		emitter_id: The emitter ID returned from allocate_emitter
+	"""
+	if _compute_system:
+		_compute_system.free_emitter(emitter_id)
+
+
+func update_emitter_position(emitter_id: int, pos: Vector3) -> void:
+	"""
+	Update the position of a GPU emitter.
+	Call this each frame with the new position of the emitting object.
+	The emitter will emit particles along the path from prev_position to position.
+
+	Args:
+		emitter_id: The emitter ID returned from allocate_emitter
+		pos: Current world position of the emitter
+	"""
+	if _compute_system:
+		_compute_system.update_emitter_position(emitter_id, pos)
+
+
+func set_emitter_params(emitter_id: int, size_multiplier: float = -1.0,
+						emit_rate: float = -1.0, velocity_boost: float = -1.0) -> void:
+	"""
+	Update emitter parameters. Pass -1 to keep current value.
+
+	Args:
+		emitter_id: The emitter ID
+		size_multiplier: Scale multiplier for particles (-1 to keep current)
+		emit_rate: Particles per unit distance (-1 to keep current)
+		velocity_boost: Extra velocity in travel direction (-1 to keep current)
+	"""
+	if _compute_system:
+		_compute_system.set_emitter_params(emitter_id, size_multiplier, emit_rate, velocity_boost)
+
+
+func get_active_emitter_count() -> int:
+	"""Returns the number of currently active emitters"""
+	if _compute_system:
+		return _compute_system.get_active_emitter_count()
+	return 0
+
 
 func update_shader_uniforms() -> void:
 	"""Update shader uniforms when templates change"""
-	if process_material_shader and template_manager:
-		var uniforms = template_manager.get_shader_uniforms()
-		for key in uniforms:
-			process_material_shader.set_shader_parameter(key, uniforms[key])
-
-		if draw_material_shader:
-			if uniforms.has("template_properties"):
-				draw_material_shader.set_shader_parameter("template_properties", uniforms["template_properties"])
-			if uniforms.has("texture_atlas"):
-				draw_material_shader.set_shader_parameter("texture_atlas", uniforms["texture_atlas"])
-			if uniforms.has("color_ramp_atlas"):
-				draw_material_shader.set_shader_parameter("color_ramp_atlas", uniforms["color_ramp_atlas"])
-			if uniforms.has("scale_curve_atlas"):
-				draw_material_shader.set_shader_parameter("scale_curve_atlas", uniforms["scale_curve_atlas"])
-			if uniforms.has("emission_curve_atlas"):
-				draw_material_shader.set_shader_parameter("emission_curve_atlas", uniforms["emission_curve_atlas"])
-
+	if _compute_system:
+		_compute_system.update_shader_uniforms()
 		print("UnifiedParticleSystem: Shader uniforms updated")
 
 func clear_all_particles() -> void:
 	"""Clear all active particles"""
-	restart()
+	if _compute_system:
+		_compute_system.clear_all_particles()
+
+func get_active_particle_count() -> int:
+	"""Get the number of currently active particles"""
+	if _compute_system:
+		return _compute_system.get_active_particle_count()
+	return 0

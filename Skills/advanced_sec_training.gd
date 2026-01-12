@@ -1,27 +1,17 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.4
-const max_spread_bonus = 0.60 # temporary high value for simulating full skill build
+const max_grouping_bonus = 0.6
+const max_spread_bonus = 0.60
 
 var grouping_multiplier: float = 1.0
 var spread_multiplier: float = 1.0
 
 func _init():
 	name = "CQ Expertise"
-	description = "Increases secondary artillery accuracy the longer they fire on a target, up to 30% grouping and 70% spread improvement. Accuracy resets after not firing for a short time."
+	description = "Increases secondary artillery accuracy the longer they fire on a target, up to 60% grouping and 60% spread improvement. Accuracy resets after not firing for a short time."
 
 func _a(ship: Ship):
-	# for sec: SecSubController in ship.secondary_controller.sub_controllers:
-	# 	var params: GunParams = sec.params.dynamic_mod as GunParams
-	# 	# params.v_grouping_mod = grouping_multiplier
-	# 	# params.h_grouping_mod = grouping_multiplier
-	# 	# params.base_spread_mod = spread_multiplier
-	# 	sec.target_mod.h_grouping = grouping_multiplier
-	# 	sec.target_mod.v_grouping = grouping_multiplier
-	# 	sec.target_mod.base_spread = spread_multiplier
-	# 	params.reload_time *= 0.9
-
 	_ship.secondary_controller.target_mod.h_grouping = grouping_multiplier
 	_ship.secondary_controller.target_mod.v_grouping = grouping_multiplier
 	_ship.secondary_controller.target_mod.base_spread = spread_multiplier
@@ -31,7 +21,7 @@ func _a(ship: Ship):
 
 var num_enemies = 0
 var priority_target: Ship = null
-const accuracy_buildup_time = 35.0
+const accuracy_buildup_time = 40.0
 const accuracy_falloff_time = 50.0
 const accuracy_decay_time = 10.0
 var accuracy_buildup: float = 0.0
@@ -83,10 +73,10 @@ func _proc(_delta: float) -> void:
 	# 	accuracy_timer = max(0.0, accuracy_timer - _delta)
 	# 	grouping_multiplier = max(1.0, grouping_multiplier * 0.95)
 	# 	spread_multiplier = min(1.0, spread_multiplier * 1.05)
-			
+
 		# if (sec.params.params() as GunParams)._range > max_secondary_range:
 		# 	max_secondary_range = (sec.params.params() as GunParams)._range
-	
+
 	# filter out enemies that are out of secondary range
 	# enemies = enemies.filter(func (enemy) -> bool:
 	# 	return _ship.global_position.distance_to(enemy.global_position) < max_secondary_range

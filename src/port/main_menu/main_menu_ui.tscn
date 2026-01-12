@@ -1,0 +1,161 @@
+[gd_scene load_steps=6 format=3 uid="uid://davxh8pj063uw"]
+
+[ext_resource type="Script" uid="uid://budq4bhs6x0g1" path="res://src/port/main_menu/main_menu_ui.gd" id="1_ui_script"]
+[ext_resource type="PackedScene" uid="uid://bu6esupokhxqv" path="res://src/port/main_menu/ship_tab.tscn" id="2_ship_tab"]
+[ext_resource type="PackedScene" uid="uid://cxgx5p7j582qa" path="res://src/port/main_menu/upgrade_tab.tscn" id="3_upgrade_tab"]
+[ext_resource type="PackedScene" uid="uid://dtynepuhssiks" path="res://src/port/main_menu/commander_skills_tab.tscn" id="4_commander_tab"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_7nxx5"]
+
+[node name="MainMenuUI" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ui_script")
+
+[node name="TopBar" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 50.0
+grow_horizontal = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="TopBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 5.0
+offset_right = -10.0
+offset_bottom = -5.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="NameLabel" type="Label" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Player:"
+vertical_alignment = 1
+
+[node name="NameValue" type="Label" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Default Player"
+vertical_alignment = 1
+
+[node name="Spacer" type="Control" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConnectButton" type="Button" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Multiplayer"
+
+[node name="SinglePlayerButton" type="Button" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Single Player"
+
+[node name="ReplayButton" type="Button" parent="TopBar/HBoxContainer"]
+layout_mode = 2
+text = "Replay"
+
+[node name="StatusLabel" type="Label" parent="TopBar"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -50.0
+offset_top = 5.0
+offset_right = 50.0
+offset_bottom = 28.0
+grow_horizontal = 2
+grow_vertical = 0
+horizontal_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 49.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 2
+
+[node name="TabContainer" type="TabContainer" parent="HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxEmpty_7nxx5")
+current_tab = 0
+
+[node name="Ship" parent="HBoxContainer/TabContainer" instance=ExtResource("2_ship_tab")]
+layout_mode = 2
+metadata/_tab_index = 0
+
+[node name="Upgrades" parent="HBoxContainer/TabContainer" instance=ExtResource("3_upgrade_tab")]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 1
+
+[node name="Commander Skills" parent="HBoxContainer/TabContainer" instance=ExtResource("4_commander_tab")]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 2
+
+[node name="StatsPanel" type="Panel" parent="HBoxContainer"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="HBoxContainer/StatsPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+text = "Ship Stats"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="SpeedLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+text = "Speed:"
+
+[node name="SpeedBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+max_value = 1.0
+value = 0.4
+show_percentage = false
+
+[node name="ArmorLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+text = "Armor:"
+
+[node name="ArmorBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+max_value = 1.0
+value = 0.6
+show_percentage = false
+
+[node name="FirepowerLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+text = "Firepower:"
+
+[node name="FirepowerBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+layout_mode = 2
+max_value = 1.0
+value = 0.7
+show_percentage = false

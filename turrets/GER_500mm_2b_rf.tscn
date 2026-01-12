@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://geicgbdeyrwl" path="res://turrets/glb/GER_500mm_2b_rf.glb" id="1_wbeb2"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_goysy"]
-[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://ShipModels/Armor_viewer_material.tres" id="3_goysy"]
+[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="3_goysy"]
 
 [node name="GER_500mm_2b_rf" instance=ExtResource("1_wbeb2")]
 script = ExtResource("2_goysy")

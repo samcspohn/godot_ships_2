@@ -16,11 +16,6 @@ class_name GunParams
 # @export var v_grouping_mod: float = 1.0
 # @export var base_spread_mod: float = 1.0
 
-func _init() -> void:
-	reload_time = 1
-	traverse_speed = deg_to_rad(40)
-	elevation_speed = deg_to_rad(40)
-	_range = 20
 
 func from_params(gun_params: GunParams) -> void:
 	reload_time = gun_params.reload_time

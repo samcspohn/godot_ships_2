@@ -45,8 +45,8 @@ func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	
 	writer.put_32(id)
-	writer.put_float(cooldown_time)
-	writer.put_float(duration)
+	writer.put_double(cooldown_time)
+	writer.put_double(duration)
 	writer.put_32(max_stack)
 	writer.put_32(current_stack)
 	writer.put_32(type)
@@ -64,8 +64,8 @@ func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 	id = reader.get_32()
-	cooldown_time = reader.get_float()
-	duration = reader.get_float()
+	cooldown_time = reader.get_double()
+	duration = reader.get_double()
 	max_stack = reader.get_32()
 	current_stack = reader.get_32()
 	type = reader.get_32() as ConsumableType

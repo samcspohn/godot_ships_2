@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://breanu3menb7j"
+path="res://.godot/imported/compute_particle_sort.glsl-6d6e6045dd5c204b5246b07b7dbc2a78.res"
+
+[deps]
+
+source_file="res://src/particles/shaders/compute_particle_sort.glsl"
+dest_files=["res://.godot/imported/compute_particle_sort.glsl-6d6e6045dd5c204b5246b07b7dbc2a78.res"]
+
+[params]
+

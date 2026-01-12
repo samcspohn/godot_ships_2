@@ -1,0 +1,178 @@
+[gd_scene load_steps=27 format=3 uid="uid://eovuir5enue4"]
+
+[ext_resource type="PackedScene" uid="uid://cd12snnrw56y0" path="res://Ships/Shimakaze/Shimakaze.glb" id="1_8273q"]
+[ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_x3pwv"]
+[ext_resource type="PackedScene" uid="uid://crqcxtlvo2tif" path="res://turrets/IJN_127mm_2b_3rd_yr.tscn" id="3_l33cj"]
+[ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="3_pxp4h"]
+[ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_o13ib"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="4_rq2cd"]
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_o13ib"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_nguxy"]
+[ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="7_nguxy"]
+[ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="7_s67vb"]
+[ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_q7yd3"]
+[ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="9_okiv0"]
+[ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="10_y8kxj"]
+[ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="11_56jcx"]
+
+[sub_resource type="Resource" id="Resource_nguxy"]
+resource_local_to_scene = true
+script = ExtResource("3_pxp4h")
+pool1 = 2000.0
+pool2 = 20000.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_s67vb"]
+resource_local_to_scene = true
+script = ExtResource("3_pxp4h")
+pool1 = 1788.0
+pool2 = 3576.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_pnq28"]
+resource_local_to_scene = true
+script = ExtResource("3_pxp4h")
+pool1 = 895.0
+pool2 = 1790.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_u1184"]
+resource_local_to_scene = true
+script = ExtResource("3_pxp4h")
+pool1 = 895.0
+pool2 = 1790.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_8826j"]
+resource_local_to_scene = true
+script = ExtResource("3_pxp4h")
+pool1 = 895.0
+pool2 = 1790.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_q7yd3"]
+resource_local_to_scene = true
+script = ExtResource("4_o13ib")
+radius = 4000.0
+bloom_duration = 12.0
+metadata/_custom_type_script = "uid://bmckcfm6ohb58"
+
+[sub_resource type="Resource" id="Resource_okiv0"]
+resource_local_to_scene = true
+script = ExtResource("6_nguxy")
+speed = 910.0
+drag = 0.06
+damage = 2000.0
+size = 2.0
+caliber = 127.0
+mass = 20.3
+fire_buildup = 7.0
+type = 0
+overmatch = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[sub_resource type="Resource" id="Resource_56jcx"]
+script = ExtResource("5_o13ib")
+reload_time = 7.0
+traverse_speed = 5.0
+elevation_speed = 5.0
+_range = 10000.0
+shell1 = SubResource("Resource_okiv0")
+shell2 = SubResource("Resource_okiv0")
+h_grouping = 2.1
+v_grouping = 2.1
+base_spread = 0.005
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
+
+[sub_resource type="Resource" id="Resource_qjvt5"]
+script = ExtResource("7_s67vb")
+dmg_rate = 0.02
+dur = 50.0
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
+
+[sub_resource type="Resource" id="Resource_ydll1"]
+script = ExtResource("9_okiv0")
+metadata/_custom_type_script = "uid://cvrvionelmhv6"
+
+[sub_resource type="Resource" id="Resource_22e6m"]
+script = ExtResource("10_y8kxj")
+metadata/_custom_type_script = "uid://drnfyeps8j1r0"
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_8273q"]
+size = Vector3(11.2, 14.6533, 133.4914)
+
+[node name="ship" instance=ExtResource("1_8273q")]
+mass = 3353000.0
+ship_model_glb_path = "uid://cd12snnrw56y0"
+
+[node name="Modules" parent="." index="0" instance=ExtResource("2_x3pwv")]
+
+[node name="HPManager" parent="Modules" index="0"]
+max_hp = 6706.0
+citadel = SubResource("Resource_nguxy")
+casemate = SubResource("Resource_s67vb")
+bow = SubResource("Resource_pnq28")
+stern = SubResource("Resource_u1184")
+superstructure = SubResource("Resource_8826j")
+
+[node name="Concealment" parent="Modules" index="1"]
+params = SubResource("Resource_q7yd3")
+
+[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+params = SubResource("Resource_56jcx")
+guns = [NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr/IJN_127mm_2b_3rd_yr"), NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr_001/IJN_127mm_2b_3rd_yr_001"), NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr_002/IJN_127mm_2b_3rd_yr_002")]
+
+[node name="MovementController" parent="Modules" index="4"]
+max_speed_knots = 41.0
+acceleration_time = 15.0
+deceleration_time = 12.0
+rudder_response_time = 5.0
+
+[node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
+params = SubResource("Resource_qjvt5")
+fires = [NodePath("../../Fires/Fire"), NodePath("../../Fires/Fire2"), NodePath("../../Fires/Fire3"), NodePath("../../Fires/Fire4")]
+
+[node name="ConsumableManager" parent="Modules" index="6"]
+equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_ydll1"), SubResource("Resource_22e6m")])
+
+[node name="Upgrades" parent="Modules" index="7"]
+upgrades = Array[ExtResource("11_56jcx")]([null, null, null])
+
+[node name="Fires" type="Node3D" parent="." index="1"]
+
+[node name="Fire" parent="Fires" index="0" instance=ExtResource("7_nguxy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 5.28098, -50.400265)
+
+[node name="Fire2" parent="Fires" index="1" instance=ExtResource("7_nguxy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 5.142741, -25.379156)
+
+[node name="Fire3" parent="Fires" index="2" instance=ExtResource("7_nguxy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 2.3779774, 14.502558)
+
+[node name="Fire4" parent="Fires" index="3" instance=ExtResource("7_nguxy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 2.5162125, 51.135674)
+
+[node name="Superstructure_col" parent="." index="4"]
+layers = 0
+
+[node name="IJN_127mm_2b_3rd_yr" type="Node3D" parent="TurretMount_IJN_127mm_2b_3rd_yr" index="0" instance=ExtResource("3_l33cj")]
+script = ExtResource("4_rq2cd")
+min_rotation_angle = 3.466413074652885
+max_rotation_angle = 2.7870165630889936
+
+[node name="IJN_127mm_2b_3rd_yr_001" type="Node3D" parent="TurretMount_IJN_127mm_2b_3rd_yr_001" index="0" instance=ExtResource("3_l33cj")]
+script = ExtResource("4_rq2cd")
+min_rotation_angle = 0.3983302351100093
+max_rotation_angle = 5.886675619346533
+
+[node name="IJN_127mm_2b_3rd_yr_002" type="Node3D" parent="TurretMount_IJN_127mm_2b_3rd_yr_002" index="0" instance=ExtResource("3_l33cj")]
+script = ExtResource("4_rq2cd")
+min_rotation_angle = 0.653058470700457
+max_rotation_angle = 5.705911526789212
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." index="19"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3032227, -2.257721)
+shape = SubResource("BoxShape3D_8273q")
+
+[editable path="Modules"]

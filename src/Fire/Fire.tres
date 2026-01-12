@@ -3,9 +3,9 @@
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="1_icpme"]
 
 [resource]
+resource_local_to_scene = true
 script = ExtResource("1_icpme")
 dmg_rate = 0.002
 dur = 50.0
 max_buildup = 150.0
-buildup_reduction_rate = 0.005
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"

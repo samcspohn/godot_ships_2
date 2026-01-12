@@ -1,0 +1,2074 @@
+[gd_scene load_steps=20 format=3 uid="uid://b8j0h3k7w5u2e"]
+
+[ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_kk7j4"]
+[ext_resource type="Texture2D" uid="uid://b0mbwillllaha" path="res://circle.png" id="2_oxqcb"]
+[ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="2_v8ncv"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_secondary_bg"]
+bg_color = Color(0.134, 0.212, 0.178, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_main_bg"]
+bg_color = Color(0.24, 0.32, 0.24, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_shatter_bg"]
+bg_color = Color(0.32, 0.08, 0.08, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_penetration_bg"]
+bg_color = Color(0.4, 0.4, 0.4, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_overpenetration_bg"]
+bg_color = Color(0.4, 0.32, 0.08, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ricochet_bg"]
+bg_color = Color(0.24, 0.24, 0.4, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_citadel_bg"]
+bg_color = Color(0.142, 0.142, 0.142, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_tracker_bg"]
+bg_color = Color(0.1, 0.1, 0.1, 0.8)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_bg"]
+bg_color = Color(0.3, 0.3, 0.3, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.5, 0.5, 0.5, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reload_fill"]
+bg_color = Color(1, 1, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp_bg"]
+bg_color = Color(0.2, 0.2, 0.2, 0.8)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.5, 0.5, 0.5, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hp_fill"]
+bg_color = Color(0.2, 0.9, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ship_enemy_fill"]
+bg_color = Color(0.9, 0.2, 0.2, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ship_friendly_fill"]
+bg_color = Color(0.2, 0.9, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_bg"]
+bg_color = Color(0.15, 0.15, 0.15, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_friendly"]
+bg_color = Color(0.2, 0.9, 0.4, 1)
+
+[node name="CameraUI" type="CanvasLayer"]
+script = ExtResource("1_kk7j4")
+reloading_gun_color = Color(1, 0.95, 0, 1)
+ready_gun_color = Color(0, 0.96271867, 0.79062206, 1)
+valid_cannot_fire_color_mod = 0.85
+invalid_cannot_fire_color_mod = 0.65
+
+[node name="MainContainer" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="VisibilityIndicator" type="ColorRect" parent="MainContainer"]
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.75
+anchor_top = 0.25
+anchor_right = 0.75
+anchor_bottom = 0.25
+offset_left = -60.0
+offset_top = -10.0
+offset_right = -30.0
+offset_bottom = 20.0
+color = Color(1, 1, 0, 0.8)
+
+[node name="CrosshairContainer" type="Control" parent="MainContainer"]
+z_index = 2
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+pivot_offset = Vector2(20, 20)
+mouse_filter = 2
+
+[node name="CrosshairCenter" type="Control" parent="MainContainer/CrosshairContainer"]
+z_index = 2
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="TargetInfoContainer" type="HBoxContainer" parent="MainContainer/CrosshairContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -50.0
+offset_top = 25.0
+offset_right = 50.0
+offset_bottom = 75.0
+grow_horizontal = 2
+grow_vertical = 2
+alignment = 1
+
+[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+layout_mode = 2
+
+[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
+layout_mode = 2
+text = "-- s"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
+layout_mode = 2
+text = "-- m"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TargetInfo2" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+layout_mode = 2
+
+[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2"]
+layout_mode = 2
+text = "--mm"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer"]
+z_index = 1
+layout_mode = 0
+offset_left = 85.0
+offset_top = -17.0
+offset_right = 97.0
+offset_bottom = -5.0
+rotation = 0.7853982
+
+[node name="GunIndicator" type="TextureProgressBar" parent="MainContainer/CrosshairContainer"]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -127.999985
+offset_top = -127.999985
+offset_right = 128.00002
+offset_bottom = 128.00002
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.125, 0.125)
+pivot_offset = Vector2(128, 128)
+max_value = 1.0
+step = 0.01
+value = 0.5
+fill_mode = 5
+radial_fill_degrees = 180.0
+texture_under = ExtResource("2_oxqcb")
+texture_progress = ExtResource("2_oxqcb")
+tint_under = Color(1, 1, 1, 0.42352942)
+metadata/_edit_use_anchors_ = true
+
+[node name="AngleLabel" type="Label" parent="MainContainer/CrosshairContainer/GunIndicator"]
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -15.0
+offset_top = -15.0
+offset_right = 15.0
+offset_bottom = 15.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(7.1429, 7.1429)
+pivot_offset = Vector2(15, 15)
+text = "--.-°"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -150.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 150.0
+grow_horizontal = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
+layout_mode = 2
+
+[node name="SecondaryCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecondaryBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_secondary_bg")
+
+[node name="SecondaryContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecondarySec" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.33523, 0.530682, 0.445213, 1)
+theme_override_font_sizes/font_size = 24
+text = "SEC"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecondaryCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="MainCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
+custom_minimum_size = Vector2(80, 40)
+layout_mode = 2
+
+[node name="MainBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_main_bg")
+
+[node name="MainContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MainMain" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -30.5
+offset_top = -17.0
+offset_right = 30.5
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.6, 0.8, 0.6, 1)
+theme_override_font_sizes/font_size = 24
+text = "MAIN"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MainCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -17.5
+offset_top = -15.0
+offset_right = -9.5
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="FragCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
+custom_minimum_size = Vector2(80, 40)
+layout_mode = 2
+
+[node name="FragBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
+
+[node name="FragContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="FragFRAG" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -30.5
+offset_top = -17.0
+offset_right = 30.5
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.284297, 0.346101, 1)
+theme_override_font_sizes/font_size = 24
+text = "FRAG"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FragCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -17.5
+offset_top = -15.0
+offset_right = -9.5
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/HBoxContainer"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "D"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/DamageCounter"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0,000,000"
+horizontal_alignment = 2
+
+[node name="MainVBox" type="VBoxContainer" parent="MainContainer/TopRightPanel"]
+visible = false
+layout_mode = 2
+
+[node name="MainHitCounters" type="HBoxContainer" parent="MainContainer/TopRightPanel/MainVBox"]
+layout_mode = 2
+
+[node name="PenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="PenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
+
+[node name="PenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PenetrationP" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "P"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="OverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="OverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
+
+[node name="OverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="OverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "O"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="ShatterCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="ShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
+
+[node name="ShatterContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ShatterS" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "S"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ShatterCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="RicochetCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="RicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
+
+[node name="RicochetContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RicochetR" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RicochetCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="CitadelCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="CitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
+
+[node name="CitadelContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CitadelC" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
+theme_override_font_sizes/font_size = 24
+text = "C"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CitadelCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/MainVBox"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/MainVBox/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Damage"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/MainVBox/DamageCounter"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0,000,000"
+horizontal_alignment = 2
+
+[node name="SecondaryVBox" type="VBoxContainer" parent="MainContainer/TopRightPanel"]
+visible = false
+layout_mode = 2
+
+[node name="SecondaryHitCounters" type="HBoxContainer" parent="MainContainer/TopRightPanel/SecondaryVBox"]
+layout_mode = 2
+
+[node name="SecPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecPenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
+
+[node name="SecPenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecPenetrationP" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "P"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecPenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecOverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
+
+[node name="SecOverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecOverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "O"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecOverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecShatterCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
+
+[node name="SecShatterContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecShatterS" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "S"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecShatterCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecRicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
+
+[node name="SecRicochetContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecRicochetR" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecRicochetCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecCitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
+
+[node name="SecCitadelContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecCitadelC" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
+theme_override_font_sizes/font_size = 24
+text = "C"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/SecondaryVBox"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Damage"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/DamageCounter"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0,000,000"
+horizontal_alignment = 2
+
+[node name="MainCounterTemp" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+alignment = 2
+
+[node name="TempPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="PenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
+
+[node name="PenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PenetrationP" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "P"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="OverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
+
+[node name="OverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="OverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "O"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempShatterCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="ShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
+
+[node name="ShatterContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ShatterS" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "S"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ShatterCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="RicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
+
+[node name="RicochetContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RicochetR" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RicochetCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="CitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
+
+[node name="CitadelContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CitadelC" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
+theme_override_font_sizes/font_size = 24
+text = "C"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CitadelCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="Spacer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+
+[node name="SecCounterTemp" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+alignment = 2
+
+[node name="TempSecPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecPenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
+
+[node name="SecPenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecPenetrationP" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "P"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecPenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecOverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
+
+[node name="SecOverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecOverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "O"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecOverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecShatterCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
+
+[node name="SecShatterContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecShatterS" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 24
+text = "S"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecShatterCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecRicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
+
+[node name="SecRicochetContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecRicochetR" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecRicochetCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecCitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
+
+[node name="SecCitadelContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecCitadelC" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
+theme_override_font_sizes/font_size = 24
+text = "C"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="Spacer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+custom_minimum_size = Vector2(60, 0)
+layout_mode = 2
+
+[node name="TopLeftPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+offset_right = 190.0
+offset_bottom = 90.0
+
+[node name="FPSLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "FPS: --"
+
+[node name="CameraAngleLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Angle: --"
+
+[node name="TopCenterPanel" type="Control" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_right = 200.0
+offset_bottom = 55.0
+grow_horizontal = 2
+
+[node name="TeamTrackerBackground" type="Panel" parent="MainContainer/TopCenterPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_team_tracker_bg")
+
+[node name="TeamTrackerContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="FriendlyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+alignment = 2
+
+[node name="VSeparator" type="VSeparator" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="EnemyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+
+[node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -153.0
+offset_right = 220.0
+offset_bottom = -20.0
+grow_vertical = 0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/BottomLeftPanel"]
+layout_mode = 2
+
+[node name="ShipStatusContainer" type="VBoxContainer" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="SpeedLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Speed: -- knots"
+
+[node name="ThrottleLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Throttle: Stop"
+
+[node name="RudderLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Rudder: Center"
+
+[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+custom_minimum_size = Vector2(150, 20)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+editable = false
+
+[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+custom_minimum_size = Vector2(20, 100)
+layout_mode = 2
+min_value = -1.0
+max_value = 4.0
+step = 0.1
+editable = false
+
+[node name="BottomCenterPanel" type="VBoxContainer" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -110.0
+offset_top = -120.0
+offset_right = 110.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel"]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer"]
+custom_minimum_size = Vector2(60, 8)
+layout_mode = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_reload_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_reload_fill")
+max_value = 1.0
+value = 1.0
+show_percentage = false
+
+[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -20.0
+offset_top = -22.0
+offset_right = 20.0
+offset_bottom = 1.0
+grow_horizontal = 2
+text = "10.0"
+
+[node name="HPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer"]
+custom_minimum_size = Vector2(200, 20)
+layout_mode = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_hp_fill")
+value = 100.0
+show_percentage = false
+
+[node name="HPLabel" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/HPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="UsableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel"]
+layout_mode = 2
+
+[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
+layout_mode = 2
+size_flags_vertical = 8
+
+[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+toggle_mode = true
+button_pressed = true
+text = "AP"
+
+[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+toggle_mode = true
+text = "HE"
+
+[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+toggle_mode = true
+text = "TP"
+
+[node name="ConsumableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
+custom_minimum_size = Vector2(0, 56)
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="ConsumableTemplate" type="TextureButton" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer"]
+custom_minimum_size = Vector2(56, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+texture_normal = ExtResource("2_v8ncv")
+ignore_texture_size = true
+stretch_mode = 0
+
+[node name="ProgressBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+value = 50.0
+rounded = true
+fill_mode = 3
+
+[node name="KeyboardShortcutLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -13.0
+offset_bottom = 14.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 10
+text = "R"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CountLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -14.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 10
+text = "3"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="BottomRightPanel" type="Control" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -10.0
+offset_top = -10.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="ShipUITemplates" type="GridContainer" parent="MainContainer"]
+layout_mode = 1
+offset_left = 100.0
+offset_top = 100.0
+offset_right = 200.0
+offset_bottom = 200.0
+
+[node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+z_index = -1
+y_sort_enabled = true
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
+
+[node name="EnemyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 12
+text = "Enemy Ship"
+horizontal_alignment = 1
+
+[node name="EnemyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -25.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_ship_enemy_fill")
+value = 100.0
+show_percentage = false
+
+[node name="EnemyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyHPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 10
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="EnemyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_top = -24.9
+offset_right = 19.999512
+offset_bottom = -4.8999996
+grow_horizontal = 2
+color = Color(1, 1, 1, 0)
+
+[node name="EnemyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyTargetIndicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "◉"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+z_index = -1
+y_sort_enabled = true
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
+
+[node name="FriendlyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 12
+text = "Friendly Ship"
+horizontal_alignment = 1
+
+[node name="FriendlyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -25.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_ship_friendly_fill")
+value = 100.0
+show_percentage = false
+
+[node name="FriendlyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyHPBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_font_sizes/font_size = 10
+text = "100/100"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FriendlyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+visible = false
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = 5.0
+offset_top = -5.0
+offset_right = 25.0
+offset_bottom = 15.0
+grow_horizontal = 0
+color = Color(1, 0.6, 0, 0.9)
+
+[node name="FriendlyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyTargetIndicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 12
+text = "◉"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TeamTrackerTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+custom_minimum_size = Vector2(50, 35)
+layout_mode = 2
+size_flags_horizontal = 0
+size_flags_vertical = 0
+
+[node name="ShipIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 20.0
+grow_horizontal = 2
+color = Color(0.2, 0.9, 0.4, 0.8)
+
+[node name="HPIndicator" type="ProgressBar" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+custom_minimum_size = Vector2(50, 8)
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -25.0
+offset_top = -10.0
+offset_right = 25.0
+offset_bottom = -2.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_styles/background = SubResource("StyleBoxFlat_team_hp_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_team_hp_friendly")
+value = 100.0
+show_percentage = false
+
+[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -160.0
+offset_top = -118.0
+offset_right = -145.0
+offset_bottom = -102.0
+grow_horizontal = 2
+grow_vertical = 0

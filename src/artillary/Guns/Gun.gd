@@ -9,6 +9,7 @@ extends Node3D
 @export var max_rotation_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
+var sound: AudioStreamPlayer3D
 # @export var dispersion_calculator: ArtilleryDispersion
 var _aim_point: Vector3
 var reload: float = 0.0
@@ -53,18 +54,19 @@ func to_dict() -> Dictionary:
 		"rl": reload
 	}
 
-func to_bytes() -> PackedByteArray:
+func to_bytes(full: bool) -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
-	
+
 	writer.put_float(rotation.y)
 
 	writer.put_float(barrel.rotation.x)
-	
-	writer.put_u8(1 if can_fire else 0)
-	writer.put_u8(1 if _valid_target else 0)
-	
-	writer.put_float(reload)
-	
+
+	if full:
+		writer.put_u8(1 if can_fire else 0)
+		writer.put_u8(1 if _valid_target else 0)
+
+		writer.put_float(reload)
+
 	return writer.get_data_array()
 
 func from_dict(d: Dictionary) -> void:
@@ -74,17 +76,19 @@ func from_dict(d: Dictionary) -> void:
 	_valid_target = d.v
 	reload = d.rl
 
-func from_bytes(b: PackedByteArray) -> void:
+func from_bytes(b: PackedByteArray, full: bool) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	
+
 	rotation.y = reader.get_float()
-	
+
 	barrel.rotation.x = reader.get_float()
-	
+
+	if not full:
+		return
 	can_fire = reader.get_u8() == 1
 	_valid_target = reader.get_u8() == 1
-	
+
 	reload = reader.get_float()
 
 func get_params() -> GunParams:
@@ -103,7 +107,7 @@ func cleanup():
 	var grand_parent = self.get_parent().get_parent()
 	var parent = self.get_parent()
 	var saved_transform = self.global_transform
-	
+
 	# Remove self from parent first
 	parent.remove_child(self)
 	# Add self to grandparent
@@ -111,7 +115,7 @@ func cleanup():
 	# Now safe to remove and free the old parent
 	grand_parent.remove_child(parent)
 	parent.queue_free()
-	
+
 	# Restore transform and owner
 	self.global_transform = saved_transform
 	self.owner = grand_parent
@@ -133,24 +137,30 @@ func _ready() -> void:
 
 
 	#print("max range: ", a)
-	
+
+	if sound == null:
+		sound = AudioStreamPlayer3D.new()
+		sound.stream = preload("res://audio/explosion1.wav")
+		sound.max_polyphony = 1
+		add_child(sound)
+		# get_tree().root.add_child(sound)
+
 	# Set up muzzles
 	update_barrels()
-	
+
 	# Set processing mode based on authority
 	if _Utils.authority():
-		process_mode = Node.PROCESS_MODE_INHERIT
+		set_physics_process(true)
 	else:
 		# We still need to receive updates, just not run physics
-		process_mode = Node.PROCESS_MODE_INHERIT
 		set_physics_process(false)
 
 	# print(rad_to_deg(base_rotation))
-	
+
 	#_ship = get_parent().get_parent() as Ship
 	initialize_armor_system.call_deferred()
 	cleanup.call_deferred()
-	
+
 
 
 
@@ -158,12 +168,12 @@ func _ready() -> void:
 func update_barrels() -> void:
 	# Clear existing muzzles array
 	muzzles.clear()
-	
+
 	# Check if barrel exists
 	if not is_node_ready():
 		# We might be in the editor, just return
 		return
-	
+
 	for muzzle in barrel.get_children():
 		# if muzzle.name.contains("Muzzle"):
 		muzzles.append(muzzle)
@@ -179,10 +189,10 @@ func _physics_process(delta: float) -> void:
 func normalize_angle_0_2pi(angle: float) -> float:
 	while angle < 0:
 		angle += TAU
-	
+
 	while angle >= TAU:
 		angle -= TAU
-	
+
 	return angle
 
 
@@ -191,13 +201,13 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 	# If rotation limits are not enabled, return the desired delta as is
 	if not rotation_limits_enabled or desired_delta == 0:
 		return [desired_delta, false]
-	
+
 	# Normalize the current angle to [0, 2π]
 	var normalized_current = normalize_angle_0_2pi(current_angle)
-	
+
 	# Calculate the target angle after applying the delta
 	var target_angle = normalize_angle_0_2pi(normalized_current + desired_delta)
-	
+
 	# Check if the target angle is in the valid region
 	var is_target_valid = false
 	if min_rotation_angle <= max_rotation_angle:
@@ -206,12 +216,12 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 	else:
 		# Valid region wraps around: [min, 2π] ∪ [0, max]
 		is_target_valid = (target_angle >= min_rotation_angle or target_angle <= max_rotation_angle)
-	
+
 	# If target is valid, check if the rotation path crosses the invalid region
 	if is_target_valid:
 		# Check if we're rotating through the invalid region
 		var crosses_invalid = false
-		
+
 		if min_rotation_angle <= max_rotation_angle:
 			# The invalid region is [0, min) ∪ (max, 2π)
 			var invalid_region = TAU - (max_rotation_angle - min_rotation_angle)
@@ -236,7 +246,7 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 					# Starting in lower valid region, can't cross invalid by going counter-clockwise
 					crosses_invalid = false
 			# print("Crosses invalid (wrap): ", crosses_invalid)
-				
+
 		if crosses_invalid:
 			# If we would cross the invalid region, go the other way around the circle
 			if desired_delta > 0:
@@ -252,7 +262,7 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 		# Target is in the invalid region, find the nearest valid boundary
 		var dist_to_min = min(abs(target_angle - min_rotation_angle), TAU - abs(target_angle - min_rotation_angle))
 		var dist_to_max = min(abs(target_angle - max_rotation_angle), TAU - abs(target_angle - max_rotation_angle))
-		
+
 		if min_rotation_angle <= max_rotation_angle:
 			if dist_to_min <= dist_to_max:
 				# Min angle is closer, go to min angle
@@ -272,10 +282,10 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 func clamp_to_rotation_limits() -> void:
 	if not rotation_limits_enabled:
 		return
-		
+
 	# Normalize the current angle to [0, 2π]
 	var normalized_current = normalize_angle_0_2pi(rotation.y)
-	
+
 	# Check if the current angle is in the valid region
 	var is_valid = false
 	if min_rotation_angle <= max_rotation_angle:
@@ -284,12 +294,12 @@ func clamp_to_rotation_limits() -> void:
 	else:
 		# Valid region wraps around: [min, 2π] ∪ [0, max]
 		is_valid = (normalized_current >= min_rotation_angle or normalized_current <= max_rotation_angle)
-	
+
 	# If current angle is not valid, clamp to nearest boundary
 	if not is_valid:
 		var dist_to_min = min(abs(normalized_current - min_rotation_angle), TAU - abs(normalized_current - min_rotation_angle))
 		var dist_to_max = min(abs(normalized_current - max_rotation_angle), TAU - abs(normalized_current - max_rotation_angle))
-		
+
 		if dist_to_min <= dist_to_max:
 			# Min angle is closer
 			rotation.y = min_rotation_angle
@@ -304,21 +314,21 @@ func normalize_angle_0_2pi_simple(angle: float) -> float:
 func apply_rotation_limits_simple(current_angle: float, desired_delta: float) -> Array:
 	if not rotation_limits_enabled or desired_delta == 0:
 		return [desired_delta, false]
-	
+
 	var current = normalize_angle_0_2pi_simple(current_angle)
 	var target = normalize_angle_0_2pi_simple(current + desired_delta)
-	
+
 	# Check if target is in valid range
 	var is_valid: bool
 	if min_rotation_angle <= max_rotation_angle:
 		is_valid = target >= min_rotation_angle and target <= max_rotation_angle
 	else:
 		is_valid = target >= min_rotation_angle or target <= max_rotation_angle
-	
+
 	if is_valid:
 		# Check if shortest rotation path crosses invalid region
 		var crosses_invalid = false
-		
+
 		if min_rotation_angle <= max_rotation_angle:
 			# Valid region is [min, max], invalid regions are [0, min) and (max, 2π]
 			# Check if we cross through either invalid region
@@ -329,7 +339,7 @@ func apply_rotation_limits_simple(current_angle: float, desired_delta: float) ->
 					var steps_to_max = max_rotation_angle - current
 					crosses_invalid = desired_delta > steps_to_max and desired_delta > (TAU - current + target)
 			else:
-				# Going counter-clockwise - check if we cross from valid region through invalid back to valid  
+				# Going counter-clockwise - check if we cross from valid region through invalid back to valid
 				if current >= min_rotation_angle and current <= max_rotation_angle:
 					# We're in valid region, check if we go below min then wrap to target
 					var steps_to_min = current - min_rotation_angle
@@ -340,61 +350,69 @@ func apply_rotation_limits_simple(current_angle: float, desired_delta: float) ->
 				# Starting in lower valid region, check if we cross invalid region to upper valid region
 				crosses_invalid = target >= min_rotation_angle and (current + desired_delta) > min_rotation_angle
 			elif desired_delta < 0 and current >= min_rotation_angle:
-				# Starting in upper valid region, check if we cross invalid region to lower valid region  
+				# Starting in upper valid region, check if we cross invalid region to lower valid region
 				crosses_invalid = target <= max_rotation_angle and (current + desired_delta) < max_rotation_angle
-		
+
 		if crosses_invalid:
 			# Take the longer path around the circle to avoid invalid region
 			return [desired_delta + (TAU if desired_delta < 0 else -TAU), false]
-		
+
 		return [desired_delta, false]
 	else:
 		# Target invalid, find nearest boundary
 		var to_min = min_rotation_angle - current
 		var to_max = max_rotation_angle - current
-		
+
 		# Normalize deltas to shortest path
 		if abs(to_min) > PI:
 			to_min += TAU if to_min < 0 else -TAU
 		if abs(to_max) > PI:
 			to_max += TAU if to_max < 0 else -TAU
-		
+
 		return [to_min if abs(to_min) <= abs(to_max) else to_max, true]
 
 func clamp_to_rotation_limits_simple() -> void:
 	if not rotation_limits_enabled:
 		return
-	
+
 	var current = normalize_angle_0_2pi_simple(rotation.y)
 	var is_valid: bool
-	
+
 	if min_rotation_angle <= max_rotation_angle:
 		is_valid = current >= min_rotation_angle and current <= max_rotation_angle
 	else:
 		is_valid = current >= min_rotation_angle or current <= max_rotation_angle
-	
+
 	if not is_valid:
 		var to_min = abs(current - min_rotation_angle)
 		var to_max = abs(current - max_rotation_angle)
-		
+
 		# Account for circular distance
 		to_min = min(to_min, TAU - to_min)
 		to_max = min(to_max, TAU - to_max)
-		
+
 		rotation.y = min_rotation_angle if to_min <= to_max else max_rotation_angle
 
-func return_to_base(delta: float) -> void:
+# returns true if turning
+func return_to_base(delta: float) -> bool:
 	# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
+	if disabled:
+		return false
 	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
 	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
 	var adjusted_angle = base_rotation - rotation.y
 	if abs(adjusted_angle) > PI:
 		adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
 	var turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
+
+	if abs(turret_angle_delta) < 0.001:
+		can_fire = false
+		return false
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
 	# clamp_to_rotation_limits()
 	can_fire = false
+	return true
 
 func get_angle_to_target(target: Vector3) -> float:
 	var forward: Vector3 = - global_basis.z.normalized()
@@ -408,6 +426,21 @@ func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, target, get_shell().speed, get_shell().drag)
 	if sol[0] != null and (target - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
+		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
+		if a[1]:
+			return false
+		return true
+	return false
+
+func get_leading_position(target: Vector3, target_velocity: Vector3):
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell().speed, get_shell().drag)
+	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
+		return sol[2]
+	return null
+
+func is_aimpoint_valid(aim_point: Vector3) -> bool:
+	if aim_point.distance_to(global_position) < get_params()._range:
+		var desired_local_angle_delta: float = get_angle_to_target(aim_point)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
 			return false
@@ -437,7 +470,7 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 		return
 	# Cache constants
 	# const TURRET_ROT_SPEED_DEG: float = 40.0
-	
+
 	# Calculate turret rotation
 	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
 	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
@@ -464,7 +497,7 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
-	
+
 	# Ensure rotation is within limits
 	# if not _return_to_base:
 	clamp_to_rotation_limits()
@@ -494,11 +527,11 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> vo
 		elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
 	if sol[0] == null:
 		elevation_delta = - max_elev_angle
-	
+
 	if is_nan(elevation_delta):
 		elevation_delta = 0.0
 	barrel.rotate(Vector3.RIGHT, elevation_delta)
-	
+
 	if abs(elevation_delta) < 0.02 && abs(desired_local_angle_delta) < 0.02 and _valid_target:
 		can_fire = true
 	else:
@@ -535,47 +568,48 @@ func fire(mod: TargetMod = null) -> void:
 				else:
 					pass
 					# print(aim)
+			_ship.concealment.bloom(get_params()._range)
 			reload = 0
 
 # @rpc("authority", "reliable")
 func fire_client(vel, pos, t, _id):
 	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-
-@rpc("authority", "call_remote", "reliable", 2)
-func fire_client2(data: PackedByteArray) -> void:
-	if data.size() != 36:
-		print("Invalid fire_client2 data size: ", data.size())
-		return
-	var stream = StreamPeerBuffer.new()
-	stream.data_array = data
-	var vel = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-	var pos = Vector3(stream.get_float(), stream.get_float(), stream.get_float())
-	var t = stream.get_double()
-	var _id = stream.get_32()
-	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-
-
-
+	sound.global_position = pos
+	var size_factor = get_shell().caliber * get_shell().caliber / 10000.0
+	# 380 -> 14.44
+	# 500 -> 25.0
+	# 150 -> 2.25
+	# 100 -> 1.0
+	var pitch_scale = 7.0 / size_factor
+	# 6 / 25 = 0.24
+	# 6 / 14.44 = 0.415
+	# 6 / 2.25 = 2.66
+	# 6 / 1 = 6.0
+	# smaller shells need more variance than larger ones
+	var dispersion
+	sound.pitch_scale = pitch_scale + (pitch_scale * pitch_scale) * randf_range(-0.1, 0.1)
+	sound.volume_linear = clamp(1.0 / pitch_scale + randf_range(-0.3, 0.3), 0.0, 10.0) + 1.0
+	sound.play()
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system - extract and load armor data"""
 	# print("🛡️ Initializing armor system for ship...")
-	
+
 	# Validate and resolve the GLB path
 	var resolved_glb_path = _ship.resolve_glb_path(ship_model_glb_path)
 	if resolved_glb_path.is_empty():
 		print("   ❌ Invalid or missing GLB path: ", ship_model_glb_path)
 		return
-	
+
 	# Create armor system instance
 	armor_system = ArmorSystemV2.new()
 	add_child(armor_system)
-	
+
 	# Determine paths
 	var model_name = resolved_glb_path.get_file().get_basename()
 	var ship_dir = resolved_glb_path.get_base_dir()
 	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
-	
+
 	# Check if armor JSON already exists
 	if FileAccess.file_exists(armor_json_path):
 		# print("   ✅ Found existing armor data, loading...")
@@ -594,16 +628,15 @@ func initialize_armor_system() -> void:
 	enable_backface_collision_recursive(self)
 	print("done")
 
-
 func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:
 	"""Extract armor data from GLB and save it locally"""
 	# Load the extractor
 	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
 	var extractor = extractor_script.new()
-	
+
 	# print("      Extracting armor data from GLB...")
 	var success = extractor.extract_armor_with_mapping_to_json(glb_path, armor_json_path)
-	
+
 	if success:
 		# Load the newly extracted data
 		success = armor_system.load_armor_data(armor_json_path)
@@ -614,7 +647,6 @@ func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> v
 			print("      ❌ Failed to load extracted armor data")
 	else:
 		print("      ❌ Armor extraction failed")
-
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
@@ -649,13 +681,12 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		# 	print("armor_part.collision_mask: ", armor_part.collision_mask)
 		# elif node.name == "Citadel":
 		# 	citadel = armor_part
-		
+
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
 
-
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
-	
+
 	var muzzles_pos = get_muzzles_position()
 	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
 	if sol[0] == null:
@@ -664,36 +695,6 @@ func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 	var flight_time = sol[1]
 	var can_shoot = sim_can_shoot_over_terrain_static(muzzles_pos, launch_vector, flight_time, get_shell().drag, _ship)
 	return can_shoot.can_shoot_over_terrain and can_shoot.can_shoot_over_ship
-	# shell_sim.start_position = muzzles_pos
-	# shell_sim.position = muzzles_pos
-	# sim_shell_in_flight = true
-	# var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
-	# if sol[0] == null:
-	# 	return false
-	# var launch_vector = sol[0]
-	# var flight_time = sol[1]
-	# var space_state = get_world_3d().direct_space_state
-	# var ray = PhysicsRayQueryParameters3D.new()
-	# ray.collide_with_bodies = true
-	# ray.collision_mask = 1
-	# var t = 1.0
-	# while t < flight_time + 1.0:
-	# 	ray.from = shell_sim.position
-	# 	ray.to = ProjectilePhysicsWithDrag.calculate_position_at_time(
-	# 		shell_sim.start_position,
-	# 		launch_vector,
-	# 		t,
-	# 		get_shell().drag,
-	# 	)
-	# 	# ray.collide_with_bodies = true
-	# 	# ray.collide_with_areas = false
-	# 	# ray.collision_mask # Collide with terrain only
-	# 	var result = space_state.intersect_ray(ray)
-	# 	if result.size() > 0 and result["position"].y > 0.00001:
-	# 		return false
-	# 	shell_sim.position = ray.to
-	# 	t += 1.0
-	# return true
 
 class ShootOver:
 	var can_shoot_over_terrain: bool
@@ -702,7 +703,7 @@ class ShootOver:
 	func _init(_terrain: bool, _ship: bool):
 		can_shoot_over_terrain = _terrain
 		can_shoot_over_ship = _ship
-		
+
 static func sim_can_shoot_over_terrain_static(
 	pos: Vector3,
 	launch_vector: Vector3,
