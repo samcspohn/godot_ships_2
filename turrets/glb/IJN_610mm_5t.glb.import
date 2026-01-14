@@ -13,7 +13,7 @@ dest_files=["res://.godot/imported/IJN_610mm_5t.glb-26ee9c98ef8885ed36fa5f5659e2
 
 [params]
 
-nodes/root_type=""
+nodes/root_type="TorpedoLauncher"
 nodes/root_name=""
 nodes/root_script=null
 nodes/apply_root_scale=true

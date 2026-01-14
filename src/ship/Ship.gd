@@ -6,13 +6,14 @@ var initialized: bool = false
 @onready var movement_controller: ShipMovementV2 = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
+@onready var torpedo_controller: TorpedoController = $Modules/TorpedoController
 @onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
 @onready var upgrades: Upgrades = $Modules/Upgrades
 @onready var skills: SkillsManager = $Modules/Skills
 @onready var concealment: Concealment = $Modules/Concealment
-var torpedo_launcher: TorpedoLauncher
+# var torpedo_launcher: TorpedoLauncher
 var stats: Stats
 var control
 var team: TeamEntity
@@ -63,7 +64,7 @@ func remove_dynamic_mod(mod_func):
 	update_dynamic_mods = true
 
 
-func _enable_guns():
+func _enable_weapons():
 	if !initialized:
 		await Engine.get_main_loop().process_frame
 	for g: Gun in artillery_controller.guns:
@@ -71,8 +72,11 @@ func _enable_guns():
 	for c in secondary_controller.sub_controllers:
 		for g: Gun in c.guns:
 			g.disabled = false
+	if torpedo_controller:
+		for tl in torpedo_controller.launchers:
+			tl.disabled = false
 
-func _disable_guns():
+func _disable_weapons():
 	if !initialized:
 		await Engine.get_main_loop().process_frame
 	for g: Gun in artillery_controller.guns:
@@ -80,6 +84,9 @@ func _disable_guns():
 	for c in secondary_controller.sub_controllers:
 		for g: Gun in c.guns:
 			g.disabled = true
+	if torpedo_controller:
+		for tl in torpedo_controller.launchers:
+			tl.disabled = true
 
 func _update_static_mods(): # called when changed
 	reset_mods.emit()
@@ -107,7 +114,7 @@ func _ready() -> void:
 	# movement_controller = $Modules/MovementController
 	# artillery_controller = $Modules/ArtilleryController
 	# health_controller = $Modules/HPManager
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
 	# consumable_manager = $Modules/ConsumableManager
 	consumable_manager.ship = self
 	# fire_manager = $Modules/FireManager
@@ -161,8 +168,8 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
-	if torpedo_launcher != null:
-		torpedo_launcher._aim(artillery_controller.aim_point, delta)
+	# if torpedo_launcher != null:
+	# 	torpedo_launcher._aim(artillery_controller.aim_point, delta)
 
 	for skill in skills.skills:
 		skill._proc(delta)
@@ -217,11 +224,15 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 				writer.put_var(g.to_bytes(false))
 
 	# Torpedo launcher data
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	writer.put_32(1 if torpedo_launcher != null else 0)
-	if torpedo_launcher != null:
-		var euler_tl = torpedo_launcher.global_basis.get_euler()
-		writer.put_var(euler_tl)
+	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# writer.put_32(1 if torpedo_launcher != null else 0)
+	# if torpedo_launcher != null:
+	# 	var euler_tl = torpedo_launcher.global_basis.get_euler()
+	# 	writer.put_var(euler_tl)
+	if torpedo_controller:
+		writer.put_32(torpedo_controller.launchers.size())
+		for tl in torpedo_controller.launchers:
+			writer.put_var(tl.to_bytes(false))
 
 	writer.put_32(multiplayer.get_unique_id())
 
@@ -296,11 +307,16 @@ func sync_player_data() -> PackedByteArray:
 			writer.put_var(g.to_bytes(true))
 
 	# Torpedo launcher data
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	if torpedo_launcher != null:
-		var euler_tl = torpedo_launcher.global_basis.get_euler()
-		writer.put_var(euler_tl)
-		# writer.put_var(torpedo_launcher.global_basis)
+	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# if torpedo_launcher != null:
+	# 	var euler_tl = torpedo_launcher.global_basis.get_euler()
+	# 	writer.put_var(euler_tl)
+	# 	# writer.put_var(torpedo_launcher.global_basis)
+
+	if torpedo_controller:
+		writer.put_32(torpedo_controller.launchers.size())
+		for tl in torpedo_controller.launchers:
+			writer.put_var(tl.to_bytes(true))
 
 	writer.put_var(concealment.to_bytes())
 
@@ -375,12 +391,19 @@ func sync2(b: PackedByteArray, friendly: bool):
 				g.from_bytes(gun_bytes, false)
 
 	# Torpedo launcher data
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	var has_torpedo_launcher: int = reader.get_32()
-	if has_torpedo_launcher == 1:
-		var euler_tl: Vector3 = reader.get_var()
-		if torpedo_launcher != null:
-			torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# var has_torpedo_launcher: int = reader.get_32()
+	# if has_torpedo_launcher == 1:
+	# 	var euler_tl: Vector3 = reader.get_var()
+	# 	if torpedo_launcher != null:
+	# 		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+
+	if torpedo_controller:
+		var tl_count: int = reader.get_32()
+		for tl in torpedo_controller.launchers:
+			var tl_bytes: PackedByteArray = reader.get_var()
+			tl.from_bytes(tl_bytes, false)
+
 	var p_id: int = reader.get_32()
 	# var stats_bytes: PackedByteArray = reader.get_var()
 	# stats.from_bytes(stats_bytes)
@@ -434,10 +457,15 @@ func sync_player(b: PackedByteArray):
 			g.from_bytes(gun_bytes, true)
 
 	# Torpedo launcher data
-	torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	if torpedo_launcher != null:
-		var euler_tl: Vector3 = reader.get_var()
-		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	# if torpedo_launcher != null:
+	# 	var euler_tl: Vector3 = reader.get_var()
+	# 	torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
+	if torpedo_controller:
+		var tl_count: int = reader.get_32()
+		for tl in torpedo_controller.launchers:
+			var tl_bytes: PackedByteArray = reader.get_var()
+			tl.from_bytes(tl_bytes, true)
 
 	concealment.from_bytes(reader.get_var())
 

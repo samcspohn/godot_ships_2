@@ -8,6 +8,7 @@ const GunIndicatorScene = preload("res://src/camera/gun_indicator.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera
+var player_controller: PlayerController
 
 @export var reloading_gun_color: Color = Color(1, 0, 0)
 @export var ready_gun_color: Color = Color(0, 1, 0)
@@ -179,11 +180,20 @@ func get_keyboard_shortcut_for_action(action_name: String) -> String:
 
 	return ""
 
-# Gun reload tracking
-var gun_reload_bars: Array[ProgressBar] = []
-var gun_indicators: Array[Control] = []
-var gun_reload_timers: Array[Label] = []
-var guns: Array[Gun] = []
+
+class Weapon:
+	var weapon: Turret
+	var reload_bar: ProgressBar
+	var indicator: Control
+	var reload_timer: Label
+
+# # Gun reload tracking
+# var gun_reload_bars: Array[ProgressBar] = []
+# var gun_indicators: Array[Control] = []
+# var gun_reload_timers: Array[Label] = []
+# var guns: Array[Gun] = []
+
+var weapons: Dictionary[Node, Array] = {} # Maps Controller to its Weapon data
 
 # Minimap
 var minimap: Minimap
@@ -249,7 +259,7 @@ func _ready():
 
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
-		setup_guns()
+		setup_weapons()
 
 	update_counters()
 
@@ -846,6 +856,7 @@ func update_ship_ui():
 	# 			print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
 
 	# Update each ship's UI
+	var secondary_offset = camera_controller._ship.secondary_controller.target_offset if camera_controller._ship and camera_controller._ship.secondary_controller else Vector3.ZERO
 	for ship in tracked_ships.keys():
 		if is_instance_valid(ship) and ship in ship_ui_elements:
 			var ui = ship_ui_elements[ship]
@@ -866,6 +877,7 @@ func update_ship_ui():
 			var is_targeted = (ship == current_secondary_target)
 			if ui.target_indicator.visible != is_targeted:
 				ui.target_indicator.visible = is_targeted
+			ui.target_indicator.get_child(0).text = "◉" if secondary_offset == Vector3.ZERO else "◎+"
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -1133,39 +1145,71 @@ func set_weapon_button_pressed(idx: int):
 		for i in range(weapon_buttons.size()):
 			weapon_buttons[i].button_pressed = (i == idx)
 
+func setup_weapon_controller(controller: Node):
+	if weapons.has(controller):
+		for weapon: Weapon in weapons[controller]:
+			if is_instance_valid(weapon):
+				weapon.indicator.queue_free()
+				weapon.reload_bar.queue_free()
+		weapons.erase(controller)
+
+	if not weapons.has(controller):
+		weapons[controller] = []
+	var hp_container = gun_reload_container.get_parent() as Control
+	var gun_container = gun_reload_container.duplicate()
+	gun_container.visible = true
+	for i in range(controller.weapons.size()):
+		var turret: Turret = controller.weapons[i]
+		var weapon_data = Weapon.new()
+		weapon_data.weapon = turret
+		weapon_data.indicator = GunIndicatorScene.instantiate()
+		weapon_data.reload_bar = reload_bar_template.duplicate()
+		weapon_data.indicator.visible = true
+		weapon_data.reload_bar.visible = true
+		weapons[controller].append(weapon_data)
+		crosshair_container.add_child(weapon_data.indicator)
+		gun_container.add_child(weapon_data.reload_bar)
+	hp_container.add_child(gun_container)
+	hp_container.move_child(gun_container, 0)
+
 # Gun reload bar management
-func setup_guns():
-	# Clear existing reload bars
-	for bar in gun_reload_bars:
-		if is_instance_valid(bar):
-			bar.queue_free()
-	for indicator in gun_indicators:
-		if is_instance_valid(indicator):
-			indicator.queue_free()
-	gun_reload_bars.clear()
-	gun_indicators.clear()
-	gun_reload_timers.clear()
+func setup_weapons():
+	# # Clear existing reload bars
+	# for bar in gun_reload_bars:
+	# 	if is_instance_valid(bar):
+	# 		bar.queue_free()
+	# for indicator in gun_indicators:
+	# 	if is_instance_valid(indicator):
+	# 		indicator.queue_free()
+	# gun_reload_bars.clear()
+	# gun_indicators.clear()
+	# # gun_reload_timers.clear()
 	reload_bar_template.visible = false
 	gun_indicator.visible = false
+	gun_reload_container.visible = false
 
-	# Get guns from ship artillery controller
-	if camera_controller and camera_controller._ship and camera_controller._ship.artillery_controller:
-		guns = camera_controller._ship.artillery_controller.guns
+	# # Get guns from ship artillery controller
+	# if camera_controller and camera_controller._ship and camera_controller._ship.artillery_controller:
+	# 	guns = camera_controller._ship.artillery_controller.guns
 
-		for i in range(guns.size()):
-			# Duplicate the template progress bar
-			var progress_bar = reload_bar_template.duplicate()
-			progress_bar.visible = true
-			progress_bar.value = guns[i].reload if guns[i] else 1.0
+	# 	for i in range(guns.size()):
+	# 		# Duplicate the template progress bar
+	# 		var progress_bar = reload_bar_template.duplicate()
+	# 		progress_bar.visible = true
+	# 		progress_bar.value = guns[i].reload if guns[i] else 1.0
 
-			var indicator = GunIndicatorScene.instantiate()
-			indicator.visible = true
-			crosshair_container.add_child(indicator)
-			gun_indicators.append(indicator)
+	# 		var indicator = GunIndicatorScene.instantiate()
+	# 		indicator.visible = true
+	# 		crosshair_container.add_child(indicator)
+	# 		gun_indicators.append(indicator)
 
-			gun_reload_container.add_child(progress_bar)
-			gun_reload_bars.append(progress_bar)
-			gun_reload_timers.append(progress_bar.get_child(0))
+	# 		gun_reload_container.add_child(progress_bar)
+	# 		gun_reload_bars.append(progress_bar)
+	# 		# gun_reload_timers.append(progress_bar.get_child(0))
+
+	setup_weapon_controller(camera_controller._ship.artillery_controller)
+	if camera_controller._ship.torpedo_controller:
+		setup_weapon_controller(camera_controller._ship.torpedo_controller)
 
 func update_gun_reload_bars():
 	# Update reload progress for each gun
@@ -1178,14 +1222,30 @@ func update_gun_reload_bars():
 	var already_drawn_indicators = []
 	var overlapping_indicators = {}
 
+	for controller in weapons.keys():
+		var turret_list = weapons[controller]
+		var params = controller.params.p()
+		for t in turret_list:
+			var gun: Turret = t.weapon
+			var bar = t.reload_bar
+			var indicator = t.indicator
+			var timer_label = bar.get_child(0) as Label
 
-	for i in range(min(guns.size(), gun_reload_bars.size())):
-		if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
-			var gun: Gun = guns[i]
-			var bar = gun_reload_bars[i]
-			var indicator = gun_indicators[i]
-			var timer_label = gun_reload_timers[i]
-			var gun_params: GunParams = (gun.controller as ArtilleryController).params.p() as GunParams
+
+			# Update reload progress
+			bar.value = gun.reload
+			var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
+			var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
+			progress_tex.value = gun.reload
+			if gun.reload >= 1.0:
+				timer_label.text = "%.1f" % (gun.reload * params.reload_time)
+			else:
+				timer_label.text = "%.1f s" % ((1.0 - gun.reload) * params.reload_time)
+
+			if controller != player_controller.current_weapon_controller:
+				indicator.visible = false
+				continue
+
 			var gun_pos = gun.global_position
 			gun_pos.y = 0.0
 			var aim_point = camera_controller.aim_position
@@ -1198,16 +1258,6 @@ func update_gun_reload_bars():
 			# Calculate angle between gun forward and aim direction
 			var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
 			var angle = rad_to_deg(angle_rad)
-
-			# Update reload progress
-			bar.value = gun.reload
-			var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
-			var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
-			progress_tex.value = gun.reload
-			if gun.reload >= 1.0:
-				timer_label.text = "%.1f" % (gun.reload * gun_params.reload_time)
-			else:
-				timer_label.text = "%.1f s" % ((1.0 - gun.reload) * gun_params.reload_time)
 
 			indicator.visible = true
 			if abs(angle) > 0.9:
@@ -1240,7 +1290,6 @@ func update_gun_reload_bars():
 				if dist < 6.0:
 					closest_indicator = other_indicator
 					break
-
 			if closest_indicator:
 				indicator.get_node("AngleLabel").visible = false
 				indicator.global_position = closest_indicator.global_position
@@ -1267,8 +1316,98 @@ func update_gun_reload_bars():
 				under_tex.radial_initial_angle = 0
 				progress_tex.radial_fill_degrees = 360
 				progress_tex.radial_initial_angle = 0
-
 			already_drawn_indicators.append(indicator)
+
+	# for i in range(min(guns.size(), gun_reload_bars.size())):
+	# 	if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
+	# 		var gun: Turret = guns[i]
+	# 		var bar = gun_reload_bars[i]
+	# 		var indicator = gun_indicators[i]
+	# 		var timer_label = bar.get_child(0) as Label
+	# 		var gun_params: GunParams = (gun.controller as ArtilleryController).params.p() as GunParams
+	# 		var gun_pos = gun.global_position
+	# 		gun_pos.y = 0.0
+	# 		var aim_point = camera_controller.aim_position
+	# 		aim_point.y = 0.0
+	# 		var aim_dir = gun_pos.direction_to(aim_point).normalized()
+
+	# 		var gun_forw = -gun.global_transform.basis.z
+	# 		gun_forw.y = 0.0
+	# 		gun_forw = gun_forw.normalized()
+	# 		# Calculate angle between gun forward and aim direction
+	# 		var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
+	# 		var angle = rad_to_deg(angle_rad)
+
+	# 		# Update reload progress
+	# 		bar.value = gun.reload
+	# 		var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
+	# 		var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
+	# 		progress_tex.value = gun.reload
+	# 		if gun.reload >= 1.0:
+	# 			timer_label.text = "%.1f" % (gun.reload * gun_params.reload_time)
+	# 		else:
+	# 			timer_label.text = "%.1f s" % ((1.0 - gun.reload) * gun_params.reload_time)
+
+	# 		indicator.visible = true
+	# 		if abs(angle) > 0.9:
+	# 			indicator.get_node("AngleLabel").text = "%.0f°" % abs(angle)
+	# 		else:
+	# 			indicator.get_node("AngleLabel").text = ""
+
+	# 		indicator.global_position = gun_indicator.global_position - Vector2(angle * 4.0, 0)
+
+	# 		var color_mod: float
+	# 		var color: Color
+	# 		if gun._valid_target:
+	# 			if gun.can_fire:
+	# 				color_mod = valid_can_fire_color_mod
+	# 			else:
+	# 				color_mod = valid_cannot_fire_color_mod
+	# 		else:
+	# 			color_mod = invalid_cannot_fire_color_mod
+	# 		if gun.reload >= 1.0:
+	# 			color = ready_gun_color * color_mod
+	# 		else:
+	# 			color = reloading_gun_color * color_mod
+	# 		bar.self_modulate = color
+	# 		progress_tex.tint_progress = color
+
+	# 		var closest_indicator: Control = null
+	# 		# Avoid overlapping indicators
+	# 		for other_indicator in already_drawn_indicators:
+	# 			var dist = indicator.global_position.distance_to(other_indicator.global_position)
+	# 			if dist < 6.0:
+	# 				closest_indicator = other_indicator
+	# 				break
+
+	# 		if closest_indicator:
+	# 			indicator.get_node("AngleLabel").visible = false
+	# 			indicator.global_position = closest_indicator.global_position
+	# 			if overlapping_indicators.has(closest_indicator):
+	# 				overlapping_indicators[closest_indicator].append(indicator)
+	# 			else:
+	# 				overlapping_indicators[closest_indicator] = [closest_indicator, indicator]
+	# 			var gap = 15
+	# 			var num_indicators = overlapping_indicators[closest_indicator].size()
+	# 			var step = (360.0 - (gap * num_indicators)) / num_indicators
+	# 			var angle_idx = 0
+	# 			var start = gap / 2.0
+	# 			for k: Control in overlapping_indicators[closest_indicator]:
+	# 				var k_under_tex = k.get_node("UnderTexture") as TextureProgressBar
+	# 				var k_progress_tex = k.get_node("ProgressTexture") as TextureProgressBar
+	# 				k_under_tex.radial_fill_degrees = step
+	# 				k_under_tex.radial_initial_angle = start + angle_idx * (step + gap)
+	# 				k_progress_tex.radial_fill_degrees = step
+	# 				k_progress_tex.radial_initial_angle = start + angle_idx * (step + gap)
+	# 				angle_idx += 1
+	# 		else:
+	# 			indicator.get_node("AngleLabel").visible = true
+	# 			under_tex.radial_fill_degrees = 360
+	# 			under_tex.radial_initial_angle = 0
+	# 			progress_tex.radial_fill_degrees = 360
+	# 			progress_tex.radial_initial_angle = 0
+
+	# 		already_drawn_indicators.append(indicator)
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):

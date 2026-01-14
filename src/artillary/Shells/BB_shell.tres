@@ -6,7 +6,7 @@
 script = ExtResource("1_svjww")
 speed = 820.0
 drag = 0.014
-damage = 8600.0
+damage = 9700.0
 size = 3.8
 caliber = 380.0
 mass = 800.0

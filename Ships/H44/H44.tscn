@@ -20,36 +20,36 @@
 [sub_resource type="Resource" id="Resource_n2r5a"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 450000.0
-pool2 = 450000.0
+pool1 = 465300.0
+pool2 = 465300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_c07vg"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 40000.0
-pool2 = 90000.0
+pool1 = 46530.0
+pool2 = 93060.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_636pm"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 21000.0
-pool2 = 42000.0
+pool1 = 25850.0
+pool2 = 51700.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_2gw4s"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 21000.0
-pool2 = 42000.0
+pool1 = 25850.0
+pool2 = 51700.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_d6qea"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 15000.0
-pool2 = 35000.0
+pool1 = 15510.0
+pool2 = 45000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_8j47w"]
@@ -89,23 +89,22 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_pm07r"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
-reload_time = 29.0
-traverse_speed = 3.5
 elevation_speed = 3.5
-_range = 15500.0
 shell1 = SubResource("Resource_apgp6")
 shell2 = SubResource("Resource_uu5mp")
 h_grouping = 1.6
-v_grouping = 1.6
 base_spread = 0.012
+reload_time = 29.0
+traverse_speed = 3.5
+_range = 15500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_5talp"]
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
-speed = 12000.0
-drag = 0.037
-damage = 3500.0
+speed = 1200.0
+drag = 0.04
+damage = 2500.0
 size = 2.25
 caliber = 150.0
 mass = 42.0
@@ -118,8 +117,8 @@ arming_threshold = 25
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 1200.0
-drag = 0.037
-damage = 1100.0
+drag = 0.04
+damage = 900.0
 size = 2.25
 caliber = 150.0
 mass = 42.0
@@ -134,15 +133,15 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_mntgu"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
-reload_time = 5.5
-traverse_speed = 50.0
 elevation_speed = 50.0
-_range = 5750.0
 shell1 = SubResource("Resource_5talp")
 shell2 = SubResource("Resource_mddhe")
 h_grouping = 1.0
 v_grouping = 1.0
 base_spread = 0.06
+reload_time = 5.5
+traverse_speed = 50.0
+_range = 5750.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_gc5ee"]

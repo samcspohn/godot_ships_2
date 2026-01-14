@@ -129,7 +129,7 @@ func spawn_player(id, player_name):
 	player.peer_id = id
 	#print(player_name)
 	player.name = player_name
-	player._enable_guns()
+	player._enable_weapons()
 	var tl = player.get_node_or_null("TorpedoLauncher")
 	if tl:
 		(tl as TorpedoLauncher).disabled = false
@@ -233,7 +233,7 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship):
 	var player: Ship = load(ship).instantiate()
 	player.name = _player_name
 
-	player._enable_guns()
+	player._enable_weapons()
 
 	# Check if this is the local player or a bot by checking team info
 	var is_local_player = (int(id) == multiplayer.get_unique_id())

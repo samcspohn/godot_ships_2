@@ -289,6 +289,9 @@ func _on_canvas_draw() -> void:
 
 	# draw gun ranges
 	draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.get_params()._range, Color(1, 1, 1, 0.5))
+
+	if ship.torpedo_controller:
+		draw_range_circle_on_minimap(ship.global_position, ship.torpedo_controller.get_params()._range, Color(1, 1, 1, 0.5))
 	if ship.secondary_controller.sub_controllers.size() > 0:
 		for controller in ship.secondary_controller.sub_controllers:
 			draw_range_circle_on_minimap(ship.global_position, controller.get_params()._range, Color.DARK_KHAKI)

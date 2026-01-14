@@ -1,13 +1,16 @@
+@tool
 extends Node
 class_name HPManager
 
 @export var max_hp: float
 var current_hp: float
 var sunk: bool = false
-@onready var ship: Ship = $"../.."
+var ship: Ship
 
 signal hp_changed(new_hp: float)
 signal ship_sunk()
+
+@export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 
 @export var citadel: HpPartMod
 @export var casemate: HpPartMod
@@ -17,16 +20,54 @@ signal ship_sunk()
 
 const SHELL_DAMAGE_RADIUS_MOD: float = 12.5
 
+func _generate_armor_parts():
+	if !Engine.is_editor_hint():
+		return
+	if !citadel:
+		citadel = HpPartMod.new()
+		citadel.resource_local_to_scene = true
+	citadel.pool1 = max_hp * 3.0
+	citadel.pool2 = max_hp * 3.0
+	if !casemate:
+		casemate = HpPartMod.new()
+		casemate.resource_local_to_scene = true
+	casemate.pool1 = max_hp * 0.9 / 3.0
+	casemate.pool2 = 2.0 * max_hp * 0.9 / 3.0
+	if !bow:
+		bow = HpPartMod.new()
+		bow.resource_local_to_scene = true
+	bow.pool1 = max_hp * 0.5 / 3.0
+	bow.pool2 = 2.0 * max_hp * 0.5 / 3.0
+	if !stern:
+		stern = HpPartMod.new()
+		stern.resource_local_to_scene = true
+	stern.pool1 = max_hp * 0.5 / 3.0
+	stern.pool2 = 2.0 * max_hp * 0.5 / 3.0
+	if !superstructure:
+		superstructure = HpPartMod.new()
+		superstructure.resource_local_to_scene = true
+	superstructure.pool1 = max_hp * 0.4 / 3.0
+	superstructure.pool2 = 2.0 * max_hp * 0.4 / 3.0
+
 
 func _ready() -> void:
+	if Engine.is_editor_hint():
+		return
 	current_hp = max_hp
+	ship = get_parent().get_parent() as Ship
 	if ship == null:
-		ship = get_parent().get_parent() as Ship
-	citadel.init(ship)
-	casemate.init(ship)
-	bow.init(ship)
-	stern.init(ship)
-	superstructure.init(ship)
+		push_error("HPManager: Could not find Ship in parent hierarchy")
+		return
+	if citadel:
+		citadel.init(ship)
+	if casemate:
+		casemate.init(ship)
+	if bow:
+		bow.init(ship)
+	if stern:
+		stern.init(ship)
+	if superstructure:
+		superstructure.init(ship)
 
 func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, shell_cal:float = 0) -> Array:
 	if sunk:
@@ -105,7 +146,7 @@ func sink():
 	if pc != null:
 		pc.set_physics_process(false)
 		pc.set_process_input(false)
-	ship._disable_guns()
+	ship._disable_weapons()
 	#ship.set_physics_process(false)
 	if _Utils.authority():
 		sink.rpc()

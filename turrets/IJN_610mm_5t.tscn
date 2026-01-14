@@ -3,6 +3,8 @@
 [ext_resource type="PackedScene" uid="uid://bu7r7fnkmnj2n" path="res://turrets/glb/IJN_610mm_5t.glb" id="1_hkbk4"]
 
 [node name="IJN_610mm_5t" instance=ExtResource("1_hkbk4")]
+rotation_limits_enabled = false
+glb_path = "uid://bu7r7fnkmnj2n"
 
 [node name="Launcher_col" parent="." index="1"]
 visible = false

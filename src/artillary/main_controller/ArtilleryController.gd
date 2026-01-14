@@ -10,6 +10,13 @@ var aim_point: Vector3
 var _ship: Ship
 var target_mod: TargetMod = TargetMod.new()
 
+var weapons: Array[Turret]:
+	get:
+		var arr: Array[Turret] = []
+		for g in guns:
+			arr.append(g)
+		return arr
+
 func to_dict() -> Dictionary:
 	return {
 		"params": params.dynamic_mod.to_dict(),
@@ -45,26 +52,29 @@ func _ready() -> void:
 		g._ship = _ship
 		i += 1
 
+	if _Utils.authority():
+		set_physics_process(true)
+	else:
+		set_physics_process(false)
+
 func set_aim_input(target_point: Vector3) -> void:
 	aim_point = target_point
 
 func _physics_process(delta: float) -> void:
-	if !(_Utils.authority()):
-		return
-		
+
 	# Aim all guns toward the target point
 	for g in guns:
 		g._aim(aim_point, delta)
-		
+
 
 @rpc("any_peer", "call_remote")
-func fire_all_guns() -> void:
+func fire_all() -> void:
 	for gun in guns:
 		if gun.reload >= 1.0 and gun.can_fire:
 			gun.fire(target_mod)
 
 @rpc("any_peer", "call_remote")
-func fire_next_ready_gun() -> void:
+func fire_next_ready() -> void:
 	for g in guns:
 		if g.reload >= 1 and g.can_fire:
 			g.fire(target_mod)

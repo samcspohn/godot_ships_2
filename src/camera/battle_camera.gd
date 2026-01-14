@@ -4,6 +4,7 @@ class_name BattleCamera
 signal processed
 # Ship to follow
 @export var _ship: Ship
+var player_controller: PlayerController
 #@export var ship_movement: ShipMovement
 #@export var hp_manager: HPManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
@@ -90,6 +91,7 @@ func _ready():
 	var ui_scene = preload("res://src/camera/camera_ui.tscn")
 	ui = ui_scene.instantiate()
 	ui.camera_controller = self
+	ui.player_controller = player_controller
 	add_child(ui)
 
 	# Setup gun reload bars after camera controller is assigned

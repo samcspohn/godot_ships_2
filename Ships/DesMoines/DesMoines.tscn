@@ -20,36 +20,36 @@
 [sub_resource type="Resource" id="Resource_jjc8t"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 75000.0
-pool2 = 75000.0
+pool1 = 108000.0
+pool2 = 108000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_q1kic"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 6960.0
-pool2 = 13720.0
+pool1 = 9600.0
+pool2 = 17200.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_seiyl"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 3480.0
-pool2 = 6960.0
+pool1 = 4800.0
+pool2 = 9600.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_t5p80"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 3480.0
-pool2 = 6960.0
+pool1 = 4800.0
+pool2 = 9600.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_in36t"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 3480.0
-pool2 = 6960.0
+pool1 = 4800.0
+pool2 = 9600.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_eyh3c"]
@@ -64,7 +64,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
 drag = 0.0205
-damage = 4500.0
+damage = 3400.0
 size = 2.5
 caliber = 203.0
 mass = 152.0
@@ -78,7 +78,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 823.0
 drag = 0.025
-damage = 2300.0
+damage = 1240.0
 size = 2.5
 caliber = 203.0
 mass = 118.0
@@ -93,15 +93,14 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_h3lju"]
 resource_local_to_scene = true
 script = ExtResource("5_jjc8t")
-reload_time = 5.0
-traverse_speed = 5.0
 elevation_speed = 8.2
-_range = 13500.0
 shell1 = SubResource("Resource_vndb5")
 shell2 = SubResource("Resource_08c6r")
 h_grouping = 2.1
 v_grouping = 2.1
 base_spread = 0.008
+reload_time = 5.0
+_range = 13500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_krgon"]
@@ -109,7 +108,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
 drag = 0.02
-damage = 2200.0
+damage = 1650.0
 size = 2.0
 caliber = 127.0
 mass = 25.0
@@ -122,7 +121,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
 drag = 0.02
-damage = 1300.0
+damage = 660.0
 size = 2.0
 caliber = 127.0
 mass = 25.0
@@ -137,15 +136,15 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 [sub_resource type="Resource" id="Resource_fa4yd"]
 resource_local_to_scene = true
 script = ExtResource("5_jjc8t")
-reload_time = 4.0
-traverse_speed = 25.0
 elevation_speed = 15.0
-_range = 4000.0
 shell1 = SubResource("Resource_krgon")
 shell2 = SubResource("Resource_4m2vt")
 h_grouping = 1.0
 v_grouping = 1.0
 base_spread = 0.06
+reload_time = 4.0
+traverse_speed = 25.0
+_range = 4000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_1vq2y"]
@@ -166,7 +165,7 @@ ship_model_glb_path = "uid://0rigmm4tvpum"
 [node name="Modules" parent="." index="0" instance=ExtResource("2_q1kic")]
 
 [node name="HPManager" parent="Modules" index="0"]
-max_hp = 26100.0
+max_hp = 36000.0
 citadel = SubResource("Resource_jjc8t")
 casemate = SubResource("Resource_q1kic")
 bow = SubResource("Resource_seiyl")
@@ -207,7 +206,11 @@ equipped_consumables = Array[ExtResource("9_08c6r")]([ExtResource("10_krgon"), E
 [node name="Upgrades" parent="Modules" index="7"]
 upgrades = Array[ExtResource("12_krgon")]([null, null, null])
 
-[node name="Fires" type="Node3D" parent="." index="1"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." index="1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.019375801, 13.150307, -0.6786766)
+shape = SubResource("BoxShape3D_iwiyp")
+
+[node name="Fires" type="Node3D" parent="." index="2"]
 
 [node name="Fire" parent="Fires" index="0" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.4778533, -71.727486)
@@ -221,19 +224,19 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.542353, 23.084698)
 [node name="Fire4" parent="Fires" index="3" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.888956, 83.8587)
 
-[node name="Superstructure_col" parent="." index="7"]
+[node name="Superstructure_col" parent="." index="8"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col" parent="." index="9"]
+[node name="Barbette_col" parent="." index="10"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_001" parent="." index="10"]
+[node name="Barbette_col_001" parent="." index="11"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_002" parent="." index="11"]
+[node name="Barbette_col_002" parent="." index="12"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
@@ -272,13 +275,9 @@ max_rotation_angle = 2.6637303561129713
 [node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" index="0" instance=ExtResource("4_4rujh")]
 min_rotation_angle = 0.5323421803960757
 
-[node name="Hull_Bow_col" parent="." index="21"]
+[node name="Hull_Bow_col" parent="." index="22"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="." index="22"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.019375801, 13.150307, -0.6786766)
-shape = SubResource("BoxShape3D_iwiyp")
 
 [node name="Hull_Casemate_col" parent="." index="24"]
 layers = 0

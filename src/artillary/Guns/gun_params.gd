@@ -1,10 +1,11 @@
-extends Moddable
+# extends Moddable
+extends TurretParams
 class_name GunParams
 
-@export var reload_time: float
-@export var traverse_speed: float
+# @export var reload_time: float
+# @export var traverse_speed: float
 @export var elevation_speed: float
-@export var _range: float
+# @export var _range: float
 @export var shell1: ShellParams
 @export var shell2: ShellParams
 
@@ -51,26 +52,26 @@ func to_dict() -> Dictionary:
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
-	
+
 	writer.put_float(reload_time)
 	writer.put_float(traverse_speed)
 	writer.put_float(elevation_speed)
 	writer.put_float(_range)
-	
+
 	writer.put_float(shell1.speed)
 	writer.put_float(shell1.drag)
 	writer.put_float(shell1.damage)
-	
+
 	writer.put_float(shell2.speed)
 	writer.put_float(shell2.drag)
 	writer.put_float(shell2.damage)
-	
+
 	writer.put_float(h_grouping)
 	writer.put_float(v_grouping)
 	writer.put_float(base_spread)
-	
+
 	return writer.get_data_array()
-	
+
 
 func from_dict(d: Dictionary) -> void:
 	reload_time = d.get("reload_time", 1)
@@ -112,10 +113,10 @@ func from_bytes(b: PackedByteArray) -> void:
 func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell_index: int, target_mod: TargetMod) -> Vector3:
 	var shell: ShellParams = shell1 if shell_index == 0 else shell2
 	return ArtilleryDispersion.calculate_dispersed_launch(
-		aim_point, 
-		gun_position, 
-		shell.speed, 
-		shell.drag, 
+		aim_point,
+		gun_position,
+		shell.speed,
+		shell.drag,
 		h_grouping * (target_mod.h_grouping if target_mod else 1.0),
 		v_grouping * (target_mod.v_grouping if target_mod else 1.0),
 		base_spread * (target_mod.base_spread if target_mod else 1.0)

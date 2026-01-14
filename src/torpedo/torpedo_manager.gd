@@ -5,7 +5,7 @@ var torpedos: Array[TorpedoData] = [];
 var ids_reuse: Array[int] = []
 var bulletId: int = 0
 #var shell_resource_path = "res://Shells/"
-@onready var particles: GPUParticles3D
+# @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
 
@@ -14,6 +14,7 @@ var camera: Camera3D = null
 
 class TorpedoData:
 	var position: Vector3
+	var start_position: Vector3
 	var direction: Vector3
 	var t: float
 	var params: TorpedoParams
@@ -21,6 +22,7 @@ class TorpedoData:
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship):
 		self.position = pos
+		self.start_position = pos
 		self.direction = dir.normalized()
 		self.t = _t
 		self.params = _params
@@ -31,7 +33,7 @@ func _ready():
 	# Auto-register all bullet resources in the directory
 	#register_all_bullet_resources()
 	#particles = $GPUParticles3D
-	#multi_mesh = $MultiMeshInstance3D
+	multi_mesh = $MultiMeshInstance3D
 	if OS.get_cmdline_args().find("--server") != -1:
 		print("running server")
 		set_process(false)
@@ -130,12 +132,12 @@ func _process(_delta: float) -> void:
 			id += 1
 			continue
 
-		#var t = (current_time - p.start_time) * 2.0
+		var t = (current_time - p.t)
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
-		var prev_pos = p.position
-		p.position += p.direction * p.params.speed * _delta * 3.0
+		#var prev_pos = p.position
+		p.position = p.direction * p.params.speed * t + p.start_position
 		if p.position.y > 0.01:
-			p.position.y = max(p.position.y - _delta * 10, 0.01)
+			p.position.y = max(p.position.y - t * 10, 0.01)
 		update_transform_pos(id, p.position)
 
 		## Calculate distance-based scale to counter perspective shrinking
@@ -156,14 +158,14 @@ func _process(_delta: float) -> void:
 
 		var trans = Transform3D.IDENTITY.translated(p.position)
 		#while :
-		particles.emit_particle(trans, (p.position - prev_pos).normalized() , Color.WHITE,Color.WHITE, 5)
+		# particles.emit_particle(trans, (p.position - prev_pos).normalized() , Color.WHITE,Color.WHITE, 5)
 		#trans = trans.translated(p.position)
 		#p.trail_pos += offset
 		#offset_length -= step_size
 
-	# self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
-	# self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
-	# self.multi_mesh.multimesh.buffer = transforms
+	self.multi_mesh.multimesh.instance_count = int(transforms.size() / 12.0)
+	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
+	self.multi_mesh.multimesh.buffer = transforms
 
 
 func _physics_process(_delta: float) -> void:
@@ -175,12 +177,12 @@ func _physics_process(_delta: float) -> void:
 		if p == null:
 			id += 1
 			continue
-		#var t = (current_time - p.start_time) * 2.0
+		var t = (current_time - p.t)
 		ray_query.from = p.position
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
-		p.position += p.direction * p.params.speed * _delta * 3.0
+		p.position = p.direction * p.params.speed * t + p.start_position
 		if p.position.y > 0.01:
-			p.position.y = max(p.position.y - _delta * 10, 0.01)
+			p.position.y = max(p.position.y - t * 10, 0.01)
 		ray_query.to = p.position
 
 		# Perform the raycast
@@ -277,7 +279,7 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	b.z = Vector3.ZERO
 	var t = Transform3D(b,Vector3.ZERO)
 	update_transform(id, t) # set to invisible
-	#self.multi_mesh.multimesh.set_instance_transform(id, t)
+	self.multi_mesh.multimesh.set_instance_transform(id, t)
 
 	#var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 	#get_tree().root.add_child(expl)

@@ -357,14 +357,14 @@ func fire_at_target():
 			artillery.get_shell_params().speed,
 			artillery.get_shell_params().drag
 		)[2]
-		
-		if target_position:
+
+		if target_position != null:
 			# Set aim input like player controller does
-			if artillery.has_method("set_aim_input"):
+			# if artillery.has_method("set_aim_input"):
 				artillery.set_aim_input(target_position)
 			# Fire guns
-			if artillery.has_method("fire_next_ready_gun"):
-				artillery.fire_next_ready_gun()
+			# if artillery.has_method("fire_next_ready"):
+				artillery.fire_next_ready()
 
 func apply_collision_avoidance(base_heading: float) -> float:
 	if !ship:

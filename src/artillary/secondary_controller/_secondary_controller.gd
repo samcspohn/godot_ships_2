@@ -14,6 +14,9 @@ var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
 var ammo_type: int = 1 # 0 = AP, 1 = HE
 
+var aim_point: Vector3 = Vector3.ZERO # for manual control
+var target_offset: Vector3 = Vector3.ZERO
+
 # var _found_target: bool = false
 # var not_all_returned_to_base: bool
 
@@ -109,9 +112,12 @@ func _physics_process(delta: float) -> void:
 		var _gi = gi
 		for g in sc.guns:
 			var found_target = false
-			for e in enemies_in_range:
-				var lead_target = g.get_leading_position(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier)
-				if lead_target and g.is_aimpoint_valid(lead_target) and g.sim_can_shoot_over_terrain(lead_target):
+			for e: Ship in enemies_in_range:
+				var pos = e.global_position
+				if e == target:
+					pos = e.to_global(target_offset)
+				var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.shell_time_multiplier)
+				if lead_target and g.is_aimpoint_valid(pos) and g.sim_can_shoot_over_terrain(lead_target):
 					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
 					gun_targets[gi] = e

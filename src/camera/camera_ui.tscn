@@ -1736,12 +1736,14 @@ layout_mode = 2
 size_flags_vertical = 8
 
 [node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer"]
+custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
 alignment = 1
 
 [node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer"]
 custom_minimum_size = Vector2(60, 8)
 layout_mode = 2
+size_flags_vertical = 8
 theme_override_styles/background = SubResource("StyleBoxFlat_reload_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_reload_fill")
 max_value = 1.0

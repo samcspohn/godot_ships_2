@@ -40,6 +40,11 @@ var view_port_size: Vector2i = Vector2i(0, 0)
 # Flag to check if initialization is needed
 var needs_initialization: bool = true
 
+# Pending target selection for physics thread
+var _pending_target_selection: Variant = null
+
+var current_weapon_controller: Node = null
+
 func _ready() -> void:
 	# Get reference to the ship components
 	#ship = get_node("../..") as Ship
@@ -60,6 +65,11 @@ func _ready() -> void:
 		# Capture mouse by default for camera control
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		mouse_captured = true
+	set_controller.call_deferred()
+
+func set_controller():
+	current_weapon_controller = ship.artillery_controller
+
 
 
 # func secondary_upgrade(_ship: Ship) -> void:
@@ -77,6 +87,7 @@ func _ready() -> void:
 func setup_artillery_camera() -> void:
 	cam = load("res://src/camera/player_cam.tscn").instantiate()
 	cam._ship = ship
+	cam.player_controller = self
 
 	if cam is Camera3D:
 		cam.current = true
@@ -101,9 +112,8 @@ func _input(event: InputEvent) -> void:
 		if not mouse_captured: # Only handle mouse clicks when cursor is released
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					# Mouse target selection with left click
-					var mouse_pos = get_viewport().get_mouse_position()
-					select_target_at_mouse_position(mouse_pos)
+					# Mouse target selection with left click - queue for physics thread
+					_pending_target_selection = get_viewport().get_mouse_position()
 
 		elif mouse_captured: # Handle normal camera-based shooting
 			if event.button_index == MOUSE_BUTTON_LEFT:
@@ -116,22 +126,24 @@ func _input(event: InputEvent) -> void:
 					var current_time = Time.get_ticks_msec() / 1000.0
 					if current_time - last_click_time < double_click_timer:
 						click_count = 2
-						if selected_weapon == 0 or selected_weapon == 1:
-							# Use your existing firing logic for guns
-							ship.artillery_controller.fire_all_guns.rpc_id(1)
-						elif selected_weapon == 2:
-							# Use your existing firing logic for torpedos
-							if ship.torpedo_launcher:
-								ship.torpedo_launcher.fire.rpc_id(1)
+						# if selected_weapon == 0 or selected_weapon == 1:
+						# 	# Use your existing firing logic for guns
+						# 	ship.artillery_controller.fire_all.rpc_id(1)
+						# elif selected_weapon == 2:
+						# 	# Use your existing firing logic for torpedos
+						# 	if ship.torpedo_controller:
+						# 		ship.torpedo_controller.fire_all.rpc_id(1)
+						current_weapon_controller.fire_all.rpc_id(1)
 					else:
 						click_count = 1
-						if selected_weapon == 0 or selected_weapon == 1:
-							# Use your existing firing logic for guns
-							ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
-						elif selected_weapon == 2:
-							# Use your existing firing logic for torpedos
-							if ship.torpedo_launcher:
-								ship.torpedo_launcher.fire.rpc_id(1)
+						# if selected_weapon == 0 or selected_weapon == 1:
+						# 	# Use your existing firing logic for guns
+						# 	ship.artillery_controller.fire_next_ready.rpc_id(1)
+						# elif selected_weapon == 2:
+						# 	# Use your existing firing logic for torpedos
+						# 	if ship.torpedo_controller:
+						# 		ship.torpedo_controller.fire_next_ready.rpc_id(1)
+						current_weapon_controller.fire_next_ready.rpc_id(1)
 
 					last_click_time = current_time
 				else:
@@ -150,9 +162,6 @@ func _input(event: InputEvent) -> void:
 				# When releasing control, capture the mouse again
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 				mouse_captured = true
-		if event.keycode == KEY_T:
-			if ship.torpedo_launcher:
-				ship.torpedo_launcher.fire.rpc_id(1)
 		# if event.keycode == KEY_X:
 		# 	# Clear secondary target
 		# 	clear_secondary_target()
@@ -196,6 +205,34 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 		print("No server found for target selection")
 		return
 
+	# Calculate offset point on the ship for targeting
+	var space_state = get_tree().root.get_world_3d().direct_space_state
+	# Cast a ray from camera through mouse position to find intersection with ship
+	var cam_ray = PhysicsRayQueryParameters3D.new()
+	var ray_origin = cam.project_ray_origin(mouse_pos)
+	var ray_direction = cam.project_ray_normal(mouse_pos)
+	cam_ray.from = ray_origin
+	cam_ray.to = ray_origin + ray_direction * 100000.0
+	cam_ray.exclude = [ship.get_rid()]
+	cam_ray.collision_mask = (1 << 1) # | (1 << 2)  # Layer 2 = armor parts, Layer 3 = ships
+	var offset_point: Vector3 = Vector3.ZERO
+	var result = space_state.intersect_ray(cam_ray)
+	if result:
+		offset_point = result.position
+		var collider = result.collider
+		# Check if we hit a Ship directly or an ArmorPart (which has a ship reference)
+		if collider is Ship:
+			closest_ship = collider
+		elif collider is ArmorPart:
+			closest_ship = collider.ship
+
+		if closest_ship:
+			print("Direct ray hit ship: ", closest_ship.name)
+			offset_point = closest_ship.to_local(offset_point)
+			offset_point.x = 0
+			set_target_ship.rpc_id(1, closest_ship.get_path(), offset_point)
+			return
+
 	# Check each ship to find the closest one to mouse cursor
 	for pid in server.players:
 		var potential_ship: Ship = server.players[pid][0]
@@ -225,7 +262,7 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 	# Send the selected target to the server
 	if closest_ship:
 		print("Client selected ship: ", closest_ship.name, " at distance: ", closest_distance)
-		set_target_ship.rpc_id(1, closest_ship.get_path())
+		set_target_ship.rpc_id(1, closest_ship.get_path(), Vector3.ZERO)
 	else:
 		print("No ship found within selection radius of ", selection_radius, " pixels")
 
@@ -238,7 +275,7 @@ func handle_single_click() -> void:
 	# 			break
 
 @rpc("any_peer", "call_remote", "reliable")
-func set_target_ship(ship_path: NodePath) -> void:
+func set_target_ship(ship_path: NodePath, offset: Vector3) -> void:
 	"""Server-side RPC to set the target ship"""
 	if not _Utils.authority():
 		return
@@ -246,25 +283,32 @@ func set_target_ship(ship_path: NodePath) -> void:
 	var target_ship = get_node_or_null(ship_path)
 	if target_ship and target_ship is Ship:
 		print("Server setting target ship: ", target_ship.name)
-		select_target_ship(target_ship)
+		select_target_ship(target_ship, offset)
 		#notify the calling client to set the target visually
-		c_set_target_ship.rpc_id(multiplayer.get_remote_sender_id(), ship_path)
+		c_set_target_ship.rpc_id(multiplayer.get_remote_sender_id(), ship_path, offset)
 	else:
 		print("Invalid ship path received: ", ship_path)
 
 @rpc("authority", "call_remote", "reliable")
-func c_set_target_ship(ship_path: NodePath) -> void:
+func c_set_target_ship(ship_path: NodePath, offset: Vector3) -> void:
 	"""Client-side RPC to set the target ship"""
 	if not _Utils.authority():
 		var target_ship = get_node_or_null(ship_path)
 		if target_ship and target_ship is Ship:
 			print("Client setting target ship: ", target_ship.name)
-			select_target_ship(target_ship)
+			select_target_ship(target_ship, offset)
+			show_target_indicator(target_ship)
 		else:
 			print("Invalid ship path received: ", ship_path)
 
 
-func select_target_ship(target_ship: Ship) -> void:
+func select_target_ship(target_ship: Ship, offset: Vector3) -> void:
+	if ship.secondary_controller.target == target_ship:
+		ship.secondary_controller.target_offset = offset
+		ship.secondary_controller.target_offset.x = 0.0
+	else:
+		ship.secondary_controller.target_offset = Vector3.ZERO
+
 	ship.secondary_controller.target = target_ship
 	#for secondary_controller in ship.secondary_controller.target:
 		## Set the target in the secondary controller
@@ -272,7 +316,6 @@ func select_target_ship(target_ship: Ship) -> void:
 		#print("Selected target: " + target_ship.name)
 		#
 		# Add a visual indicator for the selected target
-	show_target_indicator(target_ship)
 	# else:
 	# 	print("Warning: secondary_controller not initialized")
 
@@ -280,6 +323,7 @@ func show_target_indicator(target_ship: Ship) -> void:
 	# Update the UI to show the target indicator
 	if cam and cam.ui:
 		cam.ui.set_secondary_target(target_ship)
+		print("showing secondary target indicator")
 	else:
 		print("Warning: cam.ui not available for target indicator")
 
@@ -309,6 +353,11 @@ func c_toggle_secondaries_enabled() -> void:
 func toggle_secondaries_enabled(enabled: bool) -> void:
 	"""Server-side function to notify caller of state"""
 	ship.secondary_controller.enabled = enabled
+
+func _physics_process(_delta: float) -> void:
+	if _pending_target_selection != null:
+		select_target_at_mouse_position(_pending_target_selection)
+		_pending_target_selection = null
 
 func _process(dt: float) -> void:
 	# Check if we need to initialize guns - do it only once
@@ -342,18 +391,25 @@ func _process(dt: float) -> void:
 
 	# Handle sequential firing when holding
 	if is_holding:
-		if selected_weapon == 0 or selected_weapon == 1:
-			sequential_fire_timer += dt
-			var reload = ship.artillery_controller.get_params().reload_time
-			var min_reload = reload / guns.size() - 0.01
-			var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
-			while sequential_fire_timer >= adjusted_sequential_fire_delay:
-				sequential_fire_timer -= adjusted_sequential_fire_delay
-				ship.artillery_controller.fire_next_ready_gun.rpc_id(1)
-		elif selected_weapon == 2:
-			# Use your existing firing logic for torpedos
-			if ship.torpedo_launcher:
-				ship.torpedo_launcher.fire.rpc_id(1)
+		sequential_fire_timer += dt
+		var reload = current_weapon_controller.get_params().reload_time
+		var min_reload = reload / guns.size() - 0.01
+		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		while sequential_fire_timer >= adjusted_sequential_fire_delay:
+			sequential_fire_timer -= adjusted_sequential_fire_delay
+			current_weapon_controller.fire_next_ready.rpc_id(1)
+		# if selected_weapon == 0 or selected_weapon == 1:
+		# 	sequential_fire_timer += dt
+		# 	var reload = ship.artillery_controller.get_params().reload_time
+		# 	var min_reload = reload / guns.size() - 0.01
+		# 	var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		# 	while sequential_fire_timer >= adjusted_sequential_fire_delay:
+		# 		sequential_fire_timer -= adjusted_sequential_fire_delay
+		# 		ship.artillery_controller.fire_next_ready.rpc_id(1)
+		# elif selected_weapon == 2:
+		# 	# Use your existing firing logic for torpedos
+		# 	if ship.torpedo_controller:
+		# 		ship.torpedo_controller.fire_next_ready.rpc_id(1)
 
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
@@ -466,6 +522,8 @@ func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3
 		# Forward movement input to ship movement controller
 		ship.movement_controller.set_movement_input([_throttle_level, rudder_value])
 		ship.artillery_controller.set_aim_input(aim_position)
+		if ship.torpedo_controller:
+			ship.torpedo_controller.set_aim_input(aim_position)
 		ship.frustum_planes = frustum_planes
 
 func select_weapon(idx: int) -> void:
@@ -475,4 +533,9 @@ func select_weapon(idx: int) -> void:
 	if idx == 0 or idx == 1:
 		ship.artillery_controller.select_shell(idx)
 		ship.artillery_controller.select_shell.rpc_id(1, idx)
+		current_weapon_controller = ship.artillery_controller
+	elif idx == 2:
+		if ship.torpedo_controller:
+			# ship.torpedo_controller.select_torpedo.rpc_id(1)
+			current_weapon_controller = ship.torpedo_controller
 	print("Selected weapon: %d" % idx)
