@@ -256,8 +256,8 @@ min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
 
 [node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" index="0" instance=ExtResource("14_nfp68")]
-min_rotation_angle = 3.665191429188092
-max_rotation_angle = 5.846852994181004
+min_rotation_angle = 3.6651914291880923
+max_rotation_angle = 5.811946409141117
 
 [node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" index="0" instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.1590459461097367
@@ -268,11 +268,11 @@ min_rotation_angle = 6.256198206425091
 max_rotation_angle = 2.9572237882480756
 
 [node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" index="0" instance=ExtResource("14_nfp68")]
-min_rotation_angle = 0.22377577895065315
-max_rotation_angle = 2.671751901963866
+min_rotation_angle = 0.22689280275926285
+max_rotation_angle = 2.670353755551324
 
 [node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" index="0" instance=ExtResource("14_nfp68")]
-min_rotation_angle = 0.5235987755982988
+min_rotation_angle = 0.47123889803846897
 max_rotation_angle = 2.722713633111154
 
 [node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" index="0" instance=ExtResource("14_nfp68")]
@@ -299,20 +299,20 @@ min_rotation_angle = 3.490658503988659
 max_rotation_angle = 0.0
 
 [node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" index="0" instance=ExtResource("9_gdlp2")]
-min_rotation_angle = 3.7524578917878086
-max_rotation_angle = 2.530727415391778
+min_rotation_angle = 3.7000980142279785
+max_rotation_angle = 2.5830872929516078
 
 [node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" index="0" instance=ExtResource("9_gdlp2")]
-min_rotation_angle = 0.6108652381980153
-max_rotation_angle = 5.672320068981571
+min_rotation_angle = 0.5759586531581288
+max_rotation_angle = 5.707226654021458
 
 [node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" index="0" instance=ExtResource("9_gdlp2")]
-min_rotation_angle = 3.7524578917878086
-max_rotation_angle = 2.530727415391778
+min_rotation_angle = 3.7000980142279785
+max_rotation_angle = 2.5830872929516078
 
 [node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" index="0" instance=ExtResource("9_gdlp2")]
-min_rotation_angle = 0.6108652381980153
-max_rotation_angle = 5.672320068981571
+min_rotation_angle = 0.5585053606381855
+max_rotation_angle = 5.724679946541401
 
 [node name="Hull_Citadel_col" parent="." index="10"]
 layers = 0

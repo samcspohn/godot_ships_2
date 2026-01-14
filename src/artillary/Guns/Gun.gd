@@ -566,7 +566,7 @@ func fire(mod: TargetMod = null) -> void:
 		if !disabled && reload >= 1.0 and can_fire:
 			var muzzles_pos = get_muzzles_position()
 			for m in muzzles:
-				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, controller.shell_index, mod)
+				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = Time.get_unix_time_from_system()

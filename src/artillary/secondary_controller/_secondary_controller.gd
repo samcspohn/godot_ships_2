@@ -10,17 +10,28 @@ var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 var gun_targets: Array[Ship] = []
 
 var target_mod: TargetMod
+var manual_target_mod: TargetMod = TargetMod.new()
 var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
-var ammo_type: int = 1 # 0 = AP, 1 = HE
 
-var aim_point: Vector3 = Vector3.ZERO # for manual control
+var aim_point: Variant = null # for manual control
 var target_offset: Vector3 = Vector3.ZERO
-
+var guns_shooting_at_aim_point: Dictionary[Gun, bool] = {}
+var just_switched_mode: bool = false
 # var _found_target: bool = false
 # var not_all_returned_to_base: bool
 
 var active: bool
+
+func get_params() -> GunParams:
+	var min_reload = INF
+	var selected_params: GunParams = null
+	for sc in sub_controllers:
+		var p = sc.p.p() as GunParams
+		if p.reload_time < min_reload:
+			min_reload = p.reload_time
+			selected_params = p
+	return selected_params
 
 func _ready() -> void:
 	# for sc in sub_controllers:
@@ -31,6 +42,12 @@ func _ready() -> void:
 	target_mod = TargetMod.new()
 	target_mod.resource_local_to_scene = true
 	target_mod.init(_ship)
+
+	manual_target_mod.h_grouping = 1.6
+	manual_target_mod.v_grouping = 1.6
+	manual_target_mod.base_spread = 0.35
+	manual_target_mod.resource_local_to_scene = true
+	manual_target_mod.init(_ship)
 
 	for sc in sub_controllers:
 		sc.init(_ship)
@@ -69,6 +86,28 @@ func from_dict(d: Dictionary) -> void:
 		if i < sub_controllers.size() and sub_list[i]:
 			sub_controllers[i].from_dict(sub_list[i])
 
+func set_aim_input(target_point: Variant):
+	if aim_point == null and target_point != null:
+		just_switched_mode = true
+	if target_point == null:
+		just_switched_mode = true
+	aim_point = target_point
+
+@rpc("any_peer", "reliable", "call_remote")
+func fire_all():
+	for sc in sub_controllers:
+		for g in sc.guns:
+			if guns_shooting_at_aim_point.has(g) and g.reload >= 1 and g.can_fire:
+				g.fire(manual_target_mod)
+
+@rpc("any_peer", "reliable", "call_remote")
+func fire_next_ready():
+	for sc in sub_controllers:
+		for g in sc.guns:
+			if guns_shooting_at_aim_point.has(g) and g.reload >= 1 and g.can_fire:
+				g.fire(manual_target_mod)
+				return
+
 func _physics_process(delta: float) -> void:
 	# return
 	if !(_Utils.authority()):
@@ -84,6 +123,17 @@ func _physics_process(delta: float) -> void:
 		return
 	if not _ship.team:
 		return
+
+	guns_shooting_at_aim_point.clear()
+	if aim_point != null:
+		for sc in sub_controllers:
+			for g in sc.guns:
+				if g.is_aimpoint_valid(aim_point):
+					guns_shooting_at_aim_point[g] = true
+					g._aim(aim_point, delta)
+	if just_switched_mode:
+		just_switched_mode = false
+		active = true
 
 	var max_range = 0.0
 	for sc in sub_controllers:
@@ -111,6 +161,9 @@ func _physics_process(delta: float) -> void:
 		var _range = sc.p.p()._range
 		var _gi = gi
 		for g in sc.guns:
+			if guns_shooting_at_aim_point.has(g):
+				gi += 1
+				continue
 			var found_target = false
 			for e: Ship in enemies_in_range:
 				var pos = e.global_position
@@ -136,6 +189,9 @@ func _physics_process(delta: float) -> void:
 			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
 				sc.sequential_fire_timer = 0.0
 				for g in sc.guns:
+					if guns_shooting_at_aim_point.has(g):
+						gi += 1
+						continue
 					if g.reload >= 1 and g.can_fire and gun_targets[gi] != null:
 						if gun_targets[gi] == target:
 							g.fire(target_mod)
@@ -148,13 +204,13 @@ func _physics_process(delta: float) -> void:
 	# for g in guns:
 	# 	g._aim(aim_point, delta)
 
-func change_ammo_type(new_type: int) -> void:
-	ammo_type = new_type
-	if ammo_type == 0:
-		shell_index = 0
-	else:
-		shell_index = 1
+@rpc("any_peer", "reliable", "call_remote")
+func select_shell(new_type: int) -> void:
 
+	if shell_index == new_type:
+		return
+	shell_index = new_type
 	for sc in sub_controllers:
+		#sc.shell_index = shell_index
 		for g in sc.guns:
 			g.reload = 0.0

@@ -5,9 +5,9 @@ class_name SecSubController
 @export var guns: Array[Gun]
 var sequential_fire_timer: float = 0.0
 var controller: SecondaryController_ = null
-var shell_index: int:
-	get:
-		return controller.shell_index
+# var shell_index: int:
+# 	get:
+# 		return controller.shell_index
 
 func init(_ship: Ship) -> void:
 	p.shell1._secondary = true

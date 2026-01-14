@@ -171,6 +171,10 @@ func _input(event: InputEvent) -> void:
 			select_weapon(1)
 		elif event.keycode == KEY_3:
 			select_weapon(2)
+		elif event.keycode == KEY_4:
+			select_weapon(3)
+		elif event.keycode == KEY_5:
+			select_weapon(4)
 
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
@@ -229,7 +233,7 @@ func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 		if closest_ship:
 			print("Direct ray hit ship: ", closest_ship.name)
 			offset_point = closest_ship.to_local(offset_point)
-			offset_point.x = 0
+			# offset_point.x = 0
 			set_target_ship.rpc_id(1, closest_ship.get_path(), offset_point)
 			return
 
@@ -398,18 +402,6 @@ func _process(dt: float) -> void:
 		while sequential_fire_timer >= adjusted_sequential_fire_delay:
 			sequential_fire_timer -= adjusted_sequential_fire_delay
 			current_weapon_controller.fire_next_ready.rpc_id(1)
-		# if selected_weapon == 0 or selected_weapon == 1:
-		# 	sequential_fire_timer += dt
-		# 	var reload = ship.artillery_controller.get_params().reload_time
-		# 	var min_reload = reload / guns.size() - 0.01
-		# 	var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
-		# 	while sequential_fire_timer >= adjusted_sequential_fire_delay:
-		# 		sequential_fire_timer -= adjusted_sequential_fire_delay
-		# 		ship.artillery_controller.fire_next_ready.rpc_id(1)
-		# elif selected_weapon == 2:
-		# 	# Use your existing firing logic for torpedos
-		# 	if ship.torpedo_controller:
-		# 		ship.torpedo_controller.fire_next_ready.rpc_id(1)
 
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
@@ -510,20 +502,26 @@ func process_player_input() -> void:
 		send_input.rpc_id(1, input_data.throttle_level,
 								input_data.rudder_value,
 								input_data.aim_position,
-								input_data.frustum_planes)
+								input_data.frustum_planes,
+								current_weapon_controller == ship.secondary_controller)
 	# send_aim_input.rpc_id(1, cam.aim_position)
 
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane]) -> void:
+func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane], manual_sec: bool) -> void:
 	if _Utils.authority():
 		# Forward movement input to ship movement controller
 		ship.movement_controller.set_movement_input([_throttle_level, rudder_value])
 		ship.artillery_controller.set_aim_input(aim_position)
 		if ship.torpedo_controller:
 			ship.torpedo_controller.set_aim_input(aim_position)
+		if ship.secondary_controller:
+			if manual_sec:
+				ship.secondary_controller.set_aim_input(aim_position)
+			else :
+				ship.secondary_controller.set_aim_input(null) # Disable manual aiming for secondaries
 		ship.frustum_planes = frustum_planes
 
 func select_weapon(idx: int) -> void:
@@ -538,4 +536,8 @@ func select_weapon(idx: int) -> void:
 		if ship.torpedo_controller:
 			# ship.torpedo_controller.select_torpedo.rpc_id(1)
 			current_weapon_controller = ship.torpedo_controller
+	elif idx == 3 or idx == 4:
+		ship.secondary_controller.select_shell(idx - 3)
+		ship.secondary_controller.select_shell.rpc_id(1, idx - 3)
+		current_weapon_controller = ship.secondary_controller
 	print("Selected weapon: %d" % idx)

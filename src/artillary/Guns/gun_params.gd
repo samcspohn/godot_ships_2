@@ -110,8 +110,8 @@ func from_bytes(b: PackedByteArray) -> void:
 	base_spread = reader.get_float()
 
 
-func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell_index: int, target_mod: TargetMod) -> Vector3:
-	var shell: ShellParams = shell1 if shell_index == 0 else shell2
+func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell: ShellParams, target_mod: TargetMod) -> Vector3:
+	#var shell: ShellParams = shell1 if shell_index == 0 else shell2
 	return ArtilleryDispersion.calculate_dispersed_launch(
 		aim_point,
 		gun_position,
