@@ -468,6 +468,8 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	events.append("hit_cit flag: %s, over_pen flag: %s" % [hit_cit, over_pen])
 
 	var damage_result := _resolve_hit_result(result, d, hit_cit, over_pen)
+	if damage_result == HitResult.CITADEL_OVERPEN:
+		d = hit_node.ship.citadel
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 

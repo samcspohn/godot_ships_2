@@ -62,7 +62,8 @@ func _ready():
 				var bot_ships = ["res://Ships/Bismarck/Bismarck3.tscn",
 					"res://Ships/DesMoines/DesMoines.tscn",
 					"res://Ships/Shimakaze/Shimakaze.tscn",
-					"res://Ships/H44/H44.tscn",]
+					"res://Ships/H44/H44.tscn",
+				]
 				# Player team (team 0)
 				team[client_data["player_name"]] = {
 					"team": "0",
@@ -71,7 +72,7 @@ func _ready():
 					"is_bot": false
 				}
 				# Bot team (team 1) - 3 bots
-				var num_in_team = 10
+				var num_in_team = 15
 				for i in range(1, num_in_team):
 					var bot_id = str(i + 1 + 1000)
 					team[bot_id] = {

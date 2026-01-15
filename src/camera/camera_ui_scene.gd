@@ -54,6 +54,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var shatter_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer/ShatterCount
 @onready var ricochet_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer/RicochetCount
 @onready var citadel_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer/CitadelCount
+@onready var citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer/CitadelOverpenCount
+@onready var partial_pen_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer/PartialPenCount
 @onready var main_damage_label: Label = $MainContainer/TopRightPanel/MainVBox/DamageCounter/DamageValue
 
 # Secondary hit counter labels (shown when hovering over SEC)$MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCountw
@@ -62,6 +64,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer/SecShatterCount
 @onready var sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer/SecRicochetCount
 @onready var sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer/SecCitadelCount
+@onready var sec_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer/SecCitadelOverpenCount
+@onready var sec_partial_pen_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer/SecPartialPenCount
 @onready var sec_damage_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/DamageCounter/DamageValue
 
 @onready var damage_value_label: Label = $MainContainer/TopRightPanel/HBoxContainer/DamageCounter/DamageValue
@@ -80,6 +84,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var temp_shatter_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter
 @onready var temp_ricochet_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter
 @onready var temp_citadel_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter
+@onready var temp_citadel_overpen_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter
+@onready var temp_partial_pen_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter
 
 # Temporary main hit counter labels
 @onready var temp_penetration_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer/PenetrationCount
@@ -87,6 +93,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var temp_shatter_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer/ShatterCount
 @onready var temp_ricochet_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer/RicochetCount
 @onready var temp_citadel_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer/CitadelCount
+@onready var temp_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer/CitadelOverpenCount
+@onready var temp_partial_pen_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer/PartialPenCount
 
 # Temporary secondary hit counter references
 @onready var temp_sec_penetration_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter
@@ -94,6 +102,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var temp_sec_shatter_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter
 @onready var temp_sec_ricochet_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter
 @onready var temp_sec_citadel_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter
+@onready var temp_sec_citadel_overpen_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter
+@onready var temp_sec_partial_pen_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter
 
 # Temporary secondary hit counter labels
 @onready var temp_sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
@@ -101,6 +111,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var temp_sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer/SecShatterCount
 @onready var temp_sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer/SecRicochetCount
 @onready var temp_sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer/SecCitadelCount
+@onready var temp_sec_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer/SecCitadelOverpenCount
+@onready var temp_sec_partial_pen_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer/SecPartialPenCount
 
 # Main counter labels for hover detection
 @onready var secondary_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondarySec
@@ -291,6 +303,8 @@ func update_counters() -> void:
 	update_counter(ricochet_count_label, stats.ricochet_count)
 	update_counter(shatter_count_label, stats.shatter_count)
 	update_counter(citadel_count_label, stats.citadel_count)
+	update_counter(citadel_overpen_count_label, stats.citadel_overpen_count)
+	update_counter(partial_pen_count_label, stats.partial_pen_count)
 	update_counter(main_damage_label, stats.main_damage)
 
 	# Update secondary hit counters
@@ -299,6 +313,8 @@ func update_counters() -> void:
 	update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
 	update_counter(sec_shatter_count_label, stats.sec_shatter_count)
 	update_counter(sec_citadel_count_label, stats.sec_citadel_count)
+	update_counter(sec_citadel_overpen_count_label, stats.sec_citadel_overpen_count)
+	update_counter(sec_partial_pen_count_label, stats.sec_partial_pen_count)
 	update_counter(sec_damage_label, stats.sec_damage)
 
 
@@ -400,7 +416,9 @@ func setup_hit_counter_system():
 		"overpenetration": {"main": temp_overpenetration_counter, "sec": temp_sec_overpenetration_counter, "main_label": temp_overpenetration_count_label, "sec_label": temp_sec_overpenetration_count_label},
 		"shatter": {"main": temp_shatter_counter, "sec": temp_sec_shatter_counter, "main_label": temp_shatter_count_label, "sec_label": temp_sec_shatter_count_label},
 		"ricochet": {"main": temp_ricochet_counter, "sec": temp_sec_ricochet_counter, "main_label": temp_ricochet_count_label, "sec_label": temp_sec_ricochet_count_label},
-		"citadel": {"main": temp_citadel_counter, "sec": temp_sec_citadel_counter, "main_label": temp_citadel_count_label, "sec_label": temp_sec_citadel_count_label}
+		"citadel": {"main": temp_citadel_counter, "sec": temp_sec_citadel_counter, "main_label": temp_citadel_count_label, "sec_label": temp_sec_citadel_count_label},
+		"citadel_overpen": {"main": temp_citadel_overpen_counter, "sec": temp_sec_citadel_overpen_counter, "main_label": temp_citadel_overpen_count_label, "sec_label": temp_sec_citadel_overpen_count_label},
+		"partial_pen": {"main": temp_partial_pen_counter, "sec": temp_sec_partial_pen_counter, "main_label": temp_partial_pen_count_label, "sec_label": temp_sec_partial_pen_count_label}
 	}
 
 	print("Hit counter system setup complete")
@@ -545,6 +563,16 @@ func process_damage_events(damage_events: Array):
 					update_counter(sec_citadel_count_label, stats.sec_citadel_count)
 				else:
 					update_counter(citadel_count_label, stats.citadel_count)
+			ArmorInteraction.HitResult.CITADEL_OVERPEN:
+				if is_secondary:
+					update_counter(sec_citadel_overpen_count_label, stats.sec_citadel_overpen_count)
+				else:
+					update_counter(citadel_overpen_count_label, stats.citadel_overpen_count)
+			ArmorInteraction.HitResult.PARTIAL_PEN:
+				if is_secondary:
+					update_counter(sec_partial_pen_count_label, stats.sec_partial_pen_count)
+				else:
+					update_counter(partial_pen_count_label, stats.partial_pen_count)
 			_:
 				print("Warning: Unhandled hit type: ", hit_type)
 
@@ -578,6 +606,8 @@ func get_hit_type_from_event(event: Dictionary) -> String:
 		ArmorInteraction.HitResult.OVERPENETRATION: return "overpenetration" # HitResult.OVERPENETRATION
 		ArmorInteraction.HitResult.SHATTER: return "shatter"        # HitResult.SHATTER
 		ArmorInteraction.HitResult.CITADEL: return "citadel"        # HitResult.CITADEL
+		ArmorInteraction.HitResult.CITADEL_OVERPEN: return "citadel_overpen" # HitResult.CITADEL_OVERPEN
+		ArmorInteraction.HitResult.PARTIAL_PEN: return "partial_pen"    # HitResult.PARTIAL_PEN
 		_: return ""               # Unknown or no hit
 
 # Manual hover detection in _process

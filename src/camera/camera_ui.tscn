@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://b8j0h3k7w5u2e"]
+[gd_scene load_steps=22 format=3 uid="uid://b8j0h3k7w5u2e"]
 
 [ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_kk7j4"]
 [ext_resource type="Texture2D" uid="uid://b0mbwillllaha" path="res://circle.png" id="2_oxqcb"]
@@ -48,6 +48,20 @@ corner_radius_bottom_left = 4
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_citadel_bg"]
 bg_color = Color(0.142, 0.142, 0.142, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_citadel_overpen_bg"]
+bg_color = Color(0.5, 0.25, 0.1, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_partial_pen_bg"]
+bg_color = Color(0.3, 0.3, 0.5, 0.9)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
@@ -730,6 +744,114 @@ text = "0"
 horizontal_alignment = 1
 vertical_alignment = 2
 
+[node name="CitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="CitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
+
+[node name="CitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
+theme_override_font_sizes/font_size = 24
+text = "Co"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="PartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="PartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
+
+[node name="PartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PartialPenPp" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "Pp"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartialPenCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
 [node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/MainVBox"]
 layout_mode = 2
 
@@ -1005,6 +1127,114 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecCitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
+
+[node name="SecCitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecCitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
+theme_override_font_sizes/font_size = 24
+text = "Co"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecCitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="SecPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecPartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
+
+[node name="SecPartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecPartialPenPp" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "Pp"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecPartialPenCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer"]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0
@@ -1319,6 +1549,116 @@ text = "0"
 horizontal_alignment = 1
 vertical_alignment = 2
 
+[node name="TempCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="CitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
+
+[node name="CitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
+theme_override_font_sizes/font_size = 24
+text = "Co"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="CitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="PartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
+
+[node name="PartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PartialPenPp" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "Pp"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PartialPenCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
 [node name="Spacer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
 custom_minimum_size = Vector2(60, 0)
 layout_mode = 2
@@ -1580,6 +1920,114 @@ horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecCitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
+
+[node name="SecCitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecCitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
+theme_override_font_sizes/font_size = 24
+text = "Co"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecCitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="TempSecPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
+visible = false
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecPartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
+
+[node name="SecPartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecPartialPenPp" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "Pp"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecPartialPenCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer"]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0

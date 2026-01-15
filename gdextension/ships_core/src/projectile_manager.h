@@ -115,6 +115,8 @@ public:
 	void track_overpenetration(const Ref<ProjectileData> &p);
 	void track_shatter(const Ref<ProjectileData> &p);
 	void track_ricochet(const Ref<ProjectileData> &p);
+	void track_citadel_overpen(const Ref<ProjectileData> &p);
+	void track_partial_pen(const Ref<ProjectileData> &p);
 	void track_frag(const Ref<ProjectileData> &p);
 
 	// Ricochet RPC methods

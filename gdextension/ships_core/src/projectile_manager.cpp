@@ -573,7 +573,7 @@ void _ProjectileManager::_physics_process(double delta) {
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 1: // PARTIAL_PENETRATION
-						damage = base_damage / 6.0;
+						damage = base_damage / 8.0;
 						rpc_result_type = PENETRATION;
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
@@ -639,7 +639,9 @@ void _ProjectileManager::_physics_process(double delta) {
 						// Track hit type
 						switch (armor_result_type) {
 							case 0: track_penetration(p); break;
+							case 1: track_partial_pen(p); break;
 							case 5: track_citadel(p); break;
+							case 6: track_citadel_overpen(p); break;
 							case 3: track_overpenetration(p); break;
 							case 4: track_shatter(p); break;
 							case 2: track_ricochet(p); break;
@@ -1234,6 +1236,68 @@ void _ProjectileManager::track_ricochet(const Ref<ProjectileData> &p) {
 	} else {
 		int sec_ricochet_count = stats->get("sec_ricochet_count");
 		stats->set("sec_ricochet_count", sec_ricochet_count + 1);
+		int secondary_count = stats->get("secondary_count");
+		stats->set("secondary_count", secondary_count + 1);
+	}
+}
+
+void _ProjectileManager::track_citadel_overpen(const Ref<ProjectileData> &p) {
+	if (!p.is_valid()) return;
+
+	Object *owner = p->get_owner();
+	if (owner == nullptr) return;
+
+	Variant stats_var = owner->get("stats");
+	if (stats_var.get_type() == Variant::NIL) return;
+
+	Object *stats = Object::cast_to<Object>(stats_var);
+	if (stats == nullptr) return;
+
+	Ref<Resource> params = p->get_params();
+	bool is_secondary = false;
+	if (params.is_valid()) {
+		is_secondary = params->get("_secondary");
+	}
+
+	if (!is_secondary) {
+		int citadel_overpen_count = stats->get("citadel_overpen_count");
+		stats->set("citadel_overpen_count", citadel_overpen_count + 1);
+		int main_hits = stats->get("main_hits");
+		stats->set("main_hits", main_hits + 1);
+	} else {
+		int sec_citadel_overpen_count = stats->get("sec_citadel_overpen_count");
+		stats->set("sec_citadel_overpen_count", sec_citadel_overpen_count + 1);
+		int secondary_count = stats->get("secondary_count");
+		stats->set("secondary_count", secondary_count + 1);
+	}
+}
+
+void _ProjectileManager::track_partial_pen(const Ref<ProjectileData> &p) {
+	if (!p.is_valid()) return;
+
+	Object *owner = p->get_owner();
+	if (owner == nullptr) return;
+
+	Variant stats_var = owner->get("stats");
+	if (stats_var.get_type() == Variant::NIL) return;
+
+	Object *stats = Object::cast_to<Object>(stats_var);
+	if (stats == nullptr) return;
+
+	Ref<Resource> params = p->get_params();
+	bool is_secondary = false;
+	if (params.is_valid()) {
+		is_secondary = params->get("_secondary");
+	}
+
+	if (!is_secondary) {
+		int partial_pen_count = stats->get("partial_pen_count");
+		stats->set("partial_pen_count", partial_pen_count + 1);
+		int main_hits = stats->get("main_hits");
+		stats->set("main_hits", main_hits + 1);
+	} else {
+		int sec_partial_pen_count = stats->get("sec_partial_pen_count");
+		stats->set("sec_partial_pen_count", sec_partial_pen_count + 1);
 		int secondary_count = stats->get("secondary_count");
 		stats->set("secondary_count", secondary_count + 1);
 	}

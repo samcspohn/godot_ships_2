@@ -523,6 +523,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
 		elif node.name.to_lower().contains("citadel"):
 			armor_part.type = ArmorPart.Type.CITADAL
+			self.citadel = armor_part
 
 	# handle colonly type
 	if armor_system.armor_data.has(path) and node is StaticBody3D:

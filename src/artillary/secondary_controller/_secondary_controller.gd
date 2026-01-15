@@ -43,9 +43,9 @@ func _ready() -> void:
 	target_mod.resource_local_to_scene = true
 	target_mod.init(_ship)
 
-	manual_target_mod.h_grouping = 1.6
-	manual_target_mod.v_grouping = 1.6
-	manual_target_mod.base_spread = 0.35
+	manual_target_mod.h_grouping = 1.5
+	manual_target_mod.v_grouping = 1.5
+	manual_target_mod.base_spread = 0.5
 	manual_target_mod.resource_local_to_scene = true
 	manual_target_mod.init(_ship)
 

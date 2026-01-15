@@ -28,7 +28,7 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_s67vb"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 2490.0
+pool1 = 2000.0
 pool2 = 4980.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
@@ -103,7 +103,7 @@ metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
 [sub_resource type="Resource" id="Resource_jewkh"]
 script = ExtResource("14_56jcx")
-speed = 54.0
+speed = 26.7
 damage = 20000.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
@@ -111,7 +111,7 @@ metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 resource_local_to_scene = true
 script = ExtResource("13_56jcx")
 torpedo_params = SubResource("Resource_jewkh")
-reload_time = 40.0
+reload_time = 5.0
 traverse_speed = 15.0
 _range = 14000.0
 metadata/_custom_type_script = "uid://cq5883re36gh7"

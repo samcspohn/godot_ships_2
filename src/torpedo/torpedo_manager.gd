@@ -8,7 +8,7 @@ var bulletId: int = 0
 # @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
-
+const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
@@ -16,17 +16,19 @@ class TorpedoData:
 	var position: Vector3
 	var start_position: Vector3
 	var direction: Vector3
+	var _range: float
 	var t: float
 	var params: TorpedoParams
 	var owner: Ship
 
-	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship):
+	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float):
 		self.position = pos
 		self.start_position = pos
 		self.direction = dir.normalized()
 		self.t = _t
 		self.params = _params
 		self.owner = _owner
+		self._range = __range
 
 
 func _ready():
@@ -132,7 +134,7 @@ func _process(_delta: float) -> void:
 			id += 1
 			continue
 
-		var t = (current_time - p.t)
+		var t = (current_time - p.t) * TORPEDO_SPEED_MULTIPLIER
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		#var prev_pos = p.position
 		p.position = p.direction * p.params.speed * t + p.start_position
@@ -177,12 +179,19 @@ func _physics_process(_delta: float) -> void:
 		if p == null:
 			id += 1
 			continue
-		var t = (current_time - p.t)
+		var t = (current_time - p.t) * TORPEDO_SPEED_MULTIPLIER
 		ray_query.from = p.position
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position = p.direction * p.params.speed * t + p.start_position
 		if p.position.y > 0.01:
 			p.position.y = max(p.position.y - t * 10, 0.01)
+
+		if p.position.distance_to(p.start_position) > p._range:
+			# Out of range
+			self.destroyTorpedoRpc(id, p.position)
+			id += 1
+			continue
+
 		ray_query.to = p.position
 
 		# Perform the raycast
@@ -190,14 +199,27 @@ func _physics_process(_delta: float) -> void:
 
 		if not collision.is_empty():
 			#global_position = collision.position
-			self.destroyTorpedoRpc(id, collision.position)
-			var ship = ProjectileManager.find_ship(collision.collider)
+			var ship = null
+			var armor_part = null
+			if collision.has("collider"):
+				armor_part = collision.collider
+				if armor_part is ArmorPart:
+					ship = armor_part.ship
 			if ship != null:
+				if ship == p.owner:
+					# Ignore self-hit
+					id += 1
+					continue
 				var hp: HPManager = ship.health_controller
-				#hp.apply_damage(p.params.damage)
-
-				# Track torpedo damage dealt
-				track_torpedo_damage_dealt(p.owner, p.params.damage)
+				if hp.is_alive():
+					var dmg_sunk = hp.apply_damage(p.params.damage, p.params.damage, armor_part, true, 1)
+					if dmg_sunk[1]:
+						# Ship sunk
+						if p.owner:
+							p.owner.stats.frags += 1
+					# Track torpedo damage dealt
+					track_torpedo_damage_dealt(p.owner, dmg_sunk[0])
+				self.destroyTorpedoRpc(id, collision.position)
 		id += 1
 
 
@@ -242,11 +264,11 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> v
 	var trans = Transform3D(basis, pos)
 	update_transform(id, trans)
 
-	torp.initialize(pos, vel, params, t, owner)
+	torp.initialize(pos, vel, params, t, owner, 0.0)
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
-func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship) -> int:
+func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship, _range: float) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -257,7 +279,7 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship) -> int:
 		self.torpedos.resize(np2)
 
 	var torp: TorpedoData = TorpedoData.new()
-	torp.initialize(pos, vel, params, t, owner)
+	torp.initialize(pos, vel, params, t, owner, _range)
 	self.torpedos.set(id, torp)
 	return id
 	#for p in multiplayer.get_peers():
@@ -270,7 +292,13 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	if torp == null:
 		print("bullet is null: ", id)
 		return
-	var radius = torp.params.damage / 200
+	var radius = torp.params.damage * 8 / 20000.0
+
+
+	HitEffects.he_explosion_effect(pos, radius, Vector3.UP)
+	HitEffects.sparks_effect(pos, radius, Vector3.UP)
+	HitEffects.splash_effect(pos, radius)
+
 	self.torpedos.set(id, null)
 	#self.projectiles.erase(id)
 	var b = Basis()
@@ -286,12 +314,14 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	#expl.global_position = pos
 	#expl.radius = radius
 
-@rpc("authority", "reliable")
+#@rpc("authority", "reliable")
 func destroyTorpedoRpc(id, position) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)
+
 	self.torpedos.set(id, null)
 	#self.projectiles.erase(id)
 	self.ids_reuse.append(id)
+	destroyTorpedoRpc2.rpc(id, position)
 
 func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
 	"""Track torpedo damage dealt using the ship's stats module"""

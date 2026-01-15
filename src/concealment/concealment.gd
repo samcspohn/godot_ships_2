@@ -5,22 +5,49 @@ class_name Concealment
 var bloom_value: float = 0.0
 var bloom_radius: float = 0.0
 
+var blooms: Dictionary[float, float] = {} # value : time_remaining
+# var bloom_radii: Dictionary[float, float] = {} # radius : time_remaining
+
+
 func _ready() -> void:
 	params.init(_ship)
 	_ship.concealment = self
 
+
 func _physics_process(delta: float) -> void:
 	if not _Utils.authority():
 		return
-	if bloom_value > 0.0:
-		bloom_value -= delta / params.p().bloom_duration
-	else:
+	# if bloom_value > 0.0:
+	# 	bloom_value -= delta / params.p().bloom_duration
+	# else:
+	# 	bloom_radius = params.p().radius
+	if blooms.size() == 0:
+		bloom_value = 0.0
 		bloom_radius = params.p().radius
+		return
+	var to_remove: Array[float] = []
+	var max_bloom: float = 0.0
+	var min_bloom_value: float = 0.0
+	for amount in blooms.keys():
+		blooms[amount] -= delta / params.p().bloom_duration
+		if blooms[amount] <= 0.0:
+			to_remove.append(amount)
+		else:
+			if amount > max_bloom:
+				max_bloom = amount
+			if blooms[amount] > min_bloom_value:
+				min_bloom_value = blooms[amount]
+	bloom_value = min_bloom_value
+	for amount in to_remove:
+		blooms.erase(amount)
+	bloom_radius = max(max_bloom, params.p().radius)
+
 
 func bloom(amount: float) -> void:
-	bloom_value = 1.0
-	if bloom_radius < amount:
-		bloom_radius = amount
+	# bloom_value = 1.0
+	# if bloom_radius < amount:
+	# 	bloom_radius = amount
+	blooms[amount] = 1.0
 
 func get_concealment() -> float:
 	return bloom_radius
