@@ -4,6 +4,8 @@
 - [ ] save settings (screen resolution, minimap size, volume levels, keybindings)
 - [ ] crtl+x lock guns
 - [ ] hover over UI elements for tooltips (gun stats, consumable info, etc)
+- [ ] add fire ribbon, temporary frag/fire ribbon.
+- [ ] add kill feed
 
 ## Todo Soon ⏳
 concealment, sound effects, damage saturation, clamp sniper range

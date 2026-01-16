@@ -851,39 +851,6 @@ func update_ship_ui():
 				setup_ship_ui(ship)
 				minimap.register_ship(ship)
 				print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
-	# if should_search:
-	# 	last_ship_search_time = current_time
-
-	# 	# Try to find ships in different possible locations
-	# 	var ships = []
-	# 	var possible_paths = [
-	# 		"/root/Server/GameWorld/Players",
-	# 		"/root/GameWorld/Players",
-	# 		"/root/Main/Players"
-	# 	]
-
-	# 	for path in possible_paths:
-	# 		var players_node = get_node_or_null(path)
-	# 		if players_node:
-	# 			ships = players_node.get_children()
-	# 			# print("Found ships at: ", path, " - Count: ", ships.size())
-	# 			break
-
-	# 	if ships.is_empty():
-	# 		# Fallback: search for all ships in the scene
-	# 		ships = get_tree().get_nodes_in_group("ships")
-	# 		if ships.is_empty():
-	# 			# Last resort: find all Ship nodes in the tree
-	# 			ships = []
-	# 			var root = get_tree().root
-	# 			_find_ships_recursive(root, ships)
-
-	# 	for ship in ships:
-	# 		if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
-	# 			tracked_ships[ship] = true
-	# 			setup_ship_ui(ship)
-	# 			minimap.register_ship(ship)
-	# 			print("Registered ship for UI and minimap: ", ship.name, " at position: ", ship.global_position)
 
 	# Update each ship's UI
 	var secondary_offset = camera_controller._ship.secondary_controller.target_offset if camera_controller._ship and camera_controller._ship.secondary_controller else Vector3.ZERO
@@ -1188,6 +1155,7 @@ func setup_weapon_controller(controller: Node):
 	var hp_container = gun_reload_container.get_parent() as Control
 	var gun_container = gun_reload_container.duplicate()
 	gun_container.visible = true
+	var size = controller.weapons.size()
 	for i in range(controller.weapons.size()):
 		var turret: Turret = controller.weapons[i]
 		var weapon_data = Weapon.new()
@@ -1196,6 +1164,12 @@ func setup_weapon_controller(controller: Node):
 		weapon_data.reload_bar = reload_bar_template.duplicate()
 		weapon_data.indicator.visible = true
 		weapon_data.reload_bar.visible = true
+		var width = min(400 / size, 100)
+		if width < 30:
+			weapon_data.reload_bar.get_child(0).visible = false
+		(weapon_data.reload_bar as Control).custom_minimum_size.x = width
+		(weapon_data.reload_bar as Control).size.x = width
+
 		weapons[controller].append(weapon_data)
 		crosshair_container.add_child(weapon_data.indicator)
 		gun_container.add_child(weapon_data.reload_bar)
@@ -1204,40 +1178,13 @@ func setup_weapon_controller(controller: Node):
 
 # Gun reload bar management
 func setup_weapons():
-	# # Clear existing reload bars
-	# for bar in gun_reload_bars:
-	# 	if is_instance_valid(bar):
-	# 		bar.queue_free()
-	# for indicator in gun_indicators:
-	# 	if is_instance_valid(indicator):
-	# 		indicator.queue_free()
-	# gun_reload_bars.clear()
-	# gun_indicators.clear()
-	# # gun_reload_timers.clear()
 	reload_bar_template.visible = false
 	gun_indicator.visible = false
 	gun_reload_container.visible = false
 
-	# # Get guns from ship artillery controller
-	# if camera_controller and camera_controller._ship and camera_controller._ship.artillery_controller:
-	# 	guns = camera_controller._ship.artillery_controller.guns
-
-	# 	for i in range(guns.size()):
-	# 		# Duplicate the template progress bar
-	# 		var progress_bar = reload_bar_template.duplicate()
-	# 		progress_bar.visible = true
-	# 		progress_bar.value = guns[i].reload if guns[i] else 1.0
-
-	# 		var indicator = GunIndicatorScene.instantiate()
-	# 		indicator.visible = true
-	# 		crosshair_container.add_child(indicator)
-	# 		gun_indicators.append(indicator)
-
-	# 		gun_reload_container.add_child(progress_bar)
-	# 		gun_reload_bars.append(progress_bar)
-	# 		# gun_reload_timers.append(progress_bar.get_child(0))
-
 	setup_weapon_controller(camera_controller._ship.artillery_controller)
+	if camera_controller._ship.secondary_controller.weapons.size() > 0:
+		setup_weapon_controller(camera_controller._ship.secondary_controller)
 	if camera_controller._ship.torpedo_controller:
 		setup_weapon_controller(camera_controller._ship.torpedo_controller)
 
@@ -1254,9 +1201,9 @@ func update_gun_reload_bars():
 
 	for controller in weapons.keys():
 		var turret_list = weapons[controller]
-		var params = controller.params.p()
 		for t in turret_list:
 			var gun: Turret = t.weapon
+			var params = gun.controller.get_params()
 			var bar = t.reload_bar
 			var indicator = t.indicator
 			var timer_label = bar.get_child(0) as Label
@@ -1270,11 +1217,7 @@ func update_gun_reload_bars():
 			if gun.reload >= 1.0:
 				timer_label.text = "%.1f" % (gun.reload * params.reload_time)
 			else:
-				timer_label.text = "%.1f s" % ((1.0 - gun.reload) * params.reload_time)
-
-			if controller != player_controller.current_weapon_controller:
-				indicator.visible = false
-				continue
+				timer_label.text = "%.1f" % ((1.0 - gun.reload) * params.reload_time)
 
 			var gun_pos = gun.global_position
 			gun_pos.y = 0.0
@@ -1312,6 +1255,12 @@ func update_gun_reload_bars():
 				color = reloading_gun_color * color_mod
 			bar.self_modulate = color
 			progress_tex.tint_progress = color
+
+
+			if controller != player_controller.current_weapon_controller:
+				indicator.visible = false
+				continue
+
 
 			var closest_indicator: Control = null
 			# Avoid overlapping indicators

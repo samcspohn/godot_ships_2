@@ -21,6 +21,14 @@ var just_switched_mode: bool = false
 # var _found_target: bool = false
 # var not_all_returned_to_base: bool
 
+var weapons: Array[Turret]:
+	get:
+		var all_weapons: Array[Turret] = []
+		for sc in sub_controllers:
+			for g in sc.guns:
+				all_weapons.append(g as Turret)
+		return all_weapons
+
 var active: bool
 
 func get_params() -> GunParams:
@@ -194,7 +202,7 @@ func _physics_process(delta: float) -> void:
 						continue
 					if g.reload >= 1 and g.can_fire and gun_targets[gi] != null:
 						if gun_targets[gi] == target:
-							g.fire(target_mod)
+							g.fire(target_mod.dynamic_mod)
 						else:
 							g.fire()
 						gi = sc.guns.size()
@@ -210,7 +218,7 @@ func select_shell(new_type: int) -> void:
 	if shell_index == new_type:
 		return
 	shell_index = new_type
-	for sc in sub_controllers:
-		#sc.shell_index = shell_index
-		for g in sc.guns:
-			g.reload = 0.0
+	# for sc in sub_controllers:
+	# 	#sc.shell_index = shell_index
+	# 	for g in sc.guns:
+	# 		g.reload = 0.0

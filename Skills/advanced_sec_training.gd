@@ -1,10 +1,10 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.5
-const max_spread_bonus = 0.50
+const max_grouping_bonus = 0.4
+const max_spread_bonus = 0.6
 
-var grouping_multiplier: float = 1.0
+var grouping_multiplier: float = 0.0
 var spread_multiplier: float = 1.0
 
 func _init():
@@ -12,9 +12,10 @@ func _init():
 	description = "Increases secondary artillery accuracy the longer they fire on a target, up to 60% grouping and 60% spread improvement. Accuracy resets after not firing for a short time."
 
 func _a(ship: Ship):
-	_ship.secondary_controller.target_mod.h_grouping = grouping_multiplier
-	_ship.secondary_controller.target_mod.v_grouping = grouping_multiplier
-	_ship.secondary_controller.target_mod.base_spread = spread_multiplier
+	# print("grouping_multiplier: ", grouping_multiplier, " spread_multiplier: ", spread_multiplier)
+	_ship.secondary_controller.target_mod.dynamic_mod.h_grouping += grouping_multiplier
+	_ship.secondary_controller.target_mod.dynamic_mod.v_grouping += grouping_multiplier
+	_ship.secondary_controller.target_mod.dynamic_mod.base_spread *= spread_multiplier
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.p.dynamic_mod as GunParams
 		params.reload_time *= 0.9
@@ -55,14 +56,14 @@ func _proc(_delta: float) -> void:
 
 	if secs_shooting:
 		accuracy_buildup = min(1.0, accuracy_buildup + _delta / accuracy_buildup_time)
-		grouping_multiplier = 1.0 + (max_grouping_bonus * accuracy_buildup)
+		grouping_multiplier = (max_grouping_bonus * accuracy_buildup)
 		spread_multiplier = 1.0 - (max_spread_bonus * accuracy_buildup)
 		not_shooting_timer = 0.0
 	else:
 		not_shooting_timer = max(0.0, not_shooting_timer + _delta)
 		if not_shooting_timer >= accuracy_decay_time:
 			accuracy_buildup = max(0.0, accuracy_buildup - _delta / accuracy_falloff_time)
-			grouping_multiplier = 1.0 + (max_grouping_bonus * accuracy_buildup)
+			grouping_multiplier = (max_grouping_bonus * accuracy_buildup)
 			spread_multiplier = 1.0 - (max_spread_bonus * accuracy_buildup)
 
 	if curr_accuracy_buildup != accuracy_buildup:

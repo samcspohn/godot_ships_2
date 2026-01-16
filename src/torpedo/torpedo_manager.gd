@@ -211,7 +211,7 @@ func _physics_process(_delta: float) -> void:
 					id += 1
 					continue
 				var hp: HPManager = ship.health_controller
-				if hp.is_alive():
+				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id:
 					var dmg_sunk = hp.apply_damage(p.params.damage, p.params.damage, armor_part, true, 1)
 					if dmg_sunk[1]:
 						# Ship sunk
@@ -219,7 +219,7 @@ func _physics_process(_delta: float) -> void:
 							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
 					track_torpedo_damage_dealt(p.owner, dmg_sunk[0])
-				self.destroyTorpedoRpc(id, collision.position)
+			self.destroyTorpedoRpc(id, collision.position)
 		id += 1
 
 

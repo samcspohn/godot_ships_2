@@ -1,7 +1,12 @@
 extends Resource
 class_name TorpedoParams
 
-@export var speed: float
+@export var speed_knts: float
+var speed: float:
+	get:
+		return speed_knts * 0.514444  # Convert knots to meters per second
+	set(value):
+		speed_knts = value / 0.514444
 @export var damage: float
 
 func to_bytes() -> PackedByteArray:

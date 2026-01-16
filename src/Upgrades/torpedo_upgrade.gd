@@ -6,8 +6,8 @@ func _init():
 	icon = preload("res://icons/health-normal (1).png")
 
 func _a(_ship: Ship):
-	if _ship.torpedo_launcher:
-		_ship.torpedo_launcher.reload_time *= 0.85
+	if _ship.torpedo_controller:
+		(_ship.torpedo_controller.params.static_mod as TorpedoLauncherParams).reload_time *= 0.85
 
 func apply(_ship: Ship):
 	# Apply the upgrade effect to the ship

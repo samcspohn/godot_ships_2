@@ -15,8 +15,8 @@ func _a(ship: Ship):
 		var sec_params = sec.p.dynamic_mod as GunParams
 		sec_params.reload_time *= 0.9
 		sec_params.base_spread *= 0.9
-		sec_params.h_grouping *= 0.9
-		sec_params.v_grouping *= 0.9
+		sec_params.h_grouping += 0.1
+		sec_params.v_grouping += 0.1
 
 var enabled = false
 func _proc(_delta: float) -> void:
@@ -25,7 +25,7 @@ func _proc(_delta: float) -> void:
 	for sec: SecSubController in _ship.secondary_controller.sub_controllers:
 		if (sec.p.dynamic_mod as GunParams)._range > max_secondary_range:
 			max_secondary_range = (sec.p.dynamic_mod as GunParams)._range
-	
+
 	if _ship.artillery_controller.aim_point.distance_to(_ship.global_position) < max_secondary_range:
 		if not enabled:
 			enabled = true

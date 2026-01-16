@@ -13,11 +13,15 @@ config_version=5
 base_url="http://127.0.0.1:11434"
 llm_api="ollama_api"
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
-config/name="ships2"
+config/name="ships3"
 run/main_scene="res://scenes/root.tscn"
-config/features=PackedStringArray("4.5", "Forward Plus")
+config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
 [audio]
@@ -54,6 +58,10 @@ version_control/autoload_on_startup=true
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
+
+[godots]
+
+version_hint=""
 
 [input]
 

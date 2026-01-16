@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ShellParams" load_steps=2 format=3 uid="uid://clkhcp88wnsn5"]
+[gd_resource type="Resource" script_class="ShellParams" format=3 uid="uid://clkhcp88wnsn5"]
 
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="1_svjww"]
 

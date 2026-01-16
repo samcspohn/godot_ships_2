@@ -48,7 +48,7 @@ func update_mods() -> void:
 # then apply any static mods to static_mod
 # self = static_mod.duplicate(true)
 func reset() -> void:
-	print("reset moddable")
+	# print("reset moddable")
 	static_mod = duplicate_as_copy(base)
 	dynamic_mod = static_mod.duplicate(true)
 

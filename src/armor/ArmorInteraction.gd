@@ -355,7 +355,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		if e_armor < 0.0:
 			print(" ⚠️ Warning: negative effective armor calculated")
 
-		shell.pen = calculate_de_marre_penetration(params.mass, speed, params.caliber)
+		shell.pen = calculate_de_marre_penetration(params.mass, speed, params.caliber) * params.penetration_modifier
 		shell.position = hit_position
 
 		events.append("Shell: speed=%f vel=(%f, %f, %f) m/s, fuze=%.3f s, pos=(%f, %f, %f), pen: %.1f" % [

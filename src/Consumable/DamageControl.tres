@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="DamageControl" load_steps=4 format=3 uid="uid://cj43pm5o6aibf"]
+[gd_resource type="Resource" script_class="DamageControl" format=3 uid="uid://cj43pm5o6aibf"]
 
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="1_321va"]
 [ext_resource type="Texture2D" uid="uid://cjpfk83wkq47p" path="res://icons/auto-repair.png" id="1_6426l"]
@@ -7,8 +7,6 @@
 [resource]
 resource_local_to_scene = true
 script = ExtResource("1_tj6jp")
-name = ""
-description = ""
 icon = ExtResource("1_6426l")
 disabled_icon = ExtResource("1_321va")
 cooldown_time = 10.0

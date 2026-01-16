@@ -314,6 +314,7 @@ func sync_player_data() -> PackedByteArray:
 	# 	# writer.put_var(torpedo_launcher.global_basis)
 
 	if torpedo_controller:
+		writer.put_var(torpedo_controller.to_bytes())
 		writer.put_32(torpedo_controller.launchers.size())
 		for tl in torpedo_controller.launchers:
 			writer.put_var(tl.to_bytes(true))
@@ -327,8 +328,6 @@ func sync_player_data() -> PackedByteArray:
 	writer.put_var(stats_bytes)
 
 	writer.put_u8(1 if visible_to_enemy else 0)
-
-
 
 	pb = writer.get_data_array()
 	return pb
@@ -391,13 +390,6 @@ func sync2(b: PackedByteArray, friendly: bool):
 				g.from_bytes(gun_bytes, false)
 
 	# Torpedo launcher data
-	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	# var has_torpedo_launcher: int = reader.get_32()
-	# if has_torpedo_launcher == 1:
-	# 	var euler_tl: Vector3 = reader.get_var()
-	# 	if torpedo_launcher != null:
-	# 		torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
-
 	if torpedo_controller:
 		var tl_count: int = reader.get_32()
 		for tl in torpedo_controller.launchers:
@@ -462,6 +454,7 @@ func sync_player(b: PackedByteArray):
 	# 	var euler_tl: Vector3 = reader.get_var()
 	# 	torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
 	if torpedo_controller:
+		torpedo_controller.from_bytes(reader.get_var())
 		var tl_count: int = reader.get_32()
 		for tl in torpedo_controller.launchers:
 			var tl_bytes: PackedByteArray = reader.get_var()
