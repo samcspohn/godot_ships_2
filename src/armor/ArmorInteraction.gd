@@ -464,7 +464,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("get_part_hit result: %s (citadel=%s)" % [
 		d.armor_path if d != null else "null",
-		str(d.type == ArmorPart.Type.CITADAL) if d != null else "N/A"])
+		str(d.type == ArmorPart.Type.CITADEL) if d != null else "N/A"])
 	events.append("hit_cit flag: %s, over_pen flag: %s" % [hit_cit, over_pen])
 
 	var damage_result := _resolve_hit_result(result, d, hit_cit, over_pen)
@@ -514,7 +514,7 @@ func _resolve_hit_result(armor_result: ArmorResult, final_part: ArmorPart,
 
 	# For ricochet and penetration, check where shell ended up
 	var in_citadel := final_part != null and \
-		(final_part.type == ArmorPart.Type.CITADAL)
+		(final_part.type == ArmorPart.Type.CITADEL)
 
 	if in_citadel:
 		return HitResult.CITADEL
@@ -648,7 +648,7 @@ func get_part_hit(_ship: Ship, shell_pos: Vector3,
 			inside_parts.append(armor_part)
 
 	for part in inside_parts:
-		if part.type == ArmorPart.Type.CITADAL:
+		if part.type == ArmorPart.Type.CITADEL:
 			return part
 
 	return inside_parts[0] if inside_parts.size() > 0 else null
@@ -1099,7 +1099,7 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 	# final processing
 	var d: ArmorPart = get_part_hit(hit_node.ship, shell.end_position, space_state)
 
-	events.append("get_part_hit result: %s (citadel=%s)" % [d.armor_path if d != null else "null", str(d.type == ArmorPart.Type.CITADAL) if d != null else "N/A"])
+	events.append("get_part_hit result: %s (citadel=%s)" % [d.armor_path if d != null else "null", str(d.type == ArmorPart.Type.CITADEL) if d != null else "N/A"])
 	events.append("hit_cit flag: %s, over_pen flag: %s" % [hit_cit, over_pen])
 
 	var damage_result = HitResult.WATER
@@ -1110,7 +1110,7 @@ func process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3
 		damage_result = HitResult.SHATTER
 
 	# Then check penetration depth
-	if d != null and (d.type == ArmorPart.Type.CITADAL):
+	if d != null and (d.type == ArmorPart.Type.CITADEL):
 		damage_result = HitResult.CITADEL
 	elif hit_cit: # overpen citadel but still could be inside hull
 		damage_result = HitResult.CITADEL_OVERPEN

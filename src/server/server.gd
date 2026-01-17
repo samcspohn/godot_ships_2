@@ -156,6 +156,7 @@ func spawn_player(id, player_name):
 	# If it's a bot, add bot AI controller instead of player controller
 	if is_bot:
 		var bot_controller = preload("res://src/ship/bot_controller.tscn").instantiate()
+		bot_controller.name = "BotController"
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller.ship = player
 	else:

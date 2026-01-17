@@ -7,7 +7,7 @@ var bloom_radius: float = 0.0
 
 var blooms: Dictionary[float, float] = {} # value : time_remaining
 # var bloom_radii: Dictionary[float, float] = {} # radius : time_remaining
-
+var bloom_while_not_visible: float = 0.0
 
 func _ready() -> void:
 	params.init(_ship)

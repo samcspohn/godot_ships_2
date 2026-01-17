@@ -230,7 +230,6 @@ material_override = ExtResource("14_pww3p")
 [node name="GER_380mm_2b" parent="TurretMount_GER_380mm_2b" index="0" unique_id=147827599 instance=ExtResource("14_5uw5v")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.7524578917878086
 max_rotation_angle = 2.530727415391778
 auto_extract_armor = null
@@ -238,7 +237,6 @@ auto_extract_armor = null
 [node name="GER_380mm_2b_rf" parent="TurretMount_GER_380mm_2b_rf" index="0" unique_id=1790224215 instance=ExtResource("16_1b7x2")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.7524578917878086
 max_rotation_angle = 2.530727415391778
 auto_extract_armor = null
@@ -246,7 +244,6 @@ auto_extract_armor = null
 [node name="GER_380mm_2b_rf_001" parent="TurretMount_GER_380mm_2b_rf_001" index="0" unique_id=467576354 instance=ExtResource("16_1b7x2")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 auto_extract_armor = null
@@ -254,7 +251,6 @@ auto_extract_armor = null
 [node name="GER_380mm_2b_rf_002" parent="TurretMount_GER_380mm_2b_rf_002" index="0" unique_id=104353590 instance=ExtResource("16_1b7x2")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 auto_extract_armor = null
@@ -271,7 +267,6 @@ auto_extract_armor = null
 [node name="GER_150mm_2b_rf_001" parent="TurretMount_GER_150mm_2b_rf_001" index="0" unique_id=1587270882 instance=ExtResource("17_jx7aj")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.0018859508715554
 max_rotation_angle = 2.9345538463017977
 glb_path = null
@@ -280,7 +275,6 @@ auto_extract_armor = null
 [node name="GER_150mm_2b" parent="TurretMount_GER_150mm_2b" index="0" unique_id=2054831162 instance=ExtResource("18_hcq8l")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.7312221275363617
 max_rotation_angle = 0.01012819121078401
 glb_path = null
@@ -289,7 +283,6 @@ auto_extract_armor = null
 [node name="GER_150mm_2b_001" parent="TurretMount_GER_150mm_2b_001" index="0" unique_id=1439124474 instance=ExtResource("18_hcq8l")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 6.1086523819801535
 glb_path = null
@@ -298,7 +291,6 @@ auto_extract_armor = null
 [node name="GER_150mm_2b_002" parent="TurretMount_GER_150mm_2b_002" index="0" unique_id=695376269 instance=ExtResource("18_hcq8l")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.2792526803190927
 max_rotation_angle = null
 glb_path = null
@@ -307,7 +299,6 @@ auto_extract_armor = null
 [node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" unique_id=2050033053 instance=ExtResource("18_hcq8l")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.00437897004486487
 max_rotation_angle = 2.6190116947630884
 glb_path = null
@@ -316,7 +307,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" unique_id=946330385 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.422434449473945
 max_rotation_angle = 0.004996498094882
 glb_path = null
@@ -325,7 +315,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" index="0" unique_id=2103609279 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.36186195118043
 max_rotation_angle = 6.15304730352228
 glb_path = null
@@ -334,7 +323,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_002" parent="TurretMount_GER_105mm_2b_002" index="0" unique_id=304756429 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.2585142140268153
 max_rotation_angle = 6.0817159007645785
 glb_path = null
@@ -343,7 +331,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_003" parent="TurretMount_GER_105mm_2b_003" index="0" unique_id=700267702 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 3.1665003080596836
 max_rotation_angle = 5.973077247203072
 glb_path = null
@@ -352,7 +339,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" index="0" unique_id=65977505 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.32652345383915105
 max_rotation_angle = null
 glb_path = null
@@ -361,7 +347,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" index="0" unique_id=116127837 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.20248286862908405
 max_rotation_angle = 3.036455550222673
 glb_path = null
@@ -370,7 +355,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_006" parent="TurretMount_GER_105mm_2b_006" index="0" unique_id=1220860838 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.09748192736781648
 max_rotation_angle = 2.9638556402871927
 glb_path = null
@@ -379,7 +363,6 @@ auto_extract_armor = null
 [node name="GER_105mm_2b_007" parent="TurretMount_GER_105mm_2b_007" index="0" unique_id=1316425038 instance=ExtResource("19_1k3lc")]
 barrel_count = null
 barrel_spacing = null
-rotation_limits_enabled = null
 min_rotation_angle = 0.00398590263774245
 max_rotation_angle = 2.8422316975614645
 glb_path = null

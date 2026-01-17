@@ -140,8 +140,9 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var rudder_slider: HSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderSlider
 @onready var throttle_slider: VSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ThrottleSlider
 
-@onready var hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBar
-@onready var hp_label: Label = $MainContainer/BottomCenterPanel/HPContainer/HPBar/HPLabel
+@onready var hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar
+@onready var healable_hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HealableHPBar
+@onready var hp_label: Label = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar/HPLabel
 
 @onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer
 @onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate
@@ -730,6 +731,14 @@ func _update_ui():
 		hp_bar.value = hp_percent
 		hp_label.text = "%d/%d" % [current_hp, max_hp]
 
+		# Update healable HP bar (shows current HP + healable damage as white region)
+		var healable_damage = camera_controller._ship.health_controller.healable_damage
+		if healable_damage != null and healable_damage > 0:
+			var healable_percent = (float(current_hp + healable_damage) / max_hp) * 100.0
+			healable_hp_bar.value = min(healable_percent, 100.0)
+		else:
+			healable_hp_bar.value = hp_percent
+
 		# Change HP bar color based on health level
 		if hp_percent > 75:
 			hp_bar.modulate = Color(0.2, 0.9, 0.2) # Green
@@ -1164,7 +1173,7 @@ func setup_weapon_controller(controller: Node):
 		weapon_data.reload_bar = reload_bar_template.duplicate()
 		weapon_data.indicator.visible = true
 		weapon_data.reload_bar.visible = true
-		var width = min(400 / size, 100)
+		var width = min(380 / size, 100)
 		if width < 30:
 			weapon_data.reload_bar.get_child(0).visible = false
 		(weapon_data.reload_bar as Control).custom_minimum_size.x = width

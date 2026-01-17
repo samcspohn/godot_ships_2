@@ -4,7 +4,7 @@ class_name ArmorPart
 
 enum Type {
 	MODULE,
-	CITADAL,
+	CITADEL,
 	CASEMATE,
 	BOW,
 	STERN,
@@ -19,7 +19,7 @@ var type: Type = Type.MODULE
 
 var is_citadel: bool:
 	get:
-		return type == Type.CITADAL
+		return type == Type.CITADEL
 
 func get_armor(face_index: int) -> float:
 	return armor_system.get_face_armor_thickness(armor_path, face_index)

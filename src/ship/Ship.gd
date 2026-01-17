@@ -188,6 +188,11 @@ func _physics_process(delta: float) -> void:
 func get_aabb() -> AABB:
 	return self.aabb * global_transform
 
+@rpc("any_peer", "reliable")
+func initialized_client():
+	self.initialized = true
+
+
 func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	var pb = PackedByteArray()
 	var writer = StreamPeerBuffer.new()
@@ -201,6 +206,7 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	# writer.put_var(global_basis)
 	writer.put_var(global_position)
 	writer.put_float(health_controller.current_hp)
+	writer.put_float(health_controller.max_hp)
 
 	# Consumables data
 	if friendly:
@@ -224,11 +230,6 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 				writer.put_var(g.to_bytes(false))
 
 	# Torpedo launcher data
-	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	# writer.put_32(1 if torpedo_launcher != null else 0)
-	# if torpedo_launcher != null:
-	# 	var euler_tl = torpedo_launcher.global_basis.get_euler()
-	# 	writer.put_var(euler_tl)
 	if torpedo_controller:
 		writer.put_32(torpedo_controller.launchers.size())
 		for tl in torpedo_controller.launchers:
@@ -244,100 +245,6 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	pb = writer.get_data_array()
 	return pb
 
-func sync_ship_transform() -> PackedByteArray:
-	var pb = PackedByteArray()
-	var writer = StreamPeerBuffer.new()
-	writer.put_float(rotation.y)
-	writer.put_float(global_position.x)
-	writer.put_float(global_position.z)
-	writer.put_float(health_controller.current_hp)
-	writer.put_float(health_controller.max_hp)
-	writer.put_u8(1 if visible_to_enemy else 0)
-	pb = writer.get_data_array()
-	return pb
-
-func parse_ship_transform(b: PackedByteArray) -> void:
-	var reader = StreamPeerBuffer.new()
-	reader.data_array = b
-	rotation.y = reader.get_float()
-	# server_rotation.y = reader.get_float()
-	global_position.x = reader.get_float()
-	global_position.z = reader.get_float()
-	global_position.y = 0
-	# server_rotation.y = reader.get_float()
-	# server_rotation = Basis.from_euler(Vector3(0, reader.get_float(), 0))
-
-	# server_position.x = reader.get_float()
-	# server_position.y = 0
-	# server_position.z = reader.get_float()
-	health_controller.current_hp = reader.get_float()
-	health_controller.max_hp = reader.get_float()
-	visible_to_enemy = reader.get_u8() == 1
-
-func sync_player_data() -> PackedByteArray:
-	var pb = PackedByteArray()
-	var writer = StreamPeerBuffer.new()
-
-	writer.put_32(movement_controller.throttle_level)
-	#writer.put_float_array(movement_controller.thrust_vector.to_array())
-	writer.put_float(movement_controller.rudder_input)
-	writer.put_var(linear_velocity)
-	var euler = global_basis.get_euler()
-	writer.put_var(euler)
-	# writer.put_var(global_basis)
-	writer.put_var(global_position)
-	writer.put_float(health_controller.current_hp)
-
-	# Consumables data
-	writer.put_var(consumable_manager.to_bytes())
-
-	# Artillery data
-	writer.put_var(artillery_controller.to_bytes())
-	# Guns data
-	# writer.put_32(artillery_controller.guns.size())
-	for g in artillery_controller.guns:
-		writer.put_var(g.to_bytes(true))
-
-	# Secondary controllers data
-	# writer.put_32(secondary_controller.sub_controllers.size())
-	for controller in secondary_controller.sub_controllers:
-		writer.put_var(controller.to_bytes())
-		# writer.put_32(controller.guns.size())
-		for g: Gun in controller.guns:
-			writer.put_var(g.to_bytes(true))
-
-	# Torpedo launcher data
-	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	# if torpedo_launcher != null:
-	# 	var euler_tl = torpedo_launcher.global_basis.get_euler()
-	# 	writer.put_var(euler_tl)
-	# 	# writer.put_var(torpedo_launcher.global_basis)
-
-	if torpedo_controller:
-		writer.put_var(torpedo_controller.to_bytes())
-		writer.put_32(torpedo_controller.launchers.size())
-		for tl in torpedo_controller.launchers:
-			writer.put_var(tl.to_bytes(true))
-
-	writer.put_var(concealment.to_bytes())
-
-	writer.put_32(multiplayer.get_unique_id())
-
-	# Ship stats data
-	var stats_bytes = stats.to_bytes()
-	writer.put_var(stats_bytes)
-
-	writer.put_u8(1 if visible_to_enemy else 0)
-
-	pb = writer.get_data_array()
-	return pb
-
-
-@rpc("any_peer", "reliable")
-func initialized_client():
-	self.initialized = true
-
-# @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func sync2(b: PackedByteArray, friendly: bool):
 	# print("here")
 
@@ -360,6 +267,7 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# server_rotation = Basis.from_euler(euler)
 	# server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
+	health_controller.max_hp = reader.get_float()
 	# max hp
 
 	# Consumables data
@@ -372,35 +280,117 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# artillery_controller.from_bytes(art_bytes)
 	# Guns data
 	var gun_count: int = reader.get_32()
-	for g in artillery_controller.guns:
+	for i in gun_count:
 		var gun_bytes: PackedByteArray = reader.get_var()
-		g.from_bytes(gun_bytes, false)
+		if i < artillery_controller.guns.size():
+			artillery_controller.guns[i].from_bytes(gun_bytes, false)
 
 	# Secondary controllers data
 	var active: int = reader.get_u8()
 	secondary_controller.active = active == 1
 	if active:
 		var sc_count: int = reader.get_32()
-		for controller in secondary_controller.sub_controllers:
+		for i in sc_count:
 			# var sc_bytes: PackedByteArray = reader.get_var()
 			# controller.from_bytes(sc_bytes)
 			var sc_gun_count: int = reader.get_32()
-			for g: Gun in controller.guns:
+			for j in sc_gun_count:
 				var gun_bytes: PackedByteArray = reader.get_var()
-				g.from_bytes(gun_bytes, false)
+				if i < secondary_controller.sub_controllers.size():
+					var controller = secondary_controller.sub_controllers[i]
+					if j < controller.guns.size():
+						controller.guns[j].from_bytes(gun_bytes, false)
 
 	# Torpedo launcher data
 	if torpedo_controller:
 		var tl_count: int = reader.get_32()
-		for tl in torpedo_controller.launchers:
+		for i in tl_count:
 			var tl_bytes: PackedByteArray = reader.get_var()
-			tl.from_bytes(tl_bytes, false)
+			if i < torpedo_controller.launchers.size():
+				torpedo_controller.launchers[i].from_bytes(tl_bytes, false)
 
 	var p_id: int = reader.get_32()
 	# var stats_bytes: PackedByteArray = reader.get_var()
 	# stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
 
+func sync_ship_transform() -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+	writer.put_float(rotation.y)
+	writer.put_float(global_position.x)
+	writer.put_float(global_position.z)
+	writer.put_float(health_controller.current_hp)
+	writer.put_float(health_controller.max_hp)
+	writer.put_u8(1 if visible_to_enemy else 0)
+	pb = writer.get_data_array()
+	return pb
+
+func parse_ship_transform(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	rotation.y = reader.get_float()
+	# server_rotation.y = reader.get_float()
+	global_position.x = reader.get_float()
+	global_position.z = reader.get_float()
+	global_position.y = 0
+	health_controller.current_hp = reader.get_float()
+	health_controller.max_hp = reader.get_float()
+	visible_to_enemy = reader.get_u8() == 1
+
+func sync_player_data() -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+
+	writer.put_32(movement_controller.throttle_level)
+	#writer.put_float_array(movement_controller.thrust_vector.to_array())
+	writer.put_float(movement_controller.rudder_input)
+	writer.put_var(linear_velocity)
+	var euler = global_basis.get_euler()
+	writer.put_var(euler)
+	# writer.put_var(global_basis)
+	writer.put_var(global_position)
+	writer.put_float(health_controller.current_hp)
+	writer.put_float(health_controller.max_hp)
+	writer.put_float(health_controller.healable_damage)
+
+	# Consumables data
+	writer.put_var(consumable_manager.to_bytes())
+
+	# Artillery data
+	writer.put_var(artillery_controller.to_bytes())
+	# Guns data
+	writer.put_32(artillery_controller.guns.size())
+	for g in artillery_controller.guns:
+		writer.put_var(g.to_bytes(true))
+
+	# Secondary controllers data
+	writer.put_32(secondary_controller.sub_controllers.size())
+	for controller in secondary_controller.sub_controllers:
+		writer.put_var(controller.to_bytes())
+		writer.put_32(controller.guns.size())
+		for g: Gun in controller.guns:
+			writer.put_var(g.to_bytes(true))
+
+	# Torpedo launcher data
+	if torpedo_controller:
+		writer.put_var(torpedo_controller.to_bytes())
+		writer.put_32(torpedo_controller.launchers.size())
+		for tl in torpedo_controller.launchers:
+			writer.put_var(tl.to_bytes(true))
+
+	writer.put_var(concealment.to_bytes())
+
+	writer.put_32(multiplayer.get_unique_id())
+
+	# Ship stats data
+	var stats_bytes = stats.to_bytes()
+	writer.put_var(stats_bytes)
+
+	writer.put_u8(1 if visible_to_enemy else 0)
+
+	pb = writer.get_data_array()
+	return pb
 
 @rpc("authority", "call_remote", "unreliable_ordered", 1)
 func sync_player(b: PackedByteArray):
@@ -418,10 +408,9 @@ func sync_player(b: PackedByteArray):
 	var euler: Vector3 = reader.get_var()
 	global_basis = Basis.from_euler(euler)
 	global_position = reader.get_var()
-	# server_rotation = euler
-	# server_rotation = Basis.from_euler(euler)
-	# server_position = reader.get_var()
 	health_controller.current_hp = reader.get_float()
+	health_controller.max_hp = reader.get_float()
+	health_controller.healable_damage = reader.get_float()
 	# max hp
 
 	# Consumables data
@@ -433,32 +422,34 @@ func sync_player(b: PackedByteArray):
 	artillery_controller.from_bytes(art_bytes)
 
 	# Guns data
-	# var gun_count: int = reader.get_32()
-	for g in artillery_controller.guns:
+	var gun_count: int = reader.get_32()
+	for i in gun_count:
 		var gun_bytes: PackedByteArray = reader.get_var()
-		g.from_bytes(gun_bytes, true)
+		if i < artillery_controller.guns.size():
+			artillery_controller.guns[i].from_bytes(gun_bytes, true)
 
 	# Secondary controllers data
-	# var sc_count: int = reader.get_32()
-	for controller in secondary_controller.sub_controllers:
+	var sc_count: int = reader.get_32()
+	for i in sc_count:
 		var sc_bytes: PackedByteArray = reader.get_var()
-		controller.from_bytes(sc_bytes)
-		# var sc_gun_count: int = reader.get_32()
-		for g: Gun in controller.guns:
+		if i < secondary_controller.sub_controllers.size():
+			secondary_controller.sub_controllers[i].from_bytes(sc_bytes)
+		var sc_gun_count: int = reader.get_32()
+		for j in sc_gun_count:
 			var gun_bytes: PackedByteArray = reader.get_var()
-			g.from_bytes(gun_bytes, true)
+			if i < secondary_controller.sub_controllers.size():
+				var controller = secondary_controller.sub_controllers[i]
+				if j < controller.guns.size():
+					controller.guns[j].from_bytes(gun_bytes, true)
 
 	# Torpedo launcher data
-	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
-	# if torpedo_launcher != null:
-	# 	var euler_tl: Vector3 = reader.get_var()
-	# 	torpedo_launcher.global_basis = Basis.from_euler(euler_tl)
 	if torpedo_controller:
 		torpedo_controller.from_bytes(reader.get_var())
 		var tl_count: int = reader.get_32()
-		for tl in torpedo_controller.launchers:
+		for i in tl_count:
 			var tl_bytes: PackedByteArray = reader.get_var()
-			tl.from_bytes(tl_bytes, true)
+			if i < torpedo_controller.launchers.size():
+				torpedo_controller.launchers[i].from_bytes(tl_bytes, true)
 
 	concealment.from_bytes(reader.get_var())
 
@@ -515,7 +506,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		elif node.name.to_lower().contains("superstructure"):
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
 		elif node.name.to_lower().contains("citadel"):
-			armor_part.type = ArmorPart.Type.CITADAL
+			armor_part.type = ArmorPart.Type.CITADEL
 			self.citadel = armor_part
 
 	# handle colonly type
@@ -551,7 +542,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		elif node.name.to_lower().contains("superstructure"):
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
 		elif node.name.to_lower().contains("citadel"):
-			armor_part.type = ArmorPart.Type.CITADAL
+			armor_part.type = ArmorPart.Type.CITADEL
 
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
