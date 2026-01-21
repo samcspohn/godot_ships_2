@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3 uid="uid://co64l5smsfyl5"]
+[gd_scene format=3 uid="uid://co64l5smsfyl5"]
 
 [ext_resource type="Material" uid="uid://dt2gajt2c4agi" path="res://water.tres" id="1_2llvm"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_8oaqw"]
@@ -11,1317 +11,1319 @@ margin = 0.0
 
 [sub_resource type="PrismMesh" id="PrismMesh_m8itd"]
 
-[node name="Map2" type="Node3D"]
+[node name="Map2" type="Node3D" unique_id=443946566]
 
-[node name="Water" type="CSGBox3D" parent="."]
+[node name="Water" type="CSGBox3D" parent="." unique_id=2100004922]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 material_override = ExtResource("1_2llvm")
 size = Vector3(100000, 1, 100000)
 
-[node name="StaticBody3D" type="StaticBody3D" parent="Water"]
+[node name="StaticBody3D" type="StaticBody3D" parent="Water" unique_id=1027949666]
+collision_layer = 8
+collision_mask = 0
 physics_material_override = SubResource("PhysicsMaterial_klv7y")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Water/StaticBody3D"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Water/StaticBody3D" unique_id=81546727]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
 shape = SubResource("WorldBoundaryShape3D_2llvm")
 
-[node name="Land" type="Node" parent="."]
+[node name="Land" type="Node" parent="." unique_id=301516025]
 
-[node name="Island" type="Node3D" parent="Land"]
+[node name="Island" type="Node3D" parent="Land" unique_id=1070206383]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2464.03, 0, -485.60938)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island" unique_id=432902377]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island" unique_id=563991797]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island2" type="Node3D" parent="Land"]
+[node name="Island2" type="Node3D" parent="Land" unique_id=1667207191]
 transform = Transform3D(0.89792, 0, 0.440159, 0, 1, 0, -0.440159, 0, 0.89792, -2240.12, 0, 663.4606)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island2"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island2" unique_id=1978897332]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island2"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island2" unique_id=500494255]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island5" type="Node3D" parent="Land"]
+[node name="Island5" type="Node3D" parent="Land" unique_id=1664332939]
 transform = Transform3D(0.527089, 0, -0.84981, 0, 1, 0, 0.84981, 0, 0.527089, -8356.04, 0, 2930.7407)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island5"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island5" unique_id=1639566688]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island5"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island5" unique_id=1433463904]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island6" type="Node3D" parent="Land"]
+[node name="Island6" type="Node3D" parent="Land" unique_id=1167353617]
 transform = Transform3D(0.847335, 0, -0.531058, 0, 1, 0, 0.531058, 0, 0.847335, -9214.51, 0, 3726.6904)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island6"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island6" unique_id=728176350]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island6"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island6" unique_id=848431443]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island7" type="Node3D" parent="Land"]
+[node name="Island7" type="Node3D" parent="Land" unique_id=1002314619]
 transform = Transform3D(-0.651662, 0, -0.75851, 0, 1, 0, 0.75851, 0, -0.651662, -8783.15, 0, -1182.4574)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island7"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island7" unique_id=1994319685]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island7"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island7" unique_id=1170438489]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island8" type="Node3D" parent="Land"]
+[node name="Island8" type="Node3D" parent="Land" unique_id=1572447494]
 transform = Transform3D(-0.251275, 0, -0.967916, 0, 1, 0, 0.967916, 0, -0.251275, -9800.65, 0, -1761.4194)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island8"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island8" unique_id=909511676]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island8"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island8" unique_id=1455295087]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island9" type="Node3D" parent="Land"]
+[node name="Island9" type="Node3D" parent="Land" unique_id=298788879]
 transform = Transform3D(-0.651662, 0, -0.75851, 0, 1, 0, 0.75851, 0, -0.651662, 10246, 0, -1637.2394)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island9"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island9" unique_id=21736639]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island9"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island9" unique_id=1535005598]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island10" type="Node3D" parent="Land"]
+[node name="Island10" type="Node3D" parent="Land" unique_id=1902067171]
 transform = Transform3D(-0.251275, 0, -0.967916, 0, 1, 0, 0.967916, 0, -0.251275, 9228.49, 0, -2216.1992)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island10"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island10" unique_id=1082579514]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island10"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island10" unique_id=921593809]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island11" type="Node3D" parent="Land"]
+[node name="Island11" type="Node3D" parent="Land" unique_id=1428533879]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 10173.3, 0, 2085.2307)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island11"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island11" unique_id=2015913834]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island11"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island11" unique_id=150254335]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island12" type="Node3D" parent="Land"]
+[node name="Island12" type="Node3D" parent="Land" unique_id=1904140775]
 transform = Transform3D(0.730258, 0, -0.683172, 0, 1, 0, 0.683172, 0, 0.730258, 9051.89, 0, 2702.4907)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island12"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island12" unique_id=1979794366]
 transform = Transform3D(1682.07, -1.6248, -891.616, 26.3647, 174.916, 5.48391, 1081.64, -1.73679, 1386.42, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island12"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island12" unique_id=64716830]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island13" type="Node3D" parent="Land"]
+[node name="Island13" type="Node3D" parent="Land" unique_id=1889949204]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 382.479, 0, 3057.6807)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island13"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island13" unique_id=562040551]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island13"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island13" unique_id=328055626]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island14" type="Node3D" parent="Land"]
+[node name="Island14" type="Node3D" parent="Land" unique_id=471713000]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 6841.78, 0, 5690.381)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island14"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island14" unique_id=607564232]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island14"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island14" unique_id=843428303]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 664.435, 0.603902, 191.71)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island15" type="Node3D" parent="Land"]
+[node name="Island15" type="Node3D" parent="Land" unique_id=35032188]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -4009.49, 0, 4597.2207)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island15"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island15" unique_id=986070327]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island15"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island15" unique_id=506719453]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 486.131, 0.603902, 124)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island16" type="Node3D" parent="Land"]
+[node name="Island16" type="Node3D" parent="Land" unique_id=1379955956]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, -3868.32, 0, -4699.1294)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island16"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island16" unique_id=987302724]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, -551.566, 0.781157, -270.059)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island16"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island16" unique_id=1785564160]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island17" type="Node3D" parent="Land"]
+[node name="Island17" type="Node3D" parent="Land" unique_id=1670595793]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 323.134, 0, -3573.2793)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island17"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island17" unique_id=1380495748]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island17"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island17" unique_id=1953176231]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island18" type="Node3D" parent="Land"]
+[node name="Island18" type="Node3D" parent="Land" unique_id=1069079828]
 transform = Transform3D(0.355009, 0, -0.934863, 0, 1, 0, 0.934863, 0, 0.355009, 5413.86, -0.0205078, -4724.6494)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island18"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island18" unique_id=1383099849]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, -375.321, 0.781157, -203.131)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island18"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island18" unique_id=1382150610]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island3" type="Node3D" parent="Land"]
+[node name="Island3" type="Node3D" parent="Land" unique_id=193913674]
 transform = Transform3D(-0.988589, 0, 0.15064, 0, 1, 0, -0.15064, 0, -0.988589, 3246.35, 0, 673.7706)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island3"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island3" unique_id=821229719]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island3"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island3" unique_id=1374106498]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="Island4" type="Node3D" parent="Land"]
+[node name="Island4" type="Node3D" parent="Land" unique_id=878245953]
 transform = Transform3D(-0.953979, 0, -0.299874, 0, 1, 0, 0.299874, 0, -0.953979, 3198.08, 0, -495.9185)
 
-[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island4"]
+[node name="CSGMesh3D" type="CSGMesh3D" parent="Land/Island4" unique_id=1837462837]
 transform = Transform3D(1682.19, 0, -891.59, 0, 174.932, 0, 1081.77, 0, 1386.45, 159.594, 0.781157, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island4"]
+[node name="CSGMesh3D2" type="CSGMesh3D" parent="Land/Island4" unique_id=722804571]
 transform = Transform3D(1743.45, 0, 807.695, 0, 174.932, 0, -979.982, 0, 1436.94, 159.594, 0.603902, 0)
 material_override = ExtResource("2_8oaqw")
 use_collision = true
 mesh = SubResource("PrismMesh_m8itd")
 
-[node name="sky" type="Node" parent="."]
+[node name="sky" type="Node" parent="." unique_id=940815369]
 
-[node name="Cloud" type="Node3D" parent="sky"]
+[node name="Cloud" type="Node3D" parent="sky" unique_id=1436235641]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1816.13, 2059.25, 0)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud" unique_id=469200085]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud" unique_id=1731577954]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud" unique_id=804692970]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud" unique_id=1313115512]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud" unique_id=2092167614]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud" unique_id=572057482]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud" unique_id=258668045]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud" unique_id=1556522609]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud" unique_id=1624271527]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud" unique_id=1328974362]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud" unique_id=947554478]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud" unique_id=926865865]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud" unique_id=1329945609]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud" unique_id=946516791]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud" unique_id=1400981057]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud2" type="Node3D" parent="sky"]
+[node name="Cloud2" type="Node3D" parent="sky" unique_id=1642581669]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1816.13, 2059.25, 2520.09)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud2" unique_id=1166495752]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud2" unique_id=136147860]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud2" unique_id=88472990]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud2" unique_id=178219670]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud2" unique_id=1930335543]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud2" unique_id=499114186]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud2" unique_id=961360914]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud2" unique_id=600660154]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud2" unique_id=436397445]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud2" unique_id=260106477]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud2" unique_id=1697283915]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud2" unique_id=528124608]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud2" unique_id=2105532448]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud2" unique_id=1502779711]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud2"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud2" unique_id=1284205108]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud3" type="Node3D" parent="sky"]
+[node name="Cloud3" type="Node3D" parent="sky" unique_id=1636090389]
 transform = Transform3D(0.871222, 0, 0.490889, 0, 1, 0, -0.490889, 0, 0.871222, 1892.5, 2059.25, 2520.09)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1252628882]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud3" unique_id=183915809]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud3" unique_id=779878171]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud3" unique_id=215626857]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud3" unique_id=854556689]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1098540316]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud3" unique_id=875442352]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud3" unique_id=648979796]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1702219081]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1025677278]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud3" unique_id=719241498]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1028839422]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud3" unique_id=366004836]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1815924542]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud3"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud3" unique_id=1080881675]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud4" type="Node3D" parent="sky"]
+[node name="Cloud4" type="Node3D" parent="sky" unique_id=2142508930]
 transform = Transform3D(0.871222, 0, 0.490889, 0, 1, 0, -0.490889, 0, 0.871222, 2165.07, 2059.25, 1821.29)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud4" unique_id=1166799609]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud4" unique_id=52929678]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud4" unique_id=325011484]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud4" unique_id=903833252]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud4" unique_id=661312979]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud4" unique_id=770028298]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud4" unique_id=956686069]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud4" unique_id=450596253]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud4" unique_id=486570428]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud4" unique_id=539378226]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud4" unique_id=1198946312]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud4" unique_id=885553358]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud4" unique_id=1767012461]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud4" unique_id=1767981243]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud4"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud4" unique_id=1093562736]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud5" type="Node3D" parent="sky"]
+[node name="Cloud5" type="Node3D" parent="sky" unique_id=1117842402]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, 2003.55, 2059.25, -790.081)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1421833249]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1396507630]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud5" unique_id=254731280]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud5" unique_id=520875411]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1626190125]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1928295275]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud5" unique_id=852807604]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1422462339]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud5" unique_id=261765252]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud5" unique_id=113312122]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1534650077]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1570732036]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1954770005]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud5" unique_id=1441159992]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud5"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud5" unique_id=804407033]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud6" type="Node3D" parent="sky"]
+[node name="Cloud6" type="Node3D" parent="sky" unique_id=103165507]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, -5500.67, 2059.25, -2794.78)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1033816986]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1299781920]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud6" unique_id=786961067]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud6" unique_id=972794840]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1309630889]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1868551548]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1265028270]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1335113524]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud6" unique_id=185140634]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1056103771]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud6" unique_id=412577216]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud6" unique_id=348441679]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud6" unique_id=1221460116]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud6" unique_id=169428276]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud6"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud6" unique_id=2068968508]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud7" type="Node3D" parent="sky"]
+[node name="Cloud7" type="Node3D" parent="sky" unique_id=1613365361]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, -5580.24, 2059.25, -350.76)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud7" unique_id=1325865662]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud7" unique_id=992917680]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud7" unique_id=534145573]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud7" unique_id=449632631]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud7" unique_id=954349746]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud7" unique_id=400171084]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud7" unique_id=732421106]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud7" unique_id=9638710]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud7" unique_id=570735440]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud7" unique_id=2010197565]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud7" unique_id=191134801]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud7" unique_id=364626370]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud7" unique_id=122306924]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud7" unique_id=1765715713]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud7"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud7" unique_id=1424595443]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud8" type="Node3D" parent="sky"]
+[node name="Cloud8" type="Node3D" parent="sky" unique_id=617846503]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, -6942.39, 2059.24, 2292.71)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1858010194]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud8" unique_id=174367487]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud8" unique_id=186186583]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud8" unique_id=395254449]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud8" unique_id=467996550]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1392602722]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1382286534]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1697765059]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1659009678]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1306983389]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud8" unique_id=867953446]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud8" unique_id=2088115856]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1206166516]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud8" unique_id=647563009]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud8"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud8" unique_id=1391941169]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud9" type="Node3D" parent="sky"]
+[node name="Cloud9" type="Node3D" parent="sky" unique_id=801586473]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, -3153.81, 2059.24, 4783.5)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1111091428]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1175718581]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1933839388]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud9" unique_id=680027380]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud9" unique_id=251962295]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud9" unique_id=153279941]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1267110030]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud9" unique_id=2034398613]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1027753329]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1174458863]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud9" unique_id=448975391]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1970464270]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1478502476]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud9" unique_id=2008004752]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud9"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud9" unique_id=1491390716]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud10" type="Node3D" parent="sky"]
+[node name="Cloud10" type="Node3D" parent="sky" unique_id=1494946067]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, 2918.39, 2059.24, 5500.34)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud10" unique_id=2147332247]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud10" unique_id=299240496]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud10" unique_id=773530462]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1632487284]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud10" unique_id=950600745]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1572394851]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud10" unique_id=723194747]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1602013120]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud10" unique_id=208743085]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud10" unique_id=900898951]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud10" unique_id=594439648]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1202343986]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud10" unique_id=2051363639]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1419625089]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud10"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud10" unique_id=1252078580]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud11" type="Node3D" parent="sky"]
+[node name="Cloud11" type="Node3D" parent="sky" unique_id=485044393]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, 5493.94, 2059.24, 2918.35)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1743844051]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud11" unique_id=821942127]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud11" unique_id=867373566]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud11" unique_id=2120568572]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1317375396]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1979269730]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1103533959]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1381954183]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1047006819]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1753627471]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud11" unique_id=2101681289]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1580172125]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud11" unique_id=908445165]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud11" unique_id=1181624365]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud11"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud11" unique_id=403899097]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud12" type="Node3D" parent="sky"]
+[node name="Cloud12" type="Node3D" parent="sky" unique_id=1096324076]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, 6628.97, 2059.24, -693.589)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud12" unique_id=136958284]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud12" unique_id=490337243]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1439787004]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud12" unique_id=132456525]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1604923623]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud12" unique_id=407289758]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1315709673]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud12" unique_id=663515426]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1034184687]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud12" unique_id=975809107]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1812610448]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud12" unique_id=79905027]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud12" unique_id=227605206]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud12" unique_id=440408876]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud12"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud12" unique_id=1478990197]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Cloud13" type="Node3D" parent="sky"]
+[node name="Cloud13" type="Node3D" parent="sky" unique_id=441923570]
 transform = Transform3D(0.766123, 0, -0.642694, 0, 1, 0, 0.642694, 0, 0.766123, 6444.42, 2059.24, -103.729)
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="sky/Cloud13" unique_id=2000853852]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 648.044, -12.5765, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D10" type="CSGSphere3D" parent="sky/Cloud13" unique_id=330003189]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.1199, -12.5765, 250.168)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D11" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1448655057]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.59393, -12.5765, 341.46)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D12" type="CSGSphere3D" parent="sky/Cloud13" unique_id=263321211]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.4114, -12.5765, -373.298)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D13" type="CSGSphere3D" parent="sky/Cloud13" unique_id=138587066]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 369.588, -12.5765, -381.542)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D14" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1205978729]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -332.486, -12.5765, -196.11)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D15" type="CSGSphere3D" parent="sky/Cloud13" unique_id=194883741]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -455.824, -12.5765, -11.8115)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D2" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1406690389]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 429.891, -30.0475, 0)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D3" type="CSGSphere3D" parent="sky/Cloud13" unique_id=508390944]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, 167.4)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D4" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1750009772]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 265.967, -30.0475, -231.817)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D5" type="CSGSphere3D" parent="sky/Cloud13" unique_id=603434156]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 107.277, -30.0475, -58.5271)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D6" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1028697524]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, -205.82)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D7" type="CSGSphere3D" parent="sky/Cloud13" unique_id=179418282]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -62.7327, -30.0475, 104.682)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D8" type="CSGSphere3D" parent="sky/Cloud13" unique_id=1090594733]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -28.5506)
 use_collision = true
 radius = 100.0
 
-[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud13"]
+[node name="CSGSphere3D9" type="CSGSphere3D" parent="sky/Cloud13" unique_id=2117631160]
 transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -258.372, -30.0475, -365.201)
 use_collision = true
 radius = 100.0
 
-[node name="Spawn" type="Node" parent="."]
+[node name="Spawn" type="Node" parent="." unique_id=1469901834]
 
-[node name="spawn0" type="Node3D" parent="Spawn"]
+[node name="spawn0" type="Node3D" parent="Spawn" unique_id=1502678504]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -7658.346)
 
-[node name="spawn1" type="Node3D" parent="Spawn"]
+[node name="spawn1" type="Node3D" parent="Spawn" unique_id=25988947]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 7990.2617)
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=891948397]
 transform = Transform3D(0.812084, -0.453497, 0.367234, 0, 0.62932, 0.777146, -0.583541, -0.631107, 0.511061, 0, 0, 0)
 light_color = Color(0.7067578, 0.71667814, 0.5938705, 1)
 shadow_enabled = true

@@ -70,12 +70,12 @@ func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
 
-	if ship_body.global_position.y > 1.0:
-		# Ship is airborne - let physics handle it
-		var dir_to_move = ship_body.global_basis.z
-		ship_body.linear_velocity = dir_to_move * 10.0 * ship_body.global_position.y - Vector3.UP * ship_body.global_position.y
+	# if ship_body.global_position.y > 1.0:
+	# 	# Ship is airborne - let physics handle it
+	# 	var dir_to_move = ship_body.global_basis.z
+	# 	ship_body.linear_velocity = dir_to_move * 10.0 * ship_body.global_position.y - Vector3.UP * ship_body.global_position.y
 
-		return
+	# 	return
 
 	# Check for sudden velocity changes (collision detection)
 	var forward_dir = -ship_body.global_transform.basis.z

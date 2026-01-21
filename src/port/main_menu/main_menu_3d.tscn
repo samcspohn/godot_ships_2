@@ -73,6 +73,8 @@ material = ExtResource("2_bqqt6")
 [node name="CSGBox3D" type="CSGBox3D" parent="Port"]
 material_override = ExtResource("2_ekxnf")
 use_collision = true
+collision_layer = 8
+collision_mask = 0
 size = Vector3(3000, 1, 3000)
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="Port"]

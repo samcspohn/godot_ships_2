@@ -13,7 +13,7 @@ var vertical_rot: float = 0.0
 
 var current_zoom: float = 200.0 # Default zoom
 var min_zoom_distance: float = 7.0
-var max_zoom_distance: float = 500.0
+var max_zoom_distance: float = 1000.0
 var zoom_speed: float = 20.0
 var camera_offset_vertical:float = 0.0
 var camera_offset_horizontal:float = 0.0
@@ -41,24 +41,24 @@ func handle_mouse_motion(event):
 	# Only handle mouse motion if captured
 	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		return
-	
+
 	# Convert mouse motion to rotation (with potential y-inversion)
 	var y_factor = -1.0 if invert_y else 1.0
 	# var ship_position = _ship.global_position
 	# var vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	# var orbit_distance = current_zoom
-		
+
 	# var cam_height = ship_position.y + camera_offset.y + cos(vertical_rad) * orbit_distance / 2.0
 	var vert_rad = deg_to_rad(rotation_degrees_vertical)
-	
+
 	if target_lock_enabled:
 		# When locked on target, mouse movements create offset
 		vert_rad = deg_to_rad(rotation_degrees_vertical) + camera_offset_vertical
 		var offset_sensitivity = mouse_sensitivity
 		camera_offset_vertical -= event.relative.y * offset_sensitivity * 0.1 * y_factor * sqrt(abs(vert_rad))
-		
+
 		camera_offset_horizontal -= event.relative.x * offset_sensitivity * 0.1
-		
+
 	else:
 		# Normal camera control without target lock
 		rotation_degrees_horizontal -= event.relative.x * mouse_sensitivity * 0.1
@@ -82,29 +82,29 @@ func calculate_ground_intersection(origin_position: Vector3, h_rad: float, v_rad
 		sin(v_rad), # y component
 		cos(h_rad) # z component
 	).normalized()
-	
+
 	# If direction is parallel to ground or pointing up, no intersection
 	if direction.y >= -0.0001:
 		# Return a fallback position at maximum visible distance
 		return origin_position + Vector3(sin(h_rad), 0, cos(h_rad)) * 10000.0
-	
+
 	# Calculate intersection parameter t using plane equation:
 	# For plane at y=0: t = -origin.y / direction.y
 	var t = - origin_position.y / direction.y
-	
+
 	# Calculate intersection point
 	return origin_position + direction * t
 
 func _get_angles_to_target(cam_pos, target_pos):
 	# Calculate direction to target
 	var direction_to_target = (target_pos - cam_pos).normalized()
-	
+
 	# Calculate base angle to target (without lerping for responsive movement)
 	var target_angle_horizontal = atan2(direction_to_target.x, direction_to_target.z) + PI
 	var target_distance = cam_pos.distance_to(target_pos)
 	var height_diff = target_pos.y - cam_pos.y
 	var target_angle_vertical = atan2(height_diff, sqrt(pow(direction_to_target.x, 2) + pow(direction_to_target.z, 2)) * target_distance)
-	
+
 	return [target_angle_horizontal, target_angle_vertical]
 
 func _get_orbit():
@@ -169,7 +169,7 @@ func _get_orbit2():
 func _update_camera_transform():
 	if !_ship:
 		return
-	
+
 	var ship_position = _ship.global_position
 	# var cam_pos = global_position
 	var vertical_rad = deg_to_rad(rotation_degrees_vertical)
@@ -179,13 +179,13 @@ func _update_camera_transform():
 	var cam_pos_3rd = ship_position + _get_orbit()
 
 	var cam_pos = cam_pos_3rd
-	
+
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
 		# _print("DEBUG")
 		# Calculate direction to target
 		var target_position = locked_target.global_position
 		var direction_to_target = (target_position - cam_pos).normalized()
-		
+
 		# Calculate base angle to target (without lerping for responsive movement)
 		var target_angle_horizontal = atan2(direction_to_target.x, direction_to_target.z) + PI
 		var target_distance = cam_pos.distance_to(target_position)
@@ -207,15 +207,15 @@ func _update_camera_transform():
 		# Clamp vertical rotation to prevent flipping over
 	rotation_degrees_vertical = clamp(rotation_degrees_vertical, -85.0, 85)
 
-	
+
 	# Use the existing camera positioning logic with updated rotation values
 	horizontal_rad = deg_to_rad(rotation_degrees_horizontal)
 	vertical_rad = deg_to_rad(rotation_degrees_vertical)
 	# adj = tan(PI / 2.0 + vertical_rad)
 	# var dist = adj * cam_pos.y
-	
+
 	var orbit_pos = _get_orbit()
-	
+
 	global_position = ship_position + orbit_pos
 	global_position.y = orbit_pos.y
 	#if vertical_rad > 0:
@@ -226,4 +226,3 @@ func _update_camera_transform():
 		##rotation.y = horizontal_rad
 		#look_at(aim_point)
 		##rotation.x = vertical_rad
-	

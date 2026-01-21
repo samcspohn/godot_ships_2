@@ -169,7 +169,7 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 	ray_query.to = projectile.position
 	ray_query.hit_back_faces = true
 	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 | (1 << 1)
+	ray_query.collision_mask = 1 | (1 << 1) | (1 << 3)
 
 	var result := space_state.intersect_ray(ray_query)
 

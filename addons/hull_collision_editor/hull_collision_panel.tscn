@@ -1,0 +1,111 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8xhullcollisionpanel"]
+
+[ext_resource type="Script" path="res://addons/hull_collision_editor/hull_collision_panel.gd" id="1_panel"]
+
+[node name="HullCollisionPanel" type="VBoxContainer"]
+custom_minimum_size = Vector2(250, 0)
+offset_right = 250.0
+offset_bottom = 400.0
+script = ExtResource("1_panel")
+
+[node name="TitleLabel" type="Label" parent="."]
+text = "Hull Collision Editor"
+horizontal_alignment = 1
+theme_type_variation = &"HeaderLarge"
+
+[node name="HSeparator" type="HSeparator" parent="."]
+
+[node name="ShipInfoLabel" type="Label" parent="."]
+unique_name_in_owner = true
+text = "No ship selected"
+autowrap_mode = 2
+
+[node name="HSeparator2" type="HSeparator" parent="."]
+
+[node name="OptionsLabel" type="Label" parent="."]
+text = "Generation Options"
+theme_type_variation = &"HeaderSmall"
+
+[node name="IncludeSuperstructure" type="CheckBox" parent="."]
+unique_name_in_owner = true
+text = "Include Superstructure"
+tooltip_text = "Include superstructure meshes in collision shape"
+
+[node name="SegmentedHull" type="CheckBox" parent="."]
+unique_name_in_owner = true
+text = "Segmented Hull (Bow/Mid/Stern)"
+tooltip_text = "Split hull into multiple convex shapes for better accuracy"
+
+[node name="MirrorSymmetry" type="CheckBox" parent="."]
+unique_name_in_owner = true
+button_pressed = true
+text = "Mirror Symmetry (X-axis)"
+tooltip_text = "Enforce port/starboard symmetry by mirroring vertices across the centerline"
+
+[node name="RemoveBoxCollider" type="CheckBox" parent="."]
+unique_name_in_owner = true
+button_pressed = true
+text = "Remove Original Box Collider"
+tooltip_text = "Remove the original BoxShape3D collider when generating hull collision"
+
+[node name="SimplifyVertices" type="CheckBox" parent="."]
+unique_name_in_owner = true
+button_pressed = true
+text = "Simplify Vertices"
+tooltip_text = "Reduce vertex count for better performance"
+
+[node name="MaxVerticesContainer" type="HBoxContainer" parent="."]
+
+[node name="MaxVerticesLabel" type="Label" parent="MaxVerticesContainer"]
+text = "Max Vertices:"
+
+[node name="MaxVerticesSpinBox" type="SpinBox" parent="MaxVerticesContainer"]
+unique_name_in_owner = true
+min_value = 16.0
+max_value = 2048
+step = 16.0
+value = 128.0
+tooltip_text = "Maximum vertices per convex shape"
+
+[node name="HSeparator3" type="HSeparator" parent="."]
+
+[node name="CollisionLayerLabel" type="Label" parent="."]
+text = "Physics Layer: 3"
+
+[node name="HSeparator4" type="HSeparator" parent="."]
+
+[node name="ActionsLabel" type="Label" parent="."]
+text = "Actions"
+theme_type_variation = &"HeaderSmall"
+
+[node name="GenerateButton" type="Button" parent="."]
+unique_name_in_owner = true
+text = "Generate Hull Collision"
+tooltip_text = "Generate convex hull collision shape(s) from mesh data"
+
+[node name="PreviewButton" type="Button" parent="."]
+unique_name_in_owner = true
+text = "Preview (Wireframe)"
+tooltip_text = "Show wireframe preview of collision shape"
+
+[node name="RemoveButton" type="Button" parent="."]
+unique_name_in_owner = true
+text = "Remove Hull Collision"
+tooltip_text = "Remove generated hull collision shapes"
+
+[node name="HSeparator5" type="HSeparator" parent="."]
+
+[node name="StatusLabel" type="Label" parent="."]
+unique_name_in_owner = true
+text = ""
+autowrap_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.5, 0.5, 1)
+
+[node name="HSeparator6" type="HSeparator" parent="."]
+
+[node name="ExistingCollisionLabel" type="Label" parent="."]
+text = "Existing Collision Shapes:"
+theme_type_variation = &"HeaderSmall"
+
+[node name="CollisionListContainer" type="VBoxContainer" parent="."]
+unique_name_in_owner = true

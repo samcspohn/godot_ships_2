@@ -131,6 +131,7 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 
 # Team tracker references
 @onready var top_center_panel: Control = $MainContainer/TopCenterPanel
+@onready var team_tracker_container: Control = $MainContainer/TopCenterPanel/TeamTrackerContainer
 @onready var friendly_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/FriendlyShipsContainer
 @onready var enemy_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/EnemyShipsContainer
 
@@ -162,17 +163,20 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 
 @onready var consumable_container: HBoxContainer = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer
 @onready var consumable_template: TextureButton = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate
+@onready var friendly_consumable_status_texturerect: TextureRect = $MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyStatus/FriendlyConsumable
 var consumable_buttons: Array[TextureButton] = []
 var consumable_cooldown_bars: Array[ProgressBar] = []
 var consumable_shortcut_labels: Array[Label] = []
 var consumable_count_labels: Array[Label] = []
-
 # Consumable action names for getting shortcuts from InputMap
 var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consumable_4", "consumable_5"]
 
 @onready var secondaries_disabled = $MainContainer/SecondariesDisabled
 
 var current_hp: float = 0.0
+
+# Healable HP bar pulse animation
+var healable_pulse_active: bool = false
 
 var teams_hp = {}
 var num_players = -1
@@ -733,11 +737,34 @@ func _update_ui():
 
 		# Update healable HP bar (shows current HP + healable damage as white region)
 		var healable_damage = camera_controller._ship.health_controller.healable_damage
-		if healable_damage != null and healable_damage > 0:
-			var healable_percent = (float(current_hp + healable_damage) / max_hp) * 100.0
+		if healable_damage == null:
+			healable_damage = 0.0
+
+		# Get repair party heal amount to cap the healable bar
+		var repair_party_heal_amount = _get_repair_party_heal_amount()
+		var capped_healable = min(healable_damage, repair_party_heal_amount) if repair_party_heal_amount > 0 else healable_damage
+
+		if capped_healable > 0:
+			var healable_percent = (float(current_hp + capped_healable) / max_hp) * 100.0
 			healable_hp_bar.value = min(healable_percent, 100.0)
+
+			# Check if healable damage meets or exceeds repair party amount - activate pulse
+			if repair_party_heal_amount > 0 and healable_damage >= repair_party_heal_amount:
+				healable_pulse_active = true
+			else:
+				healable_pulse_active = false
 		else:
 			healable_hp_bar.value = hp_percent
+			healable_pulse_active = false
+
+		# Apply pulse animation to healable bar
+		if healable_pulse_active:
+			var pulse_value = (sin(Time.get_ticks_msec() / 1000.0 * 8.0) + 1.0) / 2.0  # 0 to 1
+			# Pulse between white and light green
+			var pulse_color = Color(0.9, 0.9, 0.9, 0.8).lerp(Color(0.6, 1.0, 0.6, 0.9), pulse_value)
+			healable_hp_bar.modulate = pulse_color
+		else:
+			healable_hp_bar.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
 		# Change HP bar color based on health level
 		if hp_percent > 75:
@@ -748,6 +775,22 @@ func _update_ui():
 			hp_bar.modulate = Color(1.0, 0.6, 0.2) # Orange
 		else:
 			hp_bar.modulate = Color(0.9, 0.2, 0.2) # Red
+
+func _get_repair_party_heal_amount() -> float:
+	if not camera_controller or not camera_controller._ship:
+		return 0.0
+
+	var consumable_manager = camera_controller._ship.consumable_manager
+	if not consumable_manager:
+		return 0.0
+
+	# Find the repair party consumable
+	for item in consumable_manager.equipped_consumables:
+		if item is RepairParty:
+			var max_hp = camera_controller._ship.health_controller.max_hp
+			return max_hp * item.heal_percent
+
+	return 0.0
 
 func _update_fps():
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
@@ -824,17 +867,21 @@ func setup_ship_ui(ship):
 	var ship_hp_bar: ProgressBar
 	var ship_hp_label: Label
 	var target_indicator: ColorRect
+	var status_indicator: HBoxContainer
 
 	if is_enemy:
 		name_label = ship_container.get_node("EnemyNameLabel")
 		ship_hp_bar = ship_container.get_node("EnemyHPBar")
 		ship_hp_label = ship_hp_bar.get_node("EnemyHPLabel")
 		target_indicator = ship_container.get_node("EnemyTargetIndicator")
+
 	else:
 		name_label = ship_container.get_node("FriendlyNameLabel")
 		ship_hp_bar = ship_container.get_node("FriendlyHPBar")
 		ship_hp_label = ship_hp_bar.get_node("FriendlyHPLabel")
 		target_indicator = ship_container.get_node("FriendlyTargetIndicator")
+		status_indicator = ship_container.get_node("FriendlyStatus")
+		status_indicator.get_child(0).queue_free()
 
 	# Set the ship name
 	name_label.text = ship.name
@@ -846,13 +893,14 @@ func setup_ship_ui(ship):
 		"name_label": name_label,
 		"hp_bar": ship_hp_bar,
 		"hp_label": ship_hp_label,
-		"target_indicator": target_indicator
+		"target_indicator": target_indicator,
+		"status": status_indicator
 	}
 
 func update_ship_ui():
 	# Periodically search for new ships
-	var current_time = Time.get_ticks_msec() / 1000.0
-	var should_search = tracked_ships.is_empty() or (current_time - last_ship_search_time > ship_search_interval)
+	# var current_time = Time.get_ticks_msec() / 1000.0
+	# var should_search = tracked_ships.is_empty() or (current_time - last_ship_search_time > ship_search_interval)
 	if num_players != players_node.get_child_count() or tracked_ships.size() < players_node.get_child_count():
 		for ship in players_node.get_children():
 			if ship != camera_controller._ship and ship is Ship and not tracked_ships.has(ship):
@@ -863,7 +911,7 @@ func update_ship_ui():
 
 	# Update each ship's UI
 	var secondary_offset = camera_controller._ship.secondary_controller.target_offset if camera_controller._ship and camera_controller._ship.secondary_controller else Vector3.ZERO
-	for ship in tracked_ships.keys():
+	for ship: Ship in tracked_ships.keys():
 		if is_instance_valid(ship) and ship in ship_ui_elements:
 			var ui = ship_ui_elements[ship]
 
@@ -879,11 +927,27 @@ func update_ship_ui():
 					ui.hp_bar.value = hp_percent
 					ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
-			# Update target indicator visibility
-			var is_targeted = (ship == current_secondary_target)
-			if ui.target_indicator.visible != is_targeted:
-				ui.target_indicator.visible = is_targeted
-			ui.target_indicator.get_child(0).text = "◉" if secondary_offset == Vector3.ZERO else "◎+"
+			if ship.team.team_id == camera_controller._ship.team.team_id: # friendly
+				var active_consumables = ship.consumable_manager.get_active_icons()
+				for consumable: TextureRect in ui.status.get_children():
+					if consumable.texture not in active_consumables:
+						consumable.queue_free()
+				for icon in active_consumables:
+					var already_has = false
+					for consumable: TextureRect in ui.status.get_children():
+						if consumable.texture == icon:
+							already_has = true
+					if not already_has:
+						var new_icon = friendly_consumable_status_texturerect.duplicate()
+						new_icon.texture = icon
+						ui.status.add_child(new_icon)
+
+			if ship.team.team_id != camera_controller._ship.team.team_id:
+				# Update target indicator visibility
+				var is_targeted = (ship == current_secondary_target)
+				if ui.target_indicator.visible != is_targeted:
+					ui.target_indicator.visible = is_targeted
+				ui.target_indicator.get_child(0).text = "◉" if secondary_offset == Vector3.ZERO else "◎+"
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -1062,7 +1126,9 @@ func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, up
 	"""Update the appearance of a team indicator based on ship status"""
 	var ship_indicator: ColorRect = indicator.get_node("ShipIndicator")
 	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
+	var ship_name: Label = indicator.get_node("ShipName")
 
+	ship_name.text = ship.ship_name
 	# Check if ship is alive
 	var is_alive = ship.health_controller and ship.health_controller.is_alive()
 	var health_percent = 1.0
@@ -1107,8 +1173,8 @@ func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
 	# - Padding: 20px (10px on each side)
 	# - Minimum width: 200px
 
-	var friendly_width = friendly_count * 55  # 50px + 5px spacing per ship
-	var enemy_width = enemy_count * 55
+	var friendly_width = friendly_count * (55 + 5)  # 50px + 5px spacing per ship
+	var enemy_width = enemy_count * (55 + 5)
 	var separator_width = 20
 	var padding = 20
 	var min_width = 200
@@ -1119,7 +1185,8 @@ func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
 	var half_width = total_width / 2
 	top_center_panel.offset_left = -half_width
 	top_center_panel.offset_right = half_width
-	top_center_panel.offset_bottom = 60  # Increased height for HP bars
+	# top_center_panel.offset_bottom = 60  # Increased height for HP bars
+	# top_center_panel.size.x = friendly_ships_container.size.x + enemy_ships_container.size.x + 20
 
 func cleanup_team_indicators():
 	"""Clean up team indicators for invalid ships"""

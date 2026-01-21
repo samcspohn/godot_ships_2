@@ -9,6 +9,11 @@ var target_scan_timer: float = 0.0
 var target_scan_interval: float = 20.0
 var attack_range: float = 100000.0
 var preferred_distance: float = 8000.0
+var engagement_range: float = 10000.0  # Set based on concealment
+
+# Target angle thresholds (in radians)
+var broadside_angle_threshold: float = deg_to_rad(30.0)  # Target within 30 degrees of broadside
+var angled_threshold: float = deg_to_rad(45.0)  # Target is considered angled above this
 
 # Torpedo parameters
 var torpedo_fire_interval: float = 3.0  # How often to attempt firing
@@ -108,6 +113,9 @@ func _ready():
 
 		# Calculate dynamic collision avoidance distances based on ship movement parameters
 		calculate_dynamic_collision_distances()
+
+		# Set engagement range based on concealment (just outside detection range)
+		_update_engagement_range()
 	else:
 		desired_heading = randf() * TAU
 
@@ -116,6 +124,135 @@ func _ready():
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
+	ray_query.exclude = [ship]
+
+func _update_engagement_range() -> void:
+	"""Set engagement range to just outside concealment range"""
+	if ship and ship.concealment and ship.concealment.params:
+		var base_concealment = ship.concealment.params.radius
+		engagement_range = min(base_concealment + 500.0, 11000.0)  # 500m buffer outside concealment
+		preferred_distance = engagement_range
+
+func get_target_angle(target: Ship) -> float:
+	"""Calculate the angle between target's facing direction and the line from target to us.
+	Returns 0 for perfect broadside, PI/2 for bow/stern on."""
+	if !target or !is_instance_valid(target):
+		return 0.0
+
+	# Get target's forward direction (local Z axis in world space)
+	var target_forward = -target.global_transform.basis.z.normalized()
+
+	# Get direction from target to our ship
+	var to_us = (ship.global_position - target.global_position).normalized()
+	to_us.y = 0  # Only consider horizontal plane
+	target_forward.y = 0
+	target_forward = target_forward.normalized()
+	to_us = to_us.normalized()
+
+	# Calculate angle between target's forward and direction to us
+	var dot = target_forward.dot(to_us)
+	var angle_from_bow = acos(clamp(dot, -1.0, 1.0))
+
+	# Convert to angle from broadside (0 = broadside, PI/2 = bow/stern)
+	var angle_from_broadside = abs(PI / 2.0 - angle_from_bow)
+
+	return angle_from_broadside
+
+func is_target_broadside(target: Ship) -> bool:
+	"""Check if target is showing broadside (within threshold of perpendicular)"""
+	return get_target_angle(target) < broadside_angle_threshold
+
+func is_target_angled(target: Ship) -> bool:
+	"""Check if target is significantly angled (bow/stern towards us)"""
+	return get_target_angle(target) > angled_threshold
+
+func select_shell_for_target(target: Ship) -> int:
+	"""Select appropriate shell type based on own ship class, target class, and angle.
+	Returns 0 for AP (shell1), 1 for HE (shell2)."""
+	if !target or !is_instance_valid(target):
+		return 0  # Default to AP
+
+	var my_class = ship.ship_class
+	var target_class = target.ship_class
+	var target_is_broadside = is_target_broadside(target)
+	var target_is_angled = is_target_angled(target)
+
+	match my_class:
+		Ship.Class.BB:  # Battleship
+			# Battleships generally shoot AP
+			if target_is_angled:
+				# At angled targets, still use AP but aim at superstructure (handled in aim logic)
+				return 0  # AP
+			else:
+				return 0  # AP for broadside targets
+
+		Ship.Class.CA:  # Cruiser
+			# Cruisers generally shoot HE except at cruiser broadsides
+			if target_class == Ship.Class.CA and target_is_broadside:
+				return 0  # AP at cruiser broadsides
+			elif target_class == Ship.Class.BB:
+				return 1  # HE at battleships (superstructure)
+			else:
+				return 1  # HE default for cruisers
+
+		Ship.Class.DD:  # Destroyer
+			# Destroyers use HE
+			return 1
+
+		_:
+			return 1  # Default to HE for other classes
+
+func get_aim_offset_for_target(target: Ship) -> Vector3:
+	"""Get vertical aim offset based on target type and situation.
+	Returns offset to add to target position for aiming."""
+	if !target or !is_instance_valid(target):
+		return Vector3.ZERO
+
+	var my_class = ship.ship_class
+	var target_class = target.ship_class
+	var target_is_angled = is_target_angled(target)
+
+	# Default offset (waterline)
+	var offset = Vector3.ZERO
+
+	match my_class:
+		Ship.Class.BB:  # Battleship
+			if target_is_angled:
+				# Aim at superstructure when target is angled
+				offset.y = 8.0  # Aim higher for superstructure
+			elif target_class == Ship.Class.DD:
+				offset.y = 2.0  # Slight elevation for destroyers
+			# else aim at waterline/belt
+
+		Ship.Class.CA:  # Cruiser
+			if target_class == Ship.Class.BB:
+				# Aim at superstructure with HE
+				offset.y = 10.0
+			elif target_class == Ship.Class.CA:
+				# Aim at upper belt
+				offset.y = 4.0
+			elif target_class == Ship.Class.DD:
+				offset.y = 2.0
+
+		Ship.Class.DD:  # Destroyer
+			# Aim center mass
+			offset.y = 3.0
+
+	return offset
+
+func can_destroyer_shoot(target: Ship) -> bool:
+	"""Check if destroyer is within its concealment range to shoot"""
+	if ship.ship_class != Ship.Class.DD:
+		return true  # Non-destroyers can always shoot
+
+	if !target or !is_instance_valid(target):
+		return false
+
+	var distance = ship.global_position.distance_to(target.global_position)
+	var concealment_range = ship.concealment.params.radius if ship.concealment and ship.concealment.params else 6000.0
+
+	# Destroyer should only shoot if target is within their concealment range
+	return distance <= concealment_range
 
 func calculate_dynamic_collision_distances() -> void:
 	"""Calculate collision avoidance distances dynamically based on ship movement parameters."""
@@ -393,6 +530,7 @@ func handle_collision_recovery(delta: float) -> void:
 		consecutive_stuck_checks = 0
 		return
 
+	print("handle_collision_recovery")
 	match recovery_state:
 		RecoveryState.EMERGENCY_REVERSING:
 			_handle_emergency_reversing()
@@ -796,17 +934,20 @@ func attack_behavior(_delta: float):
 
 	var base_heading = angle_to_target
 
+	# Update engagement range dynamically
+	_update_engagement_range()
+
 	# If target is visible and we're in good range, use tactical maneuvering
 	if target_ship.visible_to_enemy:
-		# Try to maintain preferred distance with tactical movement
-		if distance_to_target > preferred_distance + 500:
+		# Try to maintain engagement range (just outside concealment)
+		if distance_to_target > engagement_range + 500:
 			# Move closer
 			base_heading = angle_to_target
-		elif distance_to_target < preferred_distance - 500:
-			# Move away
+		elif distance_to_target < engagement_range - 500:
+			# Move away (stay at edge of concealment)
 			base_heading = angle_to_target + PI
 		else:
-			# Circle around target
+			# Circle around target at engagement range
 			base_heading = angle_to_target + PI/2
 	else:
 		# Target is obscured or not visible - navigate directly towards it
@@ -816,6 +957,7 @@ func attack_behavior(_delta: float):
 	desired_heading = apply_collision_avoidance(base_heading)
 
 	# Fire guns if target is visible, in range, and we have line of sight
+	# Destroyers have additional restriction - must be within concealment
 	if target_ship.visible_to_enemy and distance_to_target < attack_range:
 		fire_at_target()
 
@@ -880,12 +1022,25 @@ func fire_at_target():
 	if !target_ship or !is_instance_valid(target_ship):
 		return
 
+	# Destroyers should only shoot when within concealment range
+	if !can_destroyer_shoot(target_ship):
+		return
+
 	# Get artillery controller and set aim then fire
 	var artillery = ship.get_node_or_null("Modules/ArtilleryController") as ArtilleryController
 	if artillery:
+		# Select appropriate shell type
+		var desired_shell = select_shell_for_target(target_ship)
+		if artillery.shell_index != desired_shell:
+			artillery.select_shell(desired_shell)
+
+		# Get aim offset based on target type
+		var aim_offset = get_aim_offset_for_target(target_ship)
+		var adjusted_target_pos = target_ship.global_position + aim_offset
+
 		var target_position = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
 			ship.global_position,
-			target_ship.global_position,
+			adjusted_target_pos,
 			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,
 			artillery.get_shell_params().speed,
 			artillery.get_shell_params().drag
@@ -893,11 +1048,9 @@ func fire_at_target():
 
 		if target_position != null:
 			# Set aim input like player controller does
-			# if artillery.has_method("set_aim_input"):
-				artillery.set_aim_input(target_position)
+			artillery.set_aim_input(target_position)
 			# Fire guns
-			# if artillery.has_method("fire_next_ready"):
-				artillery.fire_next_ready()
+			artillery.fire_next_ready()
 
 func calculate_interception_point(shooter_pos: Vector3, target_pos: Vector3, target_vel: Vector3, projectile_speed: float) -> Vector3:
 	# Calculate interception point for a projectile to hit a moving target

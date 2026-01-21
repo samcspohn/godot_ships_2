@@ -12,6 +12,7 @@ var explosion_template: ParticleTemplate
 var sparks_template: ParticleTemplate
 var muzzle_blast_template: ParticleTemplate
 var shell_trail_template: ParticleTemplate
+var torpedo_wake_template: ParticleTemplate
 
 func _ready() -> void:
 	print("ParticleSystemInit: Initializing particle system...")
@@ -63,6 +64,13 @@ func _load_templates() -> void:
 		template_manager.register_template(shell_trail_template)
 	else:
 		push_error("ParticleSystemInit: Failed to load shell_trail_template")
+
+	# Load torpedo wake template (flat upward-facing particles for water surface)
+	torpedo_wake_template = load("res://src/particles/templates/torpedo_wake_template.tres")
+	if torpedo_wake_template:
+		template_manager.register_template(torpedo_wake_template)
+	else:
+		push_error("ParticleSystemInit: Failed to load torpedo_wake_template")
 
 	print("ParticleSystemInit: Registered %d templates" % template_manager.next_template_id)
 

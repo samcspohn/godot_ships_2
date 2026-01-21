@@ -15,6 +15,8 @@ var players_spawned_bots = false  # Track if bots have been spawned for single p
 var team_0_valid_targets = []
 var team_1_valid_targets = []
 var players_size = 0
+var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
+var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
 
 var gun_updated = false
 
@@ -175,15 +177,43 @@ func spawn_player(id, player_name):
 
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
 
-	# Randomize spawn position
-	var spawn_pos = right_of_spawn * randf_range(-10000, 10000) + team_spawn_point
+	# Calculate even distribution spawn position
+	# Count total players on this team from team_info
+	var team_player_count = 0
+	for team_player_id in team_info["team"]:
+		var player_data = team_info["team"][team_player_id]
+		if int(player_data["team"]) == team_id:
+			team_player_count += 1
+
+	# Initialize spawn slots for this team if not exists (randomized order)
+	if not team_spawn_slots.has(team_id):
+		var slots = []
+		for i in range(team_player_count):
+			slots.append(i)
+		slots.shuffle()
+		team_spawn_slots[team_id] = slots
+		team_spawn_counts[team_id] = 0
+
+	# Get the next randomized spawn slot
+	var slot_index = team_spawn_counts[team_id]
+	var spawn_index = team_spawn_slots[team_id][slot_index]
+	team_spawn_counts[team_id] += 1
+
+	var spawn_offset: float
+	if team_player_count <= 1:
+		spawn_offset = 0.0
+	else:
+		# Distribute evenly from -10000 to 10000
+		spawn_offset = -10000.0 + (spawn_index * 20000.0 / (team_player_count - 1))
+
+	var spawn_pos = right_of_spawn * spawn_offset + team_spawn_point
 	spawn_pos.y = 0
 	spawn_point.add_child(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
 	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
-	var rot_y = (-spawn_pos).angle_to(-player.global_transform.basis.z)
-	player.rotate(Vector3.UP,rot_y)
+	var rot_y = atan2(-team_spawn_point.x, team_spawn_point.z)
+	player.rotation.y = rot_y
 
 	#join_game.rpc_id(id)
 	for p_name in players:
@@ -466,7 +496,7 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 # only terrain
+	ray_query.collision_mask = 1 | (1 << 3) # only terrain
 
 	if players_size != players.size() or gun_updated:
 		gun_updated = false

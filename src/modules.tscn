@@ -1,45 +1,47 @@
-[gd_scene load_steps=10 format=3 uid="uid://5qbpr6jjvoj6"]
+[gd_scene format=3 uid="uid://5qbpr6jjvoj6"]
 
 [ext_resource type="Script" uid="uid://sfvkyiqvuc5x" path="res://src/hp_manager/hp_manager.gd" id="1_exjcu"]
 [ext_resource type="Script" uid="uid://dyq8qw4pg6rpf" path="res://src/artillary/main_controller/ArtilleryController.gd" id="1_s01fk"]
 [ext_resource type="Script" uid="uid://b112omat8o001" path="res://src/artillary/secondary_controller/_secondary_controller.gd" id="3_exjcu"]
 [ext_resource type="PackedScene" uid="uid://bpa424xhggvk2" path="res://src/movement/ship_movement.tscn" id="4_1t3ll"]
 [ext_resource type="Script" uid="uid://d4nhn3dtrfet3" path="res://src/Consumable/consumable_manager.gd" id="6_exjcu"]
+[ext_resource type="Script" uid="uid://lyq1ou7yv8p2" path="res://src/movement/ShipMovementV4.gd" id="6_s01fk"]
 [ext_resource type="PackedScene" uid="uid://blvke4gmq0asw" path="res://src/Fire/fireManager.tscn" id="7_j72gg"]
 [ext_resource type="Script" uid="uid://bigegwv2dexue" path="res://src/concealment/concealment.gd" id="9_exjcu"]
 [ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://Skills/skills_manager.gd" id="9_hnrpx"]
 [ext_resource type="Script" uid="uid://kfbekstmxsvi" path="res://src/Upgrades/upgrades.gd" id="9_s01fk"]
 
-[node name="Modules" type="Node"]
+[node name="Modules" type="Node" unique_id=1386842876]
 
-[node name="HPManager" type="Node" parent="."]
+[node name="HPManager" type="Node" parent="." unique_id=1137121331]
 script = ExtResource("1_exjcu")
 metadata/_custom_type_script = "uid://sfvkyiqvuc5x"
 
-[node name="Concealment" type="Node" parent="."]
+[node name="Concealment" type="Node" parent="." unique_id=799010002]
 script = ExtResource("9_exjcu")
 metadata/_custom_type_script = "uid://bigegwv2dexue"
 
-[node name="ArtilleryController" type="Node" parent="."]
+[node name="ArtilleryController" type="Node" parent="." unique_id=1614620833]
 script = ExtResource("1_s01fk")
 metadata/_custom_type_script = "uid://dyq8qw4pg6rpf"
 
-[node name="SecondaryController" type="Node" parent="."]
+[node name="SecondaryController" type="Node" parent="." unique_id=1908453476]
 script = ExtResource("3_exjcu")
 metadata/_custom_type_script = "uid://b112omat8o001"
 
-[node name="MovementController" parent="." instance=ExtResource("4_1t3ll")]
+[node name="MovementController" parent="." unique_id=1088594109 instance=ExtResource("4_1t3ll")]
+script = ExtResource("6_s01fk")
 
-[node name="FireManager" parent="." instance=ExtResource("7_j72gg")]
+[node name="FireManager" parent="." unique_id=384504544 instance=ExtResource("7_j72gg")]
 
-[node name="ConsumableManager" type="Node" parent="."]
+[node name="ConsumableManager" type="Node" parent="." unique_id=1189768979]
 script = ExtResource("6_exjcu")
 metadata/_custom_type_script = "uid://d4nhn3dtrfet3"
 
-[node name="Upgrades" type="Node" parent="."]
+[node name="Upgrades" type="Node" parent="." unique_id=151881377]
 script = ExtResource("9_s01fk")
 metadata/_custom_type_script = "uid://kfbekstmxsvi"
 
-[node name="Skills" type="Node" parent="."]
+[node name="Skills" type="Node" parent="." unique_id=2018053307]
 script = ExtResource("9_hnrpx")
 metadata/_custom_type_script = "uid://bjh4lti6x5hp"

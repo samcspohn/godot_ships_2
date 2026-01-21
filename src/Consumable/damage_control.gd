@@ -4,9 +4,6 @@ class_name DamageControl
 
 func _init():
 	type = ConsumableType.DAMAGE_CONTROL
-	duration = 15.0
-	cooldown_time = 90.0
-	max_stack = -1  # Infinite uses
 
 func _ready() -> void:
 	# Initialize any necessary variables or states
@@ -17,7 +14,7 @@ func effect(ship: Ship) -> void:
 	var static_params = ship.fire_manager.params.static_mod as FireParams
 	static_params.dur *= (1.0 - 0.65)
 	static_params.dmg_rate *= (1.0 - 0.65)
-	static_params.buildup_reduction_rate *= 5.0
+	static_params.buildup_reduction_rate *= 10.0
 
 func apply_effect(ship: Ship) -> void:
 	# Create damage control effect that reduces fire duration and damage by 65%

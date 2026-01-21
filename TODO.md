@@ -7,6 +7,13 @@
 - [ ] add fire ribbon, temporary frag/fire ribbon.
 - [ ] add kill feed
 
+# bot
+- [ ] need to angle when engaging
+- [ ] angle when kiting + turn to shoot front guns when reloaded and turn back
+- [ ] use torpedos with angle offsets to increase spread
+- [ ] use navmesh to navigate around obstacles
+- [ ] reduce raycasts by using navmesh + check for other ships distance
+
 ## Todo Soon ⏳
 concealment, sound effects, damage saturation, clamp sniper range
 - [x] fix close(long?) range aiming too high

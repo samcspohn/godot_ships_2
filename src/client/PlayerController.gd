@@ -481,6 +481,8 @@ func process_player_input() -> void:
 	elif rudder_mode == "continuous":
 		target_rudder_value = 0.0
 
+	if Input.is_key_pressed(KEY_K):
+		kill.rpc_id(1)
 	# Create movement input array
 	var input_data = InputData.new()
 	input_data.throttle_level = throttle_level
@@ -508,6 +510,10 @@ func process_player_input() -> void:
 
 	#print(cam.aim_position)
 	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
+
+@rpc("any_peer")
+func kill():
+	ship.health_controller.apply_damage(10000000,10000000, ship.citadel, false, 1)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane], manual_sec: bool) -> void:

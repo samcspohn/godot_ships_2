@@ -172,3 +172,10 @@ func update_active_effects(delta: float):
 func use_consumable_rpc(slot: int):
 	if _Utils.authority():
 		use_consumable(slot)
+
+func get_active_icons() -> Array:
+	var ret = []
+	for id in active_effects:
+		if id < equipped_consumables.size() and equipped_consumables[id]:
+			ret.append(equipped_consumables[id].icon)
+	return ret

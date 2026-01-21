@@ -21,7 +21,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="ships3"
 run/main_scene="res://scenes/root.tscn"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
 
 [audio]
@@ -57,7 +57,7 @@ version_control/autoload_on_startup=true
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
+enabled=PackedStringArray("res://addons/hull_collision_editor/plugin.cfg", "res://addons/script-ide/plugin.cfg", "res://addons/turret_editor/plugin.cfg", "res://addons/warship-importer/plugin.cfg")
 
 [godots]
 

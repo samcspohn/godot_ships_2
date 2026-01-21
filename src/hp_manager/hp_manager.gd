@@ -3,12 +3,20 @@ extends Node
 class_name HPManager
 
 @export var max_hp: float
+@export var citadel_repair: float = 0.15
+@export var pen_repair: float = 0.5
+@export var light_repair: float = 0.9
 var current_hp: float
 var sunk: bool = false
 var ship: Ship
 
 signal hp_changed(new_hp: float)
 signal ship_sunk()
+var sinking: bool = false
+# var sinking_rotation_axis: Vector3 = Vector3.ZERO
+var sinking_basis: Basis = Basis.IDENTITY
+var current_sinking_basis: Basis = Basis.IDENTITY
+var sinking_time: float = 0.0
 
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 
@@ -50,7 +58,6 @@ func _generate_armor_parts():
 		superstructure.resource_local_to_scene = true
 	superstructure.pool1 = max_hp * 0.4 / 3.0
 	superstructure.pool2 = 2.0 * max_hp * 0.4 / 3.0
-
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
@@ -106,23 +113,23 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 
 	match armor_part.type:
 		ArmorPart.Type.MODULE:
-			light_damage += dmg * 0.5
-			healable_damage += dmg * 0.5
+			light_damage += dmg * pen_repair
+			healable_damage += dmg * pen_repair
 		ArmorPart.Type.CITADEL:
-			citadel.healable_damage += dmg * 0.2
-			healable_damage += dmg * 0.2
+			citadel.healable_damage += dmg * citadel_repair
+			healable_damage += dmg * citadel_repair
 		ArmorPart.Type.CASEMATE:
-			casemate.healable_damage += dmg * 0.5
-			healable_damage += dmg * 0.5
+			casemate.healable_damage += dmg * pen_repair
+			healable_damage += dmg * pen_repair
 		ArmorPart.Type.BOW:
-			bow.healable_damage += dmg * 0.5
-			healable_damage += dmg * 0.5
+			bow.healable_damage += dmg * pen_repair
+			healable_damage += dmg * pen_repair
 		ArmorPart.Type.STERN:
-			stern.healable_damage += dmg * 0.5
-			healable_damage += dmg * 0.5
+			stern.healable_damage += dmg * pen_repair
+			healable_damage += dmg * pen_repair
 		ArmorPart.Type.SUPERSTRUCTURE:
-			superstructure.healable_damage += dmg * 0.5
-			healable_damage += dmg * 0.5
+			superstructure.healable_damage += dmg * pen_repair
+			healable_damage += dmg * pen_repair
 
 
 	current_hp -= dmg
@@ -140,8 +147,8 @@ func apply_light_damage(dmg: float) -> Array:
 	if sunk:
 		return [0, false]
 	current_hp -= dmg
-	light_damage += dmg
-	healable_damage += dmg
+	light_damage += dmg * light_repair
+	healable_damage += dmg * light_repair
 	if current_hp <= 0 && !sunk:
 		dmg -= current_hp
 		current_hp = 0
@@ -183,7 +190,7 @@ func heal(amount: float) -> float:
 	# hp_changed.emit(current_hp)
 	# return amount
 
-@rpc("any_peer", "reliable", "call_remote")
+# @rpc("any_peer", "reliable", "call_remote")
 func sink():
 	sunk = true
 	if !(_Utils.authority()):
@@ -199,10 +206,63 @@ func sink():
 	if pc != null:
 		pc.set_physics_process(false)
 		pc.set_process_input(false)
+	var mv = ship.get_node_or_null("Modules/MovementController")
+	if mv != null:
+		mv.set_physics_process(false)
 	ship._disable_weapons()
 	#ship.set_physics_process(false)
 	if _Utils.authority():
-		sink.rpc()
+		sinking = true
+		# sinking_rotation_axis = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
+		# sinking_basis = Basis.from_euler(Vector3(randf() * TAU, randf() * TAU, randf() * TAU))
+		current_sinking_basis = ship.global_basis
+		# Extract the current yaw (Y rotation) to preserve it
+		var current_euler = current_sinking_basis.get_euler()
+		var preserved_yaw = current_euler.y
+		# Generate random pitch and roll for sinking
+		var random_pitch = (randf() - 0.5) * PI * 0.5  # Random pitch between -45 and 45 degrees
+		var random_roll = (randf() - 0.5) * PI * 0.8   # Random roll between -72 and 72 degrees
+		# Build the sinking basis with preserved yaw and new pitch/roll
+		sinking_basis = Basis.from_euler(Vector3(random_pitch, preserved_yaw, random_roll))
+		sinking_time = Time.get_ticks_msec() / 1000.0
+		ship.freeze = true
+		ship.linear_velocity = Vector3.ZERO
+		sink_c.rpc(sinking_basis)
+
+@rpc("authority", "reliable", "call_remote")
+func sink_c(sink_basis: Basis):
+	if !(_Utils.authority()):
+		sinking_basis = sink_basis
+		current_sinking_basis = ship.global_basis
+		sinking_time = Time.get_ticks_msec() / 1000.0
+		ship.freeze = true
+		ship.linear_velocity = Vector3.ZERO
+		sinking = true
+		HitEffects.he_explosion_effect(ship.global_transform.origin, 30.0, Vector3.UP)
+		HitEffects.sparks_effect(ship.global_transform.origin, 20.0, Vector3.UP)
+		#get_parent().queue_free()
+		ship.artillery_controller.set_physics_process(false)
+		ship.movement_controller.set_physics_process(false)
+		#ship.get_node("Secondaries").set_physics_process(false)
+		var pc = ship.get_node_or_null("PlayerController")
+		if pc == null:
+			pc = ship.get_node_or_null("Modules/BotController")
+		if pc != null:
+			pc.set_physics_process(false)
+			pc.set_process_input(false)
+		var mv = ship.get_node_or_null("Modules/MovementController")
+		if mv != null:
+			mv.set_physics_process(false)
+		ship._disable_weapons()
+
+func _physics_process(delta: float) -> void:
+	if sinking and ship.global_position.y > -400.0:
+		var elapsed = Time.get_ticks_msec() / 1000.0 - sinking_time
+		ship.global_position -= Vector3(0, delta * pow(elapsed, 0.6) * 0.06, 0)
+		current_sinking_basis = current_sinking_basis.slerp(sinking_basis, pow(elapsed, 0.3)*0.0002).orthonormalized()
+		ship.global_basis = current_sinking_basis
+		# ship.global_basis = current_sinking_basis.slerp(sinking_rotation, delta * 0.005)
+
 
 func is_alive() -> bool:
 	return current_hp > 0

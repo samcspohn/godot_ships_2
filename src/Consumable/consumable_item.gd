@@ -43,14 +43,14 @@ func to_dict() -> Dictionary:
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
-	
+
 	writer.put_32(id)
 	writer.put_double(cooldown_time)
 	writer.put_double(duration)
 	writer.put_32(max_stack)
 	writer.put_32(current_stack)
 	writer.put_32(type)
-	
+
 	return writer.data_array
 
 func from_dict(data: Dictionary) -> void:

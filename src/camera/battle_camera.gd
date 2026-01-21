@@ -447,7 +447,7 @@ func _calculate_target_info():
 		var ray_params = PhysicsRayQueryParameters3D.new()
 		ray_params.from = ray_origin
 		ray_params.to = ray_origin + aim_direction * ray_length
-		ray_params.collision_mask = 1 | (1 << 1) # Set to your proper collision mask
+		ray_params.collision_mask = 1 | (1 << 1) | (1 << 3) # land | armor | water
 		if ray_exclude.size() == 0:
 			ray_exclude = recurs_collision_bodies(_ship)
 		ray_params.exclude = ray_exclude

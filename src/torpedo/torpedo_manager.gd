@@ -12,6 +12,10 @@ const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
+# Wake particle system
+var _unified_particle_system: UnifiedParticleSystem = null
+var _wake_template_id: int = -1
+
 class TorpedoData:
 	var position: Vector3
 	var start_position: Vector3
@@ -20,6 +24,7 @@ class TorpedoData:
 	var t: float
 	var params: TorpedoParams
 	var owner: Ship
+	var emitter_id: int = -1  # GPU wake particle emitter ID
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float):
 		self.position = pos
@@ -29,6 +34,7 @@ class TorpedoData:
 		self.params = _params
 		self.owner = _owner
 		self._range = __range
+		self.emitter_id = -1
 
 
 func _ready():
@@ -46,6 +52,55 @@ func _ready():
 		set_physics_process(false)
 		transforms.resize(12)
 		torpedos.resize(1)
+		# Initialize wake particle system - use a timer to wait for particle system to be ready
+		# ParticleSystemInit uses call_deferred to add nodes, so we need to wait a frame or two
+		_wait_for_particle_system()
+
+func _wait_for_particle_system() -> void:
+	"""Wait for particle system to be ready before initializing wake particles."""
+	# Try to initialize immediately
+	if _try_init_wake_particles():
+		return
+
+	# If not ready, create a timer and retry
+	var timer = get_tree().create_timer(0.1)
+	timer.timeout.connect(_on_init_timer_timeout)
+
+var _init_retry_count: int = 0
+const MAX_INIT_RETRIES: int = 20  # 2 seconds max wait
+
+func _on_init_timer_timeout() -> void:
+	"""Retry wake particle initialization."""
+	_init_retry_count += 1
+	if _try_init_wake_particles():
+		return
+
+	if _init_retry_count < MAX_INIT_RETRIES:
+		var timer = get_tree().create_timer(0.1)
+		timer.timeout.connect(_on_init_timer_timeout)
+
+func _try_init_wake_particles() -> bool:
+	"""Try to initialize the wake particle system. Returns true if successful."""
+	# Get ParticleSystemInit autoload
+	if not has_node("/root/ParticleSystemInit"):
+		return false
+
+	var particle_init = ParticleSystemInit
+
+	# Get unified particle system from ParticleSystemInit
+	_unified_particle_system = particle_init.unified_system
+	if _unified_particle_system == null:
+		return false
+
+	# Get the wake template ID from template manager
+	if particle_init.template_manager != null:
+		_wake_template_id = particle_init.template_manager.get_template_id("torpedo_wake")
+
+	if _wake_template_id < 0:
+		# Template not registered yet, keep waiting
+		return false
+
+	return true
 
 # Returns the next power of 2 that is >= value
 func next_pow_of_2(value: int) -> int:
@@ -138,8 +193,8 @@ func _process(_delta: float) -> void:
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		#var prev_pos = p.position
 		p.position = p.direction * p.params.speed * t + p.start_position
-		if p.position.y > 0.01:
-			p.position.y = max(p.position.y - t * 10, 0.01)
+		if p.position.y > 0.1:
+			p.position.y = max(p.position.y - t * 10, 0.1)
 		update_transform_pos(id, p.position)
 
 		## Calculate distance-based scale to counter perspective shrinking
@@ -148,6 +203,10 @@ func _process(_delta: float) -> void:
 		#var max_scale_factor = INF # Cap the maximum scale increase
 		#var scale_factor = min(base_scale * (1 + distance * distance_factor), max_scale_factor)
 		#update_transform_scale(id, scale_factor)
+
+		# Update wake particle emitter position
+		if p.emitter_id >= 0 and _unified_particle_system != null:
+			_unified_particle_system.update_emitter_position(p.emitter_id, p.position)
 
 		id += 1
 		#var offset = p.position - p.trail_pos
@@ -265,6 +324,20 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> v
 	update_transform(id, trans)
 
 	torp.initialize(pos, vel, params, t, owner, 0.0)
+
+	# Allocate wake particle emitter
+	if _unified_particle_system != null and _wake_template_id >= 0:
+		var size_mult = 1.0  # Base size multiplier
+		var emit_rate = 0.2  # Particles per unit distance
+		torp.emitter_id = _unified_particle_system.allocate_emitter(
+			_wake_template_id,
+			pos,
+			size_mult,
+			emit_rate,
+			1.0,  # speed_scale
+			0.0   # velocity_boost
+		)
+
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
@@ -294,6 +367,10 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 		return
 	var radius = torp.params.damage * 8 / 20000.0
 
+	# Free wake particle emitter
+	if torp.emitter_id >= 0 and _unified_particle_system != null:
+		_unified_particle_system.free_emitter(torp.emitter_id)
+		torp.emitter_id = -1
 
 	HitEffects.he_explosion_effect(pos, radius, Vector3.UP)
 	HitEffects.sparks_effect(pos, radius, Vector3.UP)

@@ -72,7 +72,7 @@ func _ready():
 					"is_bot": false
 				}
 				# Bot team (team 1) - 3 bots
-				var num_in_team = 15
+				var num_in_team = 10
 				for i in range(1, num_in_team):
 					var bot_id = str(i + 1 + 1000)
 					team[bot_id] = {

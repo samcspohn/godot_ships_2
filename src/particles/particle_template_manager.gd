@@ -21,7 +21,7 @@ var texture_array: Texture2DArray
 
 # Texture dimensions
 const CURVE_RESOLUTION = 256
-const PROPERTIES_HEIGHT = 11  # Number of property rows per template (row 10 = base color)
+const PROPERTIES_HEIGHT = 12  # Number of property rows per template (row 10 = base color, row 11 = billboard/rotation)
 
 signal templates_updated()
 
@@ -207,6 +207,14 @@ func _encode_properties(template: ParticleTemplate, id: int) -> void:
 
 	# Row 10: base color (RGBA)
 	image.set_pixel(id, 10, template.color)
+
+	# Row 11: billboard_mode (x), fixed_rotation x/y/z (in radians)
+	image.set_pixel(id, 11, Color(
+		float(template.billboard_mode),
+		deg_to_rad(template.fixed_rotation.x),
+		deg_to_rad(template.fixed_rotation.y),
+		deg_to_rad(template.fixed_rotation.z)
+	))
 
 	template_properties_texture.update(image)
 

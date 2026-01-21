@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://yjxdk16hffim"]
+[gd_scene load_steps=38 format=3 uid="uid://yjxdk16hffim"]
 
 [ext_resource type="PackedScene" uid="uid://0rigmm4tvpum" path="res://Ships/DesMoines/DesMoines.glb" id="1_wvm7u"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="2_iwiyp"]
@@ -20,6 +20,7 @@
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="13_jxksy"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="14_s7tx1"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_xosf1"]
+[ext_resource type="Script" uid="uid://c4s0uljp7d86c" path="res://src/particles/trail_emitter.gd" id="21_3nwwl"]
 
 [sub_resource type="Resource" id="Resource_o5kiv"]
 resource_local_to_scene = true
@@ -168,7 +169,6 @@ disabled_icon = ExtResource("10_o5kiv")
 cooldown_time = 60.0
 duration = 20.0
 max_stack = -1
-type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_1hsc6"]
@@ -181,17 +181,27 @@ duration = 20.0
 max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_iwiyp"]
-size = Vector3(23.309792, 26.60669, 216.47464)
+[sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_vp8fe"]
+points = PackedVector3Array(0, -7.0708423, -106.071, 0, 9.270897, -108.41028, 0, -7.0708423, -102.32157, 0, 6.73342, 107.51141, 0, -0.16883564, -106.071, 0, -7.0708423, -85.050476, 0, -1.3565321, 105.08977, 0, -0.16883564, 105.72896, 0, -7.0708423, 40.66745, 0, -7.0708423, -43.1445, 0, 3.282292, -106.459785, 0, -7.0708423, -64.09914, 0, -0.7458525, 105.38959, 0, 3.282292, 106.77669, 0, -7.0708423, 19.71611, 0, -7.0708423, -1.2385254, 0, -7.0708423, -22.193161, 0, -3.6199636, -106.071, 0, -3.4199777, 82.57341, 0, -5.6265554, 61.622086, 0, 6.7335734, 82.57341, 0, 6.7335734, 61.622086, 0, 6.7335734, 40.66745, 0, 6.7335734, 19.71611, 0, 6.7335734, -1.2385254, 0, 6.7335734, -22.193161, 0, 6.7335734, -43.1445, 0, 7.319092, -85.050476, 0, 6.890416, -64.09914, 0, 7.319092, -85.050476, 0, 6.7335734, -43.1445, 0, 6.890416, -64.09914, 0, 7.319092, -85.050476, 2.6724882, 8.815319, -104.209465, -2.6724882, 8.815319, -104.209465, 5.6392307, 7.318915, -85.050476, -5.6392307, 7.318915, -85.050476, 8.137323, 6.890268, -64.09914, -8.137323, 6.890268, -64.09914, 10.089344, 6.73342, -43.1445, -10.089344, 6.73342, -43.1445, 11.338205, 6.73342, -22.193161, -11.338205, 6.73342, -22.193161, 11.962822, 6.73342, -1.2385254, -11.962822, 6.73342, -1.2385254, 12.197332, 6.73342, 19.71611, -12.197332, 6.73342, 19.71611, 11.885025, 6.73342, 40.66745, -11.885025, 6.73342, 40.66745, 2.5723553, -1.3565321, 102.981125, -2.5723553, -1.3565321, 102.981125, 10.948099, 6.73342, 61.622086, -10.948099, 6.73342, 61.622086, 9.230591, 6.73342, 82.57341, -9.230591, 6.73342, 82.57341, 5.7170277, 6.73342, 105.40277, -5.7170277, 6.73342, 105.40277, 0.87680817, -3.6199636, -102.32157, -0.87680817, -3.6199636, -102.32157, 4.686672, -0.16883564, 103.6203, -4.686672, -0.16883564, 103.6203, 9.224262, -7.0708423, -22.193161, -9.224262, -7.0708423, -22.193161, 8.199862, -0.16883564, 82.57341, -8.199862, -0.16883564, 82.57341, 11.338205, -3.6199636, -22.193161, -11.338205, -3.6199636, -22.193161, 9.455421, -7.0708423, 40.66745, -9.455421, -7.0708423, 40.66745, 11.338205, -0.16883564, -22.193161, -11.338205, -0.16883564, -22.193161, 6.0855446, -3.4199777, 82.57341, -6.0855446, -3.4199777, 82.57341, 7.807522, -1.6662364, 82.57341, -7.807522, -1.6662364, 82.57341, 11.651258, -0.16883564, 40.66745, -11.651258, -0.16883564, 40.66745, 11.427544, -3.6199636, 40.66745, -11.427544, -3.6199636, 40.66745, 12.197332, -3.6199636, 19.71611, -12.197332, -3.6199636, 19.71611, 10.083017, -7.0708423, 19.71611, -10.083017, -7.0708423, 19.71611, 6.7321243, -3.6199636, -64.09914, -6.7321243, -3.6199636, -64.09914, 4.702305, 3.282292, -85.050476, -4.702305, 3.282292, -85.050476, 6.7321243, -0.16883564, -64.09914, -6.7321243, -0.16883564, -64.09914, 1.0558548, 3.282292, -102.713646, -1.0558548, 3.282292, -102.713646, 0.87680817, -0.16883564, -102.32157, -0.87680817, -0.16883564, -102.32157, 4.6178074, -7.0708423, -64.09914, -4.6178074, -7.0708423, -64.09914, 4.2943325, -0.7458525, 103.280945, -4.2943325, -0.7458525, 103.280945, 8.217356, -5.6265554, 61.622086, -8.217356, -5.6265554, 61.622086, 9.939331, -2.7437158, 61.622086, -9.939331, -2.7437158, 61.622086, 5.7170277, 3.282292, 104.668045, -5.7170277, 3.282292, 104.668045, 9.230591, 3.282292, 82.57341, -9.230591, 3.282292, 82.57341, 10.331671, -0.16883564, 61.622086, -10.331671, -0.16883564, 61.622086, 10.948099, 3.282292, 61.622086, -10.948099, 3.282292, 61.622086, 9.848877, -7.0708423, -1.2385254, -9.848877, -7.0708423, -1.2385254, 11.885025, 3.282292, 40.66745, -11.885025, 3.282292, 40.66745, 12.197332, -0.16883564, 19.71611, -12.197332, -0.16883564, 19.71611, 12.197332, 3.282292, 19.71611, -12.197332, 3.282292, 19.71611, 11.962822, -3.6199636, -1.2385254, -11.962822, -3.6199636, -1.2385254, 11.962822, -0.16883564, -1.2385254, -11.962822, -0.16883564, -1.2385254, 11.962822, 3.282292, -1.2385254, -11.962822, 3.282292, -1.2385254, 11.338205, 3.282292, -22.193161, -11.338205, 3.282292, -22.193161, 9.604319, 3.282292, -43.1445, -9.604319, 3.282292, -43.1445, 9.230591, -0.16883564, -43.1445, -9.230591, -0.16883564, -43.1445, 9.230591, -3.6199636, -43.1445, -9.230591, -3.6199636, -43.1445, 7.116274, -7.0708423, -43.1445, -7.116274, -7.0708423, -43.1445, 7.388754, 3.282292, -64.09914, -7.388754, 3.282292, -64.09914, 3.687211, -0.16883564, -85.050476, -3.687211, -0.16883564, -85.050476, 3.687211, -3.6199636, -85.050476, -3.687211, -3.6199636, -85.050476, 1.5732679, -7.0708423, -85.050476, -1.5732679, -7.0708423, -85.050476, 9.230591, 6.7335734, 82.57341, -9.230591, 6.7335734, 82.57341, 5.7170277, 6.7335734, 105.40277, -5.7170277, 6.7335734, 105.40277, 11.885025, 6.7335734, 40.66745, -11.885025, 6.7335734, 40.66745, 10.948099, 6.7335734, 61.622086, -10.948099, 6.7335734, 61.622086, 12.197332, 6.7335734, 19.71611, -12.197332, 6.7335734, 19.71611, 11.962822, 6.7335734, -1.2385254, -11.962822, 6.7335734, -1.2385254, 11.338205, 6.7335734, -22.193161, -11.338205, 6.7335734, -22.193161, 10.089344, 6.7335734, -43.1445, -10.089344, 6.7335734, -43.1445, 8.137323, 6.890416, -64.09914, -8.137323, 6.890416, -64.09914, 5.6392307, 7.319092, -85.050476, -5.6392307, 7.319092, -85.050476, 2.6724882, 8.815469, -104.209465, -2.6724882, 8.815469, -104.209465, 10.089344, 6.7335734, -43.1445, -10.089344, 6.7335734, -43.1445, 5.6392307, 7.319092, -85.050476, -5.6392307, 7.319092, -85.050476, 8.137323, 6.890416, -64.09914, -8.137323, 6.890416, -64.09914)
 
-[node name="ship" unique_id=1562180474 instance=ExtResource("1_wvm7u")]
+[node name="ship" instance=ExtResource("1_wvm7u")]
+collision_layer = 4
+collision_mask = 5
 mass = 21269000.0
+contact_monitor = true
+max_contacts_reported = 4
+ship_name = "Des Moines"
+tier = 10
 ship_model_glb_path = "uid://0rigmm4tvpum"
+use_hull_collision = true
 
-[node name="Modules" parent="." index="0" unique_id=1891451256 instance=ExtResource("2_q1kic")]
+[node name="Modules" parent="." index="0" instance=ExtResource("2_q1kic")]
 
 [node name="HPManager" parent="Modules" index="0"]
 max_hp = 41000.0
+citadel_repair = 0.4
+pen_repair = 0.6
+light_repair = 0.925
 citadel = SubResource("Resource_o5kiv")
 casemate = SubResource("Resource_3nwwl")
 bow = SubResource("Resource_vfelm")
@@ -208,7 +218,7 @@ guns = [NodePath("../../TurretMount_AMER_203mm_3b_auto_001/AMER_203mm_3b_auto_00
 [node name="SecondaryController" parent="Modules" index="3" node_paths=PackedStringArray("sub_controllers")]
 sub_controllers = [NodePath("SecSubController")]
 
-[node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" unique_id=471794325 node_paths=PackedStringArray("guns")]
+[node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" node_paths=PackedStringArray("guns")]
 script = ExtResource("6_t5p80")
 p = SubResource("Resource_fa4yd")
 guns = [NodePath("../../../TurretMount_AMER_127mm_2b/AMER_127mm_2b"), NodePath("../../../TurretMount_AMER_127mm_2b_001/AMER_127mm_2b_001"), NodePath("../../../TurretMount_AMER_127mm_2b_004/AMER_127mm_2b_004"), NodePath("../../../TurretMount_AMER_127mm_2b_002/AMER_127mm_2b_002"), NodePath("../../../TurretMount_AMER_127mm_2b_005/AMER_127mm_2b_005"), NodePath("../../../TurretMount_AMER_127mm_2b_003/AMER_127mm_2b_003")]
@@ -219,7 +229,8 @@ max_speed_knots = 33.0
 acceleration_time = 20.0
 deceleration_time = 20.0
 reverse_speed_ratio = 0.5
-turning_circle_radius = 400.0
+turning_circle_radius = 300.0
+turn_speed_loss = 0.1
 rudder_response_time = 8.0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
@@ -232,132 +243,105 @@ equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_8wi5
 [node name="Upgrades" parent="Modules" index="7"]
 upgrades = Array[ExtResource("12_krgon")]([null, null, null])
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="." index="1" unique_id=1211004383]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.019375801, 13.150307, -0.6786766)
-shape = SubResource("BoxShape3D_iwiyp")
+[node name="Fires" type="Node3D" parent="." index="1"]
 
-[node name="Fires" type="Node3D" parent="." index="2" unique_id=728237648]
-
-[node name="Fire" parent="Fires" index="0" unique_id=1437305044 instance=ExtResource("9_h3lju")]
+[node name="Fire" parent="Fires" index="0" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.4778533, -71.727486)
 
-[node name="Fire2" parent="Fires" index="1" unique_id=1938568273 instance=ExtResource("9_h3lju")]
+[node name="Fire2" parent="Fires" index="1" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.540108, -24.61584)
 
-[node name="Fire3" parent="Fires" index="2" unique_id=1163450825 instance=ExtResource("9_h3lju")]
+[node name="Fire3" parent="Fires" index="2" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.542353, 23.084698)
 
-[node name="Fire4" parent="Fires" index="3" unique_id=387039034 instance=ExtResource("9_h3lju")]
+[node name="Fire4" parent="Fires" index="3" instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.888956, 83.8587)
 
-[node name="Superstructure_col" parent="." index="8"]
+[node name="Superstructure_col" parent="." index="7"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col" parent="." index="10"]
+[node name="Barbette_col" parent="." index="9"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_001" parent="." index="11"]
+[node name="Barbette_col_001" parent="." index="10"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_002" parent="." index="12"]
+[node name="Barbette_col_002" parent="." index="11"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="AMER_203mm_3b_auto" parent="TurretMount_AMER_203mm_3b_auto" index="0" unique_id=258228990 instance=ExtResource("3_6vusf")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
-min_rotation_angle = 3.739558602192923
-max_rotation_angle = 2.591178607025265
-auto_extract_armor = null
+[node name="AMER_203mm_3b_auto" parent="TurretMount_AMER_203mm_3b_auto" index="0" instance=ExtResource("3_6vusf")]
+min_rotation_angle = 3.735004599267865
+max_rotation_angle = 2.583087292951608
 
-[node name="AMER_203mm_3b_auto_001" parent="TurretMount_AMER_203mm_3b_auto_001" index="0" unique_id=1912494489 instance=ExtResource("3_6vusf")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
-min_rotation_angle = 3.714843632878361
-max_rotation_angle = 2.571673714928668
-auto_extract_armor = null
+[node name="AMER_203mm_3b_auto_001" parent="TurretMount_AMER_203mm_3b_auto_001" index="0" instance=ExtResource("3_6vusf")]
+min_rotation_angle = 3.717551306747922
+max_rotation_angle = 2.565634000431664
 
-[node name="AMER_203mm_3b_auto_002" parent="TurretMount_AMER_203mm_3b_auto_002" index="0" unique_id=1349682832 instance=ExtResource("3_6vusf")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
+[node name="AMER_203mm_3b_auto_002" parent="TurretMount_AMER_203mm_3b_auto_002" index="0" instance=ExtResource("3_6vusf")]
 min_rotation_angle = 0.5235987755982988
 max_rotation_angle = 5.759586531581287
-auto_extract_armor = null
 
-[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" index="0" unique_id=103274836 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
-min_rotation_angle = 3.804437595103174
-max_rotation_angle = 2.46210528806016
-glb_path = null
-auto_extract_armor = null
+[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" index="0" instance=ExtResource("4_4rujh")]
+min_rotation_angle = 3.8048177693476384
+max_rotation_angle = 2.4609142453120048
 
-[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" index="0" unique_id=1197788978 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
-min_rotation_angle = 3.699983182728813
+[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" index="0" instance=ExtResource("4_4rujh")]
+min_rotation_angle = 3.7000980142279785
 max_rotation_angle = 0.01745329251994329
-glb_path = null
-auto_extract_armor = null
 
-[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" index="0" unique_id=910315811 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
+[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" index="0" instance=ExtResource("4_4rujh")]
 min_rotation_angle = 3.1590459461097367
-max_rotation_angle = 5.780377668594067
-glb_path = null
-auto_extract_armor = null
+max_rotation_angle = 5.777039824101231
 
-[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" index="0" unique_id=862928738 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
+[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" index="0" instance=ExtResource("4_4rujh")]
 min_rotation_angle = 0.6130340650300443
 max_rotation_angle = 5.670813783287063
-glb_path = null
-auto_extract_armor = null
 
-[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" index="0" unique_id=642126105 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
+[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" index="0" instance=ExtResource("4_4rujh")]
 min_rotation_angle = 0.0
-max_rotation_angle = 2.6637303561129713
-glb_path = null
-auto_extract_armor = null
+max_rotation_angle = 2.670353755551324
 
-[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" index="0" unique_id=991619207 instance=ExtResource("4_4rujh")]
-barrel_count = null
-barrel_spacing = null
-rotation_limits_enabled = null
-min_rotation_angle = 0.5323421803960757
-max_rotation_angle = null
-glb_path = null
-auto_extract_armor = null
+[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" index="0" instance=ExtResource("4_4rujh")]
+min_rotation_angle = 0.6108652381980153
+max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Bow_col" parent="." index="22"]
+[node name="Hull_Bow_col" parent="." index="21"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Casemate_col" parent="." index="24"]
+[node name="Hull_Casemate_col" parent="." index="23"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Stern_col" parent="." index="26"]
+[node name="Hull_Stern_col" parent="." index="25"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Citadel_col" parent="." index="28"]
+[node name="Hull_Citadel_col" parent="." index="27"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
+
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="29"]
+shape = SubResource("ConvexPolygonShape3D_vp8fe")
+
+[node name="TrailEmitter2" type="Node3D" parent="." index="30"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -104.1375)
+script = ExtResource("21_3nwwl")
+template_name = "torpedo_wake"
+emit_rate = 0.06
+size_multiplier = 8.0
+speed_scale = 0.3
+
+[node name="TrailEmitter3" type="Node3D" parent="." index="31"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 81.6273)
+script = ExtResource("21_3nwwl")
+template_name = "torpedo_wake"
+emit_rate = 0.06
+size_multiplier = 10.0
+speed_scale = 0.3
 
 [editable path="Modules"]

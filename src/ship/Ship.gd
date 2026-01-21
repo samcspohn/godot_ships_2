@@ -1,9 +1,20 @@
 extends RigidBody3D
 class_name Ship
 
+const HullCollisionGenerator = preload("res://src/ship/hull_collision_generator.gd")
+
+# Map boundary constants (matching minimap.gd world_rect)
+const MAP_BOUNDARY: float = 17500.0
+
+enum Class {
+	BB,
+	CA,
+	DD,
+	CV
+}
 var initialized: bool = false
 # Child components
-@onready var movement_controller: ShipMovementV2 = $Modules/MovementController
+@onready var movement_controller = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
 @onready var torpedo_controller: TorpedoController = $Modules/TorpedoController
@@ -30,7 +41,12 @@ var peer_id: int = -1 # our unique peer ID assigned by server
 
 var frustum_planes: Array[Plane] = []
 var beam: float = 0.0
+@export var ship_name: String = ""
+@export var ship_class: Class = Class.CA
+@export_range(1, 11) var tier: int = 1
 
+var particles_active = false
+var wake_emitters: Array[TrailEmitter] = []
 # var server_position: Vector3
 # var server_rotation: Basis
 # @export var fires: Array[Fire] = []
@@ -41,6 +57,13 @@ var beam: float = 0.0
 
 signal reset_mods # resets static and dynamic to base
 signal reset_dynamic_mods
+
+## If true, generate convex hull collision from mesh data instead of using box collider
+@export var use_hull_collision: bool = false
+## If true, split hull into multiple convex segments for better accuracy
+@export var use_segmented_hull: bool = false
+## If true, enforce port/starboard symmetry by mirroring vertices across centerline
+@export var use_mirror_symmetry: bool = true
 
 var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
@@ -130,7 +153,17 @@ func _ready() -> void:
 	# Initialize armor system
 	initialize_armor_system()
 
-	beam = ((self.get_node("CollisionShape3D") as CollisionShape3D).shape as BoxShape3D).size.x
+	# Generate hull collision if enabled, otherwise use existing box collider
+	if use_hull_collision:
+		_setup_hull_collision()
+
+	# Calculate beam from collision shape
+	var collision_shape_node = self.get_node_or_null("CollisionShape3D")
+	if collision_shape_node and collision_shape_node.shape is BoxShape3D:
+		beam = (collision_shape_node.shape as BoxShape3D).size.x
+	else:
+		# Estimate beam from AABB if using hull collision
+		beam = aabb.size.x if aabb.size.x > 0 else 50.0
 	print("beam: ", beam)
 
 	initialized = true
@@ -138,14 +171,10 @@ func _ready() -> void:
 		initialized_client.rpc_id(1)
 		set_physics_process(false)
 		self.freeze = true
-		# physics_interpolation_mode = PhysicsInterpolationMode.PHYSICS_INTERPOLATION_MODE_OFF
-		# Disable all collision shapes under the node
-		# for child in get_children():
-		# 	if child is CollisionShape3D:
-		# 		child.disabled = true
-		# remove_physics_recurs(self)
-		# for child in get_children():
-		# 	remove_physics_recurs(child)
+
+		for child in get_children():
+			if child is TrailEmitter:
+				wake_emitters.append(child)
 	else:
 		set_process(false)
 
@@ -162,14 +191,23 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 func _process(delta: float) -> void:
 	var cam = get_viewport().get_camera_3d()
 	if cam != null:
-		if cam.is_position_in_frustum((global_position)) and (cam.global_position.distance_to(global_position) < 4000 or cam.fov < 20):
+		if cam.is_position_in_frustum((global_position)) and \
+		(cam.global_position.distance_to(global_position) < 4000 or cam.fov < 20) and \
+		Engine.get_frames_drawn() % 2 == 0:
 			global_position += linear_velocity * delta
+
+	if particles_active and not wake_emitters[0].is_emitting():
+		for emitter in wake_emitters:
+			emitter.start_emitting()
 
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
 	# if torpedo_launcher != null:
 	# 	torpedo_launcher._aim(artillery_controller.aim_point, delta)
+
+	# Clamp ship position to map boundaries
+	_clamp_to_map_bounds()
 
 	for skill in skills.skills:
 		skill._proc(delta)
@@ -185,6 +223,32 @@ func _physics_process(delta: float) -> void:
 
 	#_update_dynamic_mods()
 
+func _clamp_to_map_bounds() -> void:
+	var pos = global_position
+	var clamped = false
+
+	if pos.x > MAP_BOUNDARY:
+		pos.x = MAP_BOUNDARY
+		clamped = true
+	elif pos.x < -MAP_BOUNDARY:
+		pos.x = -MAP_BOUNDARY
+		clamped = true
+
+	if pos.z > MAP_BOUNDARY:
+		pos.z = MAP_BOUNDARY
+		clamped = true
+	elif pos.z < -MAP_BOUNDARY:
+		pos.z = -MAP_BOUNDARY
+		clamped = true
+
+	if clamped:
+		global_position = pos
+		# Zero out velocity component pushing out of bounds
+		if (pos.x >= MAP_BOUNDARY and linear_velocity.x > 0) or (pos.x <= -MAP_BOUNDARY and linear_velocity.x < 0):
+			linear_velocity.x = 0
+		if (pos.z >= MAP_BOUNDARY and linear_velocity.z > 0) or (pos.z <= -MAP_BOUNDARY and linear_velocity.z < 0):
+			linear_velocity.z = 0
+
 func get_aabb() -> AABB:
 	return self.aabb * global_transform
 
@@ -192,6 +256,31 @@ func get_aabb() -> AABB:
 func initialized_client():
 	self.initialized = true
 
+
+func sync_ship_transform() -> PackedByteArray:
+	var pb = PackedByteArray()
+	var writer = StreamPeerBuffer.new()
+	writer.put_float(rotation.y)
+	writer.put_float(global_position.x)
+	writer.put_float(global_position.z)
+	writer.put_float(health_controller.current_hp)
+	writer.put_float(health_controller.max_hp)
+	writer.put_u8(1 if visible_to_enemy else 0)
+	pb = writer.get_data_array()
+	return pb
+
+func parse_ship_transform(b: PackedByteArray) -> void:
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = b
+	rotation.y = reader.get_float()
+	# server_rotation.y = reader.get_float()
+	global_position.x = reader.get_float()
+	global_position.z = reader.get_float()
+	# global_position.y = 0
+	health_controller.current_hp = reader.get_float()
+	health_controller.max_hp = reader.get_float()
+	visible_to_enemy = reader.get_u8() == 1
+	particles_active = true
 
 func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	var pb = PackedByteArray()
@@ -247,12 +336,12 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 
 func sync2(b: PackedByteArray, friendly: bool):
 	# print("here")
-
 	if !self.initialized:
 		return
 	self.visible = true
 	# print("here2")
 
+	particles_active = true
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 
@@ -314,29 +403,6 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
 
-func sync_ship_transform() -> PackedByteArray:
-	var pb = PackedByteArray()
-	var writer = StreamPeerBuffer.new()
-	writer.put_float(rotation.y)
-	writer.put_float(global_position.x)
-	writer.put_float(global_position.z)
-	writer.put_float(health_controller.current_hp)
-	writer.put_float(health_controller.max_hp)
-	writer.put_u8(1 if visible_to_enemy else 0)
-	pb = writer.get_data_array()
-	return pb
-
-func parse_ship_transform(b: PackedByteArray) -> void:
-	var reader = StreamPeerBuffer.new()
-	reader.data_array = b
-	rotation.y = reader.get_float()
-	# server_rotation.y = reader.get_float()
-	global_position.x = reader.get_float()
-	global_position.z = reader.get_float()
-	global_position.y = 0
-	health_controller.current_hp = reader.get_float()
-	health_controller.max_hp = reader.get_float()
-	visible_to_enemy = reader.get_u8() == 1
 
 func sync_player_data() -> PackedByteArray:
 	var pb = PackedByteArray()
@@ -397,6 +463,7 @@ func sync_player(b: PackedByteArray):
 	if !self.initialized:
 		return
 	self.visible = true
+	particles_active = true
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 
@@ -463,6 +530,10 @@ func sync_player(b: PackedByteArray):
 func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
+	if particles_active and wake_emitters[0].is_emitting():
+		for emitter in wake_emitters:
+			emitter.stop_emitting()
+		particles_active = false
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
@@ -615,14 +686,52 @@ func resolve_glb_path(path: String) -> String:
 		print("   ❌ Invalid GLB path: ", path)
 		return ""
 
-func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:
+## Replaces the simple box collider with a convex hull for more accurate physics collision.
+## This allows proper ship-to-ship and ship-to-ground collision detection.
+func _setup_hull_collision() -> void:
+	print("🚢 Setting up hull collision...")
+
+	# Find and remove existing box collision shape
+	var existing_collision = get_node_or_null("CollisionShape3D")
+	if existing_collision:
+		existing_collision.queue_free()
+		print("   Removed existing box collider")
+
+	# Wait a frame for the node to be freed
+	await get_tree().process_frame
+
+	if use_segmented_hull:
+		# Generate segmented hull for better accuracy
+		var segments = HullCollisionGenerator.generate_segmented_hull_collision(self, use_mirror_symmetry)
+		for segment in segments:
+			add_child(segment)
+			print("   Added segment: ", segment.name)
+	else:
+		# Generate single convex hull
+		var hull_collision = HullCollisionGenerator.generate_hull_collision(self, false, use_mirror_symmetry)
+		if hull_collision:
+			add_child(hull_collision)
+			print("   Added hull collision shape")
+		else:
+			# Fallback to box-based hull if convex generation fails
+			print("   ⚠️ Convex hull generation failed, using box approximation")
+			var box_collision = HullCollisionGenerator.generate_box_hull_collision(self)
+			if box_collision:
+				add_child(box_collision)
+
+	# Configure collision layers
+	HullCollisionGenerator.configure_ship_collision(self)
+	print("   ✅ Hull collision setup complete")
+
+
+func extract_and_load_armor_data(resolved_glb_path: String, armor_json_path: String) -> void:
 	"""Extract armor data from GLB and save it locally"""
 	# Load the extractor
 	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
 	var extractor = extractor_script.new()
 
 	print("      Extracting armor data from GLB...")
-	var success = extractor.extract_armor_with_mapping_to_json(glb_path, armor_json_path)
+	var success = extractor.extract_armor_with_mapping_to_json(resolved_glb_path, armor_json_path)
 
 	if success:
 		print("      ✅ Armor extraction completed")

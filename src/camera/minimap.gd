@@ -4,6 +4,8 @@ class_name Minimap
 
 # Constants
 const SHIP_MARKER_SIZE = 18
+const CONSUMABLE_ICON_SIZE = 12 # Base size for consumable icons on minimap
+const SHIP_NAME_FONT_SIZE = 10 # Base font size for ship names on minimap
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White
 const FRIENDLY_COLOR = Color(0, 1, 0, 1) # Green
 const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
@@ -180,7 +182,7 @@ func register_player_ship(ship: Node3D) -> void:
 
 func register_ship(ship: Node3D) -> void:
 	if tracked_ships.find_custom(func (a): return a.ship == ship) == -1:
-		var a = {"ship": ship, "init": null}
+		var a = {"ship": ship, "init": null, "pos": ship.global_position, "rot": ship.rotation.y }
 		tracked_ships.append(a)
 		# Connect to ship's tree_exiting signal to remove it when destroyed
 		if not ship.is_connected("tree_exiting", _on_ship_destroyed):
@@ -198,6 +200,11 @@ func _physics_process(_delta: float) -> void:
 	ship_markers_canvas.queue_redraw()
 
 	# Setup draw signal - will be called by the rendering system
+	for ship in tracked_ships:
+		if (ship["ship"] as Ship).health_controller.is_alive():
+			ship["pos"] = ship["ship"].global_position
+			ship["rot"] = ship["ship"].rotation.y
+
 	if not ship_markers_canvas.is_connected("draw", _on_canvas_draw):
 		ship_markers_canvas.connect("draw", _on_canvas_draw)
 
@@ -250,6 +257,8 @@ func _on_canvas_draw() -> void:
 	# Draw tracked ships
 	for dict in tracked_ships:
 		var tracked_ship = dict["ship"] as Ship
+		var tracked_pos = dict["pos"]
+		var tracked_rot = dict["rot"]
 		if is_instance_valid(tracked_ship):
 			if tracked_ship.visible_to_enemy and tracked_ship.team.team_id != player_ship.team.team_id:
 				dict.init = true
@@ -282,9 +291,14 @@ func _on_canvas_draw() -> void:
 			if ship_state == ShipState.DETECTED:
 				var col = Color.GOLD
 				col.a = 0.7
-				ship_auras_to_draw.append({"pos": tracked_ship.global_position, "rot": -tracked_ship.rotation.y, "color": col})
+				ship_auras_to_draw.append({"pos": tracked_pos, "rot": -tracked_rot, "color": col})
 				# draw_ship_aura_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, col, 1.3)
-			ships_to_draw.append({"pos": tracked_ship.global_position, "rot": -tracked_ship.rotation.y, "color": color})
+			# Get active consumable icons for friendly ships
+			var consumable_icons = []
+			if is_friendly and tracked_ship.consumable_manager:
+				consumable_icons = tracked_ship.consumable_manager.get_active_icons()
+
+			ships_to_draw.append({"pos": tracked_pos, "rot": -tracked_rot, "color": color, "consumables": consumable_icons, "name": tracked_ship.ship_name})
 			# draw_ship_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, color)
 
 	# draw gun ranges
@@ -305,11 +319,19 @@ func _on_canvas_draw() -> void:
 
 	# Draw ships
 	for ship_info in ships_to_draw:
-		draw_ship_on_minimap(ship_info.pos, ship_info.rot, ship_info.color)
+		draw_ship_on_minimap(ship_info.pos, ship_info.rot, ship_info.color, 1.0, ship_info.name)
+		# Draw consumable icons for this ship
+		if ship_info.consumables.size() > 0:
+			draw_consumables_on_minimap(ship_info.pos, ship_info.consumables)
 
 	# Draw player ship on top if it exists
 	if is_instance_valid(player_ship):
-		draw_ship_on_minimap(player_ship.global_position, -player_ship.rotation.y, PLAYER_COLOR)
+		draw_ship_on_minimap(player_ship.global_position, -player_ship.rotation.y, PLAYER_COLOR, 1.0, player_ship.ship_name)
+		# Draw player consumable icons
+		if player_ship.consumable_manager:
+			var player_consumables = player_ship.consumable_manager.get_active_icons()
+			if player_consumables.size() > 0:
+				draw_consumables_on_minimap(player_ship.global_position, player_consumables)
 
 	var minimap_pos = world_to_minimap_position(aim_point)
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
@@ -346,7 +368,7 @@ func _draw_ship_aura(minimap_pos: Vector2, _ship_rotation: float, color: Color, 
 	ship_markers_canvas.draw_circle(minimap_pos, marker_size * scaling / 2.0, color)
 
 # Public function to draw a single ship
-func draw_ship_on_minimap(world_position: Vector3, ship_rotation: float, color: Color, marker_size: float = 1.0) -> void:
+func draw_ship_on_minimap(world_position: Vector3, ship_rotation: float, color: Color, marker_size: float = 1.0, ship_name: String = "") -> void:
 	var minimap_pos = world_to_minimap_position(world_position)
 
 	# Skip drawing if outside minimap boundaries
@@ -354,6 +376,10 @@ func draw_ship_on_minimap(world_position: Vector3, ship_rotation: float, color: 
 		return
 
 	_draw_ship_marker(minimap_pos, ship_rotation, color, marker_size)
+
+	# Draw ship name below the marker
+	if ship_name != "":
+		_draw_ship_name(minimap_pos, ship_name, color)
 
 
 # Draw range circle around ship (clipping handled by clip_contents on ship_markers_canvas)
@@ -382,6 +408,55 @@ func _draw_ship_marker(marker_position: Vector2, ship_rotation: float, color: Co
 
 func _draw_aim_point(aim_position: Vector2):
 	ship_markers_canvas.draw_circle(aim_position, 2, Color.WHITE, false)
+
+func _draw_ship_name(marker_position: Vector2, ship_name: String, color: Color) -> void:
+	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	var font_size = int(SHIP_NAME_FONT_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back())
+	font_size = max(font_size, 8) # Minimum font size of 8
+
+	var font = ThemeDB.fallback_font
+	var text_size = font.get_string_size(ship_name, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
+
+	# Position text centered below the ship marker
+	var text_pos = Vector2(
+		marker_position.x - text_size.x / 2.0,
+		marker_position.y + marker_size / 2.0 + 6.0
+	)
+
+	# Draw text with lightened color
+	var text_color = color.lerp(Color.WHITE, 0.7)
+	text_color.a = 0.9
+	ship_markers_canvas.draw_string(font, text_pos, ship_name, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
+
+# Draw consumable icons near a ship on the minimap
+func draw_consumables_on_minimap(world_position: Vector3, consumable_icons: Array) -> void:
+	var minimap_pos = world_to_minimap_position(world_position)
+
+	# Skip drawing if outside minimap boundaries
+	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
+		return
+
+	_draw_consumable_icons(minimap_pos, consumable_icons)
+
+# Private function to draw consumable icons
+func _draw_consumable_icons(marker_position: Vector2, icons: Array) -> void:
+	var icon_size = CONSUMABLE_ICON_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	var spacing = 2.0 * minimap_sizes[mm_idx] / minimap_sizes.back()
+
+	# Calculate total width of all icons
+	var total_width = icons.size() * icon_size + (icons.size() - 1) * spacing
+
+	# Start position: centered above the ship marker
+	var start_x = marker_position.x - total_width / 2.0
+	var y_pos = marker_position.y - marker_size / 2.0 - icon_size - spacing
+
+	for i in range(icons.size()):
+		var icon = icons[i] as Texture2D
+		if icon:
+			var x_pos = start_x + i * (icon_size + spacing)
+			var icon_rect = Rect2(Vector2(x_pos, y_pos), Vector2(icon_size, icon_size))
+			ship_markers_canvas.draw_texture_rect(icon, icon_rect, false)
 
 # Draw a translucent arc showing the camera's field of view
 func draw_camera_fov_arc(range: float) -> void:

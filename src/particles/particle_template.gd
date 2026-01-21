@@ -70,6 +70,10 @@ class_name ParticleTemplate
 @export var velocity_stretch: float = 1.0
 ## If true, Y scale is not affected by scale_over_life curve (maintains consistent length for touching particles)
 @export var is_trail: bool = false
+## Billboard mode: 0 = Billboard (always face camera), 1 = Y-Billboard (face camera but locked to Y axis), 2 = Fixed (no billboarding, use fixed_rotation)
+@export_enum("Billboard:0", "Y-Billboard:1", "Fixed:2") var billboard_mode: int = 0
+## Fixed rotation (Euler angles in degrees) when billboard_mode is Fixed (2)
+@export var fixed_rotation: Vector3 = Vector3.ZERO
 
 # Internal - assigned by ParticleTemplateManager
 var template_id: int = -1

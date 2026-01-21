@@ -6,9 +6,6 @@ class_name RepairParty
 
 func _init():
 	type = ConsumableType.REPAIR_PARTY
-	duration = 10.0
-	cooldown_time = 90.0
-	max_stack = 4
 
 func apply_effect(ship: Ship) -> void:
 
