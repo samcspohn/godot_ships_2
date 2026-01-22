@@ -15,6 +15,22 @@ var engagement_range: float = 10000.0  # Set based on concealment
 var broadside_angle_threshold: float = deg_to_rad(30.0)  # Target within 30 degrees of broadside
 var angled_threshold: float = deg_to_rad(45.0)  # Target is considered angled above this
 
+# Threat-based angling parameters
+var threat_ship: Ship = null  # Biggest threat to angle against
+var optimal_angle_offset: float = deg_to_rad(28.0)  # Angle offset from directly facing threat (angled armor)
+var kite_angle_offset: float = deg_to_rad(28.0)  # Angle when kiting away
+var kite_oscillation_timer: float = 0.0
+var kite_oscillation_period: float = 8.0  # Seconds per oscillation cycle
+var kite_front_gun_duration: float = 2.0  # Seconds to turn for front guns during kite
+var hp_threshold_low: float = 0.5  # Below this, prioritize angling
+var hp_threshold_critical: float = 0.25  # Below this, aggressively angle
+var threat_class_weights: Dictionary = {
+	Ship.Class.BB: 4.0,
+	Ship.Class.CA: 2.0,
+	Ship.Class.DD: 1.0,
+	Ship.Class.CV: 0.5
+}
+
 # Torpedo parameters
 var torpedo_fire_interval: float = 3.0  # How often to attempt firing
 var torpedo_fire_timer: float = 0.0
@@ -860,6 +876,43 @@ func evaluate_consumable_usage() -> void:
 				consumable_manager.use_consumable(repair_party_slot)
 				return
 
+func get_hp_ratio() -> float:
+	if !ship or !ship.health_controller:
+		return 1.0
+	return ship.health_controller.current_hp / ship.health_controller.max_hp
+
+func find_biggest_threat() -> Ship:
+	"""Find the most threatening enemy ship based on class and distance."""
+	var server_node = ship.get_node("/root/Server")
+	if !server_node:
+		return null
+
+	var biggest_threat: Ship = null
+	var highest_threat_score: float = 0.0
+
+	for player_data in server_node.players.values():
+		var enemy_ship: Ship = player_data[0]
+		if enemy_ship == ship or !is_instance_valid(enemy_ship):
+			continue
+		if enemy_ship.team.team_id == ship.team.team_id:
+			continue
+		if enemy_ship.health_controller.current_hp <= 0 or !enemy_ship.visible_to_enemy:
+			continue
+
+		var distance = ship.global_position.distance_to(enemy_ship.global_position)
+		if distance > attack_range:
+			continue
+
+		var class_weight = threat_class_weights.get(enemy_ship.ship_class, 1.0)
+		# Score = class_weight / (distance / 1000), so closer + bigger class = higher threat
+		var threat_score = class_weight * 1000.0 / max(distance, 100.0)
+
+		if threat_score > highest_threat_score:
+			highest_threat_score = threat_score
+			biggest_threat = enemy_ship
+
+	return biggest_threat
+
 func scan_for_targets():
 	var closest_visible_ship: Ship = null
 	var closest_visible_distance = attack_range
@@ -919,51 +972,82 @@ func attack_behavior(_delta: float):
 	var distance_to_target = ship.global_position.distance_to(target_ship.global_position)
 	var target_position = target_ship.global_position
 
-	# Check if target is visible and if we have line of sight
-	#var has_line_of_sight = false
 	var space_state = ship.get_world_3d().direct_space_state
-
 	ray_query.from = ship.global_position + Vector3(0, 1, 0)
 	ray_query.to = target_position + Vector3(0, 1, 0)
 	var _collision = space_state.intersect_ray(ray_query)
-	#has_line_of_sight = collision.is_empty()
 
-	# Calculate desired position relative to target
 	var angle_to_target = atan2(target_position.z - ship.global_position.z, target_position.x - ship.global_position.x)
-
 	var base_heading = angle_to_target
 
-	# Update engagement range dynamically
 	_update_engagement_range()
 
-	# If target is visible and we're in good range, use tactical maneuvering
+	# Find biggest threat to angle against
+	threat_ship = find_biggest_threat()
+	if !threat_ship or !is_instance_valid(threat_ship):
+		threat_ship = target_ship
+
+	var threat_position = threat_ship.global_position
+	var angle_to_threat = atan2(threat_position.z - ship.global_position.z, threat_position.x - ship.global_position.x)
+	var _distance_to_threat = ship.global_position.distance_to(threat_position)
+
+	var hp_ratio = get_hp_ratio()
+	var is_low_hp = hp_ratio < hp_threshold_low
+	var is_critical_hp = hp_ratio < hp_threshold_critical
+
+	# Determine angling direction (port or starboard) based on current ship heading
+	var ship_heading = get_ship_heading()
+	var angle_diff_to_threat = angle_to_threat - ship_heading
+	while angle_diff_to_threat > PI: angle_diff_to_threat -= TAU
+	while angle_diff_to_threat < -PI: angle_diff_to_threat += TAU
+	var angle_side = 1.0 if angle_diff_to_threat > 0 else -1.0
+
 	if target_ship.visible_to_enemy:
-		# Try to maintain engagement range (just outside concealment)
 		if distance_to_target > engagement_range + 500:
-			# Move closer
-			base_heading = angle_to_target
+			# Approaching: angle towards threat while closing
+			base_heading = angle_to_target + optimal_angle_offset * angle_side
 		elif distance_to_target < engagement_range - 500:
-			# Move away (stay at edge of concealment)
-			base_heading = angle_to_target + PI
+			# Too close - kiting behavior
+			if is_critical_hp:
+				# Critical HP: aggressive angling, minimal retreat
+				base_heading = angle_to_threat + PI - optimal_angle_offset * angle_side
+			elif is_low_hp:
+				# Low HP: angle while retreating, prioritize armor angle
+				base_heading = angle_to_target + PI - kite_angle_offset * angle_side
+			else:
+				# Normal HP: kite with oscillation to bring front guns to bear
+				kite_oscillation_timer += _delta
+				var cycle_pos = fmod(kite_oscillation_timer, kite_oscillation_period)
+				if cycle_pos < kite_front_gun_duration:
+					# Turn towards target briefly for front guns
+					base_heading = angle_to_target + PI * 0.6 * angle_side
+				else:
+					# Kite at an angle
+					base_heading = angle_to_target + PI - kite_angle_offset * angle_side
 		else:
-			# Circle around target at engagement range
-			base_heading = angle_to_target + PI/2
+			# At engagement range: angle towards biggest threat instead of broadside
+			if is_critical_hp:
+				# Critical: face threat more directly for best armor angle
+				base_heading = angle_to_threat + optimal_angle_offset * 0.7 * angle_side
+			elif is_low_hp:
+				# Low HP: tighter angle to threat
+				base_heading = angle_to_threat + optimal_angle_offset * angle_side
+			else:
+				# Normal: balance between circling and angling
+				var circle_component = angle_to_target + PI/2 * angle_side
+				var angle_component = angle_to_threat + optimal_angle_offset * angle_side
+				# Blend: 60% angling, 40% circling
+				base_heading = lerp_angle(circle_component, angle_component, 0.6)
 	else:
-		# Target is obscured or not visible - navigate directly towards it
 		base_heading = angle_to_target
 
-	# Apply collision avoidance to the base heading
 	desired_heading = apply_collision_avoidance(base_heading)
 
-	# Fire guns if target is visible, in range, and we have line of sight
-	# Destroyers have additional restriction - must be within concealment
 	if target_ship.visible_to_enemy and distance_to_target < attack_range:
 		fire_at_target()
 
-	# Handle torpedo aiming and firing (runs every frame for smooth turret tracking)
 	update_torpedo_aim()
 
-	# Attempt to fire torpedoes periodically if we have a valid solution
 	torpedo_fire_timer += _delta
 	if torpedo_fire_timer >= torpedo_fire_interval:
 		torpedo_fire_timer = 0.0
