@@ -21,6 +21,7 @@ var initialized: bool = false
 @onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
+@onready var flood_manager: FloodManager = $Modules/FloodManager
 @onready var upgrades: Upgrades = $Modules/Upgrades
 @onready var skills: SkillsManager = $Modules/Skills
 @onready var concealment: Concealment = $Modules/Concealment
@@ -142,6 +143,7 @@ func _ready() -> void:
 	consumable_manager.ship = self
 	# fire_manager = $Modules/FireManager
 	fire_manager._ship = self
+	flood_manager._ship = self
 	skills._ship = self
 	stats = Stats.new()
 	$Modules.add_child(stats)

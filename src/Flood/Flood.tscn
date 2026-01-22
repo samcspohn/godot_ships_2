@@ -1,0 +1,136 @@
+[gd_scene load_steps=23 format=3 uid="uid://p5jaomsktna2"]
+
+[ext_resource type="Script" uid="uid://dmegald42yrhl" path="res://src/Flood/flood.gd" id="1_flood"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2_particle"]
+
+[sub_resource type="Gradient" id="Gradient_water"]
+offsets = PackedFloat32Array(0, 0.2, 0.5, 0.8, 1)
+colors = PackedColorArray(1, 1, 1, 0.9, 0.4, 0.6, 0.8, 0.8, 0.2, 0.4, 0.7, 0.7, 0.1, 0.3, 0.6, 0.5, 0.05, 0.2, 0.5, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_water"]
+gradient = SubResource("Gradient_water")
+
+[sub_resource type="Curve" id="Curve_damping"]
+_limits = [0.0, 100.0, 0.0, 1.0]
+_data = [Vector2(0, 0), 0.0, 0.0, 0, 0, Vector2(1, 50), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_damping"]
+curve = SubResource("Curve_damping")
+
+[sub_resource type="Curve" id="Curve_accel"]
+_limits = [-200.0, 200.0, 0.0, 1.0]
+_data = [Vector2(0, 50), 0.0, -100.0, 0, 0, Vector2(1, -50), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_accel"]
+curve = SubResource("Curve_accel")
+
+[sub_resource type="Curve" id="Curve_scale"]
+_data = [Vector2(0, 0.2), 0.0, 1.5, 0, 0, Vector2(0.5, 1), 0.0, -0.5, 0, 0, Vector2(1, 0.5), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_scale"]
+curve = SubResource("Curve_scale")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_water"]
+angle_min = -90.0
+angle_max = 90.0
+spread = 10.0
+flatness = 0.07
+initial_velocity_min = -1.0
+initial_velocity_max = 1.0
+gravity = Vector3(0, -1, 0)
+linear_accel_curve = SubResource("CurveTexture_accel")
+damping_curve = SubResource("CurveTexture_damping")
+scale_curve = SubResource("CurveTexture_scale")
+color_ramp = SubResource("GradientTexture1D_water")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_water"]
+transparency = 1
+blend_mode = 1
+shading_mode = 0
+specular_mode = 2
+vertex_color_use_as_albedo = true
+albedo_texture = ExtResource("2_particle")
+billboard_mode = 3
+billboard_keep_scale = true
+particles_anim_h_frames = 1
+particles_anim_v_frames = 1
+particles_anim_loop = false
+proximity_fade_enabled = true
+proximity_fade_distance = 40.0
+
+[sub_resource type="QuadMesh" id="QuadMesh_water"]
+material = SubResource("StandardMaterial3D_water")
+
+[sub_resource type="Gradient" id="Gradient_bubbles"]
+offsets = PackedFloat32Array(0, 0.3, 0.7, 1)
+colors = PackedColorArray(0.7, 0.85, 1, 0.8, 0.5, 0.7, 0.9, 0.6, 0.3, 0.5, 0.8, 0.4, 0.2, 0.4, 0.7, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_bubbles"]
+gradient = SubResource("Gradient_bubbles")
+
+[sub_resource type="Curve" id="Curve_bubble_damping"]
+_limits = [0.0, 100.0, 0.0, 1.0]
+_data = [Vector2(0, 10), 0.0, 0.0, 0, 0, Vector2(1, 30), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_bubble_damping"]
+curve = SubResource("Curve_bubble_damping")
+
+[sub_resource type="Curve" id="Curve_bubble_scale"]
+_data = [Vector2(0, 0.891365), 0.0, 1.0, 0, 0, Vector2(0.3, 0.8), -0.64152354, -0.64152354, 0, 0, Vector2(1, 0.17618382), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_bubble_scale"]
+curve = SubResource("Curve_bubble_scale")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_bubbles"]
+angle_min = -180.0
+angle_max = 180.0
+direction = Vector3(0, 1, 0)
+spread = 17.025
+initial_velocity_min = 0.5
+initial_velocity_max = 0.59999996
+gravity = Vector3(0, -9.81, 0)
+damping_curve = SubResource("CurveTexture_bubble_damping")
+scale_min = 0.29999998
+scale_max = 0.5
+scale_curve = SubResource("CurveTexture_bubble_scale")
+color_ramp = SubResource("GradientTexture1D_bubbles")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_bubbles"]
+transparency = 1
+shading_mode = 0
+specular_mode = 2
+vertex_color_use_as_albedo = true
+albedo_texture = ExtResource("2_particle")
+billboard_mode = 3
+billboard_keep_scale = true
+particles_anim_h_frames = 1
+particles_anim_v_frames = 1
+particles_anim_loop = false
+proximity_fade_enabled = true
+proximity_fade_distance = 40.0
+
+[sub_resource type="QuadMesh" id="QuadMesh_bubbles"]
+material = SubResource("StandardMaterial3D_bubbles")
+
+[node name="Flood" type="Node3D"]
+script = ExtResource("1_flood")
+
+[node name="GPUParticles3D" type="GPUParticles3D" parent="."]
+amount = 20
+lifetime = 1.5
+visibility_aabb = AABB(-16, -5, -16, 32, 32, 32)
+process_material = SubResource("ParticleProcessMaterial_water")
+draw_pass_1 = SubResource("QuadMesh_water")
+
+[node name="GPUParticles3D2" type="GPUParticles3D" parent="."]
+amount = 16
+lifetime = 3.0
+explosiveness = 0.24
+visibility_aabb = AABB(-16, -5, -16, 32, 32, 32)
+process_material = SubResource("ParticleProcessMaterial_bubbles")
+draw_pass_1 = SubResource("QuadMesh_bubbles")

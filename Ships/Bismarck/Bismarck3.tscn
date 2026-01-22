@@ -1,4 +1,4 @@
-[gd_scene load_steps=42 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=44 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://Ships/Bismarck/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -12,8 +12,10 @@
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/artillary/Guns/sec_gun1.tres" id="7_jay6y"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="8_8qd2y"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
+[ext_resource type="PackedScene" path="res://src/Flood/Flood.tscn" id="11_flood"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="12_c72ol"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="13_5tc2e"]
+[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="13_kaouq"]
 [ext_resource type="PackedScene" uid="uid://bpyx8m6objcfv" path="res://turrets/GER_380mm_2b.tscn" id="14_5uw5v"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="14_pww3p"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="14_usy8k"]
@@ -111,6 +113,13 @@ dur = 50.0
 max_buildup = 150.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
+[sub_resource type="Resource" id="Resource_u0hyh"]
+script = ExtResource("13_kaouq")
+dmg_rate = 0.002
+dur = 100.0
+max_buildup = 160.0
+metadata/_custom_type_script = "uid://dc42cijwbxhfc"
+
 [sub_resource type="Resource" id="Resource_iohum"]
 resource_local_to_scene = true
 script = ExtResource("16_kxwob")
@@ -146,7 +155,10 @@ ship_name = "Bismarck"
 ship_class = 0
 tier = 8
 ship_model_glb_path = "uid://btam5g21aiiqg"
+auto_extract_armor = null
 use_hull_collision = true
+use_segmented_hull = null
+use_mirror_symmetry = null
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_5bir6")]
 
@@ -198,10 +210,14 @@ pitch_righting_strength = 8.0
 params = SubResource("Resource_kp8pn")
 fires = [NodePath("../../FireNodes/Fire"), NodePath("../../FireNodes/Fire2"), NodePath("../../FireNodes/Fire3"), NodePath("../../FireNodes/Fire4")]
 
-[node name="ConsumableManager" parent="Modules" index="6"]
+[node name="FloodManager" parent="Modules" index="6" node_paths=PackedStringArray("floods")]
+params = SubResource("Resource_u0hyh")
+floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+
+[node name="ConsumableManager" parent="Modules" index="7"]
 equipped_consumables = Array[ExtResource("6_id6nr")]([SubResource("Resource_iohum"), SubResource("Resource_4564o")])
 
-[node name="Upgrades" parent="Modules" index="7"]
+[node name="Upgrades" parent="Modules" index="8"]
 upgrades = Array[ExtResource("13_5tc2e")]([null, null, null])
 
 [node name="FireNodes" type="Node3D" parent="." index="1"]
@@ -218,23 +234,37 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.4077015, 29.8215)
 [node name="Fire4" parent="FireNodes" index="3" instance=ExtResource("10_2e51t")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.350092, 92.8848)
 
-[node name="SuperStructure_col" parent="." index="2"]
+[node name="FloodNodes" type="Node3D" parent="." index="2"]
+
+[node name="Flood" parent="FloodNodes" index="0" instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -84.116)
+
+[node name="Flood2" parent="FloodNodes" index="1" instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -26.3775)
+
+[node name="Flood3" parent="FloodNodes" index="2" instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 29.8215)
+
+[node name="Flood4" parent="FloodNodes" index="3" instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 92.8848)
+
+[node name="SuperStructure_col" parent="." index="3"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col" parent="." index="15"]
+[node name="For-Barbette_col" parent="." index="16"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Aft-Barbette_col" parent="." index="16"]
+[node name="Aft-Barbette_col" parent="." index="17"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col_001" parent="." index="17"]
+[node name="For-Barbette_col_001" parent="." index="18"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Aft-Barbette_col_001" parent="." index="18"]
+[node name="Aft-Barbette_col_001" parent="." index="19"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
@@ -308,26 +338,26 @@ max_rotation_angle = 2.9638556402871927
 min_rotation_angle = 0.00398590263774245
 max_rotation_angle = 2.8422316975614645
 
-[node name="Hull_Citadel_col" parent="." index="37"]
+[node name="Hull_Citadel_col" parent="." index="38"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Bow_col" parent="." index="39"]
+[node name="Hull_Bow_col" parent="." index="40"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Stern_col" parent="." index="41"]
+[node name="Hull_Stern_col" parent="." index="42"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Casemate_col" parent="." index="43"]
+[node name="Hull_Casemate_col" parent="." index="44"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="45"]
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="46"]
 shape = SubResource("ConvexPolygonShape3D_u0hyh")
 
-[node name="TrailEmitter2" type="Node3D" parent="." index="46"]
+[node name="TrailEmitter2" type="Node3D" parent="." index="47"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
 script = ExtResource("28_usy8k")
 template_name = "torpedo_wake"
@@ -335,7 +365,7 @@ emit_rate = 0.06
 size_multiplier = 15.0
 speed_scale = 0.3
 
-[node name="TrailEmitter3" type="Node3D" parent="." index="47"]
+[node name="TrailEmitter3" type="Node3D" parent="." index="48"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
 script = ExtResource("28_usy8k")
 template_name = "torpedo_wake"

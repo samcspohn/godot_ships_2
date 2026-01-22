@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://d4nhn3dtrfet3" path="res://src/Consumable/consumable_manager.gd" id="6_exjcu"]
 [ext_resource type="Script" uid="uid://lyq1ou7yv8p2" path="res://src/movement/ShipMovementV4.gd" id="6_s01fk"]
 [ext_resource type="PackedScene" uid="uid://blvke4gmq0asw" path="res://src/Fire/fireManager.tscn" id="7_j72gg"]
+[ext_resource type="PackedScene" path="res://src/Flood/floodManager.tscn" id="8_flood"]
 [ext_resource type="Script" uid="uid://bigegwv2dexue" path="res://src/concealment/concealment.gd" id="9_exjcu"]
 [ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://Skills/skills_manager.gd" id="9_hnrpx"]
 [ext_resource type="Script" uid="uid://kfbekstmxsvi" path="res://src/Upgrades/upgrades.gd" id="9_s01fk"]
@@ -33,6 +34,8 @@ metadata/_custom_type_script = "uid://b112omat8o001"
 script = ExtResource("6_s01fk")
 
 [node name="FireManager" parent="." unique_id=384504544 instance=ExtResource("7_j72gg")]
+
+[node name="FloodManager" parent="." unique_id=485605645 instance=ExtResource("8_flood")]
 
 [node name="ConsumableManager" type="Node" parent="." unique_id=1189768979]
 script = ExtResource("6_exjcu")

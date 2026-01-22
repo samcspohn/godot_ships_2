@@ -1,6 +1,8 @@
 # src/consumables/damage_control_party.gd
 extends ConsumableItem
 class_name DamageControl
+@export var duration_reduction = 0.65
+@export var damage_reduction = 0.65
 
 func _init():
 	type = ConsumableType.DAMAGE_CONTROL
@@ -12,8 +14,8 @@ func _ready() -> void:
 func effect(ship: Ship) -> void:
 	# This function can be used to apply immediate effects if needed
 	var static_params = ship.fire_manager.params.static_mod as FireParams
-	static_params.dur *= (1.0 - 0.65)
-	static_params.dmg_rate *= (1.0 - 0.65)
+	static_params.dur *= (1.0 - duration_reduction)
+	static_params.dmg_rate *= (1.0 - damage_reduction)
 	static_params.buildup_reduction_rate *= 10.0
 
 func apply_effect(ship: Ship) -> void:

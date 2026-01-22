@@ -29,6 +29,7 @@ var sec_damage: float = 0
 var damage_events: Array[Dictionary] = []
 
 var fire_damage: float
+var flood_damage: float
 
 func to_dict() -> Dictionary:
 	var _damage_events = damage_events.duplicate()
@@ -55,7 +56,8 @@ func to_dict() -> Dictionary:
 		"st": sec_damage,
 		"mtd": main_damage,
 		"de": _damage_events,
-		"fd": fire_damage
+		"fd": fire_damage,
+		"fld": flood_damage
 	}
 
 func to_bytes() -> PackedByteArray:
@@ -99,6 +101,7 @@ func to_bytes() -> PackedByteArray:
 	damage_events.clear()
 
 	writer.put_float(fire_damage)
+	writer.put_float(flood_damage)
 
 	return writer.get_data_array()
 
@@ -125,6 +128,7 @@ func from_dict(data: Dictionary):
 	main_damage = data.get("mtd", 0)
 	damage_events += data.get("de", [])
 	fire_damage = data.get("fd", 0)
+	flood_damage = data.get("fld", 0)
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
@@ -163,3 +167,4 @@ func from_bytes(b: PackedByteArray) -> void:
 		# var event_dict = event_reader.get_var()
 		# damage_events.append(event_dict)
 	fire_damage = reader.get_float()
+	flood_damage = reader.get_float()

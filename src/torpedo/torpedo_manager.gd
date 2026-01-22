@@ -277,6 +277,8 @@ func _physics_process(_delta: float) -> void:
 							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
 					track_torpedo_damage_dealt(p.owner, dmg_sunk[0])
+					# Apply flooding damage
+					apply_flood_damage(p, ship, collision.position)
 			self.destroyTorpedo(id, collision.position)
 		id += 1
 
@@ -427,3 +429,34 @@ func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
 	# Add damage to the ship's stats module
 	if owner_ship.stats:
 		owner_ship.stats.total_damage += damage
+
+func apply_flood_damage(torpedo: TorpedoData, ship: Ship, hit_position: Vector3) -> void:
+	"""Apply flooding buildup to the ship when hit by a torpedo"""
+	if torpedo == null or ship == null:
+		return
+
+	var flood_buildup: float = torpedo.params.flood_buildup
+	if flood_buildup <= 0:
+		return
+
+	# Get flood manager from ship
+	var flood_manager = ship.flood_manager
+	if flood_manager == null:
+		return
+
+	# Find closest flood point
+	var floods = flood_manager.floods
+	var closest_flood: Flood = null
+	var closest_flood_dist: float = 1e9
+
+	for f in floods:
+		if f == null:
+			continue
+		var flood_pos: Vector3 = f.global_position
+		var dist: float = flood_pos.distance_squared_to(hit_position)
+		if dist < closest_flood_dist:
+			closest_flood_dist = dist
+			closest_flood = f
+
+	if closest_flood != null:
+		closest_flood._apply_build_up(flood_buildup, torpedo.owner)

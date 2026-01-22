@@ -1,4 +1,4 @@
-[gd_scene load_steps=38 format=3 uid="uid://eovuir5enue4"]
+[gd_scene load_steps=41 format=3 uid="uid://eovuir5enue4"]
 
 [ext_resource type="PackedScene" uid="uid://cd12snnrw56y0" path="res://Ships/Shimakaze/Shimakaze.glb" id="1_8273q"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_x3pwv"]
@@ -9,6 +9,8 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_nguxy"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="7_nguxy"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="7_s67vb"]
+[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="8_17h8w"]
+[ext_resource type="PackedScene" path="res://src/Flood/Flood.tscn" id="8_flood"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_q7yd3"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="9_22e6m"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="9_okiv0"]
@@ -113,6 +115,13 @@ dur = 50.0
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
+[sub_resource type="Resource" id="Resource_3jgu3"]
+script = ExtResource("8_17h8w")
+dmg_rate = 0.002
+dur = 100.0
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://dc42cijwbxhfc"
+
 [sub_resource type="Resource" id="Resource_ydll1"]
 resource_local_to_scene = true
 script = ExtResource("9_okiv0")
@@ -136,6 +145,7 @@ resource_local_to_scene = true
 script = ExtResource("14_56jcx")
 speed_knts = 52.0
 damage = 20000.0
+flood_buildup = 200.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
 [sub_resource type="Resource" id="Resource_17h8w"]
@@ -160,7 +170,10 @@ ship_name = "Shimakaze"
 ship_class = 2
 tier = 10
 ship_model_glb_path = "uid://cd12snnrw56y0"
+auto_extract_armor = null
 use_hull_collision = true
+use_segmented_hull = null
+use_mirror_symmetry = null
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_x3pwv")]
 
@@ -199,10 +212,14 @@ pitch_righting_strength = 8.0
 params = SubResource("Resource_qjvt5")
 fires = [NodePath("../../Fires/Fire"), NodePath("../../Fires/Fire2"), NodePath("../../Fires/Fire3"), NodePath("../../Fires/Fire4")]
 
-[node name="ConsumableManager" parent="Modules" index="6"]
+[node name="FloodManager" parent="Modules" index="6" node_paths=PackedStringArray("floods")]
+params = SubResource("Resource_3jgu3")
+floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+
+[node name="ConsumableManager" parent="Modules" index="7"]
 equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_ydll1"), SubResource("Resource_22e6m")])
 
-[node name="Upgrades" parent="Modules" index="7"]
+[node name="Upgrades" parent="Modules" index="8"]
 upgrades = Array[ExtResource("11_56jcx")]([null, null, null])
 
 [node name="TorpedoController" type="Node" parent="Modules" index="9" node_paths=PackedStringArray("launchers")]
@@ -214,18 +231,32 @@ metadata/_custom_type_script = "uid://c8pq6m1rejha6"
 [node name="Fires" type="Node3D" parent="." index="1"]
 
 [node name="Fire" parent="Fires" index="0" instance=ExtResource("7_nguxy")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 5.28098, -50.400265)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.28098, -50.400265)
 
 [node name="Fire2" parent="Fires" index="1" instance=ExtResource("7_nguxy")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 5.142741, -25.379156)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.142741, -25.379156)
 
 [node name="Fire3" parent="Fires" index="2" instance=ExtResource("7_nguxy")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 2.3779774, 14.502558)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3779774, 14.502558)
 
 [node name="Fire4" parent="Fires" index="3" instance=ExtResource("7_nguxy")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5999756, 2.5162125, 51.135674)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5162125, 51.135674)
 
-[node name="Superstructure_col" parent="." index="4"]
+[node name="FloodNodes" type="Node3D" parent="." index="2"]
+
+[node name="Flood" parent="FloodNodes" index="0" instance=ExtResource("8_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -50.400265)
+
+[node name="Flood2" parent="FloodNodes" index="1" instance=ExtResource("8_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -25.379156)
+
+[node name="Flood3" parent="FloodNodes" index="2" instance=ExtResource("8_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 14.502558)
+
+[node name="Flood4" parent="FloodNodes" index="3" instance=ExtResource("8_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 51.135674)
+
+[node name="Superstructure_col" parent="." index="5"]
 layers = 0
 
 [node name="IJN_610mm_5t" parent="TurretMount_IJN_610mm_5t" index="0" instance=ExtResource("13_q7yd3")]

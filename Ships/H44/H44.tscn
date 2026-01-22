@@ -1,4 +1,4 @@
-[gd_scene load_steps=38 format=3 uid="uid://744qchvory0k"]
+[gd_scene load_steps=41 format=3 uid="uid://744qchvory0k"]
 
 [ext_resource type="PackedScene" uid="uid://dledjetx004o1" path="res://Ships/H44/H44.glb" id="1_h0h40"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_wne81"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="4_ai21t"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="5_i4u0w"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_047bu"]
+[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="9_fadtt"]
 [ext_resource type="PackedScene" uid="uid://31jgnxcyvi22" path="res://turrets/GER_500mm_2b_rf.tscn" id="9_gdlp2"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="10_8j47w"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="11_5talp"]
@@ -20,6 +21,7 @@
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_pecl7"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="15_pnxfl"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="16_nfp68"]
+[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="17_flood"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_pm07r"]
 
 [sub_resource type="Resource" id="Resource_8j47w"]
@@ -159,14 +161,26 @@ dur = 50.0
 max_buildup = 220.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
+[sub_resource type="Resource" id="Resource_r6w0e"]
+resource_local_to_scene = true
+script = ExtResource("9_fadtt")
+dmg_rate = 0.002
+dur = 100.0
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://dc42cijwbxhfc"
+
 [sub_resource type="Resource" id="Resource_3wv4u"]
 resource_local_to_scene = true
 script = ExtResource("12_fadtt")
+id = null
+name = null
+description = null
 icon = ExtResource("11_pm07r")
 disabled_icon = ExtResource("10_8j47w")
 cooldown_time = 80.0
 duration = 30.0
 max_stack = -1
+type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_43stl"]
@@ -239,10 +253,14 @@ pitch_righting_strength = 8.0
 params = SubResource("Resource_1kp4b")
 fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
 
-[node name="ConsumableManager" parent="Modules" index="6"]
+[node name="FloodManager" parent="Modules" index="6" node_paths=PackedStringArray("floods")]
+params = SubResource("Resource_r6w0e")
+floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+
+[node name="ConsumableManager" parent="Modules" index="7"]
 equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_3wv4u"), SubResource("Resource_43stl")])
 
-[node name="Upgrades" parent="Modules" index="7"]
+[node name="Upgrades" parent="Modules" index="8"]
 upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
 
 [node name="fires" type="Node3D" parent="." index="1"]
@@ -258,6 +276,20 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 43.45572)
 
 [node name="Fire4" parent="fires" index="3" instance=ExtResource("16_nfp68")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
+
+[node name="FloodNodes" type="Node3D" parent="." index="2"]
+
+[node name="Flood" parent="FloodNodes" index="0" instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
+
+[node name="Flood2" parent="FloodNodes" index="1" instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14.608513)
+
+[node name="Flood3" parent="FloodNodes" index="2" instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 43.45572)
+
+[node name="Flood4" parent="FloodNodes" index="3" instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 125.0045)
 
 [node name="500mmBarbette_col" parent="Hull" index="18"]
 layers = 0
@@ -351,19 +383,19 @@ max_rotation_angle = 2.583087292951608
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Citadel_col" parent="." index="9"]
+[node name="Hull_Citadel_col" parent="." index="10"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Bow_col" parent="." index="11"]
+[node name="Hull_Bow_col" parent="." index="12"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Stern_col" parent="." index="13"]
+[node name="Hull_Stern_col" parent="." index="14"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_CaseMate_col" parent="." index="15"]
+[node name="Hull_CaseMate_col" parent="." index="16"]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
