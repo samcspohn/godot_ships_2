@@ -121,28 +121,6 @@ func cleanup():
 	notify_gun_updated.call_deferred()
 
 func _ready() -> void:
-	# params.shell = params.shell2
-	# my_params.from_params(params)
-
-	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(get_shell().speed, get_shell().drag)
-	#max_range = min(a[0], controller.get("_my_gun_params")._range)
-	#max_flight = a[2]
-#
-	#if max_range < a[0]:
-		#max_flight = ProjectilePhysicsWithDrag.calculate_launch_vector(Vector3.ZERO, Vector3(0, 0, max_range), get_shell().speed, get_shell().drag)[1]
-
-
-	#print("max range: ", a)
-
-	# if sound == null:
-	# 	sound = AudioStreamPlayer3D.new()
-	# 	sound.stream = preload("res://audio/explosion1.wav")
-	# 	sound.max_polyphony = 1
-	# 	add_child(sound)
-		# get_tree().root.add_child(sound)
-
-	# # Set up muzzles
-	# update_barrels()
 
 	# Set processing mode based on authority
 	if _Utils.authority():

@@ -23,17 +23,6 @@ func _ready():
 			item.current_stack = 1  # Infinite uses, but show as 1
 		else:
 			item.current_stack = item.max_stack
-	# 		equipped_consumables[i].current_stack = equipped_consumables[i].max_stack
-	# 		if equipped_consumables[i].max_stack == -1:
-	# 			equipped_consumables[i].current_stack = 1  # Infinite uses, but show as 1
-	# for item in equipped_consumables:
-	# 	item = item.duplicate(true)
-	# 	item.init(ship)
-	# 	item.id = i
-	# 	item.current_stack = item.max_stack
-	# 	if item.max_stack == -1:
-	# 		item.current_stack = 1  # Infinite uses, but show as 1
-	# 	i += 1
 	if _Utils.authority():
 		set_physics_process(true)
 	else:

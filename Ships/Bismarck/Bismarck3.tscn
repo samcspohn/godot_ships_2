@@ -27,7 +27,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="18_ww2ma"]
 [ext_resource type="PackedScene" uid="uid://d4mxymjiltp2p" path="res://turrets/GER_105mm_2b.tscn" id="19_1k3lc"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="19_afiln"]
-[ext_resource type="Script" uid="uid://c4s0uljp7d86c" path="res://src/particles/trail_emitter.gd" id="28_usy8k"]
+[ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="28_usy8k"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
@@ -74,6 +74,7 @@ bloom_duration = 20.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_2muxd"]
+resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
 drag = 0.014
@@ -170,13 +171,13 @@ sub_controllers = [NodePath("SecSubController"), NodePath("SecSubController2")]
 
 [node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" node_paths=PackedStringArray("guns")]
 script = ExtResource("5_5tc2e")
-p = ExtResource("7_jay6y")
+params = ExtResource("7_jay6y")
 guns = [NodePath("../../../TurretMount_GER_150mm_2b/GER_150mm_2b"), NodePath("../../../TurretMount_GER_150mm_2b_003/GER_150mm_2b_003"), NodePath("../../../TurretMount_GER_150mm_2b_rf/GER_150mm_2b_rf"), NodePath("../../../TurretMount_GER_150mm_2b_rf_001/GER_150mm_2b_rf_001"), NodePath("../../../TurretMount_GER_150mm_2b_001/GER_150mm_2b_001"), NodePath("../../../TurretMount_GER_150mm_2b_002/GER_150mm_2b_002")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="SecSubController2" type="Node" parent="Modules/SecondaryController" index="1" node_paths=PackedStringArray("guns")]
 script = ExtResource("5_5tc2e")
-p = ExtResource("6_4ubhj")
+params = ExtResource("6_4ubhj")
 guns = [NodePath("../../../TurretMount_GER_105mm_2b/GER_105mm_2b"), NodePath("../../../TurretMount_GER_105mm_2b_007/GER_105mm_2b_007"), NodePath("../../../TurretMount_GER_105mm_2b_001/GER_105mm_2b_001"), NodePath("../../../TurretMount_GER_105mm_2b_006/GER_105mm_2b_006"), NodePath("../../../TurretMount_GER_105mm_2b_002/GER_105mm_2b_002"), NodePath("../../../TurretMount_GER_105mm_2b_005/GER_105mm_2b_005"), NodePath("../../../TurretMount_GER_105mm_2b_003/GER_105mm_2b_003"), NodePath("../../../TurretMount_GER_105mm_2b_004/GER_105mm_2b_004")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
@@ -187,6 +188,11 @@ deceleration_time = 30.0
 turning_circle_radius = 400.0
 turn_speed_loss = 0.15
 rudder_response_time = 12.0
+max_turn_roll_angle = 15.0
+roll_response_time = 2.0
+righting_strength = 5.0
+righting_damping = 3.0
+pitch_righting_strength = 8.0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_kp8pn")

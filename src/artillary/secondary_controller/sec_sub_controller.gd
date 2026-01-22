@@ -1,40 +1,45 @@
 extends Node
 class_name SecSubController
 
-@export var p: GunParams
+@export var params: GunParams
 @export var guns: Array[Gun]
 var sequential_fire_timer: float = 0.0
 var controller: SecondaryController_ = null
-# var shell_index: int:
-# 	get:
-# 		return controller.shell_index
 
 func init(_ship: Ship) -> void:
-	p.shell1._secondary = true
-	p.shell2._secondary = true
-	p.init(_ship)
+	params.shell1._secondary = true
+	params.shell2._secondary = true
+	params.init(_ship)
+	guns.sort_custom(func(a, b):
+		if a.get_parent().position.z < b.get_parent().position.z:
+			return true
+		elif a.get_parent().position.z == b.get_parent().position.z:
+			return a.get_parent().position.x < b.get_parent().position.x
+		else:
+			return false
+	)
 	for g in guns:
 		g._ship = _ship
 		g.controller = self
 
 func to_dict() -> Dictionary:
-	return p.dynamic_mod.to_dict()
+	return params.dynamic_mod.to_dict()
 
 func to_bytes() -> PackedByteArray:
-	return p.dynamic_mod.to_bytes()
+	return params.dynamic_mod.to_bytes()
 
 func from_dict(d: Dictionary) -> void:
-	p.dynamic_mod.from_dict(d)
+	params.dynamic_mod.from_dict(d)
 
 func from_bytes(b: PackedByteArray) -> void:
 	# var reader = StreamPeerBuffer.new()
 	# reader.data_array = b
-	p.dynamic_mod.from_bytes(b)
+	params.dynamic_mod.from_bytes(b)
 
 func get_params() -> GunParams:
-	return p.dynamic_mod as GunParams
+	return params.dynamic_mod as GunParams
 
 func get_shell_params() -> ShellParams:
 	if controller.shell_index == 0:
-		return p.dynamic_mod.shell1
-	return p.dynamic_mod.shell2
+		return params.dynamic_mod.shell1
+	return params.dynamic_mod.shell2

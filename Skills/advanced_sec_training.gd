@@ -17,7 +17,7 @@ func _a(ship: Ship):
 	_ship.secondary_controller.target_mod.dynamic_mod.v_grouping += grouping_multiplier
 	_ship.secondary_controller.target_mod.dynamic_mod.base_spread *= spread_multiplier
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
-		var params: GunParams = sec.p.dynamic_mod as GunParams
+		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= 0.9
 
 var num_enemies = 0

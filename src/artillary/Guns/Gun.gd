@@ -72,12 +72,14 @@ func get_shell() -> ShellParams:
 	return controller.get_shell_params()
 
 func _ready() -> void:
-	if sound == null:
-		sound = AudioStreamPlayer3D.new()
-		sound.stream = preload("res://audio/explosion1.wav")
-		sound.max_polyphony = 1
-		add_child(sound)
+	if !_Utils.authority():
+		if sound == null:
+			sound = AudioStreamPlayer3D.new()
+			sound.stream = preload("res://audio/explosion1.wav")
+			sound.max_polyphony = 1
+			add_child(sound)
 		# get_tree().root.add_child(sound)
+
 
 	# Set up muzzles
 	update_barrels()

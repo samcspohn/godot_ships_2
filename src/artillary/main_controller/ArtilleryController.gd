@@ -32,14 +32,6 @@ func from_bytes(b: PackedByteArray) -> void:
 	params.dynamic_mod.from_bytes(b)
 
 func _ready() -> void:
-	# Find all guns in the ship
-	#var parent_model = get_parent().get_parent().get_child(1)
-	#var gun_id = 0
-	#for ch in parent_model.get_children():
-		#if ch is Gun:
-			#ch.gun_id = gun_id
-			#gun_id += 1
-			#self.guns.append(ch)
 	_ship = get_parent().get_parent() as Ship
 	var i = 0
 	# params = params.duplicate(true)

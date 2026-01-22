@@ -276,7 +276,7 @@ func _ready():
 
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
-		setup_weapons()
+		setup_weapons.call_deferred()
 
 	update_counters()
 
@@ -1231,9 +1231,10 @@ func setup_weapon_controller(controller: Node):
 	var hp_container = gun_reload_container.get_parent() as Control
 	var gun_container = gun_reload_container.duplicate()
 	gun_container.visible = true
-	var size = controller.weapons.size()
-	for i in range(controller.weapons.size()):
-		var turret: Turret = controller.weapons[i]
+	var weaps = controller.weapons
+	var size = weaps.size()
+	for i in range(size):
+		var turret: Turret = weaps[i]
 		var weapon_data = Weapon.new()
 		weapon_data.weapon = turret
 		weapon_data.indicator = GunIndicatorScene.instantiate()

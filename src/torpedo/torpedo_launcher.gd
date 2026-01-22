@@ -1,24 +1,6 @@
 class_name TorpedoLauncher
 extends Turret
 
-# Properties for editor
-# @export var rotation_limits_enabled: bool = true
-# @export var min_rotation_angle: float = deg_to_rad(45)
-# @export var max_rotation_angle: float = deg_to_rad(180 + 45)
-
-# var _aim_point: Vector3
-# var reload: float = 0.0
-# var can_fire: bool = false
-# var muzzles: Array[Node3D] = []
-# var gun_id: int
-# var disabled: bool = true
-
-# var max_range: float
-# var max_flight: float
-# var _ship: Ship
-
-# @export var params: TorpedoLauncherParams
-# var my_params: TorpedoLauncherParams = TorpedoLauncherParams.new()
 func get_params() -> TorpedoLauncherParams:
 	return controller.get_params()
 
@@ -46,33 +28,10 @@ func from_bytes(b: PackedByteArray, full: bool) -> void:
 		reload = reader.get_float()
 
 func _ready() -> void:
-	# my_params.from_params(params)
-	# max_range = my_params._range
-	# _ship = ProjectileManager.find_ship(self)
-	#var a = ProjectilePhysicsWithDrag.calculate_absolute_max_range(my_params.shell.speed, my_params.shell.drag)
-	#max_range = min(a[0], my_params._range)
-	#max_flight = a[2]
-
-	#if max_range < a[0]:
-		#max_flight = ProjectilePhysicsWithDrag.calculate_launch_vector(Vector3.ZERO, Vector3(0, 0, max_range), my_params.shell.speed, my_params.shell.drag)[1]
-		#
-#
-	#print("max range: ", a)
-
 	# Set up muzzles
 	update_barrels()
 
-	# # Set processing mode based on authority
-	# if _Utils.authority():
-	# 	process_mode = Node.PROCESS_MODE_INHERIT
-	# else:
-	# 	# We still need to receive updates, just not run physics
-	# 	process_mode = Node.PROCESS_MODE_INHERIT
-	# 	set_physics_process(false)
-
 	super._ready()
-	#min_rotation_angle = deg_to_rad(90 - 60)
-	#max_rotation_angle = deg_to_rad(270 + 60)
 
 # Function to update barrels based on editor properties
 func update_barrels() -> void:
@@ -83,6 +42,10 @@ func update_barrels() -> void:
 	for t in get_child(0).get_children():
 		# if t.name.contains("Tube"):
 		muzzles.append(t)
+
+	muzzles.sort_custom(func(a, b):
+		return a.position.x < b.position.x
+	)
 
 # @rpc("any_peer", "call_remote")
 # func _set_reload(r):
@@ -113,7 +76,7 @@ func fire() -> void:
 			# Fire torpedo
 			reload = 0.0
 			can_fire = false
-			var offset:Vector3 = -muzzles[0].global_basis.x * 0.012 * (float(muzzles.size() -1) / 2.0)
+			var offset:Vector3 = +muzzles[0].global_basis.x * 0.012 * (float(muzzles.size() -1) / 2.0)
 			for m in muzzles:
 				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)

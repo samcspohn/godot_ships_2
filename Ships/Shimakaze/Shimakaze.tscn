@@ -1,4 +1,4 @@
-[gd_scene load_steps=37 format=3 uid="uid://eovuir5enue4"]
+[gd_scene load_steps=38 format=3 uid="uid://eovuir5enue4"]
 
 [ext_resource type="PackedScene" uid="uid://cd12snnrw56y0" path="res://Ships/Shimakaze/Shimakaze.glb" id="1_8273q"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_x3pwv"]
@@ -21,7 +21,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="13_fjgfy"]
 [ext_resource type="PackedScene" uid="uid://b1v7uh5a6feq1" path="res://turrets/IJN_610mm_5t.tscn" id="13_q7yd3"]
 [ext_resource type="Script" uid="uid://ckumdqdogqvlk" path="res://src/torpedo/torpedo_params.gd" id="14_56jcx"]
-[ext_resource type="Script" uid="uid://c4s0uljp7d86c" path="res://src/particles/trail_emitter.gd" id="22_jewkh"]
+[ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="22_jewkh"]
 
 [sub_resource type="Resource" id="Resource_fjgfy"]
 resource_local_to_scene = true
@@ -65,6 +65,19 @@ radius = 4000.0
 bloom_duration = 12.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
+[sub_resource type="Resource" id="Resource_2by4h"]
+resource_local_to_scene = true
+script = ExtResource("6_nguxy")
+speed = 910.0
+drag = 0.06
+damage = 1300.0
+size = 2.0
+caliber = 127.0
+mass = 20.3
+overmatch = 9
+arming_threshold = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
 [sub_resource type="Resource" id="Resource_okiv0"]
 resource_local_to_scene = true
 script = ExtResource("6_nguxy")
@@ -74,15 +87,16 @@ damage = 680.0
 size = 2.0
 caliber = 127.0
 mass = 20.3
-fire_buildup = 7.0
+fire_buildup = 10.0
 type = 0
 overmatch = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_56jcx"]
+resource_local_to_scene = true
 script = ExtResource("5_o13ib")
 elevation_speed = 5.0
-shell1 = SubResource("Resource_okiv0")
+shell1 = SubResource("Resource_2by4h")
 shell2 = SubResource("Resource_okiv0")
 h_grouping = 2.1
 v_grouping = 2.1
@@ -92,6 +106,7 @@ _range = 10000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_qjvt5"]
+resource_local_to_scene = true
 script = ExtResource("7_s67vb")
 dmg_rate = 0.02
 dur = 50.0
@@ -99,6 +114,7 @@ max_buildup = 200.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
 [sub_resource type="Resource" id="Resource_ydll1"]
+resource_local_to_scene = true
 script = ExtResource("9_okiv0")
 icon = ExtResource("10_jewkh")
 disabled_icon = ExtResource("9_22e6m")
@@ -107,6 +123,7 @@ max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_22e6m"]
+resource_local_to_scene = true
 script = ExtResource("10_y8kxj")
 icon = ExtResource("13_fjgfy")
 disabled_icon = ExtResource("12_17h8w")
@@ -115,6 +132,7 @@ duration = 10.0
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
 [sub_resource type="Resource" id="Resource_jewkh"]
+resource_local_to_scene = true
 script = ExtResource("14_56jcx")
 speed_knts = 52.0
 damage = 20000.0
@@ -171,7 +189,7 @@ deceleration_time = 12.0
 turning_circle_radius = 250.0
 turn_speed_loss = 0.15
 rudder_response_time = 5.0
-max_turn_roll_angle = 15.0
+max_turn_roll_angle = 10.0
 roll_response_time = 2.0
 righting_strength = 5.0
 righting_damping = 3.0

@@ -35,47 +35,27 @@ func get_params() -> GunParams:
 	var min_reload = INF
 	var selected_params: GunParams = null
 	for sc in sub_controllers:
-		var p = sc.p.p() as GunParams
+		var p = sc.params.p() as GunParams
 		if p.reload_time < min_reload:
 			min_reload = p.reload_time
 			selected_params = p
 	return selected_params
 
 func _ready() -> void:
-	# for sc in sub_controllers:
-	# 	sc.controller = self
-	# 	for g in sc.guns:
-	# 		g.controller = self
 	_ship = get_parent().get_parent() as Ship
 	target_mod = TargetMod.new()
-	target_mod.resource_local_to_scene = true
 	target_mod.init(_ship)
 
 	manual_target_mod.h_grouping = 1.5
 	manual_target_mod.v_grouping = 1.5
 	manual_target_mod.base_spread = 0.5
-	manual_target_mod.resource_local_to_scene = true
 	manual_target_mod.init(_ship)
 
 	for sc in sub_controllers:
 		sc.init(_ship)
-		# sc.p.init(_ship)
 		sc.controller = self
 		for g in sc.guns:
 			gun_targets.append(null)
-	# # params = params.duplicate(true)
-	# params.init(_ship)
-	# params.base.shell1._secondary = true
-	# params.base.shell2._secondary = true
-
-	# target_mod.init(_ship)
-	# # (params.shell1 as ShellParams)._secondary = true
-	# # (params.shell2 as ShellParams)._secondary = true
-
-	# for g in guns:
-	# 	g.controller = self
-	# 	g._ship = _ship
-	# 	gun_targets.append(null)
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -145,7 +125,7 @@ func _physics_process(delta: float) -> void:
 
 	var max_range = 0.0
 	for sc in sub_controllers:
-		var r = sc.p.p()._range
+		var r = sc.params.p()._range
 		if r > max_range:
 			max_range = r
 
@@ -166,7 +146,7 @@ func _physics_process(delta: float) -> void:
 	active = false
 	var gi = 0
 	for sc in sub_controllers:
-		var _range = sc.p.p()._range
+		var _range = sc.params.p()._range
 		var _gi = gi
 		for g in sc.guns:
 			if guns_shooting_at_aim_point.has(g):
@@ -192,7 +172,7 @@ func _physics_process(delta: float) -> void:
 		gi = _gi
 
 		if enemies_in_range.size() > 0:
-			var reload_time = sc.p.p().reload_time
+			var reload_time = sc.params.p().reload_time
 			sc.sequential_fire_timer += delta
 			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
 				sc.sequential_fire_timer = 0.0

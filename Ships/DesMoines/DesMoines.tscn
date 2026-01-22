@@ -20,7 +20,7 @@
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="13_jxksy"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="14_s7tx1"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_xosf1"]
-[ext_resource type="Script" uid="uid://c4s0uljp7d86c" path="res://src/particles/trail_emitter.gd" id="21_3nwwl"]
+[ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_3nwwl"]
 
 [sub_resource type="Resource" id="Resource_o5kiv"]
 resource_local_to_scene = true
@@ -88,7 +88,7 @@ damage = 1240.0
 size = 2.5
 caliber = 203.0
 mass = 118.0
-fire_buildup = 20.0
+fire_buildup = 16.0
 fuze_delay = 0.001
 type = 0
 auto_bounce = 1.5708
@@ -220,7 +220,7 @@ sub_controllers = [NodePath("SecSubController")]
 
 [node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" node_paths=PackedStringArray("guns")]
 script = ExtResource("6_t5p80")
-p = SubResource("Resource_fa4yd")
+params = SubResource("Resource_fa4yd")
 guns = [NodePath("../../../TurretMount_AMER_127mm_2b/AMER_127mm_2b"), NodePath("../../../TurretMount_AMER_127mm_2b_001/AMER_127mm_2b_001"), NodePath("../../../TurretMount_AMER_127mm_2b_004/AMER_127mm_2b_004"), NodePath("../../../TurretMount_AMER_127mm_2b_002/AMER_127mm_2b_002"), NodePath("../../../TurretMount_AMER_127mm_2b_005/AMER_127mm_2b_005"), NodePath("../../../TurretMount_AMER_127mm_2b_003/AMER_127mm_2b_003")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
@@ -232,6 +232,11 @@ reverse_speed_ratio = 0.5
 turning_circle_radius = 300.0
 turn_speed_loss = 0.1
 rudder_response_time = 8.0
+max_turn_roll_angle = 10.0
+roll_response_time = 2.0
+righting_strength = 5.0
+righting_damping = 3.0
+pitch_righting_strength = 8.0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_e3uhd")

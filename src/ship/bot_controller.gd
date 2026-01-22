@@ -530,7 +530,6 @@ func handle_collision_recovery(delta: float) -> void:
 		consecutive_stuck_checks = 0
 		return
 
-	print("handle_collision_recovery")
 	match recovery_state:
 		RecoveryState.EMERGENCY_REVERSING:
 			_handle_emergency_reversing()

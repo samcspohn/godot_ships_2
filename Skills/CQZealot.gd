@@ -14,7 +14,7 @@ func _a(ship: Ship):
 	main.reload_time *= reload_modifier
 
 	for sec in ship.secondary_controller.sub_controllers:
-		var sec_params = sec.p.dynamic_mod as GunParams
+		var sec_params = sec.params.dynamic_mod as GunParams
 		sec_params.reload_time *= reload_modifier
 
 
@@ -26,8 +26,8 @@ func _proc(_delta: float) -> void:
 	var enemies = server.get_valid_targets(_ship.team.team_id)
 	var max_secondary_range = 0.0
 	for sec: SecSubController in _ship.secondary_controller.sub_controllers:
-		if (sec.p.dynamic_mod as GunParams)._range > max_secondary_range:
-			max_secondary_range = (sec.p.dynamic_mod as GunParams)._range
+		if (sec.params.dynamic_mod as GunParams)._range > max_secondary_range:
+			max_secondary_range = (sec.params.dynamic_mod as GunParams)._range
 
 	# filter out enemies that are out of secondary range
 	enemies = enemies.filter(func (enemy) -> bool:

@@ -193,8 +193,7 @@ func _process(_delta: float) -> void:
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		#var prev_pos = p.position
 		p.position = p.direction * p.params.speed * t + p.start_position
-		if p.position.y > 0.1:
-			p.position.y = max(p.position.y - t * 10, 0.1)
+		p.position.y = max(p.position.y - t * 10, 0.1)
 		update_transform_pos(id, p.position)
 
 		## Calculate distance-based scale to counter perspective shrinking
@@ -242,12 +241,11 @@ func _physics_process(_delta: float) -> void:
 		ray_query.from = p.position
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position = p.direction * p.params.speed * t + p.start_position
-		if p.position.y > 0.01:
-			p.position.y = max(p.position.y - t * 10, 0.01)
+		p.position.y = max(p.position.y - t * 10, 0.1)
 
 		if p.position.distance_to(p.start_position) > p._range:
 			# Out of range
-			self.destroyTorpedoRpc(id, p.position)
+			self.destroyTorpedo(id, p.position)
 			id += 1
 			continue
 
@@ -264,6 +262,7 @@ func _physics_process(_delta: float) -> void:
 				armor_part = collision.collider
 				if armor_part is ArmorPart:
 					ship = armor_part.ship
+
 			if ship != null:
 				if ship == p.owner:
 					# Ignore self-hit
@@ -278,7 +277,7 @@ func _physics_process(_delta: float) -> void:
 							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
 					track_torpedo_damage_dealt(p.owner, dmg_sunk[0])
-			self.destroyTorpedoRpc(id, collision.position)
+			self.destroyTorpedo(id, collision.position)
 		id += 1
 
 
@@ -300,7 +299,7 @@ func update_transform(idx, trans):
 	transforms[offset + 11] = trans.origin.z
 
 @rpc("any_peer", "reliable")
-func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> void:
+func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var torp = TorpedoData.new()
 	#bullet.params = shell_param_ids[shells]
@@ -314,16 +313,21 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> v
 	#var s = shell.size # sqrt(shell.damage / 100)
 	var vel_norm = vel.normalized()
 	# Create basis with Y axis aligned to velocity
+	# Use a fallback "up" vector when direction is nearly parallel to Vector3.RIGHT
 	var basis = Basis()
 	basis.y = vel_norm
-	basis.z = basis.y.cross(Vector3.RIGHT).normalized()
+	var cross_result = basis.y.cross(Vector3.RIGHT)
+	# If cross product is too small (direction nearly parallel to RIGHT), use UP instead
+	if cross_result.length_squared() < 0.001:
+		cross_result = basis.y.cross(Vector3.UP)
+	basis.z = cross_result.normalized()
 	basis.x = basis.y.cross(basis.z).normalized()
 	#basis.y = vel_norm
 
 	var trans = Transform3D(basis, pos)
 	update_transform(id, trans)
 
-	torp.initialize(pos, vel, params, t, owner, 0.0)
+	torp.initialize(pos, vel, params, t, _owner, 0.0)
 
 	# Allocate wake particle emitter
 	if _unified_particle_system != null and _wake_template_id >= 0:
@@ -338,10 +342,12 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, owner: Ship) -> v
 			0.0   # velocity_boost
 		)
 
+	if self.torpedos.get(id) != null:
+		push_error("Torpedo ID already exists")
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
-func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship, _range: float) -> int:
+func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -352,19 +358,39 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, owner: Ship, _range: float) 
 		self.torpedos.resize(np2)
 
 	var torp: TorpedoData = TorpedoData.new()
-	torp.initialize(pos, vel, params, t, owner, _range)
+	torp.initialize(pos, vel, params, t, _owner, _range)
 	self.torpedos.set(id, torp)
 	return id
 	#for p in multiplayer.get_peers():
 		#self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
 
 
+func _clear_torpedo_transform(idx: int) -> void:
+	"""Helper to clear a torpedo's transform to make it invisible."""
+	if idx >= 0 and idx < transforms.size() / 12:
+		var zero_basis = Basis()
+		zero_basis.x = Vector3.ZERO
+		zero_basis.y = Vector3.ZERO
+		zero_basis.z = Vector3.ZERO
+		var zero_transform = Transform3D(zero_basis, Vector3.ZERO)
+		update_transform(idx, zero_transform)
+		self.multi_mesh.multimesh.set_instance_transform(idx, zero_transform)
+
 @rpc("call_remote", "reliable")
-func destroyTorpedoRpc2(id, pos: Vector3) -> void:
+func destroyTorpedo_c(id, pos: Vector3) -> void:
+	# Check array bounds first to handle race conditions where destroy arrives before fire
+	if id < 0 or id >= self.torpedos.size():
+		# Destroy arrived before fire RPC - this can happen due to different RPC channels
+		# Just clear the transform in case it was partially set up
+		_clear_torpedo_transform(id)
+		return
+
 	var torp: TorpedoData = self.torpedos.get(id)
 	if torp == null:
-		print("bullet is null: ", id)
+		# Torpedo already destroyed or never created - clear transform just in case
+		_clear_torpedo_transform(id)
 		return
+
 	var radius = torp.params.damage * 8 / 20000.0
 
 	# Free wake particle emitter
@@ -377,14 +403,7 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	HitEffects.splash_effect(pos, radius)
 
 	self.torpedos.set(id, null)
-	#self.projectiles.erase(id)
-	var b = Basis()
-	b.x = Vector3.ZERO
-	b.y = Vector3.ZERO
-	b.z = Vector3.ZERO
-	var t = Transform3D(b,Vector3.ZERO)
-	update_transform(id, t) # set to invisible
-	self.multi_mesh.multimesh.set_instance_transform(id, t)
+	_clear_torpedo_transform(id)
 
 	#var expl: CSGSphere3D = preload("uid://bg8ewplv43885").instantiate()
 	#get_tree().root.add_child(expl)
@@ -392,13 +411,13 @@ func destroyTorpedoRpc2(id, pos: Vector3) -> void:
 	#expl.radius = radius
 
 #@rpc("authority", "reliable")
-func destroyTorpedoRpc(id, position) -> void:
+func destroyTorpedo(id, position) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)
 
 	self.torpedos.set(id, null)
 	#self.projectiles.erase(id)
 	self.ids_reuse.append(id)
-	destroyTorpedoRpc2.rpc(id, position)
+	destroyTorpedo_c.rpc(id, position)
 
 func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
 	"""Track torpedo damage dealt using the ship's stats module"""

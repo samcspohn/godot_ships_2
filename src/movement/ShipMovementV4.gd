@@ -12,12 +12,12 @@ var max_speed: float = 15.0  # Maximum speed in m/s
 
 # Turning properties
 @export var turning_circle_radius: float = 200.0  # Turning circle radius in meters at full rudder and full speed
-@export var min_turn_speed: float = 2.0  # Minimum speed needed for effective turning
+# @export var min_turn_speed: float = 2.0  # Minimum speed needed for effective turning
 @export var turn_speed_loss: float = 0.2  # Percentage of speed lost per second while turning
 @export var rudder_response_time: float = 1.5  # Time for rudder to move from center to full
 
 # Roll and stability properties
-@export var max_turn_roll_angle: float = 15.0  # Maximum roll angle in degrees when turning at full speed/rudder
+@export var max_turn_roll_angle: float = 10.0  # Maximum roll angle in degrees when turning at full speed/rudder
 @export var roll_response_time: float = 2.0  # How quickly the ship rolls into a turn
 @export var righting_strength: float = 5.0  # How strongly the ship rights itself (metacentric height factor)
 @export var righting_damping: float = 3.0  # Damping to prevent oscillation
@@ -60,9 +60,9 @@ func _ready() -> void:
 	_detect_ship_dimensions()
 
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
-	ship.linear_damp = 0.9
+	ship.linear_damp = 0.2
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
-	ship.angular_damp = 0.9
+	ship.angular_damp = 0.2
 
 	# ship.axis_lock_angular_z = true
 	# ship.axis_lock_angular_y = true
@@ -201,10 +201,13 @@ func _physics_process(delta: float) -> void:
 		engine_power = move_toward(engine_power, target_power, delta / acceleration_time)
 
 	# Apply forward thrust
-	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio, -forward.normalized() * ship_length * 0.4)
+	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.3, -forward.normalized() * ship_length * 0.4)
 
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
+
+	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle - 10.0), deg_to_rad(max_turn_roll_angle + 10.0))
+	ship.rotation.x = clamp(ship.rotation.x, -PI / 6.0, PI / 6.0)
 
 # Utility functions for debugging and external access
 func get_current_speed_kmh() -> float:

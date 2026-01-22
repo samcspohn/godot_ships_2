@@ -15,15 +15,23 @@ func check_init() -> void:
 	# Skip check on copies (static_mod, dynamic_mod)
 	if _is_copy:
 		return
+	# Only check resource_local_to_scene for resources loaded from scene files
+	# Resources created with .new() don't have a resource_path and don't need the flag
+	if resource_path != "" and not resource_local_to_scene:
+		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
+		push_error("Moddable resource must be local to scene! Resource type: " + resource_type)
+		print_rich("[color=red]Moddable resource must be local to scene! Resource type: " + resource_type + "[/color]")
 	if base == null:
 		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
 		push_error("Moddable resource not initialized! Resource path: " + resource_type)
+		print_rich("[color=red]Moddable resource not initialized! Resource path: " + resource_type + "[/color]")
 	else:
 		valid = true
 		static_mod.valid = true
 		dynamic_mod.valid = true
 
 func _init():
+	# print("Moddable _init() called for: ", get_script().get_global_name() if get_script() else "Unknown")
 	if not valid:
 		check_init.call_deferred()
 
@@ -34,6 +42,13 @@ func duplicate_as_copy(mod: Moddable) -> Moddable:
 
 # must be local to scene
 func init(_ship: Ship) -> void:
+	# Only check resource_local_to_scene for resources loaded from scene files
+	# Resources created with .new() don't have a resource_path and don't need the flag
+	if resource_path != "" and not resource_local_to_scene:
+		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
+		push_error("Moddable resource must be local to scene! Resource type: " + resource_type)
+		print_rich("[color=red]Moddable resource must be local to scene! Resource type: " + resource_type + "[/color]")
+
 	base = self
 	static_mod = duplicate_as_copy(base)
 	dynamic_mod = duplicate_as_copy(static_mod)
