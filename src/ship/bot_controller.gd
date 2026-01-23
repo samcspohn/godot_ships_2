@@ -24,6 +24,13 @@ var kite_oscillation_period: float = 8.0  # Seconds per oscillation cycle
 var kite_front_gun_duration: float = 2.0  # Seconds to turn for front guns during kite
 var hp_threshold_low: float = 0.5  # Below this, prioritize angling
 var hp_threshold_critical: float = 0.25  # Below this, aggressively angle
+var hp_threshold_reengage: float = 0.6  # Above this, can re-engage aggressively
+
+# Re-engagement parameters
+var reengage_distance_max: float = 15000.0  # If further than this and pointed away, reverse to re-engage
+var reengage_distance_min: float = 4000.0  # If closer than this and pointed toward, reverse to disengage
+var pointed_away_threshold: float = deg_to_rad(100.0)  # Angle diff > this means pointed away from target
+var should_reverse: bool = false  # Whether bot should be reversing to re-engage/disengage
 var threat_class_weights: Dictionary = {
 	Ship.Class.BB: 4.0,
 	Ship.Class.CA: 2.0,
@@ -967,6 +974,7 @@ func scan_for_targets():
 
 func attack_behavior(_delta: float):
 	if !target_ship or !is_instance_valid(target_ship):
+		should_reverse = false
 		return
 
 	var distance_to_target = ship.global_position.distance_to(target_ship.global_position)
@@ -994,6 +1002,7 @@ func attack_behavior(_delta: float):
 	var hp_ratio = get_hp_ratio()
 	var is_low_hp = hp_ratio < hp_threshold_low
 	var is_critical_hp = hp_ratio < hp_threshold_critical
+	var can_reengage = hp_ratio >= hp_threshold_reengage
 
 	# Determine angling direction (port or starboard) based on current ship heading
 	var ship_heading = get_ship_heading()
@@ -1002,10 +1011,28 @@ func attack_behavior(_delta: float):
 	while angle_diff_to_threat < -PI: angle_diff_to_threat += TAU
 	var angle_side = 1.0 if angle_diff_to_threat > 0 else -1.0
 
+	# Calculate if we're pointed toward or away from target
+	var angle_diff_to_target = angle_to_target - ship_heading
+	while angle_diff_to_target > PI: angle_diff_to_target -= TAU
+	while angle_diff_to_target < -PI: angle_diff_to_target += TAU
+	var is_pointed_away = abs(angle_diff_to_target) > pointed_away_threshold
+	var is_pointed_toward = abs(angle_diff_to_target) < deg_to_rad(60.0)
+
+	# Reset reverse flag - will be set if needed
+	should_reverse = false
+
+	# Check if ship is detected by enemy
+	var we_are_detected = ship.visible_to_enemy if ship.has_method("get") or "visible_to_enemy" in ship else true
+
 	if target_ship.visible_to_enemy:
 		if distance_to_target > engagement_range + 500:
 			# Approaching: angle towards threat while closing
 			base_heading = angle_to_target + optimal_angle_offset * angle_side
+
+			# Re-engagement logic: if pointed away and too far, reverse to close distance faster
+			if can_reengage and is_pointed_away and distance_to_target > reengage_distance_max:
+				# We're angled away and too far - reverse while turning to re-engage
+				should_reverse = true
 		elif distance_to_target < engagement_range - 500:
 			# Too close - kiting behavior
 			if is_critical_hp:
@@ -1024,6 +1051,11 @@ func attack_behavior(_delta: float):
 				else:
 					# Kite at an angle
 					base_heading = angle_to_target + PI - kite_angle_offset * angle_side
+
+			# Disengage logic: if pointed toward and too close, reverse to create distance
+			if is_pointed_toward and distance_to_target < reengage_distance_min:
+				# We're pointed at the enemy but too close - reverse while turning away
+				should_reverse = true
 		else:
 			# At engagement range: angle towards biggest threat instead of broadside
 			if is_critical_hp:
@@ -1039,7 +1071,13 @@ func attack_behavior(_delta: float):
 				# Blend: 60% angling, 40% circling
 				base_heading = lerp_angle(circle_component, angle_component, 0.6)
 	else:
-		base_heading = angle_to_target
+		# Target not visible to us - check if we can safely turn around
+		if not we_are_detected:
+			# We are undetected - can freely turn to face the target
+			base_heading = angle_to_target
+		else:
+			# We are detected but target is not visible - maintain angled approach
+			base_heading = angle_to_target + optimal_angle_offset * angle_side
 
 	desired_heading = apply_collision_avoidance(base_heading)
 
@@ -1689,6 +1727,13 @@ func apply_ship_controls(_delta: float):
 	# Check for emergency collision and adjust throttle
 	var emergency_check = check_emergency_collision()
 	var throttle = 4  # Medium speed (0-4 scale)
+
+	# Apply reverse throttle for re-engagement/disengagement maneuvers
+	if should_reverse and recovery_state == RecoveryState.NORMAL:
+		# Reversing to re-engage or disengage - use slow reverse with aggressive turning
+		var reverse_rudder = clamp(angle_diff * 2.5, -1.0, 1.0)
+		_send_movement_input([float(-1), reverse_rudder])
+		return
 
 	# Handle collision recovery state - early return with dedicated handling
 	if recovery_state == RecoveryState.EMERGENCY_REVERSING:
