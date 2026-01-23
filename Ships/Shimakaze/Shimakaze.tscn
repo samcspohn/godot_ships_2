@@ -10,7 +10,7 @@
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="7_nguxy"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="7_s67vb"]
 [ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="8_17h8w"]
-[ext_resource type="PackedScene" path="res://src/Flood/Flood.tscn" id="8_flood"]
+[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="8_flood"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_q7yd3"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="9_22e6m"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="9_okiv0"]
@@ -71,7 +71,7 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 resource_local_to_scene = true
 script = ExtResource("6_nguxy")
 speed = 910.0
-drag = 0.06
+drag = 0.045
 damage = 1300.0
 size = 2.0
 caliber = 127.0
@@ -84,7 +84,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 resource_local_to_scene = true
 script = ExtResource("6_nguxy")
 speed = 910.0
-drag = 0.06
+drag = 0.045
 damage = 680.0
 size = 2.0
 caliber = 127.0
