@@ -10,6 +10,23 @@ var aim_point: Vector3
 var _ship: Ship
 var target_mod: TargetMod = TargetMod.new()
 
+func get_weapon_ui() -> Array[Button]:
+	var shell1 = Button.new()
+	shell1.text = "AP"
+	shell1.pressed.connect(func():
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+		select_shell.rpc_id(1, 0)
+	)
+
+	var shell2 = Button.new()
+	shell2.text = "HE"
+	shell2.pressed.connect(func():
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+		select_shell.rpc_id(1, 1)
+	)
+
+	return [shell1, shell2]
+
 var weapons: Array[Turret]:
 	get:
 		var arr: Array[Turret] = []

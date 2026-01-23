@@ -13,6 +13,16 @@ var weapons: Array[Turret]:
 			arr.append(l)
 		return arr
 
+
+func get_weapon_ui() -> Array[Button]:
+	var button = Button.new()
+	button.text = "TP"
+	button.pressed.connect(func():
+		print("Pressed TorpedoController")
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+	)
+	return [button]
+
 func to_bytes() -> PackedByteArray:
 	return params.dynamic_mod.to_bytes()
 

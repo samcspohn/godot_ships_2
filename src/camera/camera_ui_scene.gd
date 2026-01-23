@@ -155,11 +155,13 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var friendly_ship_template: Control = $MainContainer/ShipUITemplates/FriendlyShipTemplate
 @onready var team_tracker_template: Control = $MainContainer/ShipUITemplates/TeamTrackerTemplate
 
-@onready var weapon_buttons: Array[Button] = [
-	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell1Button,
-	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell2Button,
-	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/TorpedoButton
-]
+# @onready var weapon_buttons: Array[Button] = [
+# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell1Button,
+# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell2Button,
+# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/TorpedoButton
+# ]
+var weapon_buttons: Array[Button] # todo: TextureButton
+var weapon_button_group: ButtonGroup
 
 @onready var consumable_container: HBoxContainer = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer
 @onready var consumable_template: TextureButton = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate
@@ -242,13 +244,75 @@ func recurs_set_vis(n: Node):
 	for child in n.get_children():
 		recurs_set_vis(child)
 
+func setup_weapon_buttons():
+	var weapon_slots = $MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel
+	for i in range(3):
+		var button = weapon_slots.get_child(i)
+		button.queue_free()
+
+	# Create a ButtonGroup for mutual exclusion - only one weapon can be selected at a time
+	weapon_button_group = ButtonGroup.new()
+	weapon_buttons.clear()
+
+	var main_guns: Array[Button] = camera_controller._ship.artillery_controller.get_weapon_ui()
+	var button_i = 0
+	for weapon in main_guns:
+		var shortcut = Shortcut.new()
+		var key_event = InputEventKey.new()
+		key_event.keycode = KEY_1 + button_i
+		shortcut.events = [key_event]
+		weapon.shortcut = shortcut
+		weapon.custom_minimum_size = Vector2(56,56)
+		weapon.toggle_mode = true
+		weapon.button_group = weapon_button_group
+		weapon_slots.add_child(weapon)
+		weapon_slots.move_child(weapon, button_i)
+		weapon_buttons.append(weapon)
+		button_i += 1
+
+	if camera_controller._ship.torpedo_controller:
+		var torp_buttons: Array[Button] = camera_controller._ship.torpedo_controller.get_weapon_ui()
+		for button in torp_buttons:
+			var shortcut = Shortcut.new()
+			var key_event = InputEventKey.new()
+			key_event.keycode = KEY_1 + button_i
+			shortcut.events = [key_event]
+			button.shortcut = shortcut
+			button.custom_minimum_size = Vector2(56,56)
+			button.toggle_mode = true
+			button.button_group = weapon_button_group
+			weapon_slots.add_child(button)
+			weapon_slots.move_child(button, button_i)
+			weapon_buttons.append(button)
+			button_i += 1
+
+	if camera_controller._ship.secondary_controller:
+		var sec_buttons: Array[Button] = camera_controller._ship.secondary_controller.get_weapon_ui()
+		for button in sec_buttons:
+			var shortcut = Shortcut.new()
+			var key_event = InputEventKey.new()
+			key_event.keycode = KEY_1 + button_i
+			shortcut.events = [key_event]
+			button.shortcut = shortcut
+			button.custom_minimum_size = Vector2(56,56)
+			button.toggle_mode = true
+			button.button_group = weapon_button_group
+			weapon_slots.add_child(button)
+			weapon_slots.move_child(button, button_i)
+			weapon_buttons.append(button)
+			button_i += 1
+
+	# Select the first weapon button by default
+	if weapon_buttons.size() > 0:
+		weapon_buttons[0].button_pressed = true
+
 func _ready():
 	# Add to camera_ui group for easy access
 	add_to_group("camera_ui")
 
-	# Connect weapon button signals
-	for i in range(weapon_buttons.size()):
-		weapon_buttons[i].connect("pressed", _on_weapon_button_pressed.bind(i))
+	# # Connect weapon button signals
+	# for i in range(weapon_buttons.size()):
+	# 	weapon_buttons[i].connect("pressed", _on_weapon_button_pressed.bind(i))
 
 	# Connect crosshair drawing
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
@@ -258,6 +322,9 @@ func _ready():
 
 	# Setup hit counter display system
 	setup_hit_counter_system()
+
+	# Setup weapon UI
+	setup_weapon_buttons()
 
 	# Setup consumable buttons
 	setup_consumable_ui()
@@ -1203,20 +1270,20 @@ func cleanup_team_indicators():
 				indicator.queue_free()
 			team_ship_indicators.erase(ship)
 
-func _on_weapon_button_pressed(idx: int):
-	# Deselect all other weapon buttons
-	for i in range(weapon_buttons.size()):
-		weapon_buttons[i].button_pressed = (i == idx)
+# func _on_weapon_button_pressed(idx: int):
+# 	# Deselect all other weapon buttons
+# 	for i in range(weapon_buttons.size()):
+# 		weapon_buttons[i].button_pressed = (i == idx)
 
-	# Notify camera controller or ship of weapon selection
-	if camera_controller:
-		# This would typically call a method on the ship or player controller
-		print("Selected weapon: %d" % idx)
+# 	# Notify camera controller or ship of weapon selection
+# 	if camera_controller:
+# 		# This would typically call a method on the ship or player controller
+# 		print("Selected weapon: %d" % idx)
 
-func set_weapon_button_pressed(idx: int):
-	if idx >= 0 and idx < weapon_buttons.size():
-		for i in range(weapon_buttons.size()):
-			weapon_buttons[i].button_pressed = (i == idx)
+# func set_weapon_button_pressed(idx: int):
+# 	if idx >= 0 and idx < weapon_buttons.size():
+# 		for i in range(weapon_buttons.size()):
+# 			weapon_buttons[i].button_pressed = (i == idx)
 
 func setup_weapon_controller(controller: Node):
 	if weapons.has(controller):

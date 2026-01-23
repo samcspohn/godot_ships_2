@@ -31,6 +31,29 @@ var weapons: Array[Turret]:
 
 var active: bool
 
+func get_weapon_ui() -> Array[Button]:
+
+	if sub_controllers.size() == 0:
+		return []
+
+	var shell1 = Button.new()
+	shell1.text = "sAP"
+	shell1.pressed.connect(func():
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+		# shell_index = 0
+		select_shell.rpc_id(1, 0)
+	)
+
+	var shell2 = Button.new()
+	shell2.text = "sHE"
+	shell2.pressed.connect(func():
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+		# shell_index = 1
+		select_shell.rpc_id(1, 1)
+	)
+
+	return [shell1, shell2]
+
 func get_params() -> GunParams:
 	var min_reload = INF
 	var selected_params: GunParams = null

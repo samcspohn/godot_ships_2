@@ -132,9 +132,6 @@ func spawn_player(id, player_name):
 	#print(player_name)
 	player.name = player_name
 	player._enable_weapons()
-	var tl = player.get_node_or_null("TorpedoLauncher")
-	if tl:
-		(tl as TorpedoLauncher).disabled = false
 
 	# Load and apply player upgrades (skip for bots)
 	if not is_bot:

@@ -165,16 +165,16 @@ func _input(event: InputEvent) -> void:
 		# if event.keycode == KEY_X:
 		# 	# Clear secondary target
 		# 	clear_secondary_target()
-		if event.keycode == KEY_1:
-			select_weapon(0)
-		elif event.keycode == KEY_2:
-			select_weapon(1)
-		elif event.keycode == KEY_3:
-			select_weapon(2)
-		elif event.keycode == KEY_4:
-			select_weapon(3)
-		elif event.keycode == KEY_5:
-			select_weapon(4)
+		#if event.keycode == KEY_1:
+			#select_weapon(0)
+		#elif event.keycode == KEY_2:
+			#select_weapon(1)
+		#elif event.keycode == KEY_3:
+			#select_weapon(2)
+		#elif event.keycode == KEY_4:
+			#select_weapon(3)
+		#elif event.keycode == KEY_5:
+			#select_weapon(4)
 
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
