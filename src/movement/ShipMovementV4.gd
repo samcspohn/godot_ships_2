@@ -50,6 +50,9 @@ var ship_height: float = 0.0
 # Roll state for smooth transitions
 var current_turn_roll: float = 0.0  # Current roll induced by turning
 
+# Grounded state - ship is touching land
+var is_grounded: bool = false
+
 func _ready() -> void:
 	ship = $"../.." as RigidBody3D
 
@@ -71,6 +74,9 @@ func _ready() -> void:
 	# Convert max speed from knots to m/s
 	max_speed = max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
 
+	# Enable contact monitoring to use get_colliding_bodies()
+	ship.contact_monitor = true
+	ship.max_contacts_reported = 4
 
 func _detect_ship_dimensions() -> void:
 	var hull_aabb: AABB = AABB()
@@ -98,6 +104,29 @@ func _detect_ship_dimensions() -> void:
 		print("ShipMovementV3: Length=%.1f, Beam=%.1f, Height=%.1f, Draft=%.1f" % [ship_length, ship_beam, ship_height, ship_draft])
 	else:
 		push_warning("ShipMovementV3: Could not detect ship dimensions, using defaults")
+
+# Check for land collision using get_colliding_bodies()
+func _check_land_collision() -> void:
+	var colliding_bodies = ship.get_colliding_bodies()
+
+	# Check each colliding body to see if we're touching land
+	var touching_land := false
+	for body in colliding_bodies:
+		print(body.name)
+		# if body.has:
+			# Check if this is land (collision layer 1)
+		if body.collision_layer & 1:
+			touching_land = true
+			break
+
+	# Update grounded state
+	if touching_land and not is_grounded:
+		is_grounded = true
+		ship.linear_damp = 20.0
+		engine_power = 0.0  # Immediately cut engine power
+	elif not touching_land and is_grounded:
+		is_grounded = false
+		ship.linear_damp = 0.2
 
 func _calculate_hull_aabb_from_meshes(root: Node) -> AABB:
 	var result: Dictionary = {"aabb": AABB(), "found": false}
@@ -158,6 +187,9 @@ func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
 
+	# Check for land collision
+	_check_land_collision()
+
 	# Buoyancy (vertical)
 	if ship.global_position.y < ship_draft:
 		var submerged_ratio = (ship_draft - ship.global_position.y) / ship_draft
@@ -168,9 +200,6 @@ func _physics_process(delta: float) -> void:
 
 	# Thrust
 	var target_power = throttle_settings[throttle_level + 1]
-	#if ship.name == "1":
-		#print(target_power)
-
 
 	# Rudder
 	rudder_input = move_toward(rudder_input, target_rudder, delta / rudder_response_time)
@@ -181,6 +210,16 @@ func _physics_process(delta: float) -> void:
 	var right = ship.global_transform.basis.x
 	var up = ship.global_transform.basis.y
 	var flat_right = forward.cross(Vector3.UP)
+
+	# Don't apply thrust if grounded
+	if is_grounded:
+		print("Grounded")
+		engine_power = move_toward(engine_power, 0.0, delta * 2.0)
+		# Still allow some movement to "unstick" if player reverses
+		if throttle_level == -1:  # Reverse
+			var reverse_force = forward * -0.1 * max_speed * ship.mass
+			ship.apply_central_force(reverse_force)
+		return
 
 	var turn_thrust_ratio = 1.0
 	if abs(rudder_input) > 0.01 and current_speed:

@@ -76,7 +76,7 @@ func fire() -> void:
 			# Fire torpedo
 			reload = 0.0
 			can_fire = false
-			var offset:Vector3 = +muzzles[0].global_basis.x * 0.012 * (float(muzzles.size() -1) / 2.0)
+			var offset:Vector3 = -muzzles[0].global_basis.x * 0.012 * (float(muzzles.size() -1) / 2.0)
 			for m in muzzles:
 				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
