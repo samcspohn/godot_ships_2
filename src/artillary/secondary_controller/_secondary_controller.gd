@@ -215,12 +215,19 @@ func _physics_process(delta: float) -> void:
 	# for g in guns:
 	# 	g._aim(aim_point, delta)
 
+@rpc("authority", "reliable", "call_remote")
+func select_shell_c(new_type: int):
+	if shell_index == new_type:
+		return
+	shell_index = new_type
+
 @rpc("any_peer", "reliable", "call_remote")
 func select_shell(new_type: int) -> void:
 
 	if shell_index == new_type:
 		return
 	shell_index = new_type
+	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), new_type)
 	# for sc in sub_controllers:
 	# 	#sc.shell_index = shell_index
 	# 	for g in sc.guns:

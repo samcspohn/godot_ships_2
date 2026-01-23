@@ -172,9 +172,6 @@ metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 [sub_resource type="Resource" id="Resource_3wv4u"]
 resource_local_to_scene = true
 script = ExtResource("12_fadtt")
-id = null
-name = null
-description = null
 icon = ExtResource("11_pm07r")
 disabled_icon = ExtResource("10_8j47w")
 cooldown_time = 80.0

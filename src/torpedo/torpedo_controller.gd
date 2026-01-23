@@ -5,6 +5,7 @@ class_name TorpedoController
 @export var launchers: Array[TorpedoLauncher] = []
 var aim_point: Vector3 = Vector3.ZERO
 var _ship: Ship
+var spread: float = 0.0
 
 var weapons: Array[Turret]:
 	get:

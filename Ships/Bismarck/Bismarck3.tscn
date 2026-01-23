@@ -1,4 +1,4 @@
-[gd_scene load_steps=44 format=3 uid="uid://dk3in5cberhsg"]
+[gd_scene load_steps=45 format=3 uid="uid://dk3in5cberhsg"]
 
 [ext_resource type="PackedScene" uid="uid://btam5g21aiiqg" path="res://Ships/Bismarck/bismark_low_poly2.glb" id="1_3klas"]
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="2_4pvtd"]
@@ -12,7 +12,7 @@
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/artillary/Guns/sec_gun1.tres" id="7_jay6y"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="8_8qd2y"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="10_2e51t"]
-[ext_resource type="PackedScene" path="res://src/Flood/Flood.tscn" id="11_flood"]
+[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="11_flood"]
 [ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="12_c72ol"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="13_5tc2e"]
 [ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="13_kaouq"]
@@ -114,6 +114,7 @@ max_buildup = 150.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
 [sub_resource type="Resource" id="Resource_u0hyh"]
+resource_local_to_scene = true
 script = ExtResource("13_kaouq")
 dmg_rate = 0.002
 dur = 100.0

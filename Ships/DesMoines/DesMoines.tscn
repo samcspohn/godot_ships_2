@@ -1,4 +1,4 @@
-[gd_scene load_steps=40 format=3 uid="uid://yjxdk16hffim"]
+[gd_scene load_steps=41 format=3 uid="uid://yjxdk16hffim"]
 
 [ext_resource type="PackedScene" uid="uid://0rigmm4tvpum" path="res://Ships/DesMoines/DesMoines.glb" id="1_wvm7u"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="2_iwiyp"]
@@ -14,7 +14,7 @@
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="9_08c6r"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="9_h3lju"]
 [ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="9_vfelm"]
-[ext_resource type="PackedScene" path="res://src/Flood/Flood.tscn" id="10_flood"]
+[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="10_flood"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="10_o5kiv"]
 [ext_resource type="Texture2D" uid="uid://cjpfk83wkq47p" path="res://icons/auto-repair.png" id="11_3nwwl"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="12_krgon"]
@@ -164,6 +164,7 @@ max_buildup = 200.0
 metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
 
 [sub_resource type="Resource" id="Resource_vp8fe"]
+resource_local_to_scene = true
 script = ExtResource("9_vfelm")
 dmg_rate = 0.002
 dur = 100.0
@@ -345,19 +346,19 @@ max_rotation_angle = 2.670353755551324
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Bow_col" parent="." index="21"]
+[node name="Hull_Bow_col" parent="." index="22"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Casemate_col" parent="." index="23"]
+[node name="Hull_Casemate_col" parent="." index="24"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Stern_col" parent="." index="25"]
+[node name="Hull_Stern_col" parent="." index="26"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Citadel_col" parent="." index="27"]
+[node name="Hull_Citadel_col" parent="." index="28"]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 

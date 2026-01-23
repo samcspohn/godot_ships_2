@@ -149,6 +149,7 @@ func update_cooldowns(delta: float):
 func update_active_effects(delta: float):
 	for item_id in active_effects:
 		active_effects[item_id] -= delta
+		equipped_consumables[item_id]._proc(delta, ship)
 		if active_effects[item_id] <= 0:
 			active_effects.erase(item_id)
 			equipped_consumables[item_id].remove_effect(ship)

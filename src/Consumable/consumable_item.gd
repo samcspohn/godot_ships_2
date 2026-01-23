@@ -31,6 +31,10 @@ func remove_effect(ship: Ship) -> void:
 func can_use(ship: Ship) -> bool:
 	return true
 
+func _proc(_delta: float, ship :Ship):
+	pass
+
+
 func to_dict() -> Dictionary:
 	return {
 		"id": id,
