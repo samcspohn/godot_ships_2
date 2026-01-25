@@ -28,9 +28,8 @@ func _ready():
 	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
 	add_child(game_world)
 	spawn_point = game_world.get_child(1)
-	var map = load("res://src/Maps/map2.tscn").instantiate()
+	var map = load("res://src/Maps/map.tscn").instantiate()
 	game_world.get_node("Env").add_child(map)
-
 	print("Game server started and world loaded")
 
 	# # Wait a frame for the world to fully initialize
@@ -154,10 +153,10 @@ func spawn_player(id, player_name):
 
 	# If it's a bot, add bot AI controller instead of player controller
 	if is_bot:
-		var bot_controller = preload("res://src/ship/bot_controller.tscn").instantiate()
+		var bot_controller = preload("res://src/ship/bot_controller_v2.tscn").instantiate()
 		bot_controller.name = "BotController"
 		player.get_node("Modules").add_child(bot_controller)
-		bot_controller.ship = player
+		bot_controller._ship = player
 	else:
 		# Only add player control for human players
 		var controller = preload("res://scenes/player_control.tscn").instantiate()

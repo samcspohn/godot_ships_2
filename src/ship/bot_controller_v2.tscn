@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c2v8qkm5n3x1p"]
+
+[ext_resource type="Script" uid="uid://dyf1fg7da24ai" path="res://src/ship/bot_controller_v3.gd" id="1_k2i3y"]
+
+[node name="BotControllerV2" type="Node3D"]
+script = ExtResource("1_k2i3y")

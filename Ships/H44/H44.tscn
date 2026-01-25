@@ -322,7 +322,7 @@ min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
 
 [node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" index="0" instance=ExtResource("14_nfp68")]
-min_rotation_angle = 3.665191429188092
+min_rotation_angle = 3.5779249665883754
 max_rotation_angle = 5.811946409141117
 
 [node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" index="0" instance=ExtResource("14_nfp68")]
@@ -338,7 +338,7 @@ min_rotation_angle = 0.22689280275926285
 max_rotation_angle = 2.670353755551324
 
 [node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" index="0" instance=ExtResource("14_nfp68")]
-min_rotation_angle = 0.47123889803846897
+min_rotation_angle = 0.4363323129985824
 max_rotation_angle = 2.722713633111154
 
 [node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" index="0" instance=ExtResource("14_nfp68")]

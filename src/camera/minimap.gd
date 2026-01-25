@@ -20,7 +20,7 @@ static var is_initialized: bool = false
 # Minimap properties
 #@export var minimap_size: Vector2 = Vector2(200, 200)
 var mm_idx = 2
-const minimap_sizes: Array[float] = [100, 200, 300, 400, 500, 600, 700, 800]
+const minimap_sizes: Array[float] = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600]
 var num_sizes: int = minimap_sizes.size()
 const w_s: float = 35000.0 / 2.0
 @export var world_rect: Rect2 = Rect2(-w_s, -w_s, 2 * w_s, 2 * w_s) # World boundaries

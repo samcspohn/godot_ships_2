@@ -57,7 +57,7 @@ func _ready() -> void:
 	ship = $"../.." as RigidBody3D
 
 	if ship == null:
-		push_error("ShipMovementV2: Could not find RigidBody3D parent")
+		push_error("ShipMovementV4: Could not find RigidBody3D parent")
 		return
 
 	_detect_ship_dimensions()
@@ -101,9 +101,9 @@ func _detect_ship_dimensions() -> void:
 		# Draft is distance from origin (waterline) to bottom of hull
 		ship_draft = -hull_aabb.position.y
 
-		print("ShipMovementV3: Length=%.1f, Beam=%.1f, Height=%.1f, Draft=%.1f" % [ship_length, ship_beam, ship_height, ship_draft])
+		print("ShipMovementV4: Length=%.1f, Beam=%.1f, Height=%.1f, Draft=%.1f" % [ship_length, ship_beam, ship_height, ship_draft])
 	else:
-		push_warning("ShipMovementV3: Could not detect ship dimensions, using defaults")
+		push_warning("ShipMovementV4: Could not detect ship dimensions, using defaults")
 
 # Check for land collision using get_colliding_bodies()
 func _check_land_collision() -> void:
@@ -112,7 +112,7 @@ func _check_land_collision() -> void:
 	# Check each colliding body to see if we're touching land
 	var touching_land := false
 	for body in colliding_bodies:
-		print(body.name)
+		# print(body.name)
 		# if body.has:
 			# Check if this is land (collision layer 1)
 		if body.collision_layer & 1:

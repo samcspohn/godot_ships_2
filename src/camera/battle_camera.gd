@@ -4,6 +4,7 @@ class_name BattleCamera
 signal processed
 # Ship to follow
 @export var _ship: Ship
+var follow_ship: Ship = null
 var player_controller: PlayerController
 #@export var ship_movement: ShipMovement
 #@export var hp_manager: HPManager  # Add reference to hit points
@@ -99,6 +100,7 @@ func _ready():
 
 	# Initialize UI for the ship after it's added to the scene tree
 	if _ship:
+		follow_ship = _ship
 		ui.call_deferred("initialize_for_ship")
 
 	third_person_view = ThirdPersonView.new()
@@ -146,6 +148,11 @@ func _input(event):
 		# Toggle target lock with X key
 		if event.pressed and event.keycode == KEY_X:
 			toggle_target_lock()
+		# Set follow_ship to ship closest to screen center with Ctrl+J
+		if event.pressed and event.keycode == KEY_J and event.ctrl_pressed:
+			var closest_ship = find_ship_closest_to_screen_center()
+			if closest_ship:
+				follow_ship = closest_ship
 
 	# if not free_look:
 	# 	third_person_view.input(event)
@@ -295,17 +302,22 @@ func _update_camera_transform():
 	if !_ship:
 		return
 	if current_mode == CameraMode.FREE_LOOK:
+		free_look_view._ship = follow_ship
 		free_look_view._update_camera_transform()
 		self.global_position = free_look_view.global_position
 		self.rotation.y = free_look_view.rotation.y
 		self.rotation.x = free_look_view.rotation.x
 		self.fov = free_look_view.current_fov
 	elif current_mode == CameraMode.THIRD_PERSON:
+		third_person_view._ship = follow_ship
+		# third_person_view._update_camera_transform()
 		self.global_position = third_person_view.global_position
 		self.rotation.y = third_person_view.rotation.y
 		self.rotation.x = third_person_view.rotation.x
 		self.fov = third_person_view.current_fov
 	elif current_mode == CameraMode.SNIPER:
+		sniper_view._ship = follow_ship
+		# sniper_view._update_camera_transform()
 		self.global_position = sniper_view.global_position
 		self.rotation.y = sniper_view.rotation.y
 		self.rotation.x = sniper_view.rotation.x
@@ -566,6 +578,28 @@ func toggle_target_lock():
 		sniper_view.camera_offset_vertical = 0.0
 		third_person_view.camera_offset_horizontal = 0.0
 		third_person_view.camera_offset_vertical = 0.0
+
+func find_ship_closest_to_screen_center():
+	# Find the ship closest to the center of the screen
+	var ships = get_node("/root/Server/GameWorld/Players").get_children()
+	var closest_ship = null
+	var closest_distance = INF
+
+	for ship in ships:
+		if not (ship is Ship):
+			continue
+
+		# Check if ship is visible on screen
+		if is_position_visible_on_screen(ship.global_position):
+			var screen_pos = get_viewport().get_camera_3d().unproject_position(ship.global_position)
+			var screen_center = get_viewport().get_visible_rect().size / 2.0
+			var center_distance = screen_pos.distance_to(screen_center)
+
+			if center_distance < closest_distance:
+				closest_distance = center_distance
+				closest_ship = ship
+
+	return closest_ship
 
 func find_lockable_target():
 	# Find all ships in the scene
