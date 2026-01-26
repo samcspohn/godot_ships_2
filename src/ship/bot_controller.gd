@@ -1106,7 +1106,7 @@ func patrol_behavior(_delta: float):
 			opposite_side_reached = true
 			has_patrol_target = false  # Reset patrol target when transitioning phases
 			if debug_draw and ship.get_tree():
-				BattleCamera.draw_debug_sphere(ship.get_tree().root, ship_pos + Vector3(0, 20, 0), 150, Color.GREEN, 2.0)
+				_Debug.sphere(ship_pos + Vector3(0, 20, 0), 150, Color.GREEN, 2.0)
 	else:
 		# Second phase: Patrol within patrol radius around center
 		# Check if we need a new patrol target or if we've reached the current one
@@ -1117,7 +1117,7 @@ func patrol_behavior(_delta: float):
 
 			if debug_draw and ship.get_tree():
 				# Show new patrol target with a distinct marker
-				BattleCamera.draw_debug_sphere(ship.get_tree().root, current_patrol_target + Vector3(0, 10, 0), 80, Color.WHITE, 1.0)
+				_Debug.sphere(current_patrol_target + Vector3(0, 10, 0), 80, Color.WHITE, 1.0)
 
 		target_position = current_patrol_target
 
@@ -1137,7 +1137,7 @@ func patrol_behavior(_delta: float):
 	# Debug visualization for strategic navigation
 	if debug_draw and ship.get_tree():
 		var debug_color = Color.CYAN if not opposite_side_reached else Color.MAGENTA
-		BattleCamera.draw_debug_sphere(ship.get_tree().root, target_position, 100, debug_color, 0.1)
+		_Debug.sphere(target_position, 100, debug_color, 0.1)
 
 func fire_at_target():
 	if !target_ship or !is_instance_valid(target_ship):
@@ -1325,7 +1325,7 @@ func is_land_blocking_torpedo_path(from_pos: Vector3, to_pos: Vector3) -> bool:
 	# 		if collision.position.y > -2.0:
 	# 			# Debug visualization
 	# 			if debug_draw and ship.get_tree():
-	# 				BattleCamera.draw_debug_sphere(ship.get_tree().root, collision.position, 30, Color.RED, 0.5)
+	# 				_Debug.sphere(collision.position, 30, Color.RED, 0.5)
 	# 			return true
 
 	# # Also do a direct horizontal ray check at water level to catch islands
@@ -1344,7 +1344,7 @@ func is_land_blocking_torpedo_path(from_pos: Vector3, to_pos: Vector3) -> bool:
 
 	# 	if dist_to_collision < dist_to_target:
 	# 		if debug_draw and ship.get_tree():
-	# 			BattleCamera.draw_debug_sphere(ship.get_tree().root, direct_collision.position, 50, Color.ORANGE, 0.5)
+	# 			_Debug.sphere(direct_collision.position, 50, Color.ORANGE, 0.5)
 	# 		return true
 
 	return false
@@ -1402,8 +1402,8 @@ func would_hit_friendly_ship(from_pos: Vector3, to_pos: Vector3, torpedo_speed: 
 			if distance_at_t < friendly_fire_safety_margin:
 				# Debug visualization
 				if debug_draw and ship.get_tree():
-					BattleCamera.draw_debug_sphere(ship.get_tree().root, torpedo_pos, 40, Color.YELLOW, 0.5)
-					BattleCamera.draw_debug_sphere(ship.get_tree().root, ally_pos, 40, Color.GREEN, 0.5)
+					_Debug.sphere(torpedo_pos, 40, Color.YELLOW, 0.5)
+					_Debug.sphere(ally_pos, 40, Color.GREEN, 0.5)
 				return true
 
 	return false
@@ -1466,14 +1466,14 @@ func apply_collision_avoidance(base_heading: float) -> float:
 
 					# Debug visualization for moving objects
 					if debug_draw and ship.get_tree():
-						BattleCamera.draw_debug_sphere(ship.get_tree().root, predicted_position, 70, Color.RED, 0.1)
+						_Debug.sphere(predicted_position, 70, Color.RED, 0.1)
 
 			# Debug visualization for all obstacles
 			if debug_draw and ship.get_tree():
 				var debug_color = Color.YELLOW if obstacle_velocity.length() < 1.0 else Color.ORANGE
 				if is_ship_collision and recovery_state != RecoveryState.NORMAL:
 					debug_color = Color.GRAY  # Show reduced priority obstacles as gray
-				BattleCamera.draw_debug_sphere(ship.get_tree().root, collision.position, 50, debug_color, 0.1)
+				_Debug.sphere(collision.position, 50, debug_color, 0.1)
 
 			# Calculate avoidance direction (perpendicular to obstacle direction)
 			var to_obstacle = Vector2(collision_point.x - ship_position.x, collision_point.z - ship_position.z).normalized()
@@ -1507,7 +1507,7 @@ func apply_collision_avoidance(base_heading: float) -> float:
 		if debug_draw and ship.get_tree():
 			var final_dir = Vector3(cos(modified_heading), 0, sin(modified_heading))
 			var final_end = ship_position + final_dir * 1000
-			BattleCamera.draw_debug_sphere(ship.get_tree().root, final_end, 100, Color.BLUE, 0.1)
+			_Debug.sphere(final_end, 100, Color.BLUE, 0.1)
 
 	# Emergency collision prevention - check directly ahead
 	var emergency_check = check_emergency_collision()
@@ -1523,7 +1523,7 @@ func apply_collision_avoidance(base_heading: float) -> float:
 
 		# Debug emergency avoidance
 		if debug_draw and ship.get_tree():
-			BattleCamera.draw_debug_sphere(ship.get_tree().root, ship_position + Vector3(0, 15, 0), 100, Color.MAGENTA, 0.1)
+			_Debug.sphere(ship_position + Vector3(0, 15, 0), 100, Color.MAGENTA, 0.1)
 
 	return modified_heading
 
@@ -1558,7 +1558,7 @@ func check_lateral_obstacles() -> Vector2:
 
 		if debug_draw and ship.get_tree():
 			var color = Color.GRAY if (in_recovery and is_ship) else Color.CYAN
-			BattleCamera.draw_debug_sphere(ship.get_tree().root, left_collision.position, 30, color, 0.1)
+			_Debug.sphere(left_collision.position, 30, color, 0.1)
 
 	# Check right side
 	var right_heading = ship_heading + PI/2
@@ -1578,7 +1578,7 @@ func check_lateral_obstacles() -> Vector2:
 
 		if debug_draw and ship.get_tree():
 			var color = Color.GRAY if (in_recovery and is_ship) else Color.CYAN
-			BattleCamera.draw_debug_sphere(ship.get_tree().root, right_collision.position, 30, color, 0.1)
+			_Debug.sphere(right_collision.position, 30, color, 0.1)
 
 	# Check diagonal front-left and front-right for early warning
 	var diag_distance = lateral_check_distance * 1.5

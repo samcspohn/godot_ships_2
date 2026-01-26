@@ -11,12 +11,16 @@ func init(_ship: Ship) -> void:
 	params.shell2._secondary = true
 	params.init(_ship)
 	guns.sort_custom(func(a, b):
-		if a.get_parent().position.z < b.get_parent().position.z:
-			return true
-		elif a.get_parent().position.z == b.get_parent().position.z:
-			return a.get_parent().position.x < b.get_parent().position.x
+		# sort by side (x) then z
+		var _a = a.get_parent()
+		var _b = b.get_parent()
+		if sign(_a.position.x) == sign(_b.position.x):
+			if _a.position.z <= _b.position.z:
+				return true
+			else:
+				return false
 		else:
-			return false
+			return sign(_a.position.x) < sign(_b.position.x)
 	)
 	for g in guns:
 		g._ship = _ship

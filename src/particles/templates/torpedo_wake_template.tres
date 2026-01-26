@@ -12,7 +12,7 @@ gradient = SubResource("Gradient_wake")
 
 [sub_resource type="Curve" id="Curve_scale_wake"]
 bake_resolution = 256
-_data = [Vector2(0, 0.089999914), 0.0, 10.780102, 0, 0, Vector2(0.052307695, 0.3372237), 1.764742, 1.764742, 0, 0, Vector2(0.72307694, 1), 0.2, 0.2, 0, 0, Vector2(1, 0.6), -0.5, 0.0, 0, 0]
+_data = [Vector2(0, 0), 0.0, 27.016796, 0, 0, Vector2(0.052307695, 0.5687962), 1.2495447, 1.2495447, 0, 0, Vector2(0.72307694, 1), 0.2, 0.2, 0, 0, Vector2(1, 0.6), -3.258986, 0.0, 0, 0]
 point_count = 4
 
 [sub_resource type="CurveTexture" id="CurveTexture_scale_wake"]
@@ -34,7 +34,7 @@ damping_min = 0.5
 damping_max = 0.8
 lifetime_min = 4.0
 lifetime_max = 5.0
-scale_min = Vector2(3, 3)
-scale_max = Vector2(8, 8)
+scale_min = Vector2(3, 4)
+scale_max = Vector2(8, 4)
 billboard_mode = 2
 fixed_rotation = Vector3(90, 0, 0)

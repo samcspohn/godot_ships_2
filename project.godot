@@ -30,6 +30,7 @@ driver/driver="ALSA"
 
 [autoload]
 
+Debug="*res://src/autoload/debug.gd"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"
 UpgradeManager="*res://src/autoload/upgrade_manager.gd"

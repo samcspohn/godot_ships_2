@@ -509,7 +509,7 @@ func process_player_input() -> void:
 	# send_aim_input.rpc_id(1, cam.aim_position)
 
 	#print(cam.aim_position)
-	# BattleCamera.draw_debug_sphere(get_tree().root, cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
+	# _Debug.sphere(cam.aim_position, 5, Color(1, 0.5, 0), 1.0 / 61.0)
 
 @rpc("any_peer")
 func kill():

@@ -478,7 +478,7 @@ func draw_camera_fov_arc(range: float) -> void:
 	var fov_horizontal_rad = 2.0 * atan(tan(fov_vertical_rad / 2.0) * aspect_ratio)
 
 	# Get player position on minimap (camera follows player ship)
-	var minimap_center = world_to_minimap_position(player_ship.global_position)
+	var minimap_center = world_to_minimap_position((battle_camera as BattleCamera).follow_ship.global_position)
 
 	# Calculate arc radius on minimap
 	var arc_radius = range * scale_factor.x

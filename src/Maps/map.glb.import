@@ -13,7 +13,7 @@ dest_files=["res://.godot/imported/map.glb-f9d25658646623b06ab24df3752a3a68.scn"
 
 [params]
 
-nodes/root_type="NavigationRegion3D"
+nodes/root_type="Node3D"
 nodes/root_name=""
 nodes/root_script=null
 nodes/apply_root_scale=true
@@ -38,6 +38,13 @@ materials/extract=0
 materials/extract_format=0
 materials/extract_path=""
 _subresources={
+"materials": {
+"Material.002": {
+"use_external/enabled": false,
+"use_external/fallback_path": "",
+"use_external/path": ""
+}
+},
 "nodes": {
 "PATH:Plane": {
 "generate/physics": true

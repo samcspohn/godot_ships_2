@@ -156,10 +156,7 @@ ship_name = "Bismarck"
 ship_class = 0
 tier = 8
 ship_model_glb_path = "uid://btam5g21aiiqg"
-auto_extract_armor = null
 use_hull_collision = true
-use_segmented_hull = null
-use_mirror_symmetry = null
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_5bir6")]
 
@@ -180,7 +177,7 @@ params = SubResource("Resource_afiln")
 guns = [NodePath("../../TurretMount_GER_380mm_2b/GER_380mm_2b"), NodePath("../../TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"), NodePath("../../TurretMount_GER_380mm_2b_rf_001/GER_380mm_2b_rf_001"), NodePath("../../TurretMount_GER_380mm_2b_rf_002/GER_380mm_2b_rf_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" node_paths=PackedStringArray("sub_controllers")]
-sub_controllers = [NodePath("SecSubController"), NodePath("SecSubController2")]
+sub_controllers = [NodePath("SecSubController"), NodePath("SecSubController2"), NodePath("SecSubController")]
 
 [node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" node_paths=PackedStringArray("guns")]
 script = ExtResource("5_5tc2e")
@@ -198,14 +195,16 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 max_speed_knots = 30.5
 acceleration_time = 40.0
 deceleration_time = 30.0
+reverse_speed_ratio = 0.5
 turning_circle_radius = 400.0
 turn_speed_loss = 0.15
 rudder_response_time = 12.0
-max_turn_roll_angle = 15.0
+max_turn_roll_angle = 5.0
 roll_response_time = 2.0
 righting_strength = 5.0
 righting_damping = 3.0
 pitch_righting_strength = 8.0
+nav_size = 2
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_kp8pn")

@@ -3,12 +3,14 @@ class_name ShipMovementV4
 
 const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 
+var debug_log: bool = false
+
 # Direct movement properties
 @export var max_speed_knots: float
 var max_speed: float = 15.0  # Maximum speed in m/s
 @export var acceleration_time: float = 8.0  # Time to reach full speed from stop
 @export var deceleration_time: float = 4.0  # Time to stop from full speed
-@export var reverse_speed_ratio: float = 0.4  # Reverse speed as ratio of max speed
+@export var reverse_speed_ratio: float = 0.5  # Reverse speed as ratio of max speed
 
 # Turning properties
 @export var turning_circle_radius: float = 200.0  # Turning circle radius in meters at full rudder and full speed
@@ -17,7 +19,7 @@ var max_speed: float = 15.0  # Maximum speed in m/s
 @export var rudder_response_time: float = 1.5  # Time for rudder to move from center to full
 
 # Roll and stability properties
-@export var max_turn_roll_angle: float = 10.0  # Maximum roll angle in degrees when turning at full speed/rudder
+@export var max_turn_roll_angle: float = 5.0  # Maximum roll angle in degrees when turning at full speed/rudder
 @export var roll_response_time: float = 2.0  # How quickly the ship rolls into a turn
 @export var righting_strength: float = 5.0  # How strongly the ship rights itself (metacentric height factor)
 @export var righting_damping: float = 3.0  # Damping to prevent oscillation
@@ -52,6 +54,25 @@ var current_turn_roll: float = 0.0  # Current roll induced by turning
 
 # Grounded state - ship is touching land
 var is_grounded: bool = false
+var grounded_position: Variant = null
+
+enum __NavMode {
+	NAV_MODE_IDLE,
+	NAV_MODE_AVOID,
+	NAV_MODE_FOLLOW,
+	NAV_MODE_WAYPOINT,
+	NAV_MODE_TARGET
+}
+
+enum NavSize {
+	NAV_LIGHT,
+	NAV_MEDIUM,
+	NAV_HEAVY,
+	NAV_SUPERHEAVY,
+	NAV_ULTRAHEAVY
+}
+
+@export var nav_size: NavSize = NavSize.NAV_MEDIUM
 
 func _ready() -> void:
 	ship = $"../.." as RigidBody3D
@@ -105,28 +126,36 @@ func _detect_ship_dimensions() -> void:
 	else:
 		push_warning("ShipMovementV4: Could not detect ship dimensions, using defaults")
 
+func get_contacts() -> Array[Dictionary]:
+	return ship.last_contacts if ship else []
+
 # Check for land collision using get_colliding_bodies()
 func _check_land_collision() -> void:
-	var colliding_bodies = ship.get_colliding_bodies()
+	# var colliding_bodies = ship.get_colliding_bodies()
+	var colliding_bodies = get_contacts()
 
 	# Check each colliding body to see if we're touching land
 	var touching_land := false
-	for body in colliding_bodies:
+	for dict in colliding_bodies:
+		var body = dict["collider"]
 		# print(body.name)
 		# if body.has:
 			# Check if this is land (collision layer 1)
 		if body.collision_layer & 1:
 			touching_land = true
+			ship.apply_central_impulse(ship.mass * 0.5 * (ship.position - dict["point"]).normalized())
+			grounded_position = dict["point"]
 			break
 
 	# Update grounded state
 	if touching_land and not is_grounded:
 		is_grounded = true
-		ship.linear_damp = 20.0
+		ship.linear_damp = 3.0
 		engine_power = 0.0  # Immediately cut engine power
 	elif not touching_land and is_grounded:
 		is_grounded = false
 		ship.linear_damp = 0.2
+		grounded_position = null
 
 func _calculate_hull_aabb_from_meshes(root: Node) -> AABB:
 	var result: Dictionary = {"aabb": AABB(), "found": false}
@@ -157,7 +186,6 @@ func _collect_mesh_aabb_recursive(node: Node, result: Dictionary) -> void:
 
 	for child in node.get_children():
 		_collect_mesh_aabb_recursive(child, result)
-
 
 func set_movement_input(input_array: Array) -> void:
 	# Expect [throttle, rudder]
@@ -213,13 +241,13 @@ func _physics_process(delta: float) -> void:
 
 	# Don't apply thrust if grounded
 	if is_grounded:
-		print("Grounded")
-		engine_power = move_toward(engine_power, 0.0, delta * 2.0)
+		print("Grounded 2")
+		engine_power = move_toward(engine_power, 0.0, delta * 0.5)
 		# Still allow some movement to "unstick" if player reverses
-		if throttle_level == -1:  # Reverse
-			var reverse_force = forward * -0.1 * max_speed * ship.mass
-			ship.apply_central_force(reverse_force)
-		return
+		# if throttle_level == -1:  # Reverse
+		# 	var reverse_force = forward * -0.1 * max_speed * ship.mass
+		# 	ship.apply_central_force(reverse_force)
+		# return
 
 	var turn_thrust_ratio = 1.0
 	if abs(rudder_input) > 0.01 and current_speed:
@@ -228,12 +256,15 @@ func _physics_process(delta: float) -> void:
 		var stern_offset = -forward * half_length  # Vector from center to stern
 		# Initiation: target_omega derived from desired turn
 		var turn_radius := turning_circle_radius
-		var target_omega := current_speed / turn_radius * -rudder_input  # full rudder turn rate
+		var target_omega: float = max_speed * (1 - turn_speed_loss * abs(rudder_input)) / turn_radius * -rudder_input  # full rudder turn rate
+		var target_omega_curr: float = current_speed / turn_radius * -rudder_input
+		var weight = 0.8
+		target_omega = target_omega_curr * weight + target_omega * (1 - weight)
 		var fulcrum_offset = -half_length
 
 		var F := calculate_lateral_force(ship.mass, ship_length, turning_circle_radius * 2.0,
 										  fulcrum_offset, ship.angular_damp,
-										  ship.angular_velocity.y * 0.95, target_omega, delta)
+										  ship.angular_velocity.y, target_omega, delta)
 		ship.apply_force(-flat_right * F, stern_offset)
 		engine_power = move_toward(engine_power, target_power * (1 - turn_speed_loss * abs(rudder_input)), delta / acceleration_time)
 	else:
@@ -245,8 +276,15 @@ func _physics_process(delta: float) -> void:
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
 
-	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle - 10.0), deg_to_rad(max_turn_roll_angle + 10.0))
+	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle + 10.0), deg_to_rad(max_turn_roll_angle + 10.0))
 	ship.rotation.x = clamp(ship.rotation.x, -PI / 6.0, PI / 6.0)
+
+	if debug_log and ship.name == "1" and Engine.get_physics_frames() % 16 == 0:
+		print("Ship 1 Debug Info:")
+		print("Current Speed:", get_current_speed_kmh(), "km/h")
+		print("Current Speed (Knots):", get_current_speed_knots(), "knots")
+		print("Actual Turning Radius:", get_actual_turning_radius(), "m")
+		print("Throttle Percentage:", get_throttle_percentage(), "%")
 
 # Utility functions for debugging and external access
 func get_current_speed_kmh() -> float:

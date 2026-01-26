@@ -1057,7 +1057,7 @@ func setup_team_tracker():
 		setup_team_tracker.call_deferred()
 		return
 
-	var friendly_ships = server.get_team_ships(camera_controller._ship.team.team_id)
+	var friendly_ships = server._get_team_ships(camera_controller._ship.team.team_id)
 	var enemy_ships = server._get_enemy_ships(camera_controller._ship.team.team_id)
 
 	update_team_container(friendly_ships_container, friendly_ships, true)
@@ -1083,7 +1083,7 @@ func update_team_tracker():
 		return
 
 	# Get all ships from server (including dead ones)
-	var friendly_ships = server.get_team_ships(friendly_team_id)
+	var friendly_ships = server._get_team_ships(friendly_team_id)
 	var enemy_ships = server._get_enemy_ships(friendly_team_id)
 	#print("Friendly ships count: ", friendly_ships.size(), " | Enemy ships count: ", enemy_ships.size())
 

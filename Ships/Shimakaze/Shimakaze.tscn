@@ -63,7 +63,7 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_omo1p"]
 resource_local_to_scene = true
 script = ExtResource("4_o13ib")
-radius = 4000.0
+radius = 3500.0
 bloom_duration = 12.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
@@ -89,7 +89,7 @@ damage = 680.0
 size = 2.0
 caliber = 127.0
 mass = 20.3
-fire_buildup = 10.0
+fire_buildup = 12.0
 type = 0
 overmatch = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
@@ -104,6 +104,7 @@ h_grouping = 2.1
 v_grouping = 2.1
 base_spread = 0.005
 reload_time = 7.0
+traverse_speed = 10.0
 _range = 10000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
@@ -171,10 +172,7 @@ ship_name = "Shimakaze"
 ship_class = 2
 tier = 10
 ship_model_glb_path = "uid://cd12snnrw56y0"
-auto_extract_armor = null
 use_hull_collision = true
-use_segmented_hull = null
-use_mirror_symmetry = null
 
 [node name="Modules" parent="." index="0" instance=ExtResource("2_x3pwv")]
 
@@ -198,16 +196,17 @@ guns = [NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr/IJN_127mm_2b_3rd_yr"), N
 
 [node name="MovementController" parent="Modules" index="4"]
 max_speed_knots = 41.0
-acceleration_time = 12.0
-deceleration_time = 12.0
+acceleration_time = 9.0
+deceleration_time = 9.0
 turning_circle_radius = 250.0
 turn_speed_loss = 0.15
-rudder_response_time = 5.0
-max_turn_roll_angle = 10.0
+rudder_response_time = 3.5
+max_turn_roll_angle = 5.0
 roll_response_time = 2.0
 righting_strength = 5.0
 righting_damping = 3.0
 pitch_righting_strength = 8.0
+nav_size = 0
 
 [node name="FireManager" parent="Modules" index="5" node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_qjvt5")
@@ -282,7 +281,7 @@ max_rotation_angle = 5.705911526789212
 shape = SubResource("ConvexPolygonShape3D_2by4h")
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="20"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -67.025024)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -64.96127)
 script = ExtResource("22_jewkh")
 template_name = "torpedo_wake"
 size_multiplier = 6.0

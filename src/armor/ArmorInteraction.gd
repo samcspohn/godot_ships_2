@@ -473,10 +473,10 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
-	# if true:
-		for e in events:
-			print(e)
+	# if damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN:
+	# # if true:
+	# 	for e in events:
+	# 		print(e)
 
 	# print("hit result is %s at pos (%.2f, %.2f, %.2f) on ship %s" % [
 	# 	HitResult.keys()[HitResult.values().find(damage_result)],

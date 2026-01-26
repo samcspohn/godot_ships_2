@@ -12,8 +12,10 @@ var team_info = null
 var team_file_path = ""
 var team = {}
 var players_spawned_bots = false  # Track if bots have been spawned for single player
-var team_0_valid_targets = []
-var team_1_valid_targets = []
+var team_0_valid_targets: Array[Ship] = []
+var team_1_valid_targets: Array[Ship] = []
+var team_0_ships: Array[Ship] = []
+var team_1_ships: Array[Ship] = []
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
 var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
@@ -74,6 +76,8 @@ func reconnect(id, player_name):
 func validate_connection():
 	# Implement validation logic if needed
 	NetworkManager.player_controller_connected = true
+
+var bot_id: int = 0
 
 func spawn_player(id, player_name):
 	print("spawn_player called with ID: ", id, ", player_name: ", player_name)
@@ -157,6 +161,8 @@ func spawn_player(id, player_name):
 		bot_controller.name = "BotController"
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
+		bot_controller.bot_id = bot_id
+		bot_id += 1
 	else:
 		# Only add player control for human players
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
@@ -218,10 +224,10 @@ func spawn_player(id, player_name):
 		var pid = players[p_name][2]
 		# notify new client of current players
 		if not is_bot:
-			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship)
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV3)
 		#notify current players of new player
 		if not p.team.is_bot:
-			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship)
+			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship, is_bot)
 
 	#spawn_players_client.rpc_id(id, id,player_name,spawn_pos)
 
@@ -244,13 +250,12 @@ func spawn_player(id, player_name):
 				var player_data = team_info["team"][team_player_id]
 				if player_data.get("is_bot", false):
 					# Spawn bot with unique ID
-					var bot_id = team_player_id
-					print("Spawning bot: ID=", bot_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
+					print("Spawning bot: ID=", team_player_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
 
 @rpc("call_remote", "reliable")
-func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship):
+func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 
 	if !Minimap.is_initialized:
 		Minimap.server_take_map_snapshot(get_viewport())
@@ -264,15 +269,6 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship):
 
 	# Check if this is the local player or a bot by checking team info
 	var is_local_player = (int(id) == multiplayer.get_unique_id())
-	var is_bot = false
-
-	# Check team info for bot status
-	if team_info and team_info.has("team"):
-		for team_player_id in team_info["team"]:
-			if str(id) == str(int(team_player_id) + 1000) or team_player_id == str(id):  # Check both bot ID mapping and regular ID
-				var player_data = team_info["team"][team_player_id]
-				is_bot = player_data.get("is_bot", false)
-				break
 
 	# Only add player control for local human player
 	if is_local_player and not is_bot:
@@ -378,14 +374,34 @@ func _get_enemy_ships(team_id: int) -> Array:
 			enemies.append(ship)
 	return enemies
 
-func get_team_ships(team_id: int) -> Array:
-	var team_ships: Array = []
+func get_team_ships(team_id: int) -> Array[Ship]:
+	# var team_ships: Array = []
+	# for p_name in players:
+	# 	# print("Checking player ID: ", p, " current HP: ", (players[p][0] as Ship).health_controller.current_hp)
+	# 	var ship: Ship = players[p_name][0]
+	# 	if is_instance_valid(ship) and ship.team.team_id == team_id:
+	# 		team_ships.append(ship)
+	# return team_ships
+	if team_id == 0:
+		return team_0_ships
+	else:
+		return team_1_ships
+
+func _get_team_ships(team_id: int) -> Array[Ship]:
+	var team_ships: Array[Ship] = []
 	for p_name in players:
-		# print("Checking player ID: ", p, " current HP: ", (players[p][0] as Ship).health_controller.current_hp)
 		var ship: Ship = players[p_name][0]
 		if is_instance_valid(ship) and ship.team.team_id == team_id:
 			team_ships.append(ship)
 	return team_ships
+
+func _get_team(team_id: int) -> Array[Ship]:
+	var ships: Array[Ship] = []
+	for p_name in players:
+		var ship: Ship = players[p_name][0]
+		if ship.team.team_id == team_id and ship.is_alive():
+			ships.append(ship)
+	return ships
 
 func _get_valid_targets(team_id: int) -> Array[Ship]:
 	var targets: Array[Ship] = []
@@ -485,6 +501,8 @@ func is_point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 	return true
 
 func _physics_process(_delta: float) -> void:
+	team_0_ships = _get_team(0)
+	team_1_ships = _get_team(1)
 	if !_Utils.authority():
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state
@@ -650,6 +668,7 @@ func _physics_process(_delta: float) -> void:
 
 	team_0_valid_targets = _get_valid_targets(0)
 	team_1_valid_targets = _get_valid_targets(1)
+
 
 
 	# for p_name in players: # for every player, synchronize self with others - TODO: sync all to self instead

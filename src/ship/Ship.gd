@@ -40,6 +40,9 @@ var dynamic_mods: Array = [] # checked every frame for changes, affects _params
 
 var peer_id: int = -1 # our unique peer ID assigned by server
 
+# Contact data from last physics frame (each entry: {point: Vector3, collider: Object})
+var last_contacts: Array[Dictionary] = []
+
 var frustum_planes: Array[Plane] = []
 var beam: float = 0.0
 @export var ship_name: String = ""
@@ -69,6 +72,14 @@ signal reset_dynamic_mods
 var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 
+func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
+	last_contacts.clear()
+	for i in range(state.get_contact_count()):
+		last_contacts.append({
+			"point": state.get_contact_local_position(i),
+			"collider": state.get_contact_collider_object(i)
+		})
+
 func add_static_mod(mod_func):
 	static_mods.append(mod_func)
 	update_static_mods = true
@@ -87,6 +98,8 @@ func remove_dynamic_mod(mod_func):
 	dynamic_mods.erase(mod_func)
 	update_dynamic_mods = true
 
+func is_alive():
+	return health_controller.is_alive()
 
 func _enable_weapons():
 	if !initialized:

@@ -71,6 +71,8 @@ var ray_exclude: Array = [] # Nodes to exclude from raycasting
 var zoom_accumulator: float = 0.0
 var zoom_smoothing: float = 1.0 # Adjust this value to control smoothing
 
+
+
 func set_angle(angle: float):
 	aim.rotation_degrees_horizontal = angle
 
@@ -87,6 +89,10 @@ func _ready():
 	# Initial setup
 	current_fov = default_fov
 	fov = current_fov
+
+	# Register with Debug autoload
+	if has_node("/root/Debug"):
+		get_node("/root/Debug").register_camera(self)
 
 	# Load the UI scene instead of creating it programmatically
 	var ui_scene = preload("res://src/camera/camera_ui.tscn")
@@ -166,6 +172,11 @@ func _process(delta):
 		zoom_accumulator -= zoom_delta
 	# Update camera position and rotation
 	_update_target_lock()
+
+	# Update Debug autoload with current follow ship
+	if has_node("/root/Debug"):
+		get_node("/root/Debug").set_follow_ship(follow_ship, _ship)
+
 	if last_non_free_look_mode == CameraMode.THIRD_PERSON:
 		third_person_view._update_camera_transform()
 	else:
@@ -337,33 +348,7 @@ func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool
 	else:
 		return angle_rad
 
-# Add a debug sphere at global location.
-static func draw_debug_sphere(scene_root: Node, location, size, color = Color(1, 0, 0), duration: float = 3.0):
-	# Will usually work, but you might need to adjust this.
-	# Create sphere with low detail of size.
-	var sphere = SphereMesh.new()
-	sphere.radial_segments = 4
-	sphere.rings = 4
-	sphere.radius = size
-	sphere.height = size * 2
-	# Bright red material (unshaded).
-	var material = StandardMaterial3D.new()
-	material.albedo_color = color
-	material.flags_unshaded = true
-	sphere.surface_set_material(0, material)
 
-	# Add to meshinstance in the right place.
-	var node = MeshInstance3D.new()
-	node.mesh = sphere
-	var t = Timer.new()
-	t.wait_time = duration
-	t.timeout.connect(func():
-		node.queue_free()
-		)
-	t.autostart = true
-	node.add_child(t)
-	scene_root.add_child(node)
-	node.global_transform.origin = location
 
 
 func set_camera_mode(mode):
@@ -397,7 +382,7 @@ func set_camera_mode(mode):
 		# Switch to sniper mode if zoomed in enough
 		current_mode = CameraMode.SNIPER
 		last_non_free_look_mode = CameraMode.SNIPER
-		draw_debug_sphere(get_tree().root, aim_position, 5)
+		_Debug.sphere(aim_position, 5)
 		# print("DEBUG: SNIPER")
 		# print(aim_position.y)
 		var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
@@ -424,7 +409,7 @@ func set_camera_mode(mode):
 		sniper_view.sniper_height = sniper_height
 		var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
 		var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
-		draw_debug_sphere(get_tree().root, intersection_point, 5, Color.GREEN)
+		_Debug.sphere(intersection_point, 5, Color.GREEN)
 		#sniper_view.rotation.x = angle
 		aim = sniper_view
 
