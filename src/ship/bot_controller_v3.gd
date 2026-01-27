@@ -212,7 +212,7 @@ func get_threat_vector() -> Dictionary:
 			if angle_ > PI / 2.0:
 				angle_ = PI - angle_
 			angle_ = angle_ / PI # between 0 and 1, 0 directly directly forward, 1 directly perpendicular
-			var weight_base = clamp(1.3 - angle_, 0.0, 1.0) # between 0 and 1, 1 directly forward, 0.3 directly perpendicular
+			var weight_base = clamp(1.5 - angle_, 0.0, 1.0) # between 0 and 1, 1 directly forward, 0.5 directly perpendicular
 			_debug_turn_sim_points_undesired.push_back(result.position)
 			threat_vector += result.position - _ship.global_position
 			weight_base = weight_base * (1.0 - threat_vector.length() / movement.turning_circle_radius * 2.5)
