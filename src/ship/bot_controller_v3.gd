@@ -19,6 +19,10 @@ var target: Ship
 var destination: Vector3 = Vector3.ZERO
 var navigation_proxy: Node3D
 var navigation_agent: NavigationAgent3D
+var _avoidance_velocity: Vector3 = Vector3.ZERO
+var _desired_velocity: Vector3 = Vector3.ZERO
+var _use_avoidance_heading: bool = false
+var _avoidance_heading: float = 0.0
 var path: PackedVector3Array
 var waypoint: Vector3 = Vector3.ZERO
 var desired_heading: float
@@ -34,7 +38,7 @@ var target_scan_timer: float = 0.0
 ## Number of simulation points per turn direction
 const TURN_SIM_POINTS: int = 32
 ## Tolerance for considering tangent aligned with waypoint (in radians)
-const TANGENT_ALIGNMENT_TOLERANCE: float = 0.1
+const TANGENT_ALIGNMENT_TOLERANCE: float = TAU / TURN_SIM_POINTS
 
 const RECALC_FRAME: int = 4
 
@@ -53,11 +57,14 @@ func _ready() -> void:
 	navigation_agent = NavigationAgent3D.new()
 	navigation_agent.radius = movement.ship_length / 2 + 50.0
 	# navigation_agent.border_size = 50.0
-	navigation_agent.path_desired_distance = movement.ship_length / 2 + 50.0
+	navigation_agent.path_desired_distance = movement.turning_circle_radius
 	navigation_agent.path_postprocessing = NavigationPathQueryParameters3D.PATH_POSTPROCESSING_CORRIDORFUNNEL
 	navigation_agent.simplify_path = true
 	navigation_agent.avoidance_enabled = true
-	navigation_agent.neighbor_distance = movement.ship_length * 2.0
+	navigation_agent.neighbor_distance = movement.ship_length
+	navigation_agent.max_speed = movement.max_speed
+	navigation_agent.time_horizon_agents = movement.rudder_response_time
+	navigation_agent.velocity_computed.connect(_on_velocity_computed)
 	# path = navigation_agent.get_current_navigation_path()
 	# server_node.get_node("GameWorld/Env").get_child(0).add_child(navigation_proxy)
 	assign_nav_agent(server_node.get_node("GameWorld/Env").get_child(0))
@@ -77,22 +84,31 @@ func _physics_process(_delta: float) -> void:
 	_update_proxy()
 	waypoint = navigation_agent.get_next_path_position()
 
+	# Feed velocity to avoidance system
+	_update_avoidance_velocity()
+
 	# Update debug heading vector for remote visualization
 	_update_debug_heading_vector()
 
 	if movement.is_grounded or grounded_position != null:
 		if (grounded_position == null or grounded_timer > 5.0) and movement.is_grounded:
 			grounded_position = movement.grounded_position
-			var dir_away_from_island = _ship.global_position - grounded_position
-			desired_heading = atan2(dir_away_from_island.x, dir_away_from_island.z)
+			var island = movement.grounded_island
+			var dir_away_from_collision = _ship.global_position - grounded_position
+			var dir_away_from_island = _ship.global_position - island.global_position
+			var final_dir = dir_away_from_collision.normalized() + dir_away_from_island.normalized()
+			desired_heading = atan2(final_dir.x, final_dir.z)
 			grounded_timer = 0.0
-		if _ship.global_position.distance_to(grounded_position) > movement.turning_circle_radius * 2.0:
+		if _ship.global_position.distance_to(grounded_position) > movement.turning_circle_radius * 1.25:
 			grounded_position = null
 			grounded_timer = 0.0
 		else:
 			grounded_timer += _delta
 	else:
 		desired_heading = calculate_desired_heading(waypoint)
+		# Apply avoidance heading override if needed (after normal heading calculation)
+		if _use_avoidance_heading:
+			desired_heading = _avoidance_heading
 	apply_ship_controls()
 
 
@@ -105,6 +121,32 @@ func _physics_process(_delta: float) -> void:
 		_aquire_target()
 
 	engage_target()
+
+func _update_avoidance_velocity() -> void:
+	# Calculate desired velocity toward waypoint
+	var to_waypoint := waypoint - _ship.global_position
+	to_waypoint.y = 0.0
+	if to_waypoint.length_squared() > 0.01:
+		_desired_velocity = to_waypoint.normalized() * movement.max_speed
+	else:
+		_desired_velocity = Vector3.ZERO
+
+	# Feed velocity to the navigation agent for avoidance computation
+	navigation_agent.set_velocity(_desired_velocity)
+
+func _on_velocity_computed(safe_velocity: Vector3) -> void:
+	_avoidance_velocity = safe_velocity
+	_use_avoidance_heading = false
+
+	# If avoidance velocity differs significantly from desired, store avoidance heading
+	if _avoidance_velocity.length_squared() > 0.01 and _desired_velocity.length_squared() > 0.01:
+		_avoidance_heading = atan2(_avoidance_velocity.x, _avoidance_velocity.z)
+		var desired_heading_to_waypoint := atan2(_desired_velocity.x, _desired_velocity.z)
+		var heading_diff: float = abs(_normalize_angle(_avoidance_heading - desired_heading_to_waypoint))
+
+		# If avoidance wants us to turn more than 15 degrees, flag to use avoidance heading
+		if heading_diff > deg_to_rad(15.0):
+			_use_avoidance_heading = true
 
 func _update_proxy():
 	if Engine.get_physics_frames() % RECALC_FRAME != bot_id % RECALC_FRAME:
@@ -147,7 +189,7 @@ func calculate_desired_heading(target_position: Vector3) -> float:
 ## 3. Checks if each point is valid on the navigation mesh
 ## 4. If the shorter turn is blocked, checks the longer turn
 ## 5. Returns true if the ship should use the longer (inverted) turn
-func should_invert_turn(ship_position: Vector3, waypoint: Vector3) -> bool:
+func should_invert_turn(ship_position: Vector3) -> bool:
 	if Engine.get_physics_frames() % RECALC_FRAME != bot_id % RECALC_FRAME:
 		return invert_turn_cached
 	var current_heading := get_ship_heading()
@@ -169,11 +211,20 @@ func should_invert_turn(ship_position: Vector3, waypoint: Vector3) -> bool:
 	var shorter_valid := _simulate_turn(ship_position, waypoint, current_heading, shorter_turn_right, _debug_turn_sim_points_desired)
 
 	var longer_valid
-	if !shorter_valid["valid"] or debug_draw_turn_sim:
+	if !shorter_valid["valid"]:
 		# Shorter turn is blocked, try the longer turn
 		longer_valid = _simulate_turn(ship_position, waypoint, current_heading, not shorter_turn_right, _debug_turn_sim_points_undesired, shorter_valid["points"] + 1)
 
 	invert_turn_cached = false if shorter_valid["valid"] else shorter_valid["points"] < longer_valid["points"]
+
+	if shorter_valid["valid"]:
+		invert_turn_cached = false
+		return false
+	elif longer_valid["valid"]:
+		invert_turn_cached = true
+		return true
+	else:
+		invert_turn_cached = longer_valid["points"] > shorter_valid["points"]
 
 	# Both turns are blocked - return false and let the ship handle it
 	# (might need to back up, which is handled by the grounded logic)
@@ -198,13 +249,13 @@ func _simulate_turn(ship_position: Vector3, waypoint: Vector3, current_heading: 
 
 	# Get current speed (clamped to a minimum for simulation purposes)
 	var forward := -_ship.global_transform.basis.z
-	var current_speed: float = max(_ship.linear_velocity.dot(forward), movement.max_speed * 0.25)
+	var current_speed: float = _ship.linear_velocity.dot(forward)
 
-	# Calculate effective turn radius (increases at lower speeds relative to max)
+	# Calculate effective turn radius (decreases at lower speeds relative to max)
 	# At full speed, radius = turning_circle_radius
 	# The turn radius scales with speed squared (roughly)
-	var speed_ratio := current_speed / movement.max_speed
-	var effective_radius: float = movement.turning_circle_radius / max(speed_ratio, 0.25)
+	var speed_ratio: float = current_speed / movement.max_speed * 0.25 + 0.75
+	var effective_radius: float = movement.turning_circle_radius * speed_ratio
 
 	# Calculate the center of the turning circle
 	# Right turn: center is to the right of the ship
@@ -225,21 +276,25 @@ func _simulate_turn(ship_position: Vector3, waypoint: Vector3, current_heading: 
 
 	# If turning the "wrong way", we need to go almost all the way around
 	var angle_diff := _normalize_angle(target_heading - current_heading)
+	if abs(angle_diff) < TANGENT_ALIGNMENT_TOLERANCE:
+		return {"points": 0, "valid": true}
+
 	if (angle_diff > 0) != turn_right:
 		total_angle_to_turn = TAU - total_angle_to_turn
 
-	# Calculate angular step for each simulation point
-	var max_angle: float = min(total_angle_to_turn + TANGENT_ALIGNMENT_TOLERANCE, TAU)
+	# # Calculate angular step for each simulation point
+	# var max_angle: float = min(total_angle_to_turn + TANGENT_ALIGNMENT_TOLERANCE, TAU)
+	var max_angle := TAU
 
 	# Fixed angle step - always TAU / TURN_SIM_POINTS (e.g., 36 degrees per step for 10 points)
-	var angle_step: float = TAU / float(TURN_SIM_POINTS)
+	var angle_step: float = TAU / float(TURN_SIM_POINTS) * sign(current_speed)
 
 	# Calculate number of points needed for this turn
-	var num_points: int = int(ceil(max_angle / angle_step))
+	var num_points: int = int(ceil(max_angle / abs(angle_step)))
 
 	# Account for rudder response time
 	# The ship won't immediately start turning at full rate
-	var time_per_point := angle_step * effective_radius / current_speed
+	var time_per_point: float = angle_step * effective_radius / abs(current_speed)
 	var rudder_delay_points := int(ceil(movement.rudder_response_time / time_per_point))
 
 	# Starting angle on the circle (ship position relative to center)
@@ -311,19 +366,20 @@ func apply_ship_controls():
 
 	desired_heading_offset_deg = rad_to_deg(angle_diff)
 
-	var invert := should_invert_turn(_ship.global_position, waypoint)
+	# var invert := should_invert_turn(_ship.global_position)
 
-	if invert and grounded_position != null:
-		# Flip the turn direction by inverting the angle difference
-		angle_diff = _normalize_angle(-sign(angle_diff) * (TAU - abs(angle_diff)))
+	# if invert:
+	# 	# Flip the turn direction by inverting the angle difference
+	# 	angle_diff = _normalize_angle(-sign(angle_diff) * (TAU - abs(angle_diff)))
 
 	var rudder := 0.0
 	# if grounded allow reverse more
-	var heading_tolerance := deg_to_rad(150) if grounded_position != null else deg_to_rad(90) # behind
+	var heading_tolerance := deg_to_rad(90) if grounded_position != null else deg_to_rad(130) # behind
 
 	if abs(angle_diff) < heading_tolerance:
 		rudder = -clampf(angle_diff * 4.0 / PI, -1.0, 1.0)
-		movement.set_movement_input([4.0, rudder])
+		var throttle: float = 1.0 - abs(angle_diff) / PI * 2.0 + 0.5
+		movement.set_movement_input([throttle, rudder])
 	elif angle_diff > 0: # reverse
 		rudder = -clampf((PI - angle_diff) * 4.0 / PI, -1.0, 1.0)
 		movement.set_movement_input([-1, rudder])
@@ -331,10 +387,14 @@ func apply_ship_controls():
 func _aquire_target():
 	target = behavior.pick_target(server_node.get_valid_targets(_ship.team.team_id))
 
+var target_lead = null
 func engage_target():
+	if target_lead != null:
+		_ship.artillery_controller.fire_next_ready()
+
 	if target != null and target.visible_to_enemy and target.is_alive():
 		var adjusted_target_pos = target.global_position + behavior.target_aim_offset(target)
-		var target_lead = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
+		target_lead = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
 			_ship.global_position,
 			adjusted_target_pos,
 			target.linear_velocity / ProjectileManager.shell_time_multiplier,
@@ -344,8 +404,8 @@ func engage_target():
 
 		if target_lead != null:
 			_ship.artillery_controller.set_aim_input(target_lead)
-			_ship.artillery_controller.fire_next_ready()
 	else:
+		target_lead = null
 		_ship.artillery_controller.set_aim_input(destination)
 
 func assign_nav_agent(map: Node):

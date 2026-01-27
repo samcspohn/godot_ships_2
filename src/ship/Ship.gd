@@ -204,6 +204,8 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 	artillery_controller.set_aim_input(aim_point)
 
 func _process(delta: float) -> void:
+	if !visible_to_enemy:
+		return
 	var cam = get_viewport().get_camera_3d()
 	if cam != null:
 		if cam.is_position_in_frustum((global_position)) and \

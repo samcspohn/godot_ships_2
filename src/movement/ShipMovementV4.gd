@@ -55,6 +55,7 @@ var current_turn_roll: float = 0.0  # Current roll induced by turning
 # Grounded state - ship is touching land
 var is_grounded: bool = false
 var grounded_position: Variant = null
+var grounded_island: Node3D = null
 
 enum __NavMode {
 	NAV_MODE_IDLE,
@@ -145,6 +146,7 @@ func _check_land_collision() -> void:
 			touching_land = true
 			ship.apply_central_impulse(ship.mass * 0.5 * (ship.position - dict["point"]).normalized())
 			grounded_position = dict["point"]
+			grounded_island = dict["collider"]
 			break
 
 	# Update grounded state
@@ -156,6 +158,7 @@ func _check_land_collision() -> void:
 		is_grounded = false
 		ship.linear_damp = 0.2
 		grounded_position = null
+		grounded_island = null
 
 func _calculate_hull_aabb_from_meshes(root: Node) -> AABB:
 	var result: Dictionary = {"aabb": AABB(), "found": false}
@@ -241,7 +244,7 @@ func _physics_process(delta: float) -> void:
 
 	# Don't apply thrust if grounded
 	if is_grounded:
-		print("Grounded 2")
+		print("Grounded")
 		engine_power = move_toward(engine_power, 0.0, delta * 0.5)
 		# Still allow some movement to "unstick" if player reverses
 		# if throttle_level == -1:  # Reverse
@@ -250,7 +253,7 @@ func _physics_process(delta: float) -> void:
 		# return
 
 	var turn_thrust_ratio = 1.0
-	if abs(rudder_input) > 0.01 and current_speed:
+	if abs(rudder_input) > 0.01 and abs(current_speed) > 2.0:
 		var rudder_dist = 0.5
 		var half_length = ship_length * rudder_dist
 		var stern_offset = -forward * half_length  # Vector from center to stern

@@ -40,12 +40,16 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 	"""Returns the desired position for the bot"""
 	var desired_pos = Vector3.ZERO
 	if target != null:
-		# Calculate intersection point using optimal intercept angle
-		var intercept_point = _calculate_intercept_point(target)
-		if intercept_point != Vector3.ZERO:
-			desired_pos = (intercept_point + target.global_position) / 2
-		else:
-			desired_pos = target.global_position
+		# # Calculate intersection point using optimal intercept angle
+		# var intercept_point = _calculate_intercept_point(target)
+		# if intercept_point != Vector3.ZERO:
+		# 	desired_pos = intercept_point * 0.3 + target.global_position * 0.7
+		# else:
+		# 	desired_pos = target.global_position
+		var dist = _ship.position.distance_to(target.position)
+		var t = dist / _ship.movement_controller.max_speed
+		desired_pos = target.position + target.linear_velocity * min(t, 30.0)
+
 	elif enemy.size() > 0:
 		var closest_enemy = enemy[0]
 		for enemy_ship in enemy:

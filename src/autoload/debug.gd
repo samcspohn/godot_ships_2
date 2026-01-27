@@ -85,15 +85,20 @@ func request_debug_info(target_path: NodePath) -> void:
 		var heading_vec = bot_controller.get_debug_heading_vector()
 		var turn_sim_points_desired = bot_controller.get_turn_simulation_points_desired()
 		var turn_sim_points_undesired = bot_controller.get_turn_simulation_points_undesired()
-		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, turn_sim_points_desired, turn_sim_points_undesired)
+		var target_ship_path = null
+		if bot_controller.target != null:
+			target_ship_path = bot_controller.target.get_path()
+		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired)
 
 @rpc("authority", "call_remote", "unreliable")
-func send_debug_info_to_client(heading_vec: Vector3, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = []) -> void:
+func send_debug_info_to_client(heading_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = []) -> void:
 	# Forward the debug info to the Debug autoload
 	bot_debug_heading_vector = heading_vec
 	# bot_debug_target_path = target_path
 	bot_debug_turn_sim_points_desired = turn_sim_points_desired
 	bot_debug_turn_sim_points_undesired = turn_sim_points_undesired
+	if target_ship_path != null:
+		bot_debug_target_ship = get_node(target_ship_path)
 
 # Called by BotControllerV3 RPC to update heading vector on client
 func receive_bot_debug_info(heading_vector: Vector3, target_ship_path: NodePath, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = []) -> void:
@@ -168,9 +173,9 @@ func _draw_bot_debug_arrow() -> void:
 	bot_debug_arrow.rotation = Vector3(PI / 2.0, heading_angle, 0)
 	bot_debug_arrow.visible = true
 
-	# Draw debug spheres to verify positions
-	_draw_debug_sphere(ship_pos, 20.0, Color.BLUE, 0.2)  # Ship position (blue)
-	_draw_debug_sphere(end_pos, 20.0, Color.RED, 0.2)    # End of heading vector (red)
+	# # Draw debug spheres to verify positions
+	# _draw_debug_sphere(ship_pos, 20.0, Color.BLUE, 0.2)  # Ship position (blue)
+	# _draw_debug_sphere(end_pos, 20.0, Color.RED, 0.2)    # End of heading vector (red)
 
 
 func _clear_bot_debug_arrow() -> void:
