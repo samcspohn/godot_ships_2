@@ -6,6 +6,7 @@
 - [ ] hover over UI elements for tooltips (gun stats, consumable info, etc)
 - [ ] add fire ribbon, temporary frag/fire ribbon.
 - [ ] add kill feed
+- [ ] map view + autopilot
 
 # bot
 - [ ] need to angle when engaging

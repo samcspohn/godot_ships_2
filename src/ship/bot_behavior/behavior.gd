@@ -48,7 +48,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 		# 	desired_pos = target.global_position
 		var dist = _ship.position.distance_to(target.position)
 		var t = dist / _ship.movement_controller.max_speed
-		desired_pos = target.position + target.linear_velocity * min(t, 30.0)
+		desired_pos = target.position + target.linear_velocity * min(t * 0.2, 30.0)
 
 	elif enemy.size() > 0:
 		var closest_enemy = enemy[0]

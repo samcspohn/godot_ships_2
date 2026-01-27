@@ -120,7 +120,7 @@ void vertex() {
 	// Calculate FOV-based distance scaling
 	float fov_y = 2.0 * atan(1.0 / PROJECTION_MATRIX[1][1]);
 	float dist = length(MAIN_CAM_INV_VIEW_MATRIX[3].xyz - world_pos);
-	scale_distance_factor = 1.0 + dist * 0.00021 * -fov_y;
+	scale_distance_factor = 1.5 + dist * 0.0002 * -fov_y;
 
 	// Apply scale (billboard keep scale)
 	float final_scale = shell_size * scale_distance_factor;
