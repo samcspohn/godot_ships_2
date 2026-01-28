@@ -14,7 +14,7 @@ func _get_valid_nav_point(target: Vector3) -> Vector3:
 	var closest_point = NavigationServer3D.map_get_closest_point(nav_map, target)
 	return closest_point
 
-func pick_target(targets: Array[Ship]) -> Ship:
+func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	"""Takes an array of valid targets"""
 	var target = null
 	var closest_dist = INF
@@ -28,6 +28,9 @@ func pick_target(targets: Array[Ship]) -> Ship:
 			target = ship
 			closest_dist = dist
 	if target != null:
+		if last_target != null and last_target.is_alive():
+			if last_target.position.distance_to(target.position) < 1000:
+				return last_target
 		return target
 	else:
 		return null
@@ -47,8 +50,11 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 		# else:
 		# 	desired_pos = target.global_position
 		var dist = _ship.position.distance_to(target.position)
-		var t = dist / _ship.movement_controller.max_speed
-		desired_pos = target.position + target.linear_velocity * min(t * 0.2, 30.0)
+		if dist > 4000 or dist < 500:
+			desired_pos = target.position
+		else:
+			var t = dist / _ship.movement_controller.max_speed
+			desired_pos = target.position + target.linear_velocity * min(t * 0.2, 20.0)
 
 	elif enemy.size() > 0:
 		var closest_enemy = enemy[0]
@@ -57,7 +63,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 			if dist < closest_enemy.position.distance_to(_ship.position):
 				closest_enemy = enemy_ship
 		desired_pos = closest_enemy.global_position
-		desired_pos = _calculate_intercept_point(closest_enemy)
+		# desired_pos = _calculate_intercept_point(closest_enemy)
 	else:
 		desired_pos = current_destination
 	return _get_valid_nav_point(desired_pos)

@@ -15,6 +15,7 @@ var shell_trail_template: ParticleTemplate
 var torpedo_wake_template: ParticleTemplate
 
 func _ready() -> void:
+	#return
 	print("ParticleSystemInit: Initializing particle system...")
 
 	# Create template manager

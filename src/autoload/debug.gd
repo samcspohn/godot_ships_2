@@ -4,11 +4,13 @@ class_name _Debug
 
 # Bot debug drawing
 var bot_debug_heading_vector: Vector3 = Vector3.ZERO
+var bot_debug_heading_rudder_vector: Vector3 = Vector3.ZERO
 var bot_debug_target_ship: Ship = null
 var bot_debug_active: bool = false
 var bot_debug_request_timer: float = 0.0
 var bot_debug_request_interval: float = 0.1  # Request debug info every 100ms
 var bot_debug_arrow: MeshInstance3D = null
+var bot_debug_heading_rudder_arrow: MeshInstance3D = null
 var bot_debug_target_indicator: MeshInstance3D = null
 var bot_debug_follow_ship: Ship = null
 
@@ -17,6 +19,17 @@ var bot_debug_turn_sim_points_desired: Array[Vector3] = []
 var bot_debug_turn_sim_points_undesired: Array[Vector3] = []
 var bot_debug_turn_sim_frame_counter: int = 0
 var bot_debug_turn_sim_draw_interval: int = 8  # Draw every 8 physics frames
+
+# Navigation path debug
+var bot_debug_nav_path: PackedVector3Array = PackedVector3Array()
+var bot_debug_nav_path_spheres: Array[MeshInstance3D] = []
+
+# Threat and safe vector debug
+var bot_debug_threat_vector: Vector3 = Vector3.ZERO
+var bot_debug_safe_vector: Vector3 = Vector3.ZERO
+var bot_debug_threat_weight: float = 0.0
+var bot_debug_threat_arrow: MeshInstance3D = null
+var bot_debug_safe_arrow: MeshInstance3D = null
 
 # Reference to the player's camera (set by BattleCamera)
 var battle_camera: BattleCamera = null
@@ -49,13 +62,21 @@ func set_follow_ship(ship: Ship, player_ship: Ship) -> void:
 		bot_debug_target_ship = null
 		bot_debug_active = false
 		_clear_bot_debug_arrow()
+		_clear_bot_debug_heading_rudder_arrow()
 		_clear_bot_debug_target_indicator()
+		_clear_bot_debug_nav_path()
+		_clear_bot_debug_threat_arrow()
+		_clear_bot_debug_safe_arrow()
 
 
 func _update_bot_debug(delta: float) -> void:
 	if bot_debug_follow_ship == null or not is_instance_valid(bot_debug_follow_ship):
 		bot_debug_active = false
 		_clear_bot_debug_arrow()
+		_clear_bot_debug_heading_rudder_arrow()
+		_clear_bot_debug_nav_path()
+		_clear_bot_debug_threat_arrow()
+		_clear_bot_debug_safe_arrow()
 		return
 
 	bot_debug_request_timer += delta
@@ -67,7 +88,10 @@ func _update_bot_debug(delta: float) -> void:
 	if bot_debug_heading_vector.length() > 0.1:
 		bot_debug_active = true
 		_draw_bot_debug_arrow()
+		_draw_bot_debug_heading_rudder_arrow()
 		_draw_bot_debug_target_indicator()
+		_draw_bot_debug_threat_arrow()
+		_draw_bot_debug_safe_arrow()
 		# Turn sim points are drawn in _physics_process
 
 
@@ -83,20 +107,30 @@ func request_debug_info(target_path: NodePath) -> void:
 
 	if bot_controller:
 		var heading_vec = bot_controller.get_debug_heading_vector()
+		var heading_rudder_vec = bot_controller.get_debug_heading_rudder_vector()
 		var turn_sim_points_desired = bot_controller.get_turn_simulation_points_desired()
 		var turn_sim_points_undesired = bot_controller.get_turn_simulation_points_undesired()
+		var nav_path = bot_controller.get_debug_nav_path()
+		var threat_vec = bot_controller.get_debug_threat_vector()
+		var safe_vec = bot_controller.get_debug_safe_vector()
+		var threat_weight = bot_controller.get_debug_threat_weight()
 		var target_ship_path = null
 		if bot_controller.target != null:
 			target_ship_path = bot_controller.target.get_path()
-		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired)
+		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight)
 
 @rpc("authority", "call_remote", "unreliable")
-func send_debug_info_to_client(heading_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = []) -> void:
+func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0) -> void:
 	# Forward the debug info to the Debug autoload
 	bot_debug_heading_vector = heading_vec
+	bot_debug_heading_rudder_vector = heading_rudder_vec
 	# bot_debug_target_path = target_path
 	bot_debug_turn_sim_points_desired = turn_sim_points_desired
 	bot_debug_turn_sim_points_undesired = turn_sim_points_undesired
+	bot_debug_nav_path = nav_path
+	bot_debug_threat_vector = threat_vec
+	bot_debug_safe_vector = safe_vec
+	bot_debug_threat_weight = threat_weight
 	if target_ship_path != null:
 		bot_debug_target_ship = get_node(target_ship_path)
 
@@ -183,6 +217,215 @@ func _clear_bot_debug_arrow() -> void:
 		bot_debug_arrow.visible = false
 
 
+func _draw_bot_debug_heading_rudder_arrow() -> void:
+	if bot_debug_follow_ship == null:
+		return
+
+	if bot_debug_heading_rudder_vector.length() < 0.1:
+		return
+
+	# Create arrow mesh if it doesn't exist
+	if bot_debug_heading_rudder_arrow == null:
+		bot_debug_heading_rudder_arrow = MeshInstance3D.new()
+		bot_debug_heading_rudder_arrow.name = "BotDebugHeadingRudderArrow"
+
+		var arrow_mesh = CylinderMesh.new()
+		arrow_mesh.top_radius = 0.0
+		arrow_mesh.bottom_radius = 8.0
+		arrow_mesh.height = 180.0
+		arrow_mesh.radial_segments = 8
+		bot_debug_heading_rudder_arrow.mesh = arrow_mesh
+
+		var material = StandardMaterial3D.new()
+		material.albedo_color = Color(0, 1, 1, 1.0)  # Cyan color for heading+rudder
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true  # Always visible through objects
+		bot_debug_heading_rudder_arrow.material_override = material
+
+		bot_debug_heading_rudder_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(bot_debug_heading_rudder_arrow)
+
+	# Position the arrow at the ship location, pointing in the heading+rudder direction
+	var ship_pos = bot_debug_follow_ship.global_position
+	ship_pos.y += 80.0  # Slightly lower than the desired heading arrow
+
+	# Calculate the end position of the arrow (where it should point)
+	var arrow_length = 180.0
+	var end_pos = ship_pos + bot_debug_heading_rudder_vector.normalized() * arrow_length
+
+	# Position at midpoint between ship and end
+	var mid_pos = (ship_pos + end_pos) / 2.0
+	bot_debug_heading_rudder_arrow.global_position = mid_pos
+
+	# Rotate to point in heading+rudder direction
+	var heading_angle = atan2(bot_debug_heading_rudder_vector.x, bot_debug_heading_rudder_vector.z)
+	bot_debug_heading_rudder_arrow.rotation = Vector3(PI / 2.0, heading_angle, 0)
+	bot_debug_heading_rudder_arrow.visible = true
+
+
+func _clear_bot_debug_heading_rudder_arrow() -> void:
+	if bot_debug_heading_rudder_arrow != null:
+		bot_debug_heading_rudder_arrow.visible = false
+
+
+func _draw_bot_debug_threat_arrow() -> void:
+	if bot_debug_follow_ship == null:
+		return
+
+	# # Only draw if there's a meaningful threat
+	# if bot_debug_threat_vector.length() < 0.1 or bot_debug_threat_weight < 0.05:
+	# 	_clear_bot_debug_threat_arrow()
+	# 	return
+
+	# Create arrow mesh if it doesn't exist
+	if bot_debug_threat_arrow == null:
+		bot_debug_threat_arrow = MeshInstance3D.new()
+		bot_debug_threat_arrow.name = "BotDebugThreatArrow"
+
+		var arrow_mesh = CylinderMesh.new()
+		arrow_mesh.top_radius = 0.0
+		arrow_mesh.bottom_radius = 8.0
+		arrow_mesh.height = 200.0
+		arrow_mesh.radial_segments = 8
+		bot_debug_threat_arrow.mesh = arrow_mesh
+
+		var material = StandardMaterial3D.new()
+		material.albedo_color = Color(1.0, 0.3, 0.0, 1.0)  # Orange color for threat
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		bot_debug_threat_arrow.material_override = material
+
+		bot_debug_threat_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(bot_debug_threat_arrow)
+
+	# Position the arrow at the ship location, pointing toward the threat
+	var ship_pos = bot_debug_follow_ship.global_position
+	ship_pos.y += 60.0
+
+	# Scale arrow length by threat weight
+	var arrow_length = 200.0 * bot_debug_threat_weight
+	var threat_dir = bot_debug_threat_vector.normalized()
+	var end_pos = ship_pos + threat_dir * arrow_length
+
+	var mid_pos = (ship_pos + end_pos) / 2.0
+	bot_debug_threat_arrow.global_position = mid_pos
+
+	# Rotate to point toward threat
+	var heading_angle = atan2(threat_dir.x, threat_dir.z)
+	bot_debug_threat_arrow.rotation = Vector3(PI / 2.0, heading_angle, 0)
+	bot_debug_threat_arrow.scale = Vector3(1.0, bot_debug_threat_weight, 1.0)
+	bot_debug_threat_arrow.visible = true
+
+
+func _clear_bot_debug_threat_arrow() -> void:
+	if bot_debug_threat_arrow != null:
+		bot_debug_threat_arrow.visible = false
+
+
+func _draw_bot_debug_safe_arrow() -> void:
+	if bot_debug_follow_ship == null:
+		return
+
+	# # Only draw if there's a meaningful threat (safe is opposite of threat)
+	# if bot_debug_safe_vector.length() < 0.1 or bot_debug_threat_weight < 0.05:
+	# 	_clear_bot_debug_safe_arrow()
+	# 	return
+
+	# Create arrow mesh if it doesn't exist
+	if bot_debug_safe_arrow == null:
+		bot_debug_safe_arrow = MeshInstance3D.new()
+		bot_debug_safe_arrow.name = "BotDebugSafeArrow"
+
+		var arrow_mesh = CylinderMesh.new()
+		arrow_mesh.top_radius = 0.0
+		arrow_mesh.bottom_radius = 8.0
+		arrow_mesh.height = 200.0
+		arrow_mesh.radial_segments = 8
+		bot_debug_safe_arrow.mesh = arrow_mesh
+
+		var material = StandardMaterial3D.new()
+		material.albedo_color = Color(0.0, 1.0, 0.5, 1.0)  # Teal/mint color for safe direction
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		bot_debug_safe_arrow.material_override = material
+
+		bot_debug_safe_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(bot_debug_safe_arrow)
+
+	# Position the arrow at the ship location, pointing toward safety
+	var ship_pos = bot_debug_follow_ship.global_position
+	ship_pos.y += 60.0
+
+	# Scale arrow length by threat weight
+	var arrow_length = 200.0 * bot_debug_threat_weight
+	var safe_dir = bot_debug_safe_vector.normalized()
+	var end_pos = ship_pos + safe_dir * arrow_length
+
+	var mid_pos = (ship_pos + end_pos) / 2.0
+	bot_debug_safe_arrow.global_position = mid_pos
+
+	# Rotate to point toward safety
+	var heading_angle = atan2(safe_dir.x, safe_dir.z)
+	bot_debug_safe_arrow.rotation = Vector3(PI / 2.0, heading_angle, 0)
+	bot_debug_safe_arrow.scale = Vector3(1.0, bot_debug_threat_weight, 1.0)
+	bot_debug_safe_arrow.visible = true
+
+
+func _clear_bot_debug_safe_arrow() -> void:
+	if bot_debug_safe_arrow != null:
+		bot_debug_safe_arrow.visible = false
+
+
+func _draw_bot_debug_nav_path() -> void:
+	# Clear existing path spheres
+	_clear_bot_debug_nav_path()
+
+	if bot_debug_nav_path.size() < 2:
+		return
+
+	# Draw spheres at each path point with a gradient from white to magenta
+	var path_count = bot_debug_nav_path.size()
+	for i in range(path_count):
+		var point = bot_debug_nav_path[i]
+		point.y += 50.0  # Raise above water level for visibility
+
+		var path_sphere = MeshInstance3D.new()
+		path_sphere.name = "NavPathPoint_%d" % i
+
+		var sphere_mesh = SphereMesh.new()
+		sphere_mesh.radius = 20.0
+		sphere_mesh.height = 40.0
+		sphere_mesh.radial_segments = 8
+		sphere_mesh.rings = 4
+		path_sphere.mesh = sphere_mesh
+
+		# Gradient from white (start) to magenta (end)
+		var t = float(i) / float(max(path_count - 1, 1))
+		var color = Color(1.0, 1.0 - t, 1.0)  # White to magenta
+
+		var material = StandardMaterial3D.new()
+		material.albedo_color = color
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		path_sphere.material_override = material
+
+		path_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(path_sphere)
+		bot_debug_nav_path_spheres.append(path_sphere)
+		path_sphere.global_position = point
+
+
+
+func _clear_bot_debug_nav_path() -> void:
+	for path_sphere in bot_debug_nav_path_spheres:
+		if is_instance_valid(path_sphere):
+			path_sphere.queue_free()
+	bot_debug_nav_path_spheres.clear()
+
+
 func _update_turn_simulation_debug() -> void:
 	if not bot_debug_active or bot_debug_follow_ship == null:
 		return
@@ -191,6 +434,7 @@ func _update_turn_simulation_debug() -> void:
 	if bot_debug_turn_sim_frame_counter >= bot_debug_turn_sim_draw_interval:
 		bot_debug_turn_sim_frame_counter = 0
 		_draw_turn_simulation_points()
+		_draw_bot_debug_nav_path()
 
 
 func _draw_turn_simulation_points() -> void:

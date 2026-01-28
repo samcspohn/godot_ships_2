@@ -293,6 +293,9 @@ func _physics_process(delta: float) -> void:
 func get_current_speed_kmh() -> float:
 	return ship.linear_velocity.length() * 3.6
 
+func get_current_speed_ms() -> float:
+	return ship.linear_velocity.length()
+
 func get_current_speed_knots() -> float:
 	return ship.linear_velocity.length() * 1.9444
 
