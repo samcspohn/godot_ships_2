@@ -18,3 +18,9 @@ mono_crash.*.json
 *.dblite
 *.so
 *.os
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
