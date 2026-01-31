@@ -405,8 +405,7 @@ void _ProjectileManager::_process(double delta) {
 		return;
 	}
 
-	// GPU renderer handles shell position/rendering automatically via shader
-	// We only need to update trail particles here
+	// Update shell positions in GPU renderer and trail particles
 	_process_trails_only(current_time);
 }
 
@@ -429,16 +428,19 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
 		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
-		// Calculate position for trail emission (still needed for trails)
-		// Call the static method on ProjectilePhysicsWithDrag
-		// Note: physics_script is unused since we use ClassDB::instantiate below
-
+		// Calculate position for rendering and trail emission
 		// Use native ProjectilePhysicsWithDrag static method directly
 		double drag = shell_params->get("drag");
 		Vector3 new_position = ProjectilePhysicsWithDrag::calculate_position_at_time(
 			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 
 		p->set_position(new_position);
+
+		// Update GPU renderer with new position
+		int gpu_id = p->get_frame_count();  // GPU slot ID stored in frame_count
+		if (gpu_renderer != nullptr && gpu_id >= 0) {
+			gpu_renderer->call("update_shell_position", gpu_id, new_position);
+		}
 
 		// Skip trail emission near spawn point
 		if ((p->get_position() - p->get_start_position()).length_squared() < 80) {
