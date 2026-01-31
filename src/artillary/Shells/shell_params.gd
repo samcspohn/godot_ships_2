@@ -8,8 +8,17 @@ enum ShellType {
 }
 
 @export var speed: float
+@export var time_warp_rate: float = 1.0:
+	set(value):
+		time_warp_rate = value
+		_update_time_warp_k()
+@export var time_warp_apex: float = 30.0:
+	set(value):
+		time_warp_apex = value
+		_update_time_warp_k()
 @export var drag: float
 @export var damage: float
+var time_warp_k: float
 @export var size: float  # Visual rendering size
 @export var caliber: float # Shell caliber in mm for penetration calculations
 @export var mass: float  # Shell mass in kg for penetration calculations
@@ -37,3 +46,10 @@ func _init() -> void:
 	overmatch = 0
 	_secondary = false
 	arming_threshold = ceil(caliber * 1.0 / 6.0)
+	_update_time_warp_k()
+
+func _update_time_warp_k() -> void:
+	if time_warp_apex > 0:
+		time_warp_k = (1.0 - time_warp_rate) / pow(time_warp_apex, 2)
+	else:
+		time_warp_k = 0.0

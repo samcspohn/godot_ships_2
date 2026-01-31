@@ -276,7 +276,7 @@ func _process_client_messages():
 
 func _stop_client():
 	client_running = false
-	if receive_thread and receive_thread.is_active():
+	if receive_thread and receive_thread.is_alive():
 		receive_thread.wait_to_finish()
 		receive_thread = null
 	if client and client.get_status() == StreamPeerTCP.STATUS_CONNECTED:

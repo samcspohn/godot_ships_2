@@ -422,20 +422,21 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 			continue;
 		}
 
+		Ref<Resource> shell_params = p->get_params();
+		if (!shell_params.is_valid()) {
+			continue;
+		}
 		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
+		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
 		// Calculate position for trail emission (still needed for trails)
 		// Call the static method on ProjectilePhysicsWithDrag
 		// Note: physics_script is unused since we use ClassDB::instantiate below
 
 		// Use native ProjectilePhysicsWithDrag static method directly
-		Ref<Resource> shell_params = p->get_params();
-		double drag = 0.009; // Default drag coefficient
-		if (shell_params.is_valid()) {
-			drag = shell_params->get("drag");
-		}
+		double drag = shell_params->get("drag");
 		Vector3 new_position = ProjectilePhysicsWithDrag::calculate_position_at_time(
-			p->get_start_position(), p->get_launch_velocity(), t, drag);
+			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 
 		p->set_position(new_position);
 
@@ -483,17 +484,21 @@ void _ProjectileManager::_physics_process(double delta) {
 		p->increment_frame_count();
 
 		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
+		// t = _ProjectileManager::time_warp(t, p->get_params()) * shell_time_multiplier;
+
 
 		ray_query->set_from(p->get_position());
 
 		// Calculate new position using native ProjectilePhysicsWithDrag static method
 		Ref<Resource> shell_params = p->get_params();
-		double drag = 0.009; // Default drag coefficient
-		if (shell_params.is_valid()) {
-			drag = shell_params->get("drag");
+		if (!shell_params.is_valid()) {
+			UtilityFunctions::push_warning("ProjectileManager: Projectile has invalid shell_params, skipping");
+			id++;
+			continue;
 		}
+		double drag = shell_params->get("drag");
 		Vector3 new_position = ProjectilePhysicsWithDrag::calculate_position_at_time(
-			p->get_start_position(), p->get_launch_velocity(), t, drag);
+			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 		p->set_position(new_position);
 		ray_query->set_to(p->get_position());
 

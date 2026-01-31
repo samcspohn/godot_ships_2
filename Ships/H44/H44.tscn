@@ -404,7 +404,7 @@ shape = SubResource("ConvexPolygonShape3D_8j47w")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 90.318)
 script = ExtResource("21_pm07r")
 template_name = "torpedo_wake"
-emit_rate = 0.025
+emit_rate = 0.032
 size_multiplier = 18.0
 speed_scale = 0.15
 

@@ -1,3 +1,7 @@
 [gd_scene format=3 uid="uid://cj32a1kjmd61g"]
 
-[node name="ProjectileManager" type="_ProjectileManager"]
+[node name="ProjectileManager" type="_ProjectileManager" unique_id=648273995 node_paths=PackedStringArray("gpu_renderer")]
+projectiles = Array[ProjectileData]([null])
+gpu_renderer = NodePath("@Node@18821")
+
+[node name="MultiMeshInstance3D" type="MultiMeshInstance3D" parent="." unique_id=1615920800]

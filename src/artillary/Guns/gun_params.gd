@@ -115,8 +115,7 @@ func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell
 	return ArtilleryDispersion.calculate_dispersed_launch(
 		aim_point,
 		gun_position,
-		shell.speed,
-		shell.drag,
+		shell,
 		h_grouping * (target_mod.h_grouping if target_mod else 1.0),
 		v_grouping * (target_mod.v_grouping if target_mod else 1.0),
 		base_spread * (target_mod.base_spread if target_mod else 1.0)

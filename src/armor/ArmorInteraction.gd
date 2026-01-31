@@ -249,10 +249,12 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 			var water_hit_pos := prev_pos + dir * distance_to_water
 			var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
 				projectile.launch_velocity, t, projectile.params.drag)
-
+			
+			var p = projectile.params.duplicate(true)
+			p.drag *= WATER_DRAG
 			var fuzed_position := ProjectilePhysicsWithDrag.calculate_position_at_time(
 				water_hit_pos, impact_vel, projectile.params.fuze_delay,
-				projectile.params.drag * WATER_DRAG)
+				p)
 
 			var ship_ray := PhysicsRayQueryParameters3D.new()
 			ship_ray.from = water_hit_pos

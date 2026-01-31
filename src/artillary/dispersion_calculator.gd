@@ -28,14 +28,13 @@ class_name ArtilleryDispersion
 static func calculate_dispersed_launch(
 									aim_point: Vector3,
 									gun_position: Vector3,
-									speed: float,
-									drag: float,
+									shell_params: ShellParams,
 									h_grouping: float,
 									v_grouping: float,
 									base_spread: float) -> Vector3:
 	# print(aim_point)
 
-	var a = ProjectilePhysicsWithDrag.calculate_launch_vector(gun_position, aim_point, speed, drag)
+	var a = ProjectilePhysicsWithDrag.calculate_launch_vector(gun_position, aim_point, shell_params)
 	var launch_velocity = a[0]
 	# return launch_velocity
 
@@ -49,7 +48,7 @@ static func calculate_dispersed_launch(
 	var r = launch_velocity.cross(Vector3.UP).normalized()
 	var u = launch_velocity.cross(r).normalized()
 	# var base_spread = 0.01
-	var new_launch_velocity = (launch_velocity.normalized() + (r * p.x + u * p.y) * base_spread) * speed
+	var new_launch_velocity = (launch_velocity.normalized() + (r * p.x + u * p.y) * base_spread) * shell_params.speed
 
 	return new_launch_velocity
 

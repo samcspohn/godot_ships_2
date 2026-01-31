@@ -110,7 +110,7 @@ func _physics_process(delta: float) -> void:
 			reload = min(reload + delta / get_params().reload_time, 1.0)
 
 func valid_target(target: Vector3) -> bool:
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, target, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(global_position, target, get_shell())
 	if sol[0] != null and (target - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
@@ -120,13 +120,13 @@ func valid_target(target: Vector3) -> bool:
 	return false
 
 func get_leading_position(target: Vector3, target_velocity: Vector3):
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
 	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
 		return sol[2]
 	return null
 
 func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
 	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(sol[2])
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
@@ -151,13 +151,13 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 	var muzzles_pos = get_muzzles_position()
 
 	# Existing aiming logic for elevation
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell())
 	if sol[0] != null and (aim_point - muzzles_pos).length() < get_params()._range:
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)
 		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params()._range - 500)
-		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, self._aim_point, get_shell().speed, get_shell().drag)
+		sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, self._aim_point, get_shell())
 
 	# launch_vector = sol[0]
 	# flight_time = sol[1]
@@ -194,7 +194,7 @@ func normalize_angle(angle: float) -> float:
 
 func _aim_leading(aim_point: Vector3, vel: Vector3, delta: float):
 	var muzzles_pos = get_muzzles_position()
-	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(muzzles_pos, aim_point, vel, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(muzzles_pos, aim_point, vel, get_shell())
 	if sol[0] == null or (aim_point - muzzles_pos).length() > get_params()._range:
 		can_fire = false
 		return
@@ -241,12 +241,12 @@ func fire_client(vel, pos, t, _id):
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 
 	var muzzles_pos = get_muzzles_position()
-	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell().speed, get_shell().drag)
+	var sol = ProjectilePhysicsWithDrag.calculate_launch_vector(muzzles_pos, aim_point, get_shell())
 	if sol[0] == null:
 		return false
 	var launch_vector = sol[0]
 	var flight_time = sol[1]
-	var can_shoot = sim_can_shoot_over_terrain_static(muzzles_pos, launch_vector, flight_time, get_shell().drag, _ship)
+	var can_shoot = sim_can_shoot_over_terrain_static(muzzles_pos, launch_vector, flight_time, get_shell(), _ship)
 	return can_shoot.can_shoot_over_terrain and can_shoot.can_shoot_over_ship
 
 class ShootOver:
@@ -261,7 +261,7 @@ static func sim_can_shoot_over_terrain_static(
 	pos: Vector3,
 	launch_vector: Vector3,
 	flight_time: float,
-	drag: float,
+	shell_params: ShellParams,
 	ship: Ship
 ) -> ShootOver:
 	var shell_sim_position: Vector3 = pos
@@ -276,7 +276,7 @@ static func sim_can_shoot_over_terrain_static(
 			pos,
 			launch_vector,
 			t,
-			drag,
+			shell_params,
 		)
 		var result = space_state.intersect_ray(ray)
 		if not result.is_empty():

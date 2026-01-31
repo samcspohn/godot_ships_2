@@ -22,16 +22,16 @@ void ProjectilePhysicsWithDrag::_bind_methods() {
 	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("get_initial_angle_step"), &ProjectilePhysicsWithDrag::get_initial_angle_step);
 
 	// Bind static methods
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_absolute_max_range", "projectile_speed", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_absolute_max_range);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_velocity_at_time", "launch_vector", "time", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_velocity_at_time);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_precise_shell_position", "start_pos", "target_pos", "launch_vector", "current_time", "total_flight_time", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_precise_shell_position);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_launch_vector", "start_pos", "target_pos", "projectile_speed", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_launch_vector);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_impact_position", "start_pos", "launch_velocity", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_impact_position);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("estimate_time_of_flight", "start_pos", "launch_vector", "horiz_dist", "drag_coefficient"), &ProjectilePhysicsWithDrag::estimate_time_of_flight);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_position_at_time", "start_pos", "launch_vector", "time", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_position_at_time);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_leading_launch_vector", "start_pos", "target_pos", "target_velocity", "projectile_speed", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_leading_launch_vector);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_max_range_from_angle", "angle", "projectile_speed", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_max_range_from_angle);
-	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_angle_from_max_range", "max_range", "projectile_speed", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_angle_from_max_range);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_absolute_max_range", "shell_params"), &ProjectilePhysicsWithDrag::calculate_absolute_max_range);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_velocity_at_time", "launch_vector", "time", "shell_params"), &ProjectilePhysicsWithDrag::calculate_velocity_at_time);
+	// ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_precise_shell_position", "start_pos", "target_pos", "launch_vector", "current_time", "total_flight_time", "drag_coefficient"), &ProjectilePhysicsWithDrag::calculate_precise_shell_position);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_launch_vector", "start_pos", "target_pos", "shell_params"), &ProjectilePhysicsWithDrag::calculate_launch_vector);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_impact_position", "start_pos", "launch_velocity", "shell_params"), &ProjectilePhysicsWithDrag::calculate_impact_position);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("estimate_time_of_flight", "start_pos", "launch_vector", "horiz_dist", "shell_params"), &ProjectilePhysicsWithDrag::estimate_time_of_flight);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_position_at_time", "start_pos", "launch_vector", "time", "shell_params"), &ProjectilePhysicsWithDrag::calculate_position_at_time);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_leading_launch_vector", "start_pos", "target_pos", "target_velocity", "shell_params"), &ProjectilePhysicsWithDrag::calculate_leading_launch_vector);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_max_range_from_angle", "angle", "shell_params"), &ProjectilePhysicsWithDrag::calculate_max_range_from_angle);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDrag", D_METHOD("calculate_angle_from_max_range", "max_range", "shell_params"), &ProjectilePhysicsWithDrag::calculate_angle_from_max_range);
 }
 
 ProjectilePhysicsWithDrag::ProjectilePhysicsWithDrag() {
@@ -40,6 +40,22 @@ ProjectilePhysicsWithDrag::ProjectilePhysicsWithDrag() {
 ProjectilePhysicsWithDrag::~ProjectilePhysicsWithDrag() {
 }
 
+float ProjectilePhysicsWithDrag::time_warp(double t, Ref<Resource> params) {
+	if (!params.is_valid()) {
+		return t; // No warp if params are invalid
+	}
+	
+	Variant rate_var = params->get("time_warp_rate");
+	Variant apex_var = params->get("time_warp_apex");
+	Variant k_var = params->get("time_warp_k");
+	
+	// Use safe defaults if properties don't exist or are nil
+	float rate = (rate_var.get_type() != Variant::NIL) ? (float)rate_var : 1.0f;
+	float apex = (apex_var.get_type() != Variant::NIL) ? (float)apex_var : 30.0f;
+	float k = (k_var.get_type() != Variant::NIL) ? (float)k_var : 0.0f;
+
+	return rate * t + k * (pow(t - apex, 3.0) + pow(apex, 3.0)) / 3.0;
+}
 // Constant accessors
 double ProjectilePhysicsWithDrag::get_gravity() {
 	return GRAVITY;
@@ -73,9 +89,10 @@ double ProjectilePhysicsWithDrag::get_initial_angle_step() {
 	return INITIAL_ANGLE_STEP;
 }
 
-Array ProjectilePhysicsWithDrag::calculate_absolute_max_range(double projectile_speed, double drag_coefficient) {
+Array ProjectilePhysicsWithDrag::calculate_absolute_max_range(Ref<Resource> shell_params) {
 	// Initialize search parameters
 	double min_range = 0.0;
+	double projectile_speed = shell_params->get("speed");
 	double max_range = projectile_speed * projectile_speed / std::abs(GRAVITY) * 2.0; // Theoretical max without drag
 	double best_range = 0.0;
 	double best_angle = 0.0;
@@ -85,7 +102,7 @@ Array ProjectilePhysicsWithDrag::calculate_absolute_max_range(double projectile_
 	for (int i = 0; i < MAX_ITERATIONS; i++) {
 		double test_range = (min_range + max_range) / 2.0;
 		Vector3 target_pos = Vector3(test_range, 0, 0);
-		Array result = calculate_launch_vector(Vector3(), target_pos, projectile_speed, drag_coefficient);
+		Array result = calculate_launch_vector(Vector3(), target_pos, shell_params);
 
 		if (result[0].get_type() != Variant::NIL && (double)result[1] > 0) {
 			if (test_range > best_range) {
@@ -133,61 +150,61 @@ Vector3 ProjectilePhysicsWithDrag::calculate_velocity_at_time(const Vector3 &lau
 	return Vector3(vx, vy, vz);
 }
 
-Vector3 ProjectilePhysicsWithDrag::calculate_precise_shell_position(const Vector3 &start_pos, const Vector3 &target_pos,
-	const Vector3 &launch_vector, double current_time, double total_flight_time, double drag_coefficient) {
+// Vector3 ProjectilePhysicsWithDrag::calculate_precise_shell_position(const Vector3 &start_pos, const Vector3 &target_pos,
+// 	const Vector3 &launch_vector, double current_time, double total_flight_time, double drag_coefficient) {
 
-	// Safety check
-	if (total_flight_time <= 0.0) {
-		return start_pos;
-	}
+// 	// Safety check
+// 	if (total_flight_time <= 0.0) {
+// 		return start_pos;
+// 	}
 
-	// If we haven't reached the target yet, use physics with correction
-	if (current_time <= total_flight_time) {
-		// Calculate the physically expected position using drag physics
-		Vector3 physics_position = calculate_position_at_time(start_pos, launch_vector, current_time, drag_coefficient);
+// 	// If we haven't reached the target yet, use physics with correction
+// 	if (current_time <= total_flight_time) {
+// 		// Calculate the physically expected position using drag physics
+// 		Vector3 physics_position = calculate_position_at_time(start_pos, launch_vector, current_time, drag_coefficient);
 
-		// If we're at the end time or very close to it, return exactly the target position
-		if (Math::is_equal_approx(current_time, total_flight_time) ||
-			(total_flight_time - current_time) < 0.001) {
-			return target_pos;
-		}
+// 		// If we're at the end time or very close to it, return exactly the target position
+// 		if (Math::is_equal_approx(current_time, total_flight_time) ||
+// 			(total_flight_time - current_time) < 0.001) {
+// 			return target_pos;
+// 		}
 
-		// Generate a correction factor that smoothly transitions from 0 to 1
-		// Starts small and increases toward the end of the flight
-		// Using a smooth cubic function for natural-looking correction
-		double t = current_time / total_flight_time;
-		double correction_strength = t * t * t; // Smooth step function
+// 		// Generate a correction factor that smoothly transitions from 0 to 1
+// 		// Starts small and increases toward the end of the flight
+// 		// Using a smooth cubic function for natural-looking correction
+// 		double t = current_time / total_flight_time;
+// 		double correction_strength = t * t * t; // Smooth step function
 
-		// Apply increasing correction as we get closer to the target
-		// For artillery shells, the correction is very small until near the end
-		Vector3 projected_error = target_pos - calculate_position_at_time(start_pos, launch_vector,
-			total_flight_time, drag_coefficient);
-		// Scale error correction - minimal during most of flight, increasing toward end
-		Vector3 corrected_position = physics_position + projected_error * correction_strength;
+// 		// Apply increasing correction as we get closer to the target
+// 		// For artillery shells, the correction is very small until near the end
+// 		Vector3 projected_error = target_pos - calculate_position_at_time(start_pos, launch_vector,
+// 			total_flight_time, drag_coefficient);
+// 		// Scale error correction - minimal during most of flight, increasing toward end
+// 		Vector3 corrected_position = physics_position + projected_error * correction_strength;
 
-		return corrected_position;
-	}
+// 		return corrected_position;
+// 	}
 
-	// If we're past the target, extrapolate from end position using end velocity
-	else {
-		// Calculate velocity at impact point
-		Vector3 impact_velocity = calculate_velocity_at_time(launch_vector, total_flight_time, drag_coefficient);
+// 	// If we're past the target, extrapolate from end position using end velocity
+// 	else {
+// 		// Calculate velocity at impact point
+// 		Vector3 impact_velocity = calculate_velocity_at_time(launch_vector, total_flight_time, drag_coefficient);
 
-		// Ensure we have exactly the target position at impact time
-		double excess_time = current_time - total_flight_time;
+// 		// Ensure we have exactly the target position at impact time
+// 		double excess_time = current_time - total_flight_time;
 
-		// Linear extrapolation past the target using the final velocity
-		return target_pos + impact_velocity * excess_time;
-	}
-}
+// 		// Linear extrapolation past the target using the final velocity
+// 		return target_pos + impact_velocity * excess_time;
+// 	}
+// }
 
 Array ProjectilePhysicsWithDrag::calculate_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
-	double projectile_speed, double drag_coefficient) {
+	Ref<Resource> shell_params) {
 
 	Array result;
 
 	// Start with the non-drag physics as initial approximation
-	Array initial_result = ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, projectile_speed);
+	Array initial_result = ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, shell_params->get("speed"));
 
 	if (initial_result[0].get_type() == Variant::NIL) {
 		result.push_back(Variant()); // null
@@ -206,7 +223,7 @@ Array ProjectilePhysicsWithDrag::calculate_launch_vector(const Vector3 &start_po
 	double initial_speed_xz = Vector2(initial_vector.x, initial_vector.z).length();
 	double elevation_angle = std::atan2(initial_vector.y, initial_speed_xz);
 
-	double beta = drag_coefficient;
+	double beta = shell_params->get("drag");
 	double g = std::abs(GRAVITY);
 	double theta = elevation_angle;
 
@@ -221,6 +238,8 @@ Array ProjectilePhysicsWithDrag::calculate_launch_vector(const Vector3 &start_po
 	double drag_decay;
 	double calc_y;
 	double f_val;
+	double projectile_speed = shell_params->get("speed");
+
 
 	for (int iteration = 0; iteration < REFINEMENT_ITERATIONS; iteration++) {
 		// Calculate current trajectory error
@@ -290,8 +309,10 @@ Array ProjectilePhysicsWithDrag::calculate_launch_vector(const Vector3 &start_po
 		return result; // Solution not accurate enough
 	}
 
+	double warped_time = time_warp(final_flight_time, shell_params);
+
 	result.push_back(final_launch_vector);
-	result.push_back(final_flight_time);
+	result.push_back(warped_time);
 	return result;
 }
 
@@ -394,17 +415,40 @@ double ProjectilePhysicsWithDrag::estimate_time_of_flight(const Vector3 &start_p
 }
 
 Vector3 ProjectilePhysicsWithDrag::calculate_position_at_time(const Vector3 &start_pos, const Vector3 &launch_vector,
-	double time, double drag_coefficient) {
+	double time, Ref<Resource> shell_params) {
 
 	if (time <= 0.0) {
 		return start_pos;
 	}
+	
+	// Validate shell_params before use
+	if (!shell_params.is_valid()) {
+		UtilityFunctions::push_warning("ProjectilePhysicsWithDrag: Invalid shell_params, using simple ballistic trajectory");
+		// Fallback to simple ballistic trajectory without drag
+		double g = std::abs(GRAVITY);
+		return Vector3(
+			start_pos.x + launch_vector.x * time,
+			start_pos.y + launch_vector.y * time - 0.5 * g * time * time,
+			start_pos.z + launch_vector.z * time
+		);
+	}
+	
+	time = time_warp(time, shell_params);
 
 	// Extract components
 	double v0x = launch_vector.x;
 	double v0y = launch_vector.y;
 	double v0z = launch_vector.z;
-	double beta = drag_coefficient;
+	
+	Variant drag_var = shell_params->get("drag");
+	double beta = (drag_var.get_type() != Variant::NIL) ? (double)drag_var : DEFAULT_DRAG_COEFFICIENT;
+	
+	// Prevent division by zero - use minimum drag value
+	if (beta <= 0.0001) {
+		beta = 0.0001;
+		UtilityFunctions::push_warning("ProjectilePhysicsWithDrag: drag coefficient too small, using minimum value");
+	}
+	
 	double g = std::abs(GRAVITY);
 
 	Vector3 position;
@@ -426,12 +470,12 @@ Vector3 ProjectilePhysicsWithDrag::calculate_position_at_time(const Vector3 &sta
 }
 
 Array ProjectilePhysicsWithDrag::calculate_leading_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
-	const Vector3 &target_velocity, double projectile_speed, double drag_coefficient) {
+	const Vector3 &target_velocity, Ref<Resource> shell_params) {
 
 	Array result;
 
 	// Start with the time it would take to hit the current position (non-drag estimation)
-	Array initial_result = ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, projectile_speed);
+	Array initial_result = ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, shell_params->get("speed"));
 
 	if (initial_result[0].get_type() == Variant::NIL) {
 		result.push_back(Variant()); // null
@@ -448,7 +492,7 @@ Array ProjectilePhysicsWithDrag::calculate_leading_launch_vector(const Vector3 &
 		Vector3 predicted_pos = target_pos + target_velocity * time_estimate;
 
 		// Calculate launch vector to hit that position with drag
-		Array iter_result = calculate_launch_vector(start_pos, predicted_pos, projectile_speed, drag_coefficient);
+		Array iter_result = calculate_launch_vector(start_pos, predicted_pos, shell_params);
 
 		if (iter_result[0].get_type() == Variant::NIL) {
 			result.push_back(Variant()); // null
@@ -462,7 +506,7 @@ Array ProjectilePhysicsWithDrag::calculate_leading_launch_vector(const Vector3 &
 
 	// Final calculation with the best time estimate
 	Vector3 final_target_pos = target_pos + target_velocity * time_estimate;
-	Array final_result = calculate_launch_vector(start_pos, final_target_pos, projectile_speed, drag_coefficient);
+	Array final_result = calculate_launch_vector(start_pos, final_target_pos, shell_params);
 
 	// Return launch vector, time to target, and the final target position
 	if (final_result[0].get_type() == Variant::NIL) {
@@ -477,8 +521,11 @@ Array ProjectilePhysicsWithDrag::calculate_leading_launch_vector(const Vector3 &
 	return result;
 }
 
-double ProjectilePhysicsWithDrag::calculate_max_range_from_angle(double angle, double projectile_speed, double drag_coefficient) {
+double ProjectilePhysicsWithDrag::calculate_max_range_from_angle(double angle, Ref<Resource> shell_params) {
 	// Create a launch vector for this angle
+	double projectile_speed = shell_params->get("speed");
+	double drag_coefficient = shell_params->get("drag");
+
 	Vector3 launch_vector(
 		projectile_speed * std::cos(angle),
 		projectile_speed * std::sin(angle),
@@ -500,7 +547,7 @@ double ProjectilePhysicsWithDrag::calculate_max_range_from_angle(double angle, d
 
 	// Find when the projectile hits the ground (y=0) by stepping through time
 	while (current_time < max_time) {
-		current_pos = calculate_position_at_time(Vector3(), launch_vector, current_time, drag_coefficient);
+		current_pos = calculate_position_at_time(Vector3(), launch_vector, current_time, shell_params);
 
 		// If we've gone below y=0, we can interpolate to find the exact impact point
 		if (current_pos.y < 0 && prev_pos.y >= 0) {
@@ -509,7 +556,7 @@ double ProjectilePhysicsWithDrag::calculate_max_range_from_angle(double angle, d
 			double impact_time = current_time - time_step + (time_step * t_ratio);
 
 			// Calculate final position at impact time
-			Vector3 impact_pos = calculate_position_at_time(Vector3(), launch_vector, impact_time, drag_coefficient);
+			Vector3 impact_pos = calculate_position_at_time(Vector3(), launch_vector, impact_time, shell_params);
 
 			// Return the horizontal distance traveled (the range)
 			return Vector2(impact_pos.x, impact_pos.z).length();
@@ -525,8 +572,9 @@ double ProjectilePhysicsWithDrag::calculate_max_range_from_angle(double angle, d
 	return asymptotic_range;
 }
 
-double ProjectilePhysicsWithDrag::calculate_angle_from_max_range(double max_range, double projectile_speed, double drag_coefficient) {
-	double beta = drag_coefficient;
+double ProjectilePhysicsWithDrag::calculate_angle_from_max_range(double max_range, Ref<Resource> shell_params) {
+	double beta = shell_params->get("drag");
+	double projectile_speed = shell_params->get("speed");
 
 	// With drag, we need to search for the angle that gives desired range
 	// Binary search through angles to find best match
@@ -540,7 +588,7 @@ double ProjectilePhysicsWithDrag::calculate_angle_from_max_range(double max_rang
 	double max_possible_range = 0.0;
 	double test_angles[] = { Math_PI / 6.0, Math_PI / 5.0, Math_PI / 4.0, Math_PI / 3.0 };
 	for (int i = 0; i < 4; i++) {
-		double test_range = calculate_max_range_from_angle(test_angles[i], projectile_speed, beta);
+		double test_range = calculate_max_range_from_angle(test_angles[i], shell_params);
 		if (test_range > max_possible_range) {
 			max_possible_range = test_range;
 		}
@@ -554,7 +602,7 @@ double ProjectilePhysicsWithDrag::calculate_angle_from_max_range(double max_rang
 	// Binary search for angle that gives desired range
 	for (int i = 0; i < MAX_ITERATIONS; i++) {
 		double test_angle = (min_angle + max_angle) / 2.0;
-		double test_range = calculate_max_range_from_angle(test_angle, projectile_speed, beta);
+		double test_range = calculate_max_range_from_angle(test_angle, shell_params);
 
 		double error = test_range - max_range;
 

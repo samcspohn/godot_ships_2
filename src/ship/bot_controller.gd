@@ -1163,8 +1163,7 @@ func fire_at_target():
 			ship.global_position,
 			adjusted_target_pos,
 			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,
-			artillery.get_shell_params().speed,
-			artillery.get_shell_params().drag
+			artillery.get_shell_params()
 		)[2]
 
 		if target_position != null:

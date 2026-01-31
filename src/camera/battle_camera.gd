@@ -468,8 +468,7 @@ func _calculate_target_info():
 	var launch_result = ProjectilePhysicsWithDrag.calculate_launch_vector(
 		ship_position,
 		aim_position,
-		projectile_speed,
-		projectile_drag_coefficient
+		_ship.artillery_controller.get_shell_params()
 	)
 
 	# Extract results
@@ -487,7 +486,7 @@ func _calculate_target_info():
 			ship_position,
 			launch_vector,
 			launch_result[1],
-			projectile_drag_coefficient,
+			_ship.artillery_controller.get_shell_params(),
 			_ship
 			)
 

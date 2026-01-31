@@ -354,8 +354,7 @@ func engage_target():
 			_ship.global_position,
 			adjusted_target_pos,
 			target.linear_velocity / ProjectileManager.shell_time_multiplier,
-			_ship.artillery_controller.get_shell_params().speed,
-			_ship.artillery_controller.get_shell_params().drag
+			_ship.artillery_controller.get_shell_params()
 		)[2]
 
 		if target_lead != null:

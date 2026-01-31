@@ -5,6 +5,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/classes/resource.hpp>
 
 namespace godot {
 
@@ -52,26 +53,28 @@ public:
 	static double get_position_tolerance();
 	static int get_max_iterations();
 	static double get_initial_angle_step();
+	static float time_warp(double t, Ref<Resource> shell_params);
+
 
 	/// Calculate the absolute maximum range possible with the given projectile speed,
 	/// regardless of direction, and return [max_range, optimal_angle, flight_time]
-	static Array calculate_absolute_max_range(double projectile_speed, double drag_coefficient);
+	static Array calculate_absolute_max_range(Ref<Resource> shell_params);
 
 	/// Calculate projectile velocity at any time with drag effects
 	/// Returns the velocity vector at the specified time
 	static Vector3 calculate_velocity_at_time(const Vector3 &launch_vector, double time, double drag_coefficient);
 
-	/// Calculates shell position with endpoint precision guarantee
-	/// This ensures the shell will hit exactly at the target position despite floating point errors
-	/// Allows shell to continue past the target with the correct final velocity
-	static Vector3 calculate_precise_shell_position(const Vector3 &start_pos, const Vector3 &target_pos,
-		const Vector3 &launch_vector, double current_time, double total_flight_time, double drag_coefficient);
+	// /// Calculates shell position with endpoint precision guarantee
+	// /// This ensures the shell will hit exactly at the target position despite floating point errors
+	// /// Allows shell to continue past the target with the correct final velocity
+	// static Vector3 calculate_precise_shell_position(const Vector3 &start_pos, const Vector3 &target_pos,
+	// 	const Vector3 &launch_vector, double current_time, double total_flight_time, double drag_coefficient);
 
 	/// Calculates the launch vector needed to hit a stationary target from a given position
 	/// with drag effects considered
 	/// Returns [launch_vector, time_to_target] or [null, -1] if no solution exists
 	static Array calculate_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
-		double projectile_speed, double drag_coefficient);
+		Ref<Resource> shell_params);
 
 	/// Calculate the impact position where y = 0 using advanced analytical approximation
 	/// This function uses Newton-Raphson refinement with a high-accuracy initial guess
@@ -85,18 +88,19 @@ public:
 
 	/// Calculate projectile position at any time with drag effects
 	static Vector3 calculate_position_at_time(const Vector3 &start_pos, const Vector3 &launch_vector,
-		double time, double drag_coefficient);
+		double time, Ref<Resource> shell_params);
 
 	/// Calculate launch vector to lead a moving target with drag effects
 	/// Returns [launch_vector, time_to_target, final_target_position] or [null, -1, null] if no solution exists
 	static Array calculate_leading_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
-		const Vector3 &target_velocity, double projectile_speed, double drag_coefficient);
+		const Vector3 &target_velocity, Ref<Resource> shell_params);
 
 	/// Calculate the maximum horizontal range given a launch angle, accounting for drag
-	static double calculate_max_range_from_angle(double angle, double projectile_speed, double drag_coefficient);
+	static double calculate_max_range_from_angle(double angle, Ref<Resource> shell_params);
 
 	/// Calculate the required launch angle to achieve a specific range with drag
-	static double calculate_angle_from_max_range(double max_range, double projectile_speed, double drag_coefficient);
+	static double calculate_angle_from_max_range(double max_range, Ref<Resource> shell_params);
+
 };
 
 } // namespace godot
