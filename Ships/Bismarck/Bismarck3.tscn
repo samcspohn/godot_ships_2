@@ -78,6 +78,8 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
+time_warp_rate = 0.961
+time_warp_apex = 22.6
 drag = 0.0117
 damage = 9700.0
 size = 3.8
@@ -91,6 +93,8 @@ arming_threshold = 63
 resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
+time_warp_rate = 0.961
+time_warp_apex = 22.6
 drag = 0.0117
 damage = 3200.0
 size = 3.8
@@ -189,7 +193,7 @@ params = SubResource("Resource_u0hyh")
 guns = [NodePath("../../TurretMount_GER_380mm_2b/GER_380mm_2b"), NodePath("../../TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"), NodePath("../../TurretMount_GER_380mm_2b_rf_001/GER_380mm_2b_rf_001"), NodePath("../../TurretMount_GER_380mm_2b_rf_002/GER_380mm_2b_rf_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
-sub_controllers = [NodePath("SecSubController"), NodePath("SecSubController2"), NodePath("SecSubController")]
+sub_controllers = [NodePath("SecSubController2"), NodePath("SecSubController")]
 
 [node name="SecSubController" type="Node" parent="Modules/SecondaryController" index="0" unique_id=1645319735 node_paths=PackedStringArray("guns")]
 script = ExtResource("5_5tc2e")

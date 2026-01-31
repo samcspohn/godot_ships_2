@@ -1,13 +1,18 @@
-[gd_scene load_steps=3 format=3 uid="uid://5diwy5owyxuo"]
+[gd_scene format=3 uid="uid://5diwy5owyxuo"]
 
 [ext_resource type="Script" uid="uid://chcmxyf6tdfh2" path="res://src/camera/battle_camera.gd" id="1_eru7b"]
 
 [sub_resource type="Environment" id="Environment_bp804"]
 background_mode = 1
 background_color = Color(0.409483, 0.709723, 0.857173, 1)
+ssr_fade_in = 0.43922663
+ssr_fade_out = 0.4204495
+ssr_depth_tolerance = 128.0
+ssao_power = 2.2821069
+ssao_detail = 0.0
+ssil_intensity = 0.81
 glow_enabled = true
 glow_intensity = 0.25
-glow_blend_mode = 1
 glow_hdr_threshold = 1.2
 glow_hdr_luminance_cap = 256.0
 fog_enabled = true
@@ -18,7 +23,7 @@ fog_depth_curve = 0.57435
 fog_depth_begin = 0.0
 fog_depth_end = 50000.0
 
-[node name="PlayerCam" type="Camera3D"]
+[node name="PlayerCam" type="Camera3D" unique_id=1912885597]
 process_priority = 2
 environment = SubResource("Environment_bp804")
 current = true
@@ -26,11 +31,11 @@ near = 5.0
 far = 60000.0
 script = ExtResource("1_eru7b")
 
-[node name="RayCast3D" type="RayCast3D" parent="."]
+[node name="RayCast3D" type="RayCast3D" parent="." unique_id=1683830365]
 target_position = Vector3(0, 0, -60000)
 collision_mask = 3
 hit_back_faces = false
 collide_with_areas = true
 
-[node name="AudioListener3D" type="AudioListener3D" parent="."]
+[node name="AudioListener3D" type="AudioListener3D" parent="." unique_id=1168412776]
 current = true

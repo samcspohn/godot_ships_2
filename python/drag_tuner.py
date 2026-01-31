@@ -140,13 +140,11 @@ class LinearDragApproximation:
         self,
         beta: float,
         gravity: float = GRAVITY,
-        muzzle_velocity_multiplier: float = 1.0,
         time_warp_min_rate: float = 1.0,
         time_warp_apex: float = 30.0,
     ):
         self.beta = beta
         self.gravity = gravity
-        self.muzzle_velocity_multiplier = muzzle_velocity_multiplier
         self.time_warp_min_rate = time_warp_min_rate
         self.time_warp_apex = time_warp_apex
 
@@ -203,9 +201,8 @@ class LinearDragApproximation:
         max_time: float = 200.0,
         max_range: float = None,
     ) -> Tuple[List[float], np.ndarray]:
-        v0_effective = v0 * self.muzzle_velocity_multiplier
-        v0x = v0_effective * np.cos(angle_rad)
-        v0y = v0_effective * np.sin(angle_rad)
+        v0x = v0 * np.cos(angle_rad)
+        v0y = v0 * np.sin(angle_rad)
 
         times = []
         trajectory = []
@@ -284,7 +281,6 @@ class DragTunerApp:
         # Initial parameter values
         self.beta = 0.015
         self.gravity = 9.81
-        self.muzzle_vel_mult = 1.0
         self.time_warp_min_rate = 1.0
         self.time_warp_apex = 30.0
 
@@ -312,9 +308,6 @@ class DragTunerApp:
         self.ax_grav = self.fig.add_axes(
             [slider_left, 0.09, slider_width, slider_height]
         )
-        self.ax_mv_mult = self.fig.add_axes(
-            [slider_left, 0.05, slider_width, slider_height]
-        )
         self.ax_tw_rate = self.fig.add_axes(
             [slider_left, 0.01, slider_width, slider_height]
         )
@@ -327,14 +320,6 @@ class DragTunerApp:
         )
         self.slider_grav = Slider(
             self.ax_grav, "Gravity", 5.0, 25.0, valinit=self.gravity, valfmt="%.2f"
-        )
-        self.slider_mv_mult = Slider(
-            self.ax_mv_mult,
-            "Muzzle Vel Mult",
-            0.5,
-            1.5,
-            valinit=self.muzzle_vel_mult,
-            valfmt="%.3f",
         )
         self.slider_tw_rate = Slider(
             self.ax_tw_rate,
@@ -356,7 +341,6 @@ class DragTunerApp:
         # Connect sliders to update function
         self.slider_beta.on_changed(self.update)
         self.slider_grav.on_changed(self.update)
-        self.slider_mv_mult.on_changed(self.update)
         self.slider_tw_rate.on_changed(self.update)
         self.slider_tw_apex.on_changed(self.update)
 
@@ -380,7 +364,6 @@ class DragTunerApp:
         # Get current slider values
         self.beta = self.slider_beta.val
         self.gravity = self.slider_grav.val
-        self.muzzle_vel_mult = self.slider_mv_mult.val
         self.time_warp_min_rate = self.slider_tw_rate.val
         self.time_warp_apex = self.slider_tw_apex.val
 
@@ -395,7 +378,6 @@ class DragTunerApp:
         linear_sim = LinearDragApproximation(
             self.beta,
             gravity=self.gravity,
-            muzzle_velocity_multiplier=self.muzzle_vel_mult,
             time_warp_min_rate=self.time_warp_min_rate,
             time_warp_apex=self.time_warp_apex,
         )
@@ -501,7 +483,6 @@ class DragTunerApp:
         linear_sim = LinearDragApproximation(
             self.beta,
             gravity=self.gravity,
-            muzzle_velocity_multiplier=self.muzzle_vel_mult,
             time_warp_min_rate=self.time_warp_min_rate,
             time_warp_apex=self.time_warp_apex,
         )
@@ -604,7 +585,6 @@ class DragTunerApp:
         """Reset sliders to initial values."""
         self.slider_beta.reset()
         self.slider_grav.reset()
-        self.slider_mv_mult.reset()
         self.slider_tw_rate.reset()
         self.slider_tw_apex.reset()
 

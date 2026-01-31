@@ -104,6 +104,7 @@ filter_baking_aabb = AABB(-17500, -1, -17500, 35000, 2, 35000)
 [node name="Plane_019" parent="." index="18" groups=["island"]]
 
 [node name="water" parent="." index="20" groups=["map"]]
+visible = false
 material_override = ExtResource("2_7hjns")
 
 [node name="Spawn" type="Node3D" parent="." index="21" unique_id=2118512378]
