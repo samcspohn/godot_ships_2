@@ -53,9 +53,6 @@ public:
 	static double get_position_tolerance();
 	static int get_max_iterations();
 	static double get_initial_angle_step();
-	static float time_warp(double t, Ref<Resource> shell_params);
-	static float inverse_time_warp(double warped_t, Ref<Resource> shell_params);
-
 
 	/// Calculate the absolute maximum range possible with the given projectile speed,
 	/// regardless of direction, and return [max_range, optimal_angle, flight_time]

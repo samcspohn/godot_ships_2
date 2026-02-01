@@ -40,81 +40,6 @@ ProjectilePhysicsWithDrag::ProjectilePhysicsWithDrag() {
 ProjectilePhysicsWithDrag::~ProjectilePhysicsWithDrag() {
 }
 
-float ProjectilePhysicsWithDrag::time_warp(double t, Ref<Resource> params) {
-	if (!params.is_valid()) {
-		return t; // No warp if params are invalid
-	}
-
-	Variant rate_var = params->get("time_warp_rate");
-	Variant apex_var = params->get("time_warp_apex");
-	Variant k_var = params->get("time_warp_k");
-
-	// Use safe defaults if properties don't exist or are nil
-	float rate = (rate_var.get_type() != Variant::NIL) ? (float)rate_var : 1.0f;
-	float apex = (apex_var.get_type() != Variant::NIL) ? (float)apex_var : 30.0f;
-	float k = (k_var.get_type() != Variant::NIL) ? (float)k_var : 0.0f;
-
-	return rate * t + k * (pow(t - apex, 3.0) + pow(apex, 3.0)) / 3.0;
-}
-
-float ProjectilePhysicsWithDrag::inverse_time_warp(double warped_t, Ref<Resource> params) {
-	if (!params.is_valid()) {
-		return warped_t; // No inverse warp if params are invalid
-	}
-
-	Variant rate_var = params->get("time_warp_rate");
-	Variant apex_var = params->get("time_warp_apex");
-	Variant k_var = params->get("time_warp_k");
-
-	// Use safe defaults if properties don't exist or are nil
-	float rate = (rate_var.get_type() != Variant::NIL) ? (float)rate_var : 1.0f;
-	float apex = (apex_var.get_type() != Variant::NIL) ? (float)apex_var : 30.0f;
-	float k = (k_var.get_type() != Variant::NIL) ? (float)k_var : 0.0f;
-
-	// If k is zero, the equation is linear: warped_t = rate * t
-	if (std::abs(k) < 1e-10) {
-		return (rate != 0.0f) ? warped_t / rate : warped_t;
-	}
-
-	// Solve analytically using Cardano's formula
-	// Forward: w = rate * t + k * ((t - apex)^3 + apex^3) / 3
-	// Substitute s = t - apex, so t = s + apex:
-	// w = rate * (s + apex) + k * (s^3 + apex^3) / 3
-	// w = rate*s + rate*apex + k*s^3/3 + k*apex^3/3
-	// Rearranging: s^3 + (3*rate/k)*s + (apex^3 + 3*rate*apex/k - 3*w/k) = 0
-	// This is a depressed cubic: s^3 + p*s + q = 0
-
-	double p = 3.0 * rate / k;
-	double q = apex * apex * apex + 3.0 * rate * apex / k - 3.0 * warped_t / k;
-
-	// Cardano's formula discriminant: D = (q/2)^2 + (p/3)^3
-	double q_half = q / 2.0;
-	double p_third = p / 3.0;
-	double discriminant = q_half * q_half + p_third * p_third * p_third;
-
-	double s;
-
-	if (discriminant >= 0) {
-		// One real root (or repeated roots)
-		double sqrt_D = std::sqrt(discriminant);
-		double u = -q_half + sqrt_D;
-		double v = -q_half - sqrt_D;
-		// Cube roots (handle negative values)
-		s = std::cbrt(u) + std::cbrt(v);
-	} else {
-		// Three real roots - use trigonometric method
-		// s = 2 * sqrt(-p/3) * cos(theta/3 - 2*pi*k/3) for k = 0, 1, 2
-		// We want the principal root (k=0) which corresponds to the physical solution
-		double r = std::sqrt(-p_third * p_third * p_third);
-		double theta = std::acos(-q_half / r);
-		s = 2.0 * std::sqrt(-p_third) * std::cos(theta / 3.0);
-	}
-
-	// Convert back: t = s + apex
-	double t = s + apex;
-
-	return static_cast<float>(t);
-}
 // Constant accessors
 double ProjectilePhysicsWithDrag::get_gravity() {
 	return GRAVITY;
@@ -368,10 +293,8 @@ Array ProjectilePhysicsWithDrag::calculate_launch_vector(const Vector3 &start_po
 		return result; // Solution not accurate enough
 	}
 
-	double warped_time = inverse_time_warp(final_flight_time, shell_params);
-
 	result.push_back(final_launch_vector);
-	result.push_back(warped_time);
+	result.push_back(final_flight_time);
 	return result;
 }
 
@@ -491,8 +414,6 @@ Vector3 ProjectilePhysicsWithDrag::calculate_position_at_time(const Vector3 &sta
 			start_pos.z + launch_vector.z * time
 		);
 	}
-
-	time = time_warp(time, shell_params);
 
 	// Extract components
 	double v0x = launch_vector.x;

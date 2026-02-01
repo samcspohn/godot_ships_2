@@ -5,9 +5,10 @@
 [sub_resource type="Environment" id="Environment_bp804"]
 background_mode = 1
 background_color = Color(0.409483, 0.709723, 0.857173, 1)
-ssr_fade_in = 0.43922663
-ssr_fade_out = 0.4204495
-ssr_depth_tolerance = 128.0
+ssr_max_steps = 512
+ssr_fade_in = 0.35676184
+ssr_fade_out = 0.08838842
+ssr_depth_tolerance = 0.01
 ssao_power = 2.2821069
 ssao_detail = 0.0
 ssil_intensity = 0.81
@@ -18,6 +19,7 @@ glow_hdr_luminance_cap = 256.0
 fog_enabled = true
 fog_mode = 1
 fog_light_color = Color(0.40784314, 0.70980394, 0.85882354, 1)
+fog_light_energy = 0.91
 fog_density = 1.049
 fog_depth_curve = 0.57435
 fog_depth_begin = 0.0

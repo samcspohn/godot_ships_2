@@ -1,6 +1,7 @@
 extends Resource
 class_name ShellParams
 
+const GRAVITY: float = 9.81
 
 enum ShellType {
 	HE,
@@ -8,17 +9,13 @@ enum ShellType {
 }
 
 @export var speed: float
-@export var time_warp_rate: float = 1.0:
+@export var drag: float:
 	set(value):
-		time_warp_rate = value
-		_update_time_warp_k()
-@export var time_warp_apex: float = 30.0:
-	set(value):
-		time_warp_apex = value
-		_update_time_warp_k()
-@export var drag: float
+		drag = value
+		_update_derived_values()
+@export_storage var vt: float  # Terminal velocity = sqrt(g / beta)
+@export_storage var tau: float  # Time constant = vt / g
 @export var damage: float
-var time_warp_k: float
 @export var size: float  # Visual rendering size
 @export var caliber: float # Shell caliber in mm for penetration calculations
 @export var mass: float  # Shell mass in kg for penetration calculations
@@ -35,6 +32,8 @@ var time_warp_k: float
 func _init() -> void:
 	speed = 0
 	drag = 0.0
+	vt = 0.0
+	tau = 0.0
 	damage = 0
 	size = 1
 	caliber = 0.0  # Default 380mm caliber
@@ -46,10 +45,12 @@ func _init() -> void:
 	overmatch = 0
 	_secondary = false
 	arming_threshold = ceil(caliber * 1.0 / 6.0)
-	_update_time_warp_k()
 
-func _update_time_warp_k() -> void:
-	if time_warp_apex > 0:
-		time_warp_k = (1.0 - time_warp_rate) / pow(time_warp_apex, 2)
+
+func _update_derived_values() -> void:
+	if drag > 0.0:
+		vt = sqrt(GRAVITY / drag)
+		tau = vt / GRAVITY
 	else:
-		time_warp_k = 0.0
+		vt = 0.0
+		tau = 0.0

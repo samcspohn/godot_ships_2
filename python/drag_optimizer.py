@@ -10,16 +10,28 @@ Usage:
 """
 
 import argparse
-from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import minimize_scalar
 
 # =============================================================================
 # CONFIGURATION - Edit these values for your shell
 # =============================================================================
+
+
+@dataclass
+class BallisticDataPoint:
+    """A single known ballistic data point for fitting the drag coefficient"""
+
+    elevation: float  # radians - launch angle
+    range: float  # meters - horizontal distance traveled
+    time: float  # seconds - time of flight
+    impact_velocity: float  # m/s - velocity at impact
+    weight: float = 1.0  # relative weight for this data point in optimization
 
 
 @dataclass
@@ -29,20 +41,44 @@ class ShellParameters:
     caliber: float  # meters
     mass: float  # kg
     muzzle_velocity: float  # m/s
-    target_range: float  # meters
-    target_elevation: float  # radians
-    expected_time: float  # seconds
-    expected_impact_velocity: float  # m/s
     max_range: float  # meters - maximum effective range (simulation stops here)
+    data_points: List[BallisticDataPoint] = field(
+        default_factory=list
+    )  # known ballistic data for fitting
     linear_gravity: float = 9.81  # m/s² - gravity for linear drag (can differ from quadratic for game balance)
-    linear_muzzle_velocity_multiplier: float = (
-        1.0  # multiplier for muzzle velocity in linear drag (0.5-2.0+)
-    )
     # Quadratic rate time warp: rate(t) = min_rate + k*(t - apex)²
     # Starts at rate>1, slows to min_rate at apex, then speeds back up past 1.0
     time_warp_min_rate: float = 1.0  # minimum rate at apex (0.88 = 88% speed)
     time_warp_apex: float = 30.0  # time when rate is minimum (seconds)
     name: str = "Shell"
+
+    @property
+    def target_range(self) -> float:
+        """Return the first data point's range for backward compatibility"""
+        if self.data_points:
+            return self.data_points[0].range
+        return 0.0
+
+    @property
+    def target_elevation(self) -> float:
+        """Return the first data point's elevation for backward compatibility"""
+        if self.data_points:
+            return self.data_points[0].elevation
+        return 0.0
+
+    @property
+    def expected_time(self) -> float:
+        """Return the first data point's time for backward compatibility"""
+        if self.data_points:
+            return self.data_points[0].time
+        return 0.0
+
+    @property
+    def expected_impact_velocity(self) -> float:
+        """Return the first data point's impact velocity for backward compatibility"""
+        if self.data_points:
+            return self.data_points[0].impact_velocity
+        return 0.0
 
 
 # Define your shells here
@@ -50,13 +86,27 @@ SHELL_380MM = ShellParameters(
     caliber=0.380,
     mass=800.0,
     muzzle_velocity=820.0,
-    target_range=35000.0,
-    target_elevation=np.radians(30.0),
-    expected_time=71.45,
-    expected_impact_velocity=470.7,
     max_range=38000.0,  # Maximum effective range
+    data_points=[
+        BallisticDataPoint(
+            elevation=np.radians(29.1),
+            range=35000.0,
+            time=69.9,
+            impact_velocity=462,
+            weight=1.0,
+        ),
+        BallisticDataPoint(
+            elevation=np.radians(16.8),
+            range=25000.0,
+            time=43.0,
+            impact_velocity=473.0,
+            weight=1.0,
+        ),
+        # Add more data points here for better fitting:
+        # BallisticDataPoint(elevation=np.radians(15.0), range=20000.0, time=35.0, impact_velocity=550.0),
+        # BallisticDataPoint(elevation=np.radians(45.0), range=38000.0, time=90.0, impact_velocity=420.0),
+    ],
     linear_gravity=10.5,  # Custom gravity for linear drag approximation
-    linear_muzzle_velocity_multiplier=1.0,  # Multiplier for muzzle velocity in linear drag
     time_warp_min_rate=1.0,  # No time warp (rate always 1.0)
     time_warp_apex=30.0,
     name="380mm",
@@ -66,20 +116,26 @@ SHELL_203MM = ShellParameters(
     caliber=0.203,
     mass=152.0,
     muzzle_velocity=762.0,
-    target_range=27900.0,
-    target_elevation=np.radians(45.28),
-    expected_time=84.0,
-    expected_impact_velocity=404.0,
     max_range=30000.0,  # Maximum effective range
+    data_points=[
+        BallisticDataPoint(
+            elevation=np.radians(45.28),
+            range=27900.0,
+            time=84.0,
+            impact_velocity=404.0,
+            weight=1.0,
+        ),
+        # Add more data points here for better fitting:
+        # BallisticDataPoint(elevation=np.radians(20.0), range=15000.0, time=40.0, impact_velocity=500.0),
+    ],
     linear_gravity=9.81,  # Custom gravity for linear drag approximation
-    linear_muzzle_velocity_multiplier=1.0,  # Multiplier for muzzle velocity in linear drag
     time_warp_min_rate=0.88,  # Slow to 88% at apex
     time_warp_apex=30.0,  # Apex at 30 seconds
     name="203mm",
 )
 
 # Select which shell to optimize
-CURRENT_SHELL = SHELL_203MM
+CURRENT_SHELL = SHELL_380MM
 
 # Optimization search parameters
 BETA_SEARCH_PARAMS = {
@@ -208,13 +264,11 @@ class LinearDragApproximation:
         self,
         beta: float,
         gravity: float = GRAVITY,
-        muzzle_velocity_multiplier: float = 1.0,
         time_warp_min_rate: float = 1.0,
         time_warp_apex: float = 30.0,
     ):
         self.beta = beta
         self.gravity = gravity
-        self.muzzle_velocity_multiplier = muzzle_velocity_multiplier
         self.time_warp_min_rate = time_warp_min_rate
         self.time_warp_apex = time_warp_apex
         # Quadratic coefficient: rate(t) = min_rate + k*(t - apex)²
@@ -306,10 +360,8 @@ class LinearDragApproximation:
             times: List of time points
             trajectory: Array of [x, y, vx, vy] at each time point
         """
-        # Apply muzzle velocity multiplier for linear drag approximation
-        v0_effective = v0 * self.muzzle_velocity_multiplier
-        v0x = v0_effective * np.cos(angle_rad)
-        v0y = v0_effective * np.sin(angle_rad)
+        v0x = v0 * np.cos(angle_rad)
+        v0y = v0 * np.sin(angle_rad)
 
         times = []
         trajectory = []
@@ -350,39 +402,120 @@ class LinearDragApproximation:
 # =============================================================================
 
 
-def find_quadratic_drag_coefficient(shell: ShellParameters) -> float:
+def find_quadratic_drag_coefficient(
+    shell: ShellParameters,
+    k_min: float = 0.00001,
+    k_max: float = 0.0005,
+    error_weights: Optional[Dict[str, float]] = None,
+) -> float:
     """
-    Find quadratic drag coefficient that matches target range and impact velocity
+    Find quadratic drag coefficient that best matches all known ballistic data points.
+
+    Uses scipy.optimize.minimize_scalar with Brent's method for robust optimization.
+
+    Args:
+        shell: Shell parameters with data_points list
+        k_min: Minimum k value to search
+        k_max: Maximum k value to search
+        error_weights: Optional weights for error components:
+            - 'range': weight for range error (default 1.0)
+            - 'time': weight for time error (default 1.0)
+            - 'velocity': weight for impact velocity error (default 1.0)
+
+    Returns:
+        Optimal quadratic drag coefficient k
     """
+    if not shell.data_points:
+        raise ValueError("No ballistic data points provided in shell.data_points")
+
+    # Default error weights
+    if error_weights is None:
+        error_weights = {"range": 1.0, "time": 1.0, "velocity": 1.0}
+
     print(f"Finding quadratic drag coefficient for {shell.name}...")
+    print(f"  Using {len(shell.data_points)} data point(s) for fitting")
+    print(
+        f"  Error weights: range={error_weights['range']:.2f}, "
+        f"time={error_weights['time']:.2f}, velocity={error_weights['velocity']:.2f}"
+    )
 
-    k_values = np.linspace(0.00001, 0.0001, 100)
-    best_k = None
-    best_error = float("inf")
+    def compute_total_error(k: float) -> float:
+        """Compute weighted total error across all data points for a given k"""
+        if k <= 0:
+            return float("inf")
 
-    for k_test in k_values:
-        sim = QuadraticDragSimulator(k_test)
-        times, traj = sim.simulate(shell.muzzle_velocity, shell.target_elevation)
+        sim = QuadraticDragSimulator(k)
+        total_error = 0.0
+        total_weight = 0.0
 
+        for dp in shell.data_points:
+            times, traj = sim.simulate(
+                shell.muzzle_velocity, dp.elevation, max_range=shell.max_range
+            )
+
+            if len(traj) < 2:
+                return float("inf")
+
+            actual_range = traj[-1, 0]
+            actual_time = times[-1]
+            actual_impact_vel = np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2)
+
+            # Compute normalized errors
+            range_error = abs(actual_range - dp.range) / dp.range if dp.range > 0 else 0
+            time_error = abs(actual_time - dp.time) / dp.time if dp.time > 0 else 0
+            vel_error = (
+                abs(actual_impact_vel - dp.impact_velocity) / dp.impact_velocity
+                if dp.impact_velocity > 0
+                else 0
+            )
+
+            # Weighted sum of squared errors for this data point
+            point_error = (
+                error_weights["range"] * range_error**2
+                + error_weights["time"] * time_error**2
+                + error_weights["velocity"] * vel_error**2
+            )
+
+            total_error += dp.weight * point_error
+            total_weight += dp.weight
+
+        return total_error / total_weight if total_weight > 0 else float("inf")
+
+    # Use scipy's minimize_scalar with Brent's method for robust optimization
+    result = minimize_scalar(
+        compute_total_error,
+        bounds=(k_min, k_max),
+        method="bounded",
+        options={"xatol": 1e-10, "maxiter": 500},
+    )
+
+    best_k = result.x
+    best_error = result.fun
+
+    print(f"  Optimization {'converged' if result.success else 'did not converge'}")
+    print(f"  Found k = {best_k:.10f} (RMS error: {np.sqrt(best_error) * 100:.4f}%)")
+
+    # Print per-data-point results
+    sim = QuadraticDragSimulator(best_k)
+    print("\n  Per-data-point results:")
+    print(
+        f"  {'Angle°':<10} {'Range km':<12} {'Exp km':<10} {'Time s':<10} {'Exp s':<10} {'Vel m/s':<10} {'Exp m/s':<10}"
+    )
+    print("  " + "-" * 75)
+
+    for dp in shell.data_points:
+        times, traj = sim.simulate(
+            shell.muzzle_velocity, dp.elevation, max_range=shell.max_range
+        )
         actual_range = traj[-1, 0]
         actual_time = times[-1]
-        actual_impact_vel = np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2)
+        actual_vel = np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2)
 
-        # Error metric
-        range_error = abs(actual_range - shell.target_range) / shell.target_range
-        time_error = abs(actual_time - shell.expected_time) / shell.expected_time
-        vel_error = (
-            abs(actual_impact_vel - shell.expected_impact_velocity)
-            / shell.expected_impact_velocity
+        print(
+            f"  {np.degrees(dp.elevation):<10.2f} {actual_range / 1000:<12.2f} {dp.range / 1000:<10.2f} "
+            f"{actual_time:<10.2f} {dp.time:<10.2f} {actual_vel:<10.1f} {dp.impact_velocity:<10.1f}"
         )
 
-        total_error = range_error + time_error + vel_error
-
-        if total_error < best_error:
-            best_error = total_error
-            best_k = k_test
-
-    print(f"  Found k = {best_k:.8f}")
     return best_k
 
 
@@ -443,7 +576,6 @@ def optimize_linear_drag(
         linear_sim = LinearDragApproximation(
             beta,
             gravity=shell.linear_gravity,
-            muzzle_velocity_multiplier=shell.linear_muzzle_velocity_multiplier,
             time_warp_min_rate=shell.time_warp_min_rate,
             time_warp_apex=shell.time_warp_apex,
         )
@@ -561,7 +693,6 @@ def plot_comparison(
         sim = LinearDragApproximation(
             beta,
             gravity=shell.linear_gravity,
-            muzzle_velocity_multiplier=shell.linear_muzzle_velocity_multiplier,
             time_warp_min_rate=shell.time_warp_min_rate,
             time_warp_apex=shell.time_warp_apex,
         )
@@ -853,7 +984,6 @@ def plot_range_curves(
     linear_opt_sim = LinearDragApproximation(
         beta_optimal,
         gravity=shell.linear_gravity,
-        muzzle_velocity_multiplier=shell.linear_muzzle_velocity_multiplier,
         time_warp_min_rate=shell.time_warp_min_rate,
         time_warp_apex=shell.time_warp_apex,
     )
@@ -865,7 +995,6 @@ def plot_range_curves(
                 LinearDragApproximation(
                     beta,
                     gravity=shell.linear_gravity,
-                    muzzle_velocity_multiplier=shell.linear_muzzle_velocity_multiplier,
                     time_warp_min_rate=shell.time_warp_min_rate,
                     time_warp_apex=shell.time_warp_apex,
                 )
@@ -1184,7 +1313,6 @@ def plot_ballistic_performance_curves(
         linear_sim = LinearDragApproximation(
             beta,
             gravity=shell.linear_gravity,
-            muzzle_velocity_multiplier=shell.linear_muzzle_velocity_multiplier,
             time_warp_min_rate=shell.time_warp_min_rate,
             time_warp_apex=shell.time_warp_apex,
         )
@@ -1486,9 +1614,7 @@ def main():
     print(
         f"Shell: {shell.caliber * 1000:.0f}mm, {shell.mass:.0f}kg, {shell.muzzle_velocity:.0f}m/s"
     )
-    print(
-        f"Linear params: gravity={shell.linear_gravity:.2f}m/s², muzzle_vel_mult={shell.linear_muzzle_velocity_multiplier:.2f}"
-    )
+    print(f"Linear params: gravity={shell.linear_gravity:.2f}m/s²")
     print(
         f"Time warp: min_rate={shell.time_warp_min_rate:.2f} at apex={shell.time_warp_apex:.0f}s"
     )

@@ -9,6 +9,7 @@
 // From projectile_physics
 #include "projectile_physics.h"
 #include "projectile_physics_with_drag.h"
+#include "projectile_physics_with_drag_v2.h"
 
 // From game_systems
 #include "projectile_data.h"
@@ -29,6 +30,7 @@ void initialize_ships_core_module(ModuleInitializationLevel p_level) {
 	// Register projectile physics classes
 	GDREGISTER_CLASS(ProjectilePhysics);
 	GDREGISTER_CLASS(ProjectilePhysicsWithDrag);
+	GDREGISTER_CLASS(ProjectilePhysicsWithDragV2);
 
 	// Register data classes (they are dependencies)
 	GDREGISTER_CLASS(ProjectileData);

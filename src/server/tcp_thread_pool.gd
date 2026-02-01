@@ -345,7 +345,7 @@ func _exit_tree() -> void:
 	for t in threads:
 		t.request_stop()
 	for t in threads:
-		if t.thread.is_active():
+		if t.thread.is_alive():
 			t.thread.wait_to_finish()
 	threads.clear()
 	if client:
@@ -353,7 +353,7 @@ func _exit_tree() -> void:
 		if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
 			client.disconnect_from_host()
 		client = null
-	if receive_thread and receive_thread.is_active():
+	if receive_thread and receive_thread.is_alive():
 		receive_thread.wait_to_finish()
 	receive_thread = null
 	client_queue_mutex.lock()

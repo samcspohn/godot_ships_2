@@ -31,6 +31,13 @@ run: install
 tune: install
 	$(VENV_PYTHON) drag_tuner.py
 
+# Run the combined optimizer app
+app: install
+	$(VENV_PYTHON) drag_optimizer_app.py
+
+# Run the decouple compensation analysis
+decouple: install
+	$(VENV_PYTHON) decouple_compensation.py
 
 # Clean up virtual environment
 clean:
@@ -50,6 +57,8 @@ help:
 	@echo "  install  - Install dependencies from requirements.txt"
 	@echo "  run      - Run drag_optimizer.py"
 	@echo "  tune     - Run interactive drag_tuner.py"
+	@echo "  app      - Run combined drag_optimizer_app.py"
+	@echo "  decouple - Run decouple_compensation.py analysis"
 	@echo "  clean    - Remove virtual environment and cache files"
 	@echo "  freeze   - Update requirements.txt with current packages"
 	@echo "  help     - Show this help message"
