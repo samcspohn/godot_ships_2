@@ -1159,7 +1159,7 @@ func fire_at_target():
 		var aim_offset = get_aim_offset_for_target(target_ship)
 		var adjusted_target_pos = target_ship.global_position + aim_offset
 
-		var target_position = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
+		var target_position = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 			ship.global_position,
 			adjusted_target_pos,
 			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,

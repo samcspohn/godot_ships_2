@@ -1,5 +1,5 @@
 #include "projectile_manager.h"
-#include "projectile_physics_with_drag.h"
+#include "projectile_physics_with_drag_v2.h"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/engine.hpp>
@@ -429,9 +429,8 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
 		// Calculate position for rendering and trail emission
-		// Use native ProjectilePhysicsWithDrag static method directly
-		double drag = shell_params->get("drag");
-		Vector3 new_position = ProjectilePhysicsWithDrag::calculate_position_at_time(
+		// Use native ProjectilePhysicsWithDragV2 static method directly
+		Vector3 new_position = ProjectilePhysicsWithDragV2::calculate_position_at_time(
 			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 
 		p->set_position(new_position);
@@ -491,15 +490,14 @@ void _ProjectileManager::_physics_process(double delta) {
 
 		ray_query->set_from(p->get_position());
 
-		// Calculate new position using native ProjectilePhysicsWithDrag static method
+		// Calculate new position using native ProjectilePhysicsWithDragV2 static method
 		Ref<Resource> shell_params = p->get_params();
 		if (!shell_params.is_valid()) {
 			UtilityFunctions::push_warning("ProjectileManager: Projectile has invalid shell_params, skipping");
 			id++;
 			continue;
 		}
-		double drag = shell_params->get("drag");
-		Vector3 new_position = ProjectilePhysicsWithDrag::calculate_position_at_time(
+		Vector3 new_position = ProjectilePhysicsWithDragV2::calculate_position_at_time(
 			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 		p->set_position(new_position);
 		ray_query->set_to(p->get_position());

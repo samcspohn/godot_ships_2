@@ -7,7 +7,7 @@
 resource_local_to_scene = true
 script = ExtResource("2_2me4r")
 speed = 875.0
-drag = 0.03
+drag = 5.9999999999999995e-05
 damage = 2100.0
 size = 2.25
 caliber = 150.0
@@ -21,7 +21,7 @@ arming_threshold = 25
 resource_local_to_scene = true
 script = ExtResource("2_2me4r")
 speed = 875.0
-drag = 0.03
+drag = 5.9999999999999995e-05
 damage = 700.0
 size = 2.25
 caliber = 150.0

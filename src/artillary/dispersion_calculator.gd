@@ -34,17 +34,19 @@ static func calculate_dispersed_launch(
 									base_spread: float) -> Vector3:
 	# print(aim_point)
 
-	var a = ProjectilePhysicsWithDrag.calculate_launch_vector(gun_position, aim_point, shell_params)
+	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
 	var launch_velocity = a[0]
+	if launch_velocity == null:
+		return (aim_point - gun_position).normalized()
 	# return launch_velocity
 
 
 	var _dist = gun_position.distance_to(aim_point)
-	
+
 	# Use efficient normal distribution for more realistic dispersion
 	var p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
-	
-	
+
+
 	var r = launch_velocity.cross(Vector3.UP).normalized()
 	var u = launch_velocity.cross(r).normalized()
 	# var base_spread = 0.01

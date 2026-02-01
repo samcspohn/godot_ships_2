@@ -350,7 +350,7 @@ func engage_target():
 
 	if target != null and target.visible_to_enemy and target.is_alive():
 		var adjusted_target_pos = target.global_position + behavior.target_aim_offset(target)
-		target_lead = ProjectilePhysicsWithDrag.calculate_leading_launch_vector(
+		target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 			_ship.global_position,
 			adjusted_target_pos,
 			target.linear_velocity / ProjectileManager.shell_time_multiplier,

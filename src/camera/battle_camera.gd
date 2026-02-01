@@ -465,7 +465,7 @@ func _calculate_target_info():
 
 	# Calculate launch vector using our projectile physics
 	var ship_position = _ship.global_position
-	var launch_result = ProjectilePhysicsWithDrag.calculate_launch_vector(
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
 		ship_position,
 		aim_position,
 		_ship.artillery_controller.get_shell_params()
@@ -496,10 +496,10 @@ func _calculate_target_info():
 		if shell.type == ShellParams.ShellType.HE:
 			penetration_power = shell.overmatch
 		else:
-			var velocity_at_impact_vec = ProjectilePhysicsWithDrag.calculate_velocity_at_time(
+			var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 				launch_vector,
 				launch_result[1],
-				projectile_drag_coefficient
+				_ship.artillery_controller.get_shell_params()
 			)
 			var velocity_at_impact = velocity_at_impact_vec.length()
 			var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(

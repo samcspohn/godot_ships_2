@@ -230,8 +230,8 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 
 			if armor_part:
 				# Process the armor hit
-				var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-					projectile.launch_velocity, t, projectile.params.drag)
+				var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+					projectile.launch_velocity, t, projectile.params)
 
 				return _process_hit(armor_part, result.get('position'), result.get('normal'),
 					projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
@@ -247,12 +247,12 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 
 		if distance_to_water > 0.0 and distance_to_water <= dir.length():
 			var water_hit_pos := prev_pos + dir * distance_to_water
-			var impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-				projectile.launch_velocity, t, projectile.params.drag)
-			
+			var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+				projectile.launch_velocity, t, projectile.params)
+
 			var p = projectile.params.duplicate(true)
 			p.drag *= WATER_DRAG
-			var fuzed_position := ProjectilePhysicsWithDrag.calculate_position_at_time(
+			var fuzed_position := ProjectilePhysicsWithDragV2.calculate_position_at_time(
 				water_hit_pos, impact_vel, projectile.params.fuze_delay,
 				p)
 
@@ -275,8 +275,10 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 				var total_dist := (fuzed_position - water_hit_pos).length()
 				var hit_dist := (hit_pos - water_hit_pos).length()
 				var t_impact: float = projectile.params.fuze_delay * (hit_dist / total_dist)
-				var water_impact_vel := ProjectilePhysicsWithDrag.calculate_velocity_at_time(
-					impact_vel, t_impact, projectile.params.drag * WATER_DRAG)
+				var water_p = projectile.params.duplicate(true)
+				water_p.drag *= WATER_DRAG
+				var water_impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+					impact_vel, t_impact, water_p)
 
 				return _process_hit(hit_armor, hit_pos, ship_result['normal'],
 					projectile, water_impact_vel, ship_result['face_index'], t_impact, space_state, true, events)

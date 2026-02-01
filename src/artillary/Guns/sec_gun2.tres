@@ -7,7 +7,7 @@
 resource_local_to_scene = true
 script = ExtResource("2_kndud")
 speed = 900.0
-drag = 0.043
+drag = 6.999999999999997e-05
 damage = 1400.0
 size = 1.75
 caliber = 105.0
@@ -21,7 +21,7 @@ arming_threshold = 17
 resource_local_to_scene = true
 script = ExtResource("2_kndud")
 speed = 900.0
-drag = 0.043
+drag = 6.999999999999997e-05
 damage = 470.0
 size = 1.75
 caliber = 105.0

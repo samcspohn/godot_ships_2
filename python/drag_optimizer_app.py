@@ -131,6 +131,14 @@ SHELL_203MM = ShellParameters(
             time=84.0,
             impact_velocity=404.0,
             max_height=12000.0,  # meters
+            weight=0.1,
+        ),
+        BallisticDataPoint(
+            elevation=np.radians(10.75),
+            range=14630.0,
+            time=26.93,
+            impact_velocity=419,
+            max_height=0.0,  # meters - maximum altitude at this angle
             weight=1.0,
         ),
     ],
@@ -184,7 +192,7 @@ SHELL_150MM_GERAT = ShellParameters(
 )
 
 # Select shell
-CURRENT_SHELL = SHELL_380MM
+CURRENT_SHELL = SHELL_203MM
 
 
 # =============================================================================

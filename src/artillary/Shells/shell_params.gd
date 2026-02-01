@@ -9,7 +9,7 @@ enum ShellType {
 }
 
 @export var speed: float
-@export var drag: float:
+@export_range(0.00000,0.0001,0.000001) var drag: float:
 	set(value):
 		drag = value
 		_update_derived_values()
