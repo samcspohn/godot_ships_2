@@ -21,6 +21,7 @@ mono_crash.*.json
 
 # Python
 venv/
+venv_freethreaded/
 python/output/
 __pycache__/
 *.pyc

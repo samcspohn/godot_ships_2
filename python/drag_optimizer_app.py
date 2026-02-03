@@ -9,10 +9,12 @@ Usage:
 """
 
 import json
-import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from queue import Empty, Queue
+from typing import Callable, Dict, List, Tuple
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
@@ -182,7 +184,7 @@ SHELL_150MM_GERAT = ShellParameters(
             time=0.0,
             impact_velocity=0.0,
             max_height=18000.0,  # meters
-            weight=42.0,
+            weight=1.0,
         ),
     ],
     linear_gravity=9.81,
@@ -192,7 +194,7 @@ SHELL_150MM_GERAT = ShellParameters(
 )
 
 # Select shell
-CURRENT_SHELL = SHELL_203MM
+CURRENT_SHELL = SHELL_380MM
 
 
 # =============================================================================
@@ -758,6 +760,446 @@ def optimize_linear_drag(
 # =============================================================================
 # INTERACTIVE APPLICATION
 # =============================================================================
+# PERSISTENT THREAD POOL WITH WORK-STEALING QUEUE
+# =============================================================================
+
+# De Marre constant for penetration calculation
+_DE_MARRE_K = 0.06
+
+
+def _calc_penetration(
+    velocity: float, mass_kg: float, caliber_mm: float, impact_angle_deg: float
+) -> float:
+    """Calculate armor penetration using de Marre formula, adjusted for impact angle.
+
+    The penetration is reduced by cos(impact_angle) to account for the effective
+    thickness of armor at oblique angles.
+
+    Args:
+        velocity: Impact velocity in m/s
+        mass_kg: Shell mass in kg
+        caliber_mm: Shell diameter in mm
+        impact_angle_deg: Impact angle in degrees (0 = horizontal, 90 = vertical)
+
+    Returns:
+        Effective penetration in mm
+    """
+    if velocity < 1.0:
+        return 0.0
+    base_penetration = (
+        _DE_MARRE_K * pow(mass_kg, 0.55) * pow(velocity, 1.43) / pow(caliber_mm, 0.65)
+    )
+    # Apply cosine correction for oblique impact
+    # Impact angle is measured from horizontal, so we use cos(impact_angle)
+    angle_rad = np.radians(impact_angle_deg)
+    angle_factor = np.cos(angle_rad)
+    # Clamp to avoid negative or zero values at extreme angles
+    angle_factor = max(0.1, angle_factor)
+    return base_penetration * angle_factor
+
+
+class SimulationWorkerPool:
+    """Persistent thread pool with work-stealing queue for low-latency simulation updates.
+
+    Keeps threads warm and ready to process work, avoiding thread creation overhead
+    on each parameter update. Uses a work-stealing queue pattern where idle threads
+    pick up available tasks.
+    """
+
+    def __init__(self, n_workers: int = 10):
+        self.n_workers = n_workers
+        self._task_queue: Queue = Queue()
+        self._results: Dict[int, any] = {}
+        self._results_lock = threading.Lock()
+        self._pending_count = 0
+        self._pending_lock = threading.Lock()
+        self._completion_event = threading.Event()
+        self._shutdown = False
+        self._workers: List[threading.Thread] = []
+
+        # Start persistent worker threads
+        for i in range(n_workers):
+            t = threading.Thread(target=self._worker_loop, daemon=True)
+            t.start()
+            self._workers.append(t)
+
+    def _worker_loop(self):
+        """Main loop for each worker thread - continuously steal work from queue."""
+        while not self._shutdown:
+            try:
+                # Wait for work with timeout to allow checking shutdown flag
+                task = self._task_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            if task is None:  # Shutdown signal
+                break
+
+            task_id, func, args = task
+            try:
+                result = func(args)
+            except Exception as e:
+                result = e
+
+            # Store result
+            with self._results_lock:
+                self._results[task_id] = result
+
+            # Decrement pending count and signal if all done
+            with self._pending_lock:
+                self._pending_count -= 1
+                if self._pending_count == 0:
+                    self._completion_event.set()
+
+    def submit_batch(self, tasks: List[Tuple[Callable, tuple]]) -> List:
+        """Submit a batch of tasks and wait for all to complete.
+
+        Args:
+            tasks: List of (function, args) tuples
+
+        Returns:
+            List of results in the same order as tasks
+        """
+        if not tasks:
+            return []
+
+        # Reset state for new batch
+        with self._results_lock:
+            self._results.clear()
+        with self._pending_lock:
+            self._pending_count = len(tasks)
+        self._completion_event.clear()
+
+        # Submit all tasks to the queue
+        for task_id, (func, args) in enumerate(tasks):
+            self._task_queue.put((task_id, func, args))
+
+        # Wait for all tasks to complete
+        self._completion_event.wait()
+
+        # Collect results in order
+        with self._results_lock:
+            return [self._results[i] for i in range(len(tasks))]
+
+    def shutdown(self):
+        """Shutdown the worker pool."""
+        self._shutdown = True
+        # Send shutdown signals
+        for _ in self._workers:
+            self._task_queue.put(None)
+        # Wait for workers to finish
+        for t in self._workers:
+            t.join(timeout=1.0)
+
+
+# Global worker pool instance (created lazily)
+_worker_pool: SimulationWorkerPool = None
+_worker_pool_lock = threading.Lock()
+
+
+def _get_worker_pool() -> SimulationWorkerPool:
+    """Get or create the global worker pool."""
+    global _worker_pool
+    if _worker_pool is None:
+        with _worker_pool_lock:
+            if _worker_pool is None:
+                _worker_pool = SimulationWorkerPool(n_workers=64)
+    return _worker_pool
+
+
+# =============================================================================
+# SIMULATION WORKER FUNCTIONS
+# =============================================================================
+
+
+def _simulate_quadratic_chunk(args: Tuple) -> List[Tuple[int, dict]]:
+    """Worker to simulate a chunk of angles for Quadratic simulator.
+
+    Args:
+        args: (chunk_indices, angles_rad, k_quadratic, muzzle_velocity, max_range, mass_kg, caliber_mm)
+              where chunk_indices is a list of (idx, angle_rad) pairs
+
+    Returns:
+        List of (angle_idx, result_dict) tuples
+    """
+    (
+        chunk_data,
+        k_quadratic,
+        muzzle_velocity,
+        max_range,
+        mass_kg,
+        caliber_mm,
+    ) = args
+
+    sim = QuadraticDragSimulator(k_quadratic)
+    results = []
+
+    for angle_idx, angle_rad in chunk_data:
+        times, traj = sim.simulate(muzzle_velocity, angle_rad, max_range=max_range)
+
+        if len(traj) > 1 and (traj[-1, 1] <= 0 or traj[-1, 0] >= max_range):
+            r = traj[-1, 0] / 1000
+            vx, vy = traj[-1, 2], traj[-1, 3]
+            impact_vel = np.sqrt(vx**2 + vy**2)
+            impact_angle = np.degrees(np.arctan2(-vy, vx))
+
+            results.append(
+                (
+                    angle_idx,
+                    {
+                        "range_km": r,
+                        "impact_velocity": impact_vel,
+                        "impact_angle": impact_angle,
+                        "time": times[-1],
+                        "angle_deg": np.degrees(angle_rad),
+                        "penetration": _calc_penetration(
+                            impact_vel, mass_kg, caliber_mm, impact_angle
+                        ),
+                    },
+                )
+            )
+        else:
+            results.append((angle_idx, None))
+
+    return results
+
+
+def _simulate_linear_all_angles(args: Tuple) -> Dict[str, List]:
+    """Simulate all angles for Linear simulator (fast, no need to parallelize angles)."""
+    (
+        angles_rad,
+        beta,
+        gravity,
+        time_warp_min_rate,
+        time_warp_apex,
+        muzzle_velocity,
+        max_range,
+        mass_kg,
+        caliber_mm,
+    ) = args
+
+    result = {
+        "ranges": [],
+        "impact_velocities": [],
+        "times": [],
+        "angles": [],
+        "impact_angles": [],
+        "penetrations": [],
+    }
+
+    sim = LinearDragApproximation(
+        beta,
+        gravity=gravity,
+        time_warp_min_rate=time_warp_min_rate,
+        time_warp_apex=time_warp_apex,
+    )
+
+    prev_range = -1.0
+    for angle_rad in angles_rad:
+        times, traj = sim.simulate(muzzle_velocity, angle_rad, max_range=max_range)
+
+        if len(traj) > 1 and (traj[-1, 1] <= 0 or traj[-1, 0] >= max_range):
+            r = traj[-1, 0] / 1000
+            if prev_range > 0 and r < prev_range:
+                break
+            prev_range = r
+
+            vx, vy = traj[-1, 2], traj[-1, 3]
+            impact_vel = np.sqrt(vx**2 + vy**2)
+            impact_angle = np.degrees(np.arctan2(-vy, vx))
+
+            result["ranges"].append(r)
+            result["impact_velocities"].append(impact_vel)
+            result["times"].append(times[-1])
+            result["angles"].append(np.degrees(angle_rad))
+            result["impact_angles"].append(impact_angle)
+            result["penetrations"].append(
+                _calc_penetration(impact_vel, mass_kg, caliber_mm, impact_angle)
+            )
+
+    return result
+
+
+def _simulate_analytical_all_angles(args: Tuple) -> Dict[str, List]:
+    """Simulate all angles for Analytical simulator (fast, no need to parallelize angles)."""
+    (
+        angles_rad,
+        analytical_beta,
+        gravity,
+        muzzle_velocity,
+        max_range,
+        mass_kg,
+        caliber_mm,
+    ) = args
+
+    result = {
+        "ranges": [],
+        "impact_velocities": [],
+        "times": [],
+        "angles": [],
+        "impact_angles": [],
+        "penetrations": [],
+    }
+
+    sim = AnalyticalDragSimulator(muzzle_velocity, analytical_beta, gravity)
+
+    prev_range = -1.0
+    for angle_rad in angles_rad:
+        times, traj = sim.simulate(muzzle_velocity, angle_rad, max_range=max_range)
+
+        if len(traj) > 1 and (traj[-1, 1] <= 0 or traj[-1, 0] >= max_range):
+            r = traj[-1, 0] / 1000
+            if prev_range > 0 and r < prev_range:
+                break
+            prev_range = r
+
+            vx, vy = traj[-1, 2], traj[-1, 3]
+            impact_vel = np.sqrt(vx**2 + vy**2)
+            impact_angle = np.degrees(np.arctan2(-vy, vx))
+
+            result["ranges"].append(r)
+            result["impact_velocities"].append(impact_vel)
+            result["times"].append(times[-1])
+            result["angles"].append(np.degrees(angle_rad))
+            result["impact_angles"].append(impact_angle)
+            result["penetrations"].append(
+                _calc_penetration(impact_vel, mass_kg, caliber_mm, impact_angle)
+            )
+
+    return result
+
+
+def _compute_all_simulations_parallel(
+    angles_rad: np.ndarray,
+    k_quadratic: float,
+    beta: float,
+    gravity: float,
+    time_warp_min_rate: float,
+    time_warp_apex: float,
+    analytical_beta: float,
+    muzzle_velocity: float,
+    max_range: float,
+    mass_kg: float,
+    caliber_mm: float,
+) -> Dict[str, Dict[str, List]]:
+    """Compute all simulations in parallel using persistent worker pool.
+
+    Uses a pre-warmed thread pool with work-stealing queue for low latency.
+
+    Chunked parallelism strategy:
+    - Quadratic (slow, ~80% of time): split into 8 chunks
+    - Linear (fast): single task for all angles
+    - Analytical (fast): single task for all angles
+
+    Total: 10 tasks distributed across persistent worker threads.
+
+    Returns a dictionary with 'quadratic', 'linear', 'analytical' keys,
+    each containing lists of ranges, impact_velocities, times, angles,
+    impact_angles, and penetrations.
+    """
+    pool = _get_worker_pool()
+
+    # Split Quadratic angles into 8 chunks
+    n_chunks = 8
+    angle_data = [(idx, angle_rad) for idx, angle_rad in enumerate(angles_rad)]
+    chunk_size = (len(angle_data) + n_chunks - 1) // n_chunks
+    chunks = [
+        angle_data[i : i + chunk_size] for i in range(0, len(angle_data), chunk_size)
+    ]
+
+    # Build task list: (function, args) tuples
+    # First 8 tasks are quadratic chunks, then linear, then analytical
+    tasks = []
+
+    # Quadratic chunk tasks
+    for chunk in chunks:
+        tasks.append(
+            (
+                _simulate_quadratic_chunk,
+                (chunk, k_quadratic, muzzle_velocity, max_range, mass_kg, caliber_mm),
+            )
+        )
+
+    # Linear task
+    tasks.append(
+        (
+            _simulate_linear_all_angles,
+            (
+                angles_rad,
+                beta,
+                gravity,
+                time_warp_min_rate,
+                time_warp_apex,
+                muzzle_velocity,
+                max_range,
+                mass_kg,
+                caliber_mm,
+            ),
+        )
+    )
+
+    # Analytical task
+    tasks.append(
+        (
+            _simulate_analytical_all_angles,
+            (
+                angles_rad,
+                analytical_beta,
+                gravity,
+                muzzle_velocity,
+                max_range,
+                mass_kg,
+                caliber_mm,
+            ),
+        )
+    )
+
+    # Submit all tasks to the persistent pool and wait for completion
+    results = pool.submit_batch(tasks)
+
+    # Parse results: first n_chunks are quadratic, then linear, then analytical
+    quad_chunk_results = results[: len(chunks)]
+    linear_result = results[len(chunks)]
+    analytical_result = results[len(chunks) + 1]
+
+    # Flatten quadratic chunk results
+    quad_raw_results = []
+    for chunk_result in quad_chunk_results:
+        quad_raw_results.extend(chunk_result)
+
+    # Process quadratic results: sort by angle index, stop when range decreases
+    quad_result = {
+        "ranges": [],
+        "impact_velocities": [],
+        "times": [],
+        "angles": [],
+        "impact_angles": [],
+        "penetrations": [],
+    }
+
+    # Sort by angle index and filter
+    quad_raw_results.sort(key=lambda x: x[0])
+    prev_range = -1.0
+    for angle_idx, data in quad_raw_results:
+        if data is None:
+            continue
+        r = data["range_km"]
+        if prev_range > 0 and r < prev_range:
+            break
+        prev_range = r
+
+        quad_result["ranges"].append(r)
+        quad_result["impact_velocities"].append(data["impact_velocity"])
+        quad_result["times"].append(data["time"])
+        quad_result["angles"].append(data["angle_deg"])
+        quad_result["impact_angles"].append(data["impact_angle"])
+        quad_result["penetrations"].append(data["penetration"])
+
+    return {
+        "quadratic": quad_result,
+        "linear": linear_result,
+        "analytical": analytical_result,
+    }
 
 
 class DragOptimizerApp:
@@ -809,8 +1251,9 @@ class DragOptimizerApp:
         self.ax_tof = self.fig.add_subplot(gs_plots[1, 1])
         self.ax_angle_range = self.fig.add_subplot(gs_plots[1, 2])
 
-        # Row 3: Time Warp Rate (spans all columns)
-        self.ax_warp_rate = self.fig.add_subplot(gs_plots[2, :])
+        # Row 3: Impact Angle vs Range and Armor Penetration vs Range
+        self.ax_impact_angle = self.fig.add_subplot(gs_plots[2, 0:2])
+        self.ax_armor_pen = self.fig.add_subplot(gs_plots[2, 2])
 
         # Right side: controls
         gs_controls = gridspec.GridSpecFromSubplotSpec(
@@ -1005,7 +1448,7 @@ class DragOptimizerApp:
 
         angle_rad = np.radians(self.launch_angle)
 
-        # Run simulations for current angle
+        # Run simulations for current angle (single trajectory plots)
         quad_sim = QuadraticDragSimulator(self.k_quadratic)
         times_quad, traj_quad = quad_sim.simulate(
             self.shell.muzzle_velocity, angle_rad, max_range=self.shell.max_range
@@ -1042,6 +1485,27 @@ class DragOptimizerApp:
             else np.array([])
         )
 
+        # Compute all multi-angle simulations in parallel
+        # Use exponential distribution with more samples near 0 for some plots
+        t = np.linspace(0, 1, 40)
+        angles_exp_deg = 55 * (np.exp(t) - 1) / (np.exp(1) - 1)
+        angles_exp_rad = np.radians(angles_exp_deg)
+
+        # Compute parallel simulations for all plots
+        self._cached_sim_results = _compute_all_simulations_parallel(
+            angles_exp_rad,
+            self.k_quadratic,
+            self.beta,
+            self.gravity,
+            self.time_warp_min_rate,
+            self.time_warp_apex,
+            self.analytical_beta,
+            self.shell.muzzle_velocity,
+            self.shell.max_range,
+            self.shell.mass,
+            self.shell.caliber * 1000,  # Convert to mm
+        )
+
         # Update all plots
         self._plot_trajectory(traj_quad, traj_lin, traj_analytical)
         self._plot_velocity_vs_time(
@@ -1055,14 +1519,8 @@ class DragOptimizerApp:
         self._plot_impact_velocity_vs_range()
         self._plot_tof_vs_range()
         self._plot_angle_vs_range()
-        self._plot_time_warp_rate(
-            linear_sim,
-            max(
-                times_quad[-1] if len(times_quad) > 0 else 100,
-                times_lin[-1] if len(times_lin) > 0 else 100,
-                times_analytical[-1] if len(times_analytical) > 0 else 100,
-            ),
-        )
+        self._plot_impact_angle_vs_range()
+        self._plot_armor_penetration_vs_range()
 
         # Update info text
         self._update_info(
@@ -1168,81 +1626,26 @@ class DragOptimizerApp:
         """Plot impact velocity vs range over multiple angles (Row 2.1)"""
         self.ax_impact_vel.clear()
 
-        # Exponential distribution with more samples near 0
-        # Use exponential spacing: angles = max_angle * (exp(t) - 1) / (exp(1) - 1) where t goes from 0 to 1
-        t = np.linspace(0, 1, 40)
-        angles_deg = 55 * (np.exp(t) - 1) / (np.exp(1) - 1)
-        angles_rad = np.radians(angles_deg)
-
-        # Quadratic
-        quad_sim = QuadraticDragSimulator(self.k_quadratic)
-        quad_ranges, quad_impact_vels = [], []
-
-        for angle in angles_rad:
-            times, traj = quad_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(quad_ranges) > 0 and r < quad_ranges[-1]:
-                    break
-                quad_ranges.append(r)
-                quad_impact_vels.append(np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2))
-
-        # Linear
-        linear_sim = LinearDragApproximation(
-            self.beta,
-            gravity=self.gravity,
-            time_warp_min_rate=self.time_warp_min_rate,
-            time_warp_apex=self.time_warp_apex,
-        )
-        lin_ranges, lin_impact_vels = [], []
-
-        for angle in angles_rad:
-            times, traj = linear_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(lin_ranges) > 0 and r < lin_ranges[-1]:
-                    break
-                lin_ranges.append(r)
-                lin_impact_vels.append(np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2))
-
-        # Analytical
-        analytical_sim = AnalyticalDragSimulator(
-            self.shell.muzzle_velocity, self.analytical_beta, self.gravity
-        )
-        analytical_ranges, analytical_impact_vels = [], []
-
-        for angle in angles_rad:
-            times, traj = analytical_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(analytical_ranges) > 0 and r < analytical_ranges[-1]:
-                    break
-                analytical_ranges.append(r)
-                analytical_impact_vels.append(
-                    np.sqrt(traj[-1, 2] ** 2 + traj[-1, 3] ** 2)
-                )
+        # Use cached simulation results from parallel computation
+        results = self._cached_sim_results
 
         self.ax_impact_vel.plot(
-            quad_ranges, quad_impact_vels, "b-", linewidth=2, label="Quadratic"
+            results["quadratic"]["ranges"],
+            results["quadratic"]["impact_velocities"],
+            "b-",
+            linewidth=2,
+            label="Quadratic",
         )
         self.ax_impact_vel.plot(
-            lin_ranges, lin_impact_vels, "r--", linewidth=2, label="Linear"
+            results["linear"]["ranges"],
+            results["linear"]["impact_velocities"],
+            "r--",
+            linewidth=2,
+            label="Linear",
         )
         self.ax_impact_vel.plot(
-            analytical_ranges,
-            analytical_impact_vels,
+            results["analytical"]["ranges"],
+            results["analytical"]["impact_velocities"],
             "g-.",
             linewidth=2,
             label="Analytical",
@@ -1257,71 +1660,29 @@ class DragOptimizerApp:
         """Plot time of flight vs range (Row 2.2)"""
         self.ax_tof.clear()
 
-        angles_deg = np.linspace(5, 55, 20)
-        angles_rad = np.radians(angles_deg)
+        # Use cached simulation results from parallel computation
+        results = self._cached_sim_results
 
-        # Quadratic
-        quad_sim = QuadraticDragSimulator(self.k_quadratic)
-        quad_ranges, quad_times = [], []
-
-        for angle in angles_rad:
-            times, traj = quad_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(quad_ranges) > 0 and r < quad_ranges[-1]:
-                    break
-                quad_ranges.append(r)
-                quad_times.append(times[-1])
-
-        # Linear
-        linear_sim = LinearDragApproximation(
-            self.beta,
-            gravity=self.gravity,
-            time_warp_min_rate=self.time_warp_min_rate,
-            time_warp_apex=self.time_warp_apex,
-        )
-        lin_ranges, lin_times = [], []
-
-        for angle in angles_rad:
-            times, traj = linear_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(lin_ranges) > 0 and r < lin_ranges[-1]:
-                    break
-                lin_ranges.append(r)
-                lin_times.append(times[-1])
-
-        # Analytical
-        analytical_sim = AnalyticalDragSimulator(
-            self.shell.muzzle_velocity, self.analytical_beta, self.gravity
-        )
-        analytical_ranges, analytical_times = [], []
-
-        for angle in angles_rad:
-            times, traj = analytical_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(analytical_ranges) > 0 and r < analytical_ranges[-1]:
-                    break
-                analytical_ranges.append(r)
-                analytical_times.append(times[-1])
-
-        self.ax_tof.plot(quad_ranges, quad_times, "b-", linewidth=2, label="Quadratic")
-        self.ax_tof.plot(lin_ranges, lin_times, "r--", linewidth=2, label="Linear")
         self.ax_tof.plot(
-            analytical_ranges, analytical_times, "g-.", linewidth=2, label="Analytical"
+            results["quadratic"]["ranges"],
+            results["quadratic"]["times"],
+            "b-",
+            linewidth=2,
+            label="Quadratic",
+        )
+        self.ax_tof.plot(
+            results["linear"]["ranges"],
+            results["linear"]["times"],
+            "r--",
+            linewidth=2,
+            label="Linear",
+        )
+        self.ax_tof.plot(
+            results["analytical"]["ranges"],
+            results["analytical"]["times"],
+            "g-.",
+            linewidth=2,
+            label="Analytical",
         )
         self.ax_tof.set_xlabel("Range (km)")
         self.ax_tof.set_ylabel("Time of Flight (s)")
@@ -1333,75 +1694,29 @@ class DragOptimizerApp:
         """Plot elevation angle vs range (Row 2.3)"""
         self.ax_angle_range.clear()
 
-        angles_deg = np.linspace(5, 55, 20)
-        angles_rad = np.radians(angles_deg)
-
-        # Quadratic
-        quad_sim = QuadraticDragSimulator(self.k_quadratic)
-        quad_ranges, quad_angles = [], []
-
-        for i, angle in enumerate(angles_rad):
-            times, traj = quad_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(quad_ranges) > 0 and r < quad_ranges[-1]:
-                    break
-                quad_ranges.append(r)
-                quad_angles.append(angles_deg[i])
-
-        # Linear
-        linear_sim = LinearDragApproximation(
-            self.beta,
-            gravity=self.gravity,
-            time_warp_min_rate=self.time_warp_min_rate,
-            time_warp_apex=self.time_warp_apex,
-        )
-        lin_ranges, lin_angles = [], []
-
-        for i, angle in enumerate(angles_rad):
-            times, traj = linear_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(lin_ranges) > 0 and r < lin_ranges[-1]:
-                    break
-                lin_ranges.append(r)
-                lin_angles.append(angles_deg[i])
-
-        # Analytical
-        analytical_sim = AnalyticalDragSimulator(
-            self.shell.muzzle_velocity, self.analytical_beta, self.gravity
-        )
-        analytical_ranges, analytical_angles = [], []
-
-        for i, angle in enumerate(angles_rad):
-            times, traj = analytical_sim.simulate(
-                self.shell.muzzle_velocity, angle, max_range=self.shell.max_range
-            )
-            if len(traj) > 1 and (
-                traj[-1, 1] <= 0 or traj[-1, 0] >= self.shell.max_range
-            ):
-                r = traj[-1, 0] / 1000
-                if len(analytical_ranges) > 0 and r < analytical_ranges[-1]:
-                    break
-                analytical_ranges.append(r)
-                analytical_angles.append(angles_deg[i])
+        # Use cached simulation results from parallel computation
+        results = self._cached_sim_results
 
         self.ax_angle_range.plot(
-            quad_ranges, quad_angles, "b-", linewidth=2, label="Quadratic"
+            results["quadratic"]["ranges"],
+            results["quadratic"]["angles"],
+            "b-",
+            linewidth=2,
+            label="Quadratic",
         )
         self.ax_angle_range.plot(
-            lin_ranges, lin_angles, "r--", linewidth=2, label="Linear"
+            results["linear"]["ranges"],
+            results["linear"]["angles"],
+            "r--",
+            linewidth=2,
+            label="Linear",
         )
         self.ax_angle_range.plot(
-            analytical_ranges, analytical_angles, "g-.", linewidth=2, label="Analytical"
+            results["analytical"]["ranges"],
+            results["analytical"]["angles"],
+            "g-.",
+            linewidth=2,
+            label="Analytical",
         )
         self.ax_angle_range.set_xlabel("Range (km)")
         self.ax_angle_range.set_ylabel("Elevation Angle (°)")
@@ -1409,32 +1724,92 @@ class DragOptimizerApp:
         self.ax_angle_range.legend(loc="best", fontsize=8)
         self.ax_angle_range.grid(True, alpha=0.3)
 
-    def _plot_time_warp_rate(self, linear_sim, max_time):
-        """Plot time warp rate curve (Row 3)"""
-        self.ax_warp_rate.clear()
-        times = np.linspace(0, max_time, 200)
-        rates = [linear_sim.get_rate(t) for t in times]
+    def _calculate_de_marre_penetration(
+        self, mass_kg: float, velocity_ms: float, caliber_mm: float
+    ) -> float:
+        """Calculate penetration using de Marre formula (metric)
+        mass_kg: shell mass in kg
+        velocity_ms: impact velocity in m/s
+        caliber_mm: shell diameter in mm
+        Returns: penetration in mm
+        """
+        DE_MARRE_K = 0.06
+        if velocity_ms < 1.0:
+            return 0.0
+        return (
+            DE_MARRE_K
+            * pow(mass_kg, 0.55)
+            * pow(velocity_ms, 1.43)
+            / pow(caliber_mm, 0.65)
+        )
 
-        self.ax_warp_rate.plot(times, rates, "g-", linewidth=2, label="Time Warp Rate")
-        self.ax_warp_rate.axhline(
-            y=1.0, color="gray", linestyle="--", alpha=0.5, label="Normal (1.0)"
+    def _plot_impact_angle_vs_range(self):
+        """Plot impact angle vs range (Row 3.1)"""
+        self.ax_impact_angle.clear()
+
+        # Use cached simulation results from parallel computation
+        results = self._cached_sim_results
+
+        self.ax_impact_angle.plot(
+            results["quadratic"]["ranges"],
+            results["quadratic"]["impact_angles"],
+            "b-",
+            linewidth=2,
+            label="Quadratic",
         )
-        self.ax_warp_rate.axvline(
-            x=self.time_warp_apex,
-            color="orange",
-            linestyle=":",
-            alpha=0.7,
-            label=f"Apex ({self.time_warp_apex:.0f}s)",
+        self.ax_impact_angle.plot(
+            results["linear"]["ranges"],
+            results["linear"]["impact_angles"],
+            "r--",
+            linewidth=2,
+            label="Linear",
         )
-        self.ax_warp_rate.fill_between(times, rates, 1.0, alpha=0.2, color="green")
-        self.ax_warp_rate.set_xlabel("Time (s)")
-        self.ax_warp_rate.set_ylabel("Rate Multiplier")
-        self.ax_warp_rate.set_title(
-            f"Time Warp Rate (min={self.time_warp_min_rate:.3f} at apex)"
+        self.ax_impact_angle.plot(
+            results["analytical"]["ranges"],
+            results["analytical"]["impact_angles"],
+            "g-.",
+            linewidth=2,
+            label="Analytical",
         )
-        self.ax_warp_rate.legend(loc="upper right", fontsize=8)
-        self.ax_warp_rate.grid(True, alpha=0.3)
-        self.ax_warp_rate.set_ylim(0.4, 1.6)
+        self.ax_impact_angle.set_xlabel("Range (km)")
+        self.ax_impact_angle.set_ylabel("Impact Angle (°)")
+        self.ax_impact_angle.set_title("Impact Angle vs Range")
+        self.ax_impact_angle.legend(loc="best", fontsize=8)
+        self.ax_impact_angle.grid(True, alpha=0.3)
+
+    def _plot_armor_penetration_vs_range(self):
+        """Plot armor penetration vs range using de Marre formula (Row 3.2)"""
+        self.ax_armor_pen.clear()
+
+        # Use cached simulation results from parallel computation
+        results = self._cached_sim_results
+
+        self.ax_armor_pen.plot(
+            results["quadratic"]["ranges"],
+            results["quadratic"]["penetrations"],
+            "b-",
+            linewidth=2,
+            label="Quadratic",
+        )
+        self.ax_armor_pen.plot(
+            results["linear"]["ranges"],
+            results["linear"]["penetrations"],
+            "r--",
+            linewidth=2,
+            label="Linear",
+        )
+        self.ax_armor_pen.plot(
+            results["analytical"]["ranges"],
+            results["analytical"]["penetrations"],
+            "g-.",
+            linewidth=2,
+            label="Analytical",
+        )
+        self.ax_armor_pen.set_xlabel("Range (km)")
+        self.ax_armor_pen.set_ylabel("Penetration (mm)")
+        self.ax_armor_pen.set_title("Armor Penetration vs Range (de Marre)")
+        self.ax_armor_pen.legend(loc="best", fontsize=8)
+        self.ax_armor_pen.grid(True, alpha=0.3)
 
     def _update_info(
         self, traj_quad, times_quad, speed_quad, traj_lin, times_lin, speed_lin

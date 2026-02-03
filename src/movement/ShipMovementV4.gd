@@ -87,7 +87,7 @@ func _ready() -> void:
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
 	ship.linear_damp = 0.2
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
-	ship.angular_damp = 0.2
+	ship.angular_damp = 0.4
 
 	# ship.axis_lock_angular_z = true
 	# ship.axis_lock_angular_y = true
@@ -279,8 +279,8 @@ func _physics_process(delta: float) -> void:
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
 
-	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle + 10.0), deg_to_rad(max_turn_roll_angle + 10.0))
-	ship.rotation.x = clamp(ship.rotation.x, -PI / 6.0, PI / 6.0)
+	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle + 2.0), deg_to_rad(max_turn_roll_angle + 2.0))
+	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(5), deg_to_rad(5))
 
 	if debug_log and ship.name == "1" and Engine.get_physics_frames() % 16 == 0:
 		print("Ship 1 Debug Info:")

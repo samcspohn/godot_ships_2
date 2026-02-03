@@ -1,5 +1,6 @@
 # Ship Combat Game - TODO
 
+
 # QOL
 - [ ] save settings (screen resolution, minimap size, volume levels, keybindings)
 - [ ] crtl+x lock guns
@@ -17,6 +18,8 @@
 
 ## Todo Soon ⏳
 concealment, sound effects, damage saturation, clamp sniper range
+- [ ] dp guns shoot up + flak/explode at range
+- [ ] don't count damage against team
 - [x] fix close(long?) range aiming too high
 - [ ] incorrect hit effect (explosion on ricochet)
 - [x] hit ribbons not showing

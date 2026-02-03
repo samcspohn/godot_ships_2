@@ -4,13 +4,21 @@
 
 [sub_resource type="Environment" id="Environment_bp804"]
 background_mode = 1
-background_color = Color(0.409483, 0.709723, 0.857173, 1)
+background_color = Color(0.45549244, 0.7068433, 0.8168385, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.69958174, 0.8540127, 0.93016934, 1)
+ambient_light_energy = 0.3
 ssr_max_steps = 512
-ssr_fade_in = 0.35676184
-ssr_fade_out = 0.08838842
-ssr_depth_tolerance = 0.01
-ssao_power = 2.2821069
-ssao_detail = 0.0
+ssr_fade_in = 0.43922582
+ssr_fade_out = 42.224144
+ssr_depth_tolerance = 128.0
+ssao_enabled = true
+ssao_intensity = 0.14
+ssao_power = 28.47406
+ssao_detail = 5.0
+ssao_horizon = 0.0
+ssao_sharpness = 0.0
+ssao_ao_channel_affect = 1.0
 ssil_intensity = 0.81
 glow_enabled = true
 glow_intensity = 0.25
@@ -18,12 +26,17 @@ glow_hdr_threshold = 1.2
 glow_hdr_luminance_cap = 256.0
 fog_enabled = true
 fog_mode = 1
-fog_light_color = Color(0.40784314, 0.70980394, 0.85882354, 1)
-fog_light_energy = 0.91
-fog_density = 1.049
+fog_light_color = Color(0.45490196, 0.7058824, 0.8156863, 1)
+fog_light_energy = 0.65
+fog_sun_scatter = 0.28
+fog_density = 1.0
+fog_sky_affect = 0.145
 fog_depth_curve = 0.57435
 fog_depth_begin = 0.0
 fog_depth_end = 50000.0
+volumetric_fog_density = 0.0
+volumetric_fog_length = 50000.0
+volumetric_fog_detail_spread = 0.5
 
 [node name="PlayerCam" type="Camera3D" unique_id=1912885597]
 process_priority = 2

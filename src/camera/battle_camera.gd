@@ -33,9 +33,9 @@ var current_zoom: float = 200.0 # Default zoom
 var just_changed_mode: bool = false
 
 # Sniper mode properties
-@export var default_fov: float = 70.0
+@export var default_fov: float = 40.0
 @export var min_fov: float = 2.0 # Very narrow for extreme distance aiming
-@export var max_fov: float = 60.0 # Wide enough for general aiming
+@export var max_fov: float = 40.0 # Wide enough for general aiming
 var last_fov: float = 10.0
 @export var fov_zoom_speed: float = 0.07
 var current_fov: float = default_fov
@@ -423,16 +423,51 @@ func toggle_camera_mode():
 func _calculate_target_info():
 	# Get the direction the camera is facing
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		var horizontal_rad = aim.rotation.y
-		var vertical_rad = aim.rotation.x
-		# var orbit_distance = current_zoom
-		# var adj = tan(PI / 2.0 + vertical_rad)
-		var cam_pos_3rd = aim.global_position
-		aim_position = calculate_ground_intersection(
-			cam_pos_3rd,
-			horizontal_rad + PI,
-			vertical_rad
-		)
+		# var horizontal_rad = aim.rotation.y
+		# var vertical_rad = aim.rotation.x
+		# # var orbit_distance = current_zoom
+		# # var adj = tan(PI / 2.0 + vertical_rad)
+		# var cam_pos_3rd = aim.global_position
+		# aim_position = calculate_ground_intersection(
+		# 	cam_pos_3rd,
+		# 	horizontal_rad + PI,
+		# 	vertical_rad
+		# )
+
+		var aim_direction = - aim.basis.z.normalized()
+		# Cast a ray to get target position (could be terrain, enemy, etc.)
+		var ray_length = 200000.0 # 50km range for naval artillery
+		var space_state = get_world_3d().direct_space_state
+		var ray_origin = aim.global_position
+
+		var ray_params = PhysicsRayQueryParameters3D.new()
+		ray_params.from = ray_origin
+		ray_params.to = ray_origin + aim_direction * ray_length
+		ray_params.collision_mask = (1 << 1) | (1 << 3) # armor | water
+		if ray_exclude.size() == 0:
+			ray_exclude = recurs_collision_bodies(_ship)
+		ray_params.exclude = ray_exclude
+
+		ray_params.collide_with_areas = true
+		ray_params.collide_with_bodies = true
+
+		var result = space_state.intersect_ray(ray_params)
+
+		if result:
+			aim_position = result.position
+		else:
+			var horizontal_rad = aim.rotation.y
+			var vertical_rad = aim.rotation.x
+			# var orbit_distance = current_zoom
+			# var adj = tan(PI / 2.0 + vertical_rad)
+			var cam_pos_3rd = aim.global_position
+			aim_position = calculate_ground_intersection(
+				cam_pos_3rd,
+				horizontal_rad + PI,
+				vertical_rad
+			)
+			# # No collision, use a point far in the distance
+			# aim_position = ray_origin + aim_direction * ray_length
 
 	else:
 		var aim_direction = - aim.basis.z.normalized()
