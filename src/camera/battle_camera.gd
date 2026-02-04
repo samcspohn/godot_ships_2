@@ -376,23 +376,35 @@ func set_camera_mode(mode):
 		current_mode = CameraMode.THIRD_PERSON
 		last_non_free_look_mode = CameraMode.THIRD_PERSON
 		third_person_view.rotation_degrees_horizontal = sniper_view.rotation_degrees_horizontal
-		var sniper_range = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-		var adj = sniper_range + third_person_view.current_zoom
-		var opp = third_person_view.current_zoom * 0.2 - aim_position.y + 5
-		# print("DEBUG: THIRD_PERSON")
-		#print(sniper_view.sniper_range)
-		# print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
-		# print(adj)
-		# print(opp)
-		third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
-		# print(sniper_view.rotation.x)
-		# print(third_person_view.rotation_degrees_vertical)
 
-		#third_person_view.sniper_range = sniper_view.sniper_range
+		if !target_lock_enabled:
 
-		third_person_view.camera_offset_horizontal = sniper_view.camera_offset_horizontal
-		third_person_view.camera_offset_vertical = rad_to_deg(atan(- (opp + sniper_view.camera_offset_vertical) / adj))
-		# third_person_view.camera_offset_vertical = sniper_view.camera_offset_vertical
+			var sniper_range = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+			var adj = sniper_range + third_person_view.current_zoom
+			var opp = third_person_view.current_zoom * 0.2 - aim_position.y + 5
+			# print("DEBUG: THIRD_PERSON")
+			#print(sniper_view.sniper_range)
+			# print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
+			# print(adj)
+			# print(opp)
+			third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
+			# print(sniper_view.rotation.x)
+			# print(third_person_view.rotation_degrees_vertical)
+		else:
+			var a = locked_target.global_position - _ship.global_position
+			var adj = a.length() + third_person_view.current_zoom
+			var opp = third_person_view.current_zoom * 0.2 - locked_target.global_position.y + 5
+			third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
+			adj += sniper_view.camera_offset_vertical / -tan(sniper_view.sniper_angle_x)
+			third_person_view.camera_offset_vertical = rad_to_deg(atan(-opp / adj)) - third_person_view.rotation_degrees_vertical
+
+
+
+		# #third_person_view.sniper_range = sniper_view.sniper_range
+
+		# third_person_view.camera_offset_horizontal = sniper_view.camera_offset_horizontal
+		# third_person_view.camera_offset_vertical = rad_to_deg(atan(-(sniper_view.camera_offset_vertical) / adj))
+
 		aim = third_person_view
 
 	else: # SNIPER mode
@@ -402,31 +414,53 @@ func set_camera_mode(mode):
 		_Debug.sphere(aim_position, 5)
 		# print("DEBUG: SNIPER")
 		# print(aim_position.y)
-		var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-		# var sniper_height =
-		var sniper_range = aim_dist + (aim_position.y) / -tan(sniper_view.sniper_angle_x)
-		var sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
-		if sniper_height <= 35:
-			var start_point = Vector3(_ship.global_position.x, 35, _ship.global_position.z)
-			var a = aim_position - start_point
-			var b = Vector3(0, -start_point.y, 0)
-			var angle = a.angle_to(b) - PI / 2
-			# print(rad_to_deg(angle))
-			# print(a)
-			var ground_intersection = calculate_ground_intersection(start_point, deg_to_rad(third_person_view.rotation_degrees_horizontal), angle)
-			sniper_range = Vector2(ground_intersection.x, ground_intersection.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-			sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
+		# var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+		# # var sniper_height =
+		# var sniper_range = aim_dist + (aim_position.y) / -tan(sniper_view.sniper_angle_x)
+		# var sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
+		# if sniper_height <= 35:
+		# 	var start_point = Vector3(_ship.global_position.x, 35, _ship.global_position.z)
+		# 	var a = aim_position - start_point
+		# 	var b = Vector3(0, -start_point.y, 0)
+		# 	var angle = a.angle_to(b) - PI / 2
+		# 	# print(rad_to_deg(angle))
+		# 	# print(a)
+		# 	var ground_intersection = calculate_ground_intersection(start_point, deg_to_rad(third_person_view.rotation_degrees_horizontal), angle)
+		# 	sniper_range = Vector2(ground_intersection.x, ground_intersection.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
+		# 	sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
 
+		# sniper_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
+		# #sniper_view.sniper_range = clamp(sniper_range, 0.0, _ship.artillery_controller.guns[0].max_range)
+		# sniper_view.camera_offset_horizontal = third_person_view.camera_offset_horizontal
+		# sniper_view.camera_offset_vertical = third_person_view.camera_offset_vertical
+		# # sniper_height = clamp(sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
+
+		# sniper_view.sniper_height = sniper_height
+		# var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
+		# var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
+		#
 		sniper_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
-		#sniper_view.sniper_range = clamp(sniper_range, 0.0, _ship.artillery_controller.guns[0].max_range)
-		sniper_view.camera_offset_horizontal = third_person_view.camera_offset_horizontal
-		sniper_view.camera_offset_vertical = third_person_view.camera_offset_vertical
-		# sniper_height = clamp(sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
+		if !target_lock_enabled:
+			# var intersection_point = calculate_ground_intersection(third_person_view.global_position, deg_to_rad(third_person_view.rotation_degrees_horizontal), deg_to_rad(third_person_view.rotation_degrees_vertical))
+			var a = aim_position - _ship.global_position
+			a.y = 0
+			var t = -tan(sniper_view.sniper_angle_x)
+			sniper_view.sniper_height = (a.length() + aim_position.y / t) * t
+			sniper_view.sniper_height = clamp(sniper_view.sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * player_controller.current_weapon_controller.get_max_range())
+			_Debug.sphere(aim_position, 5, Color.GREEN)
 
-		sniper_view.sniper_height = sniper_height
-		var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
-		var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
-		_Debug.sphere(intersection_point, 5, Color.GREEN)
+		else:
+			# var sniper_dist = locked_target.global_position.distance_to(_ship.global_position)
+			var a = locked_target.global_position - _ship.global_position
+			a.y = 0
+			sniper_view.sniper_height = a.length() * -tan(sniper_view.sniper_angle_x)
+
+			var intersection_point = calculate_ground_intersection(third_person_view.global_position, deg_to_rad(third_person_view.rotation_degrees_horizontal), deg_to_rad(third_person_view.rotation_degrees_vertical + third_person_view.camera_offset_vertical))
+			a = intersection_point - _ship.global_position
+			a.y = 0
+			var h = a.length() * -tan(sniper_view.sniper_angle_x)
+			sniper_view.camera_offset_vertical = h - sniper_view.sniper_height
+			_Debug.sphere(intersection_point, 5, Color.GREEN)
 		#sniper_view.rotation.x = angle
 		aim = sniper_view
 
