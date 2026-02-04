@@ -1,0 +1,280 @@
+[gd_scene format=3 uid="uid://dq8k7f3n5h2t1"]
+
+[ext_resource type="Script" path="res://src/camera/hit_stat_counters.gd" id="1_counters"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_secondary_bg"]
+bg_color = Color(0.134, 0.212, 0.178, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_main_bg"]
+bg_color = Color(0.24, 0.32, 0.24, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_frag_bg"]
+bg_color = Color(0.32, 0.08, 0.08, 0.9)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+
+[node name="HitStatCounters" type="VBoxContainer"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -150.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 150.0
+grow_horizontal = 0
+script = ExtResource("1_counters")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="SecondaryCounter" type="Control" parent="HBoxContainer"]
+custom_minimum_size = Vector2(50, 40)
+layout_mode = 2
+
+[node name="SecondaryBackground" type="Panel" parent="HBoxContainer/SecondaryCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_secondary_bg")
+
+[node name="SecondaryContainer" type="Control" parent="HBoxContainer/SecondaryCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SecondarySec" type="Label" parent="HBoxContainer/SecondaryCounter/SecondaryContainer"]
+layout_mode = 0
+offset_left = 3.0
+offset_top = 3.0
+offset_right = 45.0
+offset_bottom = 37.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.33523, 0.530682, 0.445213, 1)
+theme_override_font_sizes/font_size = 24
+text = "SEC"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SecondaryCount" type="Label" parent="HBoxContainer/SecondaryCounter/SecondaryContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -13.0
+offset_top = -15.0
+offset_right = -5.0
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="MainCounter" type="Control" parent="HBoxContainer"]
+custom_minimum_size = Vector2(80, 40)
+layout_mode = 2
+
+[node name="MainBackground" type="Panel" parent="HBoxContainer/MainCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_main_bg")
+
+[node name="MainContainer" type="Control" parent="HBoxContainer/MainCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MainMain" type="Label" parent="HBoxContainer/MainCounter/MainContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -30.5
+offset_top = -17.0
+offset_right = 30.5
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.6, 0.8, 0.6, 1)
+theme_override_font_sizes/font_size = 24
+text = "MAIN"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MainCount" type="Label" parent="HBoxContainer/MainCounter/MainContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -17.5
+offset_top = -15.0
+offset_right = -9.5
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="FragCounter" type="Control" parent="HBoxContainer"]
+custom_minimum_size = Vector2(80, 40)
+layout_mode = 2
+
+[node name="FragBackground" type="Panel" parent="HBoxContainer/FragCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_frag_bg")
+
+[node name="FragContainer" type="Control" parent="HBoxContainer/FragCounter"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="FragFRAG" type="Label" parent="HBoxContainer/FragCounter/FragContainer"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -30.5
+offset_top = -17.0
+offset_right = 30.5
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.284297, 0.346101, 1)
+theme_override_font_sizes/font_size = 24
+text = "SUNK"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="FragCount" type="Label" parent="HBoxContainer/FragCounter/FragContainer"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -17.5
+offset_top = -15.0
+offset_right = -9.5
+offset_bottom = 5.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="HBoxContainer"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="HBoxContainer/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "D"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="HBoxContainer/DamageCounter"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0"
+horizontal_alignment = 2
+
+[node name="MainVBox" type="VBoxContainer" parent="."]
+visible = false
+layout_mode = 2
+
+[node name="MainHitCounters" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="MainVBox"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="MainVBox/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Main Damage:"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="MainVBox/DamageCounter"]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="SecondaryVBox" type="VBoxContainer" parent="."]
+visible = false
+layout_mode = 2
+
+[node name="SecondaryHitCounters" type="HBoxContainer" parent="SecondaryVBox"]
+layout_mode = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="SecondaryVBox"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="SecondaryVBox/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Sec Damage:"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="SecondaryVBox/DamageCounter"]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="MainCounterTemp" type="HBoxContainer" parent="."]
+visible = false
+layout_mode = 2
+
+[node name="SecCounterTemp" type="HBoxContainer" parent="."]
+visible = false
+layout_mode = 2

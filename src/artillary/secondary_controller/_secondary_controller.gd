@@ -54,6 +54,81 @@ func get_weapon_ui() -> Array[Button]:
 
 	return [shell1, shell2]
 
+
+func get_aim_ui() -> Dictionary:
+	var ship_position = _ship.global_position
+	var time_to_target = -1
+	var penetration_power = -1
+	var terrain_hit = false
+	if aim_point != null:
+		for sec in sub_controllers:
+			var shell_params = sec.get_shell_params()
+			var pp = -1
+			var th = false
+			var tt = -1
+
+
+			var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+				ship_position,
+				aim_point,
+				shell_params
+			)
+			var launch_vector = launch_result[0]
+
+			if launch_vector:
+				tt = launch_result[1] / ProjectileManager.shell_time_multiplier
+				var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
+					ship_position,
+					launch_vector,
+					launch_result[1],
+					shell_params,
+					_ship
+					)
+
+				th = not can_shoot.can_shoot_over_terrain
+				var shell = sec.get_shell_params()
+				if shell.type == ShellParams.ShellType.HE:
+					penetration_power = shell.overmatch
+				else:
+					var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+						launch_vector,
+						launch_result[1],
+						shell_params
+					)
+					var velocity_at_impact = velocity_at_impact_vec.length()
+					var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
+						shell.mass,
+						velocity_at_impact,
+						shell.caliber)
+					# var raw_pen = 1.0
+
+					# Calculate impact angle (angle from vertical)
+					var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
+
+					# Calculate effective penetration against vertical armor
+					# Effective penetration = raw penetration * cos(impact_angle)
+					pp = raw_pen * cos(impact_angle) * (shell as ShellParams).penetration_modifier
+
+			if pp > penetration_power:
+				penetration_power = pp
+				time_to_target = tt
+				terrain_hit = th
+
+			# return terrain hit, penetration power, time to target
+	return {
+		"terrain_hit": terrain_hit,
+		"penetration_power": penetration_power,
+		"time_to_target": time_to_target
+	}
+
+func get_max_range() -> float:
+	var max_range = 0.0
+	for sc in sub_controllers:
+		var p = sc.get_params() as GunParams
+		if p._range > max_range:
+			max_range = p._range
+	return max_range
+
 func get_params() -> GunParams:
 	var min_reload = INF
 	var selected_params: GunParams = null
@@ -98,6 +173,7 @@ func from_dict(d: Dictionary) -> void:
 			sub_controllers[i].from_dict(sub_list[i])
 
 func set_aim_input(target_point: Variant):
+	aim_point = target_point
 	if aim_point == null and target_point != null:
 		just_switched_mode = true
 	if target_point == null:
@@ -137,6 +213,13 @@ func _physics_process(delta: float) -> void:
 
 	guns_shooting_at_aim_point.clear()
 	if aim_point != null:
+		var max_range = -1
+		for sec in sub_controllers:
+			max_range = max(max_range, sec.get_params()._range)
+		var ship_pos = _ship.global_position
+		ship_pos.y = 0
+		var target_offset = (aim_point - ship_pos)
+		aim_point = target_offset.normalized() * min(target_offset.length(), max_range) + ship_pos
 		for sc in sub_controllers:
 			for g in sc.guns:
 				if g.is_aimpoint_valid(aim_point):

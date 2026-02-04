@@ -28,18 +28,21 @@ concealment, sound effects, damage saturation, clamp sniper range
 - [ ] torpedo aiming indicator
 	- [ ] torpedo arming distance indicator
 	- [ ] torpedo spread indicator
-- [ ] part health system / saturation
+- [x] part health system / saturation
 - [ ] concealment
-	- [ ] visual indicator for concealment range
+	- [x] visual indicator for concealment range
 	- [ ] radio transmitter/reciever system for spotting
 - [ ] ship movement overhaul
 - [ ] ship sound effects
 - [ ] match end handling (victory/defeat screens/stats/back to port)
 - [ ] friendly consumable use visuals
+	- [ ] show on use
+	- [ ] hold alt show cooldowns/ready
 - [ ] hover over/click ships on minimap to show radar/hydro range circles
 - [ ] stat sheet based module system for ships
 - [ ] fix max gpu shells and emitters to be dynamic
 - [ ] change unified particle system from cycling to available pool
+- [ ] improve stat counter implementation
 
 ## Core Features ✅ (Mostly Complete)
 - [x] Ship movement and controls (throttle system, rudder control, physics)

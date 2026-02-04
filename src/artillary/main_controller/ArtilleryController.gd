@@ -27,6 +27,64 @@ func get_weapon_ui() -> Array[Button]:
 
 	return [shell1, shell2]
 
+func get_aim_ui() -> Dictionary:
+	var ship_position = _ship.global_position
+	var shell_params = get_shell_params()
+	var time_to_target = -1
+	var penetration_power = -1
+	var terrain_hit = false
+
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+		ship_position,
+		aim_point,
+		shell_params
+	)
+	var launch_vector = launch_result[0]
+
+	if launch_vector:
+		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+		var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
+			ship_position,
+			launch_vector,
+			launch_result[1],
+			shell_params,
+			_ship
+			)
+
+		terrain_hit = not can_shoot.can_shoot_over_terrain
+		var shell = get_shell_params()
+		if shell.type == ShellParams.ShellType.HE:
+			penetration_power = shell.overmatch
+		else:
+			var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+				launch_vector,
+				launch_result[1],
+				shell_params
+			)
+			var velocity_at_impact = velocity_at_impact_vec.length()
+			var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
+				shell.mass,
+				velocity_at_impact,
+				shell.caliber)
+			# var raw_pen = 1.0
+
+			# Calculate impact angle (angle from vertical)
+			var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
+
+			# Calculate effective penetration against vertical armor
+			# Effective penetration = raw penetration * cos(impact_angle)
+			penetration_power = raw_pen * cos(impact_angle) * (shell as ShellParams).penetration_modifier
+
+	# return terrain hit, penetration power, time to target
+	return {
+		"terrain_hit": terrain_hit,
+		"penetration_power": penetration_power,
+		"time_to_target": time_to_target
+	}
+
+func get_max_range() -> float:
+	return get_params()._range
+
 var weapons: Array[Turret]:
 	get:
 		var arr: Array[Turret] = []
@@ -67,6 +125,11 @@ func _ready() -> void:
 		set_physics_process(false)
 
 func set_aim_input(target_point: Vector3) -> void:
+	var ship_pos = _ship.global_position
+	ship_pos.y = 0
+	var target_offset = (target_point - ship_pos)
+	target_point = target_offset.normalized() * min(target_offset.length(), get_params()._range) + ship_pos
+	
 	aim_point = target_point
 
 func _physics_process(delta: float) -> void:

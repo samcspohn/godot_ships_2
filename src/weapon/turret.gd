@@ -414,8 +414,14 @@ func get_leading_position(target: Vector3, target_velocity: Vector3): # virtual
 	# 	return sol[2]
 	# return null
 
+func get_dist(pos: Vector3) -> float:
+	var dist = (pos - _ship.global_position)
+	dist.y = 0
+	return dist.length() - 0.001
+
 func is_aimpoint_valid(aim_point: Vector3) -> bool:
-	if aim_point.distance_to(global_position) < get_params()._range:
+	var dist = get_dist(aim_point)
+	if dist < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(aim_point)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:

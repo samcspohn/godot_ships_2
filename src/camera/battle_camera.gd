@@ -71,7 +71,7 @@ var ray_exclude: Array = [] # Nodes to exclude from raycasting
 var zoom_accumulator: float = 0.0
 var zoom_smoothing: float = 1.0 # Adjust this value to control smoothing
 
-
+var audio_listener: AudioListener3D
 
 func set_angle(angle: float):
 	aim.rotation_degrees_horizontal = angle
@@ -89,6 +89,7 @@ func _ready():
 	# Initial setup
 	current_fov = default_fov
 	fov = current_fov
+	audio_listener = get_node("AudioListener3D")
 
 	# Register with Debug autoload
 	if has_node("/root/Debug"):
@@ -111,11 +112,15 @@ func _ready():
 
 	third_person_view = ThirdPersonView.new()
 	third_person_view._ship = _ship
+	third_person_view.player_controller = player_controller
 	free_look_view = ThirdPersonView.new()
 	#free_look_view = FreeLookView.new()
 	free_look_view._ship = _ship
+	free_look_view.player_controller = player_controller
 	sniper_view = SniperView.new()
 	sniper_view._ship = _ship
+	sniper_view.player_controller = player_controller
+
 	get_parent().add_child(third_person_view)
 	get_parent().add_child(free_look_view)
 	get_parent().add_child(sniper_view)
@@ -165,6 +170,13 @@ func _input(event):
 
 
 func _process(delta):
+
+	var cam_to_ship = self.global_transform.origin - follow_ship.global_transform.origin
+	var cam_to_ship_normalized = cam_to_ship.normalized()
+	var cam_to_ship_distance = cam_to_ship.length()
+
+	audio_listener.global_position = follow_ship.global_transform.origin + cam_to_ship_normalized * clamp(cam_to_ship_distance * 0.3, 80.0, 300.0)
+
 	# Apply accumulated zoom smoothly
 	if abs(zoom_accumulator) > 0.01:
 		var zoom_delta = zoom_accumulator * zoom_smoothing
@@ -299,15 +311,20 @@ func _get_angles_to_target(cam_pos, target_pos):
 
 
 func _update_target_lock():
-	third_person_view.target_lock_enabled = target_lock_enabled
-	sniper_view.target_lock_enabled = target_lock_enabled
-	third_person_view.locked_target = locked_target
-	sniper_view.locked_target = locked_target
+	if locked_target:
+		if locked_target.global_position.distance_to(_ship.global_position) > player_controller.current_weapon_controller.get_max_range():
+			target_lock_enabled = false
+			locked_target = null
 
 	if target_lock_enabled and (!locked_target.visible_to_enemy or locked_target.health_controller.is_dead()):
 		# If target is not visible, disable target lock
 		target_lock_enabled = false
 		locked_target = null
+
+	third_person_view.target_lock_enabled = target_lock_enabled
+	sniper_view.target_lock_enabled = target_lock_enabled
+	third_person_view.locked_target = locked_target
+	sniper_view.locked_target = locked_target
 
 func _update_camera_transform():
 	if !_ship:
@@ -494,67 +511,74 @@ func _calculate_target_info():
 		else:
 			# No collision, use a point far in the distance
 			aim_position = ray_origin + aim_direction * ray_length
+	# aim_position.y = 0.0
 	ui.minimap.aim_point = aim_position
 	#minimap.aim_point = aim_position
+	var dist = (aim_position - _ship.global_position)
+	dist.y = 0.0
+	distance_to_target = dist.length() # Convert to km
+
+	# # Calculate launch vector using our projectile physics
+	# var ship_position = _ship.global_position
+	# var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+	# 	ship_position,
+	# 	aim_position,
+	# 	_ship.artillery_controller.get_shell_params()
+	# )
+
+	# # Extract results
+	# var launch_vector = launch_result[0]
+
+	# #max_range_reached = launch_result[2]
+	# max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
+
+	# # Calculate distance
 
 
-	# Calculate launch vector using our projectile physics
-	var ship_position = _ship.global_position
-	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
-		ship_position,
-		aim_position,
-		_ship.artillery_controller.get_shell_params()
-	)
+	# if launch_vector != null:
+	# 	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+	# 	var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
+	# 		ship_position,
+	# 		launch_vector,
+	# 		launch_result[1],
+	# 		_ship.artillery_controller.get_shell_params(),
+	# 		_ship
+	# 		)
 
-	# Extract results
-	var launch_vector = launch_result[0]
+	# 	terrain_hit = not can_shoot.can_shoot_over_terrain
 
-	#max_range_reached = launch_result[2]
-	max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
+	# 	var shell = _ship.artillery_controller.get_shell_params()
+	# 	if shell.type == ShellParams.ShellType.HE:
+	# 		penetration_power = shell.overmatch
+	# 	else:
+	# 		var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+	# 			launch_vector,
+	# 			launch_result[1],
+	# 			_ship.artillery_controller.get_shell_params()
+	# 		)
+	# 		var velocity_at_impact = velocity_at_impact_vec.length()
+	# 		var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
+	# 			shell.mass,
+	# 			velocity_at_impact,
+	# 			shell.caliber)
+	# 		# var raw_pen = 1.0
 
-	# Calculate distance
-	distance_to_target = (aim_position - ship_position).length() # Convert to km
+	# 		# Calculate impact angle (angle from vertical)
+	# 		var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
 
-	if launch_vector != null:
-		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
-		var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
-			ship_position,
-			launch_vector,
-			launch_result[1],
-			_ship.artillery_controller.get_shell_params(),
-			_ship
-			)
+	# 		# Calculate effective penetration against vertical armor
+	# 		# Effective penetration = raw penetration * cos(impact_angle)
+	# 		penetration_power = raw_pen * cos(impact_angle)
 
-		terrain_hit = not can_shoot.can_shoot_over_terrain
-
-		var shell = _ship.artillery_controller.get_shell_params()
-		if shell.type == ShellParams.ShellType.HE:
-			penetration_power = shell.overmatch
-		else:
-			var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-				launch_vector,
-				launch_result[1],
-				_ship.artillery_controller.get_shell_params()
-			)
-			var velocity_at_impact = velocity_at_impact_vec.length()
-			var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
-				shell.mass,
-				velocity_at_impact,
-				shell.caliber)
-			# var raw_pen = 1.0
-
-			# Calculate impact angle (angle from vertical)
-			var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
-
-			# Calculate effective penetration against vertical armor
-			# Effective penetration = raw penetration * cos(impact_angle)
-			penetration_power = raw_pen * cos(impact_angle)
-
-	else:
-		terrain_hit = false
-		penetration_power = 0.0
-		time_to_target = -1.0
-		distance_to_target = -1.0
+	# else:
+	# 	terrain_hit = false
+	# 	penetration_power = 0.0
+	# 	time_to_target = -1.0
+	# 	distance_to_target = -1.0
+	var aim_data = player_controller.current_weapon_controller.get_aim_ui()
+	terrain_hit = aim_data.terrain_hit
+	penetration_power = aim_data.penetration_power
+	time_to_target = aim_data.time_to_target
 
 
 
@@ -642,7 +666,10 @@ func find_lockable_target():
 				ship_team_id = ship.team.get_team_info()["team_id"]
 
 			# Prioritize enemy ships
-			if my_team_id != ship_team_id and ship.health_controller.is_alive() and ship.visible_to_enemy:
+			if my_team_id != ship_team_id \
+			and ship.health_controller.is_alive() \
+			and ship.visible_to_enemy \
+			and ship.global_position.distance_to(_ship.global_position) <= player_controller.current_weapon_controller.get_max_range():
 				# Calculate screen position and center distance
 				var screen_pos = get_viewport().get_camera_3d().unproject_position(ship.global_position)
 				var screen_center = get_viewport().get_visible_rect().size / 2.0

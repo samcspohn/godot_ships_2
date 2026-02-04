@@ -1,72 +1,9 @@
-[gd_scene load_steps=25 format=3 uid="uid://b8j0h3k7w5u2e"]
+[gd_scene format=3 uid="uid://b8j0h3k7w5u2e"]
 
 [ext_resource type="Script" uid="uid://c5g3b6smfsbw0" path="res://src/camera/camera_ui_scene.gd" id="1_kk7j4"]
 [ext_resource type="Texture2D" uid="uid://b0mbwillllaha" path="res://circle.png" id="2_oxqcb"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="2_v8ncv"]
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="4_oxqcb"]
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_secondary_bg"]
-bg_color = Color(0.134, 0.212, 0.178, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_main_bg"]
-bg_color = Color(0.24, 0.32, 0.24, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_shatter_bg"]
-bg_color = Color(0.32, 0.08, 0.08, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_penetration_bg"]
-bg_color = Color(0.4, 0.4, 0.4, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_overpenetration_bg"]
-bg_color = Color(0.4, 0.32, 0.08, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ricochet_bg"]
-bg_color = Color(0.24, 0.24, 0.4, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_citadel_bg"]
-bg_color = Color(0.142, 0.142, 0.142, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_citadel_overpen_bg"]
-bg_color = Color(0.5, 0.25, 0.1, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_partial_pen_bg"]
-bg_color = Color(0.3, 0.3, 0.5, 0.9)
-corner_radius_top_left = 4
-corner_radius_top_right = 4
-corner_radius_bottom_right = 4
-corner_radius_bottom_left = 4
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_tracker_bg"]
 bg_color = Color(0.1, 0.1, 0.1, 0.8)
@@ -119,14 +56,14 @@ corner_radius_bottom_left = 2
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_friendly"]
 bg_color = Color(0.2, 0.9, 0.4, 1)
 
-[node name="CameraUI" type="CanvasLayer"]
+[node name="CameraUI" type="CanvasLayer" unique_id=531607714]
 script = ExtResource("1_kk7j4")
 reloading_gun_color = Color(1, 0.95, 0, 1)
 ready_gun_color = Color(0, 0.96271867, 0.79062206, 1)
 valid_cannot_fire_color_mod = 0.85
 invalid_cannot_fire_color_mod = 0.65
 
-[node name="MainContainer" type="Control" parent="."]
+[node name="MainContainer" type="Control" parent="." unique_id=619103057]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -135,7 +72,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="VisibilityIndicator" type="ColorRect" parent="MainContainer"]
+[node name="VisibilityIndicator" type="ColorRect" parent="MainContainer" unique_id=576907397]
 custom_minimum_size = Vector2(30, 30)
 layout_mode = 1
 anchors_preset = -1
@@ -149,7 +86,7 @@ offset_right = -30.0
 offset_bottom = 20.0
 color = Color(1, 1, 0, 0.8)
 
-[node name="CrosshairContainer" type="Control" parent="MainContainer"]
+[node name="CrosshairContainer" type="Control" parent="MainContainer" unique_id=1888053963]
 z_index = 2
 layout_mode = 1
 anchors_preset = 8
@@ -166,7 +103,7 @@ grow_vertical = 2
 pivot_offset = Vector2(20, 20)
 mouse_filter = 2
 
-[node name="CrosshairCenter" type="Control" parent="MainContainer/CrosshairContainer"]
+[node name="CrosshairCenter" type="Control" parent="MainContainer/CrosshairContainer" unique_id=482847789]
 z_index = 2
 layout_mode = 1
 anchors_preset = 8
@@ -178,7 +115,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="TargetInfoContainer" type="HBoxContainer" parent="MainContainer/CrosshairContainer"]
+[node name="TargetInfoContainer" type="HBoxContainer" parent="MainContainer/CrosshairContainer" unique_id=1417825660]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -193,31 +130,31 @@ grow_horizontal = 2
 grow_vertical = 2
 alignment = 1
 
-[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+[node name="TargetInfo" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer" unique_id=371953301]
 layout_mode = 2
 
-[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
+[node name="TimeLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo" unique_id=2094857282]
 layout_mode = 2
 text = "-- s"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo"]
+[node name="DistanceLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo" unique_id=427637340]
 layout_mode = 2
 text = "-- m"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TargetInfo2" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer"]
+[node name="TargetInfo2" type="VBoxContainer" parent="MainContainer/CrosshairContainer/TargetInfoContainer" unique_id=875335790]
 layout_mode = 2
 
-[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2"]
+[node name="PenetrationLabel" type="Label" parent="MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2" unique_id=1619047013]
 layout_mode = 2
 text = "--mm"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer"]
+[node name="TerrainIndicator" type="ColorRect" parent="MainContainer/CrosshairContainer" unique_id=1099427657]
 z_index = 1
 layout_mode = 0
 offset_left = 85.0
@@ -226,7 +163,7 @@ offset_right = 97.0
 offset_bottom = -5.0
 rotation = 0.7853982
 
-[node name="GunIndicator" type="TextureProgressBar" parent="MainContainer/CrosshairContainer"]
+[node name="GunIndicator" type="TextureProgressBar" parent="MainContainer/CrosshairContainer" unique_id=57610250]
 visible = false
 layout_mode = 1
 anchors_preset = 8
@@ -252,7 +189,7 @@ texture_progress = ExtResource("2_oxqcb")
 tint_under = Color(1, 1, 1, 0.42352942)
 metadata/_edit_use_anchors_ = true
 
-[node name="AngleLabel" type="Label" parent="MainContainer/CrosshairContainer/GunIndicator"]
+[node name="AngleLabel" type="Label" parent="MainContainer/CrosshairContainer/GunIndicator" unique_id=233450589]
 custom_minimum_size = Vector2(30, 30)
 layout_mode = 1
 anchors_preset = 8
@@ -272,1807 +209,25 @@ text = "--.-°"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TopRightPanel" type="VBoxContainer" parent="MainContainer"]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -150.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = 150.0
-grow_horizontal = 0
-
-[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
-layout_mode = 2
-
-[node name="SecondaryCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecondaryBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_secondary_bg")
-
-[node name="SecondaryContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecondarySec" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer"]
+[node name="TopRightPanel" type="VBoxContainer" parent="MainContainer" unique_id=625341443]
 layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.33523, 0.530682, 0.445213, 1)
-theme_override_font_sizes/font_size = 24
-text = "SEC"
-horizontal_alignment = 1
-vertical_alignment = 1
 
-[node name="SecondaryCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="MainCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
-custom_minimum_size = Vector2(80, 40)
-layout_mode = 2
-
-[node name="MainBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_main_bg")
-
-[node name="MainContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="MainMain" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer"]
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -30.5
-offset_top = -17.0
-offset_right = 30.5
-offset_bottom = 17.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.6, 0.8, 0.6, 1)
-theme_override_font_sizes/font_size = 24
-text = "MAIN"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="MainCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -17.5
-offset_top = -15.0
-offset_right = -9.5
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="FragCounter" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer"]
-custom_minimum_size = Vector2(80, 40)
-layout_mode = 2
-
-[node name="FragBackground" type="Panel" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
-
-[node name="FragContainer" type="Control" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="FragFRAG" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer"]
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -30.5
-offset_top = -17.0
-offset_right = 30.5
-offset_bottom = 17.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(1, 0.284297, 0.346101, 1)
-theme_override_font_sizes/font_size = 24
-text = "FRAG"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="FragCount" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -17.5
-offset_top = -15.0
-offset_right = -9.5
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/HBoxContainer"]
-layout_mode = 2
-
-[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/DamageCounter"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 24
-text = "D"
-horizontal_alignment = 2
-
-[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/HBoxContainer/DamageCounter"]
-custom_minimum_size = Vector2(150, 0)
-layout_mode = 2
-theme_override_font_sizes/font_size = 20
-text = "0,000,000"
-horizontal_alignment = 2
-
-[node name="MainVBox" type="VBoxContainer" parent="MainContainer/TopRightPanel"]
-visible = false
-layout_mode = 2
-
-[node name="MainHitCounters" type="HBoxContainer" parent="MainContainer/TopRightPanel/MainVBox"]
-layout_mode = 2
-
-[node name="PenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="PenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
-
-[node name="PenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="PenetrationP" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "P"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="OverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="OverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
-
-[node name="OverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="OverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "O"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="OverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="ShatterCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="ShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
-
-[node name="ShatterContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="ShatterS" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "S"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="ShatterCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="RicochetCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="RicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
-
-[node name="RicochetContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="RicochetR" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "R"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="RicochetCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="CitadelCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="CitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
-
-[node name="CitadelContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="CitadelC" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
-theme_override_font_sizes/font_size = 24
-text = "C"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="CitadelCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="CitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="CitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
-
-[node name="CitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="CitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
-theme_override_font_sizes/font_size = 24
-text = "Co"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="CitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="PartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="PartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
-
-[node name="PartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="PartialPenPp" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "Pp"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartialPenCount" type="Label" parent="MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/MainVBox"]
-layout_mode = 2
-
-[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/MainVBox/DamageCounter"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Damage"
-horizontal_alignment = 2
-
-[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/MainVBox/DamageCounter"]
-custom_minimum_size = Vector2(100, 0)
-layout_mode = 2
-theme_override_font_sizes/font_size = 20
-text = "0,000,000"
-horizontal_alignment = 2
-
-[node name="SecondaryVBox" type="VBoxContainer" parent="MainContainer/TopRightPanel"]
-visible = false
-layout_mode = 2
-
-[node name="SecondaryHitCounters" type="HBoxContainer" parent="MainContainer/TopRightPanel/SecondaryVBox"]
-layout_mode = 2
-
-[node name="SecPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecPenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
-
-[node name="SecPenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecPenetrationP" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "P"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecPenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecOverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
-
-[node name="SecOverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecOverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "O"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecOverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecShatterCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
-
-[node name="SecShatterContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecShatterS" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "S"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecShatterCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecRicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
-
-[node name="SecRicochetContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecRicochetR" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "R"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecRicochetCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecCitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
-
-[node name="SecCitadelContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecCitadelC" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
-theme_override_font_sizes/font_size = 24
-text = "C"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecCitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
-
-[node name="SecCitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecCitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
-theme_override_font_sizes/font_size = 24
-text = "Co"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecCitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="SecPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters"]
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecPartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
-
-[node name="SecPartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecPartialPenPp" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "Pp"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecPartialPenCount" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="DamageCounter" type="HBoxContainer" parent="MainContainer/TopRightPanel/SecondaryVBox"]
-layout_mode = 2
-
-[node name="DamageLabel" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/DamageCounter"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Damage"
-horizontal_alignment = 2
-
-[node name="DamageValue" type="Label" parent="MainContainer/TopRightPanel/SecondaryVBox/DamageCounter"]
-custom_minimum_size = Vector2(100, 0)
-layout_mode = 2
-theme_override_font_sizes/font_size = 20
-text = "0,000,000"
-horizontal_alignment = 2
-
-[node name="MainCounterTemp" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
-custom_minimum_size = Vector2(0, 40)
-layout_mode = 2
-alignment = 2
-
-[node name="TempPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="PenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
-
-[node name="PenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="PenetrationP" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "P"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="OverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
-
-[node name="OverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="OverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "O"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="OverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempShatterCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="ShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
-
-[node name="ShatterContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="ShatterS" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "S"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="ShatterCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="RicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
-
-[node name="RicochetContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="RicochetR" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "R"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="RicochetCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="CitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
-
-[node name="CitadelContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="CitadelC" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
-theme_override_font_sizes/font_size = 24
-text = "C"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="CitadelCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="CitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
-
-[node name="CitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="CitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
-theme_override_font_sizes/font_size = 24
-text = "Co"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="CitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="PartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
-
-[node name="PartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="PartialPenPp" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "Pp"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="PartialPenCount" type="Label" parent="MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="Spacer" type="Control" parent="MainContainer/TopRightPanel/MainCounterTemp"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-
-[node name="SecCounterTemp" type="HBoxContainer" parent="MainContainer/TopRightPanel"]
-custom_minimum_size = Vector2(0, 40)
-layout_mode = 2
-alignment = 2
-
-[node name="TempSecPenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecPenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_penetration_bg")
-
-[node name="SecPenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecPenetrationP" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "P"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecPenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecOverpenetrationCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecOverpenetrationBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_overpenetration_bg")
-
-[node name="SecOverpenetrationContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecOverpenetrationO" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(1, 0.8, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "O"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecOverpenetrationCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecShatterCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecShatterBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_shatter_bg")
-
-[node name="SecShatterContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecShatterS" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.8, 0.2, 0.2, 1)
-theme_override_font_sizes/font_size = 24
-text = "S"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecShatterCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecRicochetCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecRicochetBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_ricochet_bg")
-
-[node name="SecRicochetContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecRicochetR" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.6, 0.6, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "R"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecRicochetCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecCitadelCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecCitadelBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_bg")
-
-[node name="SecCitadelContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecCitadelC" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.355314, 0.355314, 0.355314, 1)
-theme_override_font_sizes/font_size = 24
-text = "C"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecCitadelCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecCitadelOverpenCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecCitadelOverpenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_citadel_overpen_bg")
-
-[node name="SecCitadelOverpenContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecCitadelOverpenCo" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(1, 0.6, 0.3, 1)
-theme_override_font_sizes/font_size = 24
-text = "Co"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecCitadelOverpenCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="TempSecPartialPenCounter" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-visible = false
-custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
-
-[node name="SecPartialPenBackground" type="Panel" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_styles/panel = SubResource("StyleBoxFlat_partial_pen_bg")
-
-[node name="SecPartialPenContainer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-
-[node name="SecPartialPenPp" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.7, 0.7, 1, 1)
-theme_override_font_sizes/font_size = 24
-text = "Pp"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="SecPartialPenCount" type="Label" parent="MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer"]
-layout_mode = 1
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -13.0
-offset_top = -15.0
-offset_right = -5.0
-offset_bottom = 5.0
-grow_horizontal = 0
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
-theme_override_font_sizes/font_size = 14
-text = "0"
-horizontal_alignment = 1
-vertical_alignment = 2
-
-[node name="Spacer" type="Control" parent="MainContainer/TopRightPanel/SecCounterTemp"]
-custom_minimum_size = Vector2(60, 0)
-layout_mode = 2
-
-[node name="TopLeftPanel" type="VBoxContainer" parent="MainContainer"]
+[node name="TopLeftPanel" type="VBoxContainer" parent="MainContainer" unique_id=14744026]
 layout_mode = 1
 offset_right = 190.0
 offset_bottom = 90.0
 
-[node name="FPSLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+[node name="FPSLabel" type="Label" parent="MainContainer/TopLeftPanel" unique_id=599914408]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "FPS: --"
 
-[node name="CameraAngleLabel" type="Label" parent="MainContainer/TopLeftPanel"]
+[node name="CameraAngleLabel" type="Label" parent="MainContainer/TopLeftPanel" unique_id=1513040725]
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
 text = "Angle: --"
 
-[node name="TopCenterPanel" type="Control" parent="MainContainer"]
+[node name="TopCenterPanel" type="Control" parent="MainContainer" unique_id=1678383542]
 custom_minimum_size = Vector2(400, 28)
 layout_mode = 1
 anchors_preset = 5
@@ -2083,7 +238,7 @@ offset_right = 200.0
 offset_bottom = 28.0
 grow_horizontal = 2
 
-[node name="TeamTrackerBackground" type="Panel" parent="MainContainer/TopCenterPanel"]
+[node name="TeamTrackerBackground" type="Panel" parent="MainContainer/TopCenterPanel" unique_id=1792646131]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2093,7 +248,7 @@ grow_vertical = 2
 size_flags_horizontal = 3
 theme_override_styles/panel = SubResource("StyleBoxFlat_team_tracker_bg")
 
-[node name="TeamTrackerContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel"]
+[node name="TeamTrackerContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel" unique_id=364441961]
 custom_minimum_size = Vector2(380, 28)
 layout_mode = 1
 anchors_preset = 15
@@ -2107,20 +262,20 @@ grow_horizontal = 2
 grow_vertical = 2
 alignment = 1
 
-[node name="FriendlyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+[node name="FriendlyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer" unique_id=872704663]
 layout_mode = 2
 theme_override_constants/separation = 5
 alignment = 2
 
-[node name="VSeparator" type="VSeparator" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+[node name="VSeparator" type="VSeparator" parent="MainContainer/TopCenterPanel/TeamTrackerContainer" unique_id=1119213401]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="EnemyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer"]
+[node name="EnemyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer" unique_id=116800121]
 layout_mode = 2
 theme_override_constants/separation = 5
 
-[node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer"]
+[node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer" unique_id=1288718153]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
@@ -2131,33 +286,33 @@ offset_right = 220.0
 offset_bottom = -20.0
 grow_vertical = 0
 
-[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/BottomLeftPanel"]
+[node name="HBoxContainer" type="HBoxContainer" parent="MainContainer/BottomLeftPanel" unique_id=188123187]
 layout_mode = 2
 
-[node name="ShipStatusContainer" type="VBoxContainer" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+[node name="ShipStatusContainer" type="VBoxContainer" parent="MainContainer/BottomLeftPanel/HBoxContainer" unique_id=712533684]
 custom_minimum_size = Vector2(200, 0)
 layout_mode = 2
 size_flags_vertical = 0
 
-[node name="SpeedLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+[node name="SpeedLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer" unique_id=299104866]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 16
 text = "Speed: -- knots"
 
-[node name="ThrottleLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+[node name="ThrottleLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer" unique_id=845728330]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 16
 text = "Throttle: Stop"
 
-[node name="RudderLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+[node name="RudderLabel" type="Label" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer" unique_id=794236037]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.8, 1, 1)
 theme_override_font_sizes/font_size = 16
 text = "Rudder: Center"
 
-[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer"]
+[node name="RudderSlider" type="HSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer" unique_id=901929658]
 custom_minimum_size = Vector2(150, 20)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -2166,7 +321,7 @@ max_value = 1.0
 step = 0.01
 editable = false
 
-[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer"]
+[node name="ThrottleSlider" type="VSlider" parent="MainContainer/BottomLeftPanel/HBoxContainer" unique_id=1370066920]
 custom_minimum_size = Vector2(20, 100)
 layout_mode = 2
 min_value = -1.0
@@ -2174,7 +329,7 @@ max_value = 4.0
 step = 0.1
 editable = false
 
-[node name="BottomCenterPanel" type="VBoxContainer" parent="MainContainer"]
+[node name="BottomCenterPanel" type="VBoxContainer" parent="MainContainer" unique_id=683748572]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -2188,16 +343,16 @@ offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel"]
+[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1282646300]
 layout_mode = 2
 size_flags_vertical = 8
 
-[node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer"]
+[node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer" unique_id=436171657]
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
 alignment = 1
 
-[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer"]
+[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer" unique_id=453163127]
 custom_minimum_size = Vector2(60, 8)
 layout_mode = 2
 size_flags_vertical = 8
@@ -2207,7 +362,7 @@ max_value = 1.0
 value = 1.0
 show_percentage = false
 
-[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate"]
+[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate" unique_id=1627681361]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -2220,11 +375,11 @@ grow_horizontal = 2
 text = "10.0"
 horizontal_alignment = 1
 
-[node name="HPBarContainer" type="Control" parent="MainContainer/BottomCenterPanel/HPContainer"]
+[node name="HPBarContainer" type="Control" parent="MainContainer/BottomCenterPanel/HPContainer" unique_id=1650090772]
 custom_minimum_size = Vector2(200, 20)
 layout_mode = 2
 
-[node name="HealableHPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer"]
+[node name="HealableHPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer" unique_id=2020309204]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2236,7 +391,7 @@ theme_override_styles/fill = SubResource("StyleBoxFlat_hp_healable_fill")
 value = 100.0
 show_percentage = false
 
-[node name="HPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer"]
+[node name="HPBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer" unique_id=452337467]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2248,7 +403,7 @@ theme_override_styles/fill = SubResource("StyleBoxFlat_hp_fill")
 value = 100.0
 show_percentage = false
 
-[node name="HPLabel" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar"]
+[node name="HPLabel" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar" unique_id=1147301922]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2259,38 +414,38 @@ text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="UsableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel"]
+[node name="UsableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1603091367]
 layout_mode = 2
 
-[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
+[node name="WeaponPanel" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer" unique_id=371249791]
 layout_mode = 2
 size_flags_vertical = 8
 
-[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+[node name="Shell1Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel" unique_id=1267810139]
 custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
 button_pressed = true
 text = "AP"
 
-[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+[node name="Shell2Button" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel" unique_id=1426584532]
 custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
 text = "HE"
 
-[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel"]
+[node name="TorpedoButton" type="Button" parent="MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel" unique_id=777897912]
 custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 toggle_mode = true
 text = "TP"
 
-[node name="ConsumableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer"]
+[node name="ConsumableContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/UsableContainer" unique_id=568027496]
 custom_minimum_size = Vector2(0, 56)
 layout_mode = 2
 size_flags_vertical = 0
 
-[node name="ConsumableTemplate" type="TextureButton" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer"]
+[node name="ConsumableTemplate" type="TextureButton" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer" unique_id=1410774127]
 custom_minimum_size = Vector2(56, 56)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -2299,7 +454,7 @@ texture_normal = ExtResource("2_v8ncv")
 ignore_texture_size = true
 stretch_mode = 0
 
-[node name="ProgressBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+[node name="ProgressBar" type="ProgressBar" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate" unique_id=130273743]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2310,7 +465,7 @@ value = 50.0
 rounded = true
 fill_mode = 3
 
-[node name="KeyboardShortcutLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+[node name="KeyboardShortcutLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate" unique_id=1134332194]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -2327,7 +482,7 @@ text = "R"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="CountLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate"]
+[node name="CountLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate" unique_id=1309116228]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0
@@ -2347,7 +502,7 @@ text = "3"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="BottomRightPanel" type="Control" parent="MainContainer"]
+[node name="BottomRightPanel" type="Control" parent="MainContainer" unique_id=896055384]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0
@@ -2359,20 +514,20 @@ offset_top = -10.0
 grow_horizontal = 0
 grow_vertical = 0
 
-[node name="ShipUITemplates" type="GridContainer" parent="MainContainer"]
+[node name="ShipUITemplates" type="GridContainer" parent="MainContainer" unique_id=749748816]
 layout_mode = 1
 offset_left = 100.0
 offset_top = 100.0
 offset_right = 200.0
 offset_bottom = 200.0
 
-[node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+[node name="EnemyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates" unique_id=1055462459]
 z_index = -1
 y_sort_enabled = true
 custom_minimum_size = Vector2(100, 50)
 layout_mode = 2
 
-[node name="EnemyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+[node name="EnemyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate" unique_id=2145823187]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -2383,7 +538,7 @@ theme_override_font_sizes/font_size = 12
 text = "Enemy Ship"
 horizontal_alignment = 1
 
-[node name="EnemyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+[node name="EnemyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/EnemyShipTemplate" unique_id=288850122]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -2398,7 +553,7 @@ theme_override_styles/fill = SubResource("StyleBoxFlat_ship_enemy_fill")
 value = 100.0
 show_percentage = false
 
-[node name="EnemyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyHPBar"]
+[node name="EnemyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyHPBar" unique_id=1152619828]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2411,7 +566,7 @@ text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="EnemyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/EnemyShipTemplate"]
+[node name="EnemyTargetIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/EnemyShipTemplate" unique_id=1401512742]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -2422,7 +577,7 @@ offset_bottom = -4.8999996
 grow_horizontal = 2
 color = Color(1, 1, 1, 0)
 
-[node name="EnemyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyTargetIndicator"]
+[node name="EnemyTargetIcon" type="Label" parent="MainContainer/ShipUITemplates/EnemyShipTemplate/EnemyTargetIndicator" unique_id=1855677751]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2435,13 +590,13 @@ text = "◉"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates"]
+[node name="FriendlyShipTemplate" type="Control" parent="MainContainer/ShipUITemplates" unique_id=1854585917]
 z_index = -1
 y_sort_enabled = true
 custom_minimum_size = Vector2(100, 50)
 layout_mode = 2
 
-[node name="FriendlyStatus" type="HBoxContainer" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+[node name="FriendlyStatus" type="HBoxContainer" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate" unique_id=327633562]
 custom_minimum_size = Vector2(0, 15)
 layout_mode = 1
 anchors_preset = 5
@@ -2454,7 +609,7 @@ offset_bottom = -2.0
 grow_horizontal = 2
 alignment = 1
 
-[node name="FriendlyConsumable" type="TextureRect" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyStatus"]
+[node name="FriendlyConsumable" type="TextureRect" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyStatus" unique_id=2019401314]
 custom_minimum_size = Vector2(15, 15)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -2462,7 +617,7 @@ size_flags_vertical = 4
 texture = ExtResource("4_oxqcb")
 expand_mode = 1
 
-[node name="FriendlyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+[node name="FriendlyNameLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate" unique_id=1747125437]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -2473,7 +628,7 @@ theme_override_font_sizes/font_size = 12
 text = "Friendly Ship"
 horizontal_alignment = 1
 
-[node name="FriendlyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate"]
+[node name="FriendlyHPBar" type="ProgressBar" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate" unique_id=2031534430]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -2488,7 +643,7 @@ theme_override_styles/fill = SubResource("StyleBoxFlat_ship_friendly_fill")
 value = 100.0
 show_percentage = false
 
-[node name="FriendlyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyHPBar"]
+[node name="FriendlyHPLabel" type="Label" parent="MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyHPBar" unique_id=978891364]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -2501,19 +656,19 @@ text = "100/100"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TeamTrackerTemplate" type="VBoxContainer" parent="MainContainer/ShipUITemplates"]
+[node name="TeamTrackerTemplate" type="VBoxContainer" parent="MainContainer/ShipUITemplates" unique_id=1328301296]
 custom_minimum_size = Vector2(50, 18)
 layout_mode = 2
 size_flags_horizontal = 4
 size_flags_vertical = 0
 alignment = 1
 
-[node name="ShipIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+[node name="ShipIndicator" type="ColorRect" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate" unique_id=2026143936]
 custom_minimum_size = Vector2(35, 12)
 layout_mode = 2
 color = Color(0.2, 0.9, 0.4, 0.8)
 
-[node name="HPIndicator" type="ProgressBar" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+[node name="HPIndicator" type="ProgressBar" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate" unique_id=843566870]
 custom_minimum_size = Vector2(0, 4)
 layout_mode = 2
 theme_override_styles/background = SubResource("StyleBoxFlat_team_hp_bg")
@@ -2521,7 +676,7 @@ theme_override_styles/fill = SubResource("StyleBoxFlat_team_hp_friendly")
 value = 100.0
 show_percentage = false
 
-[node name="ShipName" type="Label" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate"]
+[node name="ShipName" type="Label" parent="MainContainer/ShipUITemplates/TeamTrackerTemplate" unique_id=1524341775]
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 9
@@ -2529,7 +684,7 @@ text = "text"
 horizontal_alignment = 1
 uppercase = true
 
-[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer"]
+[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer" unique_id=1638734061]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5

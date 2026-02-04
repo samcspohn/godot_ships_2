@@ -24,6 +24,22 @@ func get_weapon_ui() -> Array[Button]:
 	)
 	return [button]
 
+func get_aim_ui() -> Dictionary:
+	var time_to_target = -1
+	var penetration_power = -1
+	var terrain_hit = false
+
+	time_to_target = _ship.global_position.distance_to(aim_point) / get_torp_params().speed
+
+	return {
+		"time_to_target": time_to_target,
+		"penetration_power": penetration_power,
+		"terrain_hit": terrain_hit
+	}
+
+func get_max_range() -> float:
+	return get_params()._range
+
 func to_bytes() -> PackedByteArray:
 	return params.dynamic_mod.to_bytes()
 

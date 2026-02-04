@@ -1,16 +1,46 @@
+@tool
 class_name Gun
 extends Turret
 
 # Properties for editor
-@export var barrel_count: int = 1
-@export var barrel_spacing: float = 0.5
 # @export var rotation_limits_enabled: bool = true
 # @export var min_rotation_angle: float = deg_to_rad(90)
 # @export var max_rotation_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
 var sound: AudioStreamPlayer3D
+@export_category("Sound")
+@export var _sound: AudioStream
+@export var pitch: float = 1.0
+@export var volume: float = 1.0
+@export var variance: float = 0.05
+@export_tool_button("Preview Sound") var _preview_sound_button = _preview_sound
+@export_tool_button("Stop Preview") var _stop_preview_sound_button = _stop_preview_sound
+var preview_player: AudioStreamPlayer3D
 
+func _preview_sound() -> void:
+	if _sound == null:
+		push_warning("No sound assigned to preview")
+		return
+
+	if preview_player != null:
+		preview_player.stop()
+		preview_player.queue_free()
+		preview_player = null
+
+	preview_player = AudioStreamPlayer3D.new()
+	preview_player.stream = _sound
+	preview_player.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
+	preview_player.volume_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
+	add_child(preview_player)
+	preview_player.play()
+	preview_player.finished.connect(preview_player.queue_free)
+
+func _stop_preview_sound() -> void:
+	if preview_player != null:
+		preview_player.stop()
+		preview_player.queue_free()
+		preview_player = null
 
 class SimShell:
 	var start_position: Vector3 = Vector3.ZERO
@@ -72,10 +102,16 @@ func get_shell() -> ShellParams:
 	return controller.get_shell_params()
 
 func _ready() -> void:
+	if Engine.is_editor_hint():
+		return
+
 	if !_Utils.authority():
 		if sound == null:
 			sound = AudioStreamPlayer3D.new()
-			sound.stream = preload("res://audio/explosion1.wav")
+			if _sound == null:
+				sound.stream = preload("res://audio/explosion1.wav")
+			else:
+				sound.stream = _sound
 			sound.max_polyphony = 1
 			add_child(sound)
 		# get_tree().root.add_child(sound)
@@ -105,13 +141,21 @@ func update_barrels() -> void:
 	# print("Muzzles updated: ", muzzles.size())
 
 func _physics_process(delta: float) -> void:
+	if Engine.is_editor_hint():
+		return
+
 	if _Utils.authority():
 		if !disabled && reload < 1.0:
 			reload = min(reload + delta / get_params().reload_time, 1.0)
 
+func get_dist(target: Vector3) -> float:
+	var dist = (target - _ship.global_position)
+	dist.y = 0.0
+	return dist.length() - 0.001
+
 func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(global_position, target, get_shell())
-	if sol[0] != null and (target - global_position).length() < get_params()._range:
+	if sol[0] != null and get_dist(target) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
@@ -121,13 +165,13 @@ func valid_target(target: Vector3) -> bool:
 
 func get_leading_position(target: Vector3, target_velocity: Vector3):
 	var sol = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
-	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
+	if sol[0] != null and get_dist(sol[2]) < get_params()._range:
 		return sol[2]
 	return null
 
 func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
-	if sol[0] != null and (sol[2] - global_position).length() < get_params()._range:
+	if sol[0] != null and get_dist(sol[2]) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(sol[2])
 		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 		if a[1]:
@@ -221,21 +265,21 @@ func fire(mod: TargetMod = null) -> void:
 # @rpc("authority", "reliable")
 func fire_client(vel, pos, t, _id):
 	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-	sound.global_position = pos
-	var size_factor = get_shell().caliber * get_shell().caliber / 10000.0
+	# sound.global_position = pos
+	# var size_factor = get_shell().caliber * get_shell().caliber / 10000.0
 	# 380 -> 14.44
 	# 500 -> 25.0
 	# 150 -> 2.25
 	# 100 -> 1.0
-	var pitch_scale = 7.0 / size_factor
+	# var pitch_scale = 7.0 / size_factor
 	# 6 / 25 = 0.24
 	# 6 / 14.44 = 0.415
 	# 6 / 2.25 = 2.66
 	# 6 / 1 = 6.0
 	# smaller shells need more variance than larger ones
 	# var dispersion
-	sound.pitch_scale = pitch_scale + (pitch_scale * pitch_scale) * randf_range(-0.1, 0.1)
-	sound.volume_linear = clamp(1.0 / pitch_scale + randf_range(-0.3, 0.3), 0.0, 10.0) + 1.0
+	sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
+	sound.volume_linear = volume * 10.0 * randf_range(1.0 - variance, 1.0 + variance)
 	sound.play()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:

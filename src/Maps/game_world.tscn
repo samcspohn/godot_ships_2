@@ -1,24 +1,20 @@
-[gd_scene load_steps=3 format=3 uid="uid://hgkcpyif6x47"]
+[gd_scene format=3 uid="uid://hgkcpyif6x47"]
 
 [ext_resource type="Script" uid="uid://cmysga848xkvq" path="res://src/server/game_world.gd" id="2_dk2s4"]
 [ext_resource type="Script" uid="uid://dsmr8gp0wckmu" path="res://src/Maps/camera_3d.gd" id="4_28v7m"]
 
-[node name="GameWorld" type="Node3D"]
+[node name="GameWorld" type="Node3D" unique_id=551305846]
 script = ExtResource("2_dk2s4")
 
-[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
+[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="." unique_id=1379445340]
 spawn_path = NodePath("../Players")
 
-[node name="Players" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+[node name="Players" type="Node3D" parent="." unique_id=1763938408]
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="Camera3D" type="Camera3D" parent="." unique_id=416097676]
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, 15000, 0)
 near = 10.0
 far = 50000.0
 script = ExtResource("4_28v7m")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.203424, 0.384232, -0.900547, 0.0119864, 0.918733, 0.394699, 0.979017, -0.0910854, 0.182287, 0, 3.46307, 0)
-
-[node name="Env" type="Node3D" parent="."]
+[node name="Env" type="Node3D" parent="." unique_id=2104356912]

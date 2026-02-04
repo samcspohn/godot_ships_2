@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -31,7 +32,7 @@ public:
 	ProjectileData();
 	~ProjectileData();
 
-	void initialize(const Vector3 &pos, const Vector3 &vel, double t, 
+	void initialize(const Vector3 &pos, const Vector3 &vel, double t,
 					const Ref<Resource> &p, Object *_owner, const Array &_exclude = Array());
 
 	// Getters

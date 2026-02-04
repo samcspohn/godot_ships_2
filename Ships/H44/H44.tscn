@@ -241,10 +241,6 @@ turning_circle_radius = 600.0
 turn_speed_loss = 0.15
 rudder_response_time = 15.0
 max_turn_roll_angle = 4.0
-roll_response_time = 2.0
-righting_strength = 5.0
-righting_damping = 3.0
-pitch_righting_strength = 8.0
 nav_size = 4
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]

@@ -7,7 +7,7 @@ using namespace godot;
 
 void ProjectileData::_bind_methods() {
 	// Bind the initialize method
-	ClassDB::bind_method(D_METHOD("initialize", "pos", "vel", "t", "p", "_owner", "_exclude"), 
+	ClassDB::bind_method(D_METHOD("initialize", "pos", "vel", "t", "p", "_owner", "_exclude"),
 						 &ProjectileData::initialize, DEFVAL(Array()));
 
 	// Bind getters
@@ -65,7 +65,7 @@ ProjectileData::~ProjectileData() {
 	// Owner is not owned by this class, so we don't delete it
 }
 
-void ProjectileData::initialize(const Vector3 &pos, const Vector3 &vel, double t, 
+void ProjectileData::initialize(const Vector3 &pos, const Vector3 &vel, double t,
 								const Ref<Resource> &p, Object *_owner, const Array &_exclude) {
 	position = pos;
 	start_position = pos;

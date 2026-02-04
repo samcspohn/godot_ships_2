@@ -1,0 +1,11 @@
+{
+  "shell_name": "380mm",
+  "k_quadratic": 1.7262116716089174e-05,
+  "fit_mode": "range",
+  "beta": 0.01105168269230783,
+  "analytical_beta": 2e-05,
+  "gravity": 9.81,
+  "time_warp_min_rate": 1.0,
+  "time_warp_apex": 30.0,
+  "launch_angle": 28.846153846153868
+}

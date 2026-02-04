@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3 uid="uid://dldxmvdsgcfpc"]
+[gd_scene format=3 uid="uid://dldxmvdsgcfpc"]
 
 [ext_resource type="Texture2D" uid="uid://b0mbwillllaha" path="res://circle.png" id="1_circle"]
 
-[node name="GunIndicator" type="Control"]
+[node name="GunIndicator" type="Control" unique_id=456143102]
 layout_mode = 3
 anchors_preset = 8
 anchor_left = 0.5
@@ -17,7 +17,7 @@ grow_horizontal = 2
 grow_vertical = 2
 pivot_offset = Vector2(16, 16)
 
-[node name="UnderTexture" type="TextureProgressBar" parent="."]
+[node name="UnderTexture" type="TextureProgressBar" parent="." unique_id=748838665]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -36,7 +36,7 @@ fill_mode = 4
 texture_progress = ExtResource("1_circle")
 tint_progress = Color(0.5, 0.5, 0.5, 0.5568628)
 
-[node name="ProgressTexture" type="TextureProgressBar" parent="."]
+[node name="ProgressTexture" type="TextureProgressBar" parent="." unique_id=2073601988]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -55,7 +55,7 @@ value = 0.5
 fill_mode = 4
 texture_progress = ExtResource("1_circle")
 
-[node name="AngleLabel" type="Label" parent="."]
+[node name="AngleLabel" type="Label" parent="." unique_id=1513041210]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5

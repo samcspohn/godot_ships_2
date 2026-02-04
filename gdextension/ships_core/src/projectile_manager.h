@@ -117,7 +117,7 @@ public:
 	void track_ricochet(const Ref<ProjectileData> &p);
 	void track_citadel_overpen(const Ref<ProjectileData> &p);
 	void track_partial_pen(const Ref<ProjectileData> &p);
-	void track_frag(const Ref<ProjectileData> &p);
+	void track_sunk(const Ref<ProjectileData> &p);
 
 	// Ricochet RPC methods
 	void create_ricochet_rpc(int original_shell_id, int new_shell_id, const Vector3 &ricochet_position,

@@ -506,6 +506,7 @@ func process_player_input() -> void:
 								input_data.aim_position,
 								input_data.frustum_planes,
 								current_weapon_controller == ship.secondary_controller)
+	set_aim(input_data.aim_position, current_weapon_controller == ship.secondary_controller)
 	# send_aim_input.rpc_id(1, cam.aim_position)
 
 	#print(cam.aim_position)
@@ -515,19 +516,30 @@ func process_player_input() -> void:
 func kill():
 	ship.health_controller.apply_damage(10000000,10000000, ship.citadel, false, 1)
 
+func set_aim(aim_position: Vector3, manual_sec: bool):
+	ship.artillery_controller.set_aim_input(aim_position)
+	if ship.torpedo_controller:
+		ship.torpedo_controller.set_aim_input(aim_position)
+	if ship.secondary_controller:
+		if manual_sec:
+			ship.secondary_controller.set_aim_input(aim_position)
+		else :
+			ship.secondary_controller.set_aim_input(null) # Disable manual aiming for secondaries
+
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane], manual_sec: bool) -> void:
 	if _Utils.authority():
 		# Forward movement input to ship movement controller
 		ship.movement_controller.set_movement_input([_throttle_level, rudder_value])
-		ship.artillery_controller.set_aim_input(aim_position)
-		if ship.torpedo_controller:
-			ship.torpedo_controller.set_aim_input(aim_position)
-		if ship.secondary_controller:
-			if manual_sec:
-				ship.secondary_controller.set_aim_input(aim_position)
-			else :
-				ship.secondary_controller.set_aim_input(null) # Disable manual aiming for secondaries
+		set_aim(aim_position, manual_sec)
+		# ship.artillery_controller.set_aim_input(aim_position)
+		# if ship.torpedo_controller:
+		# 	ship.torpedo_controller.set_aim_input(aim_position)
+		# if ship.secondary_controller:
+		# 	if manual_sec:
+		# 		ship.secondary_controller.set_aim_input(aim_position)
+		# 	else :
+		# 		ship.secondary_controller.set_aim_input(null) # Disable manual aiming for secondaries
 		ship.frustum_planes = frustum_planes
 
 func select_weapon(idx: int) -> void:

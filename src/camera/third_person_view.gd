@@ -24,6 +24,7 @@ var invert_y: bool = false
 var mouse_sensitivity: float = 0.3
 var target_lock_enabled: bool = false
 var _ship: Node3D
+var player_controller: PlayerController
 var locked_target
 #
 #func copy_to_free_look(fl: FreeLookView):

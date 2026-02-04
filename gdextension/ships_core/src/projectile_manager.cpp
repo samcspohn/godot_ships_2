@@ -91,7 +91,7 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("track_overpenetration", "p"), &_ProjectileManager::track_overpenetration);
 	ClassDB::bind_method(D_METHOD("track_shatter", "p"), &_ProjectileManager::track_shatter);
 	ClassDB::bind_method(D_METHOD("track_ricochet", "p"), &_ProjectileManager::track_ricochet);
-	ClassDB::bind_method(D_METHOD("track_frag", "p"), &_ProjectileManager::track_frag);
+	ClassDB::bind_method(D_METHOD("track_sunk", "p"), &_ProjectileManager::track_sunk);
 
 	// Bind ricochet RPC methods (snake_case)
 	ClassDB::bind_method(D_METHOD("create_ricochet_rpc", "original_shell_id", "new_shell_id",
@@ -633,33 +633,40 @@ void _ProjectileManager::_physics_process(double delta) {
 						bool is_penetration = (rpc_result_type == PENETRATION || rpc_result_type == CITADEL); // PENETRATION
 						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, p->get_params()->get("caliber"));
 
-						// Apply fire damage
-						apply_fire_damage(p, ship, explosion_position);
+						Object* team = Object::cast_to<Object>(ship->get("team"));
+						Object* owner_team = Object::cast_to<Object>(owner->get("team"));
+						int owner_team_id = owner_team->get("team_id");
+						int team_id = team->get("team_id");
+						if (team_id != owner_team_id) {
 
-						// Track damage dealt
-						if (dmg_sunk.size() > 0) {
-							track_damage_dealt(p, dmg_sunk[0]);
-						}
+							// Apply fire damage
+							apply_fire_damage(p, ship, explosion_position);
 
-						// Track hit type
-						switch (armor_result_type) {
-							case 0: track_penetration(p); break;
-							case 1: track_partial_pen(p); break;
-							case 5: track_citadel(p); break;
-							case 6: track_citadel_overpen(p); break;
-							case 3: track_overpenetration(p); break;
-							case 4: track_shatter(p); break;
-							case 2: track_ricochet(p); break;
-						}
+							// Track damage dealt
+							if (dmg_sunk.size() > 0) {
+								track_damage_dealt(p, dmg_sunk[0]);
+							}
 
-						// Track frag (kill)
-						if (dmg_sunk.size() > 1 && (bool)dmg_sunk[1]) {
-							track_frag(p);
-						}
+							// Track hit type
+							switch (armor_result_type) {
+								case 0: track_penetration(p); break;
+								case 1: track_partial_pen(p); break;
+								case 5: track_citadel(p); break;
+								case 6: track_citadel_overpen(p); break;
+								case 3: track_overpenetration(p); break;
+								case 4: track_shatter(p); break;
+								case 2: track_ricochet(p); break;
+							}
 
-						// Track damage event
-						if (dmg_sunk.size() > 0) {
-							track_damage_event(p, dmg_sunk[0], ship->call("get_global_position"), armor_result_type);
+							// Track frag (kill)
+							if (dmg_sunk.size() > 1 && (bool)dmg_sunk[1]) {
+								track_sunk(p);
+							}
+
+							// Track damage event
+							if (dmg_sunk.size() > 0) {
+								track_damage_event(p, dmg_sunk[0], ship->call("get_global_position"), armor_result_type);
+							}
 						}
 					}
 				} else {
@@ -1308,7 +1315,7 @@ void _ProjectileManager::track_partial_pen(const Ref<ProjectileData> &p) {
 	}
 }
 
-void _ProjectileManager::track_frag(const Ref<ProjectileData> &p) {
+void _ProjectileManager::track_sunk(const Ref<ProjectileData> &p) {
 	if (!p.is_valid()) return;
 
 	Object *owner = p->get_owner();

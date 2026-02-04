@@ -132,3 +132,16 @@ use_collision = true
 collision_layer = 8
 size = Vector3(100000, 0, 100000)
 material = ExtResource("2_7hjns")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." index="27" unique_id=99374785]
+transform = Transform3D(0.618399, 0.23944749, -0.748497, 1.2813786e-09, 0.9524505, 0.30469313, 0.7858643, -0.18842193, 0.5889945, 0, 0, 0)
+light_color = Color(0.82994324, 0.83919644, 0.8149098, 1)
+shadow_enabled = true
+shadow_bias = 0.124
+shadow_blur = 1.284
+directional_shadow_split_1 = 0.014
+directional_shadow_split_2 = 0.04
+directional_shadow_split_3 = 0.3
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 1.0
+directional_shadow_max_distance = 30000.0

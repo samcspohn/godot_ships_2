@@ -4,10 +4,10 @@
 
 [sub_resource type="Environment" id="Environment_bp804"]
 background_mode = 1
-background_color = Color(0.45549244, 0.7068433, 0.8168385, 1)
+background_color = Color(0.48170042, 0.7273144, 0.83541787, 1)
 ambient_light_source = 2
-ambient_light_color = Color(0.69958174, 0.8540127, 0.93016934, 1)
-ambient_light_energy = 0.3
+ambient_light_color = Color(0.72783875, 0.8694468, 0.93703485, 1)
+ambient_light_energy = 0.4
 ssr_max_steps = 512
 ssr_fade_in = 0.43922582
 ssr_fade_out = 42.224144
@@ -27,10 +27,9 @@ glow_hdr_luminance_cap = 256.0
 fog_enabled = true
 fog_mode = 1
 fog_light_color = Color(0.45490196, 0.7058824, 0.8156863, 1)
-fog_light_energy = 0.65
-fog_sun_scatter = 0.28
-fog_density = 1.0
-fog_sky_affect = 0.145
+fog_light_energy = 1.3
+fog_sun_scatter = 0.11
+fog_density = 0.5175
 fog_depth_curve = 0.57435
 fog_depth_begin = 0.0
 fog_depth_end = 50000.0
@@ -39,7 +38,8 @@ volumetric_fog_length = 50000.0
 volumetric_fog_detail_spread = 0.5
 
 [node name="PlayerCam" type="Camera3D" unique_id=1912885597]
-process_priority = 2
+process_priority = -1
+process_physics_priority = -1
 environment = SubResource("Environment_bp804")
 current = true
 near = 5.0
@@ -53,4 +53,5 @@ hit_back_faces = false
 collide_with_areas = true
 
 [node name="AudioListener3D" type="AudioListener3D" parent="." unique_id=1168412776]
+doppler_tracking = 2
 current = true

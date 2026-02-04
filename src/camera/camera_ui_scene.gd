@@ -5,6 +5,7 @@ class_name CameraUIScene
 # Preload the floating damage scene
 const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
 const GunIndicatorScene = preload("res://src/camera/gun_indicator.tscn")
+const HitStatCountersScene = preload("res://src/camera/hit_stat_counters.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera
@@ -44,84 +45,8 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 @onready var fps_label: Label = $MainContainer/TopLeftPanel/FPSLabel
 @onready var camera_angle_label: Label = $MainContainer/TopLeftPanel/CameraAngleLabel
 
-@onready var secondary_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondaryCount
-@onready var main_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer/MainCount
-@onready var frag_count_label: Label = $MainContainer/TopRightPanel/HBoxContainer/FragCounter/FragContainer/FragCount
-
-# Main hit counter labels (shown when hovering over MAIN)
-@onready var penetration_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/PenetrationCounter/PenetrationContainer/PenetrationCount
-@onready var overpenetration_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/OverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
-@onready var shatter_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/ShatterCounter/ShatterContainer/ShatterCount
-@onready var ricochet_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/RicochetCounter/RicochetContainer/RicochetCount
-@onready var citadel_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelCounter/CitadelContainer/CitadelCount
-@onready var citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/CitadelOverpenCounter/CitadelOverpenContainer/CitadelOverpenCount
-@onready var partial_pen_count_label: Label = $MainContainer/TopRightPanel/MainVBox/MainHitCounters/PartialPenCounter/PartialPenContainer/PartialPenCount
-@onready var main_damage_label: Label = $MainContainer/TopRightPanel/MainVBox/DamageCounter/DamageValue
-
-# Secondary hit counter labels (shown when hovering over SEC)$MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCountw
-@onready var sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
-@onready var sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
-@onready var sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecShatterCounter/SecShatterContainer/SecShatterCount
-@onready var sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecRicochetCounter/SecRicochetContainer/SecRicochetCount
-@onready var sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelCounter/SecCitadelContainer/SecCitadelCount
-@onready var sec_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecCitadelOverpenCounter/SecCitadelOverpenContainer/SecCitadelOverpenCount
-@onready var sec_partial_pen_count_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/SecondaryHitCounters/SecPartialPenCounter/SecPartialPenContainer/SecPartialPenCount
-@onready var sec_damage_label: Label = $MainContainer/TopRightPanel/SecondaryVBox/DamageCounter/DamageValue
-
-@onready var damage_value_label: Label = $MainContainer/TopRightPanel/HBoxContainer/DamageCounter/DamageValue
-
-# Hit counter containers for hover functionality
-@onready var secondary_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/SecondaryVBox
-@onready var main_hit_counters: VBoxContainer = $MainContainer/TopRightPanel/MainVBox
-
-# Temporary hit counter containers
-@onready var main_counter_temp: HBoxContainer = $MainContainer/TopRightPanel/MainCounterTemp
-@onready var sec_counter_temp: HBoxContainer = $MainContainer/TopRightPanel/SecCounterTemp
-
-# Temporary main hit counter references
-@onready var temp_penetration_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter
-@onready var temp_overpenetration_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter
-@onready var temp_shatter_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter
-@onready var temp_ricochet_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter
-@onready var temp_citadel_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter
-@onready var temp_citadel_overpen_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter
-@onready var temp_partial_pen_counter: Control = $MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter
-
-# Temporary main hit counter labels
-@onready var temp_penetration_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempPenetrationCounter/PenetrationContainer/PenetrationCount
-@onready var temp_overpenetration_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempOverpenetrationCounter/OverpenetrationContainer/OverpenetrationCount
-@onready var temp_shatter_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempShatterCounter/ShatterContainer/ShatterCount
-@onready var temp_ricochet_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempRicochetCounter/RicochetContainer/RicochetCount
-@onready var temp_citadel_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelCounter/CitadelContainer/CitadelCount
-@onready var temp_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempCitadelOverpenCounter/CitadelOverpenContainer/CitadelOverpenCount
-@onready var temp_partial_pen_count_label: Label = $MainContainer/TopRightPanel/MainCounterTemp/TempPartialPenCounter/PartialPenContainer/PartialPenCount
-
-# Temporary secondary hit counter references
-@onready var temp_sec_penetration_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter
-@onready var temp_sec_overpenetration_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter
-@onready var temp_sec_shatter_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter
-@onready var temp_sec_ricochet_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter
-@onready var temp_sec_citadel_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter
-@onready var temp_sec_citadel_overpen_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter
-@onready var temp_sec_partial_pen_counter: Control = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter
-
-# Temporary secondary hit counter labels
-@onready var temp_sec_penetration_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPenetrationCounter/SecPenetrationContainer/SecPenetrationCount
-@onready var temp_sec_overpenetration_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecOverpenetrationCounter/SecOverpenetrationContainer/SecOverpenetrationCount
-@onready var temp_sec_shatter_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecShatterCounter/SecShatterContainer/SecShatterCount
-@onready var temp_sec_ricochet_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecRicochetCounter/SecRicochetContainer/SecRicochetCount
-@onready var temp_sec_citadel_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelCounter/SecCitadelContainer/SecCitadelCount
-@onready var temp_sec_citadel_overpen_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecCitadelOverpenCounter/SecCitadelOverpenContainer/SecCitadelOverpenCount
-@onready var temp_sec_partial_pen_count_label: Label = $MainContainer/TopRightPanel/SecCounterTemp/TempSecPartialPenCounter/SecPartialPenContainer/SecPartialPenCount
-
-# Main counter labels for hover detection
-@onready var secondary_label: Label = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter/SecondaryContainer/SecondarySec
-@onready var main_label: Label = $MainContainer/TopRightPanel/HBoxContainer/MainCounter/MainContainer/MainMain
-
-@onready var secondary_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/SecondaryCounter
-@onready var main_counter: Control = $MainContainer/TopRightPanel/HBoxContainer/MainCounter
-
-@onready var top_right_panel: VBoxContainer = $MainContainer/TopRightPanel
+# Hit/Stat counters component (self-contained)
+var hit_stat_counters: HitStatCounters = null
 
 # Visibility indicator
 @onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
@@ -230,13 +155,7 @@ var current_secondary_target: Ship = null
 var team_ship_indicators = {}  # Maps ship to its indicator ColorRect
 var friendly_team_id: int = -1  # Will be set when camera_controller is available
 
-# Hit counter system for temporary display
-var active_hit_counters = {}
-var active_hit_timers = {}
-var hit_counter_display_time: float = 5.0  # Display for 5 seconds
 
-# Hit counter references mapping
-var hit_counter_styles = {}
 
 func recurs_set_vis(n: Node):
 	if n is CanvasItem:
@@ -299,11 +218,8 @@ func _ready():
 	# Connect crosshair drawing
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
 
-	# Setup hover functionality for counters
-	setup_counter_hover_functionality()
-
-	# Setup hit counter display system
-	setup_hit_counter_system()
+	# Setup hit/stat counters component
+	_setup_hit_stat_counters()
 
 	# Setup weapon UI
 	setup_weapon_buttons()
@@ -327,8 +243,6 @@ func _ready():
 	if camera_controller:
 		setup_weapons.call_deferred()
 
-	update_counters()
-
 	setup_team_tracker()
 
 	server = get_tree().root.get_node_or_null("Server")
@@ -339,37 +253,16 @@ func _process(_delta: float) -> void:
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
 
-func update_counters() -> void:
-	var stats = camera_controller._ship.stats
-	if not stats:
-		return
+func _setup_hit_stat_counters():
+	"""Setup the hit/stat counters component"""
+	hit_stat_counters = HitStatCountersScene.instantiate()
+	$MainContainer.add_child(hit_stat_counters)
+	hit_stat_counters.floating_damage_requested.connect(_on_floating_damage_requested)
 
-	update_counter(damage_value_label, stats.total_damage)
-	update_counter(main_count_label, stats.main_hits)
-	update_counter(frag_count_label, stats.frags)
-	update_counter(secondary_count_label, stats.secondary_count)
-	update_counter(sec_citadel_count_label, stats.sec_citadel_count)
-	update_counter(sec_damage_label, stats.sec_damage)
+func _on_floating_damage_requested(damage: float, position: Vector3):
+	"""Handle floating damage requests from hit stat counters"""
+	create_floating_damage(damage, position)
 
-	# Update main hit counters
-	update_counter(penetration_count_label, stats.penetration_count)
-	update_counter(overpenetration_count_label, stats.overpen_count)
-	update_counter(ricochet_count_label, stats.ricochet_count)
-	update_counter(shatter_count_label, stats.shatter_count)
-	update_counter(citadel_count_label, stats.citadel_count)
-	update_counter(citadel_overpen_count_label, stats.citadel_overpen_count)
-	update_counter(partial_pen_count_label, stats.partial_pen_count)
-	update_counter(main_damage_label, stats.main_damage)
-
-	# Update secondary hit counters
-	update_counter(sec_penetration_count_label, stats.sec_penetration_count)
-	update_counter(sec_overpenetration_count_label, stats.sec_overpen_count)
-	update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
-	update_counter(sec_shatter_count_label, stats.sec_shatter_count)
-	update_counter(sec_citadel_count_label, stats.sec_citadel_count)
-	update_counter(sec_citadel_overpen_count_label, stats.sec_citadel_overpen_count)
-	update_counter(sec_partial_pen_count_label, stats.sec_partial_pen_count)
-	update_counter(sec_damage_label, stats.sec_damage)
 
 
 func _physics_process(_delta):
@@ -383,8 +276,6 @@ func _physics_process(_delta):
 	update_team_tracker()  # Update team tracker
 	# cleanup_team_indicators()  # Clean up invalid indicators
 	update_gun_reload_bars()
-	check_hover_detection()  # Add manual hover detection
-	update_hit_counters(_delta)  # Update hit counter timers
 	update_visibility_indicator()  # Update visibility indicator
 	update_secondaries_disabled_indicator()  # Update secondaries disabled indicator
 	update_consumable_ui()
@@ -400,16 +291,11 @@ func _physics_process(_delta):
 		if detected_target != current_secondary_target:
 			current_secondary_target = detected_target
 
+	# Update hit stat counters with ship stats
 	if camera_controller and camera_controller._ship and camera_controller._ship.stats:
 		var stats = camera_controller._ship.stats
-
-		# Process damage events for hit counters
-		if stats.damage_events.size() > 0:
-			process_damage_events(stats.damage_events)
-			update_counters()
-		update_counter(frag_count_label, stats.frags)
-		update_counter(damage_value_label, stats.total_damage)
-		# update_counter(damage_value_label, stats.total_damage)
+		if hit_stat_counters:
+			hit_stat_counters.set_stats(stats)
 
 	if camera_controller._ship:
 		var hp = camera_controller._ship.health_controller.current_hp
@@ -439,126 +325,9 @@ func initialize_for_ship():
 		update_ship_ui()
 		update_team_tracker()  # Initialize team tracker
 
-func setup_counter_hover_functionality():
-	print("Setting up hover functionality...")
-
-	# Enable mouse input for the counter containers
-	secondary_counter.mouse_filter = Control.MOUSE_FILTER_PASS
-	main_counter.mouse_filter = Control.MOUSE_FILTER_PASS
-
-	print("Secondary counter: ", secondary_counter)
-	print("Main counter: ", main_counter)
-	print("Secondary hit counters: ", secondary_hit_counters)
-	print("Main hit counters: ", main_hit_counters)
-
-	# Instead of using signals, we'll check mouse position manually in _process
-	print("Hover functionality setup complete - using manual detection")
-
-# region Hit Counter System
-func setup_hit_counter_system():
-	"""Initialize the hit counter display system"""
-	print("Setting up hit counter system...")
-
-	# The hit counter containers are already created in the scene file
-	# Just ensure they start hidden
-	main_counter_temp.visible = false
-	sec_counter_temp.visible = false
-
-	# Map hit types to their counter references for easy access
-	hit_counter_styles = {
-		"penetration": {"main": temp_penetration_counter, "sec": temp_sec_penetration_counter, "main_label": temp_penetration_count_label, "sec_label": temp_sec_penetration_count_label},
-		"overpenetration": {"main": temp_overpenetration_counter, "sec": temp_sec_overpenetration_counter, "main_label": temp_overpenetration_count_label, "sec_label": temp_sec_overpenetration_count_label},
-		"shatter": {"main": temp_shatter_counter, "sec": temp_sec_shatter_counter, "main_label": temp_shatter_count_label, "sec_label": temp_sec_shatter_count_label},
-		"ricochet": {"main": temp_ricochet_counter, "sec": temp_sec_ricochet_counter, "main_label": temp_ricochet_count_label, "sec_label": temp_sec_ricochet_count_label},
-		"citadel": {"main": temp_citadel_counter, "sec": temp_sec_citadel_counter, "main_label": temp_citadel_count_label, "sec_label": temp_sec_citadel_count_label},
-		"citadel_overpen": {"main": temp_citadel_overpen_counter, "sec": temp_sec_citadel_overpen_counter, "main_label": temp_citadel_overpen_count_label, "sec_label": temp_sec_citadel_overpen_count_label},
-		"partial_pen": {"main": temp_partial_pen_counter, "sec": temp_sec_partial_pen_counter, "main_label": temp_partial_pen_count_label, "sec_label": temp_sec_partial_pen_count_label}
-	}
-
-	print("Hit counter system setup complete")
-
-func setup_hit_counter_styles():
-	"""Setup style resources for different hit types"""
-	# This function is no longer needed since we duplicate existing UI elements
-	# The styles are already defined in the scene file
-	pass
-
-func show_hit_counter(hit_type: String, is_secondary: bool):
-	"""Show or update a hit counter for the specified type"""
-	if hit_type not in hit_counter_styles:
-		print("Warning: Unknown hit type: ", hit_type)
-		return
-
-	var counter_key = hit_type + ("_sec" if is_secondary else "_main")
-	var counter_refs = hit_counter_styles[hit_type]
-	# Get the appropriate counter and label
-	var counter: Control = counter_refs["sec"] if is_secondary else counter_refs["main"]
-	var count_label: Label = counter_refs["sec_label"] if is_secondary else counter_refs["main_label"]
-	var container: HBoxContainer = sec_counter_temp if is_secondary else main_counter_temp
-	active_hit_timers[container] = hit_counter_display_time  # Reset global timer whenever a hit is registered
-
-	# Check if counter already exists in active tracking
-	if counter_key in active_hit_counters:
-		# Update existing counter
-		var counter_data = active_hit_counters[counter_key]
-		counter_data.count += 1
-		# counter_data.timer = hit_counter_display_time  # Reset timer
-		count_label.text = str(counter_data.count)
-	else:
-		# Show new counter
-		counter.visible = true
-		container.visible = true
-		count_label.text = "1"
-
-		# Store counter data
-		active_hit_counters[counter_key] = {
-			"counter": counter,
-			"container": container,
-			"label": count_label,
-			"count": 1,
-			# "timer": hit_counter_display_time,
-			"is_secondary": is_secondary
-		}
-
-func update_hit_counters(delta: float):
-	"""Update hit counter timers and hide expired ones"""
-	var keys_to_remove = []
-
-	for container in active_hit_timers.keys():
-		active_hit_timers[container] -= delta
-		if active_hit_timers[container] <= 0.0:
-			# Hide all active counters
-			for key in active_hit_counters:
-				var counter_data = active_hit_counters[key]
-				if counter_data.container == container:
-					counter_data.counter.visible = false
-					keys_to_remove.append(key)
-
-	# for key in active_hit_counters:
-	# 	var counter_data = active_hit_counters[key]
-	# 	counter_data.timer -= delta
-
-	# 	if counter_data.timer <= 0.0:
-	# 		# Hide expired counter
-	# 		counter_data.counter.visible = false
-	# 		keys_to_remove.append(key)
-
-	# Remove expired counters from tracking
-	for key in keys_to_remove:
-		active_hit_counters.erase(key)
-
-	# Hide containers if no counters are active
-	var main_has_active = false
-	var sec_has_active = false
-
-	for key in active_hit_counters:
-		if active_hit_counters[key].is_secondary:
-			sec_has_active = true
-		else:
-			main_has_active = true
-
-	main_counter_temp.visible = main_has_active
-	sec_counter_temp.visible = sec_has_active
+		# Initialize hit stat counters with ship stats
+		if hit_stat_counters and camera_controller._ship.stats:
+			hit_stat_counters.set_stats(camera_controller._ship.stats)
 
 func update_visibility_indicator():
 	"""Update the visibility indicator based on ship's visible_to_enemy flag"""
@@ -582,135 +351,7 @@ func update_secondaries_disabled_indicator():
 	var secondaries_disabled_flag = not camera_controller._ship.secondary_controller.enabled
 	secondaries_disabled.visible = secondaries_disabled_flag
 
-func process_damage_events(damage_events: Array):
-	"""Process damage events and show appropriate hit counters"""
-	var stats = camera_controller._ship.stats
-	for event in damage_events:
-		var hit_type = get_hit_type_from_event(event)
-		var is_secondary = event.get("sec", false)
 
-		# Update appropriate hit counters based on event type
-		var event_type: ArmorInteraction.HitResult = event.get("type", -1)
-		match event_type:
-			ArmorInteraction.HitResult.PENETRATION:
-				if is_secondary:
-					update_counter(sec_penetration_count_label, stats.sec_penetration_count)
-				else:
-					update_counter(penetration_count_label, stats.penetration_count)
-			ArmorInteraction.HitResult.OVERPENETRATION:
-				if is_secondary:
-					update_counter(sec_overpenetration_count_label, stats.sec_overpen_count)
-				else:
-					update_counter(overpenetration_count_label, stats.overpen_count)
-			ArmorInteraction.HitResult.SHATTER:
-				if is_secondary:
-					update_counter(sec_shatter_count_label, stats.sec_shatter_count)
-				else:
-					update_counter(shatter_count_label, stats.shatter_count)
-			ArmorInteraction.HitResult.RICOCHET:
-				if is_secondary:
-					update_counter(sec_ricochet_count_label, stats.sec_ricochet_count)
-				else:
-					update_counter(ricochet_count_label, stats.ricochet_count)
-			ArmorInteraction.HitResult.CITADEL:
-				if is_secondary:
-					update_counter(sec_citadel_count_label, stats.sec_citadel_count)
-				else:
-					update_counter(citadel_count_label, stats.citadel_count)
-			ArmorInteraction.HitResult.CITADEL_OVERPEN:
-				if is_secondary:
-					update_counter(sec_citadel_overpen_count_label, stats.sec_citadel_overpen_count)
-				else:
-					update_counter(citadel_overpen_count_label, stats.citadel_overpen_count)
-			ArmorInteraction.HitResult.PARTIAL_PEN:
-				if is_secondary:
-					update_counter(sec_partial_pen_count_label, stats.sec_partial_pen_count)
-				else:
-					update_counter(partial_pen_count_label, stats.partial_pen_count)
-			_:
-				print("Warning: Unhandled hit type: ", hit_type)
-
-
-		if is_secondary:
-			update_counter(sec_damage_label, stats.sec_damage)
-			update_counter(secondary_count_label, stats.secondary_count)
-		else:
-			update_counter(main_damage_label, stats.main_damage)
-			update_counter(main_count_label, stats.main_hits)
-
-		##########################################################
-
-		if hit_type != "":
-			show_hit_counter(hit_type, is_secondary)
-
-		create_floating_damage(event.damage, event.position)
-
-	update_counter(damage_value_label, stats.total_damage)
-	# Clear damage events after processing to prevent duplicate processing
-	damage_events.clear()
-
-func get_hit_type_from_event(event: Dictionary) -> String:
-	"""Convert damage event type to hit counter type"""
-	var event_type: ArmorInteraction.HitResult = event.get("type", -1)
-
-	# Map HitResult enum values to strings
-	match event_type:
-		ArmorInteraction.HitResult.PENETRATION: return "penetration"    # HitResult.PENETRATION
-		ArmorInteraction.HitResult.RICOCHET: return "ricochet"       # HitResult.RICOCHET
-		ArmorInteraction.HitResult.OVERPENETRATION: return "overpenetration" # HitResult.OVERPENETRATION
-		ArmorInteraction.HitResult.SHATTER: return "shatter"        # HitResult.SHATTER
-		ArmorInteraction.HitResult.CITADEL: return "citadel"        # HitResult.CITADEL
-		ArmorInteraction.HitResult.CITADEL_OVERPEN: return "citadel_overpen" # HitResult.CITADEL_OVERPEN
-		ArmorInteraction.HitResult.PARTIAL_PEN: return "partial_pen"    # HitResult.PARTIAL_PEN
-		_: return ""               # Unknown or no hit
-
-# Manual hover detection in _process
-var was_hovering_secondary = false
-var was_hovering_main = false
-
-func check_hover_detection():
-	if not secondary_counter or not main_counter:
-		return
-
-	var mouse_pos = get_viewport().get_mouse_position()
-
-	# Check secondary counter hover
-	var sec_rect = Rect2(secondary_counter.global_position, secondary_counter.size)
-	var is_hovering_secondary = sec_rect.has_point(mouse_pos)
-
-	if is_hovering_secondary != was_hovering_secondary:
-		was_hovering_secondary = is_hovering_secondary
-		if is_hovering_secondary:
-			_on_secondary_hover_enter()
-		else:
-			_on_secondary_hover_exit()
-
-	# Check main counter hover
-	var main_rect = Rect2(main_counter.global_position, main_counter.size)
-	var is_hovering_main = main_rect.has_point(mouse_pos)
-
-	if is_hovering_main != was_hovering_main:
-		was_hovering_main = is_hovering_main
-		if is_hovering_main:
-			_on_main_hover_enter()
-		else:
-			_on_main_hover_exit()
-
-func _on_secondary_hover_enter():
-	print("Secondary hover enter!")
-	secondary_hit_counters.visible = true
-
-func _on_secondary_hover_exit():
-	print("Secondary hover exit!")
-	secondary_hit_counters.visible = false
-
-func _on_main_hover_enter():
-	print("Main hover enter!")
-	main_hit_counters.visible = true
-
-func _on_main_hover_exit():
-	print("Main hover exit!")
-	main_hit_counters.visible = false
 
 
 func _update_ui():
@@ -1529,7 +1170,7 @@ func set_distance_to_target(value: float):
 		if value < 0.0:
 			distance_label.text = "-- m"
 		else:
-			distance_label.text = "%.2f m" % value
+			distance_label.text = "%.2f km" % (value / 1000.0)
 
 func set_penetration_power(value: float):
 	penetration_power = value
@@ -1557,10 +1198,6 @@ func set_locked_target(value):
 func set_target_lock_enabled(value: bool):
 	target_lock_enabled = value
 	# Update crosshair drawing to show lock indicator
-
-func update_counter(label: Label, count):
-	if label:
-		label.text = str(int(count))
 
 # Function to create floating damage at a world position
 func create_floating_damage(damage: int, world_position: Vector3):
