@@ -60,11 +60,13 @@ var ship_speed: float = 0.0
 var tracked_ships = {} # Dictionary to store ships and their UI elements
 var ship_ui_elements = {} # Dictionary to store UI elements for each ship
 
-var aim: Node3D
+# var aim: Node3D
 var ui # Will be CameraUIScene instance
-var third_person_view: ThirdPersonView
-var free_look_view: ThirdPersonView
-var sniper_view: SniperView
+var third_person_view: ThirdPersonViewV2
+var free_look_view: ThirdPersonViewV2
+var sniper_view: AimView
+var current_view: CameraView # Current active view
+var last_view: CameraView # Last active view before switching to free look
 var ray_exclude: Array = [] # Nodes to exclude from raycasting
 
 # Zoom smoothing for Godot 4.5
@@ -74,7 +76,7 @@ var zoom_smoothing: float = 1.0 # Adjust this value to control smoothing
 var audio_listener: AudioListener3D
 
 func set_angle(angle: float):
-	aim.rotation_degrees_horizontal = angle
+	current_view.rot_h = angle
 
 func recurs_collision_bodies(node: Node) -> Array:
 	"""Recursively find all collision bodies in the node tree, excluding specified nodes."""
@@ -110,22 +112,22 @@ func _ready():
 		follow_ship = _ship
 		ui.call_deferred("initialize_for_ship")
 
-	third_person_view = ThirdPersonView.new()
-	third_person_view._ship = _ship
+	third_person_view = ThirdPersonViewV2.new()
+	third_person_view.ship = _ship
 	third_person_view.player_controller = player_controller
-	free_look_view = ThirdPersonView.new()
+	free_look_view = ThirdPersonViewV2.new()
 	#free_look_view = FreeLookView.new()
-	free_look_view._ship = _ship
+	free_look_view.ship = _ship
 	free_look_view.player_controller = player_controller
-	sniper_view = SniperView.new()
-	sniper_view._ship = _ship
+	sniper_view = AimView.new()
+	sniper_view.ship = _ship
 	sniper_view.player_controller = player_controller
 
 	get_parent().add_child(third_person_view)
 	get_parent().add_child(free_look_view)
 	get_parent().add_child(sniper_view)
 	#get_tree().root.add_child(aim)
-	aim = third_person_view
+	current_view = third_person_view
 	ProjectileManager.camera = self
 	TorpedoManager.camera = self
 	# processed.connect(ProjectileManager.__process)
@@ -168,7 +170,8 @@ func _input(event):
 	# if not free_look:
 	# 	third_person_view.input(event)
 
-
+var transition_time = 0.0
+const TRANSITION_DURATION = 0.1
 func _process(delta):
 
 	var cam_to_ship = self.global_transform.origin - follow_ship.global_transform.origin
@@ -189,12 +192,11 @@ func _process(delta):
 	if has_node("/root/Debug"):
 		get_node("/root/Debug").set_follow_ship(follow_ship, _ship)
 
-	if last_non_free_look_mode == CameraMode.THIRD_PERSON:
-		third_person_view._update_camera_transform()
-	else:
-		sniper_view._update_camera_transform()
+	#if last_non_free_look_mode == CameraMode.THIRD_PERSON:
+		#third_person_view._update_camera_transform()
+	#else:
+		#sniper_view._update_camera_transform()
 
-	_update_camera_transform()
 
 	# Calculate ship speed
 	if _ship:
@@ -206,14 +208,23 @@ func _process(delta):
 		current_mode = CameraMode.FREE_LOOK
 		if not free_look:
 			if last_non_free_look_mode == CameraMode.THIRD_PERSON:
-				free_look_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
+				last_view = third_person_view
+				free_look_view.rot_h = third_person_view.rot_h
+				free_look_view.rot_v = third_person_view.rot_v
 				#free_look_view.rotation_degrees_vertical = third_person_view.rotation_degrees_vertical
 			elif last_non_free_look_mode == CameraMode.SNIPER:
-				free_look_view.rotation_degrees_horizontal = sniper_view.rotation_degrees_horizontal
+				last_view = sniper_view
+				free_look_view.rot_h = sniper_view.rot_h - PI
 				#free_look_view.rotation_degrees_vertical = sniper_view.rotation_degrees_vertical
+			transition_time = TRANSITION_DURATION
+			current_view = free_look_view
 		free_look = true
 	else:
 		current_mode = last_non_free_look_mode
+		if last_view:
+			transition_time = TRANSITION_DURATION
+			current_view = last_view
+			last_view = null
 		free_look = false
 
 	ui.locked_target = locked_target
@@ -226,6 +237,8 @@ func _process(delta):
 	ui.penetration_power = penetration_power
 	ui.max_range_reached = max_range_reached
 
+	_update_camera_transform(delta)
+
 	# self.make_current()
 	#ProjectileManager1.__process(delta)
 	processed.emit(delta)
@@ -234,24 +247,7 @@ func _physics_process(delta):
 	_calculate_target_info()
 
 func _zoom_camera(zoom_amount):
-	if current_mode == CameraMode.THIRD_PERSON:
-		# Adjust zoom in third-person mode
-		third_person_view.current_zoom = clamp(third_person_view.current_zoom + zoom_amount, third_person_view.min_zoom_distance, third_person_view.max_zoom_distance)
-
-		# Switch to sniper mode if zoomed in enough
-		if third_person_view.current_zoom <= sniper_threshold:
-			set_camera_mode(CameraMode.SNIPER)
-	elif current_mode == CameraMode.SNIPER:
-		# In sniper mode, adjust FOV
-		sniper_view.current_fov = clamp(sniper_view.current_fov + zoom_amount * fov_zoom_speed, sniper_view.min_fov, sniper_view.max_fov)
-		# fov = current_fov
-
-		# Switch back to third-person if zoomed out enough
-		if sniper_view.current_fov >= sniper_view.max_fov:
-			set_camera_mode(CameraMode.THIRD_PERSON)
-	else:
-		# In free look mode, adjust zoom
-		free_look_view.current_zoom = clamp(free_look_view.current_zoom + zoom_amount, free_look_view.min_zoom_distance, free_look_view.max_zoom_distance)
+	current_view.zoom_camera(zoom_amount)
 
 
 
@@ -260,12 +256,8 @@ func _handle_mouse_motion(event):
 	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		return
 
-	if current_mode == CameraMode.THIRD_PERSON:
-		third_person_view.handle_mouse_motion(event)
-	elif current_mode == CameraMode.SNIPER:
-		sniper_view.handle_mouse_motion(event)
-	elif current_mode == CameraMode.FREE_LOOK:
-		free_look_view.handle_mouse_motion(event)
+	current_view.handle_mouse_event(event)
+
 
 var _t = Time.get_unix_time_from_system()
 func _print(m):
@@ -313,43 +305,38 @@ func _get_angles_to_target(cam_pos, target_pos):
 func _update_target_lock():
 	if locked_target:
 		if locked_target.global_position.distance_to(_ship.global_position) > player_controller.current_weapon_controller.get_max_range():
-			target_lock_enabled = false
-			locked_target = null
+			# target_lock_enabled = false
+			toggle_target_lock()
 
 	if target_lock_enabled and (!locked_target.visible_to_enemy or locked_target.health_controller.is_dead()):
-		# If target is not visible, disable target lock
-		target_lock_enabled = false
-		locked_target = null
+		toggle_target_lock()
 
-	third_person_view.target_lock_enabled = target_lock_enabled
-	sniper_view.target_lock_enabled = target_lock_enabled
-	third_person_view.locked_target = locked_target
-	sniper_view.locked_target = locked_target
+	if target_lock_enabled:
+		third_person_view.set_vh(locked_target.global_position)
+		sniper_view.set_vh(locked_target.global_position)
 
-func _update_camera_transform():
+func _update_camera_transform(delta_time: float):
 	if !_ship:
 		return
-	if current_mode == CameraMode.FREE_LOOK:
-		free_look_view._ship = follow_ship
-		free_look_view._update_camera_transform()
-		self.global_position = free_look_view.global_position
-		self.rotation.y = free_look_view.rotation.y
-		self.rotation.x = free_look_view.rotation.x
-		self.fov = free_look_view.current_fov
-	elif current_mode == CameraMode.THIRD_PERSON:
-		third_person_view._ship = follow_ship
-		# third_person_view._update_camera_transform()
-		self.global_position = third_person_view.global_position
-		self.rotation.y = third_person_view.rotation.y
-		self.rotation.x = third_person_view.rotation.x
-		self.fov = third_person_view.current_fov
-	elif current_mode == CameraMode.SNIPER:
-		sniper_view._ship = follow_ship
-		# sniper_view._update_camera_transform()
-		self.global_position = sniper_view.global_position
-		self.rotation.y = sniper_view.rotation.y
-		self.rotation.x = sniper_view.rotation.x
-		fov = sniper_view.current_fov
+
+	if free_look:
+		free_look_view.update_transform()
+	else:
+		third_person_view.update_transform()
+		sniper_view.update_transform()
+
+	if transition_time <= 0.0:
+		self.rotation = current_view.rotation
+		self.global_position = current_view.global_position
+		self.fov = current_view.current_fov
+	else:
+		# self.rotation = lerp(self.rotation, current_view.rotation, delta_time / transition_time)
+		self.rotation.x = lerp_angle(self.rotation.x, current_view.rotation.x, delta_time / transition_time)
+		self.rotation.y = lerp_angle(self.rotation.y, current_view.rotation.y, delta_time / transition_time)
+		self.rotation.z = lerp_angle(self.rotation.z, current_view.rotation.z, delta_time / transition_time)
+		self.global_position = lerp(self.global_position, current_view.global_position, delta_time / transition_time)
+		self.fov = lerp(self.fov, current_view.current_fov, delta_time / transition_time)
+		transition_time = clamp(transition_time - delta_time, 0.0, transition_time)
 
 func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool = false) -> float:
 	# Calculate the difference between the points
@@ -371,98 +358,27 @@ func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool
 func set_camera_mode(mode):
 	current_mode = mode
 
-
-	if mode == CameraMode.THIRD_PERSON:
-		current_mode = CameraMode.THIRD_PERSON
-		last_non_free_look_mode = CameraMode.THIRD_PERSON
-		third_person_view.rotation_degrees_horizontal = sniper_view.rotation_degrees_horizontal
-
-		if !target_lock_enabled:
-
-			var sniper_range = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-			var adj = sniper_range + third_person_view.current_zoom
-			var opp = third_person_view.current_zoom * 0.2 - aim_position.y + 5
-			# print("DEBUG: THIRD_PERSON")
-			#print(sniper_view.sniper_range)
-			# print(Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z)))
-			# print(adj)
-			# print(opp)
-			third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
-			# print(sniper_view.rotation.x)
-			# print(third_person_view.rotation_degrees_vertical)
-		else:
-			var a = locked_target.global_position - _ship.global_position
-			var adj = a.length() + third_person_view.current_zoom
-			var opp = third_person_view.current_zoom * 0.2 - locked_target.global_position.y + 5
-			third_person_view.rotation_degrees_vertical = rad_to_deg(atan(-opp / adj))
-			adj += sniper_view.camera_offset_vertical / -tan(sniper_view.sniper_angle_x)
-			third_person_view.camera_offset_vertical = rad_to_deg(atan(-opp / adj)) - third_person_view.rotation_degrees_vertical
-
-
-
-		# #third_person_view.sniper_range = sniper_view.sniper_range
-
-		# third_person_view.camera_offset_horizontal = sniper_view.camera_offset_horizontal
-		# third_person_view.camera_offset_vertical = rad_to_deg(atan(-(sniper_view.camera_offset_vertical) / adj))
-
-		aim = third_person_view
-
-	else: # SNIPER mode
-		# Switch to sniper mode if zoomed in enough
-		current_mode = CameraMode.SNIPER
+	_Debug.sphere(aim_position, 5)
+	if mode == CameraMode.SNIPER:
 		last_non_free_look_mode = CameraMode.SNIPER
-		_Debug.sphere(aim_position, 5)
-		# print("DEBUG: SNIPER")
-		# print(aim_position.y)
-		# var aim_dist = Vector2(aim_position.x, aim_position.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-		# # var sniper_height =
-		# var sniper_range = aim_dist + (aim_position.y) / -tan(sniper_view.sniper_angle_x)
-		# var sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
-		# if sniper_height <= 35:
-		# 	var start_point = Vector3(_ship.global_position.x, 35, _ship.global_position.z)
-		# 	var a = aim_position - start_point
-		# 	var b = Vector3(0, -start_point.y, 0)
-		# 	var angle = a.angle_to(b) - PI / 2
-		# 	# print(rad_to_deg(angle))
-		# 	# print(a)
-		# 	var ground_intersection = calculate_ground_intersection(start_point, deg_to_rad(third_person_view.rotation_degrees_horizontal), angle)
-		# 	sniper_range = Vector2(ground_intersection.x, ground_intersection.z).distance_to(Vector2(_ship.global_position.x, _ship.global_position.z))
-		# 	sniper_height = sniper_range * -tan(sniper_view.sniper_angle_x)
-
-		# sniper_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
-		# #sniper_view.sniper_range = clamp(sniper_range, 0.0, _ship.artillery_controller.guns[0].max_range)
-		# sniper_view.camera_offset_horizontal = third_person_view.camera_offset_horizontal
-		# sniper_view.camera_offset_vertical = third_person_view.camera_offset_vertical
-		# # sniper_height = clamp(sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * _ship.artillery_controller.guns[0].max_range)
-
-		# sniper_view.sniper_height = sniper_height
-		# var horizontal_rad = deg_to_rad(sniper_view.rotation_degrees_horizontal)
-		# var intersection_point = _ship.global_position + Vector3(sin(horizontal_rad) * -sniper_range, -_ship.global_position.y, cos(horizontal_rad) * -sniper_range)
-		#
-		sniper_view.rotation_degrees_horizontal = third_person_view.rotation_degrees_horizontal
-		if !target_lock_enabled:
-			# var intersection_point = calculate_ground_intersection(third_person_view.global_position, deg_to_rad(third_person_view.rotation_degrees_horizontal), deg_to_rad(third_person_view.rotation_degrees_vertical))
-			var a = aim_position - _ship.global_position
-			a.y = 0
-			var t = -tan(sniper_view.sniper_angle_x)
-			sniper_view.sniper_height = (a.length() + aim_position.y / t) * t
-			sniper_view.sniper_height = clamp(sniper_view.sniper_height, 0.005, -tan(sniper_view.sniper_angle_x) * player_controller.current_weapon_controller.get_max_range())
-			_Debug.sphere(aim_position, 5, Color.GREEN)
-
+		if target_lock_enabled:
+			sniper_view.set_vh(locked_target.global_position)
+			sniper_view.set_locked_rot(aim_position)
 		else:
-			# var sniper_dist = locked_target.global_position.distance_to(_ship.global_position)
-			var a = locked_target.global_position - _ship.global_position
-			a.y = 0
-			sniper_view.sniper_height = a.length() * -tan(sniper_view.sniper_angle_x)
+			sniper_view.set_vh(aim_position)
+		current_view = sniper_view
 
-			var intersection_point = calculate_ground_intersection(third_person_view.global_position, deg_to_rad(third_person_view.rotation_degrees_horizontal), deg_to_rad(third_person_view.rotation_degrees_vertical + third_person_view.camera_offset_vertical))
-			a = intersection_point - _ship.global_position
-			a.y = 0
-			var h = a.length() * -tan(sniper_view.sniper_angle_x)
-			sniper_view.camera_offset_vertical = h - sniper_view.sniper_height
-			_Debug.sphere(intersection_point, 5, Color.GREEN)
-		#sniper_view.rotation.x = angle
-		aim = sniper_view
+	elif mode == CameraMode.THIRD_PERSON:
+		last_non_free_look_mode = CameraMode.THIRD_PERSON
+		if target_lock_enabled:
+			third_person_view.set_vh(locked_target.global_position)
+			third_person_view.set_locked_rot(aim_position)
+		else:
+			third_person_view.set_vh(aim_position)
+		current_view = third_person_view
+
+	transition_time = TRANSITION_DURATION
+	_Debug.sphere.call_deferred(aim_position, 5, Color.GREEN)
 
 
 func toggle_camera_mode():
@@ -473,17 +389,8 @@ func toggle_camera_mode():
 
 func _calculate_target_info():
 	# Get the direction the camera is facing
+	var aim = current_view if last_view == null else last_view
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		# var horizontal_rad = aim.rotation.y
-		# var vertical_rad = aim.rotation.x
-		# # var orbit_distance = current_zoom
-		# # var adj = tan(PI / 2.0 + vertical_rad)
-		# var cam_pos_3rd = aim.global_position
-		# aim_position = calculate_ground_intersection(
-		# 	cam_pos_3rd,
-		# 	horizontal_rad + PI,
-		# 	vertical_rad
-		# )
 
 		var aim_direction = - aim.basis.z.normalized()
 		# Cast a ray to get target position (could be terrain, enemy, etc.)
@@ -634,15 +541,23 @@ func is_position_visible_on_screen(world_position):
 
 
 func toggle_target_lock():
+	# pass
 	# If already locked, disable the lock
 	if target_lock_enabled:
 		target_lock_enabled = false
 		locked_target = null
 		# Reset camera offsets
-		sniper_view.camera_offset_horizontal = 0.0
-		sniper_view.camera_offset_vertical = 0.0
-		third_person_view.camera_offset_horizontal = 0.0
-		third_person_view.camera_offset_vertical = 0.0
+		sniper_view.rot_h += sniper_view.locked_rot_h
+		sniper_view.rot_v += sniper_view.locked_rot_v
+		sniper_view.locked_rot_h = 0.0
+		sniper_view.locked_rot_v = 0.0
+		sniper_view.locked_ship = null
+
+		third_person_view.rot_h += third_person_view.locked_rot_h
+		third_person_view.rot_v += third_person_view.locked_rot_v
+		third_person_view.locked_rot_h = 0.0
+		third_person_view.locked_rot_v = 0.0
+		third_person_view.locked_ship = null
 		return
 
 	# Try to find a suitable target
@@ -651,10 +566,14 @@ func toggle_target_lock():
 		locked_target = closest_target
 		target_lock_enabled = true
 		# Reset camera offsets when locking a new target
-		sniper_view.camera_offset_horizontal = 0.0
-		sniper_view.camera_offset_vertical = 0.0
-		third_person_view.camera_offset_horizontal = 0.0
-		third_person_view.camera_offset_vertical = 0.0
+		sniper_view.locked_rot_h = 0.0
+		sniper_view.locked_rot_v = 0.0
+		sniper_view.locked_ship = closest_target
+		sniper_view.set_vh(closest_target.global_position)
+		third_person_view.locked_rot_h = 0.0
+		third_person_view.locked_rot_v = 0.0
+		third_person_view.locked_ship = closest_target
+		third_person_view.set_vh(closest_target.global_position)
 
 func find_ship_closest_to_screen_center():
 	# Find the ship closest to the center of the screen
