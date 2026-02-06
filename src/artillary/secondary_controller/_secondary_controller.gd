@@ -88,7 +88,7 @@ func get_aim_ui() -> Dictionary:
 				th = not can_shoot.can_shoot_over_terrain
 				var shell = sec.get_shell_params()
 				if shell.type == ShellParams.ShellType.HE:
-					penetration_power = shell.overmatch
+					pp = shell.overmatch
 				else:
 					var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 						launch_vector,

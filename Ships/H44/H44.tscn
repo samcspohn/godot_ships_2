@@ -240,7 +240,7 @@ reverse_speed_ratio = 0.5
 turning_circle_radius = 600.0
 turn_speed_loss = 0.15
 rudder_response_time = 15.0
-max_turn_roll_angle = 4.0
+max_turn_roll_angle = 5.5
 nav_size = 4
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]

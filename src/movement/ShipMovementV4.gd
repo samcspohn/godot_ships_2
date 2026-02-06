@@ -85,7 +85,7 @@ func _ready() -> void:
 	_detect_ship_dimensions()
 
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
-	ship.linear_damp = 0.2
+	ship.linear_damp = 0.3
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
 	ship.angular_damp = 0.4
 
@@ -156,7 +156,7 @@ func _check_land_collision() -> void:
 		engine_power = 0.0  # Immediately cut engine power
 	elif not touching_land and is_grounded:
 		is_grounded = false
-		ship.linear_damp = 0.2
+		ship.linear_damp = 0.3
 		grounded_position = null
 		grounded_island = null
 
@@ -274,7 +274,7 @@ func _physics_process(delta: float) -> void:
 		engine_power = move_toward(engine_power, target_power, delta / acceleration_time)
 
 	# Apply forward thrust
-	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.3, -forward.normalized() * ship_length * 0.4)
+	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.4, -forward.normalized() * ship_length * 0.4)
 
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
