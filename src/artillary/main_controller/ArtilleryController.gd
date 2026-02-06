@@ -125,11 +125,11 @@ func _ready() -> void:
 		set_physics_process(false)
 
 func set_aim_input(target_point: Vector3) -> void:
-	var ship_pos = _ship.global_position
-	ship_pos.y = 0
-	var target_offset = (target_point - ship_pos)
-	target_point = target_offset.normalized() * min(target_offset.length(), get_params()._range) + ship_pos
-	
+	# var ship_pos = _ship.global_position
+	# ship_pos.y = 0
+	# var target_offset = (target_point - ship_pos)
+	# target_point = target_offset.normalized() * min(target_offset.length(), get_params()._range) + ship_pos
+
 	aim_point = target_point
 
 func _physics_process(delta: float) -> void:

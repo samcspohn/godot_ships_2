@@ -196,7 +196,7 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 
 	# Existing aiming logic for elevation
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, aim_point, get_shell())
-	if sol[0] != null and (aim_point - muzzles_pos).length() < get_params()._range:
+	if sol[0] != null and (aim_point - _ship.global_position).length() < get_params()._range:
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)
@@ -209,20 +209,27 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 	var turret_elev_speed_rad: float = deg_to_rad(get_params().elevation_speed)
 	var max_elev_angle: float = turret_elev_speed_rad * delta
 	var elevation_delta: float = max_elev_angle
+	var desired_elevation_delta: float = INF
+	if _ship.name == "1":
+			pass
 	if sol[1] != -1:
 		var barrel_dir = sol[0]
-		var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y).normalized()
-		var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), -barrel.global_basis.z.y).normalized()
-		var elevation_angle = curr_elevation.angle_to(elevation)
-		elevation_delta = clamp(elevation_angle, -max_elev_angle, max_elev_angle)
+		# var elevation = Vector2(Vector2(barrel_dir.x, barrel_dir.z).length(), barrel_dir.y).normalized()
+		# var curr_elevation = Vector2(Vector2(barrel.global_basis.z.x, barrel.global_basis.z.z).length(), -barrel.global_basis.z.y).normalized()
+		var desired_elevation = atan2(barrel_dir.y, Vector2(barrel_dir.x, barrel_dir.z).length())
+		var curr_elevation = atan2(-barrel.global_basis.z.y, Vector2(-barrel.global_basis.z.x, -barrel.global_basis.z.z).length())
+		desired_elevation_delta = desired_elevation - curr_elevation
+		# desired_elevation_delta = (-barrel.global_basis.z).signed_angle_to(barrel_dir.normalized(), barrel.global_basis.x)
+		elevation_delta = clamp(desired_elevation_delta, -max_elev_angle, max_elev_angle)
 	if sol[0] == null:
+
 		elevation_delta = - max_elev_angle
 
-	if is_nan(elevation_delta):
-		elevation_delta = 0.0
-	barrel.rotate(Vector3.RIGHT, elevation_delta)
+	if !is_nan(elevation_delta):
+		barrel.rotate(Vector3.RIGHT, elevation_delta)
+	# barrel.rotation.x = clamp(barrel.rotation.x, deg_to_rad(-5), deg_to_rad(30))
 
-	if abs(elevation_delta) < 0.02 && abs(desired_local_angle_delta) < 0.02 and _valid_target:
+	if abs(desired_elevation_delta) < 0.015 and abs(desired_local_angle_delta) < 0.02 and _valid_target:
 		can_fire = true
 	else:
 		can_fire = false
@@ -279,7 +286,7 @@ func fire_client(vel, pos, t, _id):
 	# smaller shells need more variance than larger ones
 	# var dispersion
 	sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
-	sound.volume_linear = volume * 10.0 * randf_range(1.0 - variance, 1.0 + variance)
+	sound.volume_linear = volume * 15.0 * randf_range(1.0 - variance, 1.0 + variance)
 	sound.play()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
