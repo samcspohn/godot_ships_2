@@ -87,7 +87,7 @@ static func solve_rotation_iterative(
 		var cam_dist_xz = Vector2(cam_to_target.x, cam_to_target.z).length()
 
 		var new_rot_h = atan2(cam_to_target.x, cam_to_target.z) + h_offset
-		var new_rot_v = -atan2(cam_to_target.y, cam_dist_xz)
+		var new_rot_v = -atan2(-cam_to_target.y, cam_dist_xz)
 		new_rot_v = clamp(new_rot_v, -PI / 2 + 0.01, PI / 2 - 0.01)
 
 		# Check convergence

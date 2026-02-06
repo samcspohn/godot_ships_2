@@ -15,6 +15,8 @@ var player_controller: PlayerController
 enum CameraMode {THIRD_PERSON, SNIPER, FREE_LOOK}
 var last_non_free_look_mode: int = CameraMode.THIRD_PERSON
 var current_mode: int = CameraMode.THIRD_PERSON
+enum AimMode { SNIPER, AERIAL}
+var current_aim_mode: int = AimMode.SNIPER
 
 # Camera properties
 var camera_offset: Vector3 = Vector3(0, 50, 0) # Height offset above ship
@@ -65,6 +67,7 @@ var ui # Will be CameraUIScene instance
 var third_person_view: ThirdPersonViewV2
 var free_look_view: ThirdPersonViewV2
 var sniper_view: AimView
+var aerial_view: AerialView
 var current_view: CameraView # Current active view
 var last_view: CameraView # Last active view before switching to free look
 var ray_exclude: Array = [] # Nodes to exclude from raycasting
@@ -115,17 +118,23 @@ func _ready():
 	third_person_view = ThirdPersonViewV2.new()
 	third_person_view.ship = _ship
 	third_person_view.player_controller = player_controller
+
 	free_look_view = ThirdPersonViewV2.new()
-	#free_look_view = FreeLookView.new()
 	free_look_view.ship = _ship
 	free_look_view.player_controller = player_controller
+
 	sniper_view = AimView.new()
 	sniper_view.ship = _ship
 	sniper_view.player_controller = player_controller
 
+	aerial_view = AerialView.new()
+	aerial_view.ship = _ship
+	aerial_view.player_controller = player_controller
+
 	get_parent().add_child(third_person_view)
 	get_parent().add_child(free_look_view)
 	get_parent().add_child(sniper_view)
+	get_parent().add_child(aerial_view)
 	#get_tree().root.add_child(aim)
 	current_view = third_person_view
 	ProjectileManager.camera = self
@@ -158,6 +167,29 @@ func _input(event):
 	elif event is InputEventKey:
 		if event.pressed and event.keycode == KEY_SHIFT:
 			toggle_camera_mode()
+
+		if event.pressed and event.keycode == KEY_C and current_mode == CameraMode.SNIPER:
+			if current_aim_mode == AimMode.SNIPER:
+				current_aim_mode = AimMode.AERIAL
+				aerial_view.current_zoom = sniper_view.current_zoom * aerial_view.zoom_mod
+				aerial_view.current_fov = sniper_view.current_fov * aerial_view.zoom_mod
+				if !target_lock_enabled:
+					aerial_view.set_vh(aim_position)
+				else:
+					aerial_view.set_vh(locked_target.global_position)
+					aerial_view.set_locked_rot(aim_position)
+				current_view = aerial_view
+			else:
+				current_aim_mode = AimMode.SNIPER
+				sniper_view.current_zoom = aerial_view.current_zoom / aerial_view.zoom_mod
+				sniper_view.current_fov = aerial_view.current_fov / aerial_view.zoom_mod
+				if !target_lock_enabled:
+					sniper_view.set_vh(aim_position)
+				else:
+					sniper_view.set_vh(locked_target.global_position)
+					sniper_view.set_locked_rot(aim_position)
+				current_view = sniper_view
+
 		# Toggle target lock with X key
 		if event.pressed and event.keycode == KEY_X:
 			toggle_target_lock()
@@ -213,8 +245,13 @@ func _process(delta):
 				free_look_view.rot_v = third_person_view.rot_v
 				#free_look_view.rotation_degrees_vertical = third_person_view.rotation_degrees_vertical
 			elif last_non_free_look_mode == CameraMode.SNIPER:
-				last_view = sniper_view
-				free_look_view.rot_h = sniper_view.rot_h - PI
+				if current_aim_mode == AimMode.AERIAL:
+					last_view = aerial_view
+					free_look_view.rot_h = aerial_view.rot_h
+				else:
+					last_view = sniper_view
+					free_look_view.rot_h = sniper_view.rot_h
+
 				#free_look_view.rotation_degrees_vertical = sniper_view.rotation_degrees_vertical
 			transition_time = TRANSITION_DURATION
 			current_view = free_look_view
@@ -314,6 +351,7 @@ func _update_target_lock():
 	if target_lock_enabled:
 		third_person_view.set_vh(locked_target.global_position)
 		sniper_view.set_vh(locked_target.global_position)
+		aerial_view.set_vh(locked_target.global_position)
 
 func _update_camera_transform(delta_time: float):
 	if !_ship:
@@ -324,6 +362,7 @@ func _update_camera_transform(delta_time: float):
 	else:
 		third_person_view.update_transform()
 		sniper_view.update_transform()
+		aerial_view.update_transform()
 
 	if transition_time <= 0.0:
 		self.rotation = current_view.rotation
@@ -362,11 +401,26 @@ func set_camera_mode(mode):
 	if mode == CameraMode.SNIPER:
 		last_non_free_look_mode = CameraMode.SNIPER
 		if target_lock_enabled:
-			sniper_view.set_vh(locked_target.global_position)
-			sniper_view.set_locked_rot(aim_position)
+			# sniper_view.set_vh(locked_target.global_position)
+			# sniper_view.set_locked_rot(aim_position)
+			if current_aim_mode == AimMode.SNIPER:
+				sniper_view.set_vh(locked_target.global_position)
+				sniper_view.set_locked_rot(aim_position)
+				current_view = sniper_view
+			else:
+				aerial_view.set_vh(locked_target.global_position)
+				aerial_view.set_locked_rot(aim_position)
+				current_view = aerial_view
+
 		else:
+			# sniper_view.rot_h = third_person_view.rot_h
+			# sniper_view.rot_v = third_person_view.rot_v
 			sniper_view.set_vh(aim_position)
-		current_view = sniper_view
+			aerial_view.set_vh(aim_position)
+			if current_aim_mode == AimMode.SNIPER:
+				current_view = sniper_view
+			else:
+				current_view = aerial_view
 
 	elif mode == CameraMode.THIRD_PERSON:
 		last_non_free_look_mode = CameraMode.THIRD_PERSON
@@ -549,9 +603,14 @@ func toggle_target_lock():
 		# Reset camera offsets
 		sniper_view.rot_h += sniper_view.locked_rot_h
 		sniper_view.rot_v += sniper_view.locked_rot_v
+		aerial_view.rot_h += aerial_view.locked_rot_h
+		aerial_view.rot_v += aerial_view.locked_rot_v
 		sniper_view.locked_rot_h = 0.0
 		sniper_view.locked_rot_v = 0.0
+		aerial_view.locked_rot_h = 0.0
+		aerial_view.locked_rot_v = 0.0
 		sniper_view.locked_ship = null
+		aerial_view.locked_ship = null
 
 		third_person_view.rot_h += third_person_view.locked_rot_h
 		third_person_view.rot_v += third_person_view.locked_rot_v
@@ -570,6 +629,12 @@ func toggle_target_lock():
 		sniper_view.locked_rot_v = 0.0
 		sniper_view.locked_ship = closest_target
 		sniper_view.set_vh(closest_target.global_position)
+
+		aerial_view.locked_rot_h = 0.0
+		aerial_view.locked_rot_v = 0.0
+		aerial_view.locked_ship = closest_target
+		aerial_view.set_vh(closest_target.global_position)
+
 		third_person_view.locked_rot_h = 0.0
 		third_person_view.locked_rot_v = 0.0
 		third_person_view.locked_ship = closest_target

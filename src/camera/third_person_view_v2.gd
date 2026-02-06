@@ -25,10 +25,10 @@ func handle_mouse_event(event):
 	if event is InputEventMouseMotion:
 		if locked_ship == null:
 			rot_h -= event.relative.x * 0.001
-			rot_v += event.relative.y * 0.001
+			rot_v -= event.relative.y * 0.001
 		else:
 			locked_rot_h -= event.relative.x * 0.001
-			locked_rot_v += event.relative.y * 0.001
+			locked_rot_v -= event.relative.y * 0.001
 		rot_v = clamp(rot_v, -PI / 2 + 0.01, PI / 2 - 0.01)
 
 
@@ -38,7 +38,7 @@ func handle_mouse_event(event):
 func get_forward_direction() -> Vector3:
 	return Vector3(
 		sin(rot_h + locked_rot_h) * cos(rot_v + locked_rot_v),
-		sin(rot_v + locked_rot_v),
+		-sin(rot_v + locked_rot_v),
 		cos(rot_h + locked_rot_h) * cos(rot_v + locked_rot_v)
 	).normalized()
 
@@ -71,7 +71,7 @@ func update_transform():
 		global_position = calculate_position()
 		# var intersection_point = from_pos + Vector3(sin(rot_h), sin(rot_v), cos(rot_h)).normalized() * player_controller.current_weapon_controller.get_max_range()
 		rotation.y = rot_h + locked_rot_h
-		rotation.x = -rot_v - locked_rot_v
+		rotation.x = rot_v + locked_rot_v
 
 		# look_at(intersection_point)
 
