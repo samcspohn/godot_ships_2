@@ -107,18 +107,6 @@ public:
 	// Validation
 	void validate_penetration_formula();
 
-	// Tracking methods for stats
-	void track_damage_dealt(const Ref<ProjectileData> &p, double damage);
-	void track_damage_event(const Ref<ProjectileData> &p, double damage, const Vector3 &position, int type);
-	void track_penetration(const Ref<ProjectileData> &p);
-	void track_citadel(const Ref<ProjectileData> &p);
-	void track_overpenetration(const Ref<ProjectileData> &p);
-	void track_shatter(const Ref<ProjectileData> &p);
-	void track_ricochet(const Ref<ProjectileData> &p);
-	void track_citadel_overpen(const Ref<ProjectileData> &p);
-	void track_partial_pen(const Ref<ProjectileData> &p);
-	void track_sunk(const Ref<ProjectileData> &p);
-
 	// Ricochet RPC methods
 	void create_ricochet_rpc(int original_shell_id, int new_shell_id, const Vector3 &ricochet_position,
 							 const Vector3 &ricochet_velocity, double ricochet_time);

@@ -4,8 +4,8 @@ class_name CameraUIScene
 
 # Preload the floating damage scene
 const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
-const GunIndicatorScene = preload("res://src/camera/gun_indicator.tscn")
-const HitStatCountersScene = preload("res://src/camera/hit_stat_counters.tscn")
+const GunIndicatorScene = preload("res://src/ui/gun_indicator.tscn")
+const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera

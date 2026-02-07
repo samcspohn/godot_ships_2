@@ -38,8 +38,8 @@ volumetric_fog_length = 50000.0
 volumetric_fog_detail_spread = 0.5
 
 [node name="PlayerCam" type="Camera3D" unique_id=1912885597]
-process_priority = -1
-process_physics_priority = -1
+process_priority = 1
+process_physics_priority = 1
 environment = SubResource("Environment_bp804")
 current = true
 near = 5.0

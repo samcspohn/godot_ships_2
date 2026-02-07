@@ -286,7 +286,7 @@ func fire_client(vel, pos, t, _id):
 	# smaller shells need more variance than larger ones
 	# var dispersion
 	sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
-	sound.volume_linear = volume * 15.0 * randf_range(1.0 - variance, 1.0 + variance)
+	sound.volume_linear = volume * 30.0 * randf_range(1.0 - variance, 1.0 + variance)
 	sound.play()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:

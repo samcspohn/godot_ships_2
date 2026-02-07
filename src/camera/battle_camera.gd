@@ -101,7 +101,7 @@ func _ready():
 		get_node("/root/Debug").register_camera(self)
 
 	# Load the UI scene instead of creating it programmatically
-	var ui_scene = preload("res://src/camera/camera_ui.tscn")
+	var ui_scene = preload("res://src/ui/camera_ui.tscn")
 	ui = ui_scene.instantiate()
 	ui.camera_controller = self
 	ui.player_controller = player_controller
@@ -357,12 +357,12 @@ func _update_camera_transform(delta_time: float):
 	if !_ship:
 		return
 
-	if free_look:
-		free_look_view.update_transform()
-	else:
-		third_person_view.update_transform()
-		sniper_view.update_transform()
-		aerial_view.update_transform()
+	# if free_look:
+	free_look_view.update_transform()
+# else:
+	third_person_view.update_transform()
+	sniper_view.update_transform()
+	aerial_view.update_transform()
 
 	if transition_time <= 0.0:
 		self.rotation = current_view.rotation
@@ -374,7 +374,7 @@ func _update_camera_transform(delta_time: float):
 		self.rotation.y = lerp_angle(self.rotation.y, current_view.rotation.y, delta_time / transition_time)
 		self.rotation.z = lerp_angle(self.rotation.z, current_view.rotation.z, delta_time / transition_time)
 		self.global_position = lerp(self.global_position, current_view.global_position, delta_time / transition_time)
-		self.fov = lerp(self.fov, current_view.current_fov, delta_time / transition_time)
+		self.fov = clamp(lerp(self.fov, current_view.current_fov, delta_time / transition_time), 1.0, 179)
 		transition_time = clamp(transition_time - delta_time, 0.0, transition_time)
 
 func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool = false) -> float:

@@ -138,6 +138,7 @@ transform = Transform3D(0.618399, 0.23944749, -0.748497, 1.2813786e-09, 0.952450
 light_color = Color(0.82994324, 0.83919644, 0.8149098, 1)
 shadow_enabled = true
 shadow_bias = 0.124
+shadow_reverse_cull_face = true
 shadow_blur = 1.284
 directional_shadow_split_1 = 0.014
 directional_shadow_split_2 = 0.04

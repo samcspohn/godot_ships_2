@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=7 format=3 uid="uid://dtrail8shell1"]
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://dtrail8shell1"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
@@ -21,10 +21,9 @@ curve = SubResource("Curve_scale_trail")
 script = ExtResource("1")
 template_name = "shell_trail"
 texture = ExtResource("2")
-color = Color(1, 1, 1, 0.18039216)
+color = Color(1, 1, 1, 0.1254902)
 color_over_life = SubResource("GradientTexture1D_trail")
 scale_over_life = SubResource("CurveTexture_scale_trail")
-emission_energy = 0.5
 initial_velocity_min = 0.0
 initial_velocity_max = 0.0
 spread = 0.0

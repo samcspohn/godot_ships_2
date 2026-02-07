@@ -259,7 +259,7 @@ func _physics_process(delta: float) -> void:
 	if sinking and ship.global_position.y > -400.0:
 		var elapsed = Time.get_ticks_msec() / 1000.0 - sinking_time
 		ship.global_position -= Vector3(0, delta * pow(elapsed, 0.6) * 0.06, 0)
-		current_sinking_basis = current_sinking_basis.slerp(sinking_basis, pow(elapsed, 0.3)*0.0002).orthonormalized()
+		current_sinking_basis = current_sinking_basis.orthonormalized().slerp(sinking_basis.orthonormalized(), pow(elapsed, 0.3)*0.0002)
 		ship.global_basis = current_sinking_basis
 		# ship.global_basis = current_sinking_basis.slerp(sinking_rotation, delta * 0.005)
 

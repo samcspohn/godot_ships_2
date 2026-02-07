@@ -17,7 +17,7 @@ var initialized: bool = false
 @onready var movement_controller = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
-@onready var torpedo_controller: TorpedoController = $Modules/TorpedoController
+@onready var torpedo_controller: TorpedoController
 @onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
@@ -151,7 +151,7 @@ func _ready() -> void:
 	# movement_controller = $Modules/MovementController
 	# artillery_controller = $Modules/ArtilleryController
 	# health_controller = $Modules/HPManager
-	# torpedo_launcher = get_node_or_null("TorpedoLauncher")
+	torpedo_controller = get_node_or_null("Modules/TorpedoController")
 	# consumable_manager = $Modules/ConsumableManager
 	consumable_manager.ship = self
 	# fire_manager = $Modules/FireManager

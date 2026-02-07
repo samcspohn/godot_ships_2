@@ -10,14 +10,14 @@ class_name AerialView
 # var current_zoom = 1.0
 # var current_fov = 40.0
 var min_fov = 1.0
-var max_fov = 40.0
+var max_fov = 20.0
 var height = 60.0
 var zoom_mod = 1.0
 # var player_controller: PlayerController
 #
 func _ready():
-	current_zoom = 40.0
-	current_fov = 40.0
+	current_zoom = 20.0
+	current_fov = 20.0
 
 func zoom_camera(delta):
 	current_zoom += delta * 0.03 / zoom_mod
@@ -84,14 +84,16 @@ func handle_mouse_event(event):
 
 func update_transform():
 	if ship != null:
-		var pos = ship.global_position + Vector3(0, height, 0)
+		var pos = ship.global_position
+		pos.y = height
 		var intersection = calculate_0_intersection(pos, rot_h + locked_rot_h + PI, -(rot_v + locked_rot_v))
 		if intersection != Vector3.INF:
 			var ship_pos = ship.global_position
 			ship_pos.y = 0.0
 			var dist = intersection.distance_to(ship_pos)
 			var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40)
-			zoom_mod = max(0.3,  1.0 / h / 2000.0)
+			# zoom_mod = max(0.3,  1.0 / h / 5000.0)
+			zoom_mod = 1.0
 			current_fov = min(max(current_zoom * zoom_mod, 1.0), max_fov)
 			global_position = ship.global_position
 			global_position.y = h

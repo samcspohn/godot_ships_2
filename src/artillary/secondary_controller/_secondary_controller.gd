@@ -103,11 +103,11 @@ func get_aim_ui() -> Dictionary:
 					# var raw_pen = 1.0
 
 					# Calculate impact angle (angle from vertical)
-					var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
+					var impact_angle = velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
 
 					# Calculate effective penetration against vertical armor
 					# Effective penetration = raw penetration * cos(impact_angle)
-					pp = raw_pen * cos(impact_angle) * (shell as ShellParams).penetration_modifier
+					pp = raw_pen * sin(impact_angle) * (shell as ShellParams).penetration_modifier
 
 			if pp > penetration_power:
 				penetration_power = pp

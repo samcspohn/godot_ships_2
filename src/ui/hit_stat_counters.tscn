@@ -1,0 +1,33 @@
+[gd_scene format=3 uid="uid://dq8k7f3n5h2t1"]
+
+[ext_resource type="Script" uid="uid://lfop7wl7r7lf" path="res://src/ui/hit_stat_counters.gd" id="1_counters"]
+
+[node name="HitStatCounters" type="VBoxContainer"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -150.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 150.0
+grow_horizontal = 0
+script = ExtResource("1_counters")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="HBoxContainer"]
+layout_mode = 2
+
+[node name="DamageLabel" type="Label" parent="HBoxContainer/DamageCounter"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "D"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="HBoxContainer/DamageCounter"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "0"
+horizontal_alignment = 2

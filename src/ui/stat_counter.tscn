@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://c8j2k5m3n7p1q"]
+[gd_scene format=3]
 
-[ext_resource type="Script" path="res://src/camera/hit_counter.gd" id="1_counter"]
+[ext_resource type="Script" path="res://src/ui/stat_counter.gd" id="1_stat_counter"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bg"]
 bg_color = Color(0.4, 0.4, 0.4, 0.9)
@@ -9,11 +9,12 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[node name="HitCounter" type="Control"]
+[node name="StatCounter" type="Control"]
 custom_minimum_size = Vector2(50, 40)
-layout_mode = 2
+layout_mode = 3
+anchors_preset = 0
 size_flags_horizontal = 0
-script = ExtResource("1_counter")
+script = ExtResource("1_stat_counter")
 
 [node name="Background" type="Panel" parent="."]
 layout_mode = 1
@@ -33,16 +34,21 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="TypeLabel" type="Label" parent="Container"]
-layout_mode = 0
-offset_left = 3.0
-offset_top = 3.0
-offset_right = 45.0
-offset_bottom = 37.0
-grow_horizontal = 0
-grow_vertical = 0
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -22.0
+offset_top = -17.0
+offset_right = 22.0
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
 theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
 theme_override_font_sizes/font_size = 18
-text = "PEN"
+text = "CTR"
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -53,7 +59,7 @@ anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -13.0
+offset_left = -17.5
 offset_top = -15.0
 offset_right = -5.0
 offset_bottom = 5.0

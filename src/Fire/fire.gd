@@ -24,6 +24,8 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 		curr_buildup += a
 		if curr_buildup >= _params.max_buildup:
 			_owner = __owner
+			_owner.stats.damage_events.append({"type": "fire"})
+			_owner.stats.fire_count += 1
 			fire.emitting = true
 			smoke.emitting = true
 			_sync_activate.rpc()
