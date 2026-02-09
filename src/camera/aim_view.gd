@@ -70,8 +70,8 @@ func handle_mouse_event(event):
 			rot_v -= event.relative.y * 0.0025 * current_zoom / max_fov * -(rot_v)
 			rot_v = clamp(rot_v, -PI / 2, theta)
 		else:
-			locked_rot_h -= event.relative.x * 0.001 * current_zoom / max_fov
-			locked_rot_v -= event.relative.y * 0.01 * current_zoom / max_fov * -(rot_v + locked_rot_v)
+			locked_rot_h -= event.relative.x * 0.0002 * current_zoom / max_fov
+			locked_rot_v -= event.relative.y * 0.0025 * current_zoom / max_fov * -(rot_v + locked_rot_v)
 			var min_offset = rot_v - PI / 2
 			var max_offset = theta - rot_v
 			locked_rot_v = clamp(locked_rot_v, min_offset, max_offset)

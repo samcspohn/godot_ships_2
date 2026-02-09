@@ -34,6 +34,7 @@ func setup(counter_config: Dictionary) -> void:
 
 	if config.has("min_size"):
 		custom_minimum_size = config.min_size
+		size = config.min_size
 
 	update_count(0)
 

@@ -525,6 +525,23 @@ void _ProjectileManager::_physics_process(double delta) {
 		Vector3 ricochet_velocity = hit_obj->get("velocity");
 		Object *owner = p->get_owner();
 
+		if (owner != nullptr) {
+			Variant stats_var = owner->get("stats");
+			if (stats_var.get_type() != Variant::NIL) {
+				Object *stats = Object::cast_to<Object>(stats_var);
+				if (stats) {
+					Ref<Resource> params = p->get_params();
+					double base_damage = 0.0;
+					double caliber = 0.0;
+					if (params.is_valid()) {
+						base_damage = params->get("damage");
+						caliber = params->get("caliber");
+					}
+					stats->call("record_potential_damage", base_damage, explosion_position, caliber);
+				}
+			}
+		}
+
 		// Handle water and terrain hits (no ship involved)
 		if (armor_result_type == 7) { // WATER
 			destroy_bullet_rpc(id, explosion_position, WATER, collision_normal);

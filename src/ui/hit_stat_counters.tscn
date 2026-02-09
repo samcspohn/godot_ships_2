@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://lfop7wl7r7lf" path="res://src/ui/hit_stat_counters.gd" id="1_counters"]
 
-[node name="HitStatCounters" type="VBoxContainer"]
+[node name="HitStatCounters" type="VBoxContainer" unique_id=1688518538]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -13,21 +13,42 @@ offset_bottom = 150.0
 grow_horizontal = 0
 script = ExtResource("1_counters")
 
-[node name="HBoxContainer" type="HBoxContainer" parent="."]
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=1937964680]
 layout_mode = 2
 
-[node name="DamageCounter" type="HBoxContainer" parent="HBoxContainer"]
+[node name="DamageCounters" type="VBoxContainer" parent="HBoxContainer" unique_id=1542852099]
+layout_mode = 2
+alignment = 2
+
+[node name="DamageCounter" type="HBoxContainer" parent="HBoxContainer/DamageCounters" unique_id=1623824113]
 layout_mode = 2
 
-[node name="DamageLabel" type="Label" parent="HBoxContainer/DamageCounter"]
+[node name="DamageLabel" type="Label" parent="HBoxContainer/DamageCounters/DamageCounter" unique_id=852223371]
 layout_mode = 2
 theme_override_font_sizes/font_size = 24
 text = "D"
 horizontal_alignment = 2
 
-[node name="DamageValue" type="Label" parent="HBoxContainer/DamageCounter"]
+[node name="DamageValue" type="Label" parent="HBoxContainer/DamageCounters/DamageCounter" unique_id=1758598461]
 custom_minimum_size = Vector2(150, 0)
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
+text = "0"
+horizontal_alignment = 2
+
+[node name="PotentialDamageCounter" type="HBoxContainer" parent="HBoxContainer/DamageCounters" unique_id=326434509]
+layout_mode = 2
+alignment = 2
+
+[node name="DamageLabel" type="Label" parent="HBoxContainer/DamageCounters/PotentialDamageCounter" unique_id=918205545]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "P"
+horizontal_alignment = 2
+
+[node name="DamageValue" type="Label" parent="HBoxContainer/DamageCounters/PotentialDamageCounter" unique_id=271011430]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
 text = "0"
 horizontal_alignment = 2

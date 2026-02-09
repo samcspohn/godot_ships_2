@@ -72,12 +72,12 @@ func handle_mouse_event(event):
 		var curr_range = player_controller.current_weapon_controller.get_max_range()
 		var theta = -asin(clamp(height / curr_range, 0.0, 1.0))
 		if locked_ship == null:
-			rot_h -= event.relative.x * 0.001 * current_zoom * zoom_mod/ max_fov
-			rot_v -= event.relative.y * 0.003 * current_zoom * zoom_mod / max_fov * -(rot_v)
+			rot_h -= event.relative.x * 0.0002 * current_zoom * zoom_mod/ max_fov
+			rot_v -= event.relative.y * 0.0025 * current_zoom * zoom_mod / max_fov * -(rot_v)
 			rot_v = clamp(rot_v, -PI / 2, theta)
 		else:
-			locked_rot_h -= event.relative.x * 0.001 * current_zoom * zoom_mod / max_fov
-			locked_rot_v -= event.relative.y * 0.003 * current_zoom * zoom_mod / max_fov * -(rot_v + locked_rot_v)
+			locked_rot_h -= event.relative.x * 0.0002 * current_zoom * zoom_mod / max_fov
+			locked_rot_v -= event.relative.y * 0.0025 * current_zoom * zoom_mod / max_fov * -(rot_v + locked_rot_v)
 			var min_offset = rot_v - PI / 2
 			var max_offset = theta - rot_v
 			locked_rot_v = clamp(locked_rot_v, min_offset, max_offset)

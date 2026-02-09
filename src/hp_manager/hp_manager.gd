@@ -273,4 +273,4 @@ func is_dead() -> bool:
 	return current_hp <= 0
 
 func been_dead() -> bool:
-	return is_dead() and sunk_time > Time.get_ticks_msec() / 1000.0 - 120.0
+	return is_dead() and sunk_time < Time.get_ticks_msec() / 1000.0 - 120.0

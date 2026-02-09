@@ -203,6 +203,10 @@ var hover_damage_labels: Dictionary = {}    # Damage labels within hover panels
 var temp_containers: Dictionary = {}        # Temporary flash containers
 var temp_counters: Dictionary = {}          # Temporary flash counters
 
+# Ships damaged hover panel
+var ships_damaged_panel: VBoxContainer = null
+var damage_label_hovering: bool = false
+
 # Active temporary counter tracking
 var active_temp_counters: Dictionary = {}   # Tracks active temp counters
 var temp_timers: Dictionary = {}            # Timers for temp containers
@@ -215,7 +219,8 @@ var hover_states: Dictionary = {}
 
 # UI references
 @onready var summary_container: HBoxContainer = $HBoxContainer
-@onready var damage_value_label: Label = $HBoxContainer/DamageCounter/DamageValue
+@onready var damage_value_label: Label = $HBoxContainer/DamageCounters/DamageCounter/DamageValue
+@onready var potential_damage_label: Label = $HBoxContainer/DamageCounters/PotentialDamageCounter/DamageValue
 
 
 func _ready():
@@ -223,16 +228,21 @@ func _ready():
 	_create_summary_counters()
 	_create_hover_panels()
 	_create_temp_containers()
+	_create_ships_damaged_panel()
 	update_counters()
 
 
 func _physics_process(delta):
 	check_hover_detection()
+	check_damage_label_hover()
 	update_temp_timers(delta)
 
 	if stats and stats.damage_events.size() > 0:
 		process_damage_events(stats.damage_events)
 		update_counters()
+
+	#_update_label(potential_damage_label, stats.potential_damage)
+	# _update_label(damage_value_label, stats.total_damage)
 
 
 func _build_hit_result_lookup():
@@ -248,7 +258,7 @@ func _create_summary_counters():
 	# Clear existing counters (except DamageCounter which is last)
 	var children_to_remove = []
 	for child in summary_container.get_children():
-		if child.name != "DamageCounter":
+		if child.name != "DamageCounters":
 			children_to_remove.append(child)
 	for child in children_to_remove:
 		child.queue_free()
@@ -262,6 +272,9 @@ func _create_summary_counters():
 		summary_container.add_child(counter)
 		summary_container.move_child(counter, summary_container.get_child_count() - 2)  # Before DamageCounter
 		summary_counters[summary_type] = counter
+
+		# Prevent vertical stretching - keep at minimum size
+		counter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 		# Setup hover detection
 		counter.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -393,6 +406,7 @@ func update_counters() -> void:
 
 	# Update total damage
 	_update_label(damage_value_label, stats.total_damage)
+	_update_label(potential_damage_label, stats.potential_damage)
 
 	# Update summary counters
 	for summary_type in summary_types:
@@ -471,6 +485,10 @@ func process_damage_events(damage_events: Array):
 				show_temp_summary_counter("flood")
 			"spot":
 				show_temp_summary_counter("spot")
+			"potential":
+				pass
+				#_update_label(potential_damage_label, stats.potential_damage)
+				# show_temp_summary_counter("potential")
 
 	_update_label(damage_value_label, stats.total_damage)
 	damage_events.clear()
@@ -612,6 +630,132 @@ func update_frag_count(frags: int) -> void:
 	"""Update the sunk counter independently"""
 	if "sunk" in summary_counters:
 		summary_counters["sunk"].update_count(frags)
+
+
+func _create_ships_damaged_panel():
+	"""Create the hover panel that shows damage breakdown by ship"""
+	ships_damaged_panel = VBoxContainer.new()
+	ships_damaged_panel.name = "ShipsDamagedPanel"
+	ships_damaged_panel.visible = false
+
+	# Add a background panel for visibility
+	var bg_panel = PanelContainer.new()
+	bg_panel.name = "Background"
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.1, 0.1, 0.9)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 4
+	style.content_margin_bottom = 4
+	bg_panel.add_theme_stylebox_override("panel", style)
+
+	var content_vbox = VBoxContainer.new()
+	content_vbox.name = "Content"
+	bg_panel.add_child(content_vbox)
+
+	# Title label
+	var title = Label.new()
+	title.name = "Title"
+	title.text = "Damage by Ship"
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 1))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content_vbox.add_child(title)
+
+	# Separator
+	var separator = HSeparator.new()
+	content_vbox.add_child(separator)
+
+	ships_damaged_panel.add_child(bg_panel)
+	add_child(ships_damaged_panel)
+
+
+func check_damage_label_hover():
+	"""Check if mouse is hovering over the damage label and show/hide ships damaged panel"""
+	if not damage_value_label:
+		return
+
+	var mouse_pos = get_viewport().get_mouse_position()
+	var damage_counter = damage_value_label.get_parent()  # The DamageCounter HBoxContainer
+
+	if not damage_counter:
+		return
+
+	var rect = Rect2(damage_counter.global_position, damage_counter.size)
+	var is_hovering = rect.has_point(mouse_pos)
+
+	if is_hovering != damage_label_hovering:
+		damage_label_hovering = is_hovering
+		ships_damaged_panel.visible = is_hovering
+
+		if is_hovering:
+			update_ships_damaged_panel()
+
+
+func update_ships_damaged_panel():
+	"""Update the ships damaged panel with current damage breakdown"""
+	if not stats or not ships_damaged_panel:
+		return
+
+	var bg_panel = ships_damaged_panel.get_node_or_null("Background")
+	if not bg_panel:
+		return
+
+	var content = bg_panel.get_node_or_null("Content")
+	if not content:
+		return
+
+	# Remove old ship entries (keep Title and Separator)
+	var children_to_remove = []
+	for i in range(2, content.get_child_count()):
+		children_to_remove.append(content.get_child(i))
+	for child in children_to_remove:
+		child.queue_free()
+
+	# Sort ships by damage (highest first)
+	var ships_sorted: Array = []
+	for ship_name in stats.ships_damaged:
+		ships_sorted.append({"name": ship_name, "damage": stats.ships_damaged[ship_name]})
+
+	ships_sorted.sort_custom(func(a, b): return a.damage > b.damage)
+
+	# Create labels for each ship
+	for entry in ships_sorted:
+		var ship_name: String = entry.name
+		var damage: float = entry.damage
+
+		var hbox = HBoxContainer.new()
+		hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var name_label = Label.new()
+		name_label.text = ship_name
+		name_label.add_theme_font_size_override("font_size", 12)
+		name_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hbox.add_child(name_label)
+
+		var damage_label = Label.new()
+		damage_label.text = str(int(damage))
+		damage_label.add_theme_font_size_override("font_size", 12)
+		damage_label.add_theme_color_override("font_color", Color(1, 0.8, 0.2, 1))
+		damage_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		damage_label.custom_minimum_size = Vector2(60, 0)
+		hbox.add_child(damage_label)
+
+		content.add_child(hbox)
+
+	# Show "No damage dealt" if empty
+	if ships_sorted.is_empty():
+		var empty_label = Label.new()
+		empty_label.text = "No damage dealt"
+		empty_label.add_theme_font_size_override("font_size", 12)
+		empty_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5, 1))
+		empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		content.add_child(empty_label)
 
 
 func update_total_damage(damage: float) -> void:

@@ -57,9 +57,24 @@ func get_weapon_ui() -> Array[Button]:
 
 func get_aim_ui() -> Dictionary:
 	var ship_position = _ship.global_position
+	var _aim_point = aim_point as Vector3
 	var time_to_target = -1
 	var penetration_power = -1
 	var terrain_hit = false
+
+	var max_range = -1
+	for sec in sub_controllers:
+		var gun_params: GunParams = sec.get_params()
+		if gun_params._range > max_range:
+			max_range = gun_params._range
+
+	if Vector2(_aim_point.x, _aim_point.z).distance_to(Vector2(ship_position.x, ship_position.z)) > max_range:
+		return {
+			"terrain_hit": terrain_hit,
+			"penetration_power": penetration_power,
+			"time_to_target": time_to_target
+		}
+
 	if aim_point != null:
 		for sec in sub_controllers:
 			var shell_params = sec.get_shell_params()

@@ -21,8 +21,8 @@ tags = {
 [node name="GER_500mm_2b_rf" unique_id=627570002 instance=ExtResource("1_wbeb2")]
 script = ExtResource("2_goysy")
 _sound = SubResource("AudioStreamWAV_goysy")
-pitch = 0.22
-volume = 5.0
+pitch = 0.26
+volume = 4.0
 glb_path = "uid://geicgbdeyrwl"
 
 [node name="500mmTurret_col" parent="." index="1"]

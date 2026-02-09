@@ -31,7 +31,8 @@ func _preview_sound() -> void:
 	preview_player = AudioStreamPlayer3D.new()
 	preview_player.stream = _sound
 	preview_player.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
-	preview_player.volume_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
+	preview_player.max_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
+	preview_player.volume_db = preview_player.max_db
 	add_child(preview_player)
 	preview_player.play()
 	preview_player.finished.connect(preview_player.queue_free)
@@ -113,6 +114,8 @@ func _ready() -> void:
 			else:
 				sound.stream = _sound
 			sound.max_polyphony = 1
+			sound.unit_size = 200.0 * volume
+			sound.max_db = linear_to_db(volume * (1.0 + variance))
 			add_child(sound)
 		# get_tree().root.add_child(sound)
 
@@ -287,7 +290,8 @@ func fire_client(vel, pos, t, _id):
 	# var dispersion
 	if get_viewport().get_audio_listener_3d().global_position.distance_to(global_position) < volume * 2000: # TODO, make unique to gun
 		sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
-		sound.volume_linear = volume * 30.0 * randf_range(1.0 - variance, 1.0 + variance)
+		sound.volume_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
+		sound.unit_size = 200.0 * sqrt(get_shell().caliber / 100.0)
 		sound.play()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:

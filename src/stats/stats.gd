@@ -1,6 +1,8 @@
 extends Node
 class_name Stats
 
+var _ship: Ship
+
 var total_damage: float = 0
 var penetration_count: int = 0
 var overpen_count: int = 0
@@ -28,7 +30,7 @@ var sec_partial_pen_count: int = 0
 var sec_damage: float = 0
 var damage_events: Array[Dictionary] = []
 
-var ships_damaged: Dictionary[Ship, float] = {}
+var ships_damaged: Dictionary[String, float] = {}
 
 var torpedo_count: int = 0
 var torpedo_damage: float = 0
@@ -40,6 +42,8 @@ var flood_damage: float = 0
 
 var spotting_count: int = 0
 var spotting_damage: float = 0
+
+var potential_damage: float = 0
 
 # Hit type to counter name mapping (matches ArmorInteraction.HitResult values)
 const HIT_TYPE_COUNTERS := {
@@ -95,16 +99,39 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		"position": position
 	})
 
-	# Track ship damage
+	# Track ship damage by name
 	if damaged_ship:
-		var ship_damage = ships_damaged.get(damaged_ship, 0)
-		ships_damaged[damaged_ship] = ship_damage + damage
+		# var ship_name: String = damaged_ship.name if damaged_ship.name != "" else "Unknown"
+		var ship_name = damaged_ship.name + ": " + damaged_ship.ship_name
+		var ship_damage = ships_damaged.get(ship_name, 0.0)
+		ships_damaged[ship_name] = ship_damage + damage
 
 	# Track ship damage
 	if damaged_ship:
 		var spotter = damaged_ship.concealment.spotted_by
 		if spotter:
 			spotter.stats.spotting_damage += damage
+
+func record_potential_damage(damage: float, position: Vector3, caliber: float):
+	var server: GameServer = _ship.get_tree().root.get_node_or_null("/root/Server")
+	assert(server != null, "server not found")
+	var enemy_ships = server._get_team((_ship.team.team_id + 1) % 2)
+	for ship in enemy_ships:
+		if ship.global_position.distance_to(position) < 500:
+			var radius_mod = caliber / HPManager.SHELL_DAMAGE_RADIUS_MOD
+			var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
+			damage *= dmg_mod
+			ship.stats.potential_damage += damage
+			ship.stats.damage_events.append({
+				"type": "potential",
+				"damage": damage,
+				"position": position
+			})
+	# damage_events.append({
+	# 	"type": "potential",
+	# 	"damage": damage,
+	# 	"position": position
+	# })
 
 func to_dict() -> Dictionary:
 	var _damage_events = damage_events.duplicate()
@@ -165,6 +192,7 @@ func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 
 	writer.put_float(total_damage)
+	writer.put_float(potential_damage)
 	writer.put_32(penetration_count)
 	writer.put_32(overpen_count)
 	writer.put_32(shatter_count)
@@ -197,13 +225,6 @@ func to_bytes() -> PackedByteArray:
 	# Damage events
 	writer.put_32(damage_events.size())
 	for event in damage_events:
-		# var event_dict = event
-		# var event_bytes = PackedByteArray()
-		# var event_writer = StreamPeerBuffer.new()
-		# event_writer.put_var(event_dict)
-		# event_bytes = event_writer.get_data_array()
-		# writer.put_32(event_bytes.size())
-		# writer.put_data(event_bytes)
 		writer.put_var(event)
 	damage_events.clear()
 
@@ -212,12 +233,15 @@ func to_bytes() -> PackedByteArray:
 	writer.put_32(flood_count)
 	writer.put_float(flood_damage)
 
+	writer.put_var(ships_damaged)
+
 	return writer.get_data_array()
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 	total_damage = reader.get_float()
+	potential_damage = reader.get_float()
 	penetration_count = reader.get_32() # these could be u16 to save bandwidth
 	overpen_count = reader.get_32()
 	shatter_count = reader.get_32()
@@ -251,13 +275,9 @@ func from_bytes(b: PackedByteArray) -> void:
 	for i in range(de_size):
 		var event_dict: Dictionary = reader.get_var()
 		damage_events.append(event_dict)
-		# var event_size = reader.get_32()
-		# var event_bytes = reader.get_data(event_size)
-		# var event_reader = StreamPeerBuffer.new()
-		# event_reader.data_array = event_bytes
-		# var event_dict = event_reader.get_var()
-		# damage_events.append(event_dict)
 	fire_count = reader.get_32()
 	fire_damage = reader.get_float()
 	flood_count = reader.get_32()
 	flood_damage = reader.get_float()
+
+	ships_damaged = reader.get_var()

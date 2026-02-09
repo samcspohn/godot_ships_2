@@ -29,10 +29,17 @@ func get_weapon_ui() -> Array[Button]:
 
 func get_aim_ui() -> Dictionary:
 	var ship_position = _ship.global_position
-	var shell_params = get_shell_params()
+	var shell_params: ShellParams = get_shell_params()
 	var time_to_target = -1
 	var penetration_power = -1
 	var terrain_hit = false
+
+	if Vector2(aim_point.x, aim_point.z).distance_to(Vector2(ship_position.x, ship_position.z)) > get_params()._range:
+		return {
+			"terrain_hit": terrain_hit,
+			"penetration_power": penetration_power,
+			"time_to_target": time_to_target
+		}
 
 	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
 		ship_position,

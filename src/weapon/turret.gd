@@ -372,6 +372,8 @@ func return_to_base(delta: float) -> bool:
 	# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
 	if disabled:
 		return false
+	can_fire = false
+	_valid_target = false
 	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
 	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
 	var adjusted_angle = base_rotation - rotation.y
@@ -380,12 +382,12 @@ func return_to_base(delta: float) -> bool:
 	var turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 
 	if abs(turret_angle_delta) < 0.001:
-		can_fire = false
+		# can_fire = false
 		return false
 	# Apply rotation
 	rotate(Vector3.UP, turret_angle_delta)
 	# clamp_to_rotation_limits()
-	can_fire = false
+	# can_fire = false
 	return true
 
 func get_angle_to_target(target: Vector3) -> float:

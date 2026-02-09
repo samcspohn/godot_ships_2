@@ -159,6 +159,7 @@ func _ready() -> void:
 	flood_manager._ship = self
 	skills._ship = self
 	stats = Stats.new()
+	stats._ship = self
 	$Modules.add_child(stats)
 
 
