@@ -72,6 +72,7 @@ resource_local_to_scene = true
 script = ExtResource("14_w4pwy")
 radius = 13000.0
 bloom_duration = 20.0
+unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_iohum"]
@@ -211,11 +212,6 @@ reverse_speed_ratio = 0.5
 turning_circle_radius = 400.0
 turn_speed_loss = 0.15
 rudder_response_time = 12.0
-max_turn_roll_angle = 5.0
-roll_response_time = 2.0
-righting_strength = 5.0
-righting_damping = 3.0
-pitch_righting_strength = 8.0
 nav_size = 2
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]

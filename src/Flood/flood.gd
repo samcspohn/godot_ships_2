@@ -21,6 +21,8 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 		curr_buildup += a
 		if curr_buildup >= _params.max_buildup:
 			_owner = __owner
+			_owner.stats.damage_events.append({"type": "flood"})
+			_owner.stats.flood_count += 1
 			water.emitting = true
 			bubbles.emitting = true
 			_sync_activate.rpc()

@@ -72,6 +72,24 @@ static var STAT_CONFIG = {
 		"bg_color": Color(0.3, 0.3, 0.5, 0.9),
 		"label_color": Color(0.8, 0.8, 0.8, 1)
 	},
+	"torpedo_belt": {
+		"category": "sub",
+		"display_name": "Tb",
+		"hit_result": 1000,
+		"stat_main": "torpedo_belt_count",
+		"stat_sec": "sec_torpedo_belt_count",
+		"bg_color": Color(0.3, 0.3, 0.5, 0.9),
+		"label_color": Color(0.8, 0.8, 0.8, 1)
+	},
+	"torpedo_hit": {
+		"category": "sub",
+		"display_name": "Th",
+		"hit_result": 1001,
+		"stat_main": "torpedo_hit_count",
+		"stat_sec": "sec_torpedo_hit_count",
+		"bg_color": Color(0.3, 0.3, 0.5, 0.9),
+		"label_color": Color(0.8, 0.8, 0.8, 1)
+	},
 	# Summary counter types
 	"main": {
 		"category": "summary",
@@ -99,12 +117,25 @@ static var STAT_CONFIG = {
 		"min_size": Vector2(80, 40),
 		"font_size": 24
 	},
+	"torp": {
+		"category": "summary",
+		"display_name": "TORP",
+		"stat_count": "torpedo_count",
+		"stat_damage": "torpedo_damage",
+		"has_damage_display": true,
+		"temp_priority": 3,
+		"bg_color": Color(0.104, 0.205, 0.51, 0.9),
+		"label_color": Color(0.479, 0.64, 0.882, 1.0),
+		"sub_counters": [],
+		"min_size": Vector2(80, 40),
+		"font_size": 24
+	},
 	"sunk": {
 		"category": "summary",
 		"display_name": "SUNK",
 		"stat_count": "frags",
 		"has_damage_display": false,
-		"temp_priority": 3,
+		"temp_priority": 4,
 		"bg_color": Color(0.32, 0.08, 0.08, 0.9),
 		"label_color": Color(1, 0.284297, 0.346101, 1),
 		"sub_counters": [],
@@ -117,9 +148,35 @@ static var STAT_CONFIG = {
 		"stat_count": "fire_count",
 		"stat_damage": "fire_damage",
 		"has_damage_display": true,
-		"temp_priority": 4,
+		"temp_priority": 5,
 		"bg_color": Color(0.6, 0.3, 0.05, 0.9),
 		"label_color": Color(1, 0.6, 0.2, 1),
+		"sub_counters": [],
+		"min_size": Vector2(80, 40),
+		"font_size": 24
+	},
+	"flood": {
+		"category": "summary",
+		"display_name": "FLOOD",
+		"stat_count": "flood_count",
+		"stat_damage": "flood_damage",
+		"has_damage_display": true,
+		"temp_priority": 6,
+		"bg_color": Color(0.479, 0.64, 0.882, 1.0),
+		"label_color": Color(0.104, 0.205, 0.51, 0.9),
+		"sub_counters": [],
+		"min_size": Vector2(80, 40),
+		"font_size": 24
+	},
+	"spot": {
+		"category": "summary",
+		"display_name": "SPOT",
+		"stat_count": "spotting_count",
+		"stat_damage": "spotting_damage",
+		"has_damage_display": true,
+		"temp_priority": 7,
+		"bg_color": Color(0.593, 0.593, 0.593, 1.0),
+		"label_color": Color(0.191, 0.191, 0.191, 0.902),
 		"sub_counters": [],
 		"min_size": Vector2(80, 40),
 		"font_size": 24
@@ -136,7 +193,7 @@ var stats = null
 var counter_display_time: float = 5.0
 
 # Summary counter types in display order
-var summary_types: Array = ["fire", "sec", "main", "sunk"]
+var summary_types: Array = ["spot", "flood", "fire", "torp", "sec", "main", "sunk"]
 
 # Dynamic counter storage
 var summary_counters: Dictionary = {}       # Permanent summary counters (top row)
@@ -403,10 +460,17 @@ func process_damage_events(damage_events: Array):
 
 				# Emit signal for floating damage
 				floating_damage_requested.emit(event.damage, event.position)
+			"torp":
+				show_temp_summary_counter("torp")
+				floating_damage_requested.emit(event.damage, event.position)
 			"sunk":
 				show_temp_summary_counter("sunk")
 			"fire":
 				show_temp_summary_counter("fire")
+			"flood":
+				show_temp_summary_counter("flood")
+			"spot":
+				show_temp_summary_counter("spot")
 
 	_update_label(damage_value_label, stats.total_damage)
 	damage_events.clear()
@@ -527,6 +591,15 @@ func check_hover_detection():
 			continue
 
 		var counter = summary_counters[summary_type]
+
+		# Skip hover detection for hidden counters (0 count)
+		if not counter.visible:
+			# Ensure hover panel is hidden if counter is not visible
+			if hover_states[summary_type]:
+				hover_states[summary_type] = false
+				hover_panels[summary_type].visible = false
+			continue
+
 		var rect = Rect2(counter.global_position, counter.size)
 		var is_hovering = rect.has_point(mouse_pos)
 

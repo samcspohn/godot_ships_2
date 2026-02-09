@@ -10,14 +10,14 @@ class_name AerialView
 # var current_zoom = 1.0
 # var current_fov = 40.0
 var min_fov = 1.0
-var max_fov = 20.0
+var max_fov = 10.0
 var height = 60.0
 var zoom_mod = 1.0
 # var player_controller: PlayerController
 #
 func _ready():
-	current_zoom = 20.0
-	current_fov = 20.0
+	current_fov = max_fov
+	current_zoom = current_fov
 
 func zoom_camera(delta):
 	current_zoom += delta * 0.03 / zoom_mod

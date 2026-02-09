@@ -374,7 +374,11 @@ func _update_camera_transform(delta_time: float):
 		self.rotation.y = lerp_angle(self.rotation.y, current_view.rotation.y, delta_time / transition_time)
 		self.rotation.z = lerp_angle(self.rotation.z, current_view.rotation.z, delta_time / transition_time)
 		self.global_position = lerp(self.global_position, current_view.global_position, delta_time / transition_time)
-		self.fov = clamp(lerp(self.fov, current_view.current_fov, delta_time / transition_time), 1.0, 179)
+		var _fov = lerp(self.fov, current_view.current_fov, delta_time / transition_time)
+		if _fov > 40:
+			print("FOV is too high, current fov: ", current_view.current_fov, " self.fov: ", self.fov)
+			_fov = clamp(_fov, 1.0, 40)
+		self.fov = _fov
 		transition_time = clamp(transition_time - delta_time, 0.0, transition_time)
 
 func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool = false) -> float:
@@ -513,63 +517,6 @@ func _calculate_target_info():
 	dist.y = 0.0
 	distance_to_target = dist.length() # Convert to km
 
-	# # Calculate launch vector using our projectile physics
-	# var ship_position = _ship.global_position
-	# var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
-	# 	ship_position,
-	# 	aim_position,
-	# 	_ship.artillery_controller.get_shell_params()
-	# )
-
-	# # Extract results
-	# var launch_vector = launch_result[0]
-
-	# #max_range_reached = launch_result[2]
-	# max_range_reached = (aim_position - ship_position).length() > _ship.artillery_controller.get_params()._range
-
-	# # Calculate distance
-
-
-	# if launch_vector != null:
-	# 	time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
-	# 	var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
-	# 		ship_position,
-	# 		launch_vector,
-	# 		launch_result[1],
-	# 		_ship.artillery_controller.get_shell_params(),
-	# 		_ship
-	# 		)
-
-	# 	terrain_hit = not can_shoot.can_shoot_over_terrain
-
-	# 	var shell = _ship.artillery_controller.get_shell_params()
-	# 	if shell.type == ShellParams.ShellType.HE:
-	# 		penetration_power = shell.overmatch
-	# 	else:
-	# 		var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-	# 			launch_vector,
-	# 			launch_result[1],
-	# 			_ship.artillery_controller.get_shell_params()
-	# 		)
-	# 		var velocity_at_impact = velocity_at_impact_vec.length()
-	# 		var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
-	# 			shell.mass,
-	# 			velocity_at_impact,
-	# 			shell.caliber)
-	# 		# var raw_pen = 1.0
-
-	# 		# Calculate impact angle (angle from vertical)
-	# 		var impact_angle = PI / 2 - velocity_at_impact_vec.normalized().angle_to(Vector3.UP)
-
-	# 		# Calculate effective penetration against vertical armor
-	# 		# Effective penetration = raw penetration * cos(impact_angle)
-	# 		penetration_power = raw_pen * cos(impact_angle)
-
-	# else:
-	# 	terrain_hit = false
-	# 	penetration_power = 0.0
-	# 	time_to_target = -1.0
-	# 	distance_to_target = -1.0
 	var aim_data = player_controller.current_weapon_controller.get_aim_ui()
 	terrain_hit = aim_data.terrain_hit
 	penetration_power = aim_data.penetration_power

@@ -28,10 +28,18 @@ var sec_partial_pen_count: int = 0
 var sec_damage: float = 0
 var damage_events: Array[Dictionary] = []
 
+var ships_damaged: Dictionary[Ship, float] = {}
+
+var torpedo_count: int = 0
+var torpedo_damage: float = 0
+
 var fire_count: int = 0
 var fire_damage: float = 0
 var flood_count: int = 0
 var flood_damage: float = 0
+
+var spotting_count: int = 0
+var spotting_damage: float = 0
 
 # Hit type to counter name mapping (matches ArmorInteraction.HitResult values)
 const HIT_TYPE_COUNTERS := {
@@ -52,7 +60,8 @@ const HIT_TYPE_COUNTERS := {
 ## [param is_secondary] Whether this was a secondary battery hit
 ## [param position] World position of the hit
 ## [param sunk] Whether this hit caused the target to sink
-func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vector3, sunk: bool) -> void:
+## [param damaged_ship] The ship that was damaged
+func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vector3, sunk: bool, damaged_ship: Ship) -> void:
 	# Track total damage
 	total_damage += damage
 
@@ -86,6 +95,16 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		"position": position
 	})
 
+	# Track ship damage
+	if damaged_ship:
+		var ship_damage = ships_damaged.get(damaged_ship, 0)
+		ships_damaged[damaged_ship] = ship_damage + damage
+
+	# Track ship damage
+	if damaged_ship:
+		var spotter = damaged_ship.concealment.spotted_by
+		if spotter:
+			spotter.stats.spotting_damage += damage
 
 func to_dict() -> Dictionary:
 	var _damage_events = damage_events.duplicate()
@@ -169,6 +188,12 @@ func to_bytes() -> PackedByteArray:
 	writer.put_float(sec_damage)
 	writer.put_float(main_damage)
 
+	writer.put_32(torpedo_count)
+	writer.put_float(torpedo_damage)
+
+	writer.put_32(spotting_count)
+	writer.put_float(spotting_damage)
+
 	# Damage events
 	writer.put_32(damage_events.size())
 	for event in damage_events:
@@ -214,6 +239,13 @@ func from_bytes(b: PackedByteArray) -> void:
 	sec_partial_pen_count = reader.get_32()
 	sec_damage = reader.get_float()
 	main_damage = reader.get_float()
+
+	torpedo_count = reader.get_32()
+	torpedo_damage = reader.get_float()
+
+	spotting_count = reader.get_32()
+	spotting_damage = reader.get_float()
+
 	# Damage events
 	var de_size = reader.get_32()
 	for i in range(de_size):

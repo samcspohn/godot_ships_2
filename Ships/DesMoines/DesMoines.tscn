@@ -64,6 +64,7 @@ resource_local_to_scene = true
 script = ExtResource("4_seiyl")
 radius = 9000.0
 bloom_duration = 16.0
+unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_e3uhd"]
@@ -201,13 +202,9 @@ mass = 21269000.0
 contact_monitor = true
 max_contacts_reported = 4
 ship_name = "Des Moines"
-ship_class = null
 tier = 10
 ship_model_glb_path = "uid://0rigmm4tvpum"
-auto_extract_armor = null
 use_hull_collision = true
-use_segmented_hull = null
-use_mirror_symmetry = null
 
 [node name="Modules" parent="." index="0" unique_id=585287545 instance=ExtResource("2_q1kic")]
 
@@ -247,11 +244,6 @@ turning_circle_radius = 300.0
 turn_speed_loss = 0.1
 rudder_response_time = 8.0
 max_turn_roll_angle = 10.0
-roll_response_time = 2.0
-righting_strength = 5.0
-righting_damping = 3.0
-pitch_righting_strength = 8.0
-nav_size = 1
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 params = SubResource("Resource_vp8fe")

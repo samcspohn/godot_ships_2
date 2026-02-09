@@ -17,6 +17,7 @@ var sinking: bool = false
 var sinking_basis: Basis = Basis.IDENTITY
 var current_sinking_basis: Basis = Basis.IDENTITY
 var sinking_time: float = 0.0
+var sunk_time: float = 0.0
 
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 
@@ -213,6 +214,7 @@ func sink():
 	#ship.set_physics_process(false)
 	if _Utils.authority():
 		sinking = true
+		sunk_time = Time.get_ticks_msec() / 1000.0
 		# sinking_rotation_axis = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
 		# sinking_basis = Basis.from_euler(Vector3(randf() * TAU, randf() * TAU, randf() * TAU))
 		current_sinking_basis = ship.global_basis
@@ -269,3 +271,6 @@ func is_alive() -> bool:
 
 func is_dead() -> bool:
 	return current_hp <= 0
+
+func been_dead() -> bool:
+	return is_dead() and sunk_time > Time.get_ticks_msec() / 1000.0 - 120.0

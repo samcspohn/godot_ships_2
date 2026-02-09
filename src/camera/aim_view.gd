@@ -9,13 +9,13 @@ class_name AimView
 # var current_zoom = 1.0
 # var current_fov = 40.0
 var min_fov = 1.0
-var max_fov = 20.0
+var max_fov = 10.0
 var height = 60.0
 # var player_controller: PlayerController
 #
 func _ready():
-	current_zoom = 20.0
-	current_fov = 20.0
+	current_fov = max_fov
+	current_zoom = current_fov
 
 func zoom_camera(delta):
 	current_zoom += delta * 0.03
@@ -66,8 +66,8 @@ func handle_mouse_event(event):
 		var curr_range = player_controller.current_weapon_controller.get_max_range()
 		var theta = -asin(clamp(height / curr_range, 0.0, 1.0))
 		if locked_ship == null:
-			rot_h -= event.relative.x * 0.001 * current_zoom / max_fov
-			rot_v -= event.relative.y * 0.01 * current_zoom / max_fov * -(rot_v)
+			rot_h -= event.relative.x * 0.0002 * current_zoom / max_fov
+			rot_v -= event.relative.y * 0.0025 * current_zoom / max_fov * -(rot_v)
 			rot_v = clamp(rot_v, -PI / 2, theta)
 		else:
 			locked_rot_h -= event.relative.x * 0.001 * current_zoom / max_fov

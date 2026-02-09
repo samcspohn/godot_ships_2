@@ -643,7 +643,7 @@ void _ProjectileManager::_physics_process(double delta) {
 										Vector3 hit_position = ship->call("get_global_position");
 										double hit_damage = dmg_sunk[0];
 
-										stats->call("record_hit", armor_result_type, hit_damage, is_secondary, hit_position, sunk);
+										stats->call("record_hit", armor_result_type, hit_damage, is_secondary, hit_position, sunk, ship);
 									}
 								}
 							}

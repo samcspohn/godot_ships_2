@@ -8,7 +8,7 @@ var bulletId: int = 0
 # @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
-const TORPEDO_SPEED_MULTIPLIER = 3.0
+const TORPEDO_SPEED_MULTIPLIER = 4.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
@@ -271,12 +271,13 @@ func _physics_process(_delta: float) -> void:
 				var hp: HPManager = ship.health_controller
 				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id:
 					var dmg_sunk = hp.apply_damage(p.params.damage, p.params.damage, armor_part, true, 1)
+
 					if dmg_sunk[1]:
 						# Ship sunk
 						if p.owner:
 							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
-					track_torpedo_damage_dealt(p.owner, dmg_sunk[0])
+					track_torpedo_damage_dealt(p.owner, dmg_sunk[0], collision.position)
 					# Apply flooding damage
 					apply_flood_damage(p, ship, collision.position)
 			self.destroyTorpedo(id, collision.position)
@@ -421,14 +422,21 @@ func destroyTorpedo(id, position) -> void:
 	self.ids_reuse.append(id)
 	destroyTorpedo_c.rpc(id, position)
 
-func track_torpedo_damage_dealt(owner_ship: Ship, damage: float):
+func track_torpedo_damage_dealt(owner_ship: Ship, damage: float, position: Vector3):
 	"""Track torpedo damage dealt using the ship's stats module"""
 	if not owner_ship or not is_instance_valid(owner_ship):
 		return
 
 	# Add damage to the ship's stats module
 	if owner_ship.stats:
+		owner_ship.stats.torpedo_count += 1
+		owner_ship.stats.torpedo_damage += damage
 		owner_ship.stats.total_damage += damage
+		owner_ship.stats.damage_events.append({
+			"type": "torp",
+			"damage": damage,
+			"position": position
+		})
 
 func apply_flood_damage(torpedo: TorpedoData, ship: Ship, hit_position: Vector3) -> void:
 	"""Apply flooding buildup to the ship when hit by a torpedo"""

@@ -481,6 +481,10 @@ func sync_game_state(bytes: PackedByteArray):
 		)
 		# defer_sync_ship(friendly, player_name, ship_data)
 
+@rpc("any_peer", "reliable", "call_remote", 1)
+func sync_game_state_reliable(bytes: PackedByteArray):
+	sync_game_state(bytes)
+
 func is_aabb_in_frustum(aabb: AABB, planes: Array[Plane]) -> bool:
 	if planes.is_empty():
 		return true  # No frustum data yet, include the ship
@@ -500,7 +504,31 @@ func is_point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 			return false
 	return true
 
+var visible_toggled: Dictionary[Ship, bool] = {}
+var closest_enemies_that_can_see = {}
+
+var current_time = 0.0
+const UNSPOTTED_TIME = 100.0
+
+func handle_spot(spotter: Ship, spotted: Ship, dist: float):
+	# var dist = spotter.global_position.distance_to(spotted.global_position)
+	if spotted.concealment.get_concealment() > dist:
+		spotted.visible_to_enemy = true
+		if !visible_toggled[spotted]:
+			if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
+				spotted.concealment.spotted_by = spotter
+				spotter.stats.spotting_count += 1
+				spotter.stats.damage_events.append({"type": "spot"})
+		else:
+			if closest_enemies_that_can_see.has(spotted):
+				closest_enemies_that_can_see[spotted].append([spotter,dist])
+			else:
+				closest_enemies_that_can_see[spotted] = [[spotter,dist]]
+			# var closest_enemies: Array = closest_enemies_that_can_see[spotted]
+			# closest_enemies.append(spotter)
+
 func _physics_process(_delta: float) -> void:
+	current_time = Time.get_ticks_msec() / 1000.0
 	team_0_ships = _get_team(0)
 	team_1_ships = _get_team(1)
 	if !_Utils.authority():
@@ -532,11 +560,14 @@ func _physics_process(_delta: float) -> void:
 			var pid = p[2]
 			init_guns.rpc_id(pid, gun_paths)
 
-	var visible_toggled = {}
+
+	closest_enemies_that_can_see.clear()
+	visible_toggled.clear()
+
 	for p in players.values():
 		var ship: Ship = p[0]
-		visible_toggled[ship.name] = ship.visible_to_enemy
-		if ship.health_controller.is_dead():
+		visible_toggled[ship] = ship.visible_to_enemy
+		if ship.health_controller.is_dead() and !ship.health_controller.been_dead():
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
@@ -555,18 +586,25 @@ func _physics_process(_delta: float) -> void:
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
 				if collision.is_empty(): # can see each other no obstacles (add concealment)
 					var dist = p.global_position.distance_to(p2.global_position)
-					if p.concealment.get_concealment() > dist:
-						p.visible_to_enemy = true
-					if p2.concealment.get_concealment() > dist:
-						p2.visible_to_enemy = true
+					handle_spot(p, p2, dist)
+					handle_spot(p2, p, dist)
+
+	for spotted in closest_enemies_that_can_see.keys():
+		var closest_enemy: Ship = null
+		var closest_dist: float = INF
+		for spotter_dist in closest_enemies_that_can_see[spotted]:
+			var spotter: Ship = spotter_dist[0]
+			var dist = spotter_dist[1]
+			if dist < closest_dist:
+				closest_enemy = spotter
+				closest_dist = dist
+		if closest_enemy != null:
+			spotted.concealment.spotted_by = closest_enemy
 
 	for p_name in players:
 		var p: Ship = players[p_name][0]
-		if visible_toggled[p.name] == p.visible_to_enemy:
-			visible_toggled.erase(p.name)
-
-
-
+		if visible_toggled[p] == p.visible_to_enemy:
+			visible_toggled.erase(p)
 
 	# if c > 2:
 	# 	c = 0
@@ -645,14 +683,17 @@ func _physics_process(_delta: float) -> void:
 				var b0: Ship = b[0]
 				if p == b0:
 					pass
-				elif visible_toggled.has(b0.name) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
+				elif visible_toggled.has(b0) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
 					writer1.data_array += b[1]
 				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
 					writer1.data_array += partial_bytes_list[i][1]
 				i += 1
 			var team_0_bytes = writer1.data_array
 			if not team_0_bytes.is_empty():
-				sync_game_state.rpc_id(_p_id, team_0_bytes)
+				if visible_toggled.size() > 0:
+					sync_game_state_reliable.rpc_id(_p_id, team_0_bytes)
+				else:
+					sync_game_state.rpc_id(_p_id, team_0_bytes)
 
 
 	# c += 1

@@ -893,21 +893,6 @@ func cleanup_team_indicators():
 				indicator.queue_free()
 			team_ship_indicators.erase(ship)
 
-# func _on_weapon_button_pressed(idx: int):
-# 	# Deselect all other weapon buttons
-# 	for i in range(weapon_buttons.size()):
-# 		weapon_buttons[i].button_pressed = (i == idx)
-
-# 	# Notify camera controller or ship of weapon selection
-# 	if camera_controller:
-# 		# This would typically call a method on the ship or player controller
-# 		print("Selected weapon: %d" % idx)
-
-# func set_weapon_button_pressed(idx: int):
-# 	if idx >= 0 and idx < weapon_buttons.size():
-# 		for i in range(weapon_buttons.size()):
-# 			weapon_buttons[i].button_pressed = (i == idx)
-
 func setup_weapon_controller(controller: Node):
 	if weapons.has(controller):
 		for weapon: Weapon in weapons[controller]:
@@ -956,13 +941,7 @@ func setup_weapons():
 		setup_weapon_controller(camera_controller._ship.torpedo_controller)
 
 func update_gun_reload_bars():
-	# Update reload progress for each gun
-	# var aim_dir = camera_controller._ship.global_position.direction_to(camera_controller._ship.artillery_controller.aim_point).normalized()
-	# var ship_pos = camera_controller._ship.global_position
-	# ship_pos.y = 0.0
-	# var aim_point = camera_controller.aim_position
-	# aim_point.y = 0.0
-	# var aim_dir = ship_pos.direction_to(aim_point).normalized()
+	# Update reload progress for each weapon
 	var already_drawn_indicators = []
 	var overlapping_indicators = {}
 
@@ -1063,97 +1042,6 @@ func update_gun_reload_bars():
 				progress_tex.radial_fill_degrees = 360
 				progress_tex.radial_initial_angle = 0
 			already_drawn_indicators.append(indicator)
-
-	# for i in range(min(guns.size(), gun_reload_bars.size())):
-	# 	if is_instance_valid(guns[i]) and is_instance_valid(gun_reload_bars[i]):
-	# 		var gun: Turret = guns[i]
-	# 		var bar = gun_reload_bars[i]
-	# 		var indicator = gun_indicators[i]
-	# 		var timer_label = bar.get_child(0) as Label
-	# 		var gun_params: GunParams = (gun.controller as ArtilleryController).params.p() as GunParams
-	# 		var gun_pos = gun.global_position
-	# 		gun_pos.y = 0.0
-	# 		var aim_point = camera_controller.aim_position
-	# 		aim_point.y = 0.0
-	# 		var aim_dir = gun_pos.direction_to(aim_point).normalized()
-
-	# 		var gun_forw = -gun.global_transform.basis.z
-	# 		gun_forw.y = 0.0
-	# 		gun_forw = gun_forw.normalized()
-	# 		# Calculate angle between gun forward and aim direction
-	# 		var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
-	# 		var angle = rad_to_deg(angle_rad)
-
-	# 		# Update reload progress
-	# 		bar.value = gun.reload
-	# 		var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
-	# 		var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
-	# 		progress_tex.value = gun.reload
-	# 		if gun.reload >= 1.0:
-	# 			timer_label.text = "%.1f" % (gun.reload * gun_params.reload_time)
-	# 		else:
-	# 			timer_label.text = "%.1f s" % ((1.0 - gun.reload) * gun_params.reload_time)
-
-	# 		indicator.visible = true
-	# 		if abs(angle) > 0.9:
-	# 			indicator.get_node("AngleLabel").text = "%.0f°" % abs(angle)
-	# 		else:
-	# 			indicator.get_node("AngleLabel").text = ""
-
-	# 		indicator.global_position = gun_indicator.global_position - Vector2(angle * 4.0, 0)
-
-	# 		var color_mod: float
-	# 		var color: Color
-	# 		if gun._valid_target:
-	# 			if gun.can_fire:
-	# 				color_mod = valid_can_fire_color_mod
-	# 			else:
-	# 				color_mod = valid_cannot_fire_color_mod
-	# 		else:
-	# 			color_mod = invalid_cannot_fire_color_mod
-	# 		if gun.reload >= 1.0:
-	# 			color = ready_gun_color * color_mod
-	# 		else:
-	# 			color = reloading_gun_color * color_mod
-	# 		bar.self_modulate = color
-	# 		progress_tex.tint_progress = color
-
-	# 		var closest_indicator: Control = null
-	# 		# Avoid overlapping indicators
-	# 		for other_indicator in already_drawn_indicators:
-	# 			var dist = indicator.global_position.distance_to(other_indicator.global_position)
-	# 			if dist < 6.0:
-	# 				closest_indicator = other_indicator
-	# 				break
-
-	# 		if closest_indicator:
-	# 			indicator.get_node("AngleLabel").visible = false
-	# 			indicator.global_position = closest_indicator.global_position
-	# 			if overlapping_indicators.has(closest_indicator):
-	# 				overlapping_indicators[closest_indicator].append(indicator)
-	# 			else:
-	# 				overlapping_indicators[closest_indicator] = [closest_indicator, indicator]
-	# 			var gap = 15
-	# 			var num_indicators = overlapping_indicators[closest_indicator].size()
-	# 			var step = (360.0 - (gap * num_indicators)) / num_indicators
-	# 			var angle_idx = 0
-	# 			var start = gap / 2.0
-	# 			for k: Control in overlapping_indicators[closest_indicator]:
-	# 				var k_under_tex = k.get_node("UnderTexture") as TextureProgressBar
-	# 				var k_progress_tex = k.get_node("ProgressTexture") as TextureProgressBar
-	# 				k_under_tex.radial_fill_degrees = step
-	# 				k_under_tex.radial_initial_angle = start + angle_idx * (step + gap)
-	# 				k_progress_tex.radial_fill_degrees = step
-	# 				k_progress_tex.radial_initial_angle = start + angle_idx * (step + gap)
-	# 				angle_idx += 1
-	# 		else:
-	# 			indicator.get_node("AngleLabel").visible = true
-	# 			under_tex.radial_fill_degrees = 360
-	# 			under_tex.radial_initial_angle = 0
-	# 			progress_tex.radial_fill_degrees = 360
-	# 			progress_tex.radial_initial_angle = 0
-
-	# 		already_drawn_indicators.append(indicator)
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):

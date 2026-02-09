@@ -29,7 +29,7 @@ func get_aim_ui() -> Dictionary:
 	var penetration_power = -1
 	var terrain_hit = false
 
-	time_to_target = _ship.global_position.distance_to(aim_point) / get_torp_params().speed
+	time_to_target = _ship.global_position.distance_to(aim_point) / get_torp_params().speed / TorpedoManager.TORPEDO_SPEED_MULTIPLIER
 
 	return {
 		"time_to_target": time_to_target,

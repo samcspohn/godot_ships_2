@@ -64,6 +64,7 @@ resource_local_to_scene = true
 script = ExtResource("12_n2r5a")
 radius = 15000.0
 bloom_duration = 20.0
+unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_3wv4u"]
@@ -371,7 +372,7 @@ max_rotation_angle = 5.672320068981571
 
 [node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" index="0" unique_id=1774251165 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
-max_rotation_angle = 2.583087292951608
+max_rotation_angle = 2.5830872929516078
 
 [node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" index="0" unique_id=639428331 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153

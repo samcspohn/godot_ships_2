@@ -8,6 +8,9 @@ var bloom_radius: float = 0.0
 var blooms: Dictionary[float, float] = {} # value : time_remaining
 # var bloom_radii: Dictionary[float, float] = {} # radius : time_remaining
 var bloom_while_not_visible: float = 0.0
+var prev_visible: bool = false
+var last_spotted_time: float = -101.0
+var spotted_by: Ship = null
 
 func _ready() -> void:
 	params.init(_ship)
@@ -17,14 +20,28 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if not _Utils.authority():
 		return
-	# if bloom_value > 0.0:
-	# 	bloom_value -= delta / params.p().bloom_duration
-	# else:
-	# 	bloom_radius = params.p().radius
+
 	if blooms.size() == 0:
 		bloom_value = 0.0
 		bloom_radius = params.p().radius
+		prev_visible = _ship.visible_to_enemy
 		return
+
+	# handle bloom while not visible
+	if !_ship.visible_to_enemy:
+		if prev_visible: # ship was visible now isn't
+			bloom_while_not_visible = 1.0
+			last_spotted_time = Time.get_ticks_msec() / 1000.0
+		bloom_while_not_visible -= delta / params.p().unspotted_bloom_duration
+		if bloom_while_not_visible <= 0.0:
+			blooms.clear()
+			bloom_value = 0.0
+			bloom_radius = params.p().radius
+	else:
+		bloom_while_not_visible = 0.0
+		last_spotted_time = Time.get_ticks_msec() / 1000.0
+
+	# update bloom values
 	var to_remove: Array[float] = []
 	var max_bloom: float = 0.0
 	var min_bloom_value: float = 0.0
@@ -44,10 +61,9 @@ func _physics_process(delta: float) -> void:
 
 
 func bloom(amount: float) -> void:
-	# bloom_value = 1.0
-	# if bloom_radius < amount:
-	# 	bloom_radius = amount
 	blooms[amount] = 1.0
+	if !_ship.visible_to_enemy:
+		bloom_while_not_visible = 1.0
 
 func get_concealment() -> float:
 	return bloom_radius
