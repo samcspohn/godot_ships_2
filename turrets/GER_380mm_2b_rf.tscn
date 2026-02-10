@@ -9,7 +9,7 @@
 script = ExtResource("2_afgdy")
 _sound = ExtResource("3_v4f0q")
 pitch = 0.45
-volume = 3.0
+volume = 2.0
 glb_path = "uid://b71yjgxa0vdoy"
 
 [node name="380mmTurret_col" parent="." index="1"]

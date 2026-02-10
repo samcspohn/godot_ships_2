@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://ckua2knse10xh"]
 
 [ext_resource type="PackedScene" uid="uid://b07osptcgjb7a" path="res://src/Maps/map.glb" id="1_e0an3"]
+[ext_resource type="Script" uid="uid://bpanntf8muod" path="res://src/Maps/map.gd" id="2_1vrru"]
 [ext_resource type="Material" uid="uid://ddgdh5xl1p0ml" path="res://src/Maps/water_material.tres" id="2_7hjns"]
 
 [sub_resource type="NavigationMesh" id="NavigationMesh_10p5b"]
@@ -63,7 +64,9 @@ vertices_per_polygon = 32.0
 filter_ledge_spans = true
 filter_baking_aabb = AABB(-17500, -1, -17500, 35000, 2, 35000)
 
-[node name="map" unique_id=247599372 instance=ExtResource("1_e0an3")]
+[node name="map" unique_id=247599372 node_paths=PackedStringArray("islands") instance=ExtResource("1_e0an3")]
+script = ExtResource("2_1vrru")
+islands = [NodePath("Plane_001/StaticBody3D"), NodePath("Plane_002/StaticBody3D"), NodePath("Plane_003/StaticBody3D"), NodePath("Plane_004/StaticBody3D"), NodePath("Plane_005/StaticBody3D"), NodePath("Plane_006/StaticBody3D"), NodePath("Plane_007/StaticBody3D"), NodePath("Plane_008/StaticBody3D"), NodePath("Plane_009/StaticBody3D"), NodePath("Plane_010/StaticBody3D"), NodePath("Plane_011/StaticBody3D"), NodePath("Plane_012/StaticBody3D"), NodePath("Plane_013/StaticBody3D"), NodePath("Plane_013/StaticBody3D"), NodePath("Plane_014/StaticBody3D"), NodePath("Plane_015/StaticBody3D"), NodePath("Plane_016/StaticBody3D"), NodePath("Plane_017/StaticBody3D"), NodePath("Plane_018/StaticBody3D"), NodePath("Plane_019/StaticBody3D")]
 
 [node name="Plane_001" parent="." index="0" groups=["island"]]
 
@@ -110,10 +113,10 @@ material_override = ExtResource("2_7hjns")
 [node name="Spawn" type="Node3D" parent="." index="21" unique_id=2118512378]
 
 [node name="0" type="Node3D" parent="Spawn" index="0" unique_id=2036752882]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -11103.197)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1739.7749)
 
 [node name="1" type="Node3D" parent="Spawn" index="1" unique_id=1013910244]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 11103.197)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1500.9746)
 
 [node name="light_nav" type="NavigationRegion3D" parent="." index="22" unique_id=1006115982]
 navigation_mesh = SubResource("NavigationMesh_10p5b")

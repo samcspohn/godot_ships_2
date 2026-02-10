@@ -31,6 +31,7 @@ var sec_damage: float = 0
 var damage_events: Array[Dictionary] = []
 
 var ships_damaged: Dictionary[String, float] = {}
+var _ships_damaged: Dictionary[Ship, float] = {}
 
 var torpedo_count: int = 0
 var torpedo_damage: float = 0
@@ -103,8 +104,9 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 	if damaged_ship:
 		# var ship_name: String = damaged_ship.name if damaged_ship.name != "" else "Unknown"
 		var ship_name = damaged_ship.name + ": " + damaged_ship.ship_name
-		var ship_damage = ships_damaged.get(ship_name, 0.0)
+		var ship_damage = _ships_damaged.get(damaged_ship, 0.0)
 		ships_damaged[ship_name] = ship_damage + damage
+		_ships_damaged[damaged_ship] = ship_damage + damage
 
 	# Track ship damage
 	if damaged_ship:

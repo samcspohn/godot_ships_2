@@ -6,5 +6,5 @@
 [node name="AMER_127mm_2b2" unique_id=692518245 instance=ExtResource("1_j7fcw")]
 _sound = ExtResource("2_ptlfi")
 pitch = 2.0
-volume = 0.4
+volume = 0.7
 variance = 0.1

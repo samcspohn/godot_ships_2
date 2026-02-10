@@ -8,5 +8,5 @@
 script = ExtResource("2_t1otf")
 _sound = ExtResource("3_woe85")
 pitch = 1.6
-volume = 0.3
+volume = 0.7
 variance = 0.1

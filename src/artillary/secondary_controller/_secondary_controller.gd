@@ -7,7 +7,7 @@ var _ship: Ship
 var target: Ship
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
-var gun_targets: Array[Ship] = []
+var gun_targets: Dictionary[Gun, Ship] = {}
 
 var target_mod: TargetMod
 var manual_target_mod: TargetMod = TargetMod.new()
@@ -20,6 +20,8 @@ var guns_shooting_at_aim_point: Dictionary[Gun, bool] = {}
 var just_switched_mode: bool = false
 # var _found_target: bool = false
 # var not_all_returned_to_base: bool
+var targets_guns: Dictionary[Ship, Array] = {}
+var target_seq_timers: Dictionary[Ship, float] = {}
 
 var weapons: Array[Turret]:
 	get:
@@ -56,11 +58,17 @@ func get_weapon_ui() -> Array[Button]:
 
 
 func get_aim_ui() -> Dictionary:
-	var ship_position = _ship.global_position
-	var _aim_point = aim_point as Vector3
 	var time_to_target = -1
 	var penetration_power = -1
 	var terrain_hit = false
+	if aim_point == null:
+		return {
+			"terrain_hit": terrain_hit,
+			"penetration_power": penetration_power,
+			"time_to_target": time_to_target
+		}
+	var ship_position = _ship.global_position
+	var _aim_point = aim_point as Vector3
 
 	var max_range = -1
 	for sec in sub_controllers:
@@ -168,7 +176,7 @@ func _ready() -> void:
 		sc.init(_ship)
 		sc.controller = self
 		for g in sc.guns:
-			gun_targets.append(null)
+			gun_targets[g] = null
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -226,15 +234,18 @@ func _physics_process(delta: float) -> void:
 	if not _ship.team:
 		return
 
+	var max_range = 0.0
+	for sc in sub_controllers:
+		var r = sc.params.p()._range
+		if r > max_range:
+			max_range = r
+
 	guns_shooting_at_aim_point.clear()
 	if aim_point != null:
-		var max_range = -1
-		for sec in sub_controllers:
-			max_range = max(max_range, sec.get_params()._range)
 		var ship_pos = _ship.global_position
 		ship_pos.y = 0
-		var target_offset = (aim_point - ship_pos)
-		aim_point = target_offset.normalized() * min(target_offset.length(), max_range) + ship_pos
+		var aim_offset = (aim_point - ship_pos)
+		aim_point = aim_offset.normalized() * min(aim_offset.length(), max_range) + ship_pos
 		for sc in sub_controllers:
 			for g in sc.guns:
 				if g.is_aimpoint_valid(aim_point):
@@ -244,11 +255,7 @@ func _physics_process(delta: float) -> void:
 		just_switched_mode = false
 		active = true
 
-	var max_range = 0.0
-	for sc in sub_controllers:
-		var r = sc.params.p()._range
-		if r > max_range:
-			max_range = r
+
 
 	var enemies_in_range : Array[Ship] = server.get_valid_targets(_ship.team.team_id).filter(func(p):
 		return p.global_position.distance_to(_ship.global_position) <= max_range
@@ -265,13 +272,14 @@ func _physics_process(delta: float) -> void:
 		return
 
 	active = false
-	var gi = 0
+	targets_guns.clear()
+	# var gi = 0
 	for sc in sub_controllers:
 		var _range = sc.params.p()._range
-		var _gi = gi
+		# var _gi = gi
 		for g in sc.guns:
 			if guns_shooting_at_aim_point.has(g):
-				gi += 1
+				# gi += 1
 				continue
 			var found_target = false
 			for e: Ship in enemies_in_range:
@@ -282,33 +290,50 @@ func _physics_process(delta: float) -> void:
 				if lead_target and g.is_aimpoint_valid(pos) and g.sim_can_shoot_over_terrain(lead_target):
 					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
-					gun_targets[gi] = e
+					gun_targets[g] = e
+					targets_guns[e] = targets_guns.get(e, []) + [g]
 					found_target = true
 					active = true
 					break
 			if not found_target:
-				gun_targets[gi] = null
+				gun_targets[g] = null
 				active = g.return_to_base(delta) || active
-			gi += 1
-		gi = _gi
 
-		if enemies_in_range.size() > 0:
-			var reload_time = sc.params.p().reload_time
-			sc.sequential_fire_timer += delta
-			if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
-				sc.sequential_fire_timer = 0.0
-				for g in sc.guns:
-					if guns_shooting_at_aim_point.has(g):
-						gi += 1
-						continue
-					if g.reload >= 1 and g.can_fire and gun_targets[gi] != null:
-						if gun_targets[gi] == target:
+		# if enemies_in_range.size() > 0:
+		# 	var reload_time = sc.params.p().reload_time
+		# 	sc.sequential_fire_timer += delta
+		# 	if sc.sequential_fire_timer >= min(sequential_fire_delay, reload_time / sc.guns.size()):
+		# 		sc.sequential_fire_timer = 0.0
+		# 		for g in sc.guns:
+		# 			if guns_shooting_at_aim_point.has(g):
+		# 				# gi += 1
+		# 				continue
+		# 			if g.reload >= 1 and g.can_fire and gun_targets[g] != null:
+		# 				if gun_targets[g] == target:
+		# 					g.fire(target_mod.dynamic_mod)
+		# 				else:
+		# 					g.fire()
+		# 				# gi = sc.guns.size()
+		# 				break
+		# 			# gi += 1
+
+		# get min reload time
+		var min_reload_time = INF
+		for sec in sub_controllers:
+			min_reload_time = min(min_reload_time, sec.get_params().reload_time)
+
+		# shoot at all targets
+		for e in targets_guns:
+			target_seq_timers[e] = target_seq_timers.get(e, 0.0) + delta
+			if target_seq_timers[e] >= min(sequential_fire_delay, min_reload_time / targets_guns[e].size()):
+				target_seq_timers[e] = 0.0
+				for g: Gun in targets_guns[e]:
+					if g.reload >= 1 and g.can_fire:
+						if gun_targets[g] == target:
 							g.fire(target_mod.dynamic_mod)
 						else:
 							g.fire()
-						gi = sc.guns.size()
 						break
-					gi += 1
 
 	# for g in guns:
 	# 	g._aim(aim_point, delta)

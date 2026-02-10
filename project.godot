@@ -22,10 +22,12 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 config/name="ships3"
 run/main_scene="res://scenes/root.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
+run/max_fps=72
 config/icon="res://icon.svg"
 
 [audio]
 
+buses/default_bus_layout="uid://c0wo7dv18yqkx"
 driver/driver="ALSA"
 
 [autoload]

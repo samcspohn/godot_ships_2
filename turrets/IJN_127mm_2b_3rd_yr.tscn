@@ -6,7 +6,7 @@
 [node name="IJN_127mm_2b_3rd_yr" unique_id=2037735067 instance=ExtResource("1_bcq5c")]
 _sound = ExtResource("2_ovy00")
 pitch = 2.0
-volume = 0.4
+volume = 0.7
 variance = 0.1
 glb_path = "uid://baweb555vb2nb"
 

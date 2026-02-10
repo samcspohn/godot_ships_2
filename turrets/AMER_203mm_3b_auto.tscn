@@ -7,7 +7,7 @@
 [node name="AMER_203mm_3b_auto2" unique_id=1706508907 instance=ExtResource("1_stwq3")]
 _sound = ExtResource("2_7gshe")
 pitch = 1.5
-volume = 2.0
+volume = 1.6
 glb_path = "uid://dxbyw7cqpkytc"
 
 [node name="AMER_203mm_3b_auto_col" parent="." index="1"]

@@ -147,6 +147,12 @@ func remove_physics_recurs(node: Node) -> void:
 		node.queue_free()
 
 func _ready() -> void:
+	# Set up zero-friction physics material for frictionless ship collisions
+	var physics_material = PhysicsMaterial.new()
+	physics_material.friction = 0.0
+	physics_material.bounce = 0.1
+	self.physics_material_override = physics_material
+
 	# Get references to child components
 	# movement_controller = $Modules/MovementController
 	# artillery_controller = $Modules/ArtilleryController

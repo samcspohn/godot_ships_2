@@ -106,6 +106,30 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 
+	# if !_Utils.authority():
+	# 	if sound == null:
+	# 		sound = AudioStreamPlayer3D.new()
+	# 		if _sound == null:
+	# 			sound.stream = preload("res://audio/explosion1.wav")
+	# 		else:
+	# 			sound.stream = _sound
+	# 		sound.max_polyphony = 1
+	# 		sound.unit_size = 200.0 * volume
+	# 		sound.max_db = linear_to_db(volume * (1.0 + variance))
+	# 		add_child(sound)
+	# 	# get_tree().root.add_child(sound)
+	setup_audio.call_deferred()
+
+
+	# Set up muzzles
+	update_barrels()
+
+	super._ready()
+
+func setup_audio():
+	if Engine.is_editor_hint():
+		return
+
 	if !_Utils.authority():
 		if sound == null:
 			sound = AudioStreamPlayer3D.new()
@@ -114,17 +138,16 @@ func _ready() -> void:
 			else:
 				sound.stream = _sound
 			sound.max_polyphony = 1
-			sound.unit_size = 200.0 * volume
+			sound.unit_size = 100.0 * get_shell().caliber / 100.0 + 100.0
 			sound.max_db = linear_to_db(volume * (1.0 + variance))
+			var shell_params: ShellParams = get_shell()
+			if shell_params._secondary:
+				sound.bus = "Sec"
+			else:
+				sound.bus = "Main"
+				# pitch *= 2.0
 			add_child(sound)
 		# get_tree().root.add_child(sound)
-
-
-	# Set up muzzles
-	update_barrels()
-
-	super._ready()
-
 
 
 # Function to update barrels based on editor properties
@@ -291,7 +314,9 @@ func fire_client(vel, pos, t, _id):
 	if get_viewport().get_audio_listener_3d().global_position.distance_to(global_position) < volume * 2000: # TODO, make unique to gun
 		sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
 		sound.volume_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
-		sound.unit_size = 200.0 * sqrt(get_shell().caliber / 100.0)
+		sound.unit_size = 100.0 * sqrt(get_shell().caliber / 100.0) + 100.0
+		# if get_shell().caliber == 203:
+		# 	sound.unit_size = 0
 		sound.play()
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
