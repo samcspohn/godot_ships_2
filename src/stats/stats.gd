@@ -111,7 +111,7 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 	# Track ship damage
 	if damaged_ship:
 		var spotter = damaged_ship.concealment.spotted_by
-		if spotter:
+		if spotter and spotter != _ship:
 			spotter.stats.spotting_damage += damage
 
 func record_potential_damage(damage: float, position: Vector3, caliber: float):

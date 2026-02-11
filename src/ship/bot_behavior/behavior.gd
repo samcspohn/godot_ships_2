@@ -35,6 +35,12 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	else:
 		return null
 
+func pick_ammo(target: Ship) -> int:
+	var ammo = ShellParams.ShellType.AP
+	if target.ship_class == Ship.ShipClass.DD:
+		ammo = ShellParams.ShellType.HE
+	return 0 if ammo == ShellParams.ShellType.AP else 1
+
 func target_aim_offset(_target: Ship) -> Vector3:
 	"""Retrurns the offset to the target to aim at in local space"""
 	return Vector3.ZERO
@@ -67,6 +73,27 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 	else:
 		desired_pos = current_destination
 	return _get_valid_nav_point(desired_pos)
+
+func engage_target(target: Ship):
+	# if target != null and target.visible_to_enemy and target.is_alive():
+	if target.global_position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
+		return
+	var adjusted_target_pos = target.global_position + target_aim_offset(target)
+	var target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+		_ship.global_position,
+		adjusted_target_pos,
+		target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		_ship.artillery_controller.get_shell_params()
+	)[2]
+
+	if target_lead != null:
+		_ship.artillery_controller.set_aim_input(target_lead)
+	var ammo = pick_ammo(target)
+	_ship.artillery_controller.select_shell(ammo)
+	_ship.artillery_controller.fire_next_ready()
+	# else:
+		# target_lead = null
+		# _ship.artillery_controller.set_aim_input(destination)
 
 func _calculate_intercept_point(target: Ship) -> Vector3:
 	"""Calculate optimal intercept point given our max speed and target's velocity"""
@@ -140,3 +167,38 @@ func get_desired_angle(friendly: Array[Ship], enemy: Array[Ship], target: Varian
 	if target is Ship:
 		return _ship.rotation.y - atan2(target.position.y - _ship.position.y, target.position.x - _ship.position.x)
 	return 0.0
+
+var repair = -1
+var damage_control = -1
+func try_use_consumable():
+	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+	if repair == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
+				repair = c.id
+				break
+	if damage_control == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
+				damage_control = c.id
+				break
+	if hp < 0.5:
+		if repair != -1:
+			_ship.consumable_manager.use_consumable(repair)
+	var fires = _ship.fire_manager.get_active_fires()
+	if fires > 0:
+		if hp > 0.60 and fires >= 2:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+		elif fires >= 1:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+
+	var floods = _ship.flood_manager.get_active_floods()
+	if floods > 0:
+		if hp > 0.60 and floods >= 2:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+		elif floods >= 1:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)

@@ -16,11 +16,19 @@ var team_0_valid_targets: Array[Ship] = []
 var team_1_valid_targets: Array[Ship] = []
 var team_0_ships: Array[Ship] = []
 var team_1_ships: Array[Ship] = []
+
+# Clustering data for bot AI
+var team_0_clusters: Array[Dictionary] = []  # Array of {center: Vector3, ships: Array[Ship]}
+var team_1_clusters: Array[Dictionary] = []
+var team_0_avg_position: Vector3 = Vector3.ZERO
+var team_1_avg_position: Vector3 = Vector3.ZERO
+const CLUSTER_DISTANCE: float = 3000.0  # Ships within this distance are in same cluster
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
 var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
 
 var gun_updated = false
+var map: Map = null
 
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -30,7 +38,7 @@ func _ready():
 	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
 	add_child(game_world)
 	spawn_point = game_world.get_child(1)
-	var map = load("res://src/Maps/map.tscn").instantiate()
+	map = load("res://src/Maps/map.tscn").instantiate()
 	game_world.get_node("Env").add_child(map)
 	print("Game server started and world loaded")
 
@@ -159,6 +167,13 @@ func spawn_player(id, player_name):
 	if is_bot:
 		var bot_controller = preload("res://src/ship/bot_controller_v2.tscn").instantiate()
 		bot_controller.name = "BotController"
+		match player.ship_class:
+			Ship.ShipClass.DD:
+				bot_controller.behavior = DDBehavior.new()
+			Ship.ShipClass.BB:
+				bot_controller.behavior = BBBehavior.new()
+			Ship.ShipClass.CA:
+				bot_controller.behavior = CABehavior.new()
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
 		bot_controller.bot_id = bot_id
@@ -174,8 +189,8 @@ func spawn_player(id, player_name):
 	# Add to world - note game_world is a child of this node
 	players[player_name] = [player, ship, id]
 
-	var map = get_node("GameWorld/Env").get_child(0)
-	var team_spawn_point: Vector3 = (map.get_node("Spawn").get_child(team_id) as Node3D).global_position
+	var spawn_map = get_node("GameWorld/Env").get_child(0)
+	var team_spawn_point: Vector3 = (spawn_map.get_node("Spawn").get_child(team_id) as Node3D).global_position
 
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
 
@@ -425,6 +440,137 @@ func get_all_ships() -> Array:
 			all_ships.append(ship)
 	return all_ships
 
+
+func _update_team_clusters():
+	"""Compute clusters and average positions for both teams."""
+	team_0_clusters = _compute_clusters(team_0_ships)
+	team_1_clusters = _compute_clusters(team_1_ships)
+	team_0_avg_position = _compute_average_position(team_0_ships)
+	team_1_avg_position = _compute_average_position(team_1_ships)
+
+
+func _compute_average_position(ships: Array[Ship]) -> Vector3:
+	"""Compute average position of a list of ships."""
+	if ships.size() == 0:
+		return Vector3.ZERO
+	var avg = Vector3.ZERO
+	for ship in ships:
+		avg += ship.global_position
+	return avg / ships.size()
+
+
+func _compute_clusters(ships: Array[Ship]) -> Array[Dictionary]:
+	"""
+	Cluster ships using simple distance-based clustering.
+	Returns array of {center: Vector3, ships: Array[Ship]}
+	"""
+	if ships.size() == 0:
+		return []
+
+	var clusters: Array[Dictionary] = []
+	var assigned: Dictionary = {}  # Ship -> cluster index
+
+	for ship in ships:
+		if assigned.has(ship):
+			continue
+
+		# Start a new cluster with this ship
+		var cluster_ships: Array[Ship] = [ship]
+		assigned[ship] = clusters.size()
+
+		# Find all ships close to any ship in this cluster
+		var i = 0
+		while i < cluster_ships.size():
+			var current = cluster_ships[i]
+			for other in ships:
+				if assigned.has(other):
+					continue
+				if current.global_position.distance_to(other.global_position) <= CLUSTER_DISTANCE:
+					cluster_ships.append(other)
+					assigned[other] = clusters.size()
+			i += 1
+
+		# Compute cluster center
+		var center = Vector3.ZERO
+		for s in cluster_ships:
+			center += s.global_position
+		center /= cluster_ships.size()
+
+		clusters.append({
+			"center": center,
+			"ships": cluster_ships
+		})
+
+	return clusters
+
+
+func get_team_clusters(team_id: int) -> Array[Dictionary]:
+	"""Get cached clusters for a team."""
+	if team_id == 0:
+		return team_0_clusters
+	else:
+		return team_1_clusters
+
+
+func get_team_avg_position(team_id: int) -> Vector3:
+	"""Get cached average position for a team."""
+	if team_id == 0:
+		return team_0_avg_position
+	else:
+		return team_1_avg_position
+
+
+func get_enemy_clusters(team_id: int) -> Array[Dictionary]:
+	"""Get cached clusters for the enemy team."""
+	if team_id == 0:
+		return team_1_clusters
+	else:
+		return team_0_clusters
+
+
+func get_enemy_avg_position(team_id: int) -> Vector3:
+	"""Get cached average position for the enemy team."""
+	if team_id == 0:
+		return team_1_avg_position
+	else:
+		return team_0_avg_position
+
+
+func get_nearest_enemy_cluster(position: Vector3, team_id: int) -> Dictionary:
+	"""Get the nearest enemy cluster to a position."""
+	var enemy_clusters = get_enemy_clusters(team_id)
+	if enemy_clusters.size() == 0:
+		return {}
+
+	var nearest = enemy_clusters[0]
+	var nearest_dist = position.distance_to(nearest.center)
+
+	for cluster in enemy_clusters:
+		var dist = position.distance_to(cluster.center)
+		if dist < nearest_dist:
+			nearest = cluster
+			nearest_dist = dist
+
+	return nearest
+
+
+func get_nearest_friendly_cluster(position: Vector3, team_id: int) -> Dictionary:
+	"""Get the nearest friendly cluster to a position (excluding self)."""
+	var friendly_clusters = get_team_clusters(team_id)
+	if friendly_clusters.size() == 0:
+		return {}
+
+	var nearest = friendly_clusters[0]
+	var nearest_dist = position.distance_to(nearest.center)
+
+	for cluster in friendly_clusters:
+		var dist = position.distance_to(cluster.center)
+		if dist < nearest_dist:
+			nearest = cluster
+			nearest_dist = dist
+
+	return nearest
+
 # func sync_players(player_data: Array[Dictionary]) -> void:
 # 	for data in player_data:
 # 		var id = data.get("id", -1)
@@ -531,6 +677,9 @@ func _physics_process(_delta: float) -> void:
 	current_time = Time.get_ticks_msec() / 1000.0
 	team_0_ships = _get_team(0)
 	team_1_ships = _get_team(1)
+
+	# Update clusters and average positions
+	_update_team_clusters()
 	if !_Utils.authority():
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state

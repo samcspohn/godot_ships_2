@@ -1,7 +1,7 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.4
+const max_grouping_bonus = 0.2
 const max_spread_bonus = 0.6
 
 var grouping_multiplier: float = 0.0

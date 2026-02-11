@@ -81,7 +81,7 @@ func _ready() -> void:
 	# navigation_agent.set_target_position(target)
 	get_tree().create_timer(0.1).timeout.connect(defer_target)
 
-	behavior = BotBehavior.new()
+	# behavior = BotBehavior.new()
 	behavior._ship = _ship
 	behavior.nav = navigation_agent
 	add_child(behavior)
@@ -138,12 +138,14 @@ func _physics_process(_delta: float) -> void:
 			_debug_threat_vector = Vector3(sin(threat_heading), 0, cos(threat_heading))
 			_debug_safe_vector = Vector3(sin(safe_heading), 0, cos(safe_heading))
 			var threat_weight = threat_vector.weight * clamp(threat_vector.vector.length(), 0.0, 1.0)
-
+			threat_weight = clamp(threat_weight + 0.1, 0.0, 1.0)
 			# Use lerp_angle for proper angular interpolation with wraparound handling
 			# desired_heading = move_toward(desired_heading, lerp_angle(desired_heading, safe_heading, threat_vector.weight), _delta)
 			desired_heading = _normalize_angle(lerp_angle(desired_heading, safe_heading, threat_weight))
 
 	apply_ship_controls()
+
+	behavior.try_use_consumable()
 
 
 	target_scan_timer += _delta
@@ -231,7 +233,7 @@ func get_threat_vector() -> Dictionary:
 	var rudder := movement.rudder_input # between -1 and 1
 	# var turning_circle_radius = movement.turning_circle_radius # radius in meters
 	var adjusted_heading: float = heading - rudder * 0.5 * sign((-_ship.global_basis.z).dot(_ship.linear_velocity))
-	var samples := 32
+	var samples := 16
 	var ray_query := PhysicsRayQueryParameters3D.new()
 	ray_query.from = _ship.global_position
 	ray_query.from.y = -movement.ship_draft / 2.0
@@ -334,7 +336,9 @@ func apply_ship_controls():
 		rudder = -clampf(angle_diff * 4.0 / PI, -1.0, 1.0)
 		# if current_speed < 0.0 :
 		# 	rudder = -rudder
-		var throttle: float = max(4 * (1.0 - angle_diff / PI * 3.0 + 0.5), 2.1)
+		var dist_to_dest = _ship.global_position.distance_to(destination)
+		var stopping_dist = _ship.movement_controller.max_speed * _ship.movement_controller.acceleration_time
+		var throttle: float = max(4 * (1.0 - angle_diff / PI * 3.0 + 0.5), 2.1) * clamp(dist_to_dest / stopping_dist, 0.0, 1.0)
 		movement.set_movement_input([throttle, rudder])
 	else: # reverse
 		rudder = -clampf((PI - angle_diff) * 4.0 / PI, -1.0, 1.0)
@@ -345,20 +349,23 @@ func _aquire_target(last_target: Ship):
 
 var target_lead = null
 func engage_target():
-	if target_lead != null and target != null:
-		_ship.artillery_controller.fire_next_ready()
+	# if target_lead != null and target != null:
+	# 	_ship.artillery_controller.fire_next_ready()
 
 	if target != null and target.visible_to_enemy and target.is_alive():
-		var adjusted_target_pos = target.global_position + behavior.target_aim_offset(target)
-		target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-			_ship.global_position,
-			adjusted_target_pos,
-			target.linear_velocity / ProjectileManager.shell_time_multiplier,
-			_ship.artillery_controller.get_shell_params()
-		)[2]
+		behavior.engage_target(target)
+		# var adjusted_target_pos = target.global_position + behavior.target_aim_offset(target)
+		# target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+		# 	_ship.global_position,
+		# 	adjusted_target_pos,
+		# 	target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		# 	_ship.artillery_controller.get_shell_params()
+		# )[2]
 
-		if target_lead != null:
-			_ship.artillery_controller.set_aim_input(target_lead)
+		# if target_lead != null:
+		# 	_ship.artillery_controller.set_aim_input(target_lead)
+		# var ammo = behavior.pick_ammo(target)
+		# _ship.artillery_controller.select_shell(ammo)
 	else:
 		target_lead = null
 		_ship.artillery_controller.set_aim_input(destination)

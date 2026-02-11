@@ -3,7 +3,7 @@ extends Control
 class_name Minimap
 
 # Constants
-const SHIP_MARKER_SIZE = 18
+const SHIP_MARKER_SIZE = 30
 const CONSUMABLE_ICON_SIZE = 12 # Base size for consumable icons on minimap
 const SHIP_NAME_FONT_SIZE = 10 # Base font size for ship names on minimap
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White

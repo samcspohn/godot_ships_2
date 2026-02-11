@@ -6,7 +6,7 @@ const HullCollisionGenerator = preload("res://src/ship/hull_collision_generator.
 # Map boundary constants (matching minimap.gd world_rect)
 const MAP_BOUNDARY: float = 17500.0
 
-enum Class {
+enum ShipClass {
 	BB,
 	CA,
 	DD,
@@ -14,7 +14,7 @@ enum Class {
 }
 var initialized: bool = false
 # Child components
-@onready var movement_controller = $Modules/MovementController
+@onready var movement_controller: ShipMovementV4 = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
 @onready var torpedo_controller: TorpedoController
@@ -46,7 +46,7 @@ var last_contacts: Array[Dictionary] = []
 var frustum_planes: Array[Plane] = []
 var beam: float = 0.0
 @export var ship_name: String = ""
-@export var ship_class: Class = Class.CA
+@export var ship_class: ShipClass = ShipClass.CA
 @export_range(1, 11) var tier: int = 1
 
 var particles_active = false

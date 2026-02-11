@@ -1,0 +1,76 @@
+
+base:
+	targets are ships that have the largest silhouette. broadside targets are larger than bow/stern in
+	will increase its engagement distance based on hp ratio
+
+	positioning uses server-cached cluster data:
+		- server computes ship clusters per team each frame (ships within 3000m grouped together)
+		- avg_enemy and avg_friendly positions are precomputed on server
+		- bots use cached data instead of computing averages themselves
+Battleship:
+	prefers ap.
+	AP at:
+		broadside cruisers waterline
+		angled cruiser bow/stern when angled 30 degrees
+		battleship superstructure when angled
+		battleship waterline when broadside
+	HE at:
+		heavily angled battleships 10 degrees
+		destroyers
+
+	prefers direct engagements, pushing towards target and keeping medium distance.
+	will kite if outnumbered towards friendly side of the map or friendly team mates
+
+Cruiser:
+	prefer HE
+	AP at:
+		broadside battleships upper belt when < 6000
+		broadside cruisers upper belt when < 10000
+		broadside cruisers lower belt when < 7000
+	HE at:
+		battleship superstructure when angled
+		cruiser upper belt when angled
+		destroyers
+
+	prefers to kite
+
+	will attempt to use islands for cover:
+		- finds optimal island within gun range of target
+		- island choice based on HP:
+			- high HP: aggressive positioning at ~50% gun range to target
+			- low HP: defensive positioning at ~70% gun range to target
+		- approximates island as circle, positions on opposite side from enemies
+		- if detected (visible_to_enemy), moves further behind island
+		- if in cover and undetected, stays still
+		- prefers cover over kiting for first 60 seconds of engagement
+		- only checks shell arcs when close to island to verify can shoot over
+		- abandonment rules:
+			- abandons cover if enemies move beyond 80% gun range (too far to shoot)
+			- abandons cover if enemies get within 35% gun range (too close, kite to farther cover)
+			- otherwise stays at current island
+		- falls back to normal kiting if no suitable island or can't shoot from cover
+
+Destroyer:
+	prefer HE
+	AP at:
+		broadside cruisers when < 1000
+		broadside cruisers waterline < 500
+		broadside destroyers at waterline when < 1000
+	HE at:
+		Battleship, Cruiser superstructure
+		Destroyers
+
+	ideal torpedo targets push in at 45 degrees
+
+	torpedo launching:
+		- tracks target lead angle changes over time to predict movement
+		- adjusts aim ahead or behind based on lead angle change rate
+		- fires 5-torpedo spread pattern around predicted interception point
+		- spread angle increases with range (~3° base + 0.6° per km)
+		- fire interval scales with range (0.5s at close, 15s at 10km)
+		- each torpedo in spread is checked for terrain collision
+		- skips spread positions that would hit terrain or friendlies
+
+	will avoid shooting unless spotted and will stop shooting when closest ship is outside concealment radius
+	will shoot from long range after torpedoes land and target is flooding
+	will not shoot when low health (< 30% HP) - prioritizes stealth and survival

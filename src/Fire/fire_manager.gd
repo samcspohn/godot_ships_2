@@ -20,6 +20,12 @@ var _ship: Ship
 # 	# _params = params.duplicate(true)
 # 	# _params.init(params)
 # 	params.reset_static_mod()
+func get_active_fires() -> int:
+	var count = 0
+	for fire in fires:
+		if fire.lifetime > 0:
+			count += 1
+	return count
 
 func _ready() -> void:
 	await get_parent().get_parent().ready
