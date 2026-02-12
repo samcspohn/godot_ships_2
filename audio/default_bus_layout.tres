@@ -9,11 +9,10 @@ pitch_scale = 0.5
 
 [sub_resource type="AudioEffectCompressor" id="AudioEffectCompressor_j3pel"]
 resource_name = "Compressor"
-threshold = -1.0
-ratio = 4.2
-gain = -2.0
+ratio = 1.0
+gain = -20.0
 release_ms = 20.0
-mix = 0.6
+mix = 0.8
 sidechain = &"Main"
 
 [resource]

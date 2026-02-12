@@ -268,7 +268,7 @@ func _physics_process(delta: float) -> void:
 		var F := calculate_lateral_force(ship.mass, ship_length, turning_circle_radius * 2.0,
 										  fulcrum_offset, ship.angular_damp,
 										  ship.angular_velocity.y, target_omega, delta)
-		ship.apply_force(-flat_right * F, stern_offset)
+		ship.apply_force(-flat_right * F * abs(engine_power), stern_offset)
 		engine_power = move_toward(engine_power, target_power * (1 - turn_speed_loss * abs(rudder_input)), delta / acceleration_time)
 	else:
 		engine_power = move_toward(engine_power, target_power, delta / acceleration_time)

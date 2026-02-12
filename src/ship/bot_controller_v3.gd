@@ -121,6 +121,12 @@ func _physics_process(_delta: float) -> void:
 		# desired_heading = move_toward(desired_heading, calculate_desired_heading(waypoint), _delta)
 		desired_heading = calculate_desired_heading(waypoint)
 
+		# Check if behavior wants to override heading for evasion
+		if _ship.visible_to_enemy:
+			var heading_info = behavior.get_desired_heading(target, desired_heading, _delta, destination)
+			if heading_info.use_evasion:
+				desired_heading = heading_info.heading
+
 		# Apply avoidance heading override if needed (after normal heading calculation)
 		# if _avoidance_weight:
 		# 	desired_heading = _avoidance_heading
@@ -339,6 +345,11 @@ func apply_ship_controls():
 		var dist_to_dest = _ship.global_position.distance_to(destination)
 		var stopping_dist = _ship.movement_controller.max_speed * _ship.movement_controller.acceleration_time
 		var throttle: float = max(4 * (1.0 - angle_diff / PI * 3.0 + 0.5), 2.1) * clamp(dist_to_dest / stopping_dist, 0.0, 1.0)
+
+		# Apply speed multiplier from behavior (used by DD for evasive speed variation)
+		var speed_mult = behavior.get_speed_multiplier()
+		throttle *= speed_mult
+
 		movement.set_movement_input([throttle, rudder])
 	else: # reverse
 		rudder = -clampf((PI - angle_diff) * 4.0 / PI, -1.0, 1.0)
@@ -384,18 +395,25 @@ func assign_nav_agent(map: Node):
 			map.get_node("ultraheavy_nav").add_child(navigation_proxy)
 
 func defer_target():
-	destination = _ship.global_position
-	destination.z = -destination.z
-	destination.y = 0.0
-
 	navigation_proxy.global_position = _ship.global_position
 	navigation_proxy.global_position.y = 0.0
+
+	# Set initial destination toward enemy average position instead of map center
+	var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
+	if avg_enemy != Vector3.ZERO:
+		var gun_range = _ship.artillery_controller.get_params()._range
+		var to_enemy = (avg_enemy - _ship.global_position).normalized()
+		destination = _ship.global_position + to_enemy * gun_range * 0.5
+		destination.y = 0.0
+	else:
+		# Fallback: move toward opposite side of map
+		destination = _ship.global_position
+		destination.z = -destination.z
+		destination.y = 0.0
 
 	navigation_agent.set_target_position(destination)
 	waypoint = navigation_agent.get_next_path_position()
 	path = navigation_agent.get_current_navigation_path()
-
-	# navigation_agent.set_target_position(target)
 
 ## Updates the debug heading vector based on desired_heading
 func _update_debug_heading_vector() -> void:

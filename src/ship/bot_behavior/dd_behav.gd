@@ -3,6 +3,47 @@ class_name DDBehavior
 
 var ammo = ShellParams.ShellType.HE
 
+# Speed variation for evasion
+var speed_variation_timer: float = 0.0
+var current_speed_multiplier: float = 1.0
+const SPEED_VARIATION_PERIOD: float = 3.0  # How often to change speed
+const SPEED_VARIATION_MIN: float = 0.6  # Minimum speed multiplier
+const SPEED_VARIATION_MAX: float = 1.0  # Maximum speed multiplier
+
+func get_evasion_params() -> Dictionary:
+	return {
+		min_angle = deg_to_rad(10),
+		max_angle = deg_to_rad(25),
+		evasion_period = 2.5,  # Quick, erratic weaving
+		vary_speed = true      # Only DDs vary speed
+	}
+
+func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
+	match ship_class:
+		Ship.ShipClass.BB: return 1.0
+		Ship.ShipClass.CA: return 1.5   # CAs are DD hunters
+		Ship.ShipClass.DD: return 1.0
+	return 1.0
+
+func get_desired_heading(target: Ship, current_heading: float, delta: float, destination: Vector3) -> Dictionary:
+	"""Override to add speed variation for DDs."""
+	var result = super.get_desired_heading(target, current_heading, delta, destination)
+
+	# Update speed variation when evading
+	if result.use_evasion:
+		speed_variation_timer += delta
+		# Use a different frequency than heading to make movement less predictable
+		var speed_wave = (sin(speed_variation_timer * TAU / SPEED_VARIATION_PERIOD) + 1.0) / 2.0
+		current_speed_multiplier = lerp(SPEED_VARIATION_MIN, SPEED_VARIATION_MAX, speed_wave)
+	else:
+		current_speed_multiplier = 1.0
+
+	return result
+
+func get_speed_multiplier() -> float:
+	"""Returns current speed multiplier for evasion. Bot controller should use this."""
+	return current_speed_multiplier
+
 # Track torpedo hits and floods for shooting decision
 var last_torpedo_count: int = 0
 var last_flood_count: int = 0
@@ -38,9 +79,14 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		var dist = disp.length()
 		var angle = (-ship.basis.z).angle_to(disp)
 		angle -= PI / 4 # best angle to torpedo is 45 degrees incoming
-		var priority = cos(angle) * ship.movement_controller.ship_length / dist
-		if ship.ship_class == Ship.ShipClass.BB:
-			priority *= 3.0
+		var priority = 0
+		if !_ship.visible_to_enemy:
+			priority = cos(angle) * ship.movement_controller.ship_length / dist
+			priority = priority * 0.3 + (1 - dist / torpedo_range) * 0.7
+			if ship.ship_class == Ship.ShipClass.BB:
+				priority *= 3.0
+		else:
+			priority = (1 - dist / gun_range)
 
 		# Significantly boost priority for targets within gun range
 		if dist <= gun_range or dist <= torpedo_range:
@@ -102,8 +148,14 @@ func target_aim_offset(_target: Ship) -> Vector3:
 
 var closest_enemy: Ship
 func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Ship, current_destination: Vector3) -> Vector3:
+	# Get server reference early
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if _ship.name == "1003":
+		pass
+
+	# If no target, try to hunt unspotted enemies
 	if target == null:
-		return current_destination
+		return _get_hunting_position(server_node, friendly, current_destination)
 
 	var concealment_radius = (_ship.concealment.params.p() as ConcealmentParams).radius
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
@@ -136,7 +188,6 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 		# Only bias toward team if below 50% HP
 		if hp_ratio < 0.5:
 			var nearest_friendly_pos = Vector3.ZERO
-			var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 			if server_node:
 				var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
 				if nearest_cluster.size() > 0:
@@ -168,6 +219,77 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 		# Apply separation to avoid clumping
 		desired_position += separation * 500.0
 		return _get_valid_nav_point(desired_position)
+
+
+func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], current_destination: Vector3) -> Vector3:
+	"""When no enemies are visible, move toward last known positions of unspotted enemies.
+	DDs are excellent hunters - they should aggressively seek out unspotted enemies."""
+	if server_node == null:
+		return current_destination
+
+	var unspotted_enemies = server_node.get_unspotted_enemies(_ship.team.team_id)
+	var concealment_radius = (_ship.concealment.params.p() as ConcealmentParams).radius
+	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+
+	if unspotted_enemies.is_empty():
+		# No unspotted enemies tracked, move toward average enemy position to spot
+		var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
+		if avg_enemy != Vector3.ZERO:
+			var to_enemy = (avg_enemy - _ship.global_position).normalized()
+			# DDs should push forward aggressively to spot enemies
+			var desired_pos = _ship.global_position + to_enemy * concealment_radius * 1.5
+			return _get_valid_nav_point(desired_pos)
+		return current_destination
+
+	# Find the closest unspotted enemy's last known position
+	var closest_pos: Vector3 = Vector3.ZERO
+	var closest_dist: float = INF
+
+	for ship in unspotted_enemies.keys():
+		var last_known_pos: Vector3 = unspotted_enemies[ship]
+		var dist = _ship.global_position.distance_to(last_known_pos)
+		if dist < closest_dist:
+			closest_dist = dist
+			closest_pos = last_known_pos
+
+	if closest_pos == Vector3.ZERO:
+		return current_destination
+
+	# DDs should aggressively hunt toward last known positions
+	var to_target = (closest_pos - _ship.global_position).normalized()
+
+	# Adjust approach based on HP
+	var approach_speed: float
+	if hp_ratio < 0.3:
+		# Very low HP - be cautious, bias toward friendlies
+		approach_speed = 0.3
+		var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
+		if not nearest_cluster.is_empty():
+			var cluster_center: Vector3 = nearest_cluster.center
+			var to_cluster = (cluster_center - _ship.global_position).normalized()
+			to_target = (to_target * 0.4 + to_cluster * 0.6).normalized()
+	elif hp_ratio < 0.5:
+		approach_speed = 0.5
+	else:
+		# Healthy DD - hunt aggressively
+		approach_speed = 0.8
+
+	var desired_pos = _ship.global_position + to_target * concealment_radius * approach_speed * 2.0
+
+	# Calculate separation from friendly ships to avoid clumping
+	var separation = Vector3.ZERO
+	var min_separation_dist = 1500.0
+	for ship in friendly:
+		if ship == _ship:
+			continue
+		var to_self = _ship.global_position - ship.global_position
+		var dist = to_self.length()
+		if dist < min_separation_dist and dist > 0.1:
+			separation += to_self.normalized() * (min_separation_dist - dist) / min_separation_dist
+
+	desired_pos += separation * 500.0
+	return _get_valid_nav_point(desired_pos)
+
 
 # Torpedo parameters
 var torpedo_fire_interval: float = 3.0  # How often to attempt firing (dynamic based on range)

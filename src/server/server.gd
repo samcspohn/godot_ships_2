@@ -16,12 +16,20 @@ var team_0_valid_targets: Array[Ship] = []
 var team_1_valid_targets: Array[Ship] = []
 var team_0_ships: Array[Ship] = []
 var team_1_ships: Array[Ship] = []
+# Unspotted enemies with their last known positions (Ship -> Vector3)
+var team_0_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 0 (i.e., team 1 ships that went dark)
+var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.e., team 0 ships that went dark)
 
 # Clustering data for bot AI
 var team_0_clusters: Array[Dictionary] = []  # Array of {center: Vector3, ships: Array[Ship]}
 var team_1_clusters: Array[Dictionary] = []
 var team_0_avg_position: Vector3 = Vector3.ZERO
 var team_1_avg_position: Vector3 = Vector3.ZERO
+# Known enemy data (only includes spotted enemies + last known positions of unspotted)
+var team_0_known_enemy_avg: Vector3 = Vector3.ZERO  # What team 0 knows about team 1
+var team_1_known_enemy_avg: Vector3 = Vector3.ZERO  # What team 1 knows about team 0
+var team_0_known_enemy_clusters: Array[Dictionary] = []  # Enemy clusters team 0 knows about
+var team_1_known_enemy_clusters: Array[Dictionary] = []  # Enemy clusters team 1 knows about
 const CLUSTER_DISTANCE: float = 3000.0  # Ships within this distance are in same cluster
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
@@ -432,6 +440,14 @@ func get_valid_targets(team_id: int) -> Array[Ship]:
 	else:
 		return team_1_valid_targets
 
+func get_unspotted_enemies(team_id: int) -> Dictionary:
+	"""Returns a dictionary of unspotted enemy ships and their last known positions.
+	Key: Ship, Value: Vector3 (last known position)"""
+	if team_id == 0:
+		return team_0_unspotted_enemies
+	else:
+		return team_1_unspotted_enemies
+
 func get_all_ships() -> Array:
 	var all_ships: Array = []
 	for p in players.values():
@@ -447,6 +463,89 @@ func _update_team_clusters():
 	team_1_clusters = _compute_clusters(team_1_ships)
 	team_0_avg_position = _compute_average_position(team_0_ships)
 	team_1_avg_position = _compute_average_position(team_1_ships)
+	# Compute known enemy data (spotted + last known positions)
+	team_0_known_enemy_avg = _compute_known_enemy_avg(0)
+	team_1_known_enemy_avg = _compute_known_enemy_avg(1)
+	team_0_known_enemy_clusters = _compute_known_enemy_clusters(0)
+	team_1_known_enemy_clusters = _compute_known_enemy_clusters(1)
+
+
+func _compute_known_enemy_avg(team_id: int) -> Vector3:
+	"""Compute average position of known enemies (spotted + last known unspotted positions)."""
+	var positions: Array[Vector3] = []
+
+	# Add currently spotted enemies (valid targets)
+	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
+	for ship in valid_targets:
+		positions.append(ship.global_position)
+
+	# Add last known positions of unspotted enemies
+	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	for ship in unspotted.keys():
+		var last_pos: Vector3 = unspotted[ship]
+		positions.append(last_pos)
+
+	if positions.size() == 0:
+		return Vector3.ZERO
+
+	var avg = Vector3.ZERO
+	for pos in positions:
+		avg += pos
+	return avg / positions.size()
+
+
+func _compute_known_enemy_clusters(team_id: int) -> Array[Dictionary]:
+	"""Compute clusters of known enemies (spotted + last known unspotted positions)."""
+	var positions: Array[Dictionary] = []  # Array of {position: Vector3, ship: Ship or null}
+
+	# Add currently spotted enemies (valid targets)
+	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
+	for ship in valid_targets:
+		positions.append({position = ship.global_position, ship = ship})
+
+	# Add last known positions of unspotted enemies
+	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	for ship in unspotted.keys():
+		var last_pos: Vector3 = unspotted[ship]
+		positions.append({position = last_pos, ship = ship})
+
+	if positions.size() == 0:
+		return []
+
+	# Simple clustering by distance
+	var clusters: Array[Dictionary] = []
+	var assigned: Array[bool] = []
+	assigned.resize(positions.size())
+	assigned.fill(false)
+
+	for i in range(positions.size()):
+		if assigned[i]:
+			continue
+
+		var cluster_positions: Array[Vector3] = [positions[i].position]
+		var cluster_ships: Array = [positions[i].ship]
+		assigned[i] = true
+
+		for j in range(i + 1, positions.size()):
+			if assigned[j]:
+				continue
+			# Check if close enough to any position in the cluster
+			for cluster_pos in cluster_positions:
+				if positions[j].position.distance_to(cluster_pos) <= CLUSTER_DISTANCE:
+					cluster_positions.append(positions[j].position)
+					cluster_ships.append(positions[j].ship)
+					assigned[j] = true
+					break
+
+		# Calculate cluster center
+		var center = Vector3.ZERO
+		for pos in cluster_positions:
+			center += pos
+		center /= cluster_positions.size()
+
+		clusters.append({center = center, ships = cluster_ships})
+
+	return clusters
 
 
 func _compute_average_position(ships: Array[Ship]) -> Vector3:
@@ -521,7 +620,17 @@ func get_team_avg_position(team_id: int) -> Vector3:
 
 
 func get_enemy_clusters(team_id: int) -> Array[Dictionary]:
-	"""Get cached clusters for the enemy team."""
+	"""Get cached clusters of KNOWN enemies (spotted + last known positions).
+	This only includes information the team should legitimately have."""
+	if team_id == 0:
+		return team_0_known_enemy_clusters
+	else:
+		return team_1_known_enemy_clusters
+
+
+func get_enemy_clusters_omniscient(team_id: int) -> Array[Dictionary]:
+	"""Get cached clusters for the enemy team (all enemies, omniscient).
+	Use sparingly - this includes information the team shouldn't know."""
 	if team_id == 0:
 		return team_1_clusters
 	else:
@@ -529,7 +638,17 @@ func get_enemy_clusters(team_id: int) -> Array[Dictionary]:
 
 
 func get_enemy_avg_position(team_id: int) -> Vector3:
-	"""Get cached average position for the enemy team."""
+	"""Get cached average position of KNOWN enemies (spotted + last known positions).
+	This only includes information the team should legitimately have."""
+	if team_id == 0:
+		return team_0_known_enemy_avg
+	else:
+		return team_1_known_enemy_avg
+
+
+func get_enemy_avg_position_omniscient(team_id: int) -> Vector3:
+	"""Get cached average position for the enemy team (all enemies, omniscient).
+	Use sparingly - this includes information the team shouldn't know."""
 	if team_id == 0:
 		return team_1_avg_position
 	else:
@@ -754,6 +873,28 @@ func _physics_process(_delta: float) -> void:
 		var p: Ship = players[p_name][0]
 		if visible_toggled[p] == p.visible_to_enemy:
 			visible_toggled.erase(p)
+		else:
+			# Visibility changed - update unspotted enemy lists
+			var enemy_team_id = 1 if p.team.team_id == 0 else 0
+			var unspotted_dict = team_0_unspotted_enemies if enemy_team_id == 0 else team_1_unspotted_enemies
+
+			if p.visible_to_enemy:
+				# Ship became spotted - remove from unspotted list
+				if unspotted_dict.has(p):
+					unspotted_dict.erase(p)
+			else:
+				# Ship became unspotted - add to unspotted list with last known position
+				# Only add if ship has been spotted before (last_spotted_time > 0 means it was spotted at some point)
+				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
+					unspotted_dict[p] = p.global_position
+
+	# Clean up dead ships from unspotted lists
+	for ship in team_0_unspotted_enemies.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_0_unspotted_enemies.erase(ship)
+	for ship in team_1_unspotted_enemies.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_1_unspotted_enemies.erase(ship)
 
 	# if c > 2:
 	# 	c = 0

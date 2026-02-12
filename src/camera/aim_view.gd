@@ -12,7 +12,7 @@ var min_fov = 1.0
 var max_fov = 10.0
 var height = 60.0
 # var player_controller: PlayerController
-#
+const angle = 0.022
 func _ready():
 	current_fov = max_fov
 	current_zoom = current_fov
@@ -85,7 +85,7 @@ func update_transform():
 			var ship_pos = ship.global_position
 			ship_pos.y = 0.0
 			var dist = intersection.distance_to(ship_pos)
-			var h = max(dist * 0.015, 40)
+			var h = max(dist * angle, 40)
 			global_position = ship.global_position
 			global_position.y = h
 
@@ -99,7 +99,7 @@ func update_transform():
 func set_vh(aim_pos: Vector3):
 	# Step 1: Find the height at (ship.x, h, ship.z) where a line at 0.015 radians
 	# passes through aim_pos
-	var angle = 0.015
+	# var angle = 0.015
 	var ship_pos = ship.global_position
 
 # Calculate horizontal distance from ship to aim_pos in XZ plane

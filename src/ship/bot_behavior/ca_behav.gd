@@ -3,6 +3,42 @@ class_name CABehavior
 
 var ammo = ShellParams.ShellType.HE
 
+# Minimum distance from island when hugging cover
+const MIN_ISLAND_COVER_DISTANCE: float = 100.0
+
+func get_evasion_params() -> Dictionary:
+	return {
+		min_angle = deg_to_rad(30),
+		max_angle = deg_to_rad(45),
+		evasion_period = 5.0,
+		vary_speed = false
+	}
+
+func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
+	match ship_class:
+		Ship.ShipClass.BB: return 2.5   # BBs can devastate cruisers
+		Ship.ShipClass.CA: return 1.2
+		Ship.ShipClass.DD: return 0.5
+	return 1.0
+
+func should_evade(_destination: Vector3) -> bool:
+	"""CA-specific: Only evade when in cover or when no cover is available.
+	While traveling to cover, prioritize reaching it over evasion."""
+	# Don't evade if not detected
+	if not _ship.visible_to_enemy:
+		return false
+
+	# If we're in cover, evade (micro-adjustments)
+	if is_in_cover:
+		return true
+
+	# If we have a valid island destination, don't evade - prioritize reaching cover
+	if island_position_valid and current_island != null:
+		return false
+
+	# No cover available - fall back to evasion
+	return true
+
 # Island cover state
 var current_island: StaticBody3D = null
 var island_position_valid: bool = false
@@ -45,7 +81,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 				priority_mod = 1.2
 		priority *= priority_mod
 		priority *= 1.5 - hp_ratio
-		priority = priority * 0.6 + dist / gun_range * priority * 0.4
+		priority = priority * 0.4 + (1 - dist / gun_range) * 0.6
 
 		# Significantly boost priority for targets within gun range
 		if dist <= gun_range:
@@ -107,34 +143,35 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	return offset
 
 
-func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Ship, current_destination: Vector3) -> Vector3:
-	if target == null:
-		return current_destination
-
-	# Get cached average enemy position from server
+func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: Ship, current_destination: Vector3) -> Vector3:
+	# Get server reference early - used throughout
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-	var avg_enemy = Vector3.ZERO
-	if server_node:
-		avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
-	else:
-		for ship in enemy:
-			avg_enemy += ship.global_position
-		avg_enemy /= enemy.size()
+
+	# Check if we have any known enemies
+	var danger_center = _get_danger_center()
+	if danger_center == Vector3.ZERO:
+		# No known enemies - use hunting behavior
+		return _get_hunting_position(server_node, friendly, current_destination)
 
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
 
+	# Get nearest enemy for safety distance calculations
+	var nearest = _get_nearest_enemy()
+	var dist_to_nearest = INF
+	if not nearest.is_empty():
+		dist_to_nearest = nearest.distance
+
 	# Check if we should abandon current island cover
 	var should_find_new_island = false
-	var dist_to_target = _ship.global_position.distance_to(target.global_position)
 
 	if current_island != null and island_position_valid:
 		# Check if enemies are too far (need closer cover)
-		if dist_to_target > gun_range * ABANDON_TOO_FAR:
+		if dist_to_nearest > gun_range * ABANDON_TOO_FAR:
 			should_find_new_island = true
 			island_position_valid = false
 		# Check if enemies are too close (need to kite and find farther cover)
-		elif dist_to_target < gun_range * ABANDON_TOO_CLOSE:
+		elif dist_to_nearest < gun_range * ABANDON_TOO_CLOSE:
 			should_find_new_island = true
 			island_position_valid = false
 			# Force kiting behavior when enemies too close
@@ -144,7 +181,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 	island_cache_timer -= 1.0 / Engine.physics_ticks_per_second
 	if island_cache_timer <= 0 or should_find_new_island:
 		island_cache_timer = ISLAND_CACHE_DURATION
-		current_island = find_optimal_island(target, gun_range, hp_ratio, dist_to_target)
+		current_island = find_optimal_island(danger_center, gun_range, hp_ratio, dist_to_nearest)
 		island_position_valid = current_island != null
 
 	# Update cover preference timer
@@ -154,7 +191,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 
 	# If we have an island, use island cover logic
 	if island_position_valid and current_island != null:
-		var cover_pos = get_island_cover_position(current_island, avg_enemy, target, gun_range)
+		var cover_pos = get_island_cover_position(current_island, danger_center, gun_range)
 		if cover_pos != Vector3.ZERO:
 			# Check if we're already in cover
 			var dist_to_cover = _ship.global_position.distance_to(cover_pos)
@@ -164,23 +201,76 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 			if is_in_cover and not _ship.visible_to_enemy:
 				return _ship.global_position  # Don't move
 
+			# If in cover but detected, try to get closer to island first
+			if is_in_cover and _ship.visible_to_enemy:
+				var island_pos = current_island.global_position
+				var to_island = island_pos - _ship.global_position
+				var dist_to_island = to_island.length()
+				var island_radius = get_island_radius(current_island)
+				var min_safe_dist = island_radius + MIN_ISLAND_COVER_DISTANCE
+
+				if dist_to_island > min_safe_dist + 50.0:
+					# Can get closer to island - move toward it
+					var closer_pos = island_pos + (-to_island.normalized()) * min_safe_dist
+					closer_pos.y = 0.0
+					return _get_valid_nav_point(closer_pos)
+				else:
+					# Already at minimum distance - abandon cover and maneuver
+					is_in_cover = false
+					island_position_valid = false
+					current_island = null
+					# Fall through to tactical positioning
+					return _get_tactical_fallback_position(gun_range, hp_ratio, friendly)
+
 			return cover_pos
 
 	is_in_cover = false
 
-	# Only fall back to kiting if cover preference timer has expired
+	# Only fall back to tactical positioning if cover preference timer has expired
 	if cover_preference_timer > 0:
 		# Still prefer cover, but no island found - try to find one more aggressively
-		# For now just return current position to avoid kiting
+		# For now just return current position to avoid exposing ourselves
 		if not _ship.visible_to_enemy:
 			return _ship.global_position
 
-	# Fallback to normal positioning
-	return get_fallback_position(friendly, enemy, target, avg_enemy, gun_range, hp_ratio)
+	# Fallback to tactical positioning based on danger center
+	return _get_tactical_fallback_position(gun_range, hp_ratio, friendly)
 
 
-func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, current_dist_to_target: float) -> StaticBody3D:
-	"""Find the best island for cover based on HP and tactical situation."""
+func _get_tactical_fallback_position(gun_range: float, hp_ratio: float, friendly: Array[Ship]) -> Vector3:
+	"""Tactical positioning when no cover is available - based on danger center."""
+	# CAs want to fight at 50-70% of max range
+	var base_range_ratio = 0.55
+	# Increase range when damaged
+	var range_increase = clamp((1.0 - hp_ratio) * 0.25, 0.0, 0.20)
+	var engagement_range = (base_range_ratio + range_increase) * gun_range
+
+	# Minimum safe distance - CAs are fragile, need more space
+	var min_safe_distance = gun_range * 0.40
+
+	# CAs should flank more aggressively when healthy
+	var flank_bias = lerp(0.6, 0.2, 1.0 - hp_ratio)
+
+	var desired_position = _calculate_tactical_position(engagement_range, min_safe_distance, flank_bias)
+
+	# Apply spread offset to avoid clumping
+	var spread_offset = Vector3.ZERO
+	var min_spread_distance = 500.0
+	for ship in friendly:
+		if ship == _ship:
+			continue
+		var to_teammate = _ship.global_position - ship.global_position
+		var dist_to_teammate = to_teammate.length()
+		if dist_to_teammate < min_spread_distance * 2.0 and dist_to_teammate > 0.1:
+			var push_strength = 1.0 - (dist_to_teammate / (min_spread_distance * 2.0))
+			spread_offset += to_teammate.normalized() * push_strength * min_spread_distance
+
+	desired_position += spread_offset
+	return _get_valid_nav_point(desired_position)
+
+
+func find_optimal_island(danger_center: Vector3, gun_range: float, hp_ratio: float, dist_to_nearest: float) -> StaticBody3D:
+	"""Find the best island for cover based on danger center and tactical situation."""
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node == null or server_node.map == null:
 		return null
@@ -189,7 +279,9 @@ func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, curren
 	if map.islands.size() == 0:
 		return null
 
-	var target_pos = target.global_position
+	if danger_center == Vector3.ZERO:
+		return null
+
 	var my_pos = _ship.global_position
 
 	# Determine ideal range based on HP
@@ -198,7 +290,7 @@ func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, curren
 	var ideal_distance = gun_range * ideal_range_ratio
 
 	# If enemies too close, prefer islands that let us kite farther
-	var prefer_farther = current_dist_to_target < gun_range * ABANDON_TOO_CLOSE
+	var prefer_farther = dist_to_nearest < gun_range * ABANDON_TOO_CLOSE
 
 	var best_island: StaticBody3D = null
 	var best_score = -INF
@@ -209,15 +301,15 @@ func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, curren
 
 		var island_pos = island.global_position
 
-		# Island must be within gun range of target (so we can shoot from behind it)
-		var island_to_target = island_pos.distance_to(target_pos)
-		if island_to_target > gun_range * 0.85:
-			continue  # Too far from target to shoot over
+		# Island must be within gun range of danger center (so we can shoot from behind it)
+		var island_to_danger = island_pos.distance_to(danger_center)
+		if island_to_danger > gun_range * 0.85:
+			continue  # Too far from enemies to shoot over
 
 		var dist_to_us = island_pos.distance_to(my_pos)
 
 		# Calculate what our engagement distance would be from this island
-		var potential_engagement_dist = island_to_target
+		var potential_engagement_dist = island_to_danger
 
 		# Score based on how close to ideal range this island would put us
 		var range_diff = abs(potential_engagement_dist - ideal_distance)
@@ -226,14 +318,14 @@ func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, curren
 		# Prefer closer islands (easier to reach) with a smaller weight
 		score -= dist_to_us * 0.5
 
-		# If we need to kite farther, strongly prefer islands farther from target
+		# If we need to kite farther, strongly prefer islands farther from danger
 		if prefer_farther:
-			score += island_to_target * 3.0
+			score += island_to_danger * 3.0
 
-		# Bonus for islands that are roughly between us and enemies (good positioning)
-		var to_target_dir = (target_pos - my_pos).normalized()
+		# Bonus for islands that are roughly between us and danger center (good positioning)
+		var to_danger_dir = (danger_center - my_pos).normalized()
 		var to_island_dir = (island_pos - my_pos).normalized()
-		var alignment = to_target_dir.dot(to_island_dir)
+		var alignment = to_danger_dir.dot(to_island_dir)
 		if alignment > 0:
 			score += alignment * 300.0
 
@@ -244,16 +336,16 @@ func find_optimal_island(target: Ship, gun_range: float, hp_ratio: float, curren
 	return best_island
 
 
-func get_island_cover_position(island: StaticBody3D, avg_enemy: Vector3, target: Ship, gun_range: float) -> Vector3:
+func get_island_cover_position(island: StaticBody3D, danger_center: Vector3, gun_range: float) -> Vector3:
 	"""Get position behind island, approximating island as a circle."""
 	var island_pos = island.global_position
 	var island_radius = get_island_radius(island)
 
-	# Direction from island to average enemy
-	var to_enemy = (avg_enemy - island_pos).normalized()
+	# Direction from island to danger center
+	var to_danger = (danger_center - island_pos).normalized()
 
 	# We want to be on the opposite side
-	var cover_dir = -to_enemy
+	var cover_dir = -to_danger
 
 	# Base cover distance - just outside the island
 	var cover_distance = island_radius + 200.0
@@ -265,25 +357,14 @@ func get_island_cover_position(island: StaticBody3D, avg_enemy: Vector3, target:
 	var cover_pos = island_pos + cover_dir * cover_distance
 	cover_pos.y = 0.0
 
-	# Check if we can actually shoot the target from there
-	var dist_to_target = cover_pos.distance_to(target.global_position)
-	if dist_to_target > gun_range * 0.9:
-		# Too far, move closer to island edge toward target
-		var to_target = (target.global_position - island_pos).normalized()
-		# Blend between cover direction and target direction
-		var blended_dir = (cover_dir * 0.6 + to_target * 0.4).normalized()
+	# Check if we can actually shoot enemies from there
+	var dist_to_danger = cover_pos.distance_to(danger_center)
+	if dist_to_danger > gun_range * 0.9:
+		# Too far, move closer to island edge toward danger
+		# Blend between cover direction and danger direction
+		var blended_dir = (cover_dir * 0.6 + to_danger * 0.4).normalized()
 		cover_pos = island_pos + blended_dir * cover_distance
 		cover_pos.y = 0.0
-
-	# Only check shell arcs if we're close to the island (within 500m of cover position)
-	var dist_to_cover = _ship.global_position.distance_to(cover_pos)
-	if dist_to_cover < 500.0:
-		# We're near the island, verify we can shoot over it
-		if not can_shoot_target_from_position(cover_pos, target):
-			# Can't shoot from here, try moving along the island edge
-			cover_pos = find_shootable_position_near_island(island, island_pos, island_radius, target, avg_enemy)
-			if cover_pos == Vector3.ZERO:
-				return Vector3.ZERO  # No valid position found
 
 	return _get_valid_nav_point(cover_pos)
 
@@ -347,6 +428,128 @@ func can_shoot_target_from_position(pos: Vector3, target: Ship) -> bool:
 
 	var can_shoot = Gun.sim_can_shoot_over_terrain_static(pos, launch_vector, flight_time, shell_params, _ship)
 	return can_shoot.can_shoot_over_terrain
+
+
+func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], current_destination: Vector3) -> Vector3:
+	"""When no enemies are visible, move toward last known positions of unspotted enemies."""
+	if server_node == null:
+		return current_destination
+
+	var unspotted_enemies = server_node.get_unspotted_enemies(_ship.team.team_id)
+	if unspotted_enemies.is_empty():
+		# No unspotted enemies tracked, move toward average enemy position or hold position
+		var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
+		if avg_enemy != Vector3.ZERO:
+			# Move cautiously toward average enemy position
+			var gun_range = _ship.artillery_controller.get_params()._range
+			var to_enemy = (avg_enemy - _ship.global_position).normalized()
+			var desired_pos = _ship.global_position + to_enemy * gun_range * 0.3
+			return _get_valid_nav_point(desired_pos)
+		return current_destination
+
+	# Find the closest unspotted enemy's last known position
+	var closest_pos: Vector3 = Vector3.ZERO
+	var closest_dist: float = INF
+
+	for ship in unspotted_enemies.keys():
+		var last_known_pos: Vector3 = unspotted_enemies[ship]
+		var dist = _ship.global_position.distance_to(last_known_pos)
+		if dist < closest_dist:
+			closest_dist = dist
+			closest_pos = last_known_pos
+
+	if closest_pos == Vector3.ZERO:
+		return current_destination
+
+	# Calculate hunting position - move toward last known position but cautiously
+	var gun_range = _ship.artillery_controller.get_params()._range
+	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+
+	# If we're close to the last known position, slow down and search
+	if closest_dist < gun_range * 0.5:
+		# We're in the area, try to find island cover while hunting
+		if current_island != null and island_position_valid:
+			var avg_last_known = closest_pos
+			var cover_pos = get_island_cover_position(current_island, avg_last_known, gun_range)
+			if cover_pos != Vector3.ZERO:
+				return cover_pos
+		# No cover, cautiously approach
+		var to_target = (closest_pos - _ship.global_position).normalized()
+		var desired_pos = _ship.global_position + to_target * min(closest_dist * 0.5, 500.0)
+		return _get_valid_nav_point(desired_pos)
+
+	# Move toward the last known position
+	# Low HP ships should be more cautious
+	var approach_speed = lerp(0.6, 0.3, 1.0 - hp_ratio)  # High HP = faster approach
+	var to_target = (closest_pos - _ship.global_position).normalized()
+	var desired_pos = _ship.global_position + to_target * gun_range * approach_speed
+
+	# Try to find island cover along the way
+	island_cache_timer -= 1.0 / Engine.physics_ticks_per_second
+	if island_cache_timer <= 0:
+		island_cache_timer = ISLAND_CACHE_DURATION
+		current_island = _find_island_toward_position(closest_pos, gun_range)
+		island_position_valid = current_island != null
+
+	if island_position_valid and current_island != null:
+		var cover_pos = get_island_cover_position(current_island, closest_pos, gun_range)
+		if cover_pos != Vector3.ZERO:
+			return cover_pos
+
+	# Apply separation from teammates
+	var spread_offset = Vector3.ZERO
+	var min_spread_distance = 500.0
+	for ship in friendly:
+		if ship == _ship:
+			continue
+		var to_teammate = _ship.global_position - ship.global_position
+		var dist_to_teammate = to_teammate.length()
+		if dist_to_teammate < min_spread_distance and dist_to_teammate > 0.1:
+			spread_offset += to_teammate.normalized() * (min_spread_distance - dist_to_teammate)
+
+	desired_pos += spread_offset
+	return _get_valid_nav_point(desired_pos)
+
+
+func _find_island_toward_position(target_pos: Vector3, gun_range: float) -> StaticBody3D:
+	"""Find an island that provides cover while moving toward a position."""
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null or server_node.map == null:
+		return null
+
+	var map: Map = server_node.map
+	if map.islands.size() == 0:
+		return null
+
+	var my_pos = _ship.global_position
+	var best_island: StaticBody3D = null
+	var best_score = -INF
+
+	for island in map.islands:
+		if not is_instance_valid(island):
+			continue
+
+		var island_pos = island.global_position
+		var dist_to_us = island_pos.distance_to(my_pos)
+		var island_to_target = island_pos.distance_to(target_pos)
+
+		# Island should be between us and the target, or at least not too far
+		if island_to_target > gun_range * 0.9:
+			continue
+
+		# Prefer islands that are along our path to the target
+		var to_target_dir = (target_pos - my_pos).normalized()
+		var to_island_dir = (island_pos - my_pos).normalized()
+		var alignment = to_target_dir.dot(to_island_dir)
+
+		var score = alignment * 500.0  # Prefer aligned islands
+		score -= dist_to_us * 0.3  # Closer islands are slightly preferred
+
+		if score > best_score:
+			best_score = score
+			best_island = island
+
+	return best_island
 
 
 func get_fallback_position(friendly: Array[Ship], _enemy: Array[Ship], target: Ship, avg_enemy: Vector3, gun_range: float, hp_ratio: float) -> Vector3:
