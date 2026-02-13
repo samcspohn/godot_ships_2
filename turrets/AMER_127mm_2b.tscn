@@ -1,10 +1,10 @@
 [gd_scene format=3 uid="uid://brjx836dkpsi3"]
 
 [ext_resource type="PackedScene" uid="uid://cdg0q23ghbv4o" path="res://turrets/glb/AMER_127mm_2b.glb" id="1_j7fcw"]
-[ext_resource type="AudioStream" uid="uid://cuje38g7ibc1n" path="res://audio/explosion1.wav" id="2_ptlfi"]
+[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="2_ptlfi"]
 
 [node name="AMER_127mm_2b2" unique_id=692518245 instance=ExtResource("1_j7fcw")]
 _sound = ExtResource("2_ptlfi")
 pitch = 2.0
-volume = 0.7
+volume = 0.5
 variance = 0.1

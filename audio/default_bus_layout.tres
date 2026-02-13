@@ -1,5 +1,11 @@
 [gd_resource type="AudioBusLayout" format=3 uid="uid://c0wo7dv18yqkx"]
 
+[sub_resource type="AudioEffectAmplify" id="AudioEffectAmplify_73ea7"]
+resource_name = "Amplify"
+
+[sub_resource type="AudioEffectCompressor" id="AudioEffectCompressor_73ea7"]
+resource_name = "Compressor"
+
 [sub_resource type="AudioEffectReverb" id="AudioEffectReverb_73ea7"]
 resource_name = "Reverb"
 
@@ -16,7 +22,11 @@ mix = 0.8
 sidechain = &"Main"
 
 [resource]
-bus/0/volume_db = 3.2424984
+bus/0/volume_db = -0.13049698
+bus/0/effect/0/effect = SubResource("AudioEffectAmplify_73ea7")
+bus/0/effect/0/enabled = false
+bus/0/effect/1/effect = SubResource("AudioEffectCompressor_73ea7")
+bus/0/effect/1/enabled = true
 bus/1/name = &"Main"
 bus/1/solo = false
 bus/1/mute = false

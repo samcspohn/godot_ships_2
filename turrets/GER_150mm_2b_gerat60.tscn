@@ -2,10 +2,11 @@
 
 [ext_resource type="PackedScene" uid="uid://c7kxmqf5odbws" path="res://turrets/glb/GER_150mm_2b_gerat60.glb" id="1_kqkyl"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_56ou0"]
-[ext_resource type="AudioStream" uid="uid://cuje38g7ibc1n" path="res://audio/explosion1.wav" id="3_mt5ug"]
+[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="3_mt5ug"]
 
 [node name="GER_150mm_2b_gerat60" unique_id=1982921150 instance=ExtResource("1_kqkyl")]
 script = ExtResource("2_56ou0")
 _sound = ExtResource("3_mt5ug")
 pitch = 1.3
+volume = 0.8
 variance = 0.1

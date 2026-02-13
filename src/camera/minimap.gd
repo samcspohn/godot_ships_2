@@ -4,7 +4,7 @@ class_name Minimap
 
 # Constants
 const SHIP_MARKER_SIZE = 30
-const CONSUMABLE_ICON_SIZE = 12 # Base size for consumable icons on minimap
+const CONSUMABLE_ICON_SIZE = 24 # Base size for consumable icons on minimap
 const SHIP_NAME_FONT_SIZE = 10 # Base font size for ship names on minimap
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White
 const FRIENDLY_COLOR = Color(0, 1, 0, 1) # Green

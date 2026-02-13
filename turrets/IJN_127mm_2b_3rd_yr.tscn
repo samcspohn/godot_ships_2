@@ -1,12 +1,12 @@
 [gd_scene format=3 uid="uid://crqcxtlvo2tif"]
 
 [ext_resource type="PackedScene" uid="uid://baweb555vb2nb" path="res://turrets/glb/IJN_127mm_2b_3rd_yr.glb" id="1_bcq5c"]
-[ext_resource type="AudioStream" uid="uid://cuje38g7ibc1n" path="res://audio/explosion1.wav" id="2_ovy00"]
+[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="2_ovy00"]
 
 [node name="IJN_127mm_2b_3rd_yr" unique_id=2037735067 instance=ExtResource("1_bcq5c")]
 _sound = ExtResource("2_ovy00")
 pitch = 2.0
-volume = 0.7
+volume = 0.5
 variance = 0.1
 glb_path = "uid://baweb555vb2nb"
 

@@ -29,7 +29,7 @@ var sunk_time: float = 0.0
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
-const SHELL_DAMAGE_RADIUS_MOD: float = 12.5
+const SHELL_DAMAGE_RADIUS_MOD: float = 15.5
 
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():

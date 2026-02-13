@@ -50,6 +50,8 @@ Cruiser:
 			- otherwise stays at current island
 		- falls back to normal kiting if no suitable island or can't shoot from cover
 
+	will not go for cover when hunting especially against other cruisers and destroyers
+
 Destroyer:
 	prefer HE
 	AP at:
@@ -74,3 +76,5 @@ Destroyer:
 	will avoid shooting unless spotted and will stop shooting when closest ship is outside concealment radius
 	will shoot from long range after torpedoes land and target is flooding
 	will not shoot when low health (< 30% HP) - prioritizes stealth and survival
+
+	will chase and engage enemy destroyers when having advantage

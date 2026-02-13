@@ -33,6 +33,7 @@ func _preview_sound() -> void:
 	preview_player.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
 	preview_player.max_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
 	preview_player.volume_db = preview_player.max_db
+	preview_player.unit_size = 100
 	add_child(preview_player)
 	preview_player.play()
 	preview_player.finished.connect(preview_player.queue_free)
