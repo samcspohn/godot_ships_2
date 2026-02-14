@@ -138,7 +138,7 @@ func setup_audio():
 				sound.stream = preload("res://audio/explosion1.wav")
 			else:
 				sound.stream = _sound
-			sound.max_polyphony = 1
+			sound.max_polyphony = 4
 			sound.unit_size = 100.0 * get_shell().caliber / 100.0 + 100.0
 			sound.max_db = linear_to_db(volume * (1.0 + variance))
 			var shell_params: ShellParams = get_shell()

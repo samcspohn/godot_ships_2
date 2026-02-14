@@ -202,7 +202,7 @@ func spawn_player(id, player_name):
 
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
 
-	# Calculate even distribution spawn position
+	# Calculate spawn position
 	# Count total players on this team from team_info
 	var team_player_count = 0
 	for team_player_id in team_info["team"]:
@@ -210,19 +210,25 @@ func spawn_player(id, player_name):
 		if int(player_data["team"]) == team_id:
 			team_player_count += 1
 
-	# Initialize spawn slots for this team if not exists (randomized order)
-	if not team_spawn_slots.has(team_id):
-		var slots = []
-		for i in range(team_player_count):
-			slots.append(i)
-		slots.shuffle()
-		team_spawn_slots[team_id] = slots
-		team_spawn_counts[team_id] = 0
+	# Check if spawn_position is provided in team_info (from matchmaker)
+	var spawn_index: int
+	var player_team_data = team_info["team"].get(player_name, {})
+	if player_team_data.has("spawn_position"):
+		# Use the pre-assigned spawn position from matchmaker
+		spawn_index = player_team_data["spawn_position"]
+	else:
+		# Fallback to old random slot system for backwards compatibility
+		if not team_spawn_slots.has(team_id):
+			var slots = []
+			for i in range(team_player_count):
+				slots.append(i)
+			slots.shuffle()
+			team_spawn_slots[team_id] = slots
+			team_spawn_counts[team_id] = 0
 
-	# Get the next randomized spawn slot
-	var slot_index = team_spawn_counts[team_id]
-	var spawn_index = team_spawn_slots[team_id][slot_index]
-	team_spawn_counts[team_id] += 1
+		var slot_index = team_spawn_counts[team_id]
+		spawn_index = team_spawn_slots[team_id][slot_index]
+		team_spawn_counts[team_id] += 1
 
 	var spawn_offset: float
 	if team_player_count <= 1:
@@ -617,6 +623,18 @@ func get_team_avg_position(team_id: int) -> Vector3:
 		return team_0_avg_position
 	else:
 		return team_1_avg_position
+
+
+func get_team_spawn_position(team_id: int) -> Vector3:
+	"""Get the spawn position for a team. Used for flanking detection."""
+	var spawn_map = get_node_or_null("GameWorld/Env")
+	if spawn_map == null or spawn_map.get_child_count() == 0:
+		return Vector3.ZERO
+	spawn_map = spawn_map.get_child(0)
+	var spawn_node = spawn_map.get_node_or_null("Spawn")
+	if spawn_node == null or spawn_node.get_child_count() <= team_id:
+		return Vector3.ZERO
+	return (spawn_node.get_child(team_id) as Node3D).global_position
 
 
 func get_enemy_clusters(team_id: int) -> Array[Dictionary]:

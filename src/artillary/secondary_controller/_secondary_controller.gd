@@ -325,8 +325,9 @@ func _physics_process(delta: float) -> void:
 		# shoot at all targets
 		for e in targets_guns:
 			target_seq_timers[e] = target_seq_timers.get(e, 0.0) + delta
-			if target_seq_timers[e] >= min(sequential_fire_delay, min_reload_time / targets_guns[e].size()):
-				target_seq_timers[e] = 0.0
+			var delay = min(sequential_fire_delay, min_reload_time / targets_guns[e].size())
+			while target_seq_timers.get(e, -1) > 0.0:
+				target_seq_timers[e] -= delay
 				for g: Gun in targets_guns[e]:
 					if g.reload >= 1 and g.can_fire:
 						if gun_targets[g] == target:

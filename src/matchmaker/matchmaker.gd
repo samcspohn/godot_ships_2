@@ -7,6 +7,33 @@ var available_ports = []  # List to track available ports
 var port_range_start = 28970  # Starting port for game servers
 var port_range_end = 29000    # Ending port for game servers
 
+# Ship class constants matching Ship.ShipClass enum
+const SHIP_CLASS_BB = 0  # Battleship
+const SHIP_CLASS_CA = 1  # Cruiser
+const SHIP_CLASS_DD = 2  # Destroyer
+
+# Ship data: path -> {class, tier}
+const SHIP_DATA = {
+	"res://Ships/Bismarck/Bismarck3.tscn": {"class": SHIP_CLASS_BB, "tier": 8},
+	"res://Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
+	"res://Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
+	"res://Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10}
+}
+
+# Available ships by class for bot team generation
+const SHIPS_BY_CLASS = {
+	SHIP_CLASS_BB: [
+		"res://Ships/Bismarck/Bismarck3.tscn",
+		"res://Ships/H44/H44.tscn"
+	],
+	SHIP_CLASS_CA: [
+		"res://Ships/DesMoines/DesMoines.tscn"
+	],
+	SHIP_CLASS_DD: [
+		"res://Ships/Shimakaze/Shimakaze.tscn"
+	]
+}
+
 func _ready():
 	# Initialize available ports
 	initialize_available_ports()
@@ -59,38 +86,7 @@ func _ready():
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				var bot_ships = ["res://Ships/Bismarck/Bismarck3.tscn",
-					"res://Ships/DesMoines/DesMoines.tscn",
-					"res://Ships/Shimakaze/Shimakaze.tscn",
-					"res://Ships/H44/H44.tscn",
-				]
-				# Player team (team 0)
-				team[client_data["player_name"]] = {
-					"team": "0",
-					"player_id": client_data["player_name"],
-					"ship": client_data["ship"],
-					"is_bot": false
-				}
-				# Bot team (team 1) - 3 bots
-				var num_in_team = 10
-				for i in range(1, num_in_team):
-					var bot_id = str(i + 1 + 1000)
-					team[bot_id] = {
-						"team": "0",
-						"player_id": bot_id,
-						"ship": bot_ships[i % bot_ships.size()],
-						"is_bot": true
-					}
-
-				# Bot team (team 1) - 4 bots
-				for i in range(num_in_team):
-					var bot_id = str(i + 1 + num_in_team + 1000)
-					team[bot_id] = {
-						"team": "1",
-						"player_id": bot_id,
-						"ship": bot_ships[i % bot_ships.size()],
-						"is_bot": true
-					}
+				team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
 
 				var team_info = {
 					"team": team
@@ -220,3 +216,191 @@ func find_best_game_server():
 		"port": port,
 		"max_players": GameSettings.MAX_PLAYERS
 	}
+
+# Create balanced teams for single player mode
+# Each team will have 3-4 destroyers, 3-4 cruisers, and 3-4 battleships (10 total)
+# The player's ship class is accounted for to ensure balance
+# Both teams will have identical ship compositions (mirrored) for tier balance
+# Spawn positions: Distributed in clusters (DD, CA, BB) repeating across the spawn line
+func create_balanced_single_player_teams(player_name: String, player_ship: String) -> Dictionary:
+	var team = {}
+
+	# Determine player's ship class
+	var player_ship_data = SHIP_DATA.get(player_ship, {"class": SHIP_CLASS_CA, "tier": 10})
+	var player_ship_class = player_ship_data["class"]
+
+	# Define team composition: 10 ships per team
+	# Randomly choose which class gets 4 ships (others get 3)
+	var class_counts = {
+		SHIP_CLASS_BB: 3,
+		SHIP_CLASS_CA: 3,
+		SHIP_CLASS_DD: 3
+	}
+	# Randomly pick one class to have 4 ships
+	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
+	var bonus_class = classes[randi() % classes.size()]
+	class_counts[bonus_class] = 4
+
+	# Build the ship list for each class
+	# This ensures both teams have identical tier compositions
+	var ships_by_class_list = {
+		SHIP_CLASS_BB: [],
+		SHIP_CLASS_CA: [],
+		SHIP_CLASS_DD: []
+	}
+
+	for ship_class in [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]:
+		var ships_available = SHIPS_BY_CLASS[ship_class]
+		var count = class_counts[ship_class]
+
+		# If this is the player's class, ensure player's exact ship is included first
+		if ship_class == player_ship_class:
+			ships_by_class_list[ship_class].append(player_ship)
+			var remaining = count - 1
+			var ship_index = 0
+			while remaining > 0:
+				var ship_path = ships_available[ship_index % ships_available.size()]
+				ships_by_class_list[ship_class].append(ship_path)
+				ship_index += 1
+				remaining -= 1
+		else:
+			for i in range(count):
+				var ship_path = ships_available[i % ships_available.size()]
+				ships_by_class_list[ship_class].append(ship_path)
+
+	# Assign spawn positions by class for even distribution across the spawn axis
+	# Positions 0-9 from left to right:
+	# DDs on flanks (outer positions), CAs in between, BBs in center
+	var spawn_positions_by_class = _get_spawn_positions_by_class(class_counts)
+
+	var bot_id_counter = 1001
+	var player_slot_filled = false
+
+	# Fill team 0
+	for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
+		var ship_list = ships_by_class_list[ship_class]
+		var positions = spawn_positions_by_class[ship_class].duplicate()
+
+		for ship_path in ship_list:
+			var spawn_pos = positions.pop_front()
+
+			if not player_slot_filled and ship_path == player_ship:
+				# Player takes this slot
+				team[player_name] = {
+					"team": "0",
+					"player_id": player_name,
+					"ship": player_ship,
+					"is_bot": false,
+					"spawn_position": spawn_pos
+				}
+				player_slot_filled = true
+			else:
+				var bot_id = str(bot_id_counter)
+				bot_id_counter += 1
+				team[bot_id] = {
+					"team": "0",
+					"player_id": bot_id,
+					"ship": ship_path,
+					"is_bot": true,
+					"spawn_position": spawn_pos
+				}
+
+	# Fill team 1 - exact mirror of ship composition for tier balance
+	for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
+		var ship_list = ships_by_class_list[ship_class]
+		var positions = spawn_positions_by_class[ship_class].duplicate()
+
+		for ship_path in ship_list:
+			var spawn_pos = positions.pop_front()
+			var bot_id = str(bot_id_counter)
+			bot_id_counter += 1
+			team[bot_id] = {
+				"team": "1",
+				"player_id": bot_id,
+				"ship": ship_path,
+				"is_bot": true,
+				"spawn_position": spawn_pos
+			}
+
+	# Log team composition for debugging
+	_log_team_composition(team)
+
+	return team
+
+# Get spawn positions for each class based on class counts
+# Distributed in repeating clusters: (DD, CA, BB) pattern across the spawn line
+# Example with 3 DD, 4 CA, 3 BB: DD, CA, BB, DD, CA, BB, DD, CA, CA, BB
+func _get_spawn_positions_by_class(class_counts: Dictionary) -> Dictionary:
+	var positions = {
+		SHIP_CLASS_DD: [],
+		SHIP_CLASS_CA: [],
+		SHIP_CLASS_BB: []
+	}
+
+	# Track remaining ships of each class to assign
+	var remaining = {
+		SHIP_CLASS_DD: class_counts[SHIP_CLASS_DD],
+		SHIP_CLASS_CA: class_counts[SHIP_CLASS_CA],
+		SHIP_CLASS_BB: class_counts[SHIP_CLASS_BB]
+	}
+
+	var total_ships = class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD]
+	var current_pos = 0
+
+	# Assign positions in repeating cluster pattern: DD, CA, BB
+	var class_order = [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]
+
+	while current_pos < total_ships:
+		for ship_class in class_order:
+			if remaining[ship_class] > 0 and current_pos < total_ships:
+				positions[ship_class].append(current_pos)
+				remaining[ship_class] -= 1
+				current_pos += 1
+
+	return positions
+
+func _log_team_composition(team: Dictionary) -> void:
+	var team0_tiers = []
+	var team1_tiers = []
+	var team0_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0}
+	var team1_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0}
+
+	for key in team:
+		var ship_path = team[key]["ship"]
+		var ship_data = SHIP_DATA.get(ship_path, {"tier": 10, "class": SHIP_CLASS_CA})
+		var tier = ship_data["tier"]
+		var ship_class = ship_data["class"]
+
+		if team[key]["team"] == "0":
+			team0_tiers.append(tier)
+			team0_classes[ship_class] += 1
+		else:
+			team1_tiers.append(tier)
+			team1_classes[ship_class] += 1
+
+	print("=== Team Composition ===")
+	print("Team 0: %d ships (BB:%d CA:%d DD:%d) - Tiers: %s (avg: %.1f)" % [
+		team0_tiers.size(),
+		team0_classes[SHIP_CLASS_BB],
+		team0_classes[SHIP_CLASS_CA],
+		team0_classes[SHIP_CLASS_DD],
+		str(team0_tiers),
+		_array_average(team0_tiers)
+	])
+	print("Team 1: %d ships (BB:%d CA:%d DD:%d) - Tiers: %s (avg: %.1f)" % [
+		team1_tiers.size(),
+		team1_classes[SHIP_CLASS_BB],
+		team1_classes[SHIP_CLASS_CA],
+		team1_classes[SHIP_CLASS_DD],
+		str(team1_tiers),
+		_array_average(team1_tiers)
+	])
+	print("========================")
+
+func _array_average(arr: Array) -> float:
+	if arr.is_empty():
+		return 0.0
+	var total = 0.0
+	for val in arr:
+		total += val
+	return total / arr.size()

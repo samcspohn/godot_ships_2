@@ -398,20 +398,20 @@ func defer_target():
 	navigation_proxy.global_position = _ship.global_position
 	navigation_proxy.global_position.y = 0.0
 
-	# Set initial destination toward enemy average position instead of map center
-	var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
-	if avg_enemy != Vector3.ZERO:
-		var gun_range = _ship.artillery_controller.get_params()._range
-		var to_enemy = (avg_enemy - _ship.global_position).normalized()
-		destination = _ship.global_position + to_enemy * gun_range * 0.5
-		destination.y = 0.0
-	else:
-		# Fallback: move toward opposite side of map
-		destination = _ship.global_position
-		destination.z = -destination.z
-		destination.y = 0.0
+	# # Set initial destination toward enemy average position instead of map center
+	# var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
+	# if avg_enemy != Vector3.ZERO:
+	# 	var gun_range = _ship.artillery_controller.get_params()._range
+	# 	var to_enemy = (avg_enemy - _ship.global_position).normalized()
+	# 	destination = _ship.global_position + to_enemy * gun_range * 0.5
+	# 	destination.y = 0.0
+	# else:
+	# 	# Fallback: move toward opposite side of map
+	# 	destination = _ship.global_position
+	# 	destination.z = -destination.z
+	# 	destination.y = 0.0
 
-	navigation_agent.set_target_position(destination)
+	navigation_agent.set_target_position(Vector3.ZERO)
 	waypoint = navigation_agent.get_next_path_position()
 	path = navigation_agent.get_current_navigation_path()
 

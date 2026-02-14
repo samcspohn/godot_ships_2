@@ -7,6 +7,18 @@ base:
 		- server computes ship clusters per team each frame (ships within 3000m grouped together)
 		- avg_enemy and avg_friendly positions are precomputed on server
 		- bots use cached data instead of computing averages themselves
+
+	flanking detection:
+		- enemies pushing into friendly spawn area get extremely high target priority
+		- uses spawn-to-spawn distance to calculate penetration depth
+		- flank_threshold (50%): enemy past midfield toward our spawn
+		- deep_flank_threshold (30%): enemy very deep in our territory
+		- priority multiplier scales with penetration depth (1.0x to 2.0x base multiplier)
+		- extra priority boost if enemy is closer to our spawn than our team average (behind our lines)
+		- configurable per ship class via get_flanking_params() and flanking_multiplier in get_target_weights()
+		- BB: 4.0x multiplier (slower to respond)
+		- CA: 5.0x multiplier (standard response)
+		- DD: 6.0x multiplier (fast interceptors, excellent at catching flankers)
 Battleship:
 	prefers ap.
 	AP at:

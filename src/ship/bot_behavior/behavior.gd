@@ -56,6 +56,11 @@ var current_salvo_positions: Array[Vector3] = []
 var friendly_fire_check_radius: float = 5000.0
 var friendly_fire_safety_margin: float = 500.0
 
+# Flanking detection cache
+var _cached_friendly_spawn: Vector3 = Vector3.ZERO
+var _cached_enemy_spawn: Vector3 = Vector3.ZERO
+var _spawn_cache_initialized: bool = false
+
 # ============================================================================
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
 # ============================================================================
@@ -73,6 +78,19 @@ func get_target_weights() -> Dictionary:
 		},
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
+		flanking_multiplier = 5.0,  # Priority boost for flanking enemies
+	}
+
+func get_flanking_params() -> Dictionary:
+	"""Override to customize flanking detection thresholds."""
+	return {
+		# Enemy is flanking if closer to our spawn than this fraction of spawn-to-spawn distance
+		deep_flank_threshold = 0.3,  # Very deep in our territory
+		flank_threshold = 0.5,       # Past midfield toward our spawn
+		# Minimum distance to spawn to be considered flanking (prevents false positives at map edges)
+		min_spawn_distance = 5000.0,
+		# Enable/disable flanking detection
+		enabled = true,
 	}
 
 func get_positioning_params() -> Dictionary:
@@ -164,6 +182,14 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		# Boost targets within range
 		if dist <= gun_range:
 			priority *= weights.in_range_multiplier
+
+		# Apply flanking priority boost
+		var flank_info = _get_flanking_info(ship)
+		if flank_info.is_flanking:
+			var flank_multiplier = weights.get("flanking_multiplier", 5.0)
+			# Scale multiplier by how deep they've penetrated (1.0 to 2.0x the base multiplier)
+			var depth_scale = 1.0 + flank_info.penetration_depth
+			priority *= flank_multiplier * depth_scale
 
 		if priority > best_priority:
 			best_target = ship
@@ -328,6 +354,94 @@ func _get_nearest_enemy() -> Dictionary:
 		return {}
 
 	return {position = nearest_pos, distance = nearest_dist, ship = nearest_ship}
+
+func _initialize_spawn_cache() -> void:
+	"""Initialize spawn position cache for flanking detection."""
+	if _spawn_cache_initialized:
+		return
+
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return
+
+	var my_team_id = _ship.team.team_id
+	var enemy_team_id = 1 - my_team_id
+
+	_cached_friendly_spawn = server_node.get_team_spawn_position(my_team_id)
+	_cached_enemy_spawn = server_node.get_team_spawn_position(enemy_team_id)
+
+	if _cached_friendly_spawn != Vector3.ZERO and _cached_enemy_spawn != Vector3.ZERO:
+		_spawn_cache_initialized = true
+
+func _get_flanking_info(enemy: Ship) -> Dictionary:
+	"""Determine if an enemy is flanking (pushing into friendly spawn area).
+	Returns {is_flanking: bool, penetration_depth: float (0-1)}."""
+	var params = get_flanking_params()
+
+	if not params.enabled:
+		return {is_flanking = false, penetration_depth = 0.0}
+
+	# Initialize spawn cache if needed
+	_initialize_spawn_cache()
+
+	if not _spawn_cache_initialized:
+		return {is_flanking = false, penetration_depth = 0.0}
+
+	var enemy_pos = enemy.global_position
+	var spawn_to_spawn = _cached_enemy_spawn - _cached_friendly_spawn
+	spawn_to_spawn.y = 0.0
+	var total_distance = spawn_to_spawn.length()
+
+	if total_distance < 1.0:
+		return {is_flanking = false, penetration_depth = 0.0}
+
+	# Calculate how far along the spawn-to-spawn axis the enemy is
+	# 0.0 = at enemy spawn, 1.0 = at our spawn
+	var enemy_to_friendly_spawn = _cached_friendly_spawn - enemy_pos
+	enemy_to_friendly_spawn.y = 0.0
+	var dist_to_friendly_spawn = enemy_to_friendly_spawn.length()
+
+	# Project enemy position onto spawn-to-spawn line
+	var spawn_axis = spawn_to_spawn.normalized()
+	var enemy_from_enemy_spawn = enemy_pos - _cached_enemy_spawn
+	enemy_from_enemy_spawn.y = 0.0
+	var projection = enemy_from_enemy_spawn.dot(spawn_axis)
+	var penetration_ratio = projection / total_distance
+
+	# Check minimum distance to spawn (to avoid false positives at map edges)
+	if dist_to_friendly_spawn > params.min_spawn_distance * 2:
+		# Too far from our spawn to be a real flanking threat
+		if penetration_ratio < params.flank_threshold:
+			return {is_flanking = false, penetration_depth = 0.0}
+
+	# Determine if flanking based on penetration depth
+	var is_flanking = false
+	var depth = 0.0
+
+	if penetration_ratio >= params.deep_flank_threshold:
+		# Deep flank - very high priority
+		is_flanking = true
+		# Scale depth from 0.5 to 1.0 based on how deep (0.3 to 1.0 penetration)
+		depth = remap(penetration_ratio, params.deep_flank_threshold, 1.0, 0.5, 1.0)
+		depth = clamp(depth, 0.5, 1.0)
+	elif penetration_ratio >= params.flank_threshold:
+		# Moderate flank
+		is_flanking = true
+		# Scale depth from 0.0 to 0.5 based on penetration
+		depth = remap(penetration_ratio, params.flank_threshold, params.deep_flank_threshold, 0.0, 0.5)
+		depth = clamp(depth, 0.0, 0.5)
+
+	# Additional check: if enemy is closer to our spawn than our team average, boost priority
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node and is_flanking:
+		var friendly_avg = server_node.get_team_avg_position(_ship.team.team_id)
+		if friendly_avg != Vector3.ZERO:
+			var friendly_dist_to_spawn = friendly_avg.distance_to(_cached_friendly_spawn)
+			if dist_to_friendly_spawn < friendly_dist_to_spawn:
+				# Enemy is behind our lines - extra dangerous
+				depth = min(depth + 0.25, 1.0)
+
+	return {is_flanking = is_flanking, penetration_depth = depth}
 
 func _get_flanking_direction(danger_center: Vector3, friendly_avg: Vector3) -> int:
 	"""Determine which direction to flank (1 = right, -1 = left)."""

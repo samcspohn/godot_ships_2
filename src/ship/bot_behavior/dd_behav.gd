@@ -42,7 +42,7 @@ func get_positioning_params() -> Dictionary:
 		base_range_ratio = 0.50,
 		range_increase_when_damaged = 0.30,
 		min_safe_distance_ratio = 0.30,
-		flank_bias_healthy = 0.3,
+		flank_bias_healthy = 0.7,
 		flank_bias_damaged = 0.1,
 		spread_distance = 1500.0,  # DDs spread more
 		spread_multiplier = 1.0,
@@ -112,6 +112,14 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		# Boost targets within range
 		if dist <= gun_range or (torpedo_range > 0 and dist <= torpedo_range):
 			priority *= 10.0
+
+		# Apply flanking priority boost - DDs should intercept flankers
+		var flank_info = _get_flanking_info(ship)
+		if flank_info.is_flanking:
+			# DDs are excellent at intercepting flankers due to speed and torpedoes
+			var flank_multiplier = 6.0  # High priority for flankers
+			var depth_scale = 1.0 + flank_info.penetration_depth
+			priority *= flank_multiplier * depth_scale
 
 		if priority > highest_priority:
 			target = ship

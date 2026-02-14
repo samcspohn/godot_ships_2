@@ -19,7 +19,7 @@ func get_evasion_params() -> Dictionary:
 	return {
 		min_angle = deg_to_rad(25),
 		max_angle = deg_to_rad(35),
-		evasion_period = 7.0,  # Slow, deliberate weaves
+		evasion_period = 20.0,  # Slow, deliberate weaves
 		vary_speed = false
 	}
 
@@ -27,7 +27,7 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 2.0   # Other BBs are primary threat
 		Ship.ShipClass.CA: return 1.0
-		Ship.ShipClass.DD: return 0.3   # DDs less relevant for angling
+		Ship.ShipClass.DD: return 3.0   # DDs less relevant for angling
 	return 1.0
 
 func get_target_weights() -> Dictionary:
@@ -42,16 +42,17 @@ func get_target_weights() -> Dictionary:
 		},
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
+		flanking_multiplier = 4.0,  # BBs prioritize flanking enemies (slightly lower than CA/DD since BBs turn slowly)
 	}
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.70,           # 70% of gun range
-		range_increase_when_damaged = 0.15, # Up to +15% range when low HP
-		min_safe_distance_ratio = 0.35,     # Don't let enemies within 35% range
-		flank_bias_healthy = 0.4,
+		base_range_ratio = 0.60,           # 70% of gun range
+		range_increase_when_damaged = 0.35, # Up to +15% range when low HP
+		min_safe_distance_ratio = 0.40,     # Don't let enemies within 50% range
+		flank_bias_healthy = 0.6,
 		flank_bias_damaged = 0.1,
-		spread_distance = 500.0,
+		spread_distance = 3000.0,
 		spread_multiplier = 3.0,
 	}
 
@@ -117,7 +118,15 @@ func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: S
 
 	var danger_center = _get_danger_center()
 	if danger_center == Vector3.ZERO:
-		return _get_hunting_position(server_node, friendly, current_destination)
+		current_destination = _get_hunting_position(server_node, friendly, current_destination)
+		if current_destination == Vector3.ZERO:
+			current_destination = _ship.global_position - _ship.basis.z * 10_000
+			current_destination.y = 0
+			return _get_valid_nav_point(current_destination)
+		else:
+			return current_destination
+
+
 
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp

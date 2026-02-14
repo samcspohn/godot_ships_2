@@ -44,16 +44,17 @@ func get_target_weights() -> Dictionary:
 		},
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
+		flanking_multiplier = 5.0,  # Priority boost for flanking enemies
 	}
 
 func get_positioning_params() -> Dictionary:
 	return {
 		base_range_ratio = 0.55,
-		range_increase_when_damaged = 0.20,
+		range_increase_when_damaged = 0.40,
 		min_safe_distance_ratio = 0.40,  # CAs are fragile, need more space
 		flank_bias_healthy = 0.6,
 		flank_bias_damaged = 0.2,
-		spread_distance = 500.0,
+		spread_distance = 2000.0,
 		spread_multiplier = 2.0,
 	}
 
@@ -124,6 +125,14 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		if dist <= gun_range:
 			priority *= weights.in_range_multiplier
 
+		# Apply flanking priority boost
+		var flank_info = _get_flanking_info(ship)
+		if flank_info.is_flanking:
+			var flank_multiplier = weights.get("flanking_multiplier", 5.0)
+			# Scale multiplier by how deep they've penetrated (1.0 to 2.0x the base multiplier)
+			var depth_scale = 1.0 + flank_info.penetration_depth
+			priority *= flank_multiplier * depth_scale
+
 		if priority > best_priority:
 			best_target = ship
 			best_priority = priority
@@ -189,8 +198,24 @@ func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: S
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 
 	var danger_center = _get_danger_center()
+
 	if danger_center == Vector3.ZERO:
-		return _get_hunting_position(server_node, friendly, current_destination)
+		current_destination =  _get_hunting_position(server_node, friendly, current_destination)
+		if current_destination == Vector3.ZERO:
+			var island = _find_island_toward_position(_ship.global_position, INF)
+			if island != null:
+				var closest_point = server_node.map.island_edge_points[island][0]
+				for island_point in server_node.map.island_edge_points[island]:
+					if island_point.distance_to(_ship.global_position) < closest_point.distance_to(_ship.global_position):
+						closest_point = island_point
+				current_destination = closest_point
+				return _get_valid_nav_point(current_destination)
+			else:
+				current_destination = _ship.global_position - _ship.basis.z * 10_000
+				current_destination.y = 0
+				return _get_valid_nav_point(current_destination)
+		else:
+			return current_destination
 
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp

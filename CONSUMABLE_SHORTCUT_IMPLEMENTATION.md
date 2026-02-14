@@ -45,16 +45,16 @@ The labels automatically update if the key bindings are changed, making the syst
 ### Dynamic Key Retrieval
 ```gdscript
 func get_keyboard_shortcut_for_action(action_name: String) -> String:
-    if not InputMap.has_action(action_name):
-        return ""
-    
-    var events = InputMap.action_get_events(action_name)
-    for event in events:
-        if event is InputEventKey:
-            var key_event = event as InputEventKey
-            return OS.get_keycode_string(key_event.physical_keycode)
-    
-    return ""
+	if not InputMap.has_action(action_name):
+		return ""
+	
+	var events = InputMap.action_get_events(action_name)
+	for event in events:
+		if event is InputEventKey:
+			var key_event = event as InputEventKey
+			return OS.get_keycode_string(key_event.physical_keycode)
+	
+	return ""
 ```
 
 This function:

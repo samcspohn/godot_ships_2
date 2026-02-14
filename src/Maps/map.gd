@@ -9,7 +9,7 @@ var island_edge_points: Dictionary = {}
 
 # Grid scanning parameters
 const GRID_CELL_SIZE: float = 100.0  # Distance between ray casts
-const GRID_MARGIN: float = 100.0  # How far beyond island AABB to scan
+const GRID_MARGIN: float = 500.0  # How far beyond island AABB to scan
 const RAY_HEIGHT: float = 10000.0  # Height to cast rays from
 const WATER_LEVEL: float = 0.0  # Y level of water
 
