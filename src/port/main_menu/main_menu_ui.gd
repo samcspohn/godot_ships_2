@@ -31,10 +31,10 @@ func _ready():
 	# Hook up network signals
 	NetworkManager.connection_succeeded.connect(_on_connection_succeeded)
 	NetworkManager.connection_failed.connect(_on_connection_failed)
-	
+
 	# Connect ship_selected signal from ship_tab
 	ship_tab.ship_selected.connect(_on_ship_selected)
-	
+
 	# Connect upgrade signals from upgrade_tab
 	upgrade_tab.upgrade_selected.connect(_on_upgrade_selected)
 	upgrade_tab.upgrade_removed.connect(_on_upgrade_removed)
@@ -43,7 +43,7 @@ func _ready():
 
 	# Load saved player name
 	name_value_label.text = GameSettings.player_name
-	
+
 	# If there's a previously selected ship, restore it
 	if GameSettings.selected_ship != "":
 		ship_tab.call_deferred("_on_ship_button_pressed", GameSettings.selected_ship)
@@ -56,7 +56,7 @@ func set_dock_node(dock: Node3D):
 func _on_ship_selected(ship_node):
 	selected_ship = ship_node
 
-	
+
 	# Apply any previously selected upgrades for this specific ship
 	if selected_ship is Ship and GameSettings.ship_config.has(GameSettings.selected_ship):
 		for slot_str in GameSettings.ship_config[GameSettings.selected_ship]:
@@ -65,14 +65,10 @@ func _on_ship_selected(ship_node):
 				var upgrade_path = GameSettings.ship_config[GameSettings.selected_ship][slot_str]
 				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_path)
 		var skills = GameSettings.ship_config[GameSettings.selected_ship].get("skills", [])
-		for skill_path in skills:
-			var skill = load(skill_path)
-			if skill == null:
-				push_error("Failed to load skill resource: " + skill_path)
-				continue
-			var skill_instance = skill.new()
-			if not skill_instance is Skill:
-				push_error("Loaded resource is not a Skill: " + skill_path)
+		for skill_id in skills:
+			var skill_instance = SkillsRegistry.create_skill(skill_id)
+			if skill_instance == null:
+				push_error("Failed to create skill from registry with id: " + skill_id)
 				continue
 			selected_ship.skills.add_skill(skill_instance)
 
@@ -113,7 +109,7 @@ func _on_connect_pressed():
 	# Start waiting
 	GameSettings.is_single_player = false
 	GameSettings.save_settings()
-	
+
 	submit_to_matchmaker()
 
 	status_label.text = "Connecting to matchmaker..."
@@ -128,11 +124,11 @@ func _on_single_player_pressed():
 		return
 	if waiting:
 		return
-		
+
 	# Update game settings for single player
 	GameSettings.is_single_player = true
 	GameSettings.save_settings()
-	
+
 	status_label.text = "Starting single player game..."
 	submit_to_matchmaker()
 
@@ -175,16 +171,16 @@ func _stop_waiting():
 	single_player_button.disabled = false
 	connect_button.text = "Multiplayer"
 	connect_button.modulate = original_modulate
-	
+
 func _on_upgrade_selected(slot_index: int, upgrade_path: String):
 	# Check if this is the first upgrade for this ship
 	if not GameSettings.ship_config.has(GameSettings.selected_ship):
 		GameSettings.ship_config[GameSettings.selected_ship] = {}
-	
+
 	# Save upgrade to game settings under the current ship
 	GameSettings.ship_config[GameSettings.selected_ship][str(slot_index)] = upgrade_path
 	GameSettings.save_settings()
-	
+
 	print("Upgrade selected: ", upgrade_path, " for slot ", slot_index)
 
 func _on_upgrade_removed(slot_index: int):
@@ -193,7 +189,7 @@ func _on_upgrade_removed(slot_index: int):
 		# Check if the slot exists in this ship's config
 		if GameSettings.ship_config[GameSettings.selected_ship].has(str(slot_index)):
 			print("Upgrade removed from slot ", slot_index)
-			
+
 			# Remove the upgrade from this slot
 			GameSettings.ship_config[GameSettings.selected_ship].erase(str(slot_index))
 			GameSettings.save_settings()
@@ -202,44 +198,35 @@ func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
 	# Use the UpgradeManager to apply the upgrade
 	if upgrade_path.is_empty():
 		return
-		
+
 	var success = upgrade_manager.apply_upgrade_to_ship(ship, slot_index, upgrade_path)
 	if success:
 		print("Applied upgrade to ship: ", upgrade_path)
 	else:
 		print("Failed to apply upgrade: ", upgrade_path)
-	
+
 	# Update the upgrade tab UI
 	upgrade_tab.ship_upgrade_ui._update_slot_buttons()
 
-func _on_skill_toggled(skill_path: String, enabled: bool):
-	if selected_ship == null or skill_path == "":
+func _on_skill_toggled(skill_id: String, enabled: bool):
+	if selected_ship == null or skill_id == "":
 		return
 
-	var skill_resource = load(skill_path)
-	if skill_resource == null:
-		print("Failed to load skill resource: ", skill_path)
-		return
-	
-	var skill_instance = skill_resource.new()
-	if skill_instance is Skill:
-		if enabled:
-			selected_ship.skills.add_skill(skill_instance)
-			if not GameSettings.ship_config.has(GameSettings.selected_ship):
-				GameSettings.ship_config[GameSettings.selected_ship] = {}
-			if not GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
-				GameSettings.ship_config[GameSettings.selected_ship]["skills"] = []
+	if enabled:
+		if not GameSettings.ship_config.has(GameSettings.selected_ship):
+			GameSettings.ship_config[GameSettings.selected_ship] = {}
+		if not GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
+			GameSettings.ship_config[GameSettings.selected_ship]["skills"] = []
+		var skills_array = GameSettings.ship_config[GameSettings.selected_ship]["skills"]
+		if skill_id not in skills_array:
+			skills_array.append(skill_id)
+	else:
+		if GameSettings.ship_config.has(GameSettings.selected_ship) and GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
 			var skills_array = GameSettings.ship_config[GameSettings.selected_ship]["skills"]
-			if skill_path not in skills_array:
-				skills_array.append(skill_path)
-			GameSettings.save_settings()
+			if skill_id in skills_array:
+				skills_array.erase(skill_id)
 
-		else:
-			if GameSettings.ship_config.has(GameSettings.selected_ship) and GameSettings.ship_config[GameSettings.selected_ship].has("skills"):
-				var skills_array = GameSettings.ship_config[GameSettings.selected_ship]["skills"]
-				if skill_path in skills_array:
-					skills_array.erase(skill_path)
-					GameSettings.save_settings()
+	GameSettings.save_settings()
 
 func _on_replay_pressed():
 	get_tree().change_scene_to_file("res://src/port/shell_replay.tscn")

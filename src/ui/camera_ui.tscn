@@ -343,18 +343,31 @@ offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1282646300]
+[node name="StatusIndicators" type="HBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1218501176]
 layout_mode = 2
-size_flags_vertical = 8
+size_flags_horizontal = 4
+alignment = 1
 
-[node name="GunReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/HPContainer" unique_id=436171657]
+[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer/BottomCenterPanel/StatusIndicators" unique_id=1638734061]
+custom_minimum_size = Vector2(20, 20)
+layout_mode = 2
+size_flags_horizontal = 0
+size_flags_vertical = 0
+
+[node name="WeaponsContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1764777073]
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
 alignment = 1
 
-[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer" unique_id=453163127]
+[node name="ReloadContainer" type="HBoxContainer" parent="MainContainer/BottomCenterPanel/WeaponsContainer" unique_id=1894184615]
+custom_minimum_size = Vector2(0, 30)
+layout_mode = 2
+alignment = 1
+
+[node name="ReloadBarTemplate" type="ProgressBar" parent="MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer" unique_id=453163127]
 custom_minimum_size = Vector2(60, 8)
 layout_mode = 2
+size_flags_horizontal = 4
 size_flags_vertical = 8
 theme_override_styles/background = SubResource("StyleBoxFlat_reload_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_reload_fill")
@@ -362,7 +375,7 @@ max_value = 1.0
 value = 1.0
 show_percentage = false
 
-[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate" unique_id=1627681361]
+[node name="ReloadSecs" type="Label" parent="MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer/ReloadBarTemplate" unique_id=1627681361]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -374,6 +387,10 @@ offset_bottom = 1.0
 grow_horizontal = 2
 text = "10.0"
 horizontal_alignment = 1
+
+[node name="HPContainer" type="VBoxContainer" parent="MainContainer/BottomCenterPanel" unique_id=1282646300]
+layout_mode = 2
+size_flags_vertical = 8
 
 [node name="HPBarContainer" type="Control" parent="MainContainer/BottomCenterPanel/HPContainer" unique_id=1650090772]
 custom_minimum_size = Vector2(200, 20)
@@ -683,17 +700,3 @@ theme_override_font_sizes/font_size = 9
 text = "text"
 horizontal_alignment = 1
 uppercase = true
-
-[node name="SecondariesDisabled" type="ColorRect" parent="MainContainer" unique_id=1638734061]
-layout_mode = 1
-anchors_preset = 7
-anchor_left = 0.5
-anchor_top = 1.0
-anchor_right = 0.5
-anchor_bottom = 1.0
-offset_left = -160.0
-offset_top = -118.0
-offset_right = -145.0
-offset_bottom = -102.0
-grow_horizontal = 2
-grow_vertical = 0

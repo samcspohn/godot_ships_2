@@ -1,7 +1,7 @@
 extends RigidBody3D
 class_name Ship
 
-const HullCollisionGenerator = preload("res://src/ship/hull_collision_generator.gd")
+# const HullCollisionGenerator = preload("res://src/ship/hull_collision_generator.gd")
 
 # Map boundary constants (matching minimap.gd world_rect)
 const MAP_BOUNDARY: float = 17500.0
@@ -233,8 +233,8 @@ func _physics_process(delta: float) -> void:
 	# Clamp ship position to map boundaries
 	_clamp_to_map_bounds()
 
-	for skill in skills.skills:
-		skill._proc(delta)
+	for skill_id in skills.skills:
+		skills.skills[skill_id]._proc(delta)
 	if update_static_mods:
 		_update_static_mods()
 		update_static_mods = false
@@ -471,6 +471,8 @@ func sync_player_data() -> PackedByteArray:
 
 	writer.put_var(concealment.to_bytes())
 
+	writer.put_var(skills.to_bytes())
+
 	writer.put_32(multiplayer.get_unique_id())
 
 	# Ship stats data
@@ -543,6 +545,8 @@ func sync_player(b: PackedByteArray):
 				torpedo_controller.launchers[i].from_bytes(tl_bytes, true)
 
 	concealment.from_bytes(reader.get_var())
+
+	skills.from_bytes(reader.get_var())
 
 	var p_id: int = reader.get_32()
 	var stats_bytes: PackedByteArray = reader.get_var()

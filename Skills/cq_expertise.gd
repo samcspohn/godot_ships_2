@@ -1,7 +1,7 @@
 extends Skill
 
 func _init():
-	name = "Advanced Secondary Training"
+	name = "Close Quarters Expertise"
 	description = "Reduces secondary artillery spread, grouping, and reload time by 10%. Reduces main artillery spread when aiming at targets within secondary range."
 	# Set icon if you have one
 	# icon = preload("res://icons/auto-repair.png")

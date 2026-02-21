@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://ct7quelbueauf"]
+
+[ext_resource type="Script" uid="uid://cke84oknn71qw" path="res://Skills/skills_registry.gd" id="1_df5pm"]
+[ext_resource type="Script" uid="uid://b0x3taachp6li" path="res://Skills/adrenaline_rush.gd" id="2_mr5kx"]
+[ext_resource type="Script" uid="uid://cmdrm26vbwqxu" path="res://Skills/advanced_sec_training.gd" id="3_2m8dp"]
+[ext_resource type="Script" uid="uid://dx547111lg2t7" path="res://Skills/CQZealot.gd" id="4_eum7x"]
+[ext_resource type="Script" uid="uid://dhggoud4wmje1" path="res://Skills/cq_expertise.gd" id="5_eum7x"]
+
+[node name="SkillsRegistry" type="Node" unique_id=647299865]
+script = ExtResource("1_df5pm")
+_skill_scripts = Dictionary[String, Resource]({
+"ar": ExtResource("2_mr5kx"),
+"ast": ExtResource("3_2m8dp"),
+"cqe": ExtResource("5_eum7x"),
+"cqz": ExtResource("4_eum7x")
+})

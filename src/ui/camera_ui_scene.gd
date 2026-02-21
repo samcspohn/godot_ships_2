@@ -70,8 +70,10 @@ var hit_stat_counters: HitStatCounters = null
 @onready var healable_hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HealableHPBar
 @onready var hp_label: Label = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar/HPLabel
 
-@onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer
-@onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/GunReloadContainer/ReloadBarTemplate
+@onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer
+@onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer/ReloadBarTemplate
+
+@onready var status_indicators_container: HBoxContainer = $MainContainer/BottomCenterPanel/StatusIndicators
 
 @onready var bottom_right_panel: Control = $MainContainer/BottomRightPanel
 
@@ -98,7 +100,7 @@ var consumable_count_labels: Array[Label] = []
 # Consumable action names for getting shortcuts from InputMap
 var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consumable_4", "consumable_5"]
 
-@onready var secondaries_disabled = $MainContainer/SecondariesDisabled
+@onready var secondaries_disabled = $MainContainer/BottomCenterPanel/StatusIndicators/SecondariesDisabled
 
 var current_hp: float = 0.0
 
@@ -207,6 +209,29 @@ func setup_weapon_buttons():
 	if weapon_buttons.size() > 0:
 		weapon_buttons[0].button_pressed = true
 
+var skills_status: Dictionary = {}
+
+# func _set_up_skill_indicators():
+# 	var ship = camera_controller._ship
+# 	for skill_id in ship.skills.skills:
+# 		var slot = Control.new()
+# 		var skill = ship.skills.skills[skill_id]
+# 		skills_status[skill] = slot
+# 		status_indicators_container.add_child(slot)
+# 		skill.init_ui(slot)
+
+func _update_skill_indicators():
+	var ship = camera_controller._ship
+	for skill_id in ship.skills.skills:
+		var skill = ship.skills.skills[skill_id]
+		if skill not in skills_status:
+			var _slot = Control.new()
+			skills_status[skill] = _slot
+			status_indicators_container.add_child(_slot)
+			skill.init_ui(_slot)
+		var slot = skills_status[skill]
+		skill.update_ui(slot)
+
 func _ready():
 	# Add to camera_ui group for easy access
 	add_to_group("camera_ui")
@@ -242,6 +267,8 @@ func _ready():
 	# Setup gun reload bars (will be called again when camera_controller is set)
 	if camera_controller:
 		setup_weapons.call_deferred()
+		# get_tree().create_timer(1.0).timeout.connect(_set_up_skill_indicators)
+		# _set_up_skill_indicators.call_deferred()
 
 	setup_team_tracker()
 
@@ -279,6 +306,7 @@ func _physics_process(_delta):
 	update_visibility_indicator()  # Update visibility indicator
 	update_secondaries_disabled_indicator()  # Update secondaries disabled indicator
 	update_consumable_ui()
+	_update_skill_indicators()
 	# update_ship_ui()
 	# _update_reticle_visibility()
 
@@ -903,7 +931,7 @@ func setup_weapon_controller(controller: Node):
 
 	if not weapons.has(controller):
 		weapons[controller] = []
-	var hp_container = gun_reload_container.get_parent() as Control
+	var weapons_container = gun_reload_container.get_parent() as Control
 	var gun_container = gun_reload_container.duplicate()
 	gun_container.visible = true
 	var weaps = controller.weapons
@@ -925,8 +953,8 @@ func setup_weapon_controller(controller: Node):
 		weapons[controller].append(weapon_data)
 		crosshair_container.add_child(weapon_data.indicator)
 		gun_container.add_child(weapon_data.reload_bar)
-	hp_container.add_child(gun_container)
-	hp_container.move_child(gun_container, 0)
+	weapons_container.add_child(gun_container)
+	weapons_container.move_child(gun_container, 0)
 
 # Gun reload bar management
 func setup_weapons():

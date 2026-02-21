@@ -374,17 +374,15 @@ func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 	if not player_settings.ship_config[ship_path].has("skills"):
 		return
 	var skills = player_settings.ship_config[ship_path]["skills"]
-	print("Applying ", skills.size(), " skills to ship for player: ", player_name)
+	# print("Applying ", skills.size(), " skills to ship for player: ", player_name)
+	# print("Raw skills array: ", skills, " type: ", typeof(skills))
 
-	for skill_path in skills:
-		if skill_path and not skill_path.is_empty():
-			var skill = load(skill_path)
-			if skill == null:
-				push_error("Failed to load skill resource: " + skill_path)
-				continue
-			var skill_instance = skill.new()
-			if not skill_instance is Skill:
-				push_error("Loaded resource is not a Skill: " + skill_path)
+	for skill_id in skills:
+		# print("  skill_id=", skill_id, " type=", typeof(skill_id))
+		if skill_id and not skill_id.is_empty():
+			var skill_instance = SkillsRegistry.create_skill(skill_id)
+			if skill_instance == null:
+				push_error("Failed to create skill from registry with id: " + skill_id)
 				continue
 			ship.skills.add_skill(skill_instance)
 
@@ -1003,8 +1001,6 @@ func _physics_process(_delta: float) -> void:
 				else:
 					sync_game_state.rpc_id(_p_id, team_0_bytes)
 
-
-	# c += 1
 	# Sync individual player data
 	for p_name in players:
 		var p: Ship = players[p_name][0]
@@ -1017,33 +1013,3 @@ func _physics_process(_delta: float) -> void:
 
 	team_0_valid_targets = _get_valid_targets(0)
 	team_1_valid_targets = _get_valid_targets(1)
-
-
-
-	# for p_name in players: # for every player, synchronize self with others - TODO: sync all to self instead
-	# 	var p: Ship = players[p_name][0]
-	# 	var _p_id = players[p_name][2]
-	# 	# var d = p.sync_ship_data()
-	# 	# d['vs'] = p.visible_to_enemy
-	# 	var d = p.sync_ship_data2(p.visible_to_enemy)
-	# 	# writer.data_array = d
-	# 	# writer.put_u8(1 if p.visible_to_enemy else 0)
-	# 	# d = writer.get_data_array()
-	# 	for p_name2 in players: # every other player
-	# 		var p2: Ship = players[p_name2][0]
-	# 		var pid2 = players[p_name2][2]
-	# 		if not p2.team.is_bot: # player to sync with is not bot
-	# 			if p.team.team_id == p2.team.team_id or p.visible_to_enemy:
-	# 				# p.sync.rpc_id(pid2, d) # sync self to other player
-	# 				p.sync2.rpc_id(pid2, d)
-	# 			else:
-	# 				p._hide.rpc_id(pid2) # hide from other player
-
-
-			#if p_id == p_id2:
-				#p.sync.rpc_id(p_id2, d)
-				#continue
-			#var p2: Ship = players[p_id2][0]
-			#ray_query.to = p2.global_position
-			#var collision: Dictionary = space_state.intersect_ray(ray_query)
-			#if !collision.is_empty() and collision.collider is Ship && collision.collider != p:

@@ -69,7 +69,7 @@ var current_frame: int = -1
 func authority() -> bool:
 	if Engine.get_process_frames() != current_frame:
 		current_frame = Engine.get_process_frames()
-		cached_authority = multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server()
+		cached_authority = multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED and multiplayer.is_server() and "--server" in OS.get_cmdline_args()
 	return cached_authority
 
 func is_multiplayer_active() -> bool:

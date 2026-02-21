@@ -1,5 +1,9 @@
 extends Skill
 
+func _init():
+	name = "Adrenaline Rush"
+	description = "As HP decreases, reload time for all armaments is reduced by up to 20%."
+
 var bonus = 1.0
 func _a(ship: Ship):
 	(ship.artillery_controller.params.p() as GunParams).reload_time *= bonus

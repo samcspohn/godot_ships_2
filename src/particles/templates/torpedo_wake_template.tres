@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=7 format=3 uid="uid://cypes1be6ipnd"]
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://cypes1be6ipnd"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]

@@ -1,9 +1,9 @@
-[gd_scene load_steps=3 format=3 uid="uid://dtynepuhssiks"]
+[gd_scene format=3 uid="uid://dtynepuhssiks"]
 
 [ext_resource type="Script" uid="uid://dyy8w8kods3qk" path="res://src/port/main_menu/commander_skills_tab.gd" id="1_wu82t"]
 [ext_resource type="Script" uid="uid://hjlge6u4v5g8" path="res://src/port/main_menu/skill_button.gd" id="2_lpce8"]
 
-[node name="CommanderSkillsTab" type="Control"]
+[node name="CommanderSkillsTab" type="Control" unique_id=439042137]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -12,7 +12,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_wu82t")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1827298011]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -20,32 +20,32 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="Label" type="Label" parent="VBoxContainer"]
+[node name="Label" type="Label" parent="VBoxContainer" unique_id=112151653]
 layout_mode = 2
 text = "Commander Skills"
 horizontal_alignment = 1
 
-[node name="HSeparator" type="HSeparator" parent="VBoxContainer"]
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer" unique_id=1555424299]
 layout_mode = 2
 
-[node name="ScrollContainer" type="ScrollContainer" parent="VBoxContainer"]
+[node name="ScrollContainer" type="ScrollContainer" parent="VBoxContainer" unique_id=2004115515]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="GridContainer" type="GridContainer" parent="VBoxContainer/ScrollContainer"]
+[node name="GridContainer" type="GridContainer" parent="VBoxContainer/ScrollContainer" unique_id=1073873854]
 layout_mode = 2
 size_flags_horizontal = 6
 size_flags_vertical = 6
 columns = 4
 
-[node name="Skill1" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill1" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=2088229921]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
-skill = "uid://b0x3taachp6li"
+skill_id = "ar"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill1"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill1" unique_id=800756204]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -60,14 +60,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Adrenaline Rush"
 
-[node name="Skill2" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill2" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1798133851]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
-skill = "uid://dx547111lg2t7"
+skill_id = "cqz"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill2"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill2" unique_id=1712134163]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -82,14 +82,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "CQZealot"
 
-[node name="Skill3" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill3" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1534298132]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
-skill = "uid://dhggoud4wmje1"
+skill_id = "cqe"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill3"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill3" unique_id=1727587133]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -104,14 +104,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "CQ Expertise"
 
-[node name="Skill4" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill4" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1847203862]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
-skill = "uid://cmdrm26vbwqxu"
+skill_id = "ast"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill4"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill4" unique_id=1165111379]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -128,13 +128,13 @@ text = "Secendary
  Priority
 Target Training"
 
-[node name="Skill5" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill5" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1548190788]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill5"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill5" unique_id=589848103]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -149,13 +149,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 5"
 
-[node name="Skill6" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill6" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1544371426]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill6"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill6" unique_id=1106437000]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -170,13 +170,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 6"
 
-[node name="Skill7" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill7" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=415248189]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill7"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill7" unique_id=943017131]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -191,13 +191,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 7"
 
-[node name="Skill8" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer"]
+[node name="Skill8" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1008623422]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill8"]
+[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill8" unique_id=2047628692]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
