@@ -9,6 +9,7 @@ var shell_index: int = 0
 var aim_point: Vector3
 var _ship: Ship
 var target_mod: TargetMod = TargetMod.new()
+var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
@@ -124,6 +125,7 @@ func _ready() -> void:
 		g.gun_id = i
 		g.controller = self
 		g._ship = _ship
+		g.dispersion_calculator = self.dispersion_calculator
 		i += 1
 
 	if _Utils.authority():

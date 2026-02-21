@@ -113,10 +113,10 @@ material_override = ExtResource("2_7hjns")
 [node name="Spawn" type="Node3D" parent="." index="21" unique_id=2118512378]
 
 [node name="0" type="Node3D" parent="Spawn" index="0" unique_id=2036752882]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -11000)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8810.975)
 
 [node name="1" type="Node3D" parent="Spawn" index="1" unique_id=1013910244]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 11000)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 8507.029)
 
 [node name="light_nav" type="NavigationRegion3D" parent="." index="22" unique_id=1006115982]
 navigation_mesh = SubResource("NavigationMesh_10p5b")

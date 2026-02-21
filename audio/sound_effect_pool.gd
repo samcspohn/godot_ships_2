@@ -9,7 +9,7 @@ func play_explosion(pos: Vector3, pitch: float, vol: float):
 	var player: AudioStreamPlayer3D = _get_free_player()
 	player.stream = explosion
 	player.unit_size = 1500.0
-	player.pitch_scale = pitch
+	player.pitch_scale = pitch * 3.0
 	player.volume_linear = vol * 1.5
 	player.transform.origin = pos
 	player.play()

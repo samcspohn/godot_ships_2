@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://dsuj4hyltujjc"]
 
 [ext_resource type="Script" uid="uid://dqk4cwd6ecvpl" path="res://audio/sound_effect_pool.gd" id="1_32187"]
-[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="2_ngjln"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="2_ngjln"]
 
 [node name="SoundEffectManager" type="Node" unique_id=429788405]
 script = ExtResource("1_32187")

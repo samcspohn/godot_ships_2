@@ -7,7 +7,7 @@ class_name Turret
 
 # @onready var barrel: Node3D = get_child(0).get_child(0)
 # var sound: AudioStreamPlayer3D
-# @export var dispersion_calculator: ArtilleryDispersion
+# @export var dispersion_calculator: DispersionCalculator
 var _aim_point: Vector3
 var reload: float = 0.0
 var can_fire: bool = false

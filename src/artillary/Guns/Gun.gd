@@ -8,6 +8,7 @@ extends Turret
 # @export var max_rotation_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
+var dispersion_calculator: DispersionCalculator
 var sound: AudioStreamPlayer3D
 @export_category("Sound")
 @export var _sound: AudioStream
@@ -284,7 +285,11 @@ func fire(mod: TargetMod = null) -> void:
 		if !disabled && reload >= 1.0 and can_fire:
 			var muzzles_pos = get_muzzles_position()
 			for m in muzzles:
-				var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
+				# var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
+				var h_grouping = get_params().h_grouping * (mod.h_grouping if mod else 1.0)
+				var v_grouping = get_params().v_grouping * (mod.v_grouping if mod else 1.0)
+				var base_spread = get_params().base_spread * (mod.base_spread if mod else 1.0)
+				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), h_grouping, v_grouping, base_spread)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = Time.get_unix_time_from_system()

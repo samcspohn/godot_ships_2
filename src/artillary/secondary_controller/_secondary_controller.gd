@@ -22,7 +22,9 @@ var just_switched_mode: bool = false
 # var not_all_returned_to_base: bool
 var targets_guns: Dictionary[Ship, Array] = {}
 var target_seq_timers: Dictionary[Ship, float] = {}
-
+var dispersion_calculator: Dictionary[Ship, DispersionCalculator] = {}
+var man_dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
+var priority_target_dispersion: DispersionCalculator = DispersionCalculator.new()
 var weapons: Array[Turret]:
 	get:
 		var all_weapons: Array[Turret] = []
@@ -167,9 +169,9 @@ func _ready() -> void:
 	target_mod = TargetMod.new()
 	target_mod.init(_ship)
 
-	manual_target_mod.h_grouping = 1.5
-	manual_target_mod.v_grouping = 1.5
-	manual_target_mod.base_spread = 0.5
+	manual_target_mod.h_grouping = 1.3
+	manual_target_mod.v_grouping = 1.3
+	manual_target_mod.base_spread = 0.6
 	manual_target_mod.init(_ship)
 
 	for sc in sub_controllers:
@@ -220,6 +222,8 @@ func fire_next_ready():
 
 func _physics_process(delta: float) -> void:
 	# return
+	priority_target_dispersion.period = 6
+	man_dispersion_calculator.period = 6
 	if !(_Utils.authority()):
 		return
 	if not enabled:
@@ -250,6 +254,7 @@ func _physics_process(delta: float) -> void:
 			for g in sc.guns:
 				if g.is_aimpoint_valid(aim_point):
 					guns_shooting_at_aim_point[g] = true
+					g.dispersion_calculator = man_dispersion_calculator
 					g._aim(aim_point, delta)
 	if just_switched_mode:
 		just_switched_mode = false
@@ -292,6 +297,14 @@ func _physics_process(delta: float) -> void:
 					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
 					gun_targets[g] = e
 					targets_guns[e] = targets_guns.get(e, []) + [g]
+					if e == target:
+						g.dispersion_calculator = priority_target_dispersion
+					else:
+						if !dispersion_calculator.has(e):
+							dispersion_calculator[e] = DispersionCalculator.new()
+							dispersion_calculator[e].period = 0
+						g.dispersion_calculator = dispersion_calculator[e]
+
 					found_target = true
 					active = true
 					break

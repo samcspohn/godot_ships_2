@@ -1,7 +1,7 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.2
+const max_grouping_bonus = 0.3
 const max_spread_bonus = 0.6
 
 var grouping_multiplier: float = 0.0
@@ -16,6 +16,7 @@ func _a(ship: Ship):
 	_ship.secondary_controller.target_mod.dynamic_mod.h_grouping += grouping_multiplier
 	_ship.secondary_controller.target_mod.dynamic_mod.v_grouping += grouping_multiplier
 	_ship.secondary_controller.target_mod.dynamic_mod.base_spread *= spread_multiplier
+	_ship.secondary_controller.priority_target_dispersion.period = 5.2
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= 0.9
@@ -38,9 +39,10 @@ func _proc(_delta: float) -> void:
 	if _ship.secondary_controller.target != priority_target:
 		priority_target = _ship.secondary_controller.target
 		priority_target_changed = true
-
-	for t in _ship.secondary_controller.gun_targets:
-		if t != null: # build accuracy if at least one gun has a target
+	
+	var gun_targets = _ship.secondary_controller.gun_targets
+	for t in gun_targets.keys():
+		if gun_targets[t] != null: # build accuracy if at least one gun has a target
 			secs_shooting = true
 			break
 	# for sec: SecSubController in _ship.secondary_controller.sub_controllers:
