@@ -340,7 +340,7 @@ func fire_client(vel, pos, t, _id):
 		var dir = vel
 		dir.y = 0.0
 		wake_pos = wake_pos + dir.normalized() * size / 2.0
-		var time_mod = lerp(4.0, 1.5, size / 50)
+		var time_mod = lerp(3.0, 1.2, size / 50)
 		# print(size)
 		# dir = dir.normalized()
 		_particle_system.emit_particles(wake_pos, dir, wake_template.template_id, size, 1, time_mod)

@@ -16,7 +16,7 @@ static func save_player_upgrades(player_name: String, ship_path: String, upgrade
 		else:
 			push_error("Failed to create player upgrades directory")
 			return false
-	
+
 	# Create a data structure to save
 	var data = {
 		"player_name": player_name,
@@ -24,7 +24,7 @@ static func save_player_upgrades(player_name: String, ship_path: String, upgrade
 		"upgrades": upgrades,
 		"last_updated": Time.get_datetime_dict_from_system()
 	}
-	
+
 	# Save to file
 	var file = FileAccess.open(UPGRADES_DIR + player_name + FILE_EXTENSION, FileAccess.WRITE)
 	if file:
@@ -42,46 +42,47 @@ static func load_player_upgrades(player_name: String) -> Dictionary:
 	if not FileAccess.file_exists(file_path):
 		print("No saved upgrades found for player: ", player_name)
 		return {}
-	
+
 	var file = FileAccess.open(file_path, FileAccess.READ)
 	if not file:
 		push_error("Failed to open upgrades file for player: " + player_name)
 		return {}
-	
+
 	var json_text = file.get_as_text()
 	file.close()
-	
+
 	var json = JSON.new()
 	var parse_result = json.parse(json_text)
 	if parse_result != OK:
 		push_error("Failed to parse upgrades file for player: " + player_name)
 		return {}
-	
+
 	var data = json.get_data()
 	print("Loaded upgrades for player: ", player_name)
 	return data
 
 # Apply saved upgrades to a ship
-static func apply_upgrades_to_ship(ship: Ship, player_name: String, upgrade_manager: Node) -> void:
+static func apply_upgrades_to_ship(ship: Ship, player_name: String) -> void:
 	var data = load_player_upgrades(player_name)
 	if data.is_empty() or not data.has("upgrades"):
 		print("No upgrades to apply for player: ", player_name)
 		return
-	
+
 	var upgrades = data["upgrades"]
 	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
-	
+
 	# First, clear any existing upgrades
-	for existing_upgrade in ship.upgrades.upgrades:
-		if existing_upgrade:
-			upgrade_manager.remove_upgrade_from_ship(ship, upgrade_manager.get_path_from_upgrade(existing_upgrade))
-	
+	for i in range(ship.upgrades.upgrades.size()):
+		if ship.upgrades.upgrades[i]:
+			ship.upgrades.remove_upgrade(i)
+
 	# Apply each upgrade to the ship
 	for slot_str in upgrades:
-		var upgrade_path = upgrades[slot_str]
-		if upgrade_path and not upgrade_path.is_empty():
-			var success = upgrade_manager.apply_upgrade_to_ship(ship, upgrade_path)
-			if success:
-				print("Applied upgrade to ship: ", upgrade_path)
+		var upgrade_id = upgrades[slot_str]
+		if upgrade_id and not upgrade_id.is_empty():
+			var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
+			if upgrade_instance:
+				ship.upgrades.add_upgrade(int(slot_str), upgrade_instance)
+				print("Applied upgrade to ship: ", upgrade_id)
 			else:
-				push_error("Failed to apply upgrade: " + upgrade_path)
+				push_error("Failed to create upgrade from registry with id: " + upgrade_id)

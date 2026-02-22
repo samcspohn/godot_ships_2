@@ -362,13 +362,14 @@ func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 	for slot_str in upgrades:
 		if slot_str == "skills":  # Skip skills section
 			continue
-		var upgrade_path = upgrades[slot_str]
-		if upgrade_path and not upgrade_path.is_empty():
-			var success = UpgradeManager.apply_upgrade_to_ship(ship, int(slot_str), upgrade_path)
-			if success:
-				print("Applied upgrade to ship: ", upgrade_path)
+		var upgrade_id = upgrades[slot_str]
+		if upgrade_id and not upgrade_id.is_empty():
+			var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
+			if upgrade_instance:
+				ship.upgrades.add_upgrade(int(slot_str), upgrade_instance)
+				print("Applied upgrade to ship: ", upgrade_id)
 			else:
-				push_error("Failed to apply upgrade: " + upgrade_path)
+				push_error("Failed to create upgrade from registry with id: " + upgrade_id)
 
 	# Apply each skill to the ship
 	if not player_settings.ship_config[ship_path].has("skills"):

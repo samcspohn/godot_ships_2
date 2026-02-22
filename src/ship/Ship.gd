@@ -131,12 +131,14 @@ func _update_static_mods(): # called when changed
 		mod.call(self)
 	#reset_dynamic_mods.emit()
 	_update_dynamic_mods()
+	update_static_mods = false
 	# update_static_mods.emit()
 
 func _update_dynamic_mods(): # called when updated by signal
 	reset_dynamic_mods.emit()
 	for mod in dynamic_mods:
 		mod.call(self)
+	update_dynamic_mods = false
 	# update_static_mods.emit()
 	#
 
@@ -163,6 +165,7 @@ func _ready() -> void:
 	# fire_manager = $Modules/FireManager
 	fire_manager._ship = self
 	flood_manager._ship = self
+	upgrades._ship = self
 	skills._ship = self
 	stats = Stats.new()
 	stats._ship = self
@@ -237,10 +240,10 @@ func _physics_process(delta: float) -> void:
 		skills.skills[skill_id]._proc(delta)
 	if update_static_mods:
 		_update_static_mods()
-		update_static_mods = false
+		# update_static_mods = false
 	if update_dynamic_mods:
 		_update_dynamic_mods()
-		update_dynamic_mods = false
+		# update_dynamic_mods = false
 
 	# Sync ship data to all clients
 	# sync_ship_data()
@@ -287,8 +290,9 @@ func sync_ship_transform() -> PackedByteArray:
 	writer.put_float(rotation.y)
 	writer.put_float(global_position.x)
 	writer.put_float(global_position.z)
-	writer.put_float(health_controller.current_hp)
-	writer.put_float(health_controller.max_hp)
+	# writer.put_float(health_controller.current_hp)
+	# writer.put_float(health_controller.max_hp)
+	writer.put_var(health_controller.to_bytes())
 	writer.put_u8(1 if visible_to_enemy else 0)
 	pb = writer.get_data_array()
 	return pb
@@ -300,9 +304,10 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	# server_rotation.y = reader.get_float()
 	global_position.x = reader.get_float()
 	global_position.z = reader.get_float()
-	# global_position.y = 0
-	health_controller.current_hp = reader.get_float()
-	health_controller.max_hp = reader.get_float()
+	# # global_position.y = 0
+	# health_controller.current_hp = reader.get_float()
+	# health_controller.max_hp = reader.get_float()
+	health_controller.from_bytes(reader.get_var())
 	visible_to_enemy = reader.get_u8() == 1
 	particles_active = true
 
@@ -318,8 +323,9 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	writer.put_var(euler)
 	# writer.put_var(global_basis)
 	writer.put_var(global_position)
-	writer.put_float(health_controller.current_hp)
-	writer.put_float(health_controller.max_hp)
+	# writer.put_float(health_controller.current_hp)
+	# writer.put_float(health_controller.max_hp)
+	writer.put_var(health_controller.to_bytes())
 
 	# Consumables data
 	if friendly:
@@ -379,8 +385,9 @@ func sync2(b: PackedByteArray, friendly: bool):
 	global_position = reader.get_var()
 	# server_rotation = Basis.from_euler(euler)
 	# server_position = reader.get_var()
-	health_controller.current_hp = reader.get_float()
-	health_controller.max_hp = reader.get_float()
+	# health_controller.current_hp = reader.get_float()
+	# health_controller.max_hp = reader.get_float()
+	health_controller.from_bytes(reader.get_var())
 	# max hp
 
 	# Consumables data
@@ -440,9 +447,10 @@ func sync_player_data() -> PackedByteArray:
 	writer.put_var(euler)
 	# writer.put_var(global_basis)
 	writer.put_var(global_position)
-	writer.put_float(health_controller.current_hp)
-	writer.put_float(health_controller.max_hp)
-	writer.put_float(health_controller.healable_damage)
+	# writer.put_float(health_controller.current_hp)
+	# writer.put_float(health_controller.max_hp)
+	writer.put_var(health_controller.to_bytes())
+	writer.put_float(health_controller.healable_damage * health_controller.params.p().mult)
 
 	# Consumables data
 	writer.put_var(consumable_manager.to_bytes())
@@ -501,8 +509,9 @@ func sync_player(b: PackedByteArray):
 	var euler: Vector3 = reader.get_var()
 	global_basis = Basis.from_euler(euler)
 	global_position = reader.get_var()
-	health_controller.current_hp = reader.get_float()
-	health_controller.max_hp = reader.get_float()
+	# health_controller.current_hp = reader.get_float()
+	# health_controller.max_hp = reader.get_float()
+	health_controller.from_bytes(reader.get_var())
 	health_controller.healable_damage = reader.get_float()
 	# max hp
 

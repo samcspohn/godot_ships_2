@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://src/autoload/upgrade_manager.gd" id="1_registry"]
+[ext_resource type="Script" path="res://src/Upgrades/health_upgrade.gd" id="2_health"]
+[ext_resource type="Script" path="res://src/Upgrades/main_reload.gd" id="3_main"]
+[ext_resource type="Script" path="res://src/Upgrades/secondary_upgrade.gd" id="4_sec"]
+[ext_resource type="Script" path="res://src/Upgrades/torpedo_upgrade.gd" id="5_torp"]
+
+[node name="UpgradeRegistry" type="Node"]
+script = ExtResource("1_registry")
+_upgrade_scripts = Dictionary[String, Resource]({
+"hp": ExtResource("2_health"),
+"main_r": ExtResource("3_main"),
+"sec": ExtResource("4_sec"),
+"torp_r": ExtResource("5_torp")
+})

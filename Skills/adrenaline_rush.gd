@@ -12,6 +12,7 @@ func _a(ship: Ship):
 	if ship.torpedo_controller:
 		ship.torpedo_controller.params.p().reload_time *= bonus
 
+const modifier = 0.2
 func apply(ship: Ship):
 	_ship = ship
 	ship.health_controller.hp_changed.connect(func (new_hp: float) -> void:
@@ -19,7 +20,6 @@ func apply(ship: Ship):
 		var curr_hp = new_hp
 		var max_hp = ship.health_controller.max_hp
 		var hp_ratio = curr_hp / max_hp
-		const modifier = 0.2
 		bonus = 1.0 - (1.0 - hp_ratio) * modifier
 
 		ship.remove_dynamic_mod(_a)

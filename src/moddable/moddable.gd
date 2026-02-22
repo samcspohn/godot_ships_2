@@ -65,7 +65,7 @@ func update_mods() -> void:
 func reset() -> void:
 	# print("reset moddable")
 	static_mod = duplicate_as_copy(base)
-	dynamic_mod = static_mod.duplicate(true)
+	dynamic_mod = duplicate_as_copy(static_mod)
 
 func reset_dynamic_mod() -> void:
 	dynamic_mod = duplicate_as_copy(static_mod)

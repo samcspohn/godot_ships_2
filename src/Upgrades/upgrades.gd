@@ -1,50 +1,54 @@
 extends Node
 class_name Upgrades
+
 @export var upgrades: Array[Upgrade] = []
+var _ship: Ship = null
 
 func add_upgrade(slot_index: int, upgrade: Upgrade) -> void:
 	if upgrade == null:
-		push_error("Trying to add null upgrade")
+		push_error("Upgrades: Trying to add null upgrade")
 		return
-		
-	print("Upgrades: Adding upgrade: ", upgrade.name)
-	print("Upgrades: Before adding, array has ", upgrades.size(), " upgrades")
-	
-	# Check if the upgrade is already in the array
-	# var existing_index = -1
-	# for i in range(upgrades.size()):
-	# 	if upgrades[i] == upgrade:
-	# 		existing_index = i
-	# 		break
-			
-	# # If it's not already in the array, add it to the first empty slot or append
-	# if existing_index == -1:
-	# 	var empty_slot = -1
-	# 	for i in range(upgrades.size()):
-	# 		if upgrades[i] == null:
-	# 			empty_slot = i
-	# 			break
-				
-	# 	if empty_slot != -1:
-	# 		# Add to first empty slot
-	# 		print("Upgrades: Adding to empty slot ", empty_slot)
-	# 		upgrades[empty_slot] = upgrade
-	# 	else:
-	# 		# Append to the end
-	# 		print("Upgrades: Appending to end")
-	# 		upgrades.append(upgrade)
+
+	# Ensure array is large enough
+	while slot_index >= upgrades.size():
+		upgrades.append(null)
+
+	# Remove existing upgrade in slot
+	if upgrades[slot_index] != null:
+		remove_upgrade(slot_index)
+
 	upgrades[slot_index] = upgrade
-	# else:
-	# 	print("Upgrades: Upgrade already exists at index ", existing_index)
-		
-	# print("Upgrades: After adding, array has ", upgrades.size(), " upgrades")
+	upgrade.apply(_ship)
+	print("Upgrades: Added '", upgrade.name, "' (id=", upgrade.upgrade_id, ") to slot ", slot_index)
 
 func remove_upgrade(slot_index: int) -> void:
-	# if upgrade and upgrades.has(upgrade):
-	# 	upgrades.erase(upgrade)
-	upgrades[slot_index] = null
+	if slot_index < 0 or slot_index >= upgrades.size():
+		return
+	var upgrade = upgrades[slot_index]
+	if upgrade:
+		upgrade.remove(_ship)
+		upgrades[slot_index] = null
+		print("Upgrades: Removed '", upgrade.name, "' from slot ", slot_index)
 
 func get_upgrade(slot_index: int) -> Upgrade:
 	if slot_index >= 0 and slot_index < upgrades.size():
 		return upgrades[slot_index]
 	return null
+
+func get_upgrade_id(slot_index: int) -> String:
+	var upgrade = get_upgrade(slot_index)
+	if upgrade:
+		return upgrade.upgrade_id
+	return ""
+
+func has_upgrade_id(id: String) -> bool:
+	for upgrade in upgrades:
+		if upgrade and upgrade.upgrade_id == id:
+			return true
+	return false
+
+func find_slot_by_id(id: String) -> int:
+	for i in range(upgrades.size()):
+		if upgrades[i] and upgrades[i].upgrade_id == id:
+			return i
+	return -1

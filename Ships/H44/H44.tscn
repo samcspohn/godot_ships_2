@@ -2,6 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://dledjetx004o1" path="res://Ships/H44/H44.glb" id="1_h0h40"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_wne81"]
+[ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_54qku"]
 [ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="3_c07vg"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="3_osjim"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="4_ai21t"]
@@ -23,6 +24,12 @@
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="16_nfp68"]
 [ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="17_flood"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_pm07r"]
+
+[sub_resource type="Resource" id="Resource_almt2"]
+resource_local_to_scene = true
+script = ExtResource("3_54qku")
+pen_repair = 0.6
+metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_i4gay"]
 resource_local_to_scene = true
@@ -103,7 +110,7 @@ shell1 = SubResource("Resource_3wv4u")
 shell2 = SubResource("Resource_43stl")
 h_grouping = 1.6
 base_spread = 0.012
-reload_time = 29.0
+reload_time = 31.0
 traverse_speed = 3.5
 _range = 16000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
@@ -151,7 +158,7 @@ v_grouping = 1.0
 base_spread = 0.06
 reload_time = 6.0
 traverse_speed = 50.0
-_range = 5750.0
+_range = 5600.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_6lpig"]
@@ -209,8 +216,8 @@ use_hull_collision = true
 [node name="Modules" parent="." index="0" unique_id=158224493 instance=ExtResource("2_wne81")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-max_hp = 155100.0
-pen_repair = 0.6
+params = SubResource("Resource_almt2")
+_max_hp = 155100.0
 citadel = SubResource("Resource_i4gay")
 casemate = SubResource("Resource_54qku")
 bow = SubResource("Resource_pecl7")

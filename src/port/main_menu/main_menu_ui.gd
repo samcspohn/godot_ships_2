@@ -1,9 +1,6 @@
 # src/client/main_menu_ui.gd
 extends Control
 
-# Get reference to global UpgradeManager
-@onready var upgrade_manager = get_node("/root/UpgradeManager")
-
 @onready var connect_button: Button = $TopBar/HBoxContainer/ConnectButton
 @onready var single_player_button: Button = $TopBar/HBoxContainer/SinglePlayerButton
 @onready var replay_button: Button = $TopBar/HBoxContainer/ReplayButton
@@ -62,8 +59,8 @@ func _on_ship_selected(ship_node):
 		for slot_str in GameSettings.ship_config[GameSettings.selected_ship]:
 			if slot_str != "skills":
 				var slot_index = slot_str.to_int()
-				var upgrade_path = GameSettings.ship_config[GameSettings.selected_ship][slot_str]
-				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_path)
+				var upgrade_id = GameSettings.ship_config[GameSettings.selected_ship][slot_str]
+				_apply_upgrade_to_ship(selected_ship, slot_index, upgrade_id)
 		var skills = GameSettings.ship_config[GameSettings.selected_ship].get("skills", [])
 		for skill_id in skills:
 			var skill_instance = SkillsRegistry.create_skill(skill_id)
@@ -172,16 +169,16 @@ func _stop_waiting():
 	connect_button.text = "Multiplayer"
 	connect_button.modulate = original_modulate
 
-func _on_upgrade_selected(slot_index: int, upgrade_path: String):
+func _on_upgrade_selected(slot_index: int, upgrade_id: String):
 	# Check if this is the first upgrade for this ship
 	if not GameSettings.ship_config.has(GameSettings.selected_ship):
 		GameSettings.ship_config[GameSettings.selected_ship] = {}
 
 	# Save upgrade to game settings under the current ship
-	GameSettings.ship_config[GameSettings.selected_ship][str(slot_index)] = upgrade_path
+	GameSettings.ship_config[GameSettings.selected_ship][str(slot_index)] = upgrade_id
 	GameSettings.save_settings()
 
-	print("Upgrade selected: ", upgrade_path, " for slot ", slot_index)
+	print("Upgrade selected: ", upgrade_id, " for slot ", slot_index)
 
 func _on_upgrade_removed(slot_index: int):
 	# Check if this ship has any upgrades saved
@@ -194,16 +191,16 @@ func _on_upgrade_removed(slot_index: int):
 			GameSettings.ship_config[GameSettings.selected_ship].erase(str(slot_index))
 			GameSettings.save_settings()
 
-func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_path: String):
-	# Use the UpgradeManager to apply the upgrade
-	if upgrade_path.is_empty():
+func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_id: String):
+	if upgrade_id.is_empty():
 		return
 
-	var success = upgrade_manager.apply_upgrade_to_ship(ship, slot_index, upgrade_path)
-	if success:
-		print("Applied upgrade to ship: ", upgrade_path)
+	var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
+	if upgrade_instance:
+		ship.upgrades.add_upgrade(slot_index, upgrade_instance)
+		print("Applied upgrade to ship: ", upgrade_id)
 	else:
-		print("Failed to apply upgrade: ", upgrade_path)
+		print("Failed to apply upgrade: ", upgrade_id)
 
 	# Update the upgrade tab UI
 	upgrade_tab.ship_upgrade_ui._update_slot_buttons()

@@ -226,6 +226,7 @@ func _update_skill_indicators():
 		var skill = ship.skills.skills[skill_id]
 		if skill not in skills_status:
 			var _slot = Control.new()
+			_slot.custom_minimum_size = Vector2(30, 30)
 			skills_status[skill] = _slot
 			status_indicators_container.add_child(_slot)
 			skill.init_ui(_slot)

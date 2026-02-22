@@ -2,11 +2,7 @@
 extends Node
 class_name HPManager
 
-@export var max_hp: float
-@export var citadel_repair: float = 0.15
-@export var pen_repair: float = 0.5
-@export var light_repair: float = 0.9
-var current_hp: float
+@export var params: HPParams
 var sunk: bool = false
 var ship: Ship
 
@@ -19,6 +15,18 @@ var current_sinking_basis: Basis = Basis.IDENTITY
 var sinking_time: float = 0.0
 var sunk_time: float = 0.0
 
+@export var _max_hp: float = 10000.0
+var max_hp:
+	get:
+		return _max_hp * params.p().mult
+	# set(value):
+	# 	_max_hp = value / params.p().mult
+var _current_hp: float = 10000.0
+var current_hp:
+	get:
+		return _current_hp * params.p().mult
+	# set(value):
+	# 	_current_hp = value / params.p().mult
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 
 @export var citadel: HpPartMod
@@ -31,43 +39,63 @@ var healable_damage: float = 0.0
 var light_damage: float = 0.0
 const SHELL_DAMAGE_RADIUS_MOD: float = 15.5
 
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	if ship.name == "1":
+		pass
+	writer.put_float(_max_hp * params.p().mult)
+	writer.put_float(_current_hp * params.p().mult)
+	return writer.get_data_array()
+
+# client side rendering
+func from_bytes(data: PackedByteArray):
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = data
+	_max_hp = reader.get_float()
+	_current_hp = reader.get_float()
+
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():
 		return
+
 	if !citadel:
 		citadel = HpPartMod.new()
 		citadel.resource_local_to_scene = true
-	citadel.pool1 = max_hp * 3.0
-	citadel.pool2 = max_hp * 3.0
+	citadel.pool1 = _max_hp * 3.0
+	citadel.pool2 = _max_hp * 3.0
 	if !casemate:
 		casemate = HpPartMod.new()
 		casemate.resource_local_to_scene = true
-	casemate.pool1 = max_hp * 0.9 / 3.0
-	casemate.pool2 = 2.0 * max_hp * 0.9 / 3.0
+	casemate.pool1 = _max_hp * 0.9 / 3.0
+	casemate.pool2 = 2.0 * _max_hp * 0.9 / 3.0
 	if !bow:
 		bow = HpPartMod.new()
 		bow.resource_local_to_scene = true
-	bow.pool1 = max_hp * 0.5 / 3.0
-	bow.pool2 = 2.0 * max_hp * 0.5 / 3.0
+	bow.pool1 = _max_hp * 0.5 / 3.0
+	bow.pool2 = 2.0 * _max_hp * 0.5 / 3.0
 	if !stern:
 		stern = HpPartMod.new()
 		stern.resource_local_to_scene = true
-	stern.pool1 = max_hp * 0.5 / 3.0
-	stern.pool2 = 2.0 * max_hp * 0.5 / 3.0
+	stern.pool1 = _max_hp * 0.5 / 3.0
+	stern.pool2 = 2.0 * _max_hp * 0.5 / 3.0
 	if !superstructure:
 		superstructure = HpPartMod.new()
 		superstructure.resource_local_to_scene = true
-	superstructure.pool1 = max_hp * 0.4 / 3.0
-	superstructure.pool2 = 2.0 * max_hp * 0.4 / 3.0
+	superstructure.pool1 = _max_hp * 0.4 / 3.0
+	superstructure.pool2 = 2.0 * _max_hp * 0.4 / 3.0
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
-	current_hp = max_hp
 	ship = get_parent().get_parent() as Ship
 	if ship == null:
 		push_error("HPManager: Could not find Ship in parent hierarchy")
 		return
+	params.init(ship)
+	# params.update_mods()
+	# ship.update_static_mods = true
+	_current_hp = _max_hp
+
 	if citadel:
 		citadel.init(ship)
 		citadel.hp = self
@@ -88,10 +116,13 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	if sunk:
 		return [0, false]
 
+	# ship.update_static_mods = true
 	var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
 	var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
 	dmg *= dmg_mod
+	dmg /= params.p().mult
 	base_dmg *= dmg_mod
+	base_dmg /= params.p().mult
 
 	# TODO: how to handle overpenetration/citadel overpen damage?
 	var _dmg: float = 0
@@ -112,6 +143,9 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	if is_pen:
 		dmg = max(_dmg, base_dmg * 0.1)
 
+	var pen_repair = params.p().pen_repair
+	var citadel_repair = params.p().citadel_repair
+	var light_repair = params.p().light_repair
 	match armor_part.type:
 		ArmorPart.Type.MODULE:
 			light_damage += dmg * pen_repair
@@ -133,36 +167,40 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 			healable_damage += dmg * pen_repair
 
 
-	current_hp -= dmg
-	if current_hp <= 0 && !sunk:
-		dmg -= current_hp
-		current_hp = 0
+	_current_hp -= dmg
+	if _current_hp <= 0 && !sunk:
+		dmg -= _current_hp
+		_current_hp = 0
 		sink()
 		ship_sunk.emit()
-		hp_changed.emit(current_hp)
+		hp_changed.emit(_current_hp)
 		return [dmg, true]
-	hp_changed.emit(current_hp)
+	hp_changed.emit(_current_hp)
 	return [dmg, false]
 
 func apply_light_damage(dmg: float) -> Array:
 	if sunk:
 		return [0, false]
-	current_hp -= dmg
-	light_damage += dmg * light_repair
-	healable_damage += dmg * light_repair
-	if current_hp <= 0 && !sunk:
-		dmg -= current_hp
-		current_hp = 0
+	# ship.update_static_mods = true
+	dmg /= params.p().mult
+	_current_hp -= dmg
+	light_damage += dmg * params.p().light_repair
+	healable_damage += dmg * params.p().light_repair
+	if _current_hp <= 0 && !sunk:
+		dmg -= _current_hp
+		_current_hp = 0
 		sink()
 		ship_sunk.emit()
-		hp_changed.emit(current_hp)
+		hp_changed.emit(_current_hp)
 		return [dmg, true]
-	hp_changed.emit(current_hp)
+	hp_changed.emit(_current_hp)
 	return [dmg, false]
 
 func heal(amount: float) -> float:
 	if is_dead():
 		return 0.0
+	# ship.update_static_mods = true
+	amount /= params.p().mult
 	var casemate_dmg = self.casemate.healable_damage
 	var bow_dmg = self.bow.healable_damage
 	var stern_dmg = self.stern.healable_damage
@@ -180,15 +218,15 @@ func heal(amount: float) -> float:
 		ret += amount * (light_damage / total)
 		light_damage -= amount * (light_damage / total)
 		healable_damage -= ret
-		current_hp += ret
+		_current_hp += ret
 		return ret
 	return 0.0
 
 	# 	return 0.0
-	# if current_hp + amount > max_hp:
-	# 	amount = max_hp - current_hp
-	# current_hp += amount
-	# hp_changed.emit(current_hp)
+	# if _current_hp + amount > _max_hp:
+	# 	amount = _max_hp - _current_hp
+	# _current_hp += amount
+	# hp_changed.emit(_current_hp)
 	# return amount
 
 # @rpc("any_peer", "reliable", "call_remote")
@@ -267,10 +305,10 @@ func _physics_process(delta: float) -> void:
 
 
 func is_alive() -> bool:
-	return current_hp > 0
+	return _current_hp > 0
 
 func is_dead() -> bool:
-	return current_hp <= 0
+	return _current_hp <= 0
 
 func been_dead() -> bool:
 	return is_dead() and sunk_time < Time.get_ticks_msec() / 1000.0 - 120.0

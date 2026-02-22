@@ -38,3 +38,24 @@ func _proc(_delta: float) -> void:
 			main_gun_bonus = 1.0
 			_ship.remove_dynamic_mod(_a)
 			_ship.add_dynamic_mod(_a)
+
+func to_bytes() -> PackedByteArray:
+	var writer = StreamPeerBuffer.new()
+	writer.put_8(1 if enabled else 0)
+	return writer.get_data_array()
+
+func from_bytes(data: PackedByteArray):
+	var reader = StreamPeerBuffer.new()
+	reader.data_array = data
+	enabled = reader.get_u8()
+
+func init_ui(container: Control):
+	var _ui = load("res://Skills/skill_ui/cq_expert.tscn")
+	var ui = _ui.instantiate()
+	container.add_child(ui)
+
+func update_ui(container: Control):
+	if enabled:
+		container.visible = true
+	else:
+		container.visible = false
