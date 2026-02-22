@@ -91,25 +91,23 @@ func _ready() -> void:
 	if ship == null:
 		push_error("HPManager: Could not find Ship in parent hierarchy")
 		return
-	params.init(ship)
-	# params.update_mods()
-	# ship.update_static_mods = true
+	params = params.instantiate(ship) as HPParams
 	_current_hp = _max_hp
 
 	if citadel:
-		citadel.init(ship)
+		citadel = citadel.instantiate(ship) as HpPartMod
 		citadel.hp = self
 	if casemate:
-		casemate.init(ship)
+		casemate = casemate.instantiate(ship) as HpPartMod
 		casemate.hp = self
 	if bow:
-		bow.init(ship)
+		bow = bow.instantiate(ship) as HpPartMod
 		bow.hp = self
 	if stern:
-		stern.init(ship)
+		stern = stern.instantiate(ship) as HpPartMod
 		stern.hp = self
 	if superstructure:
-		superstructure.init(ship)
+		superstructure = superstructure.instantiate(ship) as HpPartMod
 		superstructure.hp = self
 
 func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, shell_cal:float = 0) -> Array:
@@ -169,14 +167,14 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 
 	_current_hp -= dmg
 	if _current_hp <= 0 && !sunk:
-		dmg -= _current_hp
+		dmg += _current_hp
 		_current_hp = 0
 		sink()
 		ship_sunk.emit()
 		hp_changed.emit(_current_hp)
-		return [dmg, true]
+		return [dmg * params.p().mult, true]
 	hp_changed.emit(_current_hp)
-	return [dmg, false]
+	return [dmg * params.p().mult, false]
 
 func apply_light_damage(dmg: float) -> Array:
 	if sunk:
@@ -187,14 +185,14 @@ func apply_light_damage(dmg: float) -> Array:
 	light_damage += dmg * params.p().light_repair
 	healable_damage += dmg * params.p().light_repair
 	if _current_hp <= 0 && !sunk:
-		dmg -= _current_hp
+		dmg += _current_hp
 		_current_hp = 0
 		sink()
 		ship_sunk.emit()
 		hp_changed.emit(_current_hp)
-		return [dmg, true]
+		return [dmg * params.p().mult, true]
 	hp_changed.emit(_current_hp)
-	return [dmg, false]
+	return [dmg * params.p().mult, false]
 
 func heal(amount: float) -> float:
 	if is_dead():
@@ -219,7 +217,7 @@ func heal(amount: float) -> float:
 		light_damage -= amount * (light_damage / total)
 		healable_damage -= ret
 		_current_hp += ret
-		return ret
+		return ret * params.p().mult
 	return 0.0
 
 	# 	return 0.0

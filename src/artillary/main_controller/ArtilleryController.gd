@@ -118,8 +118,8 @@ func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 	var i = 0
 	# params = params.duplicate(true)
-	params.init(_ship)
-	target_mod.init(_ship)
+	params = params.instantiate(_ship) as GunParams
+	target_mod = target_mod.instantiate(_ship) as TargetMod
 
 	for g in guns:
 		g.gun_id = i

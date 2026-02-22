@@ -94,7 +94,6 @@ func calculate_dispersed_launch(
 	if period != 0:
 		var strata = randomised_strata[strata_idx]
 		strata_idx += 1
-		# shell_index = fposmod(shell_index + 1.0, period)
 		if strata_idx >= randomised_strata.size():
 			strata_idx = 0
 			randomised_strata.clear()
@@ -102,13 +101,18 @@ func calculate_dispersed_launch(
 				randomised_strata.append(i)
 			randomised_strata.shuffle()
 
-		p = random_point_in_ellipse_stratified(1.0,1.0, strata, int(period), h_grouping, v_grouping)
+		if shell_index >= period:
+			# p *= randf_range(0.0, 0.1)
+			var accurate_period = 30
+			p = random_point_in_ellipse_stratified(1.0,1.0, 0, accurate_period, h_grouping, v_grouping)
+			shell_index -= period
+		else:
+			p = random_point_in_ellipse_stratified(1.0,1.0, strata, int(period), h_grouping, v_grouping)
+
+		shell_index += 1.0
+
 		#if strata <= 1.0 and period > 1.0:
 			#p *= randf_range(0.0, 0.1)
-		if shell_index >= period:
-			p *= randf_range(0.0, 0.1)
-			shell_index -= period
-		shell_index += 1.0
 	else:
 		p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
 

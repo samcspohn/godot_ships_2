@@ -290,6 +290,8 @@ func set_target_ship(ship_path: NodePath, offset: Vector3) -> void:
 		select_target_ship(target_ship, offset)
 		#notify the calling client to set the target visually
 		c_set_target_ship.rpc_id(multiplayer.get_remote_sender_id(), ship_path, offset)
+		ship.secondary_controller.enabled = true
+		toggle_secondaries_enabled.rpc_id(multiplayer.get_remote_sender_id(), ship.secondary_controller.enabled)
 	else:
 		print("Invalid ship path received: ", ship_path)
 
@@ -343,6 +345,14 @@ func clear_secondary_target() -> void:
 		cam.ui.clear_secondary_target()
 	else:
 		print("Warning: cam.ui not available for clearing target indicator")
+
+# @rpc("any_peer", "call_remote", "reliable")
+# func toggle_secondaries_enabled() -> void:
+# 	"Client-side request to disable/enable secondaries"
+# 	if not _Utils.authority():
+# 		return
+
+
 
 @rpc("any_peer", "call_remote", "reliable")
 func c_toggle_secondaries_enabled() -> void:

@@ -13,12 +13,10 @@ signal consumable_ready(item: ConsumableItem)
 func _ready():
 	ship = get_parent().get_parent()
 
-	var i = 0
-	for item in equipped_consumables:
-		# if item:
-		item.init(ship)
+	for i in range(equipped_consumables.size()):
+		equipped_consumables[i] = equipped_consumables[i].instantiate(ship) as ConsumableItem
+		var item = equipped_consumables[i]
 		item.id = i
-		i += 1
 		if (item.base as ConsumableItem).max_stack == -1:
 			item.current_stack = 1  # Infinite uses, but show as 1
 		else:

@@ -7,9 +7,11 @@ var sequential_fire_timer: float = 0.0
 var controller: SecondaryController_ = null
 
 func init(_ship: Ship) -> void:
+	# Set _secondary on the template before instantiate — this is a permanent
+	# property of secondary guns, not a per-ship mod, so mutating the template is fine.
 	params.shell1._secondary = true
 	params.shell2._secondary = true
-	params.init(_ship)
+	params = params.instantiate(_ship) as GunParams
 	guns.sort_custom(func(a, b):
 		# sort by side (x) then z
 		var _a = a.get_parent()

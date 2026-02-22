@@ -1,74 +1,119 @@
 extends Resource
 class_name Moddable
 
-#var mods: Array
-var base: Moddable
-var static_mod: Moddable
-var dynamic_mod: Moddable
-var _is_copy: bool = false
-var valid: bool = false
+## Shared template data lives on the original Resource (set in the editor).
+## Per-ship runtime state (base, static_mod, dynamic_mod) is created by
+## instantiate() and lives on a COPY — so the template is never mutated and
+## never needs resource_local_to_scene.
 
-func _apply_mods() -> void:
-	pass
+# ── runtime mod layers (only populated on instantiated copies) ──────────────
+var base: Moddable        ## immutable snapshot of the template
+var static_mod: Moddable  ## copy that static mods (upgrades) write to
+var dynamic_mod: Moddable ## copy that dynamic mods (skills, consumables) write to
 
-func check_init() -> void:
-	# Skip check on copies (static_mod, dynamic_mod)
-	if _is_copy:
-		return
-	# Only check resource_local_to_scene for resources loaded from scene files
-	# Resources created with .new() don't have a resource_path and don't need the flag
-	if resource_path != "" and not resource_local_to_scene:
-		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
-		push_error("Moddable resource must be local to scene! Resource type: " + resource_type)
-		print_rich("[color=red]Moddable resource must be local to scene! Resource type: " + resource_type + "[/color]")
-	if base == null:
-		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
-		push_error("Moddable resource not initialized! Resource path: " + resource_type)
-		print_rich("[color=red]Moddable resource not initialized! Resource path: " + resource_type + "[/color]")
-	else:
-		valid = true
-		static_mod.valid = true
-		dynamic_mod.valid = true
+# ── internal bookkeeping ────────────────────────────────────────────────────
+var _is_instance: bool = false   ## true on copies returned by instantiate()
+var _is_mod_copy: bool = false   ## true on base / static_mod / dynamic_mod copies
 
-func _init():
-	# print("Moddable _init() called for: ", get_script().get_global_name() if get_script() else "Unknown")
-	if not valid:
-		check_init.call_deferred()
 
-func duplicate_as_copy(mod: Moddable) -> Moddable:
-	var copy = mod.duplicate(true)
-	copy._is_copy = true
+# ─────────────────────────────────────────────────────────────────────────────
+#  Deep-ish copy that catches EVERY script-defined variable, not just @export.
+#  • duplicate(true) handles @export properties + deep-copies sub-resources.
+#  • We then patch in every non-Resource script var that duplicate() missed.
+# ─────────────────────────────────────────────────────────────────────────────
+func create_copy() -> Moddable:
+	var copy: Moddable = duplicate(true)
+
+	for prop in get_property_list():
+		if not (prop.usage & PROPERTY_USAGE_SCRIPT_VARIABLE):
+			continue
+
+		var prop_name: String = prop.name
+		# Never copy runtime mod-system internals
+		if prop_name in ["base", "static_mod", "dynamic_mod",
+						  "_is_instance", "_is_mod_copy"]:
+			continue
+
+		var val = get(prop_name)
+
+		# Skip Resource values — duplicate(true) already deep-copied the
+		# exported ones, and we don't want to overwrite them with shared refs.
+		if val is Resource:
+			continue
+
+		# For Arrays / Dictionaries, make a shallow copy so the two instances
+		# don't share the same container object.
+		if val is Array:
+			copy.set(prop_name, val.duplicate())
+		elif val is Dictionary:
+			copy.set(prop_name, val.duplicate())
+		else:
+			copy.set(prop_name, val)
+
+	copy._is_mod_copy = true
 	return copy
 
-# must be local to scene
-func init(_ship: Ship) -> void:
-	# Only check resource_local_to_scene for resources loaded from scene files
-	# Resources created with .new() don't have a resource_path and don't need the flag
-	if resource_path != "" and not resource_local_to_scene:
-		var resource_type = get_script().get_global_name() if get_script() else "Unknown"
-		push_error("Moddable resource must be local to scene! Resource type: " + resource_type)
-		print_rich("[color=red]Moddable resource must be local to scene! Resource type: " + resource_type + "[/color]")
 
-	base = self
-	static_mod = duplicate_as_copy(base)
-	dynamic_mod = duplicate_as_copy(static_mod)
+# ─────────────────────────────────────────────────────────────────────────────
+#  Create a per-ship runtime instance from this (shared) template.
+#
+#  Returns a NEW Moddable whose concrete type matches the template (e.g.
+#  HPParams, GunParams …) with independent base / static_mod / dynamic_mod.
+#
+#  Usage in each manager's _ready():
+#      params = params.instantiate(ship)        # one-liner replacement
+#
+#  The original @export var keeps pointing at the shared template in the scene
+#  file — but after this line, `params` is a per-ship copy that is safe to
+#  mutate without resource_local_to_scene.
+# ─────────────────────────────────────────────────────────────────────────────
+func instantiate(ship: Ship) -> Moddable:
+	var inst: Moddable = create_copy()
+	inst._is_instance = true
+	inst._is_mod_copy = false
+
+	inst.base       = create_copy()
+	inst.static_mod = create_copy()
+	inst.dynamic_mod = create_copy()
+
+	ship.reset_mods.connect(inst.reset)
+	ship.reset_dynamic_mods.connect(inst.reset_dynamic_mod)
+	return inst
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Mod-layer helpers  (same public API as before)
+# ─────────────────────────────────────────────────────────────────────────────
+
+## Called when static mods are reapplied (Ship.reset_mods signal).
+func reset() -> void:
+	static_mod  = base.create_copy()
+	dynamic_mod = base.create_copy()
+
+## Called when only dynamic mods need refreshing (Ship.reset_dynamic_mods signal).
+func reset_dynamic_mod() -> void:
+	dynamic_mod = static_mod.create_copy()
+
+## Returns the "effective" parameters — the dynamic_mod layer with all mods baked in.
+func p() -> Moddable:
+	return dynamic_mod
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Backward-compat shim — prints a one-time warning so you can migrate callers
+#  at your own pace.  Remove once every call site uses instantiate().
+# ─────────────────────────────────────────────────────────────────────────────
+func init(_ship: Ship) -> void:
+	push_warning("Moddable.init() is deprecated — use  params = params.instantiate(ship)  instead.")
+	# Replicate the old behaviour: mutate self in-place (requires local-to-scene)
+	if resource_path != "" and not resource_local_to_scene:
+		push_error("Moddable.init() requires resource_local_to_scene when called on a scene resource. " +
+				   "Switch to instantiate() to remove this requirement.")
+
+	base        = create_copy()
+	static_mod  = create_copy()
+	dynamic_mod = create_copy()
+	_is_instance = true
 
 	_ship.reset_mods.connect(self.reset)
 	_ship.reset_dynamic_mods.connect(self.reset_dynamic_mod)
-
-func update_mods() -> void:
-	static_mod = duplicate_as_copy(base)
-	dynamic_mod = duplicate_as_copy(static_mod)
-
-# then apply any static mods to static_mod
-# self = static_mod.duplicate(true)
-func reset() -> void:
-	# print("reset moddable")
-	static_mod = duplicate_as_copy(base)
-	dynamic_mod = duplicate_as_copy(static_mod)
-
-func reset_dynamic_mod() -> void:
-	dynamic_mod = duplicate_as_copy(static_mod)
-
-func p() -> Variant:
-	return dynamic_mod

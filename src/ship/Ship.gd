@@ -31,7 +31,7 @@ var control
 var team: TeamEntity
 var visible_to_enemy: bool = false
 var armor_system: ArmorSystemV2
-@export var citadel: StaticBody3D
+@export var citadel: ArmorPart
 @export var hull: StaticBody3D
 var armor_parts: Array[ArmorPart] = []
 var aabb: AABB

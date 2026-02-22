@@ -41,8 +41,8 @@ func _proc(_delta: float) -> void:
 		priority_target_changed = true
 
 	var gun_targets = _ship.secondary_controller.gun_targets
-	for t in gun_targets.keys():
-		if gun_targets[t] != null: # build accuracy if at least one gun has a target
+	for g in gun_targets.keys():
+		if gun_targets[g] != null: # build accuracy if at least one gun has a target
 			secs_shooting = true
 			break
 	# for sec: SecSubController in _ship.secondary_controller.sub_controllers:

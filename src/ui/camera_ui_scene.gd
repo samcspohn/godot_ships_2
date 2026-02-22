@@ -327,9 +327,11 @@ func _physics_process(_delta):
 			hit_stat_counters.set_stats(stats)
 
 	if camera_controller._ship:
-		var hp = camera_controller._ship.health_controller.current_hp
+		var hp_cont = camera_controller._ship.health_controller
+		var hp = hp_cont.current_hp
 		if hp != current_hp:
-			var damage_taken = current_hp - hp
+			print("hp mult: ", (hp_cont.params.p() as HPParams).mult)
+			var damage_taken = (current_hp - hp)
 			if damage_taken > 0.0:
 				# Show floating damage indicator
 				create_floating_damage(damage_taken, camera_controller._ship.global_position)

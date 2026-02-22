@@ -6,5 +6,9 @@ class_name HPParams
 @export var pen_repair: float = 0.5
 @export var light_repair: float = 0.9
 
-# var current_hp: float
-@export_storage var mult: float = 1.0
+@export var torpedo_protection: float = 0.0
+
+# No need for @export — Moddable.create_copy() copies ALL script variables,
+# including plain vars, so this will be properly propagated to
+# static_mod / dynamic_mod layers.
+var mult: float = 1.0

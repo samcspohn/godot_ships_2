@@ -12,6 +12,13 @@ var healable_damage: float = 0.0
 
 var hp: HPManager
 
+func instantiate(ship: Ship) -> Moddable:
+	var inst = super.instantiate(ship)
+	inst.current_pool1 = inst.pool1
+	inst.current_pool2 = inst.pool2
+	return inst
+
+## Backward-compat shim — remove once all call sites use instantiate().
 func init(_ship: Ship) -> void:
 	current_pool1 = pool1
 	current_pool2 = pool2

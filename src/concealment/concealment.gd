@@ -13,7 +13,7 @@ var last_spotted_time: float = -101.0
 var spotted_by: Ship = null
 
 func _ready() -> void:
-	params.init(_ship)
+	params = params.instantiate(_ship) as ConcealmentParams
 	_ship.concealment = self
 
 

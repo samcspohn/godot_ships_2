@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="RepairParty" format=3 uid="uid://b0w0iw2uhv8sl"]
+
+[ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="1_lvxwm"]
+[ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="2_xbjdm"]
+[ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="3_b3dui"]
+
+[resource]
+script = ExtResource("3_b3dui")
+heal_percent = 0.3
+name = "Heavy Repair Team"
+icon = ExtResource("2_xbjdm")
+disabled_icon = ExtResource("1_lvxwm")
+cooldown_time = 100.0
+duration = 50.0
+metadata/_custom_type_script = "uid://drnfyeps8j1r0"

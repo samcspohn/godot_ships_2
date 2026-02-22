@@ -167,12 +167,12 @@ func get_params() -> GunParams:
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 	target_mod = TargetMod.new()
-	target_mod.init(_ship)
+	target_mod = target_mod.instantiate(_ship) as TargetMod
 
 	manual_target_mod.h_grouping = 1.3
 	manual_target_mod.v_grouping = 1.3
 	manual_target_mod.base_spread = 0.6
-	manual_target_mod.init(_ship)
+	manual_target_mod = manual_target_mod.instantiate(_ship) as TargetMod
 
 	for sc in sub_controllers:
 		sc.init(_ship)
@@ -229,6 +229,7 @@ func _physics_process(delta: float) -> void:
 	if not enabled:
 		for sc in sub_controllers:
 			for g in sc.guns:
+				gun_targets[g] = null
 				g.return_to_base(delta)
 		return
 	# _my_gun_params.shell = _my_gun_params.shell1

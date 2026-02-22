@@ -24,6 +24,7 @@ class TorpedoData:
 	var t: float
 	var params: TorpedoParams
 	var owner: Ship
+	var visible_to_enemy: bool = false
 	var emitter_id: int = -1  # GPU wake particle emitter ID
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float):
@@ -270,7 +271,12 @@ func _physics_process(_delta: float) -> void:
 					continue
 				var hp: HPManager = ship.health_controller
 				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id:
-					var dmg_sunk = hp.apply_damage(p.params.damage, p.params.damage, armor_part, true, 1)
+					var damage = p.params.damage
+					if armor_part is ArmorPart:
+						if armor_part.type == ArmorPart.Type.CASEMATE or armor_part.type == ArmorPart.Type.CITADEL:
+							damage *= (1.0 - hp.params.p().torpedo_protection)
+							armor_part = ship.citadel
+					var dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, 1)
 
 					if dmg_sunk[1]:
 						# Ship sunk

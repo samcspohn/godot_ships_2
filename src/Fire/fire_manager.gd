@@ -29,11 +29,11 @@ func get_active_fires() -> int:
 
 func _ready() -> void:
 	await get_parent().get_parent().ready
-	params.init(_ship)
+	params = params.instantiate(_ship) as FireParams
 	# _params = params.duplicate(true)
 	# _params.init(params)
 	for f in fires:
 		f.manager = self
-	
+
 	# _ship.reset_mods.connect(params.reset)
 	# _ship.reset_dynamic_mods.connect(params.reset_dynamic_mod)

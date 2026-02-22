@@ -48,7 +48,7 @@ func from_bytes(b: PackedByteArray) -> void:
 
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
-	params.init(_ship)
+	params = params.instantiate(_ship) as TorpedoLauncherParams
 	var i = 0
 	for l in launchers:
 		l.gun_id = i
