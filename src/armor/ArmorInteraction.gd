@@ -160,20 +160,41 @@ static func calculate_ricochet_velocity(velocity: Vector3, normal: Vector3, impa
 func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 		space_state: PhysicsDirectSpaceState3D, events = []) -> ArmorResultData:
 
-	if prev_pos.y < -1.2 or projectile.position.y < -1.2:
+	if prev_pos.y < -1.2:
 		return ArmorResultData.new(HitResult.WATER, prev_pos, null, Vector3.ZERO, null, Vector3.ZERO)
-	var ray_query := PhysicsRayQueryParameters3D.new()
-	var ray_dir: Vector3 = (projectile.position - prev_pos).normalized()
 
-	ray_query.from = prev_pos
-	ray_query.to = projectile.position
+	var curr_pos := projectile.position
+	var travel := curr_pos - prev_pos
+
+	# Double the ray length by extending the start backwards by one travel step.
+	# This handles cases where prev_pos ended up inside geometry (e.g. fast-moving
+	# shells skipping past a hull surface in a single frame).
+	var extended_from := prev_pos - travel  # = 2*prev - curr
+
+	var ray_query := PhysicsRayQueryParameters3D.new()
+	ray_query.from = extended_from
+	ray_query.to = curr_pos
 	ray_query.hit_back_faces = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 | (1 << 1) | (1 << 3)
+	# todo: optimize
+	var exclude = []
+	if projectile.owner != null:
+		for part: ArmorPart in projectile.owner.armor_parts:
+			exclude.append(part.get_rid())
+	for e in projectile.exclude:
+		if e is Ship:
+			# exclude += (e as Ship).armor_parts
+			for part: ArmorPart in (e as Ship).armor_parts:
+				exclude.append(part.get_rid())
+				# print("Excluding part %s of ship %s" % [part.armor_path, e.name])
+		elif e is ArmorPart:
+			exclude.append(e.get_rid())
+	ray_query.exclude = exclude
+	#print("here")
 
 	var result := space_state.intersect_ray(ray_query)
 
-	# No owner = training/test mode, only hit terrain/water
 	if projectile.owner == null:
 		if not result.is_empty():
 			if result.get('position').y <= 0.0001:
@@ -184,69 +205,39 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 				return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 		return null
 
-	# Check if we hit armor and handle teleport/inside cases
+	# Check if we hit something
 	if not result.is_empty():
 		var hit_node = result.get('collider')
 		if hit_node is ArmorPart:
 			var armor_part := hit_node as ArmorPart
+			# print("Hit armor part: %s on ship %s" % [armor_part.armor_path, armor_part.ship.name])
+			# print("Projectile owner: %s, ray exclude list: %s" % [
+			# 	projectile.owner.name if projectile.owner != null else "null",
+			# 	ray_query.exclude])
 
 			# Ignore own ship or excluded ships
 			if armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude:
 				return null
 
-			# Check if prev_pos is inside the ship (teleport case)
-			if get_part_hit(armor_part.ship, prev_pos, space_state) != null:
-				# Exponential backoff to get outside ship
-				var backoff_pos := prev_pos
-				var step_size := 2.0  # Start with 2 meters
-				var max_iterations := 20  # Safety limit (2^20 = ~1 million meters)
-				var iterations := 0
+			# Process the armor hit
+			var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+				projectile.launch_velocity, t, projectile.params)
 
-				while get_part_hit(armor_part.ship, backoff_pos, space_state) != null and iterations < max_iterations:
-					backoff_pos -= ray_dir * step_size
-					step_size *= 2.0  # Double each iteration
-					iterations += 1
-
-				if iterations >= max_iterations:
-					printerr("⚠️ ArmorInteraction: Failed to find valid starting position after exponential backoff")
-					return null
-
-				# Now backoff_pos is outside ship (and possibly above water)
-				# Recast from the corrected position
-				ray_query.from = backoff_pos
-				result = space_state.intersect_ray(ray_query)
-
-				if result.is_empty():
-					return null
-
-				hit_node = result.get('collider')
-				if not (hit_node is ArmorPart):
-					if result.get('position').y > 0.0001:
-						return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
-
-				armor_part = hit_node as ArmorPart # null = water
-				if armor_part and (armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude):
-					return null
-
-			if armor_part:
-				# Process the armor hit
-				var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-					projectile.launch_velocity, t, projectile.params)
-
-				return _process_hit(armor_part, result.get('position'), result.get('normal'),
-					projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
+			return _process_hit(armor_part, result.get('position'), result.get('normal'),
+				projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
 
 		# Hit non-armor objects
 		elif result.get('position').y > 0.0001:
 			return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 
-	# No direct hit - check for water penetration
-	if projectile.position.y < 0.0:
-		var dir: Vector3 = projectile.position - prev_pos
-		var distance_to_water := -prev_pos.y / dir.y if abs(dir.y) > 0.0001 else 0.0
+	# No direct hit - check for water penetration using prev_pos→curr_pos segment
+	if curr_pos.y < 0.0 and prev_pos.y > 0.0:
+		var dir := curr_pos - prev_pos
+		# Parametric t: 0 = at prev_pos, 1 = at curr_pos
+		var t_water := -prev_pos.y / dir.y if abs(dir.y) > 0.0001 else 0.0
 
-		if distance_to_water > 0.0 and distance_to_water <= dir.length():
-			var water_hit_pos := prev_pos + dir * distance_to_water
+		if t_water > 0.0 and t_water <= 1.0:
+			var water_hit_pos := prev_pos + dir * t_water
 			var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 				projectile.launch_velocity, t, projectile.params)
 

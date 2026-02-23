@@ -452,7 +452,9 @@ func update_counters() -> void:
 func _update_label(label: Label, value) -> void:
 	"""Update a single label with formatted value"""
 	if label:
-		label.text = str(int(value))
+		var curr = float(label.text)
+		# var lerp_value = float(curr) / max(float(value), 1.0)
+		label.text = str(int(lerp(float(curr), float(value), 0.3)))
 
 
 func process_damage_events(damage_events: Array):

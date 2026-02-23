@@ -56,14 +56,15 @@ func _ready():
 func _physics_process(delta: float) -> void:
 	if _Utils.authority():
 		if lifetime > 0:
-			_sync.rpc(lifetime)
-			damage(delta)
-			var d = _params.dur
-			lifetime -= delta / d
-			if lifetime <= 0:
-				fire.emitting = false
-				smoke.emitting = false
-				_sync_deactivate.rpc()
+			if Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0: # tick every second
+				_sync.rpc(lifetime)
+				damage(1.0)
+				var d = _params.dur
+				lifetime -= 1.0 / d
+				if lifetime <= 0:
+					fire.emitting = false
+					smoke.emitting = false
+					_sync_deactivate.rpc()
 		elif curr_buildup < _params.max_buildup:
 			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
@@ -79,16 +80,16 @@ func damage(delta):
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
 
-@rpc("any_peer")
+@rpc("authority", "unreliable_ordered")
 func _sync(l):
 	lifetime = l
 
-@rpc("any_peer", "reliable")
+@rpc("authority", "reliable")
 func _sync_activate():
 	fire.emitting = true
 	smoke.emitting = true
 
-@rpc("any_peer", "reliable")
+@rpc("authority", "reliable")
 func _sync_deactivate():
 	fire.emitting = false
 	smoke.emitting = false

@@ -270,6 +270,9 @@ double ProjectilePhysicsWithDragV2::_newton_refine_angle(double theta, double ta
 		double error = y - target_y;
 
 		if (std::abs(error) < 1e-6) {
+			if (i > 3) {
+				UtilityFunctions::print("Converged in ", i, " iterations with error: ", error);
+			}
 			break;
 		}
 
