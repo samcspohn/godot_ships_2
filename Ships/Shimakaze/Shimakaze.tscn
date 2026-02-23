@@ -158,13 +158,15 @@ script = ExtResource("14_56jcx")
 speed_knts = 52.0
 damage = 20000.0
 flood_buildup = 200.0
+detection_range = 1500.0
+arming_distance = 200.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
 [sub_resource type="Resource" id="Resource_17h8w"]
 resource_local_to_scene = true
 script = ExtResource("13_56jcx")
 torpedo_params = SubResource("Resource_jewkh")
-reload_time = 100.0
+reload_time = 1.0
 traverse_speed = 15.0
 _range = 14000.0
 metadata/_custom_type_script = "uid://cq5883re36gh7"
