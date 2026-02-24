@@ -330,7 +330,6 @@ func _physics_process(_delta):
 		var hp_cont = camera_controller._ship.health_controller
 		var hp = hp_cont.current_hp
 		if hp != current_hp:
-			print("hp mult: ", (hp_cont.params.p() as HPParams).mult)
 			var damage_taken = (current_hp - hp)
 			if damage_taken > 0.0:
 				# Show floating damage indicator

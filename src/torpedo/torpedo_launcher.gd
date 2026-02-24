@@ -86,7 +86,8 @@ func fire() -> void:
 				var server: GameServer = get_tree().root.get_node_or_null("/root/Server")
 				# notify team of torpedo launch
 				for ship in server._get_team_ships(_ship.team.team_id):
-					fire_client.rpc_id(ship.peer_id, m.global_position, -m.global_basis.z + offset, t, _id, false)
+					if !ship.team.is_bot:
+						fire_client.rpc_id(ship.peer_id, m.global_position, -m.global_basis.z + offset, t, _id, false)
 				# for p in multiplayer.get_peers():
 				# 	self.fire_client.rpc_id(p, m.global_position, -m.global_basis.z + offset, t, _id)
 				offset += muzzles[0].global_basis.x * 0.012

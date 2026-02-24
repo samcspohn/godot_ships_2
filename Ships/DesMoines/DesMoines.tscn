@@ -117,7 +117,6 @@ shell1 = SubResource("Resource_1hsc6")
 shell2 = SubResource("Resource_vp8fe")
 h_grouping = 2.1
 v_grouping = 2.1
-base_spread = 0.008
 reload_time = 5.0
 _range = 13500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

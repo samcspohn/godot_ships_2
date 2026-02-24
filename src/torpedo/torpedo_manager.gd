@@ -8,7 +8,7 @@ var bulletId: int = 0
 # @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
-const TORPEDO_SPEED_MULTIPLIER = 4.0
+const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
@@ -297,7 +297,8 @@ func _physics_process(_delta: float) -> void:
 					if p.position.distance_squared_to(ship.global_position) < p.params.detection_range * p.params.detection_range: # Visibility range
 						p.visible_to_enemy = true
 						for player in server._get_team_ships(0 if p.owner.team.team_id == 1 else 1):
-							p.launcher.fire_client.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.armed)
+							if not player.team.is_bot:
+								p.launcher.fire_client.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.armed)
 						if p.armed:
 							notify_armed(id) # Update indicators for enemy teams
 						break
@@ -352,15 +353,19 @@ func notify_armed(id: int):
 	var torpedo: TorpedoData = self.torpedos[id]
 	var friendly_ships = server.get_team_ships(torpedo.owner.team.team_id)
 	for f in friendly_ships:
-		arm_torp.rpc_id(f.peer_id, id)
+		if !f.team.is_bot:
+			arm_torp.rpc_id(f.peer_id, id)
 	if torpedo.visible_to_enemy:
 		var enemy_ships = server.get_team_ships(0 if torpedo.owner.team.team_id == 1 else 1)
 		for e in enemy_ships:
-			arm_torp.rpc_id(e.peer_id, id)
+			if !e.team.is_bot:
+				arm_torp.rpc_id(e.peer_id, id)
 
 
 @rpc("call_remote", "reliable", "authority")
 func arm_torp(id: int):
+	if id < 0 or id >= self.torpedos.size():
+		return
 	if torpedos[id] != null:
 		torpedos[id].armed = true
 

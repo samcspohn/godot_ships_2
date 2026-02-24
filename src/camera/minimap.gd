@@ -12,7 +12,7 @@ const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
 const FOV_ARC_COLOR = Color(0.5, 0.8, 1.0, 0.25) # Translucent light blue
 const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
-const TORPEDO_MARKER_SIZE = 12 # Base size for torpedo triangle markers
+const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
 
 # Static minimap texture shared across all instances
 static var map_texture: ViewportTexture = null
@@ -497,18 +497,22 @@ func draw_torpedoes_on_minimap() -> void:
 		else:
 			color = ENEMY_COLOR
 
-		# Build a small triangle rotated to face the torpedo's travel direction
-		var heading: float = atan2(torp.direction.x, -torp.direction.z)
-		var points := PackedVector2Array([
-			Vector2(0, -marker_size / 2.0),           # Tip
-			Vector2(-marker_size / 3.0, marker_size / 2.0), # Left
-			Vector2(marker_size / 3.0, marker_size / 2.0),  # Right
-		])
-		for i in range(points.size()):
-			points[i] = points[i].rotated(-heading)
-			points[i] += minimap_pos
+		# # Build a small triangle rotated to face the torpedo's travel direction
+		# var heading: float = atan2(torp.direction.x, -torp.direction.z)
+		# var points := PackedVector2Array([
+		# 	Vector2(0, -marker_size / 2.0),           # Tip
+		# 	Vector2(-marker_size / 3.0, marker_size / 2.0), # Left
+		# 	Vector2(marker_size / 3.0, marker_size / 2.0),  # Right
+		# ])
+		# for i in range(points.size()):
+		# 	points[i] = points[i].rotated(-heading)
+		# 	points[i] += minimap_pos
+		#
+		# ship_markers_canvas.draw_colored_polygon(points, color)
+		#
 
-		ship_markers_canvas.draw_colored_polygon(points, color)
+		# draw a circle instead
+		ship_markers_canvas.draw_circle(minimap_pos, marker_size / 2.0, color)
 
 # Draw a translucent arc showing the camera's field of view
 func draw_camera_fov_arc(range: float) -> void:

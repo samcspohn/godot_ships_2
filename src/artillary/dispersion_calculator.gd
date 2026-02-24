@@ -24,14 +24,61 @@ class_name DispersionCalculator
 var period: float = 4.0
 var angle: float = 0.0
 var shell_index: float = 0.0
-var randomised_strata: Array[int] = []
+var randomised_strata: Array[Array] = []
 var strata_idx: int = 0
+var good_normal_toggle: bool = false
+var good_region: float = 0.45
+
+const GUARANTEE_STRATA = 1.0 / 20.0
+func compute_stratum():
+	shell_index = 0.0
+	randomised_strata.clear()
+	# randomised_strata.append([0.0, GUARANTEE_STRATA])
+	var i = 0;
+	while shell_index < period:
+		# {strat_id: [start, size]}
+		randomised_strata.append([0.0, 0.0])
+		i += 1
+		shell_index += 1.0
+	shell_index -= period
+
+
+	var first_good = false
+	# var strata_size = (1.0 - GUARANTEE_STRATA) / i
+	#										 v guaranteed
+	# convert to 2 strata with random order |--|----- good ------|------------ normal ------------|
+	for j in range(1, randomised_strata.size()):
+		# var start = GUARANTEE_STRATA + (j - 1) * strata_size
+		if good_normal_toggle and first_good:
+			randomised_strata[j] = [0.0, GUARANTEE_STRATA]
+			first_good = false
+		else:
+			var strata_size = good_region - GUARANTEE_STRATA if good_normal_toggle else (1.0 - good_region)
+			var start = GUARANTEE_STRATA if good_normal_toggle else good_region
+			randomised_strata[j] = [start, strata_size]
+		good_normal_toggle = !good_normal_toggle
+	randomised_strata.shuffle()
+
 func _init():
 	angle = randf_range(0, TAU)
-	shell_index = randf_range(0.0, period)
-	for i in range(int(period)):
-		randomised_strata.append(i)
-	randomised_strata.shuffle()
+	# shell_index = randf_range(0.0, period)
+	# for i in range(int(period)):
+	# 	randomised_strata.append(i)
+	# randomised_strata.shuffle()
+	# var guarantee_strata = 1.0 / 32.0
+	# randomised_strata.append({0: [0.0, guarantee_strata]})
+	# var strata_value = guarantee_strata
+	# var strata_size = (1.0 - guarantee_strata) / int(period)
+	# shell_index = 1.0
+	# strata_idx = 1
+	# while shell_index < period:
+	# 	randomised_strata.append({shell_index: [strata_value, strata_value + guarantee_strata]})
+	# 	strata_value += guarantee_strata
+	# 	# randomised_strata.append(shell_index)
+	# 	shell_index += 1.0
+	# shell_index -= period
+	# randomised_strata.shuffle()
+	compute_stratum()
 
 ## Calculate a point within the dispersion ellipse
 # aim_point: The precise point being aimed at
@@ -96,20 +143,22 @@ func calculate_dispersed_launch(
 		strata_idx += 1
 		if strata_idx >= randomised_strata.size():
 			strata_idx = 0
-			randomised_strata.clear()
-			for i in range(int(period)):
-				randomised_strata.append(i)
-			randomised_strata.shuffle()
+			# randomised_strata.clear()
+			# for i in range(int(period)):
+			# 	randomised_strata.append(i)
+			# randomised_strata.shuffle()
+			compute_stratum()
+		p = random_point_in_ellipse_stratified(1.0,1.0, strata[0], strata[1], h_grouping, v_grouping)
 
-		if shell_index >= period:
-			# p *= randf_range(0.0, 0.1)
-			var accurate_period = 30
-			p = random_point_in_ellipse_stratified(1.0,1.0, 0, accurate_period, h_grouping, v_grouping)
-			shell_index -= period
-		else:
-			p = random_point_in_ellipse_stratified(1.0,1.0, strata, int(period), h_grouping, v_grouping)
+		# if shell_index >= period:
+		# 	# p *= randf_range(0.0, 0.1)
+		# 	var accurate_period = 30
+		# 	p = random_point_in_ellipse_stratified(1.0,1.0, 0, accurate_period, h_grouping, v_grouping)
+		# 	shell_index -= period
+		# else:
+		# 	p = random_point_in_ellipse_stratified(1.0,1.0, strata, int(period), h_grouping, v_grouping)
 
-		shell_index += 1.0
+		# shell_index += 1.0
 
 		#if strata <= 1.0 and period > 1.0:
 			#p *= randf_range(0.0, 0.1)
@@ -143,13 +192,13 @@ static func random_point_in_ellipseV3(width: float, height: float, h_group: floa
 ## Boundaries: x_k = (k / N) ^ (1 / (g + 1))
 ## Sample within stratum k: rho = ((k + u) / N) ^ (1 / (g + 1))
 ## Final value: pow(rho, g) = ((k + u) / N) ^ (g / (g + 1))
-func random_point_in_ellipse_stratified(width: float, height: float, shell_idx: int, num_shells: int, h_group: float = 1.0, v_group: float = 1.0) -> Vector2:
+func random_point_in_ellipse_stratified(width: float, height: float, start: float, size: float, h_group: float = 1.0, v_group: float = 1.0) -> Vector2:
 	var u = randf_range(0.0, 1.0)
 	# var phi = randf_range(0.0, TAU)
 	var phi = angle
 	var a = width / 2.0
 	var b = height / 2.0
-	var t = (shell_idx + u) / num_shells
+	var t = start + u * size
 	var x = pow(t, h_group) * cos(phi) * a
 	var y = pow(t, v_group) * sin(phi) * b
 	return Vector2(x, y)
