@@ -296,7 +296,7 @@ func fire(mod: TargetMod = null) -> void:
 				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), h_grouping, v_grouping, base_spread)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
-					var t = Time.get_unix_time_from_system()
+					var t = ProjectileManager.get_current_time()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
 					TcpThreadPool.send_fire_gun(id, dispersed_velocity, m.global_position, t, _id)
 				else:

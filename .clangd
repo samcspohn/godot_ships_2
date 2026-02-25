@@ -1,0 +1,23 @@
+CompileFlags:
+  CompilationDatabase: .
+  Add:
+    - "-xc++"
+    - "-std=c++17"
+    - "-Igdextension/godot-cpp/include"
+    - "-Igdextension/godot-cpp/gen/include"
+    - "-Igdextension/ships_core/src"
+    - "-DLINUX_ENABLED"
+    - "-DUNIX_ENABLED"
+    - "-DTHREADS_ENABLED"
+    - "-DGDEXTENSION"
+    - "-DDEBUG_ENABLED"
+    - "-DHOT_RELOAD_ENABLED"
+  Remove:
+    - "-W*"
+    - "-fno-gnu-unique"
+
+Diagnostics:
+  UnusedIncludes: None
+
+InlayHints:
+  Enabled: No
