@@ -459,13 +459,18 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 }
 
 void _ProjectileManager::sync_time(double server_time) {
+	if (fabs(current_time - server_time) > 1.0 / 20.0) {
+		UtilityFunctions::print(String("ProjectileManager: Syncing time from server. Old time: %f, New time: %f")
+								 .replace("%f", String::num_real(current_time))
+								 .replace("%f", String::num_real(server_time)));
+	}
 	current_time = server_time;
 }
 
 void _ProjectileManager::_physics_process(double delta) {
 	// double current_time = Time::get_singleton()->get_unix_time_from_system();
-	current_time += delta * shell_time_multiplier;
 	rpc("sync_time", current_time);
+	current_time += delta * shell_time_multiplier;
 
 	Window *root = get_tree()->get_root();
 	Ref<World3D> world = root->get_world_3d();
