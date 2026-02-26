@@ -77,21 +77,21 @@ func handle_mouse_event(event):
 			locked_rot_v = clamp(locked_rot_v, min_offset, max_offset)
 
 func update_transform():
-	if ship != null:
-		var pos = ship.global_position
+	if follow_ship != null:
+		var pos = follow_ship.global_position
 		pos.y = height
 		var intersection = calculate_0_intersection(pos, rot_h + locked_rot_h + PI, -(rot_v + locked_rot_v))
 		if intersection != Vector3.INF:
-			var ship_pos = ship.global_position
+			var ship_pos = follow_ship.global_position
 			ship_pos.y = 0.0
 			var dist = intersection.distance_to(ship_pos)
 			var h = max(dist * angle, 40)
-			global_position = ship.global_position
+			global_position = follow_ship.global_position
 			global_position.y = h
 
 			look_at(intersection)
 		else:
-			global_position = ship.global_position
+			global_position = follow_ship.global_position
 			global_position.y = 100
 			rotation.x = rot_v + locked_rot_v
 			rotation.y = rot_h + locked_rot_h
@@ -100,7 +100,7 @@ func set_vh(aim_pos: Vector3):
 	# Step 1: Find the height at (ship.x, h, ship.z) where a line at 0.015 radians
 	# passes through aim_pos
 	# var angle = 0.015
-	var ship_pos = ship.global_position
+	var ship_pos = follow_ship.global_position
 
 # Calculate horizontal distance from ship to aim_pos in XZ plane
 	var dist_xz = Vector2(aim_pos.x - ship_pos.x, aim_pos.z - ship_pos.z).length()

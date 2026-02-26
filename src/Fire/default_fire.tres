@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="FireParams" format=3 uid="uid://rcvxbov740x0"]
+
+[ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="1_4xg3o"]
+
+[resource]
+script = ExtResource("1_4xg3o")
+dmg_rate = 0.0022
+dur = 55.0
+metadata/_custom_type_script = "uid://dr60dh6rgv4fp"

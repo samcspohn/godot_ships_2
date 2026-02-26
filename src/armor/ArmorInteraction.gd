@@ -54,7 +54,7 @@ const DEFLECTION_ALPHA: float = 0.35
 
 #endregion
 
-const WATER_DRAG: float = 1000.0
+const WATER_DRAG: float = 2000.0
 
 class ArmorResultData:
 	var result_type: HitResult

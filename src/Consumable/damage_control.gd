@@ -13,12 +13,13 @@ func _ready() -> void:
 
 func effect(ship: Ship) -> void:
 	# This function can be used to apply immediate effects if needed
-	var fire_params = ship.fire_manager.params.static_mod as FireParams
+	var fire_params = ship.fire_manager.fparams.p() as FireParams
+	var resist_params = ship.fire_manager.rparams.p() as ResistanceParams
 	fire_params.dur *= (1.0 - duration_reduction)
 	fire_params.dmg_rate *= (1.0 - damage_reduction)
-	fire_params.buildup_reduction_rate *= 10.0
+	resist_params.buildup_reduction_rate *= 10.0
 
-	var flood_params = ship.flood_manager.params.static_mod as FloodParams
+	var flood_params = ship.flood_manager.params.p() as FloodParams
 	flood_params.dur *= (1.0 - duration_reduction)
 	flood_params.dmg_rate *= (1.0 - damage_reduction)
 	flood_params.buildup_reduction_rate *= 10.0

@@ -6,6 +6,7 @@ var rot_v: float
 var current_fov: float
 var current_zoom: float
 var ship: Ship
+var follow_ship: Ship
 var player_controller: PlayerController
 var locked_ship: Ship
 var locked_rot_h: float

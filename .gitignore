@@ -26,3 +26,7 @@ python/output/
 __pycache__/
 *.pyc
 *.pyo
+
+# clangd
+compile_commands.json
+.cache/

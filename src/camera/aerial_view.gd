@@ -83,26 +83,26 @@ func handle_mouse_event(event):
 			locked_rot_v = clamp(locked_rot_v, min_offset, max_offset)
 
 func update_transform():
-	if ship != null:
-		var pos = ship.global_position
+	if follow_ship != null:
+		var pos = follow_ship.global_position
 		pos.y = height
 		var intersection = calculate_0_intersection(pos, rot_h + locked_rot_h + PI, -(rot_v + locked_rot_v))
 		if intersection != Vector3.INF:
-			var ship_pos = ship.global_position
+			var ship_pos = follow_ship.global_position
 			ship_pos.y = 0.0
 			var dist = intersection.distance_to(ship_pos)
 			var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40)
 			# zoom_mod = max(0.3,  1.0 / h / 5000.0)
 			zoom_mod = 1.0
 			current_fov = min(max(current_zoom * zoom_mod, 1.0), max_fov)
-			global_position = ship.global_position
+			global_position = follow_ship.global_position
 			global_position.y = h
 			# rotation.y = rot_h + PI + locked_rot_h
 			# rotation.x = -0.015
 
 			look_at(intersection)
 		else:
-			global_position = ship.global_position
+			global_position = follow_ship.global_position
 			global_position.y = 100
 			rotation.x = rot_v + locked_rot_v
 			rotation.y = rot_h + locked_rot_h
@@ -111,7 +111,7 @@ func update_transform():
 # Note: r_h andeeded to look at target_pos using custom iterative solver.
 # Returns Vector2(rot_h, rot_v) or null if no valid solution exists.
 func _calculate_rotation_for_aim(target_pos: Vector3) -> Variant:
-	var ship_pos = ship.global_position
+	var ship_pos = follow_ship.global_position
 	var ship_pos_y0 = Vector3(ship_pos.x, 0.0, ship_pos.z)
 
 	var dx = target_pos.x - ship_pos.x

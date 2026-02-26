@@ -279,6 +279,7 @@ func _physics_process(delta: float) -> void:
 
 	active = false
 	targets_guns.clear()
+	var num_guns = 0
 	# var gi = 0
 	for sc in sub_controllers:
 		var _range = sc.params.p()._range
@@ -297,6 +298,7 @@ func _physics_process(delta: float) -> void:
 					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
 					gun_targets[g] = e
+					num_guns += 1
 					targets_guns[e] = targets_guns.get(e, []) + [g]
 					if e == target:
 						g.dispersion_calculator = priority_target_dispersion
@@ -336,19 +338,82 @@ func _physics_process(delta: float) -> void:
 		for sec in sub_controllers:
 			min_reload_time = min(min_reload_time, sec.get_params().reload_time)
 
-		# shoot at all targets
-		for e in targets_guns:
-			target_seq_timers[e] = target_seq_timers.get(e, 0.0) + delta
-			var delay = min(sequential_fire_delay, min_reload_time / targets_guns[e].size())
-			while target_seq_timers.get(e, -1) > 0.0:
-				target_seq_timers[e] -= delay
-				for g: Gun in targets_guns[e]:
-					if g.reload >= 1 and g.can_fire:
-						if gun_targets[g] == target:
-							g.fire(target_mod.dynamic_mod)
-						else:
-							g.fire()
+		# # shoot at all targets
+		# for e in targets_guns:
+		# 	target_seq_timers[e] = target_seq_timers.get(e, 0.0) + delta
+		# 	var delay = min(sequential_fire_delay, min_reload_time / num_targets)
+		# 	while target_seq_timers.get(e, -1) > 0.0:
+		# 		target_seq_timers[e] -= delay
+		# 		for g: Gun in targets_guns[e]:
+		# 			if g.reload >= 1 and g.can_fire:
+		# 				if gun_targets[g] == target:
+		# 					g.fire(target_mod.dynamic_mod)
+		# 				else:
+		# 					g.fire()
+		# 				break
+
+		for t in target_seq_timers.keys():
+			if not targets_guns.has(t) or targets_guns[t].size() == 0:
+				target_seq_timers[t] = 0.0
+
+		if num_guns > 0:
+			sequential_fire_timer += delta
+			var delay = min(sequential_fire_delay, min_reload_time / num_guns)
+			# var delay = sequential_fire_delay
+
+			while sequential_fire_timer >= 0.0:
+				sequential_fire_timer -= delay
+				# sequential_fire_timer = 0.0
+				# pick random target from targets_guns
+				var target_list = targets_guns.keys()
+				target_list.shuffle()
+				var fired = false
+				for e in target_list:
+					var guns = targets_guns[e]
+					for g in guns:
+						if g.reload >= 1 and g.can_fire:
+							if gun_targets[g] == target:
+								g.fire(target_mod.dynamic_mod)
+							else:
+								g.fire()
+							fired = true
+							# sequential_fire_timer -= delay
+							break
+					if fired:
 						break
+				if not fired:
+					break
+					# if sequential_fire_timer < delay:
+					# 	break
+
+
+			# for e in targets_guns:
+			# 	if targets_guns[e].size() > 0:
+			# 		target_seq_timers[e] = target_seq_timers.get(e, 0.0) + delta
+			# while sequential_fire_timer >= 0.0:
+			# 	sequential_fire_timer -= delay
+			# 	var max_timer = 0.0
+			# 	var max_timer_enemy: Ship = null
+			# 	for t in target_seq_timers:
+			# 		if target_seq_timers[t] > max_timer and targets_guns.has(t) and target_seq_timers[t] > 0.0:
+			# 			max_timer = target_seq_timers[t]
+			# 			max_timer_enemy = t
+			# 	if max_timer_enemy:
+			# 		var guns = targets_guns.get(max_timer_enemy, [])
+			# 		if target_seq_timers[max_timer_enemy] > 0.0:
+			# 			target_seq_timers[max_timer_enemy] -= delay
+			# 			for g: Gun in guns:
+			# 				if g.reload >= 1 and g.can_fire:
+			# 					if gun_targets[g] == target:
+			# 						g.fire(target_mod.dynamic_mod)
+			# 					else:
+			# 						g.fire()
+			# 					break
+			# 	else:
+			# 		break
+
+
+
 
 	# for g in guns:
 	# 	g._aim(aim_point, delta)

@@ -117,18 +117,22 @@ func _ready():
 
 	third_person_view = ThirdPersonViewV2.new()
 	third_person_view.ship = _ship
+	third_person_view.follow_ship = follow_ship
 	third_person_view.player_controller = player_controller
 
 	free_look_view = ThirdPersonViewV2.new()
 	free_look_view.ship = _ship
+	free_look_view.follow_ship = follow_ship
 	free_look_view.player_controller = player_controller
 
 	sniper_view = AimView.new()
 	sniper_view.ship = _ship
+	sniper_view.follow_ship = follow_ship
 	sniper_view.player_controller = player_controller
 
 	aerial_view = AerialView.new()
 	aerial_view.ship = _ship
+	aerial_view.follow_ship = follow_ship
 	aerial_view.player_controller = player_controller
 
 	get_parent().add_child(third_person_view)
@@ -357,9 +361,12 @@ func _update_camera_transform(delta_time: float):
 	if !_ship:
 		return
 
-	# if free_look:
+	free_look_view.follow_ship = follow_ship
+	third_person_view.follow_ship = follow_ship
+	sniper_view.follow_ship = follow_ship
+	aerial_view.follow_ship = follow_ship
+
 	free_look_view.update_transform()
-# else:
 	third_person_view.update_transform()
 	sniper_view.update_transform()
 	aerial_view.update_transform()
