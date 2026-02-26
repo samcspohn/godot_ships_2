@@ -18,6 +18,9 @@ mono_crash.*.json
 *.dblite
 *.so
 *.os
+*.obj
+*.lib
+*.exp
 
 # Python
 venv/
