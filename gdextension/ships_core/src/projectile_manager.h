@@ -36,6 +36,7 @@ public:
 private:
 	// Time multiplier for shell speed display
 	double shell_time_multiplier;
+	double current_time;
 
 	// Projectile tracking
 	int next_id;
@@ -88,6 +89,9 @@ public:
 	// Process methods
 	void _process_trails_only(double current_time);
 
+	// sync time method for client-side projectile updates
+	void sync_time(double server_time);
+
 	// Fire bullet methods
 	int fire_bullet(const Vector3 &vel, const Vector3 &pos, const Ref<Resource> &shell,
 					double t, Object *owner, const Array &exclude = Array());
@@ -113,6 +117,7 @@ public:
 	void create_ricochet_rpc2(const PackedByteArray &data);
 
 	// Getters
+	double get_current_time() const;
 	double get_shell_time_multiplier() const;
 	int get_next_id() const;
 	TypedArray<ProjectileData> get_projectiles() const;
