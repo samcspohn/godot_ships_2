@@ -3,12 +3,11 @@
 [ext_resource type="PackedScene" uid="uid://r0fpybnysu8t" path="res://turrets/glb/GER_380mm_2b.glb" id="1_jgr4h"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_dgeog"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="3_4sdqy"]
-[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="3_i576m"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_i576m"]
 
 [node name="GER_380mm_2b" unique_id=2093200402 instance=ExtResource("1_jgr4h")]
 script = ExtResource("2_dgeog")
 _sound = ExtResource("3_i576m")
-pitch = 0.45
 glb_path = "uid://r0fpybnysu8t"
 
 [node name="380mmTurret_col" parent="." index="1"]

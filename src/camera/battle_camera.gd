@@ -376,19 +376,12 @@ func _update_camera_transform(delta_time: float):
 		self.global_position = current_view.global_position
 		self.fov = current_view.current_fov
 	else:
-		# self.rotation = lerp(self.rotation, current_view.rotation, delta_time / transition_time)
-		self.rotation.x = lerp_angle(self.rotation.x, current_view.rotation.x, delta_time / transition_time)
-		self.rotation.y = lerp_angle(self.rotation.y, current_view.rotation.y, delta_time / transition_time)
-		self.rotation.z = lerp_angle(self.rotation.z, current_view.rotation.z, delta_time / transition_time)
-		self.global_position = lerp(self.global_position, current_view.global_position, delta_time / transition_time)
-		var _fov = lerp(self.fov, current_view.current_fov, delta_time / transition_time)
-		if _fov > 40.1:
-			print("FOV is too high, current fov: ", current_view.current_fov, " self.fov: ", self.fov)
-			_fov = clamp(_fov, 1.0, 40)
-		if _fov < 1.01:
-			print("FOV is too low, current fov: ", current_view.current_fov, " self.fov: ", self.fov)
-			_fov = clamp(_fov, 1.0, 40)
-		self.fov = _fov
+		var t = clamp(delta_time / transition_time, 0.0, 1.0)
+		self.rotation.x = lerp_angle(self.rotation.x, current_view.rotation.x, t)
+		self.rotation.y = lerp_angle(self.rotation.y, current_view.rotation.y, t)
+		self.rotation.z = lerp_angle(self.rotation.z, current_view.rotation.z, t)
+		self.global_position = lerp(self.global_position, current_view.global_position, t)
+		self.fov = lerp(self.fov, current_view.current_fov, t)
 		transition_time = clamp(transition_time - delta_time, 0.0, transition_time)
 
 func get_angle_between_points(point1: Vector2, point2: Vector2, in_degrees: bool = false) -> float:

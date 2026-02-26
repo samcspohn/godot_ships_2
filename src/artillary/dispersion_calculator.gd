@@ -24,43 +24,47 @@ class_name DispersionCalculator
 var period: float = 4.0
 var angle: float = 0.0
 var shell_index: float = 0.0
-var randomised_strata: Array[Array] = []
-var strata_idx: int = 0
-var good_normal_toggle: bool = false
-var good_region: float = 0.45
+var quality: float = 0.5
+# var randomised_strata: Array[Array] = []
+# var strata_idx: int = 0
+# var good_normal_toggle: bool = false
+# var good_region: float = 1.0
 
-const GUARANTEE_STRATA = 1.0 / 20.0
-func compute_stratum():
-	shell_index = 0.0
-	randomised_strata.clear()
-	# randomised_strata.append([0.0, GUARANTEE_STRATA])
-	var i = 0;
-	while shell_index < period:
-		# {strat_id: [start, size]}
-		randomised_strata.append([0.0, 0.0])
-		i += 1
-		shell_index += 1.0
-	shell_index -= period
+# const GUARANTEE_STRATA = 1.0 / 10.0
+# func compute_stratum():
+# 	shell_index = 0.0
+# 	randomised_strata.clear()
+# 	# randomised_strata.append([0.0, GUARANTEE_STRATA])
+# 	var i = 0;
+# 	while shell_index < period:
+# 		# {strat_id: [start, size]}
+# 		randomised_strata.append([0.0, 0.0])
+# 		i += 1
+# 		shell_index += 1.0
+# 	shell_index -= period
 
 
-	var first_good = false
-	# var strata_size = (1.0 - GUARANTEE_STRATA) / i
-	#										 v guaranteed
-	# convert to 2 strata with random order |--|----- good ------|------------ normal ------------|
-	for j in range(1, randomised_strata.size()):
-		# var start = GUARANTEE_STRATA + (j - 1) * strata_size
-		if good_normal_toggle and first_good:
-			randomised_strata[j] = [0.0, GUARANTEE_STRATA]
-			first_good = false
-		else:
-			var strata_size = good_region - GUARANTEE_STRATA if good_normal_toggle else (1.0 - good_region)
-			var start = GUARANTEE_STRATA if good_normal_toggle else good_region
-			randomised_strata[j] = [start, strata_size]
-		good_normal_toggle = !good_normal_toggle
-	randomised_strata.shuffle()
+# 	var first_good = false
+
+# 	# var strata_size = (1.0 - GUARANTEE_STRATA) / i
+# 	#										 v guaranteed
+# 	# convert to 2 strata with random order |--|----- good ------|------------ normal ------------|
+# 	good_normal_toggle = true
+# 	for j in range(1, randomised_strata.size()):
+# 		# var start = GUARANTEE_STRATA + (j - 1) * strata_size
+# 		if good_normal_toggle and first_good:
+# 			randomised_strata[j] = [0.0, GUARANTEE_STRATA * 0.2]
+# 			first_good = false
+# 		else:
+# 			var strata_size = good_region - GUARANTEE_STRATA if good_normal_toggle else (1.0 - good_region)
+# 			var start = GUARANTEE_STRATA if good_normal_toggle else good_region
+# 			randomised_strata[j] = [start, strata_size]
+# 		# good_normal_toggle = !good_normal_toggle
+# 	randomised_strata.shuffle()
 
 func _init():
 	angle = randf_range(0, TAU)
+	# good_region = pow(0.5, (h_grouping + v_grouping) / 2.0)
 	# shell_index = randf_range(0.0, period)
 	# for i in range(int(period)):
 	# 	randomised_strata.append(i)
@@ -78,7 +82,7 @@ func _init():
 	# 	shell_index += 1.0
 	# shell_index -= period
 	# randomised_strata.shuffle()
-	compute_stratum()
+	# compute_stratum()
 
 ## Calculate a point within the dispersion ellipse
 # aim_point: The precise point being aimed at
@@ -139,16 +143,17 @@ func calculate_dispersed_launch(
 
 	var p = Vector2.ZERO
 	if period != 0:
-		var strata = randomised_strata[strata_idx]
-		strata_idx += 1
-		if strata_idx >= randomised_strata.size():
-			strata_idx = 0
-			# randomised_strata.clear()
-			# for i in range(int(period)):
-			# 	randomised_strata.append(i)
-			# randomised_strata.shuffle()
-			compute_stratum()
-		p = random_point_in_ellipse_stratified(1.0,1.0, strata[0], strata[1], h_grouping, v_grouping)
+		# var strata = randomised_strata[strata_idx]
+		# strata_idx += 1
+		# if strata_idx >= randomised_strata.size():
+		# 	strata_idx = 0
+		# 	# randomised_strata.clear()
+		# 	# for i in range(int(period)):
+		# 	# 	randomised_strata.append(i)
+		# 	# randomised_strata.shuffle()
+		# 	compute_stratum()
+		# p = random_point_in_ellipse_stratified(1.0,1.0, strata[0], strata[1], h_grouping, v_grouping)
+		# p *= 1.6
 
 		# if shell_index >= period:
 		# 	# p *= randf_range(0.0, 0.1)
@@ -162,6 +167,17 @@ func calculate_dispersed_launch(
 
 		#if strata <= 1.0 and period > 1.0:
 			#p *= randf_range(0.0, 0.1)
+
+		# the closer p is in quality to the desired quality, the more likely the next shell will have less quality (higher dispersion), and vice versa, creating a dynamic feedback loop that simulates the natural variability in shell dispersion while maintaining an overall average quality level.
+		var desired_quality = pow(0.5, (h_grouping + v_grouping) / 2.0)
+		p = random_point_in_ellipseV4(1.0,1.0, quality, h_grouping, v_grouping)
+		var p_qual = sqrt(p.x * p.x + p.y * p.y)
+		var qual_diff = p_qual - desired_quality
+
+
+		if shell_index >= period:
+			p *= randf_range(0.0, 0.05)
+			shell_index -= period
 	else:
 		p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
 
@@ -178,6 +194,16 @@ func calculate_dispersed_launch(
 	return new_launch_velocity
 
 static func random_point_in_ellipseV3(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
+	var rho = randf_range(0.0, 1.0)
+	var phi = randf_range(0.0, TAU)
+	var a = width / 2.0
+	var b = height / 2.0
+	var x = pow(rho, h_group) * cos(phi) * a
+	var y = pow(rho, v_group) * sin(phi) * b
+	return Vector2(x, y)
+
+
+static func random_point_in_ellipseV4(width: float, height: float, quality: float, h_group: float = 1.0, v_group: float = 1.0):
 	var rho = randf_range(0.0, 1.0)
 	var phi = randf_range(0.0, TAU)
 	var a = width / 2.0

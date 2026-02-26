@@ -87,7 +87,7 @@ resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
 drag = 2.4999999999999957e-05
-damage = 9700.0
+damage = 10300.0
 size = 3.8
 caliber = 380.0
 mass = 800.0
@@ -100,7 +100,7 @@ resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
 drag = 2.4999999999999957e-05
-damage = 3200.0
+damage = 3400.0
 size = 3.8
 caliber = 380.0
 mass = 800.0
@@ -118,7 +118,8 @@ script = ExtResource("6_lcoqi")
 elevation_speed = 6.0
 shell1 = SubResource("Resource_4564o")
 shell2 = SubResource("Resource_u0hyh")
-h_grouping = 1.6
+h_grouping = 1.5
+v_grouping = 1.7
 base_spread = 0.015
 reload_time = 25.0
 traverse_speed = 6.0
@@ -307,12 +308,12 @@ max_rotation_angle = 6.1086523819801535
 min_rotation_angle = 0.2792526803190927
 
 [node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" unique_id=1266383701 instance=ExtResource("18_hcq8l")]
-min_rotation_angle = 0.00437897004486487
-max_rotation_angle = 2.6190116947630884
+min_rotation_angle = 0.0
+max_rotation_angle = 2.6179938779914944
 
 [node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" unique_id=98366039 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 3.422434449473945
-max_rotation_angle = 0.004996498094882
+min_rotation_angle = 3.420845333908886
+max_rotation_angle = 0.0
 
 [node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" index="0" unique_id=604163652 instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 3.36186195118043

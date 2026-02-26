@@ -221,7 +221,9 @@ func find_best_game_server():
 # Each team will have 3-4 destroyers, 3-4 cruisers, and 3-4 battleships (10 total)
 # The player's ship class is accounted for to ensure balance
 # Both teams will have identical ship compositions (mirrored) for tier balance
-# Spawn positions: Distributed in clusters (DD, CA, BB) repeating across the spawn line
+# Spawn positions: Ships are grouped into 3 clusters (left flank, center, right flank)
+# Each cluster contains one of each class (DD, CA, BB), with the bonus class adding a 4th to one cluster
+# Cluster order is shuffled so the player can end up on either flank or in the middle
 func create_balanced_single_player_teams(player_name: String, player_ship: String) -> Dictionary:
 	var team = {}
 
@@ -236,10 +238,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		SHIP_CLASS_CA: 3,
 		SHIP_CLASS_DD: 3
 	}
-	# Randomly pick one class to have 4 ships
 	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
-	# var bonus_class = classes[randi() % classes.size()]
-	var bonus_class = SHIP_CLASS_CA
+	var bonus_class = classes[randi() % classes.size()]
 	class_counts[bonus_class] = 4
 
 	# Build the ship list for each class
@@ -269,96 +269,108 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 				var ship_path = ships_available[i % ships_available.size()]
 				ships_by_class_list[ship_class].append(ship_path)
 
-	# Assign spawn positions by class for even distribution across the spawn axis
-	# Positions 0-9 from left to right:
-	# DDs on flanks (outer positions), CAs in between, BBs in center
-	var spawn_positions_by_class = _get_spawn_positions_by_class(class_counts)
+	# Build 3 clusters, each with one ship per class
+	# A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
+	var clusters = [[], [], []]
+
+	# Track consumption index per class
+	var class_consume_index = {
+		SHIP_CLASS_BB: 0,
+		SHIP_CLASS_CA: 0,
+		SHIP_CLASS_DD: 0
+	}
+
+	# Fill base clusters: one DD, one CA, one BB each
+	for cluster_idx in range(3):
+		for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
+			var idx = class_consume_index[ship_class]
+			if idx < ships_by_class_list[ship_class].size():
+				var ship_path = ships_by_class_list[ship_class][idx]
+				var is_player = (ship_path == player_ship and idx == 0 and ship_class == player_ship_class)
+				clusters[cluster_idx].append({
+					"class": ship_class,
+					"ship": ship_path,
+					"is_player": is_player
+				})
+				class_consume_index[ship_class] = idx + 1
+
+	# Add the bonus (4th) ship from the bonus class to a random cluster
+	var bonus_idx = class_consume_index[bonus_class]
+	if bonus_idx < ships_by_class_list[bonus_class].size():
+		var ship_path = ships_by_class_list[bonus_class][bonus_idx]
+		var is_player = (ship_path == player_ship and bonus_idx == 0 and bonus_class == player_ship_class)
+		var bonus_cluster = randi() % 3
+		clusters[bonus_cluster].append({
+			"class": bonus_class,
+			"ship": ship_path,
+			"is_player": is_player
+		})
+
+	# Shuffle order within each cluster (so DD/CA/BB positions vary within the group)
+	for cluster in clusters:
+		cluster.shuffle()
+
+	# Shuffle the order of the 3 clusters (left flank, center, right flank)
+	clusters.shuffle()
+
+	# Flatten clusters into a single ordered spawn list
+	var spawn_list = []  # Array of {"class", "ship", "is_player"} in spawn position order
+	for cluster in clusters:
+		for entry in cluster:
+			spawn_list.append(entry)
+
+	print("=== Spawn Order (positions 0-%d) ===" % (spawn_list.size() - 1))
+	for i in range(spawn_list.size()):
+		var class_label = ["BB", "CA", "DD"][spawn_list[i]["class"]]
+		var player_marker = " [PLAYER]" if spawn_list[i]["is_player"] else ""
+		print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
+
+	# Randomize which team the player is on
+	var player_team_id = randi() % 2
+	var enemy_team_id = 1 - player_team_id
+	print("Player assigned to team %d" % player_team_id)
 
 	var bot_id_counter = 1001
-	var player_slot_filled = false
 
-	# Fill team 0
-	for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
-		var ship_list = ships_by_class_list[ship_class]
-		var positions = spawn_positions_by_class[ship_class].duplicate()
-
-		for ship_path in ship_list:
-			var spawn_pos = positions.pop_front()
-
-			if not player_slot_filled and ship_path == player_ship:
-				# Player takes this slot
-				team[player_name] = {
-					"team": "0",
-					"player_id": player_name,
-					"ship": player_ship,
-					"is_bot": false,
-					"spawn_position": spawn_pos
-				}
-				player_slot_filled = true
-			else:
-				var bot_id = str(bot_id_counter)
-				bot_id_counter += 1
-				team[bot_id] = {
-					"team": "0",
-					"player_id": bot_id,
-					"ship": ship_path,
-					"is_bot": true,
-					"spawn_position": spawn_pos
-				}
-
-	# Fill team 1 - exact mirror of ship composition for tier balance
-	for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
-		var ship_list = ships_by_class_list[ship_class]
-		var positions = spawn_positions_by_class[ship_class].duplicate()
-
-		for ship_path in ship_list:
-			var spawn_pos = positions.pop_front()
+	# Fill player's team using the spawn list
+	for spawn_pos in range(spawn_list.size()):
+		var entry = spawn_list[spawn_pos]
+		if entry["is_player"]:
+			team[player_name] = {
+				"team": str(player_team_id),
+				"player_id": player_name,
+				"ship": entry["ship"],
+				"is_bot": false,
+				"spawn_position": spawn_pos
+			}
+		else:
 			var bot_id = str(bot_id_counter)
 			bot_id_counter += 1
 			team[bot_id] = {
-				"team": "1",
+				"team": str(player_team_id),
 				"player_id": bot_id,
-				"ship": ship_path,
+				"ship": entry["ship"],
 				"is_bot": true,
 				"spawn_position": spawn_pos
 			}
+
+	# Fill enemy team - same spawn list for mirrored tier balance
+	for spawn_pos in range(spawn_list.size()):
+		var entry = spawn_list[spawn_pos]
+		var bot_id = str(bot_id_counter)
+		bot_id_counter += 1
+		team[bot_id] = {
+			"team": str(enemy_team_id),
+			"player_id": bot_id,
+			"ship": entry["ship"],
+			"is_bot": true,
+			"spawn_position": spawn_pos
+		}
 
 	# Log team composition for debugging
 	_log_team_composition(team)
 
 	return team
-
-# Get spawn positions for each class based on class counts
-# Distributed in repeating clusters: (DD, CA, BB) pattern across the spawn line
-# Example with 3 DD, 4 CA, 3 BB: DD, CA, BB, DD, CA, BB, DD, CA, CA, BB
-func _get_spawn_positions_by_class(class_counts: Dictionary) -> Dictionary:
-	var positions = {
-		SHIP_CLASS_DD: [],
-		SHIP_CLASS_CA: [],
-		SHIP_CLASS_BB: []
-	}
-
-	# Track remaining ships of each class to assign
-	var remaining = {
-		SHIP_CLASS_DD: class_counts[SHIP_CLASS_DD],
-		SHIP_CLASS_CA: class_counts[SHIP_CLASS_CA],
-		SHIP_CLASS_BB: class_counts[SHIP_CLASS_BB]
-	}
-
-	var total_ships = class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD]
-	var current_pos = 0
-
-	# Assign positions in repeating cluster pattern: DD, CA, BB
-	var class_order = [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]
-
-	while current_pos < total_ships:
-		for ship_class in class_order:
-			if remaining[ship_class] > 0 and current_pos < total_ships:
-				positions[ship_class].append(current_pos)
-				remaining[ship_class] -= 1
-				current_pos += 1
-
-	return positions
 
 func _log_team_composition(team: Dictionary) -> void:
 	var team0_tiers = []
