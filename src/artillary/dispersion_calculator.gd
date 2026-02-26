@@ -169,14 +169,13 @@ func calculate_dispersed_launch(
 			#p *= randf_range(0.0, 0.1)
 
 		# the closer p is in quality to the desired quality, the more likely the next shell will have less quality (higher dispersion), and vice versa, creating a dynamic feedback loop that simulates the natural variability in shell dispersion while maintaining an overall average quality level.
-		var desired_quality = pow(0.5, (h_grouping + v_grouping) / 2.0)
-		p = random_point_in_ellipseV4(1.0,1.0, quality, h_grouping, v_grouping)
-		var p_qual = sqrt(p.x * p.x + p.y * p.y)
-		var qual_diff = p_qual - desired_quality
+		p = random_point_in_ellipseV4(1.0, 1.0, h_grouping, v_grouping)
 
 
 		if shell_index >= period:
-			p *= randf_range(0.0, 0.05)
+			# p *= randf_range(0.0, 0.05)
+			p.y *= randf_range(0.0, 0.025)
+			p.x *= 0.33
 			shell_index -= period
 	else:
 		p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
@@ -203,13 +202,34 @@ static func random_point_in_ellipseV3(width: float, height: float, h_group: floa
 	return Vector2(x, y)
 
 
-static func random_point_in_ellipseV4(width: float, height: float, quality: float, h_group: float = 1.0, v_group: float = 1.0):
-	var rho = randf_range(0.0, 1.0)
+func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
+	# Quality feedback system: bias rho based on previous shell's quality.
+	# quality is in [0, 1] where 0 = center hit (perfect), 1 = edge hit (worst).
+	# Neutral quality = 0.5 (median rho when uniform), which corresponds to
+	# an average shell distance of pow(0.5, avg_grouping).
+	#
+	# rho_exponent < 1 -> pow(rand, <1) biases rho toward 1 (worse next shot)
+	# rho_exponent = 1 -> uniform rho (no bias, neutral)
+	# rho_exponent > 1 -> pow(rand, >1) biases rho toward 0 (better next shot)
+	#
+	# Mapping: rho_exponent = 2.0 * quality
+	#   quality = 0.0 (perfect)  -> exp ≈ 0   -> next shell strongly biased outward
+	#   quality = 0.5 (average)  -> exp = 1.0  -> next shell uniform (no bias)
+	#   quality = 1.0 (worst)    -> exp = 2.0  -> next shell biased inward
+	var rho_exponent = clampf(2.0 * quality, 0.1, 10.0)
+
+	var rho = pow(randf_range(0.0, 1.0), rho_exponent)
 	var phi = randf_range(0.0, TAU)
 	var a = width / 2.0
 	var b = height / 2.0
 	var x = pow(rho, h_group) * cos(phi) * a
 	var y = pow(rho, v_group) * sin(phi) * b
+
+	# Update quality for next shell: rho represents where this shell landed
+	# (0 = center, 1 = edge), feeding back into the next shot's bias.
+	# quality = rho
+	quality = quality * 0.5 + rho * 0.5
+
 	return Vector2(x, y)
 
 ## Equal-area stratified sampling of pow(rho, group).
