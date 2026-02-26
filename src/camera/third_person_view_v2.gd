@@ -64,7 +64,7 @@ func get_up_direction() -> Vector3:
 func update_transform():
 	height = 10
 	distance = 100
-	if ship != null:
+	if follow_ship != null:
 		# var from_pos = ship.global_position
 		# from_pos.y = 60
 
@@ -77,8 +77,8 @@ func update_transform():
 
 
 func calculate_position() -> Vector3:
-	var ship_dir = ship.global_basis.z.normalized()
-	var angle_diff = ship.global_rotation.y - rot_h
+	var ship_dir = follow_ship.global_basis.z.normalized()
+	var angle_diff = follow_ship.global_rotation.y - rot_h
 	var cos_val = cos(angle_diff)
 
 	# Smooth factor for camera offset based on angle difference
@@ -95,7 +95,7 @@ func calculate_position() -> Vector3:
 
 	# Camera is positioned behind and above the ship
 	# -forward moves camera behind where it's looking
-	var pos = ship.global_position + linear_offset - forward * distance * current_zoom + up * height * current_zoom + Vector3(0, 25.0, 0)
+	var pos = follow_ship.global_position + linear_offset - forward * distance * current_zoom + up * height * current_zoom + Vector3(0, 25.0, 0)
 	pos.y = max(pos.y, 1)
 	return pos
 
@@ -118,7 +118,7 @@ func set_vh(aim_pos: Vector3):
 	# Set rot_h and rot_v so the camera looks directly at aim_pos
 	var result = CameraView.solve_rotation_iterative(
 		aim_pos,
-		ship.global_position,
+		follow_ship.global_position,
 		_calculate_position_for_rotation
 	)
 	rot_h = result.x
@@ -133,7 +133,7 @@ func set_locked_rot(locked_aim_pos: Vector3):
 
 	var result = CameraView.solve_rotation_iterative(
 		locked_aim_pos,
-		ship.global_position,
+		follow_ship.global_position,
 		_calculate_position_for_rotation
 	)
 

@@ -748,7 +748,7 @@ func _setup_hull_collision() -> void:
 		var hull_collision = HullCollisionGenerator.generate_hull_collision(self, false, use_mirror_symmetry)
 		if hull_collision:
 			add_child(hull_collision)
-			print("   Added hull collision shape")
+			# print("   Added hull collision shape")
 		else:
 			# Fallback to box-based hull if convex generation fails
 			print("   ⚠️ Convex hull generation failed, using box approximation")

@@ -9,6 +9,8 @@ var speed: float:
 		speed_knts = value / 0.514444
 @export var damage: float
 @export var flood_buildup: float = 100.0  # Flooding chance buildup on hit
+@export var detection_range: float = 1000.0  # Range at which the torpedo can be detected by enemy
+@export var arming_distance: float = 100.0  # Distance torpedo must travel before it can arm and detonate
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()

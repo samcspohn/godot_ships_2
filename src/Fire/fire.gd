@@ -14,7 +14,12 @@ var lifetime: float = 0
 var manager: FireManager = null
 var _params: FireParams:
 	get:
-		return manager.params.p() as FireParams
+		return manager.fparams.p() as FireParams
+	set(value):
+		pass
+var _rparams: ResistanceParams:
+	get:
+		return manager.rparams.p() as ResistanceParams
 	set(value):
 		pass
 var _owner: Ship = null
@@ -22,7 +27,7 @@ var _owner: Ship = null
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a
-		if curr_buildup >= _params.max_buildup:
+		if curr_buildup >= _rparams.max_buildup:
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "fire"})
 			_owner.stats.fire_count += 1
@@ -65,8 +70,8 @@ func _physics_process(delta: float) -> void:
 					fire.emitting = false
 					smoke.emitting = false
 					_sync_deactivate.rpc()
-		elif curr_buildup < _params.max_buildup:
-			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate
+		elif curr_buildup < _rparams.max_buildup:
+			curr_buildup -= delta * _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
 
 func damage(delta):

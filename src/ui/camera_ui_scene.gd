@@ -330,7 +330,6 @@ func _physics_process(_delta):
 		var hp_cont = camera_controller._ship.health_controller
 		var hp = hp_cont.current_hp
 		if hp != current_hp:
-			print("hp mult: ", (hp_cont.params.p() as HPParams).mult)
 			var damage_taken = (current_hp - hp)
 			if damage_taken > 0.0:
 				# Show floating damage indicator
@@ -641,12 +640,12 @@ func update_ship_ui():
 			if ship_hp_manager:
 				var ship_current_hp = ship_hp_manager.current_hp
 				var max_hp = ship_hp_manager.max_hp
-				if teams_hp.has(ship) and (teams_hp[ship][0] != ship_current_hp or teams_hp[ship][1] != max_hp):
-					var hp_percent = (float(ship_current_hp) / max_hp) * 100.0
+				# if teams_hp.has(ship) and (teams_hp[ship][0] != ship_current_hp or teams_hp[ship][1] != max_hp):
+				var hp_percent = (float(ship_current_hp) / max_hp) * 100.0
 
-					# Update progress bar and label (colors are already set by template)
-					ui.hp_bar.value = hp_percent
-					ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
+				# Update progress bar and label (colors are already set by template)
+				ui.hp_bar.value = hp_percent
+				ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
 			if ship.team.team_id == camera_controller._ship.team.team_id: # friendly
 				var active_consumables = ship.consumable_manager.get_active_icons()

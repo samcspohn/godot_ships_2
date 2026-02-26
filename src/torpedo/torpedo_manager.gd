@@ -8,13 +8,18 @@ var bulletId: int = 0
 # @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
-const TORPEDO_SPEED_MULTIPLIER = 4.0
+const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
 # Wake particle system
 var _unified_particle_system: UnifiedParticleSystem = null
 var _wake_template_id: int = -1
+
+# Torpedo indicators UI
+var _torpedo_indicators: Control = null
+
+var server: GameServer = null
 
 class TorpedoData:
 	var position: Vector3
@@ -26,8 +31,10 @@ class TorpedoData:
 	var owner: Ship
 	var visible_to_enemy: bool = false
 	var emitter_id: int = -1  # GPU wake particle emitter ID
+	var launcher: TorpedoLauncher
+	var armed: bool = false
 
-	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float):
+	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float, tl: TorpedoLauncher, _armed: bool = false) -> void:
 		self.position = pos
 		self.start_position = pos
 		self.direction = dir.normalized()
@@ -36,6 +43,8 @@ class TorpedoData:
 		self.owner = _owner
 		self._range = __range
 		self.emitter_id = -1
+		self.launcher = tl
+		self.armed = _armed
 
 
 func _ready():
@@ -49,6 +58,13 @@ func _ready():
 		ray_query.collide_with_areas = true
 		ray_query.collide_with_bodies = true
 		ray_query.collision_mask = 1 | (1 << 1)
+
+		(func():
+			# Wait for server node to be ready
+			while get_tree().root.get_node_or_null("/root/Server") == null:
+				await get_tree().process_frame
+			server = get_tree().root.get_node("/root/Server") as GameServer
+		).call_deferred()
 	else:
 		set_physics_process(false)
 		transforms.resize(12)
@@ -56,6 +72,8 @@ func _ready():
 		# Initialize wake particle system - use a timer to wait for particle system to be ready
 		# ParticleSystemInit uses call_deferred to add nodes, so we need to wait a frame or two
 		_wait_for_particle_system()
+		# Initialize torpedo indicators overlay
+		_setup_torpedo_indicators()
 
 func _wait_for_particle_system() -> void:
 	"""Wait for particle system to be ready before initializing wake particles."""
@@ -178,6 +196,18 @@ func update_transform_scale(idx, scale: float):
 
 	# We don't modify z-basis as per billboard requirements
 
+func _setup_torpedo_indicators() -> void:
+	var canvas_layer = CanvasLayer.new()
+	canvas_layer.name = "TorpedoIndicatorLayer"
+	canvas_layer.layer = 100
+	add_child(canvas_layer)
+
+	var indicators = preload("res://src/torpedo/torpedo_indicators.gd").new()
+	indicators.name = "TorpedoIndicators"
+	indicators.torpedo_manager = self
+	canvas_layer.add_child(indicators)
+	_torpedo_indicators = indicators
+
 func _process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 
@@ -185,6 +215,7 @@ func _process(_delta: float) -> void:
 		return
 	# var distance_factor = 0.0003 * deg_to_rad(camera.fov) # How much to compensate for distance
 	var id = 0
+
 	for p in self.torpedos:
 		if p == null:
 			id += 1
@@ -196,6 +227,11 @@ func _process(_delta: float) -> void:
 		p.position = p.direction * p.params.speed * t + p.start_position
 		p.position.y = max(p.position.y - t * 10, 0.1)
 		update_transform_pos(id, p.position)
+
+		# # Client-side arming check (mirrors server _physics_process logic)
+		# if not p.armed:
+		# 	if p.start_position.distance_to(p.position) > p.params.arming_distance:
+		# 		p.armed = true
 
 		## Calculate distance-based scale to counter perspective shrinking
 		#var distance = camera.global_position.distance_to(p.position)
@@ -228,12 +264,18 @@ func _process(_delta: float) -> void:
 	self.multi_mesh.multimesh.visible_instance_count = self.multi_mesh.multimesh.instance_count
 	self.multi_mesh.multimesh.buffer = transforms
 
+	# Update torpedo indicators
+	if _torpedo_indicators:
+		_torpedo_indicators.queue_redraw()
+
 
 func _physics_process(_delta: float) -> void:
 	var current_time = Time.get_unix_time_from_system()
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var id = 0
 	var collision: Dictionary = {}
+	if server == null:
+		return
 	for p in self.torpedos:
 		if p == null:
 			id += 1
@@ -243,6 +285,23 @@ func _physics_process(_delta: float) -> void:
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position = p.direction * p.params.speed * t + p.start_position
 		p.position.y = max(p.position.y - t * 10, 0.1)
+		if !p.armed:
+			if p.start_position.distance_to(p.position) > p.params.arming_distance:
+				p.armed = true
+				notify_armed(id)
+
+		if !p.visible_to_enemy:
+			if server != null:
+				var enemy_ships = server.get_team_ships(0 if p.owner.team.team_id == 1 else 1)
+				for ship in enemy_ships:
+					if p.position.distance_squared_to(ship.global_position) < p.params.detection_range * p.params.detection_range: # Visibility range
+						p.visible_to_enemy = true
+						for player in server._get_team_ships(0 if p.owner.team.team_id == 1 else 1):
+							if not player.team.is_bot:
+								p.launcher.fire_client.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.armed)
+						if p.armed:
+							notify_armed(id) # Update indicators for enemy teams
+						break
 
 		if p.position.distance_to(p.start_position) > p._range:
 			# Out of range
@@ -270,7 +329,7 @@ func _physics_process(_delta: float) -> void:
 					id += 1
 					continue
 				var hp: HPManager = ship.health_controller
-				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id:
+				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id and p.armed:
 					var damage = p.params.damage
 					if armor_part is ArmorPart:
 						if armor_part.type == ArmorPart.Type.CASEMATE or armor_part.type == ArmorPart.Type.CITADEL:
@@ -290,6 +349,26 @@ func _physics_process(_delta: float) -> void:
 		id += 1
 
 
+func notify_armed(id: int):
+	var torpedo: TorpedoData = self.torpedos[id]
+	var friendly_ships = server.get_team_ships(torpedo.owner.team.team_id)
+	for f in friendly_ships:
+		if !f.team.is_bot:
+			arm_torp.rpc_id(f.peer_id, id)
+	if torpedo.visible_to_enemy:
+		var enemy_ships = server.get_team_ships(0 if torpedo.owner.team.team_id == 1 else 1)
+		for e in enemy_ships:
+			if !e.team.is_bot:
+				arm_torp.rpc_id(e.peer_id, id)
+
+
+@rpc("call_remote", "reliable", "authority")
+func arm_torp(id: int):
+	if id < 0 or id >= self.torpedos.size():
+		return
+	if torpedos[id] != null:
+		torpedos[id].armed = true
+
 func update_transform(idx, trans):
 	# Fill buffer at correct position
 	var offset = idx * 12
@@ -308,7 +387,7 @@ func update_transform(idx, trans):
 	transforms[offset + 11] = trans.origin.z
 
 @rpc("any_peer", "reliable")
-func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship) -> void:
+func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship, launcher: TorpedoLauncher, armed: bool) -> void:
 	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
 	var torp = TorpedoData.new()
 	#bullet.params = shell_param_ids[shells]
@@ -336,7 +415,7 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship) -> 
 	var trans = Transform3D(basis, pos)
 	update_transform(id, trans)
 
-	torp.initialize(pos, vel, params, t, _owner, 0.0)
+	torp.initialize(pos, vel, params, t, _owner, 0.0, launcher, armed)
 
 	# Allocate wake particle emitter
 	if _unified_particle_system != null and _wake_template_id >= 0:
@@ -356,7 +435,7 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship) -> 
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
-func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float) -> int:
+func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float, launcher: TorpedoLauncher) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -367,7 +446,7 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float)
 		self.torpedos.resize(np2)
 
 	var torp: TorpedoData = TorpedoData.new()
-	torp.initialize(pos, vel, params, t, _owner, _range)
+	torp.initialize(pos, vel, params, t, _owner, _range, launcher)
 	self.torpedos.set(id, torp)
 	return id
 	#for p in multiplayer.get_peers():

@@ -10,8 +10,9 @@
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_047bu"]
 [ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="9_fadtt"]
 [ext_resource type="PackedScene" uid="uid://31jgnxcyvi22" path="res://turrets/GER_500mm_2b_rf.tscn" id="9_gdlp2"]
+[ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="9_i4gay"]
 [ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="10_8j47w"]
-[ext_resource type="Script" uid="uid://dr60dh6rgv4fp" path="res://src/Fire/fire_params.gd" id="11_5talp"]
+[ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="10_54qku"]
 [ext_resource type="Texture2D" uid="uid://cjpfk83wkq47p" path="res://icons/auto-repair.png" id="11_pm07r"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="12_fadtt"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="12_gc5ee"]
@@ -23,25 +24,32 @@
 [ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="17_flood"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_pm07r"]
 
-[sub_resource type="Resource" id="Resource_54qku"]
+[sub_resource type="Resource" id="Resource_i4gay"]
 resource_local_to_scene = true
 script = ExtResource("3_54qku")
 pen_repair = 0.6
-torpedo_protection = 0.51
+torpedo_protection = 0.41
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_pecl7"]
+[sub_resource type="Resource" id="Resource_54qku"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
 pool1 = 465300.0
 pool2 = 465300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_gpbbn"]
+[sub_resource type="Resource" id="Resource_pecl7"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
 pool1 = 46530.0
 pool2 = 93060.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_gpbbn"]
+resource_local_to_scene = true
+script = ExtResource("3_c07vg")
+pool1 = 25850.0
+pool2 = 51700.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_itqm6"]
@@ -54,18 +62,11 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_1kp4b"]
 resource_local_to_scene = true
 script = ExtResource("3_c07vg")
-pool1 = 25850.0
-pool2 = 51700.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_3wv4u"]
-resource_local_to_scene = true
-script = ExtResource("3_c07vg")
 pool1 = 15510.0
 pool2 = 45000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_43stl"]
+[sub_resource type="Resource" id="Resource_3wv4u"]
 resource_local_to_scene = true
 script = ExtResource("12_n2r5a")
 radius = 15000.0
@@ -73,7 +74,7 @@ bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
-[sub_resource type="Resource" id="Resource_r6w0e"]
+[sub_resource type="Resource" id="Resource_43stl"]
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 810.0
@@ -86,7 +87,7 @@ overmatch = 35
 arming_threshold = 83
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_6lpig"]
+[sub_resource type="Resource" id="Resource_r6w0e"]
 resource_local_to_scene = true
 script = ExtResource("4_ai21t")
 speed = 810.0
@@ -101,14 +102,15 @@ type = 0
 overmatch = 125
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_vudfj"]
+[sub_resource type="Resource" id="Resource_6lpig"]
 resource_local_to_scene = true
 script = ExtResource("3_osjim")
 elevation_speed = 3.5
-shell1 = SubResource("Resource_r6w0e")
-shell2 = SubResource("Resource_6lpig")
-h_grouping = 1.6
-base_spread = 0.012
+shell1 = SubResource("Resource_43stl")
+shell2 = SubResource("Resource_r6w0e")
+h_grouping = 1.5
+v_grouping = 1.7
+base_spread = 0.015
 reload_time = 31.0
 traverse_speed = 3.5
 _range = 16000.0
@@ -160,15 +162,12 @@ traverse_speed = 50.0
 _range = 5600.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_qro5i"]
-resource_local_to_scene = true
-script = ExtResource("11_5talp")
-dmg_rate = 0.002
-dur = 50.0
+[sub_resource type="Resource" id="Resource_vudfj"]
+script = ExtResource("10_54qku")
 max_buildup = 220.0
-metadata/_custom_type_script = "uid://dr60dh6rgv4fp"
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_g3sxk"]
+[sub_resource type="Resource" id="Resource_qro5i"]
 resource_local_to_scene = true
 script = ExtResource("9_fadtt")
 dmg_rate = 0.002
@@ -176,7 +175,7 @@ dur = 100.0
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 
-[sub_resource type="Resource" id="Resource_almt2"]
+[sub_resource type="Resource" id="Resource_g3sxk"]
 resource_local_to_scene = true
 script = ExtResource("12_fadtt")
 icon = ExtResource("11_pm07r")
@@ -205,19 +204,19 @@ use_hull_collision = true
 [node name="Modules" parent="." index="0" unique_id=158224493 instance=ExtResource("2_wne81")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-params = SubResource("Resource_54qku")
+params = SubResource("Resource_i4gay")
 _max_hp = 155100.0
-citadel = SubResource("Resource_pecl7")
-casemate = SubResource("Resource_gpbbn")
-bow = SubResource("Resource_itqm6")
-stern = SubResource("Resource_1kp4b")
-superstructure = SubResource("Resource_3wv4u")
+citadel = SubResource("Resource_54qku")
+casemate = SubResource("Resource_pecl7")
+bow = SubResource("Resource_gpbbn")
+stern = SubResource("Resource_itqm6")
+superstructure = SubResource("Resource_1kp4b")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
-params = SubResource("Resource_43stl")
+params = SubResource("Resource_3wv4u")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_vudfj")
+params = SubResource("Resource_6lpig")
 guns = [NodePath("../../Hull/TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../Hull/TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
@@ -236,20 +235,21 @@ deceleration_time = 10.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 600.0
 turn_speed_loss = 0.15
-rudder_response_time = 15.0
+rudder_response_time = 14.0
 max_turn_roll_angle = 5.5
 nav_size = 4
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
-params = SubResource("Resource_qro5i")
+fparams = ExtResource("9_i4gay")
+rparams = SubResource("Resource_vudfj")
 fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
 
 [node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
-params = SubResource("Resource_g3sxk")
+params = SubResource("Resource_qro5i")
 floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_almt2"), ExtResource("15_fadtt")])
+equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_g3sxk"), ExtResource("15_fadtt")])
 
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])

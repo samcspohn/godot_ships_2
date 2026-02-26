@@ -196,7 +196,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 	# Calculate separation from friendly ships
 	var separation = _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
 
-	if _ship.visible_to_enemy:
+	if _ship.visible_to_enemy and enemy.size() > 0:
 		# Visible - retreat away from closest enemy
 		closest_enemy = enemy[0]
 		var closest_enemy_dist = (closest_enemy.global_position - _ship.global_position).length()

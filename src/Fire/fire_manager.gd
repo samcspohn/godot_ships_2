@@ -1,7 +1,8 @@
 extends Node
 class_name FireManager
 
-@export var params: FireParams
+@export var fparams: FireParams
+@export var rparams: ResistanceParams
 #var _params: FireParams
 @export var fires: Array[Fire] = []
 var _ship: Ship
@@ -29,7 +30,9 @@ func get_active_fires() -> int:
 
 func _ready() -> void:
 	await get_parent().get_parent().ready
-	params = params.instantiate(_ship) as FireParams
+	fparams = fparams.instantiate(_ship) as FireParams
+	rparams = rparams.instantiate(_ship) as ResistanceParams
+
 	# _params = params.duplicate(true)
 	# _params.init(params)
 	for f in fires:

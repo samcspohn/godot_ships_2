@@ -15,6 +15,8 @@
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/gd_script.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/classes/multiplayer_api.hpp>
+#include <godot_cpp/classes/multiplayer_peer.hpp>
 
 #include <cmath>
 
@@ -45,6 +47,9 @@ void _ProjectileManager::_bind_methods() {
 	// Bind process methods
 	ClassDB::bind_method(D_METHOD("_process_trails_only", "current_time"),
 						 &_ProjectileManager::_process_trails_only);
+
+	// Bind sync time method
+	ClassDB::bind_method(D_METHOD("sync_time", "server_time"), &_ProjectileManager::sync_time);
 
 	// Bind fire bullet methods (snake_case)
 	ClassDB::bind_method(D_METHOD("fire_bullet", "vel", "pos", "shell", "t", "owner", "exclude"),
@@ -95,6 +100,7 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("createRicochetRpc2", "data"), &_ProjectileManager::create_ricochet_rpc2);
 
 	// Bind getters
+	ClassDB::bind_method(D_METHOD("get_current_time"), &_ProjectileManager::get_current_time);
 	ClassDB::bind_method(D_METHOD("get_shell_time_multiplier"), &_ProjectileManager::get_shell_time_multiplier);
 	ClassDB::bind_method(D_METHOD("get_next_id"), &_ProjectileManager::get_next_id);
 	ClassDB::bind_method(D_METHOD("get_projectiles"), &_ProjectileManager::get_projectiles);
@@ -170,6 +176,7 @@ void _ProjectileManager::_ready() {
 			break;
 		}
 	}
+	current_time = 0.0;
 
 	if (is_server) {
 		UtilityFunctions::print("running server");
@@ -233,7 +240,15 @@ void _ProjectileManager::_ready() {
 		// Initialize compute particle system for trails (deferred to ensure it exists)
 		Ref<SceneTreeTimer> timer = get_tree()->create_timer(0.5);
 		timer->connect("timeout", Callable(this, "_init_compute_trails"));
+
 	}
+
+	Dictionary sync_time_rpc;
+	sync_time_rpc["rpc_mode"] = MultiplayerAPI::RPC_MODE_AUTHORITY;
+	sync_time_rpc["transfer_mode"] = MultiplayerPeer::TRANSFER_MODE_UNRELIABLE_ORDERED;
+	sync_time_rpc["call_local"] = false;
+	sync_time_rpc["channel"] = 0;
+	rpc_config("sync_time", sync_time_rpc);
 
 	projectiles.resize(1);
 }
@@ -388,14 +403,14 @@ Object *_ProjectileManager::find_ship(Node *node) {
 }
 
 void _ProjectileManager::_process(double delta) {
-	double current_time = Time::get_singleton()->get_unix_time_from_system();
-
+	// double current_time = Time::get_singleton()->get_unix_time_from_system();
 	if (camera == nullptr) {
 		return;
 	}
 
 	// Update shell positions in GPU renderer and trail particles
 	_process_trails_only(current_time);
+	current_time += delta * shell_time_multiplier;
 }
 
 void _ProjectileManager::_process_trails_only(double current_time) {
@@ -414,7 +429,7 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 		if (!shell_params.is_valid()) {
 			continue;
 		}
-		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
+		double t = (current_time - p->get_start_time());
 		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
 		// Calculate position for rendering and trail emission
@@ -443,8 +458,19 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 	}
 }
 
+void _ProjectileManager::sync_time(double server_time) {
+	// if (fabs(current_time - server_time) > 1.0 / 20.0) {
+	// 	UtilityFunctions::print(String("ProjectileManager: Syncing time from server. Old time: %f, New time: %f")
+	// 							 .replace("%f", String::num_real(current_time))
+	// 							 .replace("%f", String::num_real(server_time)));
+	// }
+	current_time = server_time;
+}
+
 void _ProjectileManager::_physics_process(double delta) {
-	double current_time = Time::get_singleton()->get_unix_time_from_system();
+	// double current_time = Time::get_singleton()->get_unix_time_from_system();
+	rpc("sync_time", current_time);
+	current_time += delta * shell_time_multiplier;
 
 	Window *root = get_tree()->get_root();
 	Ref<World3D> world = root->get_world_3d();
@@ -473,7 +499,7 @@ void _ProjectileManager::_physics_process(double delta) {
 
 		p->increment_frame_count();
 
-		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
+		double t = (current_time - p->get_start_time());
 		// t = _ProjectileManager::time_warp(t, p->get_params()) * shell_time_multiplier;
 
 
@@ -1070,6 +1096,9 @@ void _ProjectileManager::create_ricochet_rpc2(const PackedByteArray &data) {
 }
 
 // Getters
+double _ProjectileManager::get_current_time() const {
+	return current_time;
+}
 double _ProjectileManager::get_shell_time_multiplier() const {
 	return shell_time_multiplier;
 }

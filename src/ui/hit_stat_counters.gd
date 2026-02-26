@@ -453,8 +453,11 @@ func _update_label(label: Label, value) -> void:
 	"""Update a single label with formatted value"""
 	if label:
 		var curr = float(label.text)
-		# var lerp_value = float(curr) / max(float(value), 1.0)
-		label.text = str(int(lerp(float(curr), float(value), 0.3)))
+		var target = float(value)
+		if abs(target - curr) < 4.0:
+			label.text = str(int(round(target)))
+		else:
+			label.text = str(int(round(lerp(curr, target, 0.3))))
 
 
 func process_damage_events(damage_events: Array):

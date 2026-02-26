@@ -12,6 +12,7 @@ const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
 const FOV_ARC_COLOR = Color(0.5, 0.8, 1.0, 0.25) # Translucent light blue
 const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
+const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
 
 # Static minimap texture shared across all instances
 static var map_texture: ViewportTexture = null
@@ -333,6 +334,9 @@ func _on_canvas_draw() -> void:
 			if player_consumables.size() > 0:
 				draw_consumables_on_minimap(player_ship.global_position, player_consumables)
 
+	# Draw torpedo indicators
+	draw_torpedoes_on_minimap()
+
 	var minimap_pos = world_to_minimap_position(aim_point)
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
 		return
@@ -457,6 +461,58 @@ func _draw_consumable_icons(marker_position: Vector2, icons: Array) -> void:
 			var x_pos = start_x + i * (icon_size + spacing)
 			var icon_rect = Rect2(Vector2(x_pos, y_pos), Vector2(icon_size, icon_size))
 			ship_markers_canvas.draw_texture_rect(icon, icon_rect, false)
+
+func draw_torpedoes_on_minimap() -> void:
+	var tm: _TorpedoManager = TorpedoManager as _TorpedoManager
+	if tm == null:
+		return
+
+	var local_team_id: int = -1
+	if is_instance_valid(player_ship) and player_ship.team:
+		local_team_id = player_ship.team.team_id
+
+	var marker_size: float = TORPEDO_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+
+	for torp in tm.torpedos:
+		if torp == null:
+			continue
+		if not torp.armed:
+			continue
+
+		var minimap_pos: Vector2 = world_to_minimap_position(torp.position)
+
+		# Skip if outside minimap boundaries
+		if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
+			continue
+
+		# Determine color
+		var color: Color
+		var torp_owner: Ship = torp.owner
+		if torp_owner == null:
+			color = PLAYER_COLOR
+		elif is_instance_valid(player_ship) and torp_owner == player_ship:
+			color = PLAYER_COLOR
+		elif torp_owner.team and torp_owner.team.team_id == local_team_id:
+			color = FRIENDLY_COLOR
+		else:
+			color = ENEMY_COLOR
+
+		# # Build a small triangle rotated to face the torpedo's travel direction
+		# var heading: float = atan2(torp.direction.x, -torp.direction.z)
+		# var points := PackedVector2Array([
+		# 	Vector2(0, -marker_size / 2.0),           # Tip
+		# 	Vector2(-marker_size / 3.0, marker_size / 2.0), # Left
+		# 	Vector2(marker_size / 3.0, marker_size / 2.0),  # Right
+		# ])
+		# for i in range(points.size()):
+		# 	points[i] = points[i].rotated(-heading)
+		# 	points[i] += minimap_pos
+		#
+		# ship_markers_canvas.draw_colored_polygon(points, color)
+		#
+
+		# draw a circle instead
+		ship_markers_canvas.draw_circle(minimap_pos, marker_size / 2.0, color)
 
 # Draw a translucent arc showing the camera's field of view
 func draw_camera_fov_arc(range: float) -> void:
