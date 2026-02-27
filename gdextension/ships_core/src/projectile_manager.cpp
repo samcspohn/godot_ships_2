@@ -1,4 +1,5 @@
 #include "projectile_manager.h"
+#include "godot_cpp/classes/resource.hpp"
 #include "projectile_physics_with_drag_v2.h"
 
 #include <godot_cpp/core/class_db.hpp>
@@ -445,10 +446,36 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 			gpu_renderer->call("update_shell_position", gpu_id, new_position);
 		}
 
-		// Skip trail emission near spawn point
-		if ((p->get_position() - p->get_start_position()).length_squared() < 80) {
-			continue;
-		}
+		if (p->get_emitter_id() < 0 &&
+			(p->get_position() - p->get_start_position()).length_squared() > 15 * 15) {
+
+				// Allocate GPU emitter for trail emission
+				if (compute_particle_system != nullptr && trail_template_id >= 0) {
+					double size = 1.0;
+					Ref<Resource> shell = p->get("params");
+
+					if (shell.is_valid()) {
+						size = shell->get("size");
+					}
+					double width_scale = size * 0.9;
+					// emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
+					int emitter_id = compute_particle_system->call("allocate_emitter",
+						trail_template_id,  // template_id
+						new_position,                // starting_position
+						width_scale,        // size_multiplier
+						0.05,               // emit_rate (1/20 = 0.05 particles per unit)
+						1.0,                // speed_scale
+						0.0                 // velocity_boost
+					);
+					p->set_emitter_id(emitter_id);
+				}
+			}
+
+
+		// // Skip trail emission near spawn point
+		// if ((p->get_position() - p->get_start_position()).length_squared() < 80) {
+		// 	continue;
+		// }
 
 		// Use GPU emitter system for trails if available
 		if (compute_particle_system != nullptr && p->get_emitter_id() >= 0) {
@@ -766,25 +793,6 @@ void _ProjectileManager::fire_bullet_client(const Vector3 &pos, const Vector3 &v
 
 	bullet->initialize(pos, vel, t, shell, owner);
 	bullet->set_frame_count(gpu_id); // Store GPU renderer ID in frame_count for mapping
-
-	// Allocate GPU emitter for trail emission
-	if (compute_particle_system != nullptr && trail_template_id >= 0) {
-		double size = 1.0;
-		if (shell.is_valid()) {
-			size = shell->get("size");
-		}
-		double width_scale = size * 0.9;
-		// emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
-		int emitter_id = compute_particle_system->call("allocate_emitter",
-			trail_template_id,  // template_id
-			pos,                // starting_position
-			width_scale,        // size_multiplier
-			0.05,               // emit_rate (1/20 = 0.05 particles per unit)
-			1.0,                // speed_scale
-			0.0                 // velocity_boost
-		);
-		bullet->set_emitter_id(emitter_id);
-	}
 
 	projectiles[id] = bullet;
 

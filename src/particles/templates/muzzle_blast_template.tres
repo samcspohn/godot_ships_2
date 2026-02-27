@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=9 format=3 uid="uid://l1hirsugnu58"]
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://l1hirsugnu58"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
@@ -34,7 +34,7 @@ color_over_life = SubResource("GradientTexture1D_muzzle")
 scale_over_life = SubResource("CurveTexture_scale_muzzle")
 emission_over_life = SubResource("CurveTexture_emission_muzzle")
 emission_energy = 5.0
-initial_velocity_min = 0.5
+initial_velocity_min = 2.0
 initial_velocity_max = 15.0
 direction = Vector3(0, 0, -1)
 spread = 8.0

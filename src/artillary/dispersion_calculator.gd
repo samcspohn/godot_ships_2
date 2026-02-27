@@ -24,7 +24,10 @@ class_name DispersionCalculator
 var period: float = 4.0
 var angle: float = 0.0
 var shell_index: float = 0.0
+var _period: float = 8.0
+var _shell_index: float = 0.0
 var quality: float = 0.5
+var over_under_toggle: bool = false
 # var randomised_strata: Array[Array] = []
 # var strata_idx: int = 0
 # var good_normal_toggle: bool = false
@@ -64,6 +67,8 @@ var quality: float = 0.5
 
 func _init():
 	angle = randf_range(0, TAU)
+	over_under_toggle = randf() < 0.5
+	_shell_index = randf_range(0.0, _period)
 	# good_region = pow(0.5, (h_grouping + v_grouping) / 2.0)
 	# shell_index = randf_range(0.0, period)
 	# for i in range(int(period)):
@@ -172,17 +177,26 @@ func calculate_dispersed_launch(
 		p = random_point_in_ellipseV4(1.0, 1.0, h_grouping, v_grouping)
 
 
-		if shell_index >= period:
-			# p *= randf_range(0.0, 0.05)
+		# if shell_index >= period:
+		# 	# p *= randf_range(0.0, 0.05)
+		# 	p.y *= randf_range(0.0, 0.025)
+		# 	p.x *= 0.33
+		# 	shell_index -= period
+		# shell_index += 1.0
+
+		if _shell_index >= _period:
 			p.y *= randf_range(0.0, 0.025)
 			p.x *= 0.33
-			shell_index -= period
+			_shell_index -= _period
+		_shell_index += 1.0
 	else:
 		p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
 
 	# angle += 2.7 + randf_range(0.0, 2.0) * sign(randf() - 0.5)
-	angle += PI / 2 + randf_range(0.0, PI)
-	angle = fposmod(angle, TAU)
+	# angle += PI / 2 + randf_range(0.0, PI)
+	# angle = fposmod(angle, TAU)
+	angle = randf_range(0, PI) if over_under_toggle else randf_range(PI, TAU)
+	over_under_toggle = !over_under_toggle
 
 
 	var r = launch_velocity.cross(Vector3.UP).normalized()
@@ -215,11 +229,17 @@ func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0
 	# Mapping: rho_exponent = 2.0 * quality
 	#   quality = 0.0 (perfect)  -> exp ≈ 0   -> next shell strongly biased outward
 	#   quality = 0.5 (average)  -> exp = 1.0  -> next shell uniform (no bias)
-	#   quality = 1.0 (worst)    -> exp = 2.0  -> next shell biased inward
-	var rho_exponent = clampf(2.0 * quality, 0.1, 10.0)
+	#   quality = 1.0 (worst)    -> exp > 1    -> next shell biased inward
+	#
+	# feedback_strength amplifies the curve on both sides of the pivot.
+	# pow(1.0, k) = 1.0 always, so the neutral point at quality=0.5 is preserved.
+	#   strength=1 -> linear (original), strength=2 -> quadratic, etc.
+	var feedback_strength = 1.0
+	var rho_exponent = clampf(pow(2.0 * quality, feedback_strength), 0.01, 10.0)
 
 	var rho = pow(randf_range(0.0, 1.0), rho_exponent)
-	var phi = randf_range(0.0, TAU)
+	# var phi = randf_range(0.0, TAU)
+	var phi = angle
 	var a = width / 2.0
 	var b = height / 2.0
 	var x = pow(rho, h_group) * cos(phi) * a
@@ -228,7 +248,7 @@ func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0
 	# Update quality for next shell: rho represents where this shell landed
 	# (0 = center, 1 = edge), feeding back into the next shot's bias.
 	# quality = rho
-	quality = quality * 0.5 + rho * 0.5
+	quality = quality * 0.4 + rho * 0.6
 
 	return Vector2(x, y)
 

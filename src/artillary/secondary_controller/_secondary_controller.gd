@@ -335,8 +335,10 @@ func _physics_process(delta: float) -> void:
 
 		# get min reload time
 		var min_reload_time = INF
+		var num_secs = 0
 		for sec in sub_controllers:
 			min_reload_time = min(min_reload_time, sec.get_params().reload_time)
+			num_secs += sec.guns.size()
 
 		# # shoot at all targets
 		# for e in targets_guns:
@@ -358,7 +360,7 @@ func _physics_process(delta: float) -> void:
 
 		if num_guns > 0:
 			sequential_fire_timer += delta
-			var delay = min(sequential_fire_delay, min_reload_time / num_guns)
+			var delay = min(sequential_fire_delay, min_reload_time / num_secs)
 			# var delay = sequential_fire_delay
 
 			while sequential_fire_timer >= 0.0:
