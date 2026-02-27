@@ -22,7 +22,7 @@ enum EffectType {
 const SPLASH_PARTICLES: int = 20
 const HE_EXPLOSION_PARTICLES: int = 10
 const SPARKS_PARTICLES: int = 30
-const MUZZLE_BLAST_PARTICLES: int = 15
+const MUZZLE_BLAST_PARTICLES: int = 20
 
 # Size scaling factors for particle velocity and count
 const SIZE_VELOCITY_SCALE: float = 1.0
@@ -220,4 +220,3 @@ func print_status() -> void:
 			print("    %s: template_id=%d" % [template.template_name, template.template_id])
 		else:
 			print("    Effect type %d: MISSING" % type)
- 

@@ -152,7 +152,7 @@ func _input(event: InputEvent) -> void:
 
 	elif event is InputEventKey:
 		 # Control key to toggle mouse capture
-		if event.keycode == KEY_CTRL:
+		if event.keycode == KEY_CTRL and not event.is_echo():
 			if event.pressed:
 				# When pressing control, release mouse and center it
 				_center_mouse()

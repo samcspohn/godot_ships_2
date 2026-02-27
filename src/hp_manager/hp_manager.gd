@@ -37,7 +37,7 @@ var current_hp:
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
-const SHELL_DAMAGE_RADIUS_MOD: float = 15.5
+const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
