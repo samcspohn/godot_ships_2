@@ -183,6 +183,11 @@ func _ready() -> void:
 		set_physics_process(true)
 	else:
 		set_physics_process(false)
+		# Disable per-gun _physics_process on client — their state arrives via network sync.
+		# Without this, each Gun still runs _physics_process every tick just to early-return.
+		for sc in sub_controllers:
+			for g in sc.guns:
+				g.set_physics_process(false)
 
 func to_dict() -> Dictionary:
 	var sub_list = []

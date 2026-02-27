@@ -132,6 +132,10 @@ func _ready() -> void:
 		set_physics_process(true)
 	else:
 		set_physics_process(false)
+		# Disable per-gun _physics_process on client — their state arrives via network sync.
+		# Without this, each Gun still runs _physics_process every tick just to early-return.
+		for g in guns:
+			g.set_physics_process(false)
 
 func set_aim_input(target_point: Vector3) -> void:
 	# var ship_pos = _ship.global_position

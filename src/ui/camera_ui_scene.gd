@@ -276,10 +276,33 @@ func _ready():
 	server = get_tree().root.get_node_or_null("Server")
 	players_node = server.get_node_or_null("GameWorld/Players") if server else null
 
+var _ship_ui_frame_counter: int = 0
+const SHIP_UI_UPDATE_INTERVAL: int = 3 # Update ship UI every N frames instead of every frame
+
+var _lod_frame_counter: int = 0
+const LOD_UPDATE_INTERVAL: int = 30 # Re-evaluate LOD every N frames
+var _lod_initialized: bool = false
+
 func _process(_delta: float) -> void:
-	update_ship_ui()
-	# _update_reticle_visibility()
-	sniper_reticle.queue_redraw()
+	# One-time init: disable all processing on non-player ship sub-trees
+	if not _lod_initialized:
+		_lod_initialized = _disable_nonplayer_ship_processing()
+
+	# Periodic LOD: hide/show ships based on camera distance and frustum
+	_lod_frame_counter += 1
+	if _lod_frame_counter >= LOD_UPDATE_INTERVAL:
+		_lod_frame_counter = 0
+		_update_ship_visibility_lod()
+
+	# Throttle ship UI updates — HP bars, nameplates, visibility checks don't need 300+ fps
+	_ship_ui_frame_counter += 1
+	if _ship_ui_frame_counter >= SHIP_UI_UPDATE_INTERVAL:
+		_ship_ui_frame_counter = 0
+		update_ship_ui()
+
+	# Only redraw sniper reticle when in sniper mode — saves a full canvas redraw per frame
+	if camera_controller and camera_controller.current_mode == BattleCamera.CameraMode.SNIPER:
+		sniper_reticle.queue_redraw()
 
 func _setup_hit_stat_counters():
 	"""Setup the hit/stat counters component"""
@@ -697,6 +720,104 @@ func update_ship_ui():
 						element.queue_free()
 				ship_ui_elements.erase(ship)
 			tracked_ships.erase(ship)
+
+func _disable_nonplayer_ship_processing() -> bool:
+	"""One-time init: disable _process/_physics_process on individual nodes of non-player ships.
+	On the client, all ship state arrives via network sync — no local processing is needed
+	for other ships' modules, guns, fires, floods, etc.
+	NOTE: We use set_process/set_physics_process instead of process_mode = DISABLED
+	because DISABLED also blocks RPCs (fire_client, etc.) from being received.
+	Returns true once successfully applied (waits for players_node to be ready)."""
+	if not camera_controller or not camera_controller._ship:
+		return false
+	if not players_node or players_node.get_child_count() == 0:
+		return false
+
+	var my_ship = camera_controller._ship
+
+	for ship_node in players_node.get_children():
+		if not (ship_node is Ship) or ship_node == my_ship:
+			continue
+		var ship: Ship = ship_node as Ship
+
+		# Surgically disable processing on module nodes (but NOT process_mode, which blocks RPCs)
+		_disable_processing_recursive(ship.get_node_or_null("Modules"))
+		_disable_processing_recursive(ship.get_node_or_null("FireNodes"))
+		_disable_processing_recursive(ship.get_node_or_null("FloodNodes"))
+
+		# Disable _physics_process on every Gun node (they early-return on client anyway)
+		for gun in ship.artillery_controller.guns:
+			gun.set_physics_process(false)
+			gun.set_process(false)
+		for sc in ship.secondary_controller.sub_controllers:
+			for gun in sc.guns:
+				gun.set_physics_process(false)
+				gun.set_process(false)
+		if ship.torpedo_controller:
+			for launcher in ship.torpedo_controller.launchers:
+				launcher.set_physics_process(false)
+				launcher.set_process(false)
+
+	print("[LOD] Disabled processing on %d non-player ships" % (players_node.get_child_count() - 1))
+	return true
+
+
+func _disable_processing_recursive(node: Node) -> void:
+	"""Disable _process and _physics_process on a node and all its children,
+	without touching process_mode (which would also block RPCs)."""
+	if node == null:
+		return
+	node.set_process(false)
+	node.set_physics_process(false)
+	for child in node.get_children():
+		_disable_processing_recursive(child)
+
+
+const LOD_HIDE_DISTANCE: float = 5000.0 # Beyond this, hide ship mesh children
+const LOD_SHOW_DISTANCE: float = 4500.0 # Hysteresis to avoid flicker
+
+func _update_ship_visibility_lod() -> void:
+	"""Periodically evaluate distance to each non-player ship and hide mesh children
+	for distant ships. This reduces draw calls and vertex processing for off-screen
+	or far-away ships. The Ship node itself stays visible (for _process interpolation)
+	but its heavy mesh sub-tree gets hidden."""
+	if not camera_controller or not camera_controller._ship:
+		return
+
+	var cam = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+
+	var cam_pos = cam.global_position
+	var my_ship = camera_controller._ship
+	if not players_node:
+		return
+
+	for ship_node in players_node.get_children():
+		if not (ship_node is Ship) or ship_node == my_ship:
+			continue
+		var ship: Ship = ship_node as Ship
+		if not ship.visible:
+			continue
+
+		var dist = cam_pos.distance_to(ship.global_position)
+		var in_frustum = cam.is_position_in_frustum(ship.global_position)
+
+		# If far away AND out of frustum, hide all mesh children to save draw calls
+		if dist > LOD_HIDE_DISTANCE and not in_frustum:
+			_set_mesh_visibility_recursive(ship, false)
+		elif dist < LOD_SHOW_DISTANCE or in_frustum:
+			_set_mesh_visibility_recursive(ship, true)
+
+
+func _set_mesh_visibility_recursive(node: Node, vis: bool) -> void:
+	"""Set visibility on MeshInstance3D children without touching the root node."""
+	for child in node.get_children():
+		if child is MeshInstance3D:
+			if child.visible != vis:
+				child.visible = vis
+		elif child.get_child_count() > 0 and not (child is Ship):
+			_set_mesh_visibility_recursive(child, vis)
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()

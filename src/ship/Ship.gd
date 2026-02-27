@@ -224,6 +224,7 @@ func _process(delta: float) -> void:
 			global_position += linear_velocity * delta
 
 	if particles_active and not wake_emitters[0].is_emitting():
+		global_position.y = 0.0
 		for emitter in wake_emitters:
 			emitter.start_emitting()
 
@@ -571,6 +572,7 @@ func _hide():
 		for emitter in wake_emitters:
 			emitter.stop_emitting()
 		particles_active = false
+	global_position.y = -1000
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
