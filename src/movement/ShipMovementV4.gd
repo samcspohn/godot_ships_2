@@ -3,7 +3,7 @@ class_name ShipMovementV4
 
 const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 
-var debug_log: bool = false
+var debug_log: bool = true
 
 # Direct movement properties
 @export var max_speed_knots: float
@@ -17,6 +17,9 @@ var max_speed: float = 15.0  # Maximum speed in m/s
 # @export var min_turn_speed: float = 2.0  # Minimum speed needed for effective turning
 @export var turn_speed_loss: float = 0.2  # Percentage of speed lost per second while turning
 @export var rudder_response_time: float = 1.5  # Time for rudder to move from center to full
+
+# Hydrodynamic drag properties
+@export var lateral_drag_multiplier: float = 1.7  # How much more drag sideways vs forward (hull shape factor)
 
 # Roll and stability properties
 @export var max_turn_roll_angle: float = 5.0  # Maximum roll angle in degrees when turning at full speed/rudder
@@ -57,6 +60,9 @@ var is_grounded: bool = false
 var grounded_position: Variant = null
 var grounded_island: Node3D = null
 
+var turning_drag_multiplier: float = 1.0
+var grounded_drag_multiplier: float = 1.0
+const BASE_DRAG: float = 0.3
 enum __NavMode {
 	NAV_MODE_IDLE,
 	NAV_MODE_AVOID,
@@ -85,7 +91,7 @@ func _ready() -> void:
 	_detect_ship_dimensions()
 
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
-	ship.linear_damp = 0.3
+	ship.linear_damp = BASE_DRAG
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
 	ship.angular_damp = 0.4
 
@@ -144,7 +150,7 @@ func _check_land_collision() -> void:
 			# Check if this is land (collision layer 1)
 		if body.collision_layer & 1:
 			touching_land = true
-			ship.apply_central_impulse(ship.mass * 0.5 * (ship.position - dict["point"]).normalized())
+			ship.apply_central_impulse(ship.mass * 1.0 * (ship.position - dict["point"]).normalized())
 			grounded_position = dict["point"]
 			grounded_island = dict["collider"]
 			break
@@ -152,11 +158,13 @@ func _check_land_collision() -> void:
 	# Update grounded state
 	if touching_land and not is_grounded:
 		is_grounded = true
-		ship.linear_damp = 3.0
+		# ship.linear_damp = 3.0
+		grounded_drag_multiplier = 50.0
 		engine_power = 0.0  # Immediately cut engine power
 	elif not touching_land and is_grounded:
 		is_grounded = false
-		ship.linear_damp = 0.3
+		# ship.linear_damp = 0.3
+		grounded_drag_multiplier = 1.0
 		grounded_position = null
 		grounded_island = null
 
@@ -221,6 +229,9 @@ func _physics_process(delta: float) -> void:
 	# Check for land collision
 	_check_land_collision()
 
+	# # Apply anisotropic hull drag (lateral drag much higher than forward drag)
+	# _apply_hull_drag(delta)
+
 	# Buoyancy (vertical)
 	if ship.global_position.y < ship_draft:
 		var submerged_ratio = (ship_draft - ship.global_position.y) / ship_draft
@@ -253,7 +264,7 @@ func _physics_process(delta: float) -> void:
 		# return
 
 	var turn_thrust_ratio = 1.0
-	if abs(rudder_input) > 0.01 and abs(current_speed) > 2.0:
+	if abs(rudder_input) > 0.01 and abs(current_speed) > 0.0:
 		var rudder_dist = 0.5
 		var half_length = ship_length * rudder_dist
 		var stern_offset = -forward * half_length  # Vector from center to stern
@@ -268,10 +279,14 @@ func _physics_process(delta: float) -> void:
 		var F := calculate_lateral_force(ship.mass, ship_length, turning_circle_radius * 2.0,
 										  fulcrum_offset, ship.angular_damp,
 										  ship.angular_velocity.y, target_omega, delta)
-		ship.apply_force(-flat_right * F * abs(engine_power), stern_offset)
-		engine_power = move_toward(engine_power, target_power * (1 - turn_speed_loss * abs(rudder_input)), delta / acceleration_time)
+		ship.apply_force(-flat_right * F * abs(current_speed / max_speed), stern_offset)
+		# engine_power = move_toward(engine_power, target_power * (1 - turn_speed_loss * abs(rudder_input)), delta / acceleration_time)
+		turning_drag_multiplier = 1.0 + turn_speed_loss * abs(rudder_input) * 1.5
+		# turning_drag_multiplier
 	else:
-		engine_power = move_toward(engine_power, target_power, delta / acceleration_time)
+		turning_drag_multiplier = 1.0
+	engine_power = move_toward(engine_power, target_power, delta / acceleration_time)
+	ship.linear_damp = BASE_DRAG * grounded_drag_multiplier * turning_drag_multiplier
 
 	# Apply forward thrust
 	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.4, -forward.normalized() * ship_length * 0.4)
@@ -310,6 +325,24 @@ func get_throttle_percentage() -> float:
 		return throttle_settings[throttle_level + 1] * 100.0
 	return 0.0
 
+
+## Applies anisotropic drag - ships resist sideways motion much more than forward motion
+## because the hull is long and narrow. This prevents excessive drift during turns.
+func _apply_hull_drag(_delta: float) -> void:
+	var forward = -ship.global_transform.basis.z.normalized()
+	var flat_right = forward.cross(Vector3.UP).normalized()
+
+	# Decompose velocity into forward and lateral components
+	var velocity = ship.linear_velocity
+	var _forward_speed = velocity.dot(forward)
+	var lateral_speed = velocity.dot(flat_right)
+
+	# Apply extra drag force only to the lateral (sideways) component
+	# The base linear_damp already handles uniform drag, so we add the difference
+	# F_drag = -lateral_drag_multiplier * linear_damp * lateral_velocity
+	var extra_lateral_drag = lateral_drag_multiplier * ship.linear_damp
+	var lateral_drag_force = -flat_right * lateral_speed * extra_lateral_drag * ship.mass
+	ship.apply_central_force(lateral_drag_force)
 
 ## Applies a righting moment to keep the ship upright (simulates metacentric stability)
 func _apply_righting_moment(_delta: float) -> void:

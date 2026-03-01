@@ -49,29 +49,29 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_hanmg"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
-pool1 = 20100.0
-pool2 = 40200.0
+pool1 = 17866.666666666668
+pool2 = 35733.333333333336
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ww2ma"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
-pool1 = 11166.666666666666
-pool2 = 22333.333333333332
+pool1 = 7816.666666666667
+pool2 = 15633.333333333334
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_afiln"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
-pool1 = 11166.666666666666
-pool2 = 22333.333333333332
+pool1 = 7816.666666666667
+pool2 = 15633.333333333334
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kp8pn"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
-pool1 = 7000.0
-pool2 = 21000.0
+pool1 = 11166.666666666666
+pool2 = 22333.333333333332
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_iohum"]
@@ -207,6 +207,7 @@ reverse_speed_ratio = 0.5
 turning_circle_radius = 400.0
 turn_speed_loss = 0.15
 rudder_response_time = 10.0
+lateral_drag_multiplier = 1.7
 nav_size = 2
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
@@ -306,9 +307,9 @@ max_rotation_angle = 6.1086523819801535
 
 [node name="GER_150mm_2b_002" parent="TurretMount_GER_150mm_2b_002" index="0" unique_id=602898471 instance=ExtResource("18_hcq8l")]
 min_rotation_angle = 0.2792526803190927
+max_rotation_angle = 3.141592653589793
 
 [node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" unique_id=1266383701 instance=ExtResource("18_hcq8l")]
-min_rotation_angle = 0.0
 max_rotation_angle = 2.6179938779914944
 
 [node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" unique_id=98366039 instance=ExtResource("19_1k3lc")]
@@ -329,6 +330,7 @@ max_rotation_angle = 5.973077247203072
 
 [node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" index="0" unique_id=662552976 instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.32652345383915105
+max_rotation_angle = 3.141592653589793
 
 [node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" index="0" unique_id=657187972 instance=ExtResource("19_1k3lc")]
 min_rotation_angle = 0.20248286862908405

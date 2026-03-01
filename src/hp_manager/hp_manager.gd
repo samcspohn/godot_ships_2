@@ -28,6 +28,10 @@ var current_hp:
 	# set(value):
 	# 	_current_hp = value / params.p().mult
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
+@export var bow_percent: float = 0.35
+@export var stern_percent: float = 0.35
+@export var superstructure_percent: float = 0.5
+@export var casemate_percent: float = 0.8
 
 @export var citadel: HpPartMod
 @export var casemate: HpPartMod
@@ -54,6 +58,8 @@ func from_bytes(data: PackedByteArray):
 	_max_hp = reader.get_float()
 	_current_hp = reader.get_float()
 
+
+
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():
 		return
@@ -66,23 +72,23 @@ func _generate_armor_parts():
 	if !casemate:
 		casemate = HpPartMod.new()
 		casemate.resource_local_to_scene = true
-	casemate.pool1 = _max_hp * 0.9 / 3.0
-	casemate.pool2 = 2.0 * _max_hp * 0.9 / 3.0
+	casemate.pool1 = _max_hp * casemate_percent / 3.0
+	casemate.pool2 = 2.0 * _max_hp * casemate_percent / 3.0
 	if !bow:
 		bow = HpPartMod.new()
 		bow.resource_local_to_scene = true
-	bow.pool1 = _max_hp * 0.5 / 3.0
-	bow.pool2 = 2.0 * _max_hp * 0.5 / 3.0
+	bow.pool1 = _max_hp * bow_percent / 3.0
+	bow.pool2 = 2.0 * _max_hp * bow_percent / 3.0
 	if !stern:
 		stern = HpPartMod.new()
 		stern.resource_local_to_scene = true
-	stern.pool1 = _max_hp * 0.5 / 3.0
-	stern.pool2 = 2.0 * _max_hp * 0.5 / 3.0
+	stern.pool1 = _max_hp * stern_percent / 3.0
+	stern.pool2 = 2.0 * _max_hp * stern_percent / 3.0
 	if !superstructure:
 		superstructure = HpPartMod.new()
 		superstructure.resource_local_to_scene = true
-	superstructure.pool1 = _max_hp * 0.4 / 3.0
-	superstructure.pool2 = 2.0 * _max_hp * 0.4 / 3.0
+	superstructure.pool1 = _max_hp * superstructure_percent / 3.0
+	superstructure.pool2 = 2.0 * _max_hp * superstructure_percent / 3.0
 
 func _ready() -> void:
 	if Engine.is_editor_hint():

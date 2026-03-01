@@ -45,29 +45,29 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_jt21e"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 12300.0
-pool2 = 24600.0
+pool1 = 10933.333333333334
+pool2 = 21866.666666666668
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_4jnyp"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 6833.333333333333
-pool2 = 13666.666666666666
+pool1 = 4783.333333333333
+pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e3uhd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 6833.333333333333
-pool2 = 13666.666666666666
+pool1 = 4783.333333333333
+pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_8wi57"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 5466.666666666667
-pool2 = 10933.333333333334
+pool1 = 6833.333333333333
+pool2 = 13666.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_1hsc6"]
@@ -339,7 +339,6 @@ min_rotation_angle = 0.6130340650300443
 max_rotation_angle = 5.670813783287063
 
 [node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" index="0" unique_id=2100547642 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 0.0
 max_rotation_angle = 2.670353755551324
 
 [node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" index="0" unique_id=972041099 instance=ExtResource("4_4rujh")]

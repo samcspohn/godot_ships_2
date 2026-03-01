@@ -2,8 +2,8 @@ extends Node3D
 class_name Turret
 
 @export var rotation_limits_enabled: bool = true
-@export var min_rotation_angle: float = deg_to_rad(90)
-@export var max_rotation_angle: float = deg_to_rad(180)
+@export var min_rotation_angle: float = deg_to_rad(0)
+@export var max_rotation_angle: float = deg_to_rad(360)
 
 # @onready var barrel: Node3D = get_child(0).get_child(0)
 # var sound: AudioStreamPlayer3D

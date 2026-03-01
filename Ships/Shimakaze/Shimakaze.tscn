@@ -45,29 +45,29 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_uimo0"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 2070.0
-pool2 = 6900.0
+pool1 = 3066.6666666666665
+pool2 = 6133.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_omo1p"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1150.0
-pool2 = 3833.3333333333335
+pool1 = 1341.6666666666665
+pool2 = 2683.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_2by4h"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1150.0
-pool2 = 3833.3333333333335
+pool1 = 1341.6666666666665
+pool2 = 2683.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3jgu3"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 920.0
-pool2 = 3066.6666666666665
+pool1 = 1916.6666666666667
+pool2 = 3833.3333333333335
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_nwevl"]
@@ -113,7 +113,6 @@ shell1 = SubResource("Resource_1jvua")
 shell2 = SubResource("Resource_3vhro")
 h_grouping = 2.1
 v_grouping = 2.1
-base_spread = 0.0075
 reload_time = 7.0
 traverse_speed = 10.0
 _range = 10000.0
@@ -156,7 +155,6 @@ script = ExtResource("14_56jcx")
 speed_knts = 52.0
 damage = 20000.0
 flood_buildup = 200.0
-detection_range = 1500.0
 arming_distance = 200.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
@@ -209,6 +207,7 @@ deceleration_time = 9.0
 turning_circle_radius = 250.0
 turn_speed_loss = 0.15
 rudder_response_time = 3.5
+lateral_drag_multiplier = 1.7
 nav_size = 0
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
