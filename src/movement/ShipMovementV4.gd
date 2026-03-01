@@ -3,7 +3,7 @@ class_name ShipMovementV4
 
 const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 
-var debug_log: bool = true
+var debug_log: bool = false
 
 # Direct movement properties
 @export var max_speed_knots: float
@@ -150,7 +150,7 @@ func _check_land_collision() -> void:
 			# Check if this is land (collision layer 1)
 		if body.collision_layer & 1:
 			touching_land = true
-			ship.apply_central_impulse(ship.mass * 1.0 * (ship.position - dict["point"]).normalized())
+			ship.apply_central_impulse(ship.mass * 2.0 * (ship.position - dict["point"]).normalized())
 			grounded_position = dict["point"]
 			grounded_island = dict["collider"]
 			break

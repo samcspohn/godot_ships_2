@@ -472,21 +472,69 @@ func _calculate_target_info():
 
 		var result = space_state.intersect_ray(ray_params)
 
-		if result:
-			aim_position = result.position
+		# Build a vertical plane at the locked target's position,
+		# aligned with the target ship's heading (normal is the ship's lateral axis).
+		var target_pos = locked_target.global_position
+		var plane_normal = locked_target.global_basis.x
+		plane_normal.y = 0.0
+
+		# If the ship's lateral axis is degenerate (e.g. ship rolling 90 degrees),
+		# or nearly parallel to the aim ray (ship heading straight at camera),
+		# fall back to camera-to-target direction as the normal.
+		var target_dist = ray_origin.distance_to(target_pos)
+		if plane_normal.length_squared() < 0.001:
+			var fallback = ray_origin - target_pos
+			fallback.y = 0.0
+			plane_normal = fallback.normalized() if fallback.length_squared() > 0.001 else Vector3.RIGHT
 		else:
-			var horizontal_rad = aim.rotation.y
-			var vertical_rad = aim.rotation.x
-			# var orbit_distance = current_zoom
-			# var adj = tan(PI / 2.0 + vertical_rad)
-			var cam_pos_3rd = aim.global_position
-			aim_position = calculate_ground_intersection(
-				cam_pos_3rd,
-				horizontal_rad + PI,
-				vertical_rad
-			)
-			# # No collision, use a point far in the distance
-			# aim_position = ray_origin + aim_direction * ray_length
+			plane_normal = plane_normal.normalized()
+			# Check if the plane is nearly parallel to the aim ray (grazing angle).
+			# If so, fall back to camera-to-target direction.
+			var aim_flat = aim_direction
+			aim_flat.y = 0.0
+			if aim_flat.length_squared() > 0.001:
+				var graze = absf(plane_normal.dot(aim_flat.normalized()))
+				if graze < 0.15: # ~81 degrees — nearly parallel
+					var fallback = ray_origin - target_pos
+					fallback.y = 0.0
+					if fallback.length_squared() > 0.001:
+						plane_normal = fallback.normalized()
+
+		var plane = Plane(plane_normal, plane_normal.dot(target_pos))
+
+		# Intersect the aim ray with the vertical target plane
+		var plane_point = plane.intersects_ray(ray_origin, aim_direction)
+
+		# Validate the plane intersection:
+		# - Must be in front of the camera (positive along aim direction)
+		# - Must be within a reasonable lateral distance of the target
+		var max_lateral_dist = maxf(target_dist * 0.5, 500.0)
+		if plane_point != null:
+			var to_plane_point = plane_point - ray_origin
+			if to_plane_point.dot(aim_direction) < 0.0:
+				# Intersection is behind the camera
+				plane_point = null
+			else:
+				var offset = plane_point - target_pos
+				offset.y = 0.0
+				if offset.length() > max_lateral_dist:
+					# Intersection is unreasonably far from the target laterally
+					plane_point = null
+
+		var ray_hit_pos = null
+		var ray_hit_dist = INF
+		if result:
+			ray_hit_pos = result.position
+			ray_hit_dist = ray_origin.distance_to(ray_hit_pos)
+
+		var plane_hit_dist = INF
+		if plane_point != null:
+			plane_hit_dist = ray_origin.distance_to(plane_point)
+
+		if ray_hit_pos != null and ray_hit_dist <= plane_hit_dist:
+			aim_position = ray_hit_pos
+		elif plane_point != null:
+			aim_position = plane_point
 
 	else:
 		var aim_direction = - aim.basis.z.normalized()
