@@ -18,7 +18,7 @@ var bot_debug_follow_ship: Ship = null
 var bot_debug_turn_sim_points_desired: Array[Vector3] = []
 var bot_debug_turn_sim_points_undesired: Array[Vector3] = []
 var bot_debug_turn_sim_frame_counter: int = 0
-var bot_debug_turn_sim_draw_interval: int = 8  # Draw every physics frame
+var bot_debug_turn_sim_draw_interval: int = 20  # Draw every physics frame
 
 # Navigation path debug
 var bot_debug_nav_path: PackedVector3Array = PackedVector3Array()
@@ -48,7 +48,7 @@ var bot_debug_soft_clearance_circle: MeshInstance3D = null
 # SDF tile debug
 var bot_debug_sdf_tiles: Array[MeshInstance3D] = []
 var bot_debug_sdf_tile_data: PackedFloat32Array = PackedFloat32Array()  # [x, z, sdf, x, z, sdf, ...]
-var bot_debug_sdf_tile_draw_interval: int = 1  # Redraw SDF tiles every physics frame
+var bot_debug_sdf_tile_draw_interval: int = 20  # Redraw SDF tiles every physics frame
 var bot_debug_sdf_tile_frame_counter: int = 0
 
 # Island cover debug
@@ -202,18 +202,17 @@ func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> voi
 			cover_data["in_cover"] = ca.is_in_cover
 			cover_data["spotted_in_cover"] = ca.is_in_cover and target_ship is Ship and (target_ship as Ship).visible_to_enemy
 
-			# SDF-cell-based cover metadata
-			cover_data["all_hidden"] = ca._cover_all_hidden
+			# SDF-cell-based cover metadata (some fields removed in rework — use defaults)
+			cover_data["all_hidden"] = false
 			cover_data["can_shoot"] = ca._cover_can_shoot
-			cover_data["sdf_distance"] = ca._cover_sdf_distance
-			cover_data["cover_hidden_count"] = ca._cover_hidden_count
+			cover_data["sdf_distance"] = 0.0
+			cover_data["cover_hidden_count"] = 0
 
-			# Safe distance: use SDF distance at cover pos (actual distance to shore)
-			# rather than the old circle-based island_radius + clearance approximation
+			# Safe distance: use ship clearance as fallback
 			var ship_clearance: float = 100.0
 			if target_ship is Ship and (target_ship as Ship).movement_controller:
 				ship_clearance = (target_ship as Ship).movement_controller.ship_beam * 0.5 + 50.0
-			cover_data["safe_dist"] = ca._cover_sdf_distance if ca._cover_sdf_distance > 0.0 else (ship_clearance + 50.0)
+			cover_data["safe_dist"] = ship_clearance + 50.0
 
 			# Gather threat LOS data from the ship's actual position.
 			# This shows whether the ship is currently hidden or exposed — far
@@ -1017,7 +1016,12 @@ func _draw_bot_debug_sdf_tiles() -> void:
 
 		# Determine tile color based on SDF value relative to clearance
 		var color: Color
-		if sdf_val < 0.0:
+		if sdf_val < -clearance:
+			# Deep inside land — black
+			color = Color(0.1, 0.1, 0.1, 0.35)
+			# Note: the actual land contour is somewhere between sdf=0 and sdf=-clearance,
+			# so we use a stronger red for values well below zero to indicate definitely non-navigable areas.
+		elif sdf_val < 0.0:
 			# Inside land — solid red
 			color = Color(0.9, 0.1, 0.1, 0.35)
 		elif sdf_val < clearance:

@@ -86,7 +86,7 @@ var _last_raw_intent: NavIntent = null
 ## Distance threshold below which a new intent's position is considered
 ## "close enough" to the current one — the navigator will retarget rather
 ## than fully recalculating its path. Mirrors the C++ PATH_REUSE thresholds.
-const INTENT_POSITION_REUSE_THRESHOLD: float = 500.0
+const INTENT_POSITION_REUSE_THRESHOLD: float = 100.0
 
 ## Heading threshold (radians) below which a heading change is considered trivial.
 const INTENT_HEADING_REUSE_THRESHOLD: float = 0.35  # ~20 degrees
@@ -281,13 +281,13 @@ func _update_nav_intent() -> void:
 	if new_intent != null and _last_raw_intent != null and _is_intent_similar(_last_raw_intent, new_intent):
 		# Intent hasn't meaningfully changed — keep the existing validated one.
 		# Still update heading for POSE/STATION since that's cheap.
-		if _dbg:
-			print("[NavIntent %s] SIMILAR — keeping old intent (old_raw_pos=%s new_pos=%s dist=%.0f)" % [
-				_ship.name,
-				str(_last_raw_intent.target_position),
-				str(new_intent.target_position),
-				_last_raw_intent.target_position.distance_to(new_intent.target_position)
-			])
+		# if _dbg:
+		# 	print("[NavIntent %s] SIMILAR — keeping old intent (old_raw_pos=%s new_pos=%s dist=%.0f)" % [
+		# 		_ship.name,
+		# 		str(_last_raw_intent.target_position),
+		# 		str(new_intent.target_position),
+		# 		_last_raw_intent.target_position.distance_to(new_intent.target_position)
+		# 	])
 		_last_raw_intent = new_intent
 		if new_intent.mode == NavIntent.Mode.POSE:
 			_last_intent.target_heading = new_intent.target_heading
@@ -543,12 +543,18 @@ func _check_intent_events() -> void:
 		_force_intent_next_frame = true
 	_last_friendly_alive_count = alive_count
 
-	# --- 3. Cover position reached (for behaviors that seek cover) ---
+	# --- 3. Cover position reached or lost (for behaviors that seek cover) ---
 	if behavior != null and "is_in_cover" in behavior:
 		var now_in_cover: bool = behavior.is_in_cover
 		if now_in_cover and not _was_in_cover:
 			if _dbg:
 				print("[Event %s] COVER_REACHED frame=%d" % [_ship.name, Engine.get_physics_frames()])
+			_force_intent_next_frame = true
+		elif not now_in_cover and _was_in_cover:
+			# Ship drifted/overshot out of cover — force re-query so the behavior
+			# can re-issue a POSE intent to navigate back to the cover position.
+			if _dbg:
+				print("[Event %s] COVER_LOST (overshoot) frame=%d" % [_ship.name, Engine.get_physics_frames()])
 			_force_intent_next_frame = true
 		_was_in_cover = now_in_cover
 
@@ -628,7 +634,7 @@ func _update_debug_vectors(rudder: float) -> void:
 	debug_log_timer += 1.0 / Engine.physics_ticks_per_second
 	if debug_log_timer >= debug_log_interval:
 		debug_log_timer = 0.0
-		if _ship.name == "1001" or _ship.name == "1002":
+		if _ship.name == "1001" or _ship.name == "1002" or _ship.name == "1003":
 			print("[BotV4 %s] %s" % [_ship.name, navigator.get_debug_info()])
 
 

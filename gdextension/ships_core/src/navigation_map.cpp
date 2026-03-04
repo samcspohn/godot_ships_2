@@ -159,7 +159,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 					Vector3 v1 = shape_transform.xform(faces[f * 3 + 1]);
 					Vector3 v2 = shape_transform.xform(faces[f * 3 + 2]);
 					// rasterize_triangle now internally filters by Y > 0
-					if (std::max({v0.y, v1.y, v2.y}) > -5.0f) above_water_tris++;
+					if (std::max({v0.y, v1.y, v2.y}) > 0.0f) above_water_tris++;
 					rasterize_triangle(v0, v1, v2, land_mask);
 				}
 				UtilityFunctions::print("[NavigationMap]     ConcavePolygon: ", face_count,
@@ -565,10 +565,29 @@ void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, con
 							land_mask[iz * grid_width + ix] = true;
 						}
 					} else {
-						// Cell overlaps triangle but center is outside — be aggressive:
-						// mark as land if the max Y of the triangle is above water.
-						// This ensures partial-overlap cells on land edges are filled.
-						if (max_y > 0.0f) {
+						// Cell overlaps triangle but center is outside (edge/corner overlap).
+						// Clamp barycentric weights to [0,1] to interpolate Y at the nearest
+						// point on the triangle to the cell center. This avoids marking cells
+						// that only touch a low-Y (underwater) edge of a mixed triangle.
+						float w0 = e1 * inv_area;
+						float w1 = e2 * inv_area;
+						float w2 = e0 * inv_area;
+						// Clamp each weight to [0,1] and renormalize
+						w0 = std::max(0.0f, w0);
+						w1 = std::max(0.0f, w1);
+						w2 = std::max(0.0f, w2);
+						float wsum = w0 + w1 + w2;
+						if (wsum > 0.0f) {
+							float inv_wsum = 1.0f / wsum;
+							w0 *= inv_wsum;
+							w1 *= inv_wsum;
+							w2 *= inv_wsum;
+						} else {
+							// Degenerate: fall back to equal weights
+							w0 = w1 = w2 = 1.0f / 3.0f;
+						}
+						float y_at_nearest = w0 * v0.y + w1 * v1.y + w2 * v2.y;
+						if (y_at_nearest > 0.0f) {
 							land_mask[iz * grid_width + ix] = true;
 						}
 					}
@@ -912,6 +931,7 @@ void NavigationMap::extract_islands(const std::vector<bool> &land_mask) {
 
 			// Skip tiny islands (noise) — fewer than 4 cells at 50m = 10,000 sq meters
 			if (cell_count < 4) {
+				island_id++;
 				continue;
 			}
 
@@ -1115,10 +1135,6 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 
 	if (!built) return result;
 
-	if (step_size <= 0.0f) {
-		step_size = cell_size * 0.5f;
-	}
-
 	Vector2 dir = to - from;
 	float total_dist = dir.length();
 	if (total_dist < 0.001f) {
@@ -1133,34 +1149,102 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 		return result;
 	}
 
-	Vector2 step_dir = dir / total_dist;
-	float traveled = 0.0f;
+	// Use grid-cell DDA traversal to ensure every cell the ray passes through
+	// is checked. The previous sphere-tracing approach used bilinear interpolation
+	// of the SDF which can overestimate distances near land boundaries, causing
+	// the ray to skip over land cells entirely (false negatives for LOS checks).
 
-	while (traveled <= total_dist) {
-		Vector2 pos = from + step_dir * traveled;
-		float d = get_distance(pos.x, pos.y);
+	// Convert endpoints to grid coordinates
+	float gx0, gz0, gx1, gz1;
+	world_to_grid(from.x, from.y, gx0, gz0);
+	world_to_grid(to.x, to.y, gx1, gz1);
 
-		if (d < clearance) {
-			result.hit = true;
-			result.position = pos;
-			result.distance = traveled;
-			result.penetration = clearance - d;
-			return result;
-		}
+	// Current grid cell
+	int cx = static_cast<int>(std::floor(gx0));
+	int cz = static_cast<int>(std::floor(gz0));
 
-		// SDF-accelerated stepping: we can safely advance by (d - clearance) without missing anything
-		// But keep a minimum step to avoid getting stuck near boundaries
-		float safe_advance = std::max(step_size, d - clearance);
-		traveled += safe_advance;
+	// Target grid cell
+	int end_cx = static_cast<int>(std::floor(gx1));
+	int end_cz = static_cast<int>(std::floor(gz1));
+
+	// DDA direction
+	float dx = gx1 - gx0;
+	float dz = gz1 - gz0;
+
+	int step_x = (dx >= 0.0f) ? 1 : -1;
+	int step_z = (dz >= 0.0f) ? 1 : -1;
+
+	// Distance in world units for one full grid cell step along each axis
+	// (how far the ray travels in world units to cross one cell in x or z)
+	float t_delta_x = (std::abs(dx) > 1e-8f) ? (total_dist / std::abs(dx)) : 1e30f;
+	float t_delta_z = (std::abs(dz) > 1e-8f) ? (total_dist / std::abs(dz)) : 1e30f;
+
+	// Distance to the first grid boundary crossing along each axis
+	float t_max_x, t_max_z;
+	if (std::abs(dx) > 1e-8f) {
+		float next_boundary_x = (step_x > 0) ? (std::floor(gx0) + 1.0f) : std::floor(gx0);
+		t_max_x = (next_boundary_x - gx0) / dx * total_dist;
+		// Clamp small negative values from floating point
+		if (t_max_x < 0.0f) t_max_x = 0.0f;
+	} else {
+		t_max_x = 1e30f;
+	}
+	if (std::abs(dz) > 1e-8f) {
+		float next_boundary_z = (step_z > 0) ? (std::floor(gz0) + 1.0f) : std::floor(gz0);
+		t_max_z = (next_boundary_z - gz0) / dz * total_dist;
+		if (t_max_z < 0.0f) t_max_z = 0.0f;
+	} else {
+		t_max_z = 1e30f;
 	}
 
-	// Check the endpoint explicitly
-	float d = get_distance(to.x, to.y);
-	if (d < clearance) {
+	// Check the starting cell
+	if (in_bounds(cx, cz) && get_cell(cx, cz) < clearance) {
+		result.hit = true;
+		result.position = from;
+		result.distance = 0.0f;
+		result.penetration = clearance - get_cell(cx, cz);
+		return result;
+	}
+
+	// Walk cells along the ray using DDA
+	// Track the parametric distance along the ray (in world units) for hit position
+	int max_steps = std::abs(end_cx - cx) + std::abs(end_cz - cz) + 2;
+	for (int step_count = 0; step_count < max_steps; step_count++) {
+		// Advance to the next cell boundary
+		float t_cross;
+		if (t_max_x < t_max_z) {
+			t_cross = t_max_x;
+			cx += step_x;
+			t_max_x += t_delta_x;
+		} else {
+			t_cross = t_max_z;
+			cz += step_z;
+			t_max_z += t_delta_z;
+		}
+
+		if (t_cross > total_dist) break;
+
+		// Check this cell using raw SDF (no bilinear interpolation)
+		if (!in_bounds(cx, cz) || get_cell(cx, cz) < clearance) {
+			// Hit land or obstacle — compute the world-space hit position
+			// Use the crossing distance as the approximate hit point
+			Vector2 step_dir = dir / total_dist;
+			result.hit = true;
+			result.position = from + step_dir * t_cross;
+			result.distance = t_cross;
+			float cell_sdf = in_bounds(cx, cz) ? get_cell(cx, cz) : 0.0f;
+			result.penetration = clearance - cell_sdf;
+			return result;
+		}
+	}
+
+	// Also check the endpoint cell explicitly (may differ from last DDA cell due to rounding)
+	if (in_bounds(end_cx, end_cz) && get_cell(end_cx, end_cz) < clearance) {
 		result.hit = true;
 		result.position = to;
 		result.distance = total_dist;
-		result.penetration = clearance - d;
+		result.penetration = clearance - get_cell(end_cx, end_cz);
+		return result;
 	}
 
 	return result;
@@ -1171,7 +1255,8 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 // ============================================================================
 
 bool NavigationMap::line_of_sight(int x0, int z0, int x1, int z1, float clearance) const {
-	// Supercover Bresenham — visits every cell the line touches, no double-checks
+	// Supercover Bresenham — visits every cell the line touches, no gaps.
+	// clearance is in the same units as the SDF grid values (world meters).
 	int dx = std::abs(x1 - x0);
 	int dz = std::abs(z1 - z0);
 	int sx = (x0 < x1) ? 1 : -1;
@@ -1194,18 +1279,23 @@ bool NavigationMap::line_of_sight(int x0, int z0, int x1, int z1, float clearanc
 	while (!(cx == x1 && cz == z1)) {
 		int e2 = 2 * err;
 
-		if (e2 > -dz && e2 < dx) {
+		// Supercover: use >= and <= to catch exact corner crossings.
+		// When the line passes exactly through a grid vertex, both step
+		// conditions fire and we visit the diagonal plus both cardinal
+		// neighbors — eliminating false negatives from missed cells.
+		bool step_x = (e2 > -dz) || (e2 == -dz && dx > 0);
+		bool step_z = (e2 < dx)  || (e2 == dx  && dz > 0);
+
+		if (step_x && step_z) {
 			// Diagonal step — check both cardinal neighbors for supercover,
 			// then move diagonally
+			if (!in_bounds(cx + sx, cz) || get_cell(cx + sx, cz) < clearance) return false;
+			if (!in_bounds(cx, cz + sz) || get_cell(cx, cz + sz) < clearance) return false;
 			err -= dz;
 			err += dx;
-			// Check horizontal neighbor
-			if (!in_bounds(cx + sx, cz) || get_cell(cx + sx, cz) < clearance) return false;
-			// Check vertical neighbor
-			if (!in_bounds(cx, cz + sz) || get_cell(cx, cz + sz) < clearance) return false;
 			cx += sx;
 			cz += sz;
-		} else if (e2 > -dz) {
+		} else if (step_x) {
 			// Horizontal step
 			err -= dz;
 			cx += sx;
@@ -1269,8 +1359,9 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 	if (!built) return result;
 
-	// Convert clearance from world units to grid cell units for cell-level checks
-	float clearance_cells = clearance / cell_size;
+	// The SDF grid stores world-unit distances (meters), so clearance for
+	// cell-level checks stays in world units — no conversion needed.
+	float clearance_world = clearance;
 
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
@@ -1289,11 +1380,11 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	ez = std::max(0, std::min(ez, grid_height - 1));
 
 	// Snap to nearest navigable cells if needed
-	if (!find_nearest_navigable(sx, sz, clearance_cells, 30)) {
+	if (!find_nearest_navigable(sx, sz, clearance_world, 30)) {
 		UtilityFunctions::print("[NavigationMap] find_path: start position is not navigable and no nearby navigable cell found");
 		return result;
 	}
-	if (!find_nearest_navigable(ex, ez, clearance_cells, 30)) {
+	if (!find_nearest_navigable(ex, ez, clearance_world, 30)) {
 		UtilityFunctions::print("[NavigationMap] find_path: end position is not navigable and no nearby navigable cell found");
 		return result;
 	}
@@ -1316,7 +1407,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	}
 
 	// Check if direct line-of-sight exists
-	if (line_of_sight(sx, sz, ex, ez, clearance_cells)) {
+	if (line_of_sight(sx, sz, ex, ez, clearance_world)) {
 		result.waypoints.push_back(from);
 		result.waypoints.push_back(to);
 		result.total_distance = from.distance_to(to);
@@ -1407,13 +1498,13 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			int nidx = cell_idx(nx, nz);
 			if (closed[nidx]) continue;
 
-			// Check navigability with clearance
-			if (get_cell(nx, nz) < clearance_cells) continue;
+			// Check navigability with clearance (SDF values are in world units)
+			if (get_cell(nx, nz) < clearance_world) continue;
 
 			// For diagonal moves, also check the two cardinal cells to prevent corner-cutting
 			if (dx8[d] != 0 && dz8[d] != 0) {
-				if (get_cell(cx + dx8[d], cz) < clearance_cells) continue;
-				if (get_cell(cx, cz + dz8[d]) < clearance_cells) continue;
+				if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
+				if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
 			}
 
 			float base_cost = cost8[d];
@@ -1423,8 +1514,8 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				// --- Proximity penalty ---
 				// Exponential cost increase as SDF approaches the turning radius.
 				// This pushes paths away from land proportional to the ship's turn circle.
-				float sdf_value = get_cell(nx, nz);  // already in cell units
-				float proximity_ratio = turning_radius_cells / std::max(sdf_value, 1.0f);
+				float sdf_value_cells = get_cell(nx, nz) / cell_size;  // convert SDF to grid-cell units
+				float proximity_ratio = turning_radius_cells / std::max(sdf_value_cells, 1.0f);
 				proximity_ratio = std::min(proximity_ratio, 5.0f);
 				extra_cost += base_cost * proximity_ratio * 0.5f;
 
@@ -1449,8 +1540,10 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 						float turn_angle = std::acos(dot);
 						// Arc length the turning circle needs for this angle
 						float arc_length = turning_radius_cells * std::abs(turn_angle);
-						// Penalty scales with how much arc is needed vs cell spacing
-						extra_cost += (arc_length / std::max(cell_size, 1.0f)) * 0.3f;
+						// Penalty scales with how much arc is needed relative to a single cell step.
+						// arc_length is already in cell units (turning_radius_cells * angle),
+						// so no further division by cell_size is needed.
+						extra_cost += arc_length * 0.3f;
 					}
 				}
 			}
@@ -1520,7 +1613,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				int ix1 = static_cast<int>(std::round(gx1));
 				int iz1 = static_cast<int>(std::round(gz1));
 
-				if (line_of_sight(ix0, iz0, ix1, iz1, clearance_cells)) {
+				if (line_of_sight(ix0, iz0, ix1, iz1, clearance_world)) {
 					farthest = test;
 					break;  // Found farthest visible; done for this segment
 				}
@@ -1538,7 +1631,8 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	// smooth trajectory instead of point-to-point segments with sharp bends.
 	if (use_curvature_penalty && path.size() >= 3) {
 		// Threshold: if the turn angle at a waypoint exceeds this, smooth it
-		float angle_threshold = Math_PI / std::max(turning_radius_cells / std::max(clearance_cells, 1.0f), 1.0f);
+		float clearance_in_cells = clearance_world / cell_size;
+		float angle_threshold = Math_PI / std::max(turning_radius_cells / std::max(clearance_in_cells, 1.0f), 1.0f);
 		angle_threshold = std::min(angle_threshold, static_cast<float>(Math_PI * 0.5));  // cap at 90°
 		angle_threshold = std::max(angle_threshold, 0.3f);  // floor at ~17°
 

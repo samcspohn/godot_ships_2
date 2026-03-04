@@ -461,17 +461,17 @@ bool ShipNavigator::is_simulation_complete() const {
 // ============================================================================
 
 float ShipNavigator::get_ship_clearance() const {
-	return params.ship_beam * 0.5f + get_safety_margin();
+	return params.ship_beam + get_safety_margin();
 }
 
 float ShipNavigator::get_soft_clearance() const {
 	float hard = get_ship_clearance();
-	float soft = std::max(hard, params.turning_circle_radius);
+	float soft = std::max(hard, params.turning_circle_radius) + get_safety_margin();
 	return soft;
 }
 
 float ShipNavigator::get_safety_margin() const {
-	return std::max(75.0f, params.ship_beam * 0.5f);
+	return std::max(150.0f, params.ship_beam * 2.0f);
 }
 
 float ShipNavigator::get_lookahead_distance() const {
@@ -638,6 +638,144 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 		}
 	}
 
+	if (arc.size() < 2 || arc.back().position.distance_to(sim_pos) > 1.0f) {
+		arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, sim_time));
+	}
+
+	return arc;
+}
+
+Vector2 ShipNavigator::get_steer_target() const {
+	// Return the current waypoint if following a path, otherwise the final target.
+	if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size())) {
+		return current_path.waypoints[current_wp_index];
+	}
+	if (nav_mode == NavMode::POSITION || nav_mode == NavMode::POSE) {
+		return target_position;
+	}
+	if (nav_mode == NavMode::STATION_KEEP) {
+		return Vector2(station_center.x, station_center.z);
+	}
+	// ANGLE mode or NONE — no spatial target
+	return Vector2(0.0f, 0.0f);
+}
+
+std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
+															Vector2 target_pos, float lookahead_distance,
+															float max_time) const {
+	// Simulates the ship's turn at any rudder value until the heading is
+	// tangentially aligned toward target_pos, but never shorter than
+	// lookahead_distance (so obstacle detection range is preserved).
+	// The maximum arc distance is capped at the turning circle perimeter
+	// or lookahead_distance, whichever is larger.
+
+	std::vector<ArcPoint> arc;
+	arc.reserve(64);
+
+	float sim_rudder = state.current_rudder;
+	float sim_speed = state.current_speed;
+	float sim_heading = state.heading;
+	Vector2 sim_pos = state.position;
+	float sim_time = 0.0f;
+	float total_distance = 0.0f;
+
+	float target_speed_val = throttle_to_speed(commanded_throttle);
+
+	arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, 0.0f));
+
+	// Distance cap: the larger of the lookahead distance (so we always
+	// detect obstacles as far ahead as the old system did) and one full
+	// turning circle perimeter (so a complete revolution can be tested).
+	float turning_circle_perimeter = 2.0f * Math_PI * params.turning_circle_radius;
+	float max_arc_distance = std::max(lookahead_distance, turning_circle_perimeter);
+
+	// Integration timestep — same scaling as predict_arc_internal
+	const float base_dt = 0.1f;
+	const float integration_dt = std::min(
+		base_dt * std::max(1.0f, params.rudder_response_time / 4.0f),
+		0.5f
+	);
+	float emit_interval = std::max(max_arc_distance / 50.0f, params.ship_beam * 0.5f);
+	float next_emit_dist = emit_interval;
+	Vector2 prev_pos = sim_pos;
+
+	// We consider "aligned" when the heading error to the target is below
+	// this threshold.  ~5 degrees is tight enough that the ship can
+	// proceed toward the waypoint after the turn.
+	const float alignment_threshold = 0.087f;  // ~5 degrees in radians
+
+	// Simulate the turning arc.  Alignment can only terminate the loop
+	// after we've covered at least lookahead_distance — this ensures
+	// obstacle/terrain checks always see far enough ahead.
+	bool aligned = false;
+	while (sim_time < max_time && total_distance < max_arc_distance) {
+		float dt = integration_dt;
+		if (sim_time + dt > max_time) dt = max_time - sim_time;
+		if (dt < 0.001f) break;
+
+		// 1. Rudder moves toward commanded position
+		if (params.rudder_response_time > 0.001f) {
+			sim_rudder = move_toward_f(sim_rudder, commanded_rudder, dt / params.rudder_response_time);
+		} else {
+			sim_rudder = commanded_rudder;
+		}
+
+		// 2. Speed changes toward target
+		if (target_speed_val > sim_speed) {
+			float accel_rate = params.max_speed / std::max(params.acceleration_time, 0.1f);
+			sim_speed = move_toward_f(sim_speed, target_speed_val, dt * accel_rate);
+		} else {
+			float decel_rate = params.max_speed / std::max(params.deceleration_time, 0.1f);
+			sim_speed = move_toward_f(sim_speed, target_speed_val, dt * decel_rate);
+		}
+
+		// 3. Apply turn speed loss
+		float effective_speed = sim_speed * (1.0f - params.turn_speed_loss * std::abs(sim_rudder));
+
+		// 4. Compute turn rate
+		float omega = 0.0f;
+		if (params.turning_circle_radius > 0.001f) {
+			omega = (effective_speed / params.turning_circle_radius) * (-sim_rudder);
+		}
+
+		// 5. Integrate position and heading
+		sim_heading += omega * dt;
+		sim_heading = normalize_angle(sim_heading);
+		sim_pos.x += std::sin(sim_heading) * effective_speed * dt;
+		sim_pos.y += std::cos(sim_heading) * effective_speed * dt;
+
+		sim_time += dt;
+
+		float step_dist = sim_pos.distance_to(prev_pos);
+		total_distance += step_dist;
+		prev_pos = sim_pos;
+
+		// Emit point at regular intervals
+		if (total_distance >= next_emit_dist) {
+			arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, sim_time));
+			next_emit_dist += emit_interval;
+		}
+
+		// Check tangential alignment: is the sim heading now pointing at target_pos?
+		// Only allow early exit once we've covered at least lookahead_distance
+		// so that obstacle detection range is never reduced.
+		if (total_distance >= lookahead_distance) {
+			Vector2 to_target = target_pos - sim_pos;
+			float dist_to_target = to_target.length();
+			if (dist_to_target > 1.0f) {  // avoid division by near-zero
+				float desired_heading = std::atan2(to_target.x, to_target.y);
+				float heading_error = std::abs(angle_difference(sim_heading, desired_heading));
+				if (heading_error < alignment_threshold) {
+					aligned = true;
+					// Aligned — emit final point and stop
+					arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, sim_time));
+					break;
+				}
+			}
+		}
+	}
+
+	// Ensure we have at least 2 points and the last emitted point is current
 	if (arc.size() < 2 || arc.back().position.distance_to(sim_pos) > 1.0f) {
 		arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, sim_time));
 	}
@@ -813,9 +951,6 @@ int ShipNavigator::compute_throttle_for_approach(float distance_to_target) const
 	float safety_margin = params.turning_circle_radius * 0.5f;
 
 	if (distance_to_target < stopping_dist + safety_margin) {
-		if (distance_to_target < safety_margin * 0.5f) {
-			return 0;
-		}
 		return 1;
 	}
 	if (distance_to_target < stopping_dist * 2.0f + safety_margin) {
@@ -896,7 +1031,9 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			}
 		}
 
-		// Starboard-biased rudder candidates (COLREGS)
+		// Starboard-biased rudder candidates (COLREGS).
+		// Each candidate is simulated until tangentially aligned to the
+		// current waypoint, giving a physically accurate turning arc.
 		const float starboard_offsets[] = {
 			-0.25f, -0.5f, -0.75f, -1.0f,
 			 0.25f,  0.5f,  0.75f,  1.0f
@@ -905,10 +1042,18 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 		float best_rudder = desired_rudder;
 		float best_ttc = ttc;
 
-		// Phase 1: Rudder-only at current speed
+		// Phase 1: Rudder-only at current speed — tangential alignment arcs
+		Vector2 steer_tgt = get_steer_target();
+		bool have_steer_target = (steer_tgt.length_squared() > 1.0f);
+
 		for (float offset : starboard_offsets) {
 			float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
-			auto arc = predict_arc_internal(candidate, desired_throttle, lookahead);
+			std::vector<ArcPoint> arc;
+			if (have_steer_target) {
+				arc = predict_arc_to_heading(candidate, desired_throttle, steer_tgt, lookahead);
+			} else {
+				arc = predict_arc_internal(candidate, desired_throttle, lookahead);
+			}
 			float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 			float cand_ttc_terrain = check_arc_collision(arc, hard_clearance, soft_clearance);
 			float cand_ttc_obstacles = check_arc_obstacles(arc);
@@ -928,10 +1073,15 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 
 		// Phase 2: Reduce throttle if rudder alone wasn't enough
 		if (best_ttc < arc_total_time * 0.5f) {
-			int reduced_throttle = std::max(0, desired_throttle - 2);
+			int reduced_throttle = std::max(1, desired_throttle - 2);
 			for (float offset : starboard_offsets) {
 				float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
-				auto arc = predict_arc_internal(candidate, reduced_throttle, lookahead);
+				std::vector<ArcPoint> arc;
+				if (have_steer_target) {
+					arc = predict_arc_to_heading(candidate, reduced_throttle, steer_tgt, lookahead);
+				} else {
+					arc = predict_arc_internal(candidate, reduced_throttle, lookahead);
+				}
 				float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 				float cand_ttc = std::min(check_arc_collision(arc, hard_clearance, soft_clearance),
 										  check_arc_obstacles(arc));
@@ -953,11 +1103,11 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			avoidance.begin(give_way, obs_info.obstacle_id, best_rudder);
 		}
 
-		// Emergency: nothing works
+		// Emergency: nothing works — full reverse to bleed speed
 		if (best_ttc < 3.0f) {
 			nav_state = NavState::EMERGENCY;
 			out_throttle = -1;
-			best_rudder = -1.0f;
+			best_rudder = (state.angular_velocity_y > 0.0f) ? 1.0f : -1.0f;
 			avoidance.begin(give_way, obs_info.obstacle_id, best_rudder);
 		}
 
@@ -968,15 +1118,27 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 	// =====================================================================
 	// Terrain-only avoidance
 	// =====================================================================
+	// Each rudder candidate is simulated until tangentially aligned to the
+	// current waypoint, capped at the minimum turning circle perimeter.
+	// This gives a physically accurate picture of the actual turn the ship
+	// would execute rather than an arbitrary fixed-distance lookahead.
 	const float offsets[] = {0.25f, -0.25f, 0.5f, -0.5f, 0.75f, -0.75f, 1.0f, -1.0f};
 	float best_rudder = desired_rudder;
 	float best_ttc = ttc;
 	int best_throttle = desired_throttle;
 
-	// Phase 1: Rudder-only
+	Vector2 steer_tgt = get_steer_target();
+	bool have_steer_target = (steer_tgt.length_squared() > 1.0f);
+
+	// Phase 1: Rudder-only — tangential alignment arcs
 	for (float offset : offsets) {
 		float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
-		auto arc = predict_arc_internal(candidate, desired_throttle, lookahead);
+		std::vector<ArcPoint> arc;
+		if (have_steer_target) {
+			arc = predict_arc_to_heading(candidate, desired_throttle, steer_tgt, lookahead);
+		} else {
+			arc = predict_arc_internal(candidate, desired_throttle, lookahead);
+		}
 		float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 		float cand_ttc_terrain = check_arc_collision(arc, hard_clearance, soft_clearance);
 		float cand_ttc_obstacles = check_arc_obstacles(arc);
@@ -996,9 +1158,15 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 
 	// Phase 2: Reduce throttle
 	if (best_ttc < arc_total_time * 0.5f) {
-		int reduced_throttle = std::max(0, desired_throttle - 2);
-		for (float test_rudder = -1.0f; test_rudder <= 1.0f; test_rudder += 0.25f) {
-			auto arc = predict_arc_internal(test_rudder, reduced_throttle, lookahead);
+		int reduced_throttle = std::max(1, desired_throttle - 2);
+		for (float offset : offsets) {
+			float test_rudder = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+			std::vector<ArcPoint> arc;
+			if (have_steer_target) {
+				arc = predict_arc_to_heading(test_rudder, reduced_throttle, steer_tgt, lookahead);
+			} else {
+				arc = predict_arc_internal(test_rudder, reduced_throttle, lookahead);
+			}
 			float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 			float cand_ttc = std::min(check_arc_collision(arc, hard_clearance, soft_clearance),
 									  check_arc_obstacles(arc));
@@ -1019,8 +1187,14 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 	// Phase 3: Increase throttle with full rudder (build rudder authority)
 	if (best_ttc < arc_total_time * 0.5f && std::abs(state.current_speed) < params.max_speed * 0.3f) {
 		int boost_throttle = std::min(desired_throttle + 2, 4);
-		for (float test_rudder = -1.0f; test_rudder <= 1.0f; test_rudder += 0.25f) {
-			auto arc = predict_arc_internal(test_rudder, boost_throttle, lookahead);
+		for (float offset : offsets) {
+			float test_rudder = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+			std::vector<ArcPoint> arc;
+			if (have_steer_target) {
+				arc = predict_arc_to_heading(test_rudder, boost_throttle, steer_tgt, lookahead);
+			} else {
+				arc = predict_arc_internal(test_rudder, boost_throttle, lookahead);
+			}
 			float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 			float cand_ttc = std::min(check_arc_collision(arc, hard_clearance, soft_clearance),
 									  check_arc_obstacles(arc));
@@ -1054,10 +1228,8 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			float angle_to_escape = std::abs(angle_difference(state.heading, escape_heading));
 			if (angle_to_escape < Math_PI * 0.5f) {
 				out_throttle = 2; // Drive forward to turn out
-			} else if (std::abs(state.current_speed) < 2.0f) {
-				out_throttle = -1; // Brief reverse
 			} else {
-				out_throttle = 0; // Cut throttle and turn
+				out_throttle = -1; // Brief reverse
 			}
 		} else {
 			best_rudder = (state.angular_velocity_y > 0.0f) ? 1.0f : -1.0f;
@@ -1114,12 +1286,42 @@ float ShipNavigator::apply_gradient_bias(float rudder) const {
 void ShipNavigator::advance_waypoint() {
 	if (!path_valid || current_path.waypoints.empty()) return;
 
+	// Phase 1: Skip waypoints we've already reached (normal advancement)
 	while (current_wp_index < static_cast<int>(current_path.waypoints.size())) {
 		if (is_waypoint_reached(current_path.waypoints[current_wp_index])) {
 			current_wp_index++;
 		} else {
 			break;
 		}
+	}
+
+	// Phase 2: Skip waypoints that are inside the turning dead zone.
+	// The ship has two turning circles (port and starboard) tangent to its
+	// current trajectory. Any waypoint inside either circle is geometrically
+	// unreachable — the ship would orbit it forever. Skip past these to the
+	// next reachable waypoint, but never skip the final waypoint (destination).
+	int last_wp = static_cast<int>(current_path.waypoints.size()) - 1;
+	bool skipped_dead_zone = false;
+	while (current_wp_index < last_wp) {
+		if (is_waypoint_in_turning_dead_zone(current_path.waypoints[current_wp_index])) {
+			current_wp_index++;
+			skipped_dead_zone = true;
+		} else {
+			break;
+		}
+	}
+
+	// If we skipped intermediate waypoints but the final destination itself
+	// is in the dead zone, the current path is no longer viable — request a
+	// recalculation from our current position so A* can produce a path that
+	// the ship can actually follow (approaching from a different angle).
+	if (current_wp_index == last_wp && last_wp >= 0 &&
+		is_waypoint_in_turning_dead_zone(current_path.waypoints[last_wp])) {
+		// Destination is unreachable on current trajectory — recalculate.
+		// The new path will originate from where we are now, approaching
+		// the target from an angle outside both turning circles.
+		maybe_recalc_path(target_position);
+		return;
 	}
 
 	// Clamp to last valid waypoint
@@ -1147,6 +1349,48 @@ bool ShipNavigator::is_waypoint_reached(Vector2 waypoint) const {
 	if (along_track < 0.0f && dist < reach_radius * 2.0f) return true;
 
 	return false;
+}
+
+bool ShipNavigator::is_waypoint_in_turning_dead_zone(Vector2 waypoint) const {
+	// The ship has two turning circles — one to port, one to starboard —
+	// whose centers sit perpendicular to the current heading at a distance
+	// of turning_circle_radius from the ship's position.  Any point inside
+	// either circle is geometrically unreachable: the ship would need to
+	// turn tighter than its minimum radius, resulting in an infinite orbit.
+	//
+	// This is a purely geometric check — it must not gate on speed, because
+	// callers (reverse logic, path recalc) need to know the dead-zone status
+	// even when the ship has slowed down or stopped.  The "can the ship
+	// maneuver freely at low speed" decision belongs to the caller.
+
+	float r = params.turning_circle_radius;
+	if (r < 1.0f) return false;  // negligible turning radius
+
+	// Perpendicular direction to heading (port = left, starboard = right)
+	// heading 0 = +Z, so right-perpendicular is (+cos, -sin) in XZ
+	float perp_x = std::cos(state.heading);
+	float perp_z = -std::sin(state.heading);
+
+	// Starboard circle center (right of ship)
+	Vector2 center_starboard(
+		state.position.x + perp_x * r,
+		state.position.y + perp_z * r
+	);
+	// Port circle center (left of ship)
+	Vector2 center_port(
+		state.position.x - perp_x * r,
+		state.position.y - perp_z * r
+	);
+
+	float dist_starboard = waypoint.distance_to(center_starboard);
+	float dist_port = waypoint.distance_to(center_port);
+
+	// Use a slightly reduced radius to avoid false positives at the boundary.
+	// A point right on the circle edge is technically reachable (tangent approach),
+	// so we shrink by 10% to only catch points clearly inside the dead zone.
+	float threshold = r * 0.9f;
+
+	return (dist_starboard < threshold || dist_port < threshold);
 }
 
 // ============================================================================
@@ -1235,15 +1479,31 @@ void ShipNavigator::update_navigate_to_position() {
 	float reverse_min_dist = params.turning_circle_radius * 0.5f;
 
 	bool use_reverse = false;
-	if (angle_to_target > Math_PI * 0.65f
-		&& dist > reverse_min_dist
+	if (angle_to_target > Math_PI * 0.55f
+		// && dist > reverse_min_dist
 		&& dist < params.turning_circle_radius * 2.0f
-		&& std::abs(state.current_speed) < params.max_speed * 0.3f) {
+		// && std::abs(state.current_speed) < params.max_speed * 0.3f
+	) {
 
-		// Check: no path waypoints ahead requiring forward motion
+		// Check whether the target (or current waypoint) is inside the
+		// turning dead zone.  If it is, the ship can't reach it by turning
+		// forward — reversing is the right move.  Also allow reverse when
+		// there's no valid path (direct approach to a behind-target).
+		bool target_in_dead_zone = is_waypoint_in_turning_dead_zone(target_position);
+
+		// If following a path, also check the current waypoint
+		if (!target_in_dead_zone && path_valid &&
+			current_wp_index < static_cast<int>(current_path.waypoints.size())) {
+			target_in_dead_zone = is_waypoint_in_turning_dead_zone(
+				current_path.waypoints[current_wp_index]);
+		}
+
+		// Only block reverse if path has multiple waypoints ahead AND
+		// the immediate target is NOT in the dead zone — i.e. the path
+		// genuinely routes to a reachable waypoint via forward motion.
 		bool path_requires_forward = false;
-		if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size()) - 1) {
-			// More waypoints ahead means path goes somewhere — don't reverse
+		if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size()) - 1
+			&& !target_in_dead_zone) {
 			path_requires_forward = true;
 		}
 		if (!path_requires_forward) {
@@ -1252,16 +1512,18 @@ void ShipNavigator::update_navigate_to_position() {
 	}
 
 	if (use_reverse) {
+		UtilityFunctions::print(String("Using Reverse"));
 		nav_state = NavState::ARRIVING;
-		float desired_rudder = -compute_rudder_to_position(target_position);
+		float desired_rudder = compute_rudder_to_position(target_position);
 		desired_rudder = apply_gradient_bias(desired_rudder);
 		int desired_throttle = -1;
 
 		float ttc;
 		bool collision;
-		float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+		// float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+		float safe_rudder = desired_rudder; // Don't do obstacle avoidance in reverse mode, it's too complex and risky
 
-		set_steering_output(safe_rudder, collision ? 0 : desired_throttle, collision, ttc);
+		set_steering_output(safe_rudder, collision ? -1 : desired_throttle, collision, ttc);
 		return;
 	}
 
@@ -1311,17 +1573,29 @@ void ShipNavigator::update_navigate_to_position() {
 
 	// --- 6. OUTPUT ---
 	int final_throttle = desired_throttle;
-	if (collision && nav_state != NavState::EMERGENCY) {
-		final_throttle = std::min(desired_throttle, std::max(2, out_throttle));
+	if (collision) {
+		if (nav_state == NavState::EMERGENCY) {
+			// Emergency: apply out_throttle directly — allows reverse
+			final_throttle = out_throttle;
+		} else {
+			final_throttle = std::min(desired_throttle, std::max(2, out_throttle));
+		}
 	}
 
 	set_steering_output(safe_rudder, final_throttle, collision, ttc);
 
-	// Recalculate if we've deviated significantly from the path
+	// Recalculate if we've deviated significantly from the path or if the
+	// current waypoint is trapped inside a turning dead zone (the ship would
+	// orbit it forever instead of progressing along the path).
 	if (following_path) {
 		Vector2 nearest_wp = current_path.waypoints[current_wp_index];
 		float dist_to_path = state.position.distance_to(nearest_wp);
 		if (dist_to_path > params.turning_circle_radius * 2.0f) {
+			maybe_recalc_path(target_position);
+		} else if (is_waypoint_in_turning_dead_zone(nearest_wp)) {
+			// Waypoint is inside a turning circle — advance_waypoint will
+			// try to skip it next frame, but if it's the last waypoint the
+			// path needs recalculation from our current position/heading.
 			maybe_recalc_path(target_position);
 		}
 	}
@@ -1383,9 +1657,14 @@ void ShipNavigator::update_navigate_to_angle() {
 	float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
 	int final_throttle = desired_throttle;
-	if (collision && nav_state != NavState::EMERGENCY) {
-		nav_state = NavState::AVOIDING;
-		final_throttle = std::min(desired_throttle, std::max(2, out_throttle));
+	if (collision) {
+		if (nav_state == NavState::EMERGENCY) {
+			// Emergency: apply out_throttle directly — allows reverse
+			final_throttle = out_throttle;
+		} else {
+			nav_state = NavState::AVOIDING;
+			final_throttle = std::min(desired_throttle, std::max(2, out_throttle));
+		}
 	}
 
 	set_steering_output(safe_rudder, final_throttle, collision, ttc);
@@ -1417,23 +1696,34 @@ void ShipNavigator::update_navigate_to_pose() {
 	float reverse_min_dist = params.turning_circle_radius * 0.6f;
 
 	bool use_reverse = false;
-	if (angle_to_target > Math_PI * 0.65f
-		&& dist > reverse_min_dist
+	if (angle_to_target > Math_PI * 0.55f
+		// && dist > reverse_min_dist
 		&& dist < params.turning_circle_radius * 2.0f
-		&& std::abs(state.current_speed) < params.max_speed * 0.3f) {
+		// && std::abs(state.current_speed) < params.max_speed * 0.3f
+	) {
 
-		bool path_requires_forward = false;
-		if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size()) - 1) {
-			path_requires_forward = true;
-		}
-		if (!path_requires_forward) {
-			use_reverse = true;
-		}
+		// bool target_in_dead_zone = is_waypoint_in_turning_dead_zone(target_position);
+
+		// if (!target_in_dead_zone && path_valid &&
+		// 	current_wp_index < static_cast<int>(current_path.waypoints.size())) {
+		// 	target_in_dead_zone = is_waypoint_in_turning_dead_zone(
+		// 		current_path.waypoints[current_wp_index]);
+		// }
+
+		// bool path_requires_forward = false;
+		// if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size()) - 1
+		// 	&& !target_in_dead_zone) {
+		// 	path_requires_forward = true;
+		// }
+		// if (!path_requires_forward) {
+		// 	use_reverse = true;
+		// }
+		use_reverse = true;
 	}
 
 	if (use_reverse) {
 		nav_state = NavState::ARRIVING;
-		float desired_rudder = -compute_rudder_to_position(target_position);
+		float desired_rudder = compute_rudder_to_position(target_position);
 		desired_rudder = apply_gradient_bias(desired_rudder);
 		int desired_throttle = -1;
 
@@ -1441,7 +1731,7 @@ void ShipNavigator::update_navigate_to_pose() {
 		bool collision;
 		float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-		set_steering_output(safe_rudder, collision ? 0 : desired_throttle, collision, ttc);
+		set_steering_output(safe_rudder, collision ? -1 : desired_throttle, collision, ttc);
 		return;
 	}
 
@@ -1467,7 +1757,11 @@ void ShipNavigator::update_navigate_to_pose() {
 		bool collision;
 		float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-		nav_state = collision ? NavState::AVOIDING : NavState::NAVIGATING;
+		if (!collision) {
+			nav_state = NavState::NAVIGATING;
+		} else if (nav_state != NavState::EMERGENCY) {
+			nav_state = NavState::AVOIDING;
+		}
 
 		// Reduce throttle on tight turns
 		float turn_angle = std::abs(angle_difference(state.heading,
@@ -1476,16 +1770,28 @@ void ShipNavigator::update_navigate_to_pose() {
 			desired_throttle = 2;
 		}
 
-		int final_throttle = collision ?
-			std::min(desired_throttle, std::max(2, out_throttle)) : desired_throttle;
+		int final_throttle;
+		if (collision) {
+			if (nav_state == NavState::EMERGENCY) {
+				// Emergency: apply out_throttle directly — allows reverse
+				final_throttle = out_throttle;
+			} else {
+				nav_state = NavState::AVOIDING;
+				final_throttle = std::min(desired_throttle, std::max(2, out_throttle));
+			}
+		} else {
+			final_throttle = desired_throttle;
+		}
 
 		set_steering_output(safe_rudder, final_throttle, collision, ttc);
 
-		// Recalculate if deviated from path
+		// Recalculate if deviated from path or waypoint is in turning dead zone
 		if (following_path) {
 			Vector2 nearest_wp = current_path.waypoints[current_wp_index];
 			float dist_to_path = state.position.distance_to(nearest_wp);
 			if (dist_to_path > params.turning_circle_radius * 2.0f) {
+				maybe_recalc_path(target_position);
+			} else if (is_waypoint_in_turning_dead_zone(nearest_wp)) {
 				maybe_recalc_path(target_position);
 			}
 		}
@@ -1498,20 +1804,21 @@ void ShipNavigator::update_navigate_to_pose() {
 			float desired_rudder = compute_rudder_to_heading(target_heading);
 			desired_rudder = apply_gradient_bias(desired_rudder);
 
-			int desired_throttle;
-			if (heading_error > 0.3f) {
-				desired_throttle = 1;
-			} else {
-				desired_throttle = 0;
-			}
+			int desired_throttle = 1;
 
 			float ttc;
 			bool collision;
 			float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-			set_steering_output(safe_rudder,
-				collision ? std::min(desired_throttle, 1) : desired_throttle,
-				collision, ttc);
+			int final_throttle;
+			if (collision && nav_state == NavState::EMERGENCY) {
+				final_throttle = out_throttle; // Emergency: allows reverse
+			} else if (collision) {
+				final_throttle = std::max(1, out_throttle); // Avoidance: stay moving
+			} else {
+				final_throttle = desired_throttle;
+			}
+			set_steering_output(safe_rudder, final_throttle, collision, ttc);
 		} else {
 			// Blend position and heading targets
 			float heading_weight = 1.0f - (dist / approach_radius);
@@ -1590,14 +1897,14 @@ void ShipNavigator::update_station_keep(float delta) {
 			int desired_throttle;
 
 			if (use_reverse) {
-				desired_rudder = -compute_rudder_to_position(steer_target);
+				desired_rudder = compute_rudder_to_position(steer_target);
 				desired_throttle = -1;
 				desired_rudder = apply_gradient_bias(desired_rudder);
 
 				float ttc;
 				bool collision;
 				float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
-				set_steering_output(safe_rudder, collision ? 0 : desired_throttle, collision, ttc);
+				set_steering_output(safe_rudder, collision ? -1 : desired_throttle, collision, ttc);
 			} else {
 				desired_rudder = compute_rudder_to_position(steer_target);
 				desired_rudder = apply_gradient_bias(desired_rudder);
@@ -1611,12 +1918,21 @@ void ShipNavigator::update_station_keep(float delta) {
 				bool collision;
 				float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-				int final_throttle = collision ?
-					std::min(desired_throttle, 1) : desired_throttle;
-
-				// Reduce speed on tight turns
-				if (turn_angle > Math_PI * 0.5f) {
-					final_throttle = std::min(final_throttle, 1);
+				int final_throttle;
+				if (collision && nav_state == NavState::EMERGENCY) {
+					final_throttle = out_throttle;
+				} else if (collision) {
+					final_throttle = std::min(desired_throttle, 1);
+					// Reduce speed on tight turns
+					if (turn_angle > Math_PI * 0.5f) {
+						final_throttle = std::min(final_throttle, 1);
+					}
+				} else {
+					final_throttle = desired_throttle;
+					// Reduce speed on tight turns
+					if (turn_angle > Math_PI * 0.5f) {
+						final_throttle = std::min(final_throttle, 1);
+					}
 				}
 
 				set_steering_output(safe_rudder, final_throttle, collision, ttc);
@@ -1661,7 +1977,9 @@ void ShipNavigator::update_station_keep(float delta) {
 			bool collision;
 			float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-			set_steering_output(safe_rudder, desired_throttle, collision, ttc);
+			int final_throttle = (collision && nav_state == NavState::EMERGENCY)
+				? out_throttle : desired_throttle;
+			set_steering_output(safe_rudder, final_throttle, collision, ttc);
 			break;
 		}
 
@@ -1691,44 +2009,47 @@ void ShipNavigator::update_station_keep(float delta) {
 			bool collision;
 			float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-			set_steering_output(safe_rudder, desired_throttle, collision, ttc);
+			int final_throttle = (collision && nav_state == NavState::EMERGENCY)
+				? out_throttle : desired_throttle;
+			set_steering_output(safe_rudder, final_throttle, collision, ttc);
 			break;
 		}
 
 		// -------------------------------------------------------
 		case NavState::STATION_RECOVER: {
-			if (inside_zone) {
-				nav_state = NavState::STATION_SETTLE;
-				station_settle_timer = 0.0f;
-				break;
-			}
+			nav_state = NavState::STATION_APPROACH;
+			// if (inside_zone) {
+			// 	nav_state = NavState::STATION_SETTLE;
+			// 	station_settle_timer = 0.0f;
+			// 	break;
+			// }
 
-			float desired_rudder = compute_rudder_to_position(zone_center);
-			desired_rudder = apply_gradient_bias(desired_rudder);
+			// float desired_rudder = compute_rudder_to_position(zone_center);
+			// desired_rudder = apply_gradient_bias(desired_rudder);
 
-			int desired_throttle = 1;
-			if (dist_to_center > station_radius * 3.0f) {
-				desired_throttle = 2;
-			}
+			// int desired_throttle = 1;
+			// if (dist_to_center > station_radius * 3.0f) {
+			// 	desired_throttle = 2;
+			// }
 
-			float ttc;
-			bool collision;
-			float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+			// float ttc;
+			// bool collision;
+			// float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
-			set_steering_output(safe_rudder,
-				collision ? std::min(desired_throttle, 1) : desired_throttle,
-				collision, ttc);
+			// set_steering_output(safe_rudder,
+			// 	collision ? std::min(desired_throttle, 1) : desired_throttle,
+			// 	collision, ttc);
 
-			// Replan if far drift
-			if (dist_to_center > station_radius * 2.0f) {
-				Vector2 dir_to_center = (zone_center - state.position).normalized();
-				Vector2 entry_point = zone_center - dir_to_center * (station_radius * 0.5f);
-				target_position = entry_point;
-				maybe_recalc_path(entry_point);
-				nav_state = NavState::STATION_APPROACH;
-			}
+			// // Replan if far drift
+			// if (dist_to_center > station_radius * 2.0f) {
+			// 	Vector2 dir_to_center = (zone_center - state.position).normalized();
+			// 	Vector2 entry_point = zone_center - dir_to_center * (station_radius * 0.5f);
+			// 	target_position = entry_point;
+			// 	maybe_recalc_path(entry_point);
+			// 	nav_state = NavState::STATION_APPROACH;
+			// }
 
-			break;
+			// break;
 		}
 
 		// -------------------------------------------------------

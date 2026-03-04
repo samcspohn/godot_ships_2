@@ -101,6 +101,22 @@ private:
 	std::vector<ArcPoint> predict_arc_internal(float commanded_rudder, int commanded_throttle,
 											   float lookahead_distance, float max_time = 30.0f) const;
 
+	// Forward-simulate a turn arc at any rudder value until the ship's
+	// heading is tangentially aligned toward target_pos (i.e. heading
+	// points at the waypoint).  The arc distance is capped at the minimum
+	// turning circle perimeter (2*PI*turning_circle_radius) — if alignment
+	// hasn't been reached within one full revolution it won't happen.
+	// Works with any rudder value; partial rudder traces a wider arc but
+	// the perimeter cap keeps simulation bounded.
+	std::vector<ArcPoint> predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
+												 Vector2 target_pos, float lookahead_distance,
+												 float max_time = 60.0f) const;
+
+	// Get the current steer target (waypoint or final destination) for use
+	// in tangential-alignment arc prediction.  Returns zero vector if no
+	// valid target exists.
+	Vector2 get_steer_target() const;
+
 	// Check a predicted arc against the SDF for collisions.
 	float check_arc_collision(const std::vector<ArcPoint> &arc,
 							  float hard_clearance, float soft_clearance) const;
@@ -140,6 +156,13 @@ private:
 
 	// Check if a waypoint has been reached (along-track + distance check)
 	bool is_waypoint_reached(Vector2 waypoint) const;
+
+	// Check if a waypoint is inside either of the ship's turning circles
+	// (port or starboard). A point inside these circles is geometrically
+	// unreachable — the ship cannot turn tightly enough to reach it and
+	// will orbit indefinitely. The two circle centers sit perpendicular
+	// to the ship's heading at ±turning_circle_radius from the ship position.
+	bool is_waypoint_in_turning_dead_zone(Vector2 waypoint) const;
 
 	// Get dynamic reach radius based on speed and turning radius
 	float get_reach_radius() const;
