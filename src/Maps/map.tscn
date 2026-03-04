@@ -119,15 +119,19 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -11000)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 11000)
 
 [node name="light_nav" type="NavigationRegion3D" parent="." index="22" unique_id=1006115982]
+visible = false
 navigation_mesh = SubResource("NavigationMesh_10p5b")
 
 [node name="medium_nav" type="NavigationRegion3D" parent="." index="23" unique_id=949835711]
+visible = false
 navigation_mesh = SubResource("NavigationMesh_7hjns")
 
 [node name="heavy_nav" type="NavigationRegion3D" parent="." index="24" unique_id=451744478]
+visible = false
 navigation_mesh = SubResource("NavigationMesh_1vrru")
 
 [node name="ultraheavy_nav" type="NavigationRegion3D" parent="." index="25" unique_id=456176837]
+visible = false
 navigation_mesh = SubResource("NavigationMesh_mi1vd")
 
 [node name="CSGPolygon3D" type="CSGBox3D" parent="." index="26" unique_id=1064225834]

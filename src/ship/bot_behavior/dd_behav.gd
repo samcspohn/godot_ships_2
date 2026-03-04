@@ -245,8 +245,164 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 		return _get_valid_nav_point(desired_position)
 
 # ============================================================================
+# NAVINTENT — V4 bot controller interface
+# ============================================================================
+
+func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
+	"""DD always returns POSE with approach heading for safe navigation."""
+	var friendly = server.get_team_ships(ship.team.team_id)
+	var enemy = server.get_valid_targets(ship.team.team_id)
+
+	# --- No target: hunt ---
+	if target == null:
+		var hunt_dest = _get_hunting_position(server, friendly, ship.global_position - ship.global_transform.basis.z * 10000.0)
+		if hunt_dest == Vector3.ZERO:
+			var fallback = ship.global_position - ship.global_transform.basis.z * 10000.0
+			fallback.y = 0.0
+			fallback = _get_valid_nav_point(fallback)
+			var approach_heading = _calc_approach_heading(ship, fallback)
+			return NavIntent.pose(fallback, approach_heading)
+		var hunt_heading = _calc_approach_heading(ship, hunt_dest)
+		return NavIntent.pose(hunt_dest, hunt_heading)
+
+	var concealment_radius = (ship.concealment.params.p() as ConcealmentParams).radius
+	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var params = get_positioning_params()
+	var separation = _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
+
+	if ship.visible_to_enemy and enemy.size() > 0:
+		# --- Visible: retreat away from closest enemy ---
+		return _get_retreat_intent(ship, enemy, friendly, concealment_radius, hp_ratio, separation, server)
+	else:
+		# --- Hidden: torpedo run with POSE ---
+		return _get_torpedo_run_intent(ship, target, concealment_radius, separation)
+
+
+func _get_retreat_intent(ship: Ship, enemy: Array[Ship], friendly: Array[Ship], concealment_radius: float, hp_ratio: float, separation: Vector3, server: GameServer) -> NavIntent:
+	"""Calculate retreat position when spotted. Returns POSE intent with retreat heading."""
+	closest_enemy = enemy[0]
+	var closest_enemy_dist = (closest_enemy.global_position - ship.global_position).length()
+	for s in enemy:
+		var dist = (s.global_position - ship.global_position).length()
+		if dist < closest_enemy_dist:
+			closest_enemy = s
+			closest_enemy_dist = dist
+
+	var retreat_dir = (ship.global_position - closest_enemy.global_position).normalized()
+	var desired_position = ship.global_position + retreat_dir * concealment_radius * 2.0
+
+	# Only bias toward team if below 50% HP
+	if hp_ratio < 0.5:
+		var nearest_friendly_pos = Vector3.ZERO
+		if server:
+			var nearest_cluster = server.get_nearest_friendly_cluster(ship.global_position, ship.team.team_id)
+			if nearest_cluster.size() > 0:
+				nearest_friendly_pos = nearest_cluster.center
+			else:
+				nearest_friendly_pos = server.get_team_avg_position(ship.team.team_id)
+		else:
+			for s in friendly:
+				nearest_friendly_pos += s.global_position
+			nearest_friendly_pos /= friendly.size()
+		desired_position = desired_position * 0.8 + nearest_friendly_pos * 0.2
+
+	desired_position += separation * 500.0
+	desired_position = _get_valid_nav_point(desired_position)
+	var retreat_heading = _calc_approach_heading(ship, desired_position)
+	return NavIntent.pose(desired_position, retreat_heading)
+
+
+func _get_torpedo_run_intent(ship: Ship, target: Ship, concealment_radius: float, separation: Vector3) -> NavIntent:
+	"""Calculate torpedo run position and heading when hidden. Returns POSE intent for
+	optimal torpedo launch angle, or POSITION if no torpedo controller."""
+
+	var torpedo_range: float = -1.0
+	if ship.torpedo_controller != null:
+		torpedo_range = ship.torpedo_controller.get_params()._range
+
+	# Choose flank side (left or right of target)
+	var right = target.transform.basis.x * concealment_radius * 1.5
+	var right_of = target.global_position + right
+	var left_of = target.global_position - right
+
+	right_of = _get_valid_nav_point(right_of)
+	left_of = _get_valid_nav_point(left_of)
+
+	var desired_position: Vector3
+	if right_of.distance_to(ship.global_position) < left_of.distance_to(ship.global_position):
+		desired_position = right_of
+	else:
+		desired_position = left_of
+
+	desired_position += separation * 500.0
+	desired_position = _get_valid_nav_point(desired_position)
+
+	# If we have torpedoes, use POSE to arrive at optimal launch heading
+	if torpedo_range > 0:
+		var launch_heading = _calculate_torpedo_launch_heading(ship, target, desired_position)
+		return NavIntent.pose(desired_position, launch_heading)
+
+	# No torpedoes — just navigate to flank position
+	return NavIntent.position(desired_position)
+
+
+func _calculate_torpedo_launch_heading(ship: Ship, target: Ship, launch_pos: Vector3) -> float:
+	"""Calculate the heading the DD should face when launching torpedoes.
+	DDs want their torpedo tubes (beam-mounted) to bear on the target's predicted path.
+	The ideal heading is roughly perpendicular to the line between us and the target,
+	so the torpedo tubes point at the target."""
+
+	# Predict where the target will be when torpedoes arrive
+	var target_pos = target.global_position
+	if target.linear_velocity.length() > 0.5 and ship.torpedo_controller != null:
+		#var torp_speed = ship.torpedo_controller.get_params().speed
+		var torp_speed = ship.torpedo_controller.get_torp_params().speed
+		if torp_speed > 0:
+			var dist_to_target = launch_pos.distance_to(target_pos)
+			var torp_time = dist_to_target / torp_speed
+			target_pos = target_pos + target.linear_velocity * torp_time * 0.5  # conservative lead
+
+	# Direction from launch position to (predicted) target
+	var to_target = target_pos - launch_pos
+	to_target.y = 0.0
+	var target_bearing = atan2(to_target.x, to_target.z)
+
+	# Torpedo tubes are beam-mounted, so we want our beam to face the target
+	# That means our heading should be perpendicular to the target bearing
+	# Choose the perpendicular closest to our current heading
+	var current_heading = _get_ship_heading()
+
+	var perp_right = _normalize_angle(target_bearing + PI / 2.0)
+	var perp_left = _normalize_angle(target_bearing - PI / 2.0)
+
+	var diff_right = abs(_normalize_angle(perp_right - current_heading))
+	var diff_left = abs(_normalize_angle(perp_left - current_heading))
+
+	# Slight bias toward the perpendicular that keeps us moving away (escape route)
+	var away_from_target = _normalize_angle(target_bearing + PI)
+	var right_escape = abs(_normalize_angle(perp_right - away_from_target))
+	var left_escape = abs(_normalize_angle(perp_left - away_from_target))
+
+	# Blend heading preference (60% ease of turn, 40% escape route)
+	var right_score = diff_right * 0.6 + right_escape * 0.4
+	var left_score = diff_left * 0.6 + left_escape * 0.4
+
+	if right_score <= left_score:
+		return perp_right
+	else:
+		return perp_left
+
+# ============================================================================
 # COMBAT - DD-specific engagement with torpedo logic
 # ============================================================================
+
+## Compute approach heading from ship to destination
+func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
+	var to_dest = dest - ship.global_position
+	to_dest.y = 0.0
+	if to_dest.length_squared() > 1.0:
+		return atan2(to_dest.x, to_dest.z)
+	return _get_ship_heading()
 
 func engage_target(target: Ship):
 	# Track torpedo hits and floods

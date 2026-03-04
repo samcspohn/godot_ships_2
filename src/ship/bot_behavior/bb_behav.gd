@@ -11,6 +11,9 @@ const ARC_DIRECTION_CHANGE_TIME: float = 30.0
 const ARC_MOVEMENT_SPEED: float = 0.15
 const MIN_SAFE_ANGLE_FROM_THREAT: float = PI / 3.0
 
+# Broadside heading preference (degrees offset from pure perpendicular)
+const BROADSIDE_ANGLE_OFFSET: float = 15.0  # slight bow-in for angling
+
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
@@ -191,3 +194,109 @@ func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagem
 	# Blend between tactical position and arc position
 	var blend_factor = 0.3
 	return base_position * (1.0 - blend_factor) + arc_position * blend_factor
+
+# ============================================================================
+# NAVINTENT — V4 bot controller interface
+# ============================================================================
+
+var base_intent_pos = null
+func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
+	"""BB always returns POSE with safe heading for navigation."""
+	var friendly = server.get_team_ships(ship.team.team_id)
+	var _enemy = server.get_valid_targets(ship.team.team_id)
+
+	var danger_center = _get_danger_center()
+
+	# --- No enemies visible: hunt ---
+	if danger_center == Vector3.ZERO:
+		if base_intent_pos == null:
+			base_intent_pos = ship.global_position - ship.global_transform.basis.z * 20_000.0
+			base_intent_pos.y = 0.0
+		var hunt_dest = _get_hunting_position(server, friendly, base_intent_pos)
+		if hunt_dest == Vector3.ZERO:
+			# No hunting info — just push forward
+
+			var fallback = base_intent_pos
+			fallback = _get_valid_nav_point(fallback)
+			return NavIntent.pose(fallback, _calc_approach_heading(ship, fallback))
+		return NavIntent.pose(hunt_dest, _calc_approach_heading(ship, hunt_dest))
+
+	# --- Engagement: calculate tactical position with arc movement ---
+	var gun_range = ship.artillery_controller.get_params()._range
+	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var params = get_positioning_params()
+
+	var range_increase = clamp((1.0 - hp_ratio) * params.range_increase_when_damaged, 0.0, params.range_increase_when_damaged)
+	var engagement_range = (params.base_range_ratio + range_increase) * gun_range
+	var min_safe_distance = gun_range * params.min_safe_distance_ratio
+	var flank_bias = lerp(params.flank_bias_healthy, params.flank_bias_damaged, 1.0 - hp_ratio)
+
+	var desired_position = _calculate_tactical_position(engagement_range, min_safe_distance, flank_bias)
+	desired_position = _apply_arc_movement(desired_position, danger_center, engagement_range, server)
+	desired_position += _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
+	desired_position = _get_valid_nav_point(desired_position)
+
+	# --- Calculate broadside heading ---
+	var broadside_heading = _calculate_broadside_heading(target, danger_center, desired_position)
+
+	# --- Check if evasion heading should override ---
+	if ship.visible_to_enemy and target != null:
+		var heading_info = get_desired_heading(target, _get_ship_heading(), 0.0, desired_position)
+		if heading_info.get("use_evasion", false):
+			# Blend evasion with broadside: evasion takes priority but keep broadside influence
+			var evasion_heading: float = heading_info.heading
+			var blended = _normalize_angle(evasion_heading * 0.6 + broadside_heading * 0.4)
+			return NavIntent.pose(desired_position, blended)
+
+	return NavIntent.pose(desired_position, broadside_heading)
+
+
+## Compute approach heading from ship to destination
+func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
+	var to_dest = dest - ship.global_position
+	to_dest.y = 0.0
+	if to_dest.length_squared() > 1.0:
+		return atan2(to_dest.x, to_dest.z)
+	return _get_ship_heading()
+
+func _calculate_broadside_heading(target: Ship, danger_center: Vector3, desired_pos: Vector3) -> float:
+	"""Calculate a heading that presents broadside to the primary threat while angling slightly bow-in.
+	BBs want to keep all turrets on target, which means roughly perpendicular to the threat bearing."""
+
+	# Use target position if available, otherwise use danger center
+	var threat_pos: Vector3
+	if target != null and is_instance_valid(target):
+		threat_pos = target.global_position
+	else:
+		threat_pos = danger_center
+
+	var to_threat = threat_pos - desired_pos
+	to_threat.y = 0.0
+	var threat_bearing = atan2(to_threat.x, to_threat.z)
+
+	# Pure broadside is perpendicular to threat bearing
+	# Choose the perpendicular direction that is closest to our current heading
+	# so the ship doesn't do a 180 to present the other broadside
+	var current_heading = _get_ship_heading()
+
+	var broadside_right = _normalize_angle(threat_bearing + PI / 2.0)
+	var broadside_left = _normalize_angle(threat_bearing - PI / 2.0)
+
+	var diff_right = abs(_normalize_angle(broadside_right - current_heading))
+	var diff_left = abs(_normalize_angle(broadside_left - current_heading))
+
+	var broadside: float
+	if diff_right <= diff_left:
+		broadside = broadside_right
+	else:
+		broadside = broadside_left
+
+	# Angle slightly bow-in toward the threat for armor angling
+	var bow_in_offset = deg_to_rad(BROADSIDE_ANGLE_OFFSET)
+	var angle_to_threat = _normalize_angle(threat_bearing - broadside)
+	if angle_to_threat > 0:
+		broadside = _normalize_angle(broadside + bow_in_offset)
+	else:
+		broadside = _normalize_angle(broadside - bow_in_offset)
+
+	return broadside

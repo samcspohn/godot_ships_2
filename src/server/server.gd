@@ -50,6 +50,15 @@ func _ready():
 	game_world.get_node("Env").add_child(map)
 	print("Game server started and world loaded")
 
+	# Build the navigation SDF map for bot AI (must happen before bots spawn)
+	if map.islands.size() > 0:
+		NavigationMapManager.build_map(
+			map.islands,
+			Rect2(-17500, -17500, 35000, 35000)
+		)
+	else:
+		push_warning("Server: No islands found on map — NavigationMap not built")
+
 	# # Wait a frame for the world to fully initialize
 	# await get_tree().process_frame
 
@@ -173,7 +182,7 @@ func spawn_player(id, player_name):
 
 	# If it's a bot, add bot AI controller instead of player controller
 	if is_bot:
-		var bot_controller = preload("res://src/ship/bot_controller_v2.tscn").instantiate()
+		var bot_controller = preload("res://src/ship/bot_controller_v4.tscn").instantiate()
 		bot_controller.name = "BotController"
 		match player.ship_class:
 			Ship.ShipClass.DD:
@@ -182,6 +191,7 @@ func spawn_player(id, player_name):
 				bot_controller.behavior = BBBehavior.new()
 			Ship.ShipClass.CA:
 				bot_controller.behavior = CABehavior.new()
+		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
 		bot_controller.bot_id = bot_id
@@ -253,7 +263,7 @@ func spawn_player(id, player_name):
 		var pid = players[p_name][2]
 		# notify new client of current players
 		if not is_bot:
-			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV3)
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV3 or p.control is BotControllerV4)
 		#notify current players of new player
 		if not p.team.is_bot:
 			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship, is_bot)

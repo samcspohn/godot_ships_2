@@ -23,7 +23,7 @@ const SHIP_DATA = {
 # Available ships by class for bot team generation
 const SHIPS_BY_CLASS = {
 	SHIP_CLASS_BB: [
-		"res://Ships/Bismarck/Bismarck3.tscn",
+		# "res://Ships/Bismarck/Bismarck3.tscn",
 		"res://Ships/H44/H44.tscn"
 	],
 	SHIP_CLASS_CA: [
@@ -233,15 +233,20 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# Define team composition: 10 ships per team
 	# Randomly choose which class gets 4 ships (others get 3)
+	const num_ships_per_team = 7
 	var class_counts = {
-		SHIP_CLASS_BB: 3,
-		SHIP_CLASS_CA: 3,
-		SHIP_CLASS_DD: 3
+		SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
+		SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
+		SHIP_CLASS_DD: floor(num_ships_per_team / 3.0)
 	}
+	var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
 	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
-	# var bonus_class = classes[randi() % classes.size()]
-	var bonus_class = SHIP_CLASS_BB
-	class_counts[bonus_class] = 4
+	var bonus_class = classes[randi() % classes.size()]
+	# for i in range(left_over):
+	# 	var bonus_class = classes[i % classes.size()]
+	# 	class_counts[bonus_class] += 1
+	# var bonus_class = SHIP_CLASS_BB
+	class_counts[bonus_class] += 1
 
 	# Build the ship list for each class
 	# This ensures both teams have identical tier compositions
@@ -327,7 +332,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
 
 	# Randomize which team the player is on
-	var player_team_id = randi() % 2
+	# var player_team_id = randi() % 2
+	var player_team_id = 0  # For testing, put player on team 0
 	var enemy_team_id = 1 - player_team_id
 	print("Player assigned to team %d" % player_team_id)
 

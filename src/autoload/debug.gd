@@ -8,7 +8,7 @@ var bot_debug_heading_rudder_vector: Vector3 = Vector3.ZERO
 var bot_debug_target_ship: Ship = null
 var bot_debug_active: bool = false
 var bot_debug_request_timer: float = 0.0
-var bot_debug_request_interval: float = 0.1  # Request debug info every 100ms
+var bot_debug_request_interval: float = 1.0  # Request debug info every frame
 var bot_debug_arrow: MeshInstance3D = null
 var bot_debug_heading_rudder_arrow: MeshInstance3D = null
 var bot_debug_target_indicator: MeshInstance3D = null
@@ -18,11 +18,16 @@ var bot_debug_follow_ship: Ship = null
 var bot_debug_turn_sim_points_desired: Array[Vector3] = []
 var bot_debug_turn_sim_points_undesired: Array[Vector3] = []
 var bot_debug_turn_sim_frame_counter: int = 0
-var bot_debug_turn_sim_draw_interval: int = 8  # Draw every 8 physics frames
+var bot_debug_turn_sim_draw_interval: int = 8  # Draw every physics frame
 
 # Navigation path debug
 var bot_debug_nav_path: PackedVector3Array = PackedVector3Array()
 var bot_debug_nav_path_spheres: Array[MeshInstance3D] = []
+
+# Forward simulation path debug (physics-validated path to target)
+var bot_debug_simulated_path: PackedVector3Array = PackedVector3Array()
+var bot_debug_simulated_path_mesh: MeshInstance3D = null
+var bot_debug_simulated_path_spheres: Array[MeshInstance3D] = []
 
 # Threat and safe vector debug
 var bot_debug_threat_vector: Vector3 = Vector3.ZERO
@@ -33,6 +38,38 @@ var bot_debug_safe_arrow: MeshInstance3D = null
 
 # Reference to the player's camera (set by BattleCamera)
 var battle_camera: BattleCamera = null
+
+# Clearance circle debug
+var bot_debug_clearance_radius: float = 0.0
+var bot_debug_clearance_circle: MeshInstance3D = null
+var bot_debug_soft_clearance_radius: float = 0.0
+var bot_debug_soft_clearance_circle: MeshInstance3D = null
+
+# SDF tile debug
+var bot_debug_sdf_tiles: Array[MeshInstance3D] = []
+var bot_debug_sdf_tile_data: PackedFloat32Array = PackedFloat32Array()  # [x, z, sdf, x, z, sdf, ...]
+var bot_debug_sdf_tile_draw_interval: int = 1  # Redraw SDF tiles every physics frame
+var bot_debug_sdf_tile_frame_counter: int = 0
+
+# Island cover debug
+var bot_debug_cover_island_center: Vector3 = Vector3.ZERO
+var bot_debug_cover_island_radius: float = 0.0
+var bot_debug_cover_safe_dist: float = 0.0        # SDF distance at cover position (distance to shore)
+var bot_debug_cover_zone_center: Vector3 = Vector3.ZERO
+var bot_debug_cover_zone_radius: float = 0.0
+var bot_debug_cover_zone_valid: bool = false
+var bot_debug_cover_in_cover: bool = false
+var bot_debug_cover_spotted_in_cover: bool = false
+var bot_debug_cover_hidden_count: int = 0
+var bot_debug_cover_total_threats: int = 0
+var bot_debug_cover_all_hidden: bool = false
+var bot_debug_cover_can_shoot: bool = false
+var bot_debug_cover_sdf_distance: float = 0.0
+var bot_debug_cover_island_circle: MeshInstance3D = null
+var bot_debug_cover_safe_circle: MeshInstance3D = null
+var bot_debug_cover_zone_circle: MeshInstance3D = null
+var bot_debug_cover_zone_center_sphere: MeshInstance3D = null
+var bot_debug_cover_los_lines: Array[MeshInstance3D] = []
 
 
 func _ready() -> void:
@@ -65,8 +102,13 @@ func set_follow_ship(ship: Ship, player_ship: Ship) -> void:
 		_clear_bot_debug_heading_rudder_arrow()
 		_clear_bot_debug_target_indicator()
 		_clear_bot_debug_nav_path()
+		_clear_bot_debug_simulated_path()
 		_clear_bot_debug_threat_arrow()
 		_clear_bot_debug_safe_arrow()
+		_clear_bot_debug_clearance_circle()
+		_clear_bot_debug_soft_clearance_circle()
+		_clear_bot_debug_sdf_tiles()
+		_clear_bot_debug_cover_circles()
 
 
 func _update_bot_debug(delta: float) -> void:
@@ -75,8 +117,13 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_bot_debug_arrow()
 		_clear_bot_debug_heading_rudder_arrow()
 		_clear_bot_debug_nav_path()
+		_clear_bot_debug_simulated_path()
 		_clear_bot_debug_threat_arrow()
 		_clear_bot_debug_safe_arrow()
+		_clear_bot_debug_clearance_circle()
+		_clear_bot_debug_soft_clearance_circle()
+		_clear_bot_debug_sdf_tiles()
+		_clear_bot_debug_cover_circles()
 		return
 
 	bot_debug_request_timer += delta
@@ -92,7 +139,10 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_target_indicator()
 		_draw_bot_debug_threat_arrow()
 		_draw_bot_debug_safe_arrow()
-		# Turn sim points are drawn in _physics_process
+		_draw_bot_debug_clearance_circle()
+		_draw_bot_debug_soft_clearance_circle()
+		_draw_bot_debug_cover_circles()
+		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
 func _request_bot_debug_info() -> void:
@@ -103,7 +153,7 @@ func _request_bot_debug_info() -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func request_debug_info(target_path: NodePath) -> void:
 	var target = get_node(target_path)
-	var bot_controller: BotControllerV3 = target.get_node("Modules/BotController")
+	var bot_controller = target.get_node_or_null("Modules/BotController")
 
 	if bot_controller:
 		var heading_vec = bot_controller.get_debug_heading_vector()
@@ -117,10 +167,125 @@ func request_debug_info(target_path: NodePath) -> void:
 		var target_ship_path = null
 		if bot_controller.target != null:
 			target_ship_path = bot_controller.target.get_path()
-		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight)
+
+		# Get clearance radii from the navigator if V4
+		var clearance_r: float = 0.0
+		var soft_clearance_r: float = 0.0
+		var simulated_path: PackedVector3Array = PackedVector3Array()
+		if bot_controller is BotControllerV4 and bot_controller.navigator != null:
+			clearance_r = bot_controller.navigator.get_clearance_radius()
+			soft_clearance_r = bot_controller.navigator.get_soft_clearance_radius()
+			simulated_path = bot_controller.get_debug_simulated_path()
+
+		# Sample SDF tiles near the ship for debug visualization
+		var sdf_data := _sample_sdf_tiles_near(target.global_position, 1000.0, clearance_r)
+
+		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight, clearance_r, soft_clearance_r, sdf_data, simulated_path)
+
+		# --- Island cover debug (separate RPC to avoid bloating the main one) ---
+		_send_cover_debug(bot_controller, target, multiplayer.get_remote_sender_id())
+
+func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> void:
+	"""Gather island cover debug data from the behavior and send to client."""
+	var cover_data: Dictionary = {}
+	cover_data["valid"] = false
+
+	if bot_controller is BotControllerV4 and bot_controller.behavior != null:
+		var behavior = bot_controller.behavior
+		if behavior is CABehavior:
+			var ca: CABehavior = behavior
+			cover_data["valid"] = ca._cover_zone_valid
+			cover_data["island_center"] = ca._cover_island_center
+			cover_data["island_radius"] = ca._cover_island_radius
+			cover_data["zone_center"] = ca._cover_zone_center
+			cover_data["zone_radius"] = ca._cover_zone_radius
+			cover_data["in_cover"] = ca.is_in_cover
+			cover_data["spotted_in_cover"] = ca.is_in_cover and target_ship is Ship and (target_ship as Ship).visible_to_enemy
+
+			# SDF-cell-based cover metadata
+			cover_data["all_hidden"] = ca._cover_all_hidden
+			cover_data["can_shoot"] = ca._cover_can_shoot
+			cover_data["sdf_distance"] = ca._cover_sdf_distance
+			cover_data["cover_hidden_count"] = ca._cover_hidden_count
+
+			# Safe distance: use SDF distance at cover pos (actual distance to shore)
+			# rather than the old circle-based island_radius + clearance approximation
+			var ship_clearance: float = 100.0
+			if target_ship is Ship and (target_ship as Ship).movement_controller:
+				ship_clearance = (target_ship as Ship).movement_controller.ship_beam * 0.5 + 50.0
+			cover_data["safe_dist"] = ca._cover_sdf_distance if ca._cover_sdf_distance > 0.0 else (ship_clearance + 50.0)
+
+			# Gather threat LOS data from the ship's actual position.
+			# This shows whether the ship is currently hidden or exposed — far
+			# more useful than testing from the zone center.
+			var ship_pos: Vector3 = (target_ship as Ship).global_position
+			var threats: Array = ca._gather_threat_positions(target_ship as Ship)
+			cover_data["total_threats"] = threats.size()
+			cover_data["ship_pos"] = ship_pos
+			var hidden_count: int = 0
+			var los_lines: Array = []  # [{from: V3, to: V3, blocked: bool}]
+			for threat_pos in threats:
+				var blocked = NavigationMapManager.is_los_blocked(ship_pos, threat_pos)
+				if blocked:
+					hidden_count += 1
+				los_lines.append({
+					"from": ship_pos,
+					"to": threat_pos,
+					"blocked": blocked,
+				})
+			cover_data["hidden_count"] = hidden_count
+			cover_data["los_lines"] = los_lines
+
+	_receive_cover_debug.rpc_id(sender_id, cover_data)
+
 
 @rpc("authority", "call_remote", "unreliable")
-func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0) -> void:
+func _receive_cover_debug(cover_data: Dictionary) -> void:
+	"""Client receives cover debug data and stores it for drawing."""
+	bot_debug_cover_zone_valid = cover_data.get("valid", false)
+	if not bot_debug_cover_zone_valid:
+		bot_debug_cover_island_center = Vector3.ZERO
+		bot_debug_cover_island_radius = 0.0
+		bot_debug_cover_safe_dist = 0.0
+		bot_debug_cover_zone_center = Vector3.ZERO
+		bot_debug_cover_zone_radius = 0.0
+		bot_debug_cover_in_cover = false
+		bot_debug_cover_spotted_in_cover = false
+		bot_debug_cover_hidden_count = 0
+		bot_debug_cover_total_threats = 0
+		return
+
+	bot_debug_cover_island_center = cover_data.get("island_center", Vector3.ZERO)
+	bot_debug_cover_island_radius = cover_data.get("island_radius", 0.0)
+	bot_debug_cover_safe_dist = cover_data.get("safe_dist", 0.0)
+	bot_debug_cover_zone_center = cover_data.get("zone_center", Vector3.ZERO)
+	bot_debug_cover_zone_radius = cover_data.get("zone_radius", 0.0)
+	bot_debug_cover_in_cover = cover_data.get("in_cover", false)
+	bot_debug_cover_spotted_in_cover = cover_data.get("spotted_in_cover", false)
+	bot_debug_cover_hidden_count = cover_data.get("hidden_count", 0)
+	bot_debug_cover_total_threats = cover_data.get("total_threats", 0)
+	# New SDF-cell-based metadata (stored for potential debug overlay use)
+	bot_debug_cover_all_hidden = cover_data.get("all_hidden", false)
+	bot_debug_cover_can_shoot = cover_data.get("can_shoot", false)
+	bot_debug_cover_sdf_distance = cover_data.get("sdf_distance", 0.0)
+
+	# Draw LOS lines (fire-and-forget with short lifetime)
+	_clear_cover_los_lines()
+	var los_lines: Array = cover_data.get("los_lines", [])
+	for line_data in los_lines:
+		var from_pos: Vector3 = line_data.get("from", Vector3.ZERO)
+		var to_pos: Vector3 = line_data.get("to", Vector3.ZERO)
+		var blocked: bool = line_data.get("blocked", false)
+		# Green = blocked (hidden), Red = visible (exposed)
+		var color = Color(0.0, 1.0, 0.0, 0.6) if blocked else Color(1.0, 0.0, 0.0, 0.8)
+		var line_mesh = _create_los_line(from_pos, to_pos, color)
+		if line_mesh != null:
+			get_tree().root.add_child(line_mesh)
+			bot_debug_cover_los_lines.append(line_mesh)
+
+
+@rpc("authority", "call_remote", "unreliable")
+func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0, clearance_radius: float = 0.0, soft_clearance_radius: float = 0.0, sdf_data: PackedFloat32Array = PackedFloat32Array(), simulated_path: PackedVector3Array = PackedVector3Array()) -> void:
 	# Forward the debug info to the Debug autoload
 	bot_debug_heading_vector = heading_vec
 	bot_debug_heading_rudder_vector = heading_rudder_vec
@@ -131,6 +296,10 @@ func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3
 	bot_debug_threat_vector = threat_vec
 	bot_debug_safe_vector = safe_vec
 	bot_debug_threat_weight = threat_weight
+	bot_debug_clearance_radius = clearance_radius
+	bot_debug_soft_clearance_radius = soft_clearance_radius
+	bot_debug_sdf_tile_data = sdf_data
+	bot_debug_simulated_path = simulated_path
 	if target_ship_path != null:
 		bot_debug_target_ship = get_node(target_ship_path)
 
@@ -426,6 +595,110 @@ func _clear_bot_debug_nav_path() -> void:
 	bot_debug_nav_path_spheres.clear()
 
 
+# =============================================================================
+# Forward simulation path — shows the physics-validated turning path to target
+# Drawn as a connected line (cyan) with spheres at waypoint simplification points
+# =============================================================================
+
+func _draw_bot_debug_simulated_path() -> void:
+	_clear_bot_debug_simulated_path()
+
+	if bot_debug_simulated_path.size() < 2:
+		return
+
+	# --- Draw the full simulation path as a connected cyan line ---
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in range(bot_debug_simulated_path.size()):
+		var point = bot_debug_simulated_path[i]
+		im.surface_add_vertex(Vector3(point.x, 40.0, point.z))  # Raised above water
+	im.surface_end()
+
+	var line_mat := StandardMaterial3D.new()
+	line_mat.albedo_color = Color(0.0, 0.9, 0.9, 0.8)  # Cyan, semi-transparent
+	line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	line_mat.no_depth_test = true
+	line_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	bot_debug_simulated_path_mesh = MeshInstance3D.new()
+	bot_debug_simulated_path_mesh.name = "BotDebugSimulatedPathLine"
+	bot_debug_simulated_path_mesh.mesh = im
+	bot_debug_simulated_path_mesh.material_override = line_mat
+	bot_debug_simulated_path_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	get_tree().root.add_child(bot_debug_simulated_path_mesh)
+
+	# --- Draw spheres at evenly sampled points along the path ---
+	# Sample every Nth point to avoid clutter, plus always show first and last
+	var point_count := bot_debug_simulated_path.size()
+	var sample_stride := maxi(point_count / 30, 1)  # ~30 spheres max
+
+	for i in range(0, point_count, sample_stride):
+		var point = bot_debug_simulated_path[i]
+		point.y = 40.0
+
+		var sim_sphere := MeshInstance3D.new()
+		sim_sphere.name = "SimPathPoint_%d" % i
+
+		var sphere_mesh := SphereMesh.new()
+		sphere_mesh.radius = 12.0
+		sphere_mesh.height = 24.0
+		sphere_mesh.radial_segments = 6
+		sphere_mesh.rings = 3
+		sim_sphere.mesh = sphere_mesh
+
+		# Gradient from bright cyan (start) to deep teal (end)
+		var t := float(i) / float(maxi(point_count - 1, 1))
+		var color := Color(0.0, 1.0 - t * 0.5, 1.0 - t * 0.3, 0.9)
+
+		var material := StandardMaterial3D.new()
+		material.albedo_color = color
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		sim_sphere.material_override = material
+
+		sim_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(sim_sphere)
+		bot_debug_simulated_path_spheres.append(sim_sphere)
+		sim_sphere.global_position = point
+
+	# Always draw the last point if it wasn't already drawn
+	if point_count > 1 and (point_count - 1) % sample_stride != 0:
+		var last_point = bot_debug_simulated_path[point_count - 1]
+		last_point.y = 40.0
+
+		var end_sphere := MeshInstance3D.new()
+		end_sphere.name = "SimPathPoint_end"
+
+		var sphere_mesh := SphereMesh.new()
+		sphere_mesh.radius = 18.0
+		sphere_mesh.height = 36.0
+		sphere_mesh.radial_segments = 8
+		sphere_mesh.rings = 4
+		end_sphere.mesh = sphere_mesh
+
+		var material := StandardMaterial3D.new()
+		material.albedo_color = Color(0.0, 0.4, 0.7, 1.0)  # Deep teal for endpoint
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		end_sphere.material_override = material
+
+		end_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(end_sphere)
+		bot_debug_simulated_path_spheres.append(end_sphere)
+		end_sphere.global_position = last_point
+
+
+func _clear_bot_debug_simulated_path() -> void:
+	if bot_debug_simulated_path_mesh != null:
+		if is_instance_valid(bot_debug_simulated_path_mesh):
+			bot_debug_simulated_path_mesh.queue_free()
+		bot_debug_simulated_path_mesh = null
+	for sim_sphere in bot_debug_simulated_path_spheres:
+		if is_instance_valid(sim_sphere):
+			sim_sphere.queue_free()
+	bot_debug_simulated_path_spheres.clear()
+
+
 func _update_turn_simulation_debug() -> void:
 	if not bot_debug_active or bot_debug_follow_ship == null:
 		return
@@ -435,6 +708,13 @@ func _update_turn_simulation_debug() -> void:
 		bot_debug_turn_sim_frame_counter = 0
 		_draw_turn_simulation_points()
 		_draw_bot_debug_nav_path()
+		_draw_bot_debug_simulated_path()
+
+	# SDF tile visualization at a slower rate (heavier)
+	bot_debug_sdf_tile_frame_counter += 1
+	if bot_debug_sdf_tile_frame_counter >= bot_debug_sdf_tile_draw_interval:
+		bot_debug_sdf_tile_frame_counter = 0
+		_draw_bot_debug_sdf_tiles()
 
 
 func _draw_turn_simulation_points() -> void:
@@ -465,6 +745,305 @@ static func sphere(location: Vector3, size: float = 10.0, color: Color = Color(1
 	var debug_node = Engine.get_main_loop().root.get_node_or_null("/root/Debug")
 	if debug_node:
 		debug_node.draw_sphere(location, size, color, duration)
+
+
+# =============================================================================
+# Debug drawable: Circle with radius and orientation
+# =============================================================================
+
+## Draw a debug circle (torus ring) at a world position.
+## orientation: Euler angles (Vector3) — default Vector3(-PI/2, 0, 0) faces upward (XZ plane).
+## segments: number of line segments used to approximate the circle.
+func draw_circle_3d(center: Vector3, radius: float, orientation: Vector3 = Vector3.ZERO, color: Color = Color(0, 1, 0), line_width: float = 3.0, duration: float = 3.0) -> void:
+	var node := _create_circle_mesh(radius, color, line_width)
+	node.global_position = center
+	# Default mesh lies in XZ (horizontal) — apply user orientation on top
+	node.rotation = orientation
+	_attach_lifetime(node, duration)
+	get_tree().root.add_child(node)
+
+
+## Create a MeshInstance3D ring (circle) using an ImmediateMesh of line segments.
+func _create_circle_mesh(radius: float, color: Color, _line_width: float = 3.0, segments: int = 48) -> MeshInstance3D:
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in range(segments + 1):
+		var angle = TAU * float(i) / float(segments)
+		var x = cos(angle) * radius
+		var z = sin(angle) * radius
+		im.surface_add_vertex(Vector3(x, 0.0, z))
+	im.surface_end()
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	var node := MeshInstance3D.new()
+	node.mesh = im
+	node.material_override = mat
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+
+# =============================================================================
+# Debug drawable: Square/Rectangle with width, height, and orientation
+# =============================================================================
+
+## Draw a debug square/rectangle at a world position.
+## width/height define the size in the local XZ plane before orientation is applied.
+## orientation: Euler angles (Vector3) — default Vector3.ZERO means lying flat in XZ.
+func draw_square_3d(center: Vector3, width: float, height: float, orientation: Vector3 = Vector3.ZERO, color: Color = Color(1, 1, 0), duration: float = 3.0, filled: bool = true) -> void:
+	var node: MeshInstance3D
+	if filled:
+		node = _create_filled_square_mesh(width, height, color)
+	else:
+		node = _create_square_outline_mesh(width, height, color)
+	node.global_position = center
+	node.rotation = orientation
+	_attach_lifetime(node, duration)
+	get_tree().root.add_child(node)
+
+
+## Create a filled square MeshInstance3D lying in the XZ plane centered at origin.
+func _create_filled_square_mesh(width: float, height: float, color: Color) -> MeshInstance3D:
+	var im := ImmediateMesh.new()
+	var hw := width * 0.5
+	var hh := height * 0.5
+
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	im.surface_add_vertex(Vector3(-hw, 0.0, -hh))
+	im.surface_add_vertex(Vector3(-hw, 0.0,  hh))
+	im.surface_add_vertex(Vector3( hw, 0.0, -hh))
+	im.surface_add_vertex(Vector3( hw, 0.0,  hh))
+	im.surface_end()
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # Visible from both sides
+
+	var node := MeshInstance3D.new()
+	node.mesh = im
+	node.material_override = mat
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+
+## Create a square outline (wireframe) MeshInstance3D lying in the XZ plane.
+func _create_square_outline_mesh(width: float, height: float, color: Color) -> MeshInstance3D:
+	var im := ImmediateMesh.new()
+	var hw := width * 0.5
+	var hh := height * 0.5
+
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	im.surface_add_vertex(Vector3(-hw, 0.0, -hh))
+	im.surface_add_vertex(Vector3( hw, 0.0, -hh))
+	im.surface_add_vertex(Vector3( hw, 0.0,  hh))
+	im.surface_add_vertex(Vector3(-hw, 0.0,  hh))
+	im.surface_add_vertex(Vector3(-hw, 0.0, -hh))  # Close the loop
+	im.surface_end()
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	var node := MeshInstance3D.new()
+	node.mesh = im
+	node.material_override = mat
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+
+## Attach a self-destructing timer to a node.
+func _attach_lifetime(node: Node3D, duration: float) -> void:
+	var t := Timer.new()
+	t.wait_time = duration
+	t.one_shot = true
+	t.autostart = true
+	t.timeout.connect(func(): node.queue_free())
+	node.add_child(t)
+
+
+# =============================================================================
+# Clearance circle — horizontal ring showing ship's hard clearance zone
+# =============================================================================
+
+func _draw_bot_debug_clearance_circle() -> void:
+	if bot_debug_follow_ship == null or bot_debug_clearance_radius <= 0.0:
+		_clear_bot_debug_clearance_circle()
+		return
+
+	# Recreate each frame to keep mesh in sync with radius (radius rarely changes,
+	# but re-creating an ImmediateMesh is cheap)
+	if bot_debug_clearance_circle != null:
+		if is_instance_valid(bot_debug_clearance_circle):
+			bot_debug_clearance_circle.queue_free()
+		bot_debug_clearance_circle = null
+
+	bot_debug_clearance_circle = _create_circle_mesh(
+		bot_debug_clearance_radius,
+		Color(0.2, 0.8, 1.0, 0.7),  # Light blue, semi-transparent
+		3.0,
+		64
+	)
+	bot_debug_clearance_circle.name = "BotDebugClearanceCircle"
+
+	get_tree().root.add_child(bot_debug_clearance_circle)
+
+	# Position at ship, flat on water (Y slightly above 0 to avoid z-fighting)
+	var ship_pos := bot_debug_follow_ship.global_position
+	bot_debug_clearance_circle.global_position = Vector3(ship_pos.x, 5.0, ship_pos.z)
+	# Default orientation is already XZ horizontal — no rotation needed
+	bot_debug_clearance_circle.visible = true
+
+
+func _clear_bot_debug_clearance_circle() -> void:
+	if bot_debug_clearance_circle != null:
+		if is_instance_valid(bot_debug_clearance_circle):
+			bot_debug_clearance_circle.queue_free()
+		bot_debug_clearance_circle = null
+
+
+func _draw_bot_debug_soft_clearance_circle() -> void:
+	if bot_debug_follow_ship == null or bot_debug_soft_clearance_radius <= 0.0:
+		_clear_bot_debug_soft_clearance_circle()
+		return
+
+	if bot_debug_soft_clearance_circle != null:
+		if is_instance_valid(bot_debug_soft_clearance_circle):
+			bot_debug_soft_clearance_circle.queue_free()
+		bot_debug_soft_clearance_circle = null
+
+	bot_debug_soft_clearance_circle = _create_circle_mesh(
+		bot_debug_soft_clearance_radius,
+		Color(1.0, 0.8, 0.0, 0.5),  # Yellow, semi-transparent
+		3.0,
+		64
+	)
+	bot_debug_soft_clearance_circle.name = "BotDebugSoftClearanceCircle"
+
+	get_tree().root.add_child(bot_debug_soft_clearance_circle)
+
+	var ship_pos := bot_debug_follow_ship.global_position
+	bot_debug_soft_clearance_circle.global_position = Vector3(ship_pos.x, 4.0, ship_pos.z)
+	bot_debug_soft_clearance_circle.visible = true
+
+
+func _clear_bot_debug_soft_clearance_circle() -> void:
+	if bot_debug_soft_clearance_circle != null:
+		if is_instance_valid(bot_debug_soft_clearance_circle):
+			bot_debug_soft_clearance_circle.queue_free()
+		bot_debug_soft_clearance_circle = null
+
+
+# =============================================================================
+# SDF tile squares — show navigable/non-navigable tiles near the ship
+# =============================================================================
+
+## Sample SDF tiles near a world position on the SERVER and pack into a float array.
+## Returns PackedFloat32Array of triples: [world_x, world_z, sdf_value, ...]
+## Only called on the server where NavigationMapManager has the built map.
+func _sample_sdf_tiles_near(world_pos: Vector3, range_m: float, clearance: float) -> PackedFloat32Array:
+	var result := PackedFloat32Array()
+
+	if not NavigationMapManager.is_map_ready():
+		return result
+
+	var nav_map := NavigationMapManager.get_map()
+	if nav_map == null:
+		return result
+
+	var cell_size: float = nav_map.get_cell_size_value()
+	if cell_size <= 0.0:
+		return result
+
+	# Snap the search area to the grid so tiles align
+	var half_range := range_m
+	var start_x := snappedf(world_pos.x - half_range, cell_size)
+	var start_z := snappedf(world_pos.z - half_range, cell_size)
+	var end_x := world_pos.x + half_range
+	var end_z := world_pos.z + half_range
+
+	# Limit tile count to keep RPC payload reasonable
+	# With cell_size=50 and range=1000 this is (2000/50)^2 = 1600 tiles × 3 floats = 4800 floats
+	# That's fine for an unreliable debug RPC sent every 100ms
+	var cx := start_x
+	while cx <= end_x:
+		var cz := start_z
+		while cz <= end_z:
+			var dist := nav_map.get_distance(cx, cz)
+			# Only include tiles that are somewhat interesting (near land)
+			# Skip deep open water to reduce payload
+			if dist < clearance * 3.0:
+				result.append(cx)
+				result.append(cz)
+				result.append(dist)
+			cz += cell_size
+		cx += cell_size
+
+	return result
+
+
+## Draw SDF tiles as filled squares on the client. Called periodically from _physics_process.
+func _draw_bot_debug_sdf_tiles() -> void:
+	_clear_bot_debug_sdf_tiles()
+
+	if bot_debug_follow_ship == null or bot_debug_sdf_tile_data.size() < 3:
+		return
+	if bot_debug_clearance_radius <= 0.0:
+		return
+
+	# Determine cell size from the data spacing (or default to 50)
+	var cell_size: float = 50.0
+	if NavigationMapManager.is_map_ready():
+		var nav_map := NavigationMapManager.get_map()
+		if nav_map != null:
+			cell_size = nav_map.get_cell_size_value()
+
+	var clearance := bot_debug_clearance_radius
+	var tile_count := bot_debug_sdf_tile_data.size() / 3
+
+	for i in range(tile_count):
+		var idx := i * 3
+		var wx: float = bot_debug_sdf_tile_data[idx]
+		var wz: float = bot_debug_sdf_tile_data[idx + 1]
+		var sdf_val: float = bot_debug_sdf_tile_data[idx + 2]
+
+		# Determine tile color based on SDF value relative to clearance
+		var color: Color
+		if sdf_val < 0.0:
+			# Inside land — solid red
+			color = Color(0.9, 0.1, 0.1, 0.35)
+		elif sdf_val < clearance:
+			# Too close for this ship — orange/yellow gradient
+			var t := sdf_val / clearance
+			color = Color(1.0, 0.3 + t * 0.5, 0.0, 0.3)
+		else:
+			# Navigable — green, more transparent the further from land
+			var t := clampf((sdf_val - clearance) / (clearance * 2.0), 0.0, 1.0)
+			color = Color(0.0, 0.7, 0.3, 0.25 - t * 0.15)
+
+		# Create filled square lying flat on water
+		var tile_mesh := _create_filled_square_mesh(cell_size * 0.9, cell_size * 0.9, color)
+		tile_mesh.name = "SDFTile_%d" % i
+		get_tree().root.add_child(tile_mesh)
+		tile_mesh.global_position = Vector3(wx, 3.0, wz)  # Slightly above water
+		tile_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		bot_debug_sdf_tiles.append(tile_mesh)
+
+
+func _clear_bot_debug_sdf_tiles() -> void:
+	for tile in bot_debug_sdf_tiles:
+		if is_instance_valid(tile):
+			tile.queue_free()
+	bot_debug_sdf_tiles.clear()
 
 
 func _draw_bot_debug_target_indicator() -> void:
@@ -508,6 +1087,141 @@ func _draw_bot_debug_target_indicator() -> void:
 func _clear_bot_debug_target_indicator() -> void:
 	if bot_debug_target_indicator != null:
 		bot_debug_target_indicator.visible = false
+
+
+# =============================================================================
+# Island cover debug — circles for island radius, safe distance, cover zone
+# =============================================================================
+
+func _draw_bot_debug_cover_circles() -> void:
+	if not bot_debug_cover_zone_valid or bot_debug_cover_island_radius <= 0.0:
+		_clear_bot_debug_cover_circles()
+		return
+
+	var island_pos = bot_debug_cover_island_center
+	var draw_y = 6.0  # Slightly above water
+
+	# --- Island radius circle (orange) — NOTE: this is the bounding circle,
+	#     not the actual island shape. The SDF-cell-based search uses the real
+	#     island contour, so the cover position may be well inside this circle. ---
+	if bot_debug_cover_island_circle != null and is_instance_valid(bot_debug_cover_island_circle):
+		bot_debug_cover_island_circle.queue_free()
+	bot_debug_cover_island_circle = _create_circle_mesh(
+		bot_debug_cover_island_radius,
+		Color(1.0, 0.5, 0.0, 0.3),  # Orange, more transparent to indicate it's approximate
+		2.0, 64
+	)
+	bot_debug_cover_island_circle.name = "CoverIslandRadius"
+	get_tree().root.add_child(bot_debug_cover_island_circle)
+	bot_debug_cover_island_circle.global_position = Vector3(island_pos.x, draw_y, island_pos.z)
+
+	# --- Safe distance circle (red, the minimum distance ships must stay from center) ---
+	if bot_debug_cover_safe_circle != null and is_instance_valid(bot_debug_cover_safe_circle):
+		bot_debug_cover_safe_circle.queue_free()
+	bot_debug_cover_safe_circle = _create_circle_mesh(
+		bot_debug_cover_safe_dist,
+		Color(1.0, 0.15, 0.15, 0.7),  # Red
+		3.0, 64
+	)
+	bot_debug_cover_safe_circle.name = "CoverSafeDist"
+	get_tree().root.add_child(bot_debug_cover_safe_circle)
+	bot_debug_cover_safe_circle.global_position = Vector3(island_pos.x, draw_y + 1.0, island_pos.z)
+
+	# --- Cover zone circle (color depends on state) ---
+	if bot_debug_cover_zone_circle != null and is_instance_valid(bot_debug_cover_zone_circle):
+		bot_debug_cover_zone_circle.queue_free()
+
+	var zone_color: Color
+	if bot_debug_cover_spotted_in_cover:
+		zone_color = Color(1.0, 0.0, 0.0, 0.8)   # Red — spotted in cover
+	elif bot_debug_cover_in_cover:
+		zone_color = Color(0.0, 1.0, 0.0, 0.8)   # Green — safe in cover
+	else:
+		zone_color = Color(0.0, 0.7, 1.0, 0.6)   # Blue — en route to cover
+
+	bot_debug_cover_zone_circle = _create_circle_mesh(
+		bot_debug_cover_zone_radius,
+		zone_color,
+		3.0, 48
+	)
+	bot_debug_cover_zone_circle.name = "CoverZone"
+	get_tree().root.add_child(bot_debug_cover_zone_circle)
+	bot_debug_cover_zone_circle.global_position = Vector3(
+		bot_debug_cover_zone_center.x, draw_y + 2.0, bot_debug_cover_zone_center.z
+	)
+
+	# --- Cover zone center marker sphere ---
+	if bot_debug_cover_zone_center_sphere != null and is_instance_valid(bot_debug_cover_zone_center_sphere):
+		bot_debug_cover_zone_center_sphere.queue_free()
+
+	var sphere_mesh := SphereMesh.new()
+	sphere_mesh.radius = 20.0
+	sphere_mesh.height = 40.0
+	sphere_mesh.radial_segments = 8
+	sphere_mesh.rings = 4
+	var sphere_mat := StandardMaterial3D.new()
+	sphere_mat.albedo_color = zone_color
+	sphere_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sphere_mat.no_depth_test = true
+	bot_debug_cover_zone_center_sphere = MeshInstance3D.new()
+	bot_debug_cover_zone_center_sphere.name = "CoverZoneCenter"
+	bot_debug_cover_zone_center_sphere.mesh = sphere_mesh
+	bot_debug_cover_zone_center_sphere.material_override = sphere_mat
+	bot_debug_cover_zone_center_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	get_tree().root.add_child(bot_debug_cover_zone_center_sphere)
+	bot_debug_cover_zone_center_sphere.global_position = Vector3(
+		bot_debug_cover_zone_center.x, 30.0, bot_debug_cover_zone_center.z
+	)
+
+
+func _clear_bot_debug_cover_circles() -> void:
+	if bot_debug_cover_island_circle != null and is_instance_valid(bot_debug_cover_island_circle):
+		bot_debug_cover_island_circle.queue_free()
+	bot_debug_cover_island_circle = null
+
+	if bot_debug_cover_safe_circle != null and is_instance_valid(bot_debug_cover_safe_circle):
+		bot_debug_cover_safe_circle.queue_free()
+	bot_debug_cover_safe_circle = null
+
+	if bot_debug_cover_zone_circle != null and is_instance_valid(bot_debug_cover_zone_circle):
+		bot_debug_cover_zone_circle.queue_free()
+	bot_debug_cover_zone_circle = null
+
+	if bot_debug_cover_zone_center_sphere != null and is_instance_valid(bot_debug_cover_zone_center_sphere):
+		bot_debug_cover_zone_center_sphere.queue_free()
+	bot_debug_cover_zone_center_sphere = null
+
+	_clear_cover_los_lines()
+	bot_debug_cover_zone_valid = false
+
+
+func _clear_cover_los_lines() -> void:
+	for line in bot_debug_cover_los_lines:
+		if is_instance_valid(line):
+			line.queue_free()
+	bot_debug_cover_los_lines.clear()
+
+
+func _create_los_line(from_pos: Vector3, to_pos: Vector3, color: Color) -> MeshInstance3D:
+	"""Create a line mesh between two world positions for LOS visualization."""
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	im.surface_add_vertex(Vector3(from_pos.x, 25.0, from_pos.z))
+	im.surface_add_vertex(Vector3(to_pos.x, 25.0, to_pos.z))
+	im.surface_end()
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	var node := MeshInstance3D.new()
+	node.name = "CoverLOSLine"
+	node.mesh = im
+	node.material_override = mat
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
 
 
 ## Internal helper to draw a debug sphere

@@ -139,6 +139,37 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 # ============================================================================
 
 func _get_valid_nav_point(target: Vector3) -> Vector3:
+	# V4 path: use NavigationMapManager SDF + safe destination selection
+	if nav == null:
+		if NavigationMapManager != null and NavigationMapManager.is_map_ready():
+			var clearance = 100.0
+			var turning_radius = 300.0
+			if _ship and _ship.movement_controller:
+				clearance = _ship.movement_controller.ship_beam * 0.5 + 50.0
+				turning_radius = _ship.movement_controller.turning_circle_radius
+
+			var ship_pos = _ship.global_position if _ship else target
+			# Use the C++ safe_nav_point which handles:
+			#   1. Pushing points out of land with adequate buffer
+			#   2. Sliding points tangentially along coastlines so the ship
+			#      approaches parallel to shore rather than head-on
+			#   3. Ensuring at least clearance + turning_radius margin from land
+			var safe_target = NavigationMapManager.safe_nav_point(
+				ship_pos, target, clearance, turning_radius
+			)
+
+			# Second pass: validate the full approach path won't create an
+			# unrecoverable collision course (e.g. destination behind an island
+			# that forces a perpendicular approach on the last segment)
+			safe_target = NavigationMapManager.validate_destination(
+				ship_pos, safe_target, clearance, turning_radius
+			)
+
+			return safe_target
+		# No navigation system available — return target as-is
+		return target
+
+	# V3 path: use NavigationAgent3D
 	var nav_map = nav.get_navigation_map()
 	var closest_point = NavigationServer3D.map_get_closest_point(nav_map, target)
 	return closest_point
@@ -678,7 +709,7 @@ func find_optimal_island(danger_center: Vector3, gun_range: float, hp_ratio: flo
 	return best_island
 
 func get_island_cover_position(island: StaticBody3D, danger_center: Vector3, gun_range: float) -> Vector3:
-	"""Get position behind island for cover."""
+	"""Get position behind island for cover, with safe approach angle."""
 	if island == null:
 		return Vector3.ZERO
 
@@ -688,11 +719,36 @@ func get_island_cover_position(island: StaticBody3D, danger_center: Vector3, gun
 	var to_danger = (danger_center - island_pos).normalized()
 	var cover_dir = -to_danger
 
-	var cover_distance = island_radius + 200.0
-	if _ship.visible_to_enemy:
-		cover_distance = island_radius + 400.0
+	# Use a generous buffer from the island edge based on ship turning radius
+	# so the ship can maneuver safely near the island without colliding
+	var turning_radius = 300.0
+	if _ship and _ship.movement_controller:
+		turning_radius = _ship.movement_controller.turning_circle_radius
 
-	var cover_pos = island_pos + cover_dir * cover_distance
+	var min_buffer = turning_radius * 0.75 + 100.0
+	var cover_distance = island_radius + max(min_buffer, 200.0)
+	if _ship.visible_to_enemy:
+		cover_distance = island_radius + max(min_buffer + 200.0, 400.0)
+
+	# Offset the cover position slightly to one side so the ship approaches
+	# at an angle rather than heading straight at the island center.
+	# This prevents the ship from being on a head-on collision course with the island.
+	var ship_pos = _ship.global_position if _ship else island_pos
+	var to_ship = (ship_pos - island_pos)
+	to_ship.y = 0.0
+	var to_ship_len = to_ship.length()
+	if to_ship_len > 1.0:
+		to_ship /= to_ship_len
+		# Compute a tangential offset: cross product of cover_dir with up gives
+		# a direction along the island edge. Bias toward the side the ship is on.
+		var tangent = Vector3(cover_dir.z, 0.0, -cover_dir.x)  # perpendicular in XZ
+		var side_bias = tangent.dot(to_ship)
+		if side_bias > 0.1:
+			cover_dir = (cover_dir + tangent * 0.3).normalized()
+		elif side_bias < -0.1:
+			cover_dir = (cover_dir - tangent * 0.3).normalized()
+
+	var cover_pos = island_pos + cover_dir * island_radius
 	cover_pos.y = 0.0
 
 	var dist_to_danger = cover_pos.distance_to(danger_center)
@@ -1010,6 +1066,44 @@ func get_desired_position(_friendly: Array[Ship], enemy: Array[Ship], target: Sh
 	else:
 		desired_pos = current_destination
 	return _get_valid_nav_point(desired_pos)
+
+# ============================================================================
+# NAVINTENT — default implementation for V4 bot controller
+# ============================================================================
+
+var original_dest = null
+func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
+	"""Returns a NavIntent for the V4 bot controller.  Base implementation wraps
+	the legacy get_desired_position() + evasion heading so that all behaviors
+	work with BotControllerV4 without modification.  Subclasses should override
+	this to return POSE / STATION_KEEP intents where appropriate.
+
+	Always returns POSE (never bare POSITION) so the navigator always has heading
+	guidance. The bot controller further validates the pose via physics simulation."""
+
+	var friendly = server.get_team_ships(ship.team.team_id)
+	var enemy = server.get_valid_targets(ship.team.team_id)
+
+	# --- compute destination via legacy positioning ---
+	if original_dest == null:
+		original_dest = ship.global_position + Vector3(0,0,20_000) * (1 if ship.team.team_id == 0 else -1)
+	var current_dest = original_dest
+	var dest = get_desired_position(friendly, enemy, target, current_dest)
+
+	# --- check if evasion heading should override ---
+	if ship.visible_to_enemy and target != null:
+		var heading_info = get_desired_heading(target, _get_ship_heading(), 0.0, dest)
+		if heading_info.get("use_evasion", false):
+			return NavIntent.pose(dest, heading_info.heading)
+
+	# --- compute approach heading so we always return POSE ---
+	var to_dest = dest - ship.global_position
+	to_dest.y = 0.0
+	var approach_heading: float = _get_ship_heading()  # fallback: current heading
+	if to_dest.length_squared() > 1.0:
+		approach_heading = atan2(to_dest.x, to_dest.z)
+
+	return NavIntent.pose(dest, approach_heading)
 
 # ============================================================================
 # COMBAT

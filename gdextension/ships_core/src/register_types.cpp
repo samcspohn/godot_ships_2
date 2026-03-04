@@ -11,6 +11,10 @@
 #include "projectile_physics_with_drag.h"
 #include "projectile_physics_with_drag_v2.h"
 
+// From navigation
+#include "navigation_map.h"
+#include "ship_navigator.h"
+
 // From game_systems
 #include "projectile_data.h"
 #include "shell_data.h"
@@ -42,6 +46,10 @@ void initialize_ships_core_module(ModuleInitializationLevel p_level) {
 	// Register main system classes
 	GDREGISTER_CLASS(_ProjectileManager);
 	GDREGISTER_CLASS(ComputeParticleSystem);
+
+	// Register navigation classes
+	GDREGISTER_CLASS(NavigationMap);
+	GDREGISTER_CLASS(ShipNavigator);
 }
 
 void uninitialize_ships_core_module(ModuleInitializationLevel p_level) {
