@@ -214,7 +214,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			base_intent_pos.y = 0.0
 		var hunt_dest = _get_hunting_position(server, friendly, base_intent_pos)
 		if hunt_dest == Vector3.ZERO:
-			# No hunting info — just push forward
 
 			var fallback = base_intent_pos
 			fallback = _get_valid_nav_point(fallback)

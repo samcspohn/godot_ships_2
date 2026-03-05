@@ -248,6 +248,7 @@ func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Shi
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
 
+var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	"""DD always returns POSE with approach heading for safe navigation."""
 	var friendly = server.get_team_ships(ship.team.team_id)
@@ -255,11 +256,14 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# --- No target: hunt ---
 	if target == null:
-		var hunt_dest = _get_hunting_position(server, friendly, ship.global_position - ship.global_transform.basis.z * 10000.0)
+		if base_intent_pos == null:
+			base_intent_pos = ship.global_position - ship.global_transform.basis.z * 20_000.0
+			base_intent_pos.y = 0.0
+		var hunt_dest = _get_hunting_position(server, friendly, base_intent_pos)
 		if hunt_dest == Vector3.ZERO:
-			var fallback = ship.global_position - ship.global_transform.basis.z * 10000.0
-			fallback.y = 0.0
-			fallback = _get_valid_nav_point(fallback)
+			#var fallback = ship.global_position - ship.global_transform.basis.z * 10000.0
+			#fallback.y = 0.0
+			var fallback = _get_valid_nav_point(base_intent_pos)
 			var approach_heading = _calc_approach_heading(ship, fallback)
 			return NavIntent.pose(fallback, approach_heading)
 		var hunt_heading = _calc_approach_heading(ship, hunt_dest)

@@ -32,10 +32,10 @@ var reengage_distance_min: float = 4000.0  # If closer than this and pointed tow
 var pointed_away_threshold: float = deg_to_rad(100.0)  # Angle diff > this means pointed away from target
 var should_reverse: bool = false  # Whether bot should be reversing to re-engage/disengage
 var threat_class_weights: Dictionary = {
-	Ship.Class.BB: 4.0,
-	Ship.Class.CA: 2.0,
-	Ship.Class.DD: 1.0,
-	Ship.Class.CV: 0.5
+	Ship.ShipClass.BB: 4.0,
+	Ship.ShipClass.CA: 2.0,
+	Ship.ShipClass.DD: 1.0,
+	Ship.ShipClass.CV: 0.5
 }
 
 # Torpedo parameters
@@ -201,7 +201,7 @@ func select_shell_for_target(target: Ship) -> int:
 	var target_is_angled = is_target_angled(target)
 
 	match my_class:
-		Ship.Class.BB:  # Battleship
+		Ship.ShipClass.BB:  # Battleship
 			# Battleships generally shoot AP
 			if target_is_angled:
 				# At angled targets, still use AP but aim at superstructure (handled in aim logic)
@@ -209,16 +209,16 @@ func select_shell_for_target(target: Ship) -> int:
 			else:
 				return 0  # AP for broadside targets
 
-		Ship.Class.CA:  # Cruiser
+		Ship.ShipClass.CA:  # Cruiser
 			# Cruisers generally shoot HE except at cruiser broadsides
-			if target_class == Ship.Class.CA and target_is_broadside:
+			if target_class == Ship.ShipClass.CA and target_is_broadside:
 				return 0  # AP at cruiser broadsides
-			elif target_class == Ship.Class.BB:
+			elif target_class == Ship.ShipClass.BB:
 				return 1  # HE at battleships (superstructure)
 			else:
 				return 1  # HE default for cruisers
 
-		Ship.Class.DD:  # Destroyer
+		Ship.ShipClass.DD:  # Destroyer
 			# Destroyers use HE
 			return 1
 
@@ -239,25 +239,25 @@ func get_aim_offset_for_target(target: Ship) -> Vector3:
 	var offset = Vector3.ZERO
 
 	match my_class:
-		Ship.Class.BB:  # Battleship
+		Ship.ShipClass.BB:  # Battleship
 			if target_is_angled:
 				# Aim at superstructure when target is angled
 				offset.y = 8.0  # Aim higher for superstructure
-			elif target_class == Ship.Class.DD:
+			elif target_class == Ship.ShipClass.DD:
 				offset.y = 2.0  # Slight elevation for destroyers
 			# else aim at waterline/belt
 
-		Ship.Class.CA:  # Cruiser
-			if target_class == Ship.Class.BB:
+		Ship.ShipClass.CA:  # Cruiser
+			if target_class == Ship.ShipClass.BB:
 				# Aim at superstructure with HE
 				offset.y = 10.0
-			elif target_class == Ship.Class.CA:
+			elif target_class == Ship.ShipClass.CA:
 				# Aim at upper belt
 				offset.y = 4.0
-			elif target_class == Ship.Class.DD:
+			elif target_class == Ship.ShipClass.DD:
 				offset.y = 2.0
 
-		Ship.Class.DD:  # Destroyer
+		Ship.ShipClass.DD:  # Destroyer
 			# Aim center mass
 			offset.y = 3.0
 
@@ -265,7 +265,7 @@ func get_aim_offset_for_target(target: Ship) -> Vector3:
 
 func can_destroyer_shoot(target: Ship) -> bool:
 	"""Check if destroyer is within its concealment range to shoot"""
-	if ship.ship_class != Ship.Class.DD:
+	if ship.ship_class != Ship.ShipClass.DD:
 		return true  # Non-destroyers can always shoot
 
 	if !target or !is_instance_valid(target):
