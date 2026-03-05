@@ -23,6 +23,7 @@ var _debug_heading_rudder_vector: Vector3 = Vector3.ZERO
 var _debug_threat_vector: Vector3 = Vector3.ZERO
 var _debug_safe_vector: Vector3 = Vector3.ZERO
 var _debug_threat_weight: float = 0.0
+var _debug_throttle: int = 0
 var _debug_turn_sim_points_desired: Array[Vector3] = []
 var _debug_turn_sim_points_undesired: Array[Vector3] = []
 var debug_draw_turn_sim: bool = true
@@ -64,6 +65,15 @@ var target_scan_timer: float = 0.0
 const OBSTACLE_UPDATE_INTERVAL: int = 4
 ## Maximum distance to register a ship as an obstacle
 const OBSTACLE_REGISTER_RANGE: float = 5000.0
+
+## Maximum distance to register a torpedo as an obstacle
+@export var torpedo_track_range: float = 3000.0
+## Torpedo detonation/avoidance radius (m) — roughly the magnetic fuze trigger zone
+const TORPEDO_HIT_RADIUS: float = 20.0
+## Frame offset for torpedo obstacle updates vs ship obstacle updates
+const TORPEDO_UPDATE_OFFSET: int = 2
+## ID namespace base for torpedo obstacles (negative, never collides with ship instance IDs)
+const TORPEDO_ID_OFFSET: int = -100000
 
 # ===========================================================================
 # INTENT SYSTEM
@@ -190,6 +200,12 @@ func _physics_process(delta: float) -> void:
 	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
 		_update_obstacles()
 
+	# --- 2c. Update torpedo obstacles (fast-moving threats) ---
+	# Use an offset modulo so torpedo and ship updates don't fire on the same frame.
+	var torp_frame_slot: int = (bot_id + TORPEDO_UPDATE_OFFSET) % OBSTACLE_UPDATE_INTERVAL
+	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == torp_frame_slot:
+		_update_torpedo_obstacles()
+
 	# --- 2b. Check for event-driven intent triggers ---
 	# These run every frame (cheap checks) and set _force_intent_next_frame
 	# when a significant tactical event occurs. Gated by cooldown to prevent
@@ -237,6 +253,7 @@ func _physics_process(delta: float) -> void:
 
 	# --- 8. Update desired heading for debug visualization ---
 	desired_heading = navigator.get_desired_heading()
+	_debug_throttle = throttle
 	_update_debug_vectors(rudder)
 
 	# --- 9. Behavior tick (target scanning, firing, consumables) ---
@@ -425,6 +442,58 @@ func _update_obstacles() -> void:
 		var radius = ship_length * 0.5
 		# print("[Obstacle %s] Registering ship %s as obstacle at dist=%.0f" % [_ship.name, ship.name, dist])
 		navigator.register_obstacle(ship_id, pos_2d, vel_2d, radius, ship_length)
+
+	# Re-register torpedo obstacles so they are always current alongside ship obstacles.
+	# Torpedoes use negative IDs and are added on top of the freshly-cleared obstacle map.
+	_register_torpedo_obstacles()
+
+
+func _update_torpedo_obstacles() -> void:
+	# Remove stale torpedo obstacle IDs and add/refresh current ones.
+	# We don't call clear_obstacles() here because _update_obstacles() already
+	# did that on its own cadence — we just patch the torpedo entries each cycle.
+	_register_torpedo_obstacles()
+
+
+func _register_torpedo_obstacles() -> void:
+	## Iterate the live torpedo array and register armed, visible, enemy torpedoes
+	## as navigator obstacles using the negative TORPEDO_ID_OFFSET namespace.
+	var tm: _TorpedoManager = TorpedoManager as _TorpedoManager
+	if tm == null:
+		return
+
+	var my_team_id: int = _ship.team.team_id if _ship.team else -1
+
+	for i in tm.torpedos.size():
+		var torp: _TorpedoManager.TorpedoData = tm.torpedos[i]
+		if torp == null:
+			continue
+
+		# Only track armed torpedoes — unarmed ones are still inside their safe
+		# arming distance and cannot detonate yet.
+		if not torp.armed:
+			continue
+
+		# Ignore friendly torpedoes.
+		if torp.owner != null and torp.owner.team != null and torp.owner.team.team_id == my_team_id:
+			continue
+
+		# Ignore torpedoes that our team hasn't detected yet.
+		if not torp.visible_to_enemy:
+			continue
+
+		var dist: float = _ship.global_position.distance_to(torp.position)
+		if dist > torpedo_track_range:
+			continue
+
+		var obs_id: int = TORPEDO_ID_OFFSET - i
+		var pos_2d := Vector2(torp.position.x, torp.position.z)
+		# Velocity: torpedo direction × speed × game speed multiplier
+		var vel_2d := Vector2(torp.direction.x, torp.direction.z) * torp.params.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER
+
+		# length = 0.0 flags this as a torpedo to the C++ avoidance logic
+		# (distinguishable from ships which always have length > 0).
+		navigator.register_obstacle(obs_id, pos_2d, vel_2d, TORPEDO_HIT_RADIUS, 0.0)
 
 
 # ===========================================================================
@@ -673,6 +742,10 @@ func get_debug_threat_vector() -> Vector3:
 ## Get the threat weight (0.0 = no threat, 1.0 = maximum threat)
 func get_debug_threat_weight() -> float:
 	return _debug_threat_weight
+
+## Get the current throttle value for debug visualization (-1 = reverse, 0 = stopped, 1-4 = forward)
+func get_debug_throttle() -> int:
+	return _debug_throttle
 
 ## Get the safe vector for debug drawing (opposite of threat, the escape direction)
 func get_debug_safe_vector() -> Vector3:

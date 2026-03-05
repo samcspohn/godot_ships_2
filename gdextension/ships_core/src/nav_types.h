@@ -153,17 +153,30 @@ struct SteeringResult {
 		  time_to_collision(std::numeric_limits<float>::infinity()) {}
 };
 
-// Dynamic obstacle (other ships)
+// Dynamic obstacle (other ships or torpedoes)
+//
+// Torpedoes are identified by two criteria that must both be true:
+//   1. id < TORPEDO_ID_THRESHOLD  (negative IDs in the -100000 range, set by BotControllerV4)
+//   2. length == 0.0f             (ships always have length > 0)
+//
+// Using both guards prevents a false positive if a ship somehow gets a low instance ID.
+static constexpr int TORPEDO_ID_THRESHOLD = -1000;
+
 struct DynamicObstacle {
 	int id;
 	Vector2 position;
 	Vector2 velocity;
 	float radius;
-	float length;  // ship length — used for size-based avoidance priority
+	float length;  // ship length — used for size-based avoidance priority; 0 = torpedo
 
 	DynamicObstacle() : id(-1), position(Vector2()), velocity(Vector2()), radius(0.0f), length(0.0f) {}
 	DynamicObstacle(int p_id, Vector2 p_pos, Vector2 p_vel, float p_radius, float p_length = 0.0f)
 		: id(p_id), position(p_pos), velocity(p_vel), radius(p_radius), length(p_length) {}
+
+	// Returns true when this obstacle represents a torpedo rather than a ship.
+	bool is_torpedo() const {
+		return id < TORPEDO_ID_THRESHOLD && length == 0.0f;
+	}
 };
 
 // Result of obstacle collision check — identifies which obstacle and its relative geometry
@@ -175,12 +188,14 @@ struct ObstacleCollisionInfo {
 	float obstacle_length;     // length of the threatening obstacle (for size priority)
 	Vector2 obstacle_position; // position of obstacle at collision time
 	Vector2 obstacle_velocity; // velocity of the obstacle
+	bool is_torpedo;           // true when the threatening obstacle is a torpedo (not a ship)
 
 	ObstacleCollisionInfo()
 		: has_collision(false),
 		  time_to_collision(std::numeric_limits<float>::infinity()),
 		  obstacle_id(-1), relative_bearing(0.0f), obstacle_length(0.0f),
-		  obstacle_position(Vector2()), obstacle_velocity(Vector2()) {}
+		  obstacle_position(Vector2()), obstacle_velocity(Vector2()),
+		  is_torpedo(false) {}
 };
 
 // Avoidance state — tracks committed avoidance maneuvers to prevent oscillation

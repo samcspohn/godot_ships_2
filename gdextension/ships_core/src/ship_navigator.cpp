@@ -848,6 +848,7 @@ ObstacleCollisionInfo ShipNavigator::check_arc_obstacles_detailed(const std::vec
 					result.obstacle_length = obs.length;
 					result.obstacle_position = obs_pos;
 					result.obstacle_velocity = obs.velocity;
+					result.is_torpedo = obs.is_torpedo();
 
 					Vector2 to_obs = obs_pos - state.position;
 					float bearing_to_obs = std::atan2(to_obs.x, to_obs.y);
@@ -862,6 +863,9 @@ ObstacleCollisionInfo ShipNavigator::check_arc_obstacles_detailed(const std::vec
 }
 
 bool ShipNavigator::is_give_way_vessel(const ObstacleCollisionInfo &info) const {
+	// Torpedoes: always give way — there is no right-of-way against a torpedo.
+	if (info.is_torpedo) return true;
+
 	// Size priority: larger ships get right-of-way (stand-on)
 	// If we are significantly larger, we are stand-on
 	float size_ratio = params.ship_length / std::max(info.obstacle_length, 50.0f);
@@ -1002,13 +1006,108 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 	out_collision = true;
 
 	// =====================================================================
-	// COLREGS-inspired asymmetric ship avoidance with size priority
+	// TORPEDO avoidance — fast-path, no commit timer
 	// =====================================================================
+	// Torpedoes travel at ~45–90 m/s; the correct dodge direction changes
+	// quickly as the intercept geometry evolves, so we must NOT lock in a
+	// rudder via the ship-avoidance commit timer.  We also bias the rudder
+	// search to start with the side that crosses perpendicular to the
+	// torpedo track (minimises time in the danger zone).
 
 	bool obstacle_is_primary_threat = (ttc_obstacles <= ttc_terrain);
 
-	// Honor committed avoidance maneuver
+	if (obstacle_is_primary_threat && obs_info.has_collision && obs_info.is_torpedo) {
+		// --- Compute preferred dodge side ---
+		// torpedo_dir  : direction the torpedo is travelling (normalised)
+		// ship_side    : vector from torpedo to us
+		// cross sign   : positive  → we are to the right of the torpedo track → turn port  (rudder < 0)
+		//                negative  → we are to the left  of the torpedo track → turn starboard (rudder > 0)
+		Vector2 torpedo_dir = obs_info.obstacle_velocity;
+		float torp_speed = torpedo_dir.length();
+		float dodge_bias = 0.0f;  // preferred first-search direction: negative = port, positive = starboard
+		if (torp_speed > 1.0f) {
+			torpedo_dir /= torp_speed;
+			Vector2 ship_side = state.position - obs_info.obstacle_position;
+			float cross = torpedo_dir.x * ship_side.y - torpedo_dir.y * ship_side.x;
+			// cross > 0 → ship is to the right of torpedo heading → dodge further right (starboard, rudder < 0 in our convention)
+			// cross < 0 → ship is to the left  of torpedo heading → dodge further left  (port,      rudder > 0)
+			dodge_bias = (cross >= 0.0f) ? -1.0f : 1.0f;
+		}
+
+		// Build candidate list: preferred-side offsets first, then opposite side
+		// Full rudder increments — we want decisive, fast turns.
+		const float torp_offsets_primary[]   = { 0.5f, 1.0f, 0.25f, 0.75f };
+		const float torp_offsets_secondary[] = {-0.5f,-1.0f,-0.25f,-0.75f };
+
+		float best_rudder  = desired_rudder;
+		float best_ttc     = ttc;
+		int   best_throttle = desired_throttle;
+
+		auto try_torpedo_candidates = [&](const float* offsets, int count, int throttle_level) {
+			for (int ci = 0; ci < count; ++ci) {
+				float signed_offset = offsets[ci] * dodge_bias;  // apply preferred side
+				float candidate = clamp_f(desired_rudder + signed_offset, -1.0f, 1.0f);
+				auto arc = predict_arc_internal(candidate, throttle_level, lookahead);
+				float cand_arc_time   = arc.empty() ? 0.0f : arc.back().time;
+				float cand_ttc_terrain  = check_arc_collision(arc, hard_clearance, soft_clearance);
+				float cand_ttc_obstacles = check_arc_obstacles(arc);
+				float cand_ttc = std::min(cand_ttc_terrain, cand_ttc_obstacles);
+
+				if (cand_ttc > best_ttc) {
+					best_ttc      = cand_ttc;
+					best_rudder   = candidate;
+					best_throttle = throttle_level;
+					if (best_ttc >= cand_arc_time * 0.95f) {
+						return true;  // clean escape found
+					}
+				}
+			}
+			return false;
+		};
+
+		constexpr int primary_count   = 4;
+		constexpr int secondary_count = 4;
+
+		// Phase 1: preferred side, current throttle
+		if (!try_torpedo_candidates(torp_offsets_primary, primary_count, desired_throttle)) {
+			// Phase 2: opposite side, current throttle
+			if (!try_torpedo_candidates(torp_offsets_secondary, secondary_count, desired_throttle)) {
+				// Phase 3: preferred side, flank speed (run across the track)
+				int flank = std::min(desired_throttle + 2, 4);
+				if (!try_torpedo_candidates(torp_offsets_primary, primary_count, flank)) {
+					// Phase 4: preferred side, slow speed (tighter turning circle)
+					int slow = std::max(1, desired_throttle - 1);
+					try_torpedo_candidates(torp_offsets_primary, primary_count, slow);
+				}
+			}
+		}
+
+		if (best_throttle != desired_throttle) {
+			out_throttle = best_throttle;
+		}
+
+		// Emergency — nothing cleared the path: hard turn toward dodge side
+		if (best_ttc < 3.0f) {
+			nav_state = NavState::EMERGENCY;
+			best_rudder = -dodge_bias;  // full rudder on preferred dodge side
+			out_throttle = std::min(desired_throttle + 1, 4);  // build rudder authority
+		}
+
+		// NOTE: deliberately no avoidance.begin() here — torpedoes must be
+		// re-evaluated every frame because their intercept geometry changes fast.
+		out_ttc = best_ttc;
+		out_collision = (best_ttc < arc_total_time * 0.95f);
+		return best_rudder;
+	}
+
+	// =====================================================================
+	// COLREGS-inspired asymmetric ship avoidance with size priority
+	// =====================================================================
+
+	// Honor committed avoidance maneuver (ships only — not torpedoes, handled above)
 	if (avoidance.active && avoidance.commit_timer > 0.0f) {
+		// Don't honour a ship-avoidance commit if the primary threat is now a torpedo —
+		// that case was already handled above; reaching here means obstacle is a ship.
 		auto committed_arc = predict_arc_internal(avoidance.committed_rudder, desired_throttle, lookahead);
 		float committed_ttc_terrain = check_arc_collision(committed_arc, hard_clearance, soft_clearance);
 		float committed_total_time = committed_arc.empty() ? 0.0f : committed_arc.back().time;

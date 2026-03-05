@@ -36,6 +36,11 @@ var bot_debug_threat_weight: float = 0.0
 var bot_debug_threat_arrow: MeshInstance3D = null
 var bot_debug_safe_arrow: MeshInstance3D = null
 
+# Throttle indicator debug
+var bot_debug_throttle: int = 0
+var bot_debug_throttle_arrow: MeshInstance3D = null
+var bot_debug_throttle_sphere: MeshInstance3D = null
+
 # Reference to the player's camera (set by BattleCamera)
 var battle_camera: BattleCamera = null
 
@@ -124,6 +129,7 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_bot_debug_soft_clearance_circle()
 		_clear_bot_debug_sdf_tiles()
 		_clear_bot_debug_cover_circles()
+		_clear_bot_debug_throttle_indicator()
 		return
 
 	bot_debug_request_timer += delta
@@ -142,6 +148,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_clearance_circle()
 		_draw_bot_debug_soft_clearance_circle()
 		_draw_bot_debug_cover_circles()
+		_draw_bot_debug_throttle_indicator()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -172,15 +179,17 @@ func request_debug_info(target_path: NodePath) -> void:
 		var clearance_r: float = 0.0
 		var soft_clearance_r: float = 0.0
 		var simulated_path: PackedVector3Array = PackedVector3Array()
+		var throttle_val: int = 0
 		if bot_controller is BotControllerV4 and bot_controller.navigator != null:
 			clearance_r = bot_controller.navigator.get_clearance_radius()
 			soft_clearance_r = bot_controller.navigator.get_soft_clearance_radius()
 			simulated_path = bot_controller.get_debug_simulated_path()
+			throttle_val = bot_controller.get_debug_throttle()
 
 		# Sample SDF tiles near the ship for debug visualization
 		var sdf_data := _sample_sdf_tiles_near(target.global_position, 1000.0, clearance_r)
 
-		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight, clearance_r, soft_clearance_r, sdf_data, simulated_path)
+		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight, clearance_r, soft_clearance_r, sdf_data, simulated_path, throttle_val)
 
 		# --- Island cover debug (separate RPC to avoid bloating the main one) ---
 		_send_cover_debug(bot_controller, target, multiplayer.get_remote_sender_id())
@@ -284,7 +293,7 @@ func _receive_cover_debug(cover_data: Dictionary) -> void:
 
 
 @rpc("authority", "call_remote", "unreliable")
-func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0, clearance_radius: float = 0.0, soft_clearance_radius: float = 0.0, sdf_data: PackedFloat32Array = PackedFloat32Array(), simulated_path: PackedVector3Array = PackedVector3Array()) -> void:
+func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0, clearance_radius: float = 0.0, soft_clearance_radius: float = 0.0, sdf_data: PackedFloat32Array = PackedFloat32Array(), simulated_path: PackedVector3Array = PackedVector3Array(), throttle: int = 0) -> void:
 	# Forward the debug info to the Debug autoload
 	bot_debug_heading_vector = heading_vec
 	bot_debug_heading_rudder_vector = heading_rudder_vec
@@ -299,6 +308,7 @@ func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3
 	bot_debug_soft_clearance_radius = soft_clearance_radius
 	bot_debug_sdf_tile_data = sdf_data
 	bot_debug_simulated_path = simulated_path
+	bot_debug_throttle = throttle
 	if target_ship_path != null:
 		bot_debug_target_ship = get_node(target_ship_path)
 
@@ -545,6 +555,120 @@ func _draw_bot_debug_safe_arrow() -> void:
 func _clear_bot_debug_safe_arrow() -> void:
 	if bot_debug_safe_arrow != null:
 		bot_debug_safe_arrow.visible = false
+
+
+func _draw_bot_debug_throttle_indicator() -> void:
+	if bot_debug_follow_ship == null:
+		return
+
+	var ship_pos = bot_debug_follow_ship.global_position
+	ship_pos.y += 120.0  # Above the other arrows
+
+	# throttle == 0: red sphere (stopped)
+	if bot_debug_throttle == 0:
+		_clear_bot_debug_throttle_arrow()
+
+		if bot_debug_throttle_sphere == null:
+			bot_debug_throttle_sphere = MeshInstance3D.new()
+			bot_debug_throttle_sphere.name = "BotDebugThrottleSphere"
+
+			var sphere_mesh = SphereMesh.new()
+			sphere_mesh.radial_segments = 8
+			sphere_mesh.rings = 4
+			sphere_mesh.radius = 15.0
+			sphere_mesh.height = 30.0
+			bot_debug_throttle_sphere.mesh = sphere_mesh
+
+			var material = StandardMaterial3D.new()
+			material.albedo_color = Color(1.0, 0.0, 0.0, 1.0)  # Red
+			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			material.no_depth_test = true
+			bot_debug_throttle_sphere.material_override = material
+
+			bot_debug_throttle_sphere.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			get_tree().root.add_child(bot_debug_throttle_sphere)
+
+		bot_debug_throttle_sphere.global_position = ship_pos
+		bot_debug_throttle_sphere.visible = true
+		return
+
+	# Non-zero throttle: hide sphere
+	if bot_debug_throttle_sphere != null:
+		bot_debug_throttle_sphere.visible = false
+
+	# Determine arrow color and length
+	var arrow_color: Color
+	var arrow_length: float
+	var full_length: float = 200.0
+
+	if bot_debug_throttle == -1:
+		# Reverse: yellow arrow pointing backward
+		arrow_color = Color(1.0, 1.0, 0.0, 1.0)
+		arrow_length = full_length * 0.5  # Half length for reverse
+	elif bot_debug_throttle == 4:
+		# Full throttle: blue, full length
+		arrow_color = Color(0.0, 0.4, 1.0, 1.0)
+		arrow_length = full_length
+	else:
+		# Throttle 1-3: green, proportional length
+		arrow_color = Color(0.0, 1.0, 0.3, 1.0)
+		arrow_length = full_length * (float(bot_debug_throttle) / 4.0)
+
+	# Create or update the throttle arrow mesh
+	if bot_debug_throttle_arrow == null:
+		bot_debug_throttle_arrow = MeshInstance3D.new()
+		bot_debug_throttle_arrow.name = "BotDebugThrottleArrow"
+
+		var arrow_mesh = CylinderMesh.new()
+		arrow_mesh.top_radius = 0.0
+		arrow_mesh.bottom_radius = 9.0
+		arrow_mesh.height = 1.0  # Will be scaled via node scale
+		arrow_mesh.radial_segments = 8
+		bot_debug_throttle_arrow.mesh = arrow_mesh
+
+		var material = StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.no_depth_test = true
+		bot_debug_throttle_arrow.material_override = material
+
+		bot_debug_throttle_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(bot_debug_throttle_arrow)
+
+	# Update color on the material each frame (throttle level can change)
+	var mat := bot_debug_throttle_arrow.material_override as StandardMaterial3D
+	mat.albedo_color = arrow_color
+
+	# Use the ship's actual current forward direction (not desired heading)
+	var ship_forward := -bot_debug_follow_ship.global_transform.basis.z
+	var current_heading_vec := Vector3(ship_forward.x, 0.0, ship_forward.z).normalized()
+
+	# For reverse, point arrow opposite to the ship's current heading
+	var heading_vec: Vector3
+	if bot_debug_throttle == -1:
+		heading_vec = -current_heading_vec
+	else:
+		heading_vec = current_heading_vec
+
+	var end_pos = ship_pos + heading_vec * arrow_length
+	var mid_pos = (ship_pos + end_pos) / 2.0
+	bot_debug_throttle_arrow.global_position = mid_pos
+
+	var heading_angle = atan2(heading_vec.x, heading_vec.z)
+	bot_debug_throttle_arrow.rotation = Vector3(PI / 2.0, heading_angle, 0)
+	# Scale Y axis to control length (mesh height = 1.0 unit)
+	bot_debug_throttle_arrow.scale = Vector3(1.0, arrow_length, 1.0)
+	bot_debug_throttle_arrow.visible = true
+
+
+func _clear_bot_debug_throttle_arrow() -> void:
+	if bot_debug_throttle_arrow != null:
+		bot_debug_throttle_arrow.visible = false
+
+
+func _clear_bot_debug_throttle_indicator() -> void:
+	_clear_bot_debug_throttle_arrow()
+	if bot_debug_throttle_sphere != null:
+		bot_debug_throttle_sphere.visible = false
 
 
 func _draw_bot_debug_nav_path() -> void:
