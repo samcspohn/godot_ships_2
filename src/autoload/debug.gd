@@ -76,6 +76,12 @@ var bot_debug_cover_zone_circle: MeshInstance3D = null
 var bot_debug_cover_zone_center_sphere: MeshInstance3D = null
 var bot_debug_cover_los_lines: Array[MeshInstance3D] = []
 
+# CA tactical debug — enemy clusters + nearby islands
+var bot_debug_ca_enemy_clusters: Array = []        # [{center: Vector3, ship_count: int}]
+var bot_debug_ca_nearby_islands: Array = []         # [{center: Vector3, radius: float}]
+var bot_debug_ca_cluster_spheres: Array[MeshInstance3D] = []
+var bot_debug_ca_island_circles: Array[MeshInstance3D] = []
+
 
 func _ready() -> void:
 	set_process(true)
@@ -130,6 +136,7 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_bot_debug_sdf_tiles()
 		_clear_bot_debug_cover_circles()
 		_clear_bot_debug_throttle_indicator()
+		_clear_ca_tactical_debug()
 		return
 
 	bot_debug_request_timer += delta
@@ -149,6 +156,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_soft_clearance_circle()
 		_draw_bot_debug_cover_circles()
 		_draw_bot_debug_throttle_indicator()
+		_draw_ca_tactical_debug()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -168,6 +176,12 @@ func request_debug_info(target_path: NodePath) -> void:
 		var turn_sim_points_desired = bot_controller.get_turn_simulation_points_desired()
 		var turn_sim_points_undesired = bot_controller.get_turn_simulation_points_undesired()
 		var nav_path = bot_controller.get_debug_nav_path()
+		# Prepend the ship's current position so the path always shows a line
+		# from the ship to the next waypoint. get_current_path() only returns
+		# remaining waypoints, so for LOS paths (2 pts) the first is skipped
+		# immediately, leaving 0-1 points and nothing to draw.
+		if nav_path.size() > 0:
+			nav_path = PackedVector3Array([target.global_position]) + nav_path
 		var threat_vec = bot_controller.get_debug_threat_vector()
 		var safe_vec = bot_controller.get_debug_safe_vector()
 		var threat_weight = bot_controller.get_debug_threat_weight()
@@ -193,6 +207,9 @@ func request_debug_info(target_path: NodePath) -> void:
 
 		# --- Island cover debug (separate RPC to avoid bloating the main one) ---
 		_send_cover_debug(bot_controller, target, multiplayer.get_remote_sender_id())
+
+		# --- CA tactical debug: enemy clusters + nearby islands ---
+		_send_ca_tactical_debug(bot_controller, target, multiplayer.get_remote_sender_id())
 
 func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> void:
 	"""Gather island cover debug data from the behavior and send to client."""
@@ -245,6 +262,65 @@ func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> voi
 			cover_data["los_lines"] = los_lines
 
 	_receive_cover_debug.rpc_id(sender_id, cover_data)
+
+
+func _send_ca_tactical_debug(bot_controller, target_ship: Node, sender_id: int) -> void:
+	"""Gather enemy cluster and nearby island data for CA tactical debug overlay."""
+	var tac_data: Dictionary = {}
+	tac_data["valid"] = false
+
+	if not (target_ship is Ship):
+		_receive_ca_tactical_debug.rpc_id(sender_id, tac_data)
+		return
+
+	var ship: Ship = target_ship as Ship
+	var server_node: GameServer = ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		_receive_ca_tactical_debug.rpc_id(sender_id, tac_data)
+		return
+
+	tac_data["valid"] = true
+
+	# Enemy clusters (known to this team)
+	var clusters = server_node.get_enemy_clusters(ship.team.team_id)
+	var cluster_list: Array = []
+	for cluster in clusters:
+		cluster_list.append({
+			"center": cluster.center,
+			"ship_count": cluster.ships.size(),
+		})
+	tac_data["clusters"] = cluster_list
+
+	# Nearby islands within 10km
+	var my_pos = ship.global_position
+	var island_list: Array = []
+	if NavigationMapManager.is_map_ready():
+		var islands = NavigationMapManager.get_islands()
+		for isl in islands:
+			var center_2d: Vector2 = isl["center"]
+			var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
+			var isl_radius: float = isl["radius"]
+			var eff_dist = isl_pos.distance_to(my_pos) - isl_radius
+			if eff_dist <= 10000.0:
+				island_list.append({
+					"center": isl_pos,
+					"radius": isl_radius,
+				})
+	tac_data["islands"] = island_list
+
+	_receive_ca_tactical_debug.rpc_id(sender_id, tac_data)
+
+
+@rpc("authority", "call_remote", "unreliable")
+func _receive_ca_tactical_debug(tac_data: Dictionary) -> void:
+	"""Client receives CA tactical debug data."""
+	if not tac_data.get("valid", false):
+		bot_debug_ca_enemy_clusters.clear()
+		bot_debug_ca_nearby_islands.clear()
+		return
+
+	bot_debug_ca_enemy_clusters = tac_data.get("clusters", [])
+	bot_debug_ca_nearby_islands = tac_data.get("islands", [])
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -675,10 +751,12 @@ func _draw_bot_debug_nav_path() -> void:
 	# Clear existing path spheres
 	_clear_bot_debug_nav_path()
 
-	if bot_debug_nav_path.size() < 2:
+	if bot_debug_nav_path.size() < 1:
 		return
 
 	# Draw spheres at each path point with a gradient from white to magenta
+	# First point is the ship's position (prepended on the server side),
+	# so we skip drawing a sphere for index 0 and start the gradient from index 1.
 	var path_count = bot_debug_nav_path.size()
 	for i in range(path_count):
 		var point = bot_debug_nav_path[i]
@@ -687,9 +765,13 @@ func _draw_bot_debug_nav_path() -> void:
 		var path_sphere = MeshInstance3D.new()
 		path_sphere.name = "NavPathPoint_%d" % i
 
+		# Waypoint spheres grow slightly toward destination
+		var is_last = (i == path_count - 1)
+		var sphere_radius = 30.0 if is_last else 20.0
+
 		var sphere_mesh = SphereMesh.new()
-		sphere_mesh.radius = 20.0
-		sphere_mesh.height = 40.0
+		sphere_mesh.radius = sphere_radius
+		sphere_mesh.height = sphere_radius * 2.0
 		sphere_mesh.radial_segments = 8
 		sphere_mesh.rings = 4
 		path_sphere.mesh = sphere_mesh
@@ -708,6 +790,29 @@ func _draw_bot_debug_nav_path() -> void:
 		get_tree().root.add_child(path_sphere)
 		bot_debug_nav_path_spheres.append(path_sphere)
 		path_sphere.global_position = point
+
+	# Draw connecting lines between path points
+	if path_count >= 2:
+		var im := ImmediateMesh.new()
+		im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		for i in range(path_count):
+			var point = bot_debug_nav_path[i]
+			im.surface_add_vertex(Vector3(point.x, 52.0, point.z))
+		im.surface_end()
+
+		var line_mat := StandardMaterial3D.new()
+		line_mat.albedo_color = Color(1.0, 0.6, 1.0, 0.7)
+		line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		line_mat.no_depth_test = true
+		line_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+		var line_node := MeshInstance3D.new()
+		line_node.name = "NavPathLine"
+		line_node.mesh = im
+		line_node.material_override = line_mat
+		line_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(line_node)
+		bot_debug_nav_path_spheres.append(line_node)
 
 
 
@@ -1350,6 +1455,98 @@ func _create_los_line(from_pos: Vector3, to_pos: Vector3, color: Color) -> MeshI
 	node.material_override = mat
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return node
+
+
+# =============================================================================
+# CA Tactical Debug: Enemy Clusters + Nearby Islands
+# =============================================================================
+
+func _draw_ca_tactical_debug() -> void:
+	_clear_ca_tactical_debug()
+
+	var draw_y: float = 8.0
+
+	# Draw enemy cluster markers (red/orange spheres with radius based on ship count)
+	for cluster_data in bot_debug_ca_enemy_clusters:
+		var center: Vector3 = cluster_data.get("center", Vector3.ZERO)
+		var ship_count: int = cluster_data.get("ship_count", 1)
+
+		# Sphere size scales with ship count
+		var sphere_size: float = 30.0 + ship_count * 15.0
+
+		var sphere_mesh := SphereMesh.new()
+		sphere_mesh.radius = sphere_size
+		sphere_mesh.height = sphere_size * 2.0
+		sphere_mesh.radial_segments = 12
+		sphere_mesh.rings = 6
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(1.0, 0.2, 0.0, 0.7)  # Red-orange
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+		var node := MeshInstance3D.new()
+		node.name = "CATacticalCluster"
+		node.mesh = sphere_mesh
+		node.material_override = mat
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(node)
+		node.global_position = Vector3(center.x, draw_y + 30.0, center.z)
+		bot_debug_ca_cluster_spheres.append(node)
+
+		# Also draw a circle on the water showing cluster extent
+		var cluster_radius: float = 300.0 + ship_count * 200.0
+		var circle := _create_circle_mesh(cluster_radius, Color(1.0, 0.3, 0.0, 0.4), 2.0, 32)
+		circle.name = "CATacticalClusterRadius"
+		get_tree().root.add_child(circle)
+		circle.global_position = Vector3(center.x, draw_y, center.z)
+		bot_debug_ca_cluster_spheres.append(circle)
+
+	# Draw nearby islands (cyan circles for bounding radius)
+	for island_data in bot_debug_ca_nearby_islands:
+		var center: Vector3 = island_data.get("center", Vector3.ZERO)
+		var radius: float = island_data.get("radius", 0.0)
+		if radius <= 0.0:
+			continue
+
+		var circle := _create_circle_mesh(radius, Color(0.0, 0.8, 0.9, 0.35), 2.0, 48)
+		circle.name = "CATacticalIsland"
+		get_tree().root.add_child(circle)
+		circle.global_position = Vector3(center.x, draw_y + 1.0, center.z)
+		bot_debug_ca_island_circles.append(circle)
+
+		# Small center dot
+		var dot_mesh := SphereMesh.new()
+		dot_mesh.radius = 15.0
+		dot_mesh.height = 30.0
+		dot_mesh.radial_segments = 6
+		dot_mesh.rings = 4
+		var dot_mat := StandardMaterial3D.new()
+		dot_mat.albedo_color = Color(0.0, 0.9, 1.0, 0.6)
+		dot_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		dot_mat.no_depth_test = true
+		dot_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		var dot_node := MeshInstance3D.new()
+		dot_node.name = "CATacticalIslandCenter"
+		dot_node.mesh = dot_mesh
+		dot_node.material_override = dot_mat
+		dot_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		get_tree().root.add_child(dot_node)
+		dot_node.global_position = Vector3(center.x, draw_y + 20.0, center.z)
+		bot_debug_ca_island_circles.append(dot_node)
+
+
+func _clear_ca_tactical_debug() -> void:
+	for node in bot_debug_ca_cluster_spheres:
+		if node != null and is_instance_valid(node):
+			node.queue_free()
+	bot_debug_ca_cluster_spheres.clear()
+
+	for node in bot_debug_ca_island_circles:
+		if node != null and is_instance_valid(node):
+			node.queue_free()
+	bot_debug_ca_island_circles.clear()
 
 
 ## Internal helper to draw a debug sphere

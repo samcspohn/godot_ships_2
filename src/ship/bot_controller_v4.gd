@@ -703,8 +703,8 @@ func _update_debug_vectors(rudder: float) -> void:
 	debug_log_timer += 1.0 / Engine.physics_ticks_per_second
 	if debug_log_timer >= debug_log_interval:
 		debug_log_timer = 0.0
-		if _ship.name == "1001" or _ship.name == "1002" or _ship.name == "1003":
-			print("[BotV4 %s] %s" % [_ship.name, navigator.get_debug_info()])
+		# if _ship.name == "1001" or _ship.name == "1002" or _ship.name == "1003":
+		# 	print("[BotV4 %s] %s" % [_ship.name, navigator.get_debug_info()])
 
 
 ## Get the debug heading vector (for local access by camera)

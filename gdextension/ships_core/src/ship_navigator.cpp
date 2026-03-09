@@ -370,6 +370,9 @@ float ShipNavigator::get_desired_heading() const {
 	if (nav_mode == NavMode::ANGLE || nav_mode == NavMode::POSE) {
 		return target_heading;
 	}
+	if (nav_mode == NavMode::STATION_KEEP) {
+		return station_preferred_heading;
+	}
 	// For position mode, desired heading is toward the current steer target
 	Vector2 steer_target = target_position;
 	if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size())) {
@@ -904,9 +907,20 @@ bool ShipNavigator::is_give_way_vessel(const ObstacleCollisionInfo &info) const 
 // Steering pipeline helpers
 // ============================================================================
 
-float ShipNavigator::compute_rudder_to_position(Vector2 target_pos) const {
+float ShipNavigator::compute_rudder_to_position(Vector2 target_pos, bool reverse) const {
 	Vector2 to_target = target_pos - state.position;
 	float target_angle = std::atan2(to_target.x, to_target.y);
+
+	if (reverse) {
+		// In reverse the stern leads. We want the stern to point at the target,
+		// so the bow should point at the reciprocal bearing.
+		float stern_desired = normalize_angle(target_angle + Math_PI);
+		// compute_rudder_to_heading assumes forward motion (negative rudder →
+		// starboard / heading increases).  In reverse the same rudder deflection
+		// produces the opposite rotation, so we negate the result.
+		return -compute_rudder_to_heading(stern_desired);
+	}
+
 	return compute_rudder_to_heading(target_angle);
 }
 
@@ -1341,6 +1355,7 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 }
 
 float ShipNavigator::apply_gradient_bias(float rudder) const {
+	return rudder;
 	if (map.is_null() || !map->is_built()) return rudder;
 
 	float clearance = get_ship_clearance();
@@ -1613,7 +1628,7 @@ void ShipNavigator::update_navigate_to_position() {
 	if (use_reverse) {
 		UtilityFunctions::print(String("Using Reverse"));
 		nav_state = NavState::ARRIVING;
-		float desired_rudder = compute_rudder_to_position(target_position);
+		float desired_rudder = compute_rudder_to_position(target_position, true);
 		desired_rudder = apply_gradient_bias(desired_rudder);
 		int desired_throttle = -1;
 
@@ -1822,7 +1837,7 @@ void ShipNavigator::update_navigate_to_pose() {
 
 	if (use_reverse) {
 		nav_state = NavState::ARRIVING;
-		float desired_rudder = compute_rudder_to_position(target_position);
+		float desired_rudder = compute_rudder_to_position(target_position, true);
 		desired_rudder = apply_gradient_bias(desired_rudder);
 		int desired_throttle = -1;
 
@@ -1996,7 +2011,7 @@ void ShipNavigator::update_station_keep(float delta) {
 			int desired_throttle;
 
 			if (use_reverse) {
-				desired_rudder = compute_rudder_to_position(steer_target);
+				desired_rudder = compute_rudder_to_position(steer_target, true);
 				desired_throttle = -1;
 				desired_rudder = apply_gradient_bias(desired_rudder);
 
@@ -2050,35 +2065,98 @@ void ShipNavigator::update_station_keep(float delta) {
 				break;
 			}
 
-			if (!inside_zone) {
+			// Allow the ship to maneuver within a generous margin around
+			// the zone.  During a 3-point turn the ship may briefly exit
+			// the zone boundary; only bail to STATION_RECOVER if it
+			// drifts significantly outside (50% beyond radius).
+			if (dist_to_center > station_radius * 1.5f) {
 				nav_state = NavState::STATION_RECOVER;
 				break;
 			}
 
-			int desired_throttle;
-			if (heading_error > STATION_HEADING_TOLERANCE && speed < STATION_SPEED_THRESHOLD * 2.0f) {
-				desired_throttle = 1;
+			// How much room the ship has in various directions within the zone.
+			// Used to modulate throttle so the ship doesn't overshoot.
+			float dist_to_zone_edge = station_radius - dist_to_center;
+			// When outside the zone boundary, dist_to_zone_edge is negative.
+			// Clamp to a small positive value so throttle logic still works.
+			float room_ahead = std::max(dist_to_zone_edge, params.ship_beam);
+
+			// Direction from ship toward zone center — used to bias steering
+			// so the 3-point turn stays near the middle of the zone.
+			Vector2 to_center = zone_center - state.position;
+
+			// 3-point turn: when heading error is large and the ship is
+			// nearly stopped, reverse with rudder to swing the bow toward
+			// the desired heading.  Once the error drops below the
+			// threshold, switch to forward motion to complete the turn.
+			bool use_reverse_settle = heading_error > Math_PI * 0.5f
+				&& speed < STATION_SPEED_THRESHOLD * 2.0f;
+
+			if (use_reverse_settle) {
+				// Reverse leg of the 3-point turn.
+				// compute_rudder_to_heading gives the rudder for forward
+				// motion; negate it so the reversed rudder effect still
+				// swings the bow toward station_preferred_heading.
+				float desired_rudder = -compute_rudder_to_heading(station_preferred_heading);
+
+				// Bias toward zone center when getting far from it so the
+				// ship doesn't reverse out of the zone.  The stern should
+				// aim roughly toward the center.
+				if (dist_to_center > station_radius * 0.5f) {
+					float center_rudder = compute_rudder_to_position(zone_center, true);
+					float proximity = clamp_f(
+						(dist_to_center - station_radius * 0.5f) / (station_radius * 0.5f),
+						0.0f, 0.8f);
+					desired_rudder = lerp_f(desired_rudder, center_rudder, proximity);
+				}
+
+				desired_rudder = apply_gradient_bias(desired_rudder);
+				int desired_throttle = -1;
+
+				float ttc;
+				bool collision;
+				float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+
+				int final_throttle = (collision && nav_state == NavState::EMERGENCY)
+					? out_throttle : desired_throttle;
+				set_steering_output(safe_rudder, final_throttle, collision, ttc);
 			} else {
-				desired_throttle = 0;
+				// Forward leg of the 3-point turn / normal settle.
+				// Steer toward the desired heading, but also bias toward
+				// the zone center so the ship stays inside the zone and
+				// doesn't just creep in a straight line away from it.
+				float heading_rudder = 0.0f;
+				if (heading_error > 0.05f) {
+					heading_rudder = compute_rudder_to_heading(station_preferred_heading);
+				}
+
+				// Blend in a center-seeking component when drifting away
+				float center_rudder = compute_rudder_to_position(zone_center);
+				float center_weight = clamp_f(dist_to_center / station_radius, 0.0f, 0.5f);
+				float desired_rudder = lerp_f(heading_rudder, center_rudder, center_weight);
+
+				desired_rudder = apply_gradient_bias(desired_rudder);
+
+				int desired_throttle;
+				if (heading_error > STATION_HEADING_TOLERANCE && speed < STATION_SPEED_THRESHOLD * 2.0f) {
+					desired_throttle = 1;
+					// Cut throttle when near the zone edge so the ship
+					// doesn't overshoot out of the zone on the forward leg.
+					if (room_ahead < params.turning_circle_radius) {
+						desired_throttle = 0;
+					}
+				} else {
+					desired_throttle = 0;
+				}
+
+				float ttc;
+				bool collision;
+				float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+
+				int final_throttle = (collision && nav_state == NavState::EMERGENCY)
+					? out_throttle : desired_throttle;
+				set_steering_output(safe_rudder, final_throttle, collision, ttc);
 			}
-
-			float desired_rudder;
-			if (heading_error > 0.05f) {
-				desired_rudder = compute_rudder_to_heading(station_preferred_heading);
-				desired_rudder = clamp_f(desired_rudder, -0.5f, 0.5f);
-			} else {
-				desired_rudder = 0.0f;
-			}
-
-			desired_rudder = apply_gradient_bias(desired_rudder);
-
-			float ttc;
-			bool collision;
-			float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
-
-			int final_throttle = (collision && nav_state == NavState::EMERGENCY)
-				? out_throttle : desired_throttle;
-			set_steering_output(safe_rudder, final_throttle, collision, ttc);
 			break;
 		}
 
@@ -2087,7 +2165,14 @@ void ShipNavigator::update_station_keep(float delta) {
 			station_hold_timer += delta;
 
 			if (!inside_zone) {
-				nav_state = NavState::STATION_RECOVER;
+				// Don't jump straight to recover for minor drift — let
+				// settle handle re-alignment within the zone margin.
+				if (dist_to_center > station_radius * 1.5f) {
+					nav_state = NavState::STATION_RECOVER;
+				} else {
+					nav_state = NavState::STATION_SETTLE;
+					station_settle_timer = 0.0f;
+				}
 				break;
 			}
 

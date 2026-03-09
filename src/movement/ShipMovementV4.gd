@@ -13,7 +13,9 @@ var max_speed: float = 15.0  # Maximum speed in m/s
 @export var reverse_speed_ratio: float = 0.5  # Reverse speed as ratio of max speed
 
 # Turning properties
+const TURN_FORCE_CORRECTION: float = 1.27  # Empirical correction for force-at-offset vs pure torque
 @export var turning_circle_radius: float = 200.0  # Turning circle radius in meters at full rudder and full speed
+@export var slow_speed_turn_tightening: float = 0.8  # At low speed, radius shrinks to this ratio (0.7 = 70% of full radius)
 # @export var min_turn_speed: float = 2.0  # Minimum speed needed for effective turning
 @export var turn_speed_loss: float = 0.2  # Percentage of speed lost per second while turning
 @export var rudder_response_time: float = 1.5  # Time for rudder to move from center to full
@@ -204,22 +206,24 @@ func set_movement_input(input_array: Array) -> void:
 		throttle_level = clamp(int(input_array[0]), -1, 4)
 		target_rudder = clamp(float(input_array[1]), -1.0, 1.0)
 
-func calculate_lateral_force(
+## Calculates the steady-state lateral force needed to produce a desired turn rate.
+## At equilibrium, angular_damping * omega = torque / I, so:
+##   torque_needed = angular_damping * desired_omega * I
+##   F_lateral = torque_needed / fulcrum_offset
+## The angular damping naturally handles the smooth ramp-up/ramp-down —
+## no dependency on current angular velocity or PID control.
+func calculate_steady_state_lateral_force(
 	mass: float,
-	length: float,  # ship length for inertia estimate
-	turning_circle: float,
+	length: float,
 	fulcrum_offset: float,
 	angular_damping: float,
-	current_omega: float,
-	target_omega: float,
-	dt: float
+	desired_omega: float
 ) -> float:
 	var I := (1.0 / 12.0) * mass * length * length
-	var alpha := (target_omega - current_omega) / dt  # desired angular accel
-
-	# Force needed at fulcrum to achieve desired alpha while fighting damping
-	var F_lateral := (I * alpha + angular_damping * current_omega) / fulcrum_offset
-
+	# Torque needed so that at steady state: angular_damping * desired_omega = torque / I
+	var torque_needed := angular_damping * desired_omega * I
+	# Force at the fulcrum point that produces this torque
+	var F_lateral := torque_needed / fulcrum_offset
 	return F_lateral
 
 func _physics_process(delta: float) -> void:
@@ -264,25 +268,33 @@ func _physics_process(delta: float) -> void:
 		# return
 
 	var turn_thrust_ratio = 1.0
-	if abs(rudder_input) > 0.01 and abs(current_speed) > 0.0:
+	if abs(rudder_input) > 0.01 and abs(current_speed) > 5.0:
 		var rudder_dist = 0.5
 		var half_length = ship_length * rudder_dist
 		var stern_offset = -forward * half_length  # Vector from center to stern
-		# Initiation: target_omega derived from desired turn
-		var turn_radius := turning_circle_radius
-		var target_omega: float = max_speed * (1 - turn_speed_loss * abs(rudder_input)) / turn_radius * -rudder_input  # full rudder turn rate
-		var target_omega_curr: float = current_speed / turn_radius * -rudder_input
-		var weight = 0.8
-		target_omega = target_omega_curr * weight + target_omega * (1 - weight)
 		var fulcrum_offset = -half_length
 
-		var F := calculate_lateral_force(ship.mass, ship_length, turning_circle_radius * 2.0,
-										  fulcrum_offset, ship.angular_damp,
-										  ship.angular_velocity.y, target_omega, delta)
-		ship.apply_force(-flat_right * F * abs(current_speed / max_speed), stern_offset)
-		# engine_power = move_toward(engine_power, target_power * (1 - turn_speed_loss * abs(rudder_input)), delta / acceleration_time)
+		# Shrink turning circle at lower speeds — at low speed the rudder deflects
+		# flow longer per unit distance, giving a tighter circle
+		var max_speed_ratio: float = max_speed * (1 - abs(rudder_input) * turn_speed_loss)
+		var speed_ratio: float = clampf(abs(current_speed) / max_speed_ratio, 0.0, 1.0)
+		var radius_scale: float = lerpf(slow_speed_turn_tightening, 1.0, speed_ratio)
+		var effective_radius: float = turning_circle_radius * radius_scale
+
+		# Desired steady-state turn rate from current speed and effective turning circle
+		# omega = speed / radius, scaled by rudder input
+		var desired_omega: float = (current_speed / effective_radius) * -rudder_input
+
+		# Calculate the force that, when balanced by angular damping, produces this turn rate
+		var F := calculate_steady_state_lateral_force(
+			ship.mass, ship_length, fulcrum_offset, ship.angular_damp, desired_omega
+		)
+
+		# Apply lateral force at the stern — angular damping handles the transition naturally
+		# TURN_FORCE_CORRECTION accounts for force-at-offset not mapping 1:1 to pure torque
+		ship.apply_force(-flat_right * F * TURN_FORCE_CORRECTION, stern_offset)
+
 		turning_drag_multiplier = 1.0 + turn_speed_loss * abs(rudder_input) * 1.5
-		# turning_drag_multiplier
 	else:
 		turning_drag_multiplier = 1.0
 	engine_power = move_toward(engine_power, target_power, delta / acceleration_time)

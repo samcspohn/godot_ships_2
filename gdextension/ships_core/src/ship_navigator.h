@@ -132,8 +132,9 @@ private:
 
 	// --- Steering pipeline helpers ---
 
-	// Compute desired rudder to steer toward a world XZ position
-	float compute_rudder_to_position(Vector2 target_pos) const;
+	// Compute desired rudder to steer toward a world XZ position.
+	// When reverse=true, computes rudder to back the stern toward the target.
+	float compute_rudder_to_position(Vector2 target_pos, bool reverse = false) const;
 
 	// Compute desired rudder to acquire a heading, with rudder lead compensation
 	float compute_rudder_to_heading(float desired_heading) const;
