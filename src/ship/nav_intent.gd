@@ -19,11 +19,15 @@ var hold_radius: float = 0.0
 ## Optional throttle override (-1 = navigator decides)
 var throttle_override: int = -1
 
+## Heading tolerance: acceptable heading error to consider settled (radians, default ~15°)
+var heading_tolerance: float = 0.2618
+
 
 ## Create a navigation intent
-static func create(pos: Vector3, heading: float, radius: float = 0.0) -> NavIntent:
+static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618) -> NavIntent:
 	var i = NavIntent.new()
 	i.target_position = pos
 	i.target_heading = heading
 	i.hold_radius = radius
+	i.heading_tolerance = tol
 	return i

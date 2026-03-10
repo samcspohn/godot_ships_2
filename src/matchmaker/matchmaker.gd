@@ -242,7 +242,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
 	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
 	# var bonus_class = classes[randi() % classes.size()]
-	var bonus_class = SHIP_CLASS_CA
+	var bonus_class = SHIP_CLASS_BB
 	# for i in range(left_over):
 	# 	var bonus_class = classes[i % classes.size()]
 	# 	class_counts[bonus_class] += 1

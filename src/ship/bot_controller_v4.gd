@@ -337,7 +337,8 @@ func _execute_nav_intent() -> void:
 	navigator.navigate_to(
 		_last_intent.target_position,
 		_last_intent.target_heading,
-		_last_intent.hold_radius
+		_last_intent.hold_radius,
+		_last_intent.heading_tolerance
 	)
 
 ## Get the current NavIntent mode as a human-readable string (for debug overlay)

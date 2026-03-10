@@ -638,10 +638,13 @@ func get_team_spawn_position(team_id: int) -> Vector3:
 	"""Get the spawn position for a team. Used for flanking detection."""
 	var spawn_map = get_node_or_null("GameWorld/Env")
 	if spawn_map == null or spawn_map.get_child_count() == 0:
+		print("Spawn map missing or empty")
 		return Vector3.ZERO
 	spawn_map = spawn_map.get_child(0)
 	var spawn_node = spawn_map.get_node_or_null("Spawn")
+	# print("Getting spawn position for team ", team_id, ": spawn_node=", spawn_node)
 	if spawn_node == null or spawn_node.get_child_count() <= team_id:
+		print("Spawn node missing or does not have child for team ", team_id)
 		return Vector3.ZERO
 	return (spawn_node.get_child(team_id) as Node3D).global_position
 

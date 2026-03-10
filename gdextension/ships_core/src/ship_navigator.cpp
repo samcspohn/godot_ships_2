@@ -1,5 +1,4 @@
 #include "ship_navigator.h"
-#include "godot_cpp/core/math.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -31,8 +30,8 @@ void ShipNavigator::_bind_methods() {
 		&ShipNavigator::set_state);
 
 	// Navigation commands
-	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius"),
-		&ShipNavigator::navigate_to, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance"),
+		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f));
 	ClassDB::bind_method(D_METHOD("stop"), &ShipNavigator::stop);
 
 	// Output
@@ -162,7 +161,7 @@ void ShipNavigator::set_state(
 // Navigation commands
 // ============================================================================
 
-void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius) {
+void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance) {
 	Vector2 new_pos(p_target.x, p_target.z);
 	float dist_change = new_pos.distance_to(target.position);
 	float heading_change = std::abs(angle_difference(target.heading, p_heading));
@@ -174,6 +173,7 @@ void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_
 	target.position = new_pos;
 	target.heading = p_heading;
 	target.hold_radius = p_hold_radius;
+	target.heading_tolerance = p_heading_tolerance;
 
 	if (position_changed || radius_changed) {
 		// Meaningful target change — replan
@@ -490,13 +490,14 @@ void ShipNavigator::update_navigating(float delta) {
 	if (use_reverse) {
 		desired_throttle = -1;
 	} else {
-		desired_throttle = compute_throttle_for_approach(dist_to_dest);
-		float turn_angle = std::abs(angle_difference(state.heading,
-			std::atan2(steer_target.x - state.position.x,
-					   steer_target.y - state.position.y)));
-		if (turn_angle > Math_PI * 0.5f && desired_throttle > 2) {
-			desired_throttle = 2;
-		}
+		// desired_throttle = compute_throttle_for_approach(dist_to_dest);
+		// float turn_angle = std::abs(angle_difference(state.heading,
+		// 	std::atan2(steer_target.x - state.position.x,
+		// 			   steer_target.y - state.position.y)));
+		// if (turn_angle > Math_PI * 0.5f && desired_throttle > 2) {
+		// 	desired_throttle = 2;
+		// }
+		desired_throttle = 4;  // full forward, no speed limit while navigating (except collision avoidance)
 	}
 
 	// --- 5. Collision avoidance ---
@@ -613,7 +614,7 @@ void ShipNavigator::update_settling(float delta) {
 	float dist = state.position.distance_to(target.position);
 
 	// Heading achieved?
-	if (heading_error < HEADING_TOLERANCE && speed < SPEED_THRESHOLD) {
+	if (heading_error < target.heading_tolerance && speed < SPEED_THRESHOLD) {
 		nav_state = NavState::HOLDING;
 		hold_timer = 0.0f;
 		return;
@@ -644,7 +645,7 @@ void ShipNavigator::update_settling(float delta) {
 	}
 
 	int desired_throttle;
-	if (heading_error < HEADING_TOLERANCE) {
+	if (heading_error < target.heading_tolerance) {
 		desired_throttle = 0;
 	} else {
 		desired_throttle = settle_dir;
@@ -653,7 +654,7 @@ void ShipNavigator::update_settling(float delta) {
 	// Rudder steers toward desired heading; flip sense when reversing
 	bool use_reverse = (desired_throttle < 0);
 	float desired_rudder;
-	if (heading_error > Math::deg_to_rad(5)) {
+	if (heading_error > 0.05f) {
 		desired_rudder = use_reverse
 			? -compute_rudder_to_heading(target.heading)
 			: compute_rudder_to_heading(target.heading);
@@ -685,7 +686,7 @@ void ShipNavigator::update_holding(float delta) {
 	}
 
 	// Heading drifted significantly?
-	if (heading_error > HEADING_TOLERANCE * 2.0f) {
+	if (heading_error > target.heading_tolerance * 2.0f) {
 		nav_state = NavState::SETTLING;
 		settle_timer = 0.0f;
 		return;
@@ -707,7 +708,7 @@ void ShipNavigator::update_holding(float delta) {
 		throttle = -1;
 	} else {
 		// Micro-corrections (forward)
-		if (heading_error > HEADING_TOLERANCE) {
+		if (heading_error > target.heading_tolerance) {
 			rudder = compute_rudder_to_heading(target.heading);
 			rudder = clamp_f(rudder, -0.3f, 0.3f);
 		}
@@ -727,7 +728,7 @@ void ShipNavigator::update_holding(float delta) {
 void ShipNavigator::update_emergency() {
 	// Check if we've cleared the emergency
 	auto desired_arc = predict_arc_internal(0.0f, 2, get_lookahead_distance());
-	float ttc = check_arc_collision(desired_arc, get_ship_clearance(), get_soft_clearance());
+	float ttc = check_arc_collision(desired_arc, get_ship_clearance() / 2.0, get_soft_clearance());
 	float arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
 
 	if (ttc >= arc_time * 0.9f) {
@@ -1114,7 +1115,7 @@ Vector2 ShipNavigator::get_steer_target() const {
 
 std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 															Vector2 target_pos, float lookahead_distance,
-															float max_time) const {
+															float max_time, float dt_scale) const {
 	std::vector<ArcPoint> arc;
 	arc.reserve(64);
 
@@ -1132,12 +1133,12 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	float turning_circle_perimeter = 2.0f * Math_PI * params.turning_circle_radius;
 	float max_arc_distance = std::max(lookahead_distance, turning_circle_perimeter);
 
-	const float base_dt = 0.1f;
+	const float base_dt = 0.1f * dt_scale;
 	const float integration_dt = std::min(
 		base_dt * std::max(1.0f, params.rudder_response_time / 4.0f),
-		0.5f
+		0.5f * dt_scale
 	);
-	float emit_interval = std::max(max_arc_distance / 50.0f, params.ship_beam * 0.5f);
+	float emit_interval = std::max(max_arc_distance / 50.0f, params.ship_beam * 0.5f) * dt_scale;
 	float next_emit_dist = emit_interval;
 	Vector2 prev_pos = sim_pos;
 
@@ -1429,17 +1430,20 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			dodge_bias = (cross >= 0.0f) ? -1.0f : 1.0f;
 		}
 
-		const float torp_offsets_primary[]   = { 0.5f, 1.0f, 0.25f, 0.75f };
-		const float torp_offsets_secondary[] = {-0.5f,-1.0f,-0.25f,-0.75f };
+		const float torp_offsets_primary[]   = { 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
+		const float torp_offsets_secondary[] = {-0.25f,-0.5f,-0.75f,-1.0f,-1.25f,-1.5f,-1.75f,-2.0f };
 
 		float best_rudder  = desired_rudder;
 		float best_ttc     = ttc;
 		int   best_throttle = desired_throttle;
 
 		auto try_torpedo_candidates = [&](const float* offsets, int count, int throttle_level) {
+			float last_torp_candidate = desired_rudder;
 			for (int ci = 0; ci < count; ++ci) {
 				float signed_offset = offsets[ci] * dodge_bias;
 				float candidate = clamp_f(desired_rudder + signed_offset, -1.0f, 1.0f);
+				if (candidate == desired_rudder || candidate == last_torp_candidate) continue;
+				last_torp_candidate = candidate;
 				auto arc = predict_arc_internal(candidate, throttle_level, lookahead);
 				float cand_arc_time   = arc.empty() ? 0.0f : arc.back().time;
 				float cand_ttc_terrain  = check_arc_collision(arc, hard_clearance, soft_clearance);
@@ -1458,8 +1462,8 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			return false;
 		};
 
-		constexpr int primary_count   = 4;
-		constexpr int secondary_count = 4;
+		constexpr int primary_count   = 8;
+		constexpr int secondary_count = 8;
 
 		if (!try_torpedo_candidates(torp_offsets_primary, primary_count, desired_throttle)) {
 			if (!try_torpedo_candidates(torp_offsets_secondary, secondary_count, desired_throttle)) {
@@ -1512,8 +1516,8 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 		}
 
 		const float starboard_offsets[] = {
-			-0.25f, -0.5f, -0.75f, -1.0f,
-			 0.25f,  0.5f,  0.75f,  1.0f
+			-0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f, -2.0f,
+			 0.25f,  0.5f,  0.75f,  1.0f,  1.25f,  1.5f,  1.75f,  2.0f
 		};
 
 		float best_rudder = desired_rudder;
@@ -1521,9 +1525,12 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 
 		Vector2 steer_tgt = get_steer_target();
 		bool have_steer_target = (steer_tgt.length_squared() > 1.0f);
+		float last_candidate = desired_rudder;
 
 		for (float offset : starboard_offsets) {
 			float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+			if (candidate == desired_rudder || candidate == last_candidate) continue;
+			last_candidate = candidate;
 			std::vector<ArcPoint> arc;
 			if (have_steer_target) {
 				arc = predict_arc_to_heading(candidate, desired_throttle, steer_tgt, lookahead);
@@ -1549,8 +1556,11 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 
 		if (best_ttc < arc_total_time * 0.5f) {
 			int reduced_throttle = std::max(1, desired_throttle - 2);
+			float last_candidate_rt = desired_rudder;
 			for (float offset : starboard_offsets) {
 				float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+				if (candidate == desired_rudder || candidate == last_candidate_rt) continue;
+				last_candidate_rt = candidate;
 				std::vector<ArcPoint> arc;
 				if (have_steer_target) {
 					arc = predict_arc_to_heading(candidate, reduced_throttle, steer_tgt, lookahead);
@@ -1592,7 +1602,10 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 	// =====================================================================
 	// Terrain-only avoidance
 	// =====================================================================
-	const float offsets[] = {0.25f, -0.25f, 0.5f, -0.5f, 0.75f, -0.75f, 1.0f, -1.0f};
+	const float offsets[] = {
+		0.25f, -0.25f, 0.5f, -0.5f, 0.75f, -0.75f, 1.0f, -1.0f,
+		1.25f, -1.25f, 1.5f, -1.5f, 1.75f, -1.75f, 2.0f, -2.0f
+	};
 	float best_rudder = desired_rudder;
 	float best_ttc = ttc;
 	int best_throttle = desired_throttle;
@@ -1600,14 +1613,24 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 	Vector2 steer_tgt = get_steer_target();
 	bool have_steer_target = (steer_tgt.length_squared() > 1.0f);
 
-	// Phase 1: Rudder-only — tangential alignment arcs
+	// Phase 1: Rudder-only — tangential alignment arcs (coarse resolution)
+	// Test all candidates and pick the best; use extended lookahead for gentle rudder (<0.5)
+	constexpr float terrain_dt_scale = 2.0f;
+	bool tested_pos_clamp = (desired_rudder == 1.0f);
+	bool tested_neg_clamp = (desired_rudder == -1.0f);
 	for (float offset : offsets) {
 		float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+		if (candidate == desired_rudder) continue;
+		if (candidate == 1.0f && tested_pos_clamp) continue;
+		if (candidate == -1.0f && tested_neg_clamp) continue;
+		if (candidate == 1.0f) tested_pos_clamp = true;
+		if (candidate == -1.0f) tested_neg_clamp = true;
+		float cand_lookahead = (std::abs(candidate) < 0.5f) ? lookahead * 2.0f : lookahead;
 		std::vector<ArcPoint> arc;
 		if (have_steer_target) {
-			arc = predict_arc_to_heading(candidate, desired_throttle, steer_tgt, lookahead);
+			arc = predict_arc_to_heading(candidate, desired_throttle, steer_tgt, cand_lookahead, 60.0f, terrain_dt_scale);
 		} else {
-			arc = predict_arc_internal(candidate, desired_throttle, lookahead);
+			arc = predict_arc_internal(candidate, desired_throttle, cand_lookahead);
 		}
 		float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 		float cand_ttc_terrain = check_arc_collision(arc, hard_clearance, soft_clearance);
@@ -1618,24 +1641,34 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			best_ttc = cand_ttc;
 			best_rudder = candidate;
 			best_throttle = desired_throttle;
-			if (best_ttc >= cand_arc_time * 0.95f) {
-				out_ttc = best_ttc;
-				out_collision = false;
-				return best_rudder;
-			}
 		}
+	}
+
+	// If phase 1 found a clear path, return it
+	if (best_ttc >= arc_total_time * 0.95f && best_rudder != desired_rudder) {
+		out_ttc = best_ttc;
+		out_collision = false;
+		return best_rudder;
 	}
 
 	// Phase 2: Reduce throttle
 	if (best_ttc < arc_total_time * 0.5f) {
 		int reduced_throttle = std::max(1, desired_throttle - 2);
+		tested_pos_clamp = (desired_rudder == 1.0f);
+		tested_neg_clamp = (desired_rudder == -1.0f);
 		for (float offset : offsets) {
 			float test_rudder = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+			if (test_rudder == desired_rudder) continue;
+			if (test_rudder == 1.0f && tested_pos_clamp) continue;
+			if (test_rudder == -1.0f && tested_neg_clamp) continue;
+			if (test_rudder == 1.0f) tested_pos_clamp = true;
+			if (test_rudder == -1.0f) tested_neg_clamp = true;
+			float cand_lookahead = (std::abs(test_rudder) < 0.5f) ? lookahead * 2.0f : lookahead;
 			std::vector<ArcPoint> arc;
 			if (have_steer_target) {
-				arc = predict_arc_to_heading(test_rudder, reduced_throttle, steer_tgt, lookahead);
+				arc = predict_arc_to_heading(test_rudder, reduced_throttle, steer_tgt, cand_lookahead, 60.0f, terrain_dt_scale);
 			} else {
-				arc = predict_arc_internal(test_rudder, reduced_throttle, lookahead);
+				arc = predict_arc_internal(test_rudder, reduced_throttle, cand_lookahead);
 			}
 			float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 			float cand_ttc = std::min(check_arc_collision(arc, hard_clearance, soft_clearance),
@@ -1645,25 +1678,34 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 				best_ttc = cand_ttc;
 				best_rudder = test_rudder;
 				best_throttle = reduced_throttle;
-				if (best_ttc >= cand_arc_time * 0.95f) {
-					out_throttle = best_throttle;
-					out_ttc = best_ttc;
-					return best_rudder;
-				}
 			}
+		}
+
+		if (best_throttle == reduced_throttle && best_ttc >= arc_total_time * 0.95f) {
+			out_throttle = best_throttle;
+			out_ttc = best_ttc;
+			return best_rudder;
 		}
 	}
 
 	// Phase 3: Increase throttle with full rudder
 	if (best_ttc < arc_total_time * 0.5f && std::abs(state.current_speed) < params.max_speed * 0.3f) {
 		int boost_throttle = std::min(desired_throttle + 2, 4);
+		tested_pos_clamp = (desired_rudder == 1.0f);
+		tested_neg_clamp = (desired_rudder == -1.0f);
 		for (float offset : offsets) {
 			float test_rudder = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
+			if (test_rudder == desired_rudder) continue;
+			if (test_rudder == 1.0f && tested_pos_clamp) continue;
+			if (test_rudder == -1.0f && tested_neg_clamp) continue;
+			if (test_rudder == 1.0f) tested_pos_clamp = true;
+			if (test_rudder == -1.0f) tested_neg_clamp = true;
+			float cand_lookahead = (std::abs(test_rudder) < 0.5f) ? lookahead * 2.0f : lookahead;
 			std::vector<ArcPoint> arc;
 			if (have_steer_target) {
-				arc = predict_arc_to_heading(test_rudder, boost_throttle, steer_tgt, lookahead);
+				arc = predict_arc_to_heading(test_rudder, boost_throttle, steer_tgt, cand_lookahead, 60.0f, terrain_dt_scale);
 			} else {
-				arc = predict_arc_internal(test_rudder, boost_throttle, lookahead);
+				arc = predict_arc_internal(test_rudder, boost_throttle, cand_lookahead);
 			}
 			float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 			float cand_ttc = std::min(check_arc_collision(arc, hard_clearance, soft_clearance),
@@ -1673,11 +1715,6 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 				best_ttc = cand_ttc;
 				best_rudder = test_rudder;
 				best_throttle = boost_throttle;
-				if (best_ttc >= cand_arc_time * 0.95f) {
-					out_throttle = best_throttle;
-					out_ttc = best_ttc;
-					return best_rudder;
-				}
 			}
 		}
 	}

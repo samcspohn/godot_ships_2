@@ -100,7 +100,7 @@ private:
 
 	std::vector<ArcPoint> predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 												 Vector2 target_pos, float lookahead_distance,
-												 float max_time = 60.0f) const;
+												 float max_time = 60.0f, float dt_scale = 1.0f) const;
 
 	Vector2 get_steer_target() const;
 
@@ -207,7 +207,8 @@ public:
 	// target: world position to reach
 	// heading: desired heading on arrival (radians, 0 = +Z)
 	// hold_radius: 0 = arrive and stop, >0 = station-keep within radius
-	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f);
+	// heading_tolerance: acceptable heading error to consider settled (radians, default ~15°)
+	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f);
 
 	// Cancel navigation, coast to stop
 	void stop();

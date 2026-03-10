@@ -82,6 +82,10 @@ var bot_debug_ca_nearby_islands: Array = []         # [{center: Vector3, radius:
 var bot_debug_ca_cluster_spheres: Array[MeshInstance3D] = []
 var bot_debug_ca_island_circles: Array[MeshInstance3D] = []
 
+# World-space debug label
+var bot_debug_world_label: Label3D = null
+var bot_debug_nav_state: String = ""
+
 
 func _ready() -> void:
 	set_process(true)
@@ -157,6 +161,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_cover_circles()
 		_draw_bot_debug_throttle_indicator()
 		_draw_ca_tactical_debug()
+		_draw_bot_debug_world_label()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -210,6 +215,9 @@ func request_debug_info(target_path: NodePath) -> void:
 
 		# --- CA tactical debug: enemy clusters + nearby islands ---
 		_send_ca_tactical_debug(bot_controller, target, multiplayer.get_remote_sender_id())
+
+		# --- World-space label debug ---
+		_send_world_label_debug(bot_controller, multiplayer.get_remote_sender_id())
 
 func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> void:
 	"""Gather island cover debug data from the behavior and send to client."""
@@ -309,6 +317,25 @@ func _send_ca_tactical_debug(bot_controller, target_ship: Node, sender_id: int) 
 	tac_data["islands"] = island_list
 
 	_receive_ca_tactical_debug.rpc_id(sender_id, tac_data)
+
+
+const NAV_STATE_NAMES: Array[String] = [
+	"PLANNING", "NAVIGATING", "ARRIVING", "SETTLING", "HOLDING", "AVOIDING", "EMERGENCY"
+]
+
+func _send_world_label_debug(bot_controller, sender_id: int) -> void:
+	var label_data: Dictionary = {}
+	if bot_controller is BotControllerV4 and bot_controller.navigator != null:
+		var state_idx: int = bot_controller.navigator.get_nav_state()
+		if state_idx >= 0 and state_idx < NAV_STATE_NAMES.size():
+			label_data["nav_state"] = NAV_STATE_NAMES[state_idx]
+		else:
+			label_data["nav_state"] = "UNKNOWN(%d)" % state_idx
+	_receive_world_label_debug.rpc_id(sender_id, label_data)
+
+@rpc("authority", "call_remote", "unreliable")
+func _receive_world_label_debug(label_data: Dictionary) -> void:
+	bot_debug_nav_state = label_data.get("nav_state", "")
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -1442,6 +1469,47 @@ func _clear_cover_los_lines() -> void:
 		if is_instance_valid(line):
 			line.queue_free()
 	bot_debug_cover_los_lines.clear()
+
+
+# ============================================================================
+# World-space debug label — follows the tracked ship
+# ============================================================================
+
+func _draw_bot_debug_world_label() -> void:
+	if bot_debug_follow_ship == null or not is_instance_valid(bot_debug_follow_ship):
+		if bot_debug_world_label != null and is_instance_valid(bot_debug_world_label):
+			bot_debug_world_label.queue_free()
+			bot_debug_world_label = null
+		return
+
+	# Build label text
+	var text = bot_debug_nav_state
+	if text.is_empty():
+		if bot_debug_world_label != null and is_instance_valid(bot_debug_world_label):
+			bot_debug_world_label.visible = false
+		return
+
+	# Create label if needed
+	if bot_debug_world_label == null or not is_instance_valid(bot_debug_world_label):
+		bot_debug_world_label = Label3D.new()
+		bot_debug_world_label.name = "BotDebugWorldLabel"
+		bot_debug_world_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		bot_debug_world_label.no_depth_test = true
+		bot_debug_world_label.fixed_size = true
+		bot_debug_world_label.pixel_size = 0.001
+		bot_debug_world_label.font_size = 16
+		bot_debug_world_label.modulate = Color(1.0, 1.0, 1.0, 0.9)
+		bot_debug_world_label.outline_modulate = Color(0.0, 0.0, 0.0, 0.8)
+		bot_debug_world_label.outline_size = 4
+		bot_debug_world_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		bot_debug_world_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+		get_tree().root.add_child(bot_debug_world_label)
+
+	bot_debug_world_label.text = text
+	bot_debug_world_label.visible = true
+	bot_debug_world_label.fixed_size = true
+	bot_debug_world_label.pixel_size = 0.001
+	bot_debug_world_label.global_position = bot_debug_follow_ship.global_position + Vector3(-100, 100, 0)
 
 
 func _create_los_line(from_pos: Vector3, to_pos: Vector3, color: Color) -> MeshInstance3D:

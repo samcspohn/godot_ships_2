@@ -1,6 +1,8 @@
 extends BotBehavior
 class_name CABehavior
 
+const SAFE_DIR_INVALIDATION_DOT: float = cos(deg_to_rad(20.0))
+
 var ammo = ShellParams.ShellType.HE
 
 # ============================================================================
@@ -203,9 +205,10 @@ func _gather_threat_positions(ship: Ship) -> Array:
 	return threats
 
 func _get_ship_clearance() -> float:
-	"""Ship beam clearance for navigation."""
-	if _ship and _ship.movement_controller:
-		return _ship.movement_controller.ship_beam * 0.5 + 80.0
+	"""Use the navigator's hard clearance — single source of truth."""
+	var controller = get_parent()
+	if controller and controller.navigator:
+		return controller.navigator.get_clearance_radius()
 	return 100.0
 
 func _get_turning_radius() -> float:
@@ -240,7 +243,7 @@ func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
 	# Fallback: away from nearest enemy cluster
 	var cluster = server.get_nearest_enemy_cluster(ship.global_position, ship.team.team_id)
 	if not cluster.is_empty():
-		var away = ship.global_position - cluster.center
+		var away = _target_island_pos - cluster.center
 		away.y = 0.0
 		if away.length_squared() > 1.0:
 			return away.normalized()
@@ -305,60 +308,91 @@ func _find_nearest_island(ship: Ship) -> Dictionary:
 		"radius": best_radius,
 	}
 
-func _compute_island_destination(ship: Ship, island_center: Vector3, island_radius: float, safe_dir: Vector3) -> Vector3:
-	"""Compute a position on the safe side of the island (facing spawn / away from enemies).
-	Places the ship just outside the island on the safe-direction side."""
+func _compute_island_destination(_ship_unused: Ship, island_center: Vector3, island_radius: float, safe_dir: Vector3) -> Vector3:
+	"""Ray-march from island center along safe_dir to find the actual shore edge,
+	then place the ship just outside with clearance.
+	Result is ship-independent so multiple ships share the same cover zone."""
 	var clearance = _get_ship_clearance()
-	# Target distance from island center: radius + clearance + small buffer
-	var stand_off = island_radius + clearance + 50.0
 
-	# Position on the safe side
-	var dest = island_center + safe_dir * stand_off
-	dest.y = 0.0
+	if not NavigationMapManager.is_map_ready():
+		var dest = island_center + safe_dir * (island_radius + clearance + 50.0)
+		dest.y = 0.0
+		return dest
 
-	# Validate navigability — try the exact spot first, then nudge outward
-	if NavigationMapManager.is_map_ready():
-		if NavigationMapManager.is_navigable(dest, clearance):
-			return _safe_validate(ship, dest)
+	# Ray-march outward from island center along safe_dir
+	var step_size = 25.0
+	var max_dist = island_radius + 500.0
+	var dest = Vector3.ZERO
 
-		# Nudge outward in steps if the exact safe-side spot isn't navigable
-		for extra in [30.0, 60.0, 100.0, 150.0, 200.0]:
-			var test = island_center + safe_dir * (stand_off + extra)
-			test.y = 0.0
-			if NavigationMapManager.is_navigable(test, clearance):
-				return _safe_validate(ship, test)
+	var found = false
+	var dist = 0.0
+	while dist < max_dist:
+		var test = island_center + safe_dir * dist
+		test.y = 0.0
+		var sdf = NavigationMapManager.get_distance(test)
+		if sdf >= clearance:
+			dest = test
+			found = true
+			break
+		if sdf < 0.0:
+			dist -= min(sdf, -50)
+		else:
+			dist += max(clearance, 50)
 
-		# Try angling ±30° from safe direction
-		var safe_angle = atan2(safe_dir.x, safe_dir.z)
-		for angle_offset in [deg_to_rad(30), -deg_to_rad(30), deg_to_rad(60), -deg_to_rad(60)]:
-			var test_angle = safe_angle + angle_offset
-			var test_dir = Vector3(sin(test_angle), 0.0, cos(test_angle))
-			var test = island_center + test_dir * stand_off
-			test.y = 0.0
-			if NavigationMapManager.is_navigable(test, clearance):
-				return _safe_validate(ship, test)
+	if not found:
+		# Fallback: circle approximation
+		dest = island_center + safe_dir * (island_radius + clearance + 50.0)
+		dest.y = 0.0
 
-	# Fallback: just validate the original position and hope for the best
-	return _safe_validate(ship, dest)
+	return dest
 
 # ============================================================================
 # TANGENTIAL HEADING — align ship parallel to island shore
 # ============================================================================
 
 func _tangential_heading(ship: Ship, island_center: Vector3, from_pos: Vector3) -> float:
-	"""Compute a heading tangential to the island from a fixed reference position.
-	Uses from_pos (typically the nav destination) instead of the ship's current
-	position so the radial direction is stable and doesn't flip-flop as the
-	ship passes through the destination point.
+	"""Compute a heading tangential to the island shore at from_pos using the
+	SDF gradient (actual shore normal) rather than the radial from island center.
 	Picks whichever tangent (CW or CCW) is closest to the ship's current heading."""
-	var to_island = island_center - from_pos
-	to_island.y = 0.0
-	if to_island.length() < 1.0:
-		return _get_ship_heading()
+	if not NavigationMapManager.is_map_ready():
+		# Fallback: radial from island center
+		var to_island = island_center - from_pos
+		to_island.y = 0.0
+		if to_island.length() < 1.0:
+			return _get_ship_heading()
+		var radial = atan2(to_island.x, to_island.z)
+		var cw = _normalize_angle(radial + PI * 0.5)
+		var ccw = _normalize_angle(radial - PI * 0.5)
+		var current = _get_ship_heading()
+		if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
+			return cw
+		return ccw
 
-	var radial = atan2(to_island.x, to_island.z)
-	var cw = _normalize_angle(radial + PI * 0.5)
-	var ccw = _normalize_angle(radial - PI * 0.5)
+	# Sample SDF gradient at from_pos to get the shore normal direction
+	var eps = 25.0  # half cell size for finite difference
+	var dx = NavigationMapManager.get_distance(Vector3(from_pos.x + eps, 0.0, from_pos.z)) \
+		   - NavigationMapManager.get_distance(Vector3(from_pos.x - eps, 0.0, from_pos.z))
+	var dz = NavigationMapManager.get_distance(Vector3(from_pos.x, 0.0, from_pos.z + eps)) \
+		   - NavigationMapManager.get_distance(Vector3(from_pos.x, 0.0, from_pos.z - eps))
+
+	# If gradient is near-zero (far from any land), fall back to radial
+	if dx * dx + dz * dz < 0.0001:
+		var to_island = island_center - from_pos
+		to_island.y = 0.0
+		if to_island.length() < 1.0:
+			return _get_ship_heading()
+		var radial = atan2(to_island.x, to_island.z)
+		var cw = _normalize_angle(radial + PI * 0.5)
+		var ccw = _normalize_angle(radial - PI * 0.5)
+		var current = _get_ship_heading()
+		if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
+			return cw
+		return ccw
+
+	# Gradient points away from land (toward open water).
+	# Tangent is perpendicular to gradient: CW = (-dz, dx), CCW = (dz, -dx)
+	var cw = _normalize_angle(atan2(-dz, dx))
+	var ccw = _normalize_angle(atan2(dz, -dx))
 	var current = _get_ship_heading()
 
 	if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
@@ -376,7 +410,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var has_enemies = server.get_valid_targets(ship.team.team_id).size() > 0 \
 		or not server.get_unspotted_enemies(ship.team.team_id).is_empty()
 	if has_enemies:
-		_cached_safe_dir = _compute_safe_direction(ship, server)
+		var new_safe_dir = _compute_safe_direction(ship, server)
+		# If direction changed significantly, invalidate destination
+		if _nav_destination_valid and _cached_safe_dir.dot(new_safe_dir) < SAFE_DIR_INVALIDATION_DOT:
+			_nav_destination_valid = false
+		_cached_safe_dir = new_safe_dir
 
 	# Find nearest island if we don't have one or need to refresh
 	if not _nav_destination_valid:

@@ -255,12 +255,14 @@ enum class NavState {
 
 // Navigation target — the single struct replacing scattered target fields
 struct NavTarget {
-	Vector2 position;       // Destination XZ
-	float heading;          // Desired heading on arrival (radians)
-	float hold_radius;      // 0 = arrive and stop, >0 = station-keep within this radius
+	Vector2 position;         // Destination XZ
+	float heading;            // Desired heading on arrival (radians)
+	float hold_radius;        // 0 = arrive and stop, >0 = station-keep within this radius
+	float heading_tolerance;  // Acceptable heading error to consider settled (radians)
 
 	NavTarget()
-		: position(Vector2()), heading(0.0f), hold_radius(0.0f) {}
+		: position(Vector2()), heading(0.0f), hold_radius(0.0f),
+		  heading_tolerance(0.2618f) {}  // default ~15 degrees
 };
 
 // --- Math utilities ---
