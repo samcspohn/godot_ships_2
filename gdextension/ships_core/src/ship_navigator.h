@@ -50,7 +50,7 @@ private:
 	// --- Constants ---
 	static constexpr float PATH_REUSE_ABSOLUTE_THRESHOLD = 500.0f;
 	static constexpr float PATH_REUSE_RELATIVE_FRACTION = 0.15f;
-	static constexpr int   REPLAN_FRAME_COOLDOWN = 9;          // ~0.15s at 60fps safety floor
+	static constexpr int   REPLAN_FRAME_COOLDOWN = 30;         // ~0.5s at 60fps — prevents path oscillation
 	static constexpr float HEADING_TOLERANCE = 0.2618f;        // ~15 degrees
 	static constexpr float SPEED_THRESHOLD = 2.0f;             // m/s
 	static constexpr float STUCK_TIME_THRESHOLD = 2.0f;        // seconds at near-zero speed

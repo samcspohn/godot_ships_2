@@ -560,25 +560,40 @@ void ShipNavigator::update_arriving(float delta) {
 		return;
 	}
 
-	// Blend position and heading steering based on proximity
-	float heading_weight = 1.0f - (dist / approach_radius);
-	heading_weight = clamp_f(heading_weight, 0.0f, 0.7f);
+	// Check if the target is behind the ship (overshoot detection)
+	Vector2 to_target = target.position - state.position;
+	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
+	float along_track = to_target.x * forward.x + to_target.y * forward.y;
+	bool target_behind = (along_track < 0.0f);
 
-	float pos_rudder = compute_rudder_to_position(target.position);
-	float heading_rudder = compute_rudder_to_heading(target.heading);
-	float blended_rudder = lerp_f(pos_rudder, heading_rudder, heading_weight);
+	float desired_rudder;
+	int desired_throttle;
 
-	int desired_throttle = compute_throttle_for_approach(dist);
-	desired_throttle = std::min(desired_throttle, 2);  // Don't overshoot
+	if (target_behind && dist > params.ship_beam) {
+		// Target is behind us — reverse to it instead of doing a U-turn
+		desired_rudder = compute_rudder_to_position(target.position, true);
+		desired_throttle = -1;
+	} else {
+		// Target is ahead — blend position and heading steering
+		float heading_weight = 1.0f - (dist / approach_radius);
+		heading_weight = clamp_f(heading_weight, 0.0f, 0.7f);
+
+		float pos_rudder = compute_rudder_to_position(target.position);
+		float heading_rudder = compute_rudder_to_heading(target.heading);
+		desired_rudder = lerp_f(pos_rudder, heading_rudder, heading_weight);
+
+		desired_throttle = compute_throttle_for_approach(dist);
+		desired_throttle = std::min(desired_throttle, 2);  // Don't overshoot
+	}
 
 	// Collision avoidance
 	float ttc;
 	bool collision;
-	float safe_rudder = select_safe_rudder(blended_rudder, desired_throttle, ttc, collision);
+	float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
 	int final_throttle;
 	if (collision) {
-		final_throttle = std::min(desired_throttle, 1);
+		final_throttle = std::min(desired_throttle, target_behind ? -1 : 1);
 	} else {
 		final_throttle = desired_throttle;
 	}
@@ -618,21 +633,37 @@ void ShipNavigator::update_settling(float delta) {
 		return;
 	}
 
-	// --- Forward heading correction ---
-	float heading_rudder = 0.0f;
-	if (heading_error > 0.05f) {
-		heading_rudder = compute_rudder_to_heading(target.heading);
-	}
+	// --- Heading correction with reverse support ---
+	// Check if the target is behind us (we overshot)
+	Vector2 to_target = target.position - state.position;
+	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
+	float along_track = to_target.x * forward.x + to_target.y * forward.y;
+	bool target_behind = (along_track < 0.0f) && (dist > params.ship_beam);
 
-	// Blend in center-seeking when drifting from target position
-	float center_rudder = compute_rudder_to_position(target.position);
-	float center_weight = clamp_f(dist / std::max(target.hold_radius, params.turning_circle_radius * 0.5f), 0.0f, 0.5f);
-	float desired_rudder = lerp_f(heading_rudder, center_rudder, center_weight);
+	float desired_rudder;
+	int desired_throttle;
 
-	// Throttle: enough to maintain rudder authority
-	int desired_throttle = 0;
-	if (heading_error > HEADING_TOLERANCE && speed < SPEED_THRESHOLD * 2.0f) {
-		desired_throttle = 1;
+	if (target_behind) {
+		// Overshot the target — reverse back to it
+		desired_rudder = compute_rudder_to_position(target.position, true);
+		desired_throttle = -1;
+	} else {
+		// Target is ahead or very close — heading correction
+		float heading_rudder = 0.0f;
+		if (heading_error > 0.05f) {
+			heading_rudder = compute_rudder_to_heading(target.heading);
+		}
+
+		// Blend in center-seeking when drifting from target position
+		float center_rudder = compute_rudder_to_position(target.position);
+		float center_weight = clamp_f(dist / std::max(target.hold_radius, params.turning_circle_radius * 0.5f), 0.0f, 0.5f);
+		desired_rudder = lerp_f(heading_rudder, center_rudder, center_weight);
+
+		// Throttle: enough to maintain rudder authority
+		desired_throttle = 0;
+		if (heading_error > HEADING_TOLERANCE && speed < SPEED_THRESHOLD * 2.0f) {
+			desired_throttle = 1;
+		}
 	}
 
 	// Collision avoidance
@@ -665,16 +696,28 @@ void ShipNavigator::update_holding(float delta) {
 		return;
 	}
 
-	// Micro-corrections
-	float rudder = 0.0f;
-	if (heading_error > HEADING_TOLERANCE) {
-		rudder = compute_rudder_to_heading(target.heading);
-		rudder = clamp_f(rudder, -0.3f, 0.3f);
-	}
+	// Check if we've drifted and target is behind us — reverse back
+	Vector2 to_target = target.position - state.position;
+	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
+	float along_track = to_target.x * forward.x + to_target.y * forward.y;
+	bool target_behind = (along_track < 0.0f) && (dist > params.ship_beam * 0.5f);
 
+	float rudder = 0.0f;
 	int throttle = 0;
-	if (std::abs(rudder) > 0.1f && std::abs(state.current_speed) < 1.0f) {
-		throttle = 1;  // Need some speed for rudder authority
+
+	if (target_behind) {
+		// Reverse back to position
+		rudder = compute_rudder_to_position(target.position, true);
+		throttle = -1;
+	} else {
+		// Micro-corrections (forward)
+		if (heading_error > HEADING_TOLERANCE) {
+			rudder = compute_rudder_to_heading(target.heading);
+			rudder = clamp_f(rudder, -0.3f, 0.3f);
+		}
+		if (std::abs(rudder) > 0.1f && std::abs(state.current_speed) < 1.0f) {
+			throttle = 1;  // Need some speed for rudder authority
+		}
 	}
 
 	// Even in holding, check for collisions
@@ -909,16 +952,58 @@ void ShipNavigator::compute_path() {
 		}
 	}
 
-	// Use forward path
+	// Use forward path — but check for side-flip oscillation first.
+	// If we already have a valid path and the new path goes around obstacles
+	// on the opposite side, keep the old path to prevent left-right oscillation.
 	if (forward_result.valid && !forward_result.waypoints.empty()) {
-		current_path = forward_result;
-		path_valid = true;
-		current_wp_index = 0;
-		// Skip the first waypoint if very close (it's our current position)
-		if (current_path.waypoints.size() > 1 &&
-			state.position.distance_to(current_path.waypoints[0]) < params.turning_circle_radius * 0.25f) {
-			current_wp_index = 1;
+		bool should_accept = true;
+
+		if (path_valid && current_path.waypoints.size() >= 2
+			&& forward_result.waypoints.size() >= 2
+			&& current_wp_index < (int)current_path.waypoints.size()) {
+
+			// Compare the side of the new path vs old path relative to the
+			// direct line from ship to destination. Use the cross product of
+			// (ship→dest) × (ship→first_meaningful_waypoint) to determine side.
+			Vector2 to_dest = target.position - state.position;
+
+			// Old path side: use the waypoint the ship is currently heading toward
+			Vector2 old_wp = current_path.waypoints[current_wp_index];
+			Vector2 to_old = old_wp - state.position;
+			float old_cross = to_dest.x * to_old.y - to_dest.y * to_old.x;
+
+			// New path side: use the first waypoint that isn't at the ship position
+			int new_wp_idx = 0;
+			if (forward_result.waypoints.size() > 1 &&
+				state.position.distance_to(forward_result.waypoints[0]) < params.turning_circle_radius * 0.25f) {
+				new_wp_idx = 1;
+			}
+			Vector2 new_wp = forward_result.waypoints[new_wp_idx];
+			Vector2 to_new = new_wp - state.position;
+			float new_cross = to_dest.x * to_new.y - to_dest.y * to_new.x;
+
+			// If sides differ (cross products have opposite signs) and the ship
+			// hasn't deviated far from the old path, keep the old path
+			bool sides_differ = (old_cross * new_cross < 0.0f);
+			float deviation = state.position.distance_to(old_wp);
+			bool ship_on_old_path = (deviation < params.turning_circle_radius * 3.0f);
+
+			if (sides_differ && ship_on_old_path) {
+				should_accept = false;
+			}
 		}
+
+		if (should_accept) {
+			current_path = forward_result;
+			path_valid = true;
+			current_wp_index = 0;
+			// Skip the first waypoint if very close (it's our current position)
+			if (current_path.waypoints.size() > 1 &&
+				state.position.distance_to(current_path.waypoints[0]) < params.turning_circle_radius * 0.25f) {
+				current_wp_index = 1;
+			}
+		}
+		// else: keep current_path unchanged — the ship stays committed to its current side
 	} else {
 		path_valid = false;
 	}
@@ -1656,12 +1741,10 @@ void ShipNavigator::advance_waypoint() {
 		}
 	}
 
-	// If final destination is in dead zone, request replan
-	if (current_wp_index == last_wp && last_wp >= 0 &&
-		is_waypoint_in_turning_dead_zone(current_path.waypoints[last_wp])) {
-		nav_state = NavState::PLANNING;
-		return;
-	}
+	// If final destination is in dead zone, request replan via check_replan_needed
+	// (respects cooldown to prevent oscillation). Don't force PLANNING directly.
+	// The check_replan_needed() dead-zone check at the end of update_navigating
+	// will trigger the replan when the cooldown expires.
 
 	// Clamp to last valid waypoint
 	if (current_wp_index >= static_cast<int>(current_path.waypoints.size())) {
