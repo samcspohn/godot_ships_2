@@ -46,6 +46,7 @@ private:
 	float hold_timer;
 	float stuck_timer;                // Time at near-zero speed while NAVIGATING
 	int replan_frame_cooldown;        // Frame counter, not float timer
+	int settle_dir;                   // Persistent throttle direction during settling (+1 or -1)
 
 	// --- Constants ---
 	static constexpr float PATH_REUSE_ABSOLUTE_THRESHOLD = 500.0f;

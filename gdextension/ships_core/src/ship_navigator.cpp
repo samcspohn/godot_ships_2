@@ -1,4 +1,5 @@
 #include "ship_navigator.h"
+#include "godot_cpp/core/math.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -86,6 +87,7 @@ ShipNavigator::ShipNavigator() {
 	hold_timer = 0.0f;
 	stuck_timer = 0.0f;
 	replan_frame_cooldown = 0;
+	settle_dir = 1;
 	out_rudder = 0.0f;
 	out_throttle = 0;
 	out_collision_imminent = false;
@@ -550,6 +552,7 @@ void ShipNavigator::update_arriving(float delta) {
 	if (dist < params.turning_circle_radius * 0.3f) {
 		nav_state = NavState::SETTLING;
 		settle_timer = 0.0f;
+		settle_dir = 1;  // Start moving forward when settling begins
 		return;
 	}
 
@@ -560,21 +563,23 @@ void ShipNavigator::update_arriving(float delta) {
 		return;
 	}
 
-	// Check if the target is behind the ship (overshoot detection)
+	// Overshoot detection: ship was moving forward and is now past the target.
+	// Use current_speed to determine if we overshot (still moving forward but
+	// target is receding) rather than the instantaneous along_track which flips.
 	Vector2 to_target = target.position - state.position;
-	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
-	float along_track = to_target.x * forward.x + to_target.y * forward.y;
-	bool target_behind = (along_track < 0.0f);
+	Vector2 forward_dir(std::sin(state.heading), std::cos(state.heading));
+	float along_track = to_target.x * forward_dir.x + to_target.y * forward_dir.y;
+	bool overshot = (along_track < -params.ship_beam) && (state.current_speed > -SPEED_THRESHOLD);
 
 	float desired_rudder;
 	int desired_throttle;
 
-	if (target_behind && dist > params.ship_beam) {
-		// Target is behind us — reverse to it instead of doing a U-turn
+	if (overshot) {
+		// Past the target while still moving forward — reverse back
 		desired_rudder = compute_rudder_to_position(target.position, true);
 		desired_throttle = -1;
 	} else {
-		// Target is ahead — blend position and heading steering
+		// Normal approach: blend position and heading steering
 		float heading_weight = 1.0f - (dist / approach_radius);
 		heading_weight = clamp_f(heading_weight, 0.0f, 0.7f);
 
@@ -583,7 +588,7 @@ void ShipNavigator::update_arriving(float delta) {
 		desired_rudder = lerp_f(pos_rudder, heading_rudder, heading_weight);
 
 		desired_throttle = compute_throttle_for_approach(dist);
-		desired_throttle = std::min(desired_throttle, 2);  // Don't overshoot
+		desired_throttle = std::min(desired_throttle, 2);
 	}
 
 	// Collision avoidance
@@ -593,7 +598,7 @@ void ShipNavigator::update_arriving(float delta) {
 
 	int final_throttle;
 	if (collision) {
-		final_throttle = std::min(desired_throttle, target_behind ? -1 : 1);
+		final_throttle = (desired_throttle < 0) ? 0 : std::min(desired_throttle, 1);
 	} else {
 		final_throttle = desired_throttle;
 	}
@@ -623,47 +628,37 @@ void ShipNavigator::update_settling(float delta) {
 		return;
 	}
 
-	// Heading error + slow → plan 3-point turn waypoints
-	// Use a lower threshold (30°) so moderate heading errors get corrected too.
-	// This allows ships (especially CAs at island positions) to maneuver
-	// backward and forward to achieve their desired heading.
-	if (heading_error > Math_PI / 6.0f && speed < SPEED_THRESHOLD * 2.0f && settle_timer > 1.0f) {
-		plan_heading_correction();
-		nav_state = NavState::NAVIGATING;
-		return;
+	// --- Pendulum heading correction ---
+	// The ship bounces forward and backward within the station zone while its
+	// rudder turns it toward the desired heading.
+	// settle_dir (+1 or -1) is the committed motion direction and only flips
+	// when the ship has reached the zone boundary with speed in the outward direction.
+	float zone_radius = std::max(target.hold_radius, params.turning_circle_radius * 0.5f);
+	float zone_edge = zone_radius * 0.8f;
+
+	// Flip settle_dir only when: at zone edge AND moving outward (speed matches settle_dir)
+	// The outward speed check prevents flipping when the ship is decelerating at the edge.
+	float outward_speed = state.current_speed * static_cast<float>(settle_dir);
+	if (dist > zone_edge && outward_speed > SPEED_THRESHOLD) {
+		settle_dir = -settle_dir;
 	}
 
-	// --- Heading correction with reverse support ---
-	// Check if the target is behind us (we overshot)
-	Vector2 to_target = target.position - state.position;
-	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
-	float along_track = to_target.x * forward.x + to_target.y * forward.y;
-	bool target_behind = (along_track < 0.0f) && (dist > params.ship_beam);
-
-	float desired_rudder;
 	int desired_throttle;
-
-	if (target_behind) {
-		// Overshot the target — reverse back to it
-		desired_rudder = compute_rudder_to_position(target.position, true);
-		desired_throttle = -1;
-	} else {
-		// Target is ahead or very close — heading correction
-		float heading_rudder = 0.0f;
-		if (heading_error > 0.05f) {
-			heading_rudder = compute_rudder_to_heading(target.heading);
-		}
-
-		// Blend in center-seeking when drifting from target position
-		float center_rudder = compute_rudder_to_position(target.position);
-		float center_weight = clamp_f(dist / std::max(target.hold_radius, params.turning_circle_radius * 0.5f), 0.0f, 0.5f);
-		desired_rudder = lerp_f(heading_rudder, center_rudder, center_weight);
-
-		// Throttle: enough to maintain rudder authority
+	if (heading_error < HEADING_TOLERANCE) {
 		desired_throttle = 0;
-		if (heading_error > HEADING_TOLERANCE && speed < SPEED_THRESHOLD * 2.0f) {
-			desired_throttle = 1;
-		}
+	} else {
+		desired_throttle = settle_dir;
+	}
+
+	// Rudder steers toward desired heading; flip sense when reversing
+	bool use_reverse = (desired_throttle < 0);
+	float desired_rudder;
+	if (heading_error > Math::deg_to_rad(5)) {
+		desired_rudder = use_reverse
+			? -compute_rudder_to_heading(target.heading)
+			: compute_rudder_to_heading(target.heading);
+	} else {
+		desired_rudder = 0.0f;
 	}
 
 	// Collision avoidance
@@ -696,17 +691,18 @@ void ShipNavigator::update_holding(float delta) {
 		return;
 	}
 
-	// Check if we've drifted and target is behind us — reverse back
+	// Check if the ship has drifted past the target while still moving forward.
+	// Use current_speed to avoid the instantaneous along_track flip.
 	Vector2 to_target = target.position - state.position;
-	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
-	float along_track = to_target.x * forward.x + to_target.y * forward.y;
-	bool target_behind = (along_track < 0.0f) && (dist > params.ship_beam * 0.5f);
+	Vector2 forward_dir(std::sin(state.heading), std::cos(state.heading));
+	float along_track = to_target.x * forward_dir.x + to_target.y * forward_dir.y;
+	bool overshot = (along_track < -params.ship_beam) && (state.current_speed > -SPEED_THRESHOLD);
 
 	float rudder = 0.0f;
 	int throttle = 0;
 
-	if (target_behind) {
-		// Reverse back to position
+	if (overshot) {
+		// Drifted past — reverse back
 		rudder = compute_rudder_to_position(target.position, true);
 		throttle = -1;
 	} else {
@@ -716,7 +712,7 @@ void ShipNavigator::update_holding(float delta) {
 			rudder = clamp_f(rudder, -0.3f, 0.3f);
 		}
 		if (std::abs(rudder) > 0.1f && std::abs(state.current_speed) < 1.0f) {
-			throttle = 1;  // Need some speed for rudder authority
+			throttle = 1;
 		}
 	}
 
