@@ -79,11 +79,11 @@ const TORPEDO_ID_OFFSET: int = -100000
 # INTENT SYSTEM
 # ===========================================================================
 
-## Frame stagger: spread behavior queries across frames to avoid spikes.
-## Increased from 4 to 12 — behaviors that produce slightly varying positions
-## every query (arc movement, spread offsets) were resetting the forward
-## simulation too frequently. 12 frames ≈ 0.2s at 60fps, still responsive.
-const BEHAVIOR_QUERY_INTERVAL: int = 12
+## Min/max interval for behavior queries. Event-driven triggers can force
+## early re-queries (subject to MIN), while MAX ensures periodic updates.
+const MIN_BEHAVIOR_INTERVAL: float = 0.3
+const MAX_BEHAVIOR_INTERVAL: float = 2.0
+var _behavior_timer: float = 0.0
 var bot_id: int = 0
 var _last_intent: NavIntent = null
 
@@ -123,6 +123,12 @@ var _force_intent_next_frame: bool = false
 ## more than once per second. Reset after each forced intent update.
 var _event_cooldown: float = 0.0
 const EVENT_COOLDOWN_DURATION: float = 1.0
+
+## Cached average enemy position for centroid-shift detection.
+var _cached_enemy_avg: Vector3 = Vector3.ZERO
+
+## Last HP bracket (1-4) for threshold-crossing detection. -1 = uninitialized.
+var _last_hp_bracket: int = -1
 
 # ===========================================================================
 # LIFECYCLE
@@ -193,7 +199,8 @@ func _physics_process(delta: float) -> void:
 		get_ship_heading(),
 		_ship.angular_velocity.y,
 		movement.rudder_input,
-		get_current_speed()
+		get_current_speed(),
+		delta
 	)
 
 	# --- 2. Update dynamic obstacles (other ships) ---
@@ -216,13 +223,16 @@ func _physics_process(delta: float) -> void:
 		_check_intent_events()
 
 	# --- 3. Get navigation intent from behavior ---
+	_behavior_timer += delta
 	var should_query_behavior: bool = false
 	if _force_intent_next_frame:
 		should_query_behavior = true
 		_force_intent_next_frame = false
 		_event_cooldown = EVENT_COOLDOWN_DURATION
-	elif Engine.get_physics_frames() % BEHAVIOR_QUERY_INTERVAL == bot_id % BEHAVIOR_QUERY_INTERVAL:
+		_behavior_timer = 0.0
+	elif _behavior_timer >= MAX_BEHAVIOR_INTERVAL:
 		should_query_behavior = true
+		_behavior_timer = 0.0
 
 	if should_query_behavior:
 		_update_nav_intent()
@@ -238,9 +248,12 @@ func _physics_process(delta: float) -> void:
 	# Behaviors can request a minimum throttle (e.g. CAs approaching cover at speed)
 	# to prevent the navigator from decelerating too early.
 	# Only apply when:
+	#   - The navigator is NAVIGATING or AVOIDING (not ARRIVING/SETTLING/HOLDING)
 	#   - The navigator is going forward (throttle >= 0) — never override reverse
 	#   - The navigator isn't signaling collision — never force speed into an obstacle
-	if _last_intent != null and _last_intent.throttle_override >= 0 and throttle >= 0 and not navigator.is_collision_imminent():
+	var nav_st: int = navigator.get_nav_state()
+	var is_approach_phase: bool = nav_st >= 2  # ARRIVING(2), SETTLING(3), HOLDING(4)
+	if _last_intent != null and _last_intent.throttle_override >= 0 and throttle >= 0 and not navigator.is_collision_imminent() and not is_approach_phase:
 		throttle = maxi(throttle, _last_intent.throttle_override)
 
 	# --- 6. Apply behavior speed modifier (DD evasion speed variation etc.) ---
@@ -276,143 +289,60 @@ func _update_nav_intent() -> void:
 		new_intent = behavior.get_nav_intent(target, _ship, server_node)
 	else:
 		# Fallback: use the legacy get_desired_position interface
-		# and wrap its result in a NavIntent.POSITION
+		# and wrap its result in a NavIntent.create
 		var next_destination = behavior.get_desired_position(friendly, enemy, target, destination)
 		if next_destination.distance_to(destination) > movement.turning_circle_radius * 0.5:
 			destination = next_destination
-		new_intent = NavIntent.position(destination)
+		var approach_heading = calculate_desired_heading(destination)
+		new_intent = NavIntent.create(destination, approach_heading)
 
 		# Check if behavior wants to override heading for evasion
 		if _ship.visible_to_enemy and behavior.has_method("get_desired_heading"):
 			var heading_info = behavior.get_desired_heading(target, get_ship_heading(), 0.0, destination)
 			if heading_info.get("use_evasion", false):
-				# Switch to POSE intent with evasion heading
-				new_intent = NavIntent.pose(destination, heading_info.heading)
+				# Override with evasion heading
+				new_intent = NavIntent.create(destination, heading_info.heading)
 
-	# --- Smart comparison: compare the new raw behavior intent against the
-	#     PREVIOUS raw behavior intent (_last_raw_intent), NOT the validated
-	#     _last_intent. This prevents the oscillation cycle where:
-	#       behavior returns A → validate adjusts to A' → next query returns A
-	#       → A' vs A = "different" → re-validate → produces A' again → repeat.
-	#     By comparing raw-to-raw, A vs A = "similar" and we skip re-validation.
+	# --- Smart comparison: compare raw-to-raw to prevent oscillation ---
 	if new_intent != null and _last_raw_intent != null and _is_intent_similar(_last_raw_intent, new_intent):
-		# Intent hasn't meaningfully changed — keep the existing validated one.
-		# Still update heading for POSE/STATION since that's cheap.
-		# if _dbg:
-		# 	print("[NavIntent %s] SIMILAR — keeping old intent (old_raw_pos=%s new_pos=%s dist=%.0f)" % [
-		# 		_ship.name,
-		# 		str(_last_raw_intent.target_position),
-		# 		str(new_intent.target_position),
-		# 		_last_raw_intent.target_position.distance_to(new_intent.target_position)
-		# 	])
 		_last_raw_intent = new_intent
-		if new_intent.mode == NavIntent.Mode.POSE:
-			_last_intent.target_heading = new_intent.target_heading
-		elif new_intent.mode == NavIntent.Mode.STATION_KEEP:
-			_last_intent.preferred_heading = new_intent.preferred_heading
-			_last_intent.target_heading = new_intent.target_heading
+		# Still update heading since that's cheap
+		_last_intent.target_heading = new_intent.target_heading
 		return
-
-	if _dbg:
-		var old_pos_str := str(_last_raw_intent.target_position) if _last_raw_intent != null else "null"
-		var old_mode_str := str(_last_raw_intent.mode) if _last_raw_intent != null else "null"
-		var new_pos_str := str(new_intent.target_position) if new_intent != null else "null"
-		var new_mode_str := str(new_intent.mode) if new_intent != null else "null"
-		var dist_str := "%.0f" % _last_raw_intent.target_position.distance_to(new_intent.target_position) if (_last_raw_intent != null and new_intent != null) else "N/A"
-		print("[NavIntent %s] CHANGED — old_mode=%s old_raw_pos=%s → new_mode=%s new_pos=%s dist=%s frame=%d forced=%s" % [
-			_ship.name, old_mode_str, old_pos_str, new_mode_str, new_pos_str, dist_str,
-			Engine.get_physics_frames(), str(_event_cooldown <= 0.0)
-		])
 
 	# Store the raw behavior intent BEFORE validation modifies it.
 	_last_raw_intent = new_intent
-
 	_last_intent = new_intent
 
 	# --- Validate destination is in navigable water ---
-	# With turning-aware pathfinding, we no longer need multi-heading physics
-	# simulation. Just ensure the destination has adequate clearance from land.
-	# The pathfinder itself produces paths the ship can follow without grounding.
 	if _last_intent != null and NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
 		var turning_radius: float = movement.turning_circle_radius
 		var ship_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
+		var dest_2d := Vector2(_last_intent.target_position.x, _last_intent.target_position.z)
+		if not nav_map.is_navigable(dest_2d.x, dest_2d.y, clearance):
+			var safe := nav_map.safe_nav_point(ship_pos_2d, dest_2d, clearance, turning_radius)
+			_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
 
-		match _last_intent.mode:
-			NavIntent.Mode.POSITION:
-				var dest_2d := Vector2(_last_intent.target_position.x, _last_intent.target_position.z)
-				if not nav_map.is_navigable(dest_2d.x, dest_2d.y, clearance):
-					var safe := nav_map.safe_nav_point(ship_pos_2d, dest_2d, clearance, turning_radius)
-					_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
-			NavIntent.Mode.POSE:
-				var dest_2d := Vector2(_last_intent.target_position.x, _last_intent.target_position.z)
-				if not nav_map.is_navigable(dest_2d.x, dest_2d.y, clearance):
-					var safe := nav_map.safe_nav_point(ship_pos_2d, dest_2d, clearance, turning_radius)
-					_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
-			NavIntent.Mode.STATION_KEEP:
-				var center_2d := Vector2(_last_intent.zone_center.x, _last_intent.zone_center.z)
-				if not nav_map.is_navigable(center_2d.x, center_2d.y, clearance):
-					var safe := nav_map.safe_nav_point(ship_pos_2d, center_2d, clearance, turning_radius)
-					var new_center := Vector3(safe["position"].x, 0.0, safe["position"].y)
-					var shift_dist := _last_intent.zone_center.distance_to(new_center)
-					# Only adjust if the shift is reasonable (not pushed across the map)
-					if shift_dist <= _last_intent.zone_radius * 3.0:
-						_last_intent.zone_center = new_center
-
-	# Track destination from the intent for debug drawing and legacy references
+	# Track destination for debug drawing
 	if _last_intent != null:
-		match _last_intent.mode:
-			NavIntent.Mode.POSITION, NavIntent.Mode.POSE:
-				destination = _last_intent.target_position
-			NavIntent.Mode.STATION_KEEP:
-				destination = _last_intent.zone_center
+		destination = _last_intent.target_position
 
 
 func _execute_nav_intent() -> void:
 	if _last_intent == null:
-		# No intent yet — just navigate toward current destination
-		if int(_ship.name) < 1004 and Engine.get_physics_frames() % 60 == 0:
-			print("[ExecIntent %s] _last_intent is NULL, using destination=%s" % [_ship.name, str(destination)])
-		navigator.navigate_to_position(Vector3(destination.x, 0.0, destination.z))
+		navigator.navigate_to(Vector3(destination.x, 0.0, destination.z), get_ship_heading(), 0.0)
 		return
-
-	match _last_intent.mode:
-		NavIntent.Mode.POSITION:
-			navigator.navigate_to_position(_last_intent.target_position)
-		NavIntent.Mode.ANGLE:
-			navigator.navigate_to_angle(_last_intent.target_heading)
-		NavIntent.Mode.POSE:
-			navigator.navigate_to_pose(_last_intent.target_position, _last_intent.target_heading)
-		NavIntent.Mode.STATION_KEEP:
-			if int(_ship.name) < 1004 && Engine.get_physics_frames() % 20 == 0:
-				print("[BotControllerV4] Executing STATION_KEEP intent: center=%s, radius=%.1f, preferred_heading=%.1f°"
-					% [
-						str(_last_intent.zone_center),
-						_last_intent.zone_radius,
-						rad_to_deg(_last_intent.preferred_heading)
-					]
-				)
-			navigator.station_keep(
-				_last_intent.zone_center,
-				_last_intent.zone_radius,
-				_last_intent.preferred_heading
-			)
+	navigator.navigate_to(
+		_last_intent.target_position,
+		_last_intent.target_heading,
+		_last_intent.hold_radius
+	)
 
 ## Get the current NavIntent mode as a human-readable string (for debug overlay)
 func get_nav_mode_string() -> String:
-	if _last_intent == null:
-		return "NONE"
-	match _last_intent.mode:
-		NavIntent.Mode.POSITION:
-			return "POSITION"
-		NavIntent.Mode.ANGLE:
-			return "ANGLE"
-		NavIntent.Mode.POSE:
-			return "POSE"
-		NavIntent.Mode.STATION_KEEP:
-			return "STATION_KEEP"
-	return "UNKNOWN"
+	return "NAVIGATE"
 
 
 # ===========================================================================
@@ -612,7 +542,29 @@ func _check_intent_events() -> void:
 		_force_intent_next_frame = true
 	_last_friendly_alive_count = alive_count
 
-	# --- 3. Cover position reached or lost (for behaviors that seek cover) ---
+	# --- 3. Enemy centroid shift ---
+	var enemy_avg = server_node.get_enemy_avg_position(_ship.team.team_id)
+	if enemy_avg != Vector3.ZERO:
+		if _cached_enemy_avg != Vector3.ZERO:
+			if enemy_avg.distance_to(_cached_enemy_avg) > 500.0:
+				if _dbg:
+					print("[Event %s] ENEMY_CENTROID_SHIFT %.0f frame=%d" % [_ship.name, enemy_avg.distance_to(_cached_enemy_avg), Engine.get_physics_frames()])
+				_force_intent_next_frame = true
+		_cached_enemy_avg = enemy_avg
+
+	# --- 4. HP threshold crossing ---
+	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+	var hp_bracket: int = 4
+	if hp_ratio < 0.25: hp_bracket = 1
+	elif hp_ratio < 0.50: hp_bracket = 2
+	elif hp_ratio < 0.75: hp_bracket = 3
+	if _last_hp_bracket >= 0 and hp_bracket != _last_hp_bracket:
+		if _dbg:
+			print("[Event %s] HP_BRACKET %d → %d frame=%d" % [_ship.name, _last_hp_bracket, hp_bracket, Engine.get_physics_frames()])
+		_force_intent_next_frame = true
+	_last_hp_bracket = hp_bracket
+
+	# --- 5. Cover position reached or lost (for behaviors that seek cover) ---
 	if behavior != null and "is_in_cover" in behavior:
 		var now_in_cover: bool = behavior.is_in_cover
 		if now_in_cover and not _was_in_cover:
@@ -633,30 +585,13 @@ func _check_intent_events() -> void:
 ## the ship's navigation. This prevents the navigator from discarding its
 ## validated path and forward simulation for trivial position jitter.
 func _is_intent_similar(old_intent: NavIntent, new_intent: NavIntent) -> bool:
-	# Different mode is always a meaningful change
-	if old_intent.mode != new_intent.mode:
+	var pos_dist = old_intent.target_position.distance_to(new_intent.target_position)
+	if pos_dist >= INTENT_POSITION_REUSE_THRESHOLD:
 		return false
-
-	match old_intent.mode:
-		NavIntent.Mode.POSITION:
-			var dist = old_intent.target_position.distance_to(new_intent.target_position)
-			return dist < INTENT_POSITION_REUSE_THRESHOLD
-
-		NavIntent.Mode.ANGLE:
-			var hdiff = absf(_normalize_angle(old_intent.target_heading - new_intent.target_heading))
-			return hdiff < INTENT_HEADING_REUSE_THRESHOLD
-
-		NavIntent.Mode.POSE:
-			var dist = old_intent.target_position.distance_to(new_intent.target_position)
-			# Position must be close; heading is allowed to drift (updated in-place)
-			return dist < INTENT_POSITION_REUSE_THRESHOLD
-
-		NavIntent.Mode.STATION_KEEP:
-			var center_dist = old_intent.zone_center.distance_to(new_intent.zone_center)
-			var radius_diff = absf(old_intent.zone_radius - new_intent.zone_radius)
-			return center_dist < INTENT_POSITION_REUSE_THRESHOLD and radius_diff < 100.0
-
-	return false
+	var radius_diff = absf(old_intent.hold_radius - new_intent.hold_radius)
+	if radius_diff >= 100.0:
+		return false
+	return true
 
 
 func get_current_speed() -> float:
@@ -765,9 +700,8 @@ func get_turn_simulation_points_undesired() -> Array[Vector3]:
 ## Get nav state as a human-readable string
 func get_nav_state_string() -> String:
 	var state_names = [
-		"IDLE", "NAVIGATING", "ARRIVING", "TURNING",
-		"STATION_APPROACH", "STATION_SETTLE", "STATION_HOLDING", "STATION_RECOVER",
-		"AVOIDING", "EMERGENCY"
+		"PLANNING", "NAVIGATING", "ARRIVING",
+		"SETTLING", "HOLDING", "AVOIDING", "EMERGENCY"
 	]
 	var state_idx = navigator.get_nav_state()
 	if state_idx >= 0 and state_idx < state_names.size():

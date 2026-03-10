@@ -1353,6 +1353,14 @@ PackedVector2Array NavigationMap::find_path(Vector2 from, Vector2 to, float clea
 
 PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
 											 float turning_radius) const {
+	// Legacy overload: forward to heading-aware version with NAN (no heading awareness)
+	return find_path_internal(from, to, clearance, turning_radius,
+							  std::numeric_limits<float>::quiet_NaN());
+}
+
+PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
+											 float turning_radius, float start_heading,
+											 float cost_bound) const {
 	PathResult result;
 	result.valid = false;
 	result.total_distance = 0.0f;
@@ -1406,7 +1414,8 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 		return result;
 	}
 
-	// Check if direct line-of-sight exists
+	// Check if direct line-of-sight exists — fast path for open water
+	bool use_heading = !std::isnan(start_heading);
 	if (line_of_sight(sx, sz, ex, ez, clearance_world)) {
 		result.waypoints.push_back(from);
 		result.waypoints.push_back(to);
@@ -1440,12 +1449,32 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	using PQEntry = std::pair<float, int>;
 	std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> open;
 
-	int start_idx = cell_idx(sx, sz);
 	int end_idx = cell_idx(ex, ez);
+	int start_idx = cell_idx(sx, sz);
+
 	g_cost[start_idx] = 0.0f;
-	parent[start_idx] = start_idx;  // self-parent marks start
 	float h = heuristic(sx, sz, ex, ez);
 	open.push({h, start_idx});
+
+	// --- Heading-aware start: synthetic parent direction ---
+	// Instead of creating a virtual departure waypoint, we set the start cell's
+	// parent to a "virtual" cell one step behind the ship along its heading.
+	// This cell doesn't participate in A* — it only provides a direction vector
+	// for the curvature penalty when expanding the start cell's neighbors.
+	// The effect: A* penalizes first-step directions that deviate from the
+	// ship's heading, producing paths the ship can follow without U-turning.
+	if (use_heading && use_curvature_penalty) {
+		// Compute a virtual parent cell one step behind the ship's heading
+		// (i.e. the cell the ship "came from" if it were travelling along its heading)
+		int vp_x = sx - static_cast<int>(std::round(std::sin(start_heading)));
+		int vp_z = sz - static_cast<int>(std::round(std::cos(start_heading)));
+		// Clamp to grid — the cell only needs to produce a valid direction vector
+		vp_x = std::max(0, std::min(vp_x, grid_width - 1));
+		vp_z = std::max(0, std::min(vp_z, grid_height - 1));
+		parent[start_idx] = cell_idx(vp_x, vp_z);
+	} else {
+		parent[start_idx] = start_idx;  // self-parent = no heading bias
+	}
 
 	// 8-connected neighbors
 	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
@@ -1477,6 +1506,11 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 		int cx = ci % grid_width;
 		int cz = ci / grid_width;
 		float cg = g_cost[ci];
+
+		// Early termination: if g_cost exceeds the bound, no cheaper path exists
+		if (cg > cost_bound) {
+			break;
+		}
 
 		// Get grandparent direction for turn-angle penalty
 		int parent_idx = parent[ci];
@@ -1576,12 +1610,12 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			path.push_back(Vector2(wx, wz));
 
 			int pi = parent[ci];
-			if (pi == ci) break;  // safety: self-parent = start
+			if (pi == ci || pi < 0) break;  // safety
 			ci = pi;
 		}
 	}
 
-	// Add start
+	// Add ship's actual position (from) as the first point
 	path.push_back(from);
 
 	// Reverse to get start-to-end order
@@ -1594,7 +1628,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 	// --- Path simplification using grid-level LOS (fast) ---
 	// Greedy funnel: from current waypoint, find the farthest visible waypoint
-	// Uses grid-level line_of_sight which is O(max_grid_distance) per check
 	if (path.size() > 2) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
@@ -1604,7 +1637,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			size_t farthest = current + 1;
 
 			for (size_t test = path.size() - 1; test > current + 1; test--) {
-				// Convert world positions to grid for fast LOS check
 				float gx0, gz0, gx1, gz1;
 				world_to_grid(path[current].x, path[current].y, gx0, gz0);
 				world_to_grid(path[test].x, path[test].y, gx1, gz1);
@@ -1615,7 +1647,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 				if (line_of_sight(ix0, iz0, ix1, iz1, clearance_world)) {
 					farthest = test;
-					break;  // Found farthest visible; done for this segment
+					break;
 				}
 			}
 
@@ -1626,9 +1658,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	}
 
 	// --- Catmull-Rom smoothing at sharp waypoints (only when turning-radius-aware) ---
-	// Insert intermediate points along curves where the turn angle exceeds what
-	// the ship's turning circle can comfortably handle. This gives the ship a
-	// smooth trajectory instead of point-to-point segments with sharp bends.
 	if (use_curvature_penalty && path.size() >= 3) {
 		// Threshold: if the turn angle at a waypoint exceeds this, smooth it
 		float clearance_in_cells = clearance_world / cell_size;

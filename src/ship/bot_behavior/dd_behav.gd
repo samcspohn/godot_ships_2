@@ -265,9 +265,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			#fallback.y = 0.0
 			var fallback = _get_valid_nav_point(base_intent_pos)
 			var approach_heading = _calc_approach_heading(ship, fallback)
-			return NavIntent.pose(fallback, approach_heading)
+			return NavIntent.create(fallback, approach_heading)
 		var hunt_heading = _calc_approach_heading(ship, hunt_dest)
-		return NavIntent.pose(hunt_dest, hunt_heading)
+		return NavIntent.create(hunt_dest, hunt_heading)
 
 	var concealment_radius = (ship.concealment.params.p() as ConcealmentParams).radius
 	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
@@ -313,7 +313,7 @@ func _get_retreat_intent(ship: Ship, enemy: Array[Ship], friendly: Array[Ship], 
 	desired_position += separation * 500.0
 	desired_position = _get_valid_nav_point(desired_position)
 	var retreat_heading = _calc_approach_heading(ship, desired_position)
-	return NavIntent.pose(desired_position, retreat_heading)
+	return NavIntent.create(desired_position, retreat_heading)
 
 
 func _get_torpedo_run_intent(ship: Ship, target: Ship, concealment_radius: float, separation: Vector3) -> NavIntent:
@@ -344,10 +344,11 @@ func _get_torpedo_run_intent(ship: Ship, target: Ship, concealment_radius: float
 	# If we have torpedoes, use POSE to arrive at optimal launch heading
 	if torpedo_range > 0:
 		var launch_heading = _calculate_torpedo_launch_heading(ship, target, desired_position)
-		return NavIntent.pose(desired_position, launch_heading)
+		return NavIntent.create(desired_position, launch_heading)
 
 	# No torpedoes — just navigate to flank position
-	return NavIntent.position(desired_position)
+	var approach_heading = _calc_approach_heading(ship, desired_position)
+	return NavIntent.create(desired_position, approach_heading)
 
 
 func _calculate_torpedo_launch_heading(ship: Ship, target: Ship, launch_pos: Vector3) -> float:

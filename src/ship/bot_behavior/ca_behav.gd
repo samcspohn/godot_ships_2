@@ -413,10 +413,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	if arrived:
 		# Station-keep at our island position
-		return NavIntent.station(_nav_destination, arrival_radius * 0.5, heading)
+		return NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
 
 	# Approach the island — full speed when far, slow down near
-	var intent = NavIntent.pose(_nav_destination, heading)
+	var intent = NavIntent.create(_nav_destination, heading)
 	if dist_to_dest > 500.0:
 		intent.throttle_override = 4
 	elif dist_to_dest > 200.0:
@@ -436,4 +436,4 @@ func _intent_sail_forward(ship: Ship) -> NavIntent:
 	var dest = ship.global_position + fwd.normalized() * 5000.0
 	dest.y = 0.0
 	dest = _get_valid_nav_point(dest)
-	return NavIntent.pose(dest, atan2(fwd.x, fwd.z))
+	return NavIntent.create(dest, atan2(fwd.x, fwd.z))

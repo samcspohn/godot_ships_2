@@ -1094,7 +1094,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if ship.visible_to_enemy and target != null:
 		var heading_info = get_desired_heading(target, _get_ship_heading(), 0.0, dest)
 		if heading_info.get("use_evasion", false):
-			return NavIntent.pose(dest, heading_info.heading)
+			return NavIntent.create(dest, heading_info.heading)
 
 	# --- compute approach heading so we always return POSE ---
 	var to_dest = dest - ship.global_position
@@ -1103,7 +1103,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if to_dest.length_squared() > 1.0:
 		approach_heading = atan2(to_dest.x, to_dest.z)
 
-	return NavIntent.pose(dest, approach_heading)
+	return NavIntent.create(dest, approach_heading)
 
 # ============================================================================
 # COMBAT

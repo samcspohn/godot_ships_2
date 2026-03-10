@@ -754,13 +754,17 @@ func _draw_bot_debug_nav_path() -> void:
 	if bot_debug_nav_path.size() < 1:
 		return
 
-	# Draw spheres at each path point with a gradient from white to magenta
+	# Draw spheres at each path point with a gradient from white to magenta.
+	# Reverse waypoints use a darker color scheme.
 	# First point is the ship's position (prepended on the server side),
 	# so we skip drawing a sphere for index 0 and start the gradient from index 1.
+	# Y channel encodes waypoint flags: 0=normal, 1=reverse, 2=departure, 3=reverse+departure
 	var path_count = bot_debug_nav_path.size()
 	for i in range(path_count):
 		var point = bot_debug_nav_path[i]
-		point.y += 50.0  # Raise above water level for visibility
+		var wp_flags: int = int(point.y) if i > 0 else 0  # index 0 is prepended ship pos
+		var is_reverse: bool = (wp_flags & 1) != 0
+		point.y = 50.0  # Raise above water level for visibility
 
 		var path_sphere = MeshInstance3D.new()
 		path_sphere.name = "NavPathPoint_%d" % i
@@ -777,8 +781,13 @@ func _draw_bot_debug_nav_path() -> void:
 		path_sphere.mesh = sphere_mesh
 
 		# Gradient from white (start) to magenta (end)
+		# Reverse waypoints use a dark red/maroon color
 		var t = float(i) / float(max(path_count - 1, 1))
-		var color = Color(1.0, 1.0 - t, 1.0)  # White to magenta
+		var color: Color
+		if is_reverse:
+			color = Color(0.5, 0.1, 0.1)  # Dark red for reverse
+		else:
+			color = Color(1.0, 1.0 - t, 1.0)  # White to magenta
 
 		var material = StandardMaterial3D.new()
 		material.albedo_color = color

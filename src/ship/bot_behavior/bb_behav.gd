@@ -217,8 +217,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 			var fallback = base_intent_pos
 			fallback = _get_valid_nav_point(fallback)
-			return NavIntent.pose(fallback, _calc_approach_heading(ship, fallback))
-		return NavIntent.pose(hunt_dest, _calc_approach_heading(ship, hunt_dest))
+			return NavIntent.create(fallback, _calc_approach_heading(ship, fallback))
+		return NavIntent.create(hunt_dest, _calc_approach_heading(ship, hunt_dest))
 
 	# --- Engagement: calculate tactical position with arc movement ---
 	var gun_range = ship.artillery_controller.get_params()._range
@@ -245,9 +245,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Blend evasion with broadside: evasion takes priority but keep broadside influence
 			var evasion_heading: float = heading_info.heading
 			var blended = _normalize_angle(evasion_heading * 0.6 + broadside_heading * 0.4)
-			return NavIntent.pose(desired_position, blended)
+			return NavIntent.create(desired_position, blended)
 
-	return NavIntent.pose(desired_position, broadside_heading)
+	return NavIntent.create(desired_position, broadside_heading)
 
 
 ## Compute approach heading from ship to destination

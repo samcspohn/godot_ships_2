@@ -26,8 +26,10 @@ struct ArcPoint {
 // Per-waypoint metadata flags
 enum WaypointFlags : uint8_t {
 	WP_NONE            = 0,
-	WP_REVERSE_SEGMENT = 1 << 0,  // Ship should reverse through this segment
+	WP_REVERSE         = 1 << 0,  // Ship should reverse through this segment
+	WP_REVERSE_SEGMENT = WP_REVERSE, // Backward-compatible alias
 	WP_SMOOTHED        = 1 << 1,  // This waypoint was inserted by Catmull-Rom smoothing
+	WP_DEPARTURE       = 1 << 2,  // Departure/recovery waypoint (prepended by planner)
 };
 
 // Result of pathfinding
@@ -240,27 +242,25 @@ struct AvoidanceState {
 	}
 };
 
-// Navigation state machine states
+// Navigation state machine states (V5 unified)
 enum class NavState {
-	IDLE = 0,
-	NAVIGATING = 1,       // following path to waypoint
-	ARRIVING = 2,         // decelerating near destination
-	TURNING = 3,          // executing angle-only navigation
-	STATION_APPROACH = 4, // heading to station-keep zone
-	STATION_SETTLE = 5,   // slowing down inside zone
-	STATION_HOLDING = 6,  // maintaining position in zone
-	STATION_RECOVER = 7,  // drifted out of zone, returning
-	AVOIDING = 8,         // collision avoidance override active
-	EMERGENCY = 9,        // emergency reverse/evasion
+	PLANNING    = 0,  // Computing path (transitions out within same frame)
+	NAVIGATING  = 1,  // Following waypoints forward or reverse (per waypoint flag)
+	ARRIVING    = 2,  // Within approach radius, blending position + heading
+	SETTLING    = 3,  // At position, correcting heading via short maneuvers
+	HOLDING     = 4,  // Position + heading achieved, micro-corrections only
+	AVOIDING    = 5,  // Collision avoidance temporarily overriding steering
+	EMERGENCY   = 6,  // Last-resort gradient escape
 };
 
-// Navigation mode (what the navigator is trying to do)
-enum class NavMode {
-	NONE = 0,
-	POSITION = 1,
-	ANGLE = 2,
-	POSE = 3,
-	STATION_KEEP = 4,
+// Navigation target — the single struct replacing scattered target fields
+struct NavTarget {
+	Vector2 position;       // Destination XZ
+	float heading;          // Desired heading on arrival (radians)
+	float hold_radius;      // 0 = arrive and stop, >0 = station-keep within this radius
+
+	NavTarget()
+		: position(Vector2()), heading(0.0f), hold_radius(0.0f) {}
 };
 
 // --- Math utilities ---

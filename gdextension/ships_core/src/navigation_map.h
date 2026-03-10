@@ -198,6 +198,14 @@ public:
 	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
 								  float turning_radius = 0.0f) const;
 
+	// Heading-aware overload: seeds A* with a virtual departure point so the
+	// curvature penalty kicks in from the first step.
+	// start_heading: ship's current heading (radians, 0 = +Z). NAN = legacy behavior.
+	// cost_bound: A* aborts if g_cost exceeds this (for early termination of reverse search).
+	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
+								  float turning_radius, float start_heading,
+								  float cost_bound = std::numeric_limits<float>::infinity()) const;
+
 	// --- Island data ---
 
 	// Get all detected islands as an array of Dictionaries
