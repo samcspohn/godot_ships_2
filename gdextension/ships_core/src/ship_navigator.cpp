@@ -483,21 +483,50 @@ void ShipNavigator::update_navigating(float delta) {
 		steer_target = target.position;
 	}
 
-	// --- 4. Compute steering ---
-	float desired_rudder = compute_rudder_to_position(steer_target, use_reverse);
+	// --- 4. Pure pursuit path following ---
+	// Instead of steering toward a single waypoint, find a lookahead point
+	// along the path and compute the arc curvature to reach it.  This
+	// naturally considers multiple upcoming waypoints and produces smooth
+	// arcs that match the planned turning circles.
+	float desired_rudder;
+
+	if (!use_reverse && path_valid) {
+		float R = params.turning_circle_radius;
+		float speed = std::max(std::abs(state.current_speed), 1.0f);
+		float lookahead = std::max(R * 2.0f, speed * 5.0f);
+
+		Vector2 lookahead_pt = find_path_lookahead(lookahead);
+
+		// Pure pursuit curvature: κ = 2 * lateral_offset / dist²
+		Vector2 to_target = lookahead_pt - state.position;
+		float forward_x = std::sin(state.heading);
+		float forward_z = std::cos(state.heading);
+
+		float along  = to_target.x * forward_x + to_target.y * forward_z;
+		float lateral = to_target.x * forward_z - to_target.y * forward_x;
+		float dist_sq = to_target.x * to_target.x + to_target.y * to_target.y;
+		if (dist_sq < 1.0f) dist_sq = 1.0f;
+
+		float curvature = 2.0f * lateral / dist_sq;
+
+		// Convert curvature to rudder: at max curvature (1/R), full rudder.
+		// Positive lateral = target is to starboard = turn right = rudder -1.
+		desired_rudder = clamp_f(-curvature * R, -1.0f, 1.0f);
+
+		// If the lookahead point is behind us (along < 0), fall back to
+		// heading-based steering toward the current waypoint
+		if (along < 0.0f) {
+			desired_rudder = compute_rudder_to_position(steer_target, false);
+		}
+	} else {
+		desired_rudder = compute_rudder_to_position(steer_target, use_reverse);
+	}
 
 	int desired_throttle;
 	if (use_reverse) {
 		desired_throttle = -1;
 	} else {
-		// desired_throttle = compute_throttle_for_approach(dist_to_dest);
-		// float turn_angle = std::abs(angle_difference(state.heading,
-		// 	std::atan2(steer_target.x - state.position.x,
-		// 			   steer_target.y - state.position.y)));
-		// if (turn_angle > Math_PI * 0.5f && desired_throttle > 2) {
-		// 	desired_throttle = 2;
-		// }
-		desired_throttle = 4;  // full forward, no speed limit while navigating (except collision avoidance)
+		desired_throttle = 4;
 	}
 
 	// --- 5. Collision avoidance ---
@@ -895,15 +924,13 @@ void ShipNavigator::compute_path() {
 	float comfortable_clearance = std::min(min_clearance + params.ship_beam * 0.5f, min_clearance * 2.0f);
 	float turning_radius = params.turning_circle_radius;
 
-	// --- Forward path (heading-aware) ---
+	// --- Forward path (heading-aware, soft clearance fallback) ---
+	// Single A* call with min_clearance as hard limit and comfortable_clearance
+	// as the preferred clearance.  Cells between the two are navigable but
+	// penalized, eliminating the need for a separate fallback call.
 	PathResult forward_result = map->find_path_internal(
-		state.position, target.position, comfortable_clearance, turning_radius, state.heading);
-
-	if (!forward_result.valid || forward_result.waypoints.empty()) {
-		// Fallback: minimum clearance, still heading-aware
-		forward_result = map->find_path_internal(
-			state.position, target.position, min_clearance, turning_radius, state.heading);
-	}
+		state.position, target.position, min_clearance, turning_radius, state.heading,
+		std::numeric_limits<float>::infinity(), comfortable_clearance);
 
 	if (!forward_result.valid || forward_result.waypoints.empty()) {
 		// Last resort: half minimum clearance, no turning penalty, no heading
@@ -925,17 +952,10 @@ void ShipNavigator::compute_path() {
 	if (try_reverse) {
 		// Reverse heading = heading + PI
 		float reverse_heading = angle_difference(0.0f, state.heading + Math_PI);
-		// Use heading-aware A* with cost_bound for early termination
+		// Single call with soft clearance + cost_bound for early termination
 		PathResult reverse_result = map->find_path_internal(
-			state.position, target.position, comfortable_clearance, turning_radius,
-			reverse_heading, forward_result.total_distance);
-
-		if (!reverse_result.valid || reverse_result.waypoints.empty()) {
-			// Fallback: minimum clearance
-			reverse_result = map->find_path_internal(
-				state.position, target.position, min_clearance, turning_radius,
-				reverse_heading, forward_result.total_distance);
-		}
+			state.position, target.position, min_clearance, turning_radius,
+			reverse_heading, forward_result.total_distance, comfortable_clearance);
 
 		if (reverse_result.valid && !reverse_result.waypoints.empty()
 			&& reverse_result.total_distance < forward_result.total_distance) {
@@ -1341,19 +1361,27 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading) const {
 
 	float rudder;
 
+	// Tighter proportional band: full rudder at π/6 (~30°) to match the
+	// arc geometry the pathfinder plans at minimum turning radius.
+	const float full_rudder_threshold = static_cast<float>(Math_PI / 6.0);
+
 	if (abs_effective_diff < 0.02f) {
 		rudder = 0.0f;
-	} else if (abs_effective_diff > Math_PI * 0.25f) {
+	} else if (abs_effective_diff > full_rudder_threshold) {
 		rudder = (effective_diff > 0.0f) ? -1.0f : 1.0f;
 	} else {
-		float t = (abs_effective_diff - 0.02f) / (Math_PI * 0.25f - 0.02f);
+		float t = (abs_effective_diff - 0.02f) / (full_rudder_threshold - 0.02f);
 		rudder = lerp_f(0.1f, 1.0f, t);
 		if (effective_diff < 0.0f) rudder = -rudder;
 		rudder = -rudder;
 	}
 
-	if (abs_diff < std::abs(state.angular_velocity_y * params.rudder_response_time * 0.5f)) {
-		float lead_factor = abs_diff / std::max(0.01f, std::abs(state.angular_velocity_y * params.rudder_response_time * 0.5f));
+	// Lead damping: reduce rudder when angular velocity is already closing
+	// the heading error. Use a gentler factor (0.3) to avoid undercutting
+	// the tighter turns the pathfinder expects.
+	float lead_threshold = std::abs(state.angular_velocity_y * params.rudder_response_time * 0.3f);
+	if (abs_diff < lead_threshold) {
+		float lead_factor = abs_diff / std::max(0.01f, lead_threshold);
 		rudder *= lead_factor;
 	}
 
@@ -1824,4 +1852,33 @@ bool ShipNavigator::is_waypoint_in_turning_dead_zone(Vector2 waypoint) const {
 	float threshold = r * 0.9f;
 
 	return (dist_starboard < threshold || dist_port < threshold);
+}
+
+Vector2 ShipNavigator::find_path_lookahead(float lookahead_dist) const {
+	if (!path_valid || current_path.waypoints.empty()) return target.position;
+
+	int last = static_cast<int>(current_path.waypoints.size()) - 1;
+	int idx = current_wp_index;
+	if (idx > last) idx = last;
+
+	Vector2 pos = state.position;
+	float remaining = lookahead_dist;
+
+	while (remaining > 0.0f && idx <= last) {
+		Vector2 wp = current_path.waypoints[idx];
+		float seg_dist = pos.distance_to(wp);
+
+		if (seg_dist >= remaining) {
+			// Lookahead point is on this segment
+			Vector2 dir = (wp - pos).normalized();
+			return pos + dir * remaining;
+		}
+
+		remaining -= seg_dist;
+		pos = wp;
+		idx++;
+	}
+
+	// Ran out of path — return last waypoint
+	return current_path.waypoints[last];
 }

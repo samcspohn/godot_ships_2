@@ -1419,9 +1419,24 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 							  std::numeric_limits<float>::quiet_NaN());
 }
 
+// Precomputed sin/cos for 16 heading bins (22.5° each, bin k = k*PI/8)
+// Eliminates per-expansion trig calls in the Hybrid A* inner loop.
+static const float hbin_sin[16] = {
+	 0.00000f,  0.38268f,  0.70711f,  0.92388f,
+	 1.00000f,  0.92388f,  0.70711f,  0.38268f,
+	 0.00000f, -0.38268f, -0.70711f, -0.92388f,
+	-1.00000f, -0.92388f, -0.70711f, -0.38268f
+};
+static const float hbin_cos[16] = {
+	 1.00000f,  0.92388f,  0.70711f,  0.38268f,
+	 0.00000f, -0.38268f, -0.70711f, -0.92388f,
+	-1.00000f, -0.92388f, -0.70711f, -0.38268f,
+	 0.00000f,  0.38268f,  0.70711f,  0.92388f
+};
+
 PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
 											 float turning_radius, float start_heading,
-											 float cost_bound) const {
+											 float cost_bound, float soft_clearance) const {
 	PathResult result;
 	result.valid = false;
 	result.total_distance = 0.0f;
@@ -1431,6 +1446,11 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	// The SDF grid stores world-unit distances (meters), so clearance for
 	// cell-level checks stays in world units — no conversion needed.
 	float clearance_world = clearance;
+
+	// Soft clearance: cells between clearance and soft_clearance are navigable
+	// but penalized, allowing a single A* call to handle clearance fallback.
+	float soft_clearance_world = (soft_clearance > clearance) ? soft_clearance : 0.0f;
+	bool use_soft_clearance = (soft_clearance_world > 0.0f);
 
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
@@ -1573,9 +1593,16 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	float chord_22_5 = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 16.0));  // 22.5°
 	float chord_45   = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 8.0));   // 45°
 
+	// Rudder shift penalty: models the distance the ship travels while the
+	// rudder transitions between positions.  Approximated as R * 0.25 (the
+	// ship covers ~1/4 turning radius worth of distance during a full
+	// rudder shift).  Applied in grid cells when the action changes from
+	// straight to arc, or between left/right arcs.
+	float rudder_shift_cells = turning_radius * 0.25f / cell_size;
+
 	bool found = false;
 	int iterations = 0;
-	const int MAX_ITERATIONS = std::min(total_cells, 200000);
+	const int MAX_ITERATIONS = std::min(total_cells, 300000);
 
 	while (!open.empty() && iterations < MAX_ITERATIONS) {
 		iterations++;
@@ -1604,9 +1631,24 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			// ---- Hybrid A* with arc-based expansion ----
 			int8_t cur_hbin = astar_parent_dir_[ci];
 			if (cur_hbin < 0) cur_hbin = 0;
-			float theta = cur_hbin * static_cast<float>(Math_PI / 8.0);
-			float sin_t = std::sin(theta);
-			float cos_t = std::cos(theta);
+			float sin_t = hbin_sin[cur_hbin];
+			float cos_t = hbin_cos[cur_hbin];
+
+			// Infer parent's rudder state for shift cost:
+			// If the parent had a different heading → parent was turning (arc)
+			// Track the turn direction: -1 = left, 0 = straight, +1 = right
+			int parent_turn_dir = 0;
+			int pi = astar_parent_[ci];
+			if (pi != ci && pi >= 0 && pi < total_cells
+				&& astar_open_gen_[pi] == astar_current_gen_) {
+				int8_t parent_hbin = astar_parent_dir_[pi];
+				if (parent_hbin >= 0 && parent_hbin != cur_hbin) {
+					int d = static_cast<int>(cur_hbin) - static_cast<int>(parent_hbin);
+					if (d > 8) d -= 16;
+					if (d < -8) d += 16;
+					parent_turn_dir = (d > 0) ? 1 : -1;
+				}
+			}
 
 			bool any_arc_expanded = false;
 
@@ -1634,7 +1676,15 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 								float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
 								prox_cost = dist * ratio * 0.15f;
 							}
-							float new_g = cg + dist + prox_cost;
+							// Soft clearance penalty: navigable but not preferred
+							if (use_soft_clearance && landing_sdf < soft_clearance_world) {
+								float tight_ratio = (soft_clearance_world - landing_sdf)
+									/ (soft_clearance_world - clearance_world);
+								prox_cost += dist * tight_ratio * 2.0f;
+							}
+							// Rudder shift: if parent was turning, rudder returns to center
+							float shift_cost = (parent_turn_dir != 0) ? rudder_shift_cells : 0.0f;
+							float new_g = cg + dist + prox_cost + shift_cost;
 							bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
 											  || (new_g < astar_g_cost_[nidx]);
 							if (is_better) {
@@ -1669,17 +1719,18 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 				int delta = arc_bin_deltas[a];
 				int new_hbin = ((cur_hbin + delta) % 16 + 16) % 16;
-				float new_theta = new_hbin * static_cast<float>(Math_PI / 8.0);
+				float cos_new = hbin_cos[new_hbin];
+				float sin_new = hbin_sin[new_hbin];
 
 				float dx_grid, dz_grid;
 				if (delta < 0) {
 					// Left turn: center at (x - R*cos θ, z + R*sin θ)
-					dx_grid = R_grid * (-cos_t + std::cos(new_theta));
-					dz_grid = R_grid * (sin_t - std::sin(new_theta));
+					dx_grid = R_grid * (-cos_t + cos_new);
+					dz_grid = R_grid * (sin_t - sin_new);
 				} else {
 					// Right turn: center at (x + R*cos θ, z - R*sin θ)
-					dx_grid = R_grid * (cos_t - std::cos(new_theta));
-					dz_grid = R_grid * (-sin_t + std::sin(new_theta));
+					dx_grid = R_grid * (cos_t - cos_new);
+					dz_grid = R_grid * (-sin_t + sin_new);
 				}
 
 				int nx = cx + static_cast<int>(std::round(dx_grid));
@@ -1704,6 +1755,24 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 					arc_cost += arc_cost * ratio * 0.15f;
 				}
 
+				// Soft clearance penalty
+				if (use_soft_clearance && landing_sdf < soft_clearance_world) {
+					float tight_ratio = (soft_clearance_world - landing_sdf)
+						/ (soft_clearance_world - clearance_world);
+					arc_cost += arc_cost * tight_ratio * 2.0f;
+				}
+
+				// Rudder shift cost: penalty for changing rudder state.
+				// Same direction as parent: free. From straight: 1x shift.
+				// Opposite direction: 2x shift (full rudder reversal).
+				int this_turn_dir = (delta < 0) ? -1 : 1;
+				if (parent_turn_dir == 0) {
+					arc_cost += rudder_shift_cells;              // straight → arc
+				} else if (parent_turn_dir != this_turn_dir) {
+					arc_cost += rudder_shift_cells * 2.0f;       // arc reversal
+				}
+				// else: continuing same turn direction, no shift
+
 				float new_g = cg + arc_cost;
 				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
 								  || (new_g < astar_g_cost_[nidx]);
@@ -1722,13 +1791,16 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			// Heading change is capped at ±2 bins (45°) per step to
 			// prevent impossible sharp turns the ship can't follow.
 			if (!any_arc_expanded) {
+				// Heading bin for each of the 8 grid directions (precomputed)
+				// dx8 = {-1, 0, 1, -1, 1, -1, 0, 1}
+				// dz8 = {-1,-1,-1,  0, 0,  1, 1, 1}
+				static const int8_t grid_dir_hbin[8] = {
+					10, 8, 6,   // (-1,-1)=225°→bin10, (0,-1)=180°→bin8, (1,-1)=135°→bin6
+					12, 4,      // (-1,0)=270°→bin12, (1,0)=90°→bin4
+					14, 0, 2    // (-1,1)=315°→bin14, (0,1)=0°→bin0, (1,1)=45°→bin2
+				};
 				for (int d = 0; d < 8; d++) {
-					// Derive heading bin from grid direction
-					float dir_angle = std::atan2(
-						static_cast<float>(dx8[d]), static_cast<float>(dz8[d]));
-					if (dir_angle < 0) dir_angle += static_cast<float>(Math_TAU);
-					int new_hbin = static_cast<int>(
-						std::round(dir_angle / (Math_PI / 8.0))) % 16;
+					int new_hbin = grid_dir_hbin[d];
 
 					// Reject directions requiring > 45° turn (2 heading bins)
 					int turn_bins = std::abs(new_hbin - static_cast<int>(cur_hbin));
@@ -1760,6 +1832,12 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 					if (sdf_cells < turning_radius_cells * 2.0f) {
 						float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
 						prox_cost = step_dist * ratio * 0.15f;
+					}
+					// Soft clearance penalty
+					if (use_soft_clearance && landing_sdf < soft_clearance_world) {
+						float tight_ratio = (soft_clearance_world - landing_sdf)
+							/ (soft_clearance_world - clearance_world);
+						prox_cost += step_dist * tight_ratio * 2.0f;
 					}
 
 					float new_g = cg + step_dist + turn_cost + prox_cost;
@@ -1807,7 +1885,14 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				}
 
 				float step_dist = is_diag ? (max_jump * 1.414f) : static_cast<float>(max_jump);
-				float new_g = cg + step_dist;
+				// Soft clearance penalty (non-curvature path)
+				float soft_penalty = 0.0f;
+				if (use_soft_clearance && landing_sdf < soft_clearance_world) {
+					float tight_ratio = (soft_clearance_world - landing_sdf)
+						/ (soft_clearance_world - clearance_world);
+					soft_penalty = step_dist * tight_ratio * 2.0f;
+				}
+				float new_g = cg + step_dist + soft_penalty;
 
 				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
 								 || (new_g < astar_g_cost_[nidx]);

@@ -128,6 +128,10 @@ private:
 	bool is_waypoint_in_turning_dead_zone(Vector2 waypoint) const;
 	float get_reach_radius() const;
 
+	// Walk along the path from current position for `lookahead_dist` meters
+	// and return the interpolated point.  Used by pure pursuit steering.
+	Vector2 find_path_lookahead(float lookahead_dist) const;
+
 	// --- Path management ---
 
 	// Compute path from current position to target (replaces maybe_recalc_path)

@@ -234,9 +234,12 @@ public:
 	// curvature penalty kicks in from the first step.
 	// start_heading: ship's current heading (radians, 0 = +Z). NAN = legacy behavior.
 	// cost_bound: A* aborts if g_cost exceeds this (for early termination of reverse search).
+	// soft_clearance: preferred clearance (> clearance). Cells between clearance and
+	//   soft_clearance are navigable but penalized, eliminating multi-pass fallback.
 	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
 								  float turning_radius, float start_heading,
-								  float cost_bound = std::numeric_limits<float>::infinity()) const;
+								  float cost_bound = std::numeric_limits<float>::infinity(),
+								  float soft_clearance = 0.0f) const;
 
 	// --- Island data ---
 

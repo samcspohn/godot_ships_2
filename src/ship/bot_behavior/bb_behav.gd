@@ -109,7 +109,8 @@ func target_aim_offset(_target: Ship) -> Vector3:
 		Ship.ShipClass.DD:
 			# HE at destroyers
 			ammo = ShellParams.ShellType.HE
-			offset.y = 1.0
+			offset.y = 2.0
+			offset.z = _target.movement_controller.ship_length * 0.25
 	return offset
 
 # ============================================================================
