@@ -45,6 +45,32 @@ private:
 	// --- Island data ---
 	std::vector<IslandData> islands;
 
+	// --- Reusable A* buffers (mutable for use in const pathfinding methods) ---
+	mutable std::vector<float> astar_g_cost_;
+	mutable std::vector<int> astar_parent_;        // cell index for path reconstruction
+	mutable std::vector<int8_t> astar_parent_dir_; // direction index 0-7, -1 = no parent
+	mutable std::vector<uint32_t> astar_open_gen_;  // generation when g_cost was written
+	mutable std::vector<uint32_t> astar_closed_gen_; // generation when cell was closed
+	mutable uint32_t astar_current_gen_ = 0;
+
+	// Precomputed turn angle (radians) between each pair of 8-connected directions
+	float turn_angle_lut_[8][8];
+
+	// Allocate A* buffers to match current grid size (call after grid_width/height are set)
+	void allocate_astar_buffers();
+
+	// Map a (dx, dz) offset to direction index 0-7, or -1 if invalid
+	static inline int8_t dir_from_offset(int dx, int dz) {
+		// Matches dx8/dz8 ordering in find_path_internal
+		static const int8_t dir_map[3][3] = {
+			{0, 3, 5},   // dx=-1: dz=-1, dz=0, dz=1
+			{1, -1, 6},  // dx= 0: dz=-1, (0,0), dz=1
+			{2, 4, 7},   // dx=+1: dz=-1, dz=0, dz=1
+		};
+		if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return -1;
+		return dir_map[dx + 1][dz + 1];
+	}
+
 	// --- Internal SDF helpers ---
 
 	// Convert world coordinates to grid indices (fractional for interpolation)
@@ -107,6 +133,12 @@ private:
 	// Compute connected regions of navigable water cells for O(1) reachability checks.
 	// Must be called after compute_sdf_from_mask. Uses a minimum clearance of 0 (any water cell).
 	void compute_regions();
+
+	// --- Coarse grid for hierarchical pathfinding ---
+	static const int SECTOR_SIZE = 8;
+	int coarse_width_, coarse_height_;
+	std::vector<float> coarse_max_sdf_; // max SDF per sector (passable if >= clearance)
+	void build_coarse_grid();
 
 	// --- Pathfinding internals ---
 

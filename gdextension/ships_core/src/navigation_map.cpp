@@ -85,9 +85,38 @@ NavigationMap::NavigationMap() {
 	max_z = 17500.0f;
 	built = false;
 	region_count = 0;
+
+	// Precompute turn angle lookup table for all 8-direction pairs
+	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+	for (int i = 0; i < 8; i++) {
+		float d1x = static_cast<float>(dx8[i]);
+		float d1z = static_cast<float>(dz8[i]);
+		float len1 = std::sqrt(d1x * d1x + d1z * d1z);
+		d1x /= len1; d1z /= len1;
+		for (int j = 0; j < 8; j++) {
+			float d2x = static_cast<float>(dx8[j]);
+			float d2z = static_cast<float>(dz8[j]);
+			float len2 = std::sqrt(d2x * d2x + d2z * d2z);
+			d2x /= len2; d2z /= len2;
+			float dot = d1x * d2x + d1z * d2z;
+			dot = std::max(-1.0f, std::min(1.0f, dot));
+			turn_angle_lut_[i][j] = std::acos(dot);
+		}
+	}
 }
 
 NavigationMap::~NavigationMap() {
+}
+
+void NavigationMap::allocate_astar_buffers() {
+	int total = grid_width * grid_height;
+	astar_g_cost_.resize(total);
+	astar_parent_.resize(total);
+	astar_parent_dir_.resize(total);
+	astar_open_gen_.assign(total, 0);
+	astar_closed_gen_.assign(total, 0);
+	astar_current_gen_ = 0;
 }
 
 // ============================================================================
@@ -238,6 +267,10 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	// Step 4: Compute connected water regions for O(1) reachability checks
 	compute_regions();
 
+	// Step 5: Allocate reusable A* buffers and build coarse grid
+	allocate_astar_buffers();
+	build_coarse_grid();
+
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Build complete. ", islands.size(), " islands detected, ",
 							region_count, " navigable regions.");
@@ -385,6 +418,10 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 	compute_sdf_from_mask(land_mask);
 	extract_islands(land_mask);
 	compute_regions();
+
+	// Allocate reusable A* buffers and build coarse grid
+	allocate_astar_buffers();
+	build_coarse_grid();
 
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Raycast build complete. ", islands.size(), " islands detected, ",
@@ -1254,6 +1291,30 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 // Pathfinding (Theta* on SDF grid)
 // ============================================================================
 
+void NavigationMap::build_coarse_grid() {
+	coarse_width_ = (grid_width + SECTOR_SIZE - 1) / SECTOR_SIZE;
+	coarse_height_ = (grid_height + SECTOR_SIZE - 1) / SECTOR_SIZE;
+	coarse_max_sdf_.resize(coarse_width_ * coarse_height_);
+
+	for (int cz = 0; cz < coarse_height_; cz++) {
+		for (int cx = 0; cx < coarse_width_; cx++) {
+			float max_sdf = -std::numeric_limits<float>::infinity();
+			for (int dz = 0; dz < SECTOR_SIZE; dz++) {
+				for (int dx = 0; dx < SECTOR_SIZE; dx++) {
+					int fx = cx * SECTOR_SIZE + dx;
+					int fz = cz * SECTOR_SIZE + dz;
+					if (in_bounds(fx, fz)) {
+						max_sdf = std::max(max_sdf, get_cell(fx, fz));
+					}
+				}
+			}
+			coarse_max_sdf_[cz * coarse_width_ + cx] = max_sdf;
+		}
+	}
+}
+
+// ============================================================================
+
 bool NavigationMap::line_of_sight(int x0, int z0, int x1, int z1, float clearance) const {
 	// Supercover Bresenham — visits every cell the line touches, no gaps.
 	// clearance is in the same units as the SDF grid values (world meters).
@@ -1416,13 +1477,13 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 	// Check if direct line-of-sight exists — fast path for open water
 	bool use_heading = !std::isnan(start_heading);
-	if (line_of_sight(sx, sz, ex, ez, clearance_world)) {
-		result.waypoints.push_back(from);
-		result.waypoints.push_back(to);
-		result.total_distance = from.distance_to(to);
-		result.valid = true;
-		return result;
-	}
+	// if (line_of_sight(sx, sz, ex, ez, clearance_world)) {
+	// 	result.waypoints.push_back(from);
+	// 	result.waypoints.push_back(to);
+	// 	result.total_distance = from.distance_to(to);
+	// 	result.valid = true;
+	// 	return result;
+	// }
 
 	// --- A* pathfinding (8-connected grid) with post-process simplification ---
 	// When turning_radius > 0, uses a weighted cost function that penalizes:
@@ -1436,56 +1497,84 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 	int total_cells = grid_width * grid_height;
 
-	// Use flat arrays indexed by cell for O(1) lookup
-	std::vector<float> g_cost(total_cells, std::numeric_limits<float>::infinity());
-	std::vector<int> parent(total_cells, -1);  // parent as flat index, -1 = none
-	std::vector<bool> closed(total_cells, false);
-
 	auto cell_idx = [this](int x, int z) -> int {
 		return z * grid_width + x;
 	};
 
-	// Priority queue: (f_cost, flat_index)
-	using PQEntry = std::pair<float, int>;
-	std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> open;
-
 	int end_idx = cell_idx(ex, ez);
 	int start_idx = cell_idx(sx, sz);
 
-	g_cost[start_idx] = 0.0f;
-	float h = heuristic(sx, sz, ex, ez);
-	open.push({h, start_idx});
-
-	// --- Heading-aware start: synthetic parent direction ---
-	// Instead of creating a virtual departure waypoint, we set the start cell's
-	// parent to a "virtual" cell one step behind the ship along its heading.
-	// This cell doesn't participate in A* — it only provides a direction vector
-	// for the curvature penalty when expanding the start cell's neighbors.
-	// The effect: A* penalizes first-step directions that deviate from the
-	// ship's heading, producing paths the ship can follow without U-turning.
-	if (use_heading && use_curvature_penalty) {
-		// Compute a virtual parent cell one step behind the ship's heading
-		// (i.e. the cell the ship "came from" if it were travelling along its heading)
-		int vp_x = sx - static_cast<int>(std::round(std::sin(start_heading)));
-		int vp_z = sz - static_cast<int>(std::round(std::cos(start_heading)));
-		// Clamp to grid — the cell only needs to produce a valid direction vector
-		vp_x = std::max(0, std::min(vp_x, grid_width - 1));
-		vp_z = std::max(0, std::min(vp_z, grid_height - 1));
-		parent[start_idx] = cell_idx(vp_x, vp_z);
-	} else {
-		parent[start_idx] = start_idx;  // self-parent = no heading bias
-	}
-
-	// 8-connected neighbors
+	// 8-connected direction offsets
 	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
 	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-	const float cost8[] = {1.414f, 1.0f, 1.414f, 1.0f, 1.0f, 1.414f, 1.0f, 1.414f};
+
+	// ---- SDF-accelerated pathfinding ----
+	// When turning_radius > 0: Hybrid A* with arc-based expansion.
+	// State is (grid_x, grid_z) with heading bin (0-15, 22.5° resolution)
+	// stored in astar_parent_dir_. Expands via straight moves (SDF-adaptive)
+	// and left/right arcs at 22.5°/45°, using actual arc geometry so the
+	// turning radius is a hard constraint rather than a soft penalty.
+	// Tight-space fallback uses 8-direction grid moves when near obstacles.
+	//
+	// When turning_radius == 0: SDF-accelerated 8-direction A* (no heading).
+
+	astar_current_gen_++;
+	if (astar_current_gen_ == 0) {
+		std::fill(astar_open_gen_.begin(), astar_open_gen_.end(), 0);
+		std::fill(astar_closed_gen_.begin(), astar_closed_gen_.end(), 0);
+		astar_current_gen_ = 1;
+	}
+
+	astar_g_cost_[start_idx] = 0.0f;
+	astar_open_gen_[start_idx] = astar_current_gen_;
+
+	using PQEntry = std::pair<float, int>;
+	std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> open;
+	open.push({heuristic(sx, sz, ex, ez), start_idx});
+
+	// --- Initialize start heading ---
+	if (use_curvature_penalty) {
+		int8_t start_hbin;
+		if (use_heading) {
+			// Convert start_heading (radians, 0=+Z clockwise) to heading bin 0-15
+			float h = std::fmod(start_heading, static_cast<float>(Math_TAU));
+			if (h < 0) h += static_cast<float>(Math_TAU);
+			start_hbin = static_cast<int8_t>(static_cast<int>(
+				std::round(h / (Math_PI / 8.0))) % 16);
+		} else {
+			// Default: heading toward goal
+			float dx = static_cast<float>(ex - sx);
+			float dz = static_cast<float>(ez - sz);
+			float goal_angle = std::atan2(dx, dz);
+			if (goal_angle < 0) goal_angle += static_cast<float>(Math_TAU);
+			start_hbin = static_cast<int8_t>(static_cast<int>(
+				std::round(goal_angle / (Math_PI / 8.0))) % 16);
+		}
+		astar_parent_dir_[start_idx] = start_hbin;
+		astar_parent_[start_idx] = start_idx;
+	} else if (use_heading) {
+		// 8-direction heading initialization for non-curvature path
+		int vp_x = sx - static_cast<int>(std::round(std::sin(start_heading)));
+		int vp_z = sz - static_cast<int>(std::round(std::cos(start_heading)));
+		vp_x = std::max(0, std::min(vp_x, grid_width - 1));
+		vp_z = std::max(0, std::min(vp_z, grid_height - 1));
+		astar_parent_[start_idx] = cell_idx(vp_x, vp_z);
+		int hdx = std::max(-1, std::min(1, sx - vp_x));
+		int hdz = std::max(-1, std::min(1, sz - vp_z));
+		astar_parent_dir_[start_idx] = dir_from_offset(hdx, hdz);
+	} else {
+		astar_parent_[start_idx] = start_idx;
+		astar_parent_dir_[start_idx] = -1;
+	}
+
+	float R_grid = turning_radius / cell_size;  // turning radius in grid cells
+
+	// Precompute chord lengths for arc safety checks (world units)
+	float chord_22_5 = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 16.0));  // 22.5°
+	float chord_45   = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 8.0));   // 45°
 
 	bool found = false;
 	int iterations = 0;
-	// Safety limit: for a 700x700 grid the straight-line distance is at most ~990 cells,
-	// so a reasonable path should never need to expand more than ~50k-100k nodes.
-	// We set a generous limit well below total_cells to prevent multi-second stalls.
 	const int MAX_ITERATIONS = std::min(total_cells, 200000);
 
 	while (!open.empty() && iterations < MAX_ITERATIONS) {
@@ -1494,10 +1583,9 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 		auto [f, ci] = open.top();
 		open.pop();
 
-		if (closed[ci]) continue;
-		closed[ci] = true;
+		if (astar_closed_gen_[ci] == astar_current_gen_) continue;
+		astar_closed_gen_[ci] = astar_current_gen_;
 
-		// Goal reached
 		if (ci == end_idx) {
 			found = true;
 			break;
@@ -1505,90 +1593,231 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 		int cx = ci % grid_width;
 		int cz = ci / grid_width;
-		float cg = g_cost[ci];
+		float cg = astar_g_cost_[ci];
 
-		// Early termination: if g_cost exceeds the bound, no cheaper path exists
-		if (cg > cost_bound) {
-			break;
-		}
+		if (cg > cost_bound) break;
 
-		// Get grandparent direction for turn-angle penalty
-		int parent_idx = parent[ci];
-		int px = -1, pz = -1;
-		bool has_parent_dir = false;
-		if (use_curvature_penalty && parent_idx >= 0 && parent_idx != ci) {
-			px = parent_idx % grid_width;
-			pz = parent_idx / grid_width;
-			has_parent_dir = true;
-		}
+		float sdf_here = get_cell(cx, cz);
+		float safe_dist = sdf_here - clearance_world;  // world units of spare clearance
 
-		// Expand 8-connected neighbors
-		for (int d = 0; d < 8; d++) {
-			int nx = cx + dx8[d];
-			int nz = cz + dz8[d];
+		if (use_curvature_penalty) {
+			// ---- Hybrid A* with arc-based expansion ----
+			int8_t cur_hbin = astar_parent_dir_[ci];
+			if (cur_hbin < 0) cur_hbin = 0;
+			float theta = cur_hbin * static_cast<float>(Math_PI / 8.0);
+			float sin_t = std::sin(theta);
+			float cos_t = std::cos(theta);
 
-			if (!in_bounds(nx, nz)) continue;
+			bool any_arc_expanded = false;
 
-			int nidx = cell_idx(nx, nz);
-			if (closed[nidx]) continue;
+			// --- Straight move (SDF-adaptive step) ---
+			{
+				float step_world = std::max(safe_dist, cell_size);
+				step_world = std::min(step_world, turning_radius * 4.0f);
+				float step_grid = step_world / cell_size;
 
-			// Check navigability with clearance (SDF values are in world units)
-			if (get_cell(nx, nz) < clearance_world) continue;
+				int nx = cx + static_cast<int>(std::round(step_grid * sin_t));
+				int nz = cz + static_cast<int>(std::round(step_grid * cos_t));
+				nx = std::max(0, std::min(nx, grid_width - 1));
+				nz = std::max(0, std::min(nz, grid_height - 1));
 
-			// For diagonal moves, also check the two cardinal cells to prevent corner-cutting
-			if (dx8[d] != 0 && dz8[d] != 0) {
-				if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
-				if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
-			}
-
-			float base_cost = cost8[d];
-			float extra_cost = 0.0f;
-
-			if (use_curvature_penalty) {
-				// --- Proximity penalty ---
-				// Exponential cost increase as SDF approaches the turning radius.
-				// This pushes paths away from land proportional to the ship's turn circle.
-				float sdf_value_cells = get_cell(nx, nz) / cell_size;  // convert SDF to grid-cell units
-				float proximity_ratio = turning_radius_cells / std::max(sdf_value_cells, 1.0f);
-				proximity_ratio = std::min(proximity_ratio, 5.0f);
-				extra_cost += base_cost * proximity_ratio * 0.5f;
-
-				// --- Direction-change (turn angle) penalty ---
-				// parent→current→neighbor forms an angle; sharper angles cost more.
-				if (has_parent_dir) {
-					// Direction from parent to current
-					float d1x = static_cast<float>(cx - px);
-					float d1z = static_cast<float>(cz - pz);
-					// Direction from current to neighbor
-					float d2x = static_cast<float>(nx - cx);
-					float d2z = static_cast<float>(nz - cz);
-					// Normalize
-					float len1 = std::sqrt(d1x * d1x + d1z * d1z);
-					float len2 = std::sqrt(d2x * d2x + d2z * d2z);
-					if (len1 > 0.001f && len2 > 0.001f) {
-						d1x /= len1; d1z /= len1;
-						d2x /= len2; d2z /= len2;
-						// Dot product gives cos(angle), cross gives sin(angle)
-						float dot = d1x * d2x + d1z * d2z;
-						dot = std::max(-1.0f, std::min(1.0f, dot));
-						float turn_angle = std::acos(dot);
-						// Arc length the turning circle needs for this angle
-						float arc_length = turning_radius_cells * std::abs(turn_angle);
-						// Penalty scales with how much arc is needed relative to a single cell step.
-						// arc_length is already in cell units (turning_radius_cells * angle),
-						// so no further division by cell_size is needed.
-						extra_cost += arc_length * 0.3f;
+				if (nx != cx || nz != cz) {
+					int nidx = cell_idx(nx, nz);
+					if (astar_closed_gen_[nidx] != astar_current_gen_) {
+						float landing_sdf = get_cell(nx, nz);
+						if (landing_sdf >= clearance_world) {
+							float dist = std::sqrt(static_cast<float>(
+								(nx - cx) * (nx - cx) + (nz - cz) * (nz - cz)));
+							float prox_cost = 0.0f;
+							float sdf_cells = landing_sdf / cell_size;
+							if (sdf_cells < turning_radius_cells * 2.0f) {
+								float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+								prox_cost = dist * ratio * 0.15f;
+							}
+							float new_g = cg + dist + prox_cost;
+							bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
+											  || (new_g < astar_g_cost_[nidx]);
+							if (is_better) {
+								astar_g_cost_[nidx] = new_g;
+								astar_open_gen_[nidx] = astar_current_gen_;
+								astar_parent_[nidx] = ci;
+								astar_parent_dir_[nidx] = cur_hbin;
+								open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+								any_arc_expanded = true;
+							}
+						}
 					}
 				}
 			}
 
-			float new_g = cg + base_cost + extra_cost;
+			// --- Arc turns: left/right at 22.5° and 45° ---
+			// {bin_delta, angle, chord} — negative delta = left turn
+			const int arc_bin_deltas[] = {-1, 1, -2, 2};
+			const float arc_angles[] = {
+				static_cast<float>(Math_PI / 8.0),
+				static_cast<float>(Math_PI / 8.0),
+				static_cast<float>(Math_PI / 4.0),
+				static_cast<float>(Math_PI / 4.0),
+			};
+			const float arc_chords[] = {chord_22_5, chord_22_5, chord_45, chord_45};
 
-			if (new_g < g_cost[nidx]) {
-				g_cost[nidx] = new_g;
-				parent[nidx] = ci;
-				float new_f = new_g + heuristic(nx, nz, ex, ez);
-				open.push({new_f, nidx});
+			for (int a = 0; a < 4; a++) {
+				// Arc safety: chord must fit within safe distance at current cell.
+				// Since SDF is Lipschitz-1 and all arc points are within chord
+				// distance of start, SDF(arc_point) >= sdf_here - chord >= clearance.
+				if (safe_dist < arc_chords[a]) continue;
+
+				int delta = arc_bin_deltas[a];
+				int new_hbin = ((cur_hbin + delta) % 16 + 16) % 16;
+				float new_theta = new_hbin * static_cast<float>(Math_PI / 8.0);
+
+				float dx_grid, dz_grid;
+				if (delta < 0) {
+					// Left turn: center at (x - R*cos θ, z + R*sin θ)
+					dx_grid = R_grid * (-cos_t + std::cos(new_theta));
+					dz_grid = R_grid * (sin_t - std::sin(new_theta));
+				} else {
+					// Right turn: center at (x + R*cos θ, z - R*sin θ)
+					dx_grid = R_grid * (cos_t - std::cos(new_theta));
+					dz_grid = R_grid * (-sin_t + std::sin(new_theta));
+				}
+
+				int nx = cx + static_cast<int>(std::round(dx_grid));
+				int nz = cz + static_cast<int>(std::round(dz_grid));
+
+				if (nx < 0 || nx >= grid_width || nz < 0 || nz >= grid_height) continue;
+				if (nx == cx && nz == cz) continue;
+
+				int nidx = cell_idx(nx, nz);
+				if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+
+				float landing_sdf = get_cell(nx, nz);
+				if (landing_sdf < clearance_world) continue;
+
+				// Cost = arc length in grid cells
+				float arc_cost = R_grid * arc_angles[a];
+
+				// Proximity penalty at landing
+				float sdf_cells = landing_sdf / cell_size;
+				if (sdf_cells < turning_radius_cells * 2.0f) {
+					float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+					arc_cost += arc_cost * ratio * 0.15f;
+				}
+
+				float new_g = cg + arc_cost;
+				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
+								  || (new_g < astar_g_cost_[nidx]);
+				if (is_better) {
+					astar_g_cost_[nidx] = new_g;
+					astar_open_gen_[nidx] = astar_current_gen_;
+					astar_parent_[nidx] = ci;
+					astar_parent_dir_[nidx] = static_cast<int8_t>(new_hbin);
+					open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+					any_arc_expanded = true;
+				}
+			}
+
+			// --- Tight-space fallback: 8-direction step=1 ---
+			// Activates when no arc/straight action succeeded.
+			// Heading change is capped at ±2 bins (45°) per step to
+			// prevent impossible sharp turns the ship can't follow.
+			if (!any_arc_expanded) {
+				for (int d = 0; d < 8; d++) {
+					// Derive heading bin from grid direction
+					float dir_angle = std::atan2(
+						static_cast<float>(dx8[d]), static_cast<float>(dz8[d]));
+					if (dir_angle < 0) dir_angle += static_cast<float>(Math_TAU);
+					int new_hbin = static_cast<int>(
+						std::round(dir_angle / (Math_PI / 8.0))) % 16;
+
+					// Reject directions requiring > 45° turn (2 heading bins)
+					int turn_bins = std::abs(new_hbin - static_cast<int>(cur_hbin));
+					if (turn_bins > 8) turn_bins = 16 - turn_bins;
+					if (turn_bins > 2) continue;
+
+					int nx = cx + dx8[d];
+					int nz = cz + dz8[d];
+					if (nx < 0 || nx >= grid_width || nz < 0 || nz >= grid_height) continue;
+
+					int nidx = cell_idx(nx, nz);
+					if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+
+					float landing_sdf = get_cell(nx, nz);
+					if (landing_sdf < clearance_world) continue;
+
+					bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
+					if (is_diag) {
+						if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
+						if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
+					}
+
+					float step_dist = is_diag ? 1.414f : 1.0f;
+					float turn_cost = turn_bins * 0.5f;
+
+					// Proximity penalty
+					float sdf_cells = landing_sdf / cell_size;
+					float prox_cost = 0.0f;
+					if (sdf_cells < turning_radius_cells * 2.0f) {
+						float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+						prox_cost = step_dist * ratio * 0.15f;
+					}
+
+					float new_g = cg + step_dist + turn_cost + prox_cost;
+					bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
+									  || (new_g < astar_g_cost_[nidx]);
+					if (is_better) {
+						astar_g_cost_[nidx] = new_g;
+						astar_open_gen_[nidx] = astar_current_gen_;
+						astar_parent_[nidx] = ci;
+						astar_parent_dir_[nidx] = static_cast<int8_t>(new_hbin);
+						open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+					}
+				}
+			}
+		} else {
+			// ---- Original SDF-accelerated 8-direction A* (turning_radius == 0) ----
+			for (int d = 0; d < 8; d++) {
+				bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
+
+				float step_world = is_diag ? (cell_size * 1.414f) : cell_size;
+				int max_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
+
+				if (dx8[d] != 0) {
+					int max_x = (dx8[d] > 0) ? (grid_width - 1 - cx) : cx;
+					max_jump = std::min(max_jump, max_x);
+				}
+				if (dz8[d] != 0) {
+					int max_z = (dz8[d] > 0) ? (grid_height - 1 - cz) : cz;
+					max_jump = std::min(max_jump, max_z);
+				}
+				if (max_jump <= 0) continue;
+
+				int nx = cx + dx8[d] * max_jump;
+				int nz = cz + dz8[d] * max_jump;
+
+				int nidx = cell_idx(nx, nz);
+				if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+
+				float landing_sdf = get_cell(nx, nz);
+				if (landing_sdf < clearance_world) continue;
+
+				if (max_jump == 1 && is_diag) {
+					if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
+					if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
+				}
+
+				float step_dist = is_diag ? (max_jump * 1.414f) : static_cast<float>(max_jump);
+				float new_g = cg + step_dist;
+
+				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
+								 || (new_g < astar_g_cost_[nidx]);
+				if (is_better) {
+					astar_g_cost_[nidx] = new_g;
+					astar_open_gen_[nidx] = astar_current_gen_;
+					astar_parent_[nidx] = ci;
+					astar_parent_dir_[nidx] = static_cast<int8_t>(d);
+					open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+				}
 			}
 		}
 	}
@@ -1609,7 +1838,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			grid_to_world(cx, cz, wx, wz);
 			path.push_back(Vector2(wx, wz));
 
-			int pi = parent[ci];
+			int pi = astar_parent_[ci];
 			if (pi == ci || pi < 0) break;  // safety
 			ci = pi;
 		}
@@ -1628,7 +1857,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 	// --- Path simplification using grid-level LOS (fast) ---
 	// Greedy funnel: from current waypoint, find the farthest visible waypoint
-	if (path.size() > 2) {
+	if (path.size() > 2 && false) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
 
@@ -1655,6 +1884,88 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			current = farthest;
 		}
 		path = simplified;
+	}
+
+	// --- Arc feasibility validation (backtrack & straighten) ---
+	// Walk the path and check whether the ship can physically execute each
+	// turn without grounding.  At each interior waypoint, compute the arc
+	// the ship's turning circle would trace and sample it for SDF clearance.
+	// If any sample clips land, remove the waypoint to straighten the path.
+	// Repeat until all turns are feasible or no more waypoints can be removed.
+	if (use_curvature_penalty && path.size() >= 3) {
+		float R = turning_radius;
+		bool changed = true;
+		int max_passes = 10;
+
+		while (changed && path.size() >= 3 && max_passes-- > 0) {
+			changed = false;
+
+			for (size_t i = 1; i + 1 < path.size(); ) {
+				Vector2 A = path[i - 1];
+				Vector2 B = path[i];
+				Vector2 C = path[i + 1];
+
+				Vector2 d1 = (B - A).normalized();
+				Vector2 d2 = (C - B).normalized();
+				float dot_val = d1.x * d2.x + d1.y * d2.y;
+				dot_val = std::max(-1.0f, std::min(1.0f, dot_val));
+				float turn_mag = std::acos(dot_val);
+
+				if (turn_mag < 0.1f) {
+					// Negligible turn, skip
+					i++;
+					continue;
+				}
+
+				// Determine turn direction and compute arc samples
+				float arr_heading = std::atan2(d1.x, d1.y);  // heading arriving at B
+				float dep_heading = std::atan2(d2.x, d2.y);  // heading departing B
+				float angle_diff = dep_heading - arr_heading;
+				// Normalize to [-PI, PI]
+				while (angle_diff > Math_PI) angle_diff -= Math_TAU;
+				while (angle_diff < -Math_PI) angle_diff += Math_TAU;
+
+				// Sample the arc the ship would trace at B
+				// Arc center is at distance R perpendicular to arrival heading
+				// on the inside of the turn
+				bool arc_ok = true;
+				int num_samples = std::max(4, static_cast<int>(std::abs(angle_diff) / 0.15f));
+
+				for (int s = 1; s < num_samples; s++) {
+					float t = angle_diff * static_cast<float>(s) / static_cast<float>(num_samples);
+					float sample_x, sample_z;
+
+					if (angle_diff < 0) {
+						// Left turn
+						sample_x = B.x - R * std::cos(arr_heading)
+								 + R * std::cos(arr_heading + t);
+						sample_z = B.y + R * std::sin(arr_heading)
+								 - R * std::sin(arr_heading + t);
+					} else {
+						// Right turn
+						sample_x = B.x + R * std::cos(arr_heading)
+								 - R * std::cos(arr_heading + t);
+						sample_z = B.y - R * std::sin(arr_heading)
+								 + R * std::sin(arr_heading + t);
+					}
+
+					float sdf_val = get_distance(sample_x, sample_z);
+					if (sdf_val < clearance) {
+						arc_ok = false;
+						break;
+					}
+				}
+
+				if (!arc_ok) {
+					// Turn clips land — remove this waypoint to straighten
+					path.erase(path.begin() + static_cast<long>(i));
+					changed = true;
+					// Don't increment i; re-check the new triple at this index
+				} else {
+					i++;
+				}
+			}
+		}
 	}
 
 	// --- Catmull-Rom smoothing at sharp waypoints (only when turning-radius-aware) ---

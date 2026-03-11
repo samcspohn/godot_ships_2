@@ -130,6 +130,9 @@ var _cached_enemy_avg: Vector3 = Vector3.ZERO
 ## Last HP bracket (1-4) for threshold-crossing detection. -1 = uninitialized.
 var _last_hp_bracket: int = -1
 
+var should_query_behavior: bool = false
+
+
 # ===========================================================================
 # LIFECYCLE
 # ===========================================================================
@@ -180,7 +183,7 @@ func _deferred_init() -> void:
 		navigator.set_map(NavigationMapManager.get_map())
 
 	# Set initial destination (forward from spawn)
-	destination = _ship.global_position - _ship.global_transform.basis.z * 5000.0
+	destination = _ship.global_position - _ship.global_transform.basis.z * 10000.0
 	destination.y = 0.0
 
 
@@ -224,7 +227,6 @@ func _physics_process(delta: float) -> void:
 
 	# --- 3. Get navigation intent from behavior ---
 	_behavior_timer += delta
-	var should_query_behavior: bool = false
 	if _force_intent_next_frame:
 		should_query_behavior = true
 		_force_intent_next_frame = false
@@ -234,7 +236,8 @@ func _physics_process(delta: float) -> void:
 		should_query_behavior = true
 		_behavior_timer = 0.0
 
-	if should_query_behavior:
+	if should_query_behavior and Engine.get_physics_frames() % 8 == bot_id % 8:
+		should_query_behavior = false
 		_update_nav_intent()
 
 	# --- 4. Execute the current navigation intent ---
