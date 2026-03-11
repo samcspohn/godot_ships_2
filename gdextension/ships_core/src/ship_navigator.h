@@ -41,6 +41,22 @@ private:
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
 
+	// --- Async pathfinding ---
+	enum class PlanPhase : int {
+		IDLE = 0,       // No search in progress
+		FORWARD = 1,    // Running forward A* (soft clearance)
+		FALLBACK = 2,   // Running fallback A* (half clearance, no turning)
+		REVERSE = 3,    // Running reverse A*
+		DONE = 4,       // All searches complete
+	};
+	static constexpr int PLAN_ITER_BUDGET = 25000;
+
+	PlanPhase plan_phase;
+	PathSearch path_search;           // Reusable per-ship search state
+	PathResult plan_forward_result;   // Stored between planning phases
+	float plan_min_clearance;
+	float plan_comfortable_clearance;
+
 	// --- Timing ---
 	float settle_timer;
 	float hold_timer;
@@ -134,8 +150,8 @@ private:
 
 	// --- Path management ---
 
-	// Compute path from current position to target (replaces maybe_recalc_path)
-	void compute_path();
+	// Accept or reject a computed path (oscillation prevention + commit)
+	void accept_plan_result(const PathResult &forward_result);
 
 	// Check whether a destination shift is small enough to reuse the existing path
 	bool is_destination_shift_small(Vector2 old_target, Vector2 new_target) const;

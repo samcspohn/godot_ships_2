@@ -82,6 +82,9 @@ ShipNavigator::ShipNavigator() {
 	nav_state = NavState::HOLDING;
 	current_wp_index = 0;
 	path_valid = false;
+	plan_phase = PlanPhase::IDLE;
+	plan_min_clearance = 0.0f;
+	plan_comfortable_clearance = 0.0f;
 	settle_timer = 0.0f;
 	hold_timer = 0.0f;
 	stuck_timer = 0.0f;
@@ -178,6 +181,7 @@ void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_
 	if (position_changed || radius_changed) {
 		// Meaningful target change — replan
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 	} else if (heading_changed) {
 		// Heading changed but position didn't
 		if (nav_state == NavState::HOLDING) {
@@ -435,23 +439,156 @@ void ShipNavigator::update(float delta) {
 }
 
 void ShipNavigator::update_planning() {
-	compute_path();
+	if (map.is_null() || !map->is_built()) {
+		path_valid = false;
+		plan_phase = PlanPhase::IDLE;
+		nav_state = NavState::HOLDING;
+		return;
+	}
 
-	if (path_valid) {
-		stuck_timer = 0.0f;
-		nav_state = NavState::NAVIGATING;
-	} else {
-		// No path found — try to reach destination directly
-		float dist = state.position.distance_to(target.position);
-		if (dist < params.turning_circle_radius * 0.5f) {
-			nav_state = NavState::ARRIVING;
+	// --- Start a new plan if IDLE ---
+	if (plan_phase == PlanPhase::IDLE) {
+		plan_min_clearance = get_ship_clearance();
+		plan_comfortable_clearance = std::min(
+			plan_min_clearance + params.ship_beam * 0.5f,
+			plan_min_clearance * 2.0f);
+
+		// Begin forward search (heading-aware, soft clearance)
+		bool immediate = map->begin_path_search(
+			path_search, state.position, target.position,
+			plan_min_clearance, params.turning_circle_radius,
+			state.heading, std::numeric_limits<float>::infinity(),
+			plan_comfortable_clearance);
+
+		if (immediate) {
+			plan_forward_result = path_search.result;
+			plan_phase = PlanPhase::DONE;
+		} else if (path_search.active) {
+			plan_phase = PlanPhase::FORWARD;
 		} else {
-			nav_state = NavState::HOLDING;
+			// begin failed (unreachable region, etc.) — try fallback
+			plan_forward_result = PathResult();
+			plan_phase = PlanPhase::FALLBACK;
 		}
 	}
 
-	// Always produce steering output even on the planning frame
-	update(0.0f);
+	// --- Tick the active search ---
+	if (plan_phase == PlanPhase::FORWARD) {
+		bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
+		if (complete) {
+			plan_forward_result = map->finish_path_search(path_search);
+
+			if (!plan_forward_result.valid || plan_forward_result.waypoints.empty()) {
+				// Forward failed — try fallback (half clearance, no turning penalty)
+				plan_phase = PlanPhase::FALLBACK;
+			} else {
+				// Forward succeeded — check if reverse is worth trying
+				float bearing_to_dest = std::atan2(
+					target.position.x - state.position.x,
+					target.position.y - state.position.y);
+				float angle_to_dest = std::abs(angle_difference(state.heading, bearing_to_dest));
+				float dist_to_dest = state.position.distance_to(target.position);
+				float reverse_cap = params.turning_circle_radius * REVERSE_DISTANCE_CAP_FACTOR;
+
+				bool try_reverse = (angle_to_dest > Math_PI * 0.5f)
+					&& (dist_to_dest < reverse_cap);
+
+				if (try_reverse) {
+					float reverse_heading = angle_difference(0.0f, state.heading + Math_PI);
+					bool imm = map->begin_path_search(
+						path_search, state.position, target.position,
+						plan_min_clearance, params.turning_circle_radius,
+						reverse_heading, plan_forward_result.total_distance,
+						plan_comfortable_clearance);
+					if (imm) {
+						// Immediate reverse result — go to DONE to accept/reject
+						plan_phase = PlanPhase::DONE;
+					} else if (path_search.active) {
+						plan_phase = PlanPhase::REVERSE;
+					} else {
+						// Reverse begin failed — use forward result
+						plan_phase = PlanPhase::DONE;
+						path_search.result = PathResult(); // ensure no stale result
+					}
+				} else {
+					plan_phase = PlanPhase::DONE;
+					path_search.result = PathResult(); // no reverse attempted
+				}
+			}
+		}
+		// else: still searching, come back next frame
+	}
+
+	if (plan_phase == PlanPhase::FALLBACK) {
+		// Check if we need to begin the fallback search
+		if (!path_search.active && !path_search.complete) {
+			bool immediate = map->begin_path_search(
+				path_search, state.position, target.position,
+				plan_min_clearance * 0.5f, 0.0f);
+			if (immediate) {
+				plan_forward_result = path_search.result;
+				plan_phase = PlanPhase::DONE;
+			} else if (!path_search.active) {
+				// Even fallback can't begin — no path
+				plan_forward_result = PathResult();
+				plan_phase = PlanPhase::DONE;
+			}
+		}
+
+		if (plan_phase == PlanPhase::FALLBACK && path_search.active) {
+			bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
+			if (complete) {
+				plan_forward_result = map->finish_path_search(path_search);
+				plan_phase = PlanPhase::DONE;
+			}
+		}
+	}
+
+	if (plan_phase == PlanPhase::REVERSE) {
+		bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
+		if (complete) {
+			PathResult reverse_result = map->finish_path_search(path_search);
+
+			// Accept reverse if shorter than forward
+			if (reverse_result.valid && !reverse_result.waypoints.empty()
+				&& reverse_result.total_distance < plan_forward_result.total_distance) {
+				flag_reverse_departure(reverse_result, state.heading);
+				current_path = reverse_result;
+				path_valid = true;
+				current_wp_index = 0;
+				replan_frame_cooldown = REPLAN_FRAME_COOLDOWN;
+				plan_phase = PlanPhase::IDLE;
+				stuck_timer = 0.0f;
+				nav_state = NavState::NAVIGATING;
+				return;
+			}
+			// Reverse not better — fall through to accept forward
+			plan_phase = PlanPhase::DONE;
+		}
+	}
+
+	// --- Accept/reject the final path ---
+	if (plan_phase == PlanPhase::DONE) {
+		accept_plan_result(plan_forward_result);
+		plan_phase = PlanPhase::IDLE;
+
+		if (path_valid) {
+			stuck_timer = 0.0f;
+			nav_state = NavState::NAVIGATING;
+		} else {
+			float dist = state.position.distance_to(target.position);
+			if (dist < params.turning_circle_radius * 0.5f) {
+				nav_state = NavState::ARRIVING;
+			} else {
+				nav_state = NavState::HOLDING;
+			}
+		}
+		return;
+	}
+
+	// Still planning — hold current steering output (coast)
+	// Use zero throttle to avoid drifting while computing
+	set_steering_output(0.0f, 0, false, std::numeric_limits<float>::infinity());
 }
 
 void ShipNavigator::update_navigating(float delta) {
@@ -562,6 +699,7 @@ void ShipNavigator::update_navigating(float delta) {
 		stuck_timer += delta;
 		if (stuck_timer > STUCK_TIME_THRESHOLD) {
 			nav_state = NavState::PLANNING;
+			plan_phase = PlanPhase::IDLE;
 			stuck_timer = 0.0f;
 		}
 	} else {
@@ -571,6 +709,7 @@ void ShipNavigator::update_navigating(float delta) {
 	// --- 9. Replan check ---
 	if (check_replan_needed()) {
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 	}
 }
 
@@ -590,6 +729,7 @@ void ShipNavigator::update_arriving(float delta) {
 	float approach_radius = get_approach_radius();
 	if (dist > approach_radius * 1.5f) {
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 		return;
 	}
 
@@ -655,6 +795,7 @@ void ShipNavigator::update_settling(float delta) {
 		: params.turning_circle_radius;
 	if (dist > max_drift) {
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 		return;
 	}
 
@@ -711,6 +852,7 @@ void ShipNavigator::update_holding(float delta) {
 		: params.turning_circle_radius * 0.5f;
 	if (dist > max_drift) {
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 		return;
 	}
 
@@ -763,6 +905,7 @@ void ShipNavigator::update_emergency() {
 	if (ttc >= arc_time * 0.9f) {
 		// Clear — replan from here
 		nav_state = NavState::PLANNING;
+		plan_phase = PlanPhase::IDLE;
 		return;
 	}
 
@@ -911,67 +1054,11 @@ void ShipNavigator::flag_reverse_departure(PathResult &path, float ship_heading)
 }
 
 // ============================================================================
-// Path computation (replaces maybe_recalc_path)
+// Path acceptance (oscillation check + commit)
 // ============================================================================
 
-void ShipNavigator::compute_path() {
-	if (map.is_null() || !map->is_built()) {
-		path_valid = false;
-		return;
-	}
-
-	float min_clearance = get_ship_clearance();
-	float comfortable_clearance = std::min(min_clearance + params.ship_beam * 0.5f, min_clearance * 2.0f);
-	float turning_radius = params.turning_circle_radius;
-
-	// --- Forward path (heading-aware, soft clearance fallback) ---
-	// Single A* call with min_clearance as hard limit and comfortable_clearance
-	// as the preferred clearance.  Cells between the two are navigable but
-	// penalized, eliminating the need for a separate fallback call.
-	PathResult forward_result = map->find_path_internal(
-		state.position, target.position, min_clearance, turning_radius, state.heading,
-		std::numeric_limits<float>::infinity(), comfortable_clearance);
-
-	if (!forward_result.valid || forward_result.waypoints.empty()) {
-		// Last resort: half minimum clearance, no turning penalty, no heading
-		forward_result = map->find_path_internal(state.position, target.position, min_clearance * 0.5f, 0.0f);
-	}
-
-	// --- Should we try reverse? ---
-	float bearing_to_dest = std::atan2(
-		target.position.x - state.position.x,
-		target.position.y - state.position.y);
-	float angle_to_dest = std::abs(angle_difference(state.heading, bearing_to_dest));
-	float dist_to_dest = state.position.distance_to(target.position);
-	float reverse_cap = params.turning_circle_radius * REVERSE_DISTANCE_CAP_FACTOR;
-
-	bool try_reverse = (angle_to_dest > Math_PI * 0.5f)
-		&& (dist_to_dest < reverse_cap)
-		&& (forward_result.valid);
-
-	if (try_reverse) {
-		// Reverse heading = heading + PI
-		float reverse_heading = angle_difference(0.0f, state.heading + Math_PI);
-		// Single call with soft clearance + cost_bound for early termination
-		PathResult reverse_result = map->find_path_internal(
-			state.position, target.position, min_clearance, turning_radius,
-			reverse_heading, forward_result.total_distance, comfortable_clearance);
-
-		if (reverse_result.valid && !reverse_result.waypoints.empty()
-			&& reverse_result.total_distance < forward_result.total_distance) {
-			// Use reverse path — flag departure waypoints as WP_REVERSE
-			flag_reverse_departure(reverse_result, state.heading);
-			current_path = reverse_result;
-			path_valid = true;
-			current_wp_index = 0;
-			replan_frame_cooldown = REPLAN_FRAME_COOLDOWN;
-			return;
-		}
-	}
-
-	// Use forward path — but check for side-flip oscillation first.
-	// If we already have a valid path and the new path goes around obstacles
-	// on the opposite side, keep the old path to prevent left-right oscillation.
+void ShipNavigator::accept_plan_result(const PathResult &forward_result) {
+	// Accept or reject the forward result with side-flip oscillation prevention.
 	if (forward_result.valid && !forward_result.waypoints.empty()) {
 		bool should_accept = true;
 

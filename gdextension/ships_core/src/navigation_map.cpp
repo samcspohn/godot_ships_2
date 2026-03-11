@@ -117,6 +117,9 @@ void NavigationMap::allocate_astar_buffers() {
 	astar_open_gen_.assign(total, 0);
 	astar_closed_gen_.assign(total, 0);
 	astar_current_gen_ = 0;
+
+	// Pre-allocate the synchronous search state for find_path_internal
+	sync_search_.allocate(total);
 }
 
 // ============================================================================
@@ -1434,214 +1437,209 @@ static const float hbin_cos[16] = {
 	 0.00000f,  0.38268f,  0.70711f,  0.92388f
 };
 
-PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
-											 float turning_radius, float start_heading,
-											 float cost_bound, float soft_clearance) const {
-	PathResult result;
-	result.valid = false;
-	result.total_distance = 0.0f;
+// ============================================================================
+// Async pathfinding: begin / continue / finish
+// ============================================================================
 
-	if (!built) return result;
+bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 to,
+									  float clearance, float turning_radius,
+									  float start_heading, float cost_bound,
+									  float soft_clearance) const {
+	search.reset();
+	search.result.valid = false;
+	search.result.total_distance = 0.0f;
 
-	// The SDF grid stores world-unit distances (meters), so clearance for
-	// cell-level checks stays in world units — no conversion needed.
-	float clearance_world = clearance;
+	if (!built) {
+		search.complete = true;
+		return true;
+	}
 
-	// Soft clearance: cells between clearance and soft_clearance are navigable
-	// but penalized, allowing a single A* call to handle clearance fallback.
-	float soft_clearance_world = (soft_clearance > clearance) ? soft_clearance : 0.0f;
-	bool use_soft_clearance = (soft_clearance_world > 0.0f);
+	// Store world coords and original clearance for finish
+	search.from = from;
+	search.to = to;
+	search.clearance = clearance;
+
+	// The SDF grid stores world-unit distances (meters)
+	search.clearance_world = clearance;
+	search.soft_clearance_world = (soft_clearance > clearance) ? soft_clearance : 0.0f;
+	search.use_soft_clearance = (search.soft_clearance_world > 0.0f);
 
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
 	world_to_grid(from.x, from.y, gx_start, gz_start);
 	world_to_grid(to.x, to.y, gx_end, gz_end);
 
-	int sx = static_cast<int>(std::round(gx_start));
-	int sz = static_cast<int>(std::round(gz_start));
-	int ex = static_cast<int>(std::round(gx_end));
-	int ez = static_cast<int>(std::round(gz_end));
+	search.sx = static_cast<int>(std::round(gx_start));
+	search.sz = static_cast<int>(std::round(gz_start));
+	search.ex = static_cast<int>(std::round(gx_end));
+	search.ez = static_cast<int>(std::round(gz_end));
 
 	// Clamp to grid
-	sx = std::max(0, std::min(sx, grid_width - 1));
-	sz = std::max(0, std::min(sz, grid_height - 1));
-	ex = std::max(0, std::min(ex, grid_width - 1));
-	ez = std::max(0, std::min(ez, grid_height - 1));
+	search.sx = std::max(0, std::min(search.sx, grid_width - 1));
+	search.sz = std::max(0, std::min(search.sz, grid_height - 1));
+	search.ex = std::max(0, std::min(search.ex, grid_width - 1));
+	search.ez = std::max(0, std::min(search.ez, grid_height - 1));
 
 	// Snap to nearest navigable cells if needed
-	if (!find_nearest_navigable(sx, sz, clearance_world, 30)) {
+	if (!find_nearest_navigable(search.sx, search.sz, search.clearance_world, 30)) {
 		UtilityFunctions::print("[NavigationMap] find_path: start position is not navigable and no nearby navigable cell found");
-		return result;
+		search.complete = true;
+		return true;
 	}
-	if (!find_nearest_navigable(ex, ez, clearance_world, 30)) {
+	if (!find_nearest_navigable(search.ex, search.ez, search.clearance_world, 30)) {
 		UtilityFunctions::print("[NavigationMap] find_path: end position is not navigable and no nearby navigable cell found");
-		return result;
+		search.complete = true;
+		return true;
 	}
 
-	// --- O(1) reachability check using precomputed region IDs ---
-	// If start and end are in different water regions, no path exists.
-	if (!same_region(sx, sz, ex, ez)) {
+	// O(1) reachability check
+	if (!same_region(search.sx, search.sz, search.ex, search.ez)) {
 		UtilityFunctions::print("[NavigationMap] find_path: start and end are in different water regions (unreachable)");
-		return result;
+		search.complete = true;
+		return true;
 	}
 
 	// Trivial case: start == end
-	if (sx == ex && sz == ez) {
+	if (search.sx == search.ex && search.sz == search.ez) {
 		float wx, wz;
-		grid_to_world(sx, sz, wx, wz);
-		result.waypoints.push_back(Vector2(wx, wz));
-		result.valid = true;
-		result.total_distance = 0.0f;
-		return result;
+		grid_to_world(search.sx, search.sz, wx, wz);
+		search.result.waypoints.push_back(Vector2(wx, wz));
+		search.result.valid = true;
+		search.result.total_distance = 0.0f;
+		search.complete = true;
+		return true;
 	}
 
-	// Check if direct line-of-sight exists — fast path for open water
-	bool use_heading = !std::isnan(start_heading);
-	// if (line_of_sight(sx, sz, ex, ez, clearance_world)) {
-	// 	result.waypoints.push_back(from);
-	// 	result.waypoints.push_back(to);
-	// 	result.total_distance = from.distance_to(to);
-	// 	result.valid = true;
-	// 	return result;
-	// }
+	// Store search parameters
+	search.grid_width = grid_width;
+	search.grid_height = grid_height;
+	search.cell_size = cell_size;
+	search.turning_radius = turning_radius;
+	search.turning_radius_cells = turning_radius / cell_size;
+	search.use_curvature_penalty = (search.turning_radius_cells > 0.0f);
+	search.use_heading = !std::isnan(start_heading);
+	search.start_heading = start_heading;
+	search.cost_bound = cost_bound;
+	search.R_grid = turning_radius / cell_size;
 
-	// --- A* pathfinding (8-connected grid) with post-process simplification ---
-	// When turning_radius > 0, uses a weighted cost function that penalizes:
-	//   1. Proximity to land relative to turning circle (pushes paths away from shore)
-	//   2. Sharp direction changes relative to turning radius (prefers gentle curves)
-	// This produces paths that ships can actually follow without grounding.
+	// Precompute chord lengths for arc safety checks (world units)
+	search.chord_22_5 = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 16.0));
+	search.chord_45   = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 8.0));
 
-	// Convert turning radius to grid cells for cost computation
-	float turning_radius_cells = turning_radius / cell_size;
-	bool use_curvature_penalty = (turning_radius_cells > 0.0f);
+	// Rudder shift penalty in grid cells
+	search.rudder_shift_cells = turning_radius * 0.25f / cell_size;
 
 	int total_cells = grid_width * grid_height;
 
-	auto cell_idx = [this](int x, int z) -> int {
-		return z * grid_width + x;
+	auto cell_idx = [&search](int x, int z) -> int {
+		return z * search.grid_width + x;
 	};
 
-	int end_idx = cell_idx(ex, ez);
-	int start_idx = cell_idx(sx, sz);
+	search.end_idx = cell_idx(search.ex, search.ez);
+	search.start_idx = cell_idx(search.sx, search.sz);
 
-	// 8-connected direction offsets
-	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
-	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-
-	// ---- SDF-accelerated pathfinding ----
-	// When turning_radius > 0: Hybrid A* with arc-based expansion.
-	// State is (grid_x, grid_z) with heading bin (0-15, 22.5° resolution)
-	// stored in astar_parent_dir_. Expands via straight moves (SDF-adaptive)
-	// and left/right arcs at 22.5°/45°, using actual arc geometry so the
-	// turning radius is a hard constraint rather than a soft penalty.
-	// Tight-space fallback uses 8-direction grid moves when near obstacles.
-	//
-	// When turning_radius == 0: SDF-accelerated 8-direction A* (no heading).
-
-	astar_current_gen_++;
-	if (astar_current_gen_ == 0) {
-		std::fill(astar_open_gen_.begin(), astar_open_gen_.end(), 0);
-		std::fill(astar_closed_gen_.begin(), astar_closed_gen_.end(), 0);
-		astar_current_gen_ = 1;
+	// Allocate and reset generation counter
+	search.allocate(total_cells);
+	search.current_gen++;
+	if (search.current_gen == 0) {
+		std::fill(search.open_gen.begin(), search.open_gen.end(), 0);
+		std::fill(search.closed_gen.begin(), search.closed_gen.end(), 0);
+		search.current_gen = 1;
 	}
 
-	astar_g_cost_[start_idx] = 0.0f;
-	astar_open_gen_[start_idx] = astar_current_gen_;
+	search.g_cost[search.start_idx] = 0.0f;
+	search.open_gen[search.start_idx] = search.current_gen;
 
-	using PQEntry = std::pair<float, int>;
-	std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> open;
-	open.push({heuristic(sx, sz, ex, ez), start_idx});
+	search.open_set.push({heuristic(search.sx, search.sz, search.ex, search.ez), search.start_idx});
 
-	// --- Initialize start heading ---
-	if (use_curvature_penalty) {
+	// Initialize start heading
+	if (search.use_curvature_penalty) {
 		int8_t start_hbin;
-		if (use_heading) {
-			// Convert start_heading (radians, 0=+Z clockwise) to heading bin 0-15
+		if (search.use_heading) {
 			float h = std::fmod(start_heading, static_cast<float>(Math_TAU));
 			if (h < 0) h += static_cast<float>(Math_TAU);
 			start_hbin = static_cast<int8_t>(static_cast<int>(
 				std::round(h / (Math_PI / 8.0))) % 16);
 		} else {
-			// Default: heading toward goal
-			float dx = static_cast<float>(ex - sx);
-			float dz = static_cast<float>(ez - sz);
+			float dx = static_cast<float>(search.ex - search.sx);
+			float dz = static_cast<float>(search.ez - search.sz);
 			float goal_angle = std::atan2(dx, dz);
 			if (goal_angle < 0) goal_angle += static_cast<float>(Math_TAU);
 			start_hbin = static_cast<int8_t>(static_cast<int>(
 				std::round(goal_angle / (Math_PI / 8.0))) % 16);
 		}
-		astar_parent_dir_[start_idx] = start_hbin;
-		astar_parent_[start_idx] = start_idx;
-	} else if (use_heading) {
-		// 8-direction heading initialization for non-curvature path
-		int vp_x = sx - static_cast<int>(std::round(std::sin(start_heading)));
-		int vp_z = sz - static_cast<int>(std::round(std::cos(start_heading)));
+		search.parent_dir[search.start_idx] = start_hbin;
+		search.parent[search.start_idx] = search.start_idx;
+	} else if (search.use_heading) {
+		int vp_x = search.sx - static_cast<int>(std::round(std::sin(start_heading)));
+		int vp_z = search.sz - static_cast<int>(std::round(std::cos(start_heading)));
 		vp_x = std::max(0, std::min(vp_x, grid_width - 1));
 		vp_z = std::max(0, std::min(vp_z, grid_height - 1));
-		astar_parent_[start_idx] = cell_idx(vp_x, vp_z);
-		int hdx = std::max(-1, std::min(1, sx - vp_x));
-		int hdz = std::max(-1, std::min(1, sz - vp_z));
-		astar_parent_dir_[start_idx] = dir_from_offset(hdx, hdz);
+		search.parent[search.start_idx] = cell_idx(vp_x, vp_z);
+		int hdx = std::max(-1, std::min(1, search.sx - vp_x));
+		int hdz = std::max(-1, std::min(1, search.sz - vp_z));
+		search.parent_dir[search.start_idx] = dir_from_offset(hdx, hdz);
 	} else {
-		astar_parent_[start_idx] = start_idx;
-		astar_parent_dir_[start_idx] = -1;
+		search.parent[search.start_idx] = search.start_idx;
+		search.parent_dir[search.start_idx] = -1;
 	}
 
-	float R_grid = turning_radius / cell_size;  // turning radius in grid cells
+	search.max_iterations = std::min(total_cells, 300000);
+	search.active = true;
+	return false;
+}
 
-	// Precompute chord lengths for arc safety checks (world units)
-	float chord_22_5 = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 16.0));  // 22.5°
-	float chord_45   = 2.0f * turning_radius * std::sin(static_cast<float>(Math_PI / 8.0));   // 45°
+bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations) const {
+	if (!search.active || search.complete) return true;
 
-	// Rudder shift penalty: models the distance the ship travels while the
-	// rudder transitions between positions.  Approximated as R * 0.25 (the
-	// ship covers ~1/4 turning radius worth of distance during a full
-	// rudder shift).  Applied in grid cells when the action changes from
-	// straight to arc, or between left/right arcs.
-	float rudder_shift_cells = turning_radius * 0.25f / cell_size;
+	auto cell_idx = [&search](int x, int z) -> int {
+		return z * search.grid_width + x;
+	};
 
-	bool found = false;
-	int iterations = 0;
-	const int MAX_ITERATIONS = std::min(total_cells, 300000);
+	// 8-connected direction offsets
+	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
 
-	while (!open.empty() && iterations < MAX_ITERATIONS) {
-		iterations++;
+	int total_cells = search.grid_width * search.grid_height;
+	int budget = max_iterations;
 
-		auto [f, ci] = open.top();
-		open.pop();
+	while (!search.open_set.empty() && search.iterations < search.max_iterations && budget > 0) {
+		budget--;
+		search.iterations++;
 
-		if (astar_closed_gen_[ci] == astar_current_gen_) continue;
-		astar_closed_gen_[ci] = astar_current_gen_;
+		auto [f, ci] = search.open_set.top();
+		search.open_set.pop();
 
-		if (ci == end_idx) {
-			found = true;
+		if (search.closed_gen[ci] == search.current_gen) continue;
+		search.closed_gen[ci] = search.current_gen;
+
+		if (ci == search.end_idx) {
+			search.found = true;
 			break;
 		}
 
-		int cx = ci % grid_width;
-		int cz = ci / grid_width;
-		float cg = astar_g_cost_[ci];
+		int cx = ci % search.grid_width;
+		int cz = ci / search.grid_width;
+		float cg = search.g_cost[ci];
 
-		if (cg > cost_bound) break;
+		if (cg > search.cost_bound) break;
 
 		float sdf_here = get_cell(cx, cz);
-		float safe_dist = sdf_here - clearance_world;  // world units of spare clearance
+		float safe_dist = sdf_here - search.clearance_world;
 
-		if (use_curvature_penalty) {
+		if (search.use_curvature_penalty) {
 			// ---- Hybrid A* with arc-based expansion ----
-			int8_t cur_hbin = astar_parent_dir_[ci];
+			int8_t cur_hbin = search.parent_dir[ci];
 			if (cur_hbin < 0) cur_hbin = 0;
 			float sin_t = hbin_sin[cur_hbin];
 			float cos_t = hbin_cos[cur_hbin];
 
-			// Infer parent's rudder state for shift cost:
-			// If the parent had a different heading → parent was turning (arc)
-			// Track the turn direction: -1 = left, 0 = straight, +1 = right
+			// Infer parent's rudder state for shift cost
 			int parent_turn_dir = 0;
-			int pi = astar_parent_[ci];
+			int pi = search.parent[ci];
 			if (pi != ci && pi >= 0 && pi < total_cells
-				&& astar_open_gen_[pi] == astar_current_gen_) {
-				int8_t parent_hbin = astar_parent_dir_[pi];
+				&& search.open_gen[pi] == search.current_gen) {
+				int8_t parent_hbin = search.parent_dir[pi];
 				if (parent_hbin >= 0 && parent_hbin != cur_hbin) {
 					int d = static_cast<int>(cur_hbin) - static_cast<int>(parent_hbin);
 					if (d > 8) d -= 16;
@@ -1654,45 +1652,43 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 			// --- Straight move (SDF-adaptive step) ---
 			{
-				float step_world = std::max(safe_dist, cell_size);
-				step_world = std::min(step_world, turning_radius * 4.0f);
-				float step_grid = step_world / cell_size;
+				float step_world = std::max(safe_dist, search.cell_size);
+				step_world = std::min(step_world, search.turning_radius * 4.0f);
+				float step_grid = step_world / search.cell_size;
 
 				int nx = cx + static_cast<int>(std::round(step_grid * sin_t));
 				int nz = cz + static_cast<int>(std::round(step_grid * cos_t));
-				nx = std::max(0, std::min(nx, grid_width - 1));
-				nz = std::max(0, std::min(nz, grid_height - 1));
+				nx = std::max(0, std::min(nx, search.grid_width - 1));
+				nz = std::max(0, std::min(nz, search.grid_height - 1));
 
 				if (nx != cx || nz != cz) {
 					int nidx = cell_idx(nx, nz);
-					if (astar_closed_gen_[nidx] != astar_current_gen_) {
+					if (search.closed_gen[nidx] != search.current_gen) {
 						float landing_sdf = get_cell(nx, nz);
-						if (landing_sdf >= clearance_world) {
+						if (landing_sdf >= search.clearance_world) {
 							float dist = std::sqrt(static_cast<float>(
 								(nx - cx) * (nx - cx) + (nz - cz) * (nz - cz)));
 							float prox_cost = 0.0f;
-							float sdf_cells = landing_sdf / cell_size;
-							if (sdf_cells < turning_radius_cells * 2.0f) {
-								float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+							float sdf_cells = landing_sdf / search.cell_size;
+							if (sdf_cells < search.turning_radius_cells * 2.0f) {
+								float ratio = search.turning_radius_cells / std::max(sdf_cells, 1.0f);
 								prox_cost = dist * ratio * 0.15f;
 							}
-							// Soft clearance penalty: navigable but not preferred
-							if (use_soft_clearance && landing_sdf < soft_clearance_world) {
-								float tight_ratio = (soft_clearance_world - landing_sdf)
-									/ (soft_clearance_world - clearance_world);
+							if (search.use_soft_clearance && landing_sdf < search.soft_clearance_world) {
+								float tight_ratio = (search.soft_clearance_world - landing_sdf)
+									/ (search.soft_clearance_world - search.clearance_world);
 								prox_cost += dist * tight_ratio * 2.0f;
 							}
-							// Rudder shift: if parent was turning, rudder returns to center
-							float shift_cost = (parent_turn_dir != 0) ? rudder_shift_cells : 0.0f;
+							float shift_cost = (parent_turn_dir != 0) ? search.rudder_shift_cells : 0.0f;
 							float new_g = cg + dist + prox_cost + shift_cost;
-							bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
-											  || (new_g < astar_g_cost_[nidx]);
+							bool is_better = (search.open_gen[nidx] != search.current_gen)
+											  || (new_g < search.g_cost[nidx]);
 							if (is_better) {
-								astar_g_cost_[nidx] = new_g;
-								astar_open_gen_[nidx] = astar_current_gen_;
-								astar_parent_[nidx] = ci;
-								astar_parent_dir_[nidx] = cur_hbin;
-								open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+								search.g_cost[nidx] = new_g;
+								search.open_gen[nidx] = search.current_gen;
+								search.parent[nidx] = ci;
+								search.parent_dir[nidx] = cur_hbin;
+								search.open_set.push({new_g + heuristic(nx, nz, search.ex, search.ez), nidx});
 								any_arc_expanded = true;
 							}
 						}
@@ -1701,7 +1697,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			}
 
 			// --- Arc turns: left/right at 22.5° and 45° ---
-			// {bin_delta, angle, chord} — negative delta = left turn
 			const int arc_bin_deltas[] = {-1, 1, -2, 2};
 			const float arc_angles[] = {
 				static_cast<float>(Math_PI / 8.0),
@@ -1709,12 +1704,9 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				static_cast<float>(Math_PI / 4.0),
 				static_cast<float>(Math_PI / 4.0),
 			};
-			const float arc_chords[] = {chord_22_5, chord_22_5, chord_45, chord_45};
+			const float arc_chords[] = {search.chord_22_5, search.chord_22_5, search.chord_45, search.chord_45};
 
 			for (int a = 0; a < 4; a++) {
-				// Arc safety: chord must fit within safe distance at current cell.
-				// Since SDF is Lipschitz-1 and all arc points are within chord
-				// distance of start, SDF(arc_point) >= sdf_here - chord >= clearance.
 				if (safe_dist < arc_chords[a]) continue;
 
 				int delta = arc_bin_deltas[a];
@@ -1724,131 +1716,113 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 
 				float dx_grid, dz_grid;
 				if (delta < 0) {
-					// Left turn: center at (x - R*cos θ, z + R*sin θ)
-					dx_grid = R_grid * (-cos_t + cos_new);
-					dz_grid = R_grid * (sin_t - sin_new);
+					dx_grid = search.R_grid * (-cos_t + cos_new);
+					dz_grid = search.R_grid * (sin_t - sin_new);
 				} else {
-					// Right turn: center at (x + R*cos θ, z - R*sin θ)
-					dx_grid = R_grid * (cos_t - cos_new);
-					dz_grid = R_grid * (-sin_t + sin_new);
+					dx_grid = search.R_grid * (cos_t - cos_new);
+					dz_grid = search.R_grid * (-sin_t + sin_new);
 				}
 
 				int nx = cx + static_cast<int>(std::round(dx_grid));
 				int nz = cz + static_cast<int>(std::round(dz_grid));
 
-				if (nx < 0 || nx >= grid_width || nz < 0 || nz >= grid_height) continue;
+				if (nx < 0 || nx >= search.grid_width || nz < 0 || nz >= search.grid_height) continue;
 				if (nx == cx && nz == cz) continue;
 
 				int nidx = cell_idx(nx, nz);
-				if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+				if (search.closed_gen[nidx] == search.current_gen) continue;
 
 				float landing_sdf = get_cell(nx, nz);
-				if (landing_sdf < clearance_world) continue;
+				if (landing_sdf < search.clearance_world) continue;
 
-				// Cost = arc length in grid cells
-				float arc_cost = R_grid * arc_angles[a];
+				float arc_cost = search.R_grid * arc_angles[a];
 
-				// Proximity penalty at landing
-				float sdf_cells = landing_sdf / cell_size;
-				if (sdf_cells < turning_radius_cells * 2.0f) {
-					float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+				float sdf_cells = landing_sdf / search.cell_size;
+				if (sdf_cells < search.turning_radius_cells * 2.0f) {
+					float ratio = search.turning_radius_cells / std::max(sdf_cells, 1.0f);
 					arc_cost += arc_cost * ratio * 0.15f;
 				}
 
-				// Soft clearance penalty
-				if (use_soft_clearance && landing_sdf < soft_clearance_world) {
-					float tight_ratio = (soft_clearance_world - landing_sdf)
-						/ (soft_clearance_world - clearance_world);
+				if (search.use_soft_clearance && landing_sdf < search.soft_clearance_world) {
+					float tight_ratio = (search.soft_clearance_world - landing_sdf)
+						/ (search.soft_clearance_world - search.clearance_world);
 					arc_cost += arc_cost * tight_ratio * 2.0f;
 				}
 
-				// Rudder shift cost: penalty for changing rudder state.
-				// Same direction as parent: free. From straight: 1x shift.
-				// Opposite direction: 2x shift (full rudder reversal).
 				int this_turn_dir = (delta < 0) ? -1 : 1;
 				if (parent_turn_dir == 0) {
-					arc_cost += rudder_shift_cells;              // straight → arc
+					arc_cost += search.rudder_shift_cells;
 				} else if (parent_turn_dir != this_turn_dir) {
-					arc_cost += rudder_shift_cells * 2.0f;       // arc reversal
+					arc_cost += search.rudder_shift_cells * 2.0f;
 				}
-				// else: continuing same turn direction, no shift
 
 				float new_g = cg + arc_cost;
-				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
-								  || (new_g < astar_g_cost_[nidx]);
+				bool is_better = (search.open_gen[nidx] != search.current_gen)
+								  || (new_g < search.g_cost[nidx]);
 				if (is_better) {
-					astar_g_cost_[nidx] = new_g;
-					astar_open_gen_[nidx] = astar_current_gen_;
-					astar_parent_[nidx] = ci;
-					astar_parent_dir_[nidx] = static_cast<int8_t>(new_hbin);
-					open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+					search.g_cost[nidx] = new_g;
+					search.open_gen[nidx] = search.current_gen;
+					search.parent[nidx] = ci;
+					search.parent_dir[nidx] = static_cast<int8_t>(new_hbin);
+					search.open_set.push({new_g + heuristic(nx, nz, search.ex, search.ez), nidx});
 					any_arc_expanded = true;
 				}
 			}
 
 			// --- Tight-space fallback: 8-direction step=1 ---
-			// Activates when no arc/straight action succeeded.
-			// Heading change is capped at ±2 bins (45°) per step to
-			// prevent impossible sharp turns the ship can't follow.
 			if (!any_arc_expanded) {
-				// Heading bin for each of the 8 grid directions (precomputed)
-				// dx8 = {-1, 0, 1, -1, 1, -1, 0, 1}
-				// dz8 = {-1,-1,-1,  0, 0,  1, 1, 1}
 				static const int8_t grid_dir_hbin[8] = {
-					10, 8, 6,   // (-1,-1)=225°→bin10, (0,-1)=180°→bin8, (1,-1)=135°→bin6
-					12, 4,      // (-1,0)=270°→bin12, (1,0)=90°→bin4
-					14, 0, 2    // (-1,1)=315°→bin14, (0,1)=0°→bin0, (1,1)=45°→bin2
+					10, 8, 6,
+					12, 4,
+					14, 0, 2
 				};
 				for (int d = 0; d < 8; d++) {
 					int new_hbin = grid_dir_hbin[d];
 
-					// Reject directions requiring > 45° turn (2 heading bins)
 					int turn_bins = std::abs(new_hbin - static_cast<int>(cur_hbin));
 					if (turn_bins > 8) turn_bins = 16 - turn_bins;
 					if (turn_bins > 2) continue;
 
 					int nx = cx + dx8[d];
 					int nz = cz + dz8[d];
-					if (nx < 0 || nx >= grid_width || nz < 0 || nz >= grid_height) continue;
+					if (nx < 0 || nx >= search.grid_width || nz < 0 || nz >= search.grid_height) continue;
 
 					int nidx = cell_idx(nx, nz);
-					if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+					if (search.closed_gen[nidx] == search.current_gen) continue;
 
 					float landing_sdf = get_cell(nx, nz);
-					if (landing_sdf < clearance_world) continue;
+					if (landing_sdf < search.clearance_world) continue;
 
 					bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
 					if (is_diag) {
-						if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
-						if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
+						if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
+						if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
 					}
 
 					float step_dist = is_diag ? 1.414f : 1.0f;
 					float turn_cost = turn_bins * 0.5f;
 
-					// Proximity penalty
-					float sdf_cells = landing_sdf / cell_size;
+					float sdf_cells = landing_sdf / search.cell_size;
 					float prox_cost = 0.0f;
-					if (sdf_cells < turning_radius_cells * 2.0f) {
-						float ratio = turning_radius_cells / std::max(sdf_cells, 1.0f);
+					if (sdf_cells < search.turning_radius_cells * 2.0f) {
+						float ratio = search.turning_radius_cells / std::max(sdf_cells, 1.0f);
 						prox_cost = step_dist * ratio * 0.15f;
 					}
-					// Soft clearance penalty
-					if (use_soft_clearance && landing_sdf < soft_clearance_world) {
-						float tight_ratio = (soft_clearance_world - landing_sdf)
-							/ (soft_clearance_world - clearance_world);
+					if (search.use_soft_clearance && landing_sdf < search.soft_clearance_world) {
+						float tight_ratio = (search.soft_clearance_world - landing_sdf)
+							/ (search.soft_clearance_world - search.clearance_world);
 						prox_cost += step_dist * tight_ratio * 2.0f;
 					}
 
 					float new_g = cg + step_dist + turn_cost + prox_cost;
-					bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
-									  || (new_g < astar_g_cost_[nidx]);
+					bool is_better = (search.open_gen[nidx] != search.current_gen)
+									  || (new_g < search.g_cost[nidx]);
 					if (is_better) {
-						astar_g_cost_[nidx] = new_g;
-						astar_open_gen_[nidx] = astar_current_gen_;
-						astar_parent_[nidx] = ci;
-						astar_parent_dir_[nidx] = static_cast<int8_t>(new_hbin);
-						open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+						search.g_cost[nidx] = new_g;
+						search.open_gen[nidx] = search.current_gen;
+						search.parent[nidx] = ci;
+						search.parent_dir[nidx] = static_cast<int8_t>(new_hbin);
+						search.open_set.push({new_g + heuristic(nx, nz, search.ex, search.ez), nidx});
 					}
 				}
 			}
@@ -1857,15 +1831,15 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			for (int d = 0; d < 8; d++) {
 				bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
 
-				float step_world = is_diag ? (cell_size * 1.414f) : cell_size;
+				float step_world = is_diag ? (search.cell_size * 1.414f) : search.cell_size;
 				int max_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
 
 				if (dx8[d] != 0) {
-					int max_x = (dx8[d] > 0) ? (grid_width - 1 - cx) : cx;
+					int max_x = (dx8[d] > 0) ? (search.grid_width - 1 - cx) : cx;
 					max_jump = std::min(max_jump, max_x);
 				}
 				if (dz8[d] != 0) {
-					int max_z = (dz8[d] > 0) ? (grid_height - 1 - cz) : cz;
+					int max_z = (dz8[d] > 0) ? (search.grid_height - 1 - cz) : cz;
 					max_jump = std::min(max_jump, max_z);
 				}
 				if (max_jump <= 0) continue;
@@ -1874,74 +1848,89 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				int nz = cz + dz8[d] * max_jump;
 
 				int nidx = cell_idx(nx, nz);
-				if (astar_closed_gen_[nidx] == astar_current_gen_) continue;
+				if (search.closed_gen[nidx] == search.current_gen) continue;
 
 				float landing_sdf = get_cell(nx, nz);
-				if (landing_sdf < clearance_world) continue;
+				if (landing_sdf < search.clearance_world) continue;
 
 				if (max_jump == 1 && is_diag) {
-					if (get_cell(cx + dx8[d], cz) < clearance_world) continue;
-					if (get_cell(cx, cz + dz8[d]) < clearance_world) continue;
+					if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
+					if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
 				}
 
 				float step_dist = is_diag ? (max_jump * 1.414f) : static_cast<float>(max_jump);
-				// Soft clearance penalty (non-curvature path)
 				float soft_penalty = 0.0f;
-				if (use_soft_clearance && landing_sdf < soft_clearance_world) {
-					float tight_ratio = (soft_clearance_world - landing_sdf)
-						/ (soft_clearance_world - clearance_world);
+				if (search.use_soft_clearance && landing_sdf < search.soft_clearance_world) {
+					float tight_ratio = (search.soft_clearance_world - landing_sdf)
+						/ (search.soft_clearance_world - search.clearance_world);
 					soft_penalty = step_dist * tight_ratio * 2.0f;
 				}
 				float new_g = cg + step_dist + soft_penalty;
 
-				bool is_better = (astar_open_gen_[nidx] != astar_current_gen_)
-								 || (new_g < astar_g_cost_[nidx]);
+				bool is_better = (search.open_gen[nidx] != search.current_gen)
+								 || (new_g < search.g_cost[nidx]);
 				if (is_better) {
-					astar_g_cost_[nidx] = new_g;
-					astar_open_gen_[nidx] = astar_current_gen_;
-					astar_parent_[nidx] = ci;
-					astar_parent_dir_[nidx] = static_cast<int8_t>(d);
-					open.push({new_g + heuristic(nx, nz, ex, ez), nidx});
+					search.g_cost[nidx] = new_g;
+					search.open_gen[nidx] = search.current_gen;
+					search.parent[nidx] = ci;
+					search.parent_dir[nidx] = static_cast<int8_t>(d);
+					search.open_set.push({new_g + heuristic(nx, nz, search.ex, search.ez), nidx});
 				}
 			}
 		}
 	}
 
-	if (!found) {
-		UtilityFunctions::print("[NavigationMap] find_path: No path found after ", iterations, " iterations");
+	// Check if search is done
+	if (search.found || search.open_set.empty() || search.iterations >= search.max_iterations) {
+		search.complete = true;
+		search.active = false;
+		return true;
+	}
+
+	// Budget exhausted but search not done — will continue next frame
+	return false;
+}
+
+PathResult NavigationMap::finish_path_search(PathSearch &search) const {
+	PathResult result;
+	result.valid = false;
+	result.total_distance = 0.0f;
+
+	if (!search.found) {
+		UtilityFunctions::print("[NavigationMap] find_path: No path found after ", search.iterations, " iterations");
 		return result;
 	}
 
 	// Reconstruct path (grid coords -> world coords)
 	std::vector<Vector2> path;
 	{
-		int ci = end_idx;
-		while (ci != start_idx) {
-			int cx = ci % grid_width;
-			int cz = ci / grid_width;
+		int ci = search.end_idx;
+		while (ci != search.start_idx) {
+			int cx = ci % search.grid_width;
+			int cz = ci / search.grid_width;
 			float wx, wz;
 			grid_to_world(cx, cz, wx, wz);
 			path.push_back(Vector2(wx, wz));
 
-			int pi = astar_parent_[ci];
+			int pi = search.parent[ci];
 			if (pi == ci || pi < 0) break;  // safety
 			ci = pi;
 		}
 	}
 
 	// Add ship's actual position (from) as the first point
-	path.push_back(from);
+	path.push_back(search.from);
 
 	// Reverse to get start-to-end order
 	std::reverse(path.begin(), path.end());
 
 	// Replace the last point with the exact target
 	if (path.size() >= 2) {
-		path.back() = to;
+		path.back() = search.to;
 	}
 
 	// --- Path simplification using grid-level LOS (fast) ---
-	// Greedy funnel: from current waypoint, find the farthest visible waypoint
+	// (currently disabled via && false, preserved for parity)
 	if (path.size() > 2 && false) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
@@ -1959,7 +1948,7 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				int ix1 = static_cast<int>(std::round(gx1));
 				int iz1 = static_cast<int>(std::round(gz1));
 
-				if (line_of_sight(ix0, iz0, ix1, iz1, clearance_world)) {
+				if (line_of_sight(ix0, iz0, ix1, iz1, search.clearance_world)) {
 					farthest = test;
 					break;
 				}
@@ -1972,13 +1961,8 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	}
 
 	// --- Arc feasibility validation (backtrack & straighten) ---
-	// Walk the path and check whether the ship can physically execute each
-	// turn without grounding.  At each interior waypoint, compute the arc
-	// the ship's turning circle would trace and sample it for SDF clearance.
-	// If any sample clips land, remove the waypoint to straighten the path.
-	// Repeat until all turns are feasible or no more waypoints can be removed.
-	if (use_curvature_penalty && path.size() >= 3) {
-		float R = turning_radius;
+	if (search.use_curvature_penalty && path.size() >= 3) {
+		float R = search.turning_radius;
 		bool changed = true;
 		int max_passes = 10;
 
@@ -1997,22 +1981,16 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				float turn_mag = std::acos(dot_val);
 
 				if (turn_mag < 0.1f) {
-					// Negligible turn, skip
 					i++;
 					continue;
 				}
 
-				// Determine turn direction and compute arc samples
-				float arr_heading = std::atan2(d1.x, d1.y);  // heading arriving at B
-				float dep_heading = std::atan2(d2.x, d2.y);  // heading departing B
+				float arr_heading = std::atan2(d1.x, d1.y);
+				float dep_heading = std::atan2(d2.x, d2.y);
 				float angle_diff = dep_heading - arr_heading;
-				// Normalize to [-PI, PI]
 				while (angle_diff > Math_PI) angle_diff -= Math_TAU;
 				while (angle_diff < -Math_PI) angle_diff += Math_TAU;
 
-				// Sample the arc the ship would trace at B
-				// Arc center is at distance R perpendicular to arrival heading
-				// on the inside of the turn
 				bool arc_ok = true;
 				int num_samples = std::max(4, static_cast<int>(std::abs(angle_diff) / 0.15f));
 
@@ -2021,13 +1999,11 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 					float sample_x, sample_z;
 
 					if (angle_diff < 0) {
-						// Left turn
 						sample_x = B.x - R * std::cos(arr_heading)
 								 + R * std::cos(arr_heading + t);
 						sample_z = B.y + R * std::sin(arr_heading)
 								 - R * std::sin(arr_heading + t);
 					} else {
-						// Right turn
 						sample_x = B.x + R * std::cos(arr_heading)
 								 - R * std::cos(arr_heading + t);
 						sample_z = B.y - R * std::sin(arr_heading)
@@ -2035,17 +2011,15 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 					}
 
 					float sdf_val = get_distance(sample_x, sample_z);
-					if (sdf_val < clearance) {
+					if (sdf_val < search.clearance) {
 						arc_ok = false;
 						break;
 					}
 				}
 
 				if (!arc_ok) {
-					// Turn clips land — remove this waypoint to straighten
 					path.erase(path.begin() + static_cast<long>(i));
 					changed = true;
-					// Don't increment i; re-check the new triple at this index
 				} else {
 					i++;
 				}
@@ -2053,13 +2027,12 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 		}
 	}
 
-	// --- Catmull-Rom smoothing at sharp waypoints (only when turning-radius-aware) ---
-	if (use_curvature_penalty && path.size() >= 3) {
-		// Threshold: if the turn angle at a waypoint exceeds this, smooth it
-		float clearance_in_cells = clearance_world / cell_size;
-		float angle_threshold = Math_PI / std::max(turning_radius_cells / std::max(clearance_in_cells, 1.0f), 1.0f);
-		angle_threshold = std::min(angle_threshold, static_cast<float>(Math_PI * 0.5));  // cap at 90°
-		angle_threshold = std::max(angle_threshold, 0.3f);  // floor at ~17°
+	// --- Catmull-Rom smoothing at sharp waypoints ---
+	if (search.use_curvature_penalty && path.size() >= 3) {
+		float clearance_in_cells = search.clearance_world / search.cell_size;
+		float angle_threshold = Math_PI / std::max(search.turning_radius_cells / std::max(clearance_in_cells, 1.0f), 1.0f);
+		angle_threshold = std::min(angle_threshold, static_cast<float>(Math_PI * 0.5));
+		angle_threshold = std::max(angle_threshold, 0.3f);
 
 		std::vector<Vector2> smoothed;
 		smoothed.push_back(path[0]);
@@ -2069,7 +2042,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			Vector2 curr = path[i];
 			Vector2 next = path[i + 1];
 
-			// Compute turn angle at this waypoint
 			Vector2 d1 = (curr - prev).normalized();
 			Vector2 d2 = (next - curr).normalized();
 			float dot_val = d1.x * d2.x + d1.y * d2.y;
@@ -2077,9 +2049,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 			float turn_angle = std::acos(dot_val);
 
 			if (turn_angle > angle_threshold) {
-				// Insert 2-3 Catmull-Rom interpolated points
-				// Use the 4 control points: path[i-1], path[i-1], path[i], path[i+1]
-				// (duplicate first point if at start)
 				Vector2 p0 = (i >= 2) ? path[i - 2] : prev;
 				Vector2 p1 = prev;
 				Vector2 p2 = curr;
@@ -2091,7 +2060,6 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				std::vector<Vector2> interpolated;
 				for (int k = 1; k <= num_inserts; k++) {
 					float t = static_cast<float>(k) / static_cast<float>(num_inserts + 1);
-					// Catmull-Rom spline: q(t) = 0.5 * ((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t² + (-p0+3*p1-3*p2+p3)*t³)
 					float t2 = t * t;
 					float t3 = t2 * t;
 					Vector2 pt = 0.5f * (
@@ -2101,9 +2069,8 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 						(p1 * 3.0f - p0 - p2 * 3.0f + p3) * t3
 					);
 
-					// SDF validation: check if the interpolated point is navigable
 					float pt_dist = get_distance(pt.x, pt.y);
-					if (pt_dist < clearance) {
+					if (pt_dist < search.clearance) {
 						all_valid = false;
 						break;
 					}
@@ -2111,19 +2078,16 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 				}
 
 				if (all_valid && !interpolated.empty()) {
-					// Use the smoothed points instead of the sharp corner
 					for (const auto &ipt : interpolated) {
 						smoothed.push_back(ipt);
 					}
 				}
-				// Always include the original waypoint (after or instead of interpolated)
 				smoothed.push_back(curr);
 			} else {
 				smoothed.push_back(curr);
 			}
 		}
 
-		// Add the last point
 		smoothed.push_back(path.back());
 		path = smoothed;
 	}
@@ -2139,6 +2103,17 @@ PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float cle
 	result.total_distance = total_dist;
 	result.valid = true;
 	return result;
+}
+
+// Synchronous wrapper — delegates to async API using pre-allocated search state
+PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
+											 float turning_radius, float start_heading,
+											 float cost_bound, float soft_clearance) const {
+	if (begin_path_search(sync_search_, from, to, clearance, turning_radius, start_heading, cost_bound, soft_clearance)) {
+		return sync_search_.result;
+	}
+	continue_path_search(sync_search_, sync_search_.max_iterations);
+	return finish_path_search(sync_search_);
 }
 
 // ============================================================================

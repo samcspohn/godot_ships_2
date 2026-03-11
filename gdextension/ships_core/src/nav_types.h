@@ -6,6 +6,8 @@
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 
 #include <vector>
+#include <queue>
+#include <functional>
 #include <cmath>
 #include <limits>
 
@@ -308,6 +310,71 @@ inline float throttle_to_speed_fraction(int throttle) {
 		default: return 0.0f;
 	}
 }
+
+// Resumable A* search state — one per ship for async pathfinding.
+// Buffers are allocated once (matching grid size) and reused via generation counters.
+struct PathSearch {
+    // Per-cell A* buffers
+    std::vector<float> g_cost;
+    std::vector<int> parent;
+    std::vector<int8_t> parent_dir;
+    std::vector<uint32_t> open_gen;
+    std::vector<uint32_t> closed_gen;
+    uint32_t current_gen = 0;
+
+    // Priority queue
+    using PQEntry = std::pair<float, int>;
+    std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> open_set;
+
+    // Search parameters (set by begin_path_search)
+    int sx = 0, sz = 0, ex = 0, ez = 0;
+    int start_idx = 0, end_idx = 0;
+    int grid_width = 0, grid_height = 0;
+    float clearance_world = 0, soft_clearance_world = 0;
+    float turning_radius = 0, cell_size = 50;
+    float turning_radius_cells = 0, R_grid = 0;
+    float start_heading = 0, cost_bound = 0;
+    float rudder_shift_cells = 0;
+    float chord_22_5 = 0, chord_45 = 0;
+    bool use_curvature_penalty = false, use_heading = false, use_soft_clearance = false;
+
+    // World coords for path reconstruction
+    Vector2 from, to;
+    float clearance = 0;  // original clearance param (for post-processing)
+
+    // Progress tracking
+    int iterations = 0;
+    int max_iterations = 200000;
+    bool found = false;
+    bool active = false;    // search in progress
+    bool complete = false;  // search finished (found or exhausted)
+
+    // Immediate result (set by begin if LOS path found)
+    PathResult result;
+
+    PathSearch() = default;
+
+    void allocate(int total_cells) {
+        if ((int)g_cost.size() == total_cells) return;
+        g_cost.resize(total_cells);
+        parent.resize(total_cells);
+        parent_dir.resize(total_cells);
+        open_gen.resize(total_cells, 0);
+        closed_gen.resize(total_cells, 0);
+        current_gen = 0;
+    }
+
+    void reset() {
+        // Clear PQ (no clear() on std::priority_queue, swap with empty)
+        std::priority_queue<PQEntry, std::vector<PQEntry>, std::greater<PQEntry>> empty_pq;
+        open_set.swap(empty_pq);
+        iterations = 0;
+        found = false;
+        active = false;
+        complete = false;
+        result = PathResult();
+    }
+};
 
 } // namespace godot
 

@@ -53,6 +53,9 @@ private:
 	mutable std::vector<uint32_t> astar_closed_gen_; // generation when cell was closed
 	mutable uint32_t astar_current_gen_ = 0;
 
+	// Pre-allocated search state for synchronous find_path_internal calls
+	mutable PathSearch sync_search_;
+
 	// Precomputed turn angle (radians) between each pair of 8-connected directions
 	float turn_angle_lut_[8][8];
 
@@ -240,6 +243,28 @@ public:
 								  float turning_radius, float start_heading,
 								  float cost_bound = std::numeric_limits<float>::infinity(),
 								  float soft_clearance = 0.0f) const;
+
+	// --- Async pathfinding (per-ship search state) ---
+
+	// Initialize a path search. Sets up parameters, snaps start/end to grid,
+	// checks reachability and LOS. Returns true if path found immediately
+	// (direct LOS or trivial), in which case search.result is populated.
+	// Otherwise sets search.active = true and the caller should call
+	// continue_path_search() each frame.
+	bool begin_path_search(PathSearch &search, Vector2 from, Vector2 to,
+						   float clearance, float turning_radius = 0.0f,
+						   float start_heading = std::numeric_limits<float>::quiet_NaN(),
+						   float cost_bound = std::numeric_limits<float>::infinity(),
+						   float soft_clearance = 0.0f) const;
+
+	// Run up to max_iterations of the A* loop. Returns true when the search
+	// is complete (path found or exhausted). Call finish_path_search() to
+	// get the final PathResult with post-processing.
+	bool continue_path_search(PathSearch &search, int max_iterations) const;
+
+	// Post-process a completed search: reconstruct path, arc validation,
+	// Catmull-Rom smoothing. Returns the final PathResult.
+	PathResult finish_path_search(PathSearch &search) const;
 
 	// --- Island data ---
 
