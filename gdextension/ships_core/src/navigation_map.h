@@ -242,7 +242,8 @@ public:
 	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
 								  float turning_radius, float start_heading,
 								  float cost_bound = std::numeric_limits<float>::infinity(),
-								  float soft_clearance = 0.0f) const;
+								  float soft_clearance = 0.0f,
+								  float start_rudder = 0.0f) const;
 
 	// --- Async pathfinding (per-ship search state) ---
 
@@ -255,7 +256,8 @@ public:
 						   float clearance, float turning_radius = 0.0f,
 						   float start_heading = std::numeric_limits<float>::quiet_NaN(),
 						   float cost_bound = std::numeric_limits<float>::infinity(),
-						   float soft_clearance = 0.0f) const;
+						   float soft_clearance = 0.0f,
+						   float start_rudder = 0.0f) const;
 
 	// Run up to max_iterations of the A* loop. Returns true when the search
 	// is complete (path found or exhausted). Call finish_path_search() to

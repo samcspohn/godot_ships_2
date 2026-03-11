@@ -1444,7 +1444,7 @@ static const float hbin_cos[16] = {
 bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 to,
 									  float clearance, float turning_radius,
 									  float start_heading, float cost_bound,
-									  float soft_clearance) const {
+									  float soft_clearance, float start_rudder) const {
 	search.reset();
 	search.result.valid = false;
 	search.result.total_distance = 0.0f;
@@ -1528,6 +1528,16 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 
 	// Rudder shift penalty in grid cells
 	search.rudder_shift_cells = turning_radius * 0.25f / cell_size;
+
+	// Convert starting rudder to turn direction for shift cost at first expansion
+	search.start_rudder = start_rudder;
+	if (start_rudder < -0.1f) {
+		search.start_turn_dir = -1;  // currently turning left
+	} else if (start_rudder > 0.1f) {
+		search.start_turn_dir = 1;   // currently turning right
+	} else {
+		search.start_turn_dir = 0;   // centered
+	}
 
 	int total_cells = grid_width * grid_height;
 
@@ -1636,15 +1646,20 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 
 			// Infer parent's rudder state for shift cost
 			int parent_turn_dir = 0;
-			int pi = search.parent[ci];
-			if (pi != ci && pi >= 0 && pi < total_cells
-				&& search.open_gen[pi] == search.current_gen) {
-				int8_t parent_hbin = search.parent_dir[pi];
-				if (parent_hbin >= 0 && parent_hbin != cur_hbin) {
-					int d = static_cast<int>(cur_hbin) - static_cast<int>(parent_hbin);
-					if (d > 8) d -= 16;
-					if (d < -8) d += 16;
-					parent_turn_dir = (d > 0) ? 1 : -1;
+			if (ci == search.start_idx) {
+				// Use actual starting rudder direction
+				parent_turn_dir = search.start_turn_dir;
+			} else {
+				int pi = search.parent[ci];
+				if (pi != ci && pi >= 0 && pi < total_cells
+					&& search.open_gen[pi] == search.current_gen) {
+					int8_t parent_hbin = search.parent_dir[pi];
+					if (parent_hbin >= 0 && parent_hbin != cur_hbin) {
+						int d = static_cast<int>(cur_hbin) - static_cast<int>(parent_hbin);
+						if (d > 8) d -= 16;
+						if (d < -8) d += 16;
+						parent_turn_dir = (d > 0) ? 1 : -1;
+					}
 				}
 			}
 
@@ -2108,8 +2123,9 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 // Synchronous wrapper — delegates to async API using pre-allocated search state
 PathResult NavigationMap::find_path_internal(Vector2 from, Vector2 to, float clearance,
 											 float turning_radius, float start_heading,
-											 float cost_bound, float soft_clearance) const {
-	if (begin_path_search(sync_search_, from, to, clearance, turning_radius, start_heading, cost_bound, soft_clearance)) {
+											 float cost_bound, float soft_clearance,
+											 float start_rudder) const {
+	if (begin_path_search(sync_search_, from, to, clearance, turning_radius, start_heading, cost_bound, soft_clearance, start_rudder)) {
 		return sync_search_.result;
 	}
 	continue_path_search(sync_search_, sync_search_.max_iterations);

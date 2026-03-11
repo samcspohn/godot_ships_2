@@ -453,12 +453,12 @@ void ShipNavigator::update_planning() {
 			plan_min_clearance + params.ship_beam * 0.5f,
 			plan_min_clearance * 2.0f);
 
-		// Begin forward search (heading-aware, soft clearance)
+		// Begin forward search (heading-aware, soft clearance, with current rudder)
 		bool immediate = map->begin_path_search(
 			path_search, state.position, target.position,
 			plan_min_clearance, params.turning_circle_radius,
 			state.heading, std::numeric_limits<float>::infinity(),
-			plan_comfortable_clearance);
+			plan_comfortable_clearance, state.current_rudder);
 
 		if (immediate) {
 			plan_forward_result = path_search.result;
@@ -499,7 +499,7 @@ void ShipNavigator::update_planning() {
 						path_search, state.position, target.position,
 						plan_min_clearance, params.turning_circle_radius,
 						reverse_heading, plan_forward_result.total_distance,
-						plan_comfortable_clearance);
+						plan_comfortable_clearance, state.current_rudder);
 					if (imm) {
 						// Immediate reverse result — go to DONE to accept/reject
 						plan_phase = PlanPhase::DONE;
@@ -586,9 +586,51 @@ void ShipNavigator::update_planning() {
 		return;
 	}
 
-	// Still planning — hold current steering output (coast)
-	// Use zero throttle to avoid drifting while computing
-	set_steering_output(0.0f, 0, false, std::numeric_limits<float>::infinity());
+	// Still planning — continue following current path (steering only, no state transitions)
+	if (path_valid && current_wp_index < (int)current_path.waypoints.size()) {
+		advance_waypoint();
+
+		Vector2 steer_target = current_path.waypoints[current_wp_index];
+		bool use_reverse = current_waypoint_is_reverse();
+
+		float desired_rudder;
+		if (!use_reverse) {
+			float R = params.turning_circle_radius;
+			float speed = std::max(std::abs(state.current_speed), 1.0f);
+			float lookahead = std::max(R * 2.0f, speed * 5.0f);
+			Vector2 lookahead_pt = find_path_lookahead(lookahead);
+
+			Vector2 to_target = lookahead_pt - state.position;
+			float forward_x = std::sin(state.heading);
+			float forward_z = std::cos(state.heading);
+			float along  = to_target.x * forward_x + to_target.y * forward_z;
+			float lateral = to_target.x * forward_z - to_target.y * forward_x;
+			float dist_sq = to_target.x * to_target.x + to_target.y * to_target.y;
+			if (dist_sq < 1.0f) dist_sq = 1.0f;
+
+			float curvature = 2.0f * lateral / dist_sq;
+			desired_rudder = clamp_f(-curvature * R, -1.0f, 1.0f);
+
+			if (along < 0.0f) {
+				desired_rudder = compute_rudder_to_position(steer_target, false);
+			}
+		} else {
+			desired_rudder = compute_rudder_to_position(steer_target, true);
+		}
+
+		int desired_throttle = use_reverse ? -1 : 4;
+
+		float ttc;
+		bool collision;
+		float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
+		int final_throttle = collision
+			? std::min(desired_throttle, std::max(use_reverse ? -1 : 1, out_throttle))
+			: desired_throttle;
+
+		set_steering_output(safe_rudder, final_throttle, collision, ttc);
+	} else {
+		set_steering_output(0.0f, 0, false, std::numeric_limits<float>::infinity());
+	}
 }
 
 void ShipNavigator::update_navigating(float delta) {
