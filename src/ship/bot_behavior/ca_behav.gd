@@ -28,6 +28,18 @@ var _target_island_radius: float = 0.0
 var _nav_destination: Vector3 = Vector3.ZERO
 var _nav_destination_valid: bool = false
 
+# Engagement tracking
+var _last_in_range_ms: int = 0
+var _last_known_enemy_pos: Vector3 = Vector3.ZERO
+var _last_known_enemy_valid: bool = false
+
+# Skirting state
+var _skirt_dest: Vector3 = Vector3.ZERO
+var _skirt_heading: float = 0.0
+var _skirt_valid: bool = false
+var _skirt_search_ms: int = 0
+var _fire_suppressed: bool = false
+
 # ============================================================================
 # WEIGHT CONFIGURATION
 # ============================================================================
@@ -98,6 +110,14 @@ func should_evade(_destination: Vector3) -> bool:
 # ============================================================================
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
+	# When in cover, only consider targets we can shoot over the island
+	if is_in_cover:
+		var shootable: Array[Ship] = []
+		for t in targets:
+			if _can_shoot_over(t):
+				shootable.append(t)
+		if not shootable.is_empty():
+			targets = shootable
 	var weights = get_target_weights()
 	var gun_range = _ship.artillery_controller.get_params()._range
 
@@ -149,6 +169,20 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 # ============================================================================
 # AMMO AND AIM
 # ============================================================================
+
+func _can_shoot_over(target: Ship) -> bool:
+	var target_pos = target.global_position + target_aim_offset(target)
+	for gun in _ship.artillery_controller.guns:
+		if gun.sim_can_shoot_over_terrain(target_pos):
+			return true
+	return false
+
+func engage_target(target: Ship) -> void:
+	var hunting = not _nav_destination_valid and _last_known_enemy_valid
+	var shooting_ok = is_in_cover or hunting or (_ship.visible_to_enemy and not _fire_suppressed)
+	if not shooting_ok:
+		return
+	super.engage_target(target)
 
 func pick_ammo(_target: Ship) -> int:
 	return 0 if ammo == ShellParams.ShellType.AP else 1
@@ -400,62 +434,286 @@ func _tangential_heading(ship: Ship, island_center: Vector3, from_pos: Vector3) 
 	return ccw
 
 # ============================================================================
+# ENEMY TRACKING
+# ============================================================================
+
+func _update_enemy_tracking(ship: Ship, server: GameServer, spotted: Array) -> void:
+	var gun_range = ship.artillery_controller.get_params()._range
+	for enemy in spotted:
+		if enemy.global_position.distance_to(ship.global_position) <= gun_range:
+			_last_in_range_ms = Time.get_ticks_msec()
+			break
+	# Track nearest known enemy for hunting
+	var best_dist = INF
+	for enemy in spotted:
+		var d = enemy.global_position.distance_to(ship.global_position)
+		if d < best_dist:
+			best_dist = d
+			_last_known_enemy_pos = enemy.global_position
+			_last_known_enemy_valid = true
+	for pos in server.get_unspotted_enemies(ship.team.team_id).values():
+		var d = pos.distance_to(ship.global_position)
+		if d < best_dist:
+			best_dist = d
+			_last_known_enemy_pos = pos
+			_last_known_enemy_valid = true
+
+# ============================================================================
+# HUNTING — move toward last known enemy position
+# ============================================================================
+
+func _intent_hunt(ship: Ship) -> NavIntent:
+	var to_enemy = _last_known_enemy_pos - ship.global_position
+	to_enemy.y = 0.0
+	if to_enemy.length() < 500.0:
+		_last_known_enemy_valid = false
+		return _intent_sail_forward(ship)
+	var dest = _get_valid_nav_point(_last_known_enemy_pos)
+	var heading = atan2(to_enemy.x, to_enemy.z)
+	var intent = NavIntent.create(dest, heading)
+	intent.throttle_override = 4
+	return intent
+
+# ============================================================================
+# ANGLING — maintain armor angle toward target
+# ============================================================================
+
+func _get_angle_range(ship_class: Ship.ShipClass) -> Vector2:
+	match ship_class:
+		Ship.ShipClass.BB: return Vector2(deg_to_rad(25), deg_to_rad(31))
+		Ship.ShipClass.CA: return Vector2(deg_to_rad(0), deg_to_rad(30))
+		Ship.ShipClass.DD: return Vector2(deg_to_rad(0), deg_to_rad(40))
+	return Vector2(deg_to_rad(0), deg_to_rad(30))
+
+func _intent_angle(ship: Ship, target: Ship) -> NavIntent:
+	var to_enemy = target.global_position - ship.global_position
+	to_enemy.y = 0.0
+	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
+	var angle_range = _get_angle_range(target.ship_class)
+	var desired = (angle_range.x + angle_range.y) * 0.5
+	# Pick angling side closest to current heading
+	var cw = _normalize_angle(enemy_bearing + desired)
+	var ccw = _normalize_angle(enemy_bearing - desired)
+	var current = _get_ship_heading()
+	var heading = cw if abs(_normalize_angle(cw - current)) < abs(_normalize_angle(ccw - current)) else ccw
+	# Maintain engagement range while angling
+	var gun_range = ship.artillery_controller.get_params()._range
+	var desired_dist = gun_range * 0.55
+	var fwd = Vector3(sin(heading), 0.0, cos(heading))
+	var dest = ship.global_position + fwd * 1000.0
+	if to_enemy.length() > desired_dist * 1.3:
+		dest = ship.global_position + to_enemy.normalized() * 1500.0
+	elif to_enemy.length() < desired_dist * 0.4:
+		dest = ship.global_position - to_enemy.normalized() * 1000.0
+	dest.y = 0.0
+	dest = _get_valid_nav_point(dest)
+	return NavIntent.create(dest, heading)
+
+func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
+	"""Find island between CA and target reachable within angling tolerance."""
+	if target.ship_class == Ship.ShipClass.DD:
+		return false
+	if not NavigationMapManager.is_map_ready():
+		return false
+	var to_enemy = target.global_position - ship.global_position
+	to_enemy.y = 0.0
+	var enemy_dir = to_enemy.normalized()
+	var enemy_dist = to_enemy.length()
+	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
+	var max_angle = _get_angle_range(target.ship_class).y
+	var clearance = _get_ship_clearance()
+	var best_score = -INF
+	var best_island: Dictionary = {}
+	var best_dest = Vector3.ZERO
+
+	for isl in NavigationMapManager.get_islands():
+		var center = Vector3(isl["center"].x, 0.0, isl["center"].y)
+		var radius: float = isl["radius"]
+		var to_isl = center - ship.global_position
+		to_isl.y = 0.0
+		if to_isl.normalized().dot(enemy_dir) < 0.3 or to_isl.length() > enemy_dist:
+			continue
+		var isl_bearing = atan2(to_isl.x, to_isl.z)
+		if abs(_normalize_angle(isl_bearing - enemy_bearing)) > max_angle + deg_to_rad(10):
+			continue
+		var dest = center - enemy_dir * (radius + clearance + 50.0)
+		dest.y = 0.0
+		if NavigationMapManager.get_distance(dest) < clearance:
+			continue
+		var score = to_isl.normalized().dot(enemy_dir) * 100.0 - to_isl.length() * 0.01
+		if score > best_score:
+			best_score = score
+			best_island = {"id": isl["id"], "center": center, "radius": radius}
+			best_dest = dest
+
+	if best_island.is_empty():
+		return false
+	_set_island_state(best_island["id"], best_island["center"], best_island["radius"], best_dest)
+	return true
+
+# ============================================================================
+# SKIRTING — move around island to break LOS when spotted
+# ============================================================================
+
+func _find_skirt_position(ship: Ship, server: GameServer) -> Vector3:
+	if not NavigationMapManager.is_map_ready() or _target_island_id < 0:
+		return Vector3.ZERO
+	var threats = _gather_threat_positions(ship)
+	if threats.is_empty():
+		return Vector3.ZERO
+	var threat_center = Vector3.ZERO
+	for t in threats:
+		threat_center += t
+	threat_center /= threats.size()
+	var clearance = _get_ship_clearance()
+	var best_pos = Vector3.ZERO
+	var best_dist = INF
+
+	for i in range(18):  # Every 20 degrees around island
+		var angle = deg_to_rad(i * 20.0)
+		var dir = Vector3(sin(angle), 0.0, cos(angle))
+		# Ray-march from island center to find position at clearance from shore
+		var d = 0.0
+		var max_d = _target_island_radius + 500.0
+		var pos = Vector3.ZERO
+		var found = false
+		while d < max_d:
+			var test = _target_island_pos + dir * d
+			test.y = 0.0
+			var sdf = NavigationMapManager.get_distance(test)
+			if sdf >= clearance and sdf < clearance * 2.0:
+				pos = test
+				found = true
+				break
+			d += max(clearance - sdf, 25.0) if sdf >= 0.0 else -min(sdf, -25.0)
+		if not found:
+			continue
+		if not NavigationMapManager.is_los_blocked(pos, threat_center):
+			continue
+		var dist_to_ship = pos.distance_to(ship.global_position)
+		if dist_to_ship < best_dist:
+			best_dist = dist_to_ship
+			best_pos = pos
+	return best_pos
+
+func _try_skirt(ship: Ship, server: GameServer):
+	if not _skirt_valid or Time.get_ticks_msec() - _skirt_search_ms > 2000:
+		var pos = _find_skirt_position(ship, server)
+		if pos == Vector3.ZERO:
+			_skirt_valid = false
+			return null
+		_skirt_dest = pos
+		_skirt_heading = _tangential_heading(ship, _target_island_pos, pos)
+		_skirt_valid = true
+		_skirt_search_ms = Time.get_ticks_msec()
+	if ship.global_position.distance_to(_skirt_dest) < _get_ship_clearance() * 2.0:
+		return null  # At best position; 2s timer will recheck
+	var intent = NavIntent.create(_skirt_dest, _skirt_heading)
+	intent.near_terrain = true
+	intent.throttle_override = 3
+	return intent
+
+# ============================================================================
+# ISLAND STATE HELPER
+# ============================================================================
+
+func _set_island_state(id: int, center: Vector3, radius: float, dest: Vector3) -> void:
+	_target_island_id = id
+	_target_island_pos = center
+	_target_island_radius = radius
+	_nav_destination = dest
+	_nav_destination_valid = true
+	_skirt_valid = false
+	if _last_in_range_ms == 0:
+		_last_in_range_ms = Time.get_ticks_msec()
+	_cover_island_center = center
+	_cover_island_radius = radius
+	_cover_zone_center = dest
+	_cover_zone_valid = true
+	_cover_zone_radius = _get_ship_clearance() * 2.0
+
+# ============================================================================
 # NAVINTENT — Primary entry point (V4 bot controller)
 # ============================================================================
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_ensure_safe_dir(ship, server)
 
-	# Recompute safe direction if enemies are known (it may shift as the battle moves)
-	var has_enemies = server.get_valid_targets(ship.team.team_id).size() > 0 \
-		or not server.get_unspotted_enemies(ship.team.team_id).is_empty()
+	var spotted = server.get_valid_targets(ship.team.team_id)
+	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
+	var has_enemies = spotted.size() > 0 or not unspotted.is_empty()
+
+	# Recompute safe direction if enemies are known
 	if has_enemies:
 		var new_safe_dir = _compute_safe_direction(ship, server)
-		# If direction changed significantly, invalidate destination
 		if _nav_destination_valid and _cached_safe_dir.dot(new_safe_dir) < SAFE_DIR_INVALIDATION_DOT:
 			_nav_destination_valid = false
+			_skirt_valid = false
 		_cached_safe_dir = new_safe_dir
 
-	# Find nearest island if we don't have one or need to refresh
+	_update_enemy_tracking(ship, server, spotted)
+
+	# HUNT: no enemies known — head toward last known position
+	if not has_enemies:
+		_nav_destination_valid = false
+		_skirt_valid = false
+		if _last_known_enemy_valid:
+			return _intent_hunt(ship)
+		return _intent_sail_forward(ship)
+
+	# Change island after 60s without in-range targets — go dark
+	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > 60000:
+		_nav_destination_valid = false
+		_skirt_valid = false
+		_fire_suppressed = true
+		_last_in_range_ms = Time.get_ticks_msec()
+
+	# No island: angle toward target, try to find cover island en route
+	if not _nav_destination_valid and target:
+		if not _try_set_angling_island(ship, target):
+			return _intent_angle(ship, target)
+
+	# Find nearest island if we still don't have one
 	if not _nav_destination_valid:
 		var island = _find_nearest_island(ship)
 		if island.is_empty():
+			if target:
+				return _intent_angle(ship, target)
 			return _intent_sail_forward(ship)
+		var dest = _compute_island_destination(ship, island["center"], island["radius"], _cached_safe_dir)
+		_set_island_state(island["id"], island["center"], island["radius"], dest)
 
-		_target_island_id = island["id"]
-		_target_island_pos = island["center"]
-		_target_island_radius = island["radius"]
+	# Spotted en-route to cover — abandon approach, angle and shoot instead
+	if _nav_destination_valid and not is_in_cover and ship.visible_to_enemy and target:
+		_nav_destination_valid = false
+		_skirt_valid = false
+		if not _try_set_angling_island(ship, target):
+			return _intent_angle(ship, target)
 
-		var dest = _compute_island_destination(ship, _target_island_pos, _target_island_radius, _cached_safe_dir)
-		_nav_destination = dest
-		_nav_destination_valid = true
+	# Skirt around island when spotted in cover or while already skirting
+	if ship.visible_to_enemy and (is_in_cover or _skirt_valid):
+		var skirt = _try_skirt(ship, server)
+		if skirt:
+			return skirt
+	elif not ship.visible_to_enemy:
+		_skirt_valid = false
 
-		# Update debug state
-		_cover_island_center = _target_island_pos
-		_cover_island_radius = _target_island_radius
-		_cover_zone_center = dest
-		_cover_zone_valid = true
-		_cover_zone_radius = _get_ship_clearance() * 2.0
-
-	# Check if we've arrived
+	# Approach / station-keep
 	var dist_to_dest = ship.global_position.distance_to(_nav_destination)
 	var arrival_radius = _get_ship_clearance() * 2.0
 	var arrived = dist_to_dest < arrival_radius
-
-	# Compute tangential heading from the stable destination position
 	var heading = _tangential_heading(ship, _target_island_pos, _nav_destination)
 
-	# Update cover state for debug
 	is_in_cover = arrived
 	_cover_can_shoot = arrived
+	if arrived:
+		_fire_suppressed = false
 
 	if arrived:
-		# Station-keep at our island position
 		var intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
 		intent.near_terrain = true
 		return intent
 
-	# Approach the island — full speed when far, slow down near
 	var intent = NavIntent.create(_nav_destination, heading)
 	intent.near_terrain = true
 	if dist_to_dest > 500.0:

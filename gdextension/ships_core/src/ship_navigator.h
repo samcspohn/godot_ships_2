@@ -47,6 +47,7 @@ private:
 		FORWARD = 1,    // Running forward A* (soft clearance)
 		FALLBACK = 2,   // Running fallback A* (half clearance, no turning)
 		REVERSE = 3,    // Running reverse A*
+		GRID_FALLBACK = 5, // Last-resort plain A* with zero clearance + post-process push
 		DONE = 4,       // All searches complete
 	};
 	static constexpr int PLAN_ITER_BUDGET = 25000;

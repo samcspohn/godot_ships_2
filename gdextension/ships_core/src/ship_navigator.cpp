@@ -398,7 +398,7 @@ float ShipNavigator::get_lookahead_distance() const {
 }
 
 float ShipNavigator::get_stopping_distance() const {
-	float max_decel = params.max_speed / std::max(params.deceleration_time, 0.1f);
+	float max_decel = params.max_speed / std::max(params.acceleration_time, 0.1f);
 	if (max_decel < 0.001f) return 0.0f;
 	return (state.current_speed * state.current_speed) / (2.0f * max_decel);
 }
@@ -438,6 +438,14 @@ void ShipNavigator::update_predicted_arc() {
 // ============================================================================
 
 void ShipNavigator::update(float delta) {
+	// --- Grounding detection: force EMERGENCY if ship is on land ---
+	if (nav_state != NavState::EMERGENCY && map.is_valid() && map->is_built()) {
+		float sdf = map->get_distance(state.position.x, state.position.y);
+		if (sdf <= 0.0f) {
+			nav_state = NavState::EMERGENCY;
+		}
+	}
+
 	switch (nav_state) {
 		case NavState::PLANNING:    update_planning(); break;
 		case NavState::NAVIGATING:  update_navigating(delta); break;
@@ -544,11 +552,16 @@ void ShipNavigator::update_planning() {
 				plan_min_clearance * 0.5f, 0.0f);
 			if (immediate) {
 				plan_forward_result = path_search.result;
-				plan_phase = PlanPhase::DONE;
+				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
+					plan_phase = PlanPhase::DONE;
+				} else {
+					// Immediate return but invalid — try grid fallback
+					plan_phase = PlanPhase::GRID_FALLBACK;
+				}
 			} else if (!path_search.active) {
-				// Even fallback can't begin — no path
+				// Even fallback can't begin — try grid fallback with zero clearance
 				plan_forward_result = PathResult();
-				plan_phase = PlanPhase::DONE;
+				plan_phase = PlanPhase::GRID_FALLBACK;
 			}
 		}
 
@@ -556,6 +569,47 @@ void ShipNavigator::update_planning() {
 			bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
 			if (complete) {
 				plan_forward_result = map->finish_path_search(path_search);
+				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
+					plan_phase = PlanPhase::DONE;
+				} else {
+					// Half-clearance search failed — try grid fallback with zero clearance
+					plan_phase = PlanPhase::GRID_FALLBACK;
+				}
+			}
+		}
+	}
+
+	if (plan_phase == PlanPhase::GRID_FALLBACK) {
+		// Last-resort: plain 8-direction A* with near-zero clearance (just avoid land cells).
+		// Any path is valid; we post-process waypoints to push them away from land.
+		if (!path_search.active && !path_search.complete) {
+			// Use a tiny clearance so the search only rejects actual land (SDF <= 0)
+			// but allows cells that are very close to shore.
+			float grid_fb_clearance = map->get_cell_size_value() * 0.5f;
+			bool immediate = map->begin_path_search(
+				path_search, state.position, target.position,
+				grid_fb_clearance, 0.0f);
+			if (immediate) {
+				plan_forward_result = path_search.result;
+				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
+					map->post_process_path_clearance(plan_forward_result, plan_min_clearance);
+				}
+				plan_phase = PlanPhase::DONE;
+			} else if (!path_search.active) {
+				// Truly unreachable — give up
+				plan_forward_result = PathResult();
+				plan_phase = PlanPhase::DONE;
+			}
+		}
+
+		if (plan_phase == PlanPhase::GRID_FALLBACK && path_search.active) {
+			bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
+			if (complete) {
+				plan_forward_result = map->finish_path_search(path_search);
+				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
+					// Push waypoints away from land to respect the original clearance
+					map->post_process_path_clearance(plan_forward_result, plan_min_clearance);
+				}
 				plan_phase = PlanPhase::DONE;
 			}
 		}
@@ -778,13 +832,12 @@ void ShipNavigator::update_navigating(float delta) {
 
 void ShipNavigator::update_arriving(float delta) {
 	float dist = state.position.distance_to(target.position);
-	float heading_error = std::abs(angle_difference(state.heading, target.heading));
 
 	// Close enough in position? Start settling.
 	if (dist < params.turning_circle_radius * 0.3f) {
 		nav_state = NavState::SETTLING;
 		settle_timer = 0.0f;
-		settle_dir = 1;  // Start moving forward when settling begins
+		settle_dir = 1;
 		return;
 	}
 
@@ -796,37 +849,24 @@ void ShipNavigator::update_arriving(float delta) {
 		return;
 	}
 
-	// Overshoot detection: ship was moving forward and is now past the target.
-	// Use current_speed to determine if we overshot (still moving forward but
-	// target is receding) rather than the instantaneous along_track which flips.
+	// Determine whether the target is ahead or behind the ship.
 	Vector2 to_target = target.position - state.position;
 	Vector2 forward_dir(std::sin(state.heading), std::cos(state.heading));
 	float along_track = to_target.x * forward_dir.x + to_target.y * forward_dir.y;
-	bool overshot = (along_track < -params.ship_beam) && (state.current_speed > -SPEED_THRESHOLD);
+
+	// Target is "behind" if it's more than ~90° off the bow.
+	bool target_behind = (along_track < 0.0f);
 
 	float desired_rudder;
 	int desired_throttle;
-	bool use_forward_approach = false;
 
-	if (overshot) {
-		// Target is behind us — check if reversing is safe (terrain + obstacles)
-		float rev_rudder = compute_rudder_to_position(target.position, true);
-		float rev_ttc_unused;
-		bool rev_collision;
-		select_safe_rudder(rev_rudder, -1, rev_ttc_unused, rev_collision);
-
-		if (!rev_collision) {
-			// Reverse path is clear — back up toward target
-			desired_rudder = rev_rudder;
-			desired_throttle = -1;
-		} else {
-			// Reverse blocked (island behind us) — go forward and turn around
-			use_forward_approach = true;
-		}
-	}
-
-	if (!overshot || use_forward_approach) {
-		// Normal forward approach: blend position and heading steering
+	if (target_behind) {
+		// Reverse toward the target.
+		desired_rudder = compute_rudder_to_position(target.position, true);
+		desired_throttle = -1;
+	} else {
+		// Forward approach: blend position steering with heading alignment
+		// as we get closer.
 		float heading_weight = 1.0f - (dist / approach_radius);
 		heading_weight = clamp_f(heading_weight, 0.0f, 0.7f);
 
@@ -835,20 +875,23 @@ void ShipNavigator::update_arriving(float delta) {
 		desired_rudder = lerp_f(pos_rudder, heading_rudder, heading_weight);
 
 		desired_throttle = compute_throttle_for_approach(dist);
-		desired_throttle = std::min(desired_throttle, 2);
+		// desired_throttle = std::min(desired_throttle, 2);
 	}
 
-	// Collision avoidance
+	// Collision avoidance (includes terrain avoidance via select_safe_rudder)
 	float ttc;
 	bool collision;
 	float safe_rudder = select_safe_rudder(desired_rudder, desired_throttle, ttc, collision);
 
 	int final_throttle;
-	if (collision) {
-		final_throttle = (desired_throttle < 0) ? 0 : std::min(desired_throttle, 1);
-	} else {
-		final_throttle = desired_throttle;
-	}
+	// if (collision) {
+	// 	// On collision, stop if reversing (don't back into obstacle),
+	// 	// or slow down if going forward.
+	// 	final_throttle = (desired_throttle < 0) ? 0 : std::min(desired_throttle, 1);
+	// } else {
+	// 	final_throttle = desired_throttle;
+	// }
+	final_throttle = desired_throttle;
 
 	set_steering_output(safe_rudder, final_throttle, collision, ttc);
 }
@@ -974,33 +1017,35 @@ void ShipNavigator::update_holding(float delta) {
 }
 
 void ShipNavigator::update_emergency() {
-	// Check if we've cleared the emergency
-	auto desired_arc = predict_arc_internal(0.0f, 2, get_lookahead_distance());
-	float ttc = check_arc_collision(desired_arc, get_ship_clearance(), get_soft_clearance());
-	float arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
+	if (!map.is_valid() || !map->is_built()) {
+		// No map — blind reverse and hope for the best
+		float rudder = (state.angular_velocity_y > 0.0f) ? 1.0f : -1.0f;
+		set_steering_output(rudder, -1, true, 0.0f);
+		return;
+	}
 
-	if (ttc >= arc_time * 0.9f) {
-		// Clear — replan from here
+	float sdf = map->get_distance(state.position.x, state.position.y);
+	float safe_distance = params.turning_circle_radius * 1.5f;
+
+	// --- Exit condition: ship has reached 1.5× turning radius from land ---
+	if (sdf >= safe_distance) {
 		nav_state = NavState::PLANNING;
 		plan_phase = PlanPhase::IDLE;
 		return;
 	}
 
-	// Still in danger — gradient escape
-	if (map.is_valid() && map->is_built()) {
-		Vector2 grad = map->get_gradient(state.position.x, state.position.y);
-		float escape_heading = std::atan2(grad.x, grad.y);
-		float rudder = compute_rudder_to_heading(escape_heading);
-		float angle_to_escape = std::abs(angle_difference(state.heading, escape_heading));
+	// --- Emergency maneuvering: follow SDF gradient away from land ---
+	Vector2 grad = map->get_gradient(state.position.x, state.position.y);
+	float escape_heading = std::atan2(grad.x, grad.y);
+	float rudder = compute_rudder_to_heading(escape_heading);
+	float angle_to_escape = std::abs(angle_difference(state.heading, escape_heading));
 
-		if (angle_to_escape < Math_PI * 0.5f) {
-			set_steering_output(rudder, 2, true, ttc);
-		} else {
-			set_steering_output(rudder, -1, true, ttc);
-		}
+	if (angle_to_escape < Math_PI * 0.5f) {
+		// Ship is roughly pointed away from land — go forward
+		set_steering_output(rudder, 4, true, 0.0f);
 	} else {
-		float rudder = (state.angular_velocity_y > 0.0f) ? 1.0f : -1.0f;
-		set_steering_output(rudder, -1, true, ttc);
+		// Ship is pointed toward land — reverse out
+		set_steering_output(rudder, -1, true, 0.0f);
 	}
 }
 
@@ -1559,12 +1604,12 @@ int ShipNavigator::compute_throttle_for_approach(float distance_to_target) const
 	if (distance_to_target < stopping_dist + safety_margin) {
 		return 1;
 	}
-	if (distance_to_target < stopping_dist * 2.0f + safety_margin) {
-		return 2;
-	}
-	if (distance_to_target < stopping_dist * 4.0f + safety_margin) {
-		return 3;
-	}
+	// if (distance_to_target < stopping_dist * 2.0f + safety_margin) {
+	// 	return 2;
+	// }
+	// if (distance_to_target < stopping_dist * 4.0f + safety_margin) {
+	// 	return 3;
+	// }
 	return 4;
 }
 
@@ -1715,10 +1760,66 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 			}
 		}
 
-		const float starboard_offsets[] = {
-			-0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f, -2.0f,
-			 0.25f,  0.5f,  0.75f,  1.0f,  1.25f,  1.5f,  1.75f,  2.0f
-		};
+		// ---- Determine rudder bias based on encounter geometry ----
+		// Default: starboard bias (COLREGS head-on / crossing from starboard)
+		// Override: for overtaking / co-traveling, bias toward the obstacle's
+		// stern so we pass behind rather than getting stuck on its flank.
+
+		float obs_speed = obs_info.obstacle_velocity.length();
+		float our_heading_x = std::sin(state.heading);
+		float our_heading_z = std::cos(state.heading);
+		Vector2 our_dir(our_heading_x, our_heading_z);
+
+		// Normalised obstacle heading (fall back to our heading if stationary)
+		Vector2 obs_dir = (obs_speed > 0.5f)
+			? obs_info.obstacle_velocity / obs_speed
+			: our_dir;
+
+		// How aligned are we? dot > ~0.5 means roughly same direction
+		float heading_dot = our_dir.dot(obs_dir);
+		bool overtaking = (heading_dot > 0.5f);
+
+		// Compute pass-astern bias for overtaking encounters:
+		// The stern of the obstacle is *behind* its velocity vector.
+		// We want the rudder bias that steers us toward that stern.
+		float stern_bias = 0.0f;  // negative = favour starboard, positive = favour port
+		if (overtaking) {
+			// Obstacle's stern direction (opposite of its velocity)
+			Vector2 obs_stern = -obs_dir;
+			// Vector from us to the obstacle
+			Vector2 to_obs = obs_info.obstacle_position - state.position;
+			// Cross product: positive when obstacle's stern is to our port,
+			// negative when to our starboard.
+			float cross = our_dir.x * to_obs.y - our_dir.y * to_obs.x;
+			// Also check which side the stern points relative to us
+			float stern_cross = our_dir.x * obs_stern.y - our_dir.y * obs_stern.x;
+			// Blend both signals: where the obstacle is AND where its stern faces
+			float combined = cross * 0.6f + stern_cross * 0.4f;
+			// negative combined -> obstacle / stern to starboard -> bias starboard (negative rudder)
+			// positive combined -> obstacle / stern to port      -> bias port     (positive rudder)
+			stern_bias = (combined >= 0.0f) ? 1.0f : -1.0f;
+		}
+
+		// Build offset array: primary direction first, then secondary
+		// For standard COLREGS (head-on / crossing): starboard first (negative offsets)
+		// For overtaking: use stern_bias direction first
+		const float magnitude_steps[] = { 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
+		constexpr int n_steps = 8;
+		float avoidance_offsets[n_steps * 2];
+
+		if (overtaking) {
+			// Primary: steer toward the stern; secondary: opposite
+			for (int i = 0; i < n_steps; ++i) {
+				avoidance_offsets[i]           =  magnitude_steps[i] * stern_bias;
+				avoidance_offsets[i + n_steps] = -magnitude_steps[i] * stern_bias;
+			}
+		} else {
+			// Standard COLREGS: starboard first (negative rudder), then port
+			for (int i = 0; i < n_steps; ++i) {
+				avoidance_offsets[i]           = -magnitude_steps[i]; // starboard
+				avoidance_offsets[i + n_steps] =  magnitude_steps[i]; // port
+			}
+		}
 
 		float best_rudder = desired_rudder;
 		float best_ttc = ttc;
@@ -1727,7 +1828,7 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 		bool have_steer_target = (steer_tgt.length_squared() > 1.0f);
 		float last_candidate = desired_rudder;
 
-		for (float offset : starboard_offsets) {
+		for (float offset : avoidance_offsets) {
 			float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
 			if (candidate == desired_rudder || candidate == last_candidate) continue;
 			last_candidate = candidate;
@@ -1757,7 +1858,7 @@ float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_thrott
 		if (best_ttc < arc_total_time * 0.5f) {
 			int reduced_throttle = std::max(1, desired_throttle - 2);
 			float last_candidate_rt = desired_rudder;
-			for (float offset : starboard_offsets) {
+			for (float offset : avoidance_offsets) {
 				float candidate = clamp_f(desired_rudder + offset, -1.0f, 1.0f);
 				if (candidate == desired_rudder || candidate == last_candidate_rt) continue;
 				last_candidate_rt = candidate;

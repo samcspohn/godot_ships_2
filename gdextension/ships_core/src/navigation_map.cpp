@@ -1462,7 +1462,8 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 	// The SDF grid stores world-unit distances (meters)
 	search.clearance_world = clearance;
 	search.soft_clearance_world = (soft_clearance > clearance) ? soft_clearance : 0.0f;
-	search.use_soft_clearance = (search.soft_clearance_world > 0.0f);
+	// search.use_soft_clearance = (search.soft_clearance_world > 0.0f);
+	search.use_soft_clearance = false;
 
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
@@ -2118,6 +2119,103 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 	result.total_distance = total_dist;
 	result.valid = true;
 	return result;
+}
+
+// ============================================================================
+// Post-process a raw path: push waypoints away from land, then simplify
+// ============================================================================
+
+void NavigationMap::post_process_path_clearance(PathResult &path, float clearance) const {
+	if (!built || !path.valid || path.waypoints.size() < 2) return;
+
+	// --- Step 1: Push every interior waypoint to at least `clearance` from land ---
+	// Skip first (ship position) and last (destination) — those are authoritative.
+	const int max_push_iters = 8;
+
+	for (size_t i = 1; i + 1 < path.waypoints.size(); i++) {
+		Vector2 &wp = path.waypoints[i];
+		float dist = get_distance(wp.x, wp.y);
+
+		if (dist >= clearance) continue;
+
+		for (int iter = 0; iter < max_push_iters; iter++) {
+			dist = get_distance(wp.x, wp.y);
+			if (dist >= clearance) break;
+
+			Vector2 grad = get_gradient(wp.x, wp.y);
+			if (grad.length_squared() < 0.0001f) break;
+
+			// Push amount: need to cover the deficit plus a small buffer
+			float deficit = clearance - dist;
+			float push = deficit + clearance * 0.25f;
+
+			wp.x += grad.x * push;
+			wp.y += grad.y * push;
+		}
+	}
+
+	// --- Step 2: Path simplification via line-of-sight checks ---
+	// The raw A* path at zero clearance can have hundreds of nodes;
+	// collapse runs of collinear waypoints using LOS with the desired clearance.
+	if (path.waypoints.size() > 2) {
+		std::vector<Vector2> simplified;
+		simplified.push_back(path.waypoints[0]);
+
+		size_t current = 0;
+		while (current < path.waypoints.size() - 1) {
+			size_t farthest = current + 1;
+
+			for (size_t test = path.waypoints.size() - 1; test > current + 1; test--) {
+				float gx0, gz0, gx1, gz1;
+				world_to_grid(path.waypoints[current].x, path.waypoints[current].y, gx0, gz0);
+				world_to_grid(path.waypoints[test].x, path.waypoints[test].y, gx1, gz1);
+				int ix0 = static_cast<int>(std::round(gx0));
+				int iz0 = static_cast<int>(std::round(gz0));
+				int ix1 = static_cast<int>(std::round(gx1));
+				int iz1 = static_cast<int>(std::round(gz1));
+
+				if (line_of_sight(ix0, iz0, ix1, iz1, clearance)) {
+					farthest = test;
+					break;
+				}
+			}
+
+			simplified.push_back(path.waypoints[farthest]);
+			current = farthest;
+		}
+
+		// Rebuild flags array to match new waypoint count
+		std::vector<uint8_t> new_flags(simplified.size(), WP_NONE);
+		path.waypoints = simplified;
+		path.flags = new_flags;
+	}
+
+	// --- Step 3: Second push pass on the simplified path ---
+	// After simplification, the remaining waypoints may have shifted; ensure
+	// they still respect clearance (same loop as step 1).
+	for (size_t i = 1; i + 1 < path.waypoints.size(); i++) {
+		Vector2 &wp = path.waypoints[i];
+		for (int iter = 0; iter < max_push_iters; iter++) {
+			float dist = get_distance(wp.x, wp.y);
+			if (dist >= clearance) break;
+
+			Vector2 grad = get_gradient(wp.x, wp.y);
+			if (grad.length_squared() < 0.0001f) break;
+
+			float deficit = clearance - dist;
+			float push = deficit + clearance * 0.25f;
+
+			wp.x += grad.x * push;
+			wp.y += grad.y * push;
+		}
+	}
+
+	// Recompute total distance
+	float total_dist = 0.0f;
+	for (size_t i = 1; i < path.waypoints.size(); i++) {
+		total_dist += path.waypoints[i - 1].distance_to(path.waypoints[i]);
+	}
+	path.total_distance = total_dist;
 }
 
 // Synchronous wrapper — delegates to async API using pre-allocated search state

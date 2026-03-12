@@ -268,6 +268,13 @@ public:
 	// Catmull-Rom smoothing. Returns the final PathResult.
 	PathResult finish_path_search(PathSearch &search) const;
 
+	// Post-process a raw path by pushing waypoints away from land.
+	// Any waypoint within `clearance` of land is pushed along the SDF gradient
+	// until it reaches at least `clearance` distance. The path is then
+	// simplified via LOS checks to remove redundant waypoints.
+	// Used as a last-resort cleanup after zero-clearance A* fallback.
+	void post_process_path_clearance(PathResult &path, float clearance) const;
+
 	// --- Island data ---
 
 	// Get all detected islands as an array of Dictionaries
