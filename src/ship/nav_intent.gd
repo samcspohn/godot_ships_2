@@ -22,6 +22,9 @@ var throttle_override: int = -1
 ## Heading tolerance: acceptable heading error to consider settled (radians, default ~15°)
 var heading_tolerance: float = 0.2618
 
+## Near-terrain flag: relaxes terrain collision avoidance so the ship can hug islands
+var near_terrain: bool = false
+
 
 ## Create a navigation intent
 static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618) -> NavIntent:

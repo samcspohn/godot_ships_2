@@ -33,6 +33,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance"),
 		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f));
 	ClassDB::bind_method(D_METHOD("stop"), &ShipNavigator::stop);
+	ClassDB::bind_method(D_METHOD("set_near_terrain", "enabled"), &ShipNavigator::set_near_terrain);
+	ClassDB::bind_method(D_METHOD("get_near_terrain"), &ShipNavigator::get_near_terrain);
 
 	// Output
 	ClassDB::bind_method(D_METHOD("get_rudder"), &ShipNavigator::get_rudder);
@@ -90,6 +92,7 @@ ShipNavigator::ShipNavigator() {
 	stuck_timer = 0.0f;
 	replan_frame_cooldown = 0;
 	settle_dir = 1;
+	allow_near_terrain = false;
 	out_rudder = 0.0f;
 	out_throttle = 0;
 	out_collision_imminent = false;
@@ -199,6 +202,14 @@ void ShipNavigator::stop() {
 	path_valid = false;
 	nav_state = NavState::HOLDING;
 	set_steering_output(0.0f, 0, false, std::numeric_limits<float>::infinity());
+}
+
+void ShipNavigator::set_near_terrain(bool enabled) {
+	allow_near_terrain = enabled;
+}
+
+bool ShipNavigator::get_near_terrain() const {
+	return allow_near_terrain;
 }
 
 // ============================================================================
@@ -453,6 +464,12 @@ void ShipNavigator::update_planning() {
 			plan_min_clearance + params.ship_beam * 0.5f,
 			plan_min_clearance * 2.0f);
 
+		// Cover-seeking ships: use tighter clearance so paths can hug islands
+		if (allow_near_terrain) {
+			plan_min_clearance = params.ship_beam * 0.5f;
+			plan_comfortable_clearance = params.ship_beam;
+		}
+
 		// Begin forward search (heading-aware, soft clearance, with current rudder)
 		bool immediate = map->begin_path_search(
 			path_search, state.position, target.position,
@@ -641,12 +658,16 @@ void ShipNavigator::update_navigating(float delta) {
 	// Skip this check while executing departure waypoints (e.g. 3-point turn
 	// heading correction) — the ship is already near the destination and needs
 	// to follow the correction path before re-entering arrival.
+	// Also require the ship to have progressed past most of its path, so that
+	// short station-keeping paths are actually followed before entering arrival.
 	float dist_to_dest = state.position.distance_to(target.position);
 	float approach_radius = get_approach_radius();
 	bool on_departure_leg = path_valid
 		&& current_wp_index < (int)current_path.flags.size()
 		&& (current_path.flags[current_wp_index] & WP_DEPARTURE) != 0;
-	if (dist_to_dest < approach_radius && !on_departure_leg) {
+	bool near_path_end = !path_valid
+		|| current_wp_index >= (int)current_path.waypoints.size() - 1;
+	if (dist_to_dest < approach_radius && !on_departure_leg && near_path_end) {
 		nav_state = NavState::ARRIVING;
 		return;
 	}
@@ -785,13 +806,27 @@ void ShipNavigator::update_arriving(float delta) {
 
 	float desired_rudder;
 	int desired_throttle;
+	bool use_forward_approach = false;
 
 	if (overshot) {
-		// Past the target while still moving forward — reverse back
-		desired_rudder = compute_rudder_to_position(target.position, true);
-		desired_throttle = -1;
-	} else {
-		// Normal approach: blend position and heading steering
+		// Target is behind us — check if reversing is safe (terrain + obstacles)
+		float rev_rudder = compute_rudder_to_position(target.position, true);
+		float rev_ttc_unused;
+		bool rev_collision;
+		select_safe_rudder(rev_rudder, -1, rev_ttc_unused, rev_collision);
+
+		if (!rev_collision) {
+			// Reverse path is clear — back up toward target
+			desired_rudder = rev_rudder;
+			desired_throttle = -1;
+		} else {
+			// Reverse blocked (island behind us) — go forward and turn around
+			use_forward_approach = true;
+		}
+	}
+
+	if (!overshot || use_forward_approach) {
+		// Normal forward approach: blend position and heading steering
 		float heading_weight = 1.0f - (dist / approach_radius);
 		heading_weight = clamp_f(heading_weight, 0.0f, 0.7f);
 
@@ -941,7 +976,7 @@ void ShipNavigator::update_holding(float delta) {
 void ShipNavigator::update_emergency() {
 	// Check if we've cleared the emergency
 	auto desired_arc = predict_arc_internal(0.0f, 2, get_lookahead_distance());
-	float ttc = check_arc_collision(desired_arc, get_ship_clearance() / 2.0, get_soft_clearance());
+	float ttc = check_arc_collision(desired_arc, get_ship_clearance(), get_soft_clearance());
 	float arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
 
 	if (ttc >= arc_time * 0.9f) {
@@ -1535,8 +1570,16 @@ int ShipNavigator::compute_throttle_for_approach(float distance_to_target) const
 
 float ShipNavigator::select_safe_rudder(float desired_rudder, int desired_throttle,
 										 float &out_ttc, bool &out_collision) {
-	float hard_clearance = get_ship_clearance();
+	float hard_clearance = get_ship_clearance() / 2.0;
 	float soft_clearance = get_soft_clearance();
+
+	// Cover-seeking ships: reduce terrain clearance to bare minimum (half beam)
+	// so they can hug islands without collision avoidance fighting them
+	if (allow_near_terrain) {
+		hard_clearance = params.ship_beam * 0.5f;
+		soft_clearance = params.ship_beam;
+	}
+
 	float lookahead = get_lookahead_distance();
 
 	// Test the desired trajectory first

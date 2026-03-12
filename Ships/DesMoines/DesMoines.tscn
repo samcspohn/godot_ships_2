@@ -30,7 +30,7 @@
 resource_local_to_scene = true
 script = ExtResource("3_s7tx1")
 citadel_repair = 0.4
-pen_repair = 0.6666
+pen_repair = 0.7
 light_repair = 0.925
 torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
@@ -83,7 +83,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
 drag = 3.299999999999999e-05
-damage = 4100.0
+damage = 5125.0
 size = 2.5
 caliber = 203.0
 mass = 152.0
@@ -98,7 +98,7 @@ resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 823.0
 drag = 4.199999999999999e-05
-damage = 1640.0
+damage = 2050.0
 size = 2.5
 caliber = 203.0
 mass = 118.0
@@ -119,8 +119,8 @@ shell2 = SubResource("Resource_3dafd")
 h_grouping = 2.1
 v_grouping = 2.1
 base_spread = 0.012
-reload_time = 5.0
-_range = 14100.0
+reload_time = 6.0
+_range = 13500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_krgon"]
@@ -193,9 +193,10 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 [sub_resource type="Resource" id="Resource_51b1e"]
 resource_local_to_scene = true
 script = ExtResource("15_xosf1")
+heal_percent = 0.3
 icon = ExtResource("14_s7tx1")
 disabled_icon = ExtResource("13_jxksy")
-cooldown_time = 50.0
+cooldown_time = 40.0
 duration = 20.0
 max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
@@ -247,9 +248,10 @@ acceleration_time = 20.0
 deceleration_time = 20.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 300.0
+slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.1
-rudder_response_time = 8.0
-max_turn_roll_angle = 10.0
+rudder_response_time = 6.5
+lateral_drag_multiplier = 1.7
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_xosf1")

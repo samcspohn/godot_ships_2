@@ -233,7 +233,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# Define team composition: 10 ships per team
 	# Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 7
+	const num_ships_per_team = 13
 	var class_counts = {
 		SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
 		SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
@@ -278,7 +278,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# Build 3 clusters, each with one ship per class
 	# A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
-	var clusters = [[], [], []]
+	var num_clusters = int(num_ships_per_team / 3.0)
+	var clusters = []
 
 	# Track consumption index per class
 	var class_consume_index = {
@@ -288,7 +289,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	}
 
 	# Fill base clusters: one DD, one CA, one BB each
-	for cluster_idx in range(3):
+	for cluster_idx in range(num_clusters):
+		clusters.append([])
 		for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
 			var idx = class_consume_index[ship_class]
 			if idx < ships_by_class_list[ship_class].size():
@@ -306,7 +308,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	if bonus_idx < ships_by_class_list[bonus_class].size():
 		var ship_path = ships_by_class_list[bonus_class][bonus_idx]
 		var is_player = (ship_path == player_ship and bonus_idx == 0 and bonus_class == player_ship_class)
-		var bonus_cluster = randi() % 3
+		var bonus_cluster = randi() % num_clusters
 		clusters[bonus_cluster].append({
 			"class": bonus_class,
 			"ship": ship_path,

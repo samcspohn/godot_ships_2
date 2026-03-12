@@ -335,8 +335,10 @@ func _update_nav_intent() -> void:
 
 func _execute_nav_intent() -> void:
 	if _last_intent == null:
+		navigator.set_near_terrain(false)
 		navigator.navigate_to(Vector3(destination.x, 0.0, destination.z), get_ship_heading(), 0.0)
 		return
+	navigator.set_near_terrain(_last_intent.near_terrain)
 	navigator.navigate_to(
 		_last_intent.target_position,
 		_last_intent.target_heading,

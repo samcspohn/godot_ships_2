@@ -78,19 +78,19 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	var angle = (-_target.basis.z).angle_to(disp)
 	var offset = Vector3(0, 0, 0)
 	angle = abs(angle)
-	if angle > PI / 2.0:
-		angle = PI - angle
+	#if angle > PI / 2.0:
+		#angle = PI - angle
 
 	# Default to AP
 	ammo = ShellParams.ShellType.AP
 
 	match _target.ship_class:
 		Ship.ShipClass.BB:
-			if angle < deg_to_rad(10):
+			if angle < deg_to_rad(10) or angle > deg_to_rad(170):
 				# HE against heavily angled battleships
 				ammo = ShellParams.ShellType.HE
 				offset.y = _target.movement_controller.ship_height / 2.0
-			elif angle < deg_to_rad(30):
+			elif angle < deg_to_rad(30) or angle > deg_to_rad(150):
 				# AP at battleship superstructure when angled
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 2.0
@@ -101,7 +101,10 @@ func target_aim_offset(_target: Ship) -> Vector3:
 			if angle < deg_to_rad(30):
 				# AP at angled cruiser bow/stern
 				ammo = ShellParams.ShellType.AP
-				offset.z -= _target.movement_controller.ship_length / 2.0 * 0.75
+				offset.z -= _target.movement_controller.ship_length * 0.25
+			elif angle > deg_to_rad(150):
+				ammo = ShellParams.ShellType.AP
+				offset.z += _target.movement_controller.ship_length * 0.25
 			else:
 				# AP at broadside cruisers waterline
 				ammo = ShellParams.ShellType.AP

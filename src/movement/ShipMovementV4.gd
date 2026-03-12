@@ -152,7 +152,7 @@ func _check_land_collision() -> void:
 			# Check if this is land (collision layer 1)
 		if body.collision_layer & 1:
 			touching_land = true
-			ship.apply_central_impulse(ship.mass * 2.0 * (ship.position - dict["point"]).normalized())
+			ship.apply_central_impulse(ship.mass * 5.0 * (ship.position - dict["point"]).normalized())
 			grounded_position = dict["point"]
 			grounded_island = dict["collider"]
 			break

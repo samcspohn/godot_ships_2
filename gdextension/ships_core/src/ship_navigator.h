@@ -73,6 +73,9 @@ private:
 	static constexpr float STUCK_TIME_THRESHOLD = 2.0f;        // seconds at near-zero speed
 	static constexpr float REVERSE_DISTANCE_CAP_FACTOR = 2.5f; // max reverse = turning_radius * this
 
+	// --- Terrain proximity policy ---
+	bool allow_near_terrain;          // true = relax terrain collision avoidance (cover-seeking ships)
+
 	// --- Steering output ---
 	float out_rudder;                 // [-1, 1]
 	int out_throttle;                 // [-1, 4]
@@ -232,6 +235,10 @@ public:
 
 	// Cancel navigation, coast to stop
 	void stop();
+
+	// Enable/disable relaxed terrain avoidance (for cover-seeking ships near islands)
+	void set_near_terrain(bool enabled);
+	bool get_near_terrain() const;
 
 	// --- Output ---
 

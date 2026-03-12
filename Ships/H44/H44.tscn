@@ -180,7 +180,7 @@ resource_local_to_scene = true
 script = ExtResource("12_fadtt")
 icon = ExtResource("11_pm07r")
 disabled_icon = ExtResource("10_8j47w")
-cooldown_time = 80.0
+cooldown_time = 90.0
 duration = 30.0
 max_stack = -1
 type = 1
@@ -234,8 +234,10 @@ acceleration_time = 40.0
 deceleration_time = 10.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 600.0
+slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.15
 rudder_response_time = 14.0
+lateral_drag_multiplier = 1.7
 max_turn_roll_angle = 5.5
 nav_size = 4
 
@@ -360,7 +362,7 @@ max_rotation_angle = 0.0
 
 [node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" index="0" unique_id=1593747212 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
-max_rotation_angle = 2.5830872929516078
+max_rotation_angle = 2.583087292951608
 
 [node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" index="0" unique_id=15487562 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153
