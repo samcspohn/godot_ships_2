@@ -138,23 +138,25 @@ private:
 	void compute_regions();
 
 	// --- Multi-resolution grid for hierarchical pathfinding ---
-	// 5 levels: L0=50m (base), L1=100m, L2=200m, L3=400m, L4=800m
-	// Each level N cell stores min/max SDF of its 4 children at level N-1.
-	static constexpr int MR_LEVELS = 5;
+	// Dynamic levels: L0 = base grid, each higher level halves dimensions.
+	// Number of levels = floor(log2(max(grid_width, grid_height))) + 1,
+	// so the coarsest level is ~1-2 cells covering the entire map.
+	static constexpr int MR_MAX_LEVELS = 16;  // plenty for any practical map
 
 	struct MRCell { float min_sdf; float max_sdf; };
 
-	int mr_width_[MR_LEVELS] = {};
-	int mr_height_[MR_LEVELS] = {};
-	float mr_cell_size_[MR_LEVELS] = {};
-	std::vector<MRCell> mr_grid_[MR_LEVELS];
+	int mr_levels_ = 0;  // actual number of levels (set by build_multi_resolution_grid)
+	int mr_width_[MR_MAX_LEVELS] = {};
+	int mr_height_[MR_MAX_LEVELS] = {};
+	float mr_cell_size_[MR_MAX_LEVELS] = {};
+	std::vector<MRCell> mr_grid_[MR_MAX_LEVELS];
 
 	void build_multi_resolution_grid();
 
 	// Classify a cell at a given MR level relative to a clearance threshold (world units).
 	// Returns: 1 = fully navigable, 0 = mixed, -1 = fully blocked
 	inline int classify_mr_cell(int mx, int mz, int level, float clearance_world) const {
-		if (level < 0 || level >= MR_LEVELS) return -1;
+		if (level < 0 || level >= mr_levels_) return -1;
 		if (mx < 0 || mx >= mr_width_[level] || mz < 0 || mz >= mr_height_[level]) return -1;
 		const auto &cell = mr_grid_[level][mz * mr_width_[level] + mx];
 		if (cell.min_sdf >= clearance_world) return 1;   // fully navigable
@@ -166,7 +168,7 @@ private:
 	// Returns 0 if even the base cell isn't fully navigable at this clearance.
 	inline int find_navigable_mr_level(int bx, int bz, float clearance_world) const {
 		int best = 0;
-		for (int L = MR_LEVELS - 1; L >= 1; L--) {
+		for (int L = mr_levels_ - 1; L >= 1; L--) {
 			int scale = 1 << L;
 			int mx = bx / scale;
 			int mz = bz / scale;
@@ -180,7 +182,7 @@ private:
 	// Check if base-grid cell (nx, nz) is in a fully-blocked coarse cell.
 	// Checks from coarsest to finest, returns true if any level is fully blocked.
 	inline bool is_mr_blocked(int nx, int nz, float clearance_world) const {
-		for (int L = MR_LEVELS - 1; L >= 1; L--) {
+		for (int L = mr_levels_ - 1; L >= 1; L--) {
 			int scale = 1 << L;
 			int mx = nx / scale;
 			int mz = nz / scale;
@@ -275,23 +277,9 @@ public:
 	PackedVector2Array find_path(Vector2 from, Vector2 to, float clearance,
 								float turning_radius = 0.0f) const;
 
-	// Internal pathfinding returning PathResult struct
-	// When turning_radius is 0, behaves identically to the original implementation.
-	// When nonzero, applies weighted A* with curvature penalty + Catmull-Rom smoothing.
+	// Internal pathfinding returning PathResult struct (MR-accelerated 8-direction A*)
 	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
 								  float turning_radius = 0.0f) const;
-
-	// Heading-aware overload: seeds A* with a virtual departure point so the
-	// curvature penalty kicks in from the first step.
-	// start_heading: ship's current heading (radians, 0 = +Z). NAN = legacy behavior.
-	// cost_bound: A* aborts if g_cost exceeds this (for early termination of reverse search).
-	// soft_clearance: preferred clearance (> clearance). Cells between clearance and
-	//   soft_clearance are navigable but penalized, eliminating multi-pass fallback.
-	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
-								  float turning_radius, float start_heading,
-								  float cost_bound = std::numeric_limits<float>::infinity(),
-								  float soft_clearance = 0.0f,
-								  float start_rudder = 0.0f) const;
 
 	// --- Async pathfinding (per-ship search state) ---
 
@@ -301,19 +289,13 @@ public:
 	// Otherwise sets search.active = true and the caller should call
 	// continue_path_search() each frame.
 	bool begin_path_search(PathSearch &search, Vector2 from, Vector2 to,
-						   float clearance, float turning_radius = 0.0f,
-						   float start_heading = std::numeric_limits<float>::quiet_NaN(),
-						   float cost_bound = std::numeric_limits<float>::infinity(),
-						   float soft_clearance = 0.0f,
-						   float start_rudder = 0.0f) const;
+						   float clearance, float turning_radius = 0.0f) const;
 
 	// Run up to max_iterations of the A* loop. Returns true when the search
 	// is complete (path found or exhausted). Call finish_path_search() to
-	// get the final PathResult with post-processing.
+	// get the final PathResult with LOS simplification.
 	bool continue_path_search(PathSearch &search, int max_iterations) const;
 
-	// Post-process a completed search: reconstruct path, arc validation,
-	// Catmull-Rom smoothing. Returns the final PathResult.
 	PathResult finish_path_search(PathSearch &search) const;
 
 	// Post-process a raw path by pushing waypoints away from land.

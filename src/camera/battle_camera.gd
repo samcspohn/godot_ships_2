@@ -648,6 +648,9 @@ func find_ship_closest_to_screen_center():
 	for ship in ships:
 		if not (ship is Ship):
 			continue
+		if ship is Ship:
+			if ship.health_controller.is_dead():
+				continue
 
 		# Check if ship is visible on screen
 		if is_position_visible_on_screen(ship.global_position):

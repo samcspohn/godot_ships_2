@@ -325,15 +325,8 @@ struct PathSearch {
     int sx = 0, sz = 0, ex = 0, ez = 0;
     int start_idx = 0, end_idx = 0;
     int grid_width = 0, grid_height = 0;
-    float clearance_world = 0, soft_clearance_world = 0;
+    float clearance_world = 0;
     float turning_radius = 0, cell_size = 50;
-    float turning_radius_cells = 0, R_grid = 0;
-    float start_heading = 0, cost_bound = 0;
-    float start_rudder = 0;          // current rudder position [-1,1] at search start
-    int start_turn_dir = 0;          // -1 = turning left, 0 = centered, +1 = turning right
-    float rudder_shift_cells = 0;
-    float chord_22_5 = 0, chord_45 = 0;
-    bool use_curvature_penalty = false, use_heading = false, use_soft_clearance = false;
 
     // World coords for path reconstruction
     Vector2 from, to;

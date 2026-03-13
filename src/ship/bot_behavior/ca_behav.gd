@@ -687,6 +687,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if _nav_destination_valid and not is_in_cover and ship.visible_to_enemy and target:
 		_nav_destination_valid = false
 		_skirt_valid = false
+		_fire_suppressed = false
 		if not _try_set_angling_island(ship, target):
 			return _intent_angle(ship, target)
 
@@ -726,9 +727,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 # FALLBACK — sail forward when no island available
 # ============================================================================
 
+var _fwd = null
 func _intent_sail_forward(ship: Ship) -> NavIntent:
 	"""Fallback: sail straight ahead."""
-	var fwd = -ship.global_transform.basis.z
+	# var fwd = -ship.global_transform.basis.z
+	if _fwd == null:
+		_fwd = -ship.global_transform.basis.z
+	var fwd = _fwd
 	fwd.y = 0.0
 	if fwd.length_squared() < 0.1:
 		fwd = Vector3(0, 0, -1)

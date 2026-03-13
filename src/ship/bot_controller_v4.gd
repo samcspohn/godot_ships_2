@@ -309,10 +309,13 @@ func _update_nav_intent() -> void:
 				new_intent = NavIntent.create(destination, heading_info.heading)
 
 	# --- Smart comparison: compare raw-to-raw to prevent oscillation ---
+	# When similar, still pass through position + heading so the navigator
+	# always sees the freshest coordinates. It decides whether to replan
+	# based on its own threshold in navigate_to().
 	if new_intent != null and _last_raw_intent != null and _is_intent_similar(_last_raw_intent, new_intent):
 		_last_raw_intent = new_intent
-		# Still update heading since that's cheap
 		_last_intent.target_heading = new_intent.target_heading
+		_last_intent.target_position = new_intent.target_position
 		return
 
 	# Store the raw behavior intent BEFORE validation modifies it.
