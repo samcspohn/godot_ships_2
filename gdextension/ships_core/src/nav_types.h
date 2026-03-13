@@ -244,15 +244,10 @@ struct AvoidanceState {
 	}
 };
 
-// Navigation state machine states (V5 unified)
+// Navigation state machine — simplified two-state design
 enum class NavState {
-	PLANNING    = 0,  // Computing path (transitions out within same frame)
-	NAVIGATING  = 1,  // Following waypoints forward or reverse (per waypoint flag)
-	ARRIVING    = 2,  // Within approach radius, blending position + heading
-	SETTLING    = 3,  // At position, correcting heading via short maneuvers
-	HOLDING     = 4,  // Position + heading achieved, micro-corrections only
-	AVOIDING    = 5,  // Collision avoidance temporarily overriding steering
-	EMERGENCY   = 6,  // Last-resort gradient escape
+	NORMAL    = 0,  // Path following + weighted avoidance blending
+	EMERGENCY = 1,  // Grounded or critical — SDF gradient escape
 };
 
 // Navigation target — the single struct replacing scattered target fields

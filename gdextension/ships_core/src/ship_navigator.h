@@ -36,81 +36,84 @@ private:
 	NavState nav_state;
 	NavTarget target;
 
+	// --- Grounded flag (set by BotControllerV4 from movement controller) ---
+	bool grounded_;
+
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
 
-	// --- Async pathfinding ---
+	// --- Pathfinding ---
+	static constexpr bool USE_ASYNC_PATHFINDING = true;   // toggle async vs sync
+	static constexpr int PLAN_ITER_BUDGET = 20000;        // per-frame budget (async only)
+	static constexpr int SYNC_ITER_LIMIT = 50000;         // max iterations (sync only)
+
 	enum class PlanPhase : int {
-		IDLE = 0,       // No search in progress
-		FORWARD = 1,    // Running forward A* (soft clearance)
-		FALLBACK = 2,   // Running fallback A* (half clearance, no turning)
-		REVERSE = 3,    // Running reverse A*
-		GRID_FALLBACK = 5, // Last-resort plain A* with zero clearance + post-process push
-		DONE = 4,       // All searches complete
+		IDLE = 0,
+		FORWARD = 1,
+		FALLBACK = 2,
+		REVERSE = 3,
+		GRID_FALLBACK = 5,
+		DONE = 4,
 	};
-	static constexpr int PLAN_ITER_BUDGET = 25000;
 
 	PlanPhase plan_phase;
-	PathSearch path_search;           // Reusable per-ship search state
-	PathResult plan_forward_result;   // Stored between planning phases
+	PathSearch path_search;
+	PathResult plan_forward_result;
 	float plan_min_clearance;
 	float plan_comfortable_clearance;
 
-	// --- Timing ---
-	float settle_timer;
-	float hold_timer;
-	float stuck_timer;                // Time at near-zero speed while NAVIGATING
-	int replan_frame_cooldown;        // Frame counter, not float timer
-	int settle_dir;                   // Persistent throttle direction during settling (+1 or -1)
+	// --- Replan trigger (event-driven, not timer-based) ---
+	bool replan_requested_;
 
 	// --- Constants ---
 	static constexpr float PATH_REUSE_ABSOLUTE_THRESHOLD = 500.0f;
 	static constexpr float PATH_REUSE_RELATIVE_FRACTION = 0.15f;
-	static constexpr int   REPLAN_FRAME_COOLDOWN = 30;         // ~0.5s at 60fps — prevents path oscillation
-	static constexpr float HEADING_TOLERANCE = 0.2618f;        // ~15 degrees
-	static constexpr float SPEED_THRESHOLD = 2.0f;             // m/s
-	static constexpr float STUCK_TIME_THRESHOLD = 2.0f;        // seconds at near-zero speed
-	static constexpr float REVERSE_DISTANCE_CAP_FACTOR = 2.5f; // max reverse = turning_radius * this
-
-	// --- Terrain proximity policy ---
-	bool allow_near_terrain;          // true = relax terrain collision avoidance (cover-seeking ships)
+	static constexpr float HEADING_TOLERANCE = 0.2618f;
+	static constexpr float SPEED_THRESHOLD = 2.0f;
 
 	// --- Steering output ---
-	float out_rudder;                 // [-1, 1]
-	int out_throttle;                 // [-1, 4]
+	float out_rudder;
+	int out_throttle;
 	bool out_collision_imminent;
 	float out_time_to_collision;
 
+	// --- Timing instrumentation (microseconds, last frame) ---
+	float timing_update_us;
+	float timing_avoidance_us;
+	float timing_plan_us;
+	int timing_replan_reason;  // 0=none, 1=requested, 2=no_path, 3=deviated, 4=ticking
+	int timing_plan_phase_val; // current PlanPhase as int
+
 	// --- Reactive avoidance ---
-	std::vector<ArcPoint> predicted_arc;  // Short-range (~3-5 ship lengths) arc prediction
-	AvoidanceState avoidance;
+	std::vector<ArcPoint> predicted_arc;
+	bool predicted_arc_fresh;  // true if predicted_arc was already set this frame
 
 	// --- Dynamic obstacles ---
 	std::unordered_map<int, DynamicObstacle> obstacles;
 
+	// --- Avoidance result ---
+	struct AvoidanceResult {
+		float rudder;     // best avoidance rudder
+		float weight;     // 0..1, how strongly avoidance overrides desired rudder
+		bool torpedo;     // true if primary threat is a torpedo
+	};
+
+	// --- Avoidance throttling ---
+	int avoidance_frame_counter;        // counts up each frame
+	static constexpr int AVOIDANCE_FULL_INTERVAL = 4;  // full scan every N frames
+	AvoidanceResult cached_avoidance;   // last result for reuse between full scans
+	bool cached_avoidance_valid;
+
 	// --- Internal methods ---
 
-	// Hard clearance: beam/2 + safety. Ship MUST not violate this.
 	float get_ship_clearance() const;
-
-	// Soft clearance: preferred distance from land — turning_circle/2.
 	float get_soft_clearance() const;
-
-	// Safety margin for arc prediction
 	float get_safety_margin() const;
-
-	// Compute the lookahead distance for arc prediction (in meters).
 	float get_lookahead_distance() const;
-
-	// Compute the stopping distance at current speed
 	float get_stopping_distance() const;
-
-	// Convert a throttle level to target speed (m/s)
 	float throttle_to_speed(int throttle) const;
-
-	// Approach radius: distance at which NAVIGATING transitions to ARRIVING
 	float get_approach_radius() const;
 
 	// --- Arc prediction ---
@@ -138,8 +141,9 @@ private:
 	float compute_rudder_to_position(Vector2 target_pos, bool reverse = false) const;
 	float compute_rudder_to_heading(float desired_heading) const;
 	int compute_throttle_for_approach(float distance_to_target) const;
-	float select_safe_rudder(float desired_rudder, int desired_throttle,
-							 float &out_ttc, bool &out_collision);
+
+	// --- Simplified avoidance (replaces select_safe_rudder) ---
+	AvoidanceResult compute_avoidance(float desired_rudder, int desired_throttle);
 
 	// --- Waypoint following ---
 
@@ -147,37 +151,32 @@ private:
 	bool is_waypoint_reached(Vector2 waypoint) const;
 	bool is_waypoint_in_turning_dead_zone(Vector2 waypoint) const;
 	float get_reach_radius() const;
-
-	// Walk along the path from current position for `lookahead_dist` meters
-	// and return the interpolated point.  Used by pure pursuit steering.
 	Vector2 find_path_lookahead(float lookahead_dist) const;
+
+	// --- Pure pursuit steering ---
+	float compute_pure_pursuit_rudder() const;
+
+	// --- Waypoint-behind-no-room check ---
+	bool is_waypoint_behind_no_room() const;
+
+	// --- Steer away from land when waypoint is behind ---
+	float compute_outward_rudder() const;
 
 	// --- Path management ---
 
-	// Accept or reject a computed path (oscillation prevention + commit)
 	void accept_plan_result(const PathResult &forward_result);
-
-	// Check whether a destination shift is small enough to reuse the existing path
 	bool is_destination_shift_small(Vector2 old_target, Vector2 new_target) const;
 
-	// --- Unified state machine update methods ---
+	// --- Two-state update methods ---
 
 	void update(float delta);
-	void update_planning();
-	void update_navigating(float delta);
-	void update_arriving(float delta);
-	void update_settling(float delta);
-	void update_holding(float delta);
-	void update_emergency();
+	void update_normal(float delta);
+	void update_emergency(float delta);
 
-	// Heading-correction waypoint generation for SETTLING state
-	void plan_heading_correction();
-
-	// Estimate clearance in a given direction (for heading correction planning)
-	float estimate_room_in_direction(float heading) const;
-
-	// Check if the path needs recomputation
-	bool check_replan_needed();
+	// --- Plan management ---
+	void start_plan();       // begins async search (sets plan_phase)
+	void tick_plan();        // continues async search
+	void run_plan_sync();    // runs full search synchronously
 
 	// Determine if the current waypoint should be followed in reverse
 	bool current_waypoint_is_reverse() const;
@@ -227,19 +226,12 @@ public:
 
 	// --- Navigation commands ---
 
-	// The single navigation command.
-	// target: world position to reach
-	// heading: desired heading on arrival (radians, 0 = +Z)
-	// hold_radius: 0 = arrive and stop, >0 = station-keep within radius
-	// heading_tolerance: acceptable heading error to consider settled (radians, default ~15°)
 	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f);
-
-	// Cancel navigation, coast to stop
 	void stop();
 
-	// Enable/disable relaxed terrain avoidance (for cover-seeking ships near islands)
-	void set_near_terrain(bool enabled);
-	bool get_near_terrain() const;
+	// --- Grounded state (from movement controller via BotControllerV4) ---
+	void set_grounded(bool grounded);
+	bool get_grounded() const;
 
 	// --- Output ---
 
@@ -268,15 +260,25 @@ public:
 	float get_distance_to_destination() const;
 	String get_debug_info() const;
 
-	// Get the hard clearance radius for debug visualization
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
+
+	// --- Timing (microseconds) ---
+	float get_timing_update_us() const { return timing_update_us; }
+	float get_timing_avoidance_us() const { return timing_avoidance_us; }
+	float get_timing_plan_us() const { return timing_plan_us; }
+	int get_timing_replan_reason() const { return timing_replan_reason; }
+	int get_timing_plan_phase() const { return timing_plan_phase_val; }
 
 	// --- Backward-compatible API stubs ---
 
 	Dictionary validate_destination_pose(Vector3 ship_position, Vector3 candidate);
 	PackedVector3Array get_simulated_path() const;
 	bool is_simulation_complete() const;
+
+	// --- Kept for BotControllerV4 compat (no-op) ---
+	void set_near_terrain(bool enabled);
+	bool get_near_terrain() const;
 };
 
 } // namespace godot

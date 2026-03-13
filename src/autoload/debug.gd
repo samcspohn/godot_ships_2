@@ -320,7 +320,7 @@ func _send_ca_tactical_debug(bot_controller, target_ship: Node, sender_id: int) 
 
 
 const NAV_STATE_NAMES: Array[String] = [
-	"PLANNING", "NAVIGATING", "ARRIVING", "SETTLING", "HOLDING", "AVOIDING", "EMERGENCY"
+	"NORMAL", "EMERGENCY"
 ]
 
 func _send_world_label_debug(bot_controller, sender_id: int) -> void:

@@ -272,7 +272,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 
 	// Step 5: Allocate reusable A* buffers and build coarse grid
 	allocate_astar_buffers();
-	build_coarse_grid();
+	build_multi_resolution_grid();
 
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Build complete. ", islands.size(), " islands detected, ",
@@ -424,7 +424,7 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 
 	// Allocate reusable A* buffers and build coarse grid
 	allocate_astar_buffers();
-	build_coarse_grid();
+	build_multi_resolution_grid();
 
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Raycast build complete. ", islands.size(), " islands detected, ",
@@ -1294,24 +1294,45 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 // Pathfinding (Theta* on SDF grid)
 // ============================================================================
 
-void NavigationMap::build_coarse_grid() {
-	coarse_width_ = (grid_width + SECTOR_SIZE - 1) / SECTOR_SIZE;
-	coarse_height_ = (grid_height + SECTOR_SIZE - 1) / SECTOR_SIZE;
-	coarse_max_sdf_.resize(coarse_width_ * coarse_height_);
+void NavigationMap::build_multi_resolution_grid() {
+	// Level 0: mirrors the base SDF grid (min == max per cell)
+	mr_width_[0] = grid_width;
+	mr_height_[0] = grid_height;
+	mr_cell_size_[0] = cell_size;
+	int total_base = grid_width * grid_height;
+	mr_grid_[0].resize(total_base);
+	for (int i = 0; i < total_base; i++) {
+		mr_grid_[0][i] = {sdf_grid[i], sdf_grid[i]};
+	}
 
-	for (int cz = 0; cz < coarse_height_; cz++) {
-		for (int cx = 0; cx < coarse_width_; cx++) {
-			float max_sdf = -std::numeric_limits<float>::infinity();
-			for (int dz = 0; dz < SECTOR_SIZE; dz++) {
-				for (int dx = 0; dx < SECTOR_SIZE; dx++) {
-					int fx = cx * SECTOR_SIZE + dx;
-					int fz = cz * SECTOR_SIZE + dz;
-					if (in_bounds(fx, fz)) {
-						max_sdf = std::max(max_sdf, get_cell(fx, fz));
+	// Levels 1-4: each cell aggregates 2x2 children from the level below
+	for (int level = 1; level < MR_LEVELS; level++) {
+		int prev_w = mr_width_[level - 1];
+		int prev_h = mr_height_[level - 1];
+		mr_width_[level] = (prev_w + 1) / 2;
+		mr_height_[level] = (prev_h + 1) / 2;
+		mr_cell_size_[level] = mr_cell_size_[level - 1] * 2.0f;
+
+		int total = mr_width_[level] * mr_height_[level];
+		mr_grid_[level].resize(total);
+
+		for (int cz = 0; cz < mr_height_[level]; cz++) {
+			for (int cx = 0; cx < mr_width_[level]; cx++) {
+				float min_s = std::numeric_limits<float>::infinity();
+				float max_s = -std::numeric_limits<float>::infinity();
+				for (int dz = 0; dz < 2; dz++) {
+					for (int dx = 0; dx < 2; dx++) {
+						int px = cx * 2 + dx;
+						int pz = cz * 2 + dz;
+						if (px < prev_w && pz < prev_h) {
+							const auto &child = mr_grid_[level - 1][pz * prev_w + px];
+							min_s = std::min(min_s, child.min_sdf);
+							max_s = std::max(max_s, child.max_sdf);
+						}
 					}
 				}
+				mr_grid_[level][cz * mr_width_[level] + cx] = {min_s, max_s};
 			}
-			coarse_max_sdf_[cz * coarse_width_ + cx] = max_sdf;
 		}
 	}
 }
@@ -1511,6 +1532,18 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 		return true;
 	}
 
+	// Direct LOS shortcut: if start and end can see each other, skip A*
+	if (line_of_sight(search.sx, search.sz, search.ex, search.ez, clearance)) {
+		search.result.waypoints.push_back(from);
+		search.result.waypoints.push_back(to);
+		search.result.flags.push_back(WP_NONE);
+		search.result.flags.push_back(WP_NONE);
+		search.result.valid = true;
+		search.result.total_distance = from.distance_to(to);
+		search.complete = true;
+		return true;
+	}
+
 	// Store search parameters
 	search.grid_width = grid_width;
 	search.grid_height = grid_height;
@@ -1666,9 +1699,12 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 
 			bool any_arc_expanded = false;
 
-			// --- Straight move (SDF-adaptive step) ---
+			// --- Straight move (MR-hierarchy-adaptive step) ---
 			{
-				float step_world = std::max(safe_dist, search.cell_size);
+				// Use multi-resolution grid to determine jump distance in open water
+				int nav_level = find_navigable_mr_level(cx, cz, search.clearance_world);
+				float mr_step = mr_cell_size_[nav_level];
+				float step_world = std::max({safe_dist, search.cell_size, mr_step});
 				step_world = std::min(step_world, search.turning_radius * 4.0f);
 				float step_grid = step_world / search.cell_size;
 
@@ -1677,7 +1713,7 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				nx = std::max(0, std::min(nx, search.grid_width - 1));
 				nz = std::max(0, std::min(nz, search.grid_height - 1));
 
-				if (nx != cx || nz != cz) {
+				if ((nx != cx || nz != cz) && !is_mr_blocked(nx, nz, search.clearance_world)) {
 					int nidx = cell_idx(nx, nz);
 					if (search.closed_gen[nidx] != search.current_gen) {
 						float landing_sdf = get_cell(nx, nz);
@@ -1747,6 +1783,9 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 
 				int nidx = cell_idx(nx, nz);
 				if (search.closed_gen[nidx] == search.current_gen) continue;
+
+				// MR blocked-cell pruning
+				if (is_mr_blocked(nx, nz, search.clearance_world)) continue;
 
 				float landing_sdf = get_cell(nx, nz);
 				if (landing_sdf < search.clearance_world) continue;
@@ -1843,12 +1882,19 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				}
 			}
 		} else {
-			// ---- Original SDF-accelerated 8-direction A* (turning_radius == 0) ----
+			// ---- MR-accelerated 8-direction A* (turning_radius == 0) ----
+			// Hoist MR level query outside the 8-direction loop (depends only on current cell)
+			int nav_level_8dir = find_navigable_mr_level(cx, cz, search.clearance_world);
+			float mr_step_cells_8dir = mr_cell_size_[nav_level_8dir] / search.cell_size;
+
 			for (int d = 0; d < 8; d++) {
 				bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
 
+				// Use multi-resolution grid to allow larger jumps in open water
+				float mr_step_cells = mr_step_cells_8dir;
 				float step_world = is_diag ? (search.cell_size * 1.414f) : search.cell_size;
-				int max_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
+				int max_jump = std::max({static_cast<int>(safe_dist / step_world),
+										 static_cast<int>(mr_step_cells), 1});
 
 				if (dx8[d] != 0) {
 					int max_x = (dx8[d] > 0) ? (search.grid_width - 1 - cx) : cx;
@@ -1865,6 +1911,9 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 
 				int nidx = cell_idx(nx, nz);
 				if (search.closed_gen[nidx] == search.current_gen) continue;
+
+				// MR blocked-cell pruning: skip if neighbor is in a fully-blocked coarse cell
+				if (is_mr_blocked(nx, nz, search.clearance_world)) continue;
 
 				float landing_sdf = get_cell(nx, nz);
 				if (landing_sdf < search.clearance_world) continue;
@@ -1947,7 +1996,7 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 
 	// --- Path simplification using grid-level LOS (fast) ---
 	// (currently disabled via && false, preserved for parity)
-	if (path.size() > 2 && false) {
+	if (path.size() > 2) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
 

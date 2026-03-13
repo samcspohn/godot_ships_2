@@ -30,6 +30,7 @@ var debug_draw_turn_sim: bool = true
 
 var debug_log_interval: float = 2.0
 var debug_log_timer: float = 0.0
+var debug_log: bool = false
 
 # ===========================================================================
 # REFERENCES
@@ -205,6 +206,7 @@ func _physics_process(delta: float) -> void:
 		get_current_speed(),
 		delta
 	)
+	navigator.set_grounded(movement.is_grounded)
 
 	# --- 2. Update dynamic obstacles (other ships) ---
 	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
@@ -251,12 +253,12 @@ func _physics_process(delta: float) -> void:
 	# Behaviors can request a minimum throttle (e.g. CAs approaching cover at speed)
 	# to prevent the navigator from decelerating too early.
 	# Only apply when:
-	#   - The navigator is NAVIGATING or AVOIDING (not ARRIVING/SETTLING/HOLDING)
+	#   - The navigator is in NORMAL mode (not EMERGENCY)
 	#   - The navigator is going forward (throttle >= 0) — never override reverse
 	#   - The navigator isn't signaling collision — never force speed into an obstacle
 	var nav_st: int = navigator.get_nav_state()
-	var is_approach_phase: bool = nav_st >= 2  # ARRIVING(2), SETTLING(3), HOLDING(4)
-	if _last_intent != null and _last_intent.throttle_override >= 0 and throttle >= 0 and not navigator.is_collision_imminent() and not is_approach_phase:
+	var is_emergency: bool = nav_st == 1  # EMERGENCY
+	if _last_intent != null and _last_intent.throttle_override >= 0 and throttle >= 0 and not navigator.is_collision_imminent() and not is_emergency:
 		throttle = maxi(throttle, _last_intent.throttle_override)
 
 	# --- 6. Apply behavior speed modifier (DD evasion speed variation etc.) ---
@@ -335,10 +337,8 @@ func _update_nav_intent() -> void:
 
 func _execute_nav_intent() -> void:
 	if _last_intent == null:
-		navigator.set_near_terrain(false)
 		navigator.navigate_to(Vector3(destination.x, 0.0, destination.z), get_ship_heading(), 0.0)
 		return
-	navigator.set_near_terrain(_last_intent.near_terrain)
 	navigator.navigate_to(
 		_last_intent.target_position,
 		_last_intent.target_heading,
@@ -508,7 +508,7 @@ func _check_intent_events() -> void:
 	if server_node == null:
 		return
 
-	var _dbg := int(_ship.name) < 1004
+	var _dbg := int(_ship.name) < 1004 and debug_log
 
 	# --- 1. Enemy visibility change (detected or went hidden) ---
 	# We use the SIZE of get_valid_targets() which is already filtered to only
@@ -641,11 +641,27 @@ func _update_debug_vectors(rudder: float) -> void:
 		_debug_safe_vector = Vector3.ZERO
 
 	# Debug logging
-	debug_log_timer += 1.0 / Engine.physics_ticks_per_second
-	if debug_log_timer >= debug_log_interval:
-		debug_log_timer = 0.0
-		# if _ship.name == "1001" or _ship.name == "1002" or _ship.name == "1003":
-		# 	print("[BotV4 %s] %s" % [_ship.name, navigator.get_debug_info()])
+	if debug_log:
+		debug_log_timer += 1.0 / Engine.physics_ticks_per_second
+		if debug_log_timer >= debug_log_interval:
+			debug_log_timer = 0.0
+		# Performance timing (every second for bots 1001-1003)
+		var _bot_id := int(_ship.name)
+		if _bot_id >= 1001 and _bot_id <= 1003:
+			if Engine.get_physics_frames() % Engine.physics_ticks_per_second == _bot_id % Engine.physics_ticks_per_second:
+				var reason_names := ["none", "requested", "no_path", "deviated", "ticking"]
+				var phase_names := ["IDLE", "FWD", "FALLBACK", "REVERSE", "DONE", "GRID_FB"]
+				var r: int = navigator.get_timing_replan_reason()
+				var p: int = navigator.get_timing_plan_phase()
+				print("[Perf %s] update=%.0fus avoid=%.0fus plan=%.0fus | reason=%s phase=%s state=%s" % [
+					_ship.name,
+					navigator.get_timing_update_us(),
+					navigator.get_timing_avoidance_us(),
+					navigator.get_timing_plan_us(),
+					reason_names[r] if r < reason_names.size() else str(r),
+					phase_names[p] if p < phase_names.size() else str(p),
+					get_nav_state_string()
+				])
 
 
 ## Get the debug heading vector (for local access by camera)
@@ -706,8 +722,7 @@ func get_turn_simulation_points_undesired() -> Array[Vector3]:
 ## Get nav state as a human-readable string
 func get_nav_state_string() -> String:
 	var state_names = [
-		"PLANNING", "NAVIGATING", "ARRIVING",
-		"SETTLING", "HOLDING", "AVOIDING", "EMERGENCY"
+		"NORMAL", "EMERGENCY"
 	]
 	var state_idx = navigator.get_nav_state()
 	if state_idx >= 0 and state_idx < state_names.size():

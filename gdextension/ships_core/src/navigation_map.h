@@ -137,11 +137,59 @@ private:
 	// Must be called after compute_sdf_from_mask. Uses a minimum clearance of 0 (any water cell).
 	void compute_regions();
 
-	// --- Coarse grid for hierarchical pathfinding ---
-	static const int SECTOR_SIZE = 8;
-	int coarse_width_, coarse_height_;
-	std::vector<float> coarse_max_sdf_; // max SDF per sector (passable if >= clearance)
-	void build_coarse_grid();
+	// --- Multi-resolution grid for hierarchical pathfinding ---
+	// 5 levels: L0=50m (base), L1=100m, L2=200m, L3=400m, L4=800m
+	// Each level N cell stores min/max SDF of its 4 children at level N-1.
+	static constexpr int MR_LEVELS = 5;
+
+	struct MRCell { float min_sdf; float max_sdf; };
+
+	int mr_width_[MR_LEVELS] = {};
+	int mr_height_[MR_LEVELS] = {};
+	float mr_cell_size_[MR_LEVELS] = {};
+	std::vector<MRCell> mr_grid_[MR_LEVELS];
+
+	void build_multi_resolution_grid();
+
+	// Classify a cell at a given MR level relative to a clearance threshold (world units).
+	// Returns: 1 = fully navigable, 0 = mixed, -1 = fully blocked
+	inline int classify_mr_cell(int mx, int mz, int level, float clearance_world) const {
+		if (level < 0 || level >= MR_LEVELS) return -1;
+		if (mx < 0 || mx >= mr_width_[level] || mz < 0 || mz >= mr_height_[level]) return -1;
+		const auto &cell = mr_grid_[level][mz * mr_width_[level] + mx];
+		if (cell.min_sdf >= clearance_world) return 1;   // fully navigable
+		if (cell.max_sdf < clearance_world) return -1;   // fully blocked
+		return 0;                                          // mixed
+	}
+
+	// Find the highest MR level at which base-grid cell (bx, bz) is fully navigable.
+	// Returns 0 if even the base cell isn't fully navigable at this clearance.
+	inline int find_navigable_mr_level(int bx, int bz, float clearance_world) const {
+		int best = 0;
+		for (int L = MR_LEVELS - 1; L >= 1; L--) {
+			int scale = 1 << L;
+			int mx = bx / scale;
+			int mz = bz / scale;
+			int cls = classify_mr_cell(mx, mz, L, clearance_world);
+			if (cls == 1) { best = L; break; }
+			if (cls == -1) break;  // blocked at this level — finer levels won't help
+		}
+		return best;
+	}
+
+	// Check if base-grid cell (nx, nz) is in a fully-blocked coarse cell.
+	// Checks from coarsest to finest, returns true if any level is fully blocked.
+	inline bool is_mr_blocked(int nx, int nz, float clearance_world) const {
+		for (int L = MR_LEVELS - 1; L >= 1; L--) {
+			int scale = 1 << L;
+			int mx = nx / scale;
+			int mz = nz / scale;
+			int cls = classify_mr_cell(mx, mz, L, clearance_world);
+			if (cls == -1) return true;   // fully blocked
+			if (cls == 1) return false;   // fully navigable — no need to check finer
+		}
+		return false;
+	}
 
 	// --- Pathfinding internals ---
 
