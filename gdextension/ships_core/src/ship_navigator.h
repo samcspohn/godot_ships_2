@@ -99,6 +99,7 @@ private:
 		float weight;         // 0..1, hard threat only — controls throttle reduction
 		float rudder_weight;  // 0..1, includes soft-zone nudge — controls rudder blend
 		bool torpedo;         // true if primary threat is a torpedo
+		bool reverse;         // true if reversing was chosen as the best avoidance maneuver
 	};
 
 	// --- Avoidance throttling ---
@@ -106,6 +107,15 @@ private:
 	static constexpr int AVOIDANCE_FULL_INTERVAL = 4;  // full scan every N frames
 	AvoidanceResult cached_avoidance;   // last result for reuse between full scans
 	bool cached_avoidance_valid;
+
+	// --- Parked-ship obstacle filter ---
+	// When true, check_arc_obstacles_detailed skips non-torpedo obstacles.
+	// Set at the start of compute_avoidance when the ship is effectively
+	// stationary (speed < threshold, desired throttle <= 0).  A parked ship
+	// holding position should not dodge approaching friendlies — the moving
+	// ship is the give-way vessel.
+	bool skip_ship_obstacles_;
+	static constexpr float PARKED_SPEED_THRESHOLD = 10.0f;
 
 	// --- Internal methods ---
 

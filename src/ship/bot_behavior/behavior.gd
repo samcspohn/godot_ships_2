@@ -521,12 +521,20 @@ func _calculate_tactical_position(desired_range: float, min_safe_distance: float
 	to_me.y = 0.0
 	var current_angle = atan2(to_me.x, to_me.z)
 
+	# Only trigger retreat on currently visible enemies — stale last-known positions
+	# (unspotted ships) should not push the BB backward.
 	var retreat_factor = 0.0
-	if not nearest.is_empty():
-		var nearest_dist: float = nearest.distance
-		if nearest_dist < min_safe_distance:
-			retreat_factor = 1.0 - (nearest_dist / min_safe_distance)
-			retreat_factor = clamp(retreat_factor, 0.0, 1.0)
+	var valid_targets = server_node.get_valid_targets(_ship.team.team_id)
+	var nearest_visible_dist = INF
+	var nearest_visible_pos = Vector3.ZERO
+	for s in valid_targets:
+		var d = _ship.global_position.distance_to(s.global_position)
+		if d < nearest_visible_dist:
+			nearest_visible_dist = d
+			nearest_visible_pos = s.global_position
+	if nearest_visible_dist < min_safe_distance:
+		retreat_factor = 1.0 - (nearest_visible_dist / min_safe_distance)
+		retreat_factor = clamp(retreat_factor, 0.0, 1.0)
 
 	var target_dist = desired_range
 	if retreat_factor > 0:
@@ -534,10 +542,10 @@ func _calculate_tactical_position(desired_range: float, min_safe_distance: float
 
 	var flank_direction = _get_flanking_direction(danger_center, friendly_avg)
 	var flank_angle = flank_bias * (PI / 4.0) * flank_direction
-	var target_angle = current_angle + flank_angle * 0.1
+	var target_angle = current_angle + flank_angle
 
-	if retreat_factor > 0 and not nearest.is_empty():
-		var nearest_pos: Vector3 = nearest.position
+	if retreat_factor > 0 and nearest_visible_pos != Vector3.ZERO:
+		var nearest_pos: Vector3 = nearest_visible_pos
 		var to_nearest = nearest_pos - _ship.global_position
 		to_nearest.y = 0.0
 		var nearest_bearing = atan2(to_nearest.x, to_nearest.z)
@@ -598,8 +606,11 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 	if unspotted_enemies.is_empty():
 		var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
 		if avg_enemy != Vector3.ZERO:
+			# Move toward the enemy average, stopping one gun range short
 			var to_enemy = (avg_enemy - _ship.global_position).normalized()
-			var hunt_pos = _ship.global_position + to_enemy * gun_range * params.approach_multiplier
+			var standoff = gun_range * params.approach_multiplier
+			var hunt_pos = avg_enemy - to_enemy * standoff
+			hunt_pos.y = 0.0
 			return _get_valid_nav_point(hunt_pos)
 		return current_destination
 
@@ -618,8 +629,13 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 		return current_destination
 
 	var to_target = (closest_pos - _ship.global_position).normalized()
-	var approach_distance = gun_range * lerp(params.approach_multiplier, params.approach_multiplier * 0.5, 1.0 - hp_ratio)
-	var desired_pos = _ship.global_position + to_target * approach_distance
+	# Stand off in front of the last-known position by approach_multiplier * gun_range,
+	# so the BB actually closes to firing range instead of stopping halfway there.
+	# When damaged, increase the standoff slightly to be more cautious.
+	var standoff = gun_range * lerp(params.approach_multiplier, params.approach_multiplier * 1.5, 1.0 - hp_ratio)
+	standoff = clamp(standoff, 0.0, gun_range * 0.9)
+	var desired_pos = closest_pos - to_target * standoff
+	desired_pos.y = 0.0
 
 	# Apply spread
 	var pos_params = get_positioning_params()
@@ -631,7 +647,7 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 		if not nearest_cluster.is_empty():
 			var cluster_center: Vector3 = nearest_cluster.center
 			var to_cluster = (cluster_center - _ship.global_position).normalized()
-			desired_pos = _ship.global_position + (to_target * 0.6 + to_cluster * 0.4).normalized() * approach_distance
+			desired_pos = closest_pos - (to_target * 0.6 + to_cluster * 0.4).normalized() * standoff
 
 	# Use island cover if enabled
 	if params.use_island_cover:

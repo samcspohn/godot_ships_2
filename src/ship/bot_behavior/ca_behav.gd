@@ -141,7 +141,7 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		# Combine with range and HP weights
 		var size_contrib = priority * weights.size_weight
 		var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
-		var hp_contrib = (1.5 - hp_ratio) * weights.hp_weight
+		var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
 		priority = size_contrib + range_contrib + hp_contrib
 
 		# Boost targets within range
@@ -491,11 +491,49 @@ func _intent_angle(ship: Ship, target: Ship) -> NavIntent:
 	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
 	var angle_range = _get_angle_range(target.ship_class)
 	var desired = (angle_range.x + angle_range.y) * 0.5
-	# Pick angling side closest to current heading
 	var cw = _normalize_angle(enemy_bearing + desired)
 	var ccw = _normalize_angle(enemy_bearing - desired)
-	var current = _get_ship_heading()
-	var heading = cw if abs(_normalize_angle(cw - current)) < abs(_normalize_angle(ccw - current)) else ccw
+
+	# Score each candidate heading against all secondary threats.
+	# For each secondary enemy, compute how much its bearing falls on the
+	# exposed (broadside) side of the candidate heading.  A heading that
+	# keeps more threats ahead/behind (low dot product) is preferred over
+	# one that exposes our broadside to a cluster of secondaries.
+	var server_node: GameServer = ship.get_node_or_null("/root/Server")
+	var cw_score: float = 0.0
+	var ccw_score: float = 0.0
+	if server_node != null:
+		var all_threats = _gather_threat_positions(ship)
+		for threat_pos in all_threats:
+			# Skip the primary target — we already angle for them
+			if threat_pos.distance_to(target.global_position) < 50.0:
+				continue
+			var to_threat = threat_pos - ship.global_position
+			to_threat.y = 0.0
+			if to_threat.length_squared() < 1.0:
+				continue
+			var threat_dir = to_threat.normalized()
+			# Compute the right-hand perpendicular of each candidate heading
+			# (the direction that is our broadside).  The less broadside we
+			# show toward a secondary threat the better, so we *penalise*
+			# headings whose broadside axis aligns with that threat.
+			var cw_fwd = Vector3(sin(cw), 0.0, cos(cw))
+			var ccw_fwd = Vector3(sin(ccw), 0.0, cos(ccw))
+			var cw_side = Vector3(cw_fwd.z, 0.0, -cw_fwd.x)   # right-hand perp
+			var ccw_side = Vector3(ccw_fwd.z, 0.0, -ccw_fwd.x)
+			# abs dot — both sides of the ship count equally
+			cw_score += abs(cw_side.dot(threat_dir))
+			ccw_score += abs(ccw_side.dot(threat_dir))
+
+	# Lower score = less broadside exposed to secondaries — prefer that side.
+	# Fall back to whichever side requires the smaller turn if scores are equal.
+	var heading: float
+	if abs(cw_score - ccw_score) > 0.05:
+		heading = cw if cw_score < ccw_score else ccw
+	else:
+		var current = _get_ship_heading()
+		heading = cw if abs(_normalize_angle(cw - current)) < abs(_normalize_angle(ccw - current)) else ccw
+
 	# Maintain engagement range while angling
 	var gun_range = ship.artillery_controller.get_params()._range
 	var desired_dist = gun_range * 0.55
@@ -510,7 +548,10 @@ func _intent_angle(ship: Ship, target: Ship) -> NavIntent:
 	return NavIntent.create(dest, heading)
 
 func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
-	"""Find island between CA and target reachable within angling tolerance."""
+	"""Find the nearest island reachable within the angling cone, checking
+	both ahead of and behind the ship.  Any island whose disc intersects the
+	allowed cone (i.e. at least one point on the island falls within ±max_angle
+	of the enemy bearing) is a valid candidate."""
 	if target.ship_class == Ship.ShipClass.DD:
 		return false
 	if not NavigationMapManager.is_map_ready():
@@ -518,11 +559,14 @@ func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
 	var to_enemy = target.global_position - ship.global_position
 	to_enemy.y = 0.0
 	var enemy_dir = to_enemy.normalized()
-	var enemy_dist = to_enemy.length()
 	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
 	var max_angle = _get_angle_range(target.ship_class).y
+	# Add a small tolerance so islands whose edge just touches the cone are
+	# not rejected due to floating-point noise.
+	var cone_tolerance = deg_to_rad(5.0)
+	var effective_half_angle = max_angle + cone_tolerance
 	var clearance = _get_ship_clearance()
-	var best_score = -INF
+	var best_score = INF   # lower = closer, so we want minimum
 	var best_island: Dictionary = {}
 	var best_dest = Vector3.ZERO
 
@@ -531,18 +575,47 @@ func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
 		var radius: float = isl["radius"]
 		var to_isl = center - ship.global_position
 		to_isl.y = 0.0
-		if to_isl.normalized().dot(enemy_dir) < 0.3 or to_isl.length() > enemy_dist:
+		var dist_to_center = to_isl.length()
+		if dist_to_center < 1.0:
 			continue
+
+		# Angular half-width of this island disc as seen from the ship.
+		# asin is only valid when the island is farther away than its own radius.
+		var angular_half_width: float
+		if dist_to_center > radius:
+			angular_half_width = asin(clampf(radius / dist_to_center, 0.0, 1.0))
+		else:
+			# Ship is inside or right next to the island — treat as fully in-cone.
+			angular_half_width = PI
+
+		# The island intersects the cone if the closest bearing on the disc
+		# to the enemy_bearing is within effective_half_angle.
 		var isl_bearing = atan2(to_isl.x, to_isl.z)
-		if abs(_normalize_angle(isl_bearing - enemy_bearing)) > max_angle + deg_to_rad(10):
+		var bearing_diff = abs(_normalize_angle(isl_bearing - enemy_bearing))
+		# Closest bearing on the disc edge to the cone centre
+		var min_bearing_diff = maxf(bearing_diff - angular_half_width, 0.0)
+		if min_bearing_diff > effective_half_angle:
 			continue
+
+		# Compute a destination on the side of the island facing away from the
+		# enemy, so it can serve as cover.  The hide point sits just outside the
+		# island on the opposite side from the target.
 		var dest = center - enemy_dir * (radius + clearance + 50.0)
 		dest.y = 0.0
 		if NavigationMapManager.get_distance(dest) < clearance:
-			continue
-		var score = to_isl.normalized().dot(enemy_dir) * 100.0 - to_isl.length() * 0.01
-		if score > best_score:
-			best_score = score
+			# Try positioning behind the island relative to the enemy bearing
+			# but offset along the angling heading so we stay in the cone.
+			var current_heading = _get_ship_heading()
+			var alt_dir = Vector3(sin(current_heading), 0.0, cos(current_heading))
+			dest = center - alt_dir * (radius + clearance + 50.0)
+			dest.y = 0.0
+			if NavigationMapManager.get_distance(dest) < clearance:
+				continue
+
+		# Effective distance to the island edge (how far we still need to travel)
+		var eff_dist = maxf(dist_to_center - radius, 0.0)
+		if eff_dist < best_score:
+			best_score = eff_dist
 			best_island = {"id": isl["id"], "center": center, "radius": radius}
 			best_dest = dest
 
@@ -628,13 +701,25 @@ func _set_island_state(id: int, center: Vector3, radius: float, dest: Vector3) -
 		_last_in_range_ms = Time.get_ticks_msec()
 	_cover_island_center = center
 	_cover_island_radius = radius
-	_cover_zone_center = dest
 	_cover_zone_valid = true
 	_cover_zone_radius = _get_ship_clearance() * 2.0
+	# _cover_zone_center is intentionally NOT set here — it is always
+	# stamped from the actual NavIntent destination in _stamp_cover_dest().
+
+func _stamp_cover_dest(dest: Vector3) -> void:
+	"""Keep _cover_zone_center in sync with the destination actually navigated to."""
+	_cover_zone_center = dest
 
 # ============================================================================
 # NAVINTENT — Primary entry point (V4 bot controller)
 # ============================================================================
+
+func _make_intent(dest: Vector3, heading: float, arrival_radius: float = 0.0) -> NavIntent:
+	"""Thin wrapper around NavIntent.create that also stamps the cover destination."""
+	_stamp_cover_dest(dest)
+	if arrival_radius > 0.0:
+		return NavIntent.create(dest, heading, arrival_radius)
+	return NavIntent.create(dest, heading)
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_ensure_safe_dir(ship, server)
@@ -657,6 +742,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if not has_enemies:
 		_nav_destination_valid = false
 		_skirt_valid = false
+		_cover_zone_valid = false
 		if _last_known_enemy_valid:
 			return _intent_hunt(ship)
 		return _intent_sail_forward(ship)
@@ -671,12 +757,14 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# No island: angle toward target, try to find cover island en route
 	if not _nav_destination_valid and target:
 		if not _try_set_angling_island(ship, target):
+			_cover_zone_valid = false
 			return _intent_angle(ship, target)
 
 	# Find nearest island if we still don't have one
 	if not _nav_destination_valid:
 		var island = _find_nearest_island(ship)
 		if island.is_empty():
+			_cover_zone_valid = false
 			if target:
 				return _intent_angle(ship, target)
 			return _intent_sail_forward(ship)
@@ -689,20 +777,32 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_skirt_valid = false
 		_fire_suppressed = false
 		if not _try_set_angling_island(ship, target):
+			_cover_zone_valid = false
 			return _intent_angle(ship, target)
 
 	# Skirt around island when spotted in cover or while already skirting
 	if ship.visible_to_enemy and (is_in_cover or _skirt_valid):
 		var skirt = _try_skirt(ship, server)
 		if skirt:
+			_stamp_cover_dest(skirt.target_position)
 			return skirt
 	elif not ship.visible_to_enemy:
 		_skirt_valid = false
 
 	# Approach / station-keep
 	var dist_to_dest = ship.global_position.distance_to(_nav_destination)
-	var arrival_radius = _get_ship_clearance() * 2.0
-	var arrived = dist_to_dest < arrival_radius
+	var clearance = _get_ship_clearance()
+	var arrival_radius = clearance * 2.0
+	# Hysteresis: once in cover, allow a larger drift before losing cover status.
+	# This prevents obstacle-avoidance displacement (e.g. a friendly nudging us)
+	# from immediately flipping is_in_cover off → triggering COVER_LOST → forcing
+	# a re-approach that fights the avoidance in a throttle oscillation loop.
+	var exit_radius = clearance * 3.5
+	var arrived: bool
+	if is_in_cover:
+		arrived = dist_to_dest < exit_radius
+	else:
+		arrived = dist_to_dest < arrival_radius
 	var heading = _tangential_heading(ship, _target_island_pos, _nav_destination)
 
 	is_in_cover = arrived
@@ -711,11 +811,16 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_fire_suppressed = false
 
 	if arrived:
-		var intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
+		var intent = _make_intent(_nav_destination, heading, arrival_radius * 0.5)
 		intent.near_terrain = true
+		# When we're still in cover (hysteresis zone) but drifted past the
+		# tight arrival radius, gently return without a throttle override so
+		# the navigator's own avoidance can manage nearby friendlies.
+		if dist_to_dest > arrival_radius:
+			intent.throttle_override = -1
 		return intent
 
-	var intent = NavIntent.create(_nav_destination, heading)
+	var intent = _make_intent(_nav_destination, heading)
 	intent.near_terrain = true
 	if dist_to_dest > 500.0:
 		intent.throttle_override = 4

@@ -50,19 +50,19 @@ func get_target_weights() -> Dictionary:
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.60,           # 70% of gun range
-		range_increase_when_damaged = 0.35, # Up to +15% range when low HP
-		min_safe_distance_ratio = 0.40,     # Don't let enemies within 50% range
+		base_range_ratio = 0.60,           # 60% of gun range — active engagement distance
+		range_increase_when_damaged = 0.10, # Up to +10% range when low HP — don't retreat to max range
+		min_safe_distance_ratio = 0.30,     # Only retreat if something gets within 30% range (very close)
 		flank_bias_healthy = 0.6,
-		flank_bias_damaged = 0.1,
+		flank_bias_damaged = 0.2,
 		spread_distance = 3000.0,
 		spread_multiplier = 3.0,
 	}
 
 func get_hunting_params() -> Dictionary:
 	return {
-		approach_multiplier = 0.5,      # BBs move aggressively toward last known positions
-		cautious_hp_threshold = 0.5,
+		approach_multiplier = 0.4,      # Stand off 40% of gun range in front of last known position
+		cautious_hp_threshold = 0.4,    # Only pull back toward friendlies when quite damaged
 		use_island_cover = false,
 	}
 
@@ -113,7 +113,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 			# HE at destroyers
 			ammo = ShellParams.ShellType.HE
 			offset.y = 2.0
-			offset.z = -_target.movement_controller.ship_length * 0.25
+			offset.z -= _target.movement_controller.ship_length * 0.25
 	return offset
 
 # ============================================================================
@@ -203,7 +203,6 @@ func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagem
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
 
-var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	"""BB always returns POSE with safe heading for navigation."""
 	var friendly = server.get_team_ships(ship.team.team_id)
@@ -213,14 +212,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# --- No enemies visible: hunt ---
 	if danger_center == Vector3.ZERO:
-		if base_intent_pos == null:
-			base_intent_pos = ship.global_position - ship.global_transform.basis.z * 20_000.0
-			base_intent_pos.y = 0.0
-		var hunt_dest = _get_hunting_position(server, friendly, base_intent_pos)
+		var forward_fallback = ship.global_position - ship.global_transform.basis.z * 20_000.0
+		forward_fallback.y = 0.0
+		var hunt_dest = _get_hunting_position(server, friendly, forward_fallback)
 		if hunt_dest == Vector3.ZERO:
-
-			var fallback = base_intent_pos
-			fallback = _get_valid_nav_point(fallback)
+			var fallback = _get_valid_nav_point(forward_fallback)
 			return NavIntent.create(fallback, _calc_approach_heading(ship, fallback))
 		return NavIntent.create(hunt_dest, _calc_approach_heading(ship, hunt_dest))
 

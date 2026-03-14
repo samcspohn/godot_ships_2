@@ -41,6 +41,10 @@ var bot_debug_throttle: int = 0
 var bot_debug_throttle_arrow: MeshInstance3D = null
 var bot_debug_throttle_sphere: MeshInstance3D = null
 
+# Desired destination marker
+var bot_debug_destination: Vector3 = Vector3.ZERO
+var bot_debug_destination_marker: MeshInstance3D = null
+
 # Reference to the player's camera (set by BattleCamera)
 var battle_camera: BattleCamera = null
 
@@ -141,6 +145,7 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_bot_debug_cover_circles()
 		_clear_bot_debug_throttle_indicator()
 		_clear_ca_tactical_debug()
+		_clear_bot_debug_destination_marker()
 		return
 
 	bot_debug_request_timer += delta
@@ -162,6 +167,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_throttle_indicator()
 		_draw_ca_tactical_debug()
 		_draw_bot_debug_world_label()
+		_draw_bot_debug_destination_marker()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -208,7 +214,11 @@ func request_debug_info(target_path: NodePath) -> void:
 		# Sample SDF tiles near the ship for debug visualization
 		var sdf_data := _sample_sdf_tiles_near(target.global_position, 1000.0, clearance_r)
 
-		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight, clearance_r, soft_clearance_r, sdf_data, simulated_path, throttle_val)
+		var destination_val: Vector3 = Vector3.ZERO
+		if bot_controller is BotControllerV4:
+			destination_val = bot_controller.get_debug_destination()
+
+		send_debug_info_to_client.rpc_id(multiplayer.get_remote_sender_id(), heading_vec, heading_rudder_vec, target_ship_path, turn_sim_points_desired, turn_sim_points_undesired, nav_path, threat_vec, safe_vec, threat_weight, clearance_r, soft_clearance_r, sdf_data, simulated_path, throttle_val, destination_val)
 
 		# --- Island cover debug (separate RPC to avoid bloating the main one) ---
 		_send_cover_debug(bot_controller, target, multiplayer.get_remote_sender_id())
@@ -396,7 +406,7 @@ func _receive_cover_debug(cover_data: Dictionary) -> void:
 
 
 @rpc("authority", "call_remote", "unreliable")
-func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0, clearance_radius: float = 0.0, soft_clearance_radius: float = 0.0, sdf_data: PackedFloat32Array = PackedFloat32Array(), simulated_path: PackedVector3Array = PackedVector3Array(), throttle: int = 0) -> void:
+func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3, target_ship_path: Variant, turn_sim_points_desired: Array = [], turn_sim_points_undesired: Array = [], nav_path: PackedVector3Array = PackedVector3Array(), threat_vec: Vector3 = Vector3.ZERO, safe_vec: Vector3 = Vector3.ZERO, threat_weight: float = 0.0, clearance_radius: float = 0.0, soft_clearance_radius: float = 0.0, sdf_data: PackedFloat32Array = PackedFloat32Array(), simulated_path: PackedVector3Array = PackedVector3Array(), throttle: int = 0, destination: Vector3 = Vector3.ZERO) -> void:
 	# Forward the debug info to the Debug autoload
 	bot_debug_heading_vector = heading_vec
 	bot_debug_heading_rudder_vector = heading_rudder_vec
@@ -412,6 +422,7 @@ func send_debug_info_to_client(heading_vec: Vector3, heading_rudder_vec: Vector3
 	bot_debug_sdf_tile_data = sdf_data
 	bot_debug_simulated_path = simulated_path
 	bot_debug_throttle = throttle
+	bot_debug_destination = destination
 	if target_ship_path != null:
 		bot_debug_target_ship = get_node(target_ship_path)
 
@@ -761,6 +772,50 @@ func _draw_bot_debug_throttle_indicator() -> void:
 	# Scale Y axis to control length (mesh height = 1.0 unit)
 	bot_debug_throttle_arrow.scale = Vector3(1.0, arrow_length, 1.0)
 	bot_debug_throttle_arrow.visible = true
+
+
+func _draw_bot_debug_destination_marker() -> void:
+	# Hide the marker when destination is at the origin (unset)
+	if bot_debug_destination == Vector3.ZERO:
+		_clear_bot_debug_destination_marker()
+		return
+
+	# Create the marker mesh on first use
+	if bot_debug_destination_marker == null or not is_instance_valid(bot_debug_destination_marker):
+		bot_debug_destination_marker = MeshInstance3D.new()
+		bot_debug_destination_marker.name = "BotDebugDestinationMarker"
+
+		# Use a diamond shape (4-sided cone pointing down) to mark the position
+		var cone_mesh := CylinderMesh.new()
+		cone_mesh.top_radius = 0.0
+		cone_mesh.bottom_radius = 40.0
+		cone_mesh.height = 80.0
+		cone_mesh.radial_segments = 4
+		bot_debug_destination_marker.mesh = cone_mesh
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.0, 1.0, 0.4, 0.9)  # Bright green
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		bot_debug_destination_marker.material_override = mat
+		bot_debug_destination_marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(bot_debug_destination_marker)
+
+	# Point the cone downward and hover it above the water surface
+	bot_debug_destination_marker.global_position = Vector3(
+		bot_debug_destination.x,
+		120.0,
+		bot_debug_destination.z
+	)
+	bot_debug_destination_marker.rotation = Vector3(PI, 0.0, 0.0)
+	bot_debug_destination_marker.visible = true
+
+
+func _clear_bot_debug_destination_marker() -> void:
+	if bot_debug_destination_marker != null and is_instance_valid(bot_debug_destination_marker):
+		bot_debug_destination_marker.visible = false
 
 
 func _clear_bot_debug_throttle_arrow() -> void:

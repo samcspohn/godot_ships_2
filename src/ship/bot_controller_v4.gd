@@ -116,6 +116,12 @@ var _last_friendly_alive_count: int = -1
 ## Whether we were in cover last frame (behavior.is_in_cover).
 var _was_in_cover: bool = false
 
+## Cooldown (seconds) after navigator avoidance ends before throttle_override
+## is allowed again.  Prevents the push-pull oscillation where a behavior's
+## throttle_override fights the avoidance system on alternating frames.
+var _avoidance_throttle_cooldown: float = 0.0
+const AVOIDANCE_THROTTLE_COOLDOWN_DURATION: float = 3.0
+
 ## When true, the next physics frame will force an immediate intent update
 ## regardless of the stagger timer.
 var _force_intent_next_frame: bool = false
@@ -256,9 +262,23 @@ func _physics_process(delta: float) -> void:
 	#   - The navigator is in NORMAL mode (not EMERGENCY)
 	#   - The navigator is going forward (throttle >= 0) — never override reverse
 	#   - The navigator isn't signaling collision — never force speed into an obstacle
+	#   - Avoidance throttle cooldown has expired — after the navigator was recently
+	#     dodging an obstacle, don't immediately force high throttle back toward it
 	var nav_st: int = navigator.get_nav_state()
 	var is_emergency: bool = nav_st == 1  # EMERGENCY
-	if _last_intent != null and _last_intent.throttle_override >= 0 and throttle >= 0 and not navigator.is_collision_imminent() and not is_emergency:
+	if navigator.is_collision_imminent():
+		_avoidance_throttle_cooldown = AVOIDANCE_THROTTLE_COOLDOWN_DURATION
+	elif _avoidance_throttle_cooldown > 0.0:
+		_avoidance_throttle_cooldown -= delta
+	var throttle_override_allowed: bool = (
+		_last_intent != null
+		and _last_intent.throttle_override >= 0
+		and throttle >= 0
+		and not navigator.is_collision_imminent()
+		and not is_emergency
+		and _avoidance_throttle_cooldown <= 0.0
+	)
+	if throttle_override_allowed:
 		throttle = maxi(throttle, _last_intent.throttle_override)
 
 	# --- 6. Apply behavior speed modifier (DD evasion speed variation etc.) ---
@@ -583,9 +603,19 @@ func _check_intent_events() -> void:
 		elif not now_in_cover and _was_in_cover:
 			# Ship drifted/overshot out of cover — force re-query so the behavior
 			# can re-issue a POSE intent to navigate back to the cover position.
-			if _dbg:
-				print("[Event %s] COVER_LOST (overshoot) frame=%d" % [_ship.name, Engine.get_physics_frames()])
-			_force_intent_next_frame = true
+			# BUT: suppress the event when the navigator's avoidance is actively
+			# steering us (e.g. a friendly ship nudged us out).  In that case
+			# the displacement is temporary and firing COVER_LOST would trigger
+			# a throttle_override re-approach that fights the avoidance, creating
+			# an oscillation loop (reverse → throttle 3 → reverse …).
+			var avoidance_active: bool = navigator.is_collision_imminent()
+			if not avoidance_active:
+				if _dbg:
+					print("[Event %s] COVER_LOST (overshoot) frame=%d" % [_ship.name, Engine.get_physics_frames()])
+				_force_intent_next_frame = true
+			else:
+				if _dbg:
+					print("[Event %s] COVER_LOST suppressed (avoidance active) frame=%d" % [_ship.name, Engine.get_physics_frames()])
 		_was_in_cover = now_in_cover
 
 
