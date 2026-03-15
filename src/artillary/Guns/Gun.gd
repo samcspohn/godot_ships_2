@@ -393,8 +393,11 @@ static func sim_can_shoot_over_terrain_static(
 				if armor_part.ship.team.team_id != ship.team.team_id:
 					return ShootOver.new(true, true)
 				elif armor_part.ship == ship:
-					# Hitting own ship, ignore
-					pass
+					# Hitting own ship, add to exclude and recast
+					var exclude = ray.exclude
+					exclude.append(armor_part.get_rid())
+					ray.exclude = exclude
+					continue
 				elif armor_part.ship.team.team_id == ship.team.team_id:
 					return ShootOver.new(true, false)
 					# return false # dont hit friendly ships
@@ -408,6 +411,7 @@ static func sim_can_shoot_over_terrain_static(
 				# 	pass
 			elif result["position"].y > 0.00001: # Hit terrain
 				return ShootOver.new(false, true)
+
 		shell_sim_position = ray.to
 		t += 0.5
 	return ShootOver.new(true, true)

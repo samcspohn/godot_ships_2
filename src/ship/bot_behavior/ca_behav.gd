@@ -27,6 +27,7 @@ var _target_island_pos: Vector3 = Vector3.ZERO
 var _target_island_radius: float = 0.0
 var _nav_destination: Vector3 = Vector3.ZERO
 var _nav_destination_valid: bool = false
+var _abandoned_island_id: int = -1  # Island we just left — skip in next search
 
 # Engagement tracking
 var _last_in_range_ms: int = 0
@@ -110,19 +111,15 @@ func should_evade(_destination: Vector3) -> bool:
 # ============================================================================
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
-	# When in cover, only consider targets we can shoot over the island
-	if is_in_cover:
-		var shootable: Array[Ship] = []
-		for t in targets:
-			if _can_shoot_over(t):
-				shootable.append(t)
-		if not shootable.is_empty():
-			targets = shootable
+	# Always prefer targets we can actually hit (not behind cover/terrain).
+	# Uses can_hit_target from base class which does a full sim shell trace.
 	var weights = get_target_weights()
 	var gun_range = _ship.artillery_controller.get_params()._range
 
-	var best_target: Ship = null
-	var best_priority: float = -1.0
+	var best_shootable_target: Ship = null
+	var best_shootable_priority: float = -1.0
+	var best_fallback_target: Ship = null
+	var best_fallback_priority: float = -1.0
 
 	for ship in targets:
 		var disp = ship.global_position - _ship.global_position
@@ -155,14 +152,24 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 			var depth_scale = 1.0 + flank_info.penetration_depth
 			priority *= flank_multiplier * depth_scale
 
-		if priority > best_priority:
-			best_target = ship
-			best_priority = priority
+		# Sort into shootable vs fallback based on line-of-fire check
+		if dist <= gun_range and can_hit_target(ship):
+			if priority > best_shootable_priority:
+				best_shootable_target = ship
+				best_shootable_priority = priority
+		else:
+			if priority > best_fallback_priority:
+				best_fallback_target = ship
+				best_fallback_priority = priority
 
-	# Stick to last target if nearby and alive
+	# Prefer shootable targets; only fall back to blocked targets if nothing is shootable
+	var best_target = best_shootable_target if best_shootable_target != null else best_fallback_target
+
+	# Stick to last target if nearby and alive, but only if it's still shootable
 	if best_target != null and last_target != null and last_target.is_alive():
 		if last_target.position.distance_to(best_target.position) < 1000:
-			return last_target
+			if best_shootable_target == null or can_hit_target(last_target):
+				return last_target
 
 	return best_target
 
@@ -307,7 +314,8 @@ func _ensure_safe_dir(ship: Ship, server: GameServer) -> void:
 # ============================================================================
 
 func _find_nearest_island(ship: Ship) -> Dictionary:
-	"""Find the nearest island by effective distance (center - radius).
+	"""Find the best island to move to — prefers islands that put the CA
+	within gun range of enemies over merely close islands.
 	Returns {id, center: Vector3, radius: float} or empty dict."""
 	if not NavigationMapManager.is_map_ready():
 		return {}
@@ -317,18 +325,59 @@ func _find_nearest_island(ship: Ship) -> Dictionary:
 		return {}
 
 	var my_pos = ship.global_position
+	var gun_range = ship.artillery_controller.get_params()._range
+
+	# Use spotted danger center if available; fall back to any known enemies.
+	var enemy_center = _get_spotted_danger_center()
+	if enemy_center == Vector3.ZERO:
+		enemy_center = _get_danger_center()
+	# Direction toward the enemy — used to prefer islands that push us forward.
+	var toward_enemy = Vector3.ZERO
+	if enemy_center != Vector3.ZERO:
+		toward_enemy = (enemy_center - my_pos)
+		toward_enemy.y = 0.0
+		if toward_enemy.length_squared() > 1.0:
+			toward_enemy = toward_enemy.normalized()
+
 	var best_id: int = -1
-	var best_eff_dist: float = INF
+	var best_score: float = INF
 	var best_pos: Vector3 = Vector3.ZERO
 	var best_radius: float = 0.0
 
 	for isl in islands:
+		# Skip the island we just abandoned — forces finding a new one
+		if isl["id"] == _abandoned_island_id:
+			continue
+
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
 		var isl_radius: float = isl["radius"]
-		var eff_dist = isl_pos.distance_to(my_pos) - isl_radius
-		if eff_dist < best_eff_dist:
-			best_eff_dist = eff_dist
+		var eff_dist = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
+
+		var score: float = eff_dist
+		if enemy_center != Vector3.ZERO:
+			# How far the island's cover side is from the enemy.
+			# Approximate cover position: island center + away-from-enemy * radius
+			var away = (isl_pos - enemy_center).normalized() if isl_pos.distance_to(enemy_center) > 1.0 else Vector3.ZERO
+			var cover_pos = isl_pos + away * (isl_radius + _get_ship_clearance())
+			var cover_to_enemy = cover_pos.distance_to(enemy_center)
+
+			# Penalise islands whose cover position is beyond gun range —
+			# we can't shoot from there, so they're far less useful.
+			var range_overshoot = maxf(cover_to_enemy - gun_range, 0.0)
+			score += range_overshoot * 3.0
+
+			# Bonus for islands that are ahead of us (toward the enemy).
+			# dot > 0 means the island is in the enemy direction.
+			if toward_enemy != Vector3.ZERO:
+				var to_isl = (isl_pos - my_pos)
+				to_isl.y = 0.0
+				var forward_dot = to_isl.normalized().dot(toward_enemy) if to_isl.length_squared() > 1.0 else 0.0
+				# Subtract a bonus (up to 2000) for islands in the forward hemisphere
+				score -= forward_dot * 2000.0
+
+		if score < best_score:
+			best_score = score
 			best_id = isl["id"]
 			best_pos = isl_pos
 			best_radius = isl_radius
@@ -534,14 +583,22 @@ func _intent_angle(ship: Ship, target: Ship) -> NavIntent:
 		var current = _get_ship_heading()
 		heading = cw if abs(_normalize_angle(cw - current)) < abs(_normalize_angle(ccw - current)) else ccw
 
-	# Maintain engagement range while angling
+	# Maintain engagement range while angling — push hard when out of range
 	var gun_range = ship.artillery_controller.get_params()._range
 	var desired_dist = gun_range * 0.55
+	var enemy_dist = to_enemy.length()
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
 	var dest = ship.global_position + fwd * 1000.0
-	if to_enemy.length() > desired_dist * 1.3:
-		dest = ship.global_position + to_enemy.normalized() * 1500.0
-	elif to_enemy.length() < desired_dist * 0.4:
+	if enemy_dist > gun_range:
+		# Well out of range — charge toward the enemy aggressively.
+		# Close most of the excess distance so we actually get into the fight.
+		var close_dist = (enemy_dist - desired_dist) * 0.8
+		dest = ship.global_position + to_enemy.normalized() * close_dist
+	elif enemy_dist > desired_dist * 1.3:
+		# Within gun range but farther than desired — moderate approach
+		var close_dist = (enemy_dist - desired_dist) * 0.5
+		dest = ship.global_position + to_enemy.normalized() * close_dist
+	elif enemy_dist < desired_dist * 0.4:
 		dest = ship.global_position - to_enemy.normalized() * 1000.0
 	dest.y = 0.0
 	dest = _get_valid_nav_point(dest)
@@ -612,7 +669,8 @@ func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
 			if NavigationMapManager.get_distance(dest) < clearance:
 				continue
 
-		# Effective distance to the island edge (how far we still need to travel)
+		# Emergency cover — pick the nearest island in the cone so we get
+		# behind something as fast as possible while still angling.
 		var eff_dist = maxf(dist_to_center - radius, 0.0)
 		if eff_dist < best_score:
 			best_score = eff_dist
@@ -697,6 +755,10 @@ func _set_island_state(id: int, center: Vector3, radius: float, dest: Vector3) -
 	_nav_destination = dest
 	_nav_destination_valid = true
 	_skirt_valid = false
+	# Clear the abandoned-island exclusion now that we've committed to a new one.
+	# This lets us return to it later if the tactical situation changes.
+	if id != _abandoned_island_id:
+		_abandoned_island_id = -1
 	if _last_in_range_ms == 0:
 		_last_in_range_ms = Time.get_ticks_msec()
 	_cover_island_center = center
@@ -726,7 +788,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var spotted = server.get_valid_targets(ship.team.team_id)
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
-	var has_enemies = spotted.size() > 0 or not unspotted.is_empty()
+	var has_spotted = spotted.size() > 0
+	var has_enemies = has_spotted or not unspotted.is_empty()
 
 	# Recompute safe direction if enemies are known
 	if has_enemies:
@@ -747,31 +810,45 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			return _intent_hunt(ship)
 		return _intent_sail_forward(ship)
 
-	# Change island after 60s without in-range targets — go dark
-	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > 60000:
+	# HUNT (stale): enemies are only known from stale unspotted positions.
+	# Don't anchor to cover islands based on phantom locations — push toward
+	# the last-known position so we can re-spot them and get back in the fight.
+	if not has_spotted:
+		_nav_destination_valid = false
+		_skirt_valid = false
+		_cover_zone_valid = false
+		if _last_known_enemy_valid:
+			return _intent_hunt(ship)
+		return _intent_sail_forward(ship)
+
+	# Change island after 20s without in-range targets — push up toward the fight.
+	# The old 60s timer left CAs parked at useless islands for too long.
+	# Goes straight to _find_nearest_island (which scores by gun-range proximity)
+	# rather than _try_set_angling_island, which is reserved for mid-transit combat.
+	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > 20000:
+		_abandoned_island_id = _target_island_id
 		_nav_destination_valid = false
 		_skirt_valid = false
 		_fire_suppressed = true
 		_last_in_range_ms = Time.get_ticks_msec()
 
-	# No island: angle toward target, try to find cover island en route
-	if not _nav_destination_valid and target:
-		if not _try_set_angling_island(ship, target):
-			_cover_zone_valid = false
-			return _intent_angle(ship, target)
-
-	# Find nearest island if we still don't have one
+	# Find a new island if we don't have one — scored to push toward the fight.
 	if not _nav_destination_valid:
 		var island = _find_nearest_island(ship)
-		if island.is_empty():
+		if not island.is_empty():
+			var dest = _compute_island_destination(ship, island["center"], island["radius"], _cached_safe_dir)
+			_set_island_state(island["id"], island["center"], island["radius"], dest)
+		elif target:
+			# No island available at all — angle toward target and fight in the open
 			_cover_zone_valid = false
-			if target:
-				return _intent_angle(ship, target)
+			return _intent_angle(ship, target)
+		else:
+			_cover_zone_valid = false
 			return _intent_sail_forward(ship)
-		var dest = _compute_island_destination(ship, island["center"], island["radius"], _cached_safe_dir)
-		_set_island_state(island["id"], island["center"], island["radius"], dest)
 
-	# Spotted en-route to cover — abandon approach, angle and shoot instead
+	# Spotted en-route to cover — find a nearby angling island so we can
+	# fight while still heading toward cover.  This is the only place
+	# _try_set_angling_island should be called (mid-transit combat).
 	if _nav_destination_valid and not is_in_cover and ship.visible_to_enemy and target:
 		_nav_destination_valid = false
 		_skirt_valid = false

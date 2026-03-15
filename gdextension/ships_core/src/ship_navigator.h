@@ -39,6 +39,10 @@ private:
 	// --- Grounded flag (set by BotControllerV4 from movement controller) ---
 	bool grounded_;
 
+	// --- Emergency mode state ---
+	Vector2 emergency_grounding_pos;   // position when emergency mode was entered
+	bool emergency_initialized;        // true once grounding pos has been recorded
+
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
 	int current_wp_index;             // Index into current_path.waypoints
@@ -46,7 +50,7 @@ private:
 
 	// --- Pathfinding ---
 	static constexpr bool USE_ASYNC_PATHFINDING = true;   // toggle async vs sync
-	static constexpr int PLAN_ITER_BUDGET = 20000;        // per-frame budget (async only)
+	static constexpr int PLAN_ITER_BUDGET = 10000;        // per-frame budget (async only)
 	static constexpr int SYNC_ITER_LIMIT = 50000;         // max iterations (sync only)
 
 	enum class DesiredDirection : int {

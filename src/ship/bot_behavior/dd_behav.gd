@@ -82,9 +82,12 @@ func get_speed_multiplier() -> float:
 # ============================================================================
 
 func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
-	"""DD target selection differs based on visibility - torpedoes vs guns."""
-	var target: Ship = null
-	var highest_priority: float = -1.0
+	"""DD target selection differs based on visibility - torpedoes vs guns.
+	Prefers targets we can actually shoot at over ones behind cover."""
+	var best_shootable: Ship = null
+	var best_shootable_priority: float = -1.0
+	var best_fallback: Ship = null
+	var best_fallback_priority: float = -1.0
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var torpedo_range: float = -1.0
 
@@ -121,11 +124,20 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 			var depth_scale = 1.0 + flank_info.penetration_depth
 			priority *= flank_multiplier * depth_scale
 
-		if priority > highest_priority:
-			target = ship
-			highest_priority = priority
+		# Sort into shootable vs fallback based on line-of-fire check
+		# When visible (using guns), prefer targets we can actually hit
+		if _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship):
+			if priority > best_shootable_priority:
+				best_shootable = ship
+				best_shootable_priority = priority
+		else:
+			if priority > best_fallback_priority:
+				best_fallback = ship
+				best_fallback_priority = priority
 
-	return target
+	# Prefer shootable gun targets when visible; otherwise fall back
+	# (when hidden, torpedo targets don't need line-of-fire for guns)
+	return best_shootable if best_shootable != null else best_fallback
 
 # ============================================================================
 # AMMO AND AIM - Class-specific targeting logic

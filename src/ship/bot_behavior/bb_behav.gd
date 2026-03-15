@@ -123,7 +123,11 @@ func target_aim_offset(_target: Ship) -> Vector3:
 func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: Ship, current_destination: Vector3) -> Vector3:
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 
-	var danger_center = _get_danger_center()
+	# Use spotted-only danger center for positioning so stale last-known
+	# positions of unspotted enemies don't anchor the BB far from the fight.
+	var spotted_center = _get_spotted_danger_center()
+	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
+
 	if danger_center == Vector3.ZERO:
 		current_destination = _get_hunting_position(server_node, friendly, current_destination)
 		if current_destination == Vector3.ZERO:
@@ -133,7 +137,12 @@ func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: S
 		else:
 			return current_destination
 
-
+	# If we only have stale unspotted data (no spotted enemies), treat as
+	# hunting — push toward the danger center instead of orbiting it.
+	if spotted_center == Vector3.ZERO:
+		current_destination = _get_hunting_position(server_node, friendly, current_destination)
+		if current_destination != Vector3.ZERO:
+			return current_destination
 
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
@@ -208,10 +217,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var friendly = server.get_team_ships(ship.team.team_id)
 	var _enemy = server.get_valid_targets(ship.team.team_id)
 
-	var danger_center = _get_danger_center()
+	# Use spotted-only danger center so stale unspotted positions don't
+	# anchor the BB far from the actual fight.
+	var spotted_center = _get_spotted_danger_center()
+	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
 
-	# --- No enemies visible: hunt ---
-	if danger_center == Vector3.ZERO:
+	# --- No enemies at all, or only stale unspotted data: hunt ---
+	if danger_center == Vector3.ZERO or spotted_center == Vector3.ZERO:
 		var forward_fallback = ship.global_position - ship.global_transform.basis.z * 20_000.0
 		forward_fallback.y = 0.0
 		var hunt_dest = _get_hunting_position(server, friendly, forward_fallback)

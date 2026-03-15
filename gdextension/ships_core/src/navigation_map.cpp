@@ -1645,8 +1645,10 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 			bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
 
 			float step_world = is_diag ? (search.cell_size * 1.414f) : search.cell_size;
-			int max_jump = std::max({static_cast<int>(safe_dist / step_world),
-									 static_cast<int>(mr_step_cells), 1});
+			// SDF-safe jump: within the safe radius we are guaranteed no obstacles
+			int sdf_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
+			// MR jump: may be larger but needs LOS validation since it can cross MR cell boundaries
+			int max_jump = std::max({sdf_jump, static_cast<int>(mr_step_cells), 1});
 
 			// Cap jump so we don't overshoot the goal along this axis
 			if (dx8[d] != 0) {
@@ -1683,9 +1685,17 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				float landing_sdf = get_cell(nx, nz);
 				if (landing_sdf < search.clearance_world) continue;
 
-				if (is_diag && jump == 1) {
-					if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
-					if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
+				if (jump == 1) {
+					// Single-step: check diagonal corner-cutting
+					if (is_diag) {
+						if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
+						if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
+					}
+				} else if (jump > sdf_jump) {
+					// Jump extends beyond the SDF-guaranteed safe radius, so
+					// intermediate cells might contain land. Validate the
+					// entire line from (cx,cz) to (nx,nz) with clearance.
+					if (!line_of_sight(cx, cz, nx, nz, search.clearance_world)) continue;
 				}
 
 				float step_dist = is_diag ? (jump * 1.414f) : static_cast<float>(jump);

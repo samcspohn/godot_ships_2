@@ -159,7 +159,7 @@ v_grouping = 1.0
 base_spread = 0.06
 reload_time = 6.0
 traverse_speed = 50.0
-_range = 5600.0
+_range = 5900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_vudfj"]

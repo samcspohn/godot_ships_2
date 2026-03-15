@@ -179,12 +179,15 @@ func _get_valid_nav_point(target: Vector3) -> Vector3:
 # ============================================================================
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
-	"""Configurable target selection using weights from get_target_weights()."""
+	"""Configurable target selection using weights from get_target_weights().
+	Prefers targets we can actually hit (not behind cover) over ones we can't."""
 	var weights = get_target_weights()
 	var gun_range = _ship.artillery_controller.get_params()._range
 
-	var best_target: Ship = null
-	var best_priority: float = -1.0
+	var best_shootable_target: Ship = null
+	var best_shootable_priority: float = -1.0
+	var best_fallback_target: Ship = null
+	var best_fallback_priority: float = -1.0
 
 	for ship in targets:
 		var disp = ship.global_position - _ship.global_position
@@ -222,14 +225,25 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 			var depth_scale = 1.0 + flank_info.penetration_depth
 			priority *= flank_multiplier * depth_scale
 
-		if priority > best_priority:
-			best_target = ship
-			best_priority = priority
+		# Sort into shootable vs fallback based on line-of-fire check
+		if dist <= gun_range and can_hit_target(ship):
+			if priority > best_shootable_priority:
+				best_shootable_target = ship
+				best_shootable_priority = priority
+		else:
+			if priority > best_fallback_priority:
+				best_fallback_target = ship
+				best_fallback_priority = priority
 
-	# Stick to last target if nearby and alive
+	# Prefer shootable targets; only fall back to blocked targets if nothing is shootable
+	var best_target = best_shootable_target if best_shootable_target != null else best_fallback_target
+
+	# Stick to last target if nearby and alive, but only if it's still shootable
 	if best_target != null and last_target != null and last_target.is_alive():
 		if last_target.position.distance_to(best_target.position) < 1000:
-			return last_target
+			# If last target is shootable (or both are blocked), keep it for stability
+			if best_shootable_target == null or can_hit_target(last_target):
+				return last_target
 
 	return best_target
 
@@ -315,14 +329,23 @@ func _get_weighted_threat_bearing() -> Variant:
 # ============================================================================
 
 func _get_danger_center() -> Vector3:
-	"""Calculate threat-weighted center of known enemies."""
+	"""Calculate threat-weighted center of known enemies.
+	Spotted enemies are weighted much more heavily than stale last-known
+	positions so that unspotted ghosts don't pull ships away from the fight."""
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return Vector3.ZERO
 
+	# If we have spotted enemies, strongly prefer using their positions.
+	# Only fall back to full cluster data (which includes stale unspotted
+	# positions) when nothing is currently visible.
+	var spotted = server_node.get_valid_targets(_ship.team.team_id)
+	var has_spotted = spotted.size() > 0
+
 	var enemy_clusters = server_node.get_enemy_clusters(_ship.team.team_id)
 
 	if enemy_clusters.is_empty():
+		# No cluster data at all — try the known-enemy average as last resort
 		return server_node.get_enemy_avg_position(_ship.team.team_id)
 
 	var weighted_pos = Vector3.ZERO
@@ -339,14 +362,60 @@ func _get_danger_center() -> Vector3:
 		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
 
 		var cluster_threat = 0.0
+		var cluster_has_spotted = false
 		for ship in cluster.ships:
 			if ship != null and is_instance_valid(ship):
 				cluster_threat += get_threat_class_weight(ship.ship_class)
+				# Check if this ship is currently spotted (in valid_targets)
+				if spotted.has(ship):
+					cluster_has_spotted = true
 			else:
 				cluster_threat += 1.0
 
-		var weight = base_weight * max(cluster_threat, 1.0)
+		# De-weight clusters composed entirely of stale/unspotted positions
+		# when we DO have spotted enemies elsewhere.  This prevents ghost
+		# clusters from pulling the danger center (and therefore engagement
+		# range calculations) away from the actual fight.
+		var freshness_factor = 1.0
+		if has_spotted and not cluster_has_spotted:
+			freshness_factor = 0.1  # 10% weight for purely stale clusters
+
+		var weight = base_weight * max(cluster_threat, 1.0) * freshness_factor
 		weighted_pos += cluster_pos * weight
+		total_weight += weight
+
+	if total_weight < 0.001:
+		return Vector3.ZERO
+
+	return weighted_pos / total_weight
+
+func _get_spotted_danger_center() -> Vector3:
+	"""Calculate threat-weighted center of ONLY currently spotted enemies.
+	Returns Vector3.ZERO if no enemies are spotted.
+	Use this when positioning must be based on confirmed, live threats."""
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return Vector3.ZERO
+
+	var spotted = server_node.get_valid_targets(_ship.team.team_id)
+	if spotted.size() == 0:
+		return Vector3.ZERO
+
+	var weighted_pos = Vector3.ZERO
+	var total_weight = 0.0
+
+	for ship in spotted:
+		if ship == null or not is_instance_valid(ship):
+			continue
+		var to_ship = ship.global_position - _ship.global_position
+		var dist = to_ship.length()
+		if dist < 1.0:
+			dist = 1.0
+
+		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
+		var threat = get_threat_class_weight(ship.ship_class)
+		var weight = base_weight * max(threat, 1.0)
+		weighted_pos += ship.global_position * weight
 		total_weight += weight
 
 	if total_weight < 0.001:
@@ -505,12 +574,17 @@ func _get_flanking_direction(danger_center: Vector3, friendly_avg: Vector3) -> i
 # ============================================================================
 
 func _calculate_tactical_position(desired_range: float, min_safe_distance: float, flank_bias: float = 0.0) -> Vector3:
-	"""Calculate position based on tactical situation."""
+	"""Calculate position based on tactical situation.
+	Uses spotted-only danger center when spotted enemies exist, so ships
+	position relative to actual visible threats rather than stale ghosts."""
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return _ship.global_position
 
-	var danger_center = _get_danger_center()
+	# Prefer spotted-only center for positioning so stale unspotted positions
+	# don't anchor engagement range around a phantom location.
+	var spotted_center = _get_spotted_danger_center()
+	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
 	if danger_center == Vector3.ZERO:
 		return _ship.global_position
 
@@ -629,11 +703,13 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 		return current_destination
 
 	var to_target = (closest_pos - _ship.global_position).normalized()
-	# Stand off in front of the last-known position by approach_multiplier * gun_range,
-	# so the BB actually closes to firing range instead of stopping halfway there.
-	# When damaged, increase the standoff slightly to be more cautious.
-	var standoff = gun_range * lerp(params.approach_multiplier, params.approach_multiplier * 1.5, 1.0 - hp_ratio)
-	standoff = clamp(standoff, 0.0, gun_range * 0.9)
+	# Unspotted enemy positions are stale — the enemy has likely moved since
+	# going dark.  Use a reduced standoff so we actually close to where we
+	# can re-spot them instead of hovering at max range from a phantom.
+	# Halve the approach_multiplier for unspotted targets so ships push in.
+	var approach_mult = params.approach_multiplier * 0.5
+	var standoff = gun_range * lerp(approach_mult, approach_mult * 1.5, 1.0 - hp_ratio)
+	standoff = clamp(standoff, 0.0, gun_range * 0.6)
 	var desired_pos = closest_pos - to_target * standoff
 	desired_pos.y = 0.0
 
@@ -851,6 +927,37 @@ func can_shoot_target_from_position(pos: Vector3, target: Ship) -> bool:
 	var flight_time = sol[1]
 
 	var can_shoot = Gun.sim_can_shoot_over_terrain_static(pos, launch_vector, flight_time, shell_params, _ship)
+	return can_shoot.can_shoot_over_terrain
+
+func can_hit_target(target: Ship) -> bool:
+	"""Check if we can actually hit the target (not blocked by terrain/islands).
+	Uses sim_can_shoot_over_terrain_static from ship center at deck height."""
+	var shell_params = _ship.artillery_controller.get_shell_params()
+	if shell_params == null:
+		return false
+
+	var adjusted_target_pos = target.global_position + target_aim_offset(target)
+
+	# Use leading calculation so the sim check matches what we'd actually fire
+	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+		_ship.global_position,
+		adjusted_target_pos,
+		target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		shell_params
+	)
+	var lead_pos = lead_result[2]
+	if lead_pos == null:
+		return false
+
+	# Fire from ship center at deck height (draft / 2 above waterline)
+	var fire_pos = _ship.global_position
+	fire_pos.y = _ship.movement_controller.ship_draft / 2.0
+
+	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(fire_pos, lead_pos, shell_params)
+	if sol[0] == null:
+		return false
+
+	var can_shoot = Gun.sim_can_shoot_over_terrain_static(fire_pos, sol[0], sol[1], shell_params, _ship)
 	return can_shoot.can_shoot_over_terrain
 
 # ============================================================================
@@ -1131,19 +1238,55 @@ func engage_target(target: Ship):
 		return
 
 	var adjusted_target_pos = target.global_position + target_aim_offset(target)
-	var target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
 		target.linear_velocity / ProjectileManager.shell_time_multiplier,
 		_ship.artillery_controller.get_shell_params()
-	)[2]
+	)
+	var target_lead = lead_result[2]
 
-	if target_lead != null:
-		_ship.artillery_controller.set_aim_input(target_lead)
+	if target_lead == null:
+		return
+
+	# Always update aim toward the target so turrets rotate correctly
+	_ship.artillery_controller.set_aim_input(target_lead)
 
 	var ammo = pick_ammo(target)
 	_ship.artillery_controller.select_shell(ammo)
-	_ship.artillery_controller.fire_next_ready()
+
+	# Only fire guns whose actual aim point is near the intended target AND
+	# whose shell arc clears terrain. This prevents two bugs:
+	#  1) Shooting at water/old aim — gun.can_fire is stale from previous
+	#     frame when the turret was aimed at the navigation destination.
+	#     We check that the gun's _aim_point is close to our target_lead
+	#     so we never fire until the turret has actually rotated on-target.
+	#  2) Shooting at targets behind cover — sim_can_shoot_over_terrain_static
+	#     traces the full shell arc and rejects shots blocked by terrain.
+	var shell_params = _ship.artillery_controller.get_shell_params()
+	var fire_pos = _ship.global_position
+	fire_pos.y = _ship.movement_controller.ship_draft / 2.0
+	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(fire_pos, target_lead, shell_params)
+	var arc_clear := false
+	if sol[0] != null:
+		var can_shoot = Gun.sim_can_shoot_over_terrain_static(fire_pos, sol[0], sol[1], shell_params, _ship)
+		arc_clear = can_shoot.can_shoot_over_terrain
+
+	for gun in _ship.artillery_controller.guns:
+		if gun.disabled or gun.reload < 1.0 or not gun.can_fire:
+			continue
+		# Verify the gun's actual aim point is reasonably close to our
+		# intended lead position. If not, the turret hasn't caught up yet
+		# and firing would send shells toward the old (wrong) aim point.
+		var aim_error = gun._aim_point.distance_to(target_lead)
+		if aim_error > 500.0:
+			continue
+		# Verify the shell arc actually clears terrain / islands
+		if not arc_clear:
+			continue
+		# This gun is aimed correctly and has a clear arc — fire it
+		gun.fire(_ship.artillery_controller.target_mod)
+		return
 
 func _calculate_intercept_point(target: Ship) -> Vector3:
 	"""Calculate optimal intercept point given our max speed and target's velocity."""

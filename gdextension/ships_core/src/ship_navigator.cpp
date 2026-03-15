@@ -104,6 +104,8 @@ ShipNavigator::ShipNavigator() {
 	cached_avoidance = {0.0f, 0.0f, 0.0f, false, false};
 	cached_avoidance_valid = false;
 	skip_ship_obstacles_ = false;
+	emergency_grounding_pos = Vector2();
+	emergency_initialized = false;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -446,13 +448,18 @@ void ShipNavigator::update(float delta) {
 
 	// Transition to EMERGENCY if grounded or SDF indicates on land
 	if (nav_state != NavState::EMERGENCY) {
+		bool enter_emergency = false;
 		if (grounded_) {
-			nav_state = NavState::EMERGENCY;
+			enter_emergency = true;
 		} else if (map.is_valid() && map->is_built()) {
 			float sdf = map->get_distance(state.position.x, state.position.y);
 			if (sdf <= 0.0f) {
-				nav_state = NavState::EMERGENCY;
+				enter_emergency = true;
 			}
+		}
+		if (enter_emergency) {
+			nav_state = NavState::EMERGENCY;
+			emergency_initialized = false;
 		}
 	}
 
@@ -540,10 +547,11 @@ void ShipNavigator::update_normal(float delta) {
 	bool on_final_segment = !path_exhausted
 		&& current_wp_index == static_cast<int>(current_path.waypoints.size()) - 1;
 
-	// Determine the immediate steering target (next waypoint, or destination if path exhausted)
-	Vector2 steer_target = path_exhausted
-		? target.position
-		: current_path.waypoints[current_wp_index];
+	// // Determine the immediate steering target (next waypoint, or destination if path exhausted)
+	// Vector2 steer_target = path_exhausted
+	// 	? target.position
+	// 	: current_path.waypoints[current_wp_index];
+	Vector2 steer_target = target.position;
 
 	// Determine desired direction: BACKWARD if the steering target is behind
 	// the ship and within 3.5 × turning circle radius
@@ -728,50 +736,123 @@ void ShipNavigator::update_emergency(float delta) {
 		return;
 	}
 
-	// Exit condition: not grounded AND forward arc is clear
-	if (!grounded_) {
-		auto forward_arc = predict_arc_internal(0.0f, 2, get_lookahead_distance());
-		float arc_time = forward_arc.empty() ? 0.0f : forward_arc.back().time;
-		float ttc = check_arc_collision(forward_arc, get_ship_clearance() / 2.0f, get_soft_clearance());
+	// Record grounding position on first emergency frame
+	if (!emergency_initialized) {
+		emergency_grounding_pos = state.position;
+		emergency_initialized = true;
+	}
+
+	// --- SDF and gradient at current position ---
+	float sdf_here = map->get_distance(state.position.x, state.position.y);
+	Vector2 grad = map->get_gradient(state.position.x, state.position.y);
+	float grad_len = grad.length();
+
+	// Normalised away-from-land direction (SDF gradient points away from land)
+	Vector2 away_dir;
+	if (grad_len > 0.001f) {
+		away_dir = grad / grad_len;
+	} else {
+		// No gradient — fall back to direction away from grounding position
+		Vector2 from_ground = state.position - emergency_grounding_pos;
+		float from_ground_len = from_ground.length();
+		if (from_ground_len > 0.1f) {
+			away_dir = from_ground / from_ground_len;
+		} else {
+			// Perfectly on grounding spot with no gradient — use ship's stern direction
+			away_dir = Vector2(-std::sin(state.heading), -std::cos(state.heading));
+		}
+	}
+
+	// --- Compute coastline tangent toward destination ---
+	// Two tangent candidates (perpendicular to away_dir): pick the one toward destination
+	Vector2 tangent_a(-away_dir.y,  away_dir.x);  // +90°
+	Vector2 tangent_b( away_dir.y, -away_dir.x);  // -90°
+
+	Vector2 to_dest = target.position - state.position;
+	float to_dest_len = to_dest.length();
+	Vector2 chosen_tangent;
+	if (to_dest_len > 1.0f) {
+		chosen_tangent = (tangent_a.dot(to_dest) >= tangent_b.dot(to_dest)) ? tangent_a : tangent_b;
+	} else {
+		// No meaningful destination direction — just pick the tangent aligned with current velocity
+		chosen_tangent = (tangent_a.dot(state.velocity) >= tangent_b.dot(state.velocity)) ? tangent_a : tangent_b;
+	}
+
+	// --- Blend from away-from-land toward tangent based on distance from terrain ---
+	// At sdf <= 0 (inside land): fully away
+	// At sdf >= soft_clearance: fully tangent
+	// In between: linear blend
+	float soft_clearance = get_soft_clearance();
+	float blend_start = soft_clearance * 0.2f;
+	float blend_end = soft_clearance * 0.8f;  // start going mostly tangential well before full clearance
+	float blend_t = clamp_f((sdf_here - blend_start) / std::max(blend_end - blend_start, 1.0f), 0.0f, 1.0f);
+
+	// Blended escape direction
+	Vector2 escape_dir;
+	escape_dir.x = lerp_f(away_dir.x, chosen_tangent.x, blend_t);
+	escape_dir.y = lerp_f(away_dir.y, chosen_tangent.y, blend_t);
+	float escape_len = escape_dir.length();
+	if (escape_len > 0.001f) {
+		escape_dir /= escape_len;
+	} else {
+		escape_dir = away_dir;
+	}
+
+	// Desired heading from the blended escape direction
+	float escape_heading = std::atan2(escape_dir.x, escape_dir.y);
+
+	// --- Choose forward vs backward ---
+	// Dot the escape direction with the ship's forward vector.
+	// If escape is behind us, reverse; otherwise go forward.
+	float fwd_x = std::sin(state.heading);
+	float fwd_z = std::cos(state.heading);
+	float escape_dot_fwd = escape_dir.x * fwd_x + escape_dir.y * fwd_z;
+
+	bool use_reverse = (escape_dot_fwd < 0.0f);
+
+	// Compute rudder to steer toward the escape heading.
+	// When reversing, the stern should face escape_heading, so the bow must
+	// face the opposite direction (escape_heading + PI).
+	float rudder_heading = use_reverse ? normalize_angle(escape_heading + Math_PI) : escape_heading;
+	float rudder = compute_rudder_to_heading(rudder_heading, use_reverse);
+
+	// Throttle: full forward or full reverse depending on chosen direction
+	int throttle = use_reverse ? -1 : 4;
+
+	// --- Safety check: verify chosen arc doesn't make things worse ---
+	// Simulate the proposed arc and check it doesn't drive deeper into land
+	float lookahead = std::max(params.turning_circle_radius * 2.0f, params.ship_length * 3.0f);
+	auto proposed_arc = predict_arc_internal(rudder, throttle, lookahead);
+	if (!proposed_arc.empty()) {
+		// Check if the end of the arc has worse SDF than current position
+		const auto &end_pt = proposed_arc.back();
+		float end_sdf = map->get_distance(end_pt.position.x, end_pt.position.y);
+		if (end_sdf < sdf_here - params.ship_beam) {
+			// Proposed direction makes things worse — try the opposite direction
+			use_reverse = !use_reverse;
+			rudder_heading = use_reverse ? normalize_angle(escape_heading + Math_PI) : escape_heading;
+			rudder = compute_rudder_to_heading(rudder_heading, use_reverse);
+			throttle = use_reverse ? -1 : 4;
+		}
+	}
+
+	// --- Exit condition: no longer grounded AND forward path is clear ---
+	if (!grounded_ && sdf_here > get_ship_clearance() * 1.2f) {
+		// Check if a straight-ahead arc at moderate speed is safe
+		int exit_throttle = use_reverse ? -1 : 2;
+		auto exit_arc = predict_arc_internal(0.0f, exit_throttle, get_lookahead_distance());
+		float arc_time = exit_arc.empty() ? 0.0f : exit_arc.back().time;
+		float ttc = check_arc_collision(exit_arc, get_ship_clearance(), get_soft_clearance());
 
 		if (ttc >= arc_time * 0.9f) {
 			nav_state = NavState::NORMAL;
-			replan_requested_ = true; // force immediate replan
+			emergency_initialized = false;
+			replan_requested_ = true;
 			return;
 		}
 	}
 
-	// Simulate candidate turns and pick the one with best average SDF
-	float lookahead = std::max(params.turning_circle_radius * 2.0f, params.ship_length * 3.0f);
-	const float rudder_candidates[] = { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f };
-	const int throttle_candidates[] = { 4, -1 };
-	constexpr int n_rudders = 5;
-	constexpr int n_throttles = 2;
-
-	float best_avg_sdf = -std::numeric_limits<float>::infinity();
-	float best_rudder = 0.0f;
-	int best_throttle = -1;
-
-	for (int ti = 0; ti < n_throttles; ti++) {
-		for (int ri = 0; ri < n_rudders; ri++) {
-			auto arc = predict_arc_internal(rudder_candidates[ri], throttle_candidates[ti], lookahead);
-			if (arc.empty()) continue;
-
-			float sdf_sum = 0.0f;
-			for (const auto &pt : arc) {
-				sdf_sum += map->get_distance(pt.position.x, pt.position.y);
-			}
-			float avg_sdf = sdf_sum / static_cast<float>(arc.size());
-
-			if (avg_sdf > best_avg_sdf) {
-				best_avg_sdf = avg_sdf;
-				best_rudder = rudder_candidates[ri];
-				best_throttle = throttle_candidates[ti];
-			}
-		}
-	}
-
-	set_steering_output(best_rudder, best_throttle, true, 0.0f);
+	set_steering_output(rudder, throttle, true, 0.0f);
 }
 
 // ============================================================================
@@ -1327,13 +1408,15 @@ bool ShipNavigator::is_target_behind_within_reverse_zone(Vector2 target_pos) con
 	float forward_x = std::sin(state.heading);
 	float forward_z = std::cos(state.heading);
 	float along = to_target.x * forward_x + to_target.y * forward_z;
-
-	// Target is not behind
-	if (along >= 0.0f) return false;
-
-	// Target is behind — check if it's within 3.5 × turning circle radius
 	float dist = to_target.length();
-	return dist < params.turning_circle_radius * 3.5f;
+
+	// Tighter threshold: target must be more than 110° off the bow
+	// cos(110°) ≈ -0.342, so along/dist must be less than that
+	if (dist < 1e-6f) return false;
+	if (along / dist >= -0.342f) return false;
+
+	// Target is behind — check if it's within 3.0 × turning circle radius
+	return dist < params.turning_circle_radius * 3.0f;
 }
 
 // ============================================================================
