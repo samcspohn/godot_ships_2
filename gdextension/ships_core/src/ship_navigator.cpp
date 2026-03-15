@@ -509,69 +509,132 @@ void ShipNavigator::update_normal(float delta) {
 	// --- 2. Advance waypoints ---
 	if (path_valid) advance_waypoint();
 
-	// --- 3. Compute desired rudder + throttle ---
+	// --- 3. Compute desired rudder + magnitude + direction ---
 	float desired_rudder = 0.0f;
-	int desired_throttle = 4;
+	int desired_magnitude = 4;
+	DesiredDirection direction = DesiredDirection::FORWARD;
 
 	float dist_to_dest = state.position.distance_to(target.position);
 
-	// arrived_radius: close enough — stop seeking position, just hold heading
-	float arrived_radius = std::max(target.hold_radius, params.turning_circle_radius * 2.0f);
-	// approach_radius: start slowing and blending toward heading
-	// Must be strictly larger than arrived_radius by at least 1 TCR
-	float approach_radius_inner = std::max(arrived_radius + params.turning_circle_radius,
+	// arrived_radius: close enough to consider "at the destination".
+	// Respects hold_radius from the behavior (e.g. CA cover zone) with a
+	// floor of ship_beam so the ship can actually reach the point.
+	float arrived_radius = std::max(target.hold_radius, params.ship_beam * 2.0f);
+
+	// maneuver_radius: zone around the destination where the ship is allowed
+	// to overshoot and perform multi-point turns to align heading.  The ship
+	// may oscillate forward/reverse within this zone while aligning.
+	float maneuver_radius = std::max(arrived_radius, params.turning_circle_radius * 1.0f);
+
+	// approach_radius: outer zone where deceleration begins.
+	// Set to TCR so the ship drives straight at the destination and only
+	// begins alignment once it's within one turning circle.
+	float approach_radius_inner = std::max(params.turning_circle_radius,
 	                                        get_stopping_distance() * 1.5f);
 
 	bool path_exhausted = !path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size());
 
-	// Precompute whether destination is ahead or behind
-	Vector2 to_dest = target.position - state.position;
-	float forward_x = std::sin(state.heading);
-	float forward_z = std::cos(state.heading);
-	float along = to_dest.x * forward_x + to_dest.y * forward_z;
-	bool dest_behind = (along < 0.0f);
+	// Detect when we're on the final waypoint segment — the ship should start
+	// decelerating toward the destination before consuming the last waypoint,
+	// not after blowing past it at full speed.
+	bool on_final_segment = !path_exhausted
+		&& current_wp_index == static_cast<int>(current_path.waypoints.size()) - 1;
 
-	if (path_exhausted && dist_to_dest < approach_radius_inner) {
-		// Only slow down / arrive when there are no more waypoints — full speed through intermediate ones
-		if (dist_to_dest < arrived_radius) {
-			// Arrived: stop and align to desired heading
-			desired_rudder = compute_rudder_to_heading(target.heading);
-			desired_throttle = 0;
-		} else if (dest_behind && dist_to_dest < params.turning_circle_radius * 3.0f
-				   && dist_to_dest > params.ship_beam) {
-			// Destination behind in approach zone: reverse toward it
-			desired_rudder = compute_rudder_to_position(target.position, true);
-			desired_throttle = -1;
+	// Determine the immediate steering target (next waypoint, or destination if path exhausted)
+	Vector2 steer_target = path_exhausted
+		? target.position
+		: current_path.waypoints[current_wp_index];
+
+	// Determine desired direction: BACKWARD if the steering target is behind
+	// the ship and within 3.5 × turning circle radius
+	if (is_target_behind_within_reverse_zone(steer_target)) {
+		direction = DesiredDirection::BACKWARD;
+	}
+
+	// Heading error to desired heading at destination
+	float heading_error = std::abs(angle_difference(state.heading, target.heading));
+	bool heading_aligned = heading_error < target.heading_tolerance;
+
+	if ((path_exhausted || on_final_segment) && dist_to_dest < approach_radius_inner) {
+		// Approaching / maneuvering at destination.
+		// Triggered on the final waypoint segment OR after path is consumed.
+		//
+		// Three zones (inside → outside):
+		//   1. arrived_radius:   close enough AND heading aligned → stop
+		//   2. maneuver_radius:  multi-point turn zone — overshoot allowed,
+		//                        oscillate fwd/rev to align heading
+		//   3. approach_radius:  decelerate toward destination
+
+		if (dist_to_dest < arrived_radius && heading_aligned) {
+			// Arrived AND aligned: stop
+			desired_rudder = compute_rudder_to_heading(target.heading, false);
+			desired_magnitude = 0;
+			direction = DesiredDirection::FORWARD;
+
+		} else if (dist_to_dest < maneuver_radius) {
+			// Inside the maneuver zone — multi-point turn.
+			// Priority: align heading.  Use position only to prevent
+			// drifting too far from the destination.
+			//
+			// Strategy:
+			//   - Always steer toward the desired heading
+			//   - Creep forward/backward to give the rudder water flow
+			//   - If destination is behind, reverse toward it (which also
+			//     turns the ship); if ahead, go forward
+			//   - The ship naturally oscillates: overshoot forward → reverse
+			//     back → overshoot reverse → forward again, each pass
+			//     closing the heading error.
+
+			// Determine which direction moves us back toward the destination
+			Vector2 to_dest = target.position - state.position;
+			float fwd_x = std::sin(state.heading);
+			float fwd_z = std::cos(state.heading);
+			float dest_along = to_dest.x * fwd_x + to_dest.y * fwd_z;
+			bool dest_ahead = dest_along >= 0.0f;
+
+			if (dist_to_dest < arrived_radius) {
+				// Very close but heading not aligned — creep to give rudder authority
+				desired_magnitude = 1;
+				direction = dest_ahead ? DesiredDirection::FORWARD : DesiredDirection::BACKWARD;
+			} else {
+				// Drifted within maneuver zone — head back toward destination
+				// at moderate speed while turning
+				desired_magnitude = 2;
+				direction = dest_ahead ? DesiredDirection::FORWARD : DesiredDirection::BACKWARD;
+			}
+
+			bool reversing = (direction == DesiredDirection::BACKWARD);
+			desired_rudder = compute_rudder_to_heading(target.heading, reversing);
+
 		} else {
-			// Approaching final destination: blend from position-seek to heading as we close in
-			float blend_width = std::max(approach_radius_inner - arrived_radius, 1.0f);
-			float t = (dist_to_dest - arrived_radius) / blend_width;
-			float heading_weight = clamp_f(1.0f - t, 0.0f, 0.8f);
-
-			float pos_rudder = compute_rudder_to_position(target.position);
-			float heading_rudder = compute_rudder_to_heading(target.heading);
-			desired_rudder = lerp_f(pos_rudder, heading_rudder, heading_weight);
-			desired_throttle = compute_throttle_for_approach(dist_to_dest);
+			// Approach zone: decelerate toward destination, steer to align heading
+			desired_rudder = compute_rudder_to_heading(target.heading);
+			desired_magnitude = compute_magnitude_for_approach(dist_to_dest);
+			direction = DesiredDirection::FORWARD;
 		}
-	} else if (is_waypoint_behind_no_room()) {
-		// Waypoint behind + no room to turn: steer outward at full speed
-		desired_rudder = compute_outward_rudder();
-		desired_throttle = 4;
 	} else if (!path_exhausted) {
-		// Pure pursuit toward next waypoint — full speed
-		desired_rudder = compute_pure_pursuit_rudder();
-		desired_throttle = 4;
+		if (direction == DesiredDirection::BACKWARD) {
+			// Waypoint behind in reverse zone: reverse toward it at full magnitude
+			desired_rudder = compute_rudder_to_position(steer_target, true);
+			desired_magnitude = 4;
+		} else {
+			// Terrain-aware pursuit toward next waypoint — full speed forward
+			desired_rudder = compute_terrain_aware_rudder();
+			desired_magnitude = 4;
+		}
 	} else {
 		// No path or beyond approach zone — steer directly to destination
-		if (dest_behind && dist_to_dest < params.turning_circle_radius * 3.0f
-			&& dist_to_dest > params.ship_beam) {
+		if (direction == DesiredDirection::BACKWARD && dist_to_dest > params.ship_beam) {
 			desired_rudder = compute_rudder_to_position(target.position, true);
-			desired_throttle = -1;
+			desired_magnitude = 4;
 		} else {
 			desired_rudder = compute_rudder_to_position(target.position);
-			desired_throttle = 4;
+			desired_magnitude = 4;
 		}
 	}
+
+	// Resolve direction + magnitude into a throttle value for the rest of the pipeline
+	int desired_throttle = resolve_throttle(direction, desired_magnitude);
 
 	// --- 3.5. Hard clearance breach: ensure fresh avoidance each frame ---
 	// When the ship centre is inside the hard clearance zone we must not let
@@ -1185,82 +1248,92 @@ float ShipNavigator::compute_pure_pursuit_rudder() const {
 }
 
 // ============================================================================
-// Waypoint-behind-no-room check
+// Terrain-aware turn direction selection
 // ============================================================================
 
-bool ShipNavigator::is_waypoint_behind_no_room() const {
-	if (!path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size())) return false;
+float ShipNavigator::compute_terrain_aware_rudder() const {
+	// Step 1: Get the pure pursuit rudder (geometrically shortest turn)
+	float pp_rudder = compute_pure_pursuit_rudder();
+
+	// Only run the terrain check when we have a valid map and path
+	if (!map.is_valid() || !map->is_built()) return pp_rudder;
+	if (!path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size())) return pp_rudder;
+
+	// If the rudder is near-zero, both directions are roughly equal — skip the check
+	if (std::abs(pp_rudder) < 0.15f) return pp_rudder;
 
 	Vector2 wp = current_path.waypoints[current_wp_index];
-	Vector2 to_wp = wp - state.position;
+	float hard_clearance = get_ship_clearance();
+	float soft_clearance = get_soft_clearance();
+
+	// Use a lookahead that covers a full turning circle so we can evaluate the
+	// entire arc to alignment.  predict_arc_to_heading will terminate early
+	// once the sim heading aligns with the waypoint direction.
+	float turn_lookahead = 2.0f * Math_PI * params.turning_circle_radius;
+
+	// Step 2: Simulate the preferred (pure pursuit) direction at full rudder
+	float preferred_rudder = (pp_rudder > 0.0f) ? 1.0f : -1.0f;
+	auto preferred_arc = predict_arc_to_heading(preferred_rudder, 4, wp, turn_lookahead, 60.0f, 1.0f);
+	float preferred_arc_time = preferred_arc.empty() ? 0.0f : preferred_arc.back().time;
+	float preferred_ttc = check_arc_collision(preferred_arc, hard_clearance, soft_clearance);
+	bool preferred_clear = (preferred_ttc >= preferred_arc_time * 0.9f);
+
+	// Fast path: preferred direction is clear — use pure pursuit as-is
+	if (preferred_clear) return pp_rudder;
+
+	// Step 3: Preferred direction is blocked — simulate the opposite direction
+	float opposite_rudder = -preferred_rudder;
+	auto opposite_arc = predict_arc_to_heading(opposite_rudder, 4, wp, turn_lookahead, 60.0f, 1.0f);
+	float opposite_arc_time = opposite_arc.empty() ? 0.0f : opposite_arc.back().time;
+	float opposite_ttc = check_arc_collision(opposite_arc, hard_clearance, soft_clearance);
+	bool opposite_clear = (opposite_ttc >= opposite_arc_time * 0.9f);
+
+	// Opposite is clear — use full rudder in that direction
+	if (opposite_clear) return opposite_rudder;
+
+	// Both blocked — follow the coastline tangent until a turn opens up.
+	// The SDF gradient points away from the nearest land.  The tangent
+	// (perpendicular to the gradient) runs along the coast.  We pick the
+	// tangent direction whose heading component moves us toward the waypoint.
+	Vector2 grad = map->get_gradient(state.position.x, state.position.y);
+	float grad_len = grad.length();
+	if (grad_len > 0.001f) {
+		grad /= grad_len;
+
+		// Two tangent directions: rotate gradient ±90°
+		Vector2 tangent_a(-grad.y,  grad.x);  // +90°
+		Vector2 tangent_b( grad.y, -grad.x);  // -90°
+
+		// Pick the tangent whose heading is closer to the waypoint direction
+		Vector2 to_wp = wp - state.position;
+		float dot_a = tangent_a.dot(to_wp);
+		float dot_b = tangent_b.dot(to_wp);
+		Vector2 chosen_tangent = (dot_a >= dot_b) ? tangent_a : tangent_b;
+
+		float tangent_heading = std::atan2(chosen_tangent.x, chosen_tangent.y);
+		return compute_rudder_to_heading(tangent_heading);
+	}
+
+	// No gradient available — fall back to pure pursuit
+	return pp_rudder;
+}
+
+// ============================================================================
+// Direction determination — is the target behind within the reverse zone?
+// ============================================================================
+
+bool ShipNavigator::is_target_behind_within_reverse_zone(Vector2 target_pos) const {
+	Vector2 to_target = target_pos - state.position;
 	float forward_x = std::sin(state.heading);
 	float forward_z = std::cos(state.heading);
-	float along = to_wp.x * forward_x + to_wp.y * forward_z;
+	float along = to_target.x * forward_x + to_target.y * forward_z;
 
-	// Waypoint is not behind
+	// Target is not behind
 	if (along >= 0.0f) return false;
 
-	// Check if there's room to turn
-	if (!map.is_valid() || !map->is_built()) return false;
-
-	// Check SDF in the turn direction — if less than turning radius, no room
-	float lateral = to_wp.x * forward_z - to_wp.y * forward_x;
-	float turn_dir = (lateral >= 0.0f) ? 1.0f : -1.0f;
-
-	// Sample SDF at the turning circle center
-	float perp_x = std::cos(state.heading) * turn_dir;
-	float perp_z = -std::sin(state.heading) * turn_dir;
-	Vector2 turn_center(
-		state.position.x + perp_x * params.turning_circle_radius,
-		state.position.y + perp_z * params.turning_circle_radius);
-	float sdf = map->get_distance(turn_center.x, turn_center.y);
-
-	return sdf < params.turning_circle_radius * 1.5f;
-}
-
-// ============================================================================
-// Steer away from land when waypoint is behind
-// ============================================================================
-
-float ShipNavigator::compute_outward_rudder() const {
-	if (!map.is_valid() || !map->is_built()) return 0.0f;
-
-	// Follow SDF gradient to steer toward open water
-	Vector2 grad = map->get_gradient(state.position.x, state.position.y);
-	float outward_heading = std::atan2(grad.x, grad.y);
-	return compute_rudder_to_heading(outward_heading);
-}
-
-// ============================================================================
-// Path replan checks
-// ============================================================================
-
-// check_replan_needed removed — replans are purely event-driven now
-// (triggered by navigate_to when destination/heading changes, or !path_valid)
-
-bool ShipNavigator::current_waypoint_is_reverse() const {
-	if (!path_valid || current_wp_index >= (int)current_path.waypoints.size()) return false;
-	if (current_wp_index >= (int)current_path.flags.size()) return false;
-	return (current_path.flags[current_wp_index] & WP_REVERSE) != 0;
-}
-
-void ShipNavigator::flag_reverse_departure(PathResult &path, float ship_heading) {
-	for (int i = 0; i < (int)path.waypoints.size(); i++) {
-		if (i == 0) {
-			path.flags[i] |= WP_REVERSE | WP_DEPARTURE;
-			continue;
-		}
-
-		Vector2 dir = (path.waypoints[i] - path.waypoints[i - 1]).normalized();
-		float wp_heading = std::atan2(dir.x, dir.y);
-
-		float angle_diff = std::abs(angle_difference(ship_heading, wp_heading));
-		if (angle_diff < Math_PI * 0.5f) {
-			break;
-		} else {
-			path.flags[i] |= WP_REVERSE;
-		}
-	}
+	// Target is behind — check if it's within 3.5 × turning circle radius
+	float dist = to_target.length();
+	return dist < params.turning_circle_radius * 3.5f;
 }
 
 // ============================================================================
@@ -1641,19 +1714,13 @@ float ShipNavigator::compute_rudder_to_position(Vector2 target_pos, bool reverse
 	if (reverse) {
 		// Desired bow direction: pointing away from target so stern faces target.
 		float bow_away = normalize_angle(target_angle + Math_PI);
-		float angle_err = angle_difference(state.heading, bow_away);
-		// In reverse, rudder effectiveness is sign-inverted vs forward
-		// (physics: desired_omega = (speed / R) * -rudder; negative speed flips sign).
-		// Bypass the angular_velocity compensation in compute_rudder_to_heading — it
-		// assumes forward motion and produces wrong corrections when reversing.
-		static constexpr float full = static_cast<float>(Math_PI / 6.0);
-		return clamp_f(angle_err / full, -1.0f, 1.0f);
+		return compute_rudder_to_heading(bow_away, true);
 	}
 
 	return compute_rudder_to_heading(target_angle);
 }
 
-float ShipNavigator::compute_rudder_to_heading(float desired_heading) const {
+float ShipNavigator::compute_rudder_to_heading(float desired_heading, bool reverse) const {
 	float angle_diff = angle_difference(state.heading, desired_heading);
 	float abs_diff = std::abs(angle_diff);
 
@@ -1685,22 +1752,51 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading) const {
 		rudder *= lead_factor;
 	}
 
+	// In reverse, the physics inverts rudder effect:
+	//   omega = (speed / R) * (-rudder), and speed is negative,
+	//   so the same rudder value produces the opposite turn direction.
+	// Negate the rudder to compensate.
+	if (reverse) rudder = -rudder;
+
 	return clamp_f(rudder, -1.0f, 1.0f);
 }
 
-int ShipNavigator::compute_throttle_for_approach(float distance_to_target) const {
-	float stopping_dist = get_stopping_distance();
-	float safety_margin = params.turning_circle_radius * 0.5f;
+int ShipNavigator::compute_magnitude_for_approach(float distance_to_target) const {
+	float max_decel = params.max_speed / std::max(params.acceleration_time, 0.1f);
+	if (max_decel < 0.001f) return 0;
 
-	// Within ship beam: fully stopped, just hold heading
+	// Within ship beam: fully stopped
 	if (distance_to_target < params.ship_beam * 2.0f) {
 		return 0;
 	}
-	// Within stopping distance: crawl
-	if (distance_to_target < stopping_dist + safety_margin) {
-		return 1;
+
+	// Pick the highest magnitude whose target speed we can decelerate from
+	// within the remaining distance.  For each candidate magnitude, compute
+	// the distance needed to decelerate from current speed to that magnitude's
+	// target speed: d = (v² - v_target²) / (2 * decel).
+	// We add a safety margin so the ship starts slowing a bit early.
+	float safety_margin = params.turning_circle_radius * 0.5f;
+	float v = std::abs(state.current_speed);
+
+	// Magnitudes 4→1, check from highest to lowest
+	const int magnitudes[] = { 4, 3, 2, 1 };
+	for (int mag : magnitudes) {
+		float target_speed = throttle_to_speed(mag);
+		if (target_speed >= v) return mag; // already at or below target — use this magnitude
+		float decel_dist = (v * v - target_speed * target_speed) / (2.0f * max_decel);
+		if (distance_to_target > decel_dist + safety_margin) {
+			return mag;
+		}
 	}
-	return 4;
+
+	// Within stopping distance from a crawl — use minimum forward
+	return 1;
+}
+
+int ShipNavigator::resolve_throttle(DesiredDirection dir, int magnitude) const {
+	if (magnitude <= 0) return 0;
+	if (dir == DesiredDirection::BACKWARD) return -1;
+	return magnitude; // 1, 2, 3, or 4
 }
 
 // ============================================================================

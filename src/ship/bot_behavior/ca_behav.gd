@@ -822,10 +822,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var intent = _make_intent(_nav_destination, heading)
 	intent.near_terrain = true
-	if dist_to_dest > 500.0:
-		intent.throttle_override = 4
-	elif dist_to_dest > 200.0:
-		intent.throttle_override = 3
+	# throttle_override removed — the navigator handles smooth deceleration
+	# on approach via compute_magnitude_for_approach(). Overriding here was
+	# forcing high throttle past the navigator's deceleration zone, causing
+	# ships to blow past their destination.
 	return intent
 
 # ============================================================================

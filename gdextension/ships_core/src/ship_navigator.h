@@ -49,6 +49,11 @@ private:
 	static constexpr int PLAN_ITER_BUDGET = 20000;        // per-frame budget (async only)
 	static constexpr int SYNC_ITER_LIMIT = 50000;         // max iterations (sync only)
 
+	enum class DesiredDirection : int {
+		FORWARD = 0,
+		BACKWARD = 1,
+	};
+
 	enum class PlanPhase : int {
 		IDLE = 0,
 		FORWARD = 1,
@@ -150,8 +155,9 @@ private:
 	// --- Steering pipeline helpers ---
 
 	float compute_rudder_to_position(Vector2 target_pos, bool reverse = false) const;
-	float compute_rudder_to_heading(float desired_heading) const;
-	int compute_throttle_for_approach(float distance_to_target) const;
+	float compute_rudder_to_heading(float desired_heading, bool reverse = false) const;
+	int compute_magnitude_for_approach(float distance_to_target) const;
+	int resolve_throttle(DesiredDirection dir, int magnitude) const;
 
 	// --- Simplified avoidance (replaces select_safe_rudder) ---
 	AvoidanceResult compute_avoidance(float desired_rudder, int desired_throttle);
@@ -167,11 +173,13 @@ private:
 	// --- Pure pursuit steering ---
 	float compute_pure_pursuit_rudder() const;
 
-	// --- Waypoint-behind-no-room check ---
-	bool is_waypoint_behind_no_room() const;
+	// --- Terrain-aware turn direction selection ---
+	// Simulates both turn directions and picks the one that is clear of terrain
+	// and reaches alignment with the waypoint. Falls back to pure pursuit if both clear.
+	float compute_terrain_aware_rudder() const;
 
-	// --- Steer away from land when waypoint is behind ---
-	float compute_outward_rudder() const;
+	// --- Direction determination ---
+	bool is_target_behind_within_reverse_zone(Vector2 target_pos) const;
 
 	// --- Path management ---
 
@@ -188,12 +196,6 @@ private:
 	void start_plan();       // begins async search (sets plan_phase)
 	void tick_plan();        // continues async search
 	void run_plan_sync();    // runs full search synchronously
-
-	// Determine if the current waypoint should be followed in reverse
-	bool current_waypoint_is_reverse() const;
-
-	// Flag reverse waypoints on a path based on ship heading
-	void flag_reverse_departure(PathResult &path, float ship_heading);
 
 	// --- Steering output helpers ---
 
