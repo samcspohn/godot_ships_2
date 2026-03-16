@@ -105,8 +105,7 @@ private:
 	// --- Avoidance result ---
 	struct AvoidanceResult {
 		float rudder;         // best avoidance rudder
-		float weight;         // 0..1, hard threat only — controls throttle reduction
-		float rudder_weight;  // 0..1, includes soft-zone nudge — controls rudder blend
+		float weight;         // 0..1, threat severity — controls rudder blend and throttle reduction
 		bool torpedo;         // true if primary threat is a torpedo
 		bool reverse;         // true if reversing was chosen as the best avoidance maneuver
 	};

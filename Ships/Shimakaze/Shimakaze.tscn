@@ -52,14 +52,14 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_omo1p"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1341.6666666666665
+pool1 = 1341.6666666666663
 pool2 = 2683.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_2by4h"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1341.6666666666665
+pool1 = 1341.6666666666663
 pool2 = 2683.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
@@ -205,6 +205,7 @@ max_speed_knots = 41.0
 acceleration_time = 9.0
 deceleration_time = 9.0
 turning_circle_radius = 250.0
+slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.15
 rudder_response_time = 3.5
 lateral_drag_multiplier = 1.7

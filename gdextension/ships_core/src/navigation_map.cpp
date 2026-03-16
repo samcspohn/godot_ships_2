@@ -1503,8 +1503,8 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 	// Store world coords and original clearance for finish
 	search.from = from;
 	search.to = to;
-	search.clearance = clearance;
-	search.clearance_world = clearance;
+	search.clearance = clearance * 1.5f;
+	search.clearance_world = clearance * 1.5f;
 
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
@@ -1635,7 +1635,6 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 
 		// MR-accelerated 8-direction A*
 		int nav_level = find_navigable_mr_level(cx, cz, search.clearance_world);
-		float mr_step_cells = mr_cell_size_[nav_level] / search.cell_size;
 
 		// Distance to goal in grid cells (for capping jumps)
 		int goal_dx = search.ex - cx;
@@ -1647,26 +1646,33 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 			float step_world = is_diag ? (search.cell_size * 1.414f) : search.cell_size;
 			// SDF-safe jump: within the safe radius we are guaranteed no obstacles
 			int sdf_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
-			// MR jump: may be larger but needs LOS validation since it can cross MR cell boundaries
-			int max_jump = std::max({sdf_jump, static_cast<int>(mr_step_cells), 1});
 
-			// Cap jump so we don't overshoot the goal along this axis
+			// Hard cap from grid boundaries and goal distance
+			int hard_max = std::numeric_limits<int>::max();
 			if (dx8[d] != 0) {
 				int max_x = (dx8[d] > 0) ? (search.grid_width - 1 - cx) : cx;
-				max_jump = std::min(max_jump, max_x);
-				// If goal is in this direction, cap to goal distance
+				hard_max = std::min(hard_max, max_x);
 				if (dx8[d] * goal_dx > 0) {
-					max_jump = std::min(max_jump, std::abs(goal_dx));
+					hard_max = std::min(hard_max, std::abs(goal_dx));
 				}
 			}
 			if (dz8[d] != 0) {
 				int max_z = (dz8[d] > 0) ? (search.grid_height - 1 - cz) : cz;
-				max_jump = std::min(max_jump, max_z);
+				hard_max = std::min(hard_max, max_z);
 				if (dz8[d] * goal_dz > 0) {
-					max_jump = std::min(max_jump, std::abs(goal_dz));
+					hard_max = std::min(hard_max, std::abs(goal_dz));
 				}
 			}
-			if (max_jump <= 0) continue;
+			if (hard_max <= 0) continue;
+
+			// Compute the max safe jump by walking coarse MR cells along this
+			// direction.  Within the SDF radius we're guaranteed safe; beyond
+			// that, each fully-navigable coarse cell extends the safe range by
+			// `scale` base cells.  No per-cell LOS check needed.
+			int max_jump = mr_directional_safe_jump(
+				cx, cz, dx8[d], dz8[d],
+				nav_level, search.clearance_world,
+				sdf_jump, hard_max);
 
 			// Try both the large MR jump and step=1 to ensure fine-grained progress
 			int jumps[] = { max_jump, 1 };
@@ -1685,17 +1691,10 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				float landing_sdf = get_cell(nx, nz);
 				if (landing_sdf < search.clearance_world) continue;
 
-				if (jump == 1) {
-					// Single-step: check diagonal corner-cutting
-					if (is_diag) {
-						if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
-						if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
-					}
-				} else if (jump > sdf_jump) {
-					// Jump extends beyond the SDF-guaranteed safe radius, so
-					// intermediate cells might contain land. Validate the
-					// entire line from (cx,cz) to (nx,nz) with clearance.
-					if (!line_of_sight(cx, cz, nx, nz, search.clearance_world)) continue;
+				// Single-step diagonal: check corner-cutting
+				if (jump == 1 && is_diag) {
+					if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
+					if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
 				}
 
 				float step_dist = is_diag ? (jump * 1.414f) : static_cast<float>(jump);
@@ -1761,7 +1760,6 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 	}
 
 	// --- Path simplification using grid-level LOS (fast) ---
-	// (currently disabled via && false, preserved for parity)
 	if (path.size() > 2) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
@@ -1840,6 +1838,7 @@ void NavigationMap::post_process_path_clearance(PathResult &path, float clearanc
 	// --- Step 2: Path simplification via line-of-sight checks ---
 	// The raw A* path at zero clearance can have hundreds of nodes;
 	// collapse runs of collinear waypoints using LOS with the desired clearance.
+
 	if (path.waypoints.size() > 2) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path.waypoints[0]);

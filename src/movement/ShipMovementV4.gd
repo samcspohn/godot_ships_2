@@ -268,7 +268,7 @@ func _physics_process(delta: float) -> void:
 		# return
 
 	var turn_thrust_ratio = 1.0
-	if abs(rudder_input) > 0.01 and abs(current_speed) > 5.0:
+	if abs(rudder_input) > 0.01 and abs(current_speed) > 1.0:
 		var rudder_dist = 0.5
 		var half_length = ship_length * rudder_dist
 		var stern_offset = -forward * half_length  # Vector from center to stern

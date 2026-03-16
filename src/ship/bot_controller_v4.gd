@@ -244,7 +244,7 @@ func _physics_process(delta: float) -> void:
 		should_query_behavior = true
 		_behavior_timer = 0.0
 
-	if should_query_behavior and Engine.get_physics_frames() % 8 == bot_id % 8:
+	if should_query_behavior and Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
 		should_query_behavior = false
 		_update_nav_intent()
 

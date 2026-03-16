@@ -111,9 +111,9 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				offset.y = 0.0
 		Ship.ShipClass.DD:
 			# HE at destroyers
-			ammo = ShellParams.ShellType.HE
+			ammo = ShellParams.ShellType.AP
 			offset.y = 2.0
-			offset.z -= _target.movement_controller.ship_length * 0.25
+			offset.z -= _target.movement_controller.ship_length * 0.2
 	return offset
 
 # ============================================================================
@@ -224,7 +224,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# --- No enemies at all, or only stale unspotted data: hunt ---
 	if danger_center == Vector3.ZERO or spotted_center == Vector3.ZERO:
-		var forward_fallback = ship.global_position - ship.global_transform.basis.z * 20_000.0
+		var team_id = ship.team.team_id
+		
+		var forward_fallback: Vector3 = ship.global_position + Vector3.FORWARD * ((-1 if team_id == 0 else 1) * 10_000.0)
 		forward_fallback.y = 0.0
 		var hunt_dest = _get_hunting_position(server, friendly, forward_fallback)
 		if hunt_dest == Vector3.ZERO:

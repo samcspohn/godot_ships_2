@@ -27,7 +27,6 @@
 [sub_resource type="Resource" id="Resource_i4gay"]
 resource_local_to_scene = true
 script = ExtResource("3_54qku")
-pen_repair = 0.6
 torpedo_protection = 0.41
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
@@ -159,7 +158,7 @@ v_grouping = 1.0
 base_spread = 0.06
 reload_time = 6.0
 traverse_speed = 50.0
-_range = 5900.0
+_range = 5500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_vudfj"]

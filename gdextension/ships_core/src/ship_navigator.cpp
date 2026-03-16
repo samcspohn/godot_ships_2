@@ -101,7 +101,7 @@ ShipNavigator::ShipNavigator() {
 	timing_replan_reason = 0;
 	timing_plan_phase_val = 0;
 	avoidance_frame_counter = 0;
-	cached_avoidance = {0.0f, 0.0f, 0.0f, false, false};
+	cached_avoidance = {0.0f, 0.0f, false, false};
 	cached_avoidance_valid = false;
 	skip_ship_obstacles_ = false;
 	emergency_grounding_pos = Vector2();
@@ -376,7 +376,7 @@ bool ShipNavigator::is_simulation_complete() const {
 // ============================================================================
 
 float ShipNavigator::get_ship_clearance() const {
-	return params.ship_beam + get_safety_margin();
+	return params.ship_length / 2.0 + get_safety_margin();
 }
 
 float ShipNavigator::get_soft_clearance() const {
@@ -386,7 +386,7 @@ float ShipNavigator::get_soft_clearance() const {
 }
 
 float ShipNavigator::get_safety_margin() const {
-	return std::max(75.0f, params.ship_beam * 3.0f);
+	return params.ship_beam;
 }
 
 float ShipNavigator::get_lookahead_distance() const {
@@ -685,9 +685,9 @@ void ShipNavigator::update_normal(float delta) {
 	auto avoid_t1 = std::chrono::steady_clock::now();
 	timing_avoidance_us = std::chrono::duration<float, std::micro>(avoid_t1 - avoid_t0).count();
 
-	// Rudder blend uses rudder_weight (includes soft-zone nudge)
-	// Throttle decisions use weight (hard threats only)
-	float final_rudder = lerp_f(desired_rudder, avoid.rudder, avoid.rudder_weight);
+	// Rudder and throttle decisions both use weight (hard threats only).
+	// Soft-zone terrain steering is handled by compute_terrain_aware_rudder.
+	float final_rudder = lerp_f(desired_rudder, avoid.rudder, avoid.weight);
 	int final_throttle = desired_throttle;
 
 	if (avoid.torpedo) {
@@ -768,14 +768,36 @@ void ShipNavigator::update_emergency(float delta) {
 	Vector2 tangent_a(-away_dir.y,  away_dir.x);  // +90°
 	Vector2 tangent_b( away_dir.y, -away_dir.x);  // -90°
 
-	Vector2 to_dest = target.position - state.position;
+	// Direction toward next waypoint (or destination if no path)
+	Vector2 next_wp = target.position;
+	if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size())) {
+		next_wp = current_path.waypoints[current_wp_index];
+	}
+	Vector2 to_dest = next_wp - state.position;
 	float to_dest_len = to_dest.length();
-	Vector2 chosen_tangent;
+
+	// Forward tangent selection: pick tangent closest to destination (normal escape)
+	Vector2 chosen_tangent_fwd;
 	if (to_dest_len > 1.0f) {
-		chosen_tangent = (tangent_a.dot(to_dest) >= tangent_b.dot(to_dest)) ? tangent_a : tangent_b;
+		chosen_tangent_fwd = (tangent_a.dot(to_dest) >= tangent_b.dot(to_dest)) ? tangent_a : tangent_b;
 	} else {
-		// No meaningful destination direction — just pick the tangent aligned with current velocity
-		chosen_tangent = (tangent_a.dot(state.velocity) >= tangent_b.dot(state.velocity)) ? tangent_a : tangent_b;
+		chosen_tangent_fwd = (tangent_a.dot(state.velocity) >= tangent_b.dot(state.velocity)) ? tangent_a : tangent_b;
+	}
+
+	// Reverse tangent selection for 3-point turn: pick the tangent so that the
+	// BOW (opposite to travel direction) ends up closest to the next waypoint.
+	// When reversing along a tangent, the stern travels in the tangent direction
+	// while the bow points in the opposite direction (-tangent).  We want
+	// -chosen_tangent_rev to be closest to to_dest, i.e. the tangent whose
+	// negation has the greatest dot with to_dest — equivalently, the tangent
+	// with the LEAST dot with to_dest.
+	Vector2 chosen_tangent_rev;
+	if (to_dest_len > 1.0f) {
+		chosen_tangent_rev = (tangent_a.dot(to_dest) <= tangent_b.dot(to_dest)) ? tangent_a : tangent_b;
+	} else {
+		// No meaningful destination — pick tangent whose reverse aligns with current heading (bow direction)
+		Vector2 bow_dir(std::sin(state.heading), std::cos(state.heading));
+		chosen_tangent_rev = (tangent_a.dot(bow_dir) <= tangent_b.dot(bow_dir)) ? tangent_a : tangent_b;
 	}
 
 	// --- Blend from away-from-land toward tangent based on distance from terrain ---
@@ -787,68 +809,98 @@ void ShipNavigator::update_emergency(float delta) {
 	float blend_end = soft_clearance * 0.8f;  // start going mostly tangential well before full clearance
 	float blend_t = clamp_f((sdf_here - blend_start) / std::max(blend_end - blend_start, 1.0f), 0.0f, 1.0f);
 
-	// Blended escape direction
-	Vector2 escape_dir;
-	escape_dir.x = lerp_f(away_dir.x, chosen_tangent.x, blend_t);
-	escape_dir.y = lerp_f(away_dir.y, chosen_tangent.y, blend_t);
-	float escape_len = escape_dir.length();
-	if (escape_len > 0.001f) {
-		escape_dir /= escape_len;
+	// --- Determine forward vs backward first using forward tangent ---
+	// Blend escape direction using the forward tangent to decide direction
+	Vector2 escape_dir_fwd;
+	escape_dir_fwd.x = lerp_f(away_dir.x, chosen_tangent_fwd.x, blend_t);
+	escape_dir_fwd.y = lerp_f(away_dir.y, chosen_tangent_fwd.y, blend_t);
+	float escape_fwd_len = escape_dir_fwd.length();
+	if (escape_fwd_len > 0.001f) {
+		escape_dir_fwd /= escape_fwd_len;
 	} else {
-		escape_dir = away_dir;
+		escape_dir_fwd = away_dir;
 	}
 
-	// Desired heading from the blended escape direction
-	float escape_heading = std::atan2(escape_dir.x, escape_dir.y);
-
-	// --- Choose forward vs backward ---
-	// Dot the escape direction with the ship's forward vector.
-	// If escape is behind us, reverse; otherwise go forward.
 	float fwd_x = std::sin(state.heading);
 	float fwd_z = std::cos(state.heading);
-	float escape_dot_fwd = escape_dir.x * fwd_x + escape_dir.y * fwd_z;
+	float escape_dot_fwd = escape_dir_fwd.x * fwd_x + escape_dir_fwd.y * fwd_z;
 
-	bool use_reverse = (escape_dot_fwd < 0.0f);
+	// --- Evaluate forward vs reverse using the escape heading ---
+	// Simulate one arc for each direction and score by the minimum SDF along
+	// the arc.  The candidate whose tightest point is farthest from land wins
+	// — this ensures we pick the direction that avoids squeezing through a
+	// narrow gap or clipping terrain at any point along the escape path.
 
-	// Compute rudder to steer toward the escape heading.
-	// When reversing, the stern should face escape_heading, so the bow must
-	// face the opposite direction (escape_heading + PI).
-	float rudder_heading = use_reverse ? normalize_angle(escape_heading + Math_PI) : escape_heading;
-	float rudder = compute_rudder_to_heading(rudder_heading, use_reverse);
-
-	// Throttle: full forward or full reverse depending on chosen direction
-	int throttle = use_reverse ? -1 : 4;
-
-	// --- Safety check: verify chosen arc doesn't make things worse ---
-	// Simulate the proposed arc and check it doesn't drive deeper into land
 	float lookahead = std::max(params.turning_circle_radius * 2.0f, params.ship_length * 3.0f);
-	auto proposed_arc = predict_arc_internal(rudder, throttle, lookahead);
-	if (!proposed_arc.empty()) {
-		// Check if the end of the arc has worse SDF than current position
-		const auto &end_pt = proposed_arc.back();
-		float end_sdf = map->get_distance(end_pt.position.x, end_pt.position.y);
-		if (end_sdf < sdf_here - params.ship_beam) {
-			// Proposed direction makes things worse — try the opposite direction
-			use_reverse = !use_reverse;
-			rudder_heading = use_reverse ? normalize_angle(escape_heading + Math_PI) : escape_heading;
-			rudder = compute_rudder_to_heading(rudder_heading, use_reverse);
-			throttle = use_reverse ? -1 : 4;
+
+	float best_min_sdf = -std::numeric_limits<float>::infinity();
+	float best_rudder = 0.0f;
+	int best_throttle = -1;
+
+	// Evaluate both directions: 0 = forward, 1 = reverse
+	for (int dir = 0; dir < 2; ++dir) {
+		bool rev = (dir == 1);
+		Vector2 chosen_tangent = rev ? chosen_tangent_rev : chosen_tangent_fwd;
+
+		Vector2 escape_dir;
+		escape_dir.x = lerp_f(away_dir.x, chosen_tangent.x, blend_t);
+		escape_dir.y = lerp_f(away_dir.y, chosen_tangent.y, blend_t);
+		float escape_len = escape_dir.length();
+		if (escape_len > 0.001f) {
+			escape_dir /= escape_len;
+		} else {
+			escape_dir = away_dir;
+		}
+
+		float escape_heading = std::atan2(escape_dir.x, escape_dir.y);
+		float rudder_heading = rev ? normalize_angle(escape_heading + Math_PI) : escape_heading;
+		float candidate_rudder = compute_rudder_to_heading(rudder_heading, rev);
+		int throttle = rev ? -1 : 4;
+
+		auto arc = predict_arc_internal(candidate_rudder, throttle, lookahead);
+		if (arc.size() < 2) continue;
+
+		// Score: minimum SDF across all arc points — pick the direction
+		// whose worst point is farthest from land.
+		float min_sdf = std::numeric_limits<float>::infinity();
+		for (const auto &pt : arc) {
+			float sdf = map->get_distance(pt.position.x, pt.position.y);
+			if (sdf < min_sdf) min_sdf = sdf;
+		}
+
+		if (min_sdf > best_min_sdf) {
+			best_min_sdf = min_sdf;
+			best_rudder = candidate_rudder;
+			best_throttle = throttle;
 		}
 	}
 
-	// --- Exit condition: no longer grounded AND forward path is clear ---
-	if (!grounded_ && sdf_here > get_ship_clearance() * 1.2f) {
-		// Check if a straight-ahead arc at moderate speed is safe
-		int exit_throttle = use_reverse ? -1 : 2;
-		auto exit_arc = predict_arc_internal(0.0f, exit_throttle, get_lookahead_distance());
-		float arc_time = exit_arc.empty() ? 0.0f : exit_arc.back().time;
-		float ttc = check_arc_collision(exit_arc, get_ship_clearance(), get_soft_clearance());
+	float rudder = best_rudder;
+	int throttle = best_throttle;
+	bool use_reverse = (throttle < 0);
 
-		if (ttc >= arc_time * 0.9f) {
-			nav_state = NavState::NORMAL;
-			emergency_initialized = false;
-			replan_requested_ = true;
-			return;
+	// --- Exit condition: no longer grounded AND at least one direction is genuinely clear ---
+	// Use soft_clearance as the collision threshold so the exit arc must maintain
+	// comfortable room from terrain along its entire length, not just the bare minimum.
+	float soft_cl = get_soft_clearance();
+	float hard_cl = get_ship_clearance();
+	if (!grounded_ && sdf_here > hard_cl * 1.5f) {
+		float exit_lookahead = get_lookahead_distance() * 1.5f;
+		int exit_throttle = use_reverse ? -1 : 2;
+
+		// Test ahead, port, and starboard — any ONE being fully clear is enough
+		const float exit_rudders[] = { 0.0f, -0.9f, 0.9f };
+		for (float r : exit_rudders) {
+			auto arc = predict_arc_internal(r, exit_throttle, exit_lookahead);
+			float arc_time = arc.empty() ? 0.0f : arc.back().time;
+			float ttc = check_arc_collision(arc, hard_cl * 1.5f, soft_cl);
+
+			if (arc_time > 0.0f && ttc >= arc_time) {
+				nav_state = NavState::NORMAL;
+				emergency_initialized = false;
+				replan_requested_ = true;
+				return;
+			}
 		}
 	}
 
@@ -1046,7 +1098,7 @@ void ShipNavigator::run_plan_sync() {
 // ============================================================================
 
 ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_rudder, int desired_throttle) {
-	AvoidanceResult result = {desired_rudder, 0.0f, 0.0f, false, false};
+	AvoidanceResult result = {desired_rudder, 0.0f, false, false};
 
 	float hard_clearance = get_ship_clearance();
 	float soft_clearance = get_soft_clearance();
@@ -1099,36 +1151,12 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 	predicted_arc = desired_arc;
 	predicted_arc_fresh = true;
 
-	// Terrain collision — split hard vs soft so soft zone only nudges rudder, not throttle
+	// Terrain collision — hard clearance only; soft-zone steering is handled
+	// upstream by compute_terrain_aware_rudder so avoidance doesn't fight it.
 	float ttc_terrain_hard = check_arc_collision(desired_arc, hard_clearance, hard_clearance);
-	float ttc_terrain_full = check_arc_collision(desired_arc, hard_clearance, soft_clearance);
-	float terrain_weight = 0.0f;       // hard threats only — drives throttle reduction
-	float terrain_nudge = 0.0f;        // soft zone — gentle rudder nudge, no throttle impact
+	float terrain_weight = 0.0f;
 	if (ttc_terrain_hard < arc_time * 0.95f) {
 		terrain_weight = clamp_f(1.0f - (ttc_terrain_hard / std::max(arc_time, 0.1f)), 0.0f, 1.0f);
-	} else if (ttc_terrain_full < arc_time * 0.95f) {
-		// Soft zone only: small nudge, capped so it doesn't dominate the rudder
-		terrain_nudge = clamp_f((1.0f - (ttc_terrain_full / std::max(arc_time, 0.1f))) * 0.4f, 0.0f, 0.25f);
-	}
-
-	// Positional boost: when the ship is already inside the hard clearance zone the
-	// arc-based TTC may be very small (arc starts in violation) which ironically can
-	// produce a low terrain_weight via the formula above.  Floor the weight so the
-	// avoidance rudder scan runs with meaningful authority, but cap it well below 1.0
-	// so the arc-validated candidate still wins on merit rather than being overridden
-	// by a raw SDF-gradient direction that ignores stern swing.
-	if (map.is_valid() && map->is_built()) {
-		float sdf_pos = map->get_distance(state.position.x, state.position.y);
-		if (sdf_pos < hard_clearance) {
-			// Scale 0..0.5 across the zone (0 at boundary, 0.5 deep inside).
-			// This guarantees rudder_weight >= 0.5 so the avoidance candidate
-			// accounts for at least half the final rudder, but never fully
-			// suppresses the navigation intent that may already be clearing.
-			float breach_weight = clamp_f(
-				(1.0f - sdf_pos / std::max(hard_clearance, 0.1f)) * 0.5f,
-				0.0f, 0.5f);
-			terrain_weight = std::max(terrain_weight, breach_weight);
-		}
 	}
 
 	// Obstacle collision weight
@@ -1148,9 +1176,8 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 		}
 	}
 
-	float total_weight = std::max(terrain_weight, obs_weight);              // hard threats only
-	float total_rudder_weight = std::max({total_weight, terrain_nudge});    // includes soft nudge
-	if (total_rudder_weight < 0.01f) return result;
+	float total_weight = std::max(terrain_weight, obs_weight);
+	if (total_weight < 0.01f) return result;
 
 	// --- Find best avoidance rudder ---
 	float best_ttc = std::min(ttc_terrain_hard, ttc_obstacles);
@@ -1245,12 +1272,17 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 			params.ship_length * 2.0f);
 
 		// Check the best forward arc: is it still dangerously blocked?
+		// Use a high threshold (0.9) so the forward arc must be nearly
+		// fully clear before we skip the reverse scan.  This creates
+		// asymmetric hysteresis: it's easy to enter reverse (forward
+		// just needs to be partially blocked) but hard to exit (forward
+		// must prove it's genuinely safe, not just marginally better).
 		float fwd_arc_time = 0.0f;
 		{
 			auto best_fwd_arc = predict_arc_internal(best_rudder, desired_throttle, cand_lookahead);
 			fwd_arc_time = best_fwd_arc.empty() ? 0.0f : best_fwd_arc.back().time;
 		}
-		bool fwd_still_blocked = (best_ttc < fwd_arc_time * 0.6f);
+		bool fwd_still_blocked = (best_ttc < fwd_arc_time * 0.9f);
 
 		if (fwd_still_blocked) {
 			// In reverse the stern swings opposite to forward for the same rudder sign.
@@ -1264,13 +1296,21 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 				bias * 0.5f, bias * 1.0f, -bias * 0.5f, -bias * 1.0f };
 			constexpr int n_rev = 5;
 
+			// Evaluate reverse arcs with inflated clearance (1.5×) so the
+			// ship must actually escape to a comfortable distance, not just
+			// barely clear the terrain.  This prevents the oscillation where
+			// a tiny reverse nudge is enough to "clear" the forward arc on
+			// the next frame, only to immediately collide again.
+			float rev_hard_clearance = hard_clearance * 1.5f;
+			float rev_soft_clearance = soft_clearance * 1.5f;
+
 			for (int i = 0; i < n_rev; ++i) {
 				float candidate = clamp_f(rev_rudder_candidates[i], -1.0f, 1.0f);
 
 				auto arc = predict_arc_internal(candidate, -1, rev_lookahead);
 				float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
 				float cand_ttc = std::min(
-					check_arc_collision(arc, hard_clearance, soft_clearance),
+					check_arc_collision(arc, rev_hard_clearance, rev_soft_clearance),
 					check_arc_obstacles(arc));
 
 				if (cand_ttc > rev_best_ttc) {
@@ -1281,8 +1321,9 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 			}
 
 			// Accept reverse only when it's meaningfully better than the best forward option.
-			// Use a margin of 20% of the forward arc time to avoid flip-flopping.
-			if (rev_best_ttc > best_ttc + fwd_arc_time * 0.2f) {
+			// Use a margin of 30% of the forward arc time to create stronger hysteresis
+			// against flip-flopping between forward and reverse.
+			if (rev_best_ttc > best_ttc + fwd_arc_time * 0.3f) {
 				best_ttc = rev_best_ttc;
 				best_rudder = rev_best_rudder;
 				reverse_chosen = true;
@@ -1292,7 +1333,6 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 
 	result.rudder = best_rudder;
 	result.weight = total_weight;
-	result.rudder_weight = total_rudder_weight;
 	result.torpedo = torpedo_threat;
 	result.reverse = reverse_chosen;
 	return result;

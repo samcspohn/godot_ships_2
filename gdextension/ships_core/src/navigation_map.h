@@ -193,6 +193,126 @@ private:
 		return false;
 	}
 
+	// Walk coarse MR cells along direction (sdx, sdz) from base-grid cell (bx, bz)
+	// at the given MR level, returning the max base-grid jump distance where every
+	// coarse cell along the way is fully navigable.  Falls back to sdf_jump if the
+	// MR level is 0 or the very first step leaves the navigable region.
+	//
+	// For diagonal directions this uses a Bresenham-style supercover walk at the
+	// coarse level so that *every* coarse cell the diagonal line passes through is
+	// verified, not just the cells on the diagonal.  Without this, land in an
+	// adjacent coarse cell that the line clips through would be missed.
+	inline int mr_directional_safe_jump(int bx, int bz, int sdx, int sdz,
+										int level, float clearance_world,
+										int sdf_jump, int hard_max) const {
+		if (level <= 0) return sdf_jump;
+
+		int scale = 1 << level;
+
+		// Coarse-cell coords of the starting position
+		int mx = bx / scale;
+		int mz = bz / scale;
+
+		// How far (in base-grid cells) we can guarantee safety.
+		// Begin with the distance to the boundary of the starting coarse cell
+		// (which was already verified navigable by find_navigable_mr_level).
+		int safe_cells;
+		if (sdx != 0 && sdz != 0) {
+			int bnd_x = (sdx > 0) ? ((mx + 1) * scale - 1 - bx) : (bx - mx * scale);
+			int bnd_z = (sdz > 0) ? ((mz + 1) * scale - 1 - bz) : (bz - mz * scale);
+			safe_cells = std::min(bnd_x, bnd_z);
+		} else if (sdx != 0) {
+			safe_cells = (sdx > 0) ? ((mx + 1) * scale - 1 - bx) : (bx - mx * scale);
+		} else {
+			safe_cells = (sdz > 0) ? ((mz + 1) * scale - 1 - bz) : (bz - mz * scale);
+		}
+
+		// Include the SDF-safe radius (we know at least that much is clear)
+		safe_cells = std::max(safe_cells, sdf_jump);
+
+		if (safe_cells >= hard_max) return hard_max;
+
+		// --- Cardinal direction: simple linear walk ---
+		if (sdx == 0 || sdz == 0) {
+			int cmx = (sdx > 0) ? 1 : (sdx < 0) ? -1 : 0;
+			int cmz = (sdz > 0) ? 1 : (sdz < 0) ? -1 : 0;
+			int cur_mx = mx + cmx;
+			int cur_mz = mz + cmz;
+			while (safe_cells < hard_max) {
+				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
+				if (cls != 1) break;
+				safe_cells += scale;
+				cur_mx += cmx;
+				cur_mz += cmz;
+			}
+			return std::min(safe_cells, hard_max);
+		}
+
+		// --- Diagonal direction: supercover Bresenham at the coarse level ---
+		// We need to check every coarse cell that the diagonal base-grid line
+		// passes through — including the cardinal-adjacent cells at corners.
+		// This mirrors the supercover logic in line_of_sight() but operates on
+		// coarse MR coordinates.
+		//
+		// The base-grid line travels equal distances in x and z (slope = ±1),
+		// but offset within the starting coarse cell means the line may cross
+		// the x boundary and z boundary of the current coarse cell at different
+		// times.  We track how far (in base cells) until the next coarse
+		// boundary on each axis and advance whichever is nearer, checking every
+		// coarse cell we enter.
+
+		int cmx = (sdx > 0) ? 1 : -1;
+		int cmz = (sdz > 0) ? 1 : -1;
+
+		// Distance (in base cells) from (bx,bz) to the next coarse boundary on each axis
+		// These are the initial "t" values — how many base-cell steps until we
+		// cross into the next coarse cell on each axis.
+		int dist_to_bnd_x = (sdx > 0) ? ((mx + 1) * scale - bx) : (bx - mx * scale + 1);
+		int dist_to_bnd_z = (sdz > 0) ? ((mz + 1) * scale - bz) : (bz - mz * scale + 1);
+
+		// Current coarse position (start at the origin coarse cell)
+		int cur_mx = mx;
+		int cur_mz = mz;
+
+		// Next crossing distances — updated as we step
+		int next_x = dist_to_bnd_x;  // base cells until next x-boundary
+		int next_z = dist_to_bnd_z;  // base cells until next z-boundary
+
+		while (safe_cells < hard_max) {
+			if (next_x < next_z) {
+				// Cross x-boundary first — enter (cur_mx + cmx, cur_mz)
+				cur_mx += cmx;
+				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
+				if (cls != 1) break;
+				safe_cells = std::max(safe_cells, next_x);
+				next_x += scale;
+			} else if (next_z < next_x) {
+				// Cross z-boundary first — enter (cur_mx, cur_mz + cmz)
+				cur_mz += cmz;
+				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
+				if (cls != 1) break;
+				safe_cells = std::max(safe_cells, next_z);
+				next_z += scale;
+			} else {
+				// Simultaneous crossing (corner) — must check both cardinal
+				// neighbors AND the diagonal cell (supercover).
+				int cls_x = classify_mr_cell(cur_mx + cmx, cur_mz, level, clearance_world);
+				if (cls_x != 1) break;
+				int cls_z = classify_mr_cell(cur_mx, cur_mz + cmz, level, clearance_world);
+				if (cls_z != 1) break;
+				cur_mx += cmx;
+				cur_mz += cmz;
+				int cls_d = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
+				if (cls_d != 1) break;
+				safe_cells = std::max(safe_cells, next_x);
+				next_x += scale;
+				next_z += scale;
+			}
+		}
+
+		return std::min(safe_cells, hard_max);
+	}
+
 	// --- Pathfinding internals ---
 
 	// Line-of-sight check on the SDF grid with clearance (Bresenham supercover)

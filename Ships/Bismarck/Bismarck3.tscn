@@ -35,7 +35,6 @@
 [sub_resource type="Resource" id="Resource_kaouq"]
 resource_local_to_scene = true
 script = ExtResource("4_kxwob")
-pen_repair = 0.6
 torpedo_protection = 0.24
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
@@ -205,6 +204,7 @@ acceleration_time = 40.0
 deceleration_time = 30.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 400.0
+slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.15
 rudder_response_time = 10.0
 lateral_drag_multiplier = 1.7
