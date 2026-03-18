@@ -21,7 +21,8 @@ void ShipNavigator::_bind_methods() {
 		"turning_circle_radius", "rudder_response_time",
 		"acceleration_time", "deceleration_time",
 		"max_speed", "reverse_speed_ratio",
-		"ship_length", "ship_beam", "turn_speed_loss"),
+		"ship_length", "ship_beam", "turn_speed_loss",
+		"linear_drag"),
 		&ShipNavigator::set_ship_params);
 
 	// Per-frame state
@@ -29,6 +30,10 @@ void ShipNavigator::_bind_methods() {
 		"position", "velocity", "heading",
 		"angular_velocity_y", "current_rudder", "current_speed", "delta"),
 		&ShipNavigator::set_state);
+
+	// Bot identity
+	ClassDB::bind_method(D_METHOD("set_bot_id", "id"), &ShipNavigator::set_bot_id);
+	ClassDB::bind_method(D_METHOD("get_bot_id"), &ShipNavigator::get_bot_id);
 
 	// Navigation commands
 	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance"),
@@ -106,6 +111,9 @@ ShipNavigator::ShipNavigator() {
 	skip_ship_obstacles_ = false;
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
+	fwd_blocked_frames_ = 0;
+	bot_id_ = 0;
+	replan_frame_counter_ = 0;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -119,6 +127,15 @@ void ShipNavigator::set_map(Ref<NavigationMap> p_map) {
 	map = p_map;
 }
 
+void ShipNavigator::set_bot_id(int id) {
+	bot_id_ = id;
+	replan_frame_counter_ = id % REPLAN_INTERVAL;
+}
+
+int ShipNavigator::get_bot_id() const {
+	return bot_id_;
+}
+
 void ShipNavigator::set_ship_params(
 	float turning_circle_radius,
 	float rudder_response_time,
@@ -128,7 +145,8 @@ void ShipNavigator::set_ship_params(
 	float reverse_speed_ratio,
 	float ship_length,
 	float ship_beam,
-	float turn_speed_loss
+	float turn_speed_loss,
+	float linear_drag
 ) {
 	params.turning_circle_radius = turning_circle_radius;
 	params.rudder_response_time = rudder_response_time;
@@ -139,6 +157,7 @@ void ShipNavigator::set_ship_params(
 	params.ship_length = ship_length;
 	params.ship_beam = ship_beam;
 	params.turn_speed_loss = turn_speed_loss;
+	params.linear_drag = linear_drag;
 }
 
 // ============================================================================
@@ -390,15 +409,7 @@ float ShipNavigator::get_safety_margin() const {
 }
 
 float ShipNavigator::get_lookahead_distance() const {
-	float speed = std::max(std::abs(state.current_speed), params.max_speed * 0.5f);
-	float rudder_lag_dist = speed * params.rudder_response_time;
-	float turn_arc = params.turning_circle_radius * 1.57f;
-	float physics_dist = rudder_lag_dist + turn_arc + params.ship_length;
-	float legacy_min = params.ship_length * 3.0f;
-	float stopping = get_stopping_distance();
-	float dist = std::max({legacy_min, physics_dist, stopping + params.ship_length * 2.0f});
-	float max_dist = std::max(params.ship_length * 8.0f, 3000.0f);
-	return std::min(dist, max_dist);
+	return params.turning_circle_radius * 1.2f;
 }
 
 float ShipNavigator::get_stopping_distance() const {
@@ -446,8 +457,13 @@ void ShipNavigator::update_predicted_arc() {
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
 
-	// Transition to EMERGENCY if grounded or SDF indicates on land
+	// Transition to EMERGENCY if grounded or SDF indicates on land,
+	// but NOT if the ship is already at the destination within tolerance.
 	if (nav_state != NavState::EMERGENCY) {
+		float dist_to_dest_check = state.position.distance_to(target.position);
+		float arrived_radius_check = std::max(target.hold_radius, params.ship_beam * 2.0f);
+		bool at_destination = dist_to_dest_check < arrived_radius_check;
+
 		bool enter_emergency = false;
 		if (grounded_) {
 			enter_emergency = true;
@@ -457,9 +473,10 @@ void ShipNavigator::update(float delta) {
 				enter_emergency = true;
 			}
 		}
-		if (enter_emergency) {
+		if (enter_emergency && !at_destination) {
 			nav_state = NavState::EMERGENCY;
 			emergency_initialized = false;
+			fwd_blocked_frames_ = 0;
 		}
 	}
 
@@ -477,8 +494,15 @@ void ShipNavigator::update(float delta) {
 // ============================================================================
 
 void ShipNavigator::update_normal(float delta) {
-	// --- 1. Path planning (event-driven) ---
+	// --- 1. Path planning (event-driven + periodic refresh) ---
 	auto plan_t0 = std::chrono::steady_clock::now();
+
+	// Periodic replan every REPLAN_INTERVAL frames, staggered by bot_id
+	replan_frame_counter_++;
+	if (replan_frame_counter_ >= REPLAN_INTERVAL) {
+		replan_frame_counter_ = 0;
+		replan_requested_ = true;
+	}
 
 	timing_replan_reason = 0;
 
@@ -685,6 +709,31 @@ void ShipNavigator::update_normal(float delta) {
 	auto avoid_t1 = std::chrono::steady_clock::now();
 	timing_avoidance_us = std::chrono::duration<float, std::micro>(avoid_t1 - avoid_t0).count();
 
+	// --- Stuck detection: bow-toward-land oscillation ---
+	// If the ship wants to go forward but avoidance determines that all forward
+	// arcs are blocked (reverse chosen), count consecutive frames.  When this
+	// persists beyond a threshold the ship is stuck oscillating — enter
+	// emergency mode which has proper SDF-gradient-based escape logic.
+	// Only count when the ship is actively navigating forward (not in the
+	// approach/maneuver zone where forward/reverse oscillation is expected
+	// behavior for heading alignment).
+	bool at_destination_now = dist_to_dest < arrived_radius;
+	if (run_full_avoidance && avoid.reverse && direction == DesiredDirection::FORWARD
+	    && !avoid.torpedo && !at_destination_now) {
+		fwd_blocked_frames_++;
+		if (fwd_blocked_frames_ >= FWD_BLOCKED_EMERGENCY_THRESHOLD) {
+			nav_state = NavState::EMERGENCY;
+			emergency_initialized = false;
+			fwd_blocked_frames_ = 0;
+			// Apply reverse steering for this frame so the ship starts moving
+			// away immediately rather than driving into terrain for one more frame.
+			set_steering_output(avoid.rudder, -1, true, 0.0f);
+			return;
+		}
+	} else {
+		fwd_blocked_frames_ = 0;
+	}
+
 	// Rudder and throttle decisions both use weight (hard threats only).
 	// Soft-zone terrain steering is handled by compute_terrain_aware_rudder.
 	float final_rudder = lerp_f(desired_rudder, avoid.rudder, avoid.weight);
@@ -715,6 +764,26 @@ void ShipNavigator::update_normal(float delta) {
 			// Reduced throttle is clear — no need to slow down, steering alone works
 		} else {
 			final_throttle = reduced;
+		}
+	}
+
+	// --- 4.5. Rudder-discrepancy throttle reduction ---
+	// When the desired rudder is far from the current physical rudder position,
+	// the ship will travel straight (at the old rudder) until the rudder catches
+	// up, causing wide overshooting turns.  Reduce throttle proportionally to
+	// the rudder discrepancy so the ship slows while the rudder moves into
+	// position, giving tighter and more controlled turns.
+	// Skip when: torpedo evasion (need max speed), reversing, or already slow.
+	if (!avoid.torpedo && final_throttle > 1) {
+		float rudder_discrepancy = std::abs(final_rudder - state.current_rudder);
+		const float discrepancy_threshold = 0.3f;  // below this, no reduction
+		const float discrepancy_full = 1.2f;        // at or above this, maximum reduction
+		if (rudder_discrepancy > discrepancy_threshold) {
+			float t = clamp_f((rudder_discrepancy - discrepancy_threshold)
+			                   / (discrepancy_full - discrepancy_threshold), 0.0f, 1.0f);
+			// At full discrepancy, reduce throttle by up to 2 steps, but never below 1
+			int reduction = static_cast<int>(std::round(t * 2.0f));
+			final_throttle = std::max(1, final_throttle - reduction);
 		}
 	}
 
@@ -879,12 +948,44 @@ void ShipNavigator::update_emergency(float delta) {
 	int throttle = best_throttle;
 	bool use_reverse = (throttle < 0);
 
+	// --- Rudder-discrepancy throttle reduction (emergency) ---
+	// Same principle as normal mode: when the desired rudder is far from the
+	// current physical rudder, reduce throttle so the ship doesn't charge
+	// forward/backward on the old rudder heading before the rudder catches up.
+	// In emergency mode we map forward throttle 4 → magnitude steps and
+	// reverse throttle -1 stays as-is (already minimum reverse).
+	if (!use_reverse && throttle > 1) {
+		float rudder_discrepancy = std::abs(rudder - state.current_rudder);
+		const float discrepancy_threshold = 0.3f;
+		const float discrepancy_full = 1.2f;
+		if (rudder_discrepancy > discrepancy_threshold) {
+			float t = clamp_f((rudder_discrepancy - discrepancy_threshold)
+			                   / (discrepancy_full - discrepancy_threshold), 0.0f, 1.0f);
+			int reduction = static_cast<int>(std::round(t * 2.0f));
+			throttle = std::max(1, throttle - reduction);
+		}
+	}
+
+	// --- Exit condition: at destination with heading aligned — no need to escape ---
+	{
+		float dist_to_dest_em = state.position.distance_to(target.position);
+		float arrived_radius_em = std::max(target.hold_radius, params.ship_beam * 2.0f);
+		float heading_error_em = std::abs(angle_difference(state.heading, target.heading));
+		if (dist_to_dest_em < arrived_radius_em && heading_error_em < target.heading_tolerance) {
+			nav_state = NavState::NORMAL;
+			emergency_initialized = false;
+			fwd_blocked_frames_ = 0;
+			replan_requested_ = true;
+			return;
+		}
+	}
+
 	// --- Exit condition: no longer grounded AND at least one direction is genuinely clear ---
 	// Use soft_clearance as the collision threshold so the exit arc must maintain
 	// comfortable room from terrain along its entire length, not just the bare minimum.
 	float soft_cl = get_soft_clearance();
 	float hard_cl = get_ship_clearance();
-	if (!grounded_ && sdf_here > hard_cl * 1.5f) {
+	if (!grounded_ && sdf_here > soft_cl) {
 		float exit_lookahead = get_lookahead_distance() * 1.5f;
 		int exit_throttle = use_reverse ? -1 : 2;
 
@@ -1155,7 +1256,10 @@ ShipNavigator::AvoidanceResult ShipNavigator::compute_avoidance(float desired_ru
 	// upstream by compute_terrain_aware_rudder so avoidance doesn't fight it.
 	float ttc_terrain_hard = check_arc_collision(desired_arc, hard_clearance, hard_clearance);
 	float terrain_weight = 0.0f;
-	if (ttc_terrain_hard < arc_time * 0.95f) {
+	if (ttc_terrain_hard < 0.0f) {
+		// Already inside clearance — maximum urgency
+		terrain_weight = 1.0f;
+	} else if (ttc_terrain_hard < arc_time * 0.95f) {
 		terrain_weight = clamp_f(1.0f - (ttc_terrain_hard / std::max(arc_time, 0.1f)), 0.0f, 1.0f);
 	}
 
@@ -1392,7 +1496,10 @@ float ShipNavigator::compute_terrain_aware_rudder() const {
 	// once the sim heading aligns with the waypoint direction.
 	float turn_lookahead = 2.0f * Math_PI * params.turning_circle_radius;
 
-	// Step 2: Simulate the preferred (pure pursuit) direction at full rudder
+	// Step 2: Simulate both directions at full rudder.
+	// check_arc_collision now returns negative TTC when starting inside a
+	// clearance zone (time-to-exit, negated), so both arcs produce comparable
+	// values even when the ship is already inside terrain clearance.
 	float preferred_rudder = (pp_rudder > 0.0f) ? 1.0f : -1.0f;
 	auto preferred_arc = predict_arc_to_heading(preferred_rudder, 4, wp, turn_lookahead, 60.0f, 1.0f);
 	float preferred_arc_time = preferred_arc.empty() ? 0.0f : preferred_arc.back().time;
@@ -1412,7 +1519,35 @@ float ShipNavigator::compute_terrain_aware_rudder() const {
 	// Opposite is clear — use full rudder in that direction
 	if (opposite_clear) return opposite_rudder;
 
-	// Both blocked — follow the coastline tangent until a turn opens up.
+	// Step 4: Neither direction is fully clear.  Use TTC comparison to pick
+	// the better arc.  With negative TTC semantics, the arc with higher
+	// (less negative) TTC escapes faster or collides later — always better.
+	// This replaces the old behaviour of immediately falling through to the
+	// coastline tangent when both arcs were "blocked", which lost all
+	// discrimination between a nearly-clear arc and a hopeless one.
+	//
+	// When one TTC is positive (will collide in the future) and the other is
+	// negative (already inside, time-to-exit), positive is always better.
+	// When both are negative, less negative = faster escape = better.
+	// A meaningful margin prevents flip-flopping between nearly equal arcs.
+	const float margin = 0.5f;  // seconds — require clear advantage to override pure pursuit direction
+	if (preferred_ttc > opposite_ttc + margin) {
+		return preferred_rudder;
+	}
+	if (opposite_ttc > preferred_ttc + margin) {
+		return opposite_rudder;
+	}
+
+	// Within the margin — prefer the pure pursuit direction to avoid
+	// unnecessary turn reversal
+	if (preferred_ttc >= opposite_ttc) {
+		return preferred_rudder;
+	}
+	if (opposite_ttc > preferred_ttc) {
+		return opposite_rudder;
+	}
+
+	// Step 5: Both equally bad — follow the coastline tangent until a turn opens up.
 	// The SDF gradient points away from the nearest land.  The tangent
 	// (perpendicular to the gradient) runs along the coast.  We pick the
 	// tangent direction whose heading component moves us toward the waypoint.
@@ -1546,6 +1681,19 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 	float sim_time = 0.0f;
 	float total_distance = 0.0f;
 
+	// --- Drift model: decompose current velocity into forward and lateral ---
+	// The heading unit vector (forward direction in XZ)
+	float fwd_x0 = std::sin(state.heading);
+	float fwd_z0 = std::cos(state.heading);
+	// Lateral (starboard) unit vector: rotate forward 90° clockwise
+	float lat_x0 = fwd_z0;
+	float lat_z0 = -fwd_x0;
+	// Project actual velocity onto forward and lateral axes
+	// lateral > 0 means drifting to starboard
+	float sim_lateral_speed = state.velocity.x * lat_x0 + state.velocity.y * lat_z0;
+	// Drag decay rate — matches Godot's linear_damp applied uniformly
+	float lateral_drag = std::max(params.linear_drag, 0.01f);
+
 	float target_speed_val = throttle_to_speed(commanded_throttle);
 
 	arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, 0.0f));
@@ -1584,6 +1732,8 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 
 		float effective_speed = sim_speed * (1.0f - params.turn_speed_loss * std::abs(sim_rudder));
 
+		float prev_heading = sim_heading;
+
 		float omega = 0.0f;
 		if (params.turning_circle_radius > 0.001f) {
 			omega = (effective_speed / params.turning_circle_radius) * (-sim_rudder);
@@ -1591,8 +1741,27 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 
 		sim_heading += omega * dt;
 		sim_heading = normalize_angle(sim_heading);
-		sim_pos.x += std::sin(sim_heading) * effective_speed * dt;
-		sim_pos.y += std::cos(sim_heading) * effective_speed * dt;
+
+		// --- Drift model integration ---
+		// When the heading rotates, velocity that was "forward" partially becomes
+		// "lateral" from the new heading's perspective.  This models the inertia
+		// mismatch: the hull rotates but the velocity vector lags behind.
+		float heading_delta = sim_heading - prev_heading;
+		// Rotate lateral speed by the heading change:
+		//   new_lateral ≈ old_lateral * cos(dh) + forward_speed * sin(dh)
+		// For small dh this is: old_lateral + forward_speed * dh
+		sim_lateral_speed = sim_lateral_speed * std::cos(heading_delta)
+						  + effective_speed * std::sin(heading_delta);
+		// Decay lateral speed via drag (exponential decay matching Godot linear_damp)
+		sim_lateral_speed *= std::exp(-lateral_drag * dt);
+
+		// Forward movement along heading + lateral drift perpendicular to heading
+		float cur_fwd_x = std::sin(sim_heading);
+		float cur_fwd_z = std::cos(sim_heading);
+		float cur_lat_x = cur_fwd_z;   // starboard = forward rotated 90° CW
+		float cur_lat_z = -cur_fwd_x;
+		sim_pos.x += cur_fwd_x * effective_speed * dt + cur_lat_x * sim_lateral_speed * dt;
+		sim_pos.y += cur_fwd_z * effective_speed * dt + cur_lat_z * sim_lateral_speed * dt;
 
 		sim_time += dt;
 
@@ -1636,6 +1805,14 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	float sim_time = 0.0f;
 	float total_distance = 0.0f;
 
+	// --- Drift model: decompose current velocity into forward and lateral ---
+	float fwd_x0 = std::sin(state.heading);
+	float fwd_z0 = std::cos(state.heading);
+	float lat_x0 = fwd_z0;
+	float lat_z0 = -fwd_x0;
+	float sim_lateral_speed = state.velocity.x * lat_x0 + state.velocity.y * lat_z0;
+	float lateral_drag = std::max(params.linear_drag, 0.01f);
+
 	float target_speed_val = throttle_to_speed(commanded_throttle);
 
 	arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, 0.0f));
@@ -1676,6 +1853,8 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 		float effective_speed = sim_speed * (1.0f - params.turn_speed_loss * std::abs(sim_rudder));
 
+		float prev_heading = sim_heading;
+
 		float omega = 0.0f;
 		if (params.turning_circle_radius > 0.001f) {
 			omega = (effective_speed / params.turning_circle_radius) * (-sim_rudder);
@@ -1683,8 +1862,19 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 		sim_heading += omega * dt;
 		sim_heading = normalize_angle(sim_heading);
-		sim_pos.x += std::sin(sim_heading) * effective_speed * dt;
-		sim_pos.y += std::cos(sim_heading) * effective_speed * dt;
+
+		// --- Drift model integration ---
+		float heading_delta = sim_heading - prev_heading;
+		sim_lateral_speed = sim_lateral_speed * std::cos(heading_delta)
+						  + effective_speed * std::sin(heading_delta);
+		sim_lateral_speed *= std::exp(-lateral_drag * dt);
+
+		float cur_fwd_x = std::sin(sim_heading);
+		float cur_fwd_z = std::cos(sim_heading);
+		float cur_lat_x = cur_fwd_z;
+		float cur_lat_z = -cur_fwd_x;
+		sim_pos.x += cur_fwd_x * effective_speed * dt + cur_lat_x * sim_lateral_speed * dt;
+		sim_pos.y += cur_fwd_z * effective_speed * dt + cur_lat_z * sim_lateral_speed * dt;
 
 		sim_time += dt;
 
@@ -1722,6 +1912,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 float ShipNavigator::check_arc_collision(const std::vector<ArcPoint> &arc,
 										  float hard_clearance, float soft_clearance) const {
 	if (map.is_null() || !map->is_built()) return std::numeric_limits<float>::infinity();
+	if (arc.empty()) return std::numeric_limits<float>::infinity();
 
 	float first_soft_violation = std::numeric_limits<float>::infinity();
 	bool arc_exits_soft_zone = false;
@@ -1733,6 +1924,18 @@ float ShipNavigator::check_arc_collision(const std::vector<ArcPoint> &arc,
 		float sdf = map->get_distance(pt.position.x, pt.position.y);
 
 		if (sdf < hard_clearance) {
+			if (pt.time == 0.0f) {
+				// Already inside hard clearance — find time to exit and negate it.
+				// More negative = longer to escape = worse.
+				for (size_t j = i + 1; j < arc.size(); j++) {
+					float exit_sdf = map->get_distance(arc[j].position.x, arc[j].position.y);
+					if (exit_sdf >= hard_clearance) {
+						return -arc[j].time;
+					}
+				}
+				// Never escaped — return negative arc duration (worst case)
+				return -arc.back().time;
+			}
 			return pt.time;
 		}
 
@@ -1752,6 +1955,17 @@ float ShipNavigator::check_arc_collision(const std::vector<ArcPoint> &arc,
 	}
 
 	if (was_in_soft_zone && !arc_exits_soft_zone && valid_points < 3) {
+		// If the first soft violation is at t=0, the arc starts inside the
+		// soft zone.  Find exit time and negate it, same as the hard case.
+		if (first_soft_violation == 0.0f) {
+			for (size_t i = 0; i < arc.size(); i++) {
+				float sdf = map->get_distance(arc[i].position.x, arc[i].position.y);
+				if (sdf >= soft_clearance) {
+					return -arc[i].time;
+				}
+			}
+			return -arc.back().time;
+		}
 		return first_soft_violation;
 	}
 

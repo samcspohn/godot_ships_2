@@ -17,6 +17,12 @@ var _cover_can_shoot: bool = false
 var _cover_island_center: Vector3 = Vector3.ZERO
 var _cover_island_radius: float = 0.0
 
+# Cover position search tuning
+const _COVER_ANGLE_STEP: float = deg_to_rad(10.0)
+const _COVER_ANGLE_HALF_SPAN: float = PI / 3.0
+
+const _COVER_LOS_CLEARANCE: float = -50.0   # 1 cell buffer for LOS concealment checks (islands aren't perfectly modeled in SDF)
+
 # Cached safe direction (toward spawn, away from enemies)
 var _cached_safe_dir: Vector3 = Vector3.ZERO
 var _safe_dir_initialized: bool = false
@@ -27,7 +33,7 @@ var _target_island_pos: Vector3 = Vector3.ZERO
 var _target_island_radius: float = 0.0
 var _nav_destination: Vector3 = Vector3.ZERO
 var _nav_destination_valid: bool = false
-var _abandoned_island_id: int = -1  # Island we just left — skip in next search
+
 
 # Engagement tracking
 var _last_in_range_ms: int = 0
@@ -40,6 +46,10 @@ var _skirt_heading: float = 0.0
 var _skirt_valid: bool = false
 var _skirt_search_ms: int = 0
 var _fire_suppressed: bool = false
+
+# Cover recalculation cooldown (ms) — when spotted, recalc at most this often
+const _COVER_RECALC_COOLDOWN_MS: int = 3000
+var _cover_recalc_ms: int = 0
 
 # ============================================================================
 # WEIGHT CONFIGURATION
@@ -77,8 +87,8 @@ func get_target_weights() -> Dictionary:
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.55,
-		range_increase_when_damaged = 0.40,
+		base_range_ratio = 0.65,
+		range_increase_when_damaged = 0.30,
 		min_safe_distance_ratio = 0.40,
 		flank_bias_healthy = 0.6,
 		flank_bias_damaged = 0.2,
@@ -271,12 +281,12 @@ func _safe_validate(ship: Ship, pos: Vector3) -> Vector3:
 # ============================================================================
 
 func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
-	"""Determine the 'safe' direction: toward our spawn, or away from the
-	nearest enemy cluster if spawn is unavailable."""
+	"""Determine the 'safe' direction: toward our spawn from the ship,
+	or away from the nearest enemy cluster if spawn is unavailable."""
 	# Try spawn direction first
 	_initialize_spawn_cache()
 	if _cached_friendly_spawn != Vector3.ZERO:
-		var dir = _cached_friendly_spawn
+		var dir = _cached_friendly_spawn - ship.global_position
 		dir.y = 0.0
 		if dir.length_squared() > 1.0:
 			return dir.normalized()
@@ -313,10 +323,34 @@ func _ensure_safe_dir(ship: Ship, server: GameServer) -> void:
 # ISLAND FINDING — nearest island, position on safe side
 # ============================================================================
 
+func _compute_hide_heading(island_center: Vector3, threats: Array) -> float:
+	"""Average the headings from island_center to each threat, then add PI
+	to get the direction facing away from all enemies.  Uses circular mean
+	so headings near ±PI don't cancel out."""
+	if threats.is_empty():
+		return 0.0
+	var sum_sin = 0.0
+	var sum_cos = 0.0
+	for threat_pos in threats:
+		var to_threat = threat_pos - island_center
+		to_threat.y = 0.0
+		if to_threat.length_squared() < 1.0:
+			continue
+		var h = atan2(to_threat.x, to_threat.z)
+		sum_sin += sin(h)
+		sum_cos += cos(h)
+	if absf(sum_sin) < 0.001 and absf(sum_cos) < 0.001:
+		return 0.0
+	# Average heading toward threats, then flip 180° to get hide heading.
+	return atan2(sum_sin, sum_cos) + PI
+
 func _find_nearest_island(ship: Ship) -> Dictionary:
-	"""Find the best island to move to — prefers islands that put the CA
-	within gun range of enemies over merely close islands.
-	Returns {id, center: Vector3, radius: float} or empty dict."""
+	"""Find the best island to move to.  For each candidate island, computes
+	the hide heading from the averaged enemy bearings + PI, then runs the
+	full cover-position search (multiple angles, outside-in SDF walk,
+	concealment + shootability validation).  Falls back to the simple SDF
+	walk when the full search finds nothing for an island.
+	Returns {id, center: Vector3, radius: float, dest: Vector3} or empty dict."""
 	if not NavigationMapManager.is_map_ready():
 		return {}
 
@@ -326,61 +360,119 @@ func _find_nearest_island(ship: Ship) -> Dictionary:
 
 	var my_pos = ship.global_position
 	var gun_range = ship.artillery_controller.get_params()._range
+	var clearance = _get_ship_clearance()
+	var min_safe_range = gun_range * 0.35
 
-	# Use spotted danger center if available; fall back to any known enemies.
-	var enemy_center = _get_spotted_danger_center()
-	if enemy_center == Vector3.ZERO:
-		enemy_center = _get_danger_center()
-	# Direction toward the enemy — used to prefer islands that push us forward.
-	var toward_enemy = Vector3.ZERO
-	if enemy_center != Vector3.ZERO:
-		toward_enemy = (enemy_center - my_pos)
-		toward_enemy.y = 0.0
-		if toward_enemy.length_squared() > 1.0:
-			toward_enemy = toward_enemy.normalized()
+	# Gather all known enemy positions for hide-heading calculation.
+	var threats = _gather_threat_positions(ship)
+	var server_node: GameServer = ship.get_node_or_null("/root/Server")
+	var targets = server_node.get_valid_targets(ship.team.team_id)
+	var enemy_clusters = server_node.get_enemy_clusters(ship.team.team_id)
 
 	var best_id: int = -1
 	var best_score: float = INF
 	var best_pos: Vector3 = Vector3.ZERO
 	var best_radius: float = 0.0
+	var best_dest: Vector3 = Vector3.ZERO
+	var best_can_shoot: bool = false  # track if best dest was validated shootable
+
+	var nearest_target = Vector3.ZERO
+	if not targets.is_empty():
+		nearest_target = targets[0].global_position
+		for t_ship in targets:
+			var t = t_ship.global_position
+			if t.distance_to(my_pos) < nearest_target.distance_to(my_pos):
+				nearest_target = t
+
+	# islands = islands.filter(func(isl) -> bool:
+	# 	# Filter out islands that are too small to hide behind (radius < clearance)
+	# 	var center = Vector3(isl["center"].x, 0.0, isl["center"].y)
+	# 	var radius = isl["radius"]
+	# 	if center.distance_to(nearest_target) + radius + clearance > gun_range:
+	# 		return false
+	# 	else:
+	# 		return true
+	# )
 
 	for isl in islands:
-		# Skip the island we just abandoned — forces finding a new one
-		if isl["id"] == _abandoned_island_id:
-			continue
 
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
 		var isl_radius: float = isl["radius"]
 		var eff_dist = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
 
-		var score: float = eff_dist
-		if enemy_center != Vector3.ZERO:
-			# How far the island's cover side is from the enemy.
-			# Approximate cover position: island center + away-from-enemy * radius
-			var away = (isl_pos - enemy_center).normalized() if isl_pos.distance_to(enemy_center) > 1.0 else Vector3.ZERO
-			var cover_pos = isl_pos + away * (isl_radius + _get_ship_clearance())
-			var cover_to_enemy = cover_pos.distance_to(enemy_center)
+		# Compute the hide heading from averaged enemy headings + PI.
+		var hide_h: float
+		var hide_dir: Vector3
+		if threats.size() > 0:
+			hide_h = _compute_hide_heading(isl_pos, threats)
+			hide_dir = Vector3(sin(hide_h), 0.0, cos(hide_h))
+		else:
+			hide_dir = _cached_safe_dir
+			hide_h = atan2(hide_dir.x, hide_dir.z)
 
-			# Penalise islands whose cover position is beyond gun range —
-			# we can't shoot from there, so they're far less useful.
-			var range_overshoot = maxf(cover_to_enemy - gun_range, 0.0)
-			score += range_overshoot * 3.0
+		# Try the full cover-position search: multiple angles, outside-in,
+		# concealment + shootability validated.
+		var cover_result = _find_cover_position(ship, isl_pos, isl_radius, hide_h, threats, targets)
 
-			# Bonus for islands that are ahead of us (toward the enemy).
-			# dot > 0 means the island is in the enemy direction.
-			if toward_enemy != Vector3.ZERO:
-				var to_isl = (isl_pos - my_pos)
-				to_isl.y = 0.0
-				var forward_dot = to_isl.normalized().dot(toward_enemy) if to_isl.length_squared() > 1.0 else 0.0
-				# Subtract a bonus (up to 2000) for islands in the forward hemisphere
-				score -= forward_dot * 2000.0
+		# Skip this island entirely if no concealed position was found —
+		# never fall back to an unvalidated position that may be exposed.
+		if cover_result.is_empty():
+			continue
 
-		if score < best_score:
-			best_score = score
-			best_id = isl["id"]
-			best_pos = isl_pos
-			best_radius = isl_radius
+		var dest: Vector3 = cover_result["pos"]
+		var dest_validated_shootable: bool = cover_result["can_shoot"]
+
+		# Find the nearest enemy cluster to this cover destination.
+		var nearest_cluster_center = Vector3.ZERO
+		var nearest_cluster_dist = INF
+		for cluster in enemy_clusters:
+			var d = dest.distance_to(cluster.center)
+			if d < nearest_cluster_dist:
+				nearest_cluster_dist = d
+				nearest_cluster_center = cluster.center
+
+		if nearest_cluster_center != Vector3.ZERO:
+			var dest_to_cluster = nearest_cluster_dist
+
+			# Hard filter: dest must keep the nearest cluster in gun range.
+			if dest_to_cluster > gun_range:
+				continue
+			# Hard filter: don't park suicidally close.
+			if dest_to_cluster < min_safe_range:
+				continue
+
+			# Score against the nearest cluster, not a global average.
+			var pos_params = get_positioning_params()
+			var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+			var desired_range = pos_params.base_range_ratio * gun_range
+			desired_range += pos_params.range_increase_when_damaged * gun_range * (1.0 - hp_ratio)
+			var score: float = eff_dist + absf(dest_to_cluster - desired_range)
+
+			# Strongly prefer islands where the cover search confirmed we can
+			# actually shoot over the terrain — apply a large bonus (negative
+			# penalty) so validated positions beat unvalidated ones.
+			if not dest_validated_shootable:
+				continue
+
+			if score < best_score:
+				best_score = score
+				best_id = isl["id"]
+				best_pos = isl_pos
+				best_radius = isl_radius
+				best_dest = dest
+				best_can_shoot = dest_validated_shootable
+		else:
+			var score = eff_dist
+			if not dest_validated_shootable:
+				score += 5000.0
+			if score < best_score:
+				best_score = score
+				best_id = isl["id"]
+				best_pos = isl_pos
+				best_radius = isl_radius
+				best_dest = dest
+				best_can_shoot = dest_validated_shootable
 
 	if best_id < 0:
 		return {}
@@ -389,95 +481,149 @@ func _find_nearest_island(ship: Ship) -> Dictionary:
 		"id": best_id,
 		"center": best_pos,
 		"radius": best_radius,
+		"dest": best_dest,
+		"can_shoot": best_can_shoot,
 	}
 
-func _compute_island_destination(_ship_unused: Ship, island_center: Vector3, island_radius: float, safe_dir: Vector3) -> Vector3:
-	"""Ray-march from island center along safe_dir to find the actual shore edge,
-	then place the ship just outside with clearance.
-	Result is ship-independent so multiple ships share the same cover zone."""
-	var clearance = _get_ship_clearance()
-
-	if not NavigationMapManager.is_map_ready():
-		var dest = island_center + safe_dir * (island_radius + clearance + 50.0)
-		dest.y = 0.0
-		return dest
-
-	# Ray-march outward from island center along safe_dir
-	var step_size = 25.0
+func _sdf_walk_to_shore(island_center: Vector3, direction: Vector3, island_radius: float, clearance: float) -> Vector3:
+	"""Walk the SDF outward from island_center along direction until we find a
+	point with enough clearance for the ship.  Returns Vector3.ZERO on failure."""
 	var max_dist = island_radius + 500.0
-	var dest = Vector3.ZERO
-
-	var found = false
 	var dist = 0.0
 	while dist < max_dist:
-		var test = island_center + safe_dir * dist
+		var test = island_center + direction * dist
 		test.y = 0.0
 		var sdf = NavigationMapManager.get_distance(test)
 		if sdf >= clearance:
-			dest = test
-			found = true
-			break
+			return test
 		if sdf < 0.0:
-			dist -= min(sdf, -50)
+			dist += maxf(-sdf, 25.0)
 		else:
-			dist += max(clearance, 50)
+			dist += maxf(clearance - sdf, 25.0)
+	return Vector3.ZERO
 
-	if not found:
-		# Fallback: circle approximation
-		dest = island_center + safe_dir * (island_radius + clearance + 50.0)
-		dest.y = 0.0
+func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
+	"""LOS check with clearance buffer — treats islands as slightly larger than
+	the raw SDF to account for imperfect island modelling (off by ~1 cell)."""
+	if not NavigationMapManager.is_map_ready():
+		return false
+	var map = NavigationMapManager.get_map()
+	if map == null:
+		return false
+	var result: Dictionary = map.raycast(
+		Vector2(from_pos.x, from_pos.z),
+		Vector2(to_pos.x, to_pos.z),
+		_COVER_LOS_CLEARANCE
+	)
+	return result["hit"]
 
-	return dest
+func _find_cover_position(_ship_unused: Ship, island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array) -> Dictionary:
+	"""Search for a position around the island that is fully concealed from
+	enemies (flat LOS blocked to ALL threats) and allows shooting over the
+	island at targets (ballistic arc simulation).
+
+	Scans angles inward-out (0° first, ±10°, ±20°, … ±90° last), alternating
+	+/- at each step to avoid biasing one side.  For each angle, walks the SDF
+	center→outward to find the shore position, then checks concealment and
+	shootability.  Returns the first position that passes both checks.
+	Falls back to the best concealed-only position if nothing is shootable.
+	Returns { "pos": Vector3, "can_shoot": bool } or empty dict."""
+	var clearance = _get_ship_clearance()
+	if not NavigationMapManager.is_map_ready():
+		return {}
+	if threats.is_empty() and targets.is_empty():
+		return {}
+
+	var shell_params = _ship.artillery_controller.get_shell_params()
+	var gun_range = _ship.artillery_controller.get_params()._range
+	var threat_count = threats.size()
+
+	# Best concealed-only fallback (hides from all threats but can't shoot).
+	var best_concealed_fallback: Vector3 = Vector3.ZERO
+
+	# Scan angles inward-out (0° first, then ±10°, ±20°, … ±90°).
+	# Prefers the most-concealed position (closest to hide heading) that
+	# can still shoot.  Alternates +/- at each step to avoid side bias.
+	var offset: float = 0.0
+	while offset <= _COVER_ANGLE_HALF_SPAN + 0.001:
+		# Build the 1 or 2 angles to test at this offset.
+		var angles_to_test: Array[float] = []
+		if offset < 0.001:
+			angles_to_test.append(0.0)
+		else:
+			angles_to_test.append(offset)
+			angles_to_test.append(-offset)
+
+		for a_off in angles_to_test:
+			var heading = hide_heading + a_off
+			var dir = Vector3(sin(heading), 0.0, cos(heading))
+			var pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
+			if pos == Vector3.ZERO:
+				continue
+
+			# Quick range sanity — skip if no enemy is within gun range.
+			var any_in_range = false
+			for threat_pos in threats:
+				if pos.distance_to(threat_pos) <= gun_range:
+					any_in_range = true
+					break
+			if not any_in_range:
+				continue
+
+			# --- Concealment: must block LOS to ALL threats ---
+			var hidden_count: int = 0
+			for threat_pos in threats:
+				if _is_los_blocked_with_clearance(pos, threat_pos):
+					hidden_count += 1
+			if hidden_count < threat_count:
+				continue
+
+			# --- Shootability: can we arc shells over the island at any target? ---
+			var can_shoot_any: bool = false
+			if shell_params != null:
+				for t_ship in targets:
+					if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+						continue
+					var target_pos = t_ship.global_position + target_aim_offset(t_ship)
+					if pos.distance_to(target_pos) > gun_range:
+						continue
+					var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(pos, target_pos, shell_params)
+					if sol[0] == null:
+						continue
+					var shoot_result = Gun.sim_can_shoot_over_terrain_static(pos, sol[0], sol[1], shell_params, _ship)
+					if shoot_result.can_shoot_over_terrain:
+						can_shoot_any = true
+						break  # one shootable target is enough
+
+			if can_shoot_any:
+				return { "pos": pos, "can_shoot": true }
+
+			# Fully concealed but can't shoot — remember as fallback.
+			if best_concealed_fallback == Vector3.ZERO:
+				best_concealed_fallback = pos
+
+		offset += _COVER_ANGLE_STEP
+
+	if best_concealed_fallback != Vector3.ZERO:
+		return { "pos": best_concealed_fallback, "can_shoot": false }
+
+	return {}
 
 # ============================================================================
 # TANGENTIAL HEADING — align ship parallel to island shore
 # ============================================================================
 
-func _tangential_heading(ship: Ship, island_center: Vector3, from_pos: Vector3) -> float:
-	"""Compute a heading tangential to the island shore at from_pos using the
-	SDF gradient (actual shore normal) rather than the radial from island center.
+func _tangential_heading(_ship_unused2: Ship, island_center: Vector3, from_pos: Vector3) -> float:
+	"""Compute a heading tangential to the island center from from_pos.
 	Picks whichever tangent (CW or CCW) is closest to the ship's current heading."""
-	if not NavigationMapManager.is_map_ready():
-		# Fallback: radial from island center
-		var to_island = island_center - from_pos
-		to_island.y = 0.0
-		if to_island.length() < 1.0:
-			return _get_ship_heading()
-		var radial = atan2(to_island.x, to_island.z)
-		var cw = _normalize_angle(radial + PI * 0.5)
-		var ccw = _normalize_angle(radial - PI * 0.5)
-		var current = _get_ship_heading()
-		if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
-			return cw
-		return ccw
-
-	# Sample SDF gradient at from_pos to get the shore normal direction
-	var eps = 25.0  # half cell size for finite difference
-	var dx = NavigationMapManager.get_distance(Vector3(from_pos.x + eps, 0.0, from_pos.z)) \
-		   - NavigationMapManager.get_distance(Vector3(from_pos.x - eps, 0.0, from_pos.z))
-	var dz = NavigationMapManager.get_distance(Vector3(from_pos.x, 0.0, from_pos.z + eps)) \
-		   - NavigationMapManager.get_distance(Vector3(from_pos.x, 0.0, from_pos.z - eps))
-
-	# If gradient is near-zero (far from any land), fall back to radial
-	if dx * dx + dz * dz < 0.0001:
-		var to_island = island_center - from_pos
-		to_island.y = 0.0
-		if to_island.length() < 1.0:
-			return _get_ship_heading()
-		var radial = atan2(to_island.x, to_island.z)
-		var cw = _normalize_angle(radial + PI * 0.5)
-		var ccw = _normalize_angle(radial - PI * 0.5)
-		var current = _get_ship_heading()
-		if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
-			return cw
-		return ccw
-
-	# Gradient points away from land (toward open water).
-	# Tangent is perpendicular to gradient: CW = (-dz, dx), CCW = (dz, -dx)
-	var cw = _normalize_angle(atan2(-dz, dx))
-	var ccw = _normalize_angle(atan2(dz, -dx))
+	var to_island = island_center - from_pos
+	to_island.y = 0.0
+	if to_island.length() < 1.0:
+		return _get_ship_heading()
+	var radial = atan2(to_island.x, to_island.z)
+	var cw = _normalize_angle(radial + PI * 0.5)
+	var ccw = _normalize_angle(radial - PI * 0.5)
 	var current = _get_ship_heading()
-
 	if abs(_normalize_angle(cw - current)) <= abs(_normalize_angle(ccw - current)):
 		return cw
 	return ccw
@@ -604,145 +750,6 @@ func _intent_angle(ship: Ship, target: Ship) -> NavIntent:
 	dest = _get_valid_nav_point(dest)
 	return NavIntent.create(dest, heading)
 
-func _try_set_angling_island(ship: Ship, target: Ship) -> bool:
-	"""Find the nearest island reachable within the angling cone, checking
-	both ahead of and behind the ship.  Any island whose disc intersects the
-	allowed cone (i.e. at least one point on the island falls within ±max_angle
-	of the enemy bearing) is a valid candidate."""
-	if target.ship_class == Ship.ShipClass.DD:
-		return false
-	if not NavigationMapManager.is_map_ready():
-		return false
-	var to_enemy = target.global_position - ship.global_position
-	to_enemy.y = 0.0
-	var enemy_dir = to_enemy.normalized()
-	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
-	var max_angle = _get_angle_range(target.ship_class).y
-	# Add a small tolerance so islands whose edge just touches the cone are
-	# not rejected due to floating-point noise.
-	var cone_tolerance = deg_to_rad(5.0)
-	var effective_half_angle = max_angle + cone_tolerance
-	var clearance = _get_ship_clearance()
-	var best_score = INF   # lower = closer, so we want minimum
-	var best_island: Dictionary = {}
-	var best_dest = Vector3.ZERO
-
-	for isl in NavigationMapManager.get_islands():
-		var center = Vector3(isl["center"].x, 0.0, isl["center"].y)
-		var radius: float = isl["radius"]
-		var to_isl = center - ship.global_position
-		to_isl.y = 0.0
-		var dist_to_center = to_isl.length()
-		if dist_to_center < 1.0:
-			continue
-
-		# Angular half-width of this island disc as seen from the ship.
-		# asin is only valid when the island is farther away than its own radius.
-		var angular_half_width: float
-		if dist_to_center > radius:
-			angular_half_width = asin(clampf(radius / dist_to_center, 0.0, 1.0))
-		else:
-			# Ship is inside or right next to the island — treat as fully in-cone.
-			angular_half_width = PI
-
-		# The island intersects the cone if the closest bearing on the disc
-		# to the enemy_bearing is within effective_half_angle.
-		var isl_bearing = atan2(to_isl.x, to_isl.z)
-		var bearing_diff = abs(_normalize_angle(isl_bearing - enemy_bearing))
-		# Closest bearing on the disc edge to the cone centre
-		var min_bearing_diff = maxf(bearing_diff - angular_half_width, 0.0)
-		if min_bearing_diff > effective_half_angle:
-			continue
-
-		# Compute a destination on the side of the island facing away from the
-		# enemy, so it can serve as cover.  The hide point sits just outside the
-		# island on the opposite side from the target.
-		var dest = center - enemy_dir * (radius + clearance + 50.0)
-		dest.y = 0.0
-		if NavigationMapManager.get_distance(dest) < clearance:
-			# Try positioning behind the island relative to the enemy bearing
-			# but offset along the angling heading so we stay in the cone.
-			var current_heading = _get_ship_heading()
-			var alt_dir = Vector3(sin(current_heading), 0.0, cos(current_heading))
-			dest = center - alt_dir * (radius + clearance + 50.0)
-			dest.y = 0.0
-			if NavigationMapManager.get_distance(dest) < clearance:
-				continue
-
-		# Emergency cover — pick the nearest island in the cone so we get
-		# behind something as fast as possible while still angling.
-		var eff_dist = maxf(dist_to_center - radius, 0.0)
-		if eff_dist < best_score:
-			best_score = eff_dist
-			best_island = {"id": isl["id"], "center": center, "radius": radius}
-			best_dest = dest
-
-	if best_island.is_empty():
-		return false
-	_set_island_state(best_island["id"], best_island["center"], best_island["radius"], best_dest)
-	return true
-
-# ============================================================================
-# SKIRTING — move around island to break LOS when spotted
-# ============================================================================
-
-func _find_skirt_position(ship: Ship, server: GameServer) -> Vector3:
-	if not NavigationMapManager.is_map_ready() or _target_island_id < 0:
-		return Vector3.ZERO
-	var threats = _gather_threat_positions(ship)
-	if threats.is_empty():
-		return Vector3.ZERO
-	var threat_center = Vector3.ZERO
-	for t in threats:
-		threat_center += t
-	threat_center /= threats.size()
-	var clearance = _get_ship_clearance()
-	var best_pos = Vector3.ZERO
-	var best_dist = INF
-
-	for i in range(18):  # Every 20 degrees around island
-		var angle = deg_to_rad(i * 20.0)
-		var dir = Vector3(sin(angle), 0.0, cos(angle))
-		# Ray-march from island center to find position at clearance from shore
-		var d = 0.0
-		var max_d = _target_island_radius + 500.0
-		var pos = Vector3.ZERO
-		var found = false
-		while d < max_d:
-			var test = _target_island_pos + dir * d
-			test.y = 0.0
-			var sdf = NavigationMapManager.get_distance(test)
-			if sdf >= clearance and sdf < clearance * 2.0:
-				pos = test
-				found = true
-				break
-			d += max(clearance - sdf, 25.0) if sdf >= 0.0 else -min(sdf, -25.0)
-		if not found:
-			continue
-		if not NavigationMapManager.is_los_blocked(pos, threat_center):
-			continue
-		var dist_to_ship = pos.distance_to(ship.global_position)
-		if dist_to_ship < best_dist:
-			best_dist = dist_to_ship
-			best_pos = pos
-	return best_pos
-
-func _try_skirt(ship: Ship, server: GameServer):
-	if not _skirt_valid or Time.get_ticks_msec() - _skirt_search_ms > 2000:
-		var pos = _find_skirt_position(ship, server)
-		if pos == Vector3.ZERO:
-			_skirt_valid = false
-			return null
-		_skirt_dest = pos
-		_skirt_heading = _tangential_heading(ship, _target_island_pos, pos)
-		_skirt_valid = true
-		_skirt_search_ms = Time.get_ticks_msec()
-	if ship.global_position.distance_to(_skirt_dest) < _get_ship_clearance() * 2.0:
-		return null  # At best position; 2s timer will recheck
-	var intent = NavIntent.create(_skirt_dest, _skirt_heading)
-	intent.near_terrain = true
-	intent.throttle_override = 3
-	return intent
 
 # ============================================================================
 # ISLAND STATE HELPER
@@ -755,10 +762,7 @@ func _set_island_state(id: int, center: Vector3, radius: float, dest: Vector3) -
 	_nav_destination = dest
 	_nav_destination_valid = true
 	_skirt_valid = false
-	# Clear the abandoned-island exclusion now that we've committed to a new one.
-	# This lets us return to it later if the tactical situation changes.
-	if id != _abandoned_island_id:
-		_abandoned_island_id = -1
+
 	if _last_in_range_ms == 0:
 		_last_in_range_ms = Time.get_ticks_msec()
 	_cover_island_center = center
@@ -768,20 +772,29 @@ func _set_island_state(id: int, center: Vector3, radius: float, dest: Vector3) -
 	# _cover_zone_center is intentionally NOT set here — it is always
 	# stamped from the actual NavIntent destination in _stamp_cover_dest().
 
-func _stamp_cover_dest(dest: Vector3) -> void:
-	"""Keep _cover_zone_center in sync with the destination actually navigated to."""
-	_cover_zone_center = dest
-
 # ============================================================================
 # NAVINTENT — Primary entry point (V4 bot controller)
 # ============================================================================
 
 func _make_intent(dest: Vector3, heading: float, arrival_radius: float = 0.0) -> NavIntent:
 	"""Thin wrapper around NavIntent.create that also stamps the cover destination."""
-	_stamp_cover_dest(dest)
+	# _stamp_cover_dest(dest)
 	if arrival_radius > 0.0:
 		return NavIntent.create(dest, heading, arrival_radius)
 	return NavIntent.create(dest, heading)
+
+func _pick_nearest_spotted(ship: Ship, spotted: Array) -> Ship:
+	"""Pick the nearest spotted enemy to use as an angling target."""
+	var best: Ship = null
+	var best_dist: float = INF
+	for enemy in spotted:
+		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
+			continue
+		var d = enemy.global_position.distance_to(ship.global_position)
+		if d < best_dist:
+			best_dist = d
+			best = enemy
+	return best
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_ensure_safe_dir(ship, server)
@@ -823,10 +836,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# Change island after 20s without in-range targets — push up toward the fight.
 	# The old 60s timer left CAs parked at useless islands for too long.
-	# Goes straight to _find_nearest_island (which scores by gun-range proximity)
-	# rather than _try_set_angling_island, which is reserved for mid-transit combat.
 	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > 20000:
-		_abandoned_island_id = _target_island_id
 		_nav_destination_valid = false
 		_skirt_valid = false
 		_fire_suppressed = true
@@ -836,35 +846,68 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if not _nav_destination_valid:
 		var island = _find_nearest_island(ship)
 		if not island.is_empty():
-			var dest = _compute_island_destination(ship, island["center"], island["radius"], _cached_safe_dir)
-			_set_island_state(island["id"], island["center"], island["radius"], dest)
-		elif target:
-			# No island available at all — angle toward target and fight in the open
-			_cover_zone_valid = false
-			return _intent_angle(ship, target)
+			# Use the pre-computed destination from _find_nearest_island — it
+			# was scored and validated using the enemy-aware hide direction, so
+			# the destination is guaranteed to keep targets in gun range.
+			_set_island_state(island["id"], island["center"], island["radius"], island["dest"])
 		else:
+			# No island available — angle toward target and fight in the open.
 			_cover_zone_valid = false
+			var angle_target = target if target else _pick_nearest_spotted(ship, spotted)
+			if angle_target:
+				return _intent_angle(ship, angle_target)
 			return _intent_sail_forward(ship)
 
-	# Spotted en-route to cover — find a nearby angling island so we can
-	# fight while still heading toward cover.  This is the only place
-	# _try_set_angling_island should be called (mid-transit combat).
-	if _nav_destination_valid and not is_in_cover and ship.visible_to_enemy and target:
-		_nav_destination_valid = false
-		_skirt_valid = false
-		_fire_suppressed = false
-		if not _try_set_angling_island(ship, target):
-			_cover_zone_valid = false
-			return _intent_angle(ship, target)
+	# When spotted, recalculate cover position on the current island to find
+	# a spot that restores concealment (and ideally keeps shootability).
+	# Throttled by _COVER_RECALC_COOLDOWN_MS to keep cost bounded.
+	#if ship.visible_to_enemy and _nav_destination_valid:
+	var now_ms = Time.get_ticks_msec()
+	if now_ms - _cover_recalc_ms >= _COVER_RECALC_COOLDOWN_MS:
+		_cover_recalc_ms = now_ms
+		var threats = _gather_threat_positions(ship)
+		var targets_list = server.get_valid_targets(ship.team.team_id)
+		var hide_h: float
+		if threats.size() > 0:
+			hide_h = _compute_hide_heading(_target_island_pos, threats)
+		else:
+			hide_h = atan2(_cached_safe_dir.x, _cached_safe_dir.z)
+		var cover_result = _find_cover_position(ship, _target_island_pos, _target_island_radius, hide_h, threats, targets_list)
+		if not cover_result.is_empty() and cover_result["can_shoot"]:
+			var new_dest: Vector3 = cover_result["pos"]
+			# Accept if meaningfully different from where the ship
+			# actually IS — not from the old nav target.
+			if new_dest.distance_to(ship.global_position) > _get_ship_clearance():
+				_nav_destination = new_dest
+				_skirt_valid = false
+				is_in_cover = false
+		else:
+			# No concealed position exists on this island for the current
+			# threat layout — abandon it and immediately try to pick a new
+			# island rather than falling through to stale approach logic.
+			_nav_destination_valid = false
+			_skirt_valid = false
+			is_in_cover = false
+			var island = _find_nearest_island(ship)
+			if not island.is_empty():
+				_set_island_state(island["id"], island["center"], island["radius"], island["dest"])
+			else:
+				_cover_zone_valid = false
+				var angle_target = target if target else _pick_nearest_spotted(ship, spotted)
+				if angle_target:
+					return _intent_angle(ship, angle_target)
+				return _intent_sail_forward(ship)
 
-	# Skirt around island when spotted in cover or while already skirting
-	if ship.visible_to_enemy and (is_in_cover or _skirt_valid):
-		var skirt = _try_skirt(ship, server)
-		if skirt:
-			_stamp_cover_dest(skirt.target_position)
-			return skirt
-	elif not ship.visible_to_enemy:
-		_skirt_valid = false
+	## Skirt around island when spotted in cover or while already skirting
+	## (fallback if cover recalc didn't reposition us)
+	#if ship.visible_to_enemy and (is_in_cover or _skirt_valid):
+		#var skirt = _try_skirt(ship, server)
+		#if skirt:
+			#_stamp_cover_dest(skirt.target_position)
+			#return skirt
+	#elif not ship.visible_to_enemy:
+		#_skirt_valid = false
+		#_cover_recalc_ms = 0
 
 	# Approach / station-keep
 	var dist_to_dest = ship.global_position.distance_to(_nav_destination)

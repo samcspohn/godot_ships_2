@@ -173,7 +173,8 @@ func _ready() -> void:
 		movement.reverse_speed_ratio,
 		movement.ship_length,
 		movement.ship_beam,
-		movement.turn_speed_loss
+		movement.turn_speed_loss,
+		movement.BASE_DRAG
 	)
 
 	# Initialize behavior
@@ -188,6 +189,10 @@ func _deferred_init() -> void:
 	# Re-check map in case it was built after our _ready
 	if navigator != null and NavigationMapManager.is_map_ready():
 		navigator.set_map(NavigationMapManager.get_map())
+
+	# Pass bot_id to navigator for staggered periodic replanning
+	if navigator != null:
+		navigator.set_bot_id(bot_id)
 
 	# Set initial destination (forward from spawn)
 	destination = _ship.global_position - _ship.global_transform.basis.z * 10000.0

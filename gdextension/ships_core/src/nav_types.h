@@ -120,13 +120,14 @@ struct ShipParams {
 	float ship_length;             // meters
 	float ship_beam;               // meters (width)
 	float turn_speed_loss;         // fraction of speed lost while turning
+	float linear_drag;             // linear drag coefficient
 
 	ShipParams()
 		: turning_circle_radius(300.0f), rudder_response_time(5.0f),
 		  acceleration_time(20.0f), deceleration_time(10.0f),
 		  max_speed(15.0f), reverse_speed_ratio(0.5f),
 		  ship_length(200.0f), ship_beam(25.0f),
-		  turn_speed_loss(0.2f) {}
+		  turn_speed_loss(0.2f), linear_drag(0.3f) {}
 };
 
 // Live ship state (updated every physics frame)

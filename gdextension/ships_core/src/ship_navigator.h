@@ -43,6 +43,21 @@ private:
 	Vector2 emergency_grounding_pos;   // position when emergency mode was entered
 	bool emergency_initialized;        // true once grounding pos has been recorded
 
+	// --- Stuck detection: bow-toward-land oscillation ---
+	// Counts consecutive frames where the desired direction is FORWARD but
+	// avoidance determines that all forward arcs are blocked (reverse chosen).
+	// When this exceeds a threshold we enter emergency mode instead of letting
+	// normal-mode avoidance oscillate between forward and reverse.
+	int fwd_blocked_frames_;
+	static constexpr int FWD_BLOCKED_EMERGENCY_THRESHOLD = 8;
+
+	// --- Bot identity (for staggered replanning) ---
+	int bot_id_;
+
+	// --- Periodic replan ---
+	int replan_frame_counter_;
+	static constexpr int REPLAN_INTERVAL = 20;
+
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
 	int current_wp_index;             // Index into current_path.waypoints
@@ -225,7 +240,8 @@ public:
 		float reverse_speed_ratio,
 		float ship_length,
 		float ship_beam,
-		float turn_speed_loss
+		float turn_speed_loss,
+		float linear_drag
 	);
 
 	// --- Per-frame state update ---
@@ -241,6 +257,9 @@ public:
 	);
 
 	// --- Navigation commands ---
+
+	void set_bot_id(int id);
+	int get_bot_id() const;
 
 	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f);
 	void stop();

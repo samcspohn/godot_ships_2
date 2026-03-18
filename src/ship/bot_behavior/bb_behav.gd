@@ -98,12 +98,12 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				ammo = ShellParams.ShellType.AP
 				offset.y = 0.1
 		Ship.ShipClass.CA:
-			if angle < deg_to_rad(30):
+			if angle < deg_to_rad(15):
 				# AP at angled cruiser bow/stern
-				ammo = ShellParams.ShellType.AP
+				ammo = ShellParams.ShellType.HE
 				offset.z -= _target.movement_controller.ship_length * 0.25
-			elif angle > deg_to_rad(150):
-				ammo = ShellParams.ShellType.AP
+			elif angle > deg_to_rad(180-15):
+				ammo = ShellParams.ShellType.HE
 				offset.z += _target.movement_controller.ship_length * 0.25
 			else:
 				# AP at broadside cruisers waterline
