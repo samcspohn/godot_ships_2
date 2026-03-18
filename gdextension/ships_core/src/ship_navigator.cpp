@@ -990,7 +990,7 @@ void ShipNavigator::update_emergency(float delta) {
 		int exit_throttle = use_reverse ? -1 : 2;
 
 		// Test ahead, port, and starboard — any ONE being fully clear is enough
-		const float exit_rudders[] = { 0.0f, -0.9f, 0.9f };
+		const float exit_rudders[] = { 0.0f, -0.5f, 0.5f };
 		for (float r : exit_rudders) {
 			auto arc = predict_arc_internal(r, exit_throttle, exit_lookahead);
 			float arc_time = arc.empty() ? 0.0f : arc.back().time;

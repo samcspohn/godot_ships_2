@@ -52,7 +52,6 @@ func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.8,      # DDs hunt aggressively
 		cautious_hp_threshold = 0.3,
-		use_island_cover = false,
 	}
 
 # ============================================================================

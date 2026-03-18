@@ -241,7 +241,7 @@ func _send_cover_debug(bot_controller, target_ship: Node, sender_id: int) -> voi
 			cover_data["valid"] = ca._cover_zone_valid
 			cover_data["island_center"] = ca._cover_island_center
 			cover_data["island_radius"] = ca._cover_island_radius
-			cover_data["zone_center"] = ca._cover_zone_center
+			cover_data["zone_center"] = ca._nav_destination
 			cover_data["zone_radius"] = ca._cover_zone_radius
 			cover_data["in_cover"] = ca.is_in_cover
 			cover_data["spotted_in_cover"] = ca.is_in_cover and target_ship is Ship and (target_ship as Ship).visible_to_enemy

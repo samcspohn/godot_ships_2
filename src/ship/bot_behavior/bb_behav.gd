@@ -63,7 +63,6 @@ func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.4,      # Stand off 40% of gun range in front of last known position
 		cautious_hp_threshold = 0.4,    # Only pull back toward friendlies when quite damaged
-		use_island_cover = false,
 	}
 
 # ============================================================================
@@ -225,7 +224,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# --- No enemies at all, or only stale unspotted data: hunt ---
 	if danger_center == Vector3.ZERO or spotted_center == Vector3.ZERO:
 		var team_id = ship.team.team_id
-		
+
 		var forward_fallback: Vector3 = ship.global_position + Vector3.FORWARD * ((-1 if team_id == 0 else 1) * 10_000.0)
 		forward_fallback.y = 0.0
 		var hunt_dest = _get_hunting_position(server, friendly, forward_fallback)
