@@ -51,6 +51,15 @@ private:
 	int fwd_blocked_frames_;
 	static constexpr int FWD_BLOCKED_EMERGENCY_THRESHOLD = 8;
 
+	// --- Stuck detection: destination inside turning circle ---
+	// Counts consecutive frames where the destination is inside the ship's
+	// turning dead zone (within both port and starboard turning circles).
+	// The ship cannot reach such a point by turning alone — it will orbit
+	// indefinitely.  After a threshold we enter emergency mode so the
+	// multi-point-turn / reverse logic can reposition the ship.
+	int turning_circle_stuck_frames_;
+	static constexpr int TURNING_CIRCLE_STUCK_THRESHOLD = 10;
+
 	// --- Bot identity (for staggered replanning) ---
 	int bot_id_;
 
@@ -123,6 +132,7 @@ private:
 		float weight;         // 0..1, threat severity — controls rudder blend and throttle reduction
 		bool torpedo;         // true if primary threat is a torpedo
 		bool reverse;         // true if reversing was chosen as the best avoidance maneuver
+		int ship_throttle;    // throttle override for ship-obstacle avoidance (-2 = no override)
 	};
 
 	// --- Avoidance throttling ---
@@ -167,8 +177,6 @@ private:
 	float check_arc_obstacles(const std::vector<ArcPoint> &arc) const;
 
 	ObstacleCollisionInfo check_arc_obstacles_detailed(const std::vector<ArcPoint> &arc) const;
-
-	bool is_give_way_vessel(const ObstacleCollisionInfo &info) const;
 
 	// --- Steering pipeline helpers ---
 

@@ -1228,6 +1228,14 @@ func _get_cover_position(desired_range: float, target: Ship) -> Dictionary:
 	var best_dest: Vector3 = Vector3.ZERO
 	var best_can_shoot: bool = false
 
+	islands.sort_custom(func(a, b):
+		var center_a = Vector3(a["center"].x, 0.0, a["center"].y)
+		var center_b = Vector3(b["center"].x, 0.0, b["center"].y)
+		var dist_a = my_pos.distance_to(center_a) - a["radius"]
+		var dist_b = my_pos.distance_to(center_b) - b["radius"]
+		return dist_a < dist_b
+	)
+
 	for isl in islands:
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
@@ -1255,8 +1263,11 @@ func _get_cover_position(desired_range: float, target: Ship) -> Dictionary:
 		for cluster in enemy_clusters:
 			var d = dest.distance_to(cluster.center)
 			if d < nearest_cluster_dist:
-				nearest_cluster_dist = d
-				nearest_cluster_center = cluster.center
+				for cluster_ship: Ship in cluster.ships:
+					if cluster_ship.ship_class != Ship.ShipClass.DD or my_pos.distance_to(cluster.center) > desired_range: # override in function, for now for CA, skip dd only clusters since we want to kill them rather than relocate
+						nearest_cluster_dist = d
+						nearest_cluster_center = cluster.center
+						break
 
 		if nearest_cluster_center != Vector3.ZERO:
 			var dest_to_cluster = nearest_cluster_dist
@@ -1266,18 +1277,28 @@ func _get_cover_position(desired_range: float, target: Ship) -> Dictionary:
 			if dest_to_cluster < min_safe_range:
 				continue
 
-			var score: float = eff_dist + absf(dest_to_cluster - desired_range)
+			# var score: float = eff_dist + absf(dest_to_cluster - desired_range) * 0.3
 
 			# if not dest_validated_shootable:
 			# 	continue
+			var score = absf(1.0 - absf(dest_to_cluster / desired_range))
 
-			if score < best_score:
+
+			if score < 0.3:
 				best_score = score
 				best_id = isl["id"]
 				best_pos = isl_pos
 				best_radius = isl_radius
 				best_dest = dest
 				best_can_shoot = dest_validated_shootable
+
+				return {
+					"id": best_id,
+					"center": best_pos,
+					"radius": best_radius,
+					"dest": best_dest,
+					"can_shoot": best_can_shoot,
+				}
 		else:
 			var score = eff_dist
 			if not dest_validated_shootable:

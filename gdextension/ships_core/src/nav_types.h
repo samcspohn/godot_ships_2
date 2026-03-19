@@ -203,48 +203,6 @@ struct ObstacleCollisionInfo {
 		  is_torpedo(false) {}
 };
 
-// Avoidance state — tracks committed avoidance maneuvers to prevent oscillation
-struct AvoidanceState {
-	bool active;               // currently in an avoidance maneuver
-	bool is_give_way;          // true = we must maneuver; false = we hold course (stand-on)
-	int avoid_obstacle_id;     // which obstacle we're avoiding
-	float commit_timer;        // seconds remaining in committed maneuver
-	float committed_rudder;    // rudder value we committed to during avoidance
-
-	static constexpr float COMMIT_DURATION = 4.0f;       // minimum seconds to hold an avoidance maneuver
-	static constexpr float STAND_ON_TTC_THRESHOLD = 3.0f; // stand-on vessel overrides if TTC drops below this
-
-	AvoidanceState()
-		: active(false), is_give_way(false), avoid_obstacle_id(-1),
-		  commit_timer(0.0f), committed_rudder(0.0f) {}
-
-	void begin(bool give_way, int obs_id, float rudder) {
-		active = true;
-		is_give_way = give_way;
-		avoid_obstacle_id = obs_id;
-		commit_timer = COMMIT_DURATION;
-		committed_rudder = rudder;
-	}
-
-	void tick(float delta) {
-		if (active) {
-			commit_timer -= delta;
-			if (commit_timer <= 0.0f) {
-				active = false;
-				commit_timer = 0.0f;
-			}
-		}
-	}
-
-	void clear() {
-		active = false;
-		is_give_way = false;
-		avoid_obstacle_id = -1;
-		commit_timer = 0.0f;
-		committed_rudder = 0.0f;
-	}
-};
-
 // Navigation state machine — simplified two-state design
 enum class NavState {
 	NORMAL    = 0,  // Path following + weighted avoidance blending
