@@ -1569,6 +1569,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	Vector2 prev_pos = sim_pos;
 
 	const float alignment_threshold = 0.087f;
+	bool rudder_settled = false;
 
 	bool aligned = false;
 	while (sim_time < max_time && total_distance < max_arc_distance) {
@@ -1580,6 +1581,10 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 			sim_rudder = move_toward_f(sim_rudder, commanded_rudder, dt / params.rudder_response_time);
 		} else {
 			sim_rudder = commanded_rudder;
+		}
+
+		if (!rudder_settled && std::abs(sim_rudder - commanded_rudder) < 0.01f) {
+			rudder_settled = true;
 		}
 
 		if (target_speed_val > sim_speed) {
@@ -1626,7 +1631,10 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 			next_emit_dist += emit_interval;
 		}
 
-		if (total_distance >= lookahead_distance) {
+		// Check alignment once the rudder has settled to the commanded value.
+		// Before that, the ship is still on its old arc and may momentarily
+		// point at the waypoint — that's a false positive, not real alignment.
+		if (rudder_settled) {
 			Vector2 to_target = target_pos - sim_pos;
 			float dist_to_target = to_target.length();
 			if (dist_to_target > 1.0f) {
