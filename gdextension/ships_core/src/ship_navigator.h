@@ -5,8 +5,6 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
-#include <godot_cpp/variant/string.hpp>
-#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 
 #include <vector>
@@ -84,16 +82,12 @@ private:
 	bool replan_requested_;
 
 	// --- Constants ---
-	static constexpr float PATH_REUSE_ABSOLUTE_THRESHOLD = 500.0f;
-	static constexpr float PATH_REUSE_RELATIVE_FRACTION = 0.15f;
 	static constexpr float HEADING_TOLERANCE = 0.2618f;
-	static constexpr float SPEED_THRESHOLD = 2.0f;
 
 	// --- Steering output ---
 	float out_rudder;
 	int out_throttle;
 	bool out_collision_imminent;
-	float out_time_to_collision;
 
 	// --- Timing instrumentation (microseconds, last frame) ---
 	float timing_update_us;
@@ -102,9 +96,8 @@ private:
 	int timing_replan_reason;  // 0=none, 1=requested, 2=no_path, 3=deviated, 4=ticking
 	int timing_plan_phase_val; // current PlanPhase as int
 
-	// --- Reactive avoidance ---
-	std::vector<ArcPoint> predicted_arc;
-	bool predicted_arc_fresh;  // true if predicted_arc was already set this frame
+	// --- Debug visualization: the actual simulated arc that won scoring ---
+	std::vector<ArcPoint> winning_arc;
 
 	// --- Dynamic obstacles ---
 	std::unordered_map<int, DynamicObstacle> obstacles;
@@ -134,18 +127,16 @@ private:
 	float get_lookahead_distance() const;
 	float get_stopping_distance() const;
 	float throttle_to_speed(int throttle) const;
-	float get_approach_radius() const;
 
 	// --- Arc prediction ---
+	// Both functions emit arc sample points spaced by get_ship_clearance().
 
 	std::vector<ArcPoint> predict_arc_internal(float commanded_rudder, int commanded_throttle,
-											   float lookahead_distance, float max_time = 30.0f) const;
+											   float lookahead_distance) const;
 
 	std::vector<ArcPoint> predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 												 Vector2 target_pos, float lookahead_distance,
-												 float max_time = 60.0f, float dt_scale = 1.0f) const;
-
-	Vector2 get_steer_target() const;
+												 float max_time = 60.0f) const;
 
 	float check_arc_collision(const std::vector<ArcPoint> &arc,
 							  float hard_clearance, float soft_clearance) const;
@@ -181,7 +172,6 @@ private:
 	// --- Path management ---
 
 	void accept_plan_result(const PathResult &forward_result);
-	bool is_destination_shift_small(Vector2 old_target, Vector2 new_target) const;
 
 	// --- Two-state update methods ---
 
@@ -196,8 +186,7 @@ private:
 
 	// --- Steering output helpers ---
 
-	void set_steering_output(float rudder, int throttle, bool collision, float ttc);
-	void update_predicted_arc();
+	void set_steering_output(float rudder, int throttle, bool collision);
 
 protected:
 	static void _bind_methods();
@@ -253,7 +242,6 @@ public:
 	int get_throttle() const;
 	int get_nav_state() const;
 	bool is_collision_imminent() const;
-	float get_time_to_collision() const;
 
 	// --- Dynamic obstacles ---
 
@@ -272,7 +260,6 @@ public:
 
 	float get_desired_heading() const;
 	float get_distance_to_destination() const;
-	String get_debug_info() const;
 
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
@@ -286,13 +273,7 @@ public:
 
 	// --- Backward-compatible API stubs ---
 
-	Dictionary validate_destination_pose(Vector3 ship_position, Vector3 candidate);
 	PackedVector3Array get_simulated_path() const;
-	bool is_simulation_complete() const;
-
-	// --- Kept for BotControllerV4 compat (no-op) ---
-	void set_near_terrain(bool enabled);
-	bool get_near_terrain() const;
 };
 
 } // namespace godot

@@ -1,11 +1,10 @@
 #include "ship_navigator.h"
 
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <cmath>
 #include <algorithm>
-#include <sstream>
+
 #include <chrono>
 
 using namespace godot;
@@ -39,8 +38,7 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance"),
 		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f));
 	ClassDB::bind_method(D_METHOD("stop"), &ShipNavigator::stop);
-	ClassDB::bind_method(D_METHOD("set_near_terrain", "enabled"), &ShipNavigator::set_near_terrain);
-	ClassDB::bind_method(D_METHOD("get_near_terrain"), &ShipNavigator::get_near_terrain);
+
 	ClassDB::bind_method(D_METHOD("set_grounded", "grounded"), &ShipNavigator::set_grounded);
 	ClassDB::bind_method(D_METHOD("get_grounded"), &ShipNavigator::get_grounded);
 
@@ -49,7 +47,7 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_throttle"), &ShipNavigator::get_throttle);
 	ClassDB::bind_method(D_METHOD("get_nav_state"), &ShipNavigator::get_nav_state);
 	ClassDB::bind_method(D_METHOD("is_collision_imminent"), &ShipNavigator::is_collision_imminent);
-	ClassDB::bind_method(D_METHOD("get_time_to_collision"), &ShipNavigator::get_time_to_collision);
+
 
 	// Dynamic obstacles
 	ClassDB::bind_method(D_METHOD("register_obstacle", "id", "position", "velocity", "radius", "length"), &ShipNavigator::register_obstacle);
@@ -65,7 +63,7 @@ void ShipNavigator::_bind_methods() {
 	// Debug
 	ClassDB::bind_method(D_METHOD("get_desired_heading"), &ShipNavigator::get_desired_heading);
 	ClassDB::bind_method(D_METHOD("get_distance_to_destination"), &ShipNavigator::get_distance_to_destination);
-	ClassDB::bind_method(D_METHOD("get_debug_info"), &ShipNavigator::get_debug_info);
+
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
@@ -76,10 +74,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_timing_replan_reason"), &ShipNavigator::get_timing_replan_reason);
 	ClassDB::bind_method(D_METHOD("get_timing_plan_phase"), &ShipNavigator::get_timing_plan_phase);
 
-	// Backward-compatible stubs
-	ClassDB::bind_method(D_METHOD("validate_destination_pose", "ship_position", "candidate"), &ShipNavigator::validate_destination_pose);
+	// Backward-compatible stub
 	ClassDB::bind_method(D_METHOD("get_simulated_path"), &ShipNavigator::get_simulated_path);
-	ClassDB::bind_method(D_METHOD("is_simulation_complete"), &ShipNavigator::is_simulation_complete);
 }
 
 // ============================================================================
@@ -98,8 +94,6 @@ ShipNavigator::ShipNavigator() {
 	out_rudder = 0.0f;
 	out_throttle = 0;
 	out_collision_imminent = false;
-	out_time_to_collision = std::numeric_limits<float>::infinity();
-	predicted_arc_fresh = false;
 	timing_update_us = 0.0f;
 	timing_avoidance_us = 0.0f;
 	timing_plan_us = 0.0f;
@@ -176,16 +170,9 @@ void ShipNavigator::set_state(
 	state.angular_velocity_y = angular_velocity_y;
 	state.current_rudder = current_rudder;
 	state.current_speed = current_speed;
-	predicted_arc_fresh = false;
 
 	// Run state machine
 	update(delta);
-
-	// Update predicted arc for debug visualization
-	// (skipped if compute_avoidance already set it this frame)
-	if (!predicted_arc_fresh) {
-		update_predicted_arc();
-	}
 }
 
 // ============================================================================
@@ -217,15 +204,7 @@ void ShipNavigator::stop() {
 	target.heading = state.heading;
 	target.hold_radius = 0.0f;
 	path_valid = false;
-	set_steering_output(0.0f, 0, false, std::numeric_limits<float>::infinity());
-}
-
-void ShipNavigator::set_near_terrain(bool /*enabled*/) {
-	// No-op — avoidance is always weighted in the new system
-}
-
-bool ShipNavigator::get_near_terrain() const {
-	return false;
+	set_steering_output(0.0f, 0, false);
 }
 
 void ShipNavigator::set_grounded(bool grounded) {
@@ -254,10 +233,6 @@ int ShipNavigator::get_nav_state() const {
 
 bool ShipNavigator::is_collision_imminent() const {
 	return out_collision_imminent;
-}
-
-float ShipNavigator::get_time_to_collision() const {
-	return out_time_to_collision;
 }
 
 // ============================================================================
@@ -305,7 +280,7 @@ PackedVector3Array ShipNavigator::get_current_path() const {
 
 PackedVector3Array ShipNavigator::get_predicted_trajectory() const {
 	PackedVector3Array result;
-	for (const auto &pt : predicted_arc) {
+	for (const auto &pt : winning_arc) {
 		result.push_back(Vector3(pt.position.x, 0.0f, pt.position.y));
 	}
 	return result;
@@ -327,63 +302,12 @@ float ShipNavigator::get_distance_to_destination() const {
 	return state.position.distance_to(target.position);
 }
 
-String ShipNavigator::get_debug_info() const {
-	std::ostringstream oss;
-
-	const char *state_names[] = {"NORMAL", "EMERGENCY"};
-	int si = static_cast<int>(nav_state);
-
-	oss << "state=" << (si >= 0 && si <= 1 ? state_names[si] : "?")
-		<< " rudder=" << out_rudder
-		<< " throttle=" << out_throttle
-		<< " speed=" << state.current_speed
-		<< " dist=" << state.position.distance_to(target.position)
-		<< " grounded=" << grounded_
-		<< " path_valid=" << path_valid
-		<< " wp=" << current_wp_index << "/" << current_path.waypoints.size()
-		<< " collision=" << out_collision_imminent
-		<< " ttc=" << out_time_to_collision;
-
-	return String(oss.str().c_str());
-}
-
 // ============================================================================
-// Backward-compatible API stubs
+// Backward-compatible API stub
 // ============================================================================
-
-Dictionary ShipNavigator::validate_destination_pose(Vector3 ship_position, Vector3 candidate) {
-	Vector2 ship_pos_2d(ship_position.x, ship_position.z);
-	Vector2 cand_2d(candidate.x, candidate.z);
-	float clearance = get_ship_clearance();
-
-	Vector2 safe_pos = cand_2d;
-	bool adjusted = false;
-	float heading = 0.0f;
-
-	if (map.is_valid() && map->is_built()) {
-		safe_pos = map->safe_nav_point(ship_pos_2d, cand_2d, clearance, params.turning_circle_radius);
-		adjusted = safe_pos.distance_to(cand_2d) > 10.0f;
-
-		Vector2 approach = safe_pos - ship_pos_2d;
-		if (approach.length_squared() > 1.0f) {
-			heading = std::atan2(approach.x, approach.y);
-		}
-	}
-
-	Dictionary dict;
-	dict["position"] = Vector3(safe_pos.x, 0.0f, safe_pos.y);
-	dict["heading"] = heading;
-	dict["valid"] = true;
-	dict["adjusted"] = adjusted;
-	return dict;
-}
 
 PackedVector3Array ShipNavigator::get_simulated_path() const {
 	return get_predicted_trajectory();
-}
-
-bool ShipNavigator::is_simulation_complete() const {
-	return true;
 }
 
 // ============================================================================
@@ -429,22 +353,13 @@ float ShipNavigator::get_reach_radius() const {
 	return std::max(base, std::min(turn_factor, speed_factor));
 }
 
-float ShipNavigator::get_approach_radius() const {
-	return std::max(params.turning_circle_radius * 2.0f, get_stopping_distance() * 1.5f);
-}
-
-void ShipNavigator::set_steering_output(float rudder, int throttle, bool collision, float ttc) {
+void ShipNavigator::set_steering_output(float rudder, int throttle, bool collision) {
 	out_rudder = rudder;
 	out_throttle = throttle;
 	out_collision_imminent = collision;
-	out_time_to_collision = ttc;
 }
 
-void ShipNavigator::update_predicted_arc() {
-	// Use shorter lookahead for debug visualization to reduce sim cost
-	float debug_lookahead = std::min(get_lookahead_distance(), params.ship_length * 4.0f);
-	predicted_arc = predict_arc_internal(out_rudder, out_throttle, debug_lookahead);
-}
+
 
 // ============================================================================
 // Two-state machine
@@ -702,8 +617,7 @@ void ShipNavigator::update_normal(float delta) {
 		}
 	}
 
-	set_steering_output(final_rudder, final_throttle, choice.collision_imminent,
-	                    choice.collision_imminent ? 5.0f : std::numeric_limits<float>::infinity());
+	set_steering_output(final_rudder, final_throttle, choice.collision_imminent);
 }
 
 // ============================================================================
@@ -715,7 +629,7 @@ void ShipNavigator::update_emergency(float delta) {
 
 	if (!map.is_valid() || !map->is_built()) {
 		float rudder = (state.angular_velocity_y > 0.0f) ? 1.0f : -1.0f;
-		set_steering_output(rudder, -1, true, 0.0f);
+		set_steering_output(rudder, -1, true);
 		return;
 	}
 
@@ -855,6 +769,7 @@ void ShipNavigator::update_emergency(float delta) {
 			best_min_sdf = min_sdf;
 			best_rudder = candidate_rudder;
 			best_throttle = throttle;
+			winning_arc = std::move(arc);
 		}
 	}
 
@@ -916,7 +831,7 @@ void ShipNavigator::update_emergency(float delta) {
 		}
 	}
 
-	set_steering_output(rudder, throttle, true, 0.0f);
+	set_steering_output(rudder, throttle, true);
 }
 
 // ============================================================================
@@ -1166,15 +1081,17 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	}
 
 	if (terrain_safe && obstacles_safe) {
+		// Cache a short debug arc for visualization even on the fast path
+		float debug_lookahead = std::min(lookahead, params.ship_length * 4.0f);
+		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, debug_lookahead);
 		return result;
 	}
 
 	// --- Torpedo special case: scan for dodge, return immediately ---
 	{
 		auto desired_arc = predict_arc_internal(desired_rudder, desired_throttle, lookahead);
-		// Cache for debug visualisation
-		predicted_arc = desired_arc;
-		predicted_arc_fresh = true;
+		// Cache for debug visualisation (will be overwritten by winning arc below if no torpedo)
+		winning_arc = desired_arc;
 
 		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(desired_arc);
 		if (obs_info.has_collision && obs_info.is_torpedo) {
@@ -1203,6 +1120,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 					if (cand_ttc > best_ttc) {
 						best_ttc = cand_ttc;
 						best_rudder = candidate;
+						winning_arc = std::move(arc);
 						if (best_ttc >= cand_arc_time * 0.95f) break;
 					}
 				}
@@ -1283,8 +1201,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 		// Simulate until heading aligns with waypoint
 		auto arc = predict_arc_to_heading(cand_rudder, cand_throttle, wp_target,
-		                                   sim_lookahead, sim_max_time, 1.0f);
+		                                   sim_lookahead, sim_max_time);
 		if (arc.size() < 2) continue;
+
+		// Early termination: if alignment time already exceeds the best,
+		// this candidate cannot win (travel_time can only add to it).
+		if (arc.back().time >= best_time) continue;
 
 		// --- (a) Terrain safety: disqualify if any point enters hard clearance ---
 		// Truncate the check at the destination: once an arc point reaches the
@@ -1346,6 +1268,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			best_time = total_time;
 			best_rudder = cand_rudder;
 			best_throttle = cand_throttle;
+			winning_arc = std::move(arc);
 		}
 	}
 
@@ -1369,6 +1292,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				least_bad_sdf = min_sdf;
 				best_rudder = candidates[i].rudder;
 				best_throttle = candidates[i].throttle;
+				winning_arc = std::move(arc);
 			}
 		}
 		any_collision = true;
@@ -1490,24 +1414,12 @@ void ShipNavigator::accept_plan_result(const PathResult &forward_result) {
 	}
 }
 
-bool ShipNavigator::is_destination_shift_small(Vector2 old_target, Vector2 new_target) const {
-	float shift = old_target.distance_to(new_target);
-	if (shift < PATH_REUSE_ABSOLUTE_THRESHOLD) return true;
-
-	float remaining = state.position.distance_to(old_target);
-	if (remaining > 100.0f && shift < remaining * PATH_REUSE_RELATIVE_FRACTION) {
-		return true;
-	}
-
-	return false;
-}
-
 // ============================================================================
 // Arc prediction
 // ============================================================================
 
 std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder, int commanded_throttle,
-														   float lookahead_distance, float max_time) const {
+														   float lookahead_distance) const {
 	std::vector<ArcPoint> arc;
 	arc.reserve(64);
 
@@ -1540,13 +1452,13 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 		base_dt * std::max(1.0f, params.rudder_response_time / 4.0f),
 		0.5f
 	);
-	float emit_interval = std::max(lookahead_distance / 50.0f, params.ship_beam * 0.5f);
+	float emit_interval = get_ship_clearance();
 	float next_emit_dist = emit_interval;
 	Vector2 prev_pos = sim_pos;
 
 	float min_expected_speed = std::max(std::abs(state.current_speed), params.max_speed * 0.25f);
 	float time_for_lookahead = lookahead_distance / std::max(min_expected_speed, 1.0f);
-	float effective_max_time = std::max(max_time, time_for_lookahead * 1.2f);
+	float effective_max_time = std::max(30.0f, time_for_lookahead * 1.2f);
 
 	while (total_distance < lookahead_distance && sim_time < effective_max_time) {
 		float dt = integration_dt;
@@ -1619,19 +1531,9 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 	return arc;
 }
 
-Vector2 ShipNavigator::get_steer_target() const {
-	if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size())) {
-		return current_path.waypoints[current_wp_index];
-	}
-	if (target.position.length_squared() > 1.0f) {
-		return target.position;
-	}
-	return Vector2(0.0f, 0.0f);
-}
-
 std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 															Vector2 target_pos, float lookahead_distance,
-															float max_time, float dt_scale) const {
+															float max_time) const {
 	std::vector<ArcPoint> arc;
 	arc.reserve(64);
 
@@ -1657,12 +1559,12 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	float turning_circle_perimeter = 2.0f * Math_PI * params.turning_circle_radius;
 	float max_arc_distance = std::max(lookahead_distance, turning_circle_perimeter);
 
-	const float base_dt = 0.1f * dt_scale;
+	const float base_dt = 0.1f;
 	const float integration_dt = std::min(
 		base_dt * std::max(1.0f, params.rudder_response_time / 4.0f),
-		0.5f * dt_scale
+		0.5f
 	);
-	float emit_interval = std::max(max_arc_distance / 50.0f, params.ship_beam * 0.5f) * dt_scale;
+	float emit_interval = get_ship_clearance();
 	float next_emit_dist = emit_interval;
 	Vector2 prev_pos = sim_pos;
 
