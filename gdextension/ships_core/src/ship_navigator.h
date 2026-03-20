@@ -43,23 +43,6 @@ private:
 	Vector2 emergency_grounding_pos;   // position when emergency mode was entered
 	bool emergency_initialized;        // true once grounding pos has been recorded
 
-	// --- Stuck detection: bow-toward-land oscillation ---
-	// Counts consecutive frames where the desired direction is FORWARD but
-	// avoidance determines that all forward arcs are blocked (reverse chosen).
-	// When this exceeds a threshold we enter emergency mode instead of letting
-	// normal-mode avoidance oscillate between forward and reverse.
-	int fwd_blocked_frames_;
-	static constexpr int FWD_BLOCKED_EMERGENCY_THRESHOLD = 8;
-
-	// --- Stuck detection: destination inside turning circle ---
-	// Counts consecutive frames where the destination is inside the ship's
-	// turning dead zone (within both port and starboard turning circles).
-	// The ship cannot reach such a point by turning alone — it will orbit
-	// indefinitely.  After a threshold we enter emergency mode so the
-	// multi-point-turn / reverse logic can reposition the ship.
-	int turning_circle_stuck_frames_;
-	static constexpr int TURNING_CIRCLE_STUCK_THRESHOLD = 10;
-
 	// --- Bot identity (for staggered replanning) ---
 	int bot_id_;
 
@@ -126,24 +109,17 @@ private:
 	// --- Dynamic obstacles ---
 	std::unordered_map<int, DynamicObstacle> obstacles;
 
-	// --- Avoidance result ---
-	struct AvoidanceResult {
-		float rudder;         // best avoidance rudder
-		float weight;         // 0..1, threat severity — controls rudder blend and throttle reduction
-		bool torpedo;         // true if primary threat is a torpedo
-		bool reverse;         // true if reversing was chosen as the best avoidance maneuver
-		int ship_throttle;    // throttle override for ship-obstacle avoidance (-2 = no override)
+	// --- Steering choice (output of select_best_steering) ---
+	struct SteeringChoice {
+		float rudder;
+		int throttle;
+		bool torpedo_evasion;    // true if evading a torpedo (max throttle override)
+		bool collision_imminent; // true if any threat was detected
 	};
-
-	// --- Avoidance throttling ---
-	int avoidance_frame_counter;        // counts up each frame
-	static constexpr int AVOIDANCE_FULL_INTERVAL = 4;  // full scan every N frames
-	AvoidanceResult cached_avoidance;   // last result for reuse between full scans
-	bool cached_avoidance_valid;
 
 	// --- Parked-ship obstacle filter ---
 	// When true, check_arc_obstacles_detailed skips non-torpedo obstacles.
-	// Set at the start of compute_avoidance when the ship is effectively
+	// Set at the start of select_best_steering when the ship is effectively
 	// stationary (speed < threshold, desired throttle <= 0).  A parked ship
 	// holding position should not dodge approaching friendlies — the moving
 	// ship is the give-way vessel.
@@ -186,7 +162,7 @@ private:
 	int resolve_throttle(DesiredDirection dir, int magnitude) const;
 
 	// --- Simplified avoidance (replaces select_safe_rudder) ---
-	AvoidanceResult compute_avoidance(float desired_rudder, int desired_throttle);
+	SteeringChoice select_best_steering(float desired_rudder, int desired_throttle);
 
 	// --- Waypoint following ---
 
@@ -198,11 +174,6 @@ private:
 
 	// --- Pure pursuit steering ---
 	float compute_pure_pursuit_rudder() const;
-
-	// --- Terrain-aware turn direction selection ---
-	// Simulates both turn directions and picks the one that is clear of terrain
-	// and reaches alignment with the waypoint. Falls back to pure pursuit if both clear.
-	float compute_terrain_aware_rudder() const;
 
 	// --- Direction determination ---
 	bool is_target_behind_within_reverse_zone(Vector2 target_pos) const;
