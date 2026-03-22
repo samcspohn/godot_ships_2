@@ -190,12 +190,25 @@ func calculate_dispersed_launch(
 		# 	_shell_index -= _period
 		# _shell_index += 1.0
 	else:
-		p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
+		p = random_point_in_ellipseV4(1.0, 1.0, h_grouping, v_grouping)
 
 	# angle += 2.7 + randf_range(0.0, 2.0) * sign(randf() - 0.5)
 	# angle += PI / 2 + randf_range(0.0, PI)
 	# angle = fposmod(angle, TAU)
-	angle = randf_range(0, PI) if over_under_toggle else randf_range(PI, TAU)
+	# Angle quality feedback: bias angle toward good axes (0° or 180°) based on quality.
+	# Same logic as rho: high quality -> high exponent -> t biased toward 0 -> angle near good axis.
+	# Low quality -> low exponent -> t biased toward 1 -> angle near bad axis (90°/270°).
+	var angle_feedback_strength = 1.5
+	var angle_exponent = quality_exponent(quality, angle_feedback_strength)
+	var t = pow(randf(), angle_exponent)
+	# t in [0,1]: 0 = good edge (0 or PI), 1 = bad middle (PI/2 or 3PI/2)
+	# Randomly assign to left or right edge of the half-circle for symmetry
+	var half_angle: float
+	if randf() < 0.5:
+		half_angle = t * (PI / 2.0)          # biased toward 0
+	else:
+		half_angle = PI - t * (PI / 2.0)     # biased toward PI
+	angle = half_angle if over_under_toggle else half_angle + PI
 	over_under_toggle = !over_under_toggle
 
 
@@ -205,6 +218,16 @@ func calculate_dispersed_launch(
 	var new_launch_velocity = (launch_velocity.normalized() + (r * p.x + u * p.y) * base_spread) * shell_params.speed
 
 	return new_launch_velocity
+
+## Symmetric quality-to-exponent mapping.
+## Maps quality in [0, 1] to an exponent centered around 1.0:
+##   quality = 0.0 -> exp(-strength) -> exponent < 1 -> biases pow(rand, exp) toward 1 (worse)
+##   quality = 0.5 -> exp(0) = 1.0   -> no bias (neutral)
+##   quality = 1.0 -> exp(+strength) -> exponent > 1 -> biases pow(rand, exp) toward 0 (better)
+## exp(-s) and exp(+s) are perfect reciprocals — equally strong in both directions.
+static func quality_exponent(q: float, strength: float) -> float:
+	var centered = (q - 0.5) * 2.0
+	return exp(centered * strength)
 
 static func random_point_in_ellipseV3(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
 	var rho = randf_range(0.0, 1.0)
@@ -219,23 +242,9 @@ static func random_point_in_ellipseV3(width: float, height: float, h_group: floa
 func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
 	# Quality feedback system: bias rho based on previous shell's quality.
 	# quality is in [0, 1] where 0 = center hit (perfect), 1 = edge hit (worst).
-	# Neutral quality = 0.5 (median rho when uniform), which corresponds to
-	# an average shell distance of pow(0.5, avg_grouping).
 	#
-	# rho_exponent < 1 -> pow(rand, <1) biases rho toward 1 (worse next shot)
-	# rho_exponent = 1 -> uniform rho (no bias, neutral)
-	# rho_exponent > 1 -> pow(rand, >1) biases rho toward 0 (better next shot)
-	#
-	# Mapping: rho_exponent = 2.0 * quality
-	#   quality = 0.0 (perfect)  -> exp ≈ 0   -> next shell strongly biased outward
-	#   quality = 0.5 (average)  -> exp = 1.0  -> next shell uniform (no bias)
-	#   quality = 1.0 (worst)    -> exp > 1    -> next shell biased inward
-	#
-	# feedback_strength amplifies the curve on both sides of the pivot.
-	# pow(1.0, k) = 1.0 always, so the neutral point at quality=0.5 is preserved.
-	#   strength=1 -> linear (original), strength=2 -> quadratic, etc.
-	var feedback_strength = 6.0
-	var rho_exponent = clampf(pow(2.0 * quality, feedback_strength), 1.0e-6, 2.0**feedback_strength)
+	var feedback_strength = 3.0
+	var rho_exponent = quality_exponent(quality, feedback_strength)
 
 	var min_rho = 0.0 if quality > 0.16 else 2 * (0.16 - quality)
 	var max_rho = 1.0 if quality < 0.84 else 1.0 - 2 * (quality - 0.84)
@@ -247,10 +256,14 @@ func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0
 	var x = pow(rho, h_group) * cos(phi) * a
 	var y = pow(rho, v_group) * sin(phi) * b
 
-	# Update quality for next shell: rho represents where this shell landed
-	# (0 = center, 1 = edge), feeding back into the next shot's bias.
-	# quality = rho
-	quality = quality * 0.5 + rho * 0.5
+	# Update quality for next shell: combine distance and angle badness.
+	# rho: 0 = center (perfect), 1 = edge (worst)
+	# abs(sin(phi)): 0 = good axis (0°/180°), 1 = bad axis (90°/270°)
+	var dist_qual = rho
+	var angle_qual = abs(sin(phi))
+	var shell_qual = dist_qual * 0.7 + angle_qual * 0.3
+	const ALPHA = 0.2
+	quality = quality * (1.0 - ALPHA) + shell_qual * ALPHA
 
 	return Vector2(x, y)
 
