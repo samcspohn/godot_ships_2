@@ -524,7 +524,6 @@ void _ProjectileManager::_physics_process(double delta) {
 			continue;
 		}
 
-		p->increment_frame_count();
 
 		double t = (current_time - p->get_start_time());
 		// t = _ProjectileManager::time_warp(t, p->get_params()) * shell_time_multiplier;
@@ -543,6 +542,8 @@ void _ProjectileManager::_physics_process(double delta) {
 			p->get_start_position(), p->get_launch_velocity(), t, shell_params);
 		p->set_position(new_position);
 		ray_query->set_to(p->get_position());
+		p->increment_frame_count();
+
 
 		// Process travel through ArmorInteraction - using cached autoload reference
 		Variant hit_result;
