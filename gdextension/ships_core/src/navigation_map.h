@@ -137,180 +137,56 @@ private:
 	// Must be called after compute_sdf_from_mask. Uses a minimum clearance of 0 (any water cell).
 	void compute_regions();
 
-	// --- Multi-resolution grid for hierarchical pathfinding ---
-	// Dynamic levels: L0 = base grid, each higher level halves dimensions.
-	// Number of levels = floor(log2(max(grid_width, grid_height))) + 1,
-	// so the coarsest level is ~1-2 cells covering the entire map.
-	static constexpr int MR_MAX_LEVELS = 16;  // plenty for any practical map
+	// --- SDF jump helpers for accelerated A* pathfinding ---
+	// The SDF at any cell gives the exact distance to nearest obstacle.
+	// By the triangle inequality, if sdf(A) = d, then every point within
+	// distance d of A is guaranteed to be in open water. This lets us
+	// safely jump multiple grid cells in a single A* expansion step
+	// without any multi-resolution hierarchy.
 
-	struct MRCell { float min_sdf; float max_sdf; };
+	// Compute the maximum safe jump distance (in grid cells) from cell (cx, cz)
+	// along direction (sdx, sdz), given the SDF value at the source cell.
+	// The jump is capped to grid bounds and to not overshoot the goal.
+	inline int sdf_safe_jump(int cx, int cz, int sdx, int sdz,
+							 float sdf_here, float clearance_world,
+							 int goal_x, int goal_z) const {
+		float safe_radius = sdf_here - clearance_world;
+		if (safe_radius <= 0.0f) return 1;
 
-	int mr_levels_ = 0;  // actual number of levels (set by build_multi_resolution_grid)
-	int mr_width_[MR_MAX_LEVELS] = {};
-	int mr_height_[MR_MAX_LEVELS] = {};
-	float mr_cell_size_[MR_MAX_LEVELS] = {};
-	std::vector<MRCell> mr_grid_[MR_MAX_LEVELS];
+		bool is_diag = (sdx != 0 && sdz != 0);
+		float step_world = is_diag ? (cell_size * 1.41421356f) : cell_size;
 
-	void build_multi_resolution_grid();
+		int max_jump = std::max(1, static_cast<int>(safe_radius / step_world));
 
-	// Classify a cell at a given MR level relative to a clearance threshold (world units).
-	// Returns: 1 = fully navigable, 0 = mixed, -1 = fully blocked
-	inline int classify_mr_cell(int mx, int mz, int level, float clearance_world) const {
-		if (level < 0 || level >= mr_levels_) return -1;
-		if (mx < 0 || mx >= mr_width_[level] || mz < 0 || mz >= mr_height_[level]) return -1;
-		const auto &cell = mr_grid_[level][mz * mr_width_[level] + mx];
-		if (cell.min_sdf >= clearance_world) return 1;   // fully navigable
-		if (cell.max_sdf < clearance_world) return -1;   // fully blocked
-		return 0;                                          // mixed
+		// Cap to grid boundaries
+		if (sdx > 0) max_jump = std::min(max_jump, grid_width - 1 - cx);
+		else if (sdx < 0) max_jump = std::min(max_jump, cx);
+		if (sdz > 0) max_jump = std::min(max_jump, grid_height - 1 - cz);
+		else if (sdz < 0) max_jump = std::min(max_jump, cz);
+
+		// Don't overshoot the goal along axes we're moving toward it
+		int goal_dx = goal_x - cx;
+		int goal_dz = goal_z - cz;
+		if (sdx != 0 && sdx * goal_dx > 0)
+			max_jump = std::min(max_jump, std::abs(goal_dx));
+		if (sdz != 0 && sdz * goal_dz > 0)
+			max_jump = std::min(max_jump, std::abs(goal_dz));
+
+		return std::max(max_jump, 1);
 	}
 
-	// Find the highest MR level at which base-grid cell (bx, bz) is fully navigable.
-	// Returns 0 if even the base cell isn't fully navigable at this clearance.
-	inline int find_navigable_mr_level(int bx, int bz, float clearance_world) const {
-		int best = 0;
-		for (int L = mr_levels_ - 1; L >= 1; L--) {
-			int scale = 1 << L;
-			int mx = bx / scale;
-			int mz = bz / scale;
-			int cls = classify_mr_cell(mx, mz, L, clearance_world);
-			if (cls == 1) { best = L; break; }
-			if (cls == -1) break;  // blocked at this level — finer levels won't help
-		}
-		return best;
-	}
-
-	// Check if base-grid cell (nx, nz) is in a fully-blocked coarse cell.
-	// Checks from coarsest to finest, returns true if any level is fully blocked.
-	inline bool is_mr_blocked(int nx, int nz, float clearance_world) const {
-		for (int L = mr_levels_ - 1; L >= 1; L--) {
-			int scale = 1 << L;
-			int mx = nx / scale;
-			int mz = nz / scale;
-			int cls = classify_mr_cell(mx, mz, L, clearance_world);
-			if (cls == -1) return true;   // fully blocked
-			if (cls == 1) return false;   // fully navigable — no need to check finer
-		}
-		return false;
-	}
-
-	// Walk coarse MR cells along direction (sdx, sdz) from base-grid cell (bx, bz)
-	// at the given MR level, returning the max base-grid jump distance where every
-	// coarse cell along the way is fully navigable.  Falls back to sdf_jump if the
-	// MR level is 0 or the very first step leaves the navigable region.
-	//
-	// For diagonal directions this uses a Bresenham-style supercover walk at the
-	// coarse level so that *every* coarse cell the diagonal line passes through is
-	// verified, not just the cells on the diagonal.  Without this, land in an
-	// adjacent coarse cell that the line clips through would be missed.
-	inline int mr_directional_safe_jump(int bx, int bz, int sdx, int sdz,
-										int level, float clearance_world,
-										int sdf_jump, int hard_max) const {
-		if (level <= 0) return sdf_jump;
-
-		int scale = 1 << level;
-
-		// Coarse-cell coords of the starting position
-		int mx = bx / scale;
-		int mz = bz / scale;
-
-		// How far (in base-grid cells) we can guarantee safety.
-		// Begin with the distance to the boundary of the starting coarse cell
-		// (which was already verified navigable by find_navigable_mr_level).
-		int safe_cells;
-		if (sdx != 0 && sdz != 0) {
-			int bnd_x = (sdx > 0) ? ((mx + 1) * scale - 1 - bx) : (bx - mx * scale);
-			int bnd_z = (sdz > 0) ? ((mz + 1) * scale - 1 - bz) : (bz - mz * scale);
-			safe_cells = std::min(bnd_x, bnd_z);
-		} else if (sdx != 0) {
-			safe_cells = (sdx > 0) ? ((mx + 1) * scale - 1 - bx) : (bx - mx * scale);
-		} else {
-			safe_cells = (sdz > 0) ? ((mz + 1) * scale - 1 - bz) : (bz - mz * scale);
-		}
-
-		// Include the SDF-safe radius (we know at least that much is clear)
-		safe_cells = std::max(safe_cells, sdf_jump);
-
-		if (safe_cells >= hard_max) return hard_max;
-
-		// --- Cardinal direction: simple linear walk ---
-		if (sdx == 0 || sdz == 0) {
-			int cmx = (sdx > 0) ? 1 : (sdx < 0) ? -1 : 0;
-			int cmz = (sdz > 0) ? 1 : (sdz < 0) ? -1 : 0;
-			int cur_mx = mx + cmx;
-			int cur_mz = mz + cmz;
-			while (safe_cells < hard_max) {
-				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
-				if (cls != 1) break;
-				safe_cells += scale;
-				cur_mx += cmx;
-				cur_mz += cmz;
-			}
-			return std::min(safe_cells, hard_max);
-		}
-
-		// --- Diagonal direction: supercover Bresenham at the coarse level ---
-		// We need to check every coarse cell that the diagonal base-grid line
-		// passes through — including the cardinal-adjacent cells at corners.
-		// This mirrors the supercover logic in line_of_sight() but operates on
-		// coarse MR coordinates.
-		//
-		// The base-grid line travels equal distances in x and z (slope = ±1),
-		// but offset within the starting coarse cell means the line may cross
-		// the x boundary and z boundary of the current coarse cell at different
-		// times.  We track how far (in base cells) until the next coarse
-		// boundary on each axis and advance whichever is nearer, checking every
-		// coarse cell we enter.
-
-		int cmx = (sdx > 0) ? 1 : -1;
-		int cmz = (sdz > 0) ? 1 : -1;
-
-		// Distance (in base cells) from (bx,bz) to the next coarse boundary on each axis
-		// These are the initial "t" values — how many base-cell steps until we
-		// cross into the next coarse cell on each axis.
-		int dist_to_bnd_x = (sdx > 0) ? ((mx + 1) * scale - bx) : (bx - mx * scale + 1);
-		int dist_to_bnd_z = (sdz > 0) ? ((mz + 1) * scale - bz) : (bz - mz * scale + 1);
-
-		// Current coarse position (start at the origin coarse cell)
-		int cur_mx = mx;
-		int cur_mz = mz;
-
-		// Next crossing distances — updated as we step
-		int next_x = dist_to_bnd_x;  // base cells until next x-boundary
-		int next_z = dist_to_bnd_z;  // base cells until next z-boundary
-
-		while (safe_cells < hard_max) {
-			if (next_x < next_z) {
-				// Cross x-boundary first — enter (cur_mx + cmx, cur_mz)
-				cur_mx += cmx;
-				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
-				if (cls != 1) break;
-				safe_cells = std::max(safe_cells, next_x);
-				next_x += scale;
-			} else if (next_z < next_x) {
-				// Cross z-boundary first — enter (cur_mx, cur_mz + cmz)
-				cur_mz += cmz;
-				int cls = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
-				if (cls != 1) break;
-				safe_cells = std::max(safe_cells, next_z);
-				next_z += scale;
-			} else {
-				// Simultaneous crossing (corner) — must check both cardinal
-				// neighbors AND the diagonal cell (supercover).
-				int cls_x = classify_mr_cell(cur_mx + cmx, cur_mz, level, clearance_world);
-				if (cls_x != 1) break;
-				int cls_z = classify_mr_cell(cur_mx, cur_mz + cmz, level, clearance_world);
-				if (cls_z != 1) break;
-				cur_mx += cmx;
-				cur_mz += cmz;
-				int cls_d = classify_mr_cell(cur_mx, cur_mz, level, clearance_world);
-				if (cls_d != 1) break;
-				safe_cells = std::max(safe_cells, next_x);
-				next_x += scale;
-				next_z += scale;
-			}
-		}
-
-		return std::min(safe_cells, hard_max);
+	// Compute SDF-based proximity cost multiplier.
+	// Cells at or beyond soft_clearance have cost 1.0 (no penalty).
+	// Cells between hard_clearance and soft_clearance get a smooth ramp up to
+	// (1 + penalty_weight), biasing paths toward open water.
+	// Cells at or below hard_clearance are impassable (returns -1).
+	static inline float sdf_proximity_cost(float sdf, float hard_clearance,
+										   float soft_clearance) {
+		if (sdf <= hard_clearance) return -1.0f;  // impassable
+		if (sdf >= soft_clearance) return 1.0f;   // open water, no penalty
+		// Quadratic ramp: 1.0 at soft boundary, peaks at 1+weight at hard boundary
+		float t = (soft_clearance - sdf) / (soft_clearance - hard_clearance);
+		return 1.0f + 4.0f * t * t;  // up to 5x cost at the hard boundary
 	}
 
 	// --- Pathfinding internals ---
@@ -326,7 +202,7 @@ private:
 	}
 
 	// Find the nearest navigable cell to the given grid position
-	bool find_nearest_navigable(int &ix, int &iz, float clearance, int max_search_radius = 20) const;
+	bool find_nearest_navigable(int &ix, int &iz, float clearance) const;
 
 	// Check if two grid cells are in the same navigable region (O(1) reachability test)
 	inline bool same_region(int x0, int z0, int x1, int z1) const {

@@ -270,9 +270,8 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	// Step 4: Compute connected water regions for O(1) reachability checks
 	compute_regions();
 
-	// Step 5: Allocate reusable A* buffers and build coarse grid
+	// Step 5: Allocate reusable A* buffers
 	allocate_astar_buffers();
-	build_multi_resolution_grid();
 
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Build complete. ", islands.size(), " islands detected, ",
@@ -422,9 +421,8 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 	extract_islands(land_mask);
 	compute_regions();
 
-	// Allocate reusable A* buffers and build coarse grid
+	// Allocate reusable A* buffers
 	allocate_astar_buffers();
-	build_multi_resolution_grid();
 
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Raycast build complete. ", islands.size(), " islands detected, ",
@@ -1294,67 +1292,7 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 // Pathfinding (Theta* on SDF grid)
 // ============================================================================
 
-void NavigationMap::build_multi_resolution_grid() {
-	// Compute number of levels: log2(max dimension) + 1, capped at MR_MAX_LEVELS
-	int max_dim = std::max(grid_width, grid_height);
-	mr_levels_ = 1;
-	while ((1 << mr_levels_) < max_dim && mr_levels_ < MR_MAX_LEVELS) {
-		mr_levels_++;
-	}
 
-	UtilityFunctions::print("[NavigationMap] MR grid: ", mr_levels_, " levels, base=",
-		grid_width, "x", grid_height, " (", cell_size, "m), top=",
-		cell_size * (1 << (mr_levels_ - 1)), "m/cell");
-
-	// Level 0: mirrors the base SDF grid (min == max per cell)
-	mr_width_[0] = grid_width;
-	mr_height_[0] = grid_height;
-	mr_cell_size_[0] = cell_size;
-	int total_base = grid_width * grid_height;
-	mr_grid_[0].resize(total_base);
-	for (int i = 0; i < total_base; i++) {
-		mr_grid_[0][i] = {sdf_grid[i], sdf_grid[i]};
-	}
-
-	// Higher levels: each cell aggregates 2x2 children from the level below
-	for (int level = 1; level < mr_levels_; level++) {
-		int prev_w = mr_width_[level - 1];
-		int prev_h = mr_height_[level - 1];
-		mr_width_[level] = (prev_w + 1) / 2;
-		mr_height_[level] = (prev_h + 1) / 2;
-		mr_cell_size_[level] = mr_cell_size_[level - 1] * 2.0f;
-
-		int total = mr_width_[level] * mr_height_[level];
-		mr_grid_[level].resize(total);
-
-		for (int cz = 0; cz < mr_height_[level]; cz++) {
-			for (int cx = 0; cx < mr_width_[level]; cx++) {
-				float min_s = std::numeric_limits<float>::infinity();
-				float max_s = -std::numeric_limits<float>::infinity();
-				for (int dz = 0; dz < 2; dz++) {
-					for (int dx = 0; dx < 2; dx++) {
-						int px = cx * 2 + dx;
-						int pz = cz * 2 + dz;
-						if (px < prev_w && pz < prev_h) {
-							const auto &child = mr_grid_[level - 1][pz * prev_w + px];
-							min_s = std::min(min_s, child.min_sdf);
-							max_s = std::max(max_s, child.max_sdf);
-						}
-					}
-				}
-				mr_grid_[level][cz * mr_width_[level] + cx] = {min_s, max_s};
-			}
-		}
-	}
-
-	// Clear any unused levels from a previous build
-	for (int level = mr_levels_; level < MR_MAX_LEVELS; level++) {
-		mr_width_[level] = 0;
-		mr_height_[level] = 0;
-		mr_cell_size_[level] = 0.0f;
-		mr_grid_[level].clear();
-	}
-}
 
 // ============================================================================
 
@@ -1417,46 +1355,105 @@ bool NavigationMap::line_of_sight(int x0, int z0, int x1, int z1, float clearanc
 	return true;
 }
 
-bool NavigationMap::find_nearest_navigable(int &ix, int &iz, float clearance, int max_search_radius) const {
+bool NavigationMap::find_nearest_navigable(int &ix, int &iz, float clearance) const {
 	if (in_bounds(ix, iz) && get_cell(ix, iz) >= clearance) {
 		return true;  // Already navigable
 	}
 
-	// Follow SDF gradient outward to find nearest navigable cell
-	int cx = ix, cz = iz;
-	for (int step = 0; step < max_search_radius; step++) {
-		float cur_sdf = in_bounds(cx, cz) ? get_cell(cx, cz) : -1000.0f;
+	// Compute SDF gradient at a point using a wider 5x5 weighted kernel for accuracy.
+	// Weights approximate a Gaussian-weighted Sobel to reduce noise.
+	// Returns gradient in grid-cell units pointing toward increasing SDF (open water).
+	auto compute_gradient = [&](int cx, int cz, float &gx, float &gz) {
+		gx = 0.0f;
+		gz = 0.0f;
+		float weight_sum_x = 0.0f;
+		float weight_sum_z = 0.0f;
+		float center_sdf = in_bounds(cx, cz) ? get_cell(cx, cz) : 0.0f;
 
-		// Sample neighbors to find steepest SDF ascent (toward open water)
-		float best_sdf = cur_sdf;
-		int best_x = cx, best_z = cz;
-
-		for (int dx = -1; dx <= 1; dx++) {
-			for (int dz = -1; dz <= 1; dz++) {
+		// 5x5 Gaussian-weighted finite differences (sigma ~1.5)
+		// For each neighbor, compute (sdf_neighbor - sdf_center) / distance,
+		// then project onto x and z axes, weighted by a Gaussian kernel.
+		for (int dx = -2; dx <= 2; dx++) {
+			for (int dz = -2; dz <= 2; dz++) {
 				if (dx == 0 && dz == 0) continue;
 				int nx = cx + dx;
 				int nz = cz + dz;
 				if (!in_bounds(nx, nz)) continue;
-				float sdf = get_cell(nx, nz);
-				if (sdf > best_sdf) {
-					best_sdf = sdf;
-					best_x = nx;
-					best_z = nz;
-				}
+
+				float dist_sq = static_cast<float>(dx * dx + dz * dz);
+				float dist = sqrtf(dist_sq);
+				float w = expf(-dist_sq / 4.5f);  // Gaussian sigma^2 = 2.25
+
+				// Finite difference: rate of change from center to neighbor
+				float diff = (get_cell(nx, nz) - center_sdf) / dist;
+
+				// Project onto axes using unit direction components
+				float ux = static_cast<float>(dx) / dist;
+				float uz = static_cast<float>(dz) / dist;
+				gx += w * diff * ux;
+				gz += w * diff * uz;
+				weight_sum_x += w * ux * ux;  // Accumulate directional weights
+				weight_sum_z += w * uz * uz;
 			}
 		}
 
-		// No progress — stuck in a plateau or local max
-		if (best_x == cx && best_z == cz) break;
+		// Normalize by directional weight sums to get unbiased gradient components
+		if (weight_sum_x > 0.0f) gx /= weight_sum_x;
+		if (weight_sum_z > 0.0f) gz /= weight_sum_z;
+	};
 
-		cx = best_x;
-		cz = best_z;
+	// Jump along the SDF gradient by the deficit distance to reach clearance.
+	// The SDF value tells us how far we are from the boundary; clearance - sdf
+	// tells us how much further we need to go into open water.
+	int cx = ix, cz = iz;
+	const int MAX_ITERATIONS = 16;  // Safety cap on iterations
 
-		if (best_sdf >= clearance) {
+	for (int step = 0; step < MAX_ITERATIONS; step++) {
+		float cur_sdf = in_bounds(cx, cz) ? get_cell(cx, cz) : -1000.0f;
+
+		if (cur_sdf >= clearance) {
 			ix = cx;
 			iz = cz;
 			return true;
 		}
+
+		// Compute gradient pointing toward increasing SDF
+		float gx, gz;
+		compute_gradient(cx, cz, gx, gz);
+
+		float grad_len = sqrtf(gx * gx + gz * gz);
+		if (grad_len < 1e-6f) break;  // No gradient — stuck in flat region
+
+		// Normalize gradient direction
+		float dir_x = gx / grad_len;
+		float dir_z = gz / grad_len;
+
+		// Jump distance: how far along the gradient we need to go.
+		// deficit = clearance - cur_sdf is the distance (in world units / cell_size)
+		// we need to cover. Since SDF gradient magnitude is ~1 for a proper distance
+		// field, jumping by deficit in grid cells should land us near the target.
+		float deficit = clearance - cur_sdf;
+		float jump_dist = fmaxf(1.0f, deficit / grad_len);  // At least 1 cell step
+
+		int new_cx = cx + static_cast<int>(roundf(dir_x * jump_dist));
+		int new_cz = cz + static_cast<int>(roundf(dir_z * jump_dist));
+
+		// Clamp to grid bounds
+		new_cx = std::max(0, std::min(new_cx, grid_width - 1));
+		new_cz = std::max(0, std::min(new_cz, grid_height - 1));
+
+		// No progress — can't move further
+		if (new_cx == cx && new_cz == cz) break;
+
+		cx = new_cx;
+		cz = new_cz;
+	}
+
+	// Final check in case the last jump landed on a navigable cell
+	if (in_bounds(cx, cz) && get_cell(cx, cz) >= clearance) {
+		ix = cx;
+		iz = cz;
+		return true;
 	}
 
 	return false;
@@ -1523,13 +1520,13 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 	search.ez = std::max(0, std::min(search.ez, grid_height - 1));
 
 	// Snap to nearest navigable cells if needed
-	if (!find_nearest_navigable(search.sx, search.sz, search.clearance_world, 30)) {
+	if (!find_nearest_navigable(search.sx, search.sz, search.clearance_world)) {
 		UtilityFunctions::print("[NavigationMap] find_path: start position is not navigable and no nearby navigable cell found");
 		search.complete = true;
 		return true;
 	}
-	if (!find_nearest_navigable(search.ex, search.ez, search.clearance_world, 30)) {
-		UtilityFunctions::print("[NavigationMap] find_path: end position is not navigable and no nearby navigable cell found");
+	if (!find_nearest_navigable(search.ex, search.ez, search.clearance_world)) {
+		UtilityFunctions::print("[NavigationMap] find_path: end position is not navigable and no nearby navigable cell found ex: ", search.ex, " ez: ", search.ez);
 		search.complete = true;
 		return true;
 	}
@@ -1611,6 +1608,13 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
 	int budget = max_iterations;
 
+	// Soft clearance zone: paths within this range of land receive a cost
+	// penalty that ramps up as sdf approaches hard clearance.  Paths beyond
+	// soft_clearance are at base cost (1.0).
+	const float hard_clearance = search.clearance_world;
+	const float soft_clearance = hard_clearance * 3.0f;
+	const float proximity_weight = 4.0f; // peak penalty multiplier at hard boundary
+
 	while (!search.open_set.empty() && search.iterations < search.max_iterations && budget > 0) {
 		budget--;
 		search.iterations++;
@@ -1631,10 +1635,11 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 		float cg = search.g_cost[ci];
 
 		float sdf_here = get_cell(cx, cz);
-		float safe_dist = sdf_here - search.clearance_world;
 
-		// MR-accelerated 8-direction A*
-		int nav_level = find_navigable_mr_level(cx, cz, search.clearance_world);
+		// SDF sphere-trace jump: the SDF guarantees that every point within
+		// (sdf_here - clearance) of this cell is in navigable water.  We can
+		// safely jump that many world-units in any direction.
+		float safe_radius = sdf_here - hard_clearance;
 
 		// Distance to goal in grid cells (for capping jumps)
 		int goal_dx = search.ex - cx;
@@ -1644,10 +1649,11 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 			bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
 
 			float step_world = is_diag ? (search.cell_size * 1.414f) : search.cell_size;
-			// SDF-safe jump: within the safe radius we are guaranteed no obstacles
-			int sdf_jump = std::max(static_cast<int>(safe_dist / step_world), 1);
 
-			// Hard cap from grid boundaries and goal distance
+			// Max cells we can jump along this direction within the SDF safe sphere
+			int sdf_max_jump = std::max(static_cast<int>(safe_radius / step_world), 1);
+
+			// Hard cap from grid boundaries and don't overshoot the goal
 			int hard_max = std::numeric_limits<int>::max();
 			if (dx8[d] != 0) {
 				int max_x = (dx8[d] > 0) ? (search.grid_width - 1 - cx) : cx;
@@ -1665,18 +1671,19 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 			}
 			if (hard_max <= 0) continue;
 
-			// Compute the max safe jump by walking coarse MR cells along this
-			// direction.  Within the SDF radius we're guaranteed safe; beyond
-			// that, each fully-navigable coarse cell extends the safe range by
-			// `scale` base cells.  No per-cell LOS check needed.
-			int max_jump = mr_directional_safe_jump(
-				cx, cz, dx8[d], dz8[d],
-				nav_level, search.clearance_world,
-				sdf_jump, hard_max);
+			int max_jump = std::min(sdf_max_jump, hard_max);
 
-			// Try both the large MR jump and step=1 to ensure fine-grained progress
-			int jumps[] = { max_jump, 1 };
-			int n_jumps = (max_jump > 1) ? 2 : 1;
+			// Try the full SDF jump, half-jump (for intermediate stepping
+			// stones), and step-1 for fine-grained progress near terrain.
+			// Deduplicate so we don't evaluate the same cell twice.
+			int half_jump = max_jump / 2;
+			int jumps[3];
+			int n_jumps = 0;
+			jumps[n_jumps++] = max_jump;
+			if (half_jump > 0 && half_jump != max_jump)
+				jumps[n_jumps++] = half_jump;
+			if (max_jump > 1)
+				jumps[n_jumps++] = 1;
 
 			for (int ji = 0; ji < n_jumps; ji++) {
 				int jump = jumps[ji];
@@ -1686,19 +1693,28 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				int nidx = cell_idx(nx, nz);
 				if (search.closed_gen[nidx] == search.current_gen) continue;
 
-				if (is_mr_blocked(nx, nz, search.clearance_world)) continue;
-
 				float landing_sdf = get_cell(nx, nz);
-				if (landing_sdf < search.clearance_world) continue;
+				if (landing_sdf < hard_clearance) continue;
 
 				// Single-step diagonal: check corner-cutting
 				if (jump == 1 && is_diag) {
-					if (get_cell(cx + dx8[d], cz) < search.clearance_world) continue;
-					if (get_cell(cx, cz + dz8[d]) < search.clearance_world) continue;
+					if (get_cell(cx + dx8[d], cz) < hard_clearance) continue;
+					if (get_cell(cx, cz + dz8[d]) < hard_clearance) continue;
 				}
 
+				// Base step distance in grid-cell units
 				float step_dist = is_diag ? (jump * 1.414f) : static_cast<float>(jump);
-				float new_g = cg + step_dist;
+
+				// SDF proximity penalty: cost ramps up as landing cell
+				// approaches the hard clearance boundary.
+				float penalty = 1.0f;
+				if (landing_sdf < soft_clearance) {
+					float t = (soft_clearance - landing_sdf)
+							/ (soft_clearance - hard_clearance);
+					penalty = 1.0f + proximity_weight * t * t;
+				}
+
+				float new_g = cg + step_dist * penalty;
 
 				bool is_better = (search.open_gen[nidx] != search.current_gen)
 								 || (new_g < search.g_cost[nidx]);
