@@ -1,2 +1,10 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
 *_armor.json filter=lfs diff=lfs merge=lfs -text
+
+# Normalize Godot-generated files to LF to prevent cross-platform churn
+*.import eol=lf
+*.tres eol=lf
+*.tscn eol=lf
+*.godot eol=lf
+*.cfg eol=lf
+*.gdextension eol=lf
