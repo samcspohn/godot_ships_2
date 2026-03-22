@@ -1095,39 +1095,105 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(desired_arc);
 		if (obs_info.has_collision && obs_info.is_torpedo) {
-			// Compute perpendicular dodge bias
-			float dodge_bias = 0.0f;
+			// --- Torpedo evasion: minimize profile by turning bow-on or stern-on ---
+			// The goal is to present the smallest cross-section to incoming torpedoes.
+			// We compute headings that point bow directly into or away from the torpedo
+			// travel direction, then also consider perpendicular dodges as fallback.
+
 			Vector2 torpedo_dir = obs_info.obstacle_velocity;
 			float torp_speed = torpedo_dir.length();
+			Vector2 torp_unit = (torp_speed > 1.0f) ? torpedo_dir / torp_speed : Vector2(0, 0);
+
+			// Compute perpendicular dodge bias (which side of the torp track are we on?)
+			float dodge_bias = 0.0f;
 			if (torp_speed > 1.0f) {
-				torpedo_dir /= torp_speed;
 				Vector2 ship_side = state.position - obs_info.obstacle_position;
-				float cross = torpedo_dir.x * ship_side.y - torpedo_dir.y * ship_side.x;
+				float cross = torp_unit.x * ship_side.y - torp_unit.y * ship_side.x;
 				dodge_bias = (cross >= 0.0f) ? -1.0f : 1.0f;
 			}
 
-			// Scan rudder candidates for best torpedo dodge
-			float best_ttc = obs_info.time_to_collision;
-			float best_rudder = desired_rudder;
-			const float mag_steps[] = { 0.3f, 0.6f, 1.0f, 1.5f, 2.0f };
-			for (int i = 0; i < 5; ++i) {
-				float offsets[2] = { mag_steps[i] * dodge_bias, -mag_steps[i] * dodge_bias };
-				for (int j = 0; j < 2; ++j) {
-					float candidate = clamp_f(desired_rudder + offsets[j], -1.0f, 1.0f);
-					auto arc = predict_arc_internal(candidate, std::max(desired_throttle, 4), lookahead);
-					float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
-					float cand_ttc = check_arc_obstacles(arc);
-					if (cand_ttc > best_ttc) {
-						best_ttc = cand_ttc;
-						best_rudder = candidate;
-						winning_arc = std::move(arc);
-						if (best_ttc >= cand_arc_time * 0.95f) break;
-					}
+			// Build candidate rudder list: profile-minimizing headings + dodge offsets
+			struct TorpCandidate {
+				float rudder;
+				int throttle;
+			};
+			TorpCandidate torp_candidates[16];
+			int n_torp_cand = 0;
+
+			auto add_torp_cand = [&](float r, int t) {
+				r = clamp_f(r, -1.0f, 1.0f);
+				for (int k = 0; k < n_torp_cand; ++k) {
+					if (std::abs(torp_candidates[k].rudder - r) < 0.05f && torp_candidates[k].throttle == t) return;
 				}
-				if (best_ttc >= (desired_arc.empty() ? 0.0f : desired_arc.back().time) * 0.95f) break;
+				if (n_torp_cand < 16) torp_candidates[n_torp_cand++] = { r, t };
+			};
+
+			int torp_throttle = std::max(desired_throttle, 4);
+
+			// Profile-minimizing candidates: turn bow into or away from torpedo direction
+			if (torp_speed > 1.0f) {
+				// Heading that points bow directly into the torpedo (facing the torpedo source)
+				float bow_into_heading = std::atan2(-torp_unit.x, -torp_unit.y);
+				float rudder_bow_into = compute_rudder_to_heading(bow_into_heading, false);
+				add_torp_cand(rudder_bow_into, torp_throttle);
+
+				// Heading that points bow away from the torpedo (same direction as torp travel)
+				float bow_away_heading = std::atan2(torp_unit.x, torp_unit.y);
+				float rudder_bow_away = compute_rudder_to_heading(bow_away_heading, false);
+				add_torp_cand(rudder_bow_away, torp_throttle);
 			}
 
-			return { best_rudder, std::max(desired_throttle, 4), true, true };
+			// Perpendicular dodge candidates (try to squeeze between torps)
+			const float mag_steps[] = { 0.3f, 0.6f, 1.0f, 1.5f, 2.0f };
+			for (int i = 0; i < 5; ++i) {
+				add_torp_cand(desired_rudder + mag_steps[i] * dodge_bias, torp_throttle);
+				add_torp_cand(desired_rudder - mag_steps[i] * dodge_bias, torp_throttle);
+			}
+
+			// Also add hard rudder candidates
+			add_torp_cand(-1.0f, torp_throttle);
+			add_torp_cand(1.0f, torp_throttle);
+
+			// Score candidates: prefer no collision, then best TTC, then smallest profile
+			float best_ttc = obs_info.time_to_collision;
+			float best_rudder = desired_rudder;
+			float best_profile_score = std::numeric_limits<float>::infinity();
+			float desired_arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
+
+			for (int i = 0; i < n_torp_cand; ++i) {
+				auto arc = predict_arc_internal(torp_candidates[i].rudder, torp_candidates[i].throttle, lookahead);
+				float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
+				float cand_ttc = check_arc_obstacles(arc);
+
+				// Profile score: how broadside is the arc endpoint to the torpedo direction?
+				// 0 = perfectly bow/stern-on (ideal), 1 = fully broadside (worst)
+				float profile_score = 1.0f;
+				if (!arc.empty() && torp_speed > 1.0f) {
+					float end_fwd_x = std::sin(arc.back().heading);
+					float end_fwd_z = std::cos(arc.back().heading);
+					// dot with torp direction: |dot|=1 means bow/stern-on, 0 means broadside
+					float alignment = std::abs(end_fwd_x * torp_unit.x + end_fwd_z * torp_unit.y);
+					profile_score = 1.0f - alignment;  // 0=best, 1=worst
+				}
+
+				// Primary: maximize TTC. Secondary: minimize profile (break ties).
+				bool is_better = false;
+				if (cand_ttc > best_ttc + 0.5f) {
+					is_better = true;  // significantly better TTC always wins
+				} else if (cand_ttc > best_ttc - 0.5f && profile_score < best_profile_score - 0.1f) {
+					is_better = true;  // similar TTC but much better profile
+				}
+
+				if (is_better) {
+					best_ttc = cand_ttc;
+					best_rudder = torp_candidates[i].rudder;
+					best_profile_score = profile_score;
+					winning_arc = std::move(arc);
+					if (best_ttc >= cand_arc_time * 0.95f) break;
+				}
+			}
+
+			return { best_rudder, torp_throttle, true, true };
 		}
 	}
 
@@ -1195,6 +1261,14 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	int best_throttle = desired_throttle;
 	bool any_collision = false;
 
+	// --- Minimum obstacle-check distance ---
+	// When the ship is already aligned with the waypoint, predict_arc_to_heading
+	// terminates very early.  This means the arc may be too short to detect
+	// obstacles (ships) in the path.  We ensure obstacle checks always cover
+	// at least the lookahead distance by running a separate full-length arc
+	// when the heading-aligned arc is too short.
+	float min_obstacle_check_dist = lookahead;
+
 	for (int i = 0; i < n_candidates; ++i) {
 		float cand_rudder = candidates[i].rudder;
 		int cand_throttle = candidates[i].throttle;
@@ -1248,8 +1322,26 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			total_time = alignment_time + travel_time;
 		}
 
-		// --- (d) Obstacle check: double total time if hitter collision ---
-		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(arc);
+		// --- (c) Obstacle check with minimum arc coverage ---
+		// The heading-aligned arc may be very short if the ship is already
+		// pointing at the waypoint.  For obstacle detection we need coverage
+		// out to at least the lookahead distance.  If the arc is too short,
+		// run a full-length arc for obstacle checking only.
+		ObstacleCollisionInfo obs_info;
+		{
+			float arc_dist = 0.0f;
+			if (arc.size() >= 2) {
+				arc_dist = arc.front().position.distance_to(arc.back().position);
+			}
+			if (arc_dist < min_obstacle_check_dist && !obstacles_safe) {
+				// Arc too short for reliable obstacle detection — use full-length arc
+				auto extended_arc = predict_arc_internal(cand_rudder, cand_throttle, min_obstacle_check_dist);
+				obs_info = check_arc_obstacles_detailed(extended_arc);
+			} else {
+				obs_info = check_arc_obstacles_detailed(arc);
+			}
+		}
+
 		if (obs_info.has_collision && !obs_info.is_torpedo) {
 			Vector2 to_obs = obs_info.obstacle_position - state.position;
 			float to_obs_len = to_obs.length();
