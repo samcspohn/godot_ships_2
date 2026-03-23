@@ -376,23 +376,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _cover_recalc_ms >= _COVER_RECALC_COOLDOWN_MS:
 		_cover_recalc_ms = now_ms
-		# var threats = _gather_threat_positions(ship)
-		# var targets_list = server.get_valid_targets(ship.team.team_id)
-		# var hide_h: float
-		# if threats.size() > 0:
-		# 	hide_h = _compute_hide_heading(_target_island_pos, threats)
-		# else:
-		# 	hide_h = atan2(_cached_safe_dir.x, _cached_safe_dir.z)
-		# var cover_result = _find_cover_position_on_island(_target_island_pos, _target_island_radius, hide_h, threats, targets_list)
-		# if not cover_result.is_empty() and cover_result["can_shoot"]:
-		# 	var new_dest: Vector3 = cover_result["pos"]
-		# 	if new_dest.distance_to(ship.global_position) > _get_ship_clearance():
-		# 		_nav_destination = new_dest
-		# 		is_in_cover = false
-		# else:
-		# 	# No concealed position exists on this island — pick a new one.
-		# 	_nav_destination_valid = false
-		# 	is_in_cover = false
 		var gun_range = _ship.artillery_controller.get_params()._range
 		var pos_params = get_positioning_params()
 		var cover_desired_range = gun_range * pos_params.base_range_ratio
