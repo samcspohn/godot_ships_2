@@ -24,6 +24,8 @@ func _physics_process(delta: float) -> void:
 	if blooms.size() == 0:
 		bloom_value = 0.0
 		bloom_radius = params.p().radius
+		if _ship.visible_to_enemy:
+			last_spotted_time = Time.get_ticks_msec() / 1000.0
 		prev_visible = _ship.visible_to_enemy
 		return
 

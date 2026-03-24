@@ -14,6 +14,16 @@ const MIN_SAFE_ANGLE_FROM_THREAT: float = PI / 3.0
 # Broadside heading preference (degrees offset from pure perpendicular)
 const BROADSIDE_ANGLE_OFFSET: float = 15.0  # slight bow-in for angling
 
+# Skills
+var _skill_hunt: SkillHunt = SkillHunt.new()
+var _skill_chase: SkillChase = SkillChase.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
+var _skill_kite: SkillKite = SkillKite.new()
+var _skill_camp: SkillCamp = SkillCamp.new()
+var _skill_flank: SkillFlank = SkillFlank.new()
+var _skill_cover: SkillFindCover = SkillFindCover.new()
+var _skill_spread: SkillSpread = SkillSpread.new()
+
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
@@ -64,6 +74,9 @@ func get_hunting_params() -> Dictionary:
 		approach_multiplier = 0.4,      # Stand off 40% of gun range in front of last known position
 		cautious_hp_threshold = 0.4,    # Only pull back toward friendlies when quite damaged
 	}
+
+func _roll_flank_depth() -> float:
+	return randf_range(0.1, 0.3)
 
 # ============================================================================
 # AMMO AND AIM - Class-specific targeting logic
@@ -212,55 +225,115 @@ func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagem
 # ============================================================================
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
-	"""BB always returns POSE with safe heading for navigation."""
-	var friendly = server.get_team_ships(ship.team.team_id)
-	var _enemy = server.get_valid_targets(ship.team.team_id)
+	var ctx = SkillContext.create(ship, target, server, self)
+	var delta = 1.0 / Engine.physics_ticks_per_second
+	_init_flank_identity(ship, server)
 
-	# Use spotted-only danger center so stale unspotted positions don't
-	# anchor the BB far from the actual fight.
-	var spotted_center = _get_spotted_danger_center()
-	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
-
-	# --- No enemies at all, or only stale unspotted data: hunt ---
-	if danger_center == Vector3.ZERO or spotted_center == Vector3.ZERO:
-		var team_id = ship.team.team_id
-
-		var forward_fallback: Vector3 = ship.global_position + Vector3.FORWARD * ((-1 if team_id == 0 else 1) * 10_000.0)
-		forward_fallback.y = 0.0
-		var hunt_dest = _get_hunting_position(server, friendly, forward_fallback)
-		if hunt_dest == Vector3.ZERO:
-			var fallback = _get_valid_nav_point(forward_fallback)
-			return NavIntent.create(fallback, _calc_approach_heading(ship, fallback))
-		return NavIntent.create(hunt_dest, _calc_approach_heading(ship, hunt_dest))
-
-	# --- Engagement: calculate tactical position with arc movement ---
-	var gun_range = ship.artillery_controller.get_params()._range
+	var spotted = server.get_valid_targets(ship.team.team_id)
+	var has_spotted = spotted.size() > 0
+	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
+	var has_enemies = has_spotted or not unspotted.is_empty()
 	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+
+	# --- Tactical state transitions ---
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			if has_spotted:
+				_tactical_state = TacticalState.State.ENGAGED
+		TacticalState.State.ENGAGED:
+			if not has_enemies:
+				_tactical_state = TacticalState.State.HUNTING
+			elif hp_ratio < 0.2 and ship.visible_to_enemy:
+				_tactical_state = TacticalState.State.DISENGAGING
+				_bloom_probe.enter()
+		TacticalState.State.DISENGAGING:
+			_bloom_probe.update(ship, delta)
+			if _bloom_probe.went_dark:
+				_tactical_state = TacticalState.State.SNEAKING
+			elif _bloom_probe.probe_failed:
+				_tactical_state = TacticalState.State.ENGAGED
+			if hp_ratio > 0.35:
+				_tactical_state = TacticalState.State.ENGAGED
+		TacticalState.State.SNEAKING:
+			if ship.visible_to_enemy or has_spotted:
+				_tactical_state = TacticalState.State.ENGAGED
+
+	# --- Execute skill based on state ---
+	var _prev_skill_name = _active_skill_name
+	var intent: NavIntent = null
 	var params = get_positioning_params()
+	var broadside_params = {
+		"engagement_range_ratio": params.base_range_ratio,
+		"range_increase_when_damaged": params.range_increase_when_damaged,
+		"min_safe_distance_ratio": params.min_safe_distance_ratio,
+		"flank_bias_healthy": params.flank_bias_healthy,
+		"flank_bias_damaged": params.flank_bias_damaged,
+		"bow_in_offset_deg": BROADSIDE_ANGLE_OFFSET,
+	}
 
-	var range_increase = clamp((1.0 - hp_ratio) * params.range_increase_when_damaged, 0.0, params.range_increase_when_damaged)
-	var engagement_range = (params.base_range_ratio + range_increase) * gun_range
-	var min_safe_distance = gun_range * params.min_safe_distance_ratio
-	var flank_bias = lerp(params.flank_bias_healthy, params.flank_bias_damaged, 1.0 - hp_ratio)
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+		TacticalState.State.SNEAKING:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75})
+			if intent:
+				_active_skill_name = &"Kite"
+		TacticalState.State.ENGAGED:
+			intent = _execute_bb_engaged_skill(ctx, broadside_params)
+		TacticalState.State.DISENGAGING:
+			var desired_range_ratio = 0.7 + (1.0 - hp_ratio) * 0.6
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": clampf(desired_range_ratio, 0.0, 1.01), "pull_toward_friendly_weight": 0.4})
+			if intent:
+				_active_skill_name = &"Kite"
 
-	var desired_position = _calculate_tactical_position(engagement_range, min_safe_distance, flank_bias)
-	desired_position = _apply_arc_movement(desired_position, danger_center, engagement_range, server)
-	desired_position += _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
-	desired_position = _get_valid_nav_point(desired_position)
+	# Fallback
+	if intent == null:
+		intent = _skill_broadside.execute(ctx, broadside_params)
+		if intent:
+			_active_skill_name = &"Broadside"
+	if intent == null:
+		var fwd = ship.global_position - ship.basis.z * 10000
+		fwd.y = 0.0
+		intent = NavIntent.create(_get_valid_nav_point(fwd), _calc_approach_heading(ship, fwd))
+		_active_skill_name = &"SailForward"
 
-	# --- Calculate broadside heading ---
-	var broadside_heading = _calculate_broadside_heading(target, danger_center, desired_position)
+	# Reset camp lock when switching away from Camp
+	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
+		_skill_camp.reset()
 
-	# --- Check if evasion heading should override ---
-	if ship.visible_to_enemy and target != null:
-		var heading_info = get_desired_heading(target, _get_ship_heading(), 0.0, desired_position)
-		if heading_info.get("use_evasion", false):
-			# Blend evasion with broadside: evasion takes priority but keep broadside influence
-			var evasion_heading: float = heading_info.heading
-			var blended = _normalize_angle(evasion_heading * 0.6 + broadside_heading * 0.4)
-			return NavIntent.create(desired_position, blended)
+	# Post-process spread
+	intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
+	return intent
 
-	return NavIntent.create(desired_position, broadside_heading)
+func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) -> NavIntent:
+	var hp_ratio = ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp
+	var intent: NavIntent = null
+
+	# Very damaged: seek cover if available
+	if hp_ratio < 0.2:
+		intent = _skill_cover.execute(ctx, {"desired_range": ctx.ship.artillery_controller.get_params()._range * 0.7})
+		if intent != null:
+			_active_skill_name = &"FindCover"
+			return intent
+
+	# Damaged: kite
+	if hp_ratio < 0.4:
+		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.7, "pull_toward_friendly_weight": 0.3})
+		if intent:
+			_active_skill_name = &"Kite"
+		return intent
+
+	# Healthy: camp or broadside
+	intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.6})
+	if intent == null:
+		# Camp returned null (too focused), fall back to broadside
+		intent = _skill_broadside.execute(ctx, broadside_params)
+		if intent:
+			_active_skill_name = &"Broadside"
+	else:
+		_active_skill_name = &"Camp"
+	return intent
 
 
 ## Compute approach heading from ship to destination

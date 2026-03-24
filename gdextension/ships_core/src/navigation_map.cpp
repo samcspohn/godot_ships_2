@@ -1503,10 +1503,17 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 	search.clearance = clearance * 1.5f;
 	search.clearance_world = clearance * 1.5f;
 
+	// Clamp world coordinates to map bounds so that off-map points project to
+	// the nearest edge rather than landing on a far corner after grid clamping.
+	float from_x = from.x, from_z = from.y;
+	float to_x = to.x, to_z = to.y;
+	clamp_world_to_bounds(from_x, from_z);
+	clamp_world_to_bounds(to_x, to_z);
+
 	// Convert start/end to grid coordinates
 	float gx_start, gz_start, gx_end, gz_end;
-	world_to_grid(from.x, from.y, gx_start, gz_start);
-	world_to_grid(to.x, to.y, gx_end, gz_end);
+	world_to_grid(from_x, from_z, gx_start, gz_start);
+	world_to_grid(to_x, to_z, gx_end, gz_end);
 
 	search.sx = static_cast<int>(std::round(gx_start));
 	search.sz = static_cast<int>(std::round(gz_start));
@@ -1594,6 +1601,18 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 
 	search.max_iterations = std::min(total_cells, 300000);
 	search.active = true;
+
+	// Provide a temporary straight-line path to the destination so the ship
+	// can begin moving immediately while A* computes the real path.
+	search.result.waypoints.clear();
+	search.result.flags.clear();
+	search.result.waypoints.push_back(from);
+	search.result.waypoints.push_back(to);
+	search.result.flags.push_back(WP_NONE);
+	search.result.flags.push_back(WP_NONE);
+	search.result.valid = true;
+	search.result.total_distance = from.distance_to(to);
+
 	return false;
 }
 
@@ -2127,6 +2146,13 @@ Vector2 NavigationMap::safe_nav_point(Vector2 ship_position, Vector2 candidate,
 									  float clearance, float turning_radius) const {
 	if (!built) return candidate;
 
+	// Clamp candidate into map bounds so that off-map points project to the
+	// nearest edge rather than gradient-walking into a map corner.
+	float cx = candidate.x, cz = candidate.y;
+	clamp_world_to_bounds(cx, cz);
+	candidate.x = cx;
+	candidate.y = cz;
+
 	float dist = get_distance(candidate.x, candidate.y);
 
 	// If the candidate has plenty of room, return it unchanged.
@@ -2249,6 +2275,13 @@ Vector2 NavigationMap::safe_nav_point(Vector2 ship_position, Vector2 candidate,
 Vector2 NavigationMap::validate_destination(Vector2 ship_position, Vector2 destination,
 											float clearance, float turning_radius) const {
 	if (!built) return destination;
+
+	// Clamp destination into map bounds so that off-map points project to the
+	// nearest edge rather than gradient-walking into a map corner.
+	float dx = destination.x, dz = destination.y;
+	clamp_world_to_bounds(dx, dz);
+	destination.x = dx;
+	destination.y = dz;
 
 	// First pass: make the destination itself safe
 	Vector2 safe_dest = safe_nav_point(ship_position, destination, clearance, turning_radius);

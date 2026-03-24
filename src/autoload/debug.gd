@@ -89,6 +89,7 @@ var bot_debug_ca_island_circles: Array[MeshInstance3D] = []
 # World-space debug label
 var bot_debug_world_label: Label3D = null
 var bot_debug_nav_state: String = ""
+var bot_debug_skill_info: Dictionary = {}
 
 
 func _ready() -> void:
@@ -341,11 +342,14 @@ func _send_world_label_debug(bot_controller, sender_id: int) -> void:
 			label_data["nav_state"] = NAV_STATE_NAMES[state_idx]
 		else:
 			label_data["nav_state"] = "UNKNOWN(%d)" % state_idx
+	if bot_controller is BotControllerV4 and bot_controller.behavior != null:
+		label_data["skill_info"] = bot_controller.behavior.get_debug_skill_info()
 	_receive_world_label_debug.rpc_id(sender_id, label_data)
 
 @rpc("authority", "call_remote", "unreliable")
 func _receive_world_label_debug(label_data: Dictionary) -> void:
 	bot_debug_nav_state = label_data.get("nav_state", "")
+	bot_debug_skill_info = label_data.get("skill_info", {})
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -1537,8 +1541,40 @@ func _draw_bot_debug_world_label() -> void:
 			bot_debug_world_label = null
 		return
 
-	# Build label text
-	var text = bot_debug_nav_state
+	# Build label text from nav state + skill info
+	var lines: PackedStringArray = PackedStringArray()
+
+	if not bot_debug_nav_state.is_empty():
+		lines.append("Nav: %s" % bot_debug_nav_state)
+
+	if not bot_debug_skill_info.is_empty():
+		var tac_state: String = bot_debug_skill_info.get("tactical_state", "")
+		var skill: String = bot_debug_skill_info.get("skill", "")
+		var bloom: String = bot_debug_skill_info.get("bloom_phase", "")
+		var visible: bool = bot_debug_skill_info.get("visible", false)
+		var in_cover: bool = bot_debug_skill_info.get("in_cover", false)
+		var hp_pct: int = bot_debug_skill_info.get("hp_pct", -1)
+
+		if not tac_state.is_empty():
+			lines.append("State: %s" % tac_state)
+		if not skill.is_empty():
+			lines.append("Skill: %s" % skill)
+		if tac_state == "DISENGAGING":
+			lines.append("Bloom: %s" % bloom)
+
+		var flags: PackedStringArray = PackedStringArray()
+		if visible:
+			flags.append("VISIBLE")
+		else:
+			flags.append("HIDDEN")
+		if in_cover:
+			flags.append("COVER")
+		if hp_pct >= 0:
+			flags.append("HP:%d%%" % hp_pct)
+		if flags.size() > 0:
+			lines.append(" | ".join(flags))
+
+	var text = "\n".join(lines)
 	if text.is_empty():
 		if bot_debug_world_label != null and is_instance_valid(bot_debug_world_label):
 			bot_debug_world_label.visible = false

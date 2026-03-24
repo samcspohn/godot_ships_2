@@ -53,6 +53,19 @@ var _cached_friendly_spawn: Vector3 = Vector3.ZERO
 var _cached_enemy_spawn: Vector3 = Vector3.ZERO
 var _spawn_cache_initialized: bool = false
 
+# Tactical state machine
+var _tactical_state: TacticalState.State = TacticalState.State.HUNTING
+var _bloom_probe: TacticalState.BloomProbe = TacticalState.BloomProbe.new()
+var _active_skill_name: StringName = &""
+
+# Skill instances (created in subclass _init or on first use)
+var _skills: Dictionary = {}  # StringName -> BotSkill
+
+# Flank identity (rolled once at match start)
+var _flank_side: int = 0      # -1 left, +1 right, 0 unassigned
+var _flank_depth: float = 0.0
+var _flank_initialized: bool = false
+
 # ============================================================================
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
 # ============================================================================
@@ -132,6 +145,45 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.CA: return 1.0
 		Ship.ShipClass.DD: return 0.5
 	return 1.0
+
+# ============================================================================
+# TACTICAL STATE HELPERS
+# ============================================================================
+
+func _init_flank_identity(ship: Ship, server: GameServer) -> void:
+	if _flank_initialized:
+		return
+	_flank_initialized = true
+	var spawn_pos = ship.global_position
+	var team_spawn = server.get_team_spawn_position(ship.team.team_id)
+	if team_spawn == Vector3.ZERO:
+		_flank_side = 1 if randf() > 0.5 else -1
+		_flank_depth = _roll_flank_depth()
+		return
+	var to_ship = spawn_pos - team_spawn
+	to_ship.y = 0.0
+	var enemy_spawn = server.get_team_spawn_position(1 - ship.team.team_id)
+	var forward = (enemy_spawn - team_spawn).normalized() if enemy_spawn != Vector3.ZERO else Vector3(0, 0, -1)
+	var right = Vector3.UP.cross(forward).normalized()
+	var side_dot = to_ship.dot(right)
+	if abs(side_dot) < 2000.0:
+		_flank_side = 1 if randf() > 0.5 else -1
+	else:
+		_flank_side = 1 if side_dot > 0 else -1
+	_flank_depth = _roll_flank_depth()
+
+func _roll_flank_depth() -> float:
+	## Override per ship class
+	return randf_range(0.2, 0.5)
+
+func can_fire_guns() -> bool:
+	match _tactical_state:
+		TacticalState.State.SNEAKING:
+			return false
+		TacticalState.State.DISENGAGING:
+			return _bloom_probe.can_fire()
+		_:
+			return true
 
 # ============================================================================
 # NAVIGATION UTILITIES
@@ -383,13 +435,14 @@ func _get_danger_center() -> Vector3:
 		weighted_pos += cluster_pos * weight
 		total_weight += weight
 
-	if total_weight < 0.001:
-		return Vector3.ZERO
+	#if total_weight < 0.001:
+		#return Vector3.ZERO
 
 	return weighted_pos / total_weight
 
 func _get_spotted_danger_center() -> Vector3:
-	"""Calculate threat-weighted center of ONLY currently spotted enemies.
+	"""Calculate threat-weighted center of currently spotted enemies.
+	unspotted enemies are included at very low weight
 	Returns Vector3.ZERO if no enemies are spotted.
 	Use this when positioning must be based on confirmed, live threats."""
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
@@ -397,6 +450,7 @@ func _get_spotted_danger_center() -> Vector3:
 		return Vector3.ZERO
 
 	var spotted = server_node.get_valid_targets(_ship.team.team_id)
+	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
 	if spotted.size() == 0:
 		return Vector3.ZERO
 
@@ -413,12 +467,27 @@ func _get_spotted_danger_center() -> Vector3:
 
 		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
 		var threat = get_threat_class_weight(ship.ship_class)
-		var weight = base_weight * max(threat, 1.0)
+		var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
+		if dist > ship_range:
+			threat *= 0.1  # De-weight spotted enemies that are out of their effective range
+		var weight = base_weight * threat
 		weighted_pos += ship.global_position * weight
 		total_weight += weight
 
-	if total_weight < 0.001:
-		return Vector3.ZERO
+	for ship in unspotted.keys():
+		var last_pos: Vector3 = unspotted[ship]
+		var to_ship = last_pos - _ship.global_position
+		var dist = to_ship.length()
+		if dist < 1.0:
+			dist = 1.0
+
+		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
+		var threat = get_threat_class_weight(ship.ship_class) if is_instance_valid(ship) else 1.0
+		var weight = base_weight * threat * 0.03  # De-weight unspotted positions
+		weighted_pos += last_pos * weight
+		total_weight += weight
+	#if total_weight < 0.001:
+		#return Vector3.ZERO
 
 	return weighted_pos / total_weight
 
@@ -1264,7 +1333,7 @@ func _get_cover_position(desired_range: float, target: Ship) -> Dictionary:
 			var d = dest.distance_to(cluster.center)
 			if d < nearest_cluster_dist:
 				for cluster_ship: Ship in cluster.ships:
-					if cluster_ship.ship_class != Ship.ShipClass.DD or my_pos.distance_to(cluster.center) > desired_range: # override in function, for now for CA, skip dd only clusters since we want to kill them rather than relocate
+					if cluster_ship.ship_class != Ship.ShipClass.DD: # override in function, for now for CA, skip dd only clusters since we want to kill them rather than relocate
 						nearest_cluster_dist = d
 						nearest_cluster_center = cluster.center
 						break
@@ -1394,6 +1463,10 @@ func engage_target(target: Ship):
 	if target.global_position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
 		return
 
+	if not can_fire_guns():
+		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
+		return
+
 	var adjusted_target_pos = target.global_position + target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
@@ -1462,6 +1535,29 @@ func _normalize_angle(angle: float) -> float:
 	while angle < -PI:
 		angle += TAU
 	return angle
+
+# ============================================================================
+# DEBUG — Skill / tactical state info for the 3D world label
+# ============================================================================
+
+const TACTICAL_STATE_NAMES: Dictionary = {
+	TacticalState.State.HUNTING: "HUNTING",
+	TacticalState.State.SNEAKING: "SNEAKING",
+	TacticalState.State.ENGAGED: "ENGAGED",
+	TacticalState.State.DISENGAGING: "DISENGAGING",
+}
+
+func get_debug_skill_info() -> Dictionary:
+	var info: Dictionary = {}
+	info["tactical_state"] = TACTICAL_STATE_NAMES.get(_tactical_state, "UNKNOWN")
+	info["skill"] = String(_active_skill_name) if _active_skill_name != &"" else "None"
+	info["bloom_phase"] = "SHOOTING" if _bloom_probe.can_fire() else "PROBING"
+	info["visible"] = _ship.visible_to_enemy if _ship != null else false
+	info["in_cover"] = is_in_cover
+	if _ship != null:
+		var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+		info["hp_pct"] = int(hp_ratio * 100.0)
+	return info
 
 # ============================================================================
 # CONSUMABLES

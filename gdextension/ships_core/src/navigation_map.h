@@ -93,6 +93,16 @@ private:
 		return ix >= 0 && ix < grid_width && iz >= 0 && iz < grid_height;
 	}
 
+	// Clamp world-space coordinates so they fall within the map bounds.
+	// Points outside the map are projected to the nearest edge, preventing
+	// SDF gradient walks from dragging them toward map corners.
+	inline void clamp_world_to_bounds(float &wx, float &wz) const {
+		if (wx < min_x) wx = min_x;
+		else if (wx > max_x) wx = max_x;
+		if (wz < min_z) wz = min_z;
+		else if (wz > max_z) wz = max_z;
+	}
+
 	// Get raw SDF value at a grid cell (no interpolation)
 	inline float get_cell(int ix, int iz) const {
 		if (!in_bounds(ix, iz)) return 0.0f;  // Out of bounds = wall
