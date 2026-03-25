@@ -86,6 +86,11 @@ var bot_debug_ca_nearby_islands: Array = []         # [{center: Vector3, radius:
 var bot_debug_ca_cluster_spheres: Array[MeshInstance3D] = []
 var bot_debug_ca_island_circles: Array[MeshInstance3D] = []
 
+# Shell obstacle debug — incoming shell landing zones
+var bot_debug_shell_obstacles: Array = []           # [{landing_x, landing_z, time_remaining, caliber}]
+var bot_debug_shell_circles: Array[MeshInstance3D] = []
+var bot_debug_shell_center_spheres: Array[MeshInstance3D] = []
+
 # World-space debug label
 var bot_debug_world_label: Label3D = null
 var bot_debug_nav_state: String = ""
@@ -147,6 +152,7 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_bot_debug_throttle_indicator()
 		_clear_ca_tactical_debug()
 		_clear_bot_debug_destination_marker()
+		_clear_bot_debug_shell_obstacles()
 		return
 
 	bot_debug_request_timer += delta
@@ -169,6 +175,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_ca_tactical_debug()
 		_draw_bot_debug_world_label()
 		_draw_bot_debug_destination_marker()
+		_draw_bot_debug_shell_obstacles()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -226,6 +233,9 @@ func request_debug_info(target_path: NodePath) -> void:
 
 		# --- CA tactical debug: enemy clusters + nearby islands ---
 		_send_ca_tactical_debug(bot_controller, target, multiplayer.get_remote_sender_id())
+
+		# --- Shell obstacle debug: incoming shell landing zones ---
+		_send_shell_obstacle_debug(bot_controller, multiplayer.get_remote_sender_id())
 
 		# --- World-space label debug ---
 		_send_world_label_debug(bot_controller, multiplayer.get_remote_sender_id())
@@ -362,6 +372,28 @@ func _receive_ca_tactical_debug(tac_data: Dictionary) -> void:
 
 	bot_debug_ca_enemy_clusters = tac_data.get("clusters", [])
 	bot_debug_ca_nearby_islands = tac_data.get("islands", [])
+
+
+func _send_shell_obstacle_debug(bot_controller, sender_id: int) -> void:
+	"""Gather incoming shell landing data from the bot controller and send to client."""
+	var shell_data: Array = []
+	if bot_controller is BotControllerV4:
+		var raw: Array = bot_controller.get_debug_shell_obstacles()
+		for s in raw:
+			shell_data.append({
+				"landing_x": s.get("landing_x", 0.0),
+				"landing_z": s.get("landing_z", 0.0),
+				"time_remaining": s.get("time_remaining", 0.0),
+				"caliber": s.get("caliber", 0.0),
+			})
+	_receive_shell_obstacle_debug.rpc_id(sender_id, shell_data)
+
+
+@rpc("authority", "call_remote", "unreliable")
+func _receive_shell_obstacle_debug(shell_data: Array) -> void:
+	"""Client receives shell obstacle data for debug visualization."""
+	bot_debug_shell_obstacles = shell_data
+
 
 
 @rpc("authority", "call_remote", "unreliable")
@@ -1703,6 +1735,79 @@ func _draw_ca_tactical_debug() -> void:
 		get_tree().root.add_child(dot_node)
 		dot_node.global_position = Vector3(center.x, draw_y + 20.0, center.z)
 		bot_debug_ca_island_circles.append(dot_node)
+
+
+# ===========================================================================
+# Debug drawable: Shell obstacle landing indicators
+# ===========================================================================
+
+func _draw_bot_debug_shell_obstacles() -> void:
+	# Clear previous indicators
+	_clear_bot_debug_shell_obstacles()
+
+	if bot_debug_shell_obstacles.is_empty():
+		return
+
+	for s in bot_debug_shell_obstacles:
+		var landing_x: float = s.get("landing_x", 0.0)
+		var landing_z: float = s.get("landing_z", 0.0)
+		var time_remaining: float = s.get("time_remaining", 0.0)
+		var caliber: float = s.get("caliber", 0.0)
+
+		# Radius scales with caliber: larger shells get bigger circles
+		# Base radius ~40 for small calibers, up to ~120 for 460mm
+		var radius: float = clampf(caliber * 0.2, 30.0, 120.0)
+
+		# Color shifts from yellow (far) -> orange -> red (imminent)
+		# time_remaining roughly 0-15 seconds
+		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
+		var color := Color(
+			1.0,
+			lerpf(0.9, 0.0, urgency),  # green channel: yellow -> red
+			0.0,
+			lerpf(0.4, 0.9, urgency)   # alpha: faint when far, opaque when close
+		)
+
+		# Draw a circle at the landing position on the water surface
+		var center := Vector3(landing_x, 5.0, landing_z)
+		var circle := _create_circle_mesh(radius, color)
+		circle.name = "ShellObstacleCircle"
+		get_tree().root.add_child(circle)
+		circle.global_position = center
+		bot_debug_shell_circles.append(circle)
+
+		# Draw a small sphere at the center of each landing zone
+		var sphere_node := MeshInstance3D.new()
+		sphere_node.name = "ShellObstacleSphere"
+		var sphere_mesh := SphereMesh.new()
+		sphere_mesh.radial_segments = 6
+		sphere_mesh.rings = 4
+		sphere_mesh.radius = 8.0
+		sphere_mesh.height = 16.0
+		sphere_node.mesh = sphere_mesh
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = color
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		sphere_node.material_override = mat
+		sphere_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(sphere_node)
+		sphere_node.global_position = Vector3(landing_x, 15.0, landing_z)
+		bot_debug_shell_center_spheres.append(sphere_node)
+
+
+func _clear_bot_debug_shell_obstacles() -> void:
+	for c in bot_debug_shell_circles:
+		if is_instance_valid(c):
+			c.queue_free()
+	bot_debug_shell_circles.clear()
+	for s in bot_debug_shell_center_spheres:
+		if is_instance_valid(s):
+			s.queue_free()
+	bot_debug_shell_center_spheres.clear()
 
 
 func _clear_ca_tactical_debug() -> void:

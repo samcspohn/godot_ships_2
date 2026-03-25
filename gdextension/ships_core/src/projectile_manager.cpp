@@ -100,6 +100,10 @@ void _ProjectileManager::_bind_methods() {
 						 &_ProjectileManager::create_ricochet_rpc);
 	ClassDB::bind_method(D_METHOD("createRicochetRpc2", "data"), &_ProjectileManager::create_ricochet_rpc2);
 
+	// Shell landing query
+	ClassDB::bind_method(D_METHOD("get_shells_near_position", "position", "radius", "exclude_team_id"),
+						 &_ProjectileManager::get_shells_near_position);
+
 	// Bind getters
 	ClassDB::bind_method(D_METHOD("get_current_time"), &_ProjectileManager::get_current_time);
 	ClassDB::bind_method(D_METHOD("get_shell_time_multiplier"), &_ProjectileManager::get_shell_time_multiplier);
@@ -159,6 +163,9 @@ _ProjectileManager::_ProjectileManager() {
 
 	ray_query.instantiate();
 	mesh_ray_query.instantiate();
+
+	// Initialize shell landing grid
+	shell_grid.resize(SHELL_GRID_DIM * SHELL_GRID_DIM);
 }
 
 _ProjectileManager::~_ProjectileManager() {
@@ -752,6 +759,37 @@ int _ProjectileManager::fire_bullet(const Vector3 &vel, const Vector3 &pos, cons
 
 	projectiles[id] = bullet;
 
+	// Register in shell landing grid for bot shell-dodging
+	if (shell.is_valid()) {
+		Vector3 impact = ProjectilePhysicsWithDragV2::calculate_impact_position(pos, vel, shell);
+		double vx = vel.x, vz = vel.z, vy0 = vel.y;
+		double v_horiz = std::sqrt(vx * vx + vz * vz);
+		double theta = (v_horiz > 1e-10) ? std::atan2(vy0, v_horiz) : 0.0;
+		double flight_time = ProjectilePhysicsWithDragV2::time_of_flight(theta, shell, -pos.y);
+
+		if (!std::isnan(flight_time) && flight_time > 0.0) {
+			float caliber = shell->get("caliber");
+			int team_id = -1;
+			if (owner != nullptr) {
+				Variant team_var = ((Object *)owner)->get("team");
+				if (team_var.get_type() != Variant::NIL) {
+					Object *team_obj = Object::cast_to<Object>(team_var);
+					if (team_obj) team_id = team_obj->get("team_id");
+				}
+			}
+			ShellLandingEntry entry;
+			entry.shell_id = id;
+			entry.landing_x = impact.x;
+			entry.landing_z = impact.z;
+			entry.time_to_impact = static_cast<float>(flight_time);
+			entry.fire_time = static_cast<float>(current_time);
+			entry.caliber = caliber;
+			entry.team_id = team_id;
+			shell_landings[id] = entry;
+			shell_grid_insert(id, impact.x, impact.z);
+		}
+	}
+
 	return id;
 }
 
@@ -830,6 +868,7 @@ void _ProjectileManager::fire_bullet_client(const Vector3 &pos, const Vector3 &v
 
 void _ProjectileManager::destroy_bullet_rpc(int id, const Vector3 &position, int hit_result, const Vector3 &normal) {
 	projectiles[id] = Variant();
+	shell_grid_remove(id);
 	ids_reuse.append(id);
 
 	// Send destroy message through TcpThreadPool
@@ -1187,4 +1226,78 @@ void _ProjectileManager::set_trail_template_id(int value) {
 
 void _ProjectileManager::set_camera(Camera3D *value) {
 	camera = value;
+}
+
+// =============================================================================
+// Shell landing spatial grid (for bot shell dodging)
+// =============================================================================
+
+int _ProjectileManager::shell_grid_index(float wx, float wz) const {
+	int gx = static_cast<int>((wx - SHELL_GRID_MIN) / SHELL_GRID_CELL);
+	int gz = static_cast<int>((wz - SHELL_GRID_MIN) / SHELL_GRID_CELL);
+	gx = std::max(0, std::min(gx, SHELL_GRID_DIM - 1));
+	gz = std::max(0, std::min(gz, SHELL_GRID_DIM - 1));
+	return gz * SHELL_GRID_DIM + gx;
+}
+
+void _ProjectileManager::shell_grid_insert(int shell_id, float wx, float wz) {
+	int idx = shell_grid_index(wx, wz);
+	shell_grid[idx].push_back(shell_id);
+}
+
+void _ProjectileManager::shell_grid_remove(int shell_id) {
+	auto it = shell_landings.find(shell_id);
+	if (it == shell_landings.end()) return;
+
+	int idx = shell_grid_index(it->second.landing_x, it->second.landing_z);
+	auto &cell = shell_grid[idx];
+	for (size_t i = 0; i < cell.size(); i++) {
+		if (cell[i] == shell_id) {
+			cell[i] = cell.back();
+			cell.pop_back();
+			break;
+		}
+	}
+	shell_landings.erase(it);
+}
+
+Array _ProjectileManager::get_shells_near_position(Vector2 position, float radius, int exclude_team_id) const {
+	Array result;
+
+	int min_gx = std::max(0, static_cast<int>((position.x - radius - SHELL_GRID_MIN) / SHELL_GRID_CELL));
+	int max_gx = std::min(SHELL_GRID_DIM - 1, static_cast<int>((position.x + radius - SHELL_GRID_MIN) / SHELL_GRID_CELL));
+	int min_gz = std::max(0, static_cast<int>((position.y - radius - SHELL_GRID_MIN) / SHELL_GRID_CELL));
+	int max_gz = std::min(SHELL_GRID_DIM - 1, static_cast<int>((position.y + radius - SHELL_GRID_MIN) / SHELL_GRID_CELL));
+
+	float radius_sq = radius * radius;
+
+	for (int gz = min_gz; gz <= max_gz; gz++) {
+		for (int gx = min_gx; gx <= max_gx; gx++) {
+			const auto &cell = shell_grid[gz * SHELL_GRID_DIM + gx];
+			for (int sid : cell) {
+				auto it = shell_landings.find(sid);
+				if (it == shell_landings.end()) continue;
+				const auto &e = it->second;
+
+				if (e.team_id == exclude_team_id) continue;
+
+				float dx = e.landing_x - position.x;
+				float dz = e.landing_z - position.y;
+				if (dx * dx + dz * dz > radius_sq) continue;
+
+				float time_remaining = (e.fire_time + e.time_to_impact - static_cast<float>(current_time))
+				                       / static_cast<float>(shell_time_multiplier);
+				if (time_remaining <= 0.0f) continue;
+
+				Dictionary d;
+				d["shell_id"] = e.shell_id;
+				d["landing_x"] = e.landing_x;
+				d["landing_z"] = e.landing_z;
+				d["time_remaining"] = time_remaining;
+				d["caliber"] = e.caliber;
+				result.push_back(d);
+			}
+		}
+	}
+	return result;
 }

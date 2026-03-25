@@ -55,6 +55,11 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_obstacle", "id"), &ShipNavigator::remove_obstacle);
 	ClassDB::bind_method(D_METHOD("clear_obstacles"), &ShipNavigator::clear_obstacles);
 
+	// Incoming shell avoidance
+	ClassDB::bind_method(D_METHOD("clear_incoming_shells"), &ShipNavigator::clear_incoming_shells);
+	ClassDB::bind_method(D_METHOD("add_incoming_shell", "id", "landing_pos", "time_remaining", "caliber"),
+		&ShipNavigator::add_incoming_shell);
+
 	// Path info
 	ClassDB::bind_method(D_METHOD("get_current_path"), &ShipNavigator::get_current_path);
 	ClassDB::bind_method(D_METHOD("get_predicted_trajectory"), &ShipNavigator::get_predicted_trajectory);
@@ -257,6 +262,14 @@ void ShipNavigator::remove_obstacle(int id) {
 
 void ShipNavigator::clear_obstacles() {
 	obstacles.clear();
+}
+
+void ShipNavigator::clear_incoming_shells() {
+	incoming_shells_.clear();
+}
+
+void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber) {
+	incoming_shells_.emplace_back(id, landing_pos, time_remaining, caliber);
 }
 
 // ============================================================================
@@ -1035,6 +1048,49 @@ void ShipNavigator::run_plan_sync() {
 // naturally penalised by slower speed producing longer times.
 // ============================================================================
 
+// =============================================================================
+// Shell threat scoring — evaluates a candidate arc against all incoming shells
+// =============================================================================
+
+float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) const {
+	if (incoming_shells_.empty() || arc.size() < 2) return 0.0f;
+
+	float total_threat = 0.0f;
+
+	for (const auto &shell : incoming_shells_) {
+		float t_impact = shell.time_remaining;
+		if (t_impact <= 0.0f) continue;
+
+		// Caliber weight: bigger shells are exponentially more dangerous
+		// Normalise around 200mm as baseline (weight ≈ 1.0)
+		float cal_weight = (shell.caliber * shell.caliber) / (200.0f * 200.0f);
+
+		// Find the arc point closest to the shell's impact time.
+		// If impact is beyond arc duration, use the last point (ship holds course).
+		const ArcPoint *at_impact = &arc.back();
+		for (size_t i = 0; i < arc.size(); i++) {
+			if (arc[i].time >= t_impact) {
+				at_impact = &arc[i];
+				break;
+			}
+		}
+
+		// --- Proximity component ---
+		float dist = at_impact->position.distance_to(shell.landing_pos);
+		float proximity_threat = 0.0f;
+		if (dist < SHELL_THREAT_RADIUS) {
+			float norm_dist = dist / SHELL_THREAT_RADIUS;
+			proximity_threat = (1.0f - norm_dist) * (1.0f - norm_dist); // quadratic falloff
+		}
+
+		float shell_threat = cal_weight * proximity_threat;
+
+		total_threat += shell_threat;
+	}
+
+	return total_threat;
+}
+
 ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_rudder, int desired_throttle) {
 	SteeringChoice result = { desired_rudder, desired_throttle, false, false };
 
@@ -1080,7 +1136,9 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		}
 	}
 
-	if (terrain_safe && obstacles_safe) {
+	bool shells_safe = incoming_shells_.empty();
+
+	if (terrain_safe && obstacles_safe && shells_safe) {
 		// Cache a short debug arc for visualization even on the fast path
 		float debug_lookahead = std::min(lookahead, params.ship_length * 4.0f);
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, debug_lookahead);
@@ -1354,6 +1412,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				total_time *= 2.0f;
 				any_collision = true;
 			}
+		}
+
+		// --- Shell threat penalty ---
+		if (!incoming_shells_.empty()) {
+			float shell_penalty = score_arc_shell_threat(arc);
+			total_time += shell_penalty * SHELL_THREAT_WEIGHT;
 		}
 
 		if (total_time < best_time) {

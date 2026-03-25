@@ -331,7 +331,8 @@ func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) 
 			return intent
 
 	# Healthy: camp or broadside
-	intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.6})
+	var desired_range_ratio = 0.6 + (1.0 - hp_ratio) * 0.3  # Closer to 90% range when at full HP, down to 60% when damaged
+	intent = _skill_camp.execute(ctx, {"desired_range_ratio": desired_range_ratio})
 	if intent == null:
 		# Camp returned null (too focused), fall back to broadside
 		intent = _skill_broadside.execute(ctx, broadside_params)

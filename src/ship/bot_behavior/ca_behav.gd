@@ -109,6 +109,7 @@ func should_evade(_destination: Vector3) -> bool:
 	return true
 
 func get_theatened(server: GameServer) -> bool:
+	## TODO: add dispersion + caliber checks to this
 	var spotted = server.get_valid_targets(_ship.team.team_id)
 	var my_hp = _ship.health_controller.current_hp
 	var hp_ratio = my_hp / _ship.health_controller.max_hp

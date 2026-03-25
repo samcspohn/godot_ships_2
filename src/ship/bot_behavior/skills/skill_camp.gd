@@ -8,7 +8,7 @@ var _has_lock: bool = false
 
 ## Distance threshold (meters) before we accept a new camping position.
 ## Keeps the navigator stable so it can settle into heading-alignment.
-const RELOCK_DISTANCE: float = 2500.0
+const RELOCK_DISTANCE: float = 1000.0
 
 ## Clear the position lock — call when switching away from camp so the next
 ## activation picks a fresh position instead of reusing a stale one.

@@ -13,6 +13,10 @@
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/color.hpp>
 
+#include <vector>
+#include <unordered_map>
+#include <godot_cpp/variant/vector2.hpp>
+
 #include "projectile_data.h"
 #include "shell_data.h"
 
@@ -61,6 +65,29 @@ private:
 	Node *armor_interaction;
 	Node *tcp_thread_pool;
 	Node *sound_effect_manager;
+
+	// --- Shell landing spatial grid (for bot shell dodging) ---
+	struct ShellLandingEntry {
+		int shell_id;
+		float landing_x;       // world X of predicted impact
+		float landing_z;       // world Z of predicted impact
+		float time_to_impact;  // total flight time in shell-time units
+		float fire_time;       // current_time when shell was fired
+		float caliber;         // shell caliber in mm (for damage priority)
+		int team_id;           // firing team (-1 if unknown)
+	};
+
+	static constexpr float SHELL_GRID_CELL = 500.0f;
+	static constexpr float SHELL_GRID_MIN  = -17500.0f;
+	static constexpr float SHELL_GRID_MAX  =  17500.0f;
+	static constexpr int   SHELL_GRID_DIM  = 70; // (SHELL_GRID_MAX - SHELL_GRID_MIN) / SHELL_GRID_CELL
+
+	std::vector<std::vector<int>> shell_grid;
+	std::unordered_map<int, ShellLandingEntry> shell_landings;
+
+	int  shell_grid_index(float wx, float wz) const;
+	void shell_grid_insert(int shell_id, float wx, float wz);
+	void shell_grid_remove(int shell_id);
 
 protected:
 	static void _bind_methods();
@@ -128,6 +155,9 @@ public:
 	Node *get_compute_particle_system() const;
 	int get_trail_template_id() const;
 	Camera3D *get_camera() const;
+
+	// Shell landing query (for bot shell dodging)
+	Array get_shells_near_position(Vector2 position, float radius, int exclude_team_id) const;
 
 	// Setters
 	void set_shell_time_multiplier(double value);

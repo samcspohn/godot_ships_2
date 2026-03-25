@@ -203,6 +203,18 @@ struct ObstacleCollisionInfo {
 		  is_torpedo(false) {}
 };
 
+// Incoming shell threat data (for shell dodging/angling)
+struct IncomingShell {
+	int id;
+	Vector2 landing_pos;    // predicted XZ impact point
+	float time_remaining;   // real seconds until impact
+	float caliber;          // mm — for damage-weight prioritisation
+
+	IncomingShell() : id(-1), landing_pos(Vector2()), time_remaining(0.0f), caliber(0.0f) {}
+	IncomingShell(int p_id, Vector2 p_pos, float p_time, float p_cal)
+		: id(p_id), landing_pos(p_pos), time_remaining(p_time), caliber(p_cal) {}
+};
+
 // Navigation state machine — simplified two-state design
 enum class NavState {
 	NORMAL    = 0,  // Path following + weighted avoidance blending

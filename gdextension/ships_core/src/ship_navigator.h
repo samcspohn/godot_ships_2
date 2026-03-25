@@ -119,6 +119,14 @@ private:
 	bool skip_ship_obstacles_;
 	static constexpr float PARKED_SPEED_THRESHOLD = 10.0f;
 
+	// --- Incoming shell avoidance ---
+	std::vector<IncomingShell> incoming_shells_;
+
+	static constexpr float SHELL_THREAT_RADIUS   = 300.0f; // max dist for a landing to matter
+	static constexpr float SHELL_THREAT_WEIGHT   = 8.0f;   // penalty scale in candidate scoring
+
+	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
+
 	// --- Internal methods ---
 
 	float get_ship_clearance() const;
@@ -249,6 +257,10 @@ public:
 	void update_obstacle(int id, Vector2 position, Vector2 velocity);
 	void remove_obstacle(int id);
 	void clear_obstacles();
+
+	// --- Incoming shell avoidance ---
+	void clear_incoming_shells();
+	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber);
 
 	// --- Path / trajectory info ---
 
