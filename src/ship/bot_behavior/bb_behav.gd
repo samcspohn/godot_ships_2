@@ -303,7 +303,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_skill_camp.reset()
 
 	# Post-process spread
-	intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
+	# intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
 	return intent
 
 func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) -> NavIntent:
@@ -318,11 +318,17 @@ func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) 
 			return intent
 
 	# Damaged: kite
-	if hp_ratio < 0.4:
+	var nearest_enemy = ctx.behavior._get_nearest_enemy()[&"position"]
+	if hp_ratio < 0.4 and nearest_enemy.distance_to(ctx.ship.global_position) < ctx.ship.artillery_controller.get_params()._range * 0.8:
 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.7, "pull_toward_friendly_weight": 0.3})
 		if intent:
 			_active_skill_name = &"Kite"
 		return intent
+	if hp_ratio < 0.4 and !_ship.visible_to_enemy:
+		intent = _skill_cover.execute(ctx, {"desired_range": ctx.ship.artillery_controller.get_params()._range * 0.7})
+		if intent != null:
+			_active_skill_name = &"FindCover"
+			return intent
 
 	# Healthy: camp or broadside
 	intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.6})

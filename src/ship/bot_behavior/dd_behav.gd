@@ -203,72 +203,6 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	return offset
 
 # ============================================================================
-# POSITIONING - DD-specific positioning (concealment-based)
-# ============================================================================
-
-func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Ship, current_destination: Vector3) -> Vector3:
-	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-
-	# If no target, hunt unspotted enemies
-	if target == null:
-		return _get_hunting_position(server_node, friendly, current_destination)
-
-	var concealment_radius = (_ship.concealment.params.p() as ConcealmentParams).radius
-	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-	var params = get_positioning_params()
-
-	# Calculate separation from friendly ships
-	var separation = _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
-
-	if _ship.visible_to_enemy and enemy.size() > 0:
-		# Visible - retreat away from closest enemy
-		closest_enemy = enemy[0]
-		var closest_enemy_dist = (closest_enemy.global_position - _ship.global_position).length()
-		for ship in enemy:
-			var dist = (ship.global_position - _ship.global_position).length()
-			if dist < closest_enemy_dist:
-				closest_enemy = ship
-				closest_enemy_dist = dist
-
-		var retreat_dir = (_ship.global_position - closest_enemy.global_position).normalized()
-		var desired_position = _ship.global_position + retreat_dir * concealment_radius * 2.0
-
-		# Only bias toward team if below 50% HP
-		if hp_ratio < 0.5:
-			var nearest_friendly_pos = Vector3.ZERO
-			if server_node:
-				var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
-				if nearest_cluster.size() > 0:
-					nearest_friendly_pos = nearest_cluster.center
-				else:
-					nearest_friendly_pos = server_node.get_team_avg_position(_ship.team.team_id)
-			else:
-				for ship in friendly:
-					nearest_friendly_pos += ship.global_position
-				nearest_friendly_pos /= friendly.size()
-			desired_position = desired_position * 0.8 + nearest_friendly_pos * 0.2
-
-		desired_position += separation * 500.0
-		return _get_valid_nav_point(desired_position)
-	else:
-		# Hidden - flank target for torpedo attack
-		var right = target.transform.basis.x * concealment_radius * 1.5
-		var right_of = target.global_position + right
-		var left_of = target.global_position - right
-
-		right_of = _get_valid_nav_point(right_of)
-		left_of = _get_valid_nav_point(left_of)
-
-		var desired_position: Vector3
-		if right_of.distance_to(_ship.global_position) < left_of.distance_to(_ship.global_position):
-			desired_position = right_of
-		else:
-			desired_position = left_of
-
-		desired_position += separation * 500.0
-		return _get_valid_nav_point(desired_position)
-
-# ============================================================================
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
 
@@ -516,15 +450,15 @@ func engage_target(target: Ship):
 	var should_shoot_guns = false
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
 
-	if hp_ratio < 0.3:
-		# Low health - prioritize stealth
-		should_shoot_guns = false
-	elif _ship.visible_to_enemy and closest_enemy and closest_enemy.global_position.distance_to(_ship.global_position) < (_ship.concealment.params.p() as ConcealmentParams).radius:
+	# if hp_ratio < 0.3:
+	# 	# Low health - prioritize stealth
+	# 	should_shoot_guns = false
+	if _bloom_probe.can_fire():
 		# Spotted and within detection range
 		should_shoot_guns = true
-	elif target_is_flooding:
-		# Target is flooding from our torpedoes
-		should_shoot_guns = true
+	# elif target_is_flooding:
+	# 	# Target is flooding from our torpedoes
+	# 	should_shoot_guns = true
 
 	if should_shoot_guns and can_fire_guns():
 		super.engage_target(target)

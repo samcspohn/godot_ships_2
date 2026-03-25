@@ -179,11 +179,16 @@ func _roll_flank_depth() -> float:
 func can_fire_guns() -> bool:
 	match _tactical_state:
 		TacticalState.State.SNEAKING:
-			return false
+			var threats = _gather_threat_positions(_ship)
+			var gun_range = _ship.artillery_controller.get_params()._range
+			for threat in threats:
+				if threat.distance_to(_ship.global_position) < gun_range:
+					if not _is_los_blocked_with_clearance(_ship.global_position, threat):
+						return false
+			return true
 		TacticalState.State.DISENGAGING:
 			return _bloom_probe.can_fire()
-		_:
-			return true
+	return true
 
 # ============================================================================
 # NAVIGATION UTILITIES
@@ -657,7 +662,7 @@ func _calculate_tactical_position(desired_range: float, min_safe_distance: float
 		return _ship.global_position
 
 	var friendly_avg = server_node.get_team_avg_position(_ship.team.team_id)
-	var nearest = _get_nearest_enemy()
+	# var nearest = _get_nearest_enemy()
 
 	var to_me = _ship.global_position - danger_center
 	to_me.y = 0.0
@@ -1509,7 +1514,7 @@ func engage_target(target: Ship):
 		# intended lead position. If not, the turret hasn't caught up yet
 		# and firing would send shells toward the old (wrong) aim point.
 		var aim_error = gun._aim_point.distance_to(target_lead)
-		if aim_error > 500.0:
+		if aim_error > 50.0:
 			continue
 		# Verify the shell arc actually clears terrain / islands
 		if not arc_clear:
