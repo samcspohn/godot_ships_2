@@ -4,11 +4,12 @@ extends BotSkill
 ## Locked camping position — only updated when the new desired position
 ## differs by more than _relock_distance from the current lock.
 var _locked_position: Vector3 = Vector3.ZERO
+# var _locked_heading: float = 0.0
 var _has_lock: bool = false
 
 ## Distance threshold (meters) before we accept a new camping position.
 ## Keeps the navigator stable so it can settle into heading-alignment.
-const RELOCK_DISTANCE: float = 1000.0
+const RELOCK_DISTANCE: float = 500.0
 
 ## Clear the position lock — call when switching away from camp so the next
 ## activation picks a fresh position instead of reusing a stale one.
@@ -36,12 +37,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	# Compute the "ideal" camping position this frame.
 	var candidate_pos: Vector3
-	if current_dist > desired_range * 1.1:
+	# if current_dist > desired_range * 1.1:
 		# Push toward enemy to get in range
-		candidate_pos = ship.global_position + to_danger.normalized() * (current_dist - desired_range)
-	else:
-		# Already in range — ideal spot is right where we are
-		candidate_pos = ship.global_position
+	candidate_pos = ship.global_position + to_danger.normalized() * (current_dist - desired_range)
+	# else:
+	# 	# Already in range — ideal spot is right where we are
+	# 	candidate_pos = ship.global_position
 
 	candidate_pos.y = 0.0
 	candidate_pos = ctx.behavior._get_valid_nav_point(candidate_pos)
@@ -73,5 +74,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var to_danger_now = danger_center - _locked_position
 	to_danger_now.y = 0.0
 	var heading = SkillAngle.calc_heading(atan2(to_danger_now.x, to_danger_now.z), ctx, params)
+
+	# If the heading is more than 90° off our current heading, flip it so we
+	# present the stern angle instead of executing a large turn while camping.
+	# var current_heading = ship.rotation.y
+	var current_heading = ctx.behavior._get_ship_heading()
+	if absf(angle_difference(current_heading, heading)) > PI / 2.0:
+		heading = ctx.behavior._normalize_angle(heading + PI)
 
 	return NavIntent.create(_locked_position, heading, jitter)

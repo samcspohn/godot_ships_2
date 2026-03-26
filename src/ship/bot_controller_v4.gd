@@ -806,6 +806,10 @@ func get_turn_simulation_points_undesired() -> Array[Vector3]:
 func get_debug_shell_obstacles() -> Array:
 	return _debug_shell_obstacles
 
+## Return torpedo virtual threat points (generated procedurally by the navigator)
+func get_debug_torpedo_threat_points() -> Array:
+	return navigator.get_debug_torpedo_threat_points()
+
 ## Get nav state as a human-readable string
 func get_nav_state_string() -> String:
 	var state_names = [

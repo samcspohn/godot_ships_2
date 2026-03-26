@@ -91,6 +91,11 @@ var bot_debug_shell_obstacles: Array = []           # [{landing_x, landing_z, ti
 var bot_debug_shell_circles: Array[MeshInstance3D] = []
 var bot_debug_shell_center_spheres: Array[MeshInstance3D] = []
 
+# Torpedo threat point debug — virtual shell landings along torpedo paths
+var bot_debug_torpedo_threat_points: Array = []     # [{landing_x, landing_z, time_remaining, caliber}]
+var bot_debug_torpedo_circles: Array[MeshInstance3D] = []
+var bot_debug_torpedo_center_spheres: Array[MeshInstance3D] = []
+
 # World-space debug label
 var bot_debug_world_label: Label3D = null
 var bot_debug_nav_state: String = ""
@@ -153,6 +158,7 @@ func _update_bot_debug(delta: float) -> void:
 		_clear_ca_tactical_debug()
 		_clear_bot_debug_destination_marker()
 		_clear_bot_debug_shell_obstacles()
+		_clear_bot_debug_torpedo_threat_points()
 		return
 
 	bot_debug_request_timer += delta
@@ -176,6 +182,7 @@ func _update_bot_debug(delta: float) -> void:
 		_draw_bot_debug_world_label()
 		_draw_bot_debug_destination_marker()
 		_draw_bot_debug_shell_obstacles()
+		_draw_bot_debug_torpedo_threat_points()
 		# Turn sim points and SDF tiles are drawn in _physics_process
 
 
@@ -236,6 +243,9 @@ func request_debug_info(target_path: NodePath) -> void:
 
 		# --- Shell obstacle debug: incoming shell landing zones ---
 		_send_shell_obstacle_debug(bot_controller, multiplayer.get_remote_sender_id())
+
+		# --- Torpedo threat point debug: virtual shell landings along torpedo paths ---
+		_send_torpedo_threat_debug(bot_controller, multiplayer.get_remote_sender_id())
 
 		# --- World-space label debug ---
 		_send_world_label_debug(bot_controller, multiplayer.get_remote_sender_id())
@@ -393,6 +403,27 @@ func _send_shell_obstacle_debug(bot_controller, sender_id: int) -> void:
 func _receive_shell_obstacle_debug(shell_data: Array) -> void:
 	"""Client receives shell obstacle data for debug visualization."""
 	bot_debug_shell_obstacles = shell_data
+
+
+func _send_torpedo_threat_debug(bot_controller, sender_id: int) -> void:
+	"""Gather torpedo virtual threat points from the navigator and send to client."""
+	var torp_data: Array = []
+	if bot_controller is BotControllerV4:
+		var raw: Array = bot_controller.get_debug_torpedo_threat_points()
+		for t in raw:
+			torp_data.append({
+				"landing_x": t.get("landing_x", 0.0),
+				"landing_z": t.get("landing_z", 0.0),
+				"time_remaining": t.get("time_remaining", 0.0),
+				"caliber": t.get("caliber", 0.0),
+			})
+	_receive_torpedo_threat_debug.rpc_id(sender_id, torp_data)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_torpedo_threat_debug(torp_data: Array) -> void:
+	"""Client receives torpedo threat point data for debug visualization."""
+	bot_debug_torpedo_threat_points = torp_data
 
 
 
@@ -1808,6 +1839,75 @@ func _clear_bot_debug_shell_obstacles() -> void:
 		if is_instance_valid(s):
 			s.queue_free()
 	bot_debug_shell_center_spheres.clear()
+
+
+# ===========================================================================
+# Debug drawable: Torpedo threat point indicators
+# ===========================================================================
+
+func _draw_bot_debug_torpedo_threat_points() -> void:
+	_clear_bot_debug_torpedo_threat_points()
+
+	if bot_debug_torpedo_threat_points.is_empty():
+		return
+
+	for t in bot_debug_torpedo_threat_points:
+		var landing_x: float = t.get("landing_x", 0.0)
+		var landing_z: float = t.get("landing_z", 0.0)
+		var time_remaining: float = t.get("time_remaining", 0.0)
+
+		# Fixed radius for torpedo threat points — they form a corridor together
+		var radius: float = 60.0
+
+		# Color: cyan to blue, urgency shifts toward brighter cyan as time decreases
+		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
+		var color := Color(
+			0.0,
+			lerpf(0.5, 1.0, urgency),   # green channel
+			1.0,
+			lerpf(0.3, 0.8, urgency)    # alpha: faint when far, opaque when close
+		)
+
+		# Draw a circle at the threat point on the water surface
+		var center := Vector3(landing_x, 5.0, landing_z)
+		var circle := _create_circle_mesh(radius, color)
+		circle.name = "TorpedoThreatCircle"
+		get_tree().root.add_child(circle)
+		circle.global_position = center
+		bot_debug_torpedo_circles.append(circle)
+
+		# Draw a small sphere at the center
+		var sphere_node := MeshInstance3D.new()
+		sphere_node.name = "TorpedoThreatSphere"
+		var sphere_mesh := SphereMesh.new()
+		sphere_mesh.radial_segments = 6
+		sphere_mesh.rings = 4
+		sphere_mesh.radius = 6.0
+		sphere_mesh.height = 12.0
+		sphere_node.mesh = sphere_mesh
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = color
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		sphere_node.material_override = mat
+		sphere_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+		get_tree().root.add_child(sphere_node)
+		sphere_node.global_position = Vector3(landing_x, 15.0, landing_z)
+		bot_debug_torpedo_center_spheres.append(sphere_node)
+
+
+func _clear_bot_debug_torpedo_threat_points() -> void:
+	for c in bot_debug_torpedo_circles:
+		if is_instance_valid(c):
+			c.queue_free()
+	bot_debug_torpedo_circles.clear()
+	for s in bot_debug_torpedo_center_spheres:
+		if is_instance_valid(s):
+			s.queue_free()
+	bot_debug_torpedo_center_spheres.clear()
 
 
 func _clear_ca_tactical_debug() -> void:

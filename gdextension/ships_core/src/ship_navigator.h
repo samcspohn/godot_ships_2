@@ -82,7 +82,7 @@ private:
 	bool replan_requested_;
 
 	// --- Constants ---
-	static constexpr float HEADING_TOLERANCE = 0.2618f;
+	static constexpr float HEADING_TOLERANCE = 180.0 / 3.14159f;
 
 	// --- Steering output ---
 	float out_rudder;
@@ -106,7 +106,6 @@ private:
 	struct SteeringChoice {
 		float rudder;
 		int throttle;
-		bool torpedo_evasion;    // true if evading a torpedo (max throttle override)
 		bool collision_imminent; // true if any threat was detected
 	};
 
@@ -124,8 +123,13 @@ private:
 
 	static constexpr float SHELL_THREAT_RADIUS   = 300.0f; // max dist for a landing to matter
 	static constexpr float SHELL_THREAT_WEIGHT   = 8.0f;   // penalty scale in candidate scoring
+	static constexpr float TORPEDO_VIRTUAL_CALIBER = 800.0f; // virtual caliber for torpedo threat points
+	static constexpr float TORPEDO_SAMPLE_INTERVAL = 0.5f;   // seconds between torpedo path samples
 
 	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
+
+	// --- Debug: torpedo virtual threat points ---
+	Array get_debug_torpedo_threat_points() const;
 
 	// --- Internal methods ---
 

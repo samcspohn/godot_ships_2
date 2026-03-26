@@ -72,6 +72,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
+	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
+
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
 	ClassDB::bind_method(D_METHOD("get_timing_avoidance_us"), &ShipNavigator::get_timing_avoidance_us);
@@ -321,6 +323,43 @@ float ShipNavigator::get_distance_to_destination() const {
 
 PackedVector3Array ShipNavigator::get_simulated_path() const {
 	return get_predicted_trajectory();
+}
+
+Array ShipNavigator::get_debug_torpedo_threat_points() const {
+	Array result;
+	float ship_len = params.ship_length;
+
+	for (const auto &[id, obs] : obstacles) {
+		if (!obs.is_torpedo()) continue;
+
+		float torp_speed = obs.velocity.length();
+		if (torp_speed < 1.0f) continue;
+
+		Vector2 torp_dir = obs.velocity / torp_speed;
+
+		Vector2 to_ship = state.position - obs.position;
+		float t_closest = to_ship.dot(torp_dir) / torp_speed;
+
+		float half_window_time = ship_len / torp_speed;
+		float t_start = t_closest - half_window_time;
+		float t_end   = t_closest + half_window_time;
+
+		if (t_end <= 0.0f) continue;
+		if (t_start < 0.0f) t_start = 0.0f;
+
+		for (float t = t_start; t <= t_end; t += TORPEDO_SAMPLE_INTERVAL) {
+			Vector2 sample_pos = obs.position + torp_dir * torp_speed * t;
+
+			Dictionary d;
+			d["landing_x"] = sample_pos.x;
+			d["landing_z"] = sample_pos.y;
+			d["time_remaining"] = t;
+			d["caliber"] = TORPEDO_VIRTUAL_CALIBER;
+			result.push_back(d);
+		}
+	}
+
+	return result;
 }
 
 // ============================================================================
@@ -605,19 +644,14 @@ void ShipNavigator::update_normal(float delta) {
 	float final_rudder = choice.rudder;
 	int final_throttle = choice.throttle;
 
-	if (choice.torpedo_evasion) {
-		// Torpedo: ensure max throttle for escape speed
-		final_throttle = std::max(desired_throttle, 4);
-	}
-
 	// --- 4.5. Rudder-discrepancy throttle reduction ---
 	// When the desired rudder is far from the current physical rudder position,
 	// the ship will travel straight (at the old rudder) until the rudder catches
 	// up, causing wide overshooting turns.  Reduce throttle proportionally to
 	// the rudder discrepancy so the ship slows while the rudder moves into
 	// position, giving tighter and more controlled turns.
-	// Skip when: torpedo evasion (need max speed), reversing, or already slow.
-	if (!choice.torpedo_evasion && final_throttle > 1) {
+	// Skip when: reversing or already slow.
+	if (final_throttle > 1) {
 		float rudder_discrepancy = std::abs(final_rudder - state.current_rudder);
 		const float discrepancy_threshold = 0.3f;  // below this, no reduction
 		const float discrepancy_full = 1.2f;        // at or above this, maximum reduction
@@ -1053,46 +1087,77 @@ void ShipNavigator::run_plan_sync() {
 // =============================================================================
 
 float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) const {
-	if (incoming_shells_.empty() || arc.size() < 2) return 0.0f;
+	if (arc.size() < 2) return 0.0f;
 
-	float total_threat = 0.0f;
+	// --- Helper lambda: score a single threat point against the arc ---
+	auto score_threat_point = [&](Vector2 landing_pos, float time_remaining, float caliber) -> float {
+		if (time_remaining <= 0.0f) return 0.0f;
 
-	for (const auto &shell : incoming_shells_) {
-		float t_impact = shell.time_remaining;
-		if (t_impact <= 0.0f) continue;
+		float cal_weight = (caliber * caliber) / (200.0f * 200.0f);
 
-		// Caliber weight: bigger shells are exponentially more dangerous
-		// Normalise around 200mm as baseline (weight ≈ 1.0)
-		float cal_weight = (shell.caliber * shell.caliber) / (200.0f * 200.0f);
-
-		// Find the arc point closest to the shell's impact time.
-		// If impact is beyond arc duration, use the last point (ship holds course).
+		// Find the arc point closest to the impact time.
 		const ArcPoint *at_impact = &arc.back();
 		for (size_t i = 0; i < arc.size(); i++) {
-			if (arc[i].time >= t_impact) {
+			if (arc[i].time >= time_remaining) {
 				at_impact = &arc[i];
 				break;
 			}
 		}
 
-		// --- Proximity component ---
-		float dist = at_impact->position.distance_to(shell.landing_pos);
-		float proximity_threat = 0.0f;
-		if (dist < SHELL_THREAT_RADIUS) {
-			float norm_dist = dist / SHELL_THREAT_RADIUS;
-			proximity_threat = (1.0f - norm_dist) * (1.0f - norm_dist); // quadratic falloff
+		float dist = at_impact->position.distance_to(landing_pos);
+		if (dist >= SHELL_THREAT_RADIUS) return 0.0f;
+
+		float norm_dist = dist / SHELL_THREAT_RADIUS;
+		float proximity_threat = (1.0f - norm_dist) * (1.0f - norm_dist);
+		return cal_weight * proximity_threat;
+	};
+
+	float total_threat = 0.0f;
+
+	// --- Score real incoming shells ---
+	for (const auto &shell : incoming_shells_) {
+		total_threat += score_threat_point(shell.landing_pos, shell.time_remaining, shell.caliber);
+	}
+
+	// --- Generate virtual shell landings from torpedo obstacles ---
+	// For each torpedo, find the closest point on its path to the ship,
+	// then sample ±1 ship length around that point at TORPEDO_SAMPLE_INTERVAL.
+	float ship_len = params.ship_length;
+
+	for (const auto &[id, obs] : obstacles) {
+		if (!obs.is_torpedo()) continue;
+
+		float torp_speed = obs.velocity.length();
+		if (torp_speed < 1.0f) continue;
+
+		Vector2 torp_dir = obs.velocity / torp_speed;
+
+		// Project ship position onto the torpedo's infinite line to find
+		// the closest point.  t_closest is in seconds from the torpedo's
+		// current position.
+		Vector2 to_ship = state.position - obs.position;
+		float t_closest = to_ship.dot(torp_dir) / torp_speed;
+
+		// Sample window: ±1 ship length around closest point, in time units
+		float half_window_time = ship_len / torp_speed;
+		float t_start = t_closest - half_window_time;
+		float t_end   = t_closest + half_window_time;
+
+		// Only sample future positions (t > 0)
+		if (t_end <= 0.0f) continue;
+		if (t_start < 0.0f) t_start = 0.0f;
+
+		for (float t = t_start; t <= t_end; t += TORPEDO_SAMPLE_INTERVAL) {
+			Vector2 sample_pos = obs.position + torp_dir * torp_speed * t;
+			total_threat += score_threat_point(sample_pos, t, TORPEDO_VIRTUAL_CALIBER);
 		}
-
-		float shell_threat = cal_weight * proximity_threat;
-
-		total_threat += shell_threat;
 	}
 
 	return total_threat;
 }
 
 ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_rudder, int desired_throttle) {
-	SteeringChoice result = { desired_rudder, desired_throttle, false, false };
+	SteeringChoice result = { desired_rudder, desired_throttle, false };
 
 	float hard_clearance = get_ship_clearance();
 	float soft_clearance = get_soft_clearance();
@@ -1145,115 +1210,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		return result;
 	}
 
-	// --- Torpedo special case: scan for dodge, return immediately ---
-	{
-		auto desired_arc = predict_arc_internal(desired_rudder, desired_throttle, lookahead);
-		// Cache for debug visualisation (will be overwritten by winning arc below if no torpedo)
-		winning_arc = desired_arc;
 
-		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(desired_arc);
-		if (obs_info.has_collision && obs_info.is_torpedo) {
-			// --- Torpedo evasion: minimize profile by turning bow-on or stern-on ---
-			// The goal is to present the smallest cross-section to incoming torpedoes.
-			// We compute headings that point bow directly into or away from the torpedo
-			// travel direction, then also consider perpendicular dodges as fallback.
-
-			Vector2 torpedo_dir = obs_info.obstacle_velocity;
-			float torp_speed = torpedo_dir.length();
-			Vector2 torp_unit = (torp_speed > 1.0f) ? torpedo_dir / torp_speed : Vector2(0, 0);
-
-			// Compute perpendicular dodge bias (which side of the torp track are we on?)
-			float dodge_bias = 0.0f;
-			if (torp_speed > 1.0f) {
-				Vector2 ship_side = state.position - obs_info.obstacle_position;
-				float cross = torp_unit.x * ship_side.y - torp_unit.y * ship_side.x;
-				dodge_bias = (cross >= 0.0f) ? -1.0f : 1.0f;
-			}
-
-			// Build candidate rudder list: profile-minimizing headings + dodge offsets
-			struct TorpCandidate {
-				float rudder;
-				int throttle;
-			};
-			TorpCandidate torp_candidates[16];
-			int n_torp_cand = 0;
-
-			auto add_torp_cand = [&](float r, int t) {
-				r = clamp_f(r, -1.0f, 1.0f);
-				for (int k = 0; k < n_torp_cand; ++k) {
-					if (std::abs(torp_candidates[k].rudder - r) < 0.05f && torp_candidates[k].throttle == t) return;
-				}
-				if (n_torp_cand < 16) torp_candidates[n_torp_cand++] = { r, t };
-			};
-
-			int torp_throttle = std::max(desired_throttle, 4);
-
-			// Profile-minimizing candidates: turn bow into or away from torpedo direction
-			if (torp_speed > 1.0f) {
-				// Heading that points bow directly into the torpedo (facing the torpedo source)
-				float bow_into_heading = std::atan2(-torp_unit.x, -torp_unit.y);
-				float rudder_bow_into = compute_rudder_to_heading(bow_into_heading, false);
-				add_torp_cand(rudder_bow_into, torp_throttle);
-
-				// Heading that points bow away from the torpedo (same direction as torp travel)
-				float bow_away_heading = std::atan2(torp_unit.x, torp_unit.y);
-				float rudder_bow_away = compute_rudder_to_heading(bow_away_heading, false);
-				add_torp_cand(rudder_bow_away, torp_throttle);
-			}
-
-			// Perpendicular dodge candidates (try to squeeze between torps)
-			const float mag_steps[] = { 0.3f, 0.6f, 1.0f, 1.5f, 2.0f };
-			for (int i = 0; i < 5; ++i) {
-				add_torp_cand(desired_rudder + mag_steps[i] * dodge_bias, torp_throttle);
-				add_torp_cand(desired_rudder - mag_steps[i] * dodge_bias, torp_throttle);
-			}
-
-			// Also add hard rudder candidates
-			add_torp_cand(-1.0f, torp_throttle);
-			add_torp_cand(1.0f, torp_throttle);
-
-			// Score candidates: prefer no collision, then best TTC, then smallest profile
-			float best_ttc = obs_info.time_to_collision;
-			float best_rudder = desired_rudder;
-			float best_profile_score = std::numeric_limits<float>::infinity();
-			float desired_arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
-
-			for (int i = 0; i < n_torp_cand; ++i) {
-				auto arc = predict_arc_internal(torp_candidates[i].rudder, torp_candidates[i].throttle, lookahead);
-				float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
-				float cand_ttc = check_arc_obstacles(arc);
-
-				// Profile score: how broadside is the arc endpoint to the torpedo direction?
-				// 0 = perfectly bow/stern-on (ideal), 1 = fully broadside (worst)
-				float profile_score = 1.0f;
-				if (!arc.empty() && torp_speed > 1.0f) {
-					float end_fwd_x = std::sin(arc.back().heading);
-					float end_fwd_z = std::cos(arc.back().heading);
-					// dot with torp direction: |dot|=1 means bow/stern-on, 0 means broadside
-					float alignment = std::abs(end_fwd_x * torp_unit.x + end_fwd_z * torp_unit.y);
-					profile_score = 1.0f - alignment;  // 0=best, 1=worst
-				}
-
-				// Primary: maximize TTC. Secondary: minimize profile (break ties).
-				bool is_better = false;
-				if (cand_ttc > best_ttc + 0.5f) {
-					is_better = true;  // significantly better TTC always wins
-				} else if (cand_ttc > best_ttc - 0.5f && profile_score < best_profile_score - 0.1f) {
-					is_better = true;  // similar TTC but much better profile
-				}
-
-				if (is_better) {
-					best_ttc = cand_ttc;
-					best_rudder = torp_candidates[i].rudder;
-					best_profile_score = profile_score;
-					winning_arc = std::move(arc);
-					if (best_ttc >= cand_arc_time * 0.95f) break;
-				}
-			}
-
-			return { best_rudder, torp_throttle, true, true };
-		}
-	}
 
 	// --- Determine waypoint target for alignment scoring ---
 	Vector2 wp_target = target.position;
@@ -1414,10 +1371,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			}
 		}
 
-		// --- Shell threat penalty ---
-		if (!incoming_shells_.empty()) {
-			float shell_penalty = score_arc_shell_threat(arc);
-			total_time += shell_penalty * SHELL_THREAT_WEIGHT;
+		// --- Shell & torpedo threat penalty ---
+		// Scores real shells (from incoming_shells_) and virtual shell landings
+		// generated procedurally from torpedo obstacle paths.
+		{
+			float threat_penalty = score_arc_shell_threat(arc);
+			total_time += threat_penalty * SHELL_THREAT_WEIGHT;
 		}
 
 		if (total_time < best_time) {
@@ -1456,7 +1415,6 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 	result.rudder = best_rudder;
 	result.throttle = best_throttle;
-	result.torpedo_evasion = false;
 	result.collision_imminent = any_collision || (best_rudder != desired_rudder) || (best_throttle != desired_throttle);
 	return result;
 }
