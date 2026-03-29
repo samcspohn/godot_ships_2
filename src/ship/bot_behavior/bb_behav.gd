@@ -11,9 +11,6 @@ const ARC_DIRECTION_CHANGE_TIME: float = 30.0
 const ARC_MOVEMENT_SPEED: float = 0.15
 const MIN_SAFE_ANGLE_FROM_THREAT: float = PI / 3.0
 
-# Broadside heading preference (degrees offset from pure perpendicular)
-const BROADSIDE_ANGLE_OFFSET: float = 15.0  # slight bow-in for angling
-
 # Skills
 var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
@@ -23,6 +20,7 @@ var _skill_camp: SkillCamp = SkillCamp.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_cover: SkillFindCover = SkillFindCover.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_angle: SkillAngle = SkillAngle.new()
 
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
@@ -56,6 +54,9 @@ func get_target_weights() -> Dictionary:
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
 		flanking_multiplier = 4.0,  # BBs prioritize flanking enemies (slightly lower than CA/DD since BBs turn slowly)
+		overextension_weight = 0.5,  # BBs care a lot about overextended enemies (big guns punish pushes)
+		proximity_override_distance = 4000.0,  # BBs have larger proximity threshold due to slow turning
+		overextension_bonus = 2.5,  # Strong bonus for the most forward enemy when nothing is close
 	}
 
 func get_positioning_params() -> Dictionary:
@@ -66,7 +67,7 @@ func get_positioning_params() -> Dictionary:
 		flank_bias_healthy = 0.6,
 		flank_bias_damaged = 0.2,
 		spread_distance = 3000.0,
-		spread_multiplier = 3.0,
+		spread_multiplier = 1.0,
 	}
 
 func get_hunting_params() -> Dictionary:
@@ -77,6 +78,32 @@ func get_hunting_params() -> Dictionary:
 
 func _roll_flank_depth() -> float:
 	return randf_range(0.1, 0.3)
+
+func get_theatened(server: GameServer) -> bool:
+	## TODO: add dispersion + caliber checks to this
+	var spotted = server.get_valid_targets(_ship.team.team_id)
+	var my_hp = _ship.health_controller.current_hp
+	var hp_ratio = my_hp / _ship.health_controller.max_hp
+	var desired_dist = clampf(1.0 - hp_ratio + 0.3, 0.3, 1.0)
+	var total_hp: float = 0.0
+	for enemy in spotted:
+		var dist = enemy.global_position.distance_to(_ship.global_position)
+		var enemy_range = enemy.artillery_controller.get_params()._range
+		var enemy_hp = enemy.health_controller.current_hp
+		total_hp += enemy_hp
+		match enemy.ship_class:
+			Ship.ShipClass.BB:
+				if enemy_hp > my_hp * 0.9:
+					return true
+			Ship.ShipClass.CA:
+				if enemy_hp > my_hp * 0.7:
+					return true
+			Ship.ShipClass.DD:
+				if dist < enemy_range * desired_dist * 0.8:
+					return true
+	if total_hp > my_hp * 1.5:
+		return true
+	return false
 
 # ============================================================================
 # AMMO AND AIM - Class-specific targeting logic
@@ -127,57 +154,6 @@ func target_aim_offset(_target: Ship) -> Vector3:
 			offset.y = 2.0
 			offset.z -= _target.movement_controller.ship_length * 0.2
 	return offset
-
-# ============================================================================
-# POSITIONING - BB-specific positioning with arc movement
-# ============================================================================
-
-func get_desired_position(friendly: Array[Ship], _enemy: Array[Ship], _target: Ship, current_destination: Vector3) -> Vector3:
-	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-
-	# Use spotted-only danger center for positioning so stale last-known
-	# positions of unspotted enemies don't anchor the BB far from the fight.
-	var spotted_center = _get_spotted_danger_center()
-	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
-
-	if danger_center == Vector3.ZERO:
-		current_destination = _get_hunting_position(server_node, friendly, current_destination)
-		if current_destination == Vector3.ZERO:
-			current_destination = _ship.global_position - _ship.basis.z * 10_000
-			current_destination.y = 0
-			return _get_valid_nav_point(current_destination)
-		else:
-			return current_destination
-
-	# If we only have stale unspotted data (no spotted enemies), treat as
-	# hunting — push toward the danger center instead of orbiting it.
-	if spotted_center == Vector3.ZERO:
-		current_destination = _get_hunting_position(server_node, friendly, current_destination)
-		if current_destination != Vector3.ZERO:
-			return current_destination
-
-	var gun_range = _ship.artillery_controller.get_params()._range
-	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-	var params = get_positioning_params()
-
-	# Calculate engagement range based on HP
-	var range_increase = clamp((1.0 - hp_ratio) * params.range_increase_when_damaged, 0.0, params.range_increase_when_damaged)
-	var engagement_range = (params.base_range_ratio + range_increase) * gun_range
-	var min_safe_distance = gun_range * params.min_safe_distance_ratio
-
-	# Calculate flanking bias
-	var flank_bias = lerp(params.flank_bias_healthy, params.flank_bias_damaged, 1.0 - hp_ratio)
-
-	# Get tactical position
-	var desired_position = _calculate_tactical_position(engagement_range, min_safe_distance, flank_bias)
-
-	# Apply arc movement for continuous maneuvering
-	desired_position = _apply_arc_movement(desired_position, danger_center, engagement_range, server_node)
-
-	# Apply spread offset
-	desired_position += _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
-
-	return _get_valid_nav_point(desired_position)
 
 func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagement_range: float, server_node: GameServer) -> Vector3:
 	"""Apply continuous arc movement around danger center to avoid parking."""
@@ -234,6 +210,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
 	var has_enemies = has_spotted or not unspotted.is_empty()
 	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var threatened = get_theatened(server)
+
+	if not has_enemies:
+		# No enemies at all — default to hunting behavior
+		_tactical_state = TacticalState.State.HUNTING
+		# print("no enemies, hunting")
 
 	# --- Tactical state transitions ---
 	match _tactical_state:
@@ -262,15 +244,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var _prev_skill_name = _active_skill_name
 	var intent: NavIntent = null
 	var params = get_positioning_params()
-	var broadside_params = {
-		"engagement_range_ratio": params.base_range_ratio,
-		"range_increase_when_damaged": params.range_increase_when_damaged,
-		"min_safe_distance_ratio": params.min_safe_distance_ratio,
-		"flank_bias_healthy": params.flank_bias_healthy,
-		"flank_bias_damaged": params.flank_bias_damaged,
-		"bow_in_offset_deg": BROADSIDE_ANGLE_OFFSET,
-	}
-
 	match _tactical_state:
 		TacticalState.State.HUNTING:
 			intent = _skill_hunt.execute(ctx, {})
@@ -280,7 +253,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if intent:
 				_active_skill_name = &"Kite"
 		TacticalState.State.ENGAGED:
-			intent = _execute_bb_engaged_skill(ctx, broadside_params)
+			intent = _execute_bb_engaged_skill(ctx, threatened)
 		TacticalState.State.DISENGAGING:
 			var desired_range_ratio = 0.7 + (1.0 - hp_ratio) * 0.6
 			intent = _skill_kite.execute(ctx, {"desired_range_ratio": clampf(desired_range_ratio, 0.0, 1.01), "pull_toward_friendly_weight": 0.4})
@@ -288,10 +261,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				_active_skill_name = &"Kite"
 
 	# Fallback
-	if intent == null:
-		intent = _skill_broadside.execute(ctx, broadside_params)
-		if intent:
-			_active_skill_name = &"Broadside"
 	if intent == null:
 		var fwd = ship.global_position - ship.basis.z * 10000
 		fwd.y = 0.0
@@ -302,11 +271,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
 
+	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
+	if _active_skill_name in [&"Kite", &"Angle", &"Camp"]:
+		intent = _skill_broadside.apply(intent, ctx, {
+			"oscillation_bias": 0.5,
+		})
+
 	# Post-process spread
-	# intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
+	if _active_skill_name not in [&"FindCover", &"Angle", &"Kite"]:
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
 	return intent
 
-func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) -> NavIntent:
+func _execute_bb_engaged_skill(ctx: SkillContext, threatened: bool) -> NavIntent:
 	var hp_ratio = ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp
 	var intent: NavIntent = null
 
@@ -331,15 +307,19 @@ func _execute_bb_engaged_skill(ctx: SkillContext, broadside_params: Dictionary) 
 			return intent
 
 	# Healthy: camp or broadside
-	var desired_range_ratio = 0.6 + (1.0 - hp_ratio) * 0.3  # Closer to 90% range when at full HP, down to 60% when damaged
-	intent = _skill_camp.execute(ctx, {"desired_range_ratio": desired_range_ratio})
-	if intent == null:
-		# Camp returned null (too focused), fall back to broadside
-		intent = _skill_broadside.execute(ctx, broadside_params)
+	if threatened:
+		var desired_range_ratio = 0.6 + (1.0 - hp_ratio) * 0.3  # Closer to 90% range when at full HP, down to 60% when damaged
+		intent = _skill_camp.execute(ctx, {"desired_range_ratio": desired_range_ratio})
 		if intent:
-			_active_skill_name = &"Broadside"
+			_active_skill_name = &"Camp"
+			return intent
 	else:
-		_active_skill_name = &"Camp"
+		var desired_range_ratio = (1.0 - hp_ratio) * 0.3
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": desired_range_ratio})
+		if intent:
+			_active_skill_name = &"Angle"
+			return intent
+
 	return intent
 
 
@@ -350,45 +330,3 @@ func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
 	if to_dest.length_squared() > 1.0:
 		return atan2(to_dest.x, to_dest.z)
 	return _get_ship_heading()
-
-func _calculate_broadside_heading(target: Ship, danger_center: Vector3, desired_pos: Vector3) -> float:
-	"""Calculate a heading that presents broadside to the primary threat while angling slightly bow-in.
-	BBs want to keep all turrets on target, which means roughly perpendicular to the threat bearing."""
-
-	# Use target position if available, otherwise use danger center
-	var threat_pos: Vector3
-	if target != null and is_instance_valid(target):
-		threat_pos = target.global_position
-	else:
-		threat_pos = danger_center
-
-	var to_threat = threat_pos - desired_pos
-	to_threat.y = 0.0
-	var threat_bearing = atan2(to_threat.x, to_threat.z)
-
-	# Pure broadside is perpendicular to threat bearing
-	# Choose the perpendicular direction that is closest to our current heading
-	# so the ship doesn't do a 180 to present the other broadside
-	var current_heading = _get_ship_heading()
-
-	var broadside_right = _normalize_angle(threat_bearing + PI / 2.0)
-	var broadside_left = _normalize_angle(threat_bearing - PI / 2.0)
-
-	var diff_right = abs(_normalize_angle(broadside_right - current_heading))
-	var diff_left = abs(_normalize_angle(broadside_left - current_heading))
-
-	var broadside: float
-	if diff_right <= diff_left:
-		broadside = broadside_right
-	else:
-		broadside = broadside_left
-
-	# Angle slightly bow-in toward the threat for armor angling
-	var bow_in_offset = deg_to_rad(BROADSIDE_ANGLE_OFFSET)
-	var angle_to_threat = _normalize_angle(threat_bearing - broadside)
-	if angle_to_threat > 0:
-		broadside = _normalize_angle(broadside + bow_in_offset)
-	else:
-		broadside = _normalize_angle(broadside - bow_in_offset)
-
-	return broadside

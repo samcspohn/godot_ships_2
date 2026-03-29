@@ -27,6 +27,7 @@ var _skill_kite: SkillKite = SkillKite.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
 
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
@@ -95,16 +96,24 @@ func get_speed_multiplier() -> float:
 
 func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	"""DD target selection differs based on visibility - torpedoes vs guns.
-	Prefers targets we can actually shoot at over ones behind cover."""
-	var best_shootable: Ship = null
-	var best_shootable_priority: float = -1.0
-	var best_fallback: Ship = null
-	var best_fallback_priority: float = -1.0
+	Prefers targets we can actually shoot at over ones behind cover.
+	Balances proximity threats against overextended enemies:
+	 - Enemies very close get a strong proximity boost.
+	 - Enemies farthest into friendly territory get an overextension bonus.
+	 - When nothing is dangerously close, the most overextended enemy wins."""
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var torpedo_range: float = -1.0
+	var proximity_override_dist: float = 2500.0  # DDs are fast, smaller threshold
+	var overextension_weight: float = 0.3
+	var overextension_bonus: float = 1.8
 
 	if _ship.torpedo_controller != null:
 		torpedo_range = _ship.torpedo_controller.get_params()._range
+
+	# --- First pass: compute base priority and overextension for every target ---
+	var candidate_data: Array[Dictionary] = []
+	var max_overextension: float = 0.0
+	var has_close_threat: bool = false
 
 	for ship in targets:
 		var disp = ship.global_position - _ship.global_position
@@ -136,9 +145,53 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 			var depth_scale = 1.0 + flank_info.penetration_depth
 			priority *= flank_multiplier * depth_scale
 
-		# Sort into shootable vs fallback based on line-of-fire check
-		# When visible (using guns), prefer targets we can actually hit
-		if _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship):
+		# Overextension score: how far into friendly territory this enemy is
+		var overext = _get_overextension_score(ship)
+		if overext > max_overextension:
+			max_overextension = overext
+
+		# Track whether any enemy is dangerously close
+		if dist < proximity_override_dist:
+			has_close_threat = true
+
+		var shootable = _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship)
+		candidate_data.append({
+			ship = ship,
+			base_priority = priority,
+			dist = dist,
+			overextension = overext,
+			shootable = shootable,
+		})
+
+	# --- Second pass: apply overextension vs proximity weighting ---
+	var best_shootable: Ship = null
+	var best_shootable_priority: float = -1.0
+	var best_fallback: Ship = null
+	var best_fallback_priority: float = -1.0
+
+	for data in candidate_data:
+		var priority: float = data.base_priority
+		var dist: float = data.dist
+		var overext: float = data.overextension
+		var ship: Ship = data.ship
+
+		# Overextension contribution: reward enemies deeper into friendly territory
+		if max_overextension > 0.0 and overextension_weight > 0.0:
+			var relative_overext = overext / max_overextension
+			var overext_contrib = relative_overext * overextension_weight
+			priority += overext_contrib
+
+			# Extra bonus for the most overextended target when nothing is dangerously close
+			if not has_close_threat and relative_overext > 0.9:
+				priority *= overextension_bonus
+
+		# Proximity override: if this enemy is very close, give a strong boost
+		if dist < proximity_override_dist:
+			var proximity_factor = 1.0 + 2.0 * (1.0 - dist / proximity_override_dist)
+			priority *= proximity_factor
+
+		# Sort into shootable vs fallback
+		if data.shootable:
 			if priority > best_shootable_priority:
 				best_shootable = ship
 				best_shootable_priority = priority
@@ -268,6 +321,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if intent == null:
 		intent = _intent_sail_forward(ship)
 		_active_skill_name = &"SailForward"
+
+	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
+	if _active_skill_name in [&"Kite"]:
+		intent = _skill_broadside.apply(intent, ctx, {
+			"oscillation_bias": 0.3,
+		})
 
 	# Post-process spread
 	var params = get_positioning_params()

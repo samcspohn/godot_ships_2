@@ -10,9 +10,10 @@ var _cover_recalc_ms: int = 0
 var _last_in_range_ms: int = 0
 var _arrived: bool = false
 var can_shoot: bool = false
+var _dist_to_dest: float = 0.0
 
 
-func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
+func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
 	var ship = ctx.ship
 	var target = ctx.target
 	var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)
@@ -33,7 +34,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	# Find new island if needed
 	if not _nav_destination_valid:
-		var island = ctx.behavior._get_cover_position(desired_range, target)
+		var island = ctx.behavior._get_cover_position(desired_range, target,prioritize_cover)
 		if island.is_empty():
 			return null  # No cover available — caller falls back
 		_set_island(island)
@@ -42,7 +43,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _cover_recalc_ms >= recalc_cooldown:
 		_cover_recalc_ms = now_ms
-		var island = ctx.behavior._get_cover_position(desired_range, target)
+		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover)
 		if not island.is_empty():
 			_set_island(island)
 		else:
@@ -50,6 +51,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	# Approach / station-keep
 	var dist = ship.global_position.distance_to(_nav_destination)
+	_dist_to_dest = dist
 	var clearance = ctx.behavior._get_ship_clearance()
 	var arrival_radius = clearance * 2.0
 	var exit_radius = clearance * 3.5
@@ -99,6 +101,8 @@ func _set_island(island: Dictionary) -> void:
 func is_complete(ctx: SkillContext) -> bool:
 	return _arrived
 
+func get_dist() -> float:
+	return _dist_to_dest
 
 func reset() -> void:
 	_target_island_id = -1

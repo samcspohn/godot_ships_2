@@ -1331,7 +1331,25 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		} else {
 			float alignment_time = arc.back().time;
 			float endpoint_dist = arc.back().position.distance_to(wp_target);
-			float endpoint_speed = std::abs(arc.back().speed);
+
+			// When a reverse candidate ends with the bow aligned toward the
+			// waypoint, the ship will switch to forward throttle on the next
+			// frame.  Score the remaining travel using forward speed instead
+			// of the slow reverse speed.  This prevents oscillation: without
+			// this, reverse candidates are over-penalised by the slow reverse
+			// speed, so the ship reverses just far enough to unblock a forward
+			// path, drives forward into the shore again, and repeats.
+			float endpoint_speed;
+			if (cand_throttle < 0) {
+				// Bow is aligned with the waypoint — estimate travel at
+				// the forward speed the ship will use after switching.
+				// Use a moderate forward throttle (magnitude 3) as a
+				// reasonable estimate of the speed the navigator will
+				// command once it resumes forward travel.
+				endpoint_speed = throttle_to_speed(3);
+			} else {
+				endpoint_speed = std::abs(arc.back().speed);
+			}
 			if (endpoint_speed < 1.0f) endpoint_speed = 1.0f;
 			float travel_time = endpoint_dist / endpoint_speed;
 			total_time = alignment_time + travel_time;

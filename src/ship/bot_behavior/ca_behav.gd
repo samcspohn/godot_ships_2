@@ -43,6 +43,7 @@ var _skill_kite: SkillKite = SkillKite.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
 
 # ============================================================================
 # WEIGHT CONFIGURATION
@@ -76,6 +77,9 @@ func get_target_weights() -> Dictionary:
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
 		flanking_multiplier = 5.0,
+		overextension_weight = 0.4,  # CAs balance between close threats and overextended enemies
+		proximity_override_distance = 3000.0,
+		overextension_bonus = 2.0,
 	}
 
 func get_positioning_params() -> Dictionary:
@@ -120,7 +124,7 @@ func get_theatened(server: GameServer) -> bool:
 		var enemy_hp = enemy.health_controller.current_hp
 		match enemy.ship_class:
 			Ship.ShipClass.BB:
-				if dist < enemy_range * desired_dist and enemy_hp > my_hp * 0.5:
+				if dist < enemy_range * clamp(desired_dist, 0.7, 1.0) and enemy_hp > my_hp * 0.5:
 					return true
 			Ship.ShipClass.CA:
 				if dist < enemy_range * desired_dist and enemy_hp > my_hp:
@@ -368,6 +372,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			any_enemy_in_range = true
 			break
 
+	if not has_spotted:
+		_tactical_state = TacticalState.State.HUNTING
 	_update_enemy_tracking(ship, server, spotted)
 
 	var threatened = get_theatened(server)
@@ -420,13 +426,19 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		TacticalState.State.ENGAGED:
 			intent = _execute_ca_engaged_skill(ctx, cover_params, threatened, any_enemy_in_range)
 		TacticalState.State.DISENGAGING:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8, "angle_to_threat_deg": 35.0})
-			# var cover_intent = _skill_cover.execute(ctx, cover_params)
-			# if cover_intent != null and intent != null:
-			# 	# Blend kiting and cover intents so ca can attempt to kite to cover
-			# 	intent.target_position = intent.target_position * 0.7 + cover_intent.target_position
-			if intent != null:
-				_active_skill_name = &"Kite"
+			intent = _skill_cover.execute(ctx, cover_params, true)
+			if _skill_cover.get_dist() < 2500.0:
+				_active_skill_name = &"FindCover"
+				if intent != null:
+					_active_skill_name = &"FindCover"
+			else:
+				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8, "angle_to_threat_deg": 35.0})
+				# var cover_intent = _skill_cover.execute(ctx, cover_params)
+				# if cover_intent != null and intent != null:
+				# 	# Blend kiting and cover intents so ca can attempt to kite to cover
+				# 	intent.target_position = intent.target_position * 0.7 + cover_intent.target_position
+				if intent != null:
+					_active_skill_name = &"Kite"
 
 	# Fallback
 	if intent == null:
@@ -438,6 +450,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if intent == null:
 		intent = _intent_sail_forward(ship)
 		_active_skill_name = &"SailForward"
+
+	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
+	if _active_skill_name in [&"Kite", &"Angle"]:
+		intent = _skill_broadside.apply(intent, ctx, {
+			"oscillation_bias": 0.4,
+		})
 
 	# Post-process spread
 	var pos_params = get_positioning_params()
@@ -474,26 +492,30 @@ func _execute_ca_sneak_skill(ctx: SkillContext, cover_params: Dictionary) -> Nav
 	return intent
 
 func _execute_ca_engaged_skill(ctx: SkillContext, cover_params: Dictionary, threatened: bool, any_targets: bool) -> NavIntent:
+	var intent
 	# If at cover, stay there
 	if _skill_cover.is_complete(ctx):
-		var intent = _skill_cover.execute(ctx, cover_params)
+		intent = _skill_cover.execute(ctx, cover_params)
 		if intent != null:
 			_active_skill_name = &"FindCover"
 		return intent
 	# Try new cover
-	var intent
-	if not _ship.visible_to_enemy and threatened:
+	if not _ship.visible_to_enemy and threatened :
 		intent = _skill_cover.execute(ctx, cover_params)
 		if intent != null:
 			_active_skill_name = &"FindCover"
 			return intent
 	## TODO: decide on angle vs kite depending on target, outnumbered, and HP ratio
-	if not threatened or not any_targets:
+	if not threatened and not any_targets:
 		intent = _skill_angle.execute(ctx, {})
 		_active_skill_name = &"Angle"
 	else:
-		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8})
-		_active_skill_name = &"Kite"
+		intent = _skill_cover.execute(ctx, cover_params, true)
+		if _skill_cover.get_dist() < 2500.0:
+			_active_skill_name = &"FindCover"
+		else:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8})
+			_active_skill_name = &"Kite"
 		# var cover_intent = _skill_cover.execute(ctx, cover_params)
 		# intent.target_position = intent.target_position * 0.7 + cover_intent.target_position * 0.3 if cover_intent != null else intent.target_position
 	return intent

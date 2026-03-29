@@ -45,15 +45,9 @@ class BloomProbe:
 
 		match phase:
 			Phase.SHOOTING:
-				if ship.global_position.distance_to(last_pos) > 1_000.0:
+				if ship.global_position.distance_to(last_pos) > 1_000.0 \
+						and _all_enemies_safe(ship):
 					phase = Phase.PROBING
-					# _probe_timer = 0.0
-					# last_pos = ship.global_position
-				# _probe_timer += delta
-
-				# if _is_bloom_decayed(ship):
-				# 	phase = Phase.PROBING
-				# 	_probe_timer = 0.0
 
 			Phase.PROBING:
 				if _is_bloom_decayed(ship) and ship.visible_to_enemy:
@@ -65,16 +59,6 @@ class BloomProbe:
 						else:
 							went_dark = true
 					).call_deferred()
-					# _probe_timer = 0.0
-				# else:
-				# 	went_dark = true
-					# return
-				# _probe_timer += delta
-				# if not ship.visible_to_enemy:
-				# 	went_dark = true
-				# elif _probe_timer >= probe_timeout:
-				# 	probe_failed = true
-				# 	phase = Phase.SHOOTING
 
 	## Returns true only while in the SHOOTING phase.
 	func can_fire() -> bool:
@@ -84,3 +68,44 @@ class BloomProbe:
 	func _is_bloom_decayed(ship: Ship) -> bool:
 		var concealment_params: ConcealmentParams = ship.concealment.params.p() as ConcealmentParams
 		return ship.concealment.bloom_radius <= concealment_params.radius
+
+	## Returns true when every visible enemy is "safe" for probing.
+	## An enemy is safe if:
+	##   1) Terrain blocks line-of-sight (shell arc cannot clear terrain), OR
+	##   2) The enemy is outside the ship's base concealment radius.
+	## If there are no visible enemies, returns true.
+	func _all_enemies_safe(ship: Ship) -> bool:
+		var server_node: GameServer = ship.get_node_or_null("/root/Server")
+		if server_node == null:
+			return false
+
+		var visible_enemies = server_node.get_valid_targets(ship.team.team_id)
+		if visible_enemies.is_empty():
+			return true
+
+		var concealment_params: ConcealmentParams = ship.concealment.params.p() as ConcealmentParams
+		var concealment_radius: float = concealment_params.radius
+		var check_pos: Vector3 = ship.global_position
+		var has_nav: bool = NavigationMapManager.is_map_ready()
+
+		for enemy in visible_enemies:
+			# # Check if terrain blocks line-of-sight using the navigation map raycast.
+			# if has_nav and NavigationMapManager.is_los_blocked(check_pos, enemy.global_position):
+			# 	# Island blocks LoS — enemy cannot see us, safe.
+			# 	continue
+			var map = NavigationMapManager.get_map()
+			var result = map.raycast(Vector2(check_pos.x, check_pos.z), Vector2(enemy.global_position.x, enemy.global_position.z), -50)
+			var clear = not result["hit"]
+			if !clear:
+				continue
+
+
+			# Enemy has line of sight — only safe if outside concealment radius.
+			var dist: float = check_pos.distance_to(enemy.global_position)
+			if dist > concealment_radius:
+				continue
+
+			# Enemy has LoS AND is within concealment radius — not safe.
+			return false
+
+		return true
