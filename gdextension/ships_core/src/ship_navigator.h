@@ -121,6 +121,11 @@ private:
 	// --- Incoming shell avoidance ---
 	std::vector<IncomingShell> incoming_shells_;
 
+	// --- Enemy threat zones (for stealth pathfinding) ---
+	// Registered by GDScript when the DD is in SNEAKING state.
+	// These represent enemy ship positions that the pathfinder should route around.
+	std::vector<ThreatZone> threat_zones_;
+
 	static constexpr float SHELL_THREAT_RADIUS   = 300.0f; // max dist for a landing to matter
 	static constexpr float SHELL_THREAT_WEIGHT   = 8.0f;   // penalty scale in candidate scoring
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 800.0f; // virtual caliber for torpedo threat points
@@ -200,6 +205,30 @@ private:
 
 	void set_steering_output(float rudder, int throttle, bool collision);
 
+	// Stamp threat zones onto the path search's threat grid overlay
+	void stamp_threat_grid(PathSearch &search) const;
+
+	// Check if a straight line between two world positions crosses any
+	// threat zone's hard radius.  Used to reject terrain-only LOS shortcuts
+	// when stealth pathfinding is active.
+	bool line_crosses_threat(Vector2 from, Vector2 to) const;
+
+	// Threat-aware line-of-sight check on a stamped threat grid.
+	// Returns true if the line from (x0,z0) to (x1,z1) in NAV-grid coords
+	// does NOT cross any threat cell whose cost >= threshold.
+	// If no threat grid is present, always returns true.
+	static bool threat_line_of_sight(const PathSearch &search,
+									 int x0, int z0, int x1, int z1,
+									 float threshold);
+
+	// When begin_path_search returned immediate=true (terrain LOS shortcut)
+	// but we need a full A* because the straight line crosses a threat zone,
+	// this helper sets up the A* buffers, indices, and open-set seed that
+	// begin_path_search would have done in the non-LOS branch.
+	// After calling this, path_search.active=true and immediate should be
+	// treated as false.
+	void force_astar_search(PathSearch &search) const;
+
 protected:
 	static void _bind_methods();
 
@@ -265,6 +294,10 @@ public:
 	// --- Incoming shell avoidance ---
 	void clear_incoming_shells();
 	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber);
+
+	// --- Enemy threat avoidance (stealth pathfinding) ---
+	void clear_threat_zones();
+	void add_threat_zone(Vector2 position, float hard_radius, float soft_radius);
 
 	// --- Path / trajectory info ---
 

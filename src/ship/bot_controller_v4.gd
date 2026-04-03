@@ -243,6 +243,10 @@ func _physics_process(delta: float) -> void:
 	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == shell_frame_slot:
 		_update_shell_threats()
 
+	# --- 2e. Update enemy threat zones (stealth pathfinding) ---
+	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
+		_update_threat_zones()
+
 	# --- 2b. Check for event-driven intent triggers ---
 	# These run every frame (cheap checks) and set _force_intent_next_frame
 	# when a significant tactical event occurs. Gated by cooldown to prevent
@@ -373,6 +377,10 @@ func _update_nav_intent() -> void:
 			var safe := nav_map.safe_nav_point(ship_pos_2d, dest_2d, clearance, turning_radius)
 			_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
 
+	# --- Push destination out of enemy threat zones when sneaking ---
+	if _last_intent != null:
+		_adjust_destination_for_threats(_last_intent)
+
 	# Track destination for debug drawing
 	if _last_intent != null:
 		destination = _last_intent.target_position
@@ -494,6 +502,130 @@ func _update_shell_threats() -> void:
 			s["time_remaining"],
 			s["caliber"]
 		)
+
+
+## Push the intent's destination out of enemy threat zones so the A* goal
+## is in pathable territory.  Only active when SNEAKING — mirrors the same
+## condition used by _update_threat_zones().
+##
+## For every enemy whose soft_radius covers the destination we push the
+## destination radially away from that enemy until it sits just outside the
+## soft_radius.  After all pushes we re-validate against terrain so the
+## adjusted point is still in navigable water.
+func _adjust_destination_for_threats(intent: NavIntent) -> void:
+	if behavior == null:
+		return
+	if not "_tactical_state" in behavior:
+		return
+	if behavior._tactical_state != TacticalState.State.SNEAKING:
+		return
+
+	# Read concealment — same radii used by _update_threat_zones
+	var my_concealment: float = 0.0
+	if _ship.concealment != null and _ship.concealment.params != null:
+		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if my_concealment <= 0.0:
+		return
+
+	var soft_radius: float = my_concealment + 500.0  # must match _update_threat_zones
+	# Small buffer so the destination lands clearly outside the soft edge
+	var push_margin: float = 100.0
+
+	var dest := Vector2(intent.target_position.x, intent.target_position.z)
+	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var was_adjusted := false
+
+	# Collect all enemy positions (spotted + last-known unspotted)
+	var enemy_positions: Array[Vector2] = []
+	var enemies = server_node.get_valid_targets(_ship.team.team_id)
+	for enemy_ship in enemies:
+		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			enemy_positions.append(Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z))
+	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	for enemy_ship in unspotted.keys():
+		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			var lp: Vector3 = unspotted[enemy_ship]
+			enemy_positions.append(Vector2(lp.x, lp.z))
+
+	# Iteratively push the destination out of every overlapping threat zone.
+	# Multiple passes handle cases where pushing away from one enemy moves
+	# the destination into another's zone.  Cap iterations to avoid infinite
+	# loops in heavily surrounded scenarios.
+	var max_passes := 4
+	for _pass in max_passes:
+		var pushed_this_pass := false
+		for epos in enemy_positions:
+			var to_dest := dest - epos
+			var dist := to_dest.length()
+			if dist < soft_radius + push_margin:
+				# Need to push outward
+				var push_dir: Vector2
+				if dist > 1.0:
+					push_dir = to_dest / dist
+				else:
+					# Destination is right on top of the enemy — push toward
+					# the ship so the DD retreats to a sane position
+					var fallback := ship_pos - epos
+					if fallback.length() > 1.0:
+						push_dir = fallback.normalized()
+					else:
+						push_dir = Vector2(1.0, 0.0)  # arbitrary
+				dest = epos + push_dir * (soft_radius + push_margin)
+				pushed_this_pass = true
+				was_adjusted = true
+		if not pushed_this_pass:
+			break
+
+	# Re-validate against terrain so we don't push into land
+	if was_adjusted and NavigationMapManager.is_map_ready():
+		var nav_map = NavigationMapManager.get_map()
+		var clearance: float = navigator.get_clearance_radius()
+		var turning_radius: float = movement.turning_circle_radius
+		if not nav_map.is_navigable(dest.x, dest.y, clearance):
+			var safe := nav_map.safe_nav_point(ship_pos, dest, clearance, turning_radius)
+			dest = safe["position"]
+		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+	elif was_adjusted:
+		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+
+
+func _update_threat_zones() -> void:
+	navigator.clear_threat_zones()
+
+	# Only apply threat avoidance when the behavior is in SNEAKING state
+	if behavior == null:
+		return
+	if not "_tactical_state" in behavior:
+		return
+	if behavior._tactical_state != TacticalState.State.SNEAKING:
+		return
+
+	# Use our base concealment radius as the avoidance distance
+	var my_concealment: float = 0.0
+	if _ship.concealment != null and _ship.concealment.params != null:
+		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if my_concealment <= 0.0:
+		return
+
+	var hard_radius: float = my_concealment
+	var soft_radius: float = my_concealment + 500.0  # 500m safety margin
+
+	# Register all known enemy positions as threat zones
+	var enemies = server_node.get_valid_targets(_ship.team.team_id)
+	for enemy in enemies:
+		if not is_instance_valid(enemy) or not enemy.is_alive():
+			continue
+		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
+		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+
+	# Also add last-known positions of unspotted enemies (they can still detect us)
+	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	for enemy_ship in unspotted.keys():
+		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
+			continue
+		var last_pos: Vector3 = unspotted[enemy_ship]
+		var pos_2d = Vector2(last_pos.x, last_pos.z)
+		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
 
 
 # ===========================================================================

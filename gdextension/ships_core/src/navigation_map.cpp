@@ -1733,6 +1733,21 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 					penalty = 1.0f + proximity_weight * t * t;
 				}
 
+				// --- Enemy threat zone penalty ---
+				// Look up the coarser threat grid for additional cost.
+				if (!search.threat_cost.empty() && search.threat_grid_width > 0) {
+					// Map nav grid cell (nx, nz) to threat grid cell
+					int tx = nx / 2;  // threat grid is 2x coarser
+					int tz_t = nz / 2;
+					if (tx >= 0 && tx < search.threat_grid_width &&
+						tz_t >= 0 && tz_t < search.threat_grid_height) {
+						float threat = search.threat_cost[tz_t * search.threat_grid_width + tx];
+						if (threat > 0.0f) {
+							penalty += threat;
+						}
+					}
+				}
+
 				float new_g = cg + step_dist * penalty;
 
 				bool is_better = (search.open_gen[nidx] != search.current_gen)
@@ -1795,6 +1810,48 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 	}
 
 	// --- Path simplification using grid-level LOS (fast) ---
+	// When a threat grid is present, also reject shortcuts that cross
+	// high-cost threat cells so the A*'s avoidance detours are preserved.
+	const bool has_threats = !search.threat_cost.empty() && search.threat_grid_width > 0;
+	const float THREAT_LOS_THRESHOLD = 10.0f; // half of THREAT_WEIGHT — same as pocket fill
+
+	// Inline Bresenham check on the threat grid (nav-grid coords → threat cell)
+	auto threat_los_clear = [&](int x0, int z0, int x1, int z1) -> bool {
+		if (!has_threats) return true;
+		int dx = std::abs(x1 - x0);
+		int dz = std::abs(z1 - z0);
+		int sx = (x0 < x1) ? 1 : -1;
+		int sz = (z0 < z1) ? 1 : -1;
+		int cx = x0, cz = z0;
+		auto chk = [&](int nx, int nz) -> bool {
+			int tx = nx / 2;
+			int tz_t = nz / 2;
+			if (tx < 0 || tx >= search.threat_grid_width ||
+				tz_t < 0 || tz_t >= search.threat_grid_height) return true;
+			return search.threat_cost[tz_t * search.threat_grid_width + tx] < THREAT_LOS_THRESHOLD;
+		};
+		if (!chk(cx, cz)) return false;
+		if (dx == 0 && dz == 0) return true;
+		int err = dx - dz;
+		while (!(cx == x1 && cz == z1)) {
+			int e2 = 2 * err;
+			bool step_x = (e2 > -dz) || (e2 == -dz && dx > 0);
+			bool step_z = (e2 < dx)  || (e2 == dx  && dz > 0);
+			if (step_x && step_z) {
+				if (!chk(cx + sx, cz)) return false;
+				if (!chk(cx, cz + sz)) return false;
+				err -= dz; err += dx;
+				cx += sx; cz += sz;
+			} else if (step_x) {
+				err -= dz; cx += sx;
+			} else {
+				err += dx; cz += sz;
+			}
+			if (!chk(cx, cz)) return false;
+		}
+		return true;
+	};
+
 	if (path.size() > 2) {
 		std::vector<Vector2> simplified;
 		simplified.push_back(path[0]);
@@ -1812,7 +1869,8 @@ PathResult NavigationMap::finish_path_search(PathSearch &search) const {
 				int ix1 = static_cast<int>(std::round(gx1));
 				int iz1 = static_cast<int>(std::round(gz1));
 
-				if (line_of_sight(ix0, iz0, ix1, iz1, search.clearance_world)) {
+				if (line_of_sight(ix0, iz0, ix1, iz1, search.clearance_world) &&
+					threat_los_clear(ix0, iz0, ix1, iz1)) {
 					farthest = test;
 					break;
 				}

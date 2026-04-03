@@ -418,6 +418,10 @@ public:
 	int get_grid_height() const;
 	float get_cell_size_value() const;
 
+	// Get world-space origin of the grid
+	float get_min_x() const { return min_x; }
+	float get_min_z() const { return min_z; }
+
 	// Check if the map has been built
 	bool is_built() const;
 

@@ -1591,7 +1591,7 @@ func engage_target(target: Ship):
 		# intended lead position. If not, the turret hasn't caught up yet
 		# and firing would send shells toward the old (wrong) aim point.
 		var aim_error = gun._aim_point.distance_to(target_lead)
-		if aim_error > 1.0:
+		if aim_error > 5.0:
 			continue
 		# Verify the shell arc actually clears terrain / islands
 		if not arc_clear:
