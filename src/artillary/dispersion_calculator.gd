@@ -1,293 +1,237 @@
 # Naval Artillery Dispersion Calculator for GODOT 4.X
 class_name DispersionCalculator
-
-## Parameters for shell dispersion
-
-# Base dispersion values at 0.5 km (500 meters)
-# @export var base_horizontal_dispersion: float = 10.0 # Meters perpendicular to aim direction
-# @export var base_vertical_dispersion: float = 120.0 # Meters in line with aim direction
-
-# # Linear dispersion growth with range (meters per kilometer)
-# @export var horizontal_dispersion_modifier: float = 13.56 # Additional meters of dispersion per km
-# @export var vertical_dispersion_modifier: float = 13.56 # Additional meters of dispersion per km (typically 1.5-2x horizontal)
-
-# # Grouping values control how tightly shells cluster (higher = tighter grouping, lower variance)
-# @export var h_grouping: float = 3.0 # Horizontal grouping factor (higher = less spread)
-# @export var v_grouping: float = 3.0 # Vertical grouping factor (higher = less spread)
-
-# @export var base_spread: float = 0.01
-
-# # Normal distribution cache for Box-Muller transform efficiency
-# var _has_cached_normal: bool = false
-# var _cached_normal: float = 0.0
-
-var period: float = 4.0
-var angle: float = 0.0
-var shell_index: float = 0.0
-var _period: float = 8.0
-var _shell_index: float = 0.0
-var quality: float = 0.5
-var over_under_toggle: bool = false
-# var randomised_strata: Array[Array] = []
-# var strata_idx: int = 0
-# var good_normal_toggle: bool = false
-# var good_region: float = 1.0
-
-# const GUARANTEE_STRATA = 1.0 / 10.0
-# func compute_stratum():
-# 	shell_index = 0.0
-# 	randomised_strata.clear()
-# 	# randomised_strata.append([0.0, GUARANTEE_STRATA])
-# 	var i = 0;
-# 	while shell_index < period:
-# 		# {strat_id: [start, size]}
-# 		randomised_strata.append([0.0, 0.0])
-# 		i += 1
-# 		shell_index += 1.0
-# 	shell_index -= period
+var period = 0.0
 
 
-# 	var first_good = false
+# const SHELL_COUNT := 8
 
-# 	# var strata_size = (1.0 - GUARANTEE_STRATA) / i
-# 	#										 v guaranteed
-# 	# convert to 2 strata with random order |--|----- good ------|------------ normal ------------|
-# 	good_normal_toggle = true
-# 	for j in range(1, randomised_strata.size()):
-# 		# var start = GUARANTEE_STRATA + (j - 1) * strata_size
-# 		if good_normal_toggle and first_good:
-# 			randomised_strata[j] = [0.0, GUARANTEE_STRATA * 0.2]
-# 			first_good = false
-# 		else:
-# 			var strata_size = good_region - GUARANTEE_STRATA if good_normal_toggle else (1.0 - good_region)
-# 			var start = GUARANTEE_STRATA if good_normal_toggle else good_region
-# 			randomised_strata[j] = [start, strata_size]
-# 		# good_normal_toggle = !good_normal_toggle
-# 	randomised_strata.shuffle()
+# var _shell_index := 0
+# var _salvo_index := 0
+# var _salvo_rotation := 0.0
 
-func _init():
-	angle = randf_range(0, TAU)
-	over_under_toggle = randf() < 0.5
-	_shell_index = randf_range(0.0, _period)
-	# good_region = pow(0.5, (h_grouping + v_grouping) / 2.0)
-	# shell_index = randf_range(0.0, period)
-	# for i in range(int(period)):
-	# 	randomised_strata.append(i)
-	# randomised_strata.shuffle()
-	# var guarantee_strata = 1.0 / 32.0
-	# randomised_strata.append({0: [0.0, guarantee_strata]})
-	# var strata_value = guarantee_strata
-	# var strata_size = (1.0 - guarantee_strata) / int(period)
-	# shell_index = 1.0
-	# strata_idx = 1
-	# while shell_index < period:
-	# 	randomised_strata.append({shell_index: [strata_value, strata_value + guarantee_strata]})
-	# 	strata_value += guarantee_strata
-	# 	# randomised_strata.append(shell_index)
-	# 	shell_index += 1.0
-	# shell_index -= period
-	# randomised_strata.shuffle()
-	# compute_stratum()
 
-## Calculate a point within the dispersion ellipse
-# aim_point: The precise point being aimed at
-# gun_position: The position of the gun firing the shell
-# Returns: A new point representing where the shell will actually go due to dispersion
+# func _init() -> void:
+# 	_new_salvo()
+
+
+# func _new_salvo() -> void:
+# 	_shell_index = 0
+# 	_salvo_rotation = randf() * TAU
+# 	_salvo_index += 1
+
+
+# ## Halton sequence — low-discrepancy quasi-random in [0, 1]
+# ## Base 2 and 3 give good 2D coverage with minimal correlation.
+# static func _halton(index: int, base: int) -> float:
+# 	var f := 1.0
+# 	var r := 0.0
+# 	var i := index
+# 	while i > 0:
+# 		f /= base
+# 		r += f * (i % base)
+# 		i /= base
+# 	return r
+
+
+# func calculate_dispersed_launch(
+# 		aim_point: Vector3,
+# 		gun_position: Vector3,
+# 		shell_params: ShellParams,
+# 		h_grouping: float,
+# 		v_grouping: float,
+# 		base_spread: float) -> Vector3:
+
+# 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
+# 	var launch_velocity: Vector3 = a[0]
+
+# 	if _shell_index >= SHELL_COUNT:
+# 		_new_salvo()
+
+# 	# Each salvo uses a different slice of the Halton sequence
+# 	var idx := _salvo_index * SHELL_COUNT + _shell_index + 1
+# 	_shell_index += 1
+
+# 	var u1 := _halton(idx, 2)  # radial
+# 	var u2 := _halton(idx, 3)  # angular
+
+# 	# Rayleigh CDF inversion, normalized to [0, 1]
+# 	# sqrt(-2 * log(0.05)) ≈ 2.45 — captures 95% of the distribution
+# 	# Clamp the last 5% to the edge so base_spread is the hard ceiling
+# 	const MAX_R := 2.4477  # sqrt(-2 * log(0.05))
+# 	var r := minf(sqrt(-2.0 * log(1.0 - u1 + 1e-12)) / MAX_R, 1.0)
+# 	var angle := u2 * TAU + _salvo_rotation
+
+# 	# Decompose into lateral (h) and vertical (v) offsets
+# 	var h_raw := r * cos(angle)
+# 	var v_raw := r * sin(angle)
+
+# 	# Apply per-axis grouping
+# 	var h_offset: float = sign(h_raw) * pow(absf(h_raw), h_grouping)
+# 	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
+
+# 	var h_angle := h_offset * base_spread * 0.5
+# 	var v_angle := v_offset * base_spread * 0.5
+
+# 	# Build local frame around launch direction
+# 	var forward := launch_velocity.normalized()
+# 	var world_up := Vector3.UP
+# 	var right := forward.cross(world_up).normalized()
+# 	if right.length_squared() < 0.001:
+# 		right = Vector3.RIGHT
+# 	var up := right.cross(forward).normalized()
+
+# 	var speed := launch_velocity.length()
+# 	var dispersed := forward
+# 	dispersed = dispersed.rotated(up, h_angle)
+# 	dispersed = dispersed.rotated(right, v_angle)
+
+# 	return dispersed * speed
+
+
+const SHELL_COUNT := 8
+const MAX_R := 2.4477  # sqrt(-2 * log(0.05)) — 95th percentile, maps to 1.0
+
+var _shell_index := 0
+var _salvo_rotation := 0.0
+var _shuffled_radii := PackedFloat64Array()
+var _angles := PackedFloat64Array()
+var _sigma := 1.0
+
+# Citadel ellipse for post-processing (in angular fraction space, set externally)
+var _citadel_h_frac := 0.5   # citadel semi-width as fraction of base_spread
+var _citadel_v_frac := 0.05  # citadel semi-height as fraction of base_spread
+
+
+func _init(sigma: float = 1.0) -> void:
+	_sigma = maxf(sigma, 1.0)
+	_new_salvo()
+
+
+func set_sigma(sigma: float) -> void:
+	_sigma = maxf(sigma, 1.0)
+
+
+## Set citadel ellipse size as fractions of base_spread.
+## e.g. for a ship that is half the dispersion width and 1/10 the height:
+##   set_citadel_fractions(0.5, 0.1)
+func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
+	_citadel_h_frac = maxf(h_frac, 0.01)
+	_citadel_v_frac = maxf(v_frac, 0.01)
+
+
+func _new_salvo() -> void:
+	_shell_index = 0
+	_salvo_rotation = randf() * TAU
+
+	# ── Radial stratification via Rayleigh CDF, normalized to [0, 1] ──
+	_shuffled_radii.resize(SHELL_COUNT)
+	for i in SHELL_COUNT:
+		var u_low := float(i) / SHELL_COUNT
+		var u_high := float(i + 1) / SHELL_COUNT
+		var u := u_low + randf() * (u_high - u_low)
+		# Rayleigh CDF inversion, scaled so 95th percentile = 1.0
+		_shuffled_radii[i] = minf(sqrt(-2.0 * log(1.0 - u + 1e-12)) / MAX_R, 1.0)
+
+	# Fisher-Yates shuffle radii
+	for i in range(SHELL_COUNT - 1, 0, -1):
+		var j := randi_range(0, i)
+		var tmp := _shuffled_radii[i]
+		_shuffled_radii[i] = _shuffled_radii[j]
+		_shuffled_radii[j] = tmp
+
+	# ── Angular stratification with jitter ──
+	_angles.resize(SHELL_COUNT)
+	var sector := TAU / SHELL_COUNT
+	for i in SHELL_COUNT:
+		_angles[i] = float(i) * sector + _salvo_rotation \
+			+ (randf() - 0.5) * sector * 0.7
+
+	# ── Post-processing: citadel guarantee ──
+	_apply_citadel_guarantee()
+
+
+func _apply_citadel_guarantee() -> void:
+	var ea := _citadel_h_frac  # semi-axis in normalized space
+	var eb := _citadel_v_frac
+	if ea <= 0.0 or eb <= 0.0:
+		return
+
+	# Decompose each shell into h/v offsets and check ellipse
+	var any_inside := false
+	var closest_idx := 0
+	var closest_d := INF
+
+	for i in SHELL_COUNT:
+		var r := _shuffled_radii[i]
+		var a := _angles[i]
+		var hx := r * cos(a)  # lateral offset [-1, 1]
+		var vy := r * sin(a)  # vertical offset [-1, 1]
+
+		# Normalized ellipse distance: < 1 = inside
+		var d := (hx * hx) / (ea * ea) + (vy * vy) / (eb * eb)
+		if d <= 1.0:
+			any_inside = true
+			break
+		if d < closest_d:
+			closest_d = d
+			closest_idx = i
+
+	if not any_inside:
+		# Pull nearest shell to 50–90% inside the ellipse along its current angle
+		var scale_factor := (0.5 + randf() * 0.4) / sqrt(closest_d)
+		_shuffled_radii[closest_idx] *= scale_factor
+
+
+## Perturbs a launch vector by applying dispersion as angular offsets.
+## h = lateral (perpendicular to aim in horizontal plane)
+## v = vertical (elevation angle adjustment)
+## base_spread = max dispersion angle in radians at sigma=1
 func calculate_dispersed_launch(
-									aim_point: Vector3,
-									gun_position: Vector3,
-									shell_params: ShellParams,
-									h_grouping: float,
-									v_grouping: float,
-									base_spread: float) -> Vector3:
-	# print(aim_point)
+		aim_point: Vector3,
+		gun_position: Vector3,
+		shell_params: ShellParams,
+		h_grouping: float,
+		v_grouping: float,
+		base_spread: float) -> Vector3:
 
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
-	var launch_velocity = a[0]
-	if launch_velocity == null:
-		return (aim_point - gun_position).normalized()
-	# return launch_velocity
+	var launch_velocity: Vector3 = a[0]
+
+	if _shell_index >= SHELL_COUNT:
+		_new_salvo()
+
+	var r := _shuffled_radii[_shell_index]
+	var angle := _angles[_shell_index]
+	_shell_index += 1
+
+	# Decompose into lateral / vertical components (each in [-1, 1])
+	var h_raw := r * cos(angle)
+	var v_raw := r * sin(angle)
+
+	# Apply per-axis grouping: higher = tighter toward center
+	var h_offset: float = sign(h_raw) * pow(absf(h_raw), h_grouping)
+	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
+
+	# Scale to actual angular dispersion
+	var h_angle := h_offset * base_spread * 0.5
+	var v_angle := v_offset * base_spread * 0.5
+
+	# Build local frame around launch direction
+	var forward := launch_velocity.normalized()
+	var world_up := Vector3.UP
+	var right := forward.cross(world_up).normalized()
+	if right.length_squared() < 0.001:
+		right = Vector3.RIGHT
+	var up := right.cross(forward).normalized()
+
+	# Rotate launch vector
+	var speed := launch_velocity.length()
+	var dispersed := forward
+	dispersed = dispersed.rotated(up, h_angle)
+	dispersed = dispersed.rotated(right, v_angle)
+
+	return dispersed * speed
 
 
-	var _dist = gun_position.distance_to(aim_point)
-
-	# # Use efficient normal distribution for more realistic dispersion
-	# # var p = random_point_in_ellipseV3(1.0, 1.0, h_grouping, v_grouping)
-	# # print("base spread: ", base_spread)
-	# var p = Vector2(cos(angle), sin(angle)) / 2.0
-	# var x = sin(shell_index / (period + 1) * PI)
-	# #x = randf_range(x)
-	# # print(x)
-	# var y = randf_range(0.0,0.01) + lerp(0.01, 1.0, pow(x, sqrt(h_grouping **2 + v_grouping **2)))
-	# p *= y
-	# p.x /= randf_range(1.0, h_grouping)
-	# p.y /= randf_range(1.0, v_grouping)
-	# # print(p)
-
-	# angle += 2.7 + randf_range(0.0, 1.5)
-	# shell_index += 1.0
-	# angle = wrapf(angle, 0.0, TAU)
-	# shell_index = wrapf(shell_index, 0.0, period)
-
-	# var r = launch_velocity.cross(Vector3.UP).normalized()
-	# var u = launch_velocity.cross(r).normalized()
-
-	# var p = Vector2(cos(angle), sin(angle)) / 2.0
-	# shell_index += 1.0
-	# # m = midpoint
-	# var m = pow(randf_range(0.0, 1.0), sqrt(h_grouping **2 + v_grouping **2))
-	# var rho = randf_range(0.0, 1.0)
-	# var rho2 = randf_range(0.0, 1.0)
-	# var x = clamp((1.0 - pow(rho, h_grouping)) * (1.0 - m) + pow(rho2, h_grouping) * m, 0.0, 1.0)
-	# var y = clamp((1.0 - pow(rho, v_grouping)) * (1.0 - m) + pow(rho2, v_grouping) * m, 0.0, 1.0)
-	# p.x *= x
-	# p.y *= y
-	# if shell_index >= period:
-	# 	p *= randf_range(0.0, 0.1)
-	# 	shell_index -= period
-
-	var p = Vector2.ZERO
-	if period != 0:
-		# var strata = randomised_strata[strata_idx]
-		# strata_idx += 1
-		# if strata_idx >= randomised_strata.size():
-		# 	strata_idx = 0
-		# 	# randomised_strata.clear()
-		# 	# for i in range(int(period)):
-		# 	# 	randomised_strata.append(i)
-		# 	# randomised_strata.shuffle()
-		# 	compute_stratum()
-		# p = random_point_in_ellipse_stratified(1.0,1.0, strata[0], strata[1], h_grouping, v_grouping)
-		# p *= 1.6
-
-		# if shell_index >= period:
-		# 	# p *= randf_range(0.0, 0.1)
-		# 	var accurate_period = 30
-		# 	p = random_point_in_ellipse_stratified(1.0,1.0, 0, accurate_period, h_grouping, v_grouping)
-		# 	shell_index -= period
-		# else:
-		# 	p = random_point_in_ellipse_stratified(1.0,1.0, strata, int(period), h_grouping, v_grouping)
-
-		# shell_index += 1.0
-
-		#if strata <= 1.0 and period > 1.0:
-			#p *= randf_range(0.0, 0.1)
-
-		# the closer p is in quality to the desired quality, the more likely the next shell will have less quality (higher dispersion), and vice versa, creating a dynamic feedback loop that simulates the natural variability in shell dispersion while maintaining an overall average quality level.
-		p = random_point_in_ellipseV4(1.0, 1.0, h_grouping, v_grouping)
-
-
-		# if shell_index >= period:
-		# 	# p *= randf_range(0.0, 0.05)
-		# 	p.y *= randf_range(0.0, 0.025)
-		# 	p.x *= 0.33
-		# 	shell_index -= period
-		# shell_index += 1.0
-
-		# if _shell_index >= _period:
-		# 	p.y *= randf_range(0.0, 0.025)
-		# 	p.x *= 0.33
-		# 	_shell_index -= _period
-		# _shell_index += 1.0
-	else:
-		p = random_point_in_ellipseV4(1.0, 1.0, h_grouping, v_grouping)
-
-	# angle += 2.7 + randf_range(0.0, 2.0) * sign(randf() - 0.5)
-	# angle += PI / 2 + randf_range(0.0, PI)
-	# angle = fposmod(angle, TAU)
-	# Angle quality feedback: bias angle toward good axes (0° or 180°) based on quality.
-	# Same logic as rho: high quality -> high exponent -> t biased toward 0 -> angle near good axis.
-	# Low quality -> low exponent -> t biased toward 1 -> angle near bad axis (90°/270°).
-	var angle_feedback_strength = 1.5
-	var angle_exponent = quality_exponent(quality, angle_feedback_strength)
-	var t = pow(randf(), angle_exponent)
-	# t in [0,1]: 0 = good edge (0 or PI), 1 = bad middle (PI/2 or 3PI/2)
-	# Randomly assign to left or right edge of the half-circle for symmetry
-	var half_angle: float
-	if randf() < 0.5:
-		half_angle = t * (PI / 2.0)          # biased toward 0
-	else:
-		half_angle = PI - t * (PI / 2.0)     # biased toward PI
-	angle = half_angle if over_under_toggle else half_angle + PI
-	over_under_toggle = !over_under_toggle
-
-
-	var r = launch_velocity.cross(Vector3.UP).normalized()
-	var u = launch_velocity.cross(r).normalized()
-	# var base_spread = 0.01
-	var new_launch_velocity = (launch_velocity.normalized() + (r * p.x + u * p.y) * base_spread) * shell_params.speed
-
-	return new_launch_velocity
-
-## Symmetric quality-to-exponent mapping.
-## Maps quality in [0, 1] to an exponent centered around 1.0:
-##   quality = 0.0 -> exp(-strength) -> exponent < 1 -> biases pow(rand, exp) toward 1 (worse)
-##   quality = 0.5 -> exp(0) = 1.0   -> no bias (neutral)
-##   quality = 1.0 -> exp(+strength) -> exponent > 1 -> biases pow(rand, exp) toward 0 (better)
-## exp(-s) and exp(+s) are perfect reciprocals — equally strong in both directions.
-static func quality_exponent(q: float, strength: float) -> float:
-	var centered = (q - 0.5) * 2.0
-	return exp(centered * strength)
-
-static func random_point_in_ellipseV3(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
-	var rho = randf_range(0.0, 1.0)
-	var phi = randf_range(0.0, TAU)
-	var a = width / 2.0
-	var b = height / 2.0
-	var x = pow(rho, h_group) * cos(phi) * a
-	var y = pow(rho, v_group) * sin(phi) * b
-	return Vector2(x, y)
-
-
-func random_point_in_ellipseV4(width: float, height: float, h_group: float = 1.0, v_group: float = 1.0):
-	# Quality feedback system: bias rho based on previous shell's quality.
-	# quality is in [0, 1] where 0 = center hit (perfect), 1 = edge hit (worst).
-	#
-	var feedback_strength = 3.0
-	var rho_exponent = quality_exponent(quality, feedback_strength)
-
-	var min_rho = 0.0 if quality > 0.16 else 2 * (0.16 - quality)
-	var max_rho = 1.0 if quality < 0.84 else 1.0 - 2 * (quality - 0.84)
-	var rho = pow(randf_range(min_rho, max_rho), rho_exponent)
-	# var phi = randf_range(0.0, TAU)
-	var phi = angle
-	var a = width / 2.0
-	var b = height / 2.0
-	var x = pow(rho, h_group) * cos(phi) * a
-	var y = pow(rho, v_group) * sin(phi) * b
-
-	# Update quality for next shell: combine distance and angle badness.
-	# rho: 0 = center (perfect), 1 = edge (worst)
-	# abs(sin(phi)): 0 = good axis (0°/180°), 1 = bad axis (90°/270°)
-	var dist_qual = rho
-	var angle_qual = abs(sin(phi))
-	var shell_qual = dist_qual * 0.7 + angle_qual * 0.3
-	const ALPHA = 0.2
-	quality = quality * (1.0 - ALPHA) + shell_qual * ALPHA
-
-	return Vector2(x, y)
-
-## Equal-area stratified sampling of pow(rho, group).
-## Divides the area under rho^group into num_shells equal-area regions,
-## and samples within the region corresponding to shell_index.
-## Boundaries: x_k = (k / N) ^ (1 / (g + 1))
-## Sample within stratum k: rho = ((k + u) / N) ^ (1 / (g + 1))
-## Final value: pow(rho, g) = ((k + u) / N) ^ (g / (g + 1))
-func random_point_in_ellipse_stratified(width: float, height: float, start: float, size: float, h_group: float = 1.0, v_group: float = 1.0) -> Vector2:
-	var u = randf_range(0.0, 1.0)
-	# var phi = randf_range(0.0, TAU)
-	var phi = angle
-	var a = width / 2.0
-	var b = height / 2.0
-	var t = start + u * size
-	var x = pow(t, h_group) * cos(phi) * a
-	var y = pow(t, v_group) * sin(phi) * b
-	return Vector2(x, y)
-
-	# var x = cos(phi) * sqrt(rho) * a
-	# var y = sin(phi) * sqrt(rho) * b
-	# if h_group > 1.0:
-	# 	x = sign(x) * pow(abs(x) / a, h_group) * a
-	# if v_group > 1.0:
-	# 	y = sign(y) * pow(abs(y) / b, v_group) * b
-	# return Vector2(x, y)
+func get_inner_shell_count() -> int:
+	return _shell_index

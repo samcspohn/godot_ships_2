@@ -453,12 +453,12 @@ func _calculate_target_info():
 	var aim = current_view if last_view == null else last_view
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
 
-		var aim_direction = - aim.basis.z.normalized()
-		# Cast a ray to get target position (could be terrain, enemy, etc.)
-		var ray_length = 200000.0 # 50km range for naval artillery
+		var aim_direction = -aim.basis.z.normalized()
+		var ray_length = 200000.0
 		var space_state = get_world_3d().direct_space_state
 		var ray_origin = aim.global_position
 
+		# Raycast against armor and water
 		var ray_params = PhysicsRayQueryParameters3D.new()
 		ray_params.from = ray_origin
 		ray_params.to = ray_origin + aim_direction * ray_length
@@ -466,75 +466,83 @@ func _calculate_target_info():
 		if ray_exclude.size() == 0:
 			ray_exclude = recurs_collision_bodies(_ship)
 		ray_params.exclude = ray_exclude
-
 		ray_params.collide_with_areas = true
 		ray_params.collide_with_bodies = true
 
 		var result = space_state.intersect_ray(ray_params)
 
-		# Build a vertical plane at the locked target's position,
-		# aligned with the target ship's heading (normal is the ship's lateral axis).
-		var target_pos = locked_target.global_position
-		var plane_normal = locked_target.global_basis.x
-		plane_normal.y = 0.0
-
-		# If the ship's lateral axis is degenerate (e.g. ship rolling 90 degrees),
-		# or nearly parallel to the aim ray (ship heading straight at camera),
-		# fall back to camera-to-target direction as the normal.
-		var target_dist = ray_origin.distance_to(target_pos)
-		if plane_normal.length_squared() < 0.001:
-			var fallback = ray_origin - target_pos
-			fallback.y = 0.0
-			plane_normal = fallback.normalized() if fallback.length_squared() > 0.001 else Vector3.RIGHT
-		else:
-			plane_normal = plane_normal.normalized()
-			# Check if the plane is nearly parallel to the aim ray (grazing angle).
-			# If so, fall back to camera-to-target direction.
-			var aim_flat = aim_direction
-			aim_flat.y = 0.0
-			if aim_flat.length_squared() > 0.001:
-				var graze = absf(plane_normal.dot(aim_flat.normalized()))
-				if graze < 0.15: # ~81 degrees — nearly parallel
-					var fallback = ray_origin - target_pos
-					fallback.y = 0.0
-					if fallback.length_squared() > 0.001:
-						plane_normal = fallback.normalized()
-
-		var plane = Plane(plane_normal, plane_normal.dot(target_pos))
-
-		# Intersect the aim ray with the vertical target plane
-		var plane_point = plane.intersects_ray(ray_origin, aim_direction)
-
-		# Validate the plane intersection:
-		# - Must be in front of the camera (positive along aim direction)
-		# - Must be within a reasonable lateral distance of the target
-		var max_lateral_dist = maxf(target_dist * 0.5, 500.0)
-		if plane_point != null:
-			var to_plane_point = plane_point - ray_origin
-			if to_plane_point.dot(aim_direction) < 0.0:
-				# Intersection is behind the camera
-				plane_point = null
-			else:
-				var offset = plane_point - target_pos
-				offset.y = 0.0
-				if offset.length() > max_lateral_dist:
-					# Intersection is unreasonably far from the target laterally
-					plane_point = null
-
-		var ray_hit_pos = null
-		var ray_hit_dist = INF
+		# Check if we directly hit the locked target's armor
+		var hit_locked_target = false
 		if result:
-			ray_hit_pos = result.position
-			ray_hit_dist = ray_origin.distance_to(ray_hit_pos)
+			var collider = result.get("collider")
+			if collider is ArmorPart and collider.ship == locked_target:
+				hit_locked_target = true
 
-		var plane_hit_dist = INF
-		if plane_point != null:
-			plane_hit_dist = ray_origin.distance_to(plane_point)
+		if hit_locked_target:
+			# Direct hit on locked target — use it exactly
+			aim_position = result.position
+		else:
+			# Calculate broadside factor: how broadside the target is relative to camera
+			# 1.0 = perfectly broadside, 0.0 = bow/stern on
+			var target_pos = locked_target.global_position
+			var target_lateral = locked_target.global_basis.x
+			target_lateral.y = 0.0
+			var cam_to_target = target_pos - ray_origin
+			cam_to_target.y = 0.0
 
-		if ray_hit_pos != null and ray_hit_dist <= plane_hit_dist:
-			aim_position = ray_hit_pos
-		elif plane_point != null:
-			aim_position = plane_point
+			var broadside_factor = 0.0
+			if target_lateral.length_squared() > 0.001 and cam_to_target.length_squared() > 0.001:
+				broadside_factor = absf(target_lateral.normalized().dot(cam_to_target.normalized()))
+			# Power curve with identity exponent (1.0) for now — easy to tune later
+			var blend_exponent = 0.8
+			broadside_factor = pow(broadside_factor, blend_exponent)
+
+			# --- Plane intersection (camera-facing vertical plane at target) ---
+			var plane_normal = cam_to_target
+			plane_normal.y = 0.0
+			if plane_normal.length_squared() > 0.001:
+				plane_normal = plane_normal.normalized()
+			else:
+				plane_normal = Vector3.RIGHT
+
+			var plane = Plane(plane_normal, plane_normal.dot(target_pos))
+			var plane_point = plane.intersects_ray(ray_origin, aim_direction)
+
+			# Validate plane intersection
+			if plane_point != null:
+				var to_plane_point = plane_point - ray_origin
+				if to_plane_point.dot(aim_direction) < 0.0:
+					plane_point = null
+				else:
+					var target_dist = ray_origin.distance_to(target_pos)
+					var offset = plane_point - target_pos
+					offset.y = 0.0
+					var max_lateral_dist = maxf(target_dist * 0.5, 500.0)
+					if offset.length() > max_lateral_dist:
+						plane_point = null
+
+			# --- Water intersection (aim ray vs water plane at y=0) ---
+			var water_plane = Plane(Vector3.UP, 0.0)
+			var water_point = water_plane.intersects_ray(ray_origin, aim_direction)
+
+			# If water intersection is behind camera or doesn't exist, fallback
+			if water_point != null:
+				var to_water = water_point - ray_origin
+				if to_water.dot(aim_direction) < 0.0:
+					water_point = null
+
+			# Blend: broadside_factor=1 → plane, broadside_factor=0 → water
+			if plane_point != null and water_point != null:
+				aim_position = plane_point * broadside_factor + water_point * (1.0 - broadside_factor)
+			elif plane_point != null:
+				aim_position = plane_point
+			elif water_point != null:
+				aim_position = water_point
+			elif result:
+				# Fallback to whatever the ray hit (terrain, etc.)
+				aim_position = result.position
+			else:
+				aim_position = ray_origin + aim_direction * ray_length
 
 	else:
 		var aim_direction = - aim.basis.z.normalized()
