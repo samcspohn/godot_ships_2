@@ -3,6 +3,11 @@ class_name BBBehavior
 
 var ammo = ShellParams.ShellType.AP
 
+# Overmatch ratio cache: { ship_instance_id: { "bow": float, "stern": float } }
+var _overmatch_cache: Dictionary = {}
+
+const OVERMATCH_RATIO_THRESHOLD: float = 0.4  # 40% of faces must be overmatchable to prefer AP
+
 # Arc movement state
 var current_arc_direction: int = 0
 var arc_direction_timer: float = 0.0
@@ -72,28 +77,61 @@ func get_hunting_params() -> Dictionary:
 func pick_ammo(_target: Ship) -> int:
 	return 0 if ammo == ShellParams.ShellType.AP else 1
 
+func _get_cached_overmatch(target: Ship) -> Dictionary:
+	"""Return { bow: float, stern: float } overmatch ratios, cached per target."""
+	var tid = target.get_instance_id()
+	if _overmatch_cache.has(tid):
+		return _overmatch_cache[tid]
+
+	var bow_ratio = get_overmatch_ratio(target, ArmorPart.Type.BOW)
+	var stern_ratio = get_overmatch_ratio(target, ArmorPart.Type.STERN)
+	var entry = { "bow": bow_ratio, "stern": stern_ratio }
+	_overmatch_cache[tid] = entry
+	return entry
+
+func _can_overmatch_bow(target: Ship) -> bool:
+	return _get_cached_overmatch(target).bow >= OVERMATCH_RATIO_THRESHOLD
+
+func _can_overmatch_stern(target: Ship) -> bool:
+	return _get_cached_overmatch(target).stern >= OVERMATCH_RATIO_THRESHOLD
+
 func target_aim_offset(_target: Ship) -> Vector3:
 	var disp = _target.global_position - _ship.global_position
 	var angle = (-_target.basis.z).angle_to(disp)
 	var offset = Vector3(0, 0, 0)
 	angle = abs(angle)
-	#if angle > PI / 2.0:
-		#angle = PI - angle
 
 	# Default to AP
 	ammo = ShellParams.ShellType.AP
 
 	match _target.ship_class:
 		Ship.ShipClass.BB:
+			# Determine if the target is showing bow or stern
+			var is_bow_on = angle < PI / 2.0   # forward half of target faces us
+			var can_overmatch = _can_overmatch_bow(_target) if is_bow_on else _can_overmatch_stern(_target)
+
 			if angle < deg_to_rad(10) or angle > deg_to_rad(170):
-				# HE against heavily angled battleships
-				ammo = ShellParams.ShellType.HE
-				offset.y = _target.movement_controller.ship_height / 2.0
+				# Heavily angled (nearly bow/stern-on)
+				if can_overmatch:
+					# AP will punch through the thin plating regardless of angle
+					ammo = ShellParams.ShellType.AP
+					offset.y = 0.1
+				else:
+					# Thick bow/stern — AP will bounce, use HE on superstructure
+					ammo = ShellParams.ShellType.HE
+					offset.y = _target.movement_controller.ship_height / 2.0
 			elif angle < deg_to_rad(30) or angle > deg_to_rad(150):
-				# AP at battleship superstructure when angled
-				ammo = ShellParams.ShellType.AP
-				offset.y = _target.movement_controller.ship_height / 2.0
+				# Moderately angled
+				if can_overmatch:
+					# AP through the bow/stern plate into the hull
+					ammo = ShellParams.ShellType.AP
+					offset.y = 0.1
+				else:
+					# Can't overmatch — AP at superstructure for reliable damage
+					ammo = ShellParams.ShellType.AP
+					offset.y = _target.movement_controller.ship_height / 2.0
 			else:
+				# Broadside — always AP at waterline for citadel hits
 				ammo = ShellParams.ShellType.AP
 				offset.y = 0.1
 		Ship.ShipClass.CA:
@@ -109,7 +147,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				ammo = ShellParams.ShellType.AP
 				offset.y = 0.0
 		Ship.ShipClass.DD:
-			# HE at destroyers
+			# AP at destroyers — overpens citadel for good damage
 			ammo = ShellParams.ShellType.AP
 			offset.y = 2.0
 			offset.z -= _target.movement_controller.ship_length * 0.2

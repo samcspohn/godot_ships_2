@@ -256,6 +256,36 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	"""Returns the offset to the target to aim at in local space. Override in subclasses."""
 	return Vector3.ZERO
 
+func get_overmatch_ratio(target: Ship, zone_type: ArmorPart.Type) -> float:
+	"""Returns the fraction (0.0–1.0) of faces on the target's armor zone that
+	our AP shell can overmatch. Requires target.armor_system and armor_parts."""
+	if target.armor_system == null:
+		return 0.0
+
+	var ap_overmatch: int = _ship.artillery_controller.get_params().shell1.overmatch
+
+	var total_faces: int = 0
+	var overmatched_faces: int = 0
+
+	for part in target.armor_parts:
+		if part.type != zone_type:
+			continue
+		var stats = target.armor_system.get_node_armor_stats(part.armor_path)
+		if stats.is_empty():
+			continue
+		var distribution: Dictionary = stats.armor_distribution
+		for thickness in distribution:
+			var count: int = distribution[thickness]
+			if thickness <= 0:
+				continue
+			total_faces += count
+			if thickness <= ap_overmatch:
+				overmatched_faces += count
+
+	if total_faces == 0:
+		return 0.0
+	return float(overmatched_faces) / float(total_faces)
+
 # ============================================================================
 # EVASION SYSTEM
 # ============================================================================
