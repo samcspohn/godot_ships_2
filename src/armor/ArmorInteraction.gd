@@ -360,7 +360,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
 		var offset = Vector3.ZERO
 		# Overmatch Check
-		if armor_mm < params.overmatch:
+		if armor_mm <= params.overmatch:
 			if hit_node.is_citadel:
 				hit_cit = true
 			result = ArmorResult.OVERPEN
@@ -472,7 +472,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if (damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN) and ship.ship_name == "Wotan":
+	if (damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN) and ship.ship_name == "Yamato":
 	# if true:
 		for e in events:
 			print(e)

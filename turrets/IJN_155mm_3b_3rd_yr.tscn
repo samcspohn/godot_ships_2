@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://d0y6pel4m754v"]
+
+[ext_resource type="PackedScene" uid="uid://dawy17foxyc8i" path="res://turrets/glb/IJN_155mm_3b_3rd_yr.glb" id="1_8qu1c"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_hth4h"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_dbjos"]
+
+[node name="IJN_155mm_3b_3rd_yr" unique_id=2017582157 instance=ExtResource("1_8qu1c")]
+script = ExtResource("2_hth4h")
+_sound = ExtResource("3_dbjos")
+pitch = 3.2
+volume = 0.8

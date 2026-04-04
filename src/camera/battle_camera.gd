@@ -494,7 +494,7 @@ func _calculate_target_info():
 			if target_lateral.length_squared() > 0.001 and cam_to_target.length_squared() > 0.001:
 				broadside_factor = absf(target_lateral.normalized().dot(cam_to_target.normalized()))
 			# Power curve with identity exponent (1.0) for now — easy to tune later
-			var blend_exponent = 0.8
+			var blend_exponent = 1.5
 			broadside_factor = pow(broadside_factor, blend_exponent)
 
 			# --- Plane intersection (camera-facing vertical plane at target) ---
@@ -531,11 +531,27 @@ func _calculate_target_info():
 				if to_water.dot(aim_direction) < 0.0:
 					water_point = null
 
-			# Blend: broadside_factor=1 → plane, broadside_factor=0 → water
-			if plane_point != null and water_point != null:
-				aim_position = plane_point * broadside_factor + water_point * (1.0 - broadside_factor)
+			# Priority: water hit (if closer than plane) → plane with XZ blend from water
+			var plane_dist = INF
+			var water_dist = INF
+			if plane_point != null:
+				plane_dist = ray_origin.distance_to(plane_point)
+			if water_point != null:
+				water_dist = ray_origin.distance_to(water_point)
+
+			if water_point != null and water_dist <= plane_dist:
+				# Water is closer than plane — use water directly (e.g. aiming low in front of target)
+				aim_position = water_point
 			elif plane_point != null:
-				aim_position = plane_point
+				# Plane is closer — blend XZ with water for lead, keep Y from plane for elevation
+				if water_point != null:
+					aim_position = Vector3(
+						plane_point.x * broadside_factor + water_point.x * (1.0 - broadside_factor),
+						plane_point.y,
+						plane_point.z * broadside_factor + water_point.z * (1.0 - broadside_factor)
+					)
+				else:
+					aim_position = plane_point
 			elif water_point != null:
 				aim_position = water_point
 			elif result:

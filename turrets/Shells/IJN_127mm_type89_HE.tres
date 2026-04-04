@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ShellParams" format=3 uid="uid://cfsrifmgvvm6k"]
+
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="1_u4pyb"]
+
+[resource]
+script = ExtResource("1_u4pyb")
+speed = 725.0
+drag = 5.9999999999999995e-05
+damage = 1320.0
+size = 1.6
+caliber = 127.0
+mass = 34.3
+fire_buildup = 6.0
+fuze_delay = 0.001
+type = 0
+auto_bounce = 3.1416
+ricochet_angle = 0.0
+overmatch = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"

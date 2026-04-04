@@ -23,6 +23,7 @@ func _load_ship_buttons():
 	var available_ships = [
 		{"name": "Bismarck3", "path": "res://Ships/Bismarck/Bismarck3.tscn"},
 		{"name": "H44", "path": "res://Ships/H44/H44.tscn"},
+		{"name": "Yamato", "path": "res://Ships/Yamato/Yamato.tscn"},
 		{"name": "Shimakaze", "path": "res://Ships/Shimakaze/Shimakaze.tscn"},
 		{"name": "Des Moines", "path": "res://Ships/DesMoines/DesMoines.tscn"},
 	]

@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://bvn0hxpwoxai0"]
+
+[ext_resource type="PackedScene" uid="uid://tkidygteski" path="res://turrets/glb/IJN_127mm_2b_type89.glb" id="1_n31yw"]
+[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_l3ngi"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_mklbi"]
+
+[node name="IJN_127mm_2b_type89" unique_id=1502498868 instance=ExtResource("1_n31yw")]
+script = ExtResource("2_l3ngi")
+_sound = ExtResource("3_mklbi")
+pitch = 5.0
+volume = 0.7
