@@ -18,6 +18,17 @@ var target_is_flooding: bool = false
 # Track closest enemy for retreat decisions
 var closest_enemy: Ship
 
+# Skills
+var _skill_hunt: SkillHunt = SkillHunt.new()
+var _skill_chase: SkillChase = SkillChase.new()
+var _skill_torpedo_run: SkillTorpedoRun = SkillTorpedoRun.new()
+var _skill_retreat: SkillRetreat = SkillRetreat.new()
+var _skill_kite: SkillKite = SkillKite.new()
+var _skill_flank: SkillFlank = SkillFlank.new()
+var _skill_spot: SkillSpot = SkillSpot.new()
+var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
+
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
@@ -54,6 +65,9 @@ func get_hunting_params() -> Dictionary:
 		cautious_hp_threshold = 0.3,
 	}
 
+func _roll_flank_depth() -> float:
+	return randf_range(0.4, 0.9)
+
 # ============================================================================
 # EVASION - DD-specific with speed variation
 # ============================================================================
@@ -82,16 +96,24 @@ func get_speed_multiplier() -> float:
 
 func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	"""DD target selection differs based on visibility - torpedoes vs guns.
-	Prefers targets we can actually shoot at over ones behind cover."""
-	var best_shootable: Ship = null
-	var best_shootable_priority: float = -1.0
-	var best_fallback: Ship = null
-	var best_fallback_priority: float = -1.0
+	Prefers targets we can actually shoot at over ones behind cover.
+	Balances proximity threats against overextended enemies:
+	 - Enemies very close get a strong proximity boost.
+	 - Enemies farthest into friendly territory get an overextension bonus.
+	 - When nothing is dangerously close, the most overextended enemy wins."""
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var torpedo_range: float = -1.0
+	var proximity_override_dist: float = 2500.0  # DDs are fast, smaller threshold
+	var overextension_weight: float = 0.3
+	var overextension_bonus: float = 1.8
 
 	if _ship.torpedo_controller != null:
 		torpedo_range = _ship.torpedo_controller.get_params()._range
+
+	# --- First pass: compute base priority and overextension for every target ---
+	var candidate_data: Array[Dictionary] = []
+	var max_overextension: float = 0.0
+	var has_close_threat: bool = false
 
 	for ship in targets:
 		var disp = ship.global_position - _ship.global_position
@@ -123,9 +145,53 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 			var depth_scale = 1.0 + flank_info.penetration_depth
 			priority *= flank_multiplier * depth_scale
 
-		# Sort into shootable vs fallback based on line-of-fire check
-		# When visible (using guns), prefer targets we can actually hit
-		if _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship):
+		# Overextension score: how far into friendly territory this enemy is
+		var overext = _get_overextension_score(ship)
+		if overext > max_overextension:
+			max_overextension = overext
+
+		# Track whether any enemy is dangerously close
+		if dist < proximity_override_dist:
+			has_close_threat = true
+
+		var shootable = _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship)
+		candidate_data.append({
+			ship = ship,
+			base_priority = priority,
+			dist = dist,
+			overextension = overext,
+			shootable = shootable,
+		})
+
+	# --- Second pass: apply overextension vs proximity weighting ---
+	var best_shootable: Ship = null
+	var best_shootable_priority: float = -1.0
+	var best_fallback: Ship = null
+	var best_fallback_priority: float = -1.0
+
+	for data in candidate_data:
+		var priority: float = data.base_priority
+		var dist: float = data.dist
+		var overext: float = data.overextension
+		var ship: Ship = data.ship
+
+		# Overextension contribution: reward enemies deeper into friendly territory
+		if max_overextension > 0.0 and overextension_weight > 0.0:
+			var relative_overext = overext / max_overextension
+			var overext_contrib = relative_overext * overextension_weight
+			priority += overext_contrib
+
+			# Extra bonus for the most overextended target when nothing is dangerously close
+			if not has_close_threat and relative_overext > 0.9:
+				priority *= overextension_bonus
+
+		# Proximity override: if this enemy is very close, give a strong boost
+		if dist < proximity_override_dist:
+			var proximity_factor = 1.0 + 2.0 * (1.0 - dist / proximity_override_dist)
+			priority *= proximity_factor
+
+		# Sort into shootable vs fallback
+		if data.shootable:
 			if priority > best_shootable_priority:
 				best_shootable = ship
 				best_shootable_priority = priority
@@ -190,107 +256,114 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	return offset
 
 # ============================================================================
-# POSITIONING - DD-specific positioning (concealment-based)
-# ============================================================================
-
-func get_desired_position(friendly: Array[Ship], enemy: Array[Ship], target: Ship, current_destination: Vector3) -> Vector3:
-	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-
-	# If no target, hunt unspotted enemies
-	if target == null:
-		return _get_hunting_position(server_node, friendly, current_destination)
-
-	var concealment_radius = (_ship.concealment.params.p() as ConcealmentParams).radius
-	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-	var params = get_positioning_params()
-
-	# Calculate separation from friendly ships
-	var separation = _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
-
-	if _ship.visible_to_enemy and enemy.size() > 0:
-		# Visible - retreat away from closest enemy
-		closest_enemy = enemy[0]
-		var closest_enemy_dist = (closest_enemy.global_position - _ship.global_position).length()
-		for ship in enemy:
-			var dist = (ship.global_position - _ship.global_position).length()
-			if dist < closest_enemy_dist:
-				closest_enemy = ship
-				closest_enemy_dist = dist
-
-		var retreat_dir = (_ship.global_position - closest_enemy.global_position).normalized()
-		var desired_position = _ship.global_position + retreat_dir * concealment_radius * 2.0
-
-		# Only bias toward team if below 50% HP
-		if hp_ratio < 0.5:
-			var nearest_friendly_pos = Vector3.ZERO
-			if server_node:
-				var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
-				if nearest_cluster.size() > 0:
-					nearest_friendly_pos = nearest_cluster.center
-				else:
-					nearest_friendly_pos = server_node.get_team_avg_position(_ship.team.team_id)
-			else:
-				for ship in friendly:
-					nearest_friendly_pos += ship.global_position
-				nearest_friendly_pos /= friendly.size()
-			desired_position = desired_position * 0.8 + nearest_friendly_pos * 0.2
-
-		desired_position += separation * 500.0
-		return _get_valid_nav_point(desired_position)
-	else:
-		# Hidden - flank target for torpedo attack
-		var right = target.transform.basis.x * concealment_radius * 1.5
-		var right_of = target.global_position + right
-		var left_of = target.global_position - right
-
-		right_of = _get_valid_nav_point(right_of)
-		left_of = _get_valid_nav_point(left_of)
-
-		var desired_position: Vector3
-		if right_of.distance_to(_ship.global_position) < left_of.distance_to(_ship.global_position):
-			desired_position = right_of
-		else:
-			desired_position = left_of
-
-		desired_position += separation * 500.0
-		return _get_valid_nav_point(desired_position)
-
-# ============================================================================
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
 
 var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
-	"""DD always returns POSE with approach heading for safe navigation."""
-	var friendly = server.get_team_ships(ship.team.team_id)
-	var enemy = server.get_valid_targets(ship.team.team_id)
+	var ctx = SkillContext.create(ship, target, server, self)
+	var delta = 1.0 / Engine.physics_ticks_per_second
+	_init_flank_identity(ship, server)
 
-	# --- No target: hunt ---
-	if target == null:
-		if base_intent_pos == null:
-			base_intent_pos = ship.global_position - ship.global_transform.basis.z * 20_000.0
-			base_intent_pos.y = 0.0
-		var hunt_dest = _get_hunting_position(server, friendly, base_intent_pos)
-		if hunt_dest == Vector3.ZERO:
-			#var fallback = ship.global_position - ship.global_transform.basis.z * 10000.0
-			#fallback.y = 0.0
-			var fallback = _get_valid_nav_point(base_intent_pos)
-			var approach_heading = _calc_approach_heading(ship, fallback)
-			return NavIntent.create(fallback, approach_heading)
-		var hunt_heading = _calc_approach_heading(ship, hunt_dest)
-		return NavIntent.create(hunt_dest, hunt_heading)
-
-	var concealment_radius = (ship.concealment.params.p() as ConcealmentParams).radius
+	var spotted = server.get_valid_targets(ship.team.team_id)
+	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
+	var has_spotted = spotted.size() > 0
+	var has_targets = has_spotted or not unspotted.is_empty()
 	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
-	var params = get_positioning_params()
-	var separation = _calculate_spread_offset(friendly, params.spread_distance, params.spread_multiplier)
 
-	if ship.visible_to_enemy and enemy.size() > 0:
-		# --- Visible: retreat away from closest enemy ---
-		return _get_retreat_intent(ship, enemy, friendly, concealment_radius, hp_ratio, separation, server)
-	else:
-		# --- Hidden: torpedo run with POSE ---
-		return _get_torpedo_run_intent(ship, target, concealment_radius, separation)
+	# --- Tactical state transitions ---
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			if has_targets:
+				_tactical_state = TacticalState.State.SNEAKING
+		TacticalState.State.SNEAKING:
+			if ship.visible_to_enemy:
+				_tactical_state = TacticalState.State.DISENGAGING
+				_bloom_probe.enter()
+				_bloom_probe.probe_timeout = 3.0  # DD: shorter probe
+		TacticalState.State.ENGAGED:
+			if not ship.visible_to_enemy:
+				_tactical_state = TacticalState.State.SNEAKING
+		TacticalState.State.DISENGAGING:
+			_bloom_probe.update(ship, delta)
+			if _bloom_probe.went_dark:
+				_tactical_state = TacticalState.State.SNEAKING
+			elif _bloom_probe.probe_failed:
+				_tactical_state = TacticalState.State.ENGAGED
+
+	# --- Execute skill based on state ---
+	var intent: NavIntent = null
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+		TacticalState.State.SNEAKING:
+			intent = _execute_dd_sneak_skill(ctx)
+		TacticalState.State.ENGAGED:
+			if hp_ratio < 0.3:
+				intent = _skill_retreat.execute(ctx, {})
+				if intent:
+					_active_skill_name = &"Retreat"
+				else:
+					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6, "angle_to_threat_deg": 25.0})
+					if intent:
+						_active_skill_name = &"Kite"
+			else:
+				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6, "angle_to_threat_deg": 25.0})
+				if intent:
+					_active_skill_name = &"Kite"
+		TacticalState.State.DISENGAGING:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.7, "angle_to_threat_deg": 30.0})
+			if intent:
+				_active_skill_name = &"Kite"
+
+	# Fallback
+	if intent == null:
+		intent = _intent_sail_forward(ship)
+		_active_skill_name = &"SailForward"
+
+	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
+	if _active_skill_name in [&"Kite"]:
+		intent = _skill_broadside.apply(intent, ctx, {
+			"oscillation_bias": 0.3,
+		})
+
+	# Post-process spread
+	var params = get_positioning_params()
+	intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
+	return intent
+
+func _execute_dd_sneak_skill(ctx: SkillContext) -> NavIntent:
+	var intent: NavIntent = null
+	# If target is BB/CA and has torpedoes: torpedo run
+	if ctx.target != null and ctx.target.ship_class != Ship.ShipClass.DD and ctx.ship.torpedo_controller != null:
+		intent = _skill_torpedo_run.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"TorpedoRun"
+	# Fallback to flank
+	if intent == null:
+		intent = _skill_flank.execute(ctx, {"flank_side": _flank_side, "flank_depth": _flank_depth})
+		if intent:
+			_active_skill_name = &"Flank"
+	# Fallback to hunt
+	if intent == null:
+		intent = _skill_hunt.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"Hunt"
+	return intent
+
+var _fwd = null
+func _intent_sail_forward(ship: Ship) -> NavIntent:
+	if _fwd == null:
+		_fwd = -ship.global_transform.basis.z
+	var fwd = _fwd
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.1:
+		fwd = Vector3(0, 0, -1)
+	var dest = ship.global_position + fwd.normalized() * 5000.0
+	dest.y = 0.0
+	dest = _get_valid_nav_point(dest)
+	return NavIntent.create(dest, atan2(fwd.x, fwd.z))
 
 
 func _get_retreat_intent(ship: Ship, enemy: Array[Ship], friendly: Array[Ship], concealment_radius: float, hp_ratio: float, separation: Vector3, server: GameServer) -> NavIntent:
@@ -436,17 +509,17 @@ func engage_target(target: Ship):
 	var should_shoot_guns = false
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
 
-	if hp_ratio < 0.3:
-		# Low health - prioritize stealth
-		should_shoot_guns = false
-	elif _ship.visible_to_enemy and closest_enemy and closest_enemy.global_position.distance_to(_ship.global_position) < (_ship.concealment.params.p() as ConcealmentParams).radius:
+	# if hp_ratio < 0.3:
+	# 	# Low health - prioritize stealth
+	# 	should_shoot_guns = false
+	if _bloom_probe.can_fire():
 		# Spotted and within detection range
 		should_shoot_guns = true
-	elif target_is_flooding:
-		# Target is flooding from our torpedoes
-		should_shoot_guns = true
+	# elif target_is_flooding:
+	# 	# Target is flooding from our torpedoes
+	# 	should_shoot_guns = true
 
-	if should_shoot_guns:
+	if should_shoot_guns and can_fire_guns():
 		super.engage_target(target)
 		target_is_flooding = false
 

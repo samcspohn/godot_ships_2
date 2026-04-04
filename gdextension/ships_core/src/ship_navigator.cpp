@@ -55,6 +55,16 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_obstacle", "id"), &ShipNavigator::remove_obstacle);
 	ClassDB::bind_method(D_METHOD("clear_obstacles"), &ShipNavigator::clear_obstacles);
 
+	// Incoming shell avoidance
+	ClassDB::bind_method(D_METHOD("clear_incoming_shells"), &ShipNavigator::clear_incoming_shells);
+	ClassDB::bind_method(D_METHOD("add_incoming_shell", "id", "landing_pos", "time_remaining", "caliber"),
+		&ShipNavigator::add_incoming_shell);
+
+	// Enemy threat avoidance (stealth pathfinding)
+	ClassDB::bind_method(D_METHOD("clear_threat_zones"), &ShipNavigator::clear_threat_zones);
+	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius", "soft_radius"),
+		&ShipNavigator::add_threat_zone);
+
 	// Path info
 	ClassDB::bind_method(D_METHOD("get_current_path"), &ShipNavigator::get_current_path);
 	ClassDB::bind_method(D_METHOD("get_predicted_trajectory"), &ShipNavigator::get_predicted_trajectory);
@@ -66,6 +76,8 @@ void ShipNavigator::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
+
+	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -259,6 +271,327 @@ void ShipNavigator::clear_obstacles() {
 	obstacles.clear();
 }
 
+void ShipNavigator::clear_incoming_shells() {
+	incoming_shells_.clear();
+}
+
+void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber) {
+	incoming_shells_.emplace_back(id, landing_pos, time_remaining, caliber);
+}
+
+void ShipNavigator::clear_threat_zones() {
+	threat_zones_.clear();
+}
+
+void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius, float soft_radius) {
+	threat_zones_.emplace_back(position, hard_radius, soft_radius);
+}
+
+void ShipNavigator::stamp_threat_grid(PathSearch &search) const {
+	if (threat_zones_.empty()) {
+		search.threat_zones.clear();
+		search.threat_cost.clear();
+		search.threat_grid_width = 0;
+		search.threat_grid_height = 0;
+		return;
+	}
+
+	if (map.is_null() || !map->is_built()) {
+		search.threat_zones.clear();
+		search.threat_cost.clear();
+		return;
+	}
+
+	// Copy threat data into the search state
+	search.threat_zones = threat_zones_;
+
+	// Use the nav map's bounds but at halved resolution (100m cells vs 50m)
+	float nav_cell = map->get_cell_size_value();
+	search.threat_cell_size = nav_cell * 2.0f;  // 100m cells
+
+	// Get map bounds from the NavigationMap's grid dimensions
+	// The map's world bounds: min_x..max_x, min_z..max_z
+	// We can compute them from grid_width * cell_size
+	int nav_w = map->get_grid_width();
+	int nav_h = map->get_grid_height();
+
+	// Threat grid dimensions = nav grid / 2 (rounded up)
+	search.threat_grid_width  = (nav_w + 1) / 2;
+	search.threat_grid_height = (nav_h + 1) / 2;
+
+	// The threat grid shares the same world-space origin as the nav grid.
+	// Threat cell [tx, tz] covers nav cells [tx*2, tz*2] through [tx*2+1, tz*2+1].
+	search.threat_min_x = map->get_min_x();
+	search.threat_min_z = map->get_min_z();
+
+	int total_threat_cells = search.threat_grid_width * search.threat_grid_height;
+	search.threat_cost.assign(total_threat_cells, 0.0f);
+
+	// Stamp each threat zone onto the threat grid
+	const float THREAT_WEIGHT = 20.0f;  // Peak cost multiplier at hard boundary
+
+	for (const auto &tz : search.threat_zones) {
+		// Convert threat position to threat grid coordinates
+		float tgx = (tz.position.x - search.threat_min_x) / search.threat_cell_size;
+		float tgz = (tz.position.y - search.threat_min_z) / search.threat_cell_size;
+
+		// Bounding box in threat grid cells
+		float radius_cells = tz.soft_radius / search.threat_cell_size;
+		int min_tx = std::max(0, static_cast<int>(tgx - radius_cells));
+		int max_tx = std::min(search.threat_grid_width - 1, static_cast<int>(tgx + radius_cells));
+		int min_tz = std::max(0, static_cast<int>(tgz - radius_cells));
+		int max_tz = std::min(search.threat_grid_height - 1, static_cast<int>(tgz + radius_cells));
+
+		float hard_sq = tz.hard_radius * tz.hard_radius;
+		float soft_sq = tz.soft_radius * tz.soft_radius;
+
+		for (int tz_idx = min_tz; tz_idx <= max_tz; tz_idx++) {
+			for (int tx = min_tx; tx <= max_tx; tx++) {
+				// World position of this threat cell center
+				float wx = search.threat_min_x + (tx + 0.5f) * search.threat_cell_size;
+				float wz = search.threat_min_z + (tz_idx + 0.5f) * search.threat_cell_size;
+
+				float dx = wx - tz.position.x;
+				float dz = wz - tz.position.y;
+				float dist_sq = dx * dx + dz * dz;
+
+				if (dist_sq >= soft_sq) continue;
+
+				float cost;
+				if (dist_sq <= hard_sq) {
+					// Inside hard radius — maximum penalty
+					cost = THREAT_WEIGHT;
+				} else {
+					// Between hard and soft — quadratic ramp
+					float dist = std::sqrt(dist_sq);
+					float t = (tz.soft_radius - dist) / (tz.soft_radius - tz.hard_radius);
+					cost = THREAT_WEIGHT * t * t;
+				}
+
+				// Accumulate (multiple threats can overlap)
+				int idx = tz_idx * search.threat_grid_width + tx;
+				search.threat_cost[idx] += cost;
+			}
+		}
+	}
+
+	// ================================================================
+	// Pocket-filling flood fill
+	// ================================================================
+	// Threat zones abutting land or other threat zones can create isolated
+	// pockets of low-cost water that the A* can never reach from the ship.
+	// If a destination lands in such a pocket the search exhausts its budget.
+	//
+	// Fix: flood-fill from the ship's position on the threat grid, treating
+	// cells with high threat cost OR non-navigable terrain as walls.  Any
+	// navigable-water cell NOT reached by the fill is in an isolated pocket
+	// and gets stamped with maximum threat cost so that:
+	//   1. The A* won't waste iterations trying to reach it.
+	//   2. The GDScript _adjust_destination_for_threats() (which checks
+	//      against the same soft_radius) will push the destination out.
+
+	const float POCKET_THREAT_THRESHOLD = THREAT_WEIGHT * 0.5f; // 10.0 — cells above this act as walls for flood fill
+	const float POCKET_FILL_COST = THREAT_WEIGHT;               // cost stamped into pocket cells
+
+	// Minimum SDF value for a threat cell to be considered "water".
+	// Use the search clearance so we match what the A* considers passable.
+	// Fall back to a reasonable default if clearance is tiny.
+	float water_sdf_threshold = std::max(search.clearance_world, 1.0f);
+
+	// Convert ship position to threat grid coordinates
+	int ship_tx = static_cast<int>((state.position.x - search.threat_min_x) / search.threat_cell_size);
+	int ship_tz = static_cast<int>((state.position.y - search.threat_min_z) / search.threat_cell_size);
+	ship_tx = std::max(0, std::min(ship_tx, search.threat_grid_width - 1));
+	ship_tz = std::max(0, std::min(ship_tz, search.threat_grid_height - 1));
+
+	// Reusable visited mask (one byte per threat cell)
+	std::vector<uint8_t> visited(total_threat_cells, 0);
+
+	// BFS queue — indices into the threat grid
+	std::queue<int> bfs;
+
+	int start_tidx = ship_tz * search.threat_grid_width + ship_tx;
+	visited[start_tidx] = 1;
+	bfs.push(start_tidx);
+
+	const int fd4x[] = { -1, 1, 0, 0 };
+	const int fd4z[] = { 0, 0, -1, 1 };
+
+	while (!bfs.empty()) {
+		int ci = bfs.front();
+		bfs.pop();
+
+		int cx = ci % search.threat_grid_width;
+		int cz = ci / search.threat_grid_width;
+
+		for (int d = 0; d < 4; d++) {
+			int nx = cx + fd4x[d];
+			int nz = cz + fd4z[d];
+			if (nx < 0 || nx >= search.threat_grid_width ||
+				nz < 0 || nz >= search.threat_grid_height) continue;
+
+			int nidx = nz * search.threat_grid_width + nx;
+			if (visited[nidx]) continue;
+			visited[nidx] = 1;
+
+			// Wall if threat cost is too high
+			if (search.threat_cost[nidx] >= POCKET_THREAT_THRESHOLD) continue;
+
+			// Wall if terrain is not navigable water at this threat cell
+			float wx = search.threat_min_x + (nx + 0.5f) * search.threat_cell_size;
+			float wz_pos = search.threat_min_z + (nz + 0.5f) * search.threat_cell_size;
+			float sdf = map->get_distance(wx, wz_pos);
+			if (sdf < water_sdf_threshold) continue;
+
+			bfs.push(nidx);
+		}
+	}
+
+	// Any navigable-water cell not visited is in an isolated pocket — fill it
+	for (int tz_idx = 0; tz_idx < search.threat_grid_height; tz_idx++) {
+		for (int tx = 0; tx < search.threat_grid_width; tx++) {
+			int idx = tz_idx * search.threat_grid_width + tx;
+			if (visited[idx]) continue;
+			// Only fill cells that are actually water (don't stamp land cells)
+			if (search.threat_cost[idx] >= POCKET_FILL_COST) continue;
+			float wx = search.threat_min_x + (tx + 0.5f) * search.threat_cell_size;
+			float wz_pos = search.threat_min_z + (tz_idx + 0.5f) * search.threat_cell_size;
+			float sdf = map->get_distance(wx, wz_pos);
+			if (sdf < water_sdf_threshold) continue;
+			// This is navigable water trapped in a pocket — fill it
+			search.threat_cost[idx] = POCKET_FILL_COST;
+		}
+	}
+}
+
+// ============================================================================
+// Threat-aware line helpers
+// ============================================================================
+
+bool ShipNavigator::line_crosses_threat(Vector2 from, Vector2 to) const {
+	if (threat_zones_.empty()) return false;
+
+	// Walk the line in fixed steps and check against every threat zone's
+	// hard radius.  Step size = half the smallest hard radius so we never
+	// skip over a zone entirely.
+	float min_hard = std::numeric_limits<float>::max();
+	for (const auto &tz : threat_zones_) {
+		if (tz.hard_radius < min_hard) min_hard = tz.hard_radius;
+	}
+	float step = std::max(min_hard * 0.5f, 50.0f);
+
+	Vector2 diff = to - from;
+	float length = diff.length();
+	if (length < 1.0f) return false;
+
+	Vector2 dir = diff / length;
+	int n_steps = static_cast<int>(length / step) + 1;
+
+	for (int i = 0; i <= n_steps; i++) {
+		float t = std::min(static_cast<float>(i) * step, length);
+		Vector2 pt = from + dir * t;
+
+		for (const auto &tz : threat_zones_) {
+			float dx = pt.x - tz.position.x;
+			float dz = pt.y - tz.position.y;
+			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool ShipNavigator::threat_line_of_sight(const PathSearch &search,
+										 int x0, int z0, int x1, int z1,
+										 float threshold) {
+	if (search.threat_cost.empty() || search.threat_grid_width <= 0) {
+		return true;  // no threat grid — always clear
+	}
+
+	// Bresenham walk on the NAV grid; at each step map to the threat grid
+	// and reject if the threat cost meets or exceeds the threshold.
+	int dx = std::abs(x1 - x0);
+	int dz = std::abs(z1 - z0);
+	int sx = (x0 < x1) ? 1 : -1;
+	int sz = (z0 < z1) ? 1 : -1;
+	int cx = x0, cz = z0;
+
+	auto check = [&](int nx, int nz) -> bool {
+		int tx = nx / 2;
+		int tz_t = nz / 2;
+		if (tx < 0 || tx >= search.threat_grid_width ||
+			tz_t < 0 || tz_t >= search.threat_grid_height) return true;
+		return search.threat_cost[tz_t * search.threat_grid_width + tx] < threshold;
+	};
+
+	if (!check(cx, cz)) return false;
+	if (dx == 0 && dz == 0) return true;
+
+	int err = dx - dz;
+	while (!(cx == x1 && cz == z1)) {
+		int e2 = 2 * err;
+		bool step_x = (e2 > -dz) || (e2 == -dz && dx > 0);
+		bool step_z = (e2 < dx)  || (e2 == dx  && dz > 0);
+		if (step_x && step_z) {
+			if (!check(cx + sx, cz)) return false;
+			if (!check(cx, cz + sz)) return false;
+			err -= dz;
+			err += dx;
+			cx += sx;
+			cz += sz;
+		} else if (step_x) {
+			err -= dz;
+			cx += sx;
+		} else {
+			err += dx;
+			cz += sz;
+		}
+		if (!check(cx, cz)) return false;
+	}
+	return true;
+}
+
+void ShipNavigator::force_astar_search(PathSearch &search) const {
+	// Set up the A* state that begin_path_search skipped when it took the
+	// terrain-only LOS shortcut.  sx/sz/ex/ez and from/to/clearance are
+	// already valid from the begin call.
+	int gw = map->get_grid_width();
+	int gh = map->get_grid_height();
+	search.grid_width = gw;
+	search.grid_height = gh;
+	search.cell_size = map->get_cell_size_value();
+	search.turning_radius = 0.0f;
+
+	int total_cells = gw * gh;
+	search.allocate(total_cells);
+	search.current_gen++;
+	if (search.current_gen == 0) {
+		std::fill(search.open_gen.begin(), search.open_gen.end(), 0);
+		std::fill(search.closed_gen.begin(), search.closed_gen.end(), 0);
+		search.current_gen = 1;
+	}
+
+	int si = search.sz * gw + search.sx;
+	int ei = search.ez * gw + search.ex;
+	search.start_idx = si;
+	search.end_idx   = ei;
+
+	search.g_cost[si] = 0.0f;
+	search.open_gen[si] = search.current_gen;
+	float h = std::sqrt(
+		static_cast<float>((search.ex - search.sx) * (search.ex - search.sx) +
+		                   (search.ez - search.sz) * (search.ez - search.sz)));
+	search.open_set.push({h, si});
+	search.parent[si] = si;
+	search.parent_dir[si] = -1;
+
+	search.max_iterations = std::min(total_cells, 300000);
+	search.found = false;
+	search.complete = false;
+	search.active = true;
+}
+
 // ============================================================================
 // Path / trajectory info
 // ============================================================================
@@ -308,6 +641,43 @@ float ShipNavigator::get_distance_to_destination() const {
 
 PackedVector3Array ShipNavigator::get_simulated_path() const {
 	return get_predicted_trajectory();
+}
+
+Array ShipNavigator::get_debug_torpedo_threat_points() const {
+	Array result;
+	float ship_len = params.ship_length;
+
+	for (const auto &[id, obs] : obstacles) {
+		if (!obs.is_torpedo()) continue;
+
+		float torp_speed = obs.velocity.length();
+		if (torp_speed < 1.0f) continue;
+
+		Vector2 torp_dir = obs.velocity / torp_speed;
+
+		Vector2 to_ship = state.position - obs.position;
+		float t_closest = to_ship.dot(torp_dir) / torp_speed;
+
+		float half_window_time = ship_len / torp_speed;
+		float t_start = t_closest - half_window_time;
+		float t_end   = t_closest + half_window_time;
+
+		if (t_end <= 0.0f) continue;
+		if (t_start < 0.0f) t_start = 0.0f;
+
+		for (float t = t_start; t <= t_end; t += TORPEDO_SAMPLE_INTERVAL) {
+			Vector2 sample_pos = obs.position + torp_dir * torp_speed * t;
+
+			Dictionary d;
+			d["landing_x"] = sample_pos.x;
+			d["landing_z"] = sample_pos.y;
+			d["time_remaining"] = t;
+			d["caliber"] = TORPEDO_VIRTUAL_CALIBER;
+			result.push_back(d);
+		}
+	}
+
+	return result;
 }
 
 // ============================================================================
@@ -592,19 +962,14 @@ void ShipNavigator::update_normal(float delta) {
 	float final_rudder = choice.rudder;
 	int final_throttle = choice.throttle;
 
-	if (choice.torpedo_evasion) {
-		// Torpedo: ensure max throttle for escape speed
-		final_throttle = std::max(desired_throttle, 4);
-	}
-
 	// --- 4.5. Rudder-discrepancy throttle reduction ---
 	// When the desired rudder is far from the current physical rudder position,
 	// the ship will travel straight (at the old rudder) until the rudder catches
 	// up, causing wide overshooting turns.  Reduce throttle proportionally to
 	// the rudder discrepancy so the ship slows while the rudder moves into
 	// position, giving tighter and more controlled turns.
-	// Skip when: torpedo evasion (need max speed), reversing, or already slow.
-	if (!choice.torpedo_evasion && final_throttle > 1) {
+	// Skip when: reversing or already slow.
+	if (final_throttle > 1) {
 		float rudder_discrepancy = std::abs(final_rudder - state.current_rudder);
 		const float discrepancy_threshold = 0.3f;  // below this, no reduction
 		const float discrepancy_full = 1.2f;        // at or above this, maximum reduction
@@ -855,6 +1220,20 @@ void ShipNavigator::start_plan() {
 		path_search, state.position, target.position,
 		plan_min_clearance, 0.0f);
 
+	// If the terrain-only LOS shortcut fired but the straight line crosses
+	// a threat zone, reject the shortcut and force A* so the path routes
+	// around detection bubbles.
+	if (immediate && !threat_zones_.empty() &&
+		line_crosses_threat(state.position, target.position)) {
+		force_astar_search(path_search);
+		immediate = false;
+	}
+
+	// Stamp enemy threat zones onto the search's threat overlay
+	if (!immediate && path_search.active) {
+		stamp_threat_grid(path_search);
+	}
+
 	if (immediate) {
 		plan_forward_result = path_search.result;
 		plan_phase = PlanPhase::DONE;
@@ -884,11 +1263,19 @@ void ShipNavigator::tick_plan() {
 	// --- FALLBACK phase ---
 	if (plan_phase == PlanPhase::FALLBACK) {
 		if (!path_search.active) {
-			// Reset search state so begin_path_search can start fresh
 			path_search.complete = false;
 			bool immediate = map->begin_path_search(
 				path_search, state.position, target.position,
 				plan_min_clearance * 0.5f, 0.0f);
+			// Reject terrain-only LOS shortcut if it crosses a threat zone
+			if (immediate && !threat_zones_.empty() &&
+				line_crosses_threat(state.position, target.position)) {
+				force_astar_search(path_search);
+				immediate = false;
+			}
+			if (!immediate && path_search.active) {
+				stamp_threat_grid(path_search);
+			}
 			if (immediate) {
 				plan_forward_result = path_search.result;
 				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
@@ -921,12 +1308,20 @@ void ShipNavigator::tick_plan() {
 	// --- GRID_FALLBACK phase ---
 	if (plan_phase == PlanPhase::GRID_FALLBACK) {
 		if (!path_search.active) {
-			// Reset search state so begin_path_search can start fresh
 			path_search.complete = false;
 			float grid_fb_clearance = map->get_cell_size_value() * 0.5f;
 			bool immediate = map->begin_path_search(
 				path_search, state.position, target.position,
 				grid_fb_clearance, 0.0f);
+			// Reject terrain-only LOS shortcut if it crosses a threat zone
+			if (immediate && !threat_zones_.empty() &&
+				line_crosses_threat(state.position, target.position)) {
+				force_astar_search(path_search);
+				immediate = false;
+			}
+			if (!immediate && path_search.active) {
+				stamp_threat_grid(path_search);
+			}
 			if (immediate) {
 				plan_forward_result = path_search.result;
 				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
@@ -972,12 +1367,20 @@ void ShipNavigator::run_plan_sync() {
 		plan_min_clearance + params.ship_beam * 0.5f,
 		plan_min_clearance * 2.0f);
 
-	// Phase 1: Full clearance search — simple 8-direction MR A* (no heading awareness)
+	// Phase 1: Full clearance search
 	bool immediate = map->begin_path_search(
 		path_search, state.position, target.position,
 		plan_min_clearance, 0.0f);
 
+	// Reject terrain-only LOS shortcut if it crosses a threat zone
+	if (immediate && !threat_zones_.empty() &&
+		line_crosses_threat(state.position, target.position)) {
+		force_astar_search(path_search);
+		immediate = false;
+	}
+
 	if (!immediate && path_search.active) {
+		stamp_threat_grid(path_search);
 		map->continue_path_search(path_search, SYNC_ITER_LIMIT);
 	}
 
@@ -991,7 +1394,13 @@ void ShipNavigator::run_plan_sync() {
 		immediate = map->begin_path_search(
 			path_search, state.position, target.position,
 			plan_min_clearance * 0.5f, 0.0f);
+		if (immediate && !threat_zones_.empty() &&
+			line_crosses_threat(state.position, target.position)) {
+			force_astar_search(path_search);
+			immediate = false;
+		}
 		if (!immediate && path_search.active) {
+			stamp_threat_grid(path_search);
 			map->continue_path_search(path_search, SYNC_ITER_LIMIT);
 		}
 		if (path_search.complete && path_search.found) {
@@ -1005,7 +1414,13 @@ void ShipNavigator::run_plan_sync() {
 		immediate = map->begin_path_search(
 			path_search, state.position, target.position,
 			grid_fb_clearance, 0.0f);
+		if (immediate && !threat_zones_.empty() &&
+			line_crosses_threat(state.position, target.position)) {
+			force_astar_search(path_search);
+			immediate = false;
+		}
 		if (!immediate && path_search.active) {
+			stamp_threat_grid(path_search);
 			map->continue_path_search(path_search, SYNC_ITER_LIMIT);
 		}
 		if (path_search.complete && path_search.found) {
@@ -1035,8 +1450,82 @@ void ShipNavigator::run_plan_sync() {
 // naturally penalised by slower speed producing longer times.
 // ============================================================================
 
+// =============================================================================
+// Shell threat scoring — evaluates a candidate arc against all incoming shells
+// =============================================================================
+
+float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) const {
+	if (arc.size() < 2) return 0.0f;
+
+	// --- Helper lambda: score a single threat point against the arc ---
+	auto score_threat_point = [&](Vector2 landing_pos, float time_remaining, float caliber) -> float {
+		if (time_remaining <= 0.0f) return 0.0f;
+
+		float cal_weight = (caliber * caliber) / (200.0f * 200.0f);
+
+		// Find the arc point closest to the impact time.
+		const ArcPoint *at_impact = &arc.back();
+		for (size_t i = 0; i < arc.size(); i++) {
+			if (arc[i].time >= time_remaining) {
+				at_impact = &arc[i];
+				break;
+			}
+		}
+
+		float dist = at_impact->position.distance_to(landing_pos);
+		if (dist >= SHELL_THREAT_RADIUS) return 0.0f;
+
+		float norm_dist = dist / SHELL_THREAT_RADIUS;
+		float proximity_threat = (1.0f - norm_dist) * (1.0f - norm_dist);
+		return cal_weight * proximity_threat;
+	};
+
+	float total_threat = 0.0f;
+
+	// --- Score real incoming shells ---
+	for (const auto &shell : incoming_shells_) {
+		total_threat += score_threat_point(shell.landing_pos, shell.time_remaining, shell.caliber);
+	}
+
+	// --- Generate virtual shell landings from torpedo obstacles ---
+	// For each torpedo, find the closest point on its path to the ship,
+	// then sample ±1 ship length around that point at TORPEDO_SAMPLE_INTERVAL.
+	float ship_len = params.ship_length;
+
+	for (const auto &[id, obs] : obstacles) {
+		if (!obs.is_torpedo()) continue;
+
+		float torp_speed = obs.velocity.length();
+		if (torp_speed < 1.0f) continue;
+
+		Vector2 torp_dir = obs.velocity / torp_speed;
+
+		// Project ship position onto the torpedo's infinite line to find
+		// the closest point.  t_closest is in seconds from the torpedo's
+		// current position.
+		Vector2 to_ship = state.position - obs.position;
+		float t_closest = to_ship.dot(torp_dir) / torp_speed;
+
+		// Sample window: ±1 ship length around closest point, in time units
+		float half_window_time = ship_len / torp_speed;
+		float t_start = t_closest - half_window_time;
+		float t_end   = t_closest + half_window_time;
+
+		// Only sample future positions (t > 0)
+		if (t_end <= 0.0f) continue;
+		if (t_start < 0.0f) t_start = 0.0f;
+
+		for (float t = t_start; t <= t_end; t += TORPEDO_SAMPLE_INTERVAL) {
+			Vector2 sample_pos = obs.position + torp_dir * torp_speed * t;
+			total_threat += score_threat_point(sample_pos, t, TORPEDO_VIRTUAL_CALIBER);
+		}
+	}
+
+	return total_threat;
+}
+
 ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_rudder, int desired_throttle) {
-	SteeringChoice result = { desired_rudder, desired_throttle, false, false };
+	SteeringChoice result = { desired_rudder, desired_throttle, false };
 
 	float hard_clearance = get_ship_clearance();
 	float soft_clearance = get_soft_clearance();
@@ -1080,122 +1569,16 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		}
 	}
 
-	if (terrain_safe && obstacles_safe) {
+	bool shells_safe = incoming_shells_.empty();
+
+	if (terrain_safe && obstacles_safe && shells_safe) {
 		// Cache a short debug arc for visualization even on the fast path
 		float debug_lookahead = std::min(lookahead, params.ship_length * 4.0f);
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, debug_lookahead);
 		return result;
 	}
 
-	// --- Torpedo special case: scan for dodge, return immediately ---
-	{
-		auto desired_arc = predict_arc_internal(desired_rudder, desired_throttle, lookahead);
-		// Cache for debug visualisation (will be overwritten by winning arc below if no torpedo)
-		winning_arc = desired_arc;
 
-		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(desired_arc);
-		if (obs_info.has_collision && obs_info.is_torpedo) {
-			// --- Torpedo evasion: minimize profile by turning bow-on or stern-on ---
-			// The goal is to present the smallest cross-section to incoming torpedoes.
-			// We compute headings that point bow directly into or away from the torpedo
-			// travel direction, then also consider perpendicular dodges as fallback.
-
-			Vector2 torpedo_dir = obs_info.obstacle_velocity;
-			float torp_speed = torpedo_dir.length();
-			Vector2 torp_unit = (torp_speed > 1.0f) ? torpedo_dir / torp_speed : Vector2(0, 0);
-
-			// Compute perpendicular dodge bias (which side of the torp track are we on?)
-			float dodge_bias = 0.0f;
-			if (torp_speed > 1.0f) {
-				Vector2 ship_side = state.position - obs_info.obstacle_position;
-				float cross = torp_unit.x * ship_side.y - torp_unit.y * ship_side.x;
-				dodge_bias = (cross >= 0.0f) ? -1.0f : 1.0f;
-			}
-
-			// Build candidate rudder list: profile-minimizing headings + dodge offsets
-			struct TorpCandidate {
-				float rudder;
-				int throttle;
-			};
-			TorpCandidate torp_candidates[16];
-			int n_torp_cand = 0;
-
-			auto add_torp_cand = [&](float r, int t) {
-				r = clamp_f(r, -1.0f, 1.0f);
-				for (int k = 0; k < n_torp_cand; ++k) {
-					if (std::abs(torp_candidates[k].rudder - r) < 0.05f && torp_candidates[k].throttle == t) return;
-				}
-				if (n_torp_cand < 16) torp_candidates[n_torp_cand++] = { r, t };
-			};
-
-			int torp_throttle = std::max(desired_throttle, 4);
-
-			// Profile-minimizing candidates: turn bow into or away from torpedo direction
-			if (torp_speed > 1.0f) {
-				// Heading that points bow directly into the torpedo (facing the torpedo source)
-				float bow_into_heading = std::atan2(-torp_unit.x, -torp_unit.y);
-				float rudder_bow_into = compute_rudder_to_heading(bow_into_heading, false);
-				add_torp_cand(rudder_bow_into, torp_throttle);
-
-				// Heading that points bow away from the torpedo (same direction as torp travel)
-				float bow_away_heading = std::atan2(torp_unit.x, torp_unit.y);
-				float rudder_bow_away = compute_rudder_to_heading(bow_away_heading, false);
-				add_torp_cand(rudder_bow_away, torp_throttle);
-			}
-
-			// Perpendicular dodge candidates (try to squeeze between torps)
-			const float mag_steps[] = { 0.3f, 0.6f, 1.0f, 1.5f, 2.0f };
-			for (int i = 0; i < 5; ++i) {
-				add_torp_cand(desired_rudder + mag_steps[i] * dodge_bias, torp_throttle);
-				add_torp_cand(desired_rudder - mag_steps[i] * dodge_bias, torp_throttle);
-			}
-
-			// Also add hard rudder candidates
-			add_torp_cand(-1.0f, torp_throttle);
-			add_torp_cand(1.0f, torp_throttle);
-
-			// Score candidates: prefer no collision, then best TTC, then smallest profile
-			float best_ttc = obs_info.time_to_collision;
-			float best_rudder = desired_rudder;
-			float best_profile_score = std::numeric_limits<float>::infinity();
-			float desired_arc_time = desired_arc.empty() ? 0.0f : desired_arc.back().time;
-
-			for (int i = 0; i < n_torp_cand; ++i) {
-				auto arc = predict_arc_internal(torp_candidates[i].rudder, torp_candidates[i].throttle, lookahead);
-				float cand_arc_time = arc.empty() ? 0.0f : arc.back().time;
-				float cand_ttc = check_arc_obstacles(arc);
-
-				// Profile score: how broadside is the arc endpoint to the torpedo direction?
-				// 0 = perfectly bow/stern-on (ideal), 1 = fully broadside (worst)
-				float profile_score = 1.0f;
-				if (!arc.empty() && torp_speed > 1.0f) {
-					float end_fwd_x = std::sin(arc.back().heading);
-					float end_fwd_z = std::cos(arc.back().heading);
-					// dot with torp direction: |dot|=1 means bow/stern-on, 0 means broadside
-					float alignment = std::abs(end_fwd_x * torp_unit.x + end_fwd_z * torp_unit.y);
-					profile_score = 1.0f - alignment;  // 0=best, 1=worst
-				}
-
-				// Primary: maximize TTC. Secondary: minimize profile (break ties).
-				bool is_better = false;
-				if (cand_ttc > best_ttc + 0.5f) {
-					is_better = true;  // significantly better TTC always wins
-				} else if (cand_ttc > best_ttc - 0.5f && profile_score < best_profile_score - 0.1f) {
-					is_better = true;  // similar TTC but much better profile
-				}
-
-				if (is_better) {
-					best_ttc = cand_ttc;
-					best_rudder = torp_candidates[i].rudder;
-					best_profile_score = profile_score;
-					winning_arc = std::move(arc);
-					if (best_ttc >= cand_arc_time * 0.95f) break;
-				}
-			}
-
-			return { best_rudder, torp_throttle, true, true };
-		}
-	}
 
 	// --- Determine waypoint target for alignment scoring ---
 	Vector2 wp_target = target.position;
@@ -1316,7 +1699,25 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		} else {
 			float alignment_time = arc.back().time;
 			float endpoint_dist = arc.back().position.distance_to(wp_target);
-			float endpoint_speed = std::abs(arc.back().speed);
+
+			// When a reverse candidate ends with the bow aligned toward the
+			// waypoint, the ship will switch to forward throttle on the next
+			// frame.  Score the remaining travel using forward speed instead
+			// of the slow reverse speed.  This prevents oscillation: without
+			// this, reverse candidates are over-penalised by the slow reverse
+			// speed, so the ship reverses just far enough to unblock a forward
+			// path, drives forward into the shore again, and repeats.
+			float endpoint_speed;
+			if (cand_throttle < 0) {
+				// Bow is aligned with the waypoint — estimate travel at
+				// the forward speed the ship will use after switching.
+				// Use a moderate forward throttle (magnitude 3) as a
+				// reasonable estimate of the speed the navigator will
+				// command once it resumes forward travel.
+				endpoint_speed = throttle_to_speed(3);
+			} else {
+				endpoint_speed = std::abs(arc.back().speed);
+			}
 			if (endpoint_speed < 1.0f) endpoint_speed = 1.0f;
 			float travel_time = endpoint_dist / endpoint_speed;
 			total_time = alignment_time + travel_time;
@@ -1356,6 +1757,14 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			}
 		}
 
+		// --- Shell & torpedo threat penalty ---
+		// Scores real shells (from incoming_shells_) and virtual shell landings
+		// generated procedurally from torpedo obstacle paths.
+		{
+			float threat_penalty = score_arc_shell_threat(arc);
+			total_time += threat_penalty * SHELL_THREAT_WEIGHT;
+		}
+
 		if (total_time < best_time) {
 			best_time = total_time;
 			best_rudder = cand_rudder;
@@ -1392,7 +1801,6 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 	result.rudder = best_rudder;
 	result.throttle = best_throttle;
-	result.torpedo_evasion = false;
 	result.collision_imminent = any_collision || (best_rudder != desired_rudder) || (best_throttle != desired_throttle);
 	return result;
 }

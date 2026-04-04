@@ -34,6 +34,17 @@ var _fire_suppressed: bool = false
 const _COVER_RECALC_COOLDOWN_MS: int = 3000
 var _cover_recalc_ms: int = 0
 
+# Skills
+var _skill_hunt: SkillHunt = SkillHunt.new()
+var _skill_chase: SkillChase = SkillChase.new()
+var _skill_cover: SkillFindCover = SkillFindCover.new()
+var _skill_angle: SkillAngle = SkillAngle.new()
+var _skill_kite: SkillKite = SkillKite.new()
+var _skill_flank: SkillFlank = SkillFlank.new()
+var _skill_spot: SkillSpot = SkillSpot.new()
+var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
+
 # ============================================================================
 # WEIGHT CONFIGURATION
 # ============================================================================
@@ -66,6 +77,9 @@ func get_target_weights() -> Dictionary:
 		prefer_broadside = true,
 		in_range_multiplier = 10.0,
 		flanking_multiplier = 5.0,
+		overextension_weight = 0.4,  # CAs balance between close threats and overextended enemies
+		proximity_override_distance = 3000.0,
+		overextension_bonus = 2.0,
 	}
 
 func get_positioning_params() -> Dictionary:
@@ -98,6 +112,26 @@ func should_evade(_destination: Vector3) -> bool:
 		return false
 	return true
 
+func get_theatened(server: GameServer) -> bool:
+	## TODO: add dispersion + caliber checks to this
+	var spotted = server.get_valid_targets(_ship.team.team_id)
+	var my_hp = _ship.health_controller.current_hp
+	var hp_ratio = my_hp / _ship.health_controller.max_hp
+	var desired_dist = clampf(1.0 - hp_ratio + 0.5, 0.5, 1.0)
+	for enemy in spotted:
+		var dist = enemy.global_position.distance_to(_ship.global_position)
+		var enemy_range = enemy.artillery_controller.get_params()._range
+		var enemy_hp = enemy.health_controller.current_hp
+		match enemy.ship_class:
+			Ship.ShipClass.BB:
+				if dist < enemy_range * clamp(desired_dist, 0.7, 1.0) and enemy_hp > my_hp * 0.5:
+					return true
+			Ship.ShipClass.CA:
+				if dist < enemy_range * desired_dist and enemy_hp > my_hp:
+					return true
+			Ship.ShipClass.DD:
+				pass
+	return false
 
 # ============================================================================
 # AMMO AND AIM
@@ -111,10 +145,13 @@ func _can_shoot_over(target: Ship) -> bool:
 	return false
 
 func engage_target(target: Ship) -> void:
-	var hunting = not _nav_destination_valid and _last_known_enemy_valid
-	var shooting_ok = is_in_cover or hunting or (_ship.visible_to_enemy and not _fire_suppressed)
-	if not shooting_ok:
+	if not can_fire_guns():
+		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
 		return
+	# var hunting = not _skill_cover._nav_destination_valid and _last_known_enemy_valid
+	# var shooting_ok = is_in_cover or hunting or (_ship.visible_to_enemy and not _fire_suppressed)
+	# if not shooting_ok:
+	# 	return
 	super.engage_target(target)
 
 func pick_ammo(_target: Ship) -> int:
@@ -127,23 +164,23 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	var offset = Vector3.ZERO
 
 	ammo = ShellParams.ShellType.HE
-	var is_broadside = abs(sin(angle)) > sin(deg_to_rad(60))
+	var is_broadside = abs(sin(angle)) > sin(deg_to_rad(45))
 
 	match _target.ship_class:
 		Ship.ShipClass.BB:
-			if is_broadside and dist < 6000:
+			if is_broadside and dist < 8000:
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 4
 			else:
 				offset.y = _target.movement_controller.ship_height / 2
 		Ship.ShipClass.CA:
 			if is_broadside:
-				if dist < 7000:
+				if dist < 10000:
 					ammo = ShellParams.ShellType.AP
 					offset.y = 0.5
-				elif dist < 10000:
-					ammo = ShellParams.ShellType.AP
-					offset.y = _target.movement_controller.ship_height / 4
+				# elif dist < 10000:
+				# 	ammo = ShellParams.ShellType.AP
+				# 	offset.y = _target.movement_controller.ship_height / 4
 				else:
 					offset.y = _target.movement_controller.ship_height / 3
 			else:
@@ -321,138 +358,166 @@ func _pick_nearest_spotted(ship: Ship, spotted: Array) -> Ship:
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_ensure_safe_dir(ship, server)
+	var ctx = SkillContext.create(ship, target, server, self)
+	var delta = 1.0 / Engine.physics_ticks_per_second
+	_init_flank_identity(ship, server)
 
 	var spotted = server.get_valid_targets(ship.team.team_id)
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
 	var has_spotted = spotted.size() > 0
 	var has_enemies = has_spotted or not unspotted.is_empty()
+	var any_enemy_in_range = false
+	for enemy in spotted:
+		if enemy.global_position.distance_to(ship.global_position) <= ship.artillery_controller.get_params()._range:
+			any_enemy_in_range = true
+			break
 
-	# Recompute safe direction if enemies are known
-	if has_enemies:
-		var new_safe_dir = _compute_safe_direction(ship, server)
-		if _nav_destination_valid and _cached_safe_dir.dot(new_safe_dir) < SAFE_DIR_INVALIDATION_DOT:
-			_nav_destination_valid = false
-		_cached_safe_dir = new_safe_dir
-
+	if not has_spotted:
+		_tactical_state = TacticalState.State.HUNTING
 	_update_enemy_tracking(ship, server, spotted)
 
-	# HUNT: no enemies known — head toward last known position
-	if not has_enemies:
-		_nav_destination_valid = false
-		_cover_zone_valid = false
-		if _last_known_enemy_valid:
-			return _intent_hunt(ship)
-		return _intent_sail_forward(ship)
+	var threatened = get_theatened(server)
+	# --- Tactical state transitions ---
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			if has_spotted:
+				_tactical_state = TacticalState.State.SNEAKING
+		TacticalState.State.SNEAKING:
+			if ship.visible_to_enemy:
+				if threatened:
+					_tactical_state = TacticalState.State.DISENGAGING
+					_bloom_probe.enter()
+				else:
+					_tactical_state = TacticalState.State.ENGAGED
+			elif _skill_cover.is_complete(ctx):
+				_tactical_state = TacticalState.State.ENGAGED
+		TacticalState.State.ENGAGED:
+			if not has_enemies:
+				_tactical_state = TacticalState.State.HUNTING
+			elif threatened and !_skill_cover.is_complete(ctx):
+				_tactical_state = TacticalState.State.DISENGAGING
+				_bloom_probe.enter()
+		TacticalState.State.DISENGAGING:
+			_bloom_probe.update(ship, delta)
+			if not has_enemies:
+				_tactical_state = TacticalState.State.HUNTING
+			elif _bloom_probe.went_dark:
+				_tactical_state = TacticalState.State.SNEAKING
+			elif _bloom_probe.probe_failed and !threatened or !any_enemy_in_range:
+				_tactical_state = TacticalState.State.ENGAGED
 
-	# HUNT (stale): enemies are only known from stale unspotted positions.
-	if not has_spotted:
-		_nav_destination_valid = false
-		_cover_zone_valid = false
-		if _last_known_enemy_valid:
-			return _intent_hunt(ship)
-		return _intent_sail_forward(ship)
+	# --- Execute skill based on state ---
+	var intent: NavIntent = null
+	var desired_range = _get_desired_range()
+	var cover_params = {"desired_range": desired_range, "recalc_cooldown_ms": _COVER_RECALC_COOLDOWN_MS, "push_timeout_ms": 20000}
 
-	# Change island after 20s without in-range targets — push up toward the fight.
-	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > 20000:
-		_nav_destination_valid = false
-		_fire_suppressed = true
-		_last_in_range_ms = Time.get_ticks_msec()
+	match _tactical_state:
+		TacticalState.State.HUNTING:
+			if _last_known_enemy_valid:
+				intent = _skill_chase.execute(ctx, {"chase_timeout": 60.0})
+				if intent != null:
+					_active_skill_name = &"Chase"
+			if intent == null:
+				intent = _skill_hunt.execute(ctx, {})
+				if intent != null:
+					_active_skill_name = &"Hunt"
+		TacticalState.State.SNEAKING:
+			intent = _execute_ca_sneak_skill(ctx, cover_params)
+		TacticalState.State.ENGAGED:
+			intent = _execute_ca_engaged_skill(ctx, cover_params, threatened, any_enemy_in_range)
+		TacticalState.State.DISENGAGING:
+			intent = _skill_cover.execute(ctx, cover_params, true)
+			if _skill_cover.get_dist() < 2500.0:
+				_active_skill_name = &"FindCover"
+				if intent != null:
+					_active_skill_name = &"FindCover"
+			else:
+				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8, "angle_to_threat_deg": 35.0})
+				# var cover_intent = _skill_cover.execute(ctx, cover_params)
+				# if cover_intent != null and intent != null:
+				# 	# Blend kiting and cover intents so ca can attempt to kite to cover
+				# 	intent.target_position = intent.target_position * 0.7 + cover_intent.target_position
+				if intent != null:
+					_active_skill_name = &"Kite"
 
-	# Find a new island if we don't have one — scored to push toward the fight.
-	if not _nav_destination_valid:
-		var island = _get_cover_position(_get_desired_range(), target)
-		if not island.is_empty():
-			_set_island_from_result(island)
-		else:
-			# No island available — angle toward target and fight in the open.
-			_cover_zone_valid = false
-			var angle_target = target if target else _pick_nearest_spotted(ship, spotted)
-			if angle_target:
-				return _intent_angle(ship, angle_target)
-			return _intent_sail_forward(ship)
+	# Fallback
+	if intent == null:
+		var angle_target = target if target else _pick_nearest_spotted(ship, spotted)
+		if angle_target:
+			intent = _skill_angle.execute(ctx, {})
+			if intent != null:
+				_active_skill_name = &"Angle"
+	if intent == null:
+		intent = _intent_sail_forward(ship)
+		_active_skill_name = &"SailForward"
 
-	# Periodically recalculate cover position on the current island to find
-	# a spot that restores concealment (and ideally keeps shootability).
-	var now_ms = Time.get_ticks_msec()
-	if now_ms - _cover_recalc_ms >= _COVER_RECALC_COOLDOWN_MS:
-		_cover_recalc_ms = now_ms
-		# var threats = _gather_threat_positions(ship)
-		# var targets_list = server.get_valid_targets(ship.team.team_id)
-		# var hide_h: float
-		# if threats.size() > 0:
-		# 	hide_h = _compute_hide_heading(_target_island_pos, threats)
-		# else:
-		# 	hide_h = atan2(_cached_safe_dir.x, _cached_safe_dir.z)
-		# var cover_result = _find_cover_position_on_island(_target_island_pos, _target_island_radius, hide_h, threats, targets_list)
-		# if not cover_result.is_empty() and cover_result["can_shoot"]:
-		# 	var new_dest: Vector3 = cover_result["pos"]
-		# 	if new_dest.distance_to(ship.global_position) > _get_ship_clearance():
-		# 		_nav_destination = new_dest
-		# 		is_in_cover = false
-		# else:
-		# 	# No concealed position exists on this island — pick a new one.
-		# 	_nav_destination_valid = false
-		# 	is_in_cover = false
-		var gun_range = _ship.artillery_controller.get_params()._range
-		var pos_params = get_positioning_params()
-		var cover_desired_range = gun_range * pos_params.base_range_ratio
-		var island = _get_cover_position(cover_desired_range, target)
-		if not island.is_empty():
-			_set_island_from_result(island)
-		else:
-			_cover_zone_valid = false
-			var angle_target = target if target else _pick_nearest_spotted(ship, spotted)
-			if angle_target:
-				return _intent_angle(ship, angle_target)
-			return _intent_sail_forward(ship)
+	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
+	if _active_skill_name in [&"Kite", &"Angle"]:
+		intent = _skill_broadside.apply(intent, ctx, {
+			"oscillation_bias": 0.4,
+		})
 
-	# Approach / station-keep
-	var dist_to_dest = ship.global_position.distance_to(_nav_destination)
-	var clearance = _get_ship_clearance()
-	var arrival_radius = clearance * 2.0
-	# Hysteresis: once in cover, allow a larger drift before losing cover status.
-	var exit_radius = clearance * 3.5
-	var arrived: bool
-	if is_in_cover:
-		arrived = dist_to_dest < exit_radius
+	# Post-process spread
+	var pos_params = get_positioning_params()
+	if _active_skill_name not in [&"FindCover", &"Angle", &"Kite"]:
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": pos_params.spread_distance, "spread_multiplier": pos_params.spread_multiplier})
+
+	# Sync legacy cover state for debug compatibility
+	is_in_cover = _skill_cover.is_complete(ctx)
+	_cover_can_shoot = _skill_cover.can_shoot
+	if _skill_cover._nav_destination_valid:
+		_cover_zone_valid = true
+		_cover_island_center = _skill_cover._target_island_pos
+		_cover_island_radius = _skill_cover._target_island_radius
 	else:
-		arrived = dist_to_dest < arrival_radius
-	var heading = _tangential_heading(_target_island_pos, _nav_destination)
+		_cover_zone_valid = false
 
-	is_in_cover = arrived
-	if arrived:
-		_fire_suppressed = false
+	return intent
 
-	# Check if shells can arc over terrain to any spotted target.
-	# When arrived, test from ship position; when en route, test from destination.
-	var check_pos = ship.global_position if arrived else _nav_destination
-	_cover_can_shoot = false
-	var shell_params = ship.artillery_controller.get_shell_params()
-	if shell_params != null:
-		var gun_range = ship.artillery_controller.get_params()._range
-		for enemy in spotted:
-			if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
-				continue
-			var tgt_pos = enemy.global_position + target_aim_offset(enemy)
-			if check_pos.distance_to(tgt_pos) > gun_range:
-				continue
-			var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(check_pos, tgt_pos, shell_params)
-			if sol[0] == null:
-				continue
-			var result = Gun.sim_can_shoot_over_terrain_static(check_pos, sol[0], sol[1], shell_params, ship)
-			if result.can_shoot_over_terrain:
-				_cover_can_shoot = true
-				break
-
-	if arrived:
-		var intent = _make_intent(_nav_destination, heading, arrival_radius * 0.5)
-		intent.near_terrain = true
-		if dist_to_dest > arrival_radius:
-			intent.throttle_override = -1
+func _execute_ca_sneak_skill(ctx: SkillContext, cover_params: Dictionary) -> NavIntent:
+	var intent = _skill_cover.execute(ctx, cover_params)
+	if intent != null:
+		_active_skill_name = &"FindCover"
 		return intent
+	# No island — try flanking
+	var hp_ratio = ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp
+	if hp_ratio > 0.5:
+		intent = _skill_flank.execute(ctx, {"flank_side": _flank_side, "flank_depth": _flank_depth})
+		if intent != null:
+			_active_skill_name = &"Flank"
+	if intent == null:
+		intent = _skill_hunt.execute(ctx, {})
+		if intent != null:
+			_active_skill_name = &"Hunt"
+	return intent
 
-	var intent = _make_intent(_nav_destination, heading)
-	intent.near_terrain = true
+func _execute_ca_engaged_skill(ctx: SkillContext, cover_params: Dictionary, threatened: bool, any_targets: bool) -> NavIntent:
+	var intent
+	# If at cover, stay there
+	if _skill_cover.is_complete(ctx):
+		intent = _skill_cover.execute(ctx, cover_params)
+		if intent != null:
+			_active_skill_name = &"FindCover"
+		return intent
+	# Try new cover
+	if not _ship.visible_to_enemy and threatened :
+		intent = _skill_cover.execute(ctx, cover_params)
+		if intent != null:
+			_active_skill_name = &"FindCover"
+			return intent
+	## TODO: decide on angle vs kite depending on target, outnumbered, and HP ratio
+	if not threatened and not any_targets:
+		intent = _skill_angle.execute(ctx, {})
+		_active_skill_name = &"Angle"
+	else:
+		intent = _skill_cover.execute(ctx, cover_params, true)
+		if _skill_cover.get_dist() < 2500.0:
+			_active_skill_name = &"FindCover"
+		else:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.8})
+			_active_skill_name = &"Kite"
+		# var cover_intent = _skill_cover.execute(ctx, cover_params)
+		# intent.target_position = intent.target_position * 0.7 + cover_intent.target_position * 0.3 if cover_intent != null else intent.target_position
 	return intent
 
 # ============================================================================

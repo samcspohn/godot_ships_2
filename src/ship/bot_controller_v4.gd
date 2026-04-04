@@ -26,6 +26,7 @@ var _debug_threat_weight: float = 0.0
 var _debug_throttle: int = 0
 var _debug_turn_sim_points_desired: Array[Vector3] = []
 var _debug_turn_sim_points_undesired: Array[Vector3] = []
+var _debug_shell_obstacles: Array = []  # [{landing_x, landing_z, time_remaining, caliber}]
 var debug_draw_turn_sim: bool = true
 
 var debug_log_interval: float = 2.0
@@ -76,6 +77,11 @@ const TORPEDO_UPDATE_OFFSET: int = 2
 ## ID namespace base for torpedo obstacles (negative, never collides with ship instance IDs)
 const TORPEDO_ID_OFFSET: int = -100000
 
+## Maximum distance to query for incoming shells
+const SHELL_QUERY_RANGE: float = 1000.0
+## Frame offset for shell threat updates (ships=0, shells=1, torpedoes=2)
+const SHELL_UPDATE_OFFSET: int = 1
+
 # ===========================================================================
 # INTENT SYSTEM
 # ===========================================================================
@@ -125,6 +131,9 @@ const AVOIDANCE_THROTTLE_COOLDOWN_DURATION: float = 3.0
 ## When true, the next physics frame will force an immediate intent update
 ## regardless of the stagger timer.
 var _force_intent_next_frame: bool = false
+## When true, the next _tick_behavior call will force a target rescan
+## regardless of the scan timer.
+var _force_target_rescan: bool = false
 
 ## Cooldown timer (seconds) to prevent event-driven triggers from firing
 ## more than once per second. Reset after each forced intent update.
@@ -229,6 +238,15 @@ func _physics_process(delta: float) -> void:
 	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == torp_frame_slot:
 		_update_torpedo_obstacles()
 
+	# --- 2d. Update incoming shell threats ---
+	var shell_frame_slot: int = (bot_id + SHELL_UPDATE_OFFSET) % OBSTACLE_UPDATE_INTERVAL
+	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == shell_frame_slot:
+		_update_shell_threats()
+
+	# --- 2e. Update enemy threat zones (stealth pathfinding) ---
+	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
+		_update_threat_zones()
+
 	# --- 2b. Check for event-driven intent triggers ---
 	# These run every frame (cheap checks) and set _force_intent_next_frame
 	# when a significant tactical event occurs. Gated by cooldown to prevent
@@ -242,6 +260,7 @@ func _physics_process(delta: float) -> void:
 	_behavior_timer += delta
 	if _force_intent_next_frame:
 		should_query_behavior = true
+		_force_target_rescan = true
 		_force_intent_next_frame = false
 		_event_cooldown = EVENT_COOLDOWN_DURATION
 		_behavior_timer = 0.0
@@ -358,6 +377,10 @@ func _update_nav_intent() -> void:
 			var safe := nav_map.safe_nav_point(ship_pos_2d, dest_2d, clearance, turning_radius)
 			_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
 
+	# --- Push destination out of enemy threat zones when sneaking ---
+	if _last_intent != null:
+		_adjust_destination_for_threats(_last_intent)
+
 	# Track destination for debug drawing
 	if _last_intent != null:
 		destination = _last_intent.target_position
@@ -460,6 +483,151 @@ func _register_torpedo_obstacles() -> void:
 		navigator.register_obstacle(obs_id, pos_2d, vel_2d, TORPEDO_HIT_RADIUS, 0.0)
 
 
+
+func _update_shell_threats() -> void:
+	navigator.clear_incoming_shells()
+	var my_team_id: int = _ship.team.team_id if _ship.team else -1
+	var my_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
+
+	var shells: Array = ProjectileManager.get_shells_near_position(
+		my_pos_2d, SHELL_QUERY_RANGE, my_team_id
+	)
+
+	_debug_shell_obstacles = shells
+
+	for s in shells:
+		navigator.add_incoming_shell(
+			s["shell_id"],
+			Vector2(s["landing_x"], s["landing_z"]),
+			s["time_remaining"],
+			s["caliber"]
+		)
+
+
+## Push the intent's destination out of enemy threat zones so the A* goal
+## is in pathable territory.  Only active when SNEAKING — mirrors the same
+## condition used by _update_threat_zones().
+##
+## For every enemy whose soft_radius covers the destination we push the
+## destination radially away from that enemy until it sits just outside the
+## soft_radius.  After all pushes we re-validate against terrain so the
+## adjusted point is still in navigable water.
+func _adjust_destination_for_threats(intent: NavIntent) -> void:
+	if behavior == null:
+		return
+	if not "_tactical_state" in behavior:
+		return
+	if behavior._tactical_state != TacticalState.State.SNEAKING:
+		return
+
+	# Read concealment — same radii used by _update_threat_zones
+	var my_concealment: float = 0.0
+	if _ship.concealment != null and _ship.concealment.params != null:
+		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if my_concealment <= 0.0:
+		return
+
+	var soft_radius: float = my_concealment + 500.0  # must match _update_threat_zones
+	# Small buffer so the destination lands clearly outside the soft edge
+	var push_margin: float = 100.0
+
+	var dest := Vector2(intent.target_position.x, intent.target_position.z)
+	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var was_adjusted := false
+
+	# Collect all enemy positions (spotted + last-known unspotted)
+	var enemy_positions: Array[Vector2] = []
+	var enemies = server_node.get_valid_targets(_ship.team.team_id)
+	for enemy_ship in enemies:
+		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			enemy_positions.append(Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z))
+	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	for enemy_ship in unspotted.keys():
+		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			var lp: Vector3 = unspotted[enemy_ship]
+			enemy_positions.append(Vector2(lp.x, lp.z))
+
+	# Iteratively push the destination out of every overlapping threat zone.
+	# Multiple passes handle cases where pushing away from one enemy moves
+	# the destination into another's zone.  Cap iterations to avoid infinite
+	# loops in heavily surrounded scenarios.
+	var max_passes := 4
+	for _pass in max_passes:
+		var pushed_this_pass := false
+		for epos in enemy_positions:
+			var to_dest := dest - epos
+			var dist := to_dest.length()
+			if dist < soft_radius + push_margin:
+				# Need to push outward
+				var push_dir: Vector2
+				if dist > 1.0:
+					push_dir = to_dest / dist
+				else:
+					# Destination is right on top of the enemy — push toward
+					# the ship so the DD retreats to a sane position
+					var fallback := ship_pos - epos
+					if fallback.length() > 1.0:
+						push_dir = fallback.normalized()
+					else:
+						push_dir = Vector2(1.0, 0.0)  # arbitrary
+				dest = epos + push_dir * (soft_radius + push_margin)
+				pushed_this_pass = true
+				was_adjusted = true
+		if not pushed_this_pass:
+			break
+
+	# Re-validate against terrain so we don't push into land
+	if was_adjusted and NavigationMapManager.is_map_ready():
+		var nav_map = NavigationMapManager.get_map()
+		var clearance: float = navigator.get_clearance_radius()
+		var turning_radius: float = movement.turning_circle_radius
+		if not nav_map.is_navigable(dest.x, dest.y, clearance):
+			var safe := nav_map.safe_nav_point(ship_pos, dest, clearance, turning_radius)
+			dest = safe["position"]
+		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+	elif was_adjusted:
+		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+
+
+func _update_threat_zones() -> void:
+	navigator.clear_threat_zones()
+
+	# Only apply threat avoidance when the behavior is in SNEAKING state
+	if behavior == null:
+		return
+	if not "_tactical_state" in behavior:
+		return
+	if behavior._tactical_state != TacticalState.State.SNEAKING:
+		return
+
+	# Use our base concealment radius as the avoidance distance
+	var my_concealment: float = 0.0
+	if _ship.concealment != null and _ship.concealment.params != null:
+		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if my_concealment <= 0.0:
+		return
+
+	var hard_radius: float = my_concealment
+	var soft_radius: float = my_concealment + 500.0  # 500m safety margin
+
+	# Register all known enemy positions as threat zones
+	var enemies = server_node.get_valid_targets(_ship.team.team_id)
+	for enemy in enemies:
+		if not is_instance_valid(enemy) or not enemy.is_alive():
+			continue
+		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
+		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+
+	# Also add last-known positions of unspotted enemies (they can still detect us)
+	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	for enemy_ship in unspotted.keys():
+		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
+			continue
+		var last_pos: Vector3 = unspotted[enemy_ship]
+		var pos_2d = Vector2(last_pos.x, last_pos.z)
+		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+
+
 # ===========================================================================
 # BEHAVIOR TICK (target scanning, firing, consumables)
 # ===========================================================================
@@ -468,7 +636,10 @@ func _tick_behavior(delta: float) -> void:
 	# Target scanning
 	target_scan_timer += delta
 	var needs_rescan: bool = false
-	if target_scan_timer >= target_scan_interval:
+	if _force_target_rescan:
+		needs_rescan = true
+		_force_target_rescan = false
+	elif target_scan_timer >= target_scan_interval:
 		needs_rescan = true
 	elif target == null:
 		needs_rescan = true
@@ -479,6 +650,12 @@ func _tick_behavior(delta: float) -> void:
 		# thrashing when targets flicker at concealment edge. We give it a grace
 		# period: only rescan if we've waited at least 2 seconds since last scan.
 		if target_scan_timer >= 2.0:
+			needs_rescan = true
+	elif target is Ship and target.visible_to_enemy and not behavior.can_hit_target(target):
+		# Target is visible but terrain-blocked — rescan after a short grace
+		# period so we switch to a shootable enemy instead of sailing toward
+		# one we can't actually hit. Use 3s to avoid thrashing at island edges.
+		if target_scan_timer >= 3.0:
 			needs_rescan = true
 
 	if needs_rescan:
@@ -551,17 +728,17 @@ func _check_intent_events() -> void:
 		if _dbg:
 			print("[Event %s] ENEMY_VIS_COUNT %d → %d frame=%d" % [_ship.name, cached_count, visible_count, Engine.get_physics_frames()])
 		_force_intent_next_frame = true
-		# Also rescan target — the tactical picture changed so we may want
-		# a different target (e.g. our target went hidden, pick a visible one).
-		if target == null or (target is Ship and not target.visible_to_enemy):
-			var old_target = target
-			_acquire_target(target)
-			if target != old_target and _dbg:
-				print("[Event %s] TARGET_RESCAN on vis change: %s → %s" % [
-					_ship.name,
-					str(old_target.name) if old_target != null else "null",
-					str(target.name) if target != null else "null"
-				])
+		# Always rescan target when visibility changes — a newly spotted enemy
+		# may be a much better target even if the current one is still valid.
+		var old_target = target
+		_acquire_target(target)
+		_force_target_rescan = false  # just did it
+		if target != old_target and _dbg:
+			print("[Event %s] TARGET_RESCAN on vis change: %s → %s" % [
+				_ship.name,
+				str(old_target.name) if old_target != null else "null",
+				str(target.name) if target != null else "null"
+			])
 	_enemy_visibility_cache["_count"] = visible_count
 
 	# --- 2. Friendly ship died ---
@@ -756,6 +933,14 @@ func get_turn_simulation_points_desired() -> Array[Vector3]:
 ## Returns empty array (V3 compat — threat points no longer computed via raycasts)
 func get_turn_simulation_points_undesired() -> Array[Vector3]:
 	return _debug_turn_sim_points_undesired
+
+## Return cached shell obstacle data for debug visualization
+func get_debug_shell_obstacles() -> Array:
+	return _debug_shell_obstacles
+
+## Return torpedo virtual threat points (generated procedurally by the navigator)
+func get_debug_torpedo_threat_points() -> Array:
+	return navigator.get_debug_torpedo_threat_points()
 
 ## Get nav state as a human-readable string
 func get_nav_state_string() -> String:

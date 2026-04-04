@@ -203,6 +203,18 @@ struct ObstacleCollisionInfo {
 		  is_torpedo(false) {}
 };
 
+// Incoming shell threat data (for shell dodging/angling)
+struct IncomingShell {
+	int id;
+	Vector2 landing_pos;    // predicted XZ impact point
+	float time_remaining;   // real seconds until impact
+	float caliber;          // mm — for damage-weight prioritisation
+
+	IncomingShell() : id(-1), landing_pos(Vector2()), time_remaining(0.0f), caliber(0.0f) {}
+	IncomingShell(int p_id, Vector2 p_pos, float p_time, float p_cal)
+		: id(p_id), landing_pos(p_pos), time_remaining(p_time), caliber(p_cal) {}
+};
+
 // Navigation state machine — simplified two-state design
 enum class NavState {
 	NORMAL    = 0,  // Path following + weighted avoidance blending
@@ -265,6 +277,18 @@ inline float throttle_to_speed_fraction(int throttle) {
 	}
 }
 
+// Enemy ship threat zone for stealth pathfinding.
+// Stamped onto a coarser grid overlay during path search initialization.
+struct ThreatZone {
+    Vector2 position;      // world XZ position of the enemy ship
+    float hard_radius;     // inner radius — very high cost (our concealment radius)
+    float soft_radius;     // outer radius — cost ramps from 0 at soft to max at hard
+
+    ThreatZone() : position(Vector2()), hard_radius(0.0f), soft_radius(0.0f) {}
+    ThreatZone(Vector2 p_pos, float p_hard, float p_soft)
+        : position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
+};
+
 // Resumable A* search state — one per ship for async pathfinding.
 // Buffers are allocated once (matching grid size) and reused via generation counters.
 struct PathSearch {
@@ -301,6 +325,19 @@ struct PathSearch {
     // Immediate result (set by begin if LOS path found)
     PathResult result;
 
+    // --- Enemy threat avoidance overlay ---
+    // Stamped at half-resolution (each threat cell covers 2x2 nav cells).
+    // Values: 0.0 = no threat, >0 = cost multiplier penalty.
+    std::vector<float> threat_cost;
+    int threat_grid_width = 0;
+    int threat_grid_height = 0;
+    float threat_cell_size = 100.0f;   // world units per threat cell
+    float threat_min_x = 0.0f;
+    float threat_min_z = 0.0f;
+
+    // Source threat data (copied from navigator at search start)
+    std::vector<ThreatZone> threat_zones;
+
     PathSearch() = default;
 
     void allocate(int total_cells) {
@@ -322,6 +359,8 @@ struct PathSearch {
         active = false;
         complete = false;
         result = PathResult();
+        threat_zones.clear();
+        // Note: threat_cost is not cleared here — it's rebuilt per-search by stamp_threats()
     }
 };
 
