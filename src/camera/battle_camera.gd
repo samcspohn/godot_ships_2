@@ -494,16 +494,35 @@ func _calculate_target_info():
 			if target_lateral.length_squared() > 0.001 and cam_to_target.length_squared() > 0.001:
 				broadside_factor = absf(target_lateral.normalized().dot(cam_to_target.normalized()))
 			# Power curve with identity exponent (1.0) for now — easy to tune later
-			var blend_exponent = 1.5
+			# -  **Exponent = 1.0**: Linear. The blend between plane and water is proportional to the broadside angle.
+			#  At 45° you get roughly 50/50.
+
+			# - **Exponent > 1.0** (e.g. 2.0): The broadside factor gets *squashed down*.
+			#  The target needs to be more broadside before the plane starts dominating.
+			#  At 45° with exponent 2.0, `broadside_factor ≈ 0.5² = 0.25`, so you'd still be 75% water-mode.
+			#  This **keeps water-mode active longer** as the target rotates,
+			#  meaning leading feels natural for a wider range of angles and the plane only takes over when the target is clearly broadside.
+
+			# - **Exponent < 1.0** (e.g. 0.5): The broadside factor gets *pushed up*.
+			#  Even a slightly angled target snaps toward plane-mode quickly.
+			#  At 45° with exponent 0.5, `broadside_factor ≈ 0.5^0.5 ≈ 0.71`, so you'd be 71% plane-mode.
+			#  This **favors the vertical plane** for most angles,
+			#  only falling back to water when the target is nearly bow/stern-on.
+			var blend_exponent = 0.7
 			broadside_factor = pow(broadside_factor, blend_exponent)
 
-			# --- Plane intersection (camera-facing vertical plane at target) ---
-			var plane_normal = cam_to_target
+			# --- Plane intersection (vertical plane aligned with target's heading) ---
+			var plane_normal = locked_target.global_basis.x
 			plane_normal.y = 0.0
 			if plane_normal.length_squared() > 0.001:
 				plane_normal = plane_normal.normalized()
 			else:
-				plane_normal = Vector3.RIGHT
+				# Fallback if lateral axis is degenerate
+				var fallback = cam_to_target
+				if fallback.length_squared() > 0.001:
+					plane_normal = fallback.normalized()
+				else:
+					plane_normal = Vector3.RIGHT
 
 			var plane = Plane(plane_normal, plane_normal.dot(target_pos))
 			var plane_point = plane.intersects_ray(ray_origin, aim_direction)
