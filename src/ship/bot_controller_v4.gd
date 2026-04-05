@@ -318,6 +318,10 @@ func _physics_process(delta: float) -> void:
 	_debug_throttle = throttle
 	_update_debug_vectors(rudder)
 
+	# --- 8b. Emit immediate-mode debug draws when being followed ---
+	if Debug.follow_ship == _ship:
+		_emit_debug_draws()
+
 	# --- 9. Behavior tick (target scanning, firing, consumables) ---
 	_tick_behavior(delta)
 
@@ -877,6 +881,282 @@ func _update_debug_vectors(rudder: float) -> void:
 					phase_names[p] if p < phase_names.size() else str(p),
 					get_nav_state_string()
 				])
+
+
+# ---------------------------------------------------------------------------
+# Immediate-mode debug drawing — pushes draw commands to Debug autoload
+# ---------------------------------------------------------------------------
+
+func _emit_debug_draws() -> void:
+	var ship_pos: Vector3 = _ship.global_position
+
+	# --- a) Desired heading arrow (GREEN, above ship) ---
+	var heading_pos = ship_pos
+	heading_pos.y += 100.0
+	Debug.draw_arrow(heading_pos, _debug_desired_heading_vector, 200.0, Color.GREEN, 10.0)
+
+	# --- b) Heading + rudder arrow (CYAN) ---
+	if _debug_heading_rudder_vector.length() > 0.1:
+		var rudder_pos = ship_pos
+		rudder_pos.y += 80.0
+		Debug.draw_arrow(rudder_pos, _debug_heading_rudder_vector, 180.0, Color.CYAN, 8.0)
+
+	# --- c) Threat arrow (ORANGE, scaled by threat weight) ---
+	if _debug_threat_vector.length() > 0.1:
+		var threat_pos = ship_pos
+		threat_pos.y += 60.0
+		Debug.draw_arrow(threat_pos, _debug_threat_vector, 200.0 * _debug_threat_weight, Color(1.0, 0.3, 0.0), 8.0)
+
+	# --- d) Safe arrow (TEAL, same scale as threat) ---
+	if _debug_safe_vector.length() > 0.1:
+		var safe_pos = ship_pos
+		safe_pos.y += 60.0
+		Debug.draw_arrow(safe_pos, _debug_safe_vector, 200.0 * _debug_threat_weight, Color(0.0, 1.0, 0.5), 8.0)
+
+	# --- e) Throttle indicator ---
+	var throttle_pos = ship_pos
+	throttle_pos.y += 120.0
+	if _debug_throttle == 0:
+		Debug.draw_im_sphere(throttle_pos, 15.0, Color.RED)
+	else:
+		var ship_forward = -_ship.global_transform.basis.z
+		var current_heading_vec = Vector3(ship_forward.x, 0.0, ship_forward.z).normalized()
+		var throttle_color: Color
+		var throttle_length: float
+		if _debug_throttle == -1:
+			throttle_color = Color.YELLOW
+			throttle_length = 100.0
+			current_heading_vec = -current_heading_vec
+		elif _debug_throttle == 4:
+			throttle_color = Color(0.0, 0.4, 1.0)
+			throttle_length = 200.0
+		else:
+			throttle_color = Color(0.0, 1.0, 0.3)
+			throttle_length = 200.0 * (float(_debug_throttle) / 4.0)
+		Debug.draw_arrow(throttle_pos, current_heading_vec, throttle_length, throttle_color, 9.0)
+
+	# --- f) Target indicator (red diamond cone above target ship) ---
+	if target != null and is_instance_valid(target):
+		var target_pos = target.global_position
+		target_pos.y += 150.0
+		Debug.draw_cone(target_pos, Vector3(PI, 0.0, 0.0), 60.0, 0.0, 30.0, Color.RED, 4)
+
+	# --- g) Destination marker (green cone pointing down) ---
+	if destination != Vector3.ZERO:
+		Debug.draw_cone(Vector3(destination.x, 120.0, destination.z), Vector3(PI, 0.0, 0.0), 80.0, 0.0, 40.0, Color(0.0, 1.0, 0.4, 0.9), 4)
+
+	# --- Navigator-dependent draws ---
+	if navigator != null:
+		# --- h) Nav path (line strip with spheres) ---
+		var nav_path = navigator.get_current_path()
+		if nav_path.size() > 0:
+			var full_path = PackedVector3Array([_ship.global_position])
+			for pt in nav_path:
+				full_path.append(Vector3(pt.x, 50.0, pt.z))
+			full_path[0].y = 50.0
+			Debug.draw_path(full_path, Color(1.0, 0.6, 1.0, 0.7), 1, 20.0)
+
+		# --- i) Simulated path (cyan) ---
+		var sim_path = navigator.get_simulated_path()
+		if sim_path.size() >= 2:
+			var raised_path = PackedVector3Array()
+			for pt in sim_path:
+				raised_path.append(Vector3(pt.x, 40.0, pt.z))
+			var stride = maxi(raised_path.size() / 30, 1)
+			Debug.draw_path(raised_path, Color(0.0, 0.9, 0.9, 0.8), stride, 12.0)
+
+		# --- j) Predicted trajectory / turn sim points (green spheres) ---
+		var trajectory = navigator.get_predicted_trajectory()
+		for i in range(trajectory.size()):
+			var pt = trajectory[i]
+			var t = float(i) / float(max(trajectory.size() - 1, 1))
+			var color = Color(0.0, 1.0 - t * 0.5, 0.0)
+			Debug.draw_im_sphere(pt, 15.0, color)
+
+		# --- k) Clearance circles ---
+		var clearance_r = navigator.get_clearance_radius()
+		if clearance_r > 0.0:
+			var circle_pos = Vector3(ship_pos.x, 5.0, ship_pos.z)
+			Debug.draw_circle(circle_pos, clearance_r, Color(0.2, 0.8, 1.0, 0.7), 64)
+		var soft_clearance_r = navigator.get_soft_clearance_radius()
+		if soft_clearance_r > 0.0:
+			var soft_pos = Vector3(ship_pos.x, 4.0, ship_pos.z)
+			Debug.draw_circle(soft_pos, soft_clearance_r, Color(1.0, 0.8, 0.0, 0.5), 64)
+
+		# --- l) SDF tile squares ---
+		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
+			_emit_sdf_tiles(clearance_r)
+
+		# --- p) Torpedo threat points ---
+		var torp_points = navigator.get_debug_torpedo_threat_points()
+		for t_pt in torp_points:
+			var landing_x: float = t_pt.get("landing_x", 0.0)
+			var landing_z: float = t_pt.get("landing_z", 0.0)
+			var time_remaining: float = t_pt.get("time_remaining", 0.0)
+			var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
+			var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
+			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
+			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
+
+	# --- m) Cover debug (circles + LOS lines) — only for CA behavior ---
+	if behavior is CABehavior:
+		var ca: CABehavior = behavior as CABehavior
+		if ca._cover_zone_valid and ca._cover_island_radius > 0.0:
+			var island_pos = ca._cover_island_center
+			var draw_y = 6.0
+
+			# Island radius circle (orange)
+			Debug.draw_circle(Vector3(island_pos.x, draw_y, island_pos.z), ca._cover_island_radius, Color(1.0, 0.5, 0.0, 0.3), 64)
+
+			# Safe distance circle (red) — ship clearance + buffer
+			var ship_clearance: float = movement.ship_beam * 0.5 + 50.0
+			var safe_dist = ship_clearance + 50.0
+			Debug.draw_circle(Vector3(island_pos.x, draw_y + 1.0, island_pos.z), safe_dist, Color(1.0, 0.15, 0.15, 0.7), 64)
+
+			# Cover zone circle (color depends on state)
+			var zone_color: Color
+			var spotted_in_cover = ca.is_in_cover and _ship.visible_to_enemy
+			if spotted_in_cover:
+				zone_color = Color(1.0, 0.0, 0.0, 0.8)
+			elif ca.is_in_cover:
+				zone_color = Color(0.0, 1.0, 0.0, 0.8)
+			else:
+				zone_color = Color(0.0, 0.7, 1.0, 0.6)
+
+			Debug.draw_circle(Vector3(ca._nav_destination.x, draw_y + 2.0, ca._nav_destination.z), ca._cover_zone_radius, zone_color, 48)
+			Debug.draw_im_sphere(Vector3(ca._nav_destination.x, 30.0, ca._nav_destination.z), 20.0, zone_color)
+
+			# LOS lines from ship to each threat
+			var threats: Array = behavior._gather_threat_positions(_ship)
+			var ship_los_pos = _ship.global_position
+			for threat_pos in threats:
+				var blocked = NavigationMapManager.is_los_blocked(ship_los_pos, threat_pos)
+				var los_color = Color(0.0, 1.0, 0.0, 0.6) if blocked else Color(1.0, 0.0, 0.0, 0.8)
+				Debug.draw_line(Vector3(ship_los_pos.x, 25.0, ship_los_pos.z), Vector3(threat_pos.x, 25.0, threat_pos.z), los_color)
+
+	# --- n) CA tactical: enemy clusters + nearby islands ---
+	if server_node != null:
+		var clusters = server_node.get_enemy_clusters(_ship.team.team_id)
+		for cluster in clusters:
+			var center: Vector3 = cluster.center
+			var ship_count: int = cluster.ships.size()
+			var sphere_size: float = 30.0 + ship_count * 15.0
+			Debug.draw_im_sphere(Vector3(center.x, 38.0, center.z), sphere_size, Color(1.0, 0.2, 0.0, 0.7))
+			var cluster_radius: float = 300.0 + ship_count * 200.0
+			Debug.draw_circle(Vector3(center.x, 8.0, center.z), cluster_radius, Color(1.0, 0.3, 0.0, 0.4), 32)
+
+		# Nearby islands
+		if NavigationMapManager.is_map_ready():
+			var islands = NavigationMapManager.get_islands()
+			var my_pos = _ship.global_position
+			for isl in islands:
+				var center_2d: Vector2 = isl["center"]
+				var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
+				var isl_radius: float = isl["radius"]
+				var eff_dist = isl_pos.distance_to(my_pos) - isl_radius
+				if eff_dist <= 10000.0:
+					Debug.draw_circle(Vector3(isl_pos.x, 9.0, isl_pos.z), isl_radius, Color(0.0, 0.8, 0.9, 0.35), 48)
+					Debug.draw_im_sphere(Vector3(isl_pos.x, 28.0, isl_pos.z), 15.0, Color(0.0, 0.9, 1.0, 0.6))
+
+	# --- o) Shell obstacles ---
+	for s in _debug_shell_obstacles:
+		var landing_x: float = s.get("landing_x", 0.0)
+		var landing_z: float = s.get("landing_z", 0.0)
+		var time_remaining: float = s.get("time_remaining", 0.0)
+		var caliber: float = s.get("caliber", 0.0)
+		var radius: float = clampf(caliber * 0.2, 30.0, 120.0)
+		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
+		var color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
+		Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), radius, color)
+		Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 8.0, color)
+
+	# --- q) World-space label (nav state + skill info) ---
+	if behavior != null:
+		var lines: PackedStringArray = PackedStringArray()
+
+		var state_names = ["NORMAL", "EMERGENCY"]
+		if navigator != null:
+			var state_idx = navigator.get_nav_state()
+			if state_idx >= 0 and state_idx < state_names.size():
+				lines.append("Nav: %s" % state_names[state_idx])
+			else:
+				lines.append("Nav: UNKNOWN(%d)" % state_idx)
+
+		var skill_info = behavior.get_debug_skill_info()
+		if not skill_info.is_empty():
+			var tac_state: String = skill_info.get("tactical_state", "")
+			var skill: String = skill_info.get("skill", "")
+			var bloom: String = skill_info.get("bloom_phase", "")
+			var visible: bool = skill_info.get("visible", false)
+			var in_cover: bool = skill_info.get("in_cover", false)
+			var hp_pct: int = skill_info.get("hp_pct", -1)
+
+			if not tac_state.is_empty():
+				lines.append("State: %s" % tac_state)
+			if not skill.is_empty():
+				lines.append("Skill: %s" % skill)
+			if tac_state == "DISENGAGING":
+				lines.append("Bloom: %s" % bloom)
+
+			var flags: PackedStringArray = PackedStringArray()
+			if visible:
+				flags.append("VISIBLE")
+			else:
+				flags.append("HIDDEN")
+			if in_cover:
+				flags.append("COVER")
+			if hp_pct >= 0:
+				flags.append("HP:%d%%" % hp_pct)
+			if flags.size() > 0:
+				lines.append(" | ".join(flags))
+
+		var label_text = "\n".join(lines)
+		if not label_text.is_empty():
+			Debug.draw_label(_ship.global_position + Vector3(-100, 100, 0), label_text)
+
+
+## Sample SDF tiles near the ship and emit draw_square commands for each.
+func _emit_sdf_tiles(clearance: float) -> void:
+	var nav_map = NavigationMapManager.get_map()
+	if nav_map == null:
+		return
+	var cell_size: float = nav_map.get_cell_size_value()
+	if cell_size <= 0.0:
+		return
+
+	var world_pos = _ship.global_position
+	var half_range: float = 1000.0
+	var start_x: float = snappedf(world_pos.x - half_range, cell_size)
+	var start_z: float = snappedf(world_pos.z - half_range, cell_size)
+	var end_x: float = world_pos.x + half_range
+	var end_z: float = world_pos.z + half_range
+	var tile_size: float = cell_size * 0.9
+
+	var cx: float = start_x
+	while cx <= end_x:
+		var cz: float = start_z
+		while cz <= end_z:
+			var dist: float = nav_map.get_distance(cx, cz)
+			# Only draw tiles near land — skip deep open water
+			if dist < clearance * 3.0:
+				var color: Color
+				if dist < -clearance:
+					# Deep inside land — black
+					color = Color(0.1, 0.1, 0.1, 0.35)
+				elif dist < 0.0:
+					# Inside land — solid red
+					color = Color(0.9, 0.1, 0.1, 0.35)
+				elif dist < clearance:
+					# Too close for this ship — orange/yellow gradient
+					var t: float = dist / clearance
+					color = Color(1.0, 0.3 + t * 0.5, 0.0, 0.3)
+				else:
+					# Navigable — green, more transparent the further from land
+					var t: float = clampf((dist - clearance) / (clearance * 2.0), 0.0, 1.0)
+					color = Color(0.0, 0.7, 0.3, 0.25 - t * 0.15)
+				Debug.draw_square(Vector3(cx, 3.0, cz), tile_size, tile_size, color, true)
+			cz += cell_size
+		cx += cell_size
 
 
 ## Get the debug heading vector (for local access by camera)
