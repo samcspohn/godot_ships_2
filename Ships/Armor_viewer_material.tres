@@ -13,13 +13,12 @@ metadata/_stencil_owned = true
 
 [resource]
 next_pass = SubResource("StandardMaterial3D_pnxfl")
-transparency = 1
-blend_mode = 1
+transparency = 4
 cull_mode = 2
 depth_draw_mode = 1
 no_depth_test = true
 shading_mode = 0
 vertex_color_use_as_albedo = true
-albedo_color = Color(0.41960785, 0.41960785, 0.41960785, 0.76862746)
+albedo_color = Color(0.52156866, 0.52156866, 0.52156866, 0.4392157)
 stencil_mode = 2
 stencil_flags = 2

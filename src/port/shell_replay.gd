@@ -141,6 +141,8 @@ func create_shell():
 	shell_material.emission_enabled = true
 	shell_material.emission = Color(1.0, 0.3, 0.0)
 	shell_material.emission_energy_multiplier = 2.0
+	shell_material.no_depth_test = true
+	shell_material.render_priority = 2
 	shell.material_override = shell_material
 
 	world_3d.add_child(shell)
@@ -156,6 +158,8 @@ func create_trail_mesh():
 	trail_material.albedo_color = Color(1.0, 0.8, 0.0, 0.8)  # Yellow
 	trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	trail_material.no_depth_test = true
+	trail_material.render_priority = 2
 	trail_mesh_instance.material_override = trail_material
 
 	shell_trail.add_child(trail_mesh_instance)
@@ -170,6 +174,8 @@ func create_trail_mesh():
 	sim_trail_material.albedo_color = Color(0.0, 0.8, 1.0, 0.8)  # Cyan
 	sim_trail_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	sim_trail_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sim_trail_material.no_depth_test = true
+	sim_trail_material.render_priority = 2
 	sim_trail_mesh_instance.material_override = sim_trail_material
 
 	shell_trail.add_child(sim_trail_mesh_instance)
@@ -231,6 +237,9 @@ func start_replay():
 	ship = ship_scene.instantiate()
 	world_3d.add_child(ship)
 
+	# Enable armor visualization
+	enable_armor_visibility(ship)
+
 	# Reset state
 	current_event_index = 0
 	trail_points.clear()
@@ -261,6 +270,12 @@ func start_replay():
 
 	# Position camera to view the ship and shell trajectory
 	update_camera_position()
+
+func enable_armor_visibility(node: Node) -> void:
+	if node is MeshInstance3D and node.layers == 0:
+		node.layers = 1
+	for child in node.get_children():
+		enable_armor_visibility(child)
 
 func stop_replay():
 	is_playing = false
@@ -396,6 +411,8 @@ func create_impact_marker(position: Vector3, result: String):
 	material.emission_enabled = true
 	material.emission = material.albedo_color
 	material.emission_energy_multiplier = 1.5
+	material.no_depth_test = true
+	material.render_priority = 2
 	marker.material_override = material
 
 	marker.position = position
@@ -534,6 +551,9 @@ func start_validation():
 
 	ship = ship_scene.instantiate()
 	world_3d.add_child(ship)
+
+	# Enable armor visualization
+	enable_armor_visibility(ship)
 
 	# Position ship
 	for event in events:

@@ -5,13 +5,13 @@
 [ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_8r8mq"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="4_nh4gr"]
 
-[node name="IJN_460mm_3b_type94" unique_id=2097874140 instance=ExtResource("1_y2dma")]
+[node name="IJN_460mm_3b_type94" unique_id=228676193 instance=ExtResource("1_y2dma")]
 script = ExtResource("2_k2ag4")
 _sound = ExtResource("3_8r8mq")
 pitch = 0.55
 max_rotation_angle = 0.0
 glb_path = "uid://1b0ujjomsbmw"
 
-[node name="IJN_460mm_3b_type94" parent="." index="1" unique_id=1294897547]
+[node name="Turret_col" parent="." index="1" unique_id=633093453]
 layers = 0
 material_override = ExtResource("4_nh4gr")

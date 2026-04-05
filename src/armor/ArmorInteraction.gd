@@ -130,12 +130,18 @@ static func calculate_ricochet_probability(impact_angle_rad: float, critical_ang
 
 
 static func calculate_exit_velocity(entry_speed: float, pen_capability_mm: float, effective_armor_mm: float) -> float:
+	# if pen_capability_mm <= 0.0:
+	# 	return 0.0
+	# var pen_ratio := effective_armor_mm / pen_capability_mm
+	# if pen_ratio >= 1.0:
+	# 	return 0.0
+	# return entry_speed * sqrt(1.0 - pow(pen_ratio, VELOCITY_DECAY_BETA))
 	if pen_capability_mm <= 0.0:
 		return 0.0
 	var pen_ratio := effective_armor_mm / pen_capability_mm
 	if pen_ratio >= 1.0:
 		return 0.0
-	return entry_speed * sqrt(1.0 - pow(pen_ratio, VELOCITY_DECAY_BETA))
+	return entry_speed * (1.0 - pen_ratio)
 
 
 static func calculate_shell_integrity(pen_ratio: float, current_integrity: float) -> float:

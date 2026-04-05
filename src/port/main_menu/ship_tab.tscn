@@ -94,3 +94,13 @@ grow_vertical = 0
 
 [node name="HBoxContainer" type="HBoxContainer" parent="ScrollContainer"]
 layout_mode = 2
+
+[node name="ArmorViewButton" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = 120.0
+offset_bottom = 40.0
+toggle_mode = true
+text = "Show Armor"
