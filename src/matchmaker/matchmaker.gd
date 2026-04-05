@@ -16,6 +16,7 @@ const SHIP_CLASS_DD = 2  # Destroyer
 const SHIP_DATA = {
 	"res://Ships/Bismarck/Bismarck3.tscn": {"class": SHIP_CLASS_BB, "tier": 8},
 	"res://Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
+	"res://Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
 	"res://Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10}
 }
@@ -24,7 +25,8 @@ const SHIP_DATA = {
 const SHIPS_BY_CLASS = {
 	SHIP_CLASS_BB: [
 		# "res://Ships/Bismarck/Bismarck3.tscn",
-		"res://Ships/H44/H44.tscn"
+		"res://Ships/H44/H44.tscn",
+		"res://Ships/Yamato/Yamato.tscn"
 	],
 	SHIP_CLASS_CA: [
 		"res://Ships/DesMoines/DesMoines.tscn"
