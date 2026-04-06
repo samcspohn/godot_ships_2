@@ -114,7 +114,6 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bullet_id"), &_ProjectileManager::get_bullet_id);
 	ClassDB::bind_method(D_METHOD("get_gpu_renderer"), &_ProjectileManager::get_gpu_renderer);
 	ClassDB::bind_method(D_METHOD("get_compute_particle_system"), &_ProjectileManager::get_compute_particle_system);
-	ClassDB::bind_method(D_METHOD("get_trail_template_id"), &_ProjectileManager::get_trail_template_id);
 	ClassDB::bind_method(D_METHOD("get_camera"), &_ProjectileManager::get_camera);
 
 	// Bind find_ship with camelCase alias for backward compatibility
@@ -129,7 +128,6 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bullet_id", "value"), &_ProjectileManager::set_bullet_id);
 	ClassDB::bind_method(D_METHOD("set_gpu_renderer", "value"), &_ProjectileManager::set_gpu_renderer);
 	ClassDB::bind_method(D_METHOD("set_compute_particle_system", "value"), &_ProjectileManager::set_compute_particle_system);
-	ClassDB::bind_method(D_METHOD("set_trail_template_id", "value"), &_ProjectileManager::set_trail_template_id);
 	ClassDB::bind_method(D_METHOD("set_camera", "value"), &_ProjectileManager::set_camera);
 
 	// Bind properties
@@ -144,7 +142,9 @@ void _ProjectileManager::_bind_methods() {
 				 "set_gpu_renderer", "get_gpu_renderer");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "compute_particle_system", PROPERTY_HINT_NODE_TYPE, "Node"),
 				 "set_compute_particle_system", "get_compute_particle_system");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "trail_template_id"), "set_trail_template_id", "get_trail_template_id");
+	ClassDB::bind_method(D_METHOD("get_trail_template"), &_ProjectileManager::get_trail_template);
+	ClassDB::bind_method(D_METHOD("set_trail_template", "value"), &_ProjectileManager::set_trail_template);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "trail_template", PROPERTY_HINT_RESOURCE_TYPE, "Resource"), "set_trail_template", "get_trail_template");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "camera", PROPERTY_HINT_NODE_TYPE, "Camera3D"),
 				 "set_camera", "get_camera");
 }
@@ -155,7 +155,7 @@ _ProjectileManager::_ProjectileManager() {
 	bullet_id = 0;
 	gpu_renderer = nullptr;
 	compute_particle_system = nullptr;
-	trail_template_id = -1;
+	trail_template = Ref<Resource>();
 	camera = nullptr;
 	armor_interaction = nullptr;
 	tcp_thread_pool = nullptr;
@@ -276,25 +276,23 @@ void _ProjectileManager::_init_compute_trails() {
 
 	// Get or register the shell trail template
 	// The template should be pre-registered by ParticleSystemInit with align_to_velocity = true
-	Variant template_manager_var = compute_particle_system->get("template_manager");
-	if (template_manager_var.get_type() != Variant::NIL) {
-		Object *template_manager = Object::cast_to<Object>(template_manager_var);
-		if (template_manager) {
-			trail_template_id = template_manager->call("get_template_id", "shell_trail");
-			UtilityFunctions::print(String("ProjectileManager: shell_trail template_id = %d").replace("%d",
-				String::num_int64(trail_template_id)));
-			if (trail_template_id < 0) {
-				UtilityFunctions::push_warning("ProjectileManager: 'shell_trail' template not found, trails disabled");
-				return;
-			}
+	// Register trail template resource and get its ID
+	if (trail_template.is_valid()) {
+		int registered_id = compute_particle_system->call("ensure_template_registered", trail_template);
+		UtilityFunctions::print(String("ProjectileManager: trail template registered with id = ") +
+			String::num_int64(registered_id));
+		if (registered_id < 0) {
+			UtilityFunctions::push_warning("ProjectileManager: Failed to register trail template, trails disabled");
+			return;
 		}
 	} else {
-		UtilityFunctions::push_warning("ProjectileManager: Template manager not found, trails disabled");
+		UtilityFunctions::push_warning("ProjectileManager: trail_template not set, trails disabled");
 		return;
 	}
 
+	int final_id = trail_template.is_valid() ? (int)trail_template->get("template_id") : -1;
 	UtilityFunctions::print(String("ProjectileManager: Using compute shader trails (template_id=%d)").replace("%d",
-		String::num_int64(trail_template_id)));
+		String::num_int64(final_id)));
 }
 
 Node *_ProjectileManager::_find_particle_system() {
@@ -457,17 +455,18 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 			(p->get_position() - p->get_start_position()).length_squared() > 15 * 15) {
 
 				// Allocate GPU emitter for trail emission
-				if (compute_particle_system != nullptr && trail_template_id >= 0) {
-					double size = 1.0;
-					Ref<Resource> shell = p->get("params");
+				int current_trail_id = trail_template.is_valid() ? (int)trail_template->get("template_id") : -1;
+				if (compute_particle_system != nullptr && current_trail_id >= 0) {
+						double size = 1.0;
+						Ref<Resource> shell = p->get("params");
 
-					if (shell.is_valid()) {
-						size = shell->get("size");
-					}
-					double width_scale = size * 0.9;
-					// emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
-					int emitter_id = compute_particle_system->call("allocate_emitter",
-						trail_template_id,  // template_id
+						if (shell.is_valid()) {
+							size = shell->get("size");
+						}
+						double width_scale = size * 0.9;
+						// emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
+						int emitter_id = compute_particle_system->call("allocate_emitter",
+							current_trail_id,  // template_id
 						new_position,                // starting_position
 						width_scale,        // size_multiplier
 						0.05,               // emit_rate (1/20 = 0.05 particles per unit)
@@ -1179,10 +1178,6 @@ Node *_ProjectileManager::get_compute_particle_system() const {
 	return compute_particle_system;
 }
 
-int _ProjectileManager::get_trail_template_id() const {
-	return trail_template_id;
-}
-
 Camera3D *_ProjectileManager::get_camera() const {
 	return camera;
 }
@@ -1220,8 +1215,12 @@ void _ProjectileManager::set_compute_particle_system(Node *value) {
 	compute_particle_system = value;
 }
 
-void _ProjectileManager::set_trail_template_id(int value) {
-	trail_template_id = value;
+Ref<Resource> _ProjectileManager::get_trail_template() const {
+	return trail_template;
+}
+
+void _ProjectileManager::set_trail_template(const Ref<Resource> &value) {
+	trail_template = value;
 }
 
 void _ProjectileManager::set_camera(Camera3D *value) {

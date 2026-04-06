@@ -18,11 +18,7 @@
 // From game_systems
 #include "projectile_data.h"
 #include "shell_data.h"
-#include "emitter_data.h"
-#include "emission_request.h"
-#include "emitter_init_request.h"
 #include "projectile_manager.h"
-#include "compute_particle_system.h"
 
 using namespace godot;
 
@@ -39,13 +35,8 @@ void initialize_ships_core_module(ModuleInitializationLevel p_level) {
 	// Register data classes (they are dependencies)
 	GDREGISTER_CLASS(ProjectileData);
 	GDREGISTER_CLASS(ShellData);
-	GDREGISTER_CLASS(EmitterData);
-	GDREGISTER_CLASS(EmissionRequest);
-	GDREGISTER_CLASS(EmitterInitRequest);
-
 	// Register main system classes
 	GDREGISTER_CLASS(_ProjectileManager);
-	GDREGISTER_CLASS(ComputeParticleSystem);
 
 	// Register navigation classes
 	GDREGISTER_CLASS(NavigationMap);

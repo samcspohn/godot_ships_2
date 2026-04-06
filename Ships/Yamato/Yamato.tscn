@@ -28,29 +28,24 @@
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="16_4avny"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="17_svlgc"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="27_g7l6b"]
+[ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="28_wake"]
 
 [sub_resource type="Resource" id="Resource_y3atb"]
 script = ExtResource("4_073m0")
 torpedo_protection = 0.51
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_uql7x"]
+[sub_resource type="Resource" id="Resource_4avny"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 285600.0
 pool2 = 285600.0
 
-[sub_resource type="Resource" id="Resource_4avny"]
+[sub_resource type="Resource" id="Resource_svlgc"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 25386.666666666668
 pool2 = 50773.333333333336
-
-[sub_resource type="Resource" id="Resource_svlgc"]
-resource_local_to_scene = true
-script = ExtResource("5_p50sc")
-pool1 = 11106.666666666666
-pool2 = 22213.333333333332
 
 [sub_resource type="Resource" id="Resource_0yy7r"]
 resource_local_to_scene = true
@@ -59,6 +54,12 @@ pool1 = 11106.666666666666
 pool2 = 22213.333333333332
 
 [sub_resource type="Resource" id="Resource_gpmcf"]
+resource_local_to_scene = true
+script = ExtResource("5_p50sc")
+pool1 = 11106.666666666666
+pool2 = 22213.333333333332
+
+[sub_resource type="Resource" id="Resource_mhmk2"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 15866.666666666666
@@ -183,14 +184,14 @@ script = ExtResource("10_566e5")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_mhmk2"]
+[sub_resource type="Resource" id="Resource_qql7a"]
 resource_local_to_scene = true
 script = ExtResource("11_pue0t")
 dmg_rate = 0.00375
 dur = 80.0
 max_buildup = 200.0
 
-[sub_resource type="Resource" id="Resource_qql7a"]
+[sub_resource type="Resource" id="Resource_yhqtv"]
 resource_local_to_scene = true
 script = ExtResource("15_g7l6b")
 icon = ExtResource("14_uq1it")
@@ -213,7 +214,7 @@ metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_k4jny"]
 points = PackedVector3Array(0, 10.036279, -142.3654, 0, -0.030846596, 119.70154, 0, -0.3561989, -134.04483, 0, -0.3561989, -135.64566, 0, -0.3561989, -136.39003, 0, 2.7895372, -136.43744, 0, 2.7895372, -135.47307, 0, 6.0912733, 120.56979, 0, 6.7945137, -139.09293, 0, 2.9543326, 119.79201, 0, 6.075759, 116.17437, 0, 3.5527487, -136.71466, 0, 3.5527487, -135.80765, 0, 4.17487, 119.850655, 0, 9.786555, -138.06526, 0, 9.90973, -140.18628, 0, -10.811557, -102.17538, 0, -3.2522745, 116.948364, 0, -2.3414288, 119.53168, 0, -0.64726543, 119.654144, 0, -10.811557, -135.88095, 0, -10.811557, -136.90005, 0, -11.152718, 69.87196, 0, -2.500455, -136.07845, 0, -6.0234976, -138.41292, 0, -10.811557, -122.40346, 0, -10.811557, -64.819984, 0, -2.500455, -136.66306, 0, -10.811557, 19.197083, 0, -10.811557, 59.657196, 0, -10.811557, -137.53601, 0, -8.6329565, -139.16342, 0, -10.811557, -134.27724, 0, -10.811557, -81.947296, 0, -10.811557, -61.719208, 0, -10.811557, -41.487175, 0, -10.811557, -21.259094, 0, -10.811557, -1.0310059, 0, -10.811557, 39.429108, 0, -10.811557, 46.898605, 0, -10.811557, 54.372055, 0, -10.939086, 79.924774, 0, 8.555299, -122.40311, 0, 8.555299, -122.40311, 0, 7.429342, -102.17398, 0, 7.0540233, -81.944855, 0, 7.429342, -102.17398, 0, 7.1076407, -61.71573, 0, 7.1076407, -64.81922, 0, 7.6438107, -41.486603, 0, 7.1076407, -61.71573, 0, 8.340832, -21.257479, 0, 7.6438107, -41.486603, 0, 8.340832, -1.0283546, 0, 8.340832, -21.257479, 0, 8.340832, 19.20077, 0, 8.340832, 39.429893, 0, 8.340832, 46.901356, 0, 8.340832, 54.372818, 0, 8.340832, 59.65902, 0, 8.340832, 69.77358, 0, 8.340832, 69.77358, 0, 8.340832, 79.888145, 0, 8.340832, 90.0027, 0, 8.340832, 100.11726, 0, 6.0252104, 104.199554, 0, 8.268831, 104.14703, 0, 8.340832, 100.11726, 0, 6.0252104, 104.199554, 0, 8.268831, 104.14703, 0, 7.1076407, -64.81922, 0, 7.0540233, -81.944855, 0, 8.555299, -122.40311, 0, -5.0037823, 104.924484, 0, -5.0037823, 104.924484, 0, -8.440551, 90.028946, 0, -5.7083564, 100.13707, 19.343334, 8.340832, 69.77358, -19.343334, 8.340832, 69.77358, 6.571472, 8.555299, -122.40311, -6.571472, 8.555299, -122.40311, 10.260752, 6.0252104, 104.199554, -10.260752, 6.0252104, 104.199554, 18.007719, 2.7895372, 54.372818, -18.007719, 2.7895372, 54.372818, 14.269212, -0.16769058, 79.90322, -14.269212, -0.16769058, 79.90322, 12.55344, -0.08927569, 89.98325, -12.55344, -0.08927569, 89.98325, 1.7331924, -5.296499, 100.11336, -1.7331924, -5.296499, 100.11336, 1.8094959, -4.4988027, 104.90079, -1.8094959, -4.4988027, 104.90079, 15.809226, -0.3561989, 69.77358, -15.809226, -0.3561989, 69.77358, 16.633106, -0.3561989, 59.659016, -16.633106, -0.3561989, 59.659016, 17.01652, -0.3561989, 54.37281, -17.01652, -0.3561989, 54.37281, 18.100342, -0.3561989, 39.42989, -18.100342, -0.3561989, 39.42989, 18.509735, -0.3561989, 19.200766, -18.509735, -0.3561989, 19.200766, 19.527708, -2.500455, -1.0310059, -19.527708, -2.500455, -1.0310059, 1.8750668, -0.6065254, 118.879944, -1.8750668, -0.6065254, 118.879944, 2.478714, 6.0912733, 119.89958, -2.478714, 6.0912733, 119.89958, 0.9165211, -10.811557, -133.51883, -0.9165211, -10.811557, -133.51883, 2.4079914, -0.35626125, -122.40346, -2.4079914, -0.35626125, -122.40346, 15.778746, 2.7895372, -64.81922, -15.778746, 2.7895372, -64.81922, 7.1691303, -0.35626125, -102.17538, -7.1691303, -0.35626125, -102.17538, 12.21402, -0.35626125, -81.947296, -12.21402, -0.35626125, -81.947296, 14.831541, -0.35626125, -64.819984, -14.831541, -0.35626125, -64.819984, 18.607908, -0.35626125, -21.259094, -18.607908, -0.35626125, -21.259094, 17.408533, -0.35626125, -41.487175, -17.408533, -0.35626125, -41.487175, 2.7737713, 10.036279, -141.26636, -2.7737713, 10.036279, -141.26636, 15.02408, 3.2665277, 79.970955, -15.02408, 3.2665277, 79.970955, 19.097982, 3.5527487, 39.429893, -19.097982, 3.5527487, 39.429893, 19.698565, 2.7895372, -21.25748, -19.698565, 2.7895372, -21.25748, 2.4830656, 6.669652, -133.80138, -2.4830656, 6.669652, -133.80138, 7.5931854, 2.7895372, -102.17398, -7.5931854, 2.7895372, -102.17398, 12.425151, 2.7895372, -81.944855, -12.425151, 2.7895372, -81.944855, 19.688093, 2.7895372, -1.0283569, -19.688093, 2.7895372, -1.0283569, 19.690016, 2.7895372, 19.200768, -19.690016, 2.7895372, 19.200768, 19.343334, 8.340832, 59.65902, -19.343334, 8.340832, 59.65902, 11.512588, 3.4762812, 100.13939, -11.512588, 3.4762812, 100.13939, 18.29053, 7.6438107, -41.486603, -18.29053, 7.6438107, -41.486603, 1.4720974, -8.6329565, -138.47612, -1.4720974, -8.6329565, -138.47612, 8.604565, -10.811557, -81.947296, -8.604565, -10.811557, -81.947296, 10.655785, -10.811557, 54.372055, -10.655785, -10.811557, 54.372055, 1.2163639, -10.603745, 79.90898, -1.2163639, -10.603745, 79.90898, 8.997999, -10.811557, 59.657196, -8.997999, -10.811557, 59.657196, 4.712557, -10.811557, 69.77321, -4.712557, -10.811557, 69.77321)
 
-[node name="ship" unique_id=710283710 instance=ExtResource("1_d38pk")]
+[node name="ship3" unique_id=710283710 instance=ExtResource("1_d38pk")]
 collision_layer = 4
 collision_mask = 5
 mass = 71659000.0
@@ -230,11 +231,11 @@ ship_model_glb_path = "uid://cuxnkbgacr6mr"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_y3atb")
 _max_hp = 95200.0
-citadel = SubResource("Resource_uql7x")
-casemate = SubResource("Resource_4avny")
-bow = SubResource("Resource_svlgc")
-stern = SubResource("Resource_0yy7r")
-superstructure = SubResource("Resource_gpmcf")
+citadel = SubResource("Resource_4avny")
+casemate = SubResource("Resource_svlgc")
+bow = SubResource("Resource_0yy7r")
+stern = SubResource("Resource_gpmcf")
+superstructure = SubResource("Resource_mhmk2")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_eppy3")
@@ -274,11 +275,11 @@ rparams = SubResource("Resource_g21k6")
 fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
 
 [node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
-params = SubResource("Resource_mhmk2")
+params = SubResource("Resource_qql7a")
 floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_qql7a"), SubResource("Resource_ssrv5")])
+equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_yhqtv"), SubResource("Resource_ssrv5")])
 
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("17_svlgc")]([null, null, null])
@@ -311,110 +312,110 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 38.2433)
 [node name="Flood4" parent="FloodNodes" index="3" unique_id=1765229231 instance=ExtResource("13_jppql")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 86.26976)
 
-[node name="Barbette_col" parent="." index="10" unique_id=1929642939]
+[node name="Barbette_col" parent="." index="10" unique_id=800002117]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_001" parent="." index="11" unique_id=773291045]
+[node name="Barbette_col_001" parent="." index="11" unique_id=1920365011]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_002" parent="." index="12" unique_id=1218084535]
+[node name="Barbette_col_002" parent="." index="12" unique_id=429761014]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_003" parent="." index="13" unique_id=1416474895]
+[node name="Barbette_col_003" parent="." index="13" unique_id=2062313718]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_004" parent="." index="14" unique_id=2114121560]
+[node name="Barbette_col_004" parent="." index="14" unique_id=1751081613]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="SuperStructure_col" parent="." index="15" unique_id=472174256]
+[node name="SuperStructure_col" parent="." index="15" unique_id=385383813]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="IJN_460mm_3b_type94" parent="TurretMount_IJN_460mm_3b_type94" parent_id_path=PackedInt32Array(572853281) index="0" unique_id=1467724788 instance=ExtResource("7_073m0")]
+[node name="IJN_460mm_3b_type94" parent="TurretMount_IJN_460mm_3b_type94" parent_id_path=PackedInt32Array(527601173) index="0" unique_id=1467724788 instance=ExtResource("7_073m0")]
 min_rotation_angle = 0.5319847180187836
 max_rotation_angle = 5.759586531581287
 
-[node name="IJN_460mm_3b_type94_001" parent="TurretMount_IJN_460mm_3b_type94_001" parent_id_path=PackedInt32Array(1306520172) index="0" unique_id=2054163920 instance=ExtResource("7_073m0")]
+[node name="IJN_460mm_3b_type94_001" parent="TurretMount_IJN_460mm_3b_type94_001" parent_id_path=PackedInt32Array(341855240) index="0" unique_id=2054163920 instance=ExtResource("7_073m0")]
 min_rotation_angle = 3.641256634904862
 max_rotation_angle = 2.6903140410368156
 
-[node name="IJN_460mm_3b_type94_002" parent="TurretMount_IJN_460mm_3b_type94_002" parent_id_path=PackedInt32Array(1201176133) index="0" unique_id=353634193 instance=ExtResource("7_073m0")]
+[node name="IJN_460mm_3b_type94_002" parent="TurretMount_IJN_460mm_3b_type94_002" parent_id_path=PackedInt32Array(1805470654) index="0" unique_id=353634193 instance=ExtResource("7_073m0")]
 min_rotation_angle = 3.636927002699438
 max_rotation_angle = 2.6020769113995392
 
-[node name="IJN_155mm_3b_3rd_yr" parent="TurretMount_IJN_155mm_3b_3rd_yr" parent_id_path=PackedInt32Array(22380020) index="0" unique_id=2017582157 instance=ExtResource("10_rniut")]
+[node name="IJN_155mm_3b_3rd_yr" parent="TurretMount_IJN_155mm_3b_3rd_yr" parent_id_path=PackedInt32Array(67039675) index="0" unique_id=2017582157 instance=ExtResource("10_rniut")]
 min_rotation_angle = 0.6044881220841987
 max_rotation_angle = 5.670959853499079
 
-[node name="IJN_155mm_3b_3rd_yr_001" parent="TurretMount_IJN_155mm_3b_3rd_yr_001" parent_id_path=PackedInt32Array(356719102) index="0" unique_id=399046460 instance=ExtResource("10_rniut")]
+[node name="IJN_155mm_3b_3rd_yr_001" parent="TurretMount_IJN_155mm_3b_3rd_yr_001" parent_id_path=PackedInt32Array(1324242310) index="0" unique_id=399046460 instance=ExtResource("10_rniut")]
 min_rotation_angle = 3.7938938012743977
 max_rotation_angle = 2.4776352929415246
 
-[node name="IJN_127mm_2b_type89" parent="TurretMount_IJN_127mm_2b_type89" parent_id_path=PackedInt32Array(461002602) index="0" unique_id=1502498868 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89" parent="TurretMount_IJN_127mm_2b_type89" parent_id_path=PackedInt32Array(1686137792) index="0" unique_id=1502498868 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.67071772160153
 max_rotation_angle = 0.0
 
-[node name="IJN_127mm_2b_type89_001" parent="TurretMount_IJN_127mm_2b_type89_001" parent_id_path=PackedInt32Array(305300642) index="0" unique_id=1975681058 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_001" parent="TurretMount_IJN_127mm_2b_type89_001" parent_id_path=PackedInt32Array(1075487614) index="0" unique_id=1975681058 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.7186099669343142
 max_rotation_angle = 5.8021081059267665
 
-[node name="IJN_127mm_2b_type89_002" parent="TurretMount_IJN_127mm_2b_type89_002" parent_id_path=PackedInt32Array(894428860) index="0" unique_id=116410538 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_002" parent="TurretMount_IJN_127mm_2b_type89_002" parent_id_path=PackedInt32Array(1693909112) index="0" unique_id=116410538 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.717073392654925
 max_rotation_angle = 5.82147747614166
 
-[node name="IJN_127mm_2b_type89_003" parent="TurretMount_IJN_127mm_2b_type89_003" parent_id_path=PackedInt32Array(56141691) index="0" unique_id=718648876 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_003" parent="TurretMount_IJN_127mm_2b_type89_003" parent_id_path=PackedInt32Array(1860097896) index="0" unique_id=718648876 instance=ExtResource("11_566e5")]
 max_rotation_angle = 2.8347453171260284
 
-[node name="IJN_127mm_2b_type89_004" parent="TurretMount_IJN_127mm_2b_type89_004" parent_id_path=PackedInt32Array(1363536395) index="0" unique_id=768634134 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_004" parent="TurretMount_IJN_127mm_2b_type89_004" parent_id_path=PackedInt32Array(1984452048) index="0" unique_id=768634134 instance=ExtResource("11_566e5")]
 min_rotation_angle = 0.39227738000920986
 max_rotation_angle = 2.659649916488642
 
-[node name="IJN_127mm_2b_type89_005" parent="TurretMount_IJN_127mm_2b_type89_005" parent_id_path=PackedInt32Array(1365097618) index="0" unique_id=1532643473 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_005" parent="TurretMount_IJN_127mm_2b_type89_005" parent_id_path=PackedInt32Array(925000850) index="0" unique_id=1532643473 instance=ExtResource("11_566e5")]
 min_rotation_angle = 0.3204716670711756
 max_rotation_angle = 3.1534656127749017
 
-[node name="IJN_127mm_2b_type89_006" parent="TurretMount_IJN_127mm_2b_type89_006" parent_id_path=PackedInt32Array(321833826) index="0" unique_id=1070500107 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_006" parent="TurretMount_IJN_127mm_2b_type89_006" parent_id_path=PackedInt32Array(181879183) index="0" unique_id=1070500107 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.692670013210952
 max_rotation_angle = 6.0128416155908155
 
-[node name="IJN_127mm_2b_type89_007" parent="TurretMount_IJN_127mm_2b_type89_007" parent_id_path=PackedInt32Array(1276079430) index="0" unique_id=1144862863 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_007" parent="TurretMount_IJN_127mm_2b_type89_007" parent_id_path=PackedInt32Array(426807182) index="0" unique_id=1144862863 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.7189098722010105
 max_rotation_angle = 5.944731590656524
 
-[node name="IJN_127mm_2b_type89_008" parent="TurretMount_IJN_127mm_2b_type89_008" parent_id_path=PackedInt32Array(119204697) index="0" unique_id=457444380 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_008" parent="TurretMount_IJN_127mm_2b_type89_008" parent_id_path=PackedInt32Array(875286562) index="0" unique_id=457444380 instance=ExtResource("11_566e5")]
 min_rotation_angle = 3.1760909565242037
 max_rotation_angle = 5.610500702285657
 
-[node name="IJN_127mm_2b_type89_009" parent="TurretMount_IJN_127mm_2b_type89_009" parent_id_path=PackedInt32Array(846401654) index="0" unique_id=1377025100 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_009" parent="TurretMount_IJN_127mm_2b_type89_009" parent_id_path=PackedInt32Array(984505377) index="0" unique_id=1377025100 instance=ExtResource("11_566e5")]
 min_rotation_angle = 0.24286483075712084
 max_rotation_angle = 2.808608393637801
 
-[node name="IJN_127mm_2b_type89_010" parent="TurretMount_IJN_127mm_2b_type89_010" parent_id_path=PackedInt32Array(431970487) index="0" unique_id=597935310 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_010" parent="TurretMount_IJN_127mm_2b_type89_010" parent_id_path=PackedInt32Array(1912044882) index="0" unique_id=597935310 instance=ExtResource("11_566e5")]
 min_rotation_angle = 0.2617993877991494
 max_rotation_angle = 2.8099800957108707
 
-[node name="IJN_127mm_2b_type89_011" parent="TurretMount_IJN_127mm_2b_type89_011" parent_id_path=PackedInt32Array(41048644) index="0" unique_id=876511193 instance=ExtResource("11_566e5")]
+[node name="IJN_127mm_2b_type89_011" parent="TurretMount_IJN_127mm_2b_type89_011" parent_id_path=PackedInt32Array(920464303) index="0" unique_id=876511193 instance=ExtResource("11_566e5")]
 min_rotation_angle = 0.4598669449886561
 max_rotation_angle = 3.125410947686813
 
-[node name="Hull_Citadel_col" parent="." index="33" unique_id=1866385032]
+[node name="Hull_Citadel_col" parent="." index="33" unique_id=76087076]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Casemate_col" parent="." index="35" unique_id=1561315865]
+[node name="Hull_Casemate_col" parent="." index="35" unique_id=1236308411]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Bow_col" parent="." index="37" unique_id=817555]
+[node name="Hull_Bow_col" parent="." index="37" unique_id=998067226]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Stern_col" parent="." index="39" unique_id=801527462]
+[node name="Hull_Stern_col" parent="." index="39" unique_id=67111136]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
@@ -424,7 +425,7 @@ shape = SubResource("ConvexPolygonShape3D_k4jny")
 [node name="TrailEmitter2" type="Node3D" parent="." index="42" unique_id=1134755731]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
 script = ExtResource("27_g7l6b")
-template_name = "torpedo_wake"
+template = ExtResource("28_wake")
 emit_rate = 0.03
 size_multiplier = 15.0
 speed_scale = 0.3
@@ -432,7 +433,7 @@ speed_scale = 0.3
 [node name="TrailEmitter3" type="Node3D" parent="." index="43" unique_id=295557932]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
 script = ExtResource("27_g7l6b")
-template_name = "torpedo_wake"
+template = ExtResource("28_wake")
 emit_rate = 0.03
 size_multiplier = 20.0
 speed_scale = 0.3

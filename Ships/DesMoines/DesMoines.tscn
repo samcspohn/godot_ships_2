@@ -25,6 +25,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="14_s7tx1"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_xosf1"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_3nwwl"]
+[ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="22_wake"]
 
 [sub_resource type="Resource" id="Resource_xosf1"]
 resource_local_to_scene = true
@@ -369,7 +370,7 @@ shape = SubResource("ConvexPolygonShape3D_vp8fe")
 [node name="TrailEmitter2" type="Node3D" parent="." index="30" unique_id=1759543631]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -104.1375)
 script = ExtResource("21_3nwwl")
-template_name = "torpedo_wake"
+template = ExtResource("22_wake")
 emit_rate = 0.06
 size_multiplier = 8.0
 speed_scale = 0.3
@@ -377,7 +378,7 @@ speed_scale = 0.3
 [node name="TrailEmitter3" type="Node3D" parent="." index="31" unique_id=1941991960]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 81.6273)
 script = ExtResource("21_3nwwl")
-template_name = "torpedo_wake"
+template = ExtResource("22_wake")
 emit_rate = 0.06
 size_multiplier = 10.0
 speed_scale = 0.3

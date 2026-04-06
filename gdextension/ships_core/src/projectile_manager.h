@@ -58,7 +58,7 @@ private:
 
 	// Compute particle system for trails
 	Node *compute_particle_system; // UnifiedParticleSystem
-	int trail_template_id;
+	Ref<Resource> trail_template;
 	Camera3D *camera;
 
 	// Cached autoload references
@@ -153,7 +153,8 @@ public:
 	int get_bullet_id() const;
 	Node *get_gpu_renderer() const;
 	Node *get_compute_particle_system() const;
-	int get_trail_template_id() const;
+
+	Ref<Resource> get_trail_template() const;
 	Camera3D *get_camera() const;
 
 	// Shell landing query (for bot shell dodging)
@@ -168,7 +169,8 @@ public:
 	void set_bullet_id(int value);
 	void set_gpu_renderer(Node *value);
 	void set_compute_particle_system(Node *value);
-	void set_trail_template_id(int value);
+
+	void set_trail_template(const Ref<Resource> &value);
 	void set_camera(Camera3D *value);
 };
 

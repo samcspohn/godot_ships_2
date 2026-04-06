@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://cypes1be6ipnd"]
 
-[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
+[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_wake"]
@@ -20,7 +20,7 @@ curve = SubResource("Curve_scale_wake")
 
 [resource]
 script = ExtResource("1")
-template_name = "torpedo_wake"
+
 texture = ExtResource("2")
 color = Color(0.85, 0.93, 1, 0.4)
 color_over_life = SubResource("GradientTexture1D_wake")
