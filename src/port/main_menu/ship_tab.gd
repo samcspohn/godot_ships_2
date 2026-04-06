@@ -17,6 +17,9 @@ var armor_filter_panel: PanelContainer
 var armor_filter_buttons: Dictionary = {} # ArmorPart.Type -> Button
 var armor_part_visibility: Dictionary = {} # ArmorPart.Type -> bool
 
+# Dual-viewport armor overlay system
+var armor_overlay: ArmorViewportOverlay
+
 # Part type display order and labels
 const PART_TYPES := [
 	ArmorPart.Type.CITADEL,
@@ -35,6 +38,7 @@ func _ready():
 	_create_armor_tooltip()
 	_create_armor_filter_panel()
 	_init_part_visibility()
+	_setup_armor_overlay()
 
 	# If there's a previously selected ship, select it
 	if GameSettings.selected_ship != "":
@@ -48,6 +52,15 @@ func set_dock_node(dock: Node3D):
 func _init_part_visibility():
 	for part_type in PART_TYPES:
 		armor_part_visibility[part_type] = true
+
+func _setup_armor_overlay():
+	# Create and add the ArmorViewportOverlay as a sibling via our parent
+	# so it persists independently of this Control's visibility
+	armor_overlay = ArmorViewportOverlay.new()
+	armor_overlay.name = "ArmorViewportOverlay"
+	# Add to the scene tree — we add it to ourselves; the CanvasLayer inside
+	# it will handle rendering on top regardless
+	add_child(armor_overlay)
 
 func _create_armor_tooltip():
 	armor_tooltip = PanelContainer.new()
@@ -155,7 +168,8 @@ func _on_ship_button_pressed(ship_path):
 		dock_node.add_child(selected_ship)
 		selected_ship.position = Vector3(0,0,0)
 
-	# Re-apply armor view if it was enabled
+	# Hide armor meshes in the main viewport (they start with layers=0 in the scene)
+	# and populate the armor overlay viewport if armor view is enabled
 	if armor_view_enabled:
 		_apply_armor_visibility()
 
@@ -166,12 +180,13 @@ func _on_armor_view_toggled():
 	armor_view_enabled = armor_view_button.button_pressed
 	armor_view_button.text = "Hide Armor" if armor_view_enabled else "Show Armor"
 	armor_filter_panel.visible = armor_view_enabled
-	if selected_ship != null:
-		if armor_view_enabled:
+	if armor_view_enabled:
+		if selected_ship != null:
 			_apply_armor_visibility()
-		else:
-			_set_armor_visibility(selected_ship, false)
-	if not armor_view_enabled:
+	else:
+		armor_overlay.disable()
+		if selected_ship != null:
+			_set_armor_visibility_main(selected_ship, false)
 		armor_tooltip.visible = false
 
 func _on_part_filter_toggled(part_type: ArmorPart.Type):
@@ -188,8 +203,9 @@ func _on_visibility_changed():
 			_apply_armor_visibility()
 			armor_filter_panel.visible = true
 	else:
-		# Leaving ship tab - disable armor view
-		_set_armor_visibility(selected_ship, false)
+		# Leaving ship tab - disable armor overlay and hide armor
+		armor_overlay.disable()
+		_set_armor_visibility_main(selected_ship, false)
 		armor_tooltip.visible = false
 		armor_filter_panel.visible = false
 
@@ -208,6 +224,7 @@ func _physics_process(_delta: float) -> void:
 	var ray_dir := camera.project_ray_normal(mouse_pos)
 	var ray_end := ray_origin + ray_dir * 1000.0
 
+	# Raycast in the MAIN world (where the original armor StaticBody3D colliders live)
 	var space_state := camera.get_world_3d().direct_space_state
 	var ray_query := PhysicsRayQueryParameters3D.new()
 	ray_query.from = ray_origin
@@ -285,20 +302,25 @@ func _get_part_type_for_mesh_name(mesh_name: String) -> ArmorPart.Type:
 		# Barbettes and everything else are modules
 		return ArmorPart.Type.MODULE
 
+## Apply armor visibility using the dual-viewport system.
+## Armor meshes are hidden in the main viewport and rendered in the armor overlay viewport.
 func _apply_armor_visibility() -> void:
 	if selected_ship == null:
 		return
-	_apply_armor_visibility_recursive(selected_ship)
 
-func _apply_armor_visibility_recursive(node: Node) -> void:
-	if node is MeshInstance3D and String(node.name).contains("_col"):
-		var part_type := _get_part_type_for_mesh_name(String(node.name))
-		node.layers = 1 if armor_part_visibility.get(part_type, true) else 0
-	for child in node.get_children():
-		_apply_armor_visibility_recursive(child)
+	# Ensure armor meshes are hidden in the main viewport
+	# (they should already have layers=0 from the scene, but ensure it)
+	_set_armor_visibility_main(selected_ship, false)
 
-func _set_armor_visibility(node: Node, enabled: bool) -> void:
+	# Enable the overlay and populate it with the currently visible armor parts
+	armor_overlay.enable()
+	armor_overlay.populate_armor_meshes(selected_ship, armor_part_visibility)
+
+## Hide or show armor meshes in the MAIN viewport by setting their render layers.
+## With the dual-viewport system, armor meshes should always be hidden (layers=0)
+## in the main viewport — they are rendered in the armor overlay viewport instead.
+func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
 	if node is MeshInstance3D and String(node.name).contains("_col"):
 		node.layers = 1 if enabled else 0
 	for child in node.get_children():
-		_set_armor_visibility(child, enabled)
+		_set_armor_visibility_main(child, enabled)

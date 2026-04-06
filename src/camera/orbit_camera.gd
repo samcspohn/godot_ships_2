@@ -7,7 +7,7 @@ class_name OrbitCamera
 @onready var pitch_node: Node3D = $"./Pitch"
 
 @export var distance: float = 400.0
-@export var min_distance: float = 100.0
+@export var min_distance: float = 50.0
 @export var max_distance: float = 800.0
 
 @export var rotation_speed: float = 0.4
