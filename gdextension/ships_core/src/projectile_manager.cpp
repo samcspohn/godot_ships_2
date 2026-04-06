@@ -18,6 +18,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/multiplayer_api.hpp>
 #include <godot_cpp/classes/multiplayer_peer.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 
 #include <cmath>
 
@@ -420,6 +421,8 @@ void _ProjectileManager::_process(double delta) {
 }
 
 void _ProjectileManager::_process_trails_only(double current_time) {
+	int physics_fps = ProjectSettings::get_singleton()->get_setting("physics/common/physics_ticks_per_second");
+	double step_size = 1.0 / physics_fps;
 	for (int i = 0; i < projectiles.size(); i++) {
 		Variant p_var = projectiles[i];
 		if (p_var.get_type() == Variant::NIL) {
@@ -436,6 +439,11 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 			continue;
 		}
 		double t = (current_time - p->get_start_time());
+		if (t < 2.0) {
+			t += step_size * (1.0 - (2.0 - t) / 2.0); // Smoothly interpolate time for the first 2 seconds to avoid trail popping
+		} else {
+			t += step_size; // Regular time progression after 2 seconds
+		}
 		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
 		// Calculate position for rendering and trail emission
