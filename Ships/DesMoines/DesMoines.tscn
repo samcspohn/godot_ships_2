@@ -26,8 +26,10 @@
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_xosf1"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_3nwwl"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="22_wake"]
+[ext_resource type="Script" uid="uid://8ly51uodan7" path="res://addons/Godot-Unified-Particle-System/particles/trail_emitter.gd" id="27_4jnyp"]
+[ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://src/particles/templates/funnel_exhaust_smoke_template.tres" id="28_e3uhd"]
 
-[sub_resource type="Resource" id="Resource_xosf1"]
+[sub_resource type="Resource" id="Resource_8wi57"]
 resource_local_to_scene = true
 script = ExtResource("3_s7tx1")
 citadel_repair = 0.4
@@ -36,42 +38,42 @@ light_repair = 0.925
 torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_rqfqd"]
+[sub_resource type="Resource" id="Resource_1hsc6"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 123000.0
 pool2 = 123000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_jt21e"]
+[sub_resource type="Resource" id="Resource_vp8fe"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 10933.333333333334
 pool2 = 21866.666666666668
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_4jnyp"]
+[sub_resource type="Resource" id="Resource_3dafd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 4783.333333333333
 pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_e3uhd"]
+[sub_resource type="Resource" id="Resource_d6neb"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 4783.333333333333
 pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_8wi57"]
+[sub_resource type="Resource" id="Resource_bsnob"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 6833.333333333333
 pool2 = 13666.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_1hsc6"]
+[sub_resource type="Resource" id="Resource_m8khc"]
 resource_local_to_scene = true
 script = ExtResource("4_seiyl")
 radius = 9000.0
@@ -79,7 +81,7 @@ bloom_duration = 16.0
 unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
-[sub_resource type="Resource" id="Resource_vp8fe"]
+[sub_resource type="Resource" id="Resource_51b1e"]
 resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
@@ -94,7 +96,7 @@ overmatch = 14
 arming_threshold = 33
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_3dafd"]
+[sub_resource type="Resource" id="Resource_oonm6"]
 resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 823.0
@@ -111,12 +113,12 @@ ricochet_angle = 1.5708
 overmatch = 34
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_d6neb"]
+[sub_resource type="Resource" id="Resource_2m68x"]
 resource_local_to_scene = true
 script = ExtResource("5_jjc8t")
 elevation_speed = 8.2
-shell1 = SubResource("Resource_vp8fe")
-shell2 = SubResource("Resource_3dafd")
+shell1 = SubResource("Resource_51b1e")
+shell2 = SubResource("Resource_oonm6")
 h_grouping = 2.1
 v_grouping = 2.1
 base_spread = 0.015
@@ -173,7 +175,7 @@ script = ExtResource("10_rqfqd")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_bsnob"]
+[sub_resource type="Resource" id="Resource_67mgq"]
 resource_local_to_scene = true
 script = ExtResource("9_vfelm")
 dmg_rate = 0.002
@@ -181,7 +183,7 @@ dur = 100.0
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 
-[sub_resource type="Resource" id="Resource_m8khc"]
+[sub_resource type="Resource" id="Resource_ev4mb"]
 resource_local_to_scene = true
 script = ExtResource("12_vfelm")
 icon = ExtResource("11_3nwwl")
@@ -191,7 +193,7 @@ duration = 20.0
 max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_51b1e"]
+[sub_resource type="Resource" id="Resource_b6wa0"]
 resource_local_to_scene = true
 script = ExtResource("15_xosf1")
 heal_percent = 0.3
@@ -219,19 +221,19 @@ use_hull_collision = true
 [node name="Modules" parent="." index="0" unique_id=585287545 instance=ExtResource("2_q1kic")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-params = SubResource("Resource_xosf1")
+params = SubResource("Resource_8wi57")
 _max_hp = 41000.0
-citadel = SubResource("Resource_rqfqd")
-casemate = SubResource("Resource_jt21e")
-bow = SubResource("Resource_4jnyp")
-stern = SubResource("Resource_e3uhd")
-superstructure = SubResource("Resource_8wi57")
+citadel = SubResource("Resource_1hsc6")
+casemate = SubResource("Resource_vp8fe")
+bow = SubResource("Resource_3dafd")
+stern = SubResource("Resource_d6neb")
+superstructure = SubResource("Resource_bsnob")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
-params = SubResource("Resource_1hsc6")
+params = SubResource("Resource_m8khc")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_d6neb")
+params = SubResource("Resource_2m68x")
 guns = [NodePath("../../TurretMount_AMER_203mm_3b_auto_001/AMER_203mm_3b_auto_001"), NodePath("../../TurretMount_AMER_203mm_3b_auto/AMER_203mm_3b_auto"), NodePath("../../TurretMount_AMER_203mm_3b_auto_002/AMER_203mm_3b_auto_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
@@ -260,11 +262,11 @@ rparams = SubResource("Resource_d0r0t")
 fires = [NodePath("../../Fires/Fire"), NodePath("../../Fires/Fire2"), NodePath("../../Fires/Fire3"), NodePath("../../Fires/Fire4")]
 
 [node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
-params = SubResource("Resource_bsnob")
+params = SubResource("Resource_67mgq")
 floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_m8khc"), SubResource("Resource_51b1e")])
+equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_ev4mb"), SubResource("Resource_b6wa0")])
 
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("12_krgon")]([null, null, null])
@@ -382,5 +384,14 @@ template = ExtResource("22_wake")
 emit_rate = 0.06
 size_multiplier = 10.0
 speed_scale = 0.3
+
+[node name="TrailEmitter4" type="Node3D" parent="." index="33" unique_id=724595562]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 23.689333, 6.2772636)
+script = ExtResource("27_4jnyp")
+template = ExtResource("28_e3uhd")
+emit_rate = 0.34
+size_multiplier = 7.0
+speed_scale = 0.4
+metadata/_custom_type_script = "uid://8ly51uodan7"
 
 [editable path="Modules"]

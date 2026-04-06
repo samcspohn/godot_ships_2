@@ -1,6 +1,8 @@
-[gd_scene load_steps=2 format=3 uid="uid://cj32a1kjmd61g"]
+[gd_scene format=3 uid="uid://cj32a1kjmd61g"]
 
 [ext_resource type="Resource" uid="uid://dtrail8shell1" path="res://src/particles/templates/shell_trail_template.tres" id="1_trail"]
 
-[node name="ProjectileManager" type="_ProjectileManager" unique_id=648273995]
+[node name="ProjectileManager" type="_ProjectileManager" unique_id=648273995 node_paths=PackedStringArray("gpu_renderer")]
+projectiles = Array[ProjectileData]([null])
+gpu_renderer = NodePath("@Node@18967")
 trail_template = ExtResource("1_trail")

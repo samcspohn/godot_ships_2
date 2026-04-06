@@ -50,7 +50,7 @@ var beam: float = 0.0
 @export_range(1, 11) var tier: int = 1
 
 var particles_active = false
-var wake_emitters: Array[TrailEmitter] = []
+var trail_emitters: Array[TrailEmitter] = []
 # var server_position: Vector3
 # var server_rotation: Basis
 # @export var fires: Array[Fire] = []
@@ -199,7 +199,7 @@ func _ready() -> void:
 
 		for child in get_children():
 			if child is TrailEmitter:
-				wake_emitters.append(child)
+				trail_emitters.append(child)
 	else:
 		set_process(false)
 
@@ -223,8 +223,8 @@ func _process(delta: float) -> void:
 		Engine.get_frames_drawn() % 2 == 0:
 			global_position += linear_velocity * delta
 
-	if particles_active and not wake_emitters[0].is_emitting():
-		for emitter in wake_emitters:
+	if particles_active and not trail_emitters[0].is_emitting():
+		for emitter in trail_emitters:
 			emitter.start_emitting()
 
 func _physics_process(delta: float) -> void:
@@ -567,8 +567,8 @@ func sync_player(b: PackedByteArray):
 func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
-	if particles_active and wake_emitters[0].is_emitting():
-		for emitter in wake_emitters:
+	if particles_active and trail_emitters[0].is_emitting():
+		for emitter in trail_emitters:
 			emitter.stop_emitting()
 		particles_active = false
 

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=5 format=3 uid="uid://debsjyu8b8beq"]
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://debsjyu8b8beq"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
@@ -17,7 +17,6 @@ color_over_life = SubResource("GradientTexture1D_sparks")
 emission_energy = 64.0
 initial_velocity_min = 15.0
 initial_velocity_max = 30.0
-direction = Vector3(0, 0, 1)
 spread = 180.0
 gravity = Vector3(0, -20, 0)
 lifetime_min = 0.7

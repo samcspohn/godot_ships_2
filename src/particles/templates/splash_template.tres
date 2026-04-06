@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ParticleTemplate" load_steps=5 format=3 uid="uid://bjsiopaukrjwx"]
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://bjsiopaukrjwx"]
 
 [ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
@@ -12,7 +12,6 @@ gradient = SubResource("Gradient_splash")
 
 [resource]
 script = ExtResource("1")
-
 texture = ExtResource("2")
 color_over_life = SubResource("GradientTexture1D_splash")
 initial_velocity_max = 35.0
@@ -22,6 +21,6 @@ damping_min = 0.9
 damping_max = 0.92
 lifetime_min = 5.0
 lifetime_max = 5.0
-scale_min = Vector2(5.0, 5.0)
-scale_max = Vector2(5.0, 5.0)
+scale_min = Vector2(5, 5)
+scale_max = Vector2(5, 5)
 emission_shape = 1
