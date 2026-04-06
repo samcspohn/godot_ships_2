@@ -54,12 +54,8 @@ func _init_part_visibility():
 		armor_part_visibility[part_type] = true
 
 func _setup_armor_overlay():
-	# Create and add the ArmorViewportOverlay as a sibling via our parent
-	# so it persists independently of this Control's visibility
 	armor_overlay = ArmorViewportOverlay.new()
 	armor_overlay.name = "ArmorViewportOverlay"
-	# Add to the scene tree — we add it to ourselves; the CanvasLayer inside
-	# it will handle rendering on top regardless
 	add_child(armor_overlay)
 
 func _create_armor_tooltip():

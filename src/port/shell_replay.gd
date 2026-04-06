@@ -14,6 +14,8 @@ extends Node
 var ship: Node3D = null  # Will be dynamically spawned
 @onready var camera: Camera3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D/Camera3D
 @onready var shell_trail: Node3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D/ShellTrail
+@onready var sub_viewport: SubViewport = $CanvasLayer/SubViewportContainer/SubViewport
+@onready var sub_viewport_container: SubViewportContainer = $CanvasLayer/SubViewportContainer
 
 # Shell representation
 var shell: MeshInstance3D
@@ -56,6 +58,9 @@ var zoom_speed: float = 5.0
 var is_dragging: bool = false
 var last_mouse_pos: Vector2 = Vector2.ZERO
 
+# Armor overlay system
+var armor_overlay: ArmorViewportOverlay
+
 func _ready():
 	# Connect button signals
 	play_button.pressed.connect(_on_play_pressed)
@@ -74,6 +79,18 @@ func _ready():
 	# Initialize camera
 	camera_rotation = Vector2(-PI / 6, 0)  # Start with slight downward angle
 	update_camera_transform()
+
+	# Setup armor overlay in embedded mode — overlay composites inside the
+	# SubViewportContainer alongside the 3D SubViewport
+	_setup_armor_overlay()
+
+func _setup_armor_overlay():
+	armor_overlay = ArmorViewportOverlay.new()
+	armor_overlay.name = "ArmorViewportOverlay"
+	# Add to tree first so _ready fires and loads the opaque material,
+	# then immediately call setup_embedded to replace the standalone setup
+	add_child(armor_overlay)
+	armor_overlay.setup_embedded(camera, sub_viewport_container, sub_viewport)
 
 func _input(event):
 	# Handle mouse button for camera rotation
@@ -237,8 +254,8 @@ func start_replay():
 	ship = ship_scene.instantiate()
 	world_3d.add_child(ship)
 
-	# Enable armor visualization
-	enable_armor_visibility(ship)
+	# Enable armor visualization via dual-viewport overlay
+	_enable_armor_overlay(ship)
 
 	# Reset state
 	current_event_index = 0
@@ -271,16 +288,30 @@ func start_replay():
 	# Position camera to view the ship and shell trajectory
 	update_camera_position()
 
-func enable_armor_visibility(node: Node) -> void:
-	if node is MeshInstance3D and node.layers == 0:
-		node.layers = 1
+func _enable_armor_overlay(ship_node: Node) -> void:
+	# Hide armor meshes in the 3D SubViewport (they render in the overlay instead)
+	_set_armor_visibility_main(ship_node, false)
+	armor_overlay.set_main_camera(camera)
+	armor_overlay.enable()
+	armor_overlay.populate_armor_meshes(ship_node)
+
+func _disable_armor_overlay(ship_node: Node) -> void:
+	armor_overlay.disable()
+	if ship_node != null:
+		_set_armor_visibility_main(ship_node, false)
+
+func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
+	if node is MeshInstance3D and String(node.name).contains("_col"):
+		node.layers = 1 if enabled else 0
 	for child in node.get_children():
-		enable_armor_visibility(child)
+		_set_armor_visibility_main(child, enabled)
 
 func stop_replay():
 	is_playing = false
 	play_button.text = "Play Replay"
 	shell.visible = false
+	if ship != null:
+		_disable_armor_overlay(ship)
 
 func update_camera_transform():
 	# Calculate camera position based on target, rotation, and distance
@@ -552,8 +583,8 @@ func start_validation():
 	ship = ship_scene.instantiate()
 	world_3d.add_child(ship)
 
-	# Enable armor visualization
-	enable_armor_visibility(ship)
+	# Enable armor visualization via dual-viewport overlay
+	_enable_armor_overlay(ship)
 
 	# Position ship
 	for event in events:
@@ -585,6 +616,8 @@ func start_validation():
 	validate_button.text = "Stop Validation"
 
 func stop_validation():
+	if ship != null:
+		_disable_armor_overlay(ship)
 	is_validating = false
 	validate_button.text = "Validate"
 
