@@ -19,7 +19,6 @@ var sound: AudioStreamPlayer3D
 @export_tool_button("Stop Preview") var _stop_preview_sound_button = _stop_preview_sound
 var preview_player: AudioStreamPlayer3D
 var wake_template: ParticleTemplate = preload("res://src/particles/templates/torpedo_wake_template.tres")
-var _particle_system: UParticleSystem = null
 
 func _preview_sound() -> void:
 	if _sound == null:
@@ -109,28 +108,8 @@ func get_shell() -> ShellParams:
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
-
-	if !_Utils.authority():
-		_particle_system = get_node_or_null("/root/UnifiedParticleSystem") as UParticleSystem
-		if _particle_system and wake_template:
-			_particle_system.ensure_template_registered(wake_template)
-	# 	if sound == null:
-	# 		sound = AudioStreamPlayer3D.new()
-	# 		if _sound == null:
-	# 			sound.stream = preload("res://audio/explosion1.wav")
-	# 		else:
-	# 			sound.stream = _sound
-	# 		sound.max_polyphony = 1
-	# 		sound.unit_size = 200.0 * volume
-	# 		sound.max_db = linear_to_db(volume * (1.0 + variance))
-	# 		add_child(sound)
-	# 	# get_tree().root.add_child(sound)
 	setup_audio.call_deferred()
-
-
-	# Set up muzzles
 	update_barrels()
-
 	super._ready()
 
 func setup_audio():
@@ -331,10 +310,6 @@ func fire_client(vel, pos, t, _id):
 		sound.play()
 
 	if wake_template != null:
-		if _particle_system == null:
-			_particle_system = get_node_or_null("/root/UnifiedParticleSystem") as UParticleSystem
-			if _particle_system:
-				_particle_system.ensure_template_registered(wake_template)
 		var wake_pos = pos
 		wake_pos.y = 0.01
 		var size = get_shell().caliber / 100.0
@@ -343,12 +318,7 @@ func fire_client(vel, pos, t, _id):
 		dir.y = 0.0
 		wake_pos = wake_pos + dir.normalized() * size / 2.0
 		var time_mod = lerp(3.0, 1.2, size / 50)
-		# print(size)
-		# dir = dir.normalized()
-		if wake_template.template_id < 0:
-			_particle_system.ensure_template_registered(wake_template)
-		if wake_template.template_id >= 0:
-			_particle_system.emit_particles(wake_pos, dir, wake_template.template_id, size, 1, time_mod)
+		wake_template.emit(wake_pos, dir, size, 1, time_mod)
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 
