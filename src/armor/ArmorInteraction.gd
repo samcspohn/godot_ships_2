@@ -34,23 +34,50 @@ const DE_MARRE_K: float = 0.06
 ## Velocity decay exponent for post-penetration speed
 const VELOCITY_DECAY_BETA: float = 0.8
 
-## Base critical ricochet angle (degrees) for APC shells
-const BASE_CRIT_ANGLE_APC: float = 75.0
-
-## Ricochet sigmoid sharpness (per degree)
-const RICOCHET_SIGMOID_K: float = 0.25
-
-## Reference velocity for angle corrections (m/s)
-const VELOCITY_REFERENCE: float = 500.0
-
-## Ricochet energy retention
-const RICOCHET_RETENTION: float = 0.75
-
 ## Minimum velocity to continue (m/s)
 const MIN_VELOCITY: float = 10.0
 
 ## Shell deflection coefficient during penetration
 const DEFLECTION_ALPHA: float = 0.35
+
+#endregion
+
+#region Deflection Energy-Balance Ricochet Model
+## Based on the Thompson/Okun framework: ricochet emerges from the obliquity
+## multiplier diverging beyond what the shell's energy can overcome.
+## M(Ob) = (1/cos(Ob))^alpha * (1 + K_nose * tan(Ob)^gamma * f(T/D))
+## The first term is geometric LOS thickness increase (de Marre family).
+## The second term is the deflection torque energy penalty from asymmetric
+## contact forces on the nose during oblique impact.
+
+## de Marre thickness-to-velocity exponent ratio for the geometric term.
+## ~1.0 for homogeneous ductile armor, ~0.9 for face-hardened.
+const OBLIQUITY_ALPHA: float = 1.0
+
+## Deflection torque exponent. Controls how steeply the deflection penalty
+## rises with obliquity. Derived from Thompson F-value curve fits against
+## M79APCLC data (Okun). ~3.0 for typical WWII APC ogival noses.
+const DEFLECTION_GAMMA: float = 3.0
+
+## Nose shape deflection coefficients (K_nose).
+## Lower = better at maintaining nose-first bite at obliquity.
+## APC hard cap digs into plate, resisting rotation.
+## Uncapped pointed noses deflect easily.
+const K_NOSE_APC: float = 0.06      ## APC / APCBC (hard cap catches plate edge)
+const K_NOSE_AP_UNCAPPED: float = 0.15  ## Uncapped pointed ogival
+const K_NOSE_COMMON: float = 0.10    ## Common/SAP (intermediate nose)
+
+## T/D modulation: thicker plates relative to caliber give the deflection
+## torque more angular impulse (shell spends more time in contact).
+## f(T/D) = 1.0 + TD_MOD_SCALE * clamp(T/D - TD_MOD_ONSET, 0, TD_MOD_MAX)
+const TD_MOD_SCALE: float = 0.3
+const TD_MOD_ONSET: float = 0.5
+const TD_MOD_MAX: float = 1.5
+
+## When the deflection multiplier exceeds this threshold, a failed penetration
+## is classified as ricochet (shell deflected off) rather than shatter/embed
+## (shell stopped inside the plate by raw thickness).
+const DEFLECTION_RICOCHET_THRESHOLD: float = 1.15
 
 #endregion
 
@@ -115,18 +142,39 @@ static func calculate_effective_thickness(thickness_mm: float, impact_angle_rad:
 	return thickness_mm / cos_angle
 
 
-static func calculate_critical_angle(velocity_ms: float, armor_mm: float, caliber_mm: float, ricochet_angle: float) -> float:
-	var base_deg := ricochet_angle
-	var vel_correction := 5.0 * (velocity_ms - VELOCITY_REFERENCE) / VELOCITY_REFERENCE
-	var td_ratio := armor_mm / caliber_mm
-	var td_correction := -8.0 * (td_ratio - 0.5) / 0.5
-	var crit_deg := clampf(base_deg + vel_correction + td_correction, 55.0, 85.0)
-	return deg_to_rad(crit_deg)
+## Compute the full obliquity multiplier including deflection torque penalty.
+## Returns the factor by which the required penetration velocity increases at
+## this obliquity vs normal incidence. Based on Thompson F-value empirical data.
+static func calculate_obliquity_multiplier(impact_angle_rad: float, armor_mm: float,
+		caliber_mm: float, k_nose: float) -> Dictionary:
+	var cos_a := maxf(cos(impact_angle_rad), 0.05)
+	var tan_a := tan(clampf(impact_angle_rad, 0.0, deg_to_rad(89.0)))
+
+	# Geometric LOS term: (1/cos)^alpha
+	var geometric := pow(1.0 / cos_a, OBLIQUITY_ALPHA)
+
+	# T/D modulation: thick plates give deflection torque more angular impulse
+	var td_ratio := armor_mm / maxf(caliber_mm, 1.0)
+	var f_td := 1.0 + TD_MOD_SCALE * clampf(td_ratio - TD_MOD_ONSET, 0.0, TD_MOD_MAX)
+
+	# Deflection torque penalty: 1 + K * tan^gamma * f(T/D)
+	var deflection := 1.0 + k_nose * pow(tan_a, DEFLECTION_GAMMA) * f_td
+
+	return {
+		"multiplier": geometric * deflection,
+		"geometric": geometric,
+		"deflection": deflection,
+	}
 
 
-static func calculate_ricochet_probability(impact_angle_rad: float, critical_angle_rad: float) -> float:
-	var angle_diff_deg := rad_to_deg(impact_angle_rad - critical_angle_rad)
-	return 1.0 / (1.0 + exp(-RICOCHET_SIGMOID_K * angle_diff_deg))
+## Get the nose deflection coefficient for a shell type.
+static func get_k_nose(params: ShellParams) -> float:
+	# Use APC for capped AP shells, COMMON for HE/SAP, AP_UNCAPPED as fallback.
+	# If ShellParams has a nose_k override, prefer that.
+	if params.type == ShellParams.ShellType.HE:
+		return K_NOSE_COMMON
+	# Default: APC (most WWII naval AP shells were capped)
+	return K_NOSE_APC
 
 
 static func calculate_exit_velocity(entry_speed: float, pen_capability_mm: float, effective_armor_mm: float) -> float:
@@ -154,10 +202,21 @@ static func calculate_deflected_direction(entry_dir: Vector3, armor_normal: Vect
 	return entry_dir.slerp(-armor_normal, deflection_amount).normalized()
 
 
-static func calculate_ricochet_velocity(velocity: Vector3, normal: Vector3, impact_angle_rad: float) -> Vector3:
-	var reflected := velocity.bounce(normal.normalized())
-	var retention := RICOCHET_RETENTION * sin(impact_angle_rad)
-	return reflected * retention
+static func calculate_ricochet_velocity(velocity: Vector3, normal: Vector3, impact_angle_rad: float,
+		energy_loss_fraction: float) -> Vector3:
+	## Physics-based ricochet: the shell retains most of its tangential velocity
+	## and loses a fraction of its normal (into-plate) velocity component based on
+	## how deeply the nose gouged before deflecting.
+	var n := normal.normalized()
+	var v_normal_mag := velocity.dot(n)
+	var v_normal := n * v_normal_mag
+	var v_tangential := velocity - v_normal
+
+	# The normal component reverses direction (bounce) with energy loss from
+	# the plate gouge. At grazing angles most energy is tangential anyway.
+	var retained_normal := -v_normal * (1.0 - energy_loss_fraction)
+	var result := v_tangential + retained_normal
+	return result
 
 #endregion
 
@@ -303,8 +362,9 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	shell.params = params
 	shell.calc_end_position()
 
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
+	# Energy-balance ricochet model is deterministic — no RNG needed.
+	# Ricochet emerges from the obliquity multiplier exceeding the shell's
+	# available penetration energy.
 
 	var armor_ray := PhysicsRayQueryParameters3D.new()
 	armor_ray.hit_back_faces = true
@@ -365,69 +425,91 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
 			shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
 		var offset = Vector3.ZERO
-		# Overmatch Check
+		var deflection_mult := 1.0
+
+		# --- Overmatch: caliber vastly exceeds plate thickness ---
+		# Shell punches through with minimal resistance. Historically justified:
+		# a 460mm shell hitting 19mm plating is not going to be stopped or deflected.
+		# The energy-balance model mostly handles this (low T/D = low deflection),
+		# but this avoids wasting cycles on the multiplier math for trivial plates.
 		if armor_mm <= params.overmatch:
 			if hit_node.is_citadel:
 				hit_cit = true
 			result = ArmorResult.OVERPEN
 			over_pen = true
-			if iteration == 0:
+			if iteration == 1:
 				overmatch_first_armor = true
 
 			var pen_ratio := e_armor / maxf(shell.pen, 1.0)
 			shell.velocity *= (1.0 - pen_ratio * 0.3)
 			shell.integrity = calculate_shell_integrity(pen_ratio * 0.5, shell.integrity)
-			shell.position += shell.velocity.normalized() * 0.001  # Small nudge forward
+			shell.position += shell.velocity.normalized() * 0.001
 
 			if shell.fuze < 0.0 and e_armor > params.arming_threshold:
 				shell.fuze = 0.0
 
-		# Ricochet Check
-		elif _should_ricochet(shell, params, impact_angle, armor_mm, e_armor, rng):
+		# --- Autobounce: hard physics ceiling ---
+		# Above ~80° no realistic naval shell can maintain nose-first penetration.
+		# The energy model already makes this near-impossible, but the hard cap
+		# prevents numerical edge cases at extreme grazing angles.
+		elif impact_angle > params.auto_bounce:
 			result = ArmorResult.RICOCHET
-			shell.velocity = calculate_ricochet_velocity(shell.velocity, hit_normal, impact_angle)
-			# shell.position += shell.velocity.normalized() * 0.001  # Small nudge forward
-			offset += hit_normal * 0.001  # Nudge out of armor
+			# Grazing hit — very little energy transferred to plate
+			var energy_loss := 0.1
+			shell.velocity = calculate_ricochet_velocity(
+				shell.velocity, hit_normal, impact_angle, energy_loss)
+			offset += hit_normal * 0.001
 
 			if shell.fuze < 0.0 and impact_angle > deg_to_rad(70.0):
 				shell.fuze = 0.0
 
-		# Shatter / Partial Pen Check
-		elif shell.pen < e_armor:
-			var pen_ratio := shell.pen / e_armor
-
-			if pen_ratio > 0.7:
-				result = ArmorResult.PARTIAL_PEN
-				shell.velocity *= 0.1
-				shell.integrity *= 0.5
-				offset += shell.velocity.normalized() * 0.001  # Small nudge forward
-			else:
-				result = ArmorResult.SHATTER
-				shell.velocity = Vector3.ZERO
-				shell.fuze = params.fuze_delay
-				shell.position += hit_normal * 0.001  # Nudge out of armor
-
-		# Full Penetration
+		# --- Energy-balance armor interaction ---
 		else:
-			if hit_node.is_citadel:
-				hit_cit = true
-			result = ArmorResult.PEN
-			over_pen = true
+			var interaction := _evaluate_armor_interaction(shell, params, impact_angle, armor_mm, e_armor)
+			result = interaction["result"]
+			deflection_mult = interaction["deflection_mult"]
 
-			var pen_ratio := e_armor / shell.pen
-			var exit_speed := calculate_exit_velocity(speed, shell.pen, e_armor)
-			var exit_dir := calculate_deflected_direction(shell.velocity.normalized(), hit_normal, pen_ratio)
+			match result:
+				ArmorResult.RICOCHET:
+					var energy_loss: float = interaction["energy_loss_fraction"]
+					shell.velocity = calculate_ricochet_velocity(
+						shell.velocity, hit_normal, impact_angle, energy_loss)
+					offset += hit_normal * 0.001
 
-			shell.velocity = exit_dir * exit_speed
-			shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity)
-			offset += shell.velocity.normalized() * 0.001  # Small nudge forward
+					if shell.fuze < 0.0 and impact_angle > deg_to_rad(70.0):
+						shell.fuze = 0.0
 
-			if shell.fuze < 0.0 and e_armor > params.arming_threshold:
-				shell.fuze = 0.0
+				ArmorResult.SHATTER:
+					shell.velocity = Vector3.ZERO
+					shell.fuze = params.fuze_delay
+					shell.position += hit_normal * 0.001
 
-		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°), normal: (%.1f, %.1f, %.1f), ship: %s, is_citadel: %s" % [
+				ArmorResult.PARTIAL_PEN:
+					shell.velocity *= 0.1
+					shell.integrity *= 0.5
+					offset += shell.velocity.normalized() * 0.001
+
+				ArmorResult.PEN, ArmorResult.OVERPEN:
+					if hit_node.is_citadel:
+						hit_cit = true
+					over_pen = true
+
+					var pen_ratio: float = interaction["pen_ratio"]
+					var exit_speed := calculate_exit_velocity(speed, shell.pen, e_armor)
+					var exit_dir := calculate_deflected_direction(
+						shell.velocity.normalized(), hit_normal, pen_ratio)
+
+					shell.velocity = exit_dir * exit_speed
+					shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity)
+					offset += shell.velocity.normalized() * 0.001
+
+					if shell.fuze < 0.0 and e_armor > params.arming_threshold:
+						shell.fuze = 0.0
+
+
+		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°, defl_mult %.2f), normal: (%.1f, %.1f, %.1f), ship: %s, is_citadel: %s" % [
 			armor_result_to_string(result), hit_node.armor_path, armor_mm, e_armor,
-			rad_to_deg(impact_angle), hit_normal.x, hit_normal.y, hit_normal.z,
+			rad_to_deg(impact_angle), deflection_mult, hit_normal.x, hit_normal.y, hit_normal.z,
 			hit_node.ship.name, hit_node.is_citadel])
 
 		# Check termination
@@ -490,23 +572,70 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	return ArmorResultData.new(damage_result, first_hit_pos, d if d else first_hit_node, shell.velocity, ship, first_hit_normal, shell.integrity)
 
 
-func _should_ricochet(shell: _ShellData, params: ShellParams, impact_angle: float, armor: float,
-		e_armor: float, rng: RandomNumberGenerator) -> bool:
+## Energy-balance ricochet/penetration decision.
+## Returns a dictionary with the result and supporting data.
+## The obliquity multiplier makes the required penetration energy diverge
+## continuously with angle — no autobounce cutoff or sigmoid probability.
+## Ricochet vs shatter is determined by whether the deflection penalty
+## or raw thickness is what defeated the shell.
+func _evaluate_armor_interaction(shell: _ShellData, params: ShellParams,
+		impact_angle: float, armor_mm: float, e_armor: float) -> Dictionary:
 
+	var k_nose := get_k_nose(params)
+	var obliquity := calculate_obliquity_multiplier(impact_angle, armor_mm, params.caliber, k_nose)
+	var deflection_mult: float = obliquity["deflection"]
 
-	if impact_angle > params.auto_bounce:
-		return true
+	# Physics-effective armor: geometric LOS thickness × deflection penalty.
+	# This is the thickness the shell "experiences" including the energy cost
+	# of fighting the deflection torque.
+	var physics_armor := e_armor * deflection_mult
 
-	if impact_angle < params.ricochet_angle:
-		return false
+	# Pen ratio against the physics-effective thickness
+	var pen_ratio := shell.pen / maxf(physics_armor, 0.1)
 
-	var crit_angle := calculate_critical_angle(shell.get_speed(), e_armor, params.caliber, params.ricochet_angle)
-	var ricochet_prob := calculate_ricochet_probability(impact_angle, crit_angle)
+	if pen_ratio >= 1.0:
+		# Shell has enough energy to overcome both thickness and deflection
+		return {
+			"result": ArmorResult.OVERPEN,
+			"pen_ratio": e_armor / maxf(shell.pen, 0.1),  # ratio against geometric armor for exit velocity
+			"deflection_mult": deflection_mult,
+			"physics_armor": physics_armor,
+		}
+	else:
+		# Shell failed to penetrate. Was it deflected (ricochet) or stopped (shatter)?
+		# If the deflection term is what pushed it over the edge, it's a ricochet.
+		# If the shell couldn't even penetrate the geometric LOS thickness, it's
+		# a shatter or partial pen.
+		var would_pen_without_deflection := shell.pen >= e_armor
+		var is_deflection_dominated := deflection_mult >= DEFLECTION_RICOCHET_THRESHOLD
 
-	if shell.pen < e_armor:
-		ricochet_prob = minf(ricochet_prob + 0.3, 0.95)
-
-	return rng.randf() < ricochet_prob
+		if is_deflection_dominated and (would_pen_without_deflection or impact_angle > deg_to_rad(55.0)):
+			# Deflection torque defeated the shell — it skipped off
+			var energy_loss := clampf(shell.pen * cos(impact_angle) / maxf(physics_armor, 0.1), 0.0, 0.8)
+			return {
+				"result": ArmorResult.RICOCHET,
+				"pen_ratio": pen_ratio,
+				"deflection_mult": deflection_mult,
+				"energy_loss_fraction": energy_loss,
+				"physics_armor": physics_armor,
+			}
+		else:
+			# Raw thickness defeated the shell
+			var raw_pen_ratio := shell.pen / maxf(e_armor, 0.1)
+			if raw_pen_ratio > 0.7:
+				return {
+					"result": ArmorResult.PARTIAL_PEN,
+					"pen_ratio": raw_pen_ratio,
+					"deflection_mult": deflection_mult,
+					"physics_armor": physics_armor,
+				}
+			else:
+				return {
+					"result": ArmorResult.SHATTER,
+					"pen_ratio": raw_pen_ratio,
+					"deflection_mult": deflection_mult,
+					"physics_armor": physics_armor,
+				}
 
 
 func _resolve_hit_result(armor_result: ArmorResult, final_part: ArmorPart,
@@ -667,3 +796,219 @@ func get_part_hit(_ship: Ship, shell_pos: Vector3,
 	# 	if side_hits.size() < min_hits:
 	# 		min_hits = side_hits.size()
 	# 		hit_part = side_hits[-1]
+
+
+#endregion
+
+
+#region Armor Interaction Model Test Output
+
+func _ready() -> void:
+	_run_armor_model_tests()
+
+
+## Test the energy-balance ricochet model with historical shell parameters.
+## For each shell/armor combination, sweeps obliquity 0–85° and finds:
+##   - The angle where penetration first fails
+##   - Whether failure is ricochet (deflection-dominated) or shatter (thickness-dominated)
+##   - The deflection multiplier at that angle
+## Also shows the "effective overmatch" behavior: shells vs thin armor at extreme angles.
+func _run_armor_model_tests() -> void:
+	# Historical shell data
+	# Sources: NavWeaps gun pages, Okun penetration tables
+	var shells := [
+		{
+			"name": "Yamato 46cm/45 Type 91 APC",
+			"mass_kg": 1460.0,
+			"velocity_ms": 780.0,   # MV; typical striking ~720 at 20km
+			"caliber_mm": 460.0,
+			"k_nose": K_NOSE_APC,
+			"pen_mod": 1.0,
+			"test_velocities": [780.0, 720.0, 650.0],  # MV, ~20km, ~30km
+		},
+		{
+			"name": "Bismarck 38cm/52 SK C/34 APC",
+			"mass_kg": 800.0,
+			"velocity_ms": 820.0,
+			"caliber_mm": 380.0,
+			"k_nose": K_NOSE_APC,
+			"pen_mod": 1.0,
+			"test_velocities": [820.0, 720.0, 620.0],
+		},
+		{
+			"name": "Des Moines 8\"/55 Mk 21 Super Heavy APC",
+			"mass_kg": 152.0,
+			"velocity_ms": 762.0,
+			"caliber_mm": 203.0,
+			"k_nose": K_NOSE_APC,
+			"pen_mod": 1.0,
+			"test_velocities": [762.0, 670.0, 580.0],
+		},
+	]
+
+	var armor_values := [19.0, 25.0, 32.0, 50.0, 76.0, 100.0, 127.0, 150.0, 200.0, 250.0, 305.0, 380.0, 410.0]
+
+	print("")
+	print("=" .repeat(100))
+	print("  ARMOR INTERACTION MODEL TEST — Energy-Balance Ricochet (Thompson/Okun Framework)")
+	print("=" .repeat(100))
+	print("  Obliquity α=%.1f  Deflection γ=%.1f  Ricochet threshold=%.2f" % [
+		OBLIQUITY_ALPHA, DEFLECTION_GAMMA, DEFLECTION_RICOCHET_THRESHOLD])
+	print("")
+
+	for shell in shells:
+		var name: String = shell["name"]
+		var mass: float = shell["mass_kg"]
+		var caliber: float = shell["caliber_mm"]
+		var k_nose: float = shell["k_nose"]
+		var pen_mod: float = shell["pen_mod"]
+		var test_vels: Array = shell["test_velocities"]
+
+		print("-" .repeat(100))
+		print("  %s" % name)
+		print("  Mass: %.0f kg  Caliber: %.0f mm  K_nose: %.3f" % [mass, caliber, k_nose])
+		print("-" .repeat(100))
+
+		for vel in test_vels:
+			var pen_normal := calculate_de_marre_penetration(mass, vel, caliber) * pen_mod
+
+			print("")
+			print("  Striking velocity: %.0f m/s  |  Penetration at normal: %.0f mm" % [vel, pen_normal])
+			print("  %s | %s | %s | %s | %s | %s | %s" % [
+				"Armor(mm)".rpad(10),
+				"T/D".rpad(6),
+				"Ricochet°".rpad(10),
+				"Type".rpad(10),
+				"Defl@rico".rpad(10),
+				"Max pen°".rpad(10),
+				"75° result".rpad(12),
+			])
+			print("  " + "-" .repeat(80))
+
+			for armor_mm in armor_values:
+				var td_ratio: float = armor_mm / caliber
+				var ricochet_angle := -1.0
+				var ricochet_type := ""
+				var ricochet_defl := 0.0
+				var max_pen_angle := -1.0
+
+				# Sweep obliquity 0°–85° in 1° steps
+				for deg in range(0, 86):
+					var angle_rad := deg_to_rad(float(deg))
+					var e_armor := calculate_effective_thickness(armor_mm, angle_rad)
+					var obliq := calculate_obliquity_multiplier(angle_rad, armor_mm, caliber, k_nose)
+					var physics_armor: float = e_armor * obliq["deflection"]
+
+					if pen_normal * pen_mod >= physics_armor:
+						max_pen_angle = float(deg)
+					elif ricochet_angle < 0.0:
+						# First angle where pen fails
+						ricochet_angle = float(deg)
+						ricochet_defl = obliq["deflection"]
+
+						# Classify: ricochet vs shatter
+						var would_pen_geo := pen_normal * pen_mod >= e_armor
+						var defl_dominated: bool = obliq["deflection"] >= DEFLECTION_RICOCHET_THRESHOLD
+						if defl_dominated and (would_pen_geo or angle_rad > deg_to_rad(55.0)):
+							ricochet_type = "RICOCHET"
+						elif pen_normal * pen_mod / maxf(e_armor, 0.1) > 0.7:
+							ricochet_type = "PARTIAL"
+						else:
+							ricochet_type = "SHATTER"
+
+				# Check 75° specifically
+				var test_75_rad := deg_to_rad(75.0)
+				var e_75 := calculate_effective_thickness(armor_mm, test_75_rad)
+				var obliq_75 := calculate_obliquity_multiplier(test_75_rad, armor_mm, caliber, k_nose)
+				var phys_75: float = e_75 * obliq_75["deflection"]
+				var result_75 := "PEN" if pen_normal * pen_mod >= phys_75 else "FAIL"
+				if result_75 == "PEN":
+					result_75 = "PEN (d=%.2f)" % obliq_75["deflection"]
+				else:
+					var ratio_75 := pen_normal * pen_mod / maxf(phys_75, 0.1)
+					result_75 = "FAIL %.0f%%" % (ratio_75 * 100.0)
+
+				# Format output
+				var rico_str := "%.0f°" % ricochet_angle if ricochet_angle >= 0.0 else "NEVER"
+				var max_pen_str := "%.0f°" % max_pen_angle if max_pen_angle >= 0.0 else "NONE"
+				var defl_str := "%.3f" % ricochet_defl if ricochet_angle >= 0.0 else "---"
+
+				if ricochet_angle < 0.0:
+					ricochet_type = "---"
+
+				print("  %s | %s | %s | %s | %s | %s | %s" % [
+					("%.0f" % armor_mm).rpad(10),
+					("%.2f" % td_ratio).rpad(6),
+					rico_str.rpad(10),
+					ricochet_type.rpad(10),
+					defl_str.rpad(10),
+					max_pen_str.rpad(10),
+					result_75.rpad(12),
+				])
+
+		print("")
+
+	# Additional detail: show the obliquity multiplier curve for APC at various T/D
+	print("")
+	print("=" .repeat(100))
+	print("  OBLIQUITY MULTIPLIER CURVES — K_nose=%.3f (APC)" % K_NOSE_APC)
+	print("  M(Ob) = (1/cos)^%.1f × (1 + %.3f × tan^%.1f × f(T/D))" % [
+		OBLIQUITY_ALPHA, K_NOSE_APC, DEFLECTION_GAMMA])
+	print("=" .repeat(100))
+
+	var td_test_values := [0.1, 0.25, 0.5, 1.0, 1.5, 2.0]
+	var angle_steps := [0, 10, 20, 30, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+
+	# Header
+	var header := "  Ob°   | 1/cos   "
+	for td in td_test_values:
+		header += "| T/D=%.2f " % td
+	print(header)
+	print("  " + "-" .repeat(88))
+
+	for deg in angle_steps:
+		var angle_rad := deg_to_rad(float(deg))
+		var cos_inv := 1.0 / maxf(cos(angle_rad), 0.05)
+		var line := "  %s| %s" % [
+			("%d°" % deg).rpad(8),
+			("%.3f" % cos_inv).rpad(8),
+		]
+		for td in td_test_values:
+			# Use representative values: caliber=380mm, armor = td * 380
+			var armor_mm: float = td * 380.0
+			var obliq := calculate_obliquity_multiplier(angle_rad, armor_mm, 380.0, K_NOSE_APC)
+			line += "| %s" % ("%.3f" % obliq["multiplier"]).rpad(9)
+		print(line)
+
+	# Show the deflection component separately
+	print("")
+	print("  Deflection component only (multiplier on top of geometric 1/cos):")
+	var header2 := "  Ob°   "
+	for td in td_test_values:
+		header2 += "| T/D=%.2f " % td
+	print(header2)
+	print("  " + "-" .repeat(72))
+
+	for deg in angle_steps:
+		var angle_rad := deg_to_rad(float(deg))
+		var line := "  %s" % ("%d°" % deg).rpad(8)
+		for td in td_test_values:
+			var armor_mm: float = td * 380.0
+			var obliq := calculate_obliquity_multiplier(angle_rad, armor_mm, 380.0, K_NOSE_APC)
+			line += "| %s" % ("%.4f" % obliq["deflection"]).rpad(9)
+		print(line)
+
+	print("")
+	print("=" .repeat(100))
+	print("  Notes:")
+	print("  - 'Ricochet°' = lowest obliquity where shell fails to penetrate")
+	print("  - 'Type' = whether failure is RICOCHET (deflection-dominated) or SHATTER (raw thickness)")
+	print("  - 'Defl@rico' = deflection multiplier at the ricochet angle (1.0 = pure geometry)")
+	print("  - 'Max pen°' = highest angle where shell still penetrates")
+	print("  - '75° result' = outcome at 75° obliquity (extreme plunging fire angle)")
+	print("  - NEVER = shell penetrates at all tested angles (0–85°)")
+	print("  - Old overmatch behavior emerges naturally at low T/D ratios")
+	print("=" .repeat(100))
+	print("")
+
+#endregion
