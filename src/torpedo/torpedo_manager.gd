@@ -13,7 +13,8 @@ var transforms = PackedFloat32Array()
 var camera: Camera3D = null
 
 # Wake particle system
-var _unified_particle_system: UnifiedParticleSystem = null
+@export var wake_template: ParticleTemplate
+var _unified_particle_system: UParticleSystem = null
 var _wake_template_id: int = -1
 
 # Torpedo indicators UI
@@ -70,7 +71,6 @@ func _ready():
 		transforms.resize(12)
 		torpedos.resize(1)
 		# Initialize wake particle system - use a timer to wait for particle system to be ready
-		# ParticleSystemInit uses call_deferred to add nodes, so we need to wait a frame or two
 		_wait_for_particle_system()
 		# Initialize torpedo indicators overlay
 		_setup_torpedo_indicators()
@@ -100,20 +100,17 @@ func _on_init_timer_timeout() -> void:
 
 func _try_init_wake_particles() -> bool:
 	"""Try to initialize the wake particle system. Returns true if successful."""
-	# Get ParticleSystemInit autoload
-	if not has_node("/root/ParticleSystemInit"):
+	# Get UnifiedParticleSystem from scene tree
+	if not has_node("/root/UnifiedParticleSystem"):
 		return false
 
-	var particle_init = ParticleSystemInit
-
-	# Get unified particle system from ParticleSystemInit
-	_unified_particle_system = particle_init.unified_system
+	_unified_particle_system = get_node("/root/UnifiedParticleSystem") as UParticleSystem
 	if _unified_particle_system == null:
 		return false
 
-	# Get the wake template ID from template manager
-	if particle_init.template_manager != null:
-		_wake_template_id = particle_init.template_manager.get_template_id("torpedo_wake")
+	# Register the wake template resource and get its ID
+	if wake_template != null:
+		_wake_template_id = _unified_particle_system.ensure_template_registered(wake_template)
 
 	if _wake_template_id < 0:
 		# Template not registered yet, keep waiting

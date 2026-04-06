@@ -145,6 +145,10 @@ void _ProjectileManager::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "compute_particle_system", PROPERTY_HINT_NODE_TYPE, "Node"),
 				 "set_compute_particle_system", "get_compute_particle_system");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "trail_template_id"), "set_trail_template_id", "get_trail_template_id");
+
+	ClassDB::bind_method(D_METHOD("get_trail_template"), &_ProjectileManager::get_trail_template);
+	ClassDB::bind_method(D_METHOD("set_trail_template", "value"), &_ProjectileManager::set_trail_template);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "trail_template", PROPERTY_HINT_RESOURCE_TYPE, "Resource"), "set_trail_template", "get_trail_template");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "camera", PROPERTY_HINT_NODE_TYPE, "Camera3D"),
 				 "set_camera", "get_camera");
 }
@@ -156,6 +160,7 @@ _ProjectileManager::_ProjectileManager() {
 	gpu_renderer = nullptr;
 	compute_particle_system = nullptr;
 	trail_template_id = -1;
+	trail_template = Ref<Resource>();
 	camera = nullptr;
 	armor_interaction = nullptr;
 	tcp_thread_pool = nullptr;
@@ -276,20 +281,17 @@ void _ProjectileManager::_init_compute_trails() {
 
 	// Get or register the shell trail template
 	// The template should be pre-registered by ParticleSystemInit with align_to_velocity = true
-	Variant template_manager_var = compute_particle_system->get("template_manager");
-	if (template_manager_var.get_type() != Variant::NIL) {
-		Object *template_manager = Object::cast_to<Object>(template_manager_var);
-		if (template_manager) {
-			trail_template_id = template_manager->call("get_template_id", "shell_trail");
-			UtilityFunctions::print(String("ProjectileManager: shell_trail template_id = %d").replace("%d",
-				String::num_int64(trail_template_id)));
-			if (trail_template_id < 0) {
-				UtilityFunctions::push_warning("ProjectileManager: 'shell_trail' template not found, trails disabled");
-				return;
-			}
-		}
+	// Register trail template resource and get its ID
+	if (trail_template.is_valid()) {
+		trail_template_id = compute_particle_system->call("ensure_template_registered", trail_template);
+		UtilityFunctions::print(String("ProjectileManager: trail template registered with id = ") +
+			String::num_int64(trail_template_id));
 	} else {
-		UtilityFunctions::push_warning("ProjectileManager: Template manager not found, trails disabled");
+		UtilityFunctions::push_warning("ProjectileManager: trail_template not set, trails disabled");
+		return;
+	}
+	if (trail_template_id < 0) {
+		UtilityFunctions::push_warning("ProjectileManager: Failed to register trail template, trails disabled");
 		return;
 	}
 
@@ -1222,6 +1224,14 @@ void _ProjectileManager::set_compute_particle_system(Node *value) {
 
 void _ProjectileManager::set_trail_template_id(int value) {
 	trail_template_id = value;
+}
+
+Ref<Resource> _ProjectileManager::get_trail_template() const {
+	return trail_template;
+}
+
+void _ProjectileManager::set_trail_template(const Ref<Resource> &value) {
+	trail_template = value;
 }
 
 void _ProjectileManager::set_camera(Camera3D *value) {

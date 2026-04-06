@@ -18,8 +18,8 @@ var sound: AudioStreamPlayer3D
 @export_tool_button("Preview Sound") var _preview_sound_button = _preview_sound
 @export_tool_button("Stop Preview") var _stop_preview_sound_button = _stop_preview_sound
 var preview_player: AudioStreamPlayer3D
-var wake_template: ParticleTemplate
-var _particle_system: UnifiedParticleSystem = null
+var wake_template: ParticleTemplate = preload("res://src/particles/templates/torpedo_wake_template.tres")
+var _particle_system: UParticleSystem = null
 
 func _preview_sound() -> void:
 	if _sound == null:
@@ -111,8 +111,9 @@ func _ready() -> void:
 		return
 
 	if !_Utils.authority():
-		var init = get_node("/root/ParticleSystemInit")
-		wake_template = init.get_template_by_name("torpedo_wake")
+		_particle_system = get_node_or_null("/root/UnifiedParticleSystem") as UParticleSystem
+		if _particle_system and wake_template:
+			_particle_system.ensure_template_registered(wake_template)
 	# 	if sound == null:
 	# 		sound = AudioStreamPlayer3D.new()
 	# 		if _sound == null:
@@ -331,8 +332,9 @@ func fire_client(vel, pos, t, _id):
 
 	if wake_template != null:
 		if _particle_system == null:
-			var init = get_node("/root/ParticleSystemInit")
-			_particle_system = init.get_particle_system()
+			_particle_system = get_node_or_null("/root/UnifiedParticleSystem") as UParticleSystem
+			if _particle_system:
+				_particle_system.ensure_template_registered(wake_template)
 		var wake_pos = pos
 		wake_pos.y = 0.01
 		var size = get_shell().caliber / 100.0
@@ -343,7 +345,10 @@ func fire_client(vel, pos, t, _id):
 		var time_mod = lerp(3.0, 1.2, size / 50)
 		# print(size)
 		# dir = dir.normalized()
-		_particle_system.emit_particles(wake_pos, dir, wake_template.template_id, size, 1, time_mod)
+		if wake_template.template_id < 0:
+			_particle_system.ensure_template_registered(wake_template)
+		if wake_template.template_id >= 0:
+			_particle_system.emit_particles(wake_pos, dir, wake_template.template_id, size, 1, time_mod)
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 

@@ -1,6 +1,14 @@
-[gd_scene load_steps=2 format=3 uid="uid://b2h05q4ej4xeb"]
+[gd_scene load_steps=6 format=3 uid="uid://b2h05q4ej4xeb"]
 
 [ext_resource type="Script" uid="uid://bbibtirfdewu4" path="res://src/artillary/HitEffects/hit_effects.gd" id="1_ovioq"]
+[ext_resource type="Resource" uid="uid://bjsiopaukrjwx" path="res://src/particles/templates/splash_template.tres" id="2_splash"]
+[ext_resource type="Resource" uid="uid://b46yoxgx34o72" path="res://src/particles/templates/explosion_template.tres" id="3_explosion"]
+[ext_resource type="Resource" uid="uid://debsjyu8b8beq" path="res://src/particles/templates/sparks_template.tres" id="4_sparks"]
+[ext_resource type="Resource" uid="uid://l1hirsugnu58" path="res://src/particles/templates/muzzle_blast_template.tres" id="5_muzzle"]
 
 [node name="HitEffects" type="Node"]
 script = ExtResource("1_ovioq")
+splash_template = ExtResource("2_splash")
+explosion_template = ExtResource("3_explosion")
+sparks_template = ExtResource("4_sparks")
+muzzle_blast_template = ExtResource("5_muzzle")

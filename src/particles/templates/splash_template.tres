@@ -1,6 +1,6 @@
 [gd_resource type="Resource" script_class="ParticleTemplate" load_steps=5 format=3 uid="uid://bjsiopaukrjwx"]
 
-[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://src/particles/particle_template.gd" id="1"]
+[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_splash"]
@@ -12,7 +12,7 @@ gradient = SubResource("Gradient_splash")
 
 [resource]
 script = ExtResource("1")
-template_name = "splash"
+
 texture = ExtResource("2")
 color_over_life = SubResource("GradientTexture1D_splash")
 initial_velocity_max = 35.0

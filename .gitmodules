@@ -1,3 +1,6 @@
 [submodule "gdextension/godot-cpp"]
 	path = gdextension/godot-cpp
 	url = https://github.com/godotengine/godot-cpp.git
+[submodule "addons/Godot-Unified-Particle-System"]
+	path = addons/Godot-Unified-Particle-System
+	url = https://github.com/samcspohn/Godot-Unified-Particle-System.git
