@@ -1,0 +1,46 @@
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://dt5rc67ok3xke"]
+
+[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
+
+[sub_resource type="Gradient" id="Gradient_fire"]
+offsets = PackedFloat32Array(0, 0.06, 0.14, 0.24, 0.35, 0.5, 0.65, 0.85, 1)
+colors = PackedColorArray(1, 1, 1, 1, 0.816, 0.824, 0, 1, 0.984, 0.373, 0, 1, 0.796, 0.09, 0, 1, 0.125, 0.004, 0, 1, 0.039, 0, 0, 0.9, 0.02, 0.02, 0.02, 0.7, 0.01, 0.01, 0.01, 0.35, 0, 0, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_fire"]
+gradient = SubResource("Gradient_fire")
+use_hdr = true
+
+[sub_resource type="Curve" id="Curve_emission_fire"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.35, 0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_emission_fire"]
+curve = SubResource("Curve_emission_fire")
+
+[sub_resource type="Curve" id="Curve_scale_fire"]
+_data = [Vector2(0, 0.3), 0.0, 1.5, 0, 0, Vector2(0.4, 0.8), 1.0, 0.6, 0, 0, Vector2(1, 1.2), 0.3, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_scale_fire"]
+curve = SubResource("Curve_scale_fire")
+
+[resource]
+script = ExtResource("1")
+texture = ExtResource("2")
+color_over_life = SubResource("GradientTexture1D_fire")
+scale_over_life = SubResource("CurveTexture_scale_fire")
+emission_over_life = SubResource("CurveTexture_emission_fire")
+emission_energy = 3.0
+initial_velocity_min = 0.5
+initial_velocity_max = 2.0
+direction = Vector3(0, 1, 0)
+spread = 12.0
+gravity = Vector3(0, 0, 0)
+damping_min = 0.4
+damping_max = 0.7
+lifetime_min = 2.0
+lifetime_max = 4.0
+lifetime_randomness = 0.3
+scale_max = Vector2(2, 2)
+hue_variation_max = 0.03

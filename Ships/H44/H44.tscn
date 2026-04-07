@@ -24,7 +24,7 @@
 [ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="17_flood"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_pm07r"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="22_wake"]
-[ext_resource type="Script" uid="uid://8ly51uodan7" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="25_gpbbn"]
+[ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="25_gpbbn"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://src/particles/templates/funnel_exhaust_smoke_template.tres" id="26_itqm6"]
 
 [sub_resource type="Resource" id="Resource_gpbbn"]
@@ -420,7 +420,6 @@ template = ExtResource("26_itqm6")
 emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
-metadata/_custom_type_script = "uid://8ly51uodan7"
 
 [node name="TrailEmitter5" type="Node3D" parent="." index="22" unique_id=1606279390]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.812918, -0.6361103)
@@ -429,6 +428,5 @@ template = ExtResource("26_itqm6")
 emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
-metadata/_custom_type_script = "uid://8ly51uodan7"
 
 [editable path="Modules"]

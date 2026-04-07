@@ -1,14 +1,9 @@
 extends Node3D
 class_name Fire
 
-@onready var fire: GPUParticles3D = $GPUParticles3D
-@onready var smoke: GPUParticles3D = $GPUParticles3D2
+@onready var fire_emitter: ParticleEmitter = $FireEmitter
 var _ship: Ship
 var hp: HPManager
-# @export var duration: float = 50.0
-# @export var buildUp: float = 100.0
-# @export var total_dmg_p: float = .1
-# var dps: float
 var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FireManager = null
@@ -31,8 +26,7 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "fire"})
 			_owner.stats.fire_count += 1
-			fire.emitting = true
-			smoke.emitting = true
+			fire_emitter.start_emitting()
 			_sync_activate.rpc()
 			lifetime = 1
 			curr_buildup = 0
@@ -40,19 +34,11 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	return false
 
 func _ready():
-
 	_ship = get_parent().get_parent() as Ship
 	await _ship.ready
 	hp = _ship.health_controller
 	var s = _ship.get_node("Hull").get_aabb().size.length() / 10.0
-	fire.scale = Vector3(s,s,s)
-	smoke.scale = Vector3(s,s,s)
-	(fire.process_material as ParticleProcessMaterial).scale_min = s
-	#(fire.process_material as ParticleProcessMaterial).scale_max = s * 3
-	(smoke.process_material as ParticleProcessMaterial).scale_min = s * 2
-	(smoke.process_material as ParticleProcessMaterial).scale_max = s * 3
-	fire.emitting = false
-	smoke.emitting = false
+	fire_emitter.set_size(s)
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -67,8 +53,7 @@ func _physics_process(delta: float) -> void:
 				var d = _params.dur
 				lifetime -= 1.0 / d
 				if lifetime <= 0:
-					fire.emitting = false
-					smoke.emitting = false
+					fire_emitter.stop_emitting()
 					_sync_deactivate.rpc()
 		elif curr_buildup < _rparams.max_buildup:
 			curr_buildup -= delta * _rparams.max_buildup * _rparams.buildup_reduction_rate
@@ -91,10 +76,8 @@ func _sync(l):
 
 @rpc("authority", "reliable")
 func _sync_activate():
-	fire.emitting = true
-	smoke.emitting = true
+	fire_emitter.start_emitting()
 
 @rpc("authority", "reliable")
 func _sync_deactivate():
-	fire.emitting = false
-	smoke.emitting = false
+	fire_emitter.stop_emitting()

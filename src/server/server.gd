@@ -210,6 +210,9 @@ func spawn_player(id, player_name):
 	var spawn_map = get_node("GameWorld/Env").get_child(0)
 	var team_spawn_point: Vector3 = (spawn_map.get_node("Spawn").get_child(team_id) as Node3D).global_position
 
+	if team_info["team"].size() == 2:
+		team_spawn_point *= 0.15
+
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
 
 	# Calculate spawn position
