@@ -424,7 +424,7 @@ material_override = ExtResource("2_vrlwt")
 [node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="41" unique_id=1960306800]
 shape = SubResource("ConvexPolygonShape3D_k4jny")
 
-[node name="TrailEmitter2" type="Node3D" parent="." index="42" unique_id=1134755731]
+[node name="wake" type="Node3D" parent="." index="42" unique_id=1134755731]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
 script = ExtResource("27_g7l6b")
 template = ExtResource("28_wake")
@@ -432,7 +432,7 @@ emit_rate = 0.03
 size_multiplier = 15.0
 speed_scale = 0.3
 
-[node name="TrailEmitter3" type="Node3D" parent="." index="43" unique_id=295557932]
+[node name="wake2" type="Node3D" parent="." index="43" unique_id=295557932]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
 script = ExtResource("27_g7l6b")
 template = ExtResource("28_wake")
@@ -440,7 +440,7 @@ emit_rate = 0.03
 size_multiplier = 20.0
 speed_scale = 0.3
 
-[node name="TrailEmitter4" type="Node3D" parent="." index="44" unique_id=1322535710]
+[node name="Exaust" type="Node3D" parent="." index="44" unique_id=1322535710]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 29.503836, 13.607868)
 script = ExtResource("30_ssrv5")
 template = ExtResource("31_0yy7r")

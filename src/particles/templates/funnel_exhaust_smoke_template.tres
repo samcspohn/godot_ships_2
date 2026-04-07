@@ -4,8 +4,8 @@
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_smoke"]
-offsets = PackedFloat32Array(0, 0.015659954, 0.15, 0.72930646, 1)
-colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.08, 0.08, 0.08, 0.74509805, 0.03, 0.03, 0.03, 0.5058824, 0.1332072, 0.129255, 0.12135299, 0.25, 0.09998604, 0.09998598, 0.099985994, 0)
+offsets = PackedFloat32Array(0, 0.03131991, 1)
+colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.37791878, 0.37791893, 0.37791854, 0.83137256, 0.37413937, 0.37413928, 0.37413898, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_smoke"]
 gradient = SubResource("Gradient_smoke")
@@ -32,6 +32,6 @@ damping_max = 0.5
 lifetime_min = 4.0
 lifetime_max = 6.0
 lifetime_randomness = 0.3
-scale_min = Vector2(2, 2)
-scale_max = Vector2(4.5, 4.5)
+scale_min = Vector2(4, 4)
+scale_max = Vector2(8, 8)
 is_trail = true
