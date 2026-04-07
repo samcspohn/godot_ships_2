@@ -35,5 +35,6 @@ lifetime_min = 4.0
 lifetime_max = 5.0
 scale_min = Vector2(3, 4)
 scale_max = Vector2(8, 4)
+is_trail = true
 billboard_mode = 2
 fixed_rotation = Vector3(90, 0, 0)

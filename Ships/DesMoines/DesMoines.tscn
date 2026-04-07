@@ -26,7 +26,7 @@
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="15_xosf1"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_3nwwl"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="22_wake"]
-[ext_resource type="Script" uid="uid://8ly51uodan7" path="res://addons/Godot-Unified-Particle-System/particles/trail_emitter.gd" id="27_4jnyp"]
+[ext_resource type="Script" uid="uid://8ly51uodan7" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="27_4jnyp"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://src/particles/templates/funnel_exhaust_smoke_template.tres" id="28_e3uhd"]
 
 [sub_resource type="Resource" id="Resource_8wi57"]
@@ -389,8 +389,8 @@ speed_scale = 0.3
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 23.689333, 6.2772636)
 script = ExtResource("27_4jnyp")
 template = ExtResource("28_e3uhd")
-emit_rate = 0.34
-size_multiplier = 7.0
+emit_rate = 0.2
+size_multiplier = 10.0
 speed_scale = 0.4
 metadata/_custom_type_script = "uid://8ly51uodan7"
 

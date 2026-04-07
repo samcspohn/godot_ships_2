@@ -1,4 +1,4 @@
-extends TrailEmitter
+extends ParticleEmitter
 
 @export var here: float
 var local_offset: Vector3

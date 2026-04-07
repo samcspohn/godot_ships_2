@@ -50,7 +50,7 @@ var beam: float = 0.0
 @export_range(1, 11) var tier: int = 1
 
 var particles_active = false
-var trail_emitters: Array[TrailEmitter] = []
+var trail_emitters: Array[ParticleEmitter] = []
 # var server_position: Vector3
 # var server_rotation: Basis
 # @export var fires: Array[Fire] = []
@@ -198,7 +198,7 @@ func _ready() -> void:
 		self.freeze = true
 
 		for child in get_children():
-			if child is TrailEmitter:
+			if child is ParticleEmitter:
 				trail_emitters.append(child)
 	else:
 		set_process(false)
