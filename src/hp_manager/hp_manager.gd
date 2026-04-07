@@ -41,7 +41,7 @@ var current_hp:
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
-const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
+# const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
@@ -121,11 +121,11 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		return [0, false]
 
 	# ship.update_static_mods = true
-	var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
-	var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
-	dmg *= dmg_mod
+	# var radius_mod = shell_cal / SHELL_DAMAGE_RADIUS_MOD
+	# var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
+	# dmg *= dmg_mod
 	dmg /= params.p().mult
-	base_dmg *= dmg_mod
+	# base_dmg *= dmg_mod
 	base_dmg /= params.p().mult
 
 	# TODO: how to handle overpenetration/citadel overpen damage?

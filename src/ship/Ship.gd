@@ -177,6 +177,11 @@ func _ready() -> void:
 	# 	f._ship = self
 	# Initialize armor system
 	initialize_armor_system()
+	if citadel == null:
+		for part in armor_parts:
+			if part.type == ArmorPart.Type.CASEMATE:
+				citadel = part
+				break
 
 	# Generate hull collision if enabled, otherwise use existing box collider
 	if use_hull_collision:
@@ -651,6 +656,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
 		elif node.name.to_lower().contains("citadel"):
 			armor_part.type = ArmorPart.Type.CITADEL
+			self.citadel = armor_part
 
 	for child in node.get_children():
 		enable_backface_collision_recursive(child)
