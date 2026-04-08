@@ -32,7 +32,7 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	return false
 
 func _ready():
-	_ship = get_parent().get_parent() as Ship
+	_ship = $"../../.." as Ship
 	await _ship.ready
 	hp = _ship.health_controller
 	var s = _ship.get_node("Hull").get_aabb().size.length() / 10.0

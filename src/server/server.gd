@@ -306,6 +306,7 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 
 	var player: Ship = load(ship).instantiate()
 	player.name = _player_name
+	player.visible = false
 
 	player._enable_weapons()
 

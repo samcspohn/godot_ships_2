@@ -236,55 +236,48 @@ acceleration_time = 40.0
 deceleration_time = 10.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 600.0
-slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.15
 rudder_response_time = 14.0
-lateral_drag_multiplier = 1.7
 max_turn_roll_angle = 5.5
 nav_size = 4
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_i4gay")
 rparams = SubResource("Resource_vudfj")
-fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
+fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
 
-[node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
+[node name="Fire" parent="Modules/FireManager" index="0" unique_id=640486016 instance=ExtResource("16_nfp68")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.876056, -102.259605)
+
+[node name="Fire2" parent="Modules/FireManager" index="1" unique_id=906524760 instance=ExtResource("16_nfp68")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 19.97113, -14.608513)
+
+[node name="Fire3" parent="Modules/FireManager" index="2" unique_id=2139874744 instance=ExtResource("16_nfp68")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 43.45572)
+
+[node name="Fire4" parent="Modules/FireManager" index="3" unique_id=792926563 instance=ExtResource("16_nfp68")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
+
+[node name="FloodManager" parent="Modules" index="6" unique_id=485605645]
 params = SubResource("Resource_sdl3k")
-floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+
+[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=2135835489 instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
+
+[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=67181326 instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14.608513)
+
+[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=18445130 instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 43.45572)
+
+[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=977415347 instance=ExtResource("17_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 125.0045)
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_ss0d1"), ExtResource("15_fadtt")])
 
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
-
-[node name="fires" type="Node3D" parent="." index="1" unique_id=723761431]
-
-[node name="Fire" parent="fires" index="0" unique_id=640486016 instance=ExtResource("16_nfp68")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.876056, -102.259605)
-
-[node name="Fire2" parent="fires" index="1" unique_id=906524760 instance=ExtResource("16_nfp68")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 19.97113, -14.608513)
-
-[node name="Fire3" parent="fires" index="2" unique_id=2139874744 instance=ExtResource("16_nfp68")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 43.45572)
-
-[node name="Fire4" parent="fires" index="3" unique_id=792926563 instance=ExtResource("16_nfp68")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
-
-[node name="FloodNodes" type="Node3D" parent="." index="2" unique_id=1546987851]
-
-[node name="Flood" parent="FloodNodes" index="0" unique_id=2135835489 instance=ExtResource("17_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
-
-[node name="Flood2" parent="FloodNodes" index="1" unique_id=67181326 instance=ExtResource("17_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14.608513)
-
-[node name="Flood3" parent="FloodNodes" index="2" unique_id=18445130 instance=ExtResource("17_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 43.45572)
-
-[node name="Flood4" parent="FloodNodes" index="3" unique_id=977415347 instance=ExtResource("17_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 125.0045)
 
 [node name="500mmBarbette_col" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="18" unique_id=1012117797]
 layers = 0
@@ -378,55 +371,59 @@ max_rotation_angle = 2.583087292951608
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Citadel_col" parent="." index="10" unique_id=1400005419]
+[node name="Hull_Citadel_col" parent="." index="8" unique_id=1400005419]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Bow_col" parent="." index="12" unique_id=144774345]
+[node name="Hull_Bow_col" parent="." index="10" unique_id=144774345]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Stern_col" parent="." index="14" unique_id=676823597]
+[node name="Hull_Stern_col" parent="." index="12" unique_id=676823597]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_CaseMate_col" parent="." index="16" unique_id=709711495]
+[node name="Hull_CaseMate_col" parent="." index="14" unique_id=709711495]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="17" unique_id=1739079740]
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="15" unique_id=1739079740]
 shape = SubResource("ConvexPolygonShape3D_8j47w")
 
-[node name="TrailEmitter" type="Node3D" parent="." index="18" unique_id=1543568301]
+[node name="TrailEmitter" type="Node3D" parent="." index="16" unique_id=1543568301]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 90.318)
 script = ExtResource("21_pm07r")
 template = ExtResource("22_wake")
 emit_rate = 0.032
 size_multiplier = 18.0
 speed_scale = 0.15
+auto_start = true
 
-[node name="TrailEmitter2" type="Node3D" parent="." index="19" unique_id=981572906]
+[node name="TrailEmitter2" type="Node3D" parent="." index="17" unique_id=981572906]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -174.37076)
 script = ExtResource("21_pm07r")
 template = ExtResource("22_wake")
 emit_rate = 0.025
 size_multiplier = 20.0
 speed_scale = 0.12
+auto_start = true
 
-[node name="TrailEmitter4" type="Node3D" parent="." index="21" unique_id=461112369]
+[node name="TrailEmitter4" type="Node3D" parent="." index="19" unique_id=461112369]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 26.89194, 24.17419)
 script = ExtResource("25_gpbbn")
 template = ExtResource("26_itqm6")
 emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
+auto_start = true
 
-[node name="TrailEmitter5" type="Node3D" parent="." index="22" unique_id=1606279390]
+[node name="TrailEmitter5" type="Node3D" parent="." index="20" unique_id=1606279390]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.812918, -0.6361103)
 script = ExtResource("25_gpbbn")
 template = ExtResource("26_itqm6")
 emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
+auto_start = true
 
 [editable path="Modules"]

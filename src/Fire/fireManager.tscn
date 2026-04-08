@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://blvke4gmq0asw"]
+[gd_scene format=3 uid="uid://blvke4gmq0asw"]
 
 [ext_resource type="Script" uid="uid://bb1b5fegrks0f" path="res://src/Fire/fire_manager.gd" id="1_qolbm"]
 
-[node name="FireManager" type="Node"]
+[node name="FireManager" type="Node3D" unique_id=2063005595]
 script = ExtResource("1_qolbm")

@@ -35,48 +35,48 @@
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
-[sub_resource type="Resource" id="Resource_kp8pn"]
+[sub_resource type="Resource" id="Resource_ww2ma"]
 resource_local_to_scene = true
 script = ExtResource("4_kxwob")
 torpedo_protection = 0.24
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_iohum"]
+[sub_resource type="Resource" id="Resource_afiln"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
 pool1 = 201000.0
 pool2 = 201000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_4564o"]
+[sub_resource type="Resource" id="Resource_kp8pn"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
 pool1 = 17866.666666666668
 pool2 = 35733.333333333336
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
+[sub_resource type="Resource" id="Resource_iohum"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 7816.666666666667
+pool2 = 15633.333333333334
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_4564o"]
+resource_local_to_scene = true
+script = ExtResource("4_onxit")
+pool1 = 7816.666666666667
+pool2 = 15633.333333333334
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
 [sub_resource type="Resource" id="Resource_u0hyh"]
-resource_local_to_scene = true
-script = ExtResource("4_onxit")
-pool1 = 7816.666666666667
-pool2 = 15633.333333333334
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_ks2dr"]
-resource_local_to_scene = true
-script = ExtResource("4_onxit")
-pool1 = 7816.666666666667
-pool2 = 15633.333333333334
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_ktcsn"]
 resource_local_to_scene = true
 script = ExtResource("4_onxit")
 pool1 = 11166.666666666666
 pool2 = 22333.333333333332
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_060o5"]
+[sub_resource type="Resource" id="Resource_ks2dr"]
 resource_local_to_scene = true
 script = ExtResource("14_w4pwy")
 radius = 13000.0
@@ -84,7 +84,7 @@ bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
-[sub_resource type="Resource" id="Resource_gitck"]
+[sub_resource type="Resource" id="Resource_ktcsn"]
 resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
@@ -97,7 +97,7 @@ auto_bounce = 1.0472
 overmatch = 27
 arming_threshold = 63
 
-[sub_resource type="Resource" id="Resource_duhvu"]
+[sub_resource type="Resource" id="Resource_060o5"]
 resource_local_to_scene = true
 script = ExtResource("8_8qd2y")
 speed = 820.0
@@ -114,12 +114,12 @@ ricochet_angle = 0.785398
 overmatch = 95
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_chqw8"]
+[sub_resource type="Resource" id="Resource_gitck"]
 resource_local_to_scene = true
 script = ExtResource("6_lcoqi")
 elevation_speed = 6.0
-shell1 = SubResource("Resource_gitck")
-shell2 = SubResource("Resource_duhvu")
+shell1 = SubResource("Resource_ktcsn")
+shell2 = SubResource("Resource_060o5")
 h_grouping = 1.7
 v_grouping = 1.7
 base_spread = 0.02
@@ -133,7 +133,7 @@ script = ExtResource("13_kxwob")
 max_buildup = 160.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_nuepf"]
+[sub_resource type="Resource" id="Resource_duhvu"]
 resource_local_to_scene = true
 script = ExtResource("13_kaouq")
 dmg_rate = 0.002
@@ -141,7 +141,7 @@ dur = 100.0
 max_buildup = 160.0
 metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 
-[sub_resource type="Resource" id="Resource_mwddl"]
+[sub_resource type="Resource" id="Resource_chqw8"]
 resource_local_to_scene = true
 script = ExtResource("16_kxwob")
 icon = ExtResource("15_kaouq")
@@ -171,19 +171,19 @@ use_hull_collision = true
 [node name="Modules" parent="." index="0" unique_id=1714568907 instance=ExtResource("2_5bir6")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-params = SubResource("Resource_kp8pn")
+params = SubResource("Resource_ww2ma")
 _max_hp = 67000.0
-citadel = SubResource("Resource_iohum")
-casemate = SubResource("Resource_4564o")
-bow = SubResource("Resource_u0hyh")
-stern = SubResource("Resource_ks2dr")
-superstructure = SubResource("Resource_ktcsn")
+citadel = SubResource("Resource_afiln")
+casemate = SubResource("Resource_kp8pn")
+bow = SubResource("Resource_iohum")
+stern = SubResource("Resource_4564o")
+superstructure = SubResource("Resource_u0hyh")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
-params = SubResource("Resource_060o5")
+params = SubResource("Resource_ks2dr")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_chqw8")
+params = SubResource("Resource_gitck")
 guns = [NodePath("../../TurretMount_GER_380mm_2b/GER_380mm_2b"), NodePath("../../TurretMount_GER_380mm_2b_rf/GER_380mm_2b_rf"), NodePath("../../TurretMount_GER_380mm_2b_rf_001/GER_380mm_2b_rf_001"), NodePath("../../TurretMount_GER_380mm_2b_rf_002/GER_380mm_2b_rf_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
@@ -207,72 +207,65 @@ acceleration_time = 40.0
 deceleration_time = 30.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 400.0
-slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.15
 rudder_response_time = 10.0
-lateral_drag_multiplier = 1.7
 nav_size = 2
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("12_kaouq")
 rparams = SubResource("Resource_y4tl2")
-fires = [NodePath("../../FireNodes/Fire"), NodePath("../../FireNodes/Fire2"), NodePath("../../FireNodes/Fire3"), NodePath("../../FireNodes/Fire4")]
+fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
 
-[node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
-params = SubResource("Resource_nuepf")
-floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+[node name="Fire" parent="Modules/FireManager" index="0" unique_id=1632118192 instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.350202, -84.116)
+
+[node name="Fire2" parent="Modules/FireManager" index="1" unique_id=400624347 instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.269992, -26.3775)
+
+[node name="Fire3" parent="Modules/FireManager" index="2" unique_id=538506489 instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.4077015, 29.8215)
+
+[node name="Fire4" parent="Modules/FireManager" index="3" unique_id=35590103 instance=ExtResource("10_2e51t")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.350092, 92.8848)
+
+[node name="FloodManager" parent="Modules" index="6" unique_id=485605645]
+params = SubResource("Resource_duhvu")
+
+[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=1445449427 instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -84.116)
+
+[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=107821261 instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -26.3775)
+
+[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=1949772609 instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 29.8215)
+
+[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=685453925 instance=ExtResource("11_flood")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 92.8848)
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("6_id6nr")]([SubResource("Resource_mwddl"), ExtResource("18_usy8k")])
+equipped_consumables = Array[ExtResource("6_id6nr")]([SubResource("Resource_chqw8"), ExtResource("18_usy8k")])
 
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("13_5tc2e")]([null, null, null])
 
-[node name="FireNodes" type="Node3D" parent="." index="1" unique_id=66606896]
-
-[node name="Fire" parent="FireNodes" index="0" unique_id=1632118192 instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.350202, -84.116)
-
-[node name="Fire2" parent="FireNodes" index="1" unique_id=400624347 instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.269992, -26.3775)
-
-[node name="Fire3" parent="FireNodes" index="2" unique_id=538506489 instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.4077015, 29.8215)
-
-[node name="Fire4" parent="FireNodes" index="3" unique_id=35590103 instance=ExtResource("10_2e51t")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.350092, 92.8848)
-
-[node name="FloodNodes" type="Node3D" parent="." index="2" unique_id=1528180614]
-
-[node name="Flood" parent="FloodNodes" index="0" unique_id=1445449427 instance=ExtResource("11_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -84.116)
-
-[node name="Flood2" parent="FloodNodes" index="1" unique_id=107821261 instance=ExtResource("11_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -26.3775)
-
-[node name="Flood3" parent="FloodNodes" index="2" unique_id=1949772609 instance=ExtResource("11_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 29.8215)
-
-[node name="Flood4" parent="FloodNodes" index="3" unique_id=685453925 instance=ExtResource("11_flood")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 92.8848)
-
-[node name="SuperStructure_col" parent="." index="3"]
+[node name="SuperStructure_col" parent="." index="1"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col" parent="." index="16"]
+[node name="For-Barbette_col" parent="." index="14"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Aft-Barbette_col" parent="." index="17"]
+[node name="Aft-Barbette_col" parent="." index="15"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="For-Barbette_col_001" parent="." index="18"]
+[node name="For-Barbette_col_001" parent="." index="16"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Aft-Barbette_col_001" parent="." index="19"]
+[node name="Aft-Barbette_col_001" parent="." index="17"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
@@ -347,47 +340,50 @@ max_rotation_angle = 2.9638556402871927
 min_rotation_angle = 0.00398590263774245
 max_rotation_angle = 2.8422316975614645
 
-[node name="Hull_Citadel_col" parent="." index="38"]
+[node name="Hull_Citadel_col" parent="." index="36"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Bow_col" parent="." index="40"]
+[node name="Hull_Bow_col" parent="." index="38"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Stern_col" parent="." index="42"]
+[node name="Hull_Stern_col" parent="." index="40"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="Hull_Casemate_col" parent="." index="44"]
+[node name="Hull_Casemate_col" parent="." index="42"]
 layers = 0
 material_override = ExtResource("14_pww3p")
 
-[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="46" unique_id=685717458]
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="44" unique_id=685717458]
 shape = SubResource("ConvexPolygonShape3D_u0hyh")
 
-[node name="TrailEmitter2" type="Node3D" parent="." index="47" unique_id=1385002033]
+[node name="TrailEmitter2" type="Node3D" parent="." index="45" unique_id=1385002033]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
 script = ExtResource("28_usy8k")
 template = ExtResource("29_wake")
 emit_rate = 0.03
 size_multiplier = 15.0
 speed_scale = 0.3
+auto_start = true
 
-[node name="TrailEmitter3" type="Node3D" parent="." index="48" unique_id=1953850310]
+[node name="TrailEmitter3" type="Node3D" parent="." index="46" unique_id=1953850310]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
 script = ExtResource("28_usy8k")
 template = ExtResource("29_wake")
 emit_rate = 0.03
 size_multiplier = 20.0
 speed_scale = 0.3
+auto_start = true
 
-[node name="Exaust" type="Node3D" parent="." index="49" unique_id=1201441871]
+[node name="Exaust" type="Node3D" parent="." index="47" unique_id=1201441871]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 23.44927, -1.4691973)
 script = ExtResource("31_ww2ma")
 template = ExtResource("32_afiln")
 emit_rate = 0.15
 size_multiplier = 14.0
 speed_scale = 0.3
+auto_start = true
 
 [editable path="Modules"]

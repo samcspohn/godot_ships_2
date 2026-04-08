@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://brasgycy2b0h8"]
 
-[ext_resource type="Script" path="res://src/Flood/flood_manager.gd" id="1_flood"]
+[ext_resource type="Script" uid="uid://db6cc7i67c8or" path="res://src/Flood/flood_manager.gd" id="1_flood"]
 
-[node name="FloodManager" type="Node"]
+[node name="FloodManager" type="Node3D" unique_id=306465581]
 script = ExtResource("1_flood")

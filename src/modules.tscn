@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://Skills/skills_manager.gd" id="9_hnrpx"]
 [ext_resource type="Script" uid="uid://kfbekstmxsvi" path="res://src/Upgrades/upgrades.gd" id="9_s01fk"]
 
-[node name="Modules" type="Node" unique_id=1386842876]
+[node name="Modules" type="Node3D" unique_id=2063116617]
 
 [node name="HPManager" type="Node" parent="." unique_id=1137121331]
 script = ExtResource("1_exjcu")
@@ -33,7 +33,9 @@ metadata/_custom_type_script = "uid://b112omat8o001"
 
 [node name="MovementController" parent="." unique_id=1088594109 instance=ExtResource("4_1t3ll")]
 script = ExtResource("6_s01fk")
+slow_speed_turn_tightening = 0.8
 turn_speed_loss = 0.2
+lateral_drag_multiplier = 1.7
 max_turn_roll_angle = 5.0
 roll_response_time = 2.0
 righting_strength = 5.0

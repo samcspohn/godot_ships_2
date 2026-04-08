@@ -267,18 +267,39 @@ acceleration_time = 40.0
 deceleration_time = 40.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 320.0
-slow_speed_turn_tightening = 0.8
 rudder_response_time = 15.0
-lateral_drag_multiplier = 1.7
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_rniut")
 rparams = SubResource("Resource_g21k6")
-fires = [NodePath("../../fires/Fire"), NodePath("../../fires/Fire2"), NodePath("../../fires/Fire3"), NodePath("../../fires/Fire4")]
+fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
 
-[node name="FloodManager" parent="Modules" index="6" unique_id=485605645 node_paths=PackedStringArray("floods")]
+[node name="Fire" parent="Modules/FireManager" index="0" unique_id=1707173509 instance=ExtResource("12_buwu7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.876056, -100.581726)
+
+[node name="Fire2" parent="Modules/FireManager" index="1" unique_id=631114651 instance=ExtResource("12_buwu7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 17.151447, -8.797846)
+
+[node name="Fire3" parent="Modules/FireManager" index="2" unique_id=427597907 instance=ExtResource("12_buwu7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 28.13929)
+
+[node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1287646701 instance=ExtResource("12_buwu7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 74.15901)
+
+[node name="FloodManager" parent="Modules" index="6" unique_id=485605645]
 params = SubResource("Resource_26rxh")
-floods = [NodePath("../../FloodNodes/Flood"), NodePath("../../FloodNodes/Flood2"), NodePath("../../FloodNodes/Flood3"), NodePath("../../FloodNodes/Flood4")]
+
+[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=574910533 instance=ExtResource("13_jppql")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
+
+[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=1180104592 instance=ExtResource("13_jppql")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -27.618103)
+
+[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=1060840999 instance=ExtResource("13_jppql")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 38.2433)
+
+[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=1765229231 instance=ExtResource("13_jppql")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 86.26976)
 
 [node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_hv85d"), SubResource("Resource_ssrv5")])
@@ -286,55 +307,27 @@ equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_hv8
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("17_svlgc")]([null, null, null])
 
-[node name="fires" type="Node3D" parent="." index="1" unique_id=255622587]
-
-[node name="Fire" parent="fires" index="0" unique_id=1707173509 instance=ExtResource("12_buwu7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.876056, -100.581726)
-
-[node name="Fire2" parent="fires" index="1" unique_id=631114651 instance=ExtResource("12_buwu7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 17.151447, -8.797846)
-
-[node name="Fire3" parent="fires" index="2" unique_id=427597907 instance=ExtResource("12_buwu7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 28.13929)
-
-[node name="Fire4" parent="fires" index="3" unique_id=1287646701 instance=ExtResource("12_buwu7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 74.15901)
-
-[node name="FloodNodes" type="Node3D" parent="." index="2" unique_id=394868501]
-
-[node name="Flood" parent="FloodNodes" index="0" unique_id=574910533 instance=ExtResource("13_jppql")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
-
-[node name="Flood2" parent="FloodNodes" index="1" unique_id=1180104592 instance=ExtResource("13_jppql")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -27.618103)
-
-[node name="Flood3" parent="FloodNodes" index="2" unique_id=1060840999 instance=ExtResource("13_jppql")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 38.2433)
-
-[node name="Flood4" parent="FloodNodes" index="3" unique_id=1765229231 instance=ExtResource("13_jppql")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 86.26976)
-
-[node name="Barbette_col" parent="." index="10" unique_id=800002117]
+[node name="Barbette_col" parent="." index="8" unique_id=800002117]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_001" parent="." index="11" unique_id=1920365011]
+[node name="Barbette_col_001" parent="." index="9" unique_id=1920365011]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_002" parent="." index="12" unique_id=429761014]
+[node name="Barbette_col_002" parent="." index="10" unique_id=429761014]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_003" parent="." index="13" unique_id=2062313718]
+[node name="Barbette_col_003" parent="." index="11" unique_id=2062313718]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Barbette_col_004" parent="." index="14" unique_id=1751081613]
+[node name="Barbette_col_004" parent="." index="12" unique_id=1751081613]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="SuperStructure_col" parent="." index="15" unique_id=385383813]
+[node name="SuperStructure_col" parent="." index="13" unique_id=385383813]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
@@ -405,47 +398,50 @@ max_rotation_angle = 2.8099800957108707
 min_rotation_angle = 0.4598669449886561
 max_rotation_angle = 3.125410947686813
 
-[node name="Hull_Citadel_col" parent="." index="33" unique_id=76087076]
+[node name="Hull_Citadel_col" parent="." index="31" unique_id=76087076]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Casemate_col" parent="." index="35" unique_id=1236308411]
+[node name="Hull_Casemate_col" parent="." index="33" unique_id=1236308411]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Bow_col" parent="." index="37" unique_id=998067226]
+[node name="Hull_Bow_col" parent="." index="35" unique_id=998067226]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="Hull_Stern_col" parent="." index="39" unique_id=67111136]
+[node name="Hull_Stern_col" parent="." index="37" unique_id=67111136]
 layers = 0
 material_override = ExtResource("2_vrlwt")
 
-[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="41" unique_id=1960306800]
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="39" unique_id=1960306800]
 shape = SubResource("ConvexPolygonShape3D_k4jny")
 
-[node name="wake" type="Node3D" parent="." index="42" unique_id=1134755731]
+[node name="wake" type="Node3D" parent="." index="40" unique_id=1134755731]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -115.0465)
 script = ExtResource("27_g7l6b")
 template = ExtResource("28_wake")
 emit_rate = 0.03
 size_multiplier = 15.0
 speed_scale = 0.3
+auto_start = true
 
-[node name="wake2" type="Node3D" parent="." index="43" unique_id=295557932]
+[node name="wake2" type="Node3D" parent="." index="41" unique_id=295557932]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 86.7791)
 script = ExtResource("27_g7l6b")
 template = ExtResource("28_wake")
 emit_rate = 0.03
 size_multiplier = 20.0
 speed_scale = 0.3
+auto_start = true
 
-[node name="Exaust" type="Node3D" parent="." index="44" unique_id=1322535710]
+[node name="Exaust" type="Node3D" parent="." index="42" unique_id=1322535710]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 29.503836, 13.607868)
 script = ExtResource("30_ssrv5")
 template = ExtResource("31_0yy7r")
 emit_rate = 0.15
 size_multiplier = 17.0
 speed_scale = 0.2
+auto_start = true
 
 [editable path="Modules"]

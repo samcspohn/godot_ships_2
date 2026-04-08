@@ -35,8 +35,11 @@ func _ready() -> void:
 
 	# _params = params.duplicate(true)
 	# _params.init(params)
-	for f in fires:
+	#for f in fires:
+		#f.manager = self
+	for f: Fire in get_children():
 		f.manager = self
+		fires.append(f)
 
 	# _ship.reset_mods.connect(params.reset)
 	# _ship.reset_dynamic_mods.connect(params.reset_dynamic_mod)

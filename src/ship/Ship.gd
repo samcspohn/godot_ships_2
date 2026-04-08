@@ -49,8 +49,6 @@ var beam: float = 0.0
 @export var ship_class: ShipClass = ShipClass.CA
 @export_range(1, 11) var tier: int = 1
 
-var particles_active = false
-var trail_emitters: Array[ParticleEmitter] = []
 # var server_position: Vector3
 # var server_rotation: Basis
 # @export var fires: Array[Fire] = []
@@ -202,16 +200,12 @@ func _ready() -> void:
 		set_physics_process(false)
 		self.freeze = true
 
-		for child in get_children():
-			if child is ParticleEmitter:
-				trail_emitters.append(child)
 	else:
 		set_process(false)
 
 
 	self.collision_layer = 1 << 2
 	self.collision_mask = 1 | 1 << 2
-
 
 func set_input(input_array: Array, aim_point: Vector3) -> void:
 	# Split the input between movement and artillery controllers
@@ -228,9 +222,6 @@ func _process(delta: float) -> void:
 		Engine.get_frames_drawn() % 2 == 0:
 			global_position += linear_velocity * delta
 
-	if particles_active and not trail_emitters[0].is_emitting():
-		for emitter in trail_emitters:
-			emitter.start_emitting()
 
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
@@ -314,7 +305,8 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	# health_controller.max_hp = reader.get_float()
 	health_controller.from_bytes(reader.get_var())
 	visible_to_enemy = reader.get_u8() == 1
-	particles_active = true
+	visible = true
+
 
 func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	var pb = PackedByteArray()
@@ -373,10 +365,9 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# print("here")
 	if !self.initialized:
 		return
-	self.visible = true
 	# print("here2")
 
-	particles_active = true
+
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 
@@ -438,6 +429,7 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# var stats_bytes: PackedByteArray = reader.get_var()
 	# stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
+	self.visible = true
 
 
 func sync_player_data() -> PackedByteArray:
@@ -501,8 +493,7 @@ func sync_player_data() -> PackedByteArray:
 func sync_player(b: PackedByteArray):
 	if !self.initialized:
 		return
-	self.visible = true
-	particles_active = true
+
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 
@@ -566,16 +557,14 @@ func sync_player(b: PackedByteArray):
 	var stats_bytes: PackedByteArray = reader.get_var()
 	stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
+	self.visible = true
+
 
 
 @rpc("any_peer", "reliable")
 func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
-	if particles_active and trail_emitters[0].is_emitting():
-		for emitter in trail_emitters:
-			emitter.stop_emitting()
-		particles_active = false
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""

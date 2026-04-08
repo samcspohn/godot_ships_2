@@ -2,7 +2,7 @@ extends Node
 class_name FloodManager
 
 @export var params: FloodParams
-@export var floods: Array[Flood] = []
+var floods: Array[Flood] = []
 var _ship: Ship
 
 func get_active_floods() -> int:
@@ -15,5 +15,8 @@ func get_active_floods() -> int:
 func _ready() -> void:
 	await get_parent().get_parent().ready
 	params = params.instantiate(_ship) as FloodParams
-	for f in floods:
+	#for f in floods:
+		#f.manager = self
+	for f: Flood in get_children():
 		f.manager = self
+		floods.append(f)
