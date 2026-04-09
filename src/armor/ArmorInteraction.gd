@@ -342,7 +342,7 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 
 	return null
 
-const EPSILON: float = 0.0001
+const EPSILON: float = 0.001
 func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3,
 		projectile: ProjectileData, impact_velocity: Vector3,
 		face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D,

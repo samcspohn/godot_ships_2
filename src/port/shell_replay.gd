@@ -47,6 +47,9 @@ var shell_velocity_zero: bool = false
 # Validation mode
 var is_validating: bool = false
 var validation_results: Array = []
+var _validation_pending: bool = false
+var _validation_shell_data: Dictionary = {}
+var _validation_wait_frames: int = 0
 
 # Camera control
 var camera_rotation: Vector2 = Vector2.ZERO
@@ -139,10 +142,18 @@ func _physics_process(delta: float):
 		var forward = Vector3(sin(camera_rotation.y), 0, cos(camera_rotation.y))
 		var right = Vector3(cos(camera_rotation.y), 0, -sin(camera_rotation.y))
 		camera_target += (forward * move_input.z + right * move_input.x + Vector3.UP * move_input.y) * camera_speed * delta
-		update_camera_transform()
+		call_deferred("update_camera_transform")
 
 	# Handle replay playback
 	process_replay(delta)
+
+	# Run pending validation on the physics thread where direct_space_state is safe
+	if _validation_pending:
+		if _validation_wait_frames > 0:
+			_validation_wait_frames -= 1
+		else:
+			_validation_pending = false
+			run_validation_simulation(_validation_shell_data)
 
 func create_shell():
 	# Create a simple sphere to represent the shell
@@ -609,15 +620,24 @@ func start_validation():
 	sim_trail_points.clear()
 	update_sim_trail()
 
-	# Run validation simulation
-	run_validation_simulation(shell_params)
+	# Defer the actual simulation to _physics_process where direct_space_state
+	# is safe to access (project uses a separate physics thread).
+	# Wait 2 physics frames so the ship's collision shapes are flushed into
+	# the physics server before we raycast against them.
+	_validation_shell_data = shell_params
+	_validation_wait_frames = 2
+	_validation_pending = true
 
 	is_validating = true
 	validate_button.text = "Stop Validation"
+	validation_label.text = "Validation: Waiting for physics frame..."
 
 func stop_validation():
-	if ship != null:
-		_disable_armor_overlay(ship)
+	_validation_pending = false
+	_validation_shell_data = {}
+	_validation_wait_frames = 0
+	# if ship != null:
+	# 	_disable_armor_overlay(ship)
 	is_validating = false
 	validate_button.text = "Validate"
 
@@ -633,22 +653,22 @@ func extract_shell_params() -> Dictionary:
 	if first_shell_event == null:
 		return {}
 
-	# Use actual 500mm AP shell parameters from H44
+	# Use 460mm AP shell parameters from Yamato's artillery controller
 	var params = ShellParams.new()
-	params.speed = 810.0
-	params.drag = 0.008
-	params.damage = 20000.0
-	params.size = 5.0
-	params.caliber = 500.0
-	params.mass = 1850.0
+	params.speed = 780.0
+	params.drag = 1.8e-05
+	params.damage = 14500.0
+	params.size = 4.6
+	params.caliber = 460.0
+	params.mass = 1460.0
 	params.fire_buildup = 0.0
 	params.fuze_delay = 0.035
 	params.type = ShellParams.ShellType.AP
 	params.penetration_modifier = 1.0
 	params.auto_bounce = deg_to_rad(60.0)
 	params.ricochet_angle = deg_to_rad(45.0)
-	params.overmatch = 35
-	params.arming_threshold = 83
+	params.overmatch = 32
+	params.arming_threshold = 76
 
 	# Get position and velocity from first shell event
 	var hit_pos: Vector3 = first_shell_event.data["position"]
@@ -657,11 +677,11 @@ func extract_shell_params() -> Dictionary:
 	# Time step: 1/20 second
 	const TIME_STEP = 1.0 / 20.0
 
-	# Calculate prev_pos and current_pos centered around the hit position
-	# prev_pos = hit_pos - TIME_STEP * vel * 0.5
-	# current_pos = hit_pos + TIME_STEP * vel * 0.5
-	var prev_pos = hit_pos - vel * TIME_STEP * 0.5
-	var current_pos = hit_pos + vel * TIME_STEP * 0.5
+	# The first Shell event position is already at the armor surface.
+	# Place prev_pos a full timestep back so the ray starts well before the
+	# hull, and current_pos a full timestep forward so it passes through.
+	var prev_pos = hit_pos - vel * TIME_STEP
+	var current_pos = hit_pos + vel * TIME_STEP
 
 	return {
 		"params": params,
@@ -672,6 +692,9 @@ func extract_shell_params() -> Dictionary:
 	}
 
 func run_validation_simulation(shell_data: Dictionary):
+	# This function MUST run inside _physics_process because the project uses
+	# a separate physics thread and PhysicsDirectSpaceState3D is only safe to
+	# access from the physics thread.
 	validation_results.clear()
 
 	# Create ProjectileData (now a standalone C++ class, not nested in ProjectileManager)
@@ -685,6 +708,9 @@ func run_validation_simulation(shell_data: Dictionary):
 		_ship,
 		[]
 	)
+	# Set frame_count > 0 so process_travel applies its 10m backward ray
+	# extension, matching what happens for in-flight shells in the real game.
+	projectile.frame_count = 1
 
 	var space_state = world_3d.get_world_3d().direct_space_state
 
@@ -696,6 +722,11 @@ func run_validation_simulation(shell_data: Dictionary):
 	var sim_events: Array = []
 	var result = ArmorInteraction.process_travel(projectile, prev_pos, time_step, space_state, sim_events)
 
+	# Visualization and UI updates must happen on the main thread, so defer them
+	call_deferred("_on_validation_complete", sim_events, result)
+
+func _on_validation_complete(sim_events: Array, result):
+	# Called on the main thread after physics simulation completes.
 	# Visualize both trajectories
 	visualize_trajectories(sim_events)
 
@@ -788,14 +819,14 @@ func print_comparison_results(sim_events: Array, sim_result):
 			"Processing Shell":
 				print("Processing Shell: %s" % event.data.get("shell_info", ""))
 			"Ship":
-				print("Ship: %s pos=(%.1f, %.1f, %.1f), rot=(%.1f, %.1f, %.1f), scene=%s" % [
+				print("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s" % [
 					event.data.get("name", ""),
 					event.data["position"].x, event.data["position"].y, event.data["position"].z,
 					event.data["rotation"].x, event.data["rotation"].y, event.data["rotation"].z,
 					event.data.get("scene_path", "")
 				])
 			"Shell":
-				print("Shell: speed=%.1f vel=(%.1f, %.1f, %.1f) m/s, fuze=%.3f s, pos=(%.1f, %.1f, %.1f), pen: %.1f" % [
+				print("Shell: speed=%.15f vel=(%.15f, %.15f, %.15f) m/s, fuze=%.3f s, pos=(%.15f, %.15f, %.15f), pen: %.1f" % [
 					event.data["speed"],
 					event.data["velocity"].x, event.data["velocity"].y, event.data["velocity"].z,
 					event.data["fuze"],
