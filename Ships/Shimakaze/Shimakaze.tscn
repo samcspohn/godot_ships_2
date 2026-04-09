@@ -42,36 +42,36 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 [sub_resource type="Resource" id="Resource_3jgu3"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 45600.0
-pool2 = 45600.0
+pool1 = 36000.0
+pool2 = 36000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_nwevl"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 5066.666666666667
-pool2 = 10133.333333333334
+pool1 = 4000.0
+pool2 = 8000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_1jvua"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1773.3333333333333
-pool2 = 3546.6666666666665
+pool1 = 1400.0
+pool2 = 2800.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3vhro"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1773.3333333333333
-pool2 = 3546.6666666666665
+pool1 = 1400.0
+pool2 = 2800.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_44877"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 2533.3333333333335
-pool2 = 5066.666666666667
+pool1 = 2000.0
+pool2 = 4000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_l5cth"]
@@ -191,7 +191,7 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_2by4h")
-_max_hp = 15200.0
+_max_hp = 12000.0
 casemate_percent = 1.0
 citadel = SubResource("Resource_3jgu3")
 casemate = SubResource("Resource_nwevl")

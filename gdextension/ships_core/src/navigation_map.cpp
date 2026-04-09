@@ -1500,8 +1500,8 @@ bool NavigationMap::begin_path_search(PathSearch &search, Vector2 from, Vector2 
 	// Store world coords and original clearance for finish
 	search.from = from;
 	search.to = to;
-	search.clearance = clearance * 1.5f;
-	search.clearance_world = clearance * 1.5f;
+	search.clearance = clearance;
+	search.clearance_world = clearance;
 
 	// Clamp world coordinates to map bounds so that off-map points project to
 	// the nearest edge rather than landing on a far corner after grid clamping.

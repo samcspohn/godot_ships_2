@@ -206,13 +206,19 @@ struct ObstacleCollisionInfo {
 // Incoming shell threat data (for shell dodging/angling)
 struct IncomingShell {
 	int id;
-	Vector2 landing_pos;    // predicted XZ impact point
+	Vector2 landing_pos;    // predicted XZ impact point (center of threat line)
+	Vector2 landing_dir;    // normalized XZ direction of shell travel at impact
+	float threat_half_len;  // half-length of the threat line (steeper = shorter)
 	float time_remaining;   // real seconds until impact
 	float caliber;          // mm — for damage-weight prioritisation
 
-	IncomingShell() : id(-1), landing_pos(Vector2()), time_remaining(0.0f), caliber(0.0f) {}
-	IncomingShell(int p_id, Vector2 p_pos, float p_time, float p_cal)
-		: id(p_id), landing_pos(p_pos), time_remaining(p_time), caliber(p_cal) {}
+	IncomingShell()
+		: id(-1), landing_pos(Vector2()), landing_dir(Vector2(1, 0)),
+		  threat_half_len(15.0f), time_remaining(0.0f), caliber(0.0f) {}
+	IncomingShell(int p_id, Vector2 p_pos, float p_time, float p_cal,
+	              Vector2 p_dir, float p_half_len)
+		: id(p_id), landing_pos(p_pos), landing_dir(p_dir),
+		  threat_half_len(p_half_len), time_remaining(p_time), caliber(p_cal) {}
 };
 
 // Navigation state machine — simplified two-state design

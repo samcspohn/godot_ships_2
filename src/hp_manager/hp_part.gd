@@ -25,9 +25,9 @@ func init(_ship: Ship) -> void:
 	super.init(_ship)
 
 
-func apply_damage(dmg: float) -> float:
-	var dmg1 = dmg * 0.5
-	var dmg2 = dmg * 0.5
+func apply_damage(dmg: float, rate: float = 0.5) -> float:
+	var dmg1 = dmg * rate
+	var dmg2 = dmg * (1.0 - rate)
 
 	if current_pool1 > 0:
 		if current_pool1 >= dmg1:
@@ -78,19 +78,3 @@ func heal(amount: float) -> float:
 	current_pool2 += heal2
 	healable_damage = healable1 + healable2
 	return heal1 + heal2
-	# var heal1 = amount / 3.0
-	# var heal2 = amount / 3.0 * 2.0
-	# if current_pool1 + heal1 > pool1:
-	# 	heal1 = pool1 - current_pool1
-	# if current_pool2 + heal2 > pool2:
-	# 	heal2 = pool2 - current_pool2
-
-	# current_pool1 += heal1
-	# current_pool2 += heal2
-
-	# healable_damage -= heal1 + heal2
-
-	# return heal1 + heal2
-
-	# current_pool1 = clamp(current_pool1 + heal1, 0, pool1)
-	# current_pool2 = clamp(current_pool2 + heal2, 0, pool2)

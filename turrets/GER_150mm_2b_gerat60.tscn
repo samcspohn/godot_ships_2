@@ -3,10 +3,17 @@
 [ext_resource type="PackedScene" uid="uid://c7kxmqf5odbws" path="res://turrets/glb/GER_150mm_2b_gerat60.glb" id="1_kqkyl"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_56ou0"]
 [ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_mt5ug"]
+[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="4_3uwss"]
 
-[node name="GER_150mm_2b_gerat60" unique_id=1982921150 instance=ExtResource("1_kqkyl")]
+[node name="GER_150mm_2b_gerat60" unique_id=687386333 instance=ExtResource("1_kqkyl")]
 script = ExtResource("2_56ou0")
 _sound = ExtResource("3_mt5ug")
 pitch = 3.5
 volume = 0.8
 variance = 0.25
+max_rotation_angle = 0.0
+glb_path = "uid://c7kxmqf5odbws"
+
+[node name="150mmTurret_col" parent="." index="1" unique_id=172200676]
+layers = 0
+material_override = ExtResource("4_3uwss")

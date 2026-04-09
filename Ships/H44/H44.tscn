@@ -85,7 +85,7 @@ damage = 18500.0
 size = 5.0
 caliber = 500.0
 mass = 1850.0
-overmatch = 35
+overmatch = 34
 arming_threshold = 83
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
@@ -279,111 +279,108 @@ equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_ss0d
 [node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
 
-[node name="500mmBarbette_col" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="18" unique_id=1012117797]
+[node name="500mmBarbette_col" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="4" unique_id=1579110956]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_001" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="19" unique_id=1453900129]
+[node name="500mmBarbette_col_001" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="5" unique_id=124353722]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_002" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="20" unique_id=2119148582]
+[node name="500mmBarbette_col_002" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="6" unique_id=674337521]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_003" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="21" unique_id=1078584792]
+[node name="500mmBarbette_col_003" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="7" unique_id=262485840]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Superstructure_col" parent="Hull" parent_id_path=PackedInt32Array(1455215036) index="48" unique_id=773755606]
+[node name="Superstructure_col" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="34" unique_id=844118457]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 surface_material_override/0 = ExtResource("15_pnxfl")
 
-[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" parent_id_path=PackedInt32Array(2261099) index="0" unique_id=1332271903 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" parent_id_path=PackedInt32Array(573707745) index="0" unique_id=1332271903 instance=ExtResource("14_nfp68")]
 max_rotation_angle = 2.7401669256310974
 
-[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" parent_id_path=PackedInt32Array(237648400) index="0" unique_id=20859472 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" parent_id_path=PackedInt32Array(1925557527) index="0" unique_id=20859472 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.3335788713091694
-max_rotation_angle = 0.0
 
-[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" parent_id_path=PackedInt32Array(953290319) index="0" unique_id=1119718970 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" parent_id_path=PackedInt32Array(1043758769) index="0" unique_id=1119718970 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
 
-[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" parent_id_path=PackedInt32Array(1720604608) index="0" unique_id=1269835611 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" parent_id_path=PackedInt32Array(1088757772) index="0" unique_id=1269835611 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.577924966588375
 max_rotation_angle = 5.811946409141117
 
-[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" parent_id_path=PackedInt32Array(1524894316) index="0" unique_id=1507222303 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" parent_id_path=PackedInt32Array(1051729460) index="0" unique_id=1507222303 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 5.969026041820607
 
-[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" parent_id_path=PackedInt32Array(2113489230) index="0" unique_id=1537552933 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" parent_id_path=PackedInt32Array(343887266) index="0" unique_id=1537552933 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 6.2482787221397
 max_rotation_angle = 2.949606435870417
 
-[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" parent_id_path=PackedInt32Array(1437479024) index="0" unique_id=1393296534 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" parent_id_path=PackedInt32Array(836247842) index="0" unique_id=1393296534 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.22689280275926285
 max_rotation_angle = 2.670353755551324
 
-[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" parent_id_path=PackedInt32Array(488255963) index="0" unique_id=754672956 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" parent_id_path=PackedInt32Array(2031512157) index="0" unique_id=754672956 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.4363323129985824
 max_rotation_angle = 2.722713633111154
 
-[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" parent_id_path=PackedInt32Array(797505067) index="0" unique_id=506854244 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" parent_id_path=PackedInt32Array(1751005343) index="0" unique_id=506854244 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.33161255787892263
 max_rotation_angle = 3.141592653589793
 
-[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" parent_id_path=PackedInt32Array(1357246225) index="0" unique_id=1912627518 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" parent_id_path=PackedInt32Array(208543240) index="0" unique_id=1912627518 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5081117965086026
-max_rotation_angle = 0.0
 
-[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" parent_id_path=PackedInt32Array(477992639) index="0" unique_id=1978326833 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" parent_id_path=PackedInt32Array(232480482) index="0" unique_id=1978326833 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.17649923862968
 max_rotation_angle = 6.178465552059927
 
-[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" parent_id_path=PackedInt32Array(1038213442) index="0" unique_id=110945846 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" parent_id_path=PackedInt32Array(679485468) index="0" unique_id=110945846 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.03356267067948515
 max_rotation_angle = 2.7663898841263332
 
-[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" parent_id_path=PackedInt32Array(358157149) index="0" unique_id=313597726 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" parent_id_path=PackedInt32Array(1636617700) index="0" unique_id=313597726 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.13962634015954636
 max_rotation_angle = 3.0892327760299634
 
-[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" parent_id_path=PackedInt32Array(1916996406) index="0" unique_id=1891727688 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" parent_id_path=PackedInt32Array(1734794744) index="0" unique_id=1891727688 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.490658503988659
-max_rotation_angle = 0.0
 
-[node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" parent_id_path=PackedInt32Array(644398136) index="0" unique_id=1593747212 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" parent_id_path=PackedInt32Array(1217979268) index="0" unique_id=1593747212 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
 max_rotation_angle = 2.583087292951608
 
-[node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" parent_id_path=PackedInt32Array(714355431) index="0" unique_id=15487562 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" parent_id_path=PackedInt32Array(1769315193) index="0" unique_id=15487562 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" parent_id_path=PackedInt32Array(1882942606) index="0" unique_id=1774251165 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" parent_id_path=PackedInt32Array(668929582) index="0" unique_id=1774251165 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
 max_rotation_angle = 2.583087292951608
 
-[node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" parent_id_path=PackedInt32Array(1489500760) index="0" unique_id=639428331 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" parent_id_path=PackedInt32Array(167746005) index="0" unique_id=639428331 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Citadel_col" parent="." index="8" unique_id=1400005419]
+[node name="Hull_Citadel_col" parent="." index="8" unique_id=1944603706]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Bow_col" parent="." index="10" unique_id=144774345]
+[node name="Hull_Bow_col" parent="." index="10" unique_id=1052879043]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Stern_col" parent="." index="12" unique_id=676823597]
+[node name="Hull_Stern_col" parent="." index="12" unique_id=1263271912]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_CaseMate_col" parent="." index="14" unique_id=709711495]
+[node name="Hull_CaseMate_col" parent="." index="14" unique_id=555445765]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 

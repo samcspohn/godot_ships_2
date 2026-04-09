@@ -134,7 +134,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		ArmorPart.Type.MODULE:
 			_dmg = min(dmg, base_dmg * 0.1)
 		ArmorPart.Type.CITADEL:
-			_dmg = citadel.apply_damage(dmg)
+			_dmg = citadel.apply_damage(dmg, 0.333)
 		ArmorPart.Type.CASEMATE:
 			_dmg = casemate.apply_damage(dmg)
 		ArmorPart.Type.BOW:

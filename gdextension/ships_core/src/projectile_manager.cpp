@@ -792,6 +792,22 @@ int _ProjectileManager::fire_bullet(const Vector3 &vel, const Vector3 &pos, cons
 			entry.fire_time = static_cast<float>(current_time);
 			entry.caliber = caliber;
 			entry.team_id = team_id;
+
+			// Compute landing velocity and threat line length
+			Vector3 impact_vel = ProjectilePhysicsWithDragV2::calculate_velocity_at_time(vel, flight_time, shell);
+			entry.landing_vx = static_cast<float>(impact_vel.x);
+			entry.landing_vz = static_cast<float>(impact_vel.z);
+
+			double horiz_speed = std::sqrt(impact_vel.x * impact_vel.x + impact_vel.z * impact_vel.z);
+			double vert_speed = std::abs(impact_vel.y);
+			// angle_from_vertical: 0 = plunging, PI/2 = flat
+			double flatness = (horiz_speed + vert_speed > 1e-10) ? std::atan2(horiz_speed, vert_speed) : 0.0;
+			// Map flatness to threat_length: flat trajectory = long line, plunging = short
+			static constexpr float THREAT_LINE_MAX_HALF_LEN = 150.0f;
+			static constexpr float THREAT_LINE_MIN_HALF_LEN = 15.0f;
+			double t_factor = std::sin(flatness); // 0 for plunging, 1 for flat
+			entry.threat_half_len = static_cast<float>(THREAT_LINE_MIN_HALF_LEN + (THREAT_LINE_MAX_HALF_LEN - THREAT_LINE_MIN_HALF_LEN) * t_factor);
+
 			shell_landings[id] = entry;
 			shell_grid_insert(id, impact.x, impact.z);
 		}
@@ -1302,6 +1318,9 @@ Array _ProjectileManager::get_shells_near_position(Vector2 position, float radiu
 				d["landing_z"] = e.landing_z;
 				d["time_remaining"] = time_remaining;
 				d["caliber"] = e.caliber;
+				d["landing_vx"] = e.landing_vx;
+				d["landing_vz"] = e.landing_vz;
+				d["threat_half_len"] = e.threat_half_len;
 				result.push_back(d);
 			}
 		}

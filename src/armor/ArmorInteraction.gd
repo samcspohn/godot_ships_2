@@ -342,7 +342,7 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 
 	return null
 
-
+const EPSILON: float = 0.0001
 func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3,
 		projectile: ProjectileData, impact_velocity: Vector3,
 		face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D,
@@ -378,7 +378,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# var events: Array[String] = []
 	events.append("Processing Shell: %s %s " % [params.caliber, params.type])
 	var ship_scene_path := ship.scene_file_path
-	events.append("Ship: %s pos=(%f, %f, %f), rot=(%f, %f, %f), scene=%s" % [
+	events.append("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s" % [
 		ship.name,
 		ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z,
 		rad_to_deg(ship.global_transform.basis.get_euler().x),
@@ -406,6 +406,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	var iteration := 0
 	var max_iterations := 20
 
+	var offset = Vector3.ZERO
 	while shell.fuze <= params.fuze_delay and result != ArmorResult.SHATTER and \
 		  hit_node.ship == ship and iteration < max_iterations:
 		iteration += 1
@@ -419,12 +420,12 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			print(" ⚠️ Warning: negative effective armor calculated")
 
 		shell.pen = calculate_de_marre_penetration(params.mass, speed, params.caliber) * params.penetration_modifier
-		shell.position = hit_position
+		shell.position = hit_position + offset
 
-		events.append("Shell: speed=%f vel=(%f, %f, %f) m/s, fuze=%.3f s, pos=(%f, %f, %f), pen: %.1f" % [
+		events.append("Shell: speed=%.15f vel=(%.15f, %.15f, %.15f) m/s, fuze=%.3f s, pos=(%.15f, %.15f, %.15f), pen: %.1f" % [
 			shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
 			shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
-		var offset = Vector3.ZERO
+		offset = Vector3.ZERO
 		var deflection_mult := 1.0
 
 		# --- Overmatch: caliber vastly exceeds plate thickness ---
@@ -443,7 +444,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			var pen_ratio := e_armor / maxf(shell.pen, 1.0)
 			shell.velocity *= (1.0 - pen_ratio * 0.3)
 			shell.integrity = calculate_shell_integrity(pen_ratio * 0.5, shell.integrity)
-			shell.position += shell.velocity.normalized() * 0.001
+			offset += shell.velocity.normalized() * EPSILON
 
 			if shell.fuze < 0.0 and e_armor > params.arming_threshold:
 				shell.fuze = 0.0
@@ -458,7 +459,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			var energy_loss := 0.1
 			shell.velocity = calculate_ricochet_velocity(
 				shell.velocity, hit_normal, impact_angle, energy_loss)
-			offset += hit_normal * 0.001
+			offset += hit_normal * EPSILON
 
 			if shell.fuze < 0.0 and impact_angle > deg_to_rad(70.0):
 				shell.fuze = 0.0
@@ -474,7 +475,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 					var energy_loss: float = interaction["energy_loss_fraction"]
 					shell.velocity = calculate_ricochet_velocity(
 						shell.velocity, hit_normal, impact_angle, energy_loss)
-					offset += hit_normal * 0.001
+					offset += hit_normal * EPSILON
 
 					if shell.fuze < 0.0 and impact_angle > deg_to_rad(70.0):
 						shell.fuze = 0.0
@@ -482,12 +483,12 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 				ArmorResult.SHATTER:
 					shell.velocity = Vector3.ZERO
 					shell.fuze = params.fuze_delay
-					shell.position += hit_normal * 0.001
+					shell.position += hit_normal * EPSILON
 
 				ArmorResult.PARTIAL_PEN:
 					shell.velocity *= 0.1
 					shell.integrity *= 0.5
-					offset += shell.velocity.normalized() * 0.001
+					offset += shell.velocity.normalized() * EPSILON
 
 				ArmorResult.PEN, ArmorResult.OVERPEN:
 					if hit_node.is_citadel:
@@ -501,7 +502,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 					shell.velocity = exit_dir * exit_speed
 					shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity)
-					offset += shell.velocity.normalized() * 0.001
+					offset += shell.velocity.normalized() * EPSILON
 
 					if shell.fuze < 0.0 and e_armor > params.arming_threshold:
 						shell.fuze = 0.0
@@ -543,7 +544,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		if shell.fuze >= 0.0:
 			shell.fuze += fuze_elapsed
 
-	events.append("Shell: speed=%.1f vel=(%f, %f, %f) m/s, fuze=%.3f s, pos=(%f, %f, %f), pen: %.1f" % [
+	events.append("Shell: speed=%.10f vel=(%.10f, %.10f, %.10f) m/s, fuze=%.3f s, pos=(%.15f, %.15f, %.15f), pen: %.1f" % [
 		shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
 		shell.fuze, shell.end_position.x, shell.end_position.y, shell.end_position.z, shell.pen])
 

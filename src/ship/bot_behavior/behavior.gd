@@ -1272,16 +1272,20 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
 
-	Scans angles inward-out (0° first, ±10°, ±20°, … ±90° last), alternating
-	+/- at each step to avoid biasing one side.  For each angle, walks the SDF
-	center→outward to find the shore position, then checks concealment and
-	shootability.  Returns the first position that passes both checks.
-	Falls back to the best concealed-only position if nothing is shootable.
+	Generates two rings of candidate points — shore-line positions and offset
+	positions pushed out by 2.5× clearance.  When sort_by_proximity is true
+	(ship is already on this island), candidates are sorted by distance to the
+	ship so the nearest viable point wins.  Otherwise the original angle-priority
+	order is preserved (best hide heading first).
+
+	When spotted_position is provided (non-zero), candidates must also block LOS
+	to that position — this prevents the ship from shuffling between equally
+	exposed spots after being detected.
 	Returns { "pos": Vector3, "can_shoot": bool } or empty dict."""
 	var clearance = _get_ship_clearance()
 	if not NavigationMapManager.is_map_ready():
@@ -1296,8 +1300,11 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var shell_params = _ship.artillery_controller.get_shell_params()
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var threat_count = threats.size()
+	var my_pos = _ship.global_position
 
-	var best_concealed_fallback: Vector3 = Vector3.ZERO
+	# --- Phase 1: Collect all candidate positions ---
+	var candidates: Array[Vector3] = []
+	var offset_clearance = clearance * 2.5
 
 	var offset: float = 0.0
 	while offset <= angle_half_span + 0.001:
@@ -1311,49 +1318,75 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 		for a_off in angles_to_test:
 			var heading = hide_heading + a_off
 			var dir = Vector3(sin(heading), 0.0, cos(heading))
-			var pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
-			if pos == Vector3.ZERO:
-				continue
 
-			var any_in_range = false
-			for threat_pos in threats:
-				if pos.distance_to(threat_pos) <= gun_range:
-					any_in_range = true
-					break
-			if not any_in_range:
-				continue
+			# Ring 1: shore-line position (standard clearance)
+			var shore_pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
+			if shore_pos != Vector3.ZERO:
+				candidates.append(shore_pos)
 
-			var hidden_count: int = 0
-			for threat_pos in threats:
-				if _is_los_blocked_with_clearance(pos, threat_pos):
-					hidden_count += 1
-			if hidden_count < threat_count:
-				continue
-
-			var can_shoot_any: bool = false
-			if shell_params != null:
-				for t_ship in targets:
-					if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
-						continue
-					var target_pos = t_ship.global_position + target_aim_offset(t_ship)
-					if pos.distance_to(target_pos) > gun_range:
-						continue
-					var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
-					var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
-					if sol[0] == null:
-						continue
-					var shoot_result = Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship)
-					if shoot_result.can_shoot_over_terrain:
-						can_shoot_any = true
-						break
-
-			if can_shoot_any:
-				return { "pos": pos, "can_shoot": true }
-
-			if best_concealed_fallback == Vector3.ZERO:
-				best_concealed_fallback = pos
+			# Ring 2: offset position pushed out by 2.5× clearance
+			var offset_pos = _sdf_walk_to_shore(island_center, dir, island_radius, offset_clearance)
+			if offset_pos != Vector3.ZERO:
+				if shore_pos == Vector3.ZERO or offset_pos.distance_to(shore_pos) > clearance * 0.5:
+					candidates.append(offset_pos)
 
 		offset += angle_step
+
+	if candidates.is_empty():
+		return {}
+
+	# --- Phase 2: Optionally sort candidates by proximity to ship ---
+	if sort_by_proximity:
+		candidates.sort_custom(func(a: Vector3, b: Vector3) -> bool:
+			return a.distance_to(my_pos) < b.distance_to(my_pos)
+		)
+
+	# --- Phase 3: Evaluate candidates in order ---
+	var best_concealed_fallback: Vector3 = Vector3.ZERO
+
+	for pos in candidates:
+		var any_in_range = false
+		for threat_pos in threats:
+			if pos.distance_to(threat_pos) <= gun_range:
+				any_in_range = true
+				break
+		if not any_in_range:
+			continue
+
+		var hidden_count: int = 0
+		for threat_pos in threats:
+			if _is_los_blocked_with_clearance(pos, threat_pos):
+				hidden_count += 1
+		if hidden_count < threat_count:
+			continue
+
+		# If we have a spotted-position stamp, also require LOS blocked to it
+		if spotted_position != Vector3.ZERO:
+			if not _is_los_blocked_with_clearance(pos, spotted_position):
+				continue
+
+		var can_shoot_any: bool = false
+		if shell_params != null:
+			for t_ship in targets:
+				if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+					continue
+				var target_pos = t_ship.global_position + target_aim_offset(t_ship)
+				if pos.distance_to(target_pos) > gun_range:
+					continue
+				var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
+				var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
+				if sol[0] == null:
+					continue
+				var shoot_result = Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship)
+				if shoot_result.can_shoot_over_terrain:
+					can_shoot_any = true
+					break
+
+		if can_shoot_any:
+			return { "pos": pos, "can_shoot": true }
+
+		if best_concealed_fallback == Vector3.ZERO:
+			best_concealed_fallback = pos
 
 	if best_concealed_fallback != Vector3.ZERO:
 		return { "pos": best_concealed_fallback, "can_shoot": false }
@@ -1375,7 +1408,7 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 		return cw
 	return ccw
 
-func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = false) -> Dictionary:
+func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = false, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
 	"""Find the best island cover position given a desired engagement range and
 	a primary target.  Scores each island by distance-to-travel + deviation from
 	desired_range to the nearest enemy cluster.
@@ -1429,7 +1462,7 @@ func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: b
 		else:
 			hide_h = atan2(_cached_safe_dir.x, _cached_safe_dir.z)
 
-		var cover_result = _find_cover_position_on_island(isl_pos, isl_radius, hide_h, threats, targets)
+		var cover_result = _find_cover_position_on_island(isl_pos, isl_radius, hide_h, threats, targets, sort_by_proximity, spotted_position)
 		if cover_result.is_empty():
 			continue
 
@@ -1465,7 +1498,7 @@ func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: b
 			var score = absf(1.0 - absf(dest_to_cluster / desired_range))
 
 
-			if score < 0.3 if not prioritize_cover else 0.0:
+			if score < (0.3 if not prioritize_cover else 1.0):
 				best_score = score
 				best_id = isl["id"]
 				best_pos = isl_pos

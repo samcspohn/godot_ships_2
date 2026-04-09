@@ -116,6 +116,21 @@ private:
 	// holding position should not dodge approaching friendlies — the moving
 	// ship is the give-way vessel.
 	bool skip_ship_obstacles_;
+
+	// --- Health fraction for dynamic threat weighting ---
+	float health_fraction_;  // 0.0 = dead, 1.0 = full HP
+
+	// --- Dodge commitment (hysteresis to prevent oscillation) ---
+	// When threats are active and the ship picks a dodge direction, it commits
+	// to that direction for a minimum time.  This prevents symmetric threats
+	// (shells arriving perpendicular to heading) from causing frame-to-frame
+	// rudder oscillation between port and starboard.
+	float dodge_committed_rudder_;   // rudder sign of committed dodge (-1/+1), 0 = no commitment
+	float dodge_commitment_timer_;   // seconds remaining in commitment
+	static constexpr float DODGE_COMMITMENT_DURATION = 0.5f;   // minimum seconds to hold a dodge direction
+	static constexpr float DODGE_COMMITMENT_BIAS     = 8.0f;   // seconds of penalty added to candidates opposing the committed direction
+	static constexpr float DODGE_THREAT_WINDOW       = 3.0f;   // seconds before/after impact to sample arc points (Option C)
+
 	static constexpr float PARKED_SPEED_THRESHOLD = 10.0f;
 
 	// --- Incoming shell avoidance ---
@@ -126,12 +141,18 @@ private:
 	// These represent enemy ship positions that the pathfinder should route around.
 	std::vector<ThreatZone> threat_zones_;
 
-	static constexpr float SHELL_THREAT_RADIUS   = 300.0f; // max dist for a landing to matter
-	static constexpr float SHELL_THREAT_WEIGHT   = 8.0f;   // penalty scale in candidate scoring
-	static constexpr float TORPEDO_VIRTUAL_CALIBER = 800.0f; // virtual caliber for torpedo threat points
-	static constexpr float TORPEDO_SAMPLE_INTERVAL = 0.5f;   // seconds between torpedo path samples
+	static constexpr float SHELL_THREAT_RADIUS   = 300.0f;  // max dist from threat line for scoring
+	static constexpr float SHELL_THREAT_WEIGHT_BASE = 60.0f;  // base penalty — scaled by ship size and health
+	static constexpr float TORPEDO_VIRTUAL_CALIBER = 800.0f; // virtual caliber for torpedo threat lines
+	static constexpr float PARALLEL_BONUS_WEIGHT = 0.4f;    // perpendicularity penalty — low so proximity dominates over angling
+	static constexpr float GAP_CLEARANCE_PENALTY = 4.0f;     // penalty when ship barely fits between lines
+	static constexpr float TORPEDO_LINE_HALF_LEN = 600.0f;   // half-length of torpedo threat line
+	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
 
 	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
+	static float distance_to_line_segment(Vector2 point, Vector2 seg_center, Vector2 seg_dir, float half_len);
+
+	float get_dynamic_threat_weight() const;
 
 	// --- Debug: torpedo virtual threat points ---
 	Array get_debug_torpedo_threat_points() const;
@@ -277,6 +298,8 @@ public:
 	void set_grounded(bool grounded);
 	bool get_grounded() const;
 
+	void set_health_fraction(float fraction);
+
 	// --- Output ---
 
 	float get_rudder() const;
@@ -293,7 +316,7 @@ public:
 
 	// --- Incoming shell avoidance ---
 	void clear_incoming_shells();
-	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber);
+	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber, Vector2 landing_dir, float threat_half_len);
 
 	// --- Enemy threat avoidance (stealth pathfinding) ---
 	void clear_threat_zones();

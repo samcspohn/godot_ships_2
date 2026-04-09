@@ -41,36 +41,36 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 [sub_resource type="Resource" id="Resource_e3uhd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 151500.0
-pool2 = 151500.0
+pool1 = 13666.0
+pool2 = 123000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_8wi57"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 13466.666666666666
-pool2 = 26933.333333333332
+pool1 = 8883.333333333334
+pool2 = 17766.666666666668
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_1hsc6"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 5891.666666666667
-pool2 = 11783.333333333334
+pool1 = 4783.333333333333
+pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vp8fe"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 5891.666666666667
-pool2 = 11783.333333333334
+pool1 = 4783.333333333333
+pool2 = 9566.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3dafd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 8416.666666666666
-pool2 = 16833.333333333332
+pool1 = 6833.333333333333
+pool2 = 13666.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_d6neb"]
@@ -222,7 +222,8 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_4jnyp")
-_max_hp = 50500.0
+_max_hp = 41000.0
+casemate_percent = 0.65
 citadel = SubResource("Resource_e3uhd")
 casemate = SubResource("Resource_8wi57")
 bow = SubResource("Resource_1hsc6")
@@ -247,12 +248,12 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
 max_speed_knots = 33.0
-acceleration_time = 20.0
-deceleration_time = 20.0
+acceleration_time = 15.0
+deceleration_time = 15.0
 reverse_speed_ratio = 0.5
 turning_circle_radius = 300.0
 turn_speed_loss = 0.1
-rudder_response_time = 6.5
+rudder_response_time = 5.0
 
 [node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_xosf1")

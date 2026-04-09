@@ -26,7 +26,7 @@ var _debug_threat_weight: float = 0.0
 var _debug_throttle: int = 0
 var _debug_turn_sim_points_desired: Array[Vector3] = []
 var _debug_turn_sim_points_undesired: Array[Vector3] = []
-var _debug_shell_obstacles: Array = []  # [{landing_x, landing_z, time_remaining, caliber}]
+var _debug_shell_obstacles: Array = []  # [{landing_x, landing_z, time_remaining, caliber, landing_vx, landing_vz, threat_half_len}]
 var debug_draw_turn_sim: bool = true
 
 var debug_log_interval: float = 2.0
@@ -227,6 +227,10 @@ func _physics_process(delta: float) -> void:
 		delta
 	)
 	navigator.set_grounded(movement.is_grounded)
+
+	if _ship.health_controller:
+		var hp_frac: float = _ship.health_controller.current_hp / maxf(_ship.health_controller.max_hp, 1.0)
+		navigator.set_health_fraction(hp_frac)
 
 	# --- 2. Update dynamic obstacles (other ships) ---
 	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
@@ -500,11 +504,17 @@ func _update_shell_threats() -> void:
 	_debug_shell_obstacles = shells
 
 	for s in shells:
+		var vx: float = s["landing_vx"]
+		var vz: float = s["landing_vz"]
+		var spd: float = sqrt(vx * vx + vz * vz)
+		var landing_dir := Vector2(vx, vz) / maxf(spd, 1e-10)
 		navigator.add_incoming_shell(
 			s["shell_id"],
 			Vector2(s["landing_x"], s["landing_z"]),
 			s["time_remaining"],
-			s["caliber"]
+			s["caliber"],
+			landing_dir,
+			s["threat_half_len"]
 		)
 
 
@@ -987,16 +997,35 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
 
-		# --- p) Torpedo threat points ---
-		var torp_points = navigator.get_debug_torpedo_threat_points()
-		for t_pt in torp_points:
+		# --- p) Torpedo & shell threat lines ---
+		var threat_lines = navigator.get_debug_torpedo_threat_points()
+		for t_pt in threat_lines:
 			var landing_x: float = t_pt.get("landing_x", 0.0)
 			var landing_z: float = t_pt.get("landing_z", 0.0)
 			var time_remaining: float = t_pt.get("time_remaining", 0.0)
+			var caliber: float = t_pt.get("caliber", 0.0)
 			var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
-			var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
-			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
-			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
+
+			var has_line: bool = t_pt.has("line_start_x")
+			if has_line:
+				var sx: float = t_pt.get("line_start_x", 0.0)
+				var sz: float = t_pt.get("line_start_z", 0.0)
+				var ex: float = t_pt.get("line_end_x", 0.0)
+				var ez: float = t_pt.get("line_end_z", 0.0)
+				var is_torp: bool = caliber >= 500.0
+				var line_color: Color
+				if is_torp:
+					line_color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.4, 0.9, urgency))
+				else:
+					line_color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
+				var draw_y: float = 5.0
+				Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), line_color)
+				# Small sphere at the center for reference
+				Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 4.0, line_color)
+			else:
+				var color = Color(0.0, lerpf(0.5, 1.0, urgency), 1.0, lerpf(0.3, 0.8, urgency))
+				Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
+				Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
 
 	# --- m) Cover debug (circles + LOS lines) — only for CA behavior ---
 	if behavior is CABehavior:
@@ -1058,17 +1087,36 @@ func _emit_debug_draws() -> void:
 					Debug.draw_circle(Vector3(isl_pos.x, 9.0, isl_pos.z), isl_radius, Color(0.0, 0.8, 0.9, 0.35), 48)
 					Debug.draw_im_sphere(Vector3(isl_pos.x, 28.0, isl_pos.z), 15.0, Color(0.0, 0.9, 1.0, 0.6))
 
-	# --- o) Shell obstacles ---
+	# --- o) Shell obstacles (drawn as threat lines) ---
 	for s in _debug_shell_obstacles:
 		var landing_x: float = s.get("landing_x", 0.0)
 		var landing_z: float = s.get("landing_z", 0.0)
 		var time_remaining: float = s.get("time_remaining", 0.0)
 		var caliber: float = s.get("caliber", 0.0)
-		var radius: float = clampf(caliber * 0.2, 30.0, 120.0)
 		var urgency: float = clampf(1.0 - (time_remaining / 10.0), 0.0, 1.0)
 		var color = Color(1.0, lerpf(0.9, 0.0, urgency), 0.0, lerpf(0.4, 0.9, urgency))
-		Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), radius, color)
-		Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 8.0, color)
+		# Draw the threat line using landing velocity direction and threat_half_len
+		var vx: float = s.get("landing_vx", 0.0)
+		var vz: float = s.get("landing_vz", 0.0)
+		var spd: float = sqrt(vx * vx + vz * vz)
+		var half_len: float = s.get("threat_half_len", 15.0)
+		if spd > 1e-6 and half_len > 1.0:
+			var dir_x: float = vx / spd
+			var dir_z: float = vz / spd
+			# Line trails backward from landing point and extends 15m past it
+			var overshoot: float = 15.0
+			var sx: float = landing_x - dir_x * half_len * 2.0
+			var sz: float = landing_z - dir_z * half_len * 2.0
+			var ex: float = landing_x + dir_x * overshoot
+			var ez: float = landing_z + dir_z * overshoot
+			var draw_y: float = 5.0
+			Debug.draw_line(Vector3(sx, draw_y, sz), Vector3(ex, draw_y, ez), color)
+			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 5.0, color)
+		else:
+			# Fallback: draw as a circle if no velocity data
+			var radius: float = clampf(caliber * 0.2, 30.0, 120.0)
+			Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), radius, color)
+			Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 8.0, color)
 
 	# --- q) World-space label (nav state + skill info) ---
 	if behavior != null:

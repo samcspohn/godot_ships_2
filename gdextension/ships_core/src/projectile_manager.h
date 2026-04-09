@@ -75,6 +75,9 @@ private:
 		float fire_time;       // current_time when shell was fired
 		float caliber;         // shell caliber in mm (for damage priority)
 		int team_id;           // firing team (-1 if unknown)
+		float landing_vx;      // XZ velocity at impact (world X component)
+		float landing_vz;      // XZ velocity at impact (world Z component)
+		float threat_half_len; // half-length of danger line (steeper = shorter)
 	};
 
 	static constexpr float SHELL_GRID_CELL = 500.0f;

@@ -12,6 +12,13 @@ var _arrived: bool = false
 var can_shoot: bool = false
 var _dist_to_dest: float = 0.0
 
+# Spotted-position stamp: recorded when the ship arrives at cover but is still
+# visible to the enemy.  Candidate positions must also block LOS to this point
+# so the ship doesn't just shuffle between two equally exposed spots.
+var _spotted_stamp_pos: Vector3 = Vector3.ZERO
+var _spotted_stamp_ms: int = 0
+const SPOTTED_STAMP_DURATION_MS: int = 60000
+
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
 	var ship = ctx.ship
@@ -32,9 +39,23 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = fal
 		_nav_destination_valid = false
 		_last_in_range_ms = Time.get_ticks_msec()
 
+	# Spotted-position stamping: if arrived but still visible, record where we
+	# were spotted so future candidate evaluation blocks LOS to this point too.
+	if _arrived and ship.visible_to_enemy:
+		_spotted_stamp_pos = ship.global_position
+		_spotted_stamp_ms = Time.get_ticks_msec()
+
+	# Expire the stamp after 60 seconds
+	if _spotted_stamp_pos != Vector3.ZERO and Time.get_ticks_msec() - _spotted_stamp_ms > SPOTTED_STAMP_DURATION_MS:
+		_spotted_stamp_pos = Vector3.ZERO
+		_spotted_stamp_ms = 0
+
+	# Build the spotted position to pass down (Vector3.ZERO means none)
+	var active_spotted_pos: Vector3 = _spotted_stamp_pos
+
 	# Find new island if needed
 	if not _nav_destination_valid:
-		var island = ctx.behavior._get_cover_position(desired_range, target,prioritize_cover)
+		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
 		if island.is_empty():
 			return null  # No cover available — caller falls back
 		_set_island(island)
@@ -43,11 +64,11 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = fal
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _cover_recalc_ms >= recalc_cooldown:
 		_cover_recalc_ms = now_ms
-		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover)
+		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
 		if not island.is_empty():
 			_set_island(island)
-		else:
-			return null  # Lost cover
+		elif not _nav_destination_valid:
+			return null  # No cover available and no previous destination to fall back on
 
 	# Approach / station-keep
 	var dist = ship.global_position.distance_to(_nav_destination)
@@ -109,3 +130,5 @@ func reset() -> void:
 	_nav_destination_valid = false
 	_arrived = false
 	can_shoot = false
+	_spotted_stamp_pos = Vector3.ZERO
+	_spotted_stamp_ms = 0
