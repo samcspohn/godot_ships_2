@@ -283,11 +283,19 @@ func _physics_process(_delta: float) -> void:
 				var hp: HPManager = ship.health_controller
 				if hp.is_alive() and ship.team.team_id != p.owner.team.team_id and p.armed:
 					var damage = p.params.damage
+					var dmg_sunk
+					# deal damage to casemate directly
 					if armor_part is ArmorPart:
+
 						if armor_part.type == ArmorPart.Type.CASEMATE or armor_part.type == ArmorPart.Type.CITADEL:
 							damage *= (1.0 - hp.params.p().torpedo_protection)
-							armor_part = ship.citadel
-					var dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, 1)
+							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.HEAVY, p.owner)
+						else:
+							dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, HPManager.DAMAGE_TYPE.TORPEDO, HPManager.DAMAGE_LEVEL.MEDIUM, p.owner)
+
+						# 	damage *= (1.0 - hp.params.p().torpedo_protection)
+						# 	armor_part = ship.citadel
+					# var dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, 1)
 
 					if dmg_sunk[1]:
 						# Ship sunk

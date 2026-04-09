@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Turret housing (semicircular base) -->
+  <path d="M6 20 A10 10 0 0 1 26 20 L26 24 Q26 28 16 28 Q6 28 6 24 Z" fill="#FFFFFF"/>
+  <!-- Left barrel -->
+  <rect x="9" y="3" width="2.5" height="18" rx="1" fill="#FFFFFF"/>
+  <!-- Center barrel -->
+  <rect x="14.75" y="2" width="2.5" height="19" rx="1" fill="#FFFFFF"/>
+  <!-- Right barrel -->
+  <rect x="20.5" y="3" width="2.5" height="18" rx="1" fill="#FFFFFF"/>
+</svg>

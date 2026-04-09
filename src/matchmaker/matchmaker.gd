@@ -337,8 +337,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
 
 	# Randomize which team the player is on
-	# var player_team_id = randi() % 2
-	var player_team_id = 0  # For testing, put player on team 0
+	var player_team_id = randi() % 2
+	# var player_team_id = 0  # For testing, put player on team 0
 	var enemy_team_id = 1 - player_team_id
 	print("Player assigned to team %d" % player_team_id)
 

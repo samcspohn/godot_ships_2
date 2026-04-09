@@ -115,7 +115,7 @@ v_grouping = 1.7
 base_spread = 0.02
 reload_time = 31.0
 traverse_speed = 3.5
-_range = 16000.0
+_range = 15500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_5talp"]
@@ -164,20 +164,7 @@ traverse_speed = 50.0
 _range = 5500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_vudfj"]
-script = ExtResource("10_54qku")
-max_buildup = 220.0
-metadata/_custom_type_script = "uid://kgwonrqfsvxk"
-
 [sub_resource type="Resource" id="Resource_sdl3k"]
-resource_local_to_scene = true
-script = ExtResource("9_fadtt")
-dmg_rate = 0.002
-dur = 100.0
-max_buildup = 200.0
-metadata/_custom_type_script = "uid://dc42cijwbxhfc"
-
-[sub_resource type="Resource" id="Resource_ss0d1"]
 resource_local_to_scene = true
 script = ExtResource("12_fadtt")
 icon = ExtResource("11_pm07r")
@@ -187,6 +174,19 @@ duration = 30.0
 max_stack = -1
 type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
+
+[sub_resource type="Resource" id="Resource_vudfj"]
+script = ExtResource("10_54qku")
+max_buildup = 220.0
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
+
+[sub_resource type="Resource" id="Resource_ss0d1"]
+resource_local_to_scene = true
+script = ExtResource("9_fadtt")
+dmg_rate = 0.002
+dur = 100.0
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_8j47w"]
 points = PackedVector3Array(0, 9.067141, 177.97662, 0, 12.994558, -181.6929, 0, -13.148111, -163.20366, 0, -13.148111, -162.45956, 0, -13.148111, 138.42342, 0, -13.148111, 101.41808, 0, -6.6582613, -169.57599, 0, -0.16841102, -169.773, 0, -0.16841102, 173.7722, 0, -6.6582613, 162.39304, 0, -10.7376585, 160.57237, 0, -13.148111, 24.335186, 0, -13.148111, -78.44201, 0, -13.148111, -129.83061, 0, -10.7376585, -163.91675, 0, -6.6582613, -168.13441, 0, -0.16841102, -171.21458, 0, -13.148111, 151.27057, 0, -13.148111, 159.38895, 0, -13.148111, 127.11238, 0, 4.4493647, 176.92313, 0, -13.148111, 75.723785, 0, -13.148111, 50.029484, 0, 6.3454056, -176.2169, 0, -13.148111, -1.3591137, 0, -13.148111, -27.053411, 0, -13.148111, -52.74771, 0, -13.148111, -104.13631, 0, -13.148111, -149.84444, 0, 9.067142, 165.65382, 0, 9.067142, 152.80667, 0, 11.600779, -155.52492, 0, 8.611975, 50.029484, 0, 8.611975, 24.335186, 0, 8.611975, -1.3591137, 0, 8.611975, -27.053411, 0, 8.611975, -52.74771, 0, 8.611975, -52.74771, 0, 8.885075, -78.44201, 0, 8.885075, -78.44201, 0, 9.522307, -104.13631, 0, 8.794042, 75.723785, 0, 8.611975, 50.029484, 0, 9.067142, 152.80667, 0, 8.794041, 127.11238, 0, 8.794041, 127.11238, 0, 8.794042, 101.41808, 0, 8.794042, 75.723785, 0, 10.433368, -129.83061, 0, 11.600779, -155.52492, 0, 9.522307, -104.13631, 0, 10.433368, -129.83061, 0, 11.600779, -155.52492, 17.387619, 8.794041, 127.11239, -17.387619, 8.794041, 127.11239, 20.856445, 8.794042, 101.41808, -20.856445, 8.794042, 101.41808, 0.61915344, -0.16841102, -167.68674, -0.61915344, -0.16841102, -167.68674, 23.272232, 8.794043, 75.723785, -23.272232, 8.794043, 75.723785, 24.634983, 8.611975, 50.029488, -24.634983, 8.611975, 50.029488, 25.749962, 8.611975, 24.335186, -25.749962, 8.611975, 24.335186, 25.749962, 8.611975, -1.3591137, -25.749962, 8.611975, -1.3591137, 25.34806, 4.2217817, -27.053413, -25.34806, 4.2217817, -27.053413, 12.0605, 9.067142, 152.80667, -12.0605, 9.067142, 152.80667, 8.684592, 9.067142, 165.65384, -8.684592, 9.067142, 165.65384, 22.774904, 4.2217817, -52.747715, -22.774904, 4.2217817, -52.747715, 4.3175907, 8.976108, 175.76402, -4.3175907, 8.976108, 175.76402, 20.313032, 4.3583317, -78.44202, -20.313032, 4.3583317, -78.44202, 20.64502, 9.522307, -104.136314, -20.64502, 9.522307, -104.136314, 0.9000562, 12.939256, -180.93553, -0.9000562, 12.939256, -180.93553, 16.205942, 10.433368, -129.83061, -16.205942, 10.433368, -129.83061, 5.6782, 5.7161837, -155.52493, -5.6782, 5.7161837, -155.52493, 17.276085, -6.6582613, 101.418076, -17.276085, -6.6582613, 101.418076, 20.471487, -13.148111, 50.02948, -20.471487, -13.148111, 50.02948, 20.185339, -13.148111, -27.053421, -20.185339, -13.148111, -27.053421, 25.749962, -6.6582613, 24.335182, -25.749962, -6.6582613, 24.335182, 2.0987055, -0.16841102, 171.5596, -2.0987055, -0.16841102, 171.5596, 10.657504, -6.6582613, -104.13632, -10.657504, -6.6582613, -104.13632, 0.7771929, -6.6582613, 160.18044, -0.7771929, -6.6582613, 160.18044, 12.890531, -13.148111, 101.418076, -12.890531, -13.148111, 101.418076, 8.603672, -10.7376585, 127.11238, -8.603672, -10.7376585, 127.11238, 2.776173, -13.148111, -129.83063, -2.776173, -13.148111, -129.83063, 15.020139, -10.7376585, -78.44202, -15.020139, -10.7376585, -78.44202, 11.250682, 5.132478, -129.83063, -11.250682, 5.132478, -129.83063, 2.1970932, 6.215428, -170.50572, -2.1970932, 6.215428, -170.50572, 6.2526255, -6.6582613, 141.4275, -6.2526255, -6.6582613, 141.4275, 19.842499, -10.7376585, 75.723785, -19.842499, -10.7376585, 75.723785, 15.285449, -0.16841102, 127.11238, -15.285449, -0.16841102, 127.11238, 25.749962, -0.16841102, -1.359116, -25.749962, -0.16841102, -1.359116, 16.181997, -13.148111, -52.747723, -16.181997, -13.148111, -52.747723, 13.437496, -0.16841102, -104.136314, -13.437496, -0.16841102, -104.136314, 1.0677415, -13.148111, -158.99925, -1.0677415, -13.148111, -158.99925, 11.164074, -13.148111, -78.442024, -11.164074, -13.148111, -78.442024)
@@ -241,7 +241,13 @@ rudder_response_time = 14.0
 max_turn_roll_angle = 5.5
 nav_size = 4
 
-[node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
+[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_sdl3k"), ExtResource("15_fadtt")])
+
+[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
+
+[node name="FireManager" parent="Modules" index="8" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_i4gay")
 rparams = SubResource("Resource_vudfj")
 fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
@@ -258,8 +264,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.68392, 43.45572)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=792926563 instance=ExtResource("16_nfp68")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3967123, 125.0045)
 
-[node name="FloodManager" parent="Modules" index="6" unique_id=485605645]
-params = SubResource("Resource_sdl3k")
+[node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
+params = SubResource("Resource_ss0d1")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=2135835489 instance=ExtResource("17_flood")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.259605)
@@ -273,114 +279,108 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 43.45572)
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=977415347 instance=ExtResource("17_flood")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 125.0045)
 
-[node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("8_047bu")]([SubResource("Resource_ss0d1"), ExtResource("15_fadtt")])
-
-[node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
-upgrades = Array[ExtResource("12_gc5ee")]([null, null, null])
-
-[node name="500mmBarbette_col" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="4" unique_id=1579110956]
+[node name="500mmBarbette_col" parent="Hull" parent_id_path=PackedInt32Array(499177332) index="4" unique_id=632682089]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_001" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="5" unique_id=124353722]
+[node name="500mmBarbette_col_001" parent="Hull" parent_id_path=PackedInt32Array(499177332) index="5" unique_id=2011382445]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_002" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="6" unique_id=674337521]
+[node name="500mmBarbette_col_002" parent="Hull" parent_id_path=PackedInt32Array(499177332) index="6" unique_id=1282860003]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="500mmBarbette_col_003" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="7" unique_id=262485840]
+[node name="500mmBarbette_col_003" parent="Hull" parent_id_path=PackedInt32Array(499177332) index="7" unique_id=117752271]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Superstructure_col" parent="Hull" parent_id_path=PackedInt32Array(862935204) index="34" unique_id=844118457]
+[node name="Superstructure_col" parent="Hull" parent_id_path=PackedInt32Array(499177332) index="34" unique_id=485803263]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 surface_material_override/0 = ExtResource("15_pnxfl")
 
-[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" parent_id_path=PackedInt32Array(573707745) index="0" unique_id=1332271903 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_001" parent="Hull/TurretMount_GER_150mm_2b_gerat60_001" parent_id_path=PackedInt32Array(1748647641) index="0" unique_id=1332271903 instance=ExtResource("14_nfp68")]
 max_rotation_angle = 2.7401669256310974
 
-[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" parent_id_path=PackedInt32Array(1925557527) index="0" unique_id=20859472 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_002" parent="Hull/TurretMount_GER_150mm_2b_gerat60_002" parent_id_path=PackedInt32Array(456263640) index="0" unique_id=20859472 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.3335788713091694
 
-[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" parent_id_path=PackedInt32Array(1043758769) index="0" unique_id=1119718970 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_003" parent="Hull/TurretMount_GER_150mm_2b_gerat60_003" parent_id_path=PackedInt32Array(716281579) index="0" unique_id=1119718970 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5971638897097664
 max_rotation_angle = 6.06449478533597
 
-[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" parent_id_path=PackedInt32Array(1088757772) index="0" unique_id=1269835611 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_004" parent="Hull/TurretMount_GER_150mm_2b_gerat60_004" parent_id_path=PackedInt32Array(1313718083) index="0" unique_id=1269835611 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.577924966588375
 max_rotation_angle = 5.811946409141117
 
-[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" parent_id_path=PackedInt32Array(1051729460) index="0" unique_id=1507222303 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_005" parent="Hull/TurretMount_GER_150mm_2b_gerat60_005" parent_id_path=PackedInt32Array(1393096966) index="0" unique_id=1507222303 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.1590459461097367
 max_rotation_angle = 5.969026041820607
 
-[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" parent_id_path=PackedInt32Array(343887266) index="0" unique_id=1537552933 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_006" parent="Hull/TurretMount_GER_150mm_2b_gerat60_006" parent_id_path=PackedInt32Array(1667279984) index="0" unique_id=1537552933 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 6.2482787221397
 max_rotation_angle = 2.949606435870417
 
-[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" parent_id_path=PackedInt32Array(836247842) index="0" unique_id=1393296534 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_007" parent="Hull/TurretMount_GER_150mm_2b_gerat60_007" parent_id_path=PackedInt32Array(163624732) index="0" unique_id=1393296534 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.22689280275926285
 max_rotation_angle = 2.670353755551324
 
-[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" parent_id_path=PackedInt32Array(2031512157) index="0" unique_id=754672956 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_008" parent="Hull/TurretMount_GER_150mm_2b_gerat60_008" parent_id_path=PackedInt32Array(1799852769) index="0" unique_id=754672956 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.4363323129985824
 max_rotation_angle = 2.722713633111154
 
-[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" parent_id_path=PackedInt32Array(1751005343) index="0" unique_id=506854244 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_009" parent="Hull/TurretMount_GER_150mm_2b_gerat60_009" parent_id_path=PackedInt32Array(1604569478) index="0" unique_id=506854244 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.33161255787892263
 max_rotation_angle = 3.141592653589793
 
-[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" parent_id_path=PackedInt32Array(208543240) index="0" unique_id=1912627518 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_010" parent="Hull/TurretMount_GER_150mm_2b_gerat60_010" parent_id_path=PackedInt32Array(1383631570) index="0" unique_id=1912627518 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.5081117965086026
 
-[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" parent_id_path=PackedInt32Array(232480482) index="0" unique_id=1978326833 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_011" parent="Hull/TurretMount_GER_150mm_2b_gerat60_011" parent_id_path=PackedInt32Array(799995990) index="0" unique_id=1978326833 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.17649923862968
 max_rotation_angle = 6.178465552059927
 
-[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" parent_id_path=PackedInt32Array(679485468) index="0" unique_id=110945846 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_012" parent="Hull/TurretMount_GER_150mm_2b_gerat60_012" parent_id_path=PackedInt32Array(823066985) index="0" unique_id=110945846 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.03356267067948515
 max_rotation_angle = 2.7663898841263332
 
-[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" parent_id_path=PackedInt32Array(1636617700) index="0" unique_id=313597726 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerat60_013" parent="Hull/TurretMount_GER_150mm_2b_gerat60_013" parent_id_path=PackedInt32Array(1182876592) index="0" unique_id=313597726 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 0.13962634015954636
 max_rotation_angle = 3.0892327760299634
 
-[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" parent_id_path=PackedInt32Array(1734794744) index="0" unique_id=1891727688 instance=ExtResource("14_nfp68")]
+[node name="GER_150mm_2b_gerrat60" parent="Hull/TurretMount_GER_150mm_2b_gerrat60" parent_id_path=PackedInt32Array(1845110405) index="0" unique_id=1891727688 instance=ExtResource("14_nfp68")]
 min_rotation_angle = 3.490658503988659
 
-[node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" parent_id_path=PackedInt32Array(1217979268) index="0" unique_id=1593747212 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf" parent="Hull/TurretMount_GER_500mm_2b_rf" parent_id_path=PackedInt32Array(450028194) index="0" unique_id=1593747212 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
 max_rotation_angle = 2.583087292951608
 
-[node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" parent_id_path=PackedInt32Array(1769315193) index="0" unique_id=15487562 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_001" parent="Hull/TurretMount_GER_500mm_2b_rf_001" parent_id_path=PackedInt32Array(329960076) index="0" unique_id=15487562 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" parent_id_path=PackedInt32Array(668929582) index="0" unique_id=1774251165 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_002" parent="Hull/TurretMount_GER_500mm_2b_rf_002" parent_id_path=PackedInt32Array(534047413) index="0" unique_id=1774251165 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 3.7000980142279785
 max_rotation_angle = 2.583087292951608
 
-[node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" parent_id_path=PackedInt32Array(167746005) index="0" unique_id=639428331 instance=ExtResource("9_gdlp2")]
+[node name="GER_500mm_2b_rf_003" parent="Hull/TurretMount_GER_500mm_2b_rf_003" parent_id_path=PackedInt32Array(1701999433) index="0" unique_id=639428331 instance=ExtResource("9_gdlp2")]
 min_rotation_angle = 0.6108652381980153
 max_rotation_angle = 5.672320068981571
 
-[node name="Hull_Citadel_col" parent="." index="8" unique_id=1944603706]
+[node name="Hull_Citadel_col" parent="." index="8" unique_id=1712273637]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Bow_col" parent="." index="10" unique_id=1052879043]
+[node name="Hull_Bow_col" parent="." index="10" unique_id=1211453673]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_Stern_col" parent="." index="12" unique_id=1263271912]
+[node name="Hull_Stern_col" parent="." index="12" unique_id=1202903129]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
-[node name="Hull_CaseMate_col" parent="." index="14" unique_id=555445765]
+[node name="Hull_CaseMate_col" parent="." index="14" unique_id=432843001]
 layers = 0
 material_override = ExtResource("15_pnxfl")
 
@@ -405,20 +405,18 @@ size_multiplier = 20.0
 speed_scale = 0.12
 auto_start = true
 
-[node name="TrailEmitter4" type="Node3D" parent="." index="19" unique_id=461112369]
+[node name="Exaust" type="Node3D" parent="." index="19" unique_id=461112369]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 26.89194, 24.17419)
 script = ExtResource("25_gpbbn")
 template = ExtResource("26_itqm6")
-emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
 auto_start = true
 
-[node name="TrailEmitter5" type="Node3D" parent="." index="20" unique_id=1606279390]
+[node name="Exaust2" type="Node3D" parent="." index="20" unique_id=1606279390]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.812918, -0.6361103)
 script = ExtResource("25_gpbbn")
 template = ExtResource("26_itqm6")
-emit_rate = 0.14
 size_multiplier = 20.0
 speed_scale = 0.2
 auto_start = true

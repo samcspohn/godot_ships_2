@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://d2k8m4f6j1n3p"]
+
+[ext_resource type="Script" path="res://src/ui/kill_feed.gd" id="1_killfeed"]
+
+[node name="KillFeed" type="Control"]
+mouse_filter = 2
+script = ExtResource("1_killfeed")
+
+[node name="Entries" type="VBoxContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+alignment = 2
+theme_override_constants/separation = 4

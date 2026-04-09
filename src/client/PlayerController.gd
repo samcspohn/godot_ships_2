@@ -524,7 +524,7 @@ func process_player_input() -> void:
 
 @rpc("any_peer")
 func kill():
-	ship.health_controller.apply_damage(10000000,10000000, ship.citadel, false, 1)
+	ship.health_controller.apply_damage(10000000,10000000, ship.citadel, false, HPManager.DAMAGE_TYPE.FIRE, HPManager.DAMAGE_LEVEL.HEAVY, ship)
 
 func set_aim(aim_position: Vector3, manual_sec: bool):
 	ship.artillery_controller.set_aim_input(aim_position)

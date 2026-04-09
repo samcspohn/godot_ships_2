@@ -157,6 +157,7 @@ toggle_secondaries={
 3d/run_on_separate_thread=true
 common/physics_ticks_per_second=20
 common/max_physics_steps_per_frame=1
+jolt_physics_3d/queries/enable_ray_cast_face_index=true
 
 [rendering]
 

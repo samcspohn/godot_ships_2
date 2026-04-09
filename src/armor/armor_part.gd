@@ -12,6 +12,7 @@ enum Type {
 }
 
 var armor_system: ArmorSystemV2
+var hp_part: HpPartMod
 var armor_path: String
 var ship: Ship
 # var is_citadel: bool = false

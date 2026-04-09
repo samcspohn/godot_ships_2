@@ -361,6 +361,7 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	pb = writer.get_data_array()
 	return pb
 
+@rpc("authority", "call_remote")
 func sync2(b: PackedByteArray, friendly: bool):
 	# print("here")
 	if !self.initialized:
@@ -599,16 +600,22 @@ func enable_backface_collision_recursive(node: Node) -> void:
 			#print("armor_part.collision_mask: ", armor_part.collision_mask)
 		#elif node.name == "Citadel":
 			#citadel = armor_part
+		var hp = $"Modules/HPManager" as HPManager
 		if node.name.to_lower().contains("casemate"):
 			armor_part.type = ArmorPart.Type.CASEMATE
+			armor_part.hp_part = hp.casemate
 		elif node.name.to_lower().contains("bow"):
 			armor_part.type = ArmorPart.Type.BOW
+			armor_part.hp_part = hp.bow
 		elif node.name.to_lower().contains("stern"):
 			armor_part.type = ArmorPart.Type.STERN
+			armor_part.hp_part = hp.stern
 		elif node.name.to_lower().contains("superstructure"):
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
+			armor_part.hp_part = hp.superstructure
 		elif node.name.to_lower().contains("citadel"):
 			armor_part.type = ArmorPart.Type.CITADEL
+			armor_part.hp_part = hp.citadel
 			self.citadel = armor_part
 
 	# handle colonly type

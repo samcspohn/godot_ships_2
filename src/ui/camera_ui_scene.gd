@@ -6,6 +6,7 @@ class_name CameraUIScene
 const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
 const GunIndicatorScene = preload("res://src/ui/gun_indicator.tscn")
 const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
+const KillFeedScene = preload("res://src/ui/kill_feed.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera
@@ -47,6 +48,9 @@ var target_speed_label: Label = null  # Label to show locked target's speed
 
 # Hit/Stat counters component (self-contained)
 var hit_stat_counters: HitStatCounters = null
+
+# Kill feed component
+var kill_feed: KillFeed = null
 
 # Visibility indicator
 @onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
@@ -273,6 +277,9 @@ func _ready():
 
 	setup_team_tracker()
 
+	# Setup kill feed
+	_setup_kill_feed()
+
 	server = get_tree().root.get_node_or_null("Server")
 	players_node = server.get_node_or_null("GameWorld/Players") if server else null
 
@@ -280,6 +287,36 @@ func _process(_delta: float) -> void:
 	update_ship_ui()
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
+
+func _setup_kill_feed():
+	"""Setup the kill feed component positioned directly above the minimap."""
+	kill_feed = KillFeedScene.instantiate()
+	$MainContainer.add_child(kill_feed)
+	# Position will be updated each frame to sit above the minimap
+	_Utils.kill_feed_event.connect(_on_kill_feed_event)
+
+func _update_kill_feed_position():
+	"""Keep the kill feed anchored directly above the minimap."""
+	if kill_feed == null or minimap == null:
+		return
+	var minimap_size: float = minimap.minimap_sizes[minimap.mm_idx]
+	var margin := 10.0
+	# kill_feed right edge flush with minimap right edge (screen right - margin)
+	# kill_feed bottom edge flush with minimap top edge (screen bottom - margin - minimap_size - small gap)
+	var vp_size := get_viewport().get_visible_rect().size
+	var feed_width := minimap_size  # match minimap width
+	var feed_height := 200.0  # enough room for MAX_ENTRIES
+	var gap := 4.0
+	kill_feed.position = Vector2(
+		vp_size.x - margin - feed_width,
+		vp_size.y - margin - minimap_size - gap - feed_height
+	)
+	kill_feed.size = Vector2(feed_width, feed_height)
+
+func _on_kill_feed_event(sinker_name: String, sinker_player_name: String, sinker_team: int, damage_type: int, sunk_name: String, sunk_player_name: String, sunk_team: int):
+	"""Handle kill feed events from the global signal"""
+	if kill_feed:
+		kill_feed.add_kill(sinker_name, sinker_player_name, sinker_team, damage_type, sunk_name, sunk_player_name, sunk_team, friendly_team_id)
 
 func _setup_hit_stat_counters():
 	"""Setup the hit/stat counters component"""
@@ -301,6 +338,7 @@ func _physics_process(_delta):
 	_update_ui()
 	_update_fps()
 	_update_camera_angle_display()
+	_update_kill_feed_position()
 	update_team_tracker()  # Update team tracker
 	# cleanup_team_indicators()  # Clean up invalid indicators
 	update_gun_reload_bars()

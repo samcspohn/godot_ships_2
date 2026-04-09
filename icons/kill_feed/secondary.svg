@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Left turret housing -->
+  <path d="M2 22 A6 6 0 0 1 14 22 L14 25 Q14 28 8 28 Q2 28 2 25 Z" fill="#FFFFFF"/>
+  <!-- Left turret - left barrel -->
+  <rect x="4.5" y="7" width="2" height="16" rx="0.8" fill="#FFFFFF"/>
+  <!-- Left turret - right barrel -->
+  <rect x="9.5" y="7" width="2" height="16" rx="0.8" fill="#FFFFFF"/>
+  <!-- Right turret housing -->
+  <path d="M18 22 A6 6 0 0 1 30 22 L30 25 Q30 28 24 28 Q18 28 18 25 Z" fill="#FFFFFF"/>
+  <!-- Right turret - left barrel -->
+  <rect x="20.5" y="7" width="2" height="16" rx="0.8" fill="#FFFFFF"/>
+  <!-- Right turret - right barrel -->
+  <rect x="25.5" y="7" width="2" height="16" rx="0.8" fill="#FFFFFF"/>
+</svg>

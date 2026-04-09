@@ -643,37 +643,46 @@ void _ProjectileManager::_physics_process(double delta) {
 
 				double damage = 0.0;
 				int rpc_result_type = NOHIT;
+				int damage_type = 0;  // SHELL
+
+				int damage_level = 0; // LIGHT
 
 				// Map ArmorInteraction result to damage and RPC result type
 				switch (armor_result_type) {
 					case 0: // PENETRATION
 						damage = base_damage / 3.0;
 						rpc_result_type = PENETRATION;
+						damage_level = 1; // MEDIUM
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 1: // PARTIAL_PENETRATION
-						damage = base_damage / 8.0;
+						damage = base_damage * 0.0667;
 						rpc_result_type = PENETRATION;
+						damage_level = 1; // MEDIUM
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 5: // CITADEL
 						damage = base_damage;
 						rpc_result_type = CITADEL;
+						damage_level = 2; // HEAVY
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 6: // CITADEL_OVERPEN
 						damage = base_damage * 0.5;
 						rpc_result_type = PENETRATION;
+						damage_level = 2; // HEAVY
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 3: // OVERPENETRATION
 						damage = base_damage * 0.1;
 						rpc_result_type = OVERPENETRATION;
+						damage_level = 0; // LIGHT
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 4: // SHATTER
 						damage = 0.0;
 						rpc_result_type = SHATTER;
+						damage_level = 0; // LIGHT
 						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 2: { // RICOCHET
@@ -705,7 +714,10 @@ void _ProjectileManager::_physics_process(double delta) {
 					Object *health_controller = Object::cast_to<Object>(health_controller_var);
 					if (health_controller && health_controller->call("is_alive")) {
 						bool is_penetration = (rpc_result_type == PENETRATION || rpc_result_type == CITADEL); // PENETRATION
-						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, p->get_params()->get("caliber"));
+						Ref<Resource> params = p->get_params();
+						bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
+						damage_type = is_secondary ? 4 : 0; // 0 = SHELL, 4 = SECONDARY
+						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, damage_type, damage_level, owner);
 
 						Object* team = Object::cast_to<Object>(ship->get("team"));
 						Object* owner_team = Object::cast_to<Object>(owner->get("team"));

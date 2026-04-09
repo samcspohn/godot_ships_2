@@ -38,6 +38,7 @@ var current_hp:
 @export var bow: HpPartMod
 @export var stern: HpPartMod
 @export var superstructure: HpPartMod
+# @export var module: HpPartMod <- put in artillery/secondary controller/turret params
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
@@ -58,7 +59,18 @@ func from_bytes(data: PackedByteArray):
 	_max_hp = reader.get_float()
 	_current_hp = reader.get_float()
 
-
+enum DAMAGE_TYPE {
+	SHELL, # 0
+	TORPEDO, # 1
+	FIRE, # 2
+	FLOOD, # 3
+	SECONDARY, # 4
+}
+enum DAMAGE_LEVEL {
+	LIGHT,
+	MEDIUM,
+	HEAVY,
+}
 
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():
@@ -116,7 +128,7 @@ func _ready() -> void:
 		superstructure = superstructure.instantiate(ship) as HpPartMod
 		superstructure.hp = self
 
-func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, shell_cal:float = 0) -> Array:
+func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, damage_type: DAMAGE_TYPE, damage_level: DAMAGE_LEVEL, owner: Ship) -> Array:
 	if sunk:
 		return [0, false]
 
@@ -128,77 +140,110 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	# base_dmg *= dmg_mod
 	base_dmg /= params.p().mult
 
-	# TODO: how to handle overpenetration/citadel overpen damage?
+	if armor_part == null:
+		_current_hp -= dmg
+		light_damage += dmg * params.p().light_repair
+		healable_damage += dmg * params.p().light_repair
+		if _current_hp <= 0 && !sunk:
+			dmg += _current_hp
+			_current_hp = 0
+			sink(damage_type, owner)
+			ship_sunk.emit()
+			hp_changed.emit(_current_hp)
+			return [dmg * params.p().mult, true]
+		hp_changed.emit(_current_hp)
+		return [dmg * params.p().mult, false]
+
+	# # TODO: how to handle overpenetration/citadel overpen damage?
 	var _dmg: float = 0
-	match armor_part.type:
-		ArmorPart.Type.MODULE:
-			_dmg = min(dmg, base_dmg * 0.1)
-		ArmorPart.Type.CITADEL:
-			_dmg = citadel.apply_damage(dmg, 0.333)
-		ArmorPart.Type.CASEMATE:
-			_dmg = casemate.apply_damage(dmg)
-		ArmorPart.Type.BOW:
-			_dmg = bow.apply_damage(dmg)
-		ArmorPart.Type.STERN:
-			_dmg = stern.apply_damage(dmg)
-		ArmorPart.Type.SUPERSTRUCTURE:
-			_dmg = superstructure.apply_damage(dmg)
+	# match armor_part.type:
+	# 	ArmorPart.Type.MODULE:
+	# 		_dmg = min(dmg, base_dmg * 0.1)
+	# 	ArmorPart.Type.CITADEL:
+	# 		_dmg = citadel.apply_damage(dmg, 0.333)
+	# 	ArmorPart.Type.CASEMATE:
+	# 		_dmg = casemate.apply_damage(dmg)
+	# 	ArmorPart.Type.BOW:
+	# 		_dmg = bow.apply_damage(dmg)
+	# 	ArmorPart.Type.STERN:
+	# 		_dmg = stern.apply_damage(dmg)
+	# 	ArmorPart.Type.SUPERSTRUCTURE:
+	# 		_dmg = superstructure.apply_damage(dmg)
+	if armor_part.type == ArmorPart.Type.MODULE:
+		_dmg = min(dmg, base_dmg * 0.1)
+	elif armor_part.type == ArmorPart.Type.CITADEL:
+		_dmg = citadel.apply_damage(dmg, 0.333)
+	elif armor_part.hp_part != null: # handled by module
+		_dmg = armor_part.hp_part.apply_damage(dmg)
 
 	if is_pen:
 		dmg = max(_dmg, base_dmg * 0.1)
 
 	var pen_repair = params.p().pen_repair
-	var citadel_repair = params.p().citadel_repair
+	var citadel_repair = params.p().citadel_repair # heavy
 	var light_repair = params.p().light_repair
-	match armor_part.type:
-		ArmorPart.Type.MODULE:
-			light_damage += dmg * pen_repair
-			healable_damage += dmg * pen_repair
-		ArmorPart.Type.CITADEL:
-			citadel.healable_damage += dmg * citadel_repair
-			healable_damage += dmg * citadel_repair
-		ArmorPart.Type.CASEMATE:
-			casemate.healable_damage += dmg * pen_repair
-			healable_damage += dmg * pen_repair
-		ArmorPart.Type.BOW:
-			bow.healable_damage += dmg * pen_repair
-			healable_damage += dmg * pen_repair
-		ArmorPart.Type.STERN:
-			stern.healable_damage += dmg * pen_repair
-			healable_damage += dmg * pen_repair
-		ArmorPart.Type.SUPERSTRUCTURE:
-			superstructure.healable_damage += dmg * pen_repair
-			healable_damage += dmg * pen_repair
+	# var hp_part = null
+	var repair_rate = 0.0
+	if damage_level == DAMAGE_LEVEL.LIGHT:
+		repair_rate = light_repair
+	elif damage_level == DAMAGE_LEVEL.MEDIUM:
+		repair_rate = pen_repair
+	elif damage_level == DAMAGE_LEVEL.HEAVY:
+		repair_rate = citadel_repair
+
+	if armor_part.hp_part != null:
+		armor_part.hp_part.healable_damage += dmg * repair_rate
+	healable_damage += dmg * repair_rate
+
+	# match armor_part.type:
+	# 	ArmorPart.Type.MODULE:
+	# 		light_damage += dmg * pen_repair
+	# 		healable_damage += dmg * pen_repair
+	# 	ArmorPart.Type.CITADEL:
+	# 		citadel.healable_damage += dmg * citadel_repair
+	# 		healable_damage += dmg * citadel_repair
+	# 	ArmorPart.Type.CASEMATE:
+	# 		casemate.healable_damage += dmg * pen_repair
+	# 		healable_damage += dmg * pen_repair
+	# 	ArmorPart.Type.BOW:
+	# 		bow.healable_damage += dmg * pen_repair
+	# 		healable_damage += dmg * pen_repair
+	# 	ArmorPart.Type.STERN:
+	# 		stern.healable_damage += dmg * pen_repair
+	# 		healable_damage += dmg * pen_repair
+	# 	ArmorPart.Type.SUPERSTRUCTURE:
+	# 		superstructure.healable_damage += dmg * pen_repair
+	# 		healable_damage += dmg * pen_repair
 
 
 	_current_hp -= dmg
 	if _current_hp <= 0 && !sunk:
 		dmg += _current_hp
 		_current_hp = 0
-		sink()
+		sink(damage_type, owner)
 		ship_sunk.emit()
 		hp_changed.emit(_current_hp)
 		return [dmg * params.p().mult, true]
 	hp_changed.emit(_current_hp)
 	return [dmg * params.p().mult, false]
 
-func apply_light_damage(dmg: float) -> Array:
-	if sunk:
-		return [0, false]
-	# ship.update_static_mods = true
-	dmg /= params.p().mult
-	_current_hp -= dmg
-	light_damage += dmg * params.p().light_repair
-	healable_damage += dmg * params.p().light_repair
-	if _current_hp <= 0 && !sunk:
-		dmg += _current_hp
-		_current_hp = 0
-		sink()
-		ship_sunk.emit()
-		hp_changed.emit(_current_hp)
-		return [dmg * params.p().mult, true]
-	hp_changed.emit(_current_hp)
-	return [dmg * params.p().mult, false]
+# func apply_light_damage(dmg: float) -> Array:
+# 	if sunk:
+# 		return [0, false]
+# 	# ship.update_static_mods = true
+# 	dmg /= params.p().mult
+# 	_current_hp -= dmg
+# 	light_damage += dmg * params.p().light_repair
+# 	healable_damage += dmg * params.p().light_repair
+# 	if _current_hp <= 0 && !sunk:
+# 		dmg += _current_hp
+# 		_current_hp = 0
+# 		sink()
+# 		ship_sunk.emit()
+# 		hp_changed.emit(_current_hp)
+# 		return [dmg * params.p().mult, true]
+# 	hp_changed.emit(_current_hp)
+# 	return [dmg * params.p().mult, false]
 
 func heal(amount: float) -> float:
 	if is_dead():
@@ -234,7 +279,7 @@ func heal(amount: float) -> float:
 	# return amount
 
 # @rpc("any_peer", "reliable", "call_remote")
-func sink():
+func sink(damage_type: DAMAGE_TYPE, sinker: Ship):
 	sunk = true
 	if !(_Utils.authority()):
 		HitEffects.he_explosion_effect(ship.global_transform.origin, 30.0, Vector3.UP)
@@ -253,6 +298,8 @@ func sink():
 	if mv != null:
 		mv.set_physics_process(false)
 	ship._disable_weapons()
+
+	ship.sync2.rpc(ship.sync_ship_data2(true,false), false)
 	#ship.set_physics_process(false)
 	if _Utils.authority():
 		sinking = true
@@ -271,10 +318,11 @@ func sink():
 		sinking_time = Time.get_ticks_msec() / 1000.0
 		ship.freeze = true
 		ship.linear_velocity = Vector3.ZERO
-		sink_c.rpc(sinking_basis)
+		sink_c.rpc(sinking_basis, damage_type, sinker.name, sinker.team.team_id, sinker.ship_name, ship.ship_name, ship.team.team_id, ship.name)
+		_Utils.kill_feed_event.emit(sinker.ship_name, sinker.name, sinker.team.team_id, damage_type, ship.ship_name, ship.name, ship.team.team_id)
 
 @rpc("authority", "reliable", "call_remote")
-func sink_c(sink_basis: Basis):
+func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: int, sinker_ship_name: String = "", sunk_ship_name: String = "", sunk_team: int = -1, sunk_player_name: String = ""):
 	if !(_Utils.authority()):
 		sinking_basis = sink_basis
 		current_sinking_basis = ship.global_basis
@@ -298,6 +346,7 @@ func sink_c(sink_basis: Basis):
 		if mv != null:
 			mv.set_physics_process(false)
 		ship._disable_weapons()
+		_Utils.kill_feed_event.emit(sinker_ship_name, sinker, team, damage_type, sunk_ship_name, sunk_player_name, sunk_team)
 
 func _physics_process(delta: float) -> void:
 	if sinking and ship.global_position.y > -400.0:
