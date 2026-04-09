@@ -123,6 +123,24 @@ traverse_speed = 10.0
 _range = 10000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
+[sub_resource type="Resource" id="Resource_jewkh"]
+resource_local_to_scene = true
+script = ExtResource("14_56jcx")
+speed_knts = 52.0
+damage = 20000.0
+flood_buildup = 200.0
+arming_distance = 200.0
+metadata/_custom_type_script = "uid://ckumdqdogqvlk"
+
+[sub_resource type="Resource" id="Resource_17h8w"]
+resource_local_to_scene = true
+script = ExtResource("13_56jcx")
+torpedo_params = SubResource("Resource_jewkh")
+reload_time = 1.0
+traverse_speed = 15.0
+_range = 14000.0
+metadata/_custom_type_script = "uid://cq5883re36gh7"
+
 [sub_resource type="Resource" id="Resource_4im3p"]
 resource_local_to_scene = true
 script = ExtResource("9_okiv0")
@@ -145,24 +163,6 @@ metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 script = ExtResource("9_cvobt")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
-
-[sub_resource type="Resource" id="Resource_jewkh"]
-resource_local_to_scene = true
-script = ExtResource("14_56jcx")
-speed_knts = 52.0
-damage = 20000.0
-flood_buildup = 200.0
-arming_distance = 200.0
-metadata/_custom_type_script = "uid://ckumdqdogqvlk"
-
-[sub_resource type="Resource" id="Resource_17h8w"]
-resource_local_to_scene = true
-script = ExtResource("13_56jcx")
-torpedo_params = SubResource("Resource_jewkh")
-reload_time = 1.0
-traverse_speed = 15.0
-_range = 14000.0
-metadata/_custom_type_script = "uid://cq5883re36gh7"
 
 [sub_resource type="Resource" id="Resource_y7d2n"]
 resource_local_to_scene = true
@@ -206,7 +206,13 @@ params = SubResource("Resource_l5cth")
 params = SubResource("Resource_xg5wx")
 guns = [NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr/IJN_127mm_2b_3rd_yr"), NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr_001/IJN_127mm_2b_3rd_yr_001"), NodePath("../../TurretMount_IJN_127mm_2b_3rd_yr_002/IJN_127mm_2b_3rd_yr_002")]
 
-[node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
+[node name="TorpedoController" type="Node" parent="Modules" index="4" unique_id=129889940 node_paths=PackedStringArray("launchers")]
+script = ExtResource("12_y8kxj")
+params = SubResource("Resource_17h8w")
+launchers = [NodePath("../../TurretMount_IJN_610mm_5t_002/IJN_610mm_5t_002"), NodePath("../../TurretMount_IJN_610mm_5t/IJN_610mm_5t"), NodePath("../../TurretMount_IJN_610mm_5t_001/IJN_610mm_5t_001")]
+metadata/_custom_type_script = "uid://c8pq6m1rejha6"
+
+[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
 max_speed_knots = 41.0
 acceleration_time = 9.0
 deceleration_time = 9.0
@@ -215,13 +221,13 @@ turn_speed_loss = 0.15
 rudder_response_time = 3.5
 nav_size = 0
 
-[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_4im3p"), SubResource("Resource_dmio6")])
 
-[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("11_56jcx")]([null, null, null])
 
-[node name="FireManager" parent="Modules" index="8" unique_id=384504544 node_paths=PackedStringArray("fires")]
+[node name="FireManager" parent="Modules" index="9" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("8_x5bwd")
 rparams = SubResource("Resource_s4v2q")
 fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
@@ -237,12 +243,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3779774, 14.502558)
 
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=456700594 instance=ExtResource("7_nguxy")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5162125, 51.135674)
-
-[node name="TorpedoController" type="Node" parent="Modules" index="9" unique_id=129889940 node_paths=PackedStringArray("launchers")]
-script = ExtResource("12_y8kxj")
-params = SubResource("Resource_17h8w")
-launchers = [NodePath("../../TurretMount_IJN_610mm_5t_002/IJN_610mm_5t_002"), NodePath("../../TurretMount_IJN_610mm_5t/IJN_610mm_5t"), NodePath("../../TurretMount_IJN_610mm_5t_001/IJN_610mm_5t_001")]
-metadata/_custom_type_script = "uid://c8pq6m1rejha6"
 
 [node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
 params = SubResource("Resource_y7d2n")
