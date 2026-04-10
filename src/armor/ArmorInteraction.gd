@@ -475,16 +475,15 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	var over_pen := false
 
 	# var events: Array[String] = []
-	events.append("Processing Shell: %s %s " % [params.caliber, params.type])
+	events.append("Processing Shell: caliber=%.1f type=%d speed=%.1f drag=%.15e damage=%.1f size=%.2f mass=%.2f fire_buildup=%.1f fuze_delay=%.4f pen_mod=%.4f auto_bounce=%.4f ricochet_angle=%.4f overmatch=%d arming_threshold=%d" % [params.caliber, int(params.type), params.speed, params.drag, params.damage, params.size, params.mass, params.fire_buildup, params.fuze_delay, params.penetration_modifier, rad_to_deg(params.auto_bounce), rad_to_deg(params.ricochet_angle), params.overmatch, params.arming_threshold])
 	var ship_scene_path := ship.scene_file_path
-	events.append("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s [%s]" % [
+	events.append("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s" % [
 		ship.name,
 		ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z,
 		rad_to_deg(ship.global_transform.basis.get_euler().x),
 		rad_to_deg(ship.global_transform.basis.get_euler().y),
 		rad_to_deg(ship.global_transform.basis.get_euler().z),
-		ship_scene_path,
-		"PRECISION"])
+		ship_scene_path])
 
 	if hit_water:
 		events.append(" - Hit water first, fuze: %.3f s" % [shell.fuze])

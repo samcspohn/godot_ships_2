@@ -282,7 +282,6 @@ func fire(mod: TargetMod = null) -> void:
 				else:
 					pass
 					# print(aim)
-				break
 			_ship.concealment.bloom(get_params()._range)
 			reload = 0
 
