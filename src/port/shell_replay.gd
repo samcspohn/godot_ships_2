@@ -51,6 +51,7 @@ var _validation_pending: bool = false
 var _validation_shell_data: Dictionary = {}
 var _validation_wait_frames: int = 0
 
+
 # Camera control
 var camera_rotation: Vector2 = Vector2.ZERO
 var camera_distance: float = 100.0
@@ -514,8 +515,7 @@ func calculate_final_result():
 	# Get the final shell position
 	var final_shell_pos = trail_points[-1] if trail_points.size() > 0 else Vector3.ZERO
 
-	var space_state = world_3d.get_world_3d().direct_space_state
-	var d = ArmorInteraction.get_part_hit(ship, final_shell_pos, space_state)
+	var d = PrecisionPhysicsWorld.precision_get_part_hit(ship, final_shell_pos)
 
 	# var damage_result = ArmorInteraction.HitResult.WATER
 	# final_result = "WATER"
@@ -597,7 +597,7 @@ func start_validation():
 	# Enable armor visualization via dual-viewport overlay
 	_enable_armor_overlay(ship)
 
-	# Position ship
+	# Place ship at its logged world position and rotation.
 	for event in events:
 		if event.event_type == "Ship":
 			ship.position = event.data["position"]
@@ -615,6 +615,9 @@ func start_validation():
 	if shell_params == null:
 		validation_label.text = "Validation: Failed to extract shell parameters"
 		return
+
+	# Position camera to view the ship and shell trajectory
+	update_camera_position()
 
 	# Clear simulated trail
 	sim_trail_points.clear()
@@ -636,6 +639,7 @@ func stop_validation():
 	_validation_pending = false
 	_validation_shell_data = {}
 	_validation_wait_frames = 0
+
 	# if ship != null:
 	# 	_disable_armor_overlay(ship)
 	is_validating = false
@@ -653,22 +657,52 @@ func extract_shell_params() -> Dictionary:
 	if first_shell_event == null:
 		return {}
 
-	# Use 460mm AP shell parameters from Yamato's artillery controller
-	var params = ShellParams.new()
-	params.speed = 780.0
-	params.drag = 1.8e-05
-	params.damage = 14500.0
-	params.size = 4.6
-	params.caliber = 460.0
-	params.mass = 1460.0
-	params.fire_buildup = 0.0
-	params.fuze_delay = 0.035
-	params.type = ShellParams.ShellType.AP
-	params.penetration_modifier = 1.0
-	params.auto_bounce = deg_to_rad(60.0)
-	params.ricochet_angle = deg_to_rad(45.0)
-	params.overmatch = 32
-	params.arming_threshold = 76
+	# Find the "Processing Shell" event which now contains all shell parameters
+	var processing_event = null
+	for event in events:
+		if event.event_type == "Processing Shell":
+			processing_event = event
+			break
+
+	var params: ShellParams = null
+
+	# If the Processing Shell event has the full parameter set, use it directly
+	if processing_event != null and processing_event.data.has("speed"):
+		print("[ShellReplay] Constructing ShellParams from Processing Shell event data")
+		params = ShellParams.new()
+		params.caliber = float(processing_event.data["caliber"])
+		params.type = int(processing_event.data["shell_type"])
+		params.speed = float(processing_event.data["speed"])
+		params.drag = float(processing_event.data["drag"])
+		params.damage = float(processing_event.data["damage"])
+		params.size = float(processing_event.data["size"])
+		params.mass = float(processing_event.data["mass"])
+		params.fire_buildup = float(processing_event.data["fire_buildup"])
+		params.fuze_delay = float(processing_event.data["fuze_delay"])
+		params.penetration_modifier = float(processing_event.data["pen_mod"])
+		params.auto_bounce = deg_to_rad(float(processing_event.data["auto_bounce"]))
+		params.ricochet_angle = deg_to_rad(float(processing_event.data["ricochet_angle"]))
+		params.overmatch = int(processing_event.data["overmatch"])
+		params.arming_threshold = int(processing_event.data["arming_threshold"])
+
+	# Fallback: hardcoded 460mm AP shell parameters (Yamato)
+	if params == null:
+		print("[ShellReplay] Using fallback hardcoded 460mm AP shell parameters")
+		params = ShellParams.new()
+		params.speed = 780.0
+		params.drag = 1.8e-05
+		params.damage = 14500.0
+		params.size = 4.6
+		params.caliber = 460.0
+		params.mass = 1460.0
+		params.fire_buildup = 0.0
+		params.fuze_delay = 0.035
+		params.type = ShellParams.ShellType.AP
+		params.penetration_modifier = 1.0
+		params.auto_bounce = deg_to_rad(60.0)
+		params.ricochet_angle = deg_to_rad(45.0)
+		params.overmatch = 32
+		params.arming_threshold = 76
 
 	# Get position and velocity from first shell event
 	var hit_pos: Vector3 = first_shell_event.data["position"]
@@ -717,7 +751,7 @@ func run_validation_simulation(shell_data: Dictionary):
 	# Set current position from shell data
 	var prev_pos = shell_data["prev_pos"]
 	projectile.position = shell_data["current_pos"]
-	var time_step = shell_data["time_step"]
+	var time_step: float = shell_data["time_step"]
 
 	var sim_events: Array = []
 	var result = ArmorInteraction.process_travel(projectile, prev_pos, time_step, space_state, sim_events)
@@ -734,7 +768,7 @@ func _on_validation_complete(sim_events: Array, result):
 	print_comparison_results(sim_events, result)
 
 func visualize_trajectories(sim_events: Array):
-	# Visualize logged trajectory using process_event
+	# Visualize logged trajectory using world-space positions directly.
 	trail_points.clear()
 	for event in events:
 		process_event(event)

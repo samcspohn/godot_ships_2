@@ -515,6 +515,16 @@ func initialize_armor_system() -> void:
 		print("   ⚠️ No armor data found and auto-extraction disabled")
 
 	enable_backface_collision_recursive(self)
+
+	# Register turret armor parts with PrecisionPhysicsWorld.
+	# The ship registered before turret deferred init ran, so these parts
+	# were missed.  add_armor_part handles late registration.
+	if _ship != null and PrecisionPhysicsWorld != null:
+		for part: ArmorPart in _ship.armor_parts:
+			# Only register parts that belong to this turret (children of self)
+			if part.get_parent() == self or self.is_ancestor_of(part):
+				PrecisionPhysicsWorld.add_armor_part(_ship, part)
+
 	print("done")
 
 func extract_and_load_armor_data(glb_path: String, armor_json_path: String) -> void:

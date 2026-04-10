@@ -69,6 +69,7 @@ signal reset_dynamic_mods
 
 var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
+var _precision_registered: bool = false
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	last_contacts.clear()
@@ -194,6 +195,17 @@ func _ready() -> void:
 		beam = aabb.size.x if aabb.size.x > 0 else 50.0
 	print("beam: ", beam)
 
+	# Register with PrecisionPhysicsWorld for origin-local precision raycasting.
+	# Must happen after armor_parts and aabb are fully populated.
+	# All ships register — even those in SubViewports (e.g. shell_replay) —
+	# so that _process_hit can use the precision world for inner armor-layer
+	# iteration.  The broadphase OBB cast in process_travel already has a
+	# space_state identity check that prevents it from looking for OBBs in the
+	# wrong physics world.
+	if PrecisionPhysicsWorld != null:
+		PrecisionPhysicsWorld.register_ship(self)
+		_precision_registered = true
+
 	initialized = true
 	if !(_Utils.authority()):
 		initialized_client.rpc_id(1)
@@ -206,6 +218,15 @@ func _ready() -> void:
 
 	self.collision_layer = 1 << 2
 	self.collision_mask = 1 | 1 << 2
+
+	# Clean up precision world registration when the ship leaves the tree
+	if _precision_registered:
+		tree_exiting.connect(_on_tree_exiting)
+
+func _on_tree_exiting() -> void:
+	if _precision_registered and PrecisionPhysicsWorld != null:
+		PrecisionPhysicsWorld.unregister_ship(self)
+		_precision_registered = false
 
 func set_input(input_array: Array, aim_point: Vector3) -> void:
 	# Split the input between movement and artillery controllers
@@ -567,6 +588,15 @@ func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
 
+## Compute the transform from a descendant node to this ship's local space.
+func _node_to_ship_transform(node: Node3D) -> Transform3D:
+	var xform := node.transform
+	var p: Node = node.get_parent()
+	while p != self and p != null:
+		xform = (p as Node3D).transform * xform
+		p = p.get_parent()
+	return xform
+
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
 	var n = node
@@ -591,7 +621,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.add_child(armor_part)
 		armor_parts.append(armor_part)
-		self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
+		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as MeshInstance3D).get_aabb())
 		# static_body.collision_layer = 1 << 1
 		# static_body.collision_mask = 0
 		#if node.name == "Hull":
@@ -633,7 +663,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.get_parent().add_child(armor_part)
 		armor_parts.append(armor_part)
-		self.aabb = self.aabb.merge((node as StaticBody3D).get_aabb())
+		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as StaticBody3D).get_aabb())
 		# node.collision_layer = 1 << 1
 		# node.collision_mask = 0
 		# if node.name == "Hull":
