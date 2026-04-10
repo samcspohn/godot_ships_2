@@ -27,8 +27,9 @@ class_name _PrecisionPhysicsWorld
 #   "ship": Ship,
 #   "obb_body": StaticBody3D,
 #   "space_rid": RID,
-#   "body_rids": Array[RID],     # one per ArmorPart
-#   "armor_parts": Array[ArmorPart],  # the ORIGINAL parts (for debug/inspection)
+#   "static_bodies": Array[Dictionary],   # hull parts — never re-synced
+#   "dynamic_bodies": Array[Dictionary],  # turret parts — synced on OBB hit
+#   "sync_frame": int,                    # engine frame when dynamic bodies were last synced
 # }
 var _ship_cache: Dictionary = {}
 
@@ -50,7 +51,7 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	sync_transforms()
+	_sync_obbs()
 	if debug_draw_obb:
 		_draw_all_obb_wireframes()
 	_expire_obb_hits()
@@ -146,6 +147,16 @@ static func _get_shape_aabb(shape: Shape3D) -> AABB:
 
 ## Create a static body in the given precision space for a single ArmorPart.
 ## Returns { "body_rid": RID, "armor_part": ArmorPart }.
+## Returns true if the armor part is a descendant of a Turret (i.e. it moves).
+static func _is_dynamic_part(armor_part: ArmorPart) -> bool:
+	var p := armor_part.get_parent()
+	while p != null:
+		if p is Turret:
+			return true
+		p = p.get_parent()
+	return false
+
+
 func _create_precision_body(space_rid: RID, ship_inv: Transform3D, armor_part: ArmorPart) -> Dictionary:
 	var local_xform := ship_inv * armor_part.global_transform
 
@@ -226,24 +237,28 @@ func register_ship(ship: Ship) -> void:
 	var space_rid := PhysicsServer3D.space_create()
 	PhysicsServer3D.space_set_active(space_rid, true)
 
-	# Array of { "body_rid": RID, "armor_part": ArmorPart } — keeps the reference
-	# so sync_transforms can update body positions when turrets rotate.
-	var bodies: Array = []
+	var static_bodies: Array = []
+	var dynamic_bodies: Array = []
 
 	for armor_part: ArmorPart in ship.armor_parts:
 		var body_info := _create_precision_body(space_rid, ship_inv, armor_part)
-		bodies.append(body_info)
+		if _is_dynamic_part(armor_part):
+			dynamic_bodies.append(body_info)
+		else:
+			static_bodies.append(body_info)
 
 	_ship_cache[sid] = {
 		"ship": ship,
 		"obb_body": obb_body,
 		"space_rid": space_rid,
-		"bodies": bodies,
+		"static_bodies": static_bodies,
+		"dynamic_bodies": dynamic_bodies,
+		"sync_frame": -1,
 	}
 
 	if debug_log_obb:
-		print("[PrecisionPhysics] Registered ship '%s' — %d armor parts, %d bodies in precision space" % [
-			ship.ship_name, ship.armor_parts.size(), bodies.size()])
+		print("[PrecisionPhysics] Registered ship '%s' — %d static, %d dynamic bodies" % [
+			ship.ship_name, static_bodies.size(), dynamic_bodies.size()])
 
 
 ## Register an individual armor part with an already-registered ship.
@@ -260,11 +275,14 @@ func add_armor_part(ship: Ship, armor_part: ArmorPart) -> void:
 	var ship_inv := ship.global_transform.affine_inverse()
 
 	var body_info := _create_precision_body(space_rid, ship_inv, armor_part)
-	entry["bodies"].append(body_info)
+	# Turret parts added late are always dynamic
+	entry["dynamic_bodies"].append(body_info)
+	# Force re-sync on next narrowphase hit
+	entry["sync_frame"] = -1
 
 	if debug_log_obb:
-		print("[PrecisionPhysics] Added armor part '%s' to ship '%s' (now %d bodies)" % [
-			armor_part.armor_path, ship.ship_name, entry["bodies"].size()])
+		print("[PrecisionPhysics] Added dynamic armor part '%s' to ship '%s' (now %d dynamic bodies)" % [
+			armor_part.armor_path, ship.ship_name, entry["dynamic_bodies"].size()])
 
 
 ## Unregister a ship and clean up its OBB and precision space.
@@ -281,8 +299,9 @@ func unregister_ship(ship: Ship) -> void:
 		obb.queue_free()
 
 	# Free all bodies in the precision space, then the space itself
-	var bodies: Array = entry["bodies"]
-	for body_info: Dictionary in bodies:
+	for body_info: Dictionary in entry["static_bodies"]:
+		PhysicsServer3D.free_rid(body_info["body_rid"])
+	for body_info: Dictionary in entry["dynamic_bodies"]:
 		PhysicsServer3D.free_rid(body_info["body_rid"])
 
 	var space_rid: RID = entry["space_rid"]
@@ -294,9 +313,10 @@ func unregister_ship(ship: Ship) -> void:
 		print("[PrecisionPhysics] Unregistered ship '%s'" % ship.ship_name)
 
 
-## Sync OBB transforms with ship positions AND precision body transforms with
-## armor part positions. The latter handles turrets that rotate during gameplay.
-func sync_transforms() -> void:
+## Sync OBB transforms with ship positions every physics tick (cheap).
+## Precision body transforms are updated lazily via _sync_precision_bodies()
+## only when a raycast actually targets that ship's space.
+func _sync_obbs() -> void:
 	var stale: Array = []
 	for sid in _ship_cache:
 		var entry: Dictionary = _ship_cache[sid]
@@ -308,26 +328,43 @@ func sync_transforms() -> void:
 		if is_instance_valid(obb):
 			obb.global_transform = ship.global_transform
 
-		# Update all precision body transforms — handles turret rotation.
-		var ship_inv := ship.global_transform.affine_inverse()
-		for body_info: Dictionary in entry["bodies"]:
-			var armor_part: ArmorPart = body_info["armor_part"]
-			if is_instance_valid(armor_part):
-				var local_xform := ship_inv * armor_part.global_transform
-				PhysicsServer3D.body_set_state(
-					body_info["body_rid"],
-					PhysicsServer3D.BODY_STATE_TRANSFORM,
-					local_xform)
-
 	for sid in stale:
 		var entry: Dictionary = _ship_cache[sid]
 		var obb: StaticBody3D = entry["obb_body"]
 		if is_instance_valid(obb):
 			obb.queue_free()
-		for body_info: Dictionary in entry["bodies"]:
+		for body_info: Dictionary in entry["static_bodies"]:
+			PhysicsServer3D.free_rid(body_info["body_rid"])
+		for body_info: Dictionary in entry["dynamic_bodies"]:
 			PhysicsServer3D.free_rid(body_info["body_rid"])
 		PhysicsServer3D.free_rid(entry["space_rid"])
 		_ship_cache.erase(sid)
+
+
+## Update dynamic (turret) precision body transforms for a single ship.
+## Static hull bodies never move relative to the ship so they are skipped.
+## Uses a frame counter so multiple OBB hits in the same frame only sync once.
+func _sync_precision_bodies(ship: Ship) -> void:
+	var sid := ship.get_instance_id()
+	if not _ship_cache.has(sid):
+		return
+	var entry: Dictionary = _ship_cache[sid]
+	var current_frame := Engine.get_physics_frames()
+	if entry["sync_frame"] == current_frame:
+		return
+	entry["sync_frame"] = current_frame
+	var dynamic: Array = entry["dynamic_bodies"]
+	if dynamic.is_empty():
+		return
+	var ship_inv := ship.global_transform.affine_inverse()
+	for body_info: Dictionary in dynamic:
+		var armor_part: ArmorPart = body_info["armor_part"]
+		if is_instance_valid(armor_part):
+			var local_xform := ship_inv * armor_part.global_transform
+			PhysicsServer3D.body_set_state(
+				body_info["body_rid"],
+				PhysicsServer3D.BODY_STATE_TRANSFORM,
+				local_xform)
 
 
 ## Get the PhysicsDirectSpaceState3D for a specific ship's precision space.
@@ -396,6 +433,7 @@ func get_ship_containing_point(world_point: Vector3, excluded_ships: Array = [])
 ## as world-space data, or an empty dict on miss.
 ## Returns { "armor": ArmorPart, "world_pos": Vector3, "world_normal": Vector3, "face_index": int }
 func narrowphase_hit(ship: Ship, world_from: Vector3, world_to: Vector3) -> Dictionary:
+	_sync_precision_bodies(ship)
 	var local_ray := world_ray_to_local(ship, world_from, world_to)
 	var local_from: Vector3 = local_ray[0]
 	var local_to: Vector3 = local_ray[1]
@@ -444,6 +482,8 @@ func precision_raycast(ship: Ship, from_local: Vector3, to_local: Vector3,
 ## 'face_index': int } or empty dict on miss.
 ## The returned ArmorPart is the ORIGINAL scene-tree node.
 func precision_get_next_hit(ship: Ship, from_local: Vector3, to_local: Vector3) -> Dictionary:
+	# No _sync_precision_bodies here — callers (e.g. _process_hit) already
+	# entered through narrowphase_hit or precision_raycast which synced first.
 	var space_state := get_ship_space_state(ship)
 	if space_state == null:
 		return {}
@@ -474,6 +514,8 @@ func precision_get_next_hit(ship: Ship, from_local: Vector3, to_local: Vector3) 
 ## inside.  Prefers citadel parts.
 ## Returns the ORIGINAL ArmorPart the point is inside, or null.
 func precision_get_part_hit(ship: Ship, local_pos: Vector3) -> ArmorPart:
+	# No _sync_precision_bodies here — callers already synced on the initial
+	# narrowphase_hit / precision_raycast that started the hit processing.
 	var space_state := get_ship_space_state(ship)
 	if space_state == null:
 		return null
@@ -547,5 +589,5 @@ func get_ship_entry(ship: Ship) -> Dictionary:
 func get_precision_body_count(ship: Ship) -> int:
 	var sid := ship.get_instance_id()
 	if _ship_cache.has(sid):
-		return _ship_cache[sid]["bodies"].size()
+		return _ship_cache[sid]["static_bodies"].size() + _ship_cache[sid]["dynamic_bodies"].size()
 	return 0
