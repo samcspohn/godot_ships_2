@@ -55,6 +55,11 @@ const STRIDE_CONE   := 56  # 14 floats
 # The ship the client is spectating. Set via RPC from the client.
 var follow_ship: Ship = null
 
+# Whether the debug overlay is enabled (client-side). Toggled with Ctrl+`.
+# When true, the client registers as a debug receiver even without following
+# a ship, so autoload draws (OBB wireframes, etc.) are visible.
+var debug_enabled: bool = false
+
 # Per-type byte buffers: Dictionary[int, PackedByteArray]
 # IMPORTANT: PackedByteArray is a value type (copy-on-write) in GDScript.
 # We must NEVER extract it into a local var and mutate the local — the
@@ -64,6 +69,10 @@ var _draw_buffers: Dictionary = {}
 
 # Which peer is following (server tracks this for RPC target).
 var _follower_peer_id: int = 0
+
+# Whether the current follower peer is registered as a debug receiver
+# (independent of follow_ship). Server-side.
+var _is_debug_receiver: bool = false
 
 # ============================================================================
 # Client-side state
@@ -93,6 +102,9 @@ var _client_type_commands: Dictionary = {}
 
 # Whether we are currently following a non-player ship (client-side flag).
 var _following: bool = false
+
+# Whether we've registered as a debug receiver on the server (client-side).
+var _debug_registered: bool = false
 
 # Set after reconnect so the next set_follow_ship() re-sends the RPC
 # even if the followed ship hasn't changed.
@@ -168,6 +180,7 @@ func draw_square_3d(center: Vector3, width: float, height: float, orientation: V
 func _ready() -> void:
 	set_process(true)
 	set_physics_process(true)
+	set_process_unhandled_key_input(true)
 
 var _signals_connected: bool = false
 
@@ -180,6 +193,28 @@ func _process(_delta: float) -> void:
 
 		_poll_connection_state()
 		_update_mesh_pool()
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if multiplayer.is_server():
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_QUOTELEFT and event.ctrl_pressed:
+			debug_enabled = not debug_enabled
+			print("[Debug] Debug overlay %s" % ("ON" if debug_enabled else "OFF"))
+			if debug_enabled:
+				_register_debug_receiver.rpc_id(1, true)
+				_debug_registered = true
+				# Also enable OBB wireframes on the server
+				_set_debug_draw_obb.rpc_id(1, true)
+			else:
+				_set_debug_draw_obb.rpc_id(1, false)
+				_client_type_commands.clear()
+				_client_buffers.clear()
+				_clear_mesh_pool()
+				if not _following:
+					_register_debug_receiver.rpc_id(1, false)
+					_debug_registered = false
+			get_viewport().set_input_as_handled()
 
 func _physics_process(_delta: float) -> void:
 	if multiplayer.is_server():
@@ -205,9 +240,12 @@ func set_follow_ship(ship: Ship, player_ship: Ship) -> void:
 			_following = false
 			follow_ship = null
 			_set_server_follow.rpc_id(1, NodePath(""))
-			_client_type_commands.clear()
-			_client_buffers.clear()
-			_clear_mesh_pool()
+			# Only tear down the client display if debug overlay is off.
+			# When debug_enabled, we keep receiving server draws (OBBs etc.)
+			if not debug_enabled:
+				_client_type_commands.clear()
+				_client_buffers.clear()
+				_clear_mesh_pool()
 
 # ============================================================================
 # Server: follow ship RPC
@@ -216,18 +254,45 @@ func set_follow_ship(ship: Ship, player_ship: Ship) -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func _set_server_follow(ship_path: NodePath) -> void:
 	var sender_id := multiplayer.get_remote_sender_id()
-	_follower_peer_id = sender_id
 	if ship_path == NodePath(""):
 		follow_ship = null
-		_clear_buffers()
+		if not _is_debug_receiver:
+			_follower_peer_id = 0
+			_clear_buffers()
 		print("[Debug] Peer %d cleared follow ship" % sender_id)
 		return
+	_follower_peer_id = sender_id
 	var node = get_node_or_null(ship_path)
 	if node is Ship:
 		follow_ship = node as Ship
 		print("[Debug] Peer %d now following %s" % [sender_id, node.name])
 	else:
 		follow_ship = null
+
+## Register/unregister a peer as a debug receiver without requiring follow_ship.
+## This allows the client to receive autoload draws (OBB wireframes, etc.)
+## independently of following a specific bot ship.
+@rpc("any_peer", "call_remote", "reliable")
+func _register_debug_receiver(enabled: bool) -> void:
+	var sender_id := multiplayer.get_remote_sender_id()
+	_is_debug_receiver = enabled
+	if enabled:
+		_follower_peer_id = sender_id
+		print("[Debug] Peer %d registered as debug receiver" % sender_id)
+	else:
+		if follow_ship == null:
+			_follower_peer_id = 0
+			_clear_buffers()
+		print("[Debug] Peer %d unregistered as debug receiver" % sender_id)
+
+## Toggle OBB wireframe drawing on the server.
+@rpc("any_peer", "call_remote", "reliable")
+func _set_debug_draw_obb(enabled: bool) -> void:
+	if PrecisionPhysicsWorld != null:
+		PrecisionPhysicsWorld.debug_draw_obb = enabled
+		print("[Debug] OBB wireframe draw %s (peer %d)" % [
+			"enabled" if enabled else "disabled",
+			multiplayer.get_remote_sender_id()])
 
 # ============================================================================
 # Client: disconnect / reconnect handlers
@@ -258,12 +323,18 @@ func _handle_disconnect() -> void:
 	_client_buffers.clear()
 	_clear_mesh_pool()
 	_needs_reregister = true
+	_debug_registered = false
 	_was_connected = false
 
 func _handle_reconnect() -> void:
 	print("[Debug] Client reconnected — will re-register follow ship with new peer ID")
 	_needs_reregister = true
 	_was_connected = true
+	# Re-register debug receiver if it was on before disconnect
+	if debug_enabled:
+		_register_debug_receiver.rpc_id(1, true)
+		_set_debug_draw_obb.rpc_id(1, true)
+		_debug_registered = true
 
 # ============================================================================
 # Server: buffer management helpers
@@ -437,6 +508,7 @@ func _server_flush() -> void:
 	if _follower_peer_id not in connected_peers:
 		_follower_peer_id = 0
 		follow_ship = null
+		_is_debug_receiver = false
 		_clear_buffers()
 		return
 
@@ -598,7 +670,7 @@ func _decode_labels(buf: PackedByteArray) -> void:
 # ============================================================================
 
 func _update_mesh_pool() -> void:
-	if not _following:
+	if not debug_enabled:
 		return
 
 	_active_keys.clear()

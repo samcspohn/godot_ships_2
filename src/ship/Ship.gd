@@ -588,6 +588,15 @@ func _hide():
 	self.visible = false
 	self.visible_to_enemy = false
 
+## Compute the transform from a descendant node to this ship's local space.
+func _node_to_ship_transform(node: Node3D) -> Transform3D:
+	var xform := node.transform
+	var p: Node = node.get_parent()
+	while p != self and p != null:
+		xform = (p as Node3D).transform * xform
+		p = p.get_parent()
+	return xform
+
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""
 	var n = node
@@ -612,13 +621,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.add_child(armor_part)
 		armor_parts.append(armor_part)
-		# Compute node-to-ship-local transform by walking up the hierarchy
-		var node_to_ship: Transform3D = (node as Node3D).transform
-		var p: Node = node.get_parent()
-		while p != self and p != null:
-			node_to_ship = (p as Node3D).transform * node_to_ship
-			p = p.get_parent()
-		self.aabb = self.aabb.merge(node_to_ship * (node as MeshInstance3D).get_aabb())
+		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as MeshInstance3D).get_aabb())
 		# static_body.collision_layer = 1 << 1
 		# static_body.collision_mask = 0
 		#if node.name == "Hull":
@@ -660,13 +663,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.ship = self
 		node.get_parent().add_child(armor_part)
 		armor_parts.append(armor_part)
-		# Compute node-to-ship-local transform by walking up the hierarchy
-		var node_to_ship: Transform3D = (node as Node3D).transform
-		var p: Node = node.get_parent()
-		while p != self and p != null:
-			node_to_ship = (p as Node3D).transform * node_to_ship
-			p = p.get_parent()
-		self.aabb = self.aabb.merge(node_to_ship * (node as StaticBody3D).get_aabb())
+		self.aabb = self.aabb.merge(_node_to_ship_transform(node) * (node as StaticBody3D).get_aabb())
 		# node.collision_layer = 1 << 1
 		# node.collision_mask = 0
 		# if node.name == "Hull":

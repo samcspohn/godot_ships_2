@@ -36,9 +36,9 @@ var _ship_cache: Dictionary = {}
 const OBB_COLLISION_LAYER: int = 1 << 4
 
 ## When true, draw wireframe OBBs for every registered ship each physics tick.
-var debug_draw_obb: bool = true
+var debug_draw_obb: bool = false
 ## When true, print to console whenever a shell enters/misses an OBB.
-var debug_log_obb: bool = true
+var debug_log_obb: bool = false
 
 # Maps ship instance ID -> hit timestamp (msec).
 const OBB_HIT_LINGER_MS: int = 500
@@ -392,6 +392,32 @@ func get_ship_containing_point(world_point: Vector3, excluded_ships: Array = [])
 	return null
 
 
+## Perform a narrowphase precision raycast for a ship and return the hit info
+## as world-space data, or an empty dict on miss.
+## Returns { "armor": ArmorPart, "world_pos": Vector3, "world_normal": Vector3, "face_index": int }
+func narrowphase_hit(ship: Ship, world_from: Vector3, world_to: Vector3) -> Dictionary:
+	var local_ray := world_ray_to_local(ship, world_from, world_to)
+	var local_from: Vector3 = local_ray[0]
+	var local_to: Vector3 = local_ray[1]
+
+	var result := precision_raycast(ship, local_from, local_to)
+	if result.is_empty():
+		return {}
+
+	var armor_part := result.get('collider') as ArmorPart
+	if armor_part == null:
+		return {}
+
+	return {
+		"armor": armor_part,
+		"world_pos": local_to_world(ship, result.get('position')),
+		"world_normal": local_dir_to_world(ship, result.get('normal')).normalized(),
+		"face_index": result.get('face_index'),
+		"local_from": local_from,
+		"local_to": local_to,
+	}
+
+
 ## Perform a precision raycast in a ship's dedicated precision space.
 ## from_local and to_local are in ship-local coordinates.
 ## Returns the same Dictionary format as intersect_ray, with positions/normals
@@ -414,7 +440,6 @@ func precision_raycast(ship: Ship, from_local: Vector3, to_local: Vector3,
 
 
 ## Find the closest armor hit along a ray in ship-local space.
-## Iterates through overlapping colliders to pick the nearest one.
 ## Returns { 'armor': ArmorPart, 'position': Vector3, 'normal': Vector3,
 ## 'face_index': int } or empty dict on miss.
 ## The returned ArmorPart is the ORIGINAL scene-tree node.
@@ -429,33 +454,18 @@ func precision_get_next_hit(ship: Ship, from_local: Vector3, to_local: Vector3) 
 	ray_query.hit_back_faces = true
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 << 1
-	ray_query.exclude = []
 
 	var result := space_state.intersect_ray(ray_query)
 	if result.is_empty():
 		return {}
 
-	var closest_result := result
-	var exclude: Array[RID] = []
-
-	while not result.is_empty():
-		exclude.append(result.get('rid'))
-		ray_query.exclude = exclude
-		result = space_state.intersect_ray(ray_query)
-		if not result.is_empty():
-			var new_dist: float = (result.get('position') - from_local).length()
-			var old_dist: float = (closest_result.get('position') - from_local).length()
-			if new_dist < old_dist:
-				closest_result = result
-
-	# Return the closest hit if it's an ArmorPart
-	var armor: ArmorPart = closest_result.get('collider') as ArmorPart
+	var armor: ArmorPart = result.get('collider') as ArmorPart
 	if armor != null:
 		return {
 			'armor': armor,
-			'position': closest_result.get('position'),
-			'normal': closest_result.get('normal'),
-			'face_index': closest_result.get('face_index')
+			'position': result.get('position'),
+			'normal': result.get('normal'),
+			'face_index': result.get('face_index')
 		}
 	return {}
 

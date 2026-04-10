@@ -320,54 +320,24 @@ func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 					curr_pos.x, curr_pos.y, curr_pos.z])
 			PrecisionPhysicsWorld.notify_obb_hit(obb_ship)
 
-			# -------------------------------------------------------
-			# Phase 2: Narrowphase — transform the original world-space
-			# ray into the ship's local space and cast against the full
-			# armor detail in the precision world at the origin.
-			# -------------------------------------------------------
-			var local_ray := PrecisionPhysicsWorld.world_ray_to_local(obb_ship, extended_from, curr_pos)
-			var local_from: Vector3 = local_ray[0]
-			var local_to: Vector3 = local_ray[1]
+			# Phase 2: Narrowphase in precision space
+			var hit = PrecisionPhysicsWorld.narrowphase_hit(obb_ship, extended_from, curr_pos)
+			if not hit.is_empty():
+				if PrecisionPhysicsWorld.debug_log_obb:
+					print("[NARROWPHASE HIT] %s armor '%s' at world(%.1f,%.1f,%.1f)" % [
+						obb_ship.ship_name, hit["armor"].armor_path,
+						hit["world_pos"].x, hit["world_pos"].y, hit["world_pos"].z])
 
-			var precision_result := PrecisionPhysicsWorld.precision_raycast(obb_ship, local_from, local_to)
+				var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+					projectile.launch_velocity, t, projectile.params)
 
-			if not precision_result.is_empty():
-				var armor_part := precision_result.get('collider') as ArmorPart
-				if armor_part != null:
-					# Transform hit data back to world space
-					var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(obb_ship, precision_result.get('position'))
-					var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(obb_ship, precision_result.get('normal')).normalized()
+				return _process_hit(hit["armor"], hit["world_pos"], hit["world_normal"],
+					projectile, impact_vel, hit["face_index"],
+					-1.0, space_state, false, events)
 
-					if PrecisionPhysicsWorld.debug_log_obb:
-						print("[OBB NARROWPHASE HIT] %s armor '%s' at local(%.2f,%.2f,%.2f) world(%.1f,%.1f,%.1f)" % [
-							obb_ship.ship_name, armor_part.armor_path,
-							precision_result.get('position').x, precision_result.get('position').y, precision_result.get('position').z,
-							world_hit_pos.x, world_hit_pos.y, world_hit_pos.z])
-
-					var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-						projectile.launch_velocity, t, projectile.params)
-
-					return _process_hit(armor_part, world_hit_pos, world_hit_normal,
-						projectile, impact_vel, precision_result.get('face_index'),
-						-1.0, space_state, false, events)
-			# OBB was hit but no armor detail inside — miss
 			if PrecisionPhysicsWorld.debug_log_obb:
-				var ray_len := local_from.distance_to(local_to)
-				var body_count := PrecisionPhysicsWorld.get_precision_body_count(obb_ship)
-				print("[OBB NARROWPHASE MISS] OBB of %s hit but precision raycast found NO armor." % obb_ship.ship_name)
-				print("  local_ray: (%.2f,%.2f,%.2f)->(%.2f,%.2f,%.2f)  len=%.2f" % [
-					local_from.x, local_from.y, local_from.z,
-					local_to.x, local_to.y, local_to.z, ray_len])
-				print("  world_ray: (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f)" % [
-					extended_from.x, extended_from.y, extended_from.z,
-					curr_pos.x, curr_pos.y, curr_pos.z])
-				print("  obb_hit_pos: (%.1f,%.1f,%.1f)  ship_pos: (%.1f,%.1f,%.1f)" % [
-					obb_hit_pos.x, obb_hit_pos.y, obb_hit_pos.z,
-					obb_ship.global_position.x, obb_ship.global_position.y, obb_ship.global_position.z])
-				print("  precision_body_count=%d" % body_count)
-				var world_ray_from := PrecisionPhysicsWorld.local_to_world(obb_ship, local_from)
-				var world_ray_to := PrecisionPhysicsWorld.local_to_world(obb_ship, local_to)
-				Debug.draw_line(world_ray_from, world_ray_to, Color.RED)
+				print("[NARROWPHASE MISS] OBB of %s hit, no armor found (bodies=%d)" % [
+					obb_ship.ship_name, PrecisionPhysicsWorld.get_precision_body_count(obb_ship)])
 			return null
 
 		# Hit non-armor, non-OBB objects (terrain / islands)
@@ -394,32 +364,22 @@ func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 				containing_ship.ship_name, midpoint.x, midpoint.y, midpoint.z])
 		PrecisionPhysicsWorld.notify_obb_hit(containing_ship)
 
-		var local_ray := PrecisionPhysicsWorld.world_ray_to_local(containing_ship, extended_from, curr_pos)
-		var local_from: Vector3 = local_ray[0]
-		var local_to: Vector3 = local_ray[1]
+		var hit := PrecisionPhysicsWorld.narrowphase_hit(containing_ship, extended_from, curr_pos)
+		if not hit.is_empty():
+			if PrecisionPhysicsWorld.debug_log_obb:
+				print("[CONTAINMENT HIT] %s armor '%s' at world(%.1f,%.1f,%.1f)" % [
+					containing_ship.ship_name, hit["armor"].armor_path,
+					hit["world_pos"].x, hit["world_pos"].y, hit["world_pos"].z])
 
-		var precision_result := PrecisionPhysicsWorld.precision_raycast(containing_ship, local_from, local_to)
+			var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+				projectile.launch_velocity, t, projectile.params)
 
-		if not precision_result.is_empty():
-			var armor_part := precision_result.get('collider') as ArmorPart
-			if armor_part != null:
-				var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(containing_ship, precision_result.get('position'))
-				var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(containing_ship, precision_result.get('normal')).normalized()
-
-				if PrecisionPhysicsWorld.debug_log_obb:
-					print("[OBB CONTAINMENT HIT] %s armor '%s' at world(%.1f,%.1f,%.1f)" % [
-						containing_ship.ship_name, armor_part.armor_path,
-						world_hit_pos.x, world_hit_pos.y, world_hit_pos.z])
-
-				var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-					projectile.launch_velocity, t, projectile.params)
-
-				return _process_hit(armor_part, world_hit_pos, world_hit_normal,
-					projectile, impact_vel, precision_result.get('face_index'),
-					-1.0, space_state, false, events)
+			return _process_hit(hit["armor"], hit["world_pos"], hit["world_normal"],
+				projectile, impact_vel, hit["face_index"],
+				-1.0, space_state, false, events)
 
 		if PrecisionPhysicsWorld.debug_log_obb:
-			print("[OBB CONTAINMENT MISS] Inside OBB of %s but precision raycast found no armor" % containing_ship.ship_name)
+			print("[CONTAINMENT MISS] Inside OBB of %s but no armor found" % containing_ship.ship_name)
 
 	# ------------------------------------------------------------------
 	# No direct hit — check for underwater penetration (prev_pos→curr_pos)
@@ -457,31 +417,21 @@ func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 				if underwater_ship == null or underwater_ship == projectile.owner or underwater_ship in projectile.exclude:
 					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
 
-				# Narrowphase: precision cast the underwater ray in local space
-				var local_ray := PrecisionPhysicsWorld.world_ray_to_local(underwater_ship, water_hit_pos, fuzed_position)
-				var precision_result := PrecisionPhysicsWorld.precision_raycast(underwater_ship, local_ray[0], local_ray[1])
-
-				if precision_result.is_empty():
+				# Narrowphase: precision cast the underwater ray
+				var hit := PrecisionPhysicsWorld.narrowphase_hit(underwater_ship, water_hit_pos, fuzed_position)
+				if hit.is_empty():
 					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
-
-				var hit_armor := precision_result['collider'] as ArmorPart
-				if hit_armor == null:
-					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
-
-				var local_hit_pos: Vector3 = precision_result.get('position')
-				var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(underwater_ship, local_hit_pos)
-				var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(underwater_ship, precision_result.get('normal')).normalized()
 
 				var total_dist := (fuzed_position - water_hit_pos).length()
-				var hit_dist := (world_hit_pos - water_hit_pos).length()
+				var hit_dist: float = (hit["world_pos"] - water_hit_pos).length()
 				var t_impact: float = projectile.params.fuze_delay * (hit_dist / total_dist)
 				var water_p = projectile.params.duplicate(true)
 				water_p.drag *= WATER_DRAG
 				var water_impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 					impact_vel, t_impact, water_p)
 
-				return _process_hit(hit_armor, world_hit_pos, world_hit_normal,
-					projectile, water_impact_vel, precision_result.get('face_index'),
+				return _process_hit(hit["armor"], hit["world_pos"], hit["world_normal"],
+					projectile, water_impact_vel, hit["face_index"],
 					t_impact, space_state, true, events)
 
 	return null
