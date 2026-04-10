@@ -237,69 +237,196 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 	# shells skipping past a hull surface in a single frame).
 	var extended_from := prev_pos if projectile.frame_count == 0 else prev_pos - travel.normalized() * 10.0
 
+	return _process_travel_precision(projectile, prev_pos, curr_pos, extended_from, t, space_state, events)
+
+
+
+
+
+## Precision two-phase path: broadphase OBB check in the main world, then
+## narrowphase armor raycast in the origin-local precision world.
+func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
+		curr_pos: Vector3, extended_from: Vector3, t: float,
+		space_state: PhysicsDirectSpaceState3D, events) -> ArmorResultData:
+
+	# ------------------------------------------------------------------
+	# Phase 1: Broadphase — cast against terrain (layer 0), OBB ship
+	# bounding boxes (layer 4), and the sea collision layer (layer 3).
+	# Armor parts (layer 1) are NOT tested here; we rely on the coarse
+	# OBBs instead, then refine in the precision world.
+	# ------------------------------------------------------------------
 	var ray_query := PhysicsRayQueryParameters3D.new()
 	ray_query.from = extended_from
 	ray_query.to = curr_pos
 	ray_query.hit_back_faces = true
 	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 | (1 << 1) | (1 << 3)
-	# todo: optimize
+	# Layers: 0 = terrain, 3 = sea, 4 = OBB broadphase
+	ray_query.collision_mask = 1 | (1 << 3) | PrecisionPhysicsWorld.OBB_COLLISION_LAYER
+
+	# Build exclude list for OBBs belonging to owner / excluded ships
 	var exclude = []
 	if projectile.owner != null:
-		for part: ArmorPart in projectile.owner.armor_parts:
-			exclude.append(part.get_rid())
+		var owner_entry := PrecisionPhysicsWorld.get_ship_entry(projectile.owner as Ship)
+		if not owner_entry.is_empty():
+			exclude.append((owner_entry["obb_body"] as StaticBody3D).get_rid())
 	for e in projectile.exclude:
 		if e is Ship:
-			# exclude += (e as Ship).armor_parts
-			for part: ArmorPart in (e as Ship).armor_parts:
-				exclude.append(part.get_rid())
-				# print("Excluding part %s of ship %s" % [part.armor_path, e.name])
-		elif e is ArmorPart:
-			exclude.append(e.get_rid())
+			var entry := PrecisionPhysicsWorld.get_ship_entry(e as Ship)
+			if not entry.is_empty():
+				exclude.append((entry["obb_body"] as StaticBody3D).get_rid())
 	ray_query.exclude = exclude
-	#print("here")
 
-	var result := space_state.intersect_ray(ray_query)
+	# OBBs and terrain live in the main world — always cast broadphase there,
+	# even when called from a SubViewport context (e.g. shell_replay validation).
+	var _main_space: PhysicsDirectSpaceState3D = null
+	if PrecisionPhysicsWorld.get_tree() != null:
+		var root_world := PrecisionPhysicsWorld.get_tree().root.world_3d
+		if root_world != null:
+			_main_space = root_world.direct_space_state
+	if _main_space == null:
+		return null
+	var result := _main_space.intersect_ray(ray_query)
 
+	# --- Owner-less projectiles (e.g. debug / visual-only) ---
 	if projectile.owner == null:
 		if not result.is_empty():
 			if result.get('position').y <= 0.0001:
 				return ArmorResultData.new(HitResult.WATER, result.get('position'), null, Vector3.ZERO, null, Vector3.ZERO)
-			elif result.get('collider') is ArmorPart:
+			# OBB hit with no owner — treat as miss
+			elif PrecisionPhysicsWorld.get_ship_from_obb(result.get('collider')) != null:
 				return null
 			else:
 				return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 		return null
 
-	# Check if we hit something
+	# --- Check broadphase hit ---
 	if not result.is_empty():
 		var hit_node = result.get('collider')
-		if hit_node is ArmorPart:
-			var armor_part := hit_node as ArmorPart
-			# print("Hit armor part: %s on ship %s" % [armor_part.armor_path, armor_part.ship.name])
-			# print("Projectile owner: %s, ray exclude list: %s" % [
-			# 	projectile.owner.name if projectile.owner != null else "null",
-			# 	ray_query.exclude])
 
-			# Ignore own ship or excluded ships
-			if armor_part.ship == projectile.owner or armor_part.ship in projectile.exclude:
+		# Did the ray hit an OBB bounding box?
+		var obb_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(hit_node)
+		if obb_ship != null:
+			# Ignore own ship or excluded ships (redundant safety check)
+			if obb_ship == projectile.owner or obb_ship in projectile.exclude:
 				return null
 
-			# Process the armor hit
-			var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
-				projectile.launch_velocity, t, projectile.params)
+			var obb_hit_pos: Vector3 = result.get('position')
+			if PrecisionPhysicsWorld.debug_log_obb:
+				print("[OBB HIT] Shell from %s -> OBB of %s at (%.1f, %.1f, %.1f), ray: (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f)" % [
+					projectile.owner.ship_name if projectile.owner != null else "?",
+					obb_ship.ship_name,
+					obb_hit_pos.x, obb_hit_pos.y, obb_hit_pos.z,
+					extended_from.x, extended_from.y, extended_from.z,
+					curr_pos.x, curr_pos.y, curr_pos.z])
+			PrecisionPhysicsWorld.notify_obb_hit(obb_ship)
 
-			return _process_hit(armor_part, result.get('position'), result.get('normal'),
-				projectile, impact_vel, result.get('face_index'), -1.0, space_state, false, events)
+			# -------------------------------------------------------
+			# Phase 2: Narrowphase — transform the original world-space
+			# ray into the ship's local space and cast against the full
+			# armor detail in the precision world at the origin.
+			# -------------------------------------------------------
+			var local_ray := PrecisionPhysicsWorld.world_ray_to_local(obb_ship, extended_from, curr_pos)
+			var local_from: Vector3 = local_ray[0]
+			var local_to: Vector3 = local_ray[1]
 
-		# Hit non-armor objects
+			var precision_result := PrecisionPhysicsWorld.precision_raycast(obb_ship, local_from, local_to)
+
+			if not precision_result.is_empty():
+				var armor_part := precision_result.get('collider') as ArmorPart
+				if armor_part != null:
+					# Transform hit data back to world space
+					var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(obb_ship, precision_result.get('position'))
+					var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(obb_ship, precision_result.get('normal')).normalized()
+
+					if PrecisionPhysicsWorld.debug_log_obb:
+						print("[OBB NARROWPHASE HIT] %s armor '%s' at local(%.2f,%.2f,%.2f) world(%.1f,%.1f,%.1f)" % [
+							obb_ship.ship_name, armor_part.armor_path,
+							precision_result.get('position').x, precision_result.get('position').y, precision_result.get('position').z,
+							world_hit_pos.x, world_hit_pos.y, world_hit_pos.z])
+
+					var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+						projectile.launch_velocity, t, projectile.params)
+
+					return _process_hit(armor_part, world_hit_pos, world_hit_normal,
+						projectile, impact_vel, precision_result.get('face_index'),
+						-1.0, space_state, false, events)
+			# OBB was hit but no armor detail inside — miss
+			if PrecisionPhysicsWorld.debug_log_obb:
+				var ray_len := local_from.distance_to(local_to)
+				var body_count := PrecisionPhysicsWorld.get_precision_body_count(obb_ship)
+				print("[OBB NARROWPHASE MISS] OBB of %s hit but precision raycast found NO armor." % obb_ship.ship_name)
+				print("  local_ray: (%.2f,%.2f,%.2f)->(%.2f,%.2f,%.2f)  len=%.2f" % [
+					local_from.x, local_from.y, local_from.z,
+					local_to.x, local_to.y, local_to.z, ray_len])
+				print("  world_ray: (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f)" % [
+					extended_from.x, extended_from.y, extended_from.z,
+					curr_pos.x, curr_pos.y, curr_pos.z])
+				print("  obb_hit_pos: (%.1f,%.1f,%.1f)  ship_pos: (%.1f,%.1f,%.1f)" % [
+					obb_hit_pos.x, obb_hit_pos.y, obb_hit_pos.z,
+					obb_ship.global_position.x, obb_ship.global_position.y, obb_ship.global_position.z])
+				print("  precision_body_count=%d" % body_count)
+				var world_ray_from := PrecisionPhysicsWorld.local_to_world(obb_ship, local_from)
+				var world_ray_to := PrecisionPhysicsWorld.local_to_world(obb_ship, local_to)
+				Debug.draw_line(world_ray_from, world_ray_to, Color.RED)
+			return null
+
+		# Hit non-armor, non-OBB objects (terrain / islands)
 		elif result.get('position').y > 0.0001:
 			return ArmorResultData.new(HitResult.TERRAIN, result.get('position'), null, Vector3.ZERO, null, result.get('normal'))
 
-	# No direct hit - check for water penetration using prev_pos→curr_pos segment
+	# ------------------------------------------------------------------
+	# Containment fallback: if the broadphase ray found no OBB surface
+	# intersection, the ray segment may be fully inside an OBB.  Check
+	# the midpoint against all registered OBBs.
+	# ------------------------------------------------------------------
+	var excluded_ship_ids: Array = []
+	if projectile.owner != null:
+		excluded_ship_ids.append(projectile.owner.get_instance_id())
+	for e in projectile.exclude:
+		if e is Ship:
+			excluded_ship_ids.append(e.get_instance_id())
+
+	var midpoint := (extended_from + curr_pos) * 0.5
+	var containing_ship: Ship = PrecisionPhysicsWorld.get_ship_containing_point(midpoint, excluded_ship_ids)
+	if containing_ship != null:
+		if PrecisionPhysicsWorld.debug_log_obb:
+			print("[OBB CONTAINMENT] Ray fully inside OBB of %s, midpoint (%.1f,%.1f,%.1f)" % [
+				containing_ship.ship_name, midpoint.x, midpoint.y, midpoint.z])
+		PrecisionPhysicsWorld.notify_obb_hit(containing_ship)
+
+		var local_ray := PrecisionPhysicsWorld.world_ray_to_local(containing_ship, extended_from, curr_pos)
+		var local_from: Vector3 = local_ray[0]
+		var local_to: Vector3 = local_ray[1]
+
+		var precision_result := PrecisionPhysicsWorld.precision_raycast(containing_ship, local_from, local_to)
+
+		if not precision_result.is_empty():
+			var armor_part := precision_result.get('collider') as ArmorPart
+			if armor_part != null:
+				var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(containing_ship, precision_result.get('position'))
+				var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(containing_ship, precision_result.get('normal')).normalized()
+
+				if PrecisionPhysicsWorld.debug_log_obb:
+					print("[OBB CONTAINMENT HIT] %s armor '%s' at world(%.1f,%.1f,%.1f)" % [
+						containing_ship.ship_name, armor_part.armor_path,
+						world_hit_pos.x, world_hit_pos.y, world_hit_pos.z])
+
+				var impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+					projectile.launch_velocity, t, projectile.params)
+
+				return _process_hit(armor_part, world_hit_pos, world_hit_normal,
+					projectile, impact_vel, precision_result.get('face_index'),
+					-1.0, space_state, false, events)
+
+		if PrecisionPhysicsWorld.debug_log_obb:
+			print("[OBB CONTAINMENT MISS] Inside OBB of %s but precision raycast found no armor" % containing_ship.ship_name)
+
+	# ------------------------------------------------------------------
+	# No direct hit — check for underwater penetration (prev_pos→curr_pos)
+	# ------------------------------------------------------------------
 	if curr_pos.y < 0.0 and prev_pos.y > 0.0:
 		var dir := curr_pos - prev_pos
-		# Parametric t: 0 = at prev_pos, 1 = at curr_pos
+		# Parametric t_water: 0 = at prev_pos, 1 = at curr_pos
 		var t_water := -prev_pos.y / dir.y if abs(dir.y) > 0.0001 else 0.0
 
 		if t_water > 0.0 and t_water <= 1.0:
@@ -313,36 +440,53 @@ func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 				water_hit_pos, impact_vel, projectile.params.fuze_delay,
 				p)
 
+			# Broadphase underwater: cast against OBBs
 			var ship_ray := PhysicsRayQueryParameters3D.new()
 			ship_ray.from = water_hit_pos
 			ship_ray.to = fuzed_position
 			ship_ray.hit_back_faces = true
 			ship_ray.hit_from_inside = false
-			ship_ray.collision_mask = 1 << 1
+			ship_ray.collision_mask = PrecisionPhysicsWorld.OBB_COLLISION_LAYER
+			ship_ray.exclude = exclude  # reuse owner/excluded OBB list
 
-			var ship_result := space_state.intersect_ray(ship_ray)
+			var ship_result := _main_space.intersect_ray(ship_ray)
 			if ship_result.is_empty():
 				return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
 			else:
-				var hit_armor := ship_result['collider'] as ArmorPart
-				if hit_armor.ship == projectile.owner or hit_armor.ship in projectile.exclude:
+				var underwater_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(ship_result['collider'])
+				if underwater_ship == null or underwater_ship == projectile.owner or underwater_ship in projectile.exclude:
 					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
 
-				var hit_pos: Vector3 = ship_result.get('position')
+				# Narrowphase: precision cast the underwater ray in local space
+				var local_ray := PrecisionPhysicsWorld.world_ray_to_local(underwater_ship, water_hit_pos, fuzed_position)
+				var precision_result := PrecisionPhysicsWorld.precision_raycast(underwater_ship, local_ray[0], local_ray[1])
+
+				if precision_result.is_empty():
+					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
+
+				var hit_armor := precision_result['collider'] as ArmorPart
+				if hit_armor == null:
+					return ArmorResultData.new(HitResult.WATER, water_hit_pos, null, impact_vel, null, Vector3.ZERO)
+
+				var local_hit_pos: Vector3 = precision_result.get('position')
+				var world_hit_pos: Vector3 = PrecisionPhysicsWorld.local_to_world(underwater_ship, local_hit_pos)
+				var world_hit_normal: Vector3 = PrecisionPhysicsWorld.local_dir_to_world(underwater_ship, precision_result.get('normal')).normalized()
+
 				var total_dist := (fuzed_position - water_hit_pos).length()
-				var hit_dist := (hit_pos - water_hit_pos).length()
+				var hit_dist := (world_hit_pos - water_hit_pos).length()
 				var t_impact: float = projectile.params.fuze_delay * (hit_dist / total_dist)
 				var water_p = projectile.params.duplicate(true)
 				water_p.drag *= WATER_DRAG
 				var water_impact_vel := ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 					impact_vel, t_impact, water_p)
 
-				return _process_hit(hit_armor, hit_pos, ship_result['normal'],
-					projectile, water_impact_vel, ship_result['face_index'], t_impact, space_state, true, events)
+				return _process_hit(hit_armor, world_hit_pos, world_hit_normal,
+					projectile, water_impact_vel, precision_result.get('face_index'),
+					t_impact, space_state, true, events)
 
 	return null
 
-const EPSILON: float = 0.01
+const EPSILON: float = 0.0001
 func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3,
 		projectile: ProjectileData, impact_velocity: Vector3,
 		face_index: int, fuze: float, space_state: PhysicsDirectSpaceState3D,
@@ -355,9 +499,19 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	var first_hit_node := hit_node
 	var overmatch_first_armor := false
 
+	# Transform everything into ship-local space so that floating-point
+	# precision is maximised (the precision world sits at the origin).
+	var ship_xform := ship.global_transform
+	var ship_inv_xform := ship_xform.affine_inverse()
+	var ship_basis := ship_xform.basis
+	var ship_basis_inv := ship_inv_xform.basis
+
+	hit_position = ship_inv_xform * hit_position
+	hit_normal = (ship_basis_inv * hit_normal).normalized()
+
 	var shell := _ShellData.new()
 	shell.position = hit_position
-	shell.velocity = impact_velocity
+	shell.velocity = ship_basis_inv * impact_velocity
 	shell.fuze = fuze
 	shell.params = params
 	shell.calc_end_position()
@@ -366,11 +520,6 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# Ricochet emerges from the obliquity multiplier exceeding the shell's
 	# available penetration energy.
 
-	var armor_ray := PhysicsRayQueryParameters3D.new()
-	armor_ray.hit_back_faces = true
-	armor_ray.hit_from_inside = false
-	armor_ray.collision_mask = 1 << 1
-
 	var result: ArmorResult = ArmorResult.OVERPEN
 	var hit_cit := false
 	var over_pen := false
@@ -378,29 +527,31 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# var events: Array[String] = []
 	events.append("Processing Shell: %s %s " % [params.caliber, params.type])
 	var ship_scene_path := ship.scene_file_path
-	events.append("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s" % [
+	events.append("Ship: %s pos=(%.15f, %.15f, %.15f), rot=(%.10f, %.10f, %.10f), scene=%s [%s]" % [
 		ship.name,
 		ship.global_transform.origin.x, ship.global_transform.origin.y, ship.global_transform.origin.z,
 		rad_to_deg(ship.global_transform.basis.get_euler().x),
 		rad_to_deg(ship.global_transform.basis.get_euler().y),
 		rad_to_deg(ship.global_transform.basis.get_euler().z),
-		ship_scene_path])
+		ship_scene_path,
+		"PRECISION"])
 
 	if hit_water:
 		events.append(" - Hit water first, fuze: %.3f s" % [shell.fuze])
 		if params.type == ShellParams.ShellType.HE:
-			return ArmorResultData.new(HitResult.WATER, shell.position, null, shell.velocity, null, first_hit_normal)
+			return ArmorResultData.new(HitResult.WATER, first_hit_pos, null, impact_velocity, null, first_hit_normal)
 
 	# HE Shell Processing
 	if params.type == ShellParams.ShellType.HE:
 		var armor_mm: float = hit_node.get_armor(face_index)
-		# var pen_mm := calculate_de_marre_penetration(params.mass, shell.get_speed(), params.caliber)
+
+		var result_armor := hit_node
 
 		if params.overmatch >= armor_mm:
 			var hit_result := HitResult.CITADEL if hit_node.is_citadel else HitResult.PENETRATION
-			return ArmorResultData.new(hit_result, shell.position, hit_node, shell.velocity, ship, first_hit_normal)
+			return ArmorResultData.new(hit_result, first_hit_pos, result_armor, impact_velocity, ship, first_hit_normal)
 		else:
-			return ArmorResultData.new(HitResult.SHATTER, shell.position, hit_node, Vector3.ZERO, ship, first_hit_normal)
+			return ArmorResultData.new(HitResult.SHATTER, first_hit_pos, result_armor, Vector3.ZERO, ship, first_hit_normal)
 
 	# APC Shell Processing Loop
 	var iteration := 0
@@ -413,18 +564,19 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		var armor_mm: float = hit_node.get_armor(face_index)
 		var speed: float = shell.get_speed()
 
+		# hit_normal here is already in local space (local_hit_normal on first
+		# iteration, updated from precision raycast results on subsequent ones)
 		var impact_angle := _calculate_impact_angle(shell.velocity.normalized(), hit_normal)
 		var e_armor := calculate_effective_thickness(armor_mm, impact_angle)
-
-		if e_armor < 0.0:
-			print(" ⚠️ Warning: negative effective armor calculated")
 
 		shell.pen = calculate_de_marre_penetration(params.mass, speed, params.caliber) * params.penetration_modifier
 		shell.position = hit_position + offset
 
+		var _log_vel := ship_basis * shell.velocity
+		var _log_pos := ship_xform * shell.position
 		events.append("Shell: speed=%.15f vel=(%.15f, %.15f, %.15f) m/s, fuze=%.3f s, pos=(%.15f, %.15f, %.15f), pen: %.1f" % [
-			shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
-			shell.fuze, shell.position.x, shell.position.y, shell.position.z, shell.pen])
+			shell.get_speed(), _log_vel.x, _log_vel.y, _log_vel.z,
+			shell.fuze, _log_pos.x, _log_pos.y, _log_pos.z, shell.pen])
 		offset = Vector3.ZERO
 		var deflection_mult := 1.0
 
@@ -508,9 +660,10 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 						shell.fuze = 0.0
 
 
+		var _log_normal := ship_basis * hit_normal
 		events.append("Armor: %s, %s with %.1f/%.1fmm (angle %.1f°, defl_mult %.2f), normal: (%.1f, %.1f, %.1f), ship: %s, is_citadel: %s" % [
 			armor_result_to_string(result), hit_node.armor_path, armor_mm, e_armor,
-			rad_to_deg(impact_angle), deflection_mult, hit_normal.x, hit_normal.y, hit_normal.z,
+			rad_to_deg(impact_angle), deflection_mult, _log_normal.x, _log_normal.y, _log_normal.z,
 			hit_node.ship.name, hit_node.is_citadel])
 
 		# Check termination
@@ -523,11 +676,11 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		# 	break
 
 		# Find next armor layer
-		armor_ray.from = shell.position + offset
+		var next_ray_from: Vector3 = shell.position + offset
 		shell.calc_end_position()
-		armor_ray.to = shell.end_position
+		var next_ray_to := shell.end_position
 
-		var next_hit := get_next_hit(armor_ray, space_state)
+		var next_hit := PrecisionPhysicsWorld.precision_get_next_hit(ship, next_ray_from, next_ray_to)
 
 		if next_hit.is_empty():
 			if shell.fuze >= 0.0:
@@ -544,12 +697,17 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		if shell.fuze >= 0.0:
 			shell.fuze += fuze_elapsed
 
+	# Transform velocity / position back to world space for logging (precision mode)
+	# or use them directly (legacy mode).
+	var log_vel := ship_basis * shell.velocity
+	var log_pos := ship_xform * shell.end_position
+
 	events.append("Shell: speed=%.10f vel=(%.10f, %.10f, %.10f) m/s, fuze=%.3f s, pos=(%.15f, %.15f, %.15f), pen: %.1f" % [
-		shell.get_speed(), shell.velocity.x, shell.velocity.y, shell.velocity.z,
-		shell.fuze, shell.end_position.x, shell.end_position.y, shell.end_position.z, shell.pen])
+		shell.get_speed(), log_vel.x, log_vel.y, log_vel.z,
+		shell.fuze, log_pos.x, log_pos.y, log_pos.z, shell.pen])
 
-	var d: ArmorPart = get_part_hit(hit_node.ship, shell.end_position, space_state)
-
+	# Determine which part the shell ended up inside
+	var d: ArmorPart = PrecisionPhysicsWorld.precision_get_part_hit(ship, shell.end_position)
 	events.append("get_part_hit result: %s (citadel=%s)" % [
 		d.armor_path if d != null else "null",
 		str(d.type == ArmorPart.Type.CITADEL) if d != null else "N/A"])
@@ -566,11 +724,9 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		for e in events:
 			print(e)
 
-	# print("hit result is %s at pos (%.2f, %.2f, %.2f) on ship %s" % [
-	# 	HitResult.keys()[HitResult.values().find(damage_result)],
-	# 	first_hit_pos.x, first_hit_pos.y, first_hit_pos.z,
-	# 	ship.name])
-	return ArmorResultData.new(damage_result, first_hit_pos, d if d else first_hit_node, shell.velocity, ship, first_hit_normal, shell.integrity)
+	# Transform shell velocity back to world space for the result
+	var final_world_vel := ship_basis * shell.velocity
+	return ArmorResultData.new(damage_result, first_hit_pos, d if d else first_hit_node, final_world_vel, ship, first_hit_normal, shell.integrity)
 
 
 ## Energy-balance ricochet/penetration decision.
@@ -691,113 +847,6 @@ func armor_result_to_string(result: ArmorResult) -> String:
 
 
 #region Utility Functions
-
-func get_next_hit(ray_query: PhysicsRayQueryParameters3D,
-		space_state: PhysicsDirectSpaceState3D) -> Dictionary:
-	ray_query.hit_back_faces = true
-	ray_query.hit_from_inside = false
-	ray_query.exclude = []
-	ray_query.collision_mask = 1 << 1
-
-	var result := space_state.intersect_ray(ray_query)
-	if result.is_empty():
-		return {}
-	# var armor: ArmorPart = result.get('collider') as ArmorPart
-	# if armor != null:
-	# 	return {
-	# 		'armor': armor,
-	# 		'position': result.get('position'),
-	# 		'normal': result.get('normal'),
-	# 		'face_index': result.get('face_index')
-	# 	}
-	var closest_result := result
-	var exclude: Array[RID] = []
-
-	while not result.is_empty():
-		exclude.append(result.get('rid'))
-		ray_query.exclude = exclude
-		result = space_state.intersect_ray(ray_query)
-		if not result.is_empty():
-			var new_dist: float = (result.get('position') - ray_query.from).length()
-			var old_dist: float = (closest_result.get('position') - ray_query.from).length()
-			if new_dist < old_dist:
-				closest_result = result
-
-		var armor: ArmorPart = closest_result.get('collider') as ArmorPart
-		if armor != null:
-			return {
-				'armor': armor,
-				'position': closest_result.get('position'),
-				'normal': closest_result.get('normal'),
-				'face_index': closest_result.get('face_index')
-			}
-	return {}
-
-
-func get_part_hit(_ship: Ship, shell_pos: Vector3,
-		space_state: PhysicsDirectSpaceState3D) -> ArmorPart:
-	var ray_query := PhysicsRayQueryParameters3D.new()
-	ray_query.to = shell_pos
-	ray_query.hit_back_faces = true
-	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 << 1
-
-	var directions := [
-		_ship.global_basis.x.normalized(),
-		-_ship.global_basis.x.normalized(),
-		_ship.global_basis.y.normalized(),
-		-_ship.global_basis.y.normalized(),
-		_ship.global_basis.z.normalized(),
-		-_ship.global_basis.z.normalized()
-	]
-
-	var hits: Array[Array] = []
-	var armor_parts = {}
-	for dir in directions:
-		ray_query.from = shell_pos + dir * 400.0
-		ray_query.exclude = []
-		var side_hits: Array[ArmorPart] = []
-		var armor_hit := space_state.intersect_ray(ray_query)
-		var exclude: Array[RID] = []
-
-		while not armor_hit.is_empty():
-			var armor_part := armor_hit.get('collider') as ArmorPart
-			if armor_part != null and armor_part.ship == _ship:
-				side_hits.append(armor_part)
-				armor_parts[armor_part] = true
-			exclude.append(armor_hit.get('rid'))
-			ray_query.exclude = exclude
-			armor_hit = space_state.intersect_ray(ray_query)
-		hits.append(side_hits)
-
-	for side_hits in hits:
-		if side_hits.size() == 0:
-			return null
-
-	var inside_parts := []
-	for armor_part in armor_parts.keys():
-		var inside = true
-		for side_hits in hits:
-			if not armor_part in side_hits:
-				inside = false
-				break
-		if inside:
-			inside_parts.append(armor_part)
-
-	for part in inside_parts:
-		if part.type == ArmorPart.Type.CITADEL:
-			return part
-
-	return inside_parts[0] if inside_parts.size() > 0 else null
-
-
-	# var min_hits := INF
-	# var hit_part: ArmorPart = null
-	# for side_hits in hits:
-	# 	if side_hits.size() < min_hits:
-	# 		min_hits = side_hits.size()
-	# 		hit_part = side_hits[-1]
-
 
 #endregion
 

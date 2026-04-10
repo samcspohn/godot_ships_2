@@ -51,6 +51,7 @@ var _validation_pending: bool = false
 var _validation_shell_data: Dictionary = {}
 var _validation_wait_frames: int = 0
 
+
 # Camera control
 var camera_rotation: Vector2 = Vector2.ZERO
 var camera_distance: float = 100.0
@@ -514,8 +515,7 @@ func calculate_final_result():
 	# Get the final shell position
 	var final_shell_pos = trail_points[-1] if trail_points.size() > 0 else Vector3.ZERO
 
-	var space_state = world_3d.get_world_3d().direct_space_state
-	var d = ArmorInteraction.get_part_hit(ship, final_shell_pos, space_state)
+	var d = PrecisionPhysicsWorld.precision_get_part_hit(ship, final_shell_pos)
 
 	# var damage_result = ArmorInteraction.HitResult.WATER
 	# final_result = "WATER"
@@ -597,7 +597,7 @@ func start_validation():
 	# Enable armor visualization via dual-viewport overlay
 	_enable_armor_overlay(ship)
 
-	# Position ship
+	# Place ship at its logged world position and rotation.
 	for event in events:
 		if event.event_type == "Ship":
 			ship.position = event.data["position"]
@@ -615,6 +615,9 @@ func start_validation():
 	if shell_params == null:
 		validation_label.text = "Validation: Failed to extract shell parameters"
 		return
+
+	# Position camera to view the ship and shell trajectory
+	update_camera_position()
 
 	# Clear simulated trail
 	sim_trail_points.clear()
@@ -636,6 +639,7 @@ func stop_validation():
 	_validation_pending = false
 	_validation_shell_data = {}
 	_validation_wait_frames = 0
+
 	# if ship != null:
 	# 	_disable_armor_overlay(ship)
 	is_validating = false
@@ -673,6 +677,8 @@ func extract_shell_params() -> Dictionary:
 	# Get position and velocity from first shell event
 	var hit_pos: Vector3 = first_shell_event.data["position"]
 	var vel: Vector3 = first_shell_event.data["velocity"]
+
+
 
 	# Time step: 1/20 second
 	const TIME_STEP = 1.0 / 20.0
@@ -717,7 +723,7 @@ func run_validation_simulation(shell_data: Dictionary):
 	# Set current position from shell data
 	var prev_pos = shell_data["prev_pos"]
 	projectile.position = shell_data["current_pos"]
-	var time_step = shell_data["time_step"]
+	var time_step: float = shell_data["time_step"]
 
 	var sim_events: Array = []
 	var result = ArmorInteraction.process_travel(projectile, prev_pos, time_step, space_state, sim_events)
@@ -734,7 +740,7 @@ func _on_validation_complete(sim_events: Array, result):
 	print_comparison_results(sim_events, result)
 
 func visualize_trajectories(sim_events: Array):
-	# Visualize logged trajectory using process_event
+	# Visualize logged trajectory using world-space positions directly.
 	trail_points.clear()
 	for event in events:
 		process_event(event)

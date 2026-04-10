@@ -323,8 +323,9 @@ func _buf_pad(draw_type: int) -> void:
 # ============================================================================
 # Server: immediate-mode draw API
 #
-# Call these from any system during _physics_process. They only record
-# commands when follow_ship is set; nothing is drawn on the server.
+# Call these from any system during _physics_process. Commands are always
+# recorded and sent to any connected follower peer (follow_ship is NOT
+# required). Per-ship systems should gate their own draws on follow_ship.
 # ============================================================================
 
 ## Arrow (cone pointing in direction) at position.
@@ -428,10 +429,6 @@ func draw_cone(position: Vector3, rotation_euler: Vector3 = Vector3.ZERO, cone_h
 # ============================================================================
 
 func _server_flush() -> void:
-	if follow_ship == null or not is_instance_valid(follow_ship):
-		_clear_buffers()
-		return
-
 	if _follower_peer_id <= 0:
 		_clear_buffers()
 		return
