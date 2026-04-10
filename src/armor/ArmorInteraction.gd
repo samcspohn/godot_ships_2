@@ -726,22 +726,22 @@ func _evaluate_armor_interaction(shell: _ShellData, params: ShellParams,
 				"physics_armor": physics_armor,
 			}
 		else:
-			# Raw thickness defeated the shell
+			# # Raw thickness defeated the shell
 			var raw_pen_ratio := shell.pen / maxf(e_armor, 0.1)
-			if raw_pen_ratio > 0.7:
-				return {
-					"result": ArmorResult.PARTIAL_PEN,
-					"pen_ratio": raw_pen_ratio,
-					"deflection_mult": deflection_mult,
-					"physics_armor": physics_armor,
-				}
-			else:
-				return {
-					"result": ArmorResult.SHATTER,
-					"pen_ratio": raw_pen_ratio,
-					"deflection_mult": deflection_mult,
-					"physics_armor": physics_armor,
-				}
+			# if raw_pen_ratio > 0.7:
+			# 	return {
+			# 		"result": ArmorResult.PARTIAL_PEN,
+			# 		"pen_ratio": raw_pen_ratio,
+			# 		"deflection_mult": deflection_mult,
+			# 		"physics_armor": physics_armor,
+			# 	}
+			# else:
+			return {
+				"result": ArmorResult.SHATTER,
+				"pen_ratio": raw_pen_ratio,
+				"deflection_mult": deflection_mult,
+				"physics_armor": physics_armor,
+			}
 
 
 func _resolve_hit_result(armor_result: ArmorResult, final_part: ArmorPart,
