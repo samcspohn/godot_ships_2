@@ -715,6 +715,16 @@ func extract_shell_params() -> Dictionary:
 	# Place prev_pos a full timestep back so the ray starts well before the
 	# hull, and current_pos a full timestep forward so it passes through.
 	var prev_pos = hit_pos - vel * TIME_STEP
+
+	# If prev_pos ended up underwater, extend it further back along the
+	# trajectory so it's above the surface.  Water-drag detection relies on
+	# prev_pos.y > 0 to know the shell crossed the waterline.
+	if prev_pos.y < 0.0 and vel.y < -0.001:
+		# Solve for t where (hit_pos - vel * t).y = 1.0  (1 m above surface for margin)
+		var t_surface := (hit_pos.y - 1.0) / vel.y
+		if t_surface > 0.0:
+			prev_pos = hit_pos - vel * t_surface
+
 	var current_pos = hit_pos + vel * TIME_STEP
 
 	return {

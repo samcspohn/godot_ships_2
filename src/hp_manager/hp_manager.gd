@@ -79,7 +79,11 @@ func _generate_armor_parts():
 	if !citadel:
 		citadel = HpPartMod.new()
 		citadel.resource_local_to_scene = true
-	citadel.pool1 = _max_hp * 3.0
+	var _ship: Ship = $"../.."
+	if _ship.ship_class == Ship.ShipClass.CA:
+		citadel.pool1 = _max_hp * 0.3
+	else:
+		citadel.pool1 = _max_hp  * 3.0
 	citadel.pool2 = _max_hp * 3.0
 	if !casemate:
 		casemate = HpPartMod.new()

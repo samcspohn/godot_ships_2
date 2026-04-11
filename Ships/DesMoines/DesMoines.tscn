@@ -41,36 +41,36 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 [sub_resource type="Resource" id="Resource_e3uhd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 13666.0
-pool2 = 123000.0
+pool1 = 13830.0
+pool2 = 138300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_8wi57"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 8883.333333333334
-pool2 = 17766.666666666668
+pool1 = 9988.333333333334
+pool2 = 19976.666666666668
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_1hsc6"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 4783.333333333333
-pool2 = 9566.666666666666
+pool1 = 5378.333333333333
+pool2 = 10756.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vp8fe"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 4783.333333333333
-pool2 = 9566.666666666666
+pool1 = 5378.333333333333
+pool2 = 10756.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3dafd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 6833.333333333333
-pool2 = 13666.666666666666
+pool1 = 7683.333333333333
+pool2 = 15366.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_d6neb"]
@@ -170,20 +170,7 @@ traverse_speed = 25.0
 _range = 4000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_d0r0t"]
-script = ExtResource("10_rqfqd")
-max_buildup = 200.0
-metadata/_custom_type_script = "uid://kgwonrqfsvxk"
-
 [sub_resource type="Resource" id="Resource_oonm6"]
-resource_local_to_scene = true
-script = ExtResource("9_vfelm")
-dmg_rate = 0.002
-dur = 100.0
-max_buildup = 200.0
-metadata/_custom_type_script = "uid://dc42cijwbxhfc"
-
-[sub_resource type="Resource" id="Resource_2m68x"]
 resource_local_to_scene = true
 script = ExtResource("12_vfelm")
 icon = ExtResource("11_3nwwl")
@@ -193,7 +180,7 @@ duration = 20.0
 max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_67mgq"]
+[sub_resource type="Resource" id="Resource_2m68x"]
 resource_local_to_scene = true
 script = ExtResource("15_xosf1")
 heal_percent = 0.3
@@ -203,6 +190,19 @@ cooldown_time = 40.0
 duration = 20.0
 max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
+
+[sub_resource type="Resource" id="Resource_d0r0t"]
+script = ExtResource("10_rqfqd")
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
+
+[sub_resource type="Resource" id="Resource_67mgq"]
+resource_local_to_scene = true
+script = ExtResource("9_vfelm")
+dmg_rate = 0.002
+dur = 100.0
+max_buildup = 200.0
+metadata/_custom_type_script = "uid://dc42cijwbxhfc"
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_vp8fe"]
 points = PackedVector3Array(0, -7.0708423, -106.071, 0, 9.270897, -108.41028, 0, -7.0708423, -102.32157, 0, 6.73342, 107.51141, 0, -0.16883564, -106.071, 0, -7.0708423, -85.050476, 0, -1.3565321, 105.08977, 0, -0.16883564, 105.72896, 0, -7.0708423, 40.66745, 0, -7.0708423, -43.1445, 0, 3.282292, -106.459785, 0, -7.0708423, -64.09914, 0, -0.7458525, 105.38959, 0, 3.282292, 106.77669, 0, -7.0708423, 19.71611, 0, -7.0708423, -1.2385254, 0, -7.0708423, -22.193161, 0, -3.6199636, -106.071, 0, -3.4199777, 82.57341, 0, -5.6265554, 61.622086, 0, 6.7335734, 82.57341, 0, 6.7335734, 61.622086, 0, 6.7335734, 40.66745, 0, 6.7335734, 19.71611, 0, 6.7335734, -1.2385254, 0, 6.7335734, -22.193161, 0, 6.7335734, -43.1445, 0, 7.319092, -85.050476, 0, 6.890416, -64.09914, 0, 7.319092, -85.050476, 0, 6.7335734, -43.1445, 0, 6.890416, -64.09914, 0, 7.319092, -85.050476, 2.6724882, 8.815319, -104.209465, -2.6724882, 8.815319, -104.209465, 5.6392307, 7.318915, -85.050476, -5.6392307, 7.318915, -85.050476, 8.137323, 6.890268, -64.09914, -8.137323, 6.890268, -64.09914, 10.089344, 6.73342, -43.1445, -10.089344, 6.73342, -43.1445, 11.338205, 6.73342, -22.193161, -11.338205, 6.73342, -22.193161, 11.962822, 6.73342, -1.2385254, -11.962822, 6.73342, -1.2385254, 12.197332, 6.73342, 19.71611, -12.197332, 6.73342, 19.71611, 11.885025, 6.73342, 40.66745, -11.885025, 6.73342, 40.66745, 2.5723553, -1.3565321, 102.981125, -2.5723553, -1.3565321, 102.981125, 10.948099, 6.73342, 61.622086, -10.948099, 6.73342, 61.622086, 9.230591, 6.73342, 82.57341, -9.230591, 6.73342, 82.57341, 5.7170277, 6.73342, 105.40277, -5.7170277, 6.73342, 105.40277, 0.87680817, -3.6199636, -102.32157, -0.87680817, -3.6199636, -102.32157, 4.686672, -0.16883564, 103.6203, -4.686672, -0.16883564, 103.6203, 9.224262, -7.0708423, -22.193161, -9.224262, -7.0708423, -22.193161, 8.199862, -0.16883564, 82.57341, -8.199862, -0.16883564, 82.57341, 11.338205, -3.6199636, -22.193161, -11.338205, -3.6199636, -22.193161, 9.455421, -7.0708423, 40.66745, -9.455421, -7.0708423, 40.66745, 11.338205, -0.16883564, -22.193161, -11.338205, -0.16883564, -22.193161, 6.0855446, -3.4199777, 82.57341, -6.0855446, -3.4199777, 82.57341, 7.807522, -1.6662364, 82.57341, -7.807522, -1.6662364, 82.57341, 11.651258, -0.16883564, 40.66745, -11.651258, -0.16883564, 40.66745, 11.427544, -3.6199636, 40.66745, -11.427544, -3.6199636, 40.66745, 12.197332, -3.6199636, 19.71611, -12.197332, -3.6199636, 19.71611, 10.083017, -7.0708423, 19.71611, -10.083017, -7.0708423, 19.71611, 6.7321243, -3.6199636, -64.09914, -6.7321243, -3.6199636, -64.09914, 4.702305, 3.282292, -85.050476, -4.702305, 3.282292, -85.050476, 6.7321243, -0.16883564, -64.09914, -6.7321243, -0.16883564, -64.09914, 1.0558548, 3.282292, -102.713646, -1.0558548, 3.282292, -102.713646, 0.87680817, -0.16883564, -102.32157, -0.87680817, -0.16883564, -102.32157, 4.6178074, -7.0708423, -64.09914, -4.6178074, -7.0708423, -64.09914, 4.2943325, -0.7458525, 103.280945, -4.2943325, -0.7458525, 103.280945, 8.217356, -5.6265554, 61.622086, -8.217356, -5.6265554, 61.622086, 9.939331, -2.7437158, 61.622086, -9.939331, -2.7437158, 61.622086, 5.7170277, 3.282292, 104.668045, -5.7170277, 3.282292, 104.668045, 9.230591, 3.282292, 82.57341, -9.230591, 3.282292, 82.57341, 10.331671, -0.16883564, 61.622086, -10.331671, -0.16883564, 61.622086, 10.948099, 3.282292, 61.622086, -10.948099, 3.282292, 61.622086, 9.848877, -7.0708423, -1.2385254, -9.848877, -7.0708423, -1.2385254, 11.885025, 3.282292, 40.66745, -11.885025, 3.282292, 40.66745, 12.197332, -0.16883564, 19.71611, -12.197332, -0.16883564, 19.71611, 12.197332, 3.282292, 19.71611, -12.197332, 3.282292, 19.71611, 11.962822, -3.6199636, -1.2385254, -11.962822, -3.6199636, -1.2385254, 11.962822, -0.16883564, -1.2385254, -11.962822, -0.16883564, -1.2385254, 11.962822, 3.282292, -1.2385254, -11.962822, 3.282292, -1.2385254, 11.338205, 3.282292, -22.193161, -11.338205, 3.282292, -22.193161, 9.604319, 3.282292, -43.1445, -9.604319, 3.282292, -43.1445, 9.230591, -0.16883564, -43.1445, -9.230591, -0.16883564, -43.1445, 9.230591, -3.6199636, -43.1445, -9.230591, -3.6199636, -43.1445, 7.116274, -7.0708423, -43.1445, -7.116274, -7.0708423, -43.1445, 7.388754, 3.282292, -64.09914, -7.388754, 3.282292, -64.09914, 3.687211, -0.16883564, -85.050476, -3.687211, -0.16883564, -85.050476, 3.687211, -3.6199636, -85.050476, -3.687211, -3.6199636, -85.050476, 1.5732679, -7.0708423, -85.050476, -1.5732679, -7.0708423, -85.050476, 9.230591, 6.7335734, 82.57341, -9.230591, 6.7335734, 82.57341, 5.7170277, 6.7335734, 105.40277, -5.7170277, 6.7335734, 105.40277, 11.885025, 6.7335734, 40.66745, -11.885025, 6.7335734, 40.66745, 10.948099, 6.7335734, 61.622086, -10.948099, 6.7335734, 61.622086, 12.197332, 6.7335734, 19.71611, -12.197332, 6.7335734, 19.71611, 11.962822, 6.7335734, -1.2385254, -11.962822, 6.7335734, -1.2385254, 11.338205, 6.7335734, -22.193161, -11.338205, 6.7335734, -22.193161, 10.089344, 6.7335734, -43.1445, -10.089344, 6.7335734, -43.1445, 8.137323, 6.890416, -64.09914, -8.137323, 6.890416, -64.09914, 5.6392307, 7.319092, -85.050476, -5.6392307, 7.319092, -85.050476, 2.6724882, 8.815469, -104.209465, -2.6724882, 8.815469, -104.209465, 10.089344, 6.7335734, -43.1445, -10.089344, 6.7335734, -43.1445, 5.6392307, 7.319092, -85.050476, -5.6392307, 7.319092, -85.050476, 8.137323, 6.890416, -64.09914, -8.137323, 6.890416, -64.09914)
@@ -222,7 +222,7 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_4jnyp")
-_max_hp = 41000.0
+_max_hp = 46100.0
 casemate_percent = 0.65
 citadel = SubResource("Resource_e3uhd")
 casemate = SubResource("Resource_8wi57")
@@ -255,7 +255,13 @@ turning_circle_radius = 300.0
 turn_speed_loss = 0.1
 rudder_response_time = 5.0
 
-[node name="FireManager" parent="Modules" index="5" unique_id=384504544 node_paths=PackedStringArray("fires")]
+[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_oonm6"), SubResource("Resource_2m68x")])
+
+[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+upgrades = Array[ExtResource("12_krgon")]([null, null, null])
+
+[node name="FireManager" parent="Modules" index="8" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_xosf1")
 rparams = SubResource("Resource_d0r0t")
 fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
@@ -272,8 +278,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.542353, 23.084698)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=130870692 instance=ExtResource("9_h3lju")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.888956, 83.8587)
 
-[node name="FloodManager" parent="Modules" index="6" unique_id=485605645]
-params = SubResource("Resource_oonm6")
+[node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
+params = SubResource("Resource_67mgq")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=2127353951 instance=ExtResource("10_flood")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -71.727486)
@@ -286,12 +292,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 23.084698)
 
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=838156415 instance=ExtResource("10_flood")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 83.8587)
-
-[node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_2m68x"), SubResource("Resource_67mgq")])
-
-[node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
-upgrades = Array[ExtResource("12_krgon")]([null, null, null])
 
 [node name="Superstructure_col" parent="." index="6"]
 layers = 0

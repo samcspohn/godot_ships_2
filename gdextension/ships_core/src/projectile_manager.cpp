@@ -568,6 +568,12 @@ void _ProjectileManager::_physics_process(double delta) {
 		}
 
 		if (hit_result.get_type() == Variant::NIL) {
+			// If the shell is underwater and process_travel returned null,
+			// destroy it — it should not survive to the next frame.
+			if (p->get_position().y < 0.0) {
+				UtilityFunctions::print("ProjectileManager: Shell is underwater with no hit result, destroying");
+				destroy_bullet_rpc(id, p->get_position(), WATER, Vector3(0, 1, 0));
+			}
 			id++;
 			continue;
 		}
@@ -581,6 +587,9 @@ void _ProjectileManager::_physics_process(double delta) {
 
 		Object *hit_obj = Object::cast_to<Object>(hit_result);
 		if (hit_obj == nullptr) {
+			// Non-null result that isn't a valid Object — destroy the shell
+			// so it doesn't leak into the next frame.
+			destroy_bullet_rpc(id, p->get_position(), WATER, Vector3(0, 1, 0));
 			id++;
 			continue;
 		}
@@ -621,7 +630,16 @@ void _ProjectileManager::_physics_process(double delta) {
 			continue;
 		}
 
-		// Handle ship hits
+		// Any non-null, non-WATER, non-TERRAIN result means the shell interacted
+		// with armor and must be destroyed regardless of whether damage is applied.
+		// Determine the RPC result type and whether this is a ricochet (spawns new shell).
+		double damage = 0.0;
+		int rpc_result_type = NOHIT;
+		int damage_type = 0;  // SHELL
+		int damage_level = 0; // LIGHT
+		bool is_ricochet = false;
+
+		// Handle ship hits — only apply damage if we have a valid ship and owner
 		if (ship_var.get_type() != Variant::NIL && owner != nullptr) {
 			Node *ship = Object::cast_to<Node>(ship_var);
 			Array exclude = p->get_exclude();
@@ -641,69 +659,60 @@ void _ProjectileManager::_physics_process(double delta) {
 					base_damage = params->get("damage");
 				}
 
-				double damage = 0.0;
-				int rpc_result_type = NOHIT;
-				int damage_type = 0;  // SHELL
-
-				int damage_level = 0; // LIGHT
-
 				// Map ArmorInteraction result to damage and RPC result type
 				switch (armor_result_type) {
 					case 0: // PENETRATION
 						damage = base_damage / 3.0;
 						rpc_result_type = PENETRATION;
 						damage_level = 1; // MEDIUM
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 1: // PARTIAL_PENETRATION
 						damage = base_damage * 0.0667;
 						rpc_result_type = PENETRATION;
 						damage_level = 1; // MEDIUM
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 5: // CITADEL
 						damage = base_damage;
 						rpc_result_type = CITADEL;
 						damage_level = 2; // HEAVY
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 6: // CITADEL_OVERPEN
 						damage = base_damage * 0.5;
 						rpc_result_type = PENETRATION;
 						damage_level = 2; // HEAVY
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 3: // OVERPENETRATION
 						damage = base_damage * 0.1;
 						rpc_result_type = OVERPENETRATION;
 						damage_level = 0; // LIGHT
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 4: // SHATTER
 						damage = 0.0;
 						rpc_result_type = SHATTER;
 						damage_level = 0; // LIGHT
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 						break;
 					case 2: { // RICOCHET
-						damage = 0.0;
-						rpc_result_type = RICOCHET;
-						Vector3 ricochet_position = explosion_position + collision_normal * 0.2 + ricochet_velocity.normalized() * 0.2;
+							damage = 0.0;
+							rpc_result_type = RICOCHET;
 
-						// Create ricochet projectile with ship added to exclude list
-						Array new_exclude = exclude.duplicate();
-						new_exclude.append(ship);
-						int ricochet_id = fire_bullet(ricochet_velocity, ricochet_position, params, current_time, nullptr, new_exclude);
+							// Don't spawn ricochet shells underwater — a shell
+							// bouncing off submerged armor has no meaningful trajectory.
+							if (explosion_position.y >= 0.0) {
+								is_ricochet = true;
+								Vector3 ricochet_position = explosion_position + collision_normal * 0.2 + ricochet_velocity.normalized() * 0.2;
 
-						// Send ricochet RPC via TcpThreadPool
-						if (tcp_thread_pool != nullptr) {
-							tcp_thread_pool->call("send_ricochet", id, ricochet_id, ricochet_position, ricochet_velocity, current_time);
+								// Create ricochet projectile with ship added to exclude list
+								Array new_exclude = exclude.duplicate();
+								new_exclude.append(ship);
+								int ricochet_id = fire_bullet(ricochet_velocity, ricochet_position, params, current_time, nullptr, new_exclude);
+
+								// Send ricochet RPC via TcpThreadPool
+								if (tcp_thread_pool != nullptr) {
+									tcp_thread_pool->call("send_ricochet", id, ricochet_id, ricochet_position, ricochet_velocity, current_time);
+								}
+							}
+							break;
 						}
-
-						// Destroy the original shell
-						destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
-						break;
-					}
 					default:
 						break;
 				}
@@ -752,6 +761,9 @@ void _ProjectileManager::_physics_process(double delta) {
 			}
 		}
 
+		// Always destroy the shell when process_travel returned a non-null result.
+		// Damage may or may not have been applied above, but the shell is consumed.
+		destroy_bullet_rpc(id, explosion_position, rpc_result_type, collision_normal);
 		id++;
 	}
 }
