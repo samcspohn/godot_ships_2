@@ -827,7 +827,7 @@ int _ProjectileManager::fire_bullet(const Vector3 &vel, const Vector3 &pos, cons
 			// angle_from_vertical: 0 = plunging, PI/2 = flat
 			double flatness = (horiz_speed + vert_speed > 1e-10) ? std::atan2(horiz_speed, vert_speed) : 0.0;
 			// Map flatness to threat_length: flat trajectory = long line, plunging = short
-			static constexpr float THREAT_LINE_MAX_HALF_LEN = 150.0f;
+			static constexpr float THREAT_LINE_MAX_HALF_LEN = 50.0f;
 			static constexpr float THREAT_LINE_MIN_HALF_LEN = 15.0f;
 			double t_factor = std::sin(flatness); // 0 for plunging, 1 for flat
 			entry.threat_half_len = static_cast<float>(THREAT_LINE_MIN_HALF_LEN + (THREAT_LINE_MAX_HALF_LEN - THREAT_LINE_MIN_HALF_LEN) * t_factor);

@@ -1304,7 +1304,7 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 
 	# --- Phase 1: Collect all candidate positions ---
 	var candidates: Array[Vector3] = []
-	var offset_clearance = clearance * 2.5
+	var offset_clearance = clearance * 1.5
 
 	var offset: float = 0.0
 	while offset <= angle_half_span + 0.001:

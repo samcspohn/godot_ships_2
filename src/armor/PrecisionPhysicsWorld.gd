@@ -52,8 +52,8 @@ func _ready() -> void:
 
 func _physics_process(_delta: float) -> void:
 	_sync_obbs()
-	if debug_draw_obb:
-		_draw_all_obb_wireframes()
+	# if debug_draw_obb:
+	# 	_draw_all_obb_wireframes()
 	_expire_obb_hits()
 
 

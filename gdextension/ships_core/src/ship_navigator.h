@@ -128,8 +128,8 @@ private:
 	float dodge_committed_rudder_;   // rudder sign of committed dodge (-1/+1), 0 = no commitment
 	float dodge_commitment_timer_;   // seconds remaining in commitment
 	static constexpr float DODGE_COMMITMENT_DURATION = 0.5f;   // minimum seconds to hold a dodge direction
-	static constexpr float DODGE_COMMITMENT_BIAS     = 8.0f;   // seconds of penalty added to candidates opposing the committed direction
-	static constexpr float DODGE_THREAT_WINDOW       = 3.0f;   // seconds before/after impact to sample arc points (Option C)
+	static constexpr float DODGE_COMMITMENT_BIAS     = 50.0f;   // seconds of penalty added to candidates opposing the committed direction
+	static constexpr float DODGE_THREAT_WINDOW       = 10.0f;   // seconds before/after impact to sample arc points (Option C)
 
 	static constexpr float PARKED_SPEED_THRESHOLD = 10.0f;
 
@@ -141,11 +141,11 @@ private:
 	// These represent enemy ship positions that the pathfinder should route around.
 	std::vector<ThreatZone> threat_zones_;
 
-	static constexpr float SHELL_THREAT_RADIUS   = 300.0f;  // max dist from threat line for scoring
-	static constexpr float SHELL_THREAT_WEIGHT_BASE = 60.0f;  // base penalty — scaled by ship size and health
-	static constexpr float TORPEDO_VIRTUAL_CALIBER = 800.0f; // virtual caliber for torpedo threat lines
-	static constexpr float PARALLEL_BONUS_WEIGHT = 0.4f;    // perpendicularity penalty — low so proximity dominates over angling
-	static constexpr float GAP_CLEARANCE_PENALTY = 4.0f;     // penalty when ship barely fits between lines
+	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
+	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
+	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
+	static constexpr float PARALLEL_BONUS_WEIGHT = 0.5f;    // perpendicularity penalty — low so proximity dominates over angling
+	static constexpr float GAP_CLEARANCE_PENALTY = 3.0f;     // penalty when ship barely fits between lines
 	static constexpr float TORPEDO_LINE_HALF_LEN = 600.0f;   // half-length of torpedo threat line
 	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
 
