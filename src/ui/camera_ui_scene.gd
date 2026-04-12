@@ -8,6 +8,7 @@ const GunIndicatorScene = preload("res://src/ui/gun_indicator.tscn")
 const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
 const KillFeedScene = preload("res://src/ui/kill_feed.tscn")
 
+
 # Camera controller reference
 var camera_controller: BattleCamera
 var player_controller: PlayerController
@@ -161,6 +162,9 @@ var current_secondary_target: Ship = null
 var team_ship_indicators = {}  # Maps ship to its indicator ColorRect
 var friendly_team_id: int = -1  # Will be set when camera_controller is available
 
+# Battle end screen
+var match_ended: bool = false
+
 
 
 func recurs_set_vis(n: Node):
@@ -283,7 +287,14 @@ func _ready():
 	server = get_tree().root.get_node_or_null("Server")
 	players_node = server.get_node_or_null("GameWorld/Players") if server else null
 
+	# Connect to match end signal
+	_Utils.match_ended.connect(_on_match_ended)
+
 func _process(_delta: float) -> void:
+	if match_ended:
+		return
+	if not is_instance_valid(camera_controller):
+		return
 	update_ship_ui()
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
@@ -318,6 +329,78 @@ func _on_kill_feed_event(sinker_name: String, sinker_player_name: String, sinker
 	if kill_feed:
 		kill_feed.add_kill(sinker_name, sinker_player_name, sinker_team, damage_type, sunk_name, sunk_player_name, sunk_team, friendly_team_id)
 
+func _on_match_ended(winning_team: int):
+	"""Handle match end - snapshot the scene, stash results, change to end screen scene."""
+	if match_ended:
+		return
+	match_ended = true
+
+	# Disable processing on all nodes that could reference freed objects.
+	# This stops the battle camera, its views, minimap, player controller,
+	# and the entire game world from running _process / _physics_process
+	# while the deferred scene change is pending.
+	_disable_battle_processing()
+
+	# Gather stats before the scene change frees everything
+	var stats_dict := {}
+	var ship_name := ""
+	if camera_controller and camera_controller._ship:
+		var stats: Stats = camera_controller._ship.stats
+		ship_name = camera_controller._ship.ship_name if camera_controller._ship.ship_name else camera_controller._ship.name
+		if stats:
+			stats_dict = {
+				"total_damage": stats.total_damage,
+				"frags": stats.frags,
+				"main_hits": stats.main_hits,
+				"main_damage": stats.main_damage,
+				"citadel_count": stats.citadel_count,
+				"secondary_count": stats.secondary_count,
+				"sec_damage": stats.sec_damage,
+				"torpedo_count": stats.torpedo_count,
+				"torpedo_damage": stats.torpedo_damage,
+				"fire_count": stats.fire_count,
+				"fire_damage": stats.fire_damage,
+				"flood_count": stats.flood_count,
+				"flood_damage": stats.flood_damage,
+				"spotting_damage": stats.spotting_damage,
+				"potential_damage": stats.potential_damage,
+				"ships_damaged": stats.ships_damaged.duplicate(),
+			}
+
+	# Hide the UI before taking the snapshot so we get a clean 3D scene
+	visible = false
+
+	# Wait one frame for the rendering to update without the UI
+	await RenderingServer.frame_post_draw
+
+	# Take a snapshot of the current viewport (the 3D scene as the player sees it)
+	var screenshot: Image = get_viewport().get_texture().get_image()
+
+	# Stash everything on the autoload so it survives the scene change.
+	# Preserve any data already set by the RPC (e.g. leaderboard).
+	_Utils.match_result["winning_team"] = winning_team
+	_Utils.match_result["friendly_team_id"] = friendly_team_id
+	_Utils.match_result["ship_name"] = ship_name
+	_Utils.match_result["stats"] = stats_dict
+	_Utils.match_result["screenshot"] = screenshot
+	# Free the battle camera and its views — they live directly under root,
+	# not under the current scene, so change_scene_to_file won't touch them.
+	if camera_controller:
+		if camera_controller.third_person_view:
+			camera_controller.third_person_view.queue_free()
+		if camera_controller.free_look_view:
+			camera_controller.free_look_view.queue_free()
+		if camera_controller.sniper_view:
+			camera_controller.sniper_view.queue_free()
+		if camera_controller.aerial_view:
+			camera_controller.aerial_view.queue_free()
+		camera_controller.queue_free()
+
+	# Defer the scene change so it executes after the current frame completes.
+	# All battle nodes have had their processing disabled above, so nothing
+	# will touch freed objects between now and the scene swap.
+	get_tree().change_scene_to_file.call_deferred("res://src/ui/battle_end_screen.tscn")
+
 func _setup_hit_stat_counters():
 	"""Setup the hit/stat counters component"""
 	hit_stat_counters = HitStatCountersScene.instantiate()
@@ -329,8 +412,48 @@ func _on_floating_damage_requested(damage: float, position: Vector3):
 	create_floating_damage(damage, position)
 
 
+func _disable_battle_processing():
+	"""Disable _process and _physics_process on all battle-related nodes
+	so nothing references freed objects during the deferred scene change."""
+	# Battle camera and its views (added as siblings under root)
+	if camera_controller:
+		_disable_node(camera_controller)
+		if camera_controller.third_person_view:
+			_disable_node(camera_controller.third_person_view)
+		if camera_controller.free_look_view:
+			_disable_node(camera_controller.free_look_view)
+		if camera_controller.sniper_view:
+			_disable_node(camera_controller.sniper_view)
+		if camera_controller.aerial_view:
+			_disable_node(camera_controller.aerial_view)
+
+	# Player controller
+	if player_controller:
+		_disable_node(player_controller)
+
+	# Minimap
+	if minimap:
+		_disable_node(minimap)
+
+	# Game world (contains all ships, their physics, bot controllers, etc.)
+	var game_world = server.get_node_or_null("GameWorld") if server else null
+	if game_world:
+		_disable_node(game_world)
+
+	# This node itself
+	set_process(false)
+	set_physics_process(false)
+
+func _disable_node(node: Node) -> void:
+	"""Recursively disable processing on a node and all its children."""
+	node.set_process(false)
+	node.set_physics_process(false)
+	for child in node.get_children():
+		_disable_node(child)
 
 func _physics_process(_delta):
+	if match_ended:
+		return
 	var t = Time.get_ticks_usec() / 1000000.0
 	if not camera_controller:
 		return

@@ -2,6 +2,10 @@ extends Node3D
 class_name Utils
 
 signal kill_feed_event(sinker_name: String, sinker_player_name: String, sinker_team: int, damage_type: int, sunk_name: String, sunk_player_name: String, sunk_team: int)
+signal match_ended(winning_team: int)
+
+# Match result data - persists across scene changes (autoload)
+var match_result: Dictionary = {}
 
 var debug_instance: MeshInstance3D
 var debug_mesh: ImmediateMesh

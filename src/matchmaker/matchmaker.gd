@@ -37,8 +37,8 @@ const SHIPS_BY_CLASS = {
 }
 
 func _ready():
-	# Initialize available ports
-	initialize_available_ports()
+	# Available ports start empty — servers register themselves via UDP
+	available_ports = []
 
 	# Setup UDP beacon for server discovery
 	var udp = PacketPeerUDP.new()
@@ -68,6 +68,18 @@ func _ready():
 				connecting_clients[info] = client_data
 			elif packet_result["request"] == "leave_queue":
 				connecting_clients.erase(info)
+			elif packet_result["request"] == "server_available":
+				var port = int(packet_result.get("port", 0))
+				if port > 0:
+					release_port(port)
+					print("Matchmaker: Server on port ", port, " is now available")
+				continue
+			elif packet_result["request"] == "server_register":
+				var port = int(packet_result.get("port", 0))
+				if port > 0:
+					release_port(port)
+					print("Matchmaker: Server registered on port ", port)
+				continue
 
 			# Check if we have a single player request
 			var single_player_client = null
@@ -187,6 +199,7 @@ func _ready():
 
 # Initialize the list of available ports
 func initialize_available_ports():
+	# Legacy: no longer called. Servers register themselves via UDP.
 	for port in range(port_range_start, port_range_end + 1):
 		available_ports.append(port)
 
@@ -233,108 +246,138 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	var player_ship_data = SHIP_DATA.get(player_ship, {"class": SHIP_CLASS_CA, "tier": 10})
 	var player_ship_class = player_ship_data["class"]
 
-	# Define team composition: 10 ships per team
-	# Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 13
-	var class_counts = {
-		SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
-		SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
-		SHIP_CLASS_DD: floor(num_ships_per_team / 3.0)
-	}
-	var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
-	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
-	# var bonus_class = classes[randi() % classes.size()]
-	var bonus_class = SHIP_CLASS_BB
-	# for i in range(left_over):
-	# 	var bonus_class = classes[i % classes.size()]
-	# 	class_counts[bonus_class] += 1
+	# # Define team composition: 10 ships per team
+	# # Randomly choose which class gets 4 ships (others get 3)
+	const num_ships_per_team = 1
+	# var class_counts = {
+	# 	SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
+	# 	SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
+	# 	SHIP_CLASS_DD: floor(num_ships_per_team / 3.0)
+	# }
+	# var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
+	# var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
+	# # var bonus_class = classes[randi() % classes.size()]
 	# var bonus_class = SHIP_CLASS_BB
-	class_counts[bonus_class] += 1
+	# # for i in range(left_over):
+	# # 	var bonus_class = classes[i % classes.size()]
+	# # 	class_counts[bonus_class] += 1
+	# # var bonus_class = SHIP_CLASS_BB
+	# class_counts[bonus_class] += 1
 
-	# Build the ship list for each class
-	# This ensures both teams have identical tier compositions
-	var ships_by_class_list = {
-		SHIP_CLASS_BB: [],
-		SHIP_CLASS_CA: [],
-		SHIP_CLASS_DD: []
-	}
+	# # Build the ship list for each class
+	# # This ensures both teams have identical tier compositions
+	# var ships_by_class_list = {
+	# 	SHIP_CLASS_BB: [],
+	# 	SHIP_CLASS_CA: [],
+	# 	SHIP_CLASS_DD: []
+	# }
 
-	for ship_class in [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]:
-		var ships_available = SHIPS_BY_CLASS[ship_class]
-		var count = class_counts[ship_class]
+	# for ship_class in [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]:
+	# 	var ships_available = SHIPS_BY_CLASS[ship_class]
+	# 	var count = class_counts[ship_class]
 
-		# If this is the player's class, ensure player's exact ship is included first
-		if ship_class == player_ship_class:
-			ships_by_class_list[ship_class].append(player_ship)
-			var remaining = count - 1
-			var ship_index = 0
-			while remaining > 0:
-				var ship_path = ships_available[ship_index % ships_available.size()]
-				ships_by_class_list[ship_class].append(ship_path)
-				ship_index += 1
-				remaining -= 1
-		else:
-			for i in range(count):
-				var ship_path = ships_available[i % ships_available.size()]
-				ships_by_class_list[ship_class].append(ship_path)
+	# 	# If this is the player's class, ensure player's exact ship is included first
+	# 	if ship_class == player_ship_class:
+	# 		ships_by_class_list[ship_class].append(player_ship)
+	# 		var remaining = count - 1
+	# 		var ship_index = 0
+	# 		while remaining > 0:
+	# 			var ship_path = ships_available[ship_index % ships_available.size()]
+	# 			ships_by_class_list[ship_class].append(ship_path)
+	# 			ship_index += 1
+	# 			remaining -= 1
+	# 	else:
+	# 		for i in range(count):
+	# 			var ship_path = ships_available[i % ships_available.size()]
+	# 			ships_by_class_list[ship_class].append(ship_path)
 
-	# Build 3 clusters, each with one ship per class
-	# A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
-	var num_clusters = int(num_ships_per_team / 3.0)
-	var clusters = []
+	# # Build 3 clusters, each with one ship per class
+	# # A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
+	# var num_clusters = ceili(num_ships_per_team / 3.0)
+	# var clusters = []
 
-	# Track consumption index per class
-	var class_consume_index = {
-		SHIP_CLASS_BB: 0,
-		SHIP_CLASS_CA: 0,
-		SHIP_CLASS_DD: 0
-	}
+	# # Track consumption index per class
+	# var class_consume_index = {
+	# 	SHIP_CLASS_BB: 0,
+	# 	SHIP_CLASS_CA: 0,
+	# 	SHIP_CLASS_DD: 0
+	# }
 
-	# Fill base clusters: one DD, one CA, one BB each
-	for cluster_idx in range(num_clusters):
-		clusters.append([])
-		for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
-			var idx = class_consume_index[ship_class]
-			if idx < ships_by_class_list[ship_class].size():
-				var ship_path = ships_by_class_list[ship_class][idx]
-				var is_player = (ship_path == player_ship and idx == 0 and ship_class == player_ship_class)
-				clusters[cluster_idx].append({
-					"class": ship_class,
-					"ship": ship_path,
-					"is_player": is_player
-				})
-				class_consume_index[ship_class] = idx + 1
+	# # Fill base clusters: one DD, one CA, one BB each
+	# for cluster_idx in range(num_clusters):
+	# 	clusters.append([])
+	# 	for ship_class in [SHIP_CLASS_DD, SHIP_CLASS_CA, SHIP_CLASS_BB]:
+	# 		var idx = class_consume_index[ship_class]
+	# 		if idx < ships_by_class_list[ship_class].size():
+	# 			var ship_path = ships_by_class_list[ship_class][idx]
+	# 			var is_player = (ship_path == player_ship and idx == 0 and ship_class == player_ship_class)
+	# 			clusters[cluster_idx].append({
+	# 				"class": ship_class,
+	# 				"ship": ship_path,
+	# 				"is_player": is_player
+	# 			})
+	# 			class_consume_index[ship_class] = idx + 1
 
-	# Add the bonus (4th) ship from the bonus class to a random cluster
-	var bonus_idx = class_consume_index[bonus_class]
-	if bonus_idx < ships_by_class_list[bonus_class].size():
-		var ship_path = ships_by_class_list[bonus_class][bonus_idx]
-		var is_player = (ship_path == player_ship and bonus_idx == 0 and bonus_class == player_ship_class)
-		var bonus_cluster = randi() % num_clusters
-		clusters[bonus_cluster].append({
-			"class": bonus_class,
+	# # Add the bonus (4th) ship from the bonus class to a random cluster
+	# var bonus_idx = class_consume_index[bonus_class]
+	# if bonus_idx < ships_by_class_list[bonus_class].size():
+	# 	var ship_path = ships_by_class_list[bonus_class][bonus_idx]
+	# 	var is_player = (ship_path == player_ship and bonus_idx == 0 and bonus_class == player_ship_class)
+	# 	var bonus_cluster = randi() % num_clusters
+	# 	clusters[bonus_cluster].append({
+	# 		"class": bonus_class,
+	# 		"ship": ship_path,
+	# 		"is_player": is_player
+	# 	})
+
+	# # Shuffle order within each cluster (so DD/CA/BB positions vary within the group)
+	# for cluster in clusters:
+	# 	cluster.shuffle()
+
+	# # Shuffle the order of the 3 clusters (left flank, center, right flank)
+	# clusters.shuffle()
+
+	# # Flatten clusters into a single ordered spawn list
+	# var spawn_list = []  # Array of {"class", "ship", "is_player"} in spawn position order
+	# for cluster in clusters:
+	# 	for entry in cluster:
+	# 		spawn_list.append(entry)
+
+	# print("=== Spawn Order (positions 0-%d) ===" % (spawn_list.size() - 1))
+	# for i in range(spawn_list.size()):
+	# 	var class_label = ["BB", "CA", "DD"][spawn_list[i]["class"]]
+	# 	var player_marker = " [PLAYER]" if spawn_list[i]["is_player"] else ""
+	# 	print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
+
+	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
+	var spawn_classes = [[], [], []]
+	# var player_class_index = classes.find(player_ship_class)
+	spawn_classes[player_ship_class].append({
+		"class": player_ship_class,
+		"ship": player_ship,
+		"is_player": true
+	})
+	var class_index = (player_ship_class + 1) % classes.size()
+	for i in range(num_ships_per_team - 1):
+		var ship_class = classes[class_index]
+		var ship_path = SHIPS_BY_CLASS[ship_class][randi() % SHIPS_BY_CLASS[ship_class].size()]  # Just take a random ship of that class
+		# var is_player = (ship_class == player_ship_class)
+		spawn_classes[class_index].append({
+			"class": ship_class,
 			"ship": ship_path,
-			"is_player": is_player
+			"is_player": false
 		})
+		class_index = (class_index + 1) % classes.size()
 
-	# Shuffle order within each cluster (so DD/CA/BB positions vary within the group)
-	for cluster in clusters:
-		cluster.shuffle()
+	spawn_classes[0].shuffle()
+	spawn_classes[1].shuffle()
+	spawn_classes[2].shuffle()
+	spawn_classes.shuffle()
 
-	# Shuffle the order of the 3 clusters (left flank, center, right flank)
-	clusters.shuffle()
-
-	# Flatten clusters into a single ordered spawn list
-	var spawn_list = []  # Array of {"class", "ship", "is_player"} in spawn position order
-	for cluster in clusters:
-		for entry in cluster:
+	var spawn_list = []
+	for cls in spawn_classes:
+		for entry in cls:
 			spawn_list.append(entry)
-
-	print("=== Spawn Order (positions 0-%d) ===" % (spawn_list.size() - 1))
-	for i in range(spawn_list.size()):
-		var class_label = ["BB", "CA", "DD"][spawn_list[i]["class"]]
-		var player_marker = " [PLAYER]" if spawn_list[i]["is_player"] else ""
-		print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
 
 	# Randomize which team the player is on
 	var player_team_id = randi() % 2
