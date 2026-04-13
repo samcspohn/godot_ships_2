@@ -43,8 +43,7 @@ var match_active: bool = false
 var match_ended: bool = false
 var match_end_timer: float = 0.0
 const MATCH_END_DELAY: float = 5.0  # Seconds to wait after last kill before showing end screen
-const MATCH_RESET_DELAY: float = 15.0  # seconds after match end before server resets
-var match_reset_timer: float = 0.0
+
 var all_players_spawned: bool = false
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
 var matchmaker_heartbeat_timer: float = 0.0
@@ -102,7 +101,7 @@ func _on_peer_disconnected(id):
 					humans_remaining += 1
 		if humans_remaining == 0:
 			print("All human players disconnected, resetting immediately")
-			match_reset_timer = 0.0  # Will trigger reset on next physics frame
+			_reset_server()
 
 @rpc("any_peer", "call_remote", "reliable")
 func reconnect(id, player_name):
@@ -904,75 +903,10 @@ func _notify_matchmaker_available():
 	print("Notified matchmaker that port ", port, " is available")
 
 func _reset_server():
-	"""Reset the server for a new match after results have been sent."""
+	"""Reset the server by reloading the scene. The new instance's _ready()
+	re-creates the game world and re-registers with the matchmaker."""
 	print("=== Server resetting for new match ===")
-
-	# Free all player ships
-	for p_name in players:
-		var ship: Ship = players[p_name][0]
-		if is_instance_valid(ship):
-			ship.queue_free()
-
-	# Clear all state
-	players.clear()
-	player_info.clear()
-	team.clear()
-	team_info = null
-	players_spawned_bots = false
-	team_0_valid_targets.clear()
-	team_1_valid_targets.clear()
-	team_0_ships.clear()
-	team_1_ships.clear()
-	team_0_unspotted_enemies.clear()
-	team_1_unspotted_enemies.clear()
-	team_0_clusters.clear()
-	team_1_clusters.clear()
-	team_0_avg_position = Vector3.ZERO
-	team_1_avg_position = Vector3.ZERO
-	team_0_known_enemy_avg = Vector3.ZERO
-	team_1_known_enemy_avg = Vector3.ZERO
-	team_0_known_enemy_clusters.clear()
-	team_1_known_enemy_clusters.clear()
-	players_size = 0
-	team_spawn_counts.clear()
-	team_spawn_slots.clear()
-	gun_updated = false
-	bot_id = 0
-	visible_toggled.clear()
-	closest_enemies_that_can_see.clear()
-
-	# Reset match state
-	match_active = false
-	match_ended = false
-	match_end_timer = 0.0
-	match_complete = false
-	match_reset_timer = 0.0
-	all_players_spawned = false
-
-	# Remove and recreate game world
-	if game_world and is_instance_valid(game_world):
-		game_world.queue_free()
-		await game_world.tree_exited
-
-	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
-	add_child(game_world)
-	spawn_point = game_world.get_child(1)
-	map = load("res://src/Maps/map.tscn").instantiate()
-	game_world.get_node("Env").add_child(map)
-
-	# Rebuild navigation map
-	if map.islands.size() > 0:
-		NavigationMapManager.build_map(
-			map.islands,
-			Rect2(-17500, -17500, 35000, 35000)
-		)
-	else:
-		push_warning("Server reset: No islands found on map — NavigationMap not rebuilt")
-
-	print("=== Server reset complete, ready for new match ===")
-
-	# Notify matchmaker this server is available for new matches
-	_notify_matchmaker_available()
+	get_tree().call_deferred("reload_current_scene")
 
 @rpc("authority", "reliable", "call_remote")
 func notify_match_end(winning_team: int, leaderboard: Array):
@@ -985,9 +919,6 @@ func notify_match_end(winning_team: int, leaderboard: Array):
 var match_complete = false
 func _physics_process(_delta: float) -> void:
 	if match_complete:
-		match_reset_timer -= _delta
-		if match_reset_timer <= 0:
-			_reset_server()
 		return
 
 	# Periodically re-register with matchmaker while idle (no match running)
@@ -1022,7 +953,7 @@ func _physics_process(_delta: float) -> void:
 		if match_end_timer <= 0:
 			_broadcast_match_end()
 			match_complete = true
-			match_reset_timer = MATCH_RESET_DELAY
+			_reset_server()
 
 	if !_Utils.authority():
 		return
