@@ -196,7 +196,7 @@ func calculate_dispersed_launch(
 
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
 	var launch_velocity: Vector3 = a[0]
-
+	# return launch_velocity
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo()
 

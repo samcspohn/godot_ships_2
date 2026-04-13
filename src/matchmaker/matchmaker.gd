@@ -248,7 +248,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Define team composition: 10 ships per team
 	# # Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 1
+	const num_ships_per_team = 12
 	# var class_counts = {
 	# 	SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
 	# 	SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
@@ -375,9 +375,11 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	spawn_classes.shuffle()
 
 	var spawn_list = []
-	for cls in spawn_classes:
-		for entry in cls:
-			spawn_list.append(entry)
+	var max_class_size = max(spawn_classes[0].size(), spawn_classes[1].size(), spawn_classes[2].size())
+	for i in range(max_class_size):
+		for cls in spawn_classes:
+			if i < cls.size():
+				spawn_list.append(cls[i])
 
 	# Randomize which team the player is on
 	var player_team_id = randi() % 2

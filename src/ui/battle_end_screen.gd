@@ -198,6 +198,18 @@ func _build_personal_stats_tab(stats: Dictionary) -> Control:
 	return scroll
 
 
+
+func sort_leaderboard(a, b):
+	var a_dmg = a.get("total_damage", 0)
+	var b_dmg = b.get("total_damage", 0)
+	var a_spotting = a.get("spotting_damage", 0)
+	var b_spotting = b.get("spotting_damage", 0)
+	var a_kills = a.get("frags", 0)
+	var b_kills = b.get("frags", 0)
+	var a_score = a_dmg + a_spotting * 0.8 + a_kills * 10000
+	var b_score = b_dmg + b_spotting * 0.8 + b_kills * 10000
+	return a_score > b_score # Sort descending by score
+
 # ===========================================================================
 #  Leaderboard tab
 # ===========================================================================
@@ -223,8 +235,8 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 		else:
 			enemy_entries.append(entry)
 
-	friendly_entries.sort_custom(func(a, b): return a.get("total_damage", 0) > b.get("total_damage", 0))
-	enemy_entries.sort_custom(func(a, b): return a.get("total_damage", 0) > b.get("total_damage", 0))
+	friendly_entries.sort_custom(sort_leaderboard)
+	enemy_entries.sort_custom(sort_leaderboard)
 
 	# Friendly team (left side)
 	var friendly_vbox := VBoxContainer.new()
