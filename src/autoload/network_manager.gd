@@ -14,6 +14,7 @@ var network_peer: ENetMultiplayerPeer = null
 var player_controller_connected = false
 var _address = ""
 var _port = 0
+var server_port: int = 0
 
 signal connection_failed
 signal connection_succeeded
@@ -31,12 +32,12 @@ func create_client(address: String, port: int) -> bool:
 	_address = address
 	_port = port
 	var error = network_peer.create_client(_address, _port)
-	
+
 	if error != OK:
 		print("Failed to create client: ", error)
 		emit_signal("connection_failed")
 		return false
-	
+
 	multiplayer.multiplayer_peer = network_peer
 	current_connection_type = ConnectionType.CONNECTING
 	print("Client created, connecting...")
@@ -45,13 +46,14 @@ func create_client(address: String, port: int) -> bool:
 func create_server(port: int, max_players: int):
 	network_peer = ENetMultiplayerPeer.new()
 	var error = network_peer.create_server(port, max_players)
-	
+
 	if error != OK:
 		print("Failed to create server: ", error)
 		return
-	
+
 	multiplayer.multiplayer_peer = network_peer
 	current_connection_type = ConnectionType.SERVER
+	server_port = port
 	print("Server created on port: ", port)
 
 

@@ -83,7 +83,7 @@ func _draw() -> void:
 		draw_colored_polygon(points, color)
 
 	# --- Proximity circle indicators (new behavior) ---
-	if local_ship == null:
+	if local_ship == null or !local_ship.is_inside_tree():
 		return
 
 	var screen_center := viewport_rect.size / 2.0

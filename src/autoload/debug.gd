@@ -185,7 +185,7 @@ func _ready() -> void:
 var _signals_connected: bool = false
 
 func _process(_delta: float) -> void:
-	if not multiplayer.is_server():
+	if not _Utils.authority():
 		if not _signals_connected:
 			_signals_connected = true
 			multiplayer.server_disconnected.connect(_on_server_disconnected)
@@ -195,7 +195,7 @@ func _process(_delta: float) -> void:
 		_update_mesh_pool()
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_QUOTELEFT and event.ctrl_pressed:
@@ -217,7 +217,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _physics_process(_delta: float) -> void:
-	if multiplayer.is_server():
+	if _Utils.authority():
 		_server_flush()
 
 # ============================================================================

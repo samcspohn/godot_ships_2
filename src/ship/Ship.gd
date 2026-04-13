@@ -208,9 +208,10 @@ func _ready() -> void:
 
 	initialized = true
 	if !(_Utils.authority()):
-		initialized_client.rpc_id(1)
 		set_physics_process(false)
 		self.freeze = true
+		if _Utils.is_multiplayer_active():
+			initialized_client.rpc_id(1)
 
 	else:
 		set_process(false)

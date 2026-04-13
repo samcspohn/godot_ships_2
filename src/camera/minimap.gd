@@ -190,7 +190,8 @@ func register_ship(ship: Node3D) -> void:
 			ship.connect("tree_exiting", _on_ship_destroyed.bind(ship))
 
 func _on_ship_destroyed(ship: Node3D) -> void:
-	tracked_ships.erase(ship)
+	if tracked_ships.find_custom(func (a): return a.ship == ship) != -1:
+		tracked_ships.remove_at(tracked_ships.find_custom(func (a): return a.ship == ship))
 
 func clear_ships() -> void:
 	tracked_ships.clear()

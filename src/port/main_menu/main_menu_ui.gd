@@ -6,7 +6,7 @@ extends Control
 @onready var replay_button: Button = $TopBar/HBoxContainer/ReplayButton
 @onready var name_value_label: Label = $TopBar/HBoxContainer/NameValue
 @onready var status_label: Label = $TopBar/StatusLabel
-@onready var tab_container: TabContainer = $TabContainer
+# @onready var tab_container: TabContainer = $TopBar
 @onready var ship_tab = $HBoxContainer/TabContainer/Ship
 @onready var upgrade_tab = $HBoxContainer/TabContainer/Upgrades
 @onready var commander_skills_tab = $"HBoxContainer/TabContainer/Commander Skills"

@@ -107,8 +107,8 @@ func _ready():
 	ui.player_controller = player_controller
 	add_child(ui)
 
-	# Setup gun reload bars after camera controller is assigned
-	ui.call_deferred("setup_gun_reload_bars")
+	# # Setup gun reload bars after camera controller is assigned
+	# ui.call_deferred("setup_gun_reload_bars")
 
 	# Initialize UI for the ship after it's added to the scene tree
 	if _ship:

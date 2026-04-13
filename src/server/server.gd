@@ -38,6 +38,16 @@ var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
 var gun_updated = false
 var map: Map = null
 
+# Match state
+var match_active: bool = false
+var match_ended: bool = false
+var match_end_timer: float = 0.0
+const MATCH_END_DELAY: float = 5.0  # Seconds to wait after last kill before showing end screen
+
+var all_players_spawned: bool = false
+const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
+var matchmaker_heartbeat_timer: float = 0.0
+
 func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -66,6 +76,9 @@ func _ready():
 	# if multiplayer.is_server():
 	# 	await Minimap.server_take_map_snapshot(get_viewport())
 
+	# Register with the matchmaker so it knows this server is available
+	_notify_matchmaker_available()
+
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
 
@@ -75,12 +88,20 @@ func _on_peer_connected(id):
 
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
-	# Remove player
-	if players.has(id):
-		pass
-		# players[id][0].queue_free()
-		# players.erase(id)
-		# player_info.erase(id)
+	# After match is complete, check if all human players have left
+	if match_complete:
+		var humans_remaining = 0
+		for p_name in players:
+			var p = players[p_name]
+			var ship: Ship = p[0]
+			if not ship.team.is_bot:
+				# Check if this peer is still connected
+				var peer_id = p[2]
+				if peer_id != id and multiplayer.get_peers().has(peer_id):
+					humans_remaining += 1
+		if humans_remaining == 0:
+			print("All human players disconnected, resetting immediately")
+			_reset_server()
 
 @rpc("any_peer", "call_remote", "reliable")
 func reconnect(id, player_name):
@@ -295,6 +316,7 @@ func spawn_player(id, player_name):
 					print("Spawning bot: ID=", team_player_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
+	match_active = true
 
 @rpc("call_remote", "reliable")
 func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
@@ -826,13 +848,113 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 			# var closest_enemies: Array = closest_enemies_that_can_see[spotted]
 			# closest_enemies.append(spotter)
 
+func _broadcast_match_end():
+	"""Send match end notification with leaderboard data to all clients."""
+	var winning_team = 1 if _get_team(0).size() == 0 else 0
+
+	# Gather leaderboard data from all players (including bots)
+	var leaderboard: Array[Dictionary] = []
+	for p_name in players:
+		var ship: Ship = players[p_name][0]
+		var stats: Stats = ship.stats
+		var entry := {
+			"player_name": p_name,
+			"ship_name": ship.ship_name,
+			"team_id": ship.team.team_id,
+			"is_bot": ship.team.is_bot,
+			"alive": ship.is_alive(),
+			"total_damage": stats.total_damage,
+			"frags": stats.frags,
+			"main_hits": stats.main_hits,
+			"main_damage": stats.main_damage,
+			"citadel_count": stats.citadel_count,
+			"secondary_count": stats.secondary_count,
+			"sec_damage": stats.sec_damage,
+			"torpedo_count": stats.torpedo_count,
+			"torpedo_damage": stats.torpedo_damage,
+			"fire_count": stats.fire_count,
+			"fire_damage": stats.fire_damage,
+			"flood_count": stats.flood_count,
+			"flood_damage": stats.flood_damage,
+			"spotting_damage": stats.spotting_damage,
+			"potential_damage": stats.potential_damage,
+		}
+		leaderboard.append(entry)
+
+	for p_name in players:
+		var p = players[p_name]
+		var ship: Ship = p[0]
+		if not ship.team.is_bot:
+			var peer_id = p[2]
+			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
+
+func _notify_matchmaker_available():
+	"""Send UDP notification to the matchmaker that this server is available."""
+	var port = NetworkManager.server_port
+	if port == 0:
+		return
+	var udp = PacketPeerUDP.new()
+	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
+	var packet = {
+		"request": "server_available",
+		"port": port
+	}
+	udp.put_packet(JSON.stringify(packet).to_utf8_buffer())
+	print("Notified matchmaker that port ", port, " is available")
+
+func _reset_server():
+	"""Reset the server by reloading the scene. The new instance's _ready()
+	re-creates the game world and re-registers with the matchmaker."""
+	print("=== Server resetting for new match ===")
+	get_tree().call_deferred("reload_current_scene")
+
+@rpc("authority", "reliable", "call_remote")
+func notify_match_end(winning_team: int, leaderboard: Array):
+	"""Called on clients when the match ends."""
+	if _Utils.match_result.is_empty():
+		_Utils.match_result = {}
+	_Utils.match_result["leaderboard"] = leaderboard
+	_Utils.match_ended.emit(winning_team)
+
+var match_complete = false
 func _physics_process(_delta: float) -> void:
+	if match_complete:
+		return
+
+	# Periodically re-register with matchmaker while idle (no match running)
+	if not match_active and not match_ended:
+		matchmaker_heartbeat_timer -= _delta
+		if matchmaker_heartbeat_timer <= 0:
+			_notify_matchmaker_available()
+			matchmaker_heartbeat_timer = MATCHMAKER_HEARTBEAT_INTERVAL
+
 	current_time = Time.get_ticks_msec() / 1000.0
 	team_0_ships = _get_team(0)
 	team_1_ships = _get_team(1)
 
 	# Update clusters and average positions
 	_update_team_clusters()
+
+	# Match end detection (server-side)
+	if _Utils.authority() and match_active and not match_ended:
+		var team_0_all = _get_team_ships(0)
+		var team_1_all = _get_team_ships(1)
+		# Only check if both teams have been populated
+		if team_0_all.size() > 0 and team_1_all.size() > 0:
+			if team_0_ships.size() == 0 or team_1_ships.size() == 0:
+				match_ended = true
+				var winning_team = 1 if team_0_ships.size() == 0 else 0
+				match_end_timer = MATCH_END_DELAY
+				print("Match ended! Team ", winning_team, " wins!")
+
+	# Match end delay timer
+	if match_ended and match_end_timer > 0:
+		match_end_timer -= _delta
+		if match_end_timer <= 0:
+			_broadcast_match_end()
+			match_complete = true
+			_reset_server()
+
 	if !_Utils.authority():
 		return
 	var space_state = get_tree().root.get_world_3d().direct_space_state
