@@ -261,76 +261,90 @@ func target_aim_offset(_target: Ship) -> Vector3:
 
 var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
+	wants_stealth = false  # reset each tick; set true below if undetected
 	var ctx = SkillContext.create(ship, target, server, self)
-	var delta = 1.0 / Engine.physics_ticks_per_second
 	_init_flank_identity(ship, server)
 
-	var spotted = server.get_valid_targets(ship.team.team_id)
+	var spotted   = server.get_valid_targets(ship.team.team_id)
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
-	var has_spotted = spotted.size() > 0
-	var has_targets = has_spotted or not unspotted.is_empty()
-	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var has_targets = spotted.size() > 0 or not unspotted.is_empty()
 
-	# --- Tactical state transitions ---
-	match _tactical_state:
-		TacticalState.State.HUNTING:
-			if has_targets:
-				_tactical_state = TacticalState.State.SNEAKING
-		TacticalState.State.SNEAKING:
-			if ship.visible_to_enemy:
-				_tactical_state = TacticalState.State.DISENGAGING
-				_bloom_probe.enter()
-				_bloom_probe.probe_timeout = 3.0  # DD: shorter probe
-		TacticalState.State.ENGAGED:
-			if not ship.visible_to_enemy:
-				_tactical_state = TacticalState.State.SNEAKING
-		TacticalState.State.DISENGAGING:
-			_bloom_probe.update(ship, delta)
-			if _bloom_probe.went_dark:
-				_tactical_state = TacticalState.State.SNEAKING
-			elif _bloom_probe.probe_failed:
-				_tactical_state = TacticalState.State.ENGAGED
+	var hp_ratio          = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var concealment_radius: float = (ship.concealment.params.p() as ConcealmentParams).radius
+	var pos_params        = get_positioning_params()
 
-	# --- Execute skill based on state ---
 	var intent: NavIntent = null
-	match _tactical_state:
-		TacticalState.State.HUNTING:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
-		TacticalState.State.SNEAKING:
-			intent = _execute_dd_sneak_skill(ctx)
-		TacticalState.State.ENGAGED:
-			if hp_ratio < 0.3:
-				intent = _skill_retreat.execute(ctx, {})
-				if intent:
-					_active_skill_name = &"Retreat"
-				else:
-					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6, "angle_to_threat_deg": 25.0})
-					if intent:
-						_active_skill_name = &"Kite"
-			else:
-				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6, "angle_to_threat_deg": 25.0})
-				if intent:
-					_active_skill_name = &"Kite"
-		TacticalState.State.DISENGAGING:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.7, "angle_to_threat_deg": 30.0})
+
+	# ── 1. No enemies → hunt ─────────────────────────────────────────────────
+	if not has_targets:
+		intent = _skill_hunt.execute(ctx, {})
+		_active_skill_name = &"Hunt"
+
+	# ── 2. Critical HP → retreat, fallback kite ───────────────────────────────
+	elif hp_ratio < 0.3:
+		intent = _skill_retreat.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"Retreat"
+		else:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
 			if intent:
 				_active_skill_name = &"Kite"
 
-	# Fallback
+	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
+	elif target != null and target.ship_class == Ship.ShipClass.DD:
+		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.5, "angle_to_threat_deg": 20.0})
+		if intent:
+			_active_skill_name = &"Kite"
+			intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.3})
+		else:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+
+	# ── 4. No torpedo controller → spot, fallback hunt ───────────────────────
+	elif ship.torpedo_controller == null:
+		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
+		_active_skill_name = &"Spot"
+		if intent == null:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+
+	# ── 5. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
+	elif _get_max_torp_reload() >= 1.0 and target != null and target.ship_class != Ship.ShipClass.DD:
+		intent = _skill_torpedo_run.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"TorpedoRun"
+		# Null intent — fall through to spotting
+		if intent == null:
+			intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
+			_active_skill_name = &"Spot"
+			if intent == null:
+				intent = _skill_hunt.execute(ctx, {})
+				_active_skill_name = &"Hunt"
+
+	# ── 6. Reloading → spot, fallback hunt ───────────────────────────────────
+	else:
+		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
+		_active_skill_name = &"Spot"
+		if intent == null:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+
+	# Final fallback
 	if intent == null:
 		intent = _intent_sail_forward(ship)
 		_active_skill_name = &"SailForward"
 
-	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
-	if _active_skill_name in [&"Kite"]:
-		intent = _skill_broadside.apply(intent, ctx, {
-			"oscillation_bias": 0.3,
+	# DDs always want stealth routing when undetected — both spotting runs and
+	# torpedo approaches rely on staying outside enemy detection zones in transit
+	wants_stealth = not ship.visible_to_enemy
+
+	# Post-process spread (skip for Retreat and Kite)
+	if _active_skill_name != &"Retreat" and _active_skill_name != &"Kite":
+		intent = _skill_spread.apply(intent, ctx, {
+			"spread_distance": pos_params.spread_distance,
+			"spread_multiplier": pos_params.spread_multiplier,
 		})
 
-	# Post-process spread
-	var params = get_positioning_params()
-	intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
 	return intent
 
 func _execute_dd_sneak_skill(ctx: SkillContext) -> NavIntent:
@@ -494,38 +508,15 @@ func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
 	return _get_ship_heading()
 
 func engage_target(target: Ship):
-	# Track torpedo hits and floods
-	var current_torpedo_count = _ship.stats.torpedo_count
-	var current_flood_count = _ship.stats.flood_count
-
-	if current_torpedo_count > last_torpedo_count:
-		last_torpedo_count = current_torpedo_count
-
-	if current_flood_count > last_flood_count:
-		last_flood_count = current_flood_count
-		target_is_flooding = true
-
-	# Determine if we should shoot guns
-	var should_shoot_guns = false
-	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-
-	# if hp_ratio < 0.3:
-	# 	# Low health - prioritize stealth
-	# 	should_shoot_guns = false
-	if _bloom_probe.can_fire():
-		# Spotted and within detection range
-		should_shoot_guns = true
-	# elif target_is_flooding:
-	# 	# Target is flooding from our torpedoes
-	# 	should_shoot_guns = true
-
-	if should_shoot_guns and can_fire_guns():
+	# Guns only when already spotted (revealing position is already done)
+	if _ship.visible_to_enemy and can_fire_guns():
 		super.engage_target(target)
-		target_is_flooding = false
+	else:
+		# Aim turrets but don't fire
+		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
 
-	# Fire torpedoes using base class torpedo system
+	# Torpedoes are always managed
 	update_torpedo_aim(target)
-
 	torpedo_fire_timer += 1.0 / Engine.physics_ticks_per_second
 	if torpedo_fire_timer >= torpedo_fire_interval:
 		torpedo_fire_timer = 0.0

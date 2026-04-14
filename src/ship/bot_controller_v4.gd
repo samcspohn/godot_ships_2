@@ -342,23 +342,7 @@ func _update_nav_intent() -> void:
 	var new_intent: NavIntent = null
 
 	# Check if behavior supports the new NavIntent interface
-	if behavior.has_method("get_nav_intent"):
-		new_intent = behavior.get_nav_intent(target, _ship, server_node)
-	else:
-		# Fallback: use the legacy get_desired_position interface
-		# and wrap its result in a NavIntent.create
-		var next_destination = behavior.get_desired_position(friendly, enemy, target, destination)
-		if next_destination.distance_to(destination) > movement.turning_circle_radius * 0.5:
-			destination = next_destination
-		var approach_heading = calculate_desired_heading(destination)
-		new_intent = NavIntent.create(destination, approach_heading)
-
-		# Check if behavior wants to override heading for evasion
-		if _ship.visible_to_enemy and behavior.has_method("get_desired_heading"):
-			var heading_info = behavior.get_desired_heading(target, get_ship_heading(), 0.0, destination)
-			if heading_info.get("use_evasion", false):
-				# Override with evasion heading
-				new_intent = NavIntent.create(destination, heading_info.heading)
+	new_intent = behavior.get_nav_intent(target, _ship, server_node)
 
 	# --- Smart comparison: compare raw-to-raw to prevent oscillation ---
 	# When similar, still pass through position + heading so the navigator
@@ -386,7 +370,7 @@ func _update_nav_intent() -> void:
 			_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
 
 	# --- Push destination out of enemy threat zones when sneaking ---
-	if _last_intent != null:
+	if _last_intent != null and behavior != null and behavior.wants_stealth:
 		_adjust_destination_for_threats(_last_intent)
 
 	# Track destination for debug drawing
@@ -529,10 +513,10 @@ func _update_shell_threats() -> void:
 func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if behavior == null:
 		return
-	if not "_tactical_state" in behavior:
-		return
-	if behavior._tactical_state != TacticalState.State.SNEAKING:
-		return
+	#if not "_tactical_state" in behavior:
+		#return
+	#if behavior._tactical_state != TacticalState.State.SNEAKING:
+		#return
 
 	# Read concealment — same radii used by _update_threat_zones
 	var my_concealment: float = 0.0
@@ -606,12 +590,7 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 func _update_threat_zones() -> void:
 	navigator.clear_threat_zones()
 
-	# Only apply threat avoidance when the behavior is in SNEAKING state
-	if behavior == null:
-		return
-	if not "_tactical_state" in behavior:
-		return
-	if behavior._tactical_state != TacticalState.State.SNEAKING:
+	if behavior == null or not behavior.wants_stealth:
 		return
 
 	# Use our base concealment radius as the avoidance distance
@@ -1132,31 +1111,46 @@ func _emit_debug_draws() -> void:
 
 		var skill_info = behavior.get_debug_skill_info()
 		if not skill_info.is_empty():
-			var tac_state: String = skill_info.get("tactical_state", "")
-			var skill: String = skill_info.get("skill", "")
-			var bloom: String = skill_info.get("bloom_phase", "")
-			var visible: bool = skill_info.get("visible", false)
-			var in_cover: bool = skill_info.get("in_cover", false)
-			var hp_pct: int = skill_info.get("hp_pct", -1)
+			var skill: String      = skill_info.get("skill", "")
+			var threat: float      = skill_info.get("threat", -1.0)
+			var visible: bool      = skill_info.get("visible", false)
+			var in_cover: bool     = skill_info.get("in_cover", false)
+			var hp_pct: int        = skill_info.get("hp_pct", -1)
+			var torp_reload: float = skill_info.get("torp_reload", -1.0)
 
-			if not tac_state.is_empty():
-				lines.append("State: %s" % tac_state)
+			# Line 1 — skill + threat bar
 			if not skill.is_empty():
-				lines.append("Skill: %s" % skill)
-			if tac_state == "DISENGAGING":
-				lines.append("Bloom: %s" % bloom)
+				var threat_bar := ""
+				if threat >= 0.0:
+					var filled := int(round(threat * 10.0))
+					threat_bar = " [" + "█".repeat(filled) + "░".repeat(10 - filled) + "] %.2f" % threat
+				lines.append("Skill: %s%s" % [skill, threat_bar])
 
+			# Line 2 — target class, name, distance
+			if target != null:
+				var cls := ""
+				match target.ship_class:
+					Ship.ShipClass.BB: cls = "BB"
+					Ship.ShipClass.CA: cls = "CA"
+					Ship.ShipClass.DD: cls = "DD"
+				var dist_m := int(_ship.global_position.distance_to(target.global_position))
+				var dist_str := "%.1fk" % (dist_m / 1000.0) if dist_m >= 1000 else "%dm" % dist_m
+				lines.append("→ %s %s  ·  %s" % [cls, target.name, dist_str])
+
+			# Line 3 — status flags
 			var flags: PackedStringArray = PackedStringArray()
-			if visible:
-				flags.append("VISIBLE")
-			else:
-				flags.append("HIDDEN")
-			if in_cover:
-				flags.append("COVER")
 			if hp_pct >= 0:
 				flags.append("HP:%d%%" % hp_pct)
-			if flags.size() > 0:
-				lines.append(" | ".join(flags))
+			flags.append("VISIBLE" if visible else "HIDDEN")
+			if in_cover:
+				flags.append("COVER")
+			lines.append(" · ".join(flags))
+
+			# Line 4 — torpedo reload (only for ships that have torpedoes)
+			if torp_reload >= 0.0:
+				var filled := int(round(torp_reload * 10.0))
+				var bar := "█".repeat(filled) + "░".repeat(10 - filled)
+				lines.append("Torps: [%s] %d%%" % [bar, int(torp_reload * 100.0)])
 
 		var label_text = "\n".join(lines)
 		if not label_text.is_empty():

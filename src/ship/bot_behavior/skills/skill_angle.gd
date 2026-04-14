@@ -122,5 +122,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	elif enemy_dist < desired_dist * 0.4:
 		dest = ship.global_position - to_enemy.normalized() * 1000.0
 	dest.y = 0.0
+	# var dest = to_enemy.normalized() * 2000.0 + ship.global_position
 	dest = ctx.behavior._get_valid_nav_point(dest)
-	return NavIntent.create(dest, heading)
+	return NavIntent.create(dest, enemy_bearing)

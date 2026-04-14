@@ -88,6 +88,7 @@ void _ProjectileManager::_bind_methods() {
 						 &_ProjectileManager::print_armor_debug);
 	ClassDB::bind_method(D_METHOD("validate_penetration_formula"),
 						 &_ProjectileManager::validate_penetration_formula);
+	ClassDB::bind_method(D_METHOD("clear_all"), &_ProjectileManager::clear_all);
 
 	// Bind ricochet RPC methods (snake_case)
 	ClassDB::bind_method(D_METHOD("create_ricochet_rpc", "original_shell_id", "new_shell_id",
@@ -171,6 +172,48 @@ _ProjectileManager::_ProjectileManager() {
 
 _ProjectileManager::~_ProjectileManager() {
 	// Clean up if needed
+}
+
+void _ProjectileManager::clear_all() {
+	// Destroy visuals for every active projectile before clearing data
+	for (int i = 0; i < projectiles.size(); i++) {
+		Variant p_var = projectiles[i];
+		if (p_var.get_type() == Variant::NIL) {
+			continue;
+		}
+		Ref<ProjectileData> p = p_var;
+		if (!p.is_valid()) {
+			continue;
+		}
+
+		// Remove GPU renderer shell sprite
+		int gpu_id = p->get_frame_count();
+		if (gpu_renderer != nullptr && gpu_id >= 0) {
+			gpu_renderer->call("destroy_shell", gpu_id);
+		}
+
+		// Free trail emitter
+		int emitter_id = p->get_emitter_id();
+		if (compute_particle_system != nullptr && emitter_id >= 0) {
+			compute_particle_system->call("free_emitter", emitter_id);
+		}
+	}
+
+	// Clear all projectile data
+	projectiles.clear();
+	projectiles.resize(1); // Match initial state from _ready
+	ids_reuse.clear();
+	shell_param_ids.clear();
+	next_id = 0;
+	bullet_id = 0;
+
+	// Clear shell landing grid
+	shell_landings.clear();
+	for (size_t i = 0; i < shell_grid.size(); i++) {
+		shell_grid[i].clear();
+	}
+
+	UtilityFunctions::print("ProjectileManager: cleared all projectiles and visuals");
 }
 
 void _ProjectileManager::_ready() {

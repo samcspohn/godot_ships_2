@@ -508,7 +508,7 @@ func _calculate_target_info():
 			#  At 45° with exponent 0.5, `broadside_factor ≈ 0.5^0.5 ≈ 0.71`, so you'd be 71% plane-mode.
 			#  This **favors the vertical plane** for most angles,
 			#  only falling back to water when the target is nearly bow/stern-on.
-			var blend_exponent = 0.7
+			var blend_exponent = 0.0
 			broadside_factor = pow(broadside_factor, blend_exponent)
 
 			# --- Plane intersection (vertical plane aligned with target's heading) ---

@@ -47,7 +47,7 @@ func _draw() -> void:
 	var cam_dir := -cam.global_transform.basis.z.normalized()
 	var viewport_rect: Rect2 = get_viewport_rect()
 
-	# --- On-screen torpedo markers (existing behavior) ---
+	# --- On-screen torpedo markers ---
 	for torp in torpedo_manager.torpedos:
 		if torp == null:
 			continue

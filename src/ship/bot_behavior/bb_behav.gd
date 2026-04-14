@@ -239,66 +239,67 @@ func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagem
 # ============================================================================
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
+	wants_stealth = false  # BBs push or camp — never route around detection zones
 	var ctx = SkillContext.create(ship, target, server, self)
-	var delta = 1.0 / Engine.physics_ticks_per_second
 	_init_flank_identity(ship, server)
 
 	var spotted = server.get_valid_targets(ship.team.team_id)
 	var has_spotted = spotted.size() > 0
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
 	var has_enemies = has_spotted or not unspotted.is_empty()
-	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
-	var threatened = get_theatened(server)
+	var params = get_positioning_params()
+	var gun_range = ship.artillery_controller.get_params()._range
+	var threat = get_threat_score(server)
 
-	if not has_enemies:
-		# No enemies at all — default to hunting behavior
-		_tactical_state = TacticalState.State.HUNTING
-		# print("no enemies, hunting")
-
-	# --- Tactical state transitions ---
-	match _tactical_state:
-		TacticalState.State.HUNTING:
-			if has_spotted:
-				_tactical_state = TacticalState.State.ENGAGED
-		TacticalState.State.ENGAGED:
-			if not has_enemies:
-				_tactical_state = TacticalState.State.HUNTING
-			elif hp_ratio < 0.2 and ship.visible_to_enemy:
-				_tactical_state = TacticalState.State.DISENGAGING
-				_bloom_probe.enter()
-		TacticalState.State.DISENGAGING:
-			_bloom_probe.update(ship, delta)
-			if _bloom_probe.went_dark:
-				_tactical_state = TacticalState.State.SNEAKING
-			elif _bloom_probe.probe_failed:
-				_tactical_state = TacticalState.State.ENGAGED
-			if hp_ratio > 0.35:
-				_tactical_state = TacticalState.State.ENGAGED
-		TacticalState.State.SNEAKING:
-			if ship.visible_to_enemy or has_spotted:
-				_tactical_state = TacticalState.State.ENGAGED
-
-	# --- Execute skill based on state ---
 	var _prev_skill_name = _active_skill_name
 	var intent: NavIntent = null
-	var params = get_positioning_params()
-	match _tactical_state:
-		TacticalState.State.HUNTING:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
-		TacticalState.State.SNEAKING:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75})
+
+	if not has_enemies:
+		# No enemies at all — hunt then chase
+		intent = _skill_hunt.execute(ctx, {})
+		_active_skill_name = &"Hunt"
+		if intent == null:
+			intent = _skill_chase.execute(ctx, {})
 			if intent:
-				_active_skill_name = &"Kite"
-		TacticalState.State.ENGAGED:
-			intent = _execute_bb_engaged_skill(ctx, threatened)
-		TacticalState.State.DISENGAGING:
-			var desired_range_ratio = 0.7 + (1.0 - hp_ratio) * 0.6
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": clampf(desired_range_ratio, 0.0, 1.01), "pull_toward_friendly_weight": 0.4})
+				_active_skill_name = &"Chase"
+	elif not has_spotted:
+		# Enemies exist but none spotted — chase then hunt
+		intent = _skill_chase.execute(ctx, {})
+		_active_skill_name = &"Chase"
+		if intent == null:
+			intent = _skill_hunt.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Hunt"
+	elif threat < 0.25:
+		# Low threat: push directly at 40% gun range
+		_skill_cover.reset()
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.4})
+		if intent:
+			_active_skill_name = &"Angle"
+	elif threat < 0.6:
+		# Medium threat: camp/flank near island — cover at 60% range, fall back to camp at 0.65 ratio
+		intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.6})
+		if intent != null:
+			_active_skill_name = &"FindCover"
+		else:
+			intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.65})
+			if intent:
+				_active_skill_name = &"Camp"
+	else:
+		# High threat: take cover — cover at 70% range, fall back to kite
+		intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.7})
+		if intent != null:
+			_active_skill_name = &"FindCover"
+		else:
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75, "pull_toward_friendly_weight": 0.3})
 			if intent:
 				_active_skill_name = &"Kite"
 
-	# Fallback
+	# Fallback chain
+	if intent == null:
+		intent = _skill_chase.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"Chase"
 	if intent == null:
 		var fwd = ship.global_position - ship.basis.z * 10000
 		fwd.y = 0.0
@@ -309,54 +310,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
 
-	# Post-process broadside (oscillate heading toward all-guns-bearing angles)
-	if _active_skill_name in [&"Kite", &"Angle", &"Camp"]:
-		intent = _skill_broadside.apply(intent, ctx, {
-			"oscillation_bias": 0.5,
-		})
+	# Post-process broadside when skill is not Hunt or SailForward
+	if _active_skill_name != &"Hunt" and _active_skill_name != &"SailForward":
+		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
-	# Post-process spread
+	# Post-process spread when skill is not FindCover, Angle, or Kite
 	if _active_skill_name not in [&"FindCover", &"Angle", &"Kite"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
-	return intent
-
-func _execute_bb_engaged_skill(ctx: SkillContext, threatened: bool) -> NavIntent:
-	var hp_ratio = ctx.ship.health_controller.current_hp / ctx.ship.health_controller.max_hp
-	var intent: NavIntent = null
-
-	# Very damaged: seek cover if available
-	if hp_ratio < 0.2:
-		intent = _skill_cover.execute(ctx, {"desired_range": ctx.ship.artillery_controller.get_params()._range * 0.7})
-		if intent != null:
-			_active_skill_name = &"FindCover"
-			return intent
-
-	# Damaged: kite
-	var nearest_enemy = ctx.behavior._get_nearest_enemy()[&"position"]
-	if hp_ratio < 0.4 and nearest_enemy.distance_to(ctx.ship.global_position) < ctx.ship.artillery_controller.get_params()._range * 0.8:
-		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.7, "pull_toward_friendly_weight": 0.3})
-		if intent:
-			_active_skill_name = &"Kite"
-		return intent
-	if hp_ratio < 0.4 and !_ship.visible_to_enemy:
-		intent = _skill_cover.execute(ctx, {"desired_range": ctx.ship.artillery_controller.get_params()._range * 0.7})
-		if intent != null:
-			_active_skill_name = &"FindCover"
-			return intent
-
-	# Healthy: camp or broadside
-	if threatened:
-		var desired_range_ratio = 0.6 + (1.0 - hp_ratio) * 0.3  # Closer to 90% range when at full HP, down to 60% when damaged
-		intent = _skill_camp.execute(ctx, {"desired_range_ratio": desired_range_ratio})
-		if intent:
-			_active_skill_name = &"Camp"
-			return intent
-	else:
-		var desired_range_ratio = (1.0 - hp_ratio) * 0.3
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": desired_range_ratio})
-		if intent:
-			_active_skill_name = &"Angle"
-			return intent
 
 	return intent
 

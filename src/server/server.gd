@@ -79,6 +79,9 @@ func _ready():
 	# Register with the matchmaker so it knows this server is available
 	_notify_matchmaker_available()
 
+	# Tell TorpedoManager to find the new server node (needed after scene reload)
+	(TorpedoManager as _TorpedoManager).reacquire_server()
+
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
 
@@ -786,6 +789,8 @@ func defer_sync_ship(friendly: int, player_name: String, ship_data: Variant):
 
 @rpc("any_peer", "unreliable_ordered", "call_remote", 1)
 func sync_game_state(bytes: PackedByteArray):
+	if not is_inside_tree():
+		return
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = bytes
 	var frame_time = 1.0 / Engine.get_frames_per_second()
@@ -906,6 +911,12 @@ func _reset_server():
 	"""Reset the server by reloading the scene. The new instance's _ready()
 	re-creates the game world and re-registers with the matchmaker."""
 	print("=== Server resetting for new match ===")
+
+	# Clear projectile and torpedo managers before reload to prevent
+	# stale references to freed ships/nodes causing null crashes
+	ProjectileManager.clear_all()
+	(TorpedoManager as _TorpedoManager).clear_all()
+
 	get_tree().call_deferred("reload_current_scene")
 
 @rpc("authority", "reliable", "call_remote")

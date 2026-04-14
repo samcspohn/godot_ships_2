@@ -53,10 +53,19 @@ var _cached_friendly_spawn: Vector3 = Vector3.ZERO
 var _cached_enemy_spawn: Vector3 = Vector3.ZERO
 var _spawn_cache_initialized: bool = false
 
-# Tactical state machine
-var _tactical_state: TacticalState.State = TacticalState.State.HUNTING
-var _bloom_probe: TacticalState.BloomProbe = TacticalState.BloomProbe.new()
+# Active skill name for debug
 var _active_skill_name: StringName = &""
+
+## Set to true by each ship class in get_nav_intent when the ship wants the
+## bot controller to route around enemy detection zones during transit.
+## Reset to false at the start of every get_nav_intent call so it is always
+## freshly computed — never stale from a previous tick.
+## Rules of thumb:
+##   DD  : true whenever undetected (torpedo approach, spotting run)
+##   CA  : true when undetected + seeking island cover + no torpedo launcher
+##         (torpedo CAs push close regardless of detection)
+##   BB  : always false — BBs push or camp, never sneak
+var wants_stealth: bool = false
 
 # Skill instances (created in subclass _init or on first use)
 var _skills: Dictionary = {}  # StringName -> BotSkill
@@ -182,17 +191,8 @@ func _roll_flank_depth() -> float:
 	return randf_range(0.2, 0.5)
 
 func can_fire_guns() -> bool:
-	match _tactical_state:
-		TacticalState.State.SNEAKING:
-			var threats = _gather_threat_positions(_ship)
-			var gun_range = _ship.artillery_controller.get_params()._range
-			for threat in threats:
-				if threat.distance_to(_ship.global_position) < gun_range:
-					if not _is_los_blocked_with_clearance(_ship.global_position, threat):
-						return false
-			return true
-		TacticalState.State.DISENGAGING:
-			return _bloom_probe.can_fire()
+	## Always allowed at the base level.
+	## Each ship class gates firing in its own engage_target override.
 	return true
 
 # ============================================================================
@@ -1054,6 +1054,19 @@ func try_fire_torpedoes(_target_ship: Ship):
 				torpedoes_in_salvo = 0
 			return
 
+
+func _get_max_torp_reload() -> float:
+	"""Returns the highest reload progress (0–1) across all torpedo launchers.
+	Returns 0.0 if this ship has no torpedo controller or no launchers."""
+	var tc = _ship.torpedo_controller
+	if tc == null:
+		return 0.0
+	var best: float = 0.0
+	for launcher in tc.launchers:
+		if launcher.reload > best:
+			best = launcher.reload
+	return best
+
 func is_land_blocking_torpedo_path(from_pos: Vector3, to_pos: Vector3) -> bool:
 	"""Check if land blocks the torpedo path."""
 	var space_state = _ship.get_world_3d().direct_space_state
@@ -1242,9 +1255,9 @@ func _compute_hide_heading(island_center: Vector3, threats: Array) -> float:
 func _sdf_walk_to_shore(island_center: Vector3, direction: Vector3, island_radius: float, clearance: float) -> Vector3:
 	"""Walk the SDF outward from island_center along direction until we find a
 	point with enough clearance for the ship.  Returns Vector3.ZERO on failure."""
-	var max_dist = island_radius + 500.0
+	# var max_dist = island_radius + 500.0
 	var dist = 0.0
-	while dist < max_dist:
+	for i in range(50):
 		var test = island_center + direction * dist
 		test.y = 0.0
 		var sdf = NavigationMapManager.get_distance(test)
@@ -1253,7 +1266,8 @@ func _sdf_walk_to_shore(island_center: Vector3, direction: Vector3, island_radiu
 		if sdf < 0.0:
 			dist += maxf(-sdf, 25.0)
 		else:
-			dist += maxf(clearance - sdf, 25.0)
+			# dist += maxf(clearance - sdf, 25.0)\
+			dist += sdf
 	return Vector3.ZERO
 
 func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
@@ -1565,6 +1579,46 @@ func get_desired_position(_friendly: Array[Ship], enemy: Array[Ship], target: Sh
 # NAVINTENT — default implementation for V4 bot controller
 # ============================================================================
 
+func get_threat_score(server: GameServer) -> float:
+	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
+	## Each spotted enemy within its own gun range contributes weighted range
+	## pressure, scaled by get_threat_class_weight() so class matchups matter
+	## (e.g. BBs weigh heavily against CAs, DDs weigh heavily against BBs).
+	## Multiple enemies in range compound additively.
+	## Low own HP amplifies the result up to 2×.
+	## 5 threat-weight units ≈ maximum threat (clamp at 1.0).
+	## Subclasses override get_threat_class_weight() to tune per-class fear.
+	var my_hp  = _ship.health_controller.current_hp
+	var max_hp = _ship.health_controller.max_hp
+	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
+	var hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
+
+	var spotted = server.get_valid_targets(_ship.team.team_id)
+	if spotted.is_empty():
+		# No visible enemies — only own HP loss contributes a small residual threat
+		return hp_pressure * 0.3
+
+	var raw_threat: float = 0.0
+	for enemy in spotted:
+		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
+			continue
+		var dist        = enemy.global_position.distance_to(_ship.global_position)
+		var enemy_range = enemy.artillery_controller.get_params()._range
+		# Only count enemies whose guns can plausibly reach us
+		if enemy_range <= 0.0 or dist > enemy_range * 1.1:
+			continue
+		# 0.0 at range edge → 1.0 at point-blank
+		var range_pressure = clampf(1.0 - (dist / enemy_range), 0.0, 1.0)
+		# Class weight: each ship class has a different threat weight per subclass
+		var class_w = get_threat_class_weight(enemy.ship_class)
+		raw_threat += range_pressure * class_w
+
+	# Low HP amplifies perceived threat so damaged ships play more defensively
+	raw_threat *= lerpf(1.0, 2.0, hp_pressure)
+
+	# Normalize: 5 threat-weight units ≈ maximum threat
+	return clampf(raw_threat / 5.0, 0.0, 1.0)
+
 var original_dest = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	"""Returns a NavIntent for the V4 bot controller.  Base implementation wraps
@@ -1685,23 +1739,19 @@ func _normalize_angle(angle: float) -> float:
 # DEBUG — Skill / tactical state info for the 3D world label
 # ============================================================================
 
-const TACTICAL_STATE_NAMES: Dictionary = {
-	TacticalState.State.HUNTING: "HUNTING",
-	TacticalState.State.SNEAKING: "SNEAKING",
-	TacticalState.State.ENGAGED: "ENGAGED",
-	TacticalState.State.DISENGAGING: "DISENGAGING",
-}
-
 func get_debug_skill_info() -> Dictionary:
 	var info: Dictionary = {}
-	info["tactical_state"] = TACTICAL_STATE_NAMES.get(_tactical_state, "UNKNOWN")
 	info["skill"] = String(_active_skill_name) if _active_skill_name != &"" else "None"
-	info["bloom_phase"] = "SHOOTING" if _bloom_probe.can_fire() else "PROBING"
 	info["visible"] = _ship.visible_to_enemy if _ship != null else false
 	info["in_cover"] = is_in_cover
 	if _ship != null:
 		var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
 		info["hp_pct"] = int(hp_ratio * 100.0)
+		var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+		if server_node != null:
+			info["threat"] = get_threat_score(server_node)
+		if _ship.torpedo_controller != null:
+			info["torp_reload"] = _get_max_torp_reload()
 	return info
 
 # ============================================================================

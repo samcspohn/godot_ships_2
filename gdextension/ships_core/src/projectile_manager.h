@@ -141,6 +141,9 @@ public:
 	// Validation
 	void validate_penetration_formula();
 
+	// Clear all projectiles and related state (for scene reload)
+	void clear_all();
+
 	// Ricochet RPC methods
 	void create_ricochet_rpc(int original_shell_id, int new_shell_id, const Vector3 &ricochet_position,
 							 const Vector3 &ricochet_velocity, double ricochet_time);

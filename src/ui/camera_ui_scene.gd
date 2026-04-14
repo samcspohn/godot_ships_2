@@ -383,6 +383,11 @@ func _on_match_ended(winning_team: int):
 	_Utils.match_result["ship_name"] = ship_name
 	_Utils.match_result["stats"] = stats_dict
 	_Utils.match_result["screenshot"] = screenshot
+	# Clear projectile and torpedo managers so in-flight shells/torps don't
+	# hit freed ships during the scene transition
+	ProjectileManager.clear_all()
+	(TorpedoManager as _TorpedoManager).clear_all()
+
 	# Free the battle camera and its views — they live directly under root,
 	# not under the current scene, so change_scene_to_file won't touch them.
 	if camera_controller:

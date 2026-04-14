@@ -72,6 +72,39 @@ func _ready():
 		# Initialize torpedo indicators overlay
 		_setup_torpedo_indicators()
 
+func clear_all():
+	"""Clear all torpedoes and reset state for server scene reload."""
+	# Clear visuals and wake particle emitters for each torpedo
+	for idx in torpedos.size():
+		var p = torpedos[idx]
+		if p == null:
+			continue
+		# Free wake particle emitter
+		if p.emitter_id >= 0:
+			ParticleTemplate.free_emitter(p.emitter_id)
+		# Zero out the multi-mesh transform so it stops rendering
+		_clear_torpedo_transform(idx)
+	torpedos.clear()
+	torpedos.resize(1)
+	ids_reuse.clear()
+	nextId = 0
+	bulletId = 0
+	server = null
+	# Reset multi-mesh transforms array
+	transforms = PackedFloat32Array()
+	if not OS.get_cmdline_args().has("--server"):
+		transforms.resize(12)
+	print("TorpedoManager: cleared all torpedoes and visuals")
+
+func reacquire_server():
+	"""Re-fetch the server reference after a scene reload."""
+	(func():
+		while get_tree().root.get_node_or_null("/root/Server") == null:
+			await get_tree().process_frame
+		server = get_tree().root.get_node("/root/Server") as GameServer
+		print("TorpedoManager: reacquired server reference")
+	).call_deferred()
+
 
 # Returns the next power of 2 that is >= value
 func next_pow_of_2(value: int) -> int:
