@@ -165,6 +165,13 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 # Battle end screen
 var match_ended: bool = false
 
+# Floating damage accumulator
+const DAMAGE_ACCUM_WINDOW: float = 0.25
+var _damage_accum_active: bool = false
+var _damage_accum_amount: float = 0.0
+var _damage_accum_position: Vector3 = Vector3.ZERO
+var _damage_accum_timer: float = 0.0
+
 
 
 func recurs_set_vis(n: Node):
@@ -459,6 +466,13 @@ func _disable_node(node: Node) -> void:
 func _physics_process(_delta):
 	if match_ended:
 		return
+
+	# Flush accumulated floating damage when window expires
+	if _damage_accum_active:
+		_damage_accum_timer -= _delta
+		if _damage_accum_timer <= 0.0:
+			_flush_damage_accumulator()
+
 	var t = Time.get_ticks_usec() / 1000000.0
 	if not camera_controller:
 		return
@@ -1284,24 +1298,41 @@ func set_target_lock_enabled(value: bool):
 	# Update crosshair drawing to show lock indicator
 
 # Function to create floating damage at a world position
-func create_floating_damage(damage: int, world_position: Vector3):
+func create_floating_damage(damage: float, world_position: Vector3):
 	"""
-	Creates a floating damage label that appears above the hit point.
+	Accumulates damage over DAMAGE_ACCUM_WINDOW seconds, then spawns a single
+	floating damage label showing the summed total.
 
 	Args:
-		damage: The damage amount to display
-		world_position: World position where the damage occurred
+		damage: The damage amount to accumulate
+		world_position: World position of the hit (first hit anchors the label)
 	"""
 	if damage <= 0:
 		return
-	# Instantiate the floating damage scene
-	var floating_damage = FloatingDamageScene.instantiate()
+	if not _damage_accum_active:
+		_damage_accum_active = true
+		_damage_accum_amount = damage
+		_damage_accum_position = world_position
+		_damage_accum_timer = DAMAGE_ACCUM_WINDOW
+	else:
+		_damage_accum_amount += damage
 
-	# Configure the floating damage
+func _flush_damage_accumulator():
+	"""Spawns the accumulated floating damage label and resets the accumulator."""
+	_damage_accum_active = false
+	var total := _damage_accum_amount
+	var pos := _damage_accum_position
+	_damage_accum_amount = 0.0
+	_damage_accum_position = Vector3.ZERO
+	_spawn_floating_damage(roundi(total), pos)
+
+func _spawn_floating_damage(damage: int, world_position: Vector3):
+	"""Instantiates and configures a FloatingDamage label at the given world position."""
+	if damage <= 0:
+		return
+	var floating_damage = FloatingDamageScene.instantiate()
 	floating_damage.damage_amount = damage
 	floating_damage.world_position = world_position
-
-	# Add to the scene
 	add_child(floating_damage)
 
 func setup_consumable_ui():

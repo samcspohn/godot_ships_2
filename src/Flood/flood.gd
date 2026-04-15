@@ -74,9 +74,10 @@ func damage(delta):
 		_owner.stats.flood_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
 		#_owner.stats._ships_damaged[_ship] += dmg_sunk[0]
-		var _dmg = _owner.stats._ships_damaged.get(_ship, 0.0) + dmg_sunk[0]
-		_owner.stats._ships_damaged[_ship] = _dmg
-		_owner.stats.ships_damaged[_ship.name] = _dmg
+		# var _dmg = _owner.stats._ships_damaged.get(_ship, 0.0) + dmg_sunk[0]
+		# _owner.stats._ships_damaged[_ship] = _dmg
+		# _owner.stats.ships_damaged[_ship.name + ":" + _ship.ship_name] = _dmg
+		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
 

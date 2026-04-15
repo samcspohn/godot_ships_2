@@ -68,9 +68,7 @@ func damage(delta):
 		var dmg_sunk = hp.apply_damage(dmg * delta, dmg * delta, null, false, HPManager.DAMAGE_TYPE.FIRE,HPManager.DAMAGE_LEVEL.LIGHT, _owner)
 		_owner.stats.fire_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
-		var _dmg = _owner.stats._ships_damaged.get(_ship, 0.0) + dmg_sunk[0]
-		_owner.stats._ships_damaged[_ship] = _dmg
-		_owner.stats.ships_damaged[_ship.name] = _dmg
+		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
 

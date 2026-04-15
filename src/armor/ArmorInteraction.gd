@@ -74,6 +74,17 @@ const TD_MOD_SCALE: float = 0.3
 const TD_MOD_ONSET: float = 0.5
 const TD_MOD_MAX: float = 1.5
 
+## Engagement factor: models the angular impulse duration.
+## A plate must be thick enough relative to caliber to sustain contact long
+## enough to rotate the shell. Below TD_ENGAGE_REF, the plate shears/punches
+## out before the deflection torque generates meaningful angular impulse.
+## engagement = clamp(T/D / TD_ENGAGE_REF, 0, 1) ^ TD_ENGAGE_POWER
+## This multiplies the entire deflection penalty (the "1 + K*tan^g*f" term
+## becomes "1 + engagement * K*tan^g*f"), so at very low T/D the shell
+## experiences only the geometric 1/cos thickness increase — no deflection.
+const TD_ENGAGE_REF: float = 0.5    ## T/D at which full deflection applies
+const TD_ENGAGE_POWER: float = 1.5  ## Sharpness of engagement falloff
+
 ## When the deflection multiplier exceeds this threshold, a failed penetration
 ## is classified as ricochet (shell deflected off) rather than shatter/embed
 ## (shell stopped inside the plate by raw thickness).
@@ -142,9 +153,15 @@ static func calculate_effective_thickness(thickness_mm: float, impact_angle_rad:
 	return thickness_mm / cos_angle
 
 
+
 ## Compute the full obliquity multiplier including deflection torque penalty.
 ## Returns the factor by which the required penetration velocity increases at
 ## this obliquity vs normal incidence. Based on Thompson F-value empirical data.
+##
+## The engagement factor models the physical reality that thin plates (low T/D)
+## cannot sustain contact long enough to generate the angular impulse needed to
+## deflect the shell. A 460mm shell hitting 19mm plate (T/D=0.04) punches
+## through before any rotation occurs — only the geometric 1/cos term applies.
 static func calculate_obliquity_multiplier(impact_angle_rad: float, armor_mm: float,
 		caliber_mm: float, k_nose: float) -> Dictionary:
 	var cos_a := maxf(cos(impact_angle_rad), 0.05)
@@ -153,17 +170,29 @@ static func calculate_obliquity_multiplier(impact_angle_rad: float, armor_mm: fl
 	# Geometric LOS term: (1/cos)^alpha
 	var geometric := pow(1.0 / cos_a, OBLIQUITY_ALPHA)
 
-	# T/D modulation: thick plates give deflection torque more angular impulse
+	# T/D ratio
 	var td_ratio := armor_mm / maxf(caliber_mm, 1.0)
+
+	# Engagement factor: how much angular impulse the plate can deliver.
+	# Below TD_ENGAGE_REF the plate shears out before the deflection torque
+	# rotates the shell. At T/D=0.04 (460mm vs 19mm): engagement ≈ 0.02
+	var engagement := pow(clampf(td_ratio / TD_ENGAGE_REF, 0.0, 1.0), TD_ENGAGE_POWER)
+
+	# T/D thickness modulation: thick plates amplify deflection further
 	var f_td := 1.0 + TD_MOD_SCALE * clampf(td_ratio - TD_MOD_ONSET, 0.0, TD_MOD_MAX)
 
-	# Deflection torque penalty: 1 + K * tan^gamma * f(T/D)
-	var deflection := 1.0 + k_nose * pow(tan_a, DEFLECTION_GAMMA) * f_td
+	# Deflection torque penalty, scaled by engagement
+	# At low T/D, engagement → 0 and deflection → 1.0 (no penalty)
+	# At high T/D, engagement → 1.0 and the full deflection curve applies
+	var raw_deflection := k_nose * pow(tan_a, DEFLECTION_GAMMA) * f_td
+	var deflection := 1.0 + engagement * raw_deflection
 
 	return {
 		"multiplier": geometric * deflection,
 		"geometric": geometric,
 		"deflection": deflection,
+		"engagement": engagement,
+		"td_ratio": td_ratio,
 	}
 
 
@@ -606,8 +635,8 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 				overmatch_first_armor = true
 
 			var pen_ratio := e_armor / maxf(shell.pen, 1.0)
-			shell.velocity *= (1.0 - pen_ratio * 0.3)
-			shell.integrity = calculate_shell_integrity(pen_ratio * 0.5, shell.integrity)
+			shell.velocity *= (1.0 - pen_ratio)
+			shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity)
 			offset += shell.velocity.normalized() * EPSILON
 
 			if shell.fuze < 0.0 and e_armor > params.arming_threshold:
@@ -630,6 +659,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 		# --- Energy-balance armor interaction ---
 		else:
+		# if true:
 			var interaction := _evaluate_armor_interaction(shell, params, impact_angle, armor_mm, e_armor)
 			result = interaction["result"]
 			deflection_mult = interaction["deflection_mult"]
@@ -765,7 +795,7 @@ func _evaluate_armor_interaction(shell: _ShellData, params: ShellParams,
 	if pen_ratio >= 1.0:
 		# Shell has enough energy to overcome both thickness and deflection
 		return {
-			"result": ArmorResult.OVERPEN,
+			"result": ArmorResult.PEN,
 			"pen_ratio": e_armor / maxf(shell.pen, 0.1),  # ratio against geometric armor for exit velocity
 			"deflection_mult": deflection_mult,
 			"physics_armor": physics_armor,
@@ -789,7 +819,7 @@ func _evaluate_armor_interaction(shell: _ShellData, params: ShellParams,
 				"physics_armor": physics_armor,
 			}
 		else:
-			# # Raw thickness defeated the shell
+			# Raw thickness defeated the shell
 			var raw_pen_ratio := shell.pen / maxf(e_armor, 0.1)
 			# if raw_pen_ratio > 0.7:
 			# 	return {

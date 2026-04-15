@@ -57,6 +57,12 @@ const HIT_TYPE_COUNTERS := {
 	6: "citadel_overpen_count",  # CITADEL_OVERPEN
 }
 
+func damage_ship(ship: Ship, damage: float) -> void:
+	if ship:
+		var ship_name = ship.name + ": " + ship.ship_name
+		var ship_damage = _ships_damaged.get(ship, 0.0)
+		ships_damaged[ship_name] = ship_damage + damage
+		_ships_damaged[ship] = ship_damage + damage
 
 ## Records a hit event and updates all relevant stats.
 ## Called from C++ ProjectileManager to consolidate all stat tracking.
@@ -102,11 +108,12 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 
 	# Track ship damage by name
 	if damaged_ship:
-		# var ship_name: String = damaged_ship.name if damaged_ship.name != "" else "Unknown"
-		var ship_name = damaged_ship.name + ": " + damaged_ship.ship_name
-		var ship_damage = _ships_damaged.get(damaged_ship, 0.0)
-		ships_damaged[ship_name] = ship_damage + damage
-		_ships_damaged[damaged_ship] = ship_damage + damage
+		# # var ship_name: String = damaged_ship.name if damaged_ship.name != "" else "Unknown"
+		# var ship_name = damaged_ship.name + ": " + damaged_ship.ship_name
+		# var ship_damage = _ships_damaged.get(damaged_ship, 0.0)
+		# ships_damaged[ship_name] = ship_damage + damage
+		# _ships_damaged[damaged_ship] = ship_damage + damage
+		damage_ship(damaged_ship, damage)
 
 	# Track ship damage
 	if damaged_ship:
