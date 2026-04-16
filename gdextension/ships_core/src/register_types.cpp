@@ -13,6 +13,7 @@
 
 // From navigation
 #include "navigation_map.h"
+#include "waypoint_graph.h"
 #include "ship_navigator.h"
 
 // From game_systems
@@ -40,6 +41,7 @@ void initialize_ships_core_module(ModuleInitializationLevel p_level) {
 
 	// Register navigation classes
 	GDREGISTER_CLASS(NavigationMap);
+	GDREGISTER_CLASS(WaypointGraph);
 	GDREGISTER_CLASS(ShipNavigator);
 }
 

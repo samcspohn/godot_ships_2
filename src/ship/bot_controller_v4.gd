@@ -171,6 +171,13 @@ func _ready() -> void:
 	else:
 		push_warning("[BotControllerV4] NavigationMap not yet built — navigator will operate without terrain data")
 
+	# Connect to the shared WaypointGraph (built alongside NavigationMap)
+	var wp_graph = NavigationMapManager.get_waypoint_graph()
+	if wp_graph != null:
+		navigator.set_waypoint_graph(wp_graph)
+	else:
+		push_warning("[BotControllerV4] WaypointGraph not yet built — navigator will pathfind without graph")
+
 	# Set ship kinematic parameters from the movement controller
 	# These match ShipMovementV4's exported properties
 	navigator.set_ship_params(
@@ -195,9 +202,12 @@ func _ready() -> void:
 
 
 func _deferred_init() -> void:
-	# Re-check map in case it was built after our _ready
+	# Re-check map and waypoint graph in case they were built after our _ready
 	if navigator != null and NavigationMapManager.is_map_ready():
 		navigator.set_map(NavigationMapManager.get_map())
+		var wp_graph = NavigationMapManager.get_waypoint_graph()
+		if wp_graph != null:
+			navigator.set_waypoint_graph(wp_graph)
 
 	# Pass bot_id to navigator for staggered periodic replanning
 	if navigator != null:

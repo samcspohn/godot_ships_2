@@ -1,0 +1,401 @@
+# Godot Ships 2 — D* Lite Navigation System
+## Design & Implementation Plan
+
+---
+
+## 1. Problem Statement
+
+The current two-layer A* system (SDF terrain + stamped low-resolution grid for ship obstacles) has two critical failure modes:
+
+- **Path failure after 300,000+ iterations.** Ships regularly cannot find a path at all. This is A* thrashing on a dynamic graph that is invalid by the time it is searched. Moving ships briefly seal corridors; the grid is stale mid-search.
+- **Routing oscillation.** Two equal-cost paths around opposite sides of an island cause A* to pick arbitrarily each frame, sending the ship back and forth until it is too late to turn and it grounds.
+
+The core architectural mistake is asking A* to solve two fundamentally different problems simultaneously — static terrain routing and dynamic avoidance — in a single dense grid. The grid is also the wrong data structure for the primary dynamic obstacle shape (large detection circles).
+
+---
+
+## 2. Key Constraints
+
+- Stealth ships must remain at least their **concealment radius** from enemy ships with detection rating > 3.5. This creates large, circular exclusion zones — not small bumper avoidance.
+- Detection circles are **tens to hundreds of meters in radius**, move with enemy ships, and may overlap.
+- Different ship classes have different clearance diameters. The same graph must serve all classes without maintaining separate navmeshes.
+- The system must handle the case where detection circles completely seal off all routes and **fail immediately**, not after 300k iterations.
+- Naval speeds are slow. A slightly stale path for 1–2 frames is imperceptible.
+
+---
+
+## 3. Chosen Architecture: D* Lite on a Sparse Waypoint Graph
+
+### 3.1 Why D* Lite
+
+D* Lite is an incremental heuristic search that searches **backward from goal to start** and maintains a repair structure. When edges change cost, only the affected portion of the search tree is re-examined. Key properties:
+
+- **Persistent state.** g-values are not discarded between frames. When a detection circle shifts, D* Lite repairs only the locally inconsistent subgraph — not the whole graph. This bounds per-frame work to the neighborhood of changed edges.
+- **Oscillation immunity.** Because g-values are persistent, equal-cost alternate routes do not randomly swap. The current route is stable until cost differential actually changes.
+- **Bounded failure.** If all routes are blocked, the open set empties immediately. No 300k iteration death spiral.
+- **Partial updates.** Repair is not all-or-nothing. A frame budget can be applied; the ship follows a slightly stale path while repair converges over the next 1–2 frames.
+
+### 3.2 Why a Sparse Waypoint Graph (Not a Grid)
+
+A* on a dense grid is pathological for large circular obstacles:
+- Circle boundaries discretize into jagged staircases; enormous effort is wasted probing cells just inside the forbidden boundary.
+- Two nearly-touching circles create corridors only a few cells wide, highly sensitive to rounding.
+- Restamping the grid on every ship movement is expensive and produces stale state during search.
+
+A sparse graph over the SDF instead:
+- The SDF encodes all terrain geometry implicitly. Islands are never explicitly defined — the graph simply has no nodes or edges inside them.
+- Graph topology is fixed; only edge costs change. D* Lite handles edge cost changes natively.
+- Total node count for a realistic naval map is in the low hundreds to low thousands. A* on this graph completes in microseconds.
+
+---
+
+## 4. System Components
+
+### 4.1 SDF Terrain Layer (Static, Built Once)
+
+The SDF stores "distance to nearest impassable boundary" at every point. Inside an island, `SDF(p) < 0`. In shallow water or too close to shore, `SDF(p) < ship_radius`. In navigable water, `SDF(p) > ship_radius`.
+
+The SDF is built from the union of all impassable geometry: landmasses, shallow water below draft threshold, permanent hazards. It is never rebuilt during play unless terrain changes.
+
+**Island representation cost at runtime: zero.** The SDF never produces navigable samples inside islands; they do not exist in the graph.
+
+### 4.2 Waypoint Graph (Static, Built at Load Time)
+
+The waypoint graph is the SDF baked into a topology that A*/D* Lite can traverse. Construction is a one-time offline process (or on first load, cached to disk).
+
+**Phase 1: Poisson Disk Sampling**
+
+Scatter candidate nodes across the map with density inversely proportional to SDF value — sparse in open ocean, dense near terrain:
+
+```cpp
+float sample_radius(Vec2 p) {
+    float d = sdf.sample(p);
+    return clamp(d * 0.5f, r_min_tight, r_min_open);
+    //                       ~80m            ~800m
+}
+
+// Keep only navigable candidates
+if (sdf.sample(p) < ship_radius + margin) continue;
+```
+
+**Phase 2: Narrow Corridor Densification**
+
+Force nodes into tight straits that Poisson disk may miss:
+
+```cpp
+// Points where ship_radius < SDF < 3 * ship_radius are critical chokepoints
+if (d > ship_radius && d < 3.0f * ship_radius) {
+    if (no existing node within r_min * 0.5f of p)
+        nodes.push_back(p);
+}
+```
+
+**Phase 3: Edge Construction**
+
+Connect nearby nodes where the full corridor is navigable:
+
+```cpp
+bool edge_valid_terrain(Vec2 A, Vec2 B, float ship_radius) {
+    float step = ship_radius * 0.5f;
+    int steps = ceil(distance(A, B) / step);
+    for (int i = 0; i <= steps; i++) {
+        Vec2 p = lerp(A, B, i / float(steps));
+        if (sdf.sample(p) < ship_radius) return false;
+    }
+    return true;
+}
+```
+
+**Phase 4: Connectivity Validation**
+
+BFS flood-fill from one node. Disconnected components correspond to enclosed water bodies (e.g., a landlocked lake). These are flagged as separate navigable regions — ships cannot reach them from the main ocean.
+
+**Stored structure:**
+
+```cpp
+struct WaypointGraph {
+    std::vector<Vec2>               node_positions;
+    std::vector<std::vector<int>>   adjacency;
+    std::vector<std::vector<float>> base_edge_weights;  // Euclidean distances, terrain only
+    KDTree                          spatial_index;       // for fast nearest-node lookup
+};
+```
+
+### 4.3 Detection Circle Layer (Dynamic, Per-Query)
+
+Detection circles are **not nodes** in the waypoint graph. They modify edge costs at runtime.
+
+**Edge cost function:**
+
+```cpp
+float edge_cost(int node_a, int node_b, const std::vector<Ship>& threats) {
+    Vec2 A = graph.node_positions[node_a];
+    Vec2 B = graph.node_positions[node_b];
+    float base = graph.base_edge_weights[node_a][node_b];
+
+    float step = ship_radius * 0.5f;
+    int steps = ceil(distance(A, B) / step);
+    for (int i = 0; i <= steps; i++) {
+        Vec2 p = lerp(A, B, i / float(steps));
+        for (const Ship& e : threats) {
+            if (e.detection_rating <= 3.5f) continue;
+            float d = distance(p, e.pos);
+            if (d < e.concealment_radius) return INFINITY;  // fully blocked
+        }
+    }
+    return base;
+}
+```
+
+Edges are never removed from the graph — they become infinite cost when blocked by a detection circle, and return to base cost when the circle moves away.
+
+### 4.4 D* Lite Core
+
+D* Lite maintains per-node state on the waypoint graph:
+
+```cpp
+struct NodeState {
+    float g;    // current best known cost from this node to goal
+    float rhs;  // one-step lookahead value
+};
+
+// Locally consistent:    g == rhs  → settled, no work needed
+// Locally inconsistent:  g != rhs  → in priority queue, needs reprocessing
+```
+
+**Priority key:**
+
+```cpp
+Key key(int s) {
+    float min_g_rhs = std::min(g[s], rhs[s]);
+    return { min_g_rhs + h(start, s) + km,   // k1
+             min_g_rhs };                      // k2
+}
+```
+
+`km` is a monotonically increasing accumulator added every time the ship advances to the next waypoint. It keeps the search front ahead of the ship without destabilizing already-settled nodes behind it.
+
+**Update loop when edges change:**
+
+```cpp
+void update_vertex(int u) {
+    if (u != goal)
+        rhs[u] = min over successors s of (edge_cost(u, s) + g[s]);
+
+    remove u from open set;
+
+    if (g[u] != rhs[u])
+        insert u into open set with key(u);
+}
+
+void compute_shortest_path(int max_iterations = INT_MAX) {
+    int iters = 0;
+    while (!open_set.empty()
+           && (open_set.top_key() < key(start) || rhs[start] != g[start])
+           && iters++ < max_iterations) {
+        int u = open_set.pop();
+        if (key_old < key(u)) {
+            open_set.insert(u, key(u));
+        } else if (g[u] > rhs[u]) {
+            g[u] = rhs[u];
+            for each predecessor v of u: update_vertex(v);
+        } else {
+            g[u] = INFINITY;
+            update_vertex(u);
+            for each predecessor v of u: update_vertex(v);
+        }
+    }
+}
+```
+
+---
+
+## 5. Runtime Path Request Flow
+
+```
+1. Spatial lookup: find nearest waypoint graph node to ship position   O(log N)
+2. Spatial lookup: find nearest waypoint graph node to destination     O(log N)
+3. Straight-line pre-check:
+       if edge_valid(ship_pos, dest, threats): return [ship_pos, dest]  O(L)
+4. D* Lite: compute_shortest_path()                                    O(E log V) amortized
+5. Trace path: follow predecessor pointers from start node to goal
+6. String pull: collapse redundant waypoints                           O(W)
+7. Return waypoint list
+```
+
+The straight-line pre-check (step 3) short-circuits the graph entirely for ships in open ocean with no detection circles nearby. This handles the majority of queries.
+
+---
+
+## 6. Handling Ship Movement (D* Lite Incremental Updates)
+
+When an enemy ship moves from `old_pos` to `new_pos`:
+
+```cpp
+void on_enemy_ship_moved(Ship& enemy, Vec2 old_pos, Vec2 new_pos) {
+    // Find all graph edges whose corridor may have changed
+    auto affected = spatial_index.query_edges_near(old_pos, enemy.concealment_radius);
+    affected += spatial_index.query_edges_near(new_pos, enemy.concealment_radius);
+
+    for (auto [a, b] : affected) {
+        float old_cost = current_edge_cost(a, b);
+        float new_cost = recompute_edge_cost(a, b);  // full circle check
+        if (new_cost != old_cost) {
+            cached_edge_cost[a][b] = new_cost;
+            dstar.update_vertex(a);
+            dstar.update_vertex(b);
+        }
+    }
+    // D* Lite repair runs in navigation_tick(), not here
+}
+
+void navigation_tick() {
+    dstar.compute_shortest_path(max_iterations: 500);
+    current_path = dstar.extract_path();
+}
+```
+
+Key properties:
+- The priority queue after a single ship movement contains only the locally affected neighborhood — typically a small fraction of the full graph.
+- If `max_iterations` is reached before convergence, the ship continues on the previous path. The repair finishes next frame.
+- At naval speeds, 1–2 frames of path staleness is imperceptible.
+
+---
+
+## 7. Oscillation Resolution
+
+The oscillation problem is structurally solved by D* Lite's persistent g-values:
+
+| Scenario | Grid A* Behavior | D* Lite Behavior |
+|---|---|---|
+| Two equal-cost routes around an island | Arbitrary pick each frame | Commits to one route; g-values stable |
+| Detection circle shifts slightly | Full re-plan, may pick opposite route | Repairs only affected edges; route stable |
+| Detection circle blocks current route | Full re-plan | Incremental repair finds alternate |
+| All routes blocked | 300k iteration failure | Open set empties immediately |
+
+The `km` accumulator additionally prevents the ship's advancing position from destabilizing the search tree behind it.
+
+---
+
+## 8. Multi-Ship-Class Support
+
+Different ship classes have different `ship_radius` (clearance diameter). The single waypoint graph handles all classes:
+
+- **Node placement** uses the smallest `ship_radius` of any ship class. All nodes are therefore valid for small ships.
+- **Edge validity** is re-evaluated per ship class at query time using that class's `ship_radius` in the SDF corridor march.
+- **Edge costs** are cached per-class or recomputed on demand. For most maps, 2–3 ship classes means 2–3 cached cost arrays on the same graph topology.
+
+No separate navmesh per class. No graph rebuild on class change.
+
+---
+
+## 9. Open Ocean Handling
+
+Large open regions are handled by three cooperating mechanisms:
+
+**Terrain-proximity weighted sampling:** Poisson disk radius scales with SDF value. Open ocean gets sparse coverage; coastal corridors get dense coverage. The graph concentrates resolution where topology demands it.
+
+**Straight-line pre-check:** Before touching the graph, validate a direct line from current position to destination against terrain SDF and all active detection circles. In open ocean with no nearby threats, this short-circuits the graph entirely for the vast majority of queries.
+
+**String pulling:** After A*/D* Lite produces a raw waypoint sequence, collapse it to the minimum number of segments:
+
+```cpp
+std::vector<Vec2> string_pull(std::vector<Vec2> raw) {
+    std::vector<Vec2> result = { raw[0] };
+    int anchor = 0;
+    for (int i = 2; i < raw.size(); i++) {
+        if (!edge_valid(raw[anchor], raw[i])) {
+            result.push_back(raw[i-1]);
+            anchor = i - 1;
+        }
+    }
+    result.push_back(raw.back());
+    return result;
+}
+```
+
+A path that zigzags through 12 open-ocean waypoints collapses to 2 after string pulling — recovering the straight line.
+
+---
+
+## 10. Future Extension: Region Connectivity Layer
+
+If query volume grows large enough to warrant it, a hierarchical layer can be added above the waypoint graph without changing anything below it:
+
+- **Regions** are built from SDF flood-fill connected components of navigable water (one region per topologically distinct water body: bays, channels, open ocean stretches).
+- **Portals** are the narrow passages between adjacent regions, each with a measured navigable width.
+- **Same-region fast path:** `region_id[start] == region_id[goal]` is a single lookup. If true, run D* Lite only within that region.
+- **Cross-region path:** BFS on the region connectivity graph (20–100 nodes) to find the regional route, then D* Lite for each portal crossing and local segment.
+- **Dynamic updates:** Detection circles only affect the connectivity graph when they narrow a portal below a ship class's clearance diameter. Most circle movements don't affect any portal and cost nothing at the region layer.
+
+This layer is **not required initially** — D* Lite on the sparse waypoint graph is already fast enough. It becomes valuable if the map is large and queries become a CPU budget concern.
+
+---
+
+## 11. Implementation Phases
+
+### Phase 1: Waypoint Graph Builder (C++ GDExtension)
+- SDF-driven Poisson disk sampler with proximity-weighted density
+- Narrow corridor densification pass
+- SDF corridor march edge validator
+- BFS connectivity validation and component labeling
+- KD-tree spatial index over node positions
+- Serialization to disk (load once, cache)
+
+### Phase 2: D* Lite Core (C++ GDExtension)
+- NodeState array (g, rhs per node)
+- Priority queue with lazy deletion
+- `update_vertex`, `compute_shortest_path` with iteration cap
+- `km` accumulator, advancing with ship waypoint progress
+- Path extraction via predecessor pointers
+
+### Phase 3: Detection Circle Integration
+- Per-edge cost cache (base terrain cost + circle penalties)
+- `on_enemy_ship_moved` handler with spatial edge query
+- Edge cost recomputation against active threat list
+- Dirty flag propagation into D* Lite update_vertex calls
+
+### Phase 4: Path Post-Processing
+- Straight-line pre-check before graph query
+- String pulling on raw waypoint output
+- Waypoint advancement logic with `km` update
+
+### Phase 5: GDScript Integration
+- `NavigationManager` autoload wrapping the GDExtension
+- Per-ship `PathFollower` component consuming waypoint list
+- Debug draw overlay (graph nodes, edges, detection circles, active path)
+
+---
+
+## 12. Data Flow Summary
+
+```
+[SDF Terrain]
+      │  build once
+      ▼
+[Waypoint Graph]  ←─────────────── static, on disk
+      │
+      │  augmented at runtime by:
+      │
+      ├─ [Detection Circle costs]  ← enemy ship positions, updated incrementally
+      │
+      ▼
+[D* Lite State]  ─── incremental repair on edge cost changes
+      │
+      ▼
+[Raw Waypoint Path]
+      │
+      ├─ straight-line pre-check (skip graph entirely if clear)
+      ├─ string pull (collapse redundant waypoints)
+      │
+      ▼
+[Final Waypoint List]  →  ship steering / PathFollower
+```
+
+---
+
+## 13. Open Questions
+
+- **Detection circle proxy nodes (Option B):** If path quality near large detection circles proves suboptimal with pure edge-cost approach (Option A), a fixed ring of 8 proxy nodes per ship placed at spawn can be introduced. These exist for the ship's lifetime, connect to the waypoint graph, and their incident edge costs update normally. Option A is the starting point; Option B is a quality upgrade if needed.
+- **Graph rebuild on terrain change:** Currently assumed static. If destructible terrain is added, a partial SDF update + affected-region graph rebuild will be needed. D* Lite handles the downstream cost changes automatically.
+- **Portal width measurement precision:** If the region layer is added, portal width under overlapping detection circles requires careful geometric treatment for merged/overlapping circle coverage along a portal segment.

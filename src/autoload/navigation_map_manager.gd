@@ -10,8 +10,12 @@ extends Node
 ##   NavigationMapManager.get_map()                              — returns the shared NavigationMap
 
 var _map: NavigationMap = null
+var _waypoint_graph: WaypointGraph = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
+
+## Default minimum ship radius for waypoint graph generation (smallest ship beam / 2).
+const DEFAULT_MIN_SHIP_RADIUS := 25.0
 
 ## Build the navigation map from island collision shapes.
 ## island_bodies: Array of StaticBody3D nodes representing islands (with CollisionShape3D children)
@@ -47,6 +51,8 @@ func build_map(island_bodies: Array[StaticBody3D], map_bounds: Rect2, cell_size:
 		_map.get_grid_height(),
 		_map.get_cell_size_value()
 	])
+
+	_build_waypoint_graph()
 
 
 ## Build the navigation map using downward raycasts through the physics engine.
@@ -93,9 +99,31 @@ func build_map_raycast(island_bodies: Array[StaticBody3D], map_bounds: Rect2,
 		_map.get_cell_size_value()
 	])
 
+	_build_waypoint_graph()
+
+## Build the shared WaypointGraph from the NavigationMap (called internally after map build).
+func _build_waypoint_graph() -> void:
+	if _map == null or not _map.is_built():
+		return
+
+	var start_time = Time.get_ticks_msec()
+	_waypoint_graph = WaypointGraph.new()
+	_waypoint_graph.build(_map, DEFAULT_MIN_SHIP_RADIUS)
+	var elapsed = Time.get_ticks_msec() - start_time
+
+	print("[NavigationMapManager] WaypointGraph built in %.1f ms — %d nodes, %d edges" % [
+		elapsed,
+		_waypoint_graph.node_count(),
+		_waypoint_graph.get_edge_count()
+	])
+
 ## Returns the shared NavigationMap instance, or null if not yet built.
 func get_map() -> NavigationMap:
 	return _map
+
+## Returns the shared WaypointGraph instance, or null if not yet built.
+func get_waypoint_graph() -> WaypointGraph:
+	return _waypoint_graph
 
 ## Returns true if the map has been built and is ready for use.
 func is_map_ready() -> bool:
