@@ -85,6 +85,7 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
 	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
+	ClassDB::bind_method(D_METHOD("get_debug_threat_zones"), &ShipNavigator::get_debug_threat_zones);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -405,6 +406,20 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 		result.push_back(d);
 	}
 
+	return result;
+}
+
+Array ShipNavigator::get_debug_threat_zones() const {
+	Array result;
+	for (const auto &tz : threat_zones_) {
+		Dictionary d;
+		d["id"] = tz.id;
+		d["x"] = tz.position.x;
+		d["z"] = tz.position.y;
+		d["hard_radius"] = tz.hard_radius;
+		d["soft_radius"] = tz.soft_radius;
+		result.push_back(d);
+	}
 	return result;
 }
 

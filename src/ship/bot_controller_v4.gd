@@ -986,6 +986,13 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
 
+		# --- o) Threat zones (concealment radii the pathfinder avoids) ---
+		var threat_zones = navigator.get_debug_threat_zones()
+		for tz in threat_zones:
+			var tz_pos = Vector3(tz["x"], 6.0, tz["z"])
+			Debug.draw_circle(tz_pos, tz["hard_radius"], Color(1.0, 0.0, 0.0, 0.4), 64)
+			Debug.draw_circle(Vector3(tz_pos.x, 5.0, tz_pos.z), tz["soft_radius"], Color(1.0, 0.5, 0.0, 0.25), 64)
+
 		# --- p) Torpedo & shell threat lines ---
 		var threat_lines = navigator.get_debug_torpedo_threat_points()
 		for t_pt in threat_lines:

@@ -323,6 +323,8 @@ public:
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
 
+	Array get_debug_threat_zones() const;
+
 	// --- Timing (microseconds) ---
 	float get_timing_update_us() const { return timing_update_us; }
 	float get_timing_avoidance_us() const { return timing_avoidance_us; }
