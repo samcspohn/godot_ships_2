@@ -165,12 +165,17 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 # Battle end screen
 var match_ended: bool = false
 
-# Floating damage accumulator
+# Floating damage accumulator (damage dealt, anchored to hit world position)
 const DAMAGE_ACCUM_WINDOW: float = 0.25
 var _damage_accum_active: bool = false
 var _damage_accum_amount: float = 0.0
 var _damage_accum_position: Vector3 = Vector3.ZERO
 var _damage_accum_timer: float = 0.0
+
+# Floating damage accumulator (damage received, position resolved at flush time)
+var _recv_damage_accum_active: bool = false
+var _recv_damage_accum_amount: float = 0.0
+var _recv_damage_accum_timer: float = 0.0
 
 
 
@@ -473,6 +478,12 @@ func _physics_process(_delta):
 		if _damage_accum_timer <= 0.0:
 			_flush_damage_accumulator()
 
+	# Flush accumulated damage-received when window expires
+	if _recv_damage_accum_active:
+		_recv_damage_accum_timer -= _delta
+		if _recv_damage_accum_timer <= 0.0:
+			_flush_recv_damage_accumulator()
+
 	var t = Time.get_ticks_usec() / 1000000.0
 	if not camera_controller:
 		return
@@ -512,8 +523,13 @@ func _physics_process(_delta):
 		if hp != current_hp:
 			var damage_taken = (current_hp - hp)
 			if damage_taken > 0.0:
-				# Show floating damage indicator
-				create_floating_damage(damage_taken, camera_controller._ship.global_position)
+				# Accumulate damage-received floating indicator
+				if not _recv_damage_accum_active:
+					_recv_damage_accum_active = true
+					_recv_damage_accum_amount = damage_taken
+					_recv_damage_accum_timer = DAMAGE_ACCUM_WINDOW
+				else:
+					_recv_damage_accum_amount += damage_taken
 			current_hp = hp
 
 	crosshair_container.queue_redraw()
@@ -1325,6 +1341,14 @@ func _flush_damage_accumulator():
 	_damage_accum_amount = 0.0
 	_damage_accum_position = Vector3.ZERO
 	_spawn_floating_damage(roundi(total), pos)
+
+func _flush_recv_damage_accumulator():
+	"""Spawns the accumulated damage-received label at the player ship's current position."""
+	_recv_damage_accum_active = false
+	var total := _recv_damage_accum_amount
+	_recv_damage_accum_amount = 0.0
+	if camera_controller and camera_controller._ship:
+		_spawn_floating_damage(roundi(total), camera_controller._ship.global_position)
 
 func _spawn_floating_damage(damage: int, world_position: Vector3):
 	"""Instantiates and configures a FloatingDamage label at the given world position."""
