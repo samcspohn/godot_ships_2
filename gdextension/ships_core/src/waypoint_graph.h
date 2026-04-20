@@ -38,11 +38,6 @@ public:
 	static constexpr float MAX_EDGE_LENGTH = 2500.0f; // max edge distance (meters)
 	static constexpr int PROXY_RING_SIZE = 8;         // nodes per proxy ring
 
-	// Virtual nodes (goal/ship) only reconnect when they move further than this.
-	// For smaller moves the existing edge connections stay valid; only costs are
-	// refreshed by DStarLite's sync_node_edges.
-	static constexpr float VIRTUAL_NODE_REWIRE_DIST = 80.0f;
-
 private:
 	// --- Node data (index = node ID) ---
 	std::vector<Vector2> positions_;
@@ -62,10 +57,6 @@ private:
 		Vector2 center;
 	};
 	std::unordered_map<int, ProxyRing> proxy_rings_;
-
-	// --- Virtual goal / ship nodes (single persistent nodes, rewired on move) ---
-	int goal_node_idx_ = -1;
-	int ship_node_idx_ = -1;
 
 	// --- Navigation map reference (for SDF queries) ---
 	Ref<NavigationMap> nav_map_;
@@ -151,28 +142,6 @@ public:
 	void remove_proxy_ring(int enemy_id);
 	bool has_proxy_ring(int enemy_id) const;
 	void clear_proxy_rings();
-
-	// --- Goal node management ---
-	// A single persistent virtual node representing the moving goal position.
-	// Created once per path query; repositioned via edge rewiring.
-	int  ensure_goal_node(Vector2 pos, float ship_radius);
-	bool move_goal_node(Vector2 new_pos, float ship_radius,
-	                    const std::vector<ThreatZone>& threats,
-	                    bool force_rewire = false);
-	int  get_goal_node_index() const { return goal_node_idx_; }
-	bool has_goal_node() const { return goal_node_idx_ >= 0; }
-	void remove_goal_node();
-
-	// --- Ship node management ---
-	// A single persistent virtual node representing the ship's exact position.
-	// When the ship is in invalid space only an escape edge is wired.
-	int  ensure_ship_node(Vector2 pos, float ship_radius);
-	bool move_ship_node(Vector2 new_pos, float ship_radius,
-	                    const std::vector<ThreatZone>& threats,
-	                    bool force_rewire = false);
-	int  get_ship_node_index() const { return ship_node_idx_; }
-	bool has_ship_node() const { return ship_node_idx_ >= 0; }
-	void remove_ship_node();
 
 	// --- Accessors ---
 	Ref<NavigationMap> get_nav_map() const { return nav_map_; }

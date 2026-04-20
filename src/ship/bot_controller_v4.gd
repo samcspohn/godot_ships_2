@@ -149,7 +149,7 @@ var _cached_enemy_avg: Vector3 = Vector3.ZERO
 ## Last HP bracket (1-4) for threshold-crossing detection. -1 = uninitialized.
 var _last_hp_bracket: int = -1
 ## Frame counter controlling how often navigate_to() is called (path replanning).
-var _path_update_timer: int = 0
+# var _path_update_timer: int = 0
 ## Last destination sent to navigate_to() — used to detect significant moves.
 var _last_path_destination: Vector3 = Vector3.ZERO
 
@@ -314,13 +314,13 @@ func _physics_process(delta: float) -> void:
 	# PATH_SIGNIFICANT_MOVE guard ensures a brand-new waypoint is pushed
 	# immediately rather than waiting for the next interval tick.
 	# =========================================================================
-	_path_update_timer += 1
+	# _path_update_timer += 1
 	var current_dest: Vector3 = _last_intent.target_position if _last_intent != null \
 		else Vector3(destination.x, 0.0, destination.z)
 	var dest_moved_far: bool = current_dest.distance_to(_last_path_destination) >= PATH_SIGNIFICANT_MOVE
 
-	if _path_update_timer >= PATH_UPDATE_INTERVAL or dest_moved_far:
-		_path_update_timer = 0
+	if Engine.get_physics_frames() % PATH_UPDATE_INTERVAL == bot_id % PATH_UPDATE_INTERVAL or dest_moved_far:
+		# _path_update_timer = 0
 		_last_path_destination = current_dest
 		_execute_nav_intent()
 

@@ -12,10 +12,10 @@ float DStarLite::h(int a, int b) const {
 	return graph_->node_position(a).distance_to(graph_->node_position(b));
 }
 
-// Forward search: heuristic is distance from node s to goal_
+// Backward search: heuristic is distance from s toward start_ (the ship)
 DStarLite::Key DStarLite::calculate_key(int s) const {
 	float min_gr = std::min(g_[s], rhs_[s]);
-	return { min_gr + h(s, goal_) + km_,
+	return { min_gr + h(start_, s) + km_,
 			 min_gr };
 }
 
@@ -88,18 +88,18 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 		}
 	}
 
-	// Forward D* Lite: start (ship) is the source, rhs[start] = 0
-	rhs_[start_] = 0.0f;
-	insert_open(start_);
+	// Backward D* Lite: goal_ is the source, rhs[goal_] = 0
+	rhs_[goal_] = 0.0f;
+	insert_open(goal_);
 }
 
 void DStarLite::update_vertex(int u) {
-	// Forward search: rhs(u) = min over predecessors p of (edge_cost(p→u) + g(p))
-	// In our undirected graph, predecessors == neighbors.
+	// Backward search: rhs(u) = min over successors s of (edge_cost(u->s) + g(s))
+	// In our undirected graph, successors == neighbors.
 	// Node-level detection-circle blocking.
-	// If u is inside any threat hard_radius (and is not the source or destination),
-	// it is unreachable — set rhs to INF immediately and skip predecessor scan.
-	if (u != start_ && u != goal_ && !threats_.empty()) {
+	// goal_ is the source -- exempt it and start_ (ship) from blocking.
+	// If u is inside any threat hard_radius, it is unreachable.
+	if (u != goal_ && u != start_ && !threats_.empty()) {
 		Vector2 pos = graph_->node_position(u);
 		for (const auto& tz : threats_) {
 			if (pos.distance_squared_to(tz.position) <
@@ -112,16 +112,15 @@ void DStarLite::update_vertex(int u) {
 		}
 	}
 
-	if (u != start_) {
+	if (u != goal_) {
+		// goal_ is the source -- its rhs stays 0
 		float best = INF;
 		const auto& adj = graph_->neighbors(u);
 		for (int j = 0; j < (int)adj.size(); j++) {
-			int p = adj[j].target;  // predecessor p
-			if (!graph_->node_active(p)) continue;
-			// cost of edge p -> u: look up from p's adjacency list
-			int order_pu = find_neighbor_order(p, u);
-			float cost = edge_cost_cached(p, order_pu);
-			float val = cost + g_[p];
+			int s = adj[j].target;
+			if (!graph_->node_active(s)) continue;
+			float cost = edge_cost_cached(u, j);
+			float val = cost + g_[s];
 			if (val < best) best = val;
 		}
 		rhs_[u] = best;
@@ -142,9 +141,9 @@ bool DStarLite::compute_shortest_path(int max_iterations) {
 		Key top_key = top_it->first;
 		int u = top_it->second;
 
-		// Forward search: terminate when goal is consistent and top >= goal key
-		Key goal_key = calculate_key(goal_);
-		if (!(top_key < goal_key) && rhs_[goal_] == g_[goal_]) {
+		// Backward search: terminate when start is consistent and top >= start key
+		Key start_key = calculate_key(start_);
+		if (!(top_key < start_key) && rhs_[start_] == g_[start_]) {
 			break;
 		}
 
@@ -181,7 +180,7 @@ bool DStarLite::compute_shortest_path(int max_iterations) {
 	}
 
 	if (open_set_.empty()) return true;
-	if (rhs_[goal_] == g_[goal_]) return true;
+	if (rhs_[start_] == g_[start_]) return true;
 	return (iters < max_iterations);
 }
 
@@ -194,7 +193,7 @@ void DStarLite::update_threats(const std::vector<ThreatZone>& new_threats) {
 	// Mark nodes that may have changed blocking status:
 	// those inside or near old circles (might be unblocked now)
 	// and those inside or near new circles (might be newly blocked).
-	// Search radius = hard_radius only — we only care about nodes
+	// Search radius = hard_radius only -- we only care about nodes
 	// whose inside/outside status changed, not about far-away edge costs.
 	std::vector<bool> affected(graph_->node_count(), false);
 
@@ -220,7 +219,7 @@ void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edge
 	if (!graph_) return;
 
 	for (const auto& [a, b] : edges) {
-		// Update cached cost for a→b
+		// Update cached cost for a->b
 		int order_ab = find_neighbor_order(a, b);
 		if (order_ab >= 0) {
 			if (order_ab >= (int)edge_costs_[a].size()) {
@@ -229,11 +228,11 @@ void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edge
 			float new_cost = graph_->compute_edge_cost(a, b, ship_radius_, threats_);
 			if (new_cost != edge_costs_[a][order_ab]) {
 				edge_costs_[a][order_ab] = new_cost;
-				// Edge a→b cost changed: affects rhs of b (forward search)
-				update_vertex(b);
+				// Edge a->b cost changed: in backward search rhs(a) may change
+				update_vertex(a);
 			}
 		}
-		// Update cached cost for b→a
+		// Update cached cost for b->a
 		int order_ba = find_neighbor_order(b, a);
 		if (order_ba >= 0) {
 			if (order_ba >= (int)edge_costs_[b].size()) {
@@ -242,40 +241,9 @@ void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edge
 			float new_cost = graph_->compute_edge_cost(b, a, ship_radius_, threats_);
 			if (new_cost != edge_costs_[b][order_ba]) {
 				edge_costs_[b][order_ba] = new_cost;
-				// Edge b→a cost changed: affects rhs of a (forward search)
-				update_vertex(a);
+				// Edge b->a cost changed: in backward search rhs(b) may change
+				update_vertex(b);
 			}
-		}
-	}
-}
-
-// Forward search: advance_start resets the source to a new node.
-// Does NOT accumulate km (km only accumulates when goal advances).
-void DStarLite::sync_node_edges(int node, const std::vector<int>& old_adj_neighbors) {
-	if (!graph_ || node < 0 || node >= (int)edge_costs_.size()) return;
-
-	// Rebuild the edge-cost cache row to match the current adjacency list
-	const auto& adj = graph_->neighbors(node);
-	edge_costs_[node].resize(adj.size());
-	for (int j = 0; j < (int)adj.size(); j++) {
-		edge_costs_[node][j] = graph_->compute_edge_cost(
-			node, adj[j].target, ship_radius_, threats_);
-	}
-
-	// Update this node's own rhs (its predecessors may have changed)
-	update_vertex(node);
-
-	// Update new neighbors — they may now have a cheaper predecessor path through node
-	for (const auto& e : adj) {
-		if (graph_->node_active(e.target)) {
-			update_vertex(e.target);
-		}
-	}
-
-	// Update old neighbors — they may have lost node as a predecessor
-	for (int p : old_adj_neighbors) {
-		if (p != node && graph_->node_active(p)) {
-			update_vertex(p);
 		}
 	}
 }
@@ -283,82 +251,54 @@ void DStarLite::sync_node_edges(int node, const std::vector<int>& old_adj_neighb
 void DStarLite::advance_start(int new_start) {
 	if (!graph_ || new_start < 0 || new_start >= graph_->node_count()) return;
 	if (new_start == start_) return;
-
-	int old_start = start_;
+	km_ += h(start_, new_start);
 	start_ = new_start;
-
-	// Old start is no longer the source — invalidate it so it can get a real rhs
-	rhs_[old_start] = INF;
-	g_[old_start] = INF;
-	update_vertex(old_start);
-
-	// New start is the source — force rhs=0, inconsistent so it will be expanded
-	rhs_[new_start] = 0.0f;
-	g_[new_start] = INF;
-	insert_open(new_start);
+	// Existing open-set entries have stale keys; D* Lite handles this via
+	// the "if k_old < CalculateKey(u)" re-insert check in compute_shortest_path.
 }
 
-// Goal has moved to a new node. Accumulates km per D* Lite spec.
-void DStarLite::advance_goal(int new_goal) {
-	if (!graph_ || new_goal < 0 || new_goal >= graph_->node_count()) return;
-	if (new_goal == goal_) return;
-
-	km_ += h(goal_, new_goal);
-	goal_ = new_goal;
-	// goal_ is just a termination target — no special rhs seeding needed
-	// (rhs is seeded at start_ in forward search)
-}
-
-// Extract path: in forward search g values grow from start.
-// Trace backward from goal_ to start_ by picking the predecessor
-// with minimum (edge_cost(pred→current) + g[pred]), then reverse.
 std::vector<int> DStarLite::extract_path() const {
-	if (!graph_ || start_ < 0 || goal_ < 0) return {};
-	if (g_[goal_] >= INF) return {};
-
 	std::vector<int> path;
-	path.push_back(goal_);
-	int current = goal_;
+	if (!graph_ || start_ < 0 || goal_ < 0) return path;
+	if (g_[start_] >= INF) return path;
+
+	path.push_back(start_);
+	int current = start_;
 	int max_steps = graph_->node_count() + 1;
 
-	while (current != start_ && max_steps-- > 0) {
+	while (current != goal_ && max_steps-- > 0) {
 		const auto& adj = graph_->neighbors(current);
-		int best_prev = -1;
+		int best_next = -1;
 		float best_cost = INF;
-
 		for (int j = 0; j < (int)adj.size(); j++) {
-			int p = adj[j].target;
-			if (!graph_->node_active(p)) continue;
-			int order_pu = find_neighbor_order(p, current);
-			float c = edge_cost_cached(p, order_pu);
-			float val = c + g_[p];
+			int s = adj[j].target;
+			if (!graph_->node_active(s)) continue;
+			float c = edge_cost_cached(current, j);
+			float val = c + g_[s];
 			if (val < best_cost) {
 				best_cost = val;
-				best_prev = p;
+				best_next = s;
 			}
 		}
-
-		if (best_prev < 0 || best_cost >= INF) break;
-		path.push_back(best_prev);
-		current = best_prev;
+		if (best_next < 0 || best_cost >= INF) break;
+		path.push_back(best_next);
+		current = best_next;
 	}
 
-	if (path.empty() || path.back() != start_) {
-		return {};
+	if (path.empty() || path.back() != goal_) {
+		path.clear();
 	}
-
-	std::reverse(path.begin(), path.end());
 	return path;
 }
 
 bool DStarLite::has_path() const {
-	if (!graph_ || goal_ < 0) return false;
-	return g_[goal_] < INF;
+	if (!graph_ || start_ < 0) return false;
+	return g_[start_] < INF;
 }
 
 float DStarLite::path_cost() const {
-	if (!graph_ || goal_ < 0) return INF;
-	return g_[goal_];
+	if (!graph_ || start_ < 0) return INF;
+	return g_[start_];
 }
 
 } // namespace godot

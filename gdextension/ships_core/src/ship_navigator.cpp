@@ -479,7 +479,6 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 // ============================================================================
 
 void ShipNavigator::update(float delta) {
-	last_delta_ = delta;
 	auto t0 = std::chrono::steady_clock::now();
 
 	// Transition to EMERGENCY if grounded or SDF indicates on land,
@@ -1002,138 +1001,6 @@ PathResult ShipNavigator::build_path_from_dstar() const {
 // ============================================================================
 
 // ============================================================================
-// Snap helpers — push a position out of terrain / threat circles
-// ============================================================================
-
-Vector2 ShipNavigator::snap_from_terrain(Vector2 pos) const {
-	if (map.is_null() || !map->is_built()) return pos;
-	float clearance = get_ship_clearance();
-	// Step by the exact SDF deficit each iteration (sphere marching).
-	// clearance - sdf gives the distance still needed to reach safe clearance,
-	// so one step is sufficient for linear SDF; curved terrain may need 2-3.
-	for (int i = 0; i < 8; i++) {
-		float sdf = map->get_distance(pos.x, pos.y);
-		if (sdf >= clearance) return pos;  // already clear
-		Vector2 grad = map->get_gradient(pos.x, pos.y);
-		float len = grad.length();
-		if (len < 1e-4f) break;  // gradient vanished -- deep interior, fall through to graph fallback
-		pos += (grad / len) * (clearance - sdf + 1.0f);  // +1 m overshoot so we clear the boundary
-	}
-	return pos;
-}
-
-Vector2 ShipNavigator::snap_from_circle(Vector2 pos, const ThreatZone& threat) const {
-	float clearance = get_ship_clearance();
-	float dist = pos.distance_to(threat.position);
-	float min_dist = threat.hard_radius + clearance;
-	if (dist >= min_dist) return pos;
-	if (dist < 1e-4f) {
-		// Degenerate: push in +x
-		return threat.position + Vector2(min_dist, 0.0f);
-	}
-	Vector2 dir = (pos - threat.position) / dist;
-	return threat.position + dir * min_dist;
-}
-
-Vector2 ShipNavigator::snap_to_valid(Vector2 pos) const {
-	// First push out of any hard threat circles
-	for (const auto& tz : threat_zones_) {
-		pos = snap_from_circle(pos, tz);
-	}
-	// Then push out of terrain
-	pos = snap_from_terrain(pos);
-
-	// Guaranteed fallback: if still invalid after gradient push (e.g. destination
-	// is deep inside a landmass), snap to the nearest valid waypoint graph node.
-	// This prevents the goal node from ever ending up with zero navigable edges,
-	// which would cause an infinite loop in D* Lite.
-	if (!map.is_null() && map->is_built() &&
-		!map->is_navigable(pos.x, pos.y, get_ship_clearance()) &&
-		!waypoint_graph_.is_null() && waypoint_graph_->is_built()) {
-		int nearest = waypoint_graph_->find_nearest_node(pos);
-		if (nearest >= 0) {
-			pos = waypoint_graph_->node_position(nearest);
-		}
-	}
-
-	return pos;
-}
-
-// ============================================================================
-// Goal node tick — advances the moving goal along its path
-// ============================================================================
-
-void ShipNavigator::goal_node_tick(float dt) {
-	if (!goal_node_.active) return;
-	if (waypoint_graph_.is_null()) return;
-
-	if (goal_node_.path_to_destination.empty() ||
-		goal_node_.path_index >= (int)goal_node_.path_to_destination.size()) {
-		// Already at destination
-		goal_node_.pos = goal_node_.desired_destination;
-		waypoint_graph_->move_goal_node(goal_node_.pos, get_ship_clearance(), threat_zones_);
-		return;
-	}
-
-	Vector2 target_pt = goal_node_.path_to_destination[goal_node_.path_index];
-	Vector2 dir = target_pt - goal_node_.pos;
-	float dist = dir.length();
-	float move = goal_node_.speed * dt;
-
-	if (move >= dist) {
-		goal_node_.pos = target_pt;
-		goal_node_.path_index++;
-	} else {
-		goal_node_.pos += dir * (move / dist);
-	}
-
-	// Snap to valid space
-	goal_node_.pos = snap_to_valid(goal_node_.pos);
-
-	// Rewire the goal node to its new position
-	bool goal_moved = waypoint_graph_->move_goal_node(goal_node_.pos, get_ship_clearance(), threat_zones_);
-	// (no sync here — deferred to interval)
-
-	// Keep advance_goal guard if gni changed
-	if (goal_moved && dstar_initialized_) {
-		int gni = waypoint_graph_->get_goal_node_index();
-		if (gni >= 0 && gni != dstar_goal_node_) {
-			dstar_.advance_goal(gni);
-			dstar_goal_node_ = gni;
-		}
-	}
-}
-
-void ShipNavigator::on_desired_destination_changed(Vector2 desired) {
-	goal_node_.desired_destination = desired;
-	// TODO: compute a path from current goal_node_.pos to desired using nav_map
-	// For now, set a direct path
-	goal_node_.path_to_destination = { desired };
-	goal_node_.path_index = 0;
-}
-
-// ============================================================================
-// Rewire ship node — updates ship virtual node position and edges
-// ============================================================================
-
-void ShipNavigator::rewire_ship_node() {
-	if (!dstar_initialized_ || waypoint_graph_.is_null()) return;
-
-	int sni = waypoint_graph_->get_ship_node_index();
-	if (sni < 0) return;
-
-	// Move the ship node to the current position
-	waypoint_graph_->move_ship_node(state.position, get_ship_clearance(), threat_zones_);
-	// (no sync here — deferred to interval)
-
-	// advance_start is unconditional: cheap, keeps source node correct
-	if (sni != dstar_start_node_) {
-		dstar_start_node_ = sni;
-		dstar_.advance_start(sni);
-	}
-}
-
-// ============================================================================
 // start_plan — initialise D* Lite for the current goal using virtual nodes
 // ============================================================================
 
@@ -1167,17 +1034,9 @@ void ShipNavigator::start_plan() {
 		return;
 	}
 
-	// Ensure persistent ship and goal virtual nodes exist in the graph
-	Vector2 safe_goal = snap_to_valid(target.position);
-	dstar_start_node_ = waypoint_graph_->ensure_ship_node(state.position, plan_min_clearance);
-	dstar_goal_node_  = waypoint_graph_->ensure_goal_node(safe_goal, plan_min_clearance);
-
-	// Activate goal node state
-	goal_node_.active = true;
-	goal_node_.node_index = dstar_goal_node_;
-	goal_node_.pos = safe_goal;
-	on_desired_destination_changed(safe_goal);
-	goal_node_.speed = params.max_speed * 1.5f;
+	// Find nearest graph nodes for start and goal
+	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
+	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
 
 	if (dstar_start_node_ < 0 || dstar_goal_node_ < 0) {
 		plan_forward_result = PathResult();
@@ -1192,11 +1051,10 @@ void ShipNavigator::start_plan() {
 		return;
 	}
 
-	// Initialize D* Lite (forward search: start=ship node, goal=goal node)
+	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
 	dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
 					  plan_min_clearance, threat_zones_);
 	prev_threats_ = threat_zones_;
-	dstar_node_sync_timer_ = 0.0f;
 	dstar_initialized_ = true;
 	dstar_converged_ = false;
 	plan_phase = PlanPhase::COMPUTING;
@@ -1243,24 +1101,15 @@ void ShipNavigator::run_plan_sync() {
 		return;
 	}
 
-	// Ensure persistent virtual nodes
-	Vector2 safe_goal = snap_to_valid(target.position);
-	dstar_start_node_ = waypoint_graph_->ensure_ship_node(state.position, plan_min_clearance);
-	dstar_goal_node_  = waypoint_graph_->ensure_goal_node(safe_goal, plan_min_clearance);
-
-	// Activate goal node state
-	goal_node_.active = true;
-	goal_node_.node_index = dstar_goal_node_;
-	goal_node_.pos = safe_goal;
-	on_desired_destination_changed(safe_goal);
-	goal_node_.speed = params.max_speed * 1.5f;
+	// Find nearest graph nodes for start and goal
+	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
+	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
 
 	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
 		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
 		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
 						  plan_min_clearance, threat_zones_);
 		prev_threats_ = threat_zones_;
-		dstar_node_sync_timer_ = 0.0f;
 		dstar_initialized_ = true;
 		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
 
@@ -1285,11 +1134,7 @@ void ShipNavigator::run_plan_sync() {
 void ShipNavigator::dstar_incremental_update() {
 	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
 
-	// 1. Advance moving goal node along its path toward desired destination
-	// (uses last frame's delta stored in state.delta)
-	goal_node_tick(last_delta_);
-
-	// 2. Detect threat changes and update edge costs
+	// 1. Detect threat changes and update node blocking
 	bool threats_changed = false;
 	if (threat_zones_.size() != prev_threats_.size()) {
 		threats_changed = true;
@@ -1308,30 +1153,17 @@ void ShipNavigator::dstar_incremental_update() {
 		prev_threats_ = threat_zones_;
 	}
 
-	// 3. Rewire ship virtual node to ship's current position (handles escape
-	//    edge when in invalid space) and notify D* Lite of changed edges
-	rewire_ship_node();
+	// 2. Update start node if ship has moved to a different nearest node
+	int new_start = waypoint_graph_->find_nearest_node(state.position);
+	if (new_start >= 0 && new_start != dstar_start_node_) {
+		dstar_start_node_ = new_start;
+		dstar_.advance_start(new_start);
+	}
 
-	// --- Sync virtual-node edge costs on interval ---
-	dstar_node_sync_timer_ += last_delta_;
-	// if (dstar_node_sync_timer_ >= DSTAR_NODE_SYNC_INTERVAL) {
-	// 	dstar_node_sync_timer_ -= DSTAR_NODE_SYNC_INTERVAL;
-
-		int gni = waypoint_graph_->get_goal_node_index();
-		if (gni >= 0) {
-			dstar_.sync_node_edges(gni, {});
-		}
-
-		int sni = waypoint_graph_->get_ship_node_index();
-		if (sni >= 0) {
-			dstar_.sync_node_edges(sni, {});
-		}
-	// }
-
-	// 4. Run repair with small budget
+	// 3. Run repair with small budget
 	dstar_.compute_shortest_path(DSTAR_REPAIR_BUDGET);
 
-	// 5. Re-extract path (may have changed due to repairs)
+	// 4. Re-extract path (may have changed due to repairs)
 	PathResult result = build_path_from_dstar();
 	if (result.valid) {
 		accept_plan_result(result);
@@ -1976,16 +1808,23 @@ void ShipNavigator::accept_plan_result(const PathResult &forward_result) {
 			}
 		}
 	} else {
-		// Path planning failed — use direct line to destination as fallback
-		current_path = PathResult();
-		current_path.waypoints.push_back(state.position);
-		current_path.waypoints.push_back(target.position);
-		current_path.flags.push_back(WP_NONE);
-		current_path.flags.push_back(WP_NONE);
-		current_path.valid = true;
-		current_path.total_distance = state.position.distance_to(target.position);
-		path_valid = true;
-		current_wp_index = 1;
+		// Path planning came back invalid (no route found or D* Lite not yet
+		// converged to a solution).  Prefer keeping the previous path — the
+		// ship can continue following a stale-but-valid route while the search
+		// retries next frame.  Only fall back to the direct destination line
+		// when there is no prior path at all (e.g. very first navigation call).
+		if (!path_valid || current_path.waypoints.empty()) {
+			current_path = PathResult();
+			current_path.waypoints.push_back(state.position);
+			current_path.waypoints.push_back(target.position);
+			current_path.flags.push_back(WP_NONE);
+			current_path.flags.push_back(WP_NONE);
+			current_path.valid = true;
+			current_path.total_distance = state.position.distance_to(target.position);
+			path_valid = true;
+			current_wp_index = 1;
+		}
+		// else: keep current_path and path_valid unchanged
 	}
 }
 

@@ -12,16 +12,17 @@ namespace godot {
 
 class WaypointGraph;
 
-// D* Lite incremental heuristic search — one instance per ship.
+// D* Lite incremental heuristic search -- one instance per ship.
 //
-// Searches FORWARD from start (ship) to goal. g(s) = estimated cost from the
-// ship's start node to node s. When edge costs change (detection circles move),
-// only the locally affected subgraph is repaired.
+// Searches BACKWARD from goal to ship (classic D* Lite formulation).
+// g(s) = estimated cost from node s TO the goal.
+// When edge costs change (detection circles move), only the locally
+// affected subgraph is repaired.
 //
-// Key role-reversal vs. classic D* Lite backward formulation:
-//   - rhs[start_] = 0  (source seeded at start, not goal)
-//   - heuristic is h(s, goal_)  — distance from node to goal
-//   - km accumulates when GOAL advances, not when start advances
+// Key points:
+//   - rhs[goal_] = 0  (goal is the source/seed)
+//   - heuristic is h(start_, s)  -- distance from s toward the ship
+//   - km accumulates when START advances (ship moves to next waypoint)
 class DStarLite {
 public:
 	struct Key {
@@ -41,8 +42,8 @@ private:
 	const WaypointGraph* graph_ = nullptr;
 
 	// Per-node state
-	// g_[s]   = current best known cost from ship start to s
-	// rhs_[s] = one-step lookahead value (min over predecessors)
+	// g_[s]   = current best known cost from s TO goal
+	// rhs_[s] = one-step lookahead value (min over successors)
 	std::vector<float> g_;
 	std::vector<float> rhs_;
 
@@ -54,9 +55,9 @@ private:
 	std::vector<Key> stored_key_;
 
 	// Search endpoints
-	int start_ = -1;   // ship's current nearest node (source, rhs=0)
-	int goal_  = -1;   // destination node (termination check)
-	float km_  = 0.0f; // key modifier — accumulates when goal_ advances
+	int start_ = -1;   // ship current nearest node (termination check)
+	int goal_  = -1;   // destination node (source, rhs=0)
+	float km_  = 0.0f; // key modifier -- accumulates when start_ advances
 
 	// Ship parameters for edge cost computation
 	float ship_radius_ = 25.0f;
@@ -64,7 +65,7 @@ private:
 	// Current threat list (per-ship concealment zones)
 	std::vector<ThreatZone> threats_;
 
-	// Cached edge costs — mirrors graph adjacency structure.
+	// Cached edge costs -- mirrors graph adjacency structure.
 	// edge_costs_[node][neighbor_order] = current cost of that edge.
 	std::vector<std::vector<float>> edge_costs_;
 
@@ -76,7 +77,7 @@ private:
 	void insert_open(int s);
 	void remove_open(int s);
 
-	// D* Lite UpdateVertex operation (forward formulation)
+	// D* Lite UpdateVertex operation (backward formulation)
 	void update_vertex(int u);
 
 	// Recompute the cached cost for a specific edge (from, neighbor_index)
@@ -114,26 +115,16 @@ public:
 	// for the specified edges.
 	void notify_edges_changed(const std::vector<std::pair<int,int>>& edges);
 
-	// Resync the edge-cost cache and D* Lite state for a node whose adjacency
-	// list changed (e.g. a virtual goal/ship node that was rewired this frame).
-	// old_adj_neighbors: node indices that were adjacent BEFORE the rewire —
-	// update_vertex is called on them so they recalculate rhs without the
-	// now-deleted edge.
-	void sync_node_edges(int node, const std::vector<int>& old_adj_neighbors);
-
 	// Ship advanced to a new nearest waypoint node.
-	// In forward search the start is the source — reset old source, seed new one.
-	// Does NOT accumulate km (km only changes when goal advances).
+	// Accumulates km_ += h(old_start, new_start) per D* Lite spec,
+	// then updates start_. No rhs/g reset needed -- start is only the
+	// termination point, not the source seed.
 	void advance_start(int new_start);
-
-	// Goal node has moved to a new position / nearest node.
-	// Accumulates km_ += h(old_goal, new_goal) per D* Lite spec.
-	void advance_goal(int new_goal);
 
 	// --- Path extraction ---
 
 	// Extract the current shortest path as a sequence of node indices
-	// (start → … → goal). Returns empty if no path exists.
+	// (start -> ... -> goal). Returns empty if no path exists.
 	std::vector<int> extract_path() const;
 
 	// Does a valid path to goal exist?
