@@ -514,6 +514,8 @@ int WaypointGraph::find_nearest_node(Vector2 pos, int required_component) const 
 	for (int attempt = 0; attempt < 3 && best < 0; attempt++) {
 		auto candidates = spatial_query(pos, search_radius);
 		for (int ci : candidates) {
+			if (!active_[ci]) continue;
+			if (ci == goal_node_idx_ || ci == ship_node_idx_) continue;
 			if (required_component >= 0 && component_[ci] != required_component) continue;
 			float d2 = pos.distance_squared_to(positions_[ci]);
 			if (d2 < best_dist2) {
@@ -528,6 +530,7 @@ int WaypointGraph::find_nearest_node(Vector2 pos, int required_component) const 
 	if (best < 0) {
 		for (int i = 0; i < (int)positions_.size(); i++) {
 			if (!active_[i]) continue;
+			if (i == goal_node_idx_ || i == ship_node_idx_) continue;
 			if (required_component >= 0 && component_[i] != required_component) continue;
 			float d2 = pos.distance_squared_to(positions_[i]);
 			if (d2 < best_dist2) {
@@ -572,32 +575,6 @@ float WaypointGraph::compute_edge_cost(int from, int to, float ship_radius,
 	if (!corridor_clear(a, b, ship_radius)) return INF_COST;
 
 	float base = a.distance_to(b);
-
-	if (threats.empty()) return base;
-
-	// Detection circle check — march along edge
-	// For proxy-to-proxy edges of the same enemy, skip that enemy's detection circle
-	int skip_enemy_id = -1;
-	if (is_proxy_[from] && is_proxy_[to] &&
-		proxy_owner_[from] == proxy_owner_[to] && proxy_owner_[from] >= 0) {
-		skip_enemy_id = proxy_owner_[from];
-	}
-
-	float step = std::max(ship_radius * 0.5f, 10.0f);
-	float edge_len = base;
-	int steps = std::max(1, (int)std::ceil(edge_len / step));
-
-	for (int i = 0; i <= steps; i++) {
-		float t = (steps > 0) ? (float)i / steps : 0.0f;
-		Vector2 p = a.lerp(b, t);
-
-		for (const auto& tz : threats) {
-			if (tz.id >= 0 && tz.id == skip_enemy_id) continue;
-			float d = p.distance_to(tz.position);
-			if (d < tz.hard_radius) return INF_COST;
-		}
-	}
-
 	return base;
 }
 
@@ -616,16 +593,17 @@ bool WaypointGraph::straight_line_clear(Vector2 from, Vector2 to, float ship_rad
 
 	// Threat check
 	if (!threats.empty()) {
-		float step = std::max(ship_radius * 0.5f, 10.0f);
-		float dist = from.distance_to(to);
-		int steps = std::max(1, (int)std::ceil(dist / step));
-
-		for (int i = 0; i <= steps; i++) {
-			float t = (float)i / steps;
-			Vector2 p = from.lerp(to, t);
-			for (const auto& tz : threats) {
-				if (p.distance_to(tz.position) < tz.hard_radius) return false;
+		Vector2 ab = to - from;
+		float ab_len_sq = ab.dot(ab);
+		for (const auto& tz : threats) {
+			float t = 0.0f;
+			if (ab_len_sq > 0.0f) {
+				t = (tz.position - from).dot(ab) / ab_len_sq;
+				t = std::clamp(t, 0.0f, 1.0f);
 			}
+			Vector2 closest = from + ab * t;
+			if (closest.distance_squared_to(tz.position) < tz.hard_radius * tz.hard_radius)
+				return false;
 		}
 	}
 
@@ -763,6 +741,200 @@ void WaypointGraph::clear_proxy_rings() {
 	for (int id : ids) {
 		remove_proxy_ring(id);
 	}
+}
+
+// ============================================================================
+// Goal node — a single persistent virtual node for the path destination
+// ============================================================================
+
+int WaypointGraph::ensure_goal_node(Vector2 pos, float ship_radius) {
+	if (goal_node_idx_ >= 0) {
+		// Already exists — just move it
+		move_goal_node(pos, ship_radius, {}, /*force_rewire=*/true);
+		return goal_node_idx_;
+	}
+
+	int idx = (int)positions_.size();
+	positions_.push_back(pos);
+	adj_.emplace_back();
+	is_proxy_.push_back(false);
+	proxy_owner_.push_back(-1);
+	active_.push_back(true);
+	component_.push_back(-1);
+
+	goal_node_idx_ = idx;
+
+	add_to_spatial_grid(idx);
+	connect_node_to_graph(idx, ship_radius, MAX_EDGE_LENGTH);
+
+	// Inherit component from any connected neighbor
+	for (const auto& e : adj_[idx]) {
+		if (component_[e.target] >= 0) {
+			component_[idx] = component_[e.target];
+			break;
+		}
+	}
+
+	return idx;
+}
+
+bool WaypointGraph::move_goal_node(Vector2 new_pos, float ship_radius,
+                                    const std::vector<ThreatZone>& /*threats*/,
+                                    bool force_rewire) {
+	if (goal_node_idx_ < 0) return false;
+	int idx = goal_node_idx_;
+
+	float dist_sq = positions_[idx].distance_squared_to(new_pos);
+	if (dist_sq < 1.0f) return false;  // effectively stationary -- nothing to do
+
+	const float rewire_dist_sq = VIRTUAL_NODE_REWIRE_DIST * VIRTUAL_NODE_REWIRE_DIST;
+	if (!force_rewire && dist_sq < rewire_dist_sq) {
+		// Small move -- slide position, keep existing connections.
+		// sync_node_edges will recompute costs for the new geometry.
+		positions_[idx] = new_pos;
+		return true;
+	}
+
+	// Large move (or forced) -- full remove + reconnect
+	remove_from_spatial_grid(idx);
+	remove_edges_for_node(idx);
+
+	positions_[idx] = new_pos;
+	component_[idx] = -1;
+
+	add_to_spatial_grid(idx);
+	connect_node_to_graph(idx, ship_radius, MAX_EDGE_LENGTH);
+
+	for (const auto& e : adj_[idx]) {
+		if (component_[e.target] >= 0) {
+			component_[idx] = component_[e.target];
+			break;
+		}
+	}
+	return true;
+}
+
+void WaypointGraph::remove_goal_node() {
+	if (goal_node_idx_ < 0) return;
+	int idx = goal_node_idx_;
+	active_[idx] = false;
+	remove_edges_for_node(idx);
+	remove_from_spatial_grid(idx);
+	goal_node_idx_ = -1;
+}
+
+// ============================================================================
+// Ship node — a single persistent virtual node for the ship's exact position.
+// When in invalid space, only an escape edge to the nearest navigable node
+// is wired (so D* Lite can still find a path out).
+// ============================================================================
+
+int WaypointGraph::ensure_ship_node(Vector2 pos, float ship_radius) {
+	if (ship_node_idx_ >= 0) {
+		move_ship_node(pos, ship_radius, {}, /*force_rewire=*/true);
+		return ship_node_idx_;
+	}
+
+	int idx = (int)positions_.size();
+	positions_.push_back(pos);
+	adj_.emplace_back();
+	is_proxy_.push_back(false);
+	proxy_owner_.push_back(-1);
+	active_.push_back(true);
+	component_.push_back(-1);
+
+	ship_node_idx_ = idx;
+
+	bool in_valid = nav_map_.is_valid() &&
+	                nav_map_->is_navigable(pos.x, pos.y, ship_radius);
+
+	// Find escape target BEFORE adding to spatial grid so we can't find ourselves
+	int escape_nearest = -1;
+	if (!in_valid) {
+		escape_nearest = find_nearest_node(pos);
+	}
+
+	add_to_spatial_grid(idx);
+
+	if (in_valid) {
+		connect_node_to_graph(idx, ship_radius, MAX_EDGE_LENGTH);
+	} else {
+		if (escape_nearest >= 0 && escape_nearest != idx) {
+			float dist = positions_[idx].distance_to(positions_[escape_nearest]);
+			add_edge(idx, escape_nearest, dist);
+		}
+	}
+
+	for (const auto& e : adj_[idx]) {
+		if (component_[e.target] >= 0) {
+			component_[idx] = component_[e.target];
+			break;
+		}
+	}
+
+	return idx;
+}
+
+bool WaypointGraph::move_ship_node(Vector2 new_pos, float ship_radius,
+                                    const std::vector<ThreatZone>& /*threats*/,
+                                    bool force_rewire) {
+	if (ship_node_idx_ < 0) return false;
+	int idx = ship_node_idx_;
+
+	float dist_sq = positions_[idx].distance_squared_to(new_pos);
+	if (dist_sq < 1.0f) return false;
+
+	const float rewire_dist_sq = VIRTUAL_NODE_REWIRE_DIST * VIRTUAL_NODE_REWIRE_DIST;
+
+	bool in_valid = nav_map_.is_valid() &&
+	                nav_map_->is_navigable(new_pos.x, new_pos.y, ship_radius);
+
+	if (!force_rewire && dist_sq < rewire_dist_sq && in_valid) {
+		// Small move in valid space -- slide position only
+		positions_[idx] = new_pos;
+		return true;
+	}
+
+	// Large move, forced rewire, or entered invalid space -- full reconnect
+	remove_from_spatial_grid(idx);
+	remove_edges_for_node(idx);
+
+	positions_[idx] = new_pos;
+	component_[idx] = -1;
+
+	// Find escape target BEFORE adding to spatial grid
+	int escape_nearest = -1;
+	if (!in_valid) {
+		escape_nearest = find_nearest_node(new_pos);
+	}
+
+	add_to_spatial_grid(idx);
+
+	if (in_valid) {
+		connect_node_to_graph(idx, ship_radius, MAX_EDGE_LENGTH);
+	} else {
+		if (escape_nearest >= 0 && escape_nearest != idx) {
+			float dist = positions_[idx].distance_to(positions_[escape_nearest]);
+			add_edge(idx, escape_nearest, dist);
+		}
+	}
+
+	for (const auto& e : adj_[idx]) {
+		if (component_[e.target] >= 0) {
+			component_[idx] = component_[e.target];
+			break;
+		}
+	}
+	return true;
+}
+
+void WaypointGraph::remove_ship_node() {
+	if (ship_node_idx_ < 0) return;
+	int idx = ship_node_idx_;
+	active_[idx] = false;
+	remove_edges_for_node(idx);
+	remove_from_spatial_grid(idx);
+	ship_node_idx_ = -1;
 }
 
 // ============================================================================

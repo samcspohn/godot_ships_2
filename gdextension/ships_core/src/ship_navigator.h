@@ -52,13 +52,32 @@ private:
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
 
+	// --- Frame delta (stored each update for use in goal_node_tick) ---
+	float last_delta_ = 0.0f;
+
 	// --- D* Lite pathfinding state ---
 	DStarLite dstar_;
-	int dstar_start_node_ = -1;     // current nearest waypoint graph node
-	int dstar_goal_node_ = -1;      // goal nearest waypoint graph node
+	int dstar_start_node_ = -1;     // current nearest waypoint graph node (ship node idx)
+	int dstar_goal_node_ = -1;      // goal nearest waypoint graph node (goal node idx)
 	bool dstar_initialized_ = false;
 	bool dstar_converged_ = false;
 	std::vector<ThreatZone> prev_threats_; // for change detection
+
+	// Sync timer for periodic virtual-node edge-cost refresh.
+	float dstar_node_sync_timer_ = 0.0f;
+	static constexpr float DSTAR_NODE_SYNC_INTERVAL = 0.15f;  // ~7 Hz
+
+	// --- Goal node state (moving goal for D* Lite forward search) ---
+	struct GoalNodeState {
+		bool active = false;
+		int node_index = -1;
+		Vector2 pos;
+		Vector2 desired_destination;
+		std::vector<Vector2> path_to_destination;
+		int path_index = 0;
+		float speed = 0.0f;  // 1.5x ship speed, set from outside
+	};
+	GoalNodeState goal_node_;
 
 	// Convert D* Lite node path to PathResult with string pulling
 	PathResult build_path_from_dstar() const;
@@ -162,6 +181,16 @@ private:
 
 	// --- Debug: torpedo virtual threat points ---
 	Array get_debug_torpedo_threat_points() const;
+
+	// --- Snap helpers (for goal node placement) ---
+	Vector2 snap_to_valid(Vector2 pos) const;
+	Vector2 snap_from_terrain(Vector2 pos) const;
+	Vector2 snap_from_circle(Vector2 pos, const ThreatZone& threat) const;
+
+	// --- Goal / ship node management ---
+	void goal_node_tick(float dt);
+	void on_desired_destination_changed(Vector2 desired);
+	void rewire_ship_node();
 
 	// --- Internal methods ---
 
