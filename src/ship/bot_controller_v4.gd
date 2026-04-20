@@ -80,7 +80,7 @@ const SHELL_QUERY_RANGE: float = 1000.0
 ## How often to force a path replan (frames). Between replans the navigator
 ## continues arc-based threat avoidance with the last known destination.
 ## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
-const PATH_UPDATE_INTERVAL: int = 10
+const PATH_UPDATE_INTERVAL: int = 9
 ## Distance (m) the intent destination must jump to trigger an immediate path
 ## replan, bypassing the PATH_UPDATE_INTERVAL cooldown.
 const PATH_SIGNIFICANT_MOVE: float = 1000.0
@@ -558,10 +558,6 @@ func _update_shell_threats() -> void:
 func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if behavior == null:
 		return
-	#if not "_tactical_state" in behavior:
-		#return
-	#if behavior._tactical_state != TacticalState.State.SNEAKING:
-		#return
 
 	# Read concealment — same radii used by _update_threat_zones
 	var my_concealment: float = 0.0
@@ -570,7 +566,9 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if my_concealment <= 0.0:
 		return
 
-	var soft_radius: float = my_concealment + 500.0  # must match _update_threat_zones
+	# HP-based radius scaling (matches _update_threat_zones)
+	var radius_mult: float = behavior.get_concealment_radius_multiplier()
+	var soft_radius_base: float = (my_concealment + 500.0) * radius_mult  # must match _update_threat_zones
 	# Small buffer so the destination lands clearly outside the soft edge
 	var push_margin: float = 100.0
 
@@ -578,41 +576,52 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var was_adjusted := false
 
-	# Collect all enemy positions (spotted + last-known unspotted)
-	var enemy_positions: Array[Vector2] = []
+	# Collect enemy positions with per-threat soft radii
+	# Array of {pos: Vector2, radius: float}
+	var threats: Array = []
 	var enemies = server_node.get_valid_targets(_ship.team.team_id)
 	for enemy_ship in enemies:
 		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			enemy_positions.append(Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z))
+			threats.append({
+				pos = Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z),
+				radius = soft_radius_base
+			})
+
 	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
+	var now: float = Time.get_ticks_msec() / 1000.0
+	const STALE_DECAY_SECONDS: float = 100.0
 	for enemy_ship in unspotted.keys():
 		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			var last_time: float = unspotted_times.get(enemy_ship, now)
+			var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
+			if decay <= 0.0:
+				continue  # Fully decayed — no longer a routing obstacle
 			var lp: Vector3 = unspotted[enemy_ship]
-			enemy_positions.append(Vector2(lp.x, lp.z))
+			threats.append({
+				pos = Vector2(lp.x, lp.z),
+				radius = soft_radius_base * decay
+			})
 
 	# Iteratively push the destination out of every overlapping threat zone.
-	# Multiple passes handle cases where pushing away from one enemy moves
-	# the destination into another's zone.  Cap iterations to avoid infinite
-	# loops in heavily surrounded scenarios.
 	var max_passes := 4
 	for _pass in max_passes:
 		var pushed_this_pass := false
-		for epos in enemy_positions:
+		for t in threats:
+			var epos: Vector2 = t.pos
+			var soft_radius: float = t.radius
 			var to_dest := dest - epos
 			var dist := to_dest.length()
 			if dist < soft_radius + push_margin:
-				# Need to push outward
 				var push_dir: Vector2
 				if dist > 1.0:
 					push_dir = to_dest / dist
 				else:
-					# Destination is right on top of the enemy — push toward
-					# the ship so the DD retreats to a sane position
 					var fallback := ship_pos - epos
 					if fallback.length() > 1.0:
 						push_dir = fallback.normalized()
 					else:
-						push_dir = Vector2(1.0, 0.0)  # arbitrary
+						push_dir = Vector2(1.0, 0.0)
 				dest = epos + push_dir * (soft_radius + push_margin)
 				pushed_this_pass = true
 				was_adjusted = true
@@ -645,10 +654,13 @@ func _update_threat_zones() -> void:
 	if my_concealment <= 0.0:
 		return
 
-	var hard_radius: float = my_concealment + _ship.movement_controller.turning_circle_radius * 2.0
-	var soft_radius: float = my_concealment + 500.0  # 500m safety margin
+	# HP-based radius scaling (e.g. DDs scale up to 1.5x at low HP)
+	var radius_mult: float = behavior.get_concealment_radius_multiplier()
 
-	# Register all known enemy positions as threat zones
+	var hard_radius: float = (my_concealment + _ship.movement_controller.turning_circle_radius * 2.0) * radius_mult
+	var soft_radius: float = (my_concealment + 500.0) * radius_mult  # 500m safety margin
+
+	# Register all known spotted enemy positions as threat zones (full radius)
 	var enemies = server_node.get_valid_targets(_ship.team.team_id)
 	for enemy in enemies:
 		if not is_instance_valid(enemy) or not enemy.is_alive():
@@ -656,14 +668,21 @@ func _update_threat_zones() -> void:
 		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
 		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
 
-	# Also add last-known positions of unspotted enemies (they can still detect us)
+	# Unspotted enemies: radius decays linearly to 0 over 100 seconds
 	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
+	var now: float = Time.get_ticks_msec() / 1000.0
+	const STALE_DECAY_SECONDS: float = 100.0
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
 			continue
+		var last_time: float = unspotted_times.get(enemy_ship, now)
+		var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
+		if decay <= 0.0:
+			continue  # Zone fully decayed — skip
 		var last_pos: Vector3 = unspotted[enemy_ship]
 		var pos_2d = Vector2(last_pos.x, last_pos.z)
-		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+		navigator.add_threat_zone(pos_2d, hard_radius * decay, soft_radius * decay)
 
 
 # ===========================================================================

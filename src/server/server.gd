@@ -19,6 +19,9 @@ var team_1_ships: Array[Ship] = []
 # Unspotted enemies with their last known positions (Ship -> Vector3)
 var team_0_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 0 (i.e., team 1 ships that went dark)
 var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.e., team 0 ships that went dark)
+# Timestamps (seconds, from Time.get_ticks_msec()/1000) of when each ship went unspotted
+var team_0_unspotted_times: Dictionary = {}  # Ship -> float
+var team_1_unspotted_times: Dictionary = {}  # Ship -> float
 
 # Clustering data for bot AI
 var team_0_clusters: Array[Dictionary] = []  # Array of {center: Vector3, ships: Array[Ship]}
@@ -491,6 +494,14 @@ func get_unspotted_enemies(team_id: int) -> Dictionary:
 		return team_0_unspotted_enemies
 	else:
 		return team_1_unspotted_enemies
+
+func get_unspotted_enemy_times(team_id: int) -> Dictionary:
+	"""Returns a dictionary mapping unspotted enemy ships to the timestamp (seconds)
+	when they were last spotted. Key: Ship, Value: float (Time.get_ticks_msec()/1000)."""
+	if team_id == 0:
+		return team_0_unspotted_times
+	else:
+		return team_1_unspotted_times
 
 func get_all_ships() -> Array:
 	var all_ships: Array = []
@@ -1049,19 +1060,25 @@ func _physics_process(_delta: float) -> void:
 				# Ship became spotted - remove from unspotted list
 				if unspotted_dict.has(p):
 					unspotted_dict.erase(p)
+					var times_dict = team_0_unspotted_times if enemy_team_id == 0 else team_1_unspotted_times
+					times_dict.erase(p)
 			else:
 				# Ship became unspotted - add to unspotted list with last known position
 				# Only add if ship has been spotted before (last_spotted_time > 0 means it was spotted at some point)
 				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
 					unspotted_dict[p] = p.global_position
+					var times_dict = team_0_unspotted_times if enemy_team_id == 0 else team_1_unspotted_times
+					times_dict[p] = Time.get_ticks_msec() / 1000.0
 
 	# Clean up dead ships from unspotted lists
 	for ship in team_0_unspotted_enemies.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			team_0_unspotted_enemies.erase(ship)
+			team_0_unspotted_times.erase(ship)
 	for ship in team_1_unspotted_enemies.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			team_1_unspotted_enemies.erase(ship)
+			team_1_unspotted_times.erase(ship)
 
 	# if c > 2:
 	# 	c = 0
