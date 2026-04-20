@@ -1410,7 +1410,16 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 	bool shells_safe = incoming_shells_.empty();
 
-	if (terrain_safe && obstacles_safe && shells_safe) {
+	bool threat_zones_safe = true;
+	for (const auto &tz : threat_zones_) {
+		float dist = state.position.distance_to(tz.position);
+		if (dist < tz.soft_radius + lookahead) {
+			threat_zones_safe = false;
+			break;
+		}
+	}
+
+	if (terrain_safe && obstacles_safe && shells_safe && threat_zones_safe) {
 		// Cache a debug arc for visualization even on the fast path.
 		float fast_path_lookahead = params.turning_circle_radius * 1.5f;
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
@@ -1526,6 +1535,21 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		}
 		if (terrain_blocked) continue;
 
+		// --- (a2) Threat zone hard-radius: disqualify arcs that enter the hard radius ---
+		bool threat_blocked = false;
+		for (const auto &pt : arc) {
+			if (arrival_time >= 0.0f && pt.time > arrival_time) break;
+			for (const auto &tz : threat_zones_) {
+				float dist = pt.position.distance_to(tz.position);
+				if (dist < tz.hard_radius) {
+					threat_blocked = true;
+					break;
+				}
+			}
+			if (threat_blocked) break;
+		}
+		if (threat_blocked) continue;
+
 		// --- (b) Alignment time / arrival time ---
 		// If the arc physically reached the waypoint before aligning, use
 		// the arrival time directly (travel_time = 0).  Otherwise use the
@@ -1576,6 +1600,25 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				total_time *= 2.0f;
 				any_collision = true;
 			}
+		}
+
+		// --- (d) Threat zone soft-radius penalty ---
+		// Add a time penalty proportional to how deeply and how long the arc
+		// spends inside each threat zone's soft radius.
+		{
+			float tz_penalty = 0.0f;
+			for (const auto &pt : arc) {
+				if (arrival_time >= 0.0f && pt.time > arrival_time) break;
+				for (const auto &tz : threat_zones_) {
+					float dist = pt.position.distance_to(tz.position);
+					if (dist < tz.soft_radius && tz.soft_radius > tz.hard_radius) {
+						float penetration = 1.0f - (dist - tz.hard_radius) / (tz.soft_radius - tz.hard_radius);
+						penetration = std::max(0.0f, std::min(1.0f, penetration));
+						tz_penalty += penetration * 2.0f;  // 2 s penalty per fully-penetrated sample
+					}
+				}
+			}
+			total_time += tz_penalty;
 		}
 
 		// --- Shell & torpedo threat penalty ---

@@ -610,7 +610,7 @@ func _update_threat_zones() -> void:
 	if my_concealment <= 0.0:
 		return
 
-	var hard_radius: float = my_concealment
+	var hard_radius: float = my_concealment + _ship.movement_controller.turning_circle_radius * 2.0
 	var soft_radius: float = my_concealment + 500.0  # 500m safety margin
 
 	# Register all known enemy positions as threat zones

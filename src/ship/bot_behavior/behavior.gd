@@ -67,6 +67,15 @@ var _active_skill_name: StringName = &""
 ##   BB  : always false — BBs push or camp, never sneak
 var wants_stealth: bool = false
 
+## Set to true by each ship class in get_nav_intent when the ship wants to
+## suppress gun fire in order to let firing bloom decay and re-enter
+## concealment. When true, engage_target will aim turrets but NOT fire.
+## Reset to false at the start of every get_nav_intent call.
+##   DD  : true when detected AND bloom active AND nearest enemy beyond base radius
+##   CA  : true when in stealth-cover mode AND same bloom condition
+##   BB  : always false
+var wants_to_be_concealed: bool = false
+
 # Skill instances (created in subclass _init or on first use)
 var _skills: Dictionary = {}  # StringName -> BotSkill
 
@@ -194,6 +203,51 @@ func can_fire_guns() -> bool:
 	## Always allowed at the base level.
 	## Each ship class gates firing in its own engage_target override.
 	return true
+
+func _probe_concealment(server: GameServer) -> bool:
+	## Returns true when the ship should suppress gun fire to let bloom decay
+	## and attempt to re-enter concealment.
+	##
+	## Conditions (all must be true):
+	##   1. Ship is currently detected by the enemy.
+	##   2. There is active firing bloom (concealment.bloom_value > 0).
+	##   3. The nearest enemy is BEYOND the ship's base (no-bloom) concealment
+	##      radius, meaning if we stop firing the bloom can decay and we would
+	##      eventually drop off detection.
+	##   4. No enemy is closer than 60 % of our base concealment radius
+	##      (if they're nearly on top of us, going dark doesn't help).
+	if not _ship.visible_to_enemy:
+		return false
+
+	var concealment_node = _ship.concealment
+	if concealment_node == null:
+		return false
+
+	# Only probe if we actually have bloom right now
+	if concealment_node.bloom_value <= 0.0:
+		return false
+
+	var base_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
+
+	var spotted = server.get_valid_targets(_ship.team.team_id)
+	if spotted.is_empty():
+		return false
+
+	# Find nearest enemy distance
+	var nearest_dist: float = INF
+	for enemy in spotted:
+		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
+			continue
+		var d = enemy.global_position.distance_to(_ship.global_position)
+		if d < nearest_dist:
+			nearest_dist = d
+
+	# If any enemy is closer than 60 % of base concealment, going dark won't help
+	if nearest_dist < base_radius * 0.6:
+		return false
+
+	# If nearest enemy is already beyond base detection radius we can go dark
+	return nearest_dist > base_radius
 
 # ============================================================================
 # NAVIGATION UTILITIES
@@ -1666,6 +1720,11 @@ func engage_target(target: Ship):
 		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
 		return
 
+	# Concealment probe: aim turrets but hold fire to let bloom decay
+	if wants_to_be_concealed:
+		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
+		return
+
 	var adjusted_target_pos = target.global_position + target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
@@ -1744,9 +1803,12 @@ func get_debug_skill_info() -> Dictionary:
 	info["skill"] = String(_active_skill_name) if _active_skill_name != &"" else "None"
 	info["visible"] = _ship.visible_to_enemy if _ship != null else false
 	info["in_cover"] = is_in_cover
+	info["concealment"] = wants_to_be_concealed
 	if _ship != null:
 		var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
 		info["hp_pct"] = int(hp_ratio * 100.0)
+		if _ship.concealment != null:
+			info["bloom"] = _ship.concealment.bloom_value
 		var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 		if server_node != null:
 			info["threat"] = get_threat_score(server_node)

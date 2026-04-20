@@ -262,6 +262,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; set true below if undetected
+	wants_to_be_concealed = false  # reset each tick; set true below via probe
 	var ctx = SkillContext.create(ship, target, server, self)
 	_init_flank_identity(ship, server)
 
@@ -337,6 +338,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# DDs always want stealth routing when undetected — both spotting runs and
 	# torpedo approaches rely on staying outside enemy detection zones in transit
 	wants_stealth = not ship.visible_to_enemy
+
+	# Concealment probe: suppress guns when detected + bloom active + enemy
+	# is far enough away that going dark would actually drop us off detection.
+	# DDs should always try to go dark when the opportunity exists.
+	wants_to_be_concealed = _probe_concealment(server)
 
 	# Post-process spread (skip for Retreat and Kite)
 	if _active_skill_name != &"Retreat" and _active_skill_name != &"Kite":
