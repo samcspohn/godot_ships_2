@@ -64,7 +64,7 @@ var target_scan_timer: float = 0.0
 # ===========================================================================
 
 ## How often to update obstacle positions (frames)
-const OBSTACLE_UPDATE_INTERVAL: int = 5
+const OBSTACLE_UPDATE_INTERVAL: int = 4
 ## Maximum distance to register a ship as an obstacle
 const OBSTACLE_REGISTER_RANGE: float = 5000.0
 
@@ -80,7 +80,7 @@ const SHELL_QUERY_RANGE: float = 1000.0
 ## How often to force a path replan (frames). Between replans the navigator
 ## continues arc-based threat avoidance with the last known destination.
 ## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
-const PATH_UPDATE_INTERVAL: int = 9
+const PATH_UPDATE_INTERVAL: int = 8
 ## Distance (m) the intent destination must jump to trigger an immediate path
 ## replan, bypassing the PATH_UPDATE_INTERVAL cooldown.
 const PATH_SIGNIFICANT_MOVE: float = 1000.0

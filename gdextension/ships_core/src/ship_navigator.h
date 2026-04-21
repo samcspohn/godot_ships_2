@@ -149,6 +149,18 @@ private:
 	// These represent enemy ship positions that the pathfinder should route around.
 	std::vector<ThreatZone> threat_zones_;
 
+	// Spatial grid over threat_zones_ — rebuilt once per frame when the list
+	// changes (threat_grid_dirty_ = true after any add/clear call).
+	ThreatGrid threat_grid_;
+	bool       threat_grid_dirty_ = true;
+
+	// Scratch buffer for the per-steering-call threat pre-filter.
+	// Filled by select_best_steering from the grid, holds indices into threat_zones_.
+	std::vector<int>  nearby_threat_indices_;
+	// Per-nearby-threat flag: true when the ship is already inside that threat's
+	// hard_radius.  Switches the scoring from "disqualify-on-enter" to "escape".
+	std::vector<bool> nearby_threat_inside_;
+
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
 	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines

@@ -67,7 +67,20 @@ private:
 
 	// Cached edge costs -- mirrors graph adjacency structure.
 	// edge_costs_[node][neighbor_order] = current cost of that edge.
+	//
+	// The cache is valid as long as the graph pointer and ship_radius are
+	// unchanged.  Terrain is static, so a goal-only change does NOT
+	// require a rebuild.  Tracked via cache_graph_ / cache_ship_radius_.
 	std::vector<std::vector<float>> edge_costs_;
+
+	// --- Edge cache validity tracking ---
+	const WaypointGraph* cache_graph_      = nullptr;
+	float                cache_ship_radius_ = -1.0f;
+
+	// --- Threat spatial grid ---
+	// Rebuilt whenever threats_ changes.  Used in update_vertex for O(1)
+	// node-blocking lookups instead of iterating the full threats_ list.
+	ThreatGrid threat_grid_;
 
 	// --- Internal methods ---
 

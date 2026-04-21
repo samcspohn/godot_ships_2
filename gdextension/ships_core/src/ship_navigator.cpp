@@ -308,14 +308,17 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 
 void ShipNavigator::clear_threat_zones() {
 	threat_zones_.clear();
+	threat_grid_dirty_ = true;
 }
 
 void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius, float soft_radius) {
 	threat_zones_.emplace_back(position, hard_radius, soft_radius);
+	threat_grid_dirty_ = true;
 }
 
 void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius) {
 	threat_zones_.emplace_back(enemy_id, position, hard_radius, soft_radius);
+	threat_grid_dirty_ = true;
 }
 
 // ============================================================================
@@ -480,6 +483,16 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
+
+	// Rebuild threat spatial grid whenever the threat list was modified this frame.
+	if (threat_grid_dirty_) {
+		if (!threat_zones_.empty()) {
+			threat_grid_.build(threat_zones_, ThreatGrid::default_cell_size(threat_zones_));
+		} else {
+			threat_grid_ = ThreatGrid{};
+		}
+		threat_grid_dirty_ = false;
+	}
 
 	// Transition to EMERGENCY if grounded or SDF indicates on land,
 	// but NOT if the ship is already at the destination within tolerance.
@@ -1375,6 +1388,30 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	float soft_clearance = get_soft_clearance();
 	float lookahead = get_lookahead_distance();
 
+	// --- Threat zone pre-filter (spatial grid) ---
+	// Build nearby_threat_indices_ once per steering call so the hot
+	// arc-scoring loops iterate only over threats that could touch the arc.
+	// query_region returns duplicates when a threat spans multiple cells;
+	// sort+unique collapses them.
+	nearby_threat_indices_.clear();
+	threat_grid_.query_region(state.position, lookahead, nearby_threat_indices_);
+	std::sort(nearby_threat_indices_.begin(), nearby_threat_indices_.end());
+	nearby_threat_indices_.erase(
+		std::unique(nearby_threat_indices_.begin(), nearby_threat_indices_.end()),
+		nearby_threat_indices_.end());
+
+	// Per-nearby-threat "already inside" flag.
+	// When true, that threat switches from "disqualify-on-enter" to "escape" mode:
+	// arcs are not blanket-disqualified (which hands control to the terrain-only
+	// fallback), and instead a depth-weighted penalty guides arcs outward.
+	nearby_threat_inside_.assign(nearby_threat_indices_.size(), false);
+	for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+		const auto &tz = threat_zones_[nearby_threat_indices_[k]];
+		nearby_threat_inside_[k] =
+			state.position.distance_squared_to(tz.position) <
+			tz.hard_radius * tz.hard_radius;
+	}
+
 	// --- Adaptive clearance: halve when already inside the clearance zone ---
 	// If the ship is already closer to terrain than hard_clearance, insisting
 	// on full clearance causes oscillation: the ship drives forward into the
@@ -1416,7 +1453,8 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	bool shells_safe = incoming_shells_.empty();
 
 	bool threat_zones_safe = true;
-	for (const auto &tz : threat_zones_) {
+	for (int ti : nearby_threat_indices_) {
+		const auto &tz = threat_zones_[ti];
 		float dist = state.position.distance_to(tz.position);
 		if (dist < tz.soft_radius + lookahead) {
 			threat_zones_safe = false;
@@ -1541,10 +1579,15 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		if (terrain_blocked) continue;
 
 		// --- (a2) Threat zone hard-radius: disqualify arcs that enter the hard radius ---
+		// Exception: threats the ship is already inside use escape-penalty mode
+		// (nearby_threat_inside_[k] == true).  Disqualifying all arcs for those would
+		// trigger the terrain-only fallback, causing the ship to steer into the threat.
 		bool threat_blocked = false;
 		for (const auto &pt : arc) {
 			if (arrival_time >= 0.0f && pt.time > arrival_time) break;
-			for (const auto &tz : threat_zones_) {
+			for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+				if (nearby_threat_inside_[k]) continue; // already inside — escape via penalty
+				const auto &tz = threat_zones_[nearby_threat_indices_[k]];
 				float dist = pt.position.distance_to(tz.position);
 				if (dist < tz.hard_radius) {
 					threat_blocked = true;
@@ -1608,15 +1651,25 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		}
 
 		// --- (d) Threat zone soft-radius penalty ---
-		// Add a time penalty proportional to how deeply and how long the arc
-		// spends inside each threat zone's soft radius.
+		// Normal mode:  ramp from 0 at soft_radius boundary to 2 s at hard_radius.
+		// Escape mode (already inside hard_radius): depth-proportional penalty up to
+		// 4 s per sample, incentivising arcs that move outward rather than lingering
+		// or going deeper.  No blanket disqualification so the scorer can rank
+		// "escape left" vs "escape right" instead of collapsing to the fallback.
 		{
 			float tz_penalty = 0.0f;
 			for (const auto &pt : arc) {
 				if (arrival_time >= 0.0f && pt.time > arrival_time) break;
-				for (const auto &tz : threat_zones_) {
+				for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+					const auto &tz = threat_zones_[nearby_threat_indices_[k]];
 					float dist = pt.position.distance_to(tz.position);
-					if (dist < tz.soft_radius && tz.soft_radius > tz.hard_radius) {
+					if (nearby_threat_inside_[k]) {
+						// Escape mode: penalise arcs that stay inside or go deeper.
+						if (dist < tz.hard_radius) {
+							float depth_frac = 1.0f - (dist / tz.hard_radius);
+							tz_penalty += depth_frac * 4.0f;
+						}
+					} else if (dist < tz.soft_radius && tz.soft_radius > tz.hard_radius) {
 						float penetration = 1.0f - (dist - tz.hard_radius) / (tz.soft_radius - tz.hard_radius);
 						penetration = std::max(0.0f, std::min(1.0f, penetration));
 						tz_penalty += penetration * 2.0f;  // 2 s penalty per fully-penetrated sample

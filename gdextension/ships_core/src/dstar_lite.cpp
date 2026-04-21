@@ -73,24 +73,50 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 	stored_key_.resize(n);
 	open_set_.clear();
 
-	// Build edge cost cache
-	edge_costs_.resize(n);
-	for (int i = 0; i < n; i++) {
-		if (!graph_->node_active(i)) {
-			edge_costs_[i].clear();
-			continue;
+	// Build edge cost cache -- but only when the graph or ship_radius
+	// actually changed.  Terrain is static; a goal-only change does not
+	// invalidate any cached edge cost.  Skipping this loop is the dominant
+	// saving when the destination drifts (O(E) DDA raycasts avoided).
+	const int n_cached = (int)edge_costs_.size();
+	const bool full_rebuild = (graph_ != cache_graph_ ||
+	                           ship_radius_ != cache_ship_radius_ ||
+	                           n_cached == 0);
+	if (full_rebuild) {
+		edge_costs_.resize(n);
+		for (int i = 0; i < n; i++) {
+			if (!graph_->node_active(i)) {
+				edge_costs_[i].clear();
+				continue;
+			}
+			const auto& adj = graph_->neighbors(i);
+			edge_costs_[i].resize(adj.size());
+			for (int j = 0; j < (int)adj.size(); j++) {
+				edge_costs_[i][j] = graph_->compute_edge_cost(i, adj[j].target,
+															   ship_radius_, threats_);
+			}
 		}
-		const auto& adj = graph_->neighbors(i);
-		edge_costs_[i].resize(adj.size());
-		for (int j = 0; j < (int)adj.size(); j++) {
-			edge_costs_[i][j] = graph_->compute_edge_cost(i, adj[j].target,
-														   ship_radius_, threats_);
+		cache_graph_       = graph_;
+		cache_ship_radius_ = ship_radius_;
+	} else if (n > n_cached) {
+		// Graph grew (proxy nodes added since last full build).
+		// Extend with INF -- notify_edges_changed() will fill real costs in.
+		edge_costs_.resize(n);
+		for (int i = n_cached; i < n; i++) {
+			const auto& adj = graph_->neighbors(i);
+			edge_costs_[i].assign(adj.size(), INF);
 		}
 	}
 
 	// Backward D* Lite: goal_ is the source, rhs[goal_] = 0
 	rhs_[goal_] = 0.0f;
 	insert_open(goal_);
+
+	// Build threat spatial grid for fast node-blocking lookups in update_vertex.
+	if (!threats_.empty()) {
+		threat_grid_.build(threats_, ThreatGrid::default_cell_size(threats_));
+	} else {
+		threat_grid_ = ThreatGrid{};
+	}
 }
 
 void DStarLite::update_vertex(int u) {
@@ -101,7 +127,8 @@ void DStarLite::update_vertex(int u) {
 	// If u is inside any threat hard_radius, it is unreachable.
 	if (u != goal_ && u != start_ && !threats_.empty()) {
 		Vector2 pos = graph_->node_position(u);
-		for (const auto& tz : threats_) {
+		for (int ti : threat_grid_.query_point(pos)) {
+			const auto& tz = threats_[ti];
 			if (pos.distance_squared_to(tz.position) <
 					tz.hard_radius * tz.hard_radius) {
 				rhs_[u] = INF;
@@ -189,6 +216,13 @@ void DStarLite::update_threats(const std::vector<ThreatZone>& new_threats) {
 
 	std::vector<ThreatZone> old_threats = threats_;
 	threats_ = new_threats;
+
+	// Rebuild threat grid for updated positions.
+	if (!threats_.empty()) {
+		threat_grid_.build(threats_, ThreatGrid::default_cell_size(threats_));
+	} else {
+		threat_grid_ = ThreatGrid{};
+	}
 
 	// Mark nodes that may have changed blocking status:
 	// those inside or near old circles (might be unblocked now)
