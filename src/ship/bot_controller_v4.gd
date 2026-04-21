@@ -72,15 +72,18 @@ const OBSTACLE_REGISTER_RANGE: float = 5000.0
 @export var torpedo_track_range: float = 3000.0
 ## Torpedo detonation/avoidance radius (m) — roughly the magnetic fuze trigger zone
 const TORPEDO_HIT_RADIUS: float = 20.0
-## Frame offset for torpedo obstacle updates vs ship obstacle updates
-const TORPEDO_UPDATE_OFFSET: int = 2
 ## ID namespace base for torpedo obstacles (negative, never collides with ship instance IDs)
 const TORPEDO_ID_OFFSET: int = -100000
 
 ## Maximum distance to query for incoming shells
 const SHELL_QUERY_RANGE: float = 1000.0
-## Frame offset for shell threat updates (ships=0, shells=1, torpedoes=2)
-const SHELL_UPDATE_OFFSET: int = 1
+## How often to force a path replan (frames). Between replans the navigator
+## continues arc-based threat avoidance with the last known destination.
+## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
+const PATH_UPDATE_INTERVAL: int = 8
+## Distance (m) the intent destination must jump to trigger an immediate path
+## replan, bypassing the PATH_UPDATE_INTERVAL cooldown.
+const PATH_SIGNIFICANT_MOVE: float = 1000.0
 
 # ===========================================================================
 # INTENT SYSTEM
@@ -145,6 +148,10 @@ var _cached_enemy_avg: Vector3 = Vector3.ZERO
 
 ## Last HP bracket (1-4) for threshold-crossing detection. -1 = uninitialized.
 var _last_hp_bracket: int = -1
+## Frame counter controlling how often navigate_to() is called (path replanning).
+# var _path_update_timer: int = 0
+## Last destination sent to navigate_to() — used to detect significant moves.
+var _last_path_destination: Vector3 = Vector3.ZERO
 
 var should_query_behavior: bool = false
 
@@ -171,6 +178,13 @@ func _ready() -> void:
 	else:
 		push_warning("[BotControllerV4] NavigationMap not yet built — navigator will operate without terrain data")
 
+	# Connect to the shared WaypointGraph (built alongside NavigationMap)
+	var wp_graph = NavigationMapManager.get_waypoint_graph()
+	if wp_graph != null:
+		navigator.set_waypoint_graph(wp_graph)
+	else:
+		push_warning("[BotControllerV4] WaypointGraph not yet built — navigator will pathfind without graph")
+
 	# Set ship kinematic parameters from the movement controller
 	# These match ShipMovementV4's exported properties
 	navigator.set_ship_params(
@@ -195,9 +209,12 @@ func _ready() -> void:
 
 
 func _deferred_init() -> void:
-	# Re-check map in case it was built after our _ready
+	# Re-check map and waypoint graph in case they were built after our _ready
 	if navigator != null and NavigationMapManager.is_map_ready():
 		navigator.set_map(NavigationMapManager.get_map())
+		var wp_graph = NavigationMapManager.get_waypoint_graph()
+		if wp_graph != null:
+			navigator.set_waypoint_graph(wp_graph)
 
 	# Pass bot_id to navigator for staggered periodic replanning
 	if navigator != null:
@@ -216,68 +233,96 @@ func _physics_process(delta: float) -> void:
 	if _ship == null or movement == null or navigator == null:
 		return
 
-	# --- 1. Update navigator with current ship state ---
-	navigator.set_state(
-		_ship.global_position,
-		_ship.linear_velocity,
-		get_ship_heading(),
-		_ship.angular_velocity.y,
-		movement.rudder_input,
-		get_current_speed(),
-		delta
-	)
-	navigator.set_grounded(movement.is_grounded)
+	if Debug.follow_ship == _ship:
+		_emit_debug_draws()
 
-	if _ship.health_controller:
-		var hp_frac: float = _ship.health_controller.current_hp / maxf(_ship.health_controller.max_hp, 1.0)
-		navigator.set_health_fraction(hp_frac)
+	var in_update_slot: bool = Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL
 
-	# --- 2. Update dynamic obstacles (other ships) ---
-	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
-		_update_obstacles()
-
-	# --- 2c. Update torpedo obstacles (fast-moving threats) ---
-	# Use an offset modulo so torpedo and ship updates don't fire on the same frame.
-	var torp_frame_slot: int = (bot_id + TORPEDO_UPDATE_OFFSET) % OBSTACLE_UPDATE_INTERVAL
-	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == torp_frame_slot:
-		_update_torpedo_obstacles()
-
-	# --- 2d. Update incoming shell threats ---
-	var shell_frame_slot: int = (bot_id + SHELL_UPDATE_OFFSET) % OBSTACLE_UPDATE_INTERVAL
-	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == shell_frame_slot:
-		_update_shell_threats()
-
-	# --- 2e. Update enemy threat zones (stealth pathfinding) ---
-	if Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
-		_update_threat_zones()
-
-	# --- 2b. Check for event-driven intent triggers ---
-	# These run every frame (cheap checks) and set _force_intent_next_frame
-	# when a significant tactical event occurs. Gated by cooldown to prevent
-	# rapid re-firing from oscillating game state (e.g. enemies on concealment edge).
+	# --- Timers: tick every frame for accurate timing ---
+	_behavior_timer += delta
 	if _event_cooldown > 0.0:
 		_event_cooldown -= delta
-	else:
-		_check_intent_events()
 
-	# --- 3. Get navigation intent from behavior ---
-	_behavior_timer += delta
-	if _force_intent_next_frame:
-		should_query_behavior = true
-		_force_target_rescan = true
-		_force_intent_next_frame = false
-		_event_cooldown = EVENT_COOLDOWN_DURATION
-		_behavior_timer = 0.0
-	elif _behavior_timer >= MAX_BEHAVIOR_INTERVAL:
-		should_query_behavior = true
-		_behavior_timer = 0.0
+	# =========================================================================
+	# TIER 1 — every frame
+	# navigator.set_state() drives arc prediction and emergency steering, so it
+	# must receive fresh ship state on every tick for optimal threat avoidance.
+	# Shell and torpedo data are equally time-sensitive.
+	# Torpedo obstacles are re-registered every frame OUTSIDE the update slot;
+	# inside the slot _update_obstacles() handles the full clear + re-add.
+	# =========================================================================
 
-	if should_query_behavior and Engine.get_physics_frames() % OBSTACLE_UPDATE_INTERVAL == bot_id % OBSTACLE_UPDATE_INTERVAL:
-		should_query_behavior = false
-		_update_nav_intent()
+	if Engine.get_physics_frames() % 3 == bot_id % 3:
+		navigator.set_state(
+			_ship.global_position,
+			_ship.linear_velocity,
+			get_ship_heading(),
+			_ship.angular_velocity.y,
+			movement.rudder_input,
+			get_current_speed(),
+			delta
+		)
+		navigator.set_grounded(movement.is_grounded)
 
-	# --- 4. Execute the current navigation intent ---
-	_execute_nav_intent()
+		if _ship.health_controller:
+			var hp_frac: float = _ship.health_controller.current_hp / maxf(_ship.health_controller.max_hp, 1.0)
+			navigator.set_health_fraction(hp_frac)
+
+		_update_shell_threats()
+
+	if not in_update_slot:
+		# _update_obstacles() (called below in the slot) already ends with
+		# _register_torpedo_obstacles(), so only call it on non-slot frames.
+		_register_torpedo_obstacles()
+
+	# =========================================================================
+	# TIER 2 — staggered bot slot (every OBSTACLE_UPDATE_INTERVAL frames)
+	# Ship obstacle registration is expensive (iterates all ships), so it is
+	# spread across bots. Behavior and intent queries also belong here.
+	# =========================================================================
+	if in_update_slot:
+		# Full obstacle refresh: clear everything, re-add ships, re-add torpedoes.
+		# This is the only place clear_obstacles() is called.
+		_update_obstacles()
+		_update_threat_zones()
+
+		# Event checks involve server queries — deferred to slot, not every frame.
+		if _event_cooldown <= 0.0:
+			_check_intent_events()
+
+		# --- Get navigation intent from behavior ---
+		if _force_intent_next_frame:
+			should_query_behavior = true
+			_force_target_rescan = true
+			_force_intent_next_frame = false
+			_event_cooldown = EVENT_COOLDOWN_DURATION
+			_behavior_timer = 0.0
+		elif _behavior_timer >= MAX_BEHAVIOR_INTERVAL:
+			should_query_behavior = true
+			_behavior_timer = 0.0
+
+		if should_query_behavior:
+			should_query_behavior = false
+			_update_nav_intent()
+
+	# =========================================================================
+	# TIER 3 — path update (every PATH_UPDATE_INTERVAL frames, or immediately
+	# when the intent destination moves significantly)
+	# Calls navigate_to() which sets the D* Lite goal. The C++ navigator will
+	# only trigger a full replan when the destination has actually changed
+	# (built-in threshold: turning_circle_radius * 0.5). The GDScript-side
+	# PATH_SIGNIFICANT_MOVE guard ensures a brand-new waypoint is pushed
+	# immediately rather than waiting for the next interval tick.
+	# =========================================================================
+	# _path_update_timer += 1
+	var current_dest: Vector3 = _last_intent.target_position if _last_intent != null \
+		else Vector3(destination.x, 0.0, destination.z)
+	var dest_moved_far: bool = current_dest.distance_to(_last_path_destination) >= PATH_SIGNIFICANT_MOVE
+
+	if Engine.get_physics_frames() % PATH_UPDATE_INTERVAL == bot_id % PATH_UPDATE_INTERVAL or dest_moved_far:
+		# _path_update_timer = 0
+		_last_path_destination = current_dest
+		_execute_nav_intent()
 
 	# --- 5. Read steering output from navigator ---
 	var rudder: float = navigator.get_rudder()
@@ -322,9 +367,9 @@ func _physics_process(delta: float) -> void:
 	_debug_throttle = throttle
 	_update_debug_vectors(rudder)
 
-	# --- 8b. Emit immediate-mode debug draws when being followed ---
-	if Debug.follow_ship == _ship:
-		_emit_debug_draws()
+	# # --- 8b. Emit immediate-mode debug draws when being followed ---
+	# if Debug.follow_ship == _ship:
+	# 	_emit_debug_draws()
 
 	# --- 9. Behavior tick (target scanning, firing, consumables) ---
 	_tick_behavior(delta)
@@ -513,10 +558,6 @@ func _update_shell_threats() -> void:
 func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if behavior == null:
 		return
-	#if not "_tactical_state" in behavior:
-		#return
-	#if behavior._tactical_state != TacticalState.State.SNEAKING:
-		#return
 
 	# Read concealment — same radii used by _update_threat_zones
 	var my_concealment: float = 0.0
@@ -525,7 +566,9 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if my_concealment <= 0.0:
 		return
 
-	var soft_radius: float = my_concealment + 500.0  # must match _update_threat_zones
+	# HP-based radius scaling (matches _update_threat_zones)
+	var radius_mult: float = behavior.get_concealment_radius_multiplier()
+	var soft_radius_base: float = (my_concealment + 500.0) * radius_mult  # must match _update_threat_zones
 	# Small buffer so the destination lands clearly outside the soft edge
 	var push_margin: float = 100.0
 
@@ -533,41 +576,52 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var was_adjusted := false
 
-	# Collect all enemy positions (spotted + last-known unspotted)
-	var enemy_positions: Array[Vector2] = []
+	# Collect enemy positions with per-threat soft radii
+	# Array of {pos: Vector2, radius: float}
+	var threats: Array = []
 	var enemies = server_node.get_valid_targets(_ship.team.team_id)
 	for enemy_ship in enemies:
 		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			enemy_positions.append(Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z))
+			threats.append({
+				pos = Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z),
+				radius = soft_radius_base
+			})
+
 	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
+	var now: float = Time.get_ticks_msec() / 1000.0
+	const STALE_DECAY_SECONDS: float = 100.0
 	for enemy_ship in unspotted.keys():
 		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
+			var last_time: float = unspotted_times.get(enemy_ship, now)
+			var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
+			if decay <= 0.0:
+				continue  # Fully decayed — no longer a routing obstacle
 			var lp: Vector3 = unspotted[enemy_ship]
-			enemy_positions.append(Vector2(lp.x, lp.z))
+			threats.append({
+				pos = Vector2(lp.x, lp.z),
+				radius = soft_radius_base * decay
+			})
 
 	# Iteratively push the destination out of every overlapping threat zone.
-	# Multiple passes handle cases where pushing away from one enemy moves
-	# the destination into another's zone.  Cap iterations to avoid infinite
-	# loops in heavily surrounded scenarios.
 	var max_passes := 4
 	for _pass in max_passes:
 		var pushed_this_pass := false
-		for epos in enemy_positions:
+		for t in threats:
+			var epos: Vector2 = t.pos
+			var soft_radius: float = t.radius
 			var to_dest := dest - epos
 			var dist := to_dest.length()
 			if dist < soft_radius + push_margin:
-				# Need to push outward
 				var push_dir: Vector2
 				if dist > 1.0:
 					push_dir = to_dest / dist
 				else:
-					# Destination is right on top of the enemy — push toward
-					# the ship so the DD retreats to a sane position
 					var fallback := ship_pos - epos
 					if fallback.length() > 1.0:
 						push_dir = fallback.normalized()
 					else:
-						push_dir = Vector2(1.0, 0.0)  # arbitrary
+						push_dir = Vector2(1.0, 0.0)
 				dest = epos + push_dir * (soft_radius + push_margin)
 				pushed_this_pass = true
 				was_adjusted = true
@@ -600,10 +654,13 @@ func _update_threat_zones() -> void:
 	if my_concealment <= 0.0:
 		return
 
-	var hard_radius: float = my_concealment
-	var soft_radius: float = my_concealment + 500.0  # 500m safety margin
+	# HP-based radius scaling (e.g. DDs scale up to 1.5x at low HP)
+	var radius_mult: float = behavior.get_concealment_radius_multiplier()
 
-	# Register all known enemy positions as threat zones
+	var hard_radius: float = (my_concealment + _ship.movement_controller.turning_circle_radius * 2.0) * radius_mult
+	var soft_radius: float = (my_concealment + 500.0) * radius_mult  # 500m safety margin
+
+	# Register all known spotted enemy positions as threat zones (full radius)
 	var enemies = server_node.get_valid_targets(_ship.team.team_id)
 	for enemy in enemies:
 		if not is_instance_valid(enemy) or not enemy.is_alive():
@@ -611,14 +668,21 @@ func _update_threat_zones() -> void:
 		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
 		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
 
-	# Also add last-known positions of unspotted enemies (they can still detect us)
+	# Unspotted enemies: radius decays linearly to 0 over 100 seconds
 	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
+	var now: float = Time.get_ticks_msec() / 1000.0
+	const STALE_DECAY_SECONDS: float = 100.0
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
 			continue
+		var last_time: float = unspotted_times.get(enemy_ship, now)
+		var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
+		if decay <= 0.0:
+			continue  # Zone fully decayed — skip
 		var last_pos: Vector3 = unspotted[enemy_ship]
 		var pos_2d = Vector2(last_pos.x, last_pos.z)
-		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+		navigator.add_threat_zone(pos_2d, hard_radius * decay, soft_radius * decay)
 
 
 # ===========================================================================
@@ -975,6 +1039,13 @@ func _emit_debug_draws() -> void:
 		# --- l) SDF tile squares ---
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
+
+		# --- o) Threat zones (concealment radii the pathfinder avoids) ---
+		var threat_zones = navigator.get_debug_threat_zones()
+		for tz in threat_zones:
+			var tz_pos = Vector3(tz["x"], 6.0, tz["z"])
+			Debug.draw_circle(tz_pos, tz["hard_radius"], Color(1.0, 0.0, 0.0, 0.4), 64)
+			Debug.draw_circle(Vector3(tz_pos.x, 5.0, tz_pos.z), tz["soft_radius"], Color(1.0, 0.5, 0.0, 0.25), 64)
 
 		# --- p) Torpedo & shell threat lines ---
 		var threat_lines = navigator.get_debug_torpedo_threat_points()

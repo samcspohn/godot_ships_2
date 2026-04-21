@@ -1,10 +1,12 @@
 #ifndef NAV_TYPES_H
 #define NAV_TYPES_H
 
+#include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 
+#include <algorithm>
 #include <vector>
 #include <queue>
 #include <functional>
@@ -286,13 +288,116 @@ inline float throttle_to_speed_fraction(int throttle) {
 // Enemy ship threat zone for stealth pathfinding.
 // Stamped onto a coarser grid overlay during path search initialization.
 struct ThreatZone {
+    int id;                // enemy ship ID (for proxy-ring matching; -1 = unidentified)
     Vector2 position;      // world XZ position of the enemy ship
     float hard_radius;     // inner radius — very high cost (our concealment radius)
     float soft_radius;     // outer radius — cost ramps from 0 at soft to max at hard
 
-    ThreatZone() : position(Vector2()), hard_radius(0.0f), soft_radius(0.0f) {}
+    ThreatZone() : id(-1), position(Vector2()), hard_radius(0.0f), soft_radius(0.0f) {}
     ThreatZone(Vector2 p_pos, float p_hard, float p_soft)
-        : position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
+        : id(-1), position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
+    ThreatZone(int p_id, Vector2 p_pos, float p_hard, float p_soft)
+        : id(p_id), position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
+};
+
+// ============================================================================
+// Spatial acceleration grid for ThreatZone queries.
+//
+// Threats register into every cell whose bounding box their soft_radius circle
+// overlaps.  This makes both hard_radius (blocking) and soft_radius (penalty)
+// queries conservative-but-correct: the caller always performs an exact
+// distance check on the returned candidates.
+//
+// Cell size should be approximately the concealment (hard) radius.
+// With uniform radii each circle spans at most a 3x3 patch of cells.
+// ============================================================================
+struct ThreatGrid {
+	std::vector<std::vector<int>> cells; // flat [gz * w + gx] -> threat indices
+	int   grid_w    = 0;
+	int   grid_h    = 0;
+	float cell_size = 1.0f;
+	float origin_x  = 0.0f;
+	float origin_z  = 0.0f;
+
+	bool empty() const { return cells.empty(); }
+
+	// Compute a good cell size from a threat list (max hard_radius, min 1 m).
+	static float default_cell_size(const std::vector<ThreatZone>& threats) {
+		float r = 1.0f;
+		for (const auto& tz : threats) r = std::max(r, tz.hard_radius);
+		return r;
+	}
+
+	// Build (or rebuild) the grid.  Bounds are derived from the threat circles.
+	void build(const std::vector<ThreatZone>& threats, float p_cell_size) {
+		cells.clear();
+		grid_w = grid_h = 0;
+		if (threats.empty() || p_cell_size <= 0.0f) return;
+
+		cell_size = p_cell_size;
+
+		// Tight bounding box of all soft-radius circles
+		float mn_x =  std::numeric_limits<float>::infinity();
+		float mn_z =  std::numeric_limits<float>::infinity();
+		float mx_x = -std::numeric_limits<float>::infinity();
+		float mx_z = -std::numeric_limits<float>::infinity();
+		for (const auto& tz : threats) {
+			float r = tz.soft_radius;
+			mn_x = std::min(mn_x, tz.position.x - r);
+			mn_z = std::min(mn_z, tz.position.y - r); // Vector2.y == world-Z
+			mx_x = std::max(mx_x, tz.position.x + r);
+			mx_z = std::max(mx_z, tz.position.y + r);
+		}
+
+		origin_x = mn_x;
+		origin_z = mn_z;
+		grid_w   = (int)std::ceil((mx_x - mn_x) / cell_size) + 1;
+		grid_h   = (int)std::ceil((mx_z - mn_z) / cell_size) + 1;
+		cells.assign((size_t)grid_w * grid_h, {});
+
+		// Register each threat in all cells its soft_radius bounding box overlaps
+		for (int ti = 0; ti < (int)threats.size(); ++ti) {
+			const auto& tz = threats[ti];
+			float r  = tz.soft_radius;
+			int cx0  = std::max(0,          cx(tz.position.x - r));
+			int cz0  = std::max(0,          cz(tz.position.y - r));
+			int cx1  = std::min(grid_w - 1, cx(tz.position.x + r));
+			int cz1  = std::min(grid_h - 1, cz(tz.position.y + r));
+			for (int iz = cz0; iz <= cz1; ++iz)
+				for (int ix = cx0; ix <= cx1; ++ix)
+					cells[(size_t)iz * grid_w + ix].push_back(ti);
+		}
+	}
+
+	// Single-cell lookup for D* Lite node-blocking checks (hard_radius only).
+	// Returns candidates in the cell containing pos; caller checks dist^2.
+	const std::vector<int>& query_point(Vector2 pos) const {
+		static const std::vector<int> empty_vec;
+		if (cells.empty()) return empty_vec;
+		int ix = cx(pos.x), iz = cz(pos.y);
+		if (ix < 0 || ix >= grid_w || iz < 0 || iz >= grid_h) return empty_vec;
+		return cells[(size_t)iz * grid_w + ix];
+	}
+
+	// Region query -- appends (possibly duplicate) threat indices from all cells
+	// within the axis-aligned square [pos-radius, pos+radius] to |out|.
+	// Sort+unique after the call to deduplicate if needed.
+	void query_region(Vector2 pos, float radius, std::vector<int>& out) const {
+		if (cells.empty()) return;
+		int x0 = std::max(0,          cx(pos.x - radius));
+		int z0 = std::max(0,          cz(pos.y - radius));
+		int x1 = std::min(grid_w - 1, cx(pos.x + radius));
+		int z1 = std::min(grid_h - 1, cz(pos.y + radius));
+		if (x0 > x1 || z0 > z1) return;
+		for (int iz = z0; iz <= z1; ++iz)
+			for (int ix = x0; ix <= x1; ++ix)
+				for (int ti : cells[(size_t)iz * grid_w + ix])
+					out.push_back(ti);
+	}
+
+private:
+	int cx(float wx) const { return (int)std::floor((wx - origin_x) / cell_size); }
+	int cz(float wz) const { return (int)std::floor((wz - origin_z) / cell_size); }
 };
 
 // Resumable A* search state — one per ship for async pathfinding.

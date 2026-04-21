@@ -359,6 +359,7 @@ func _pick_nearest_spotted(ship: Ship, spotted: Array) -> Ship:
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; set true below if conditions are met
+	wants_to_be_concealed = false  # reset each tick; set true below via probe
 	_ensure_safe_dir(ship, server)
 	_init_flank_identity(ship, server)
 	var ctx = SkillContext.create(ship, target, server, self)
@@ -459,6 +460,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Route around detection zones only when undetected, heading to cover,
 			# and not carrying torpedoes (torpedo CAs push close regardless)
 			wants_stealth = not ship.visible_to_enemy and ship.torpedo_controller == null
+			# Concealment probe: suppress guns when detected + bloom active + enemy
+			# far enough that going dark would drop us off detection.
+			# Only applies for non-torpedo CAs in cover-seeking mode.
+			if ship.torpedo_controller == null:
+				wants_to_be_concealed = _probe_concealment(server)
+			if wants_to_be_concealed:
+				_suppress_guns = true
 
 	# ── Fallback ────────────────────────────────────────────────────────────
 	if intent == null:

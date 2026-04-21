@@ -14,6 +14,8 @@
 
 #include "nav_types.h"
 #include "navigation_map.h"
+#include "waypoint_graph.h"
+#include "dstar_lite.h"
 
 namespace godot {
 
@@ -23,6 +25,7 @@ class ShipNavigator : public RefCounted {
 private:
 	// --- References ---
 	Ref<NavigationMap> map;
+	Ref<WaypointGraph> waypoint_graph_;
 
 	// --- Ship configuration ---
 	ShipParams params;
@@ -44,19 +47,28 @@ private:
 	// --- Bot identity (for staggered replanning) ---
 	int bot_id_;
 
-	// --- Periodic replan ---
-	int replan_frame_counter_;
-	static constexpr int REPLAN_INTERVAL = 20;
-
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
 
+	// --- D* Lite pathfinding state ---
+	DStarLite dstar_;
+	int dstar_start_node_ = -1;     // current nearest waypoint graph node (ship node idx)
+	int dstar_goal_node_ = -1;      // goal nearest waypoint graph node (goal node idx)
+	bool dstar_initialized_ = false;
+	bool dstar_converged_ = false;
+	std::vector<ThreatZone> prev_threats_; // for change detection
+
+
+
+	// Convert D* Lite node path to PathResult with string pulling
+	PathResult build_path_from_dstar() const;
+
 	// --- Pathfinding ---
-	static constexpr bool USE_ASYNC_PATHFINDING = true;   // toggle async vs sync
-	static constexpr int PLAN_ITER_BUDGET = 10000;        // per-frame budget (async only)
-	static constexpr int SYNC_ITER_LIMIT = 50000;         // max iterations (sync only)
+	static constexpr int DSTAR_INIT_BUDGET = 2000;        // per-frame budget during initial convergence
+	static constexpr int DSTAR_REPAIR_BUDGET = 200;       // per-frame budget for incremental repairs
+	static constexpr int DSTAR_SYNC_LIMIT = 50000;        // max iterations for synchronous planning
 
 	enum class DesiredDirection : int {
 		FORWARD = 0,
@@ -65,15 +77,11 @@ private:
 
 	enum class PlanPhase : int {
 		IDLE = 0,
-		FORWARD = 1,
-		FALLBACK = 2,
-		REVERSE = 3,
-		GRID_FALLBACK = 5,
-		DONE = 4,
+		COMPUTING = 1,   // D* Lite initial convergence in progress
+		DONE = 2,        // result ready, accept on next tick
 	};
 
 	PlanPhase plan_phase;
-	PathSearch path_search;
 	PathResult plan_forward_result;
 	float plan_min_clearance;
 	float plan_comfortable_clearance;
@@ -140,6 +148,18 @@ private:
 	// Registered by GDScript when the DD is in SNEAKING state.
 	// These represent enemy ship positions that the pathfinder should route around.
 	std::vector<ThreatZone> threat_zones_;
+
+	// Spatial grid over threat_zones_ — rebuilt once per frame when the list
+	// changes (threat_grid_dirty_ = true after any add/clear call).
+	ThreatGrid threat_grid_;
+	bool       threat_grid_dirty_ = true;
+
+	// Scratch buffer for the per-steering-call threat pre-filter.
+	// Filled by select_best_steering from the grid, holds indices into threat_zones_.
+	std::vector<int>  nearby_threat_indices_;
+	// Per-nearby-threat flag: true when the ship is already inside that threat's
+	// hard_radius.  Switches the scoring from "disqualify-on-enter" to "escape".
+	std::vector<bool> nearby_threat_inside_;
 
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
 	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
@@ -218,37 +238,16 @@ private:
 	void update_emergency(float delta);
 
 	// --- Plan management ---
-	void start_plan();       // begins async search (sets plan_phase)
-	void tick_plan();        // continues async search
-	void run_plan_sync();    // runs full search synchronously
+	void start_plan();       // initializes D* Lite for current goal
+	void tick_plan();        // runs budgeted D* Lite computation
+	void run_plan_sync();    // runs D* Lite synchronously to completion
+
+	// D* Lite incremental repair — handles threat changes + start advancement
+	void dstar_incremental_update();
 
 	// --- Steering output helpers ---
 
 	void set_steering_output(float rudder, int throttle, bool collision);
-
-	// Stamp threat zones onto the path search's threat grid overlay
-	void stamp_threat_grid(PathSearch &search) const;
-
-	// Check if a straight line between two world positions crosses any
-	// threat zone's hard radius.  Used to reject terrain-only LOS shortcuts
-	// when stealth pathfinding is active.
-	bool line_crosses_threat(Vector2 from, Vector2 to) const;
-
-	// Threat-aware line-of-sight check on a stamped threat grid.
-	// Returns true if the line from (x0,z0) to (x1,z1) in NAV-grid coords
-	// does NOT cross any threat cell whose cost >= threshold.
-	// If no threat grid is present, always returns true.
-	static bool threat_line_of_sight(const PathSearch &search,
-									 int x0, int z0, int x1, int z1,
-									 float threshold);
-
-	// When begin_path_search returned immediate=true (terrain LOS shortcut)
-	// but we need a full A* because the straight line crosses a threat zone,
-	// this helper sets up the A* buffers, indices, and open-set seed that
-	// begin_path_search would have done in the non-LOS branch.
-	// After calling this, path_search.active=true and immediate should be
-	// treated as false.
-	void force_astar_search(PathSearch &search) const;
 
 protected:
 	static void _bind_methods();
@@ -260,6 +259,7 @@ public:
 	// --- Setup ---
 
 	void set_map(Ref<NavigationMap> p_map);
+	void set_waypoint_graph(Ref<WaypointGraph> p_graph);
 
 	void set_ship_params(
 		float turning_circle_radius,
@@ -321,6 +321,7 @@ public:
 	// --- Enemy threat avoidance (stealth pathfinding) ---
 	void clear_threat_zones();
 	void add_threat_zone(Vector2 position, float hard_radius, float soft_radius);
+	void add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius);
 
 	// --- Path / trajectory info ---
 
@@ -335,6 +336,8 @@ public:
 
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
+
+	Array get_debug_threat_zones() const;
 
 	// --- Timing (microseconds) ---
 	float get_timing_update_us() const { return timing_update_us; }

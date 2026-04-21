@@ -18,6 +18,7 @@ using namespace godot;
 void ShipNavigator::_bind_methods() {
 	// Setup
 	ClassDB::bind_method(D_METHOD("set_map", "map"), &ShipNavigator::set_map);
+	ClassDB::bind_method(D_METHOD("set_waypoint_graph", "graph"), &ShipNavigator::set_waypoint_graph);
 	ClassDB::bind_method(D_METHOD("set_ship_params",
 		"turning_circle_radius", "rudder_response_time",
 		"acceleration_time", "deceleration_time",
@@ -68,6 +69,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_threat_zones"), &ShipNavigator::clear_threat_zones);
 	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius", "soft_radius"),
 		&ShipNavigator::add_threat_zone);
+	ClassDB::bind_method(D_METHOD("add_threat_zone_ex", "enemy_id", "position", "hard_radius", "soft_radius"),
+		&ShipNavigator::add_threat_zone_ex);
 
 	// Path info
 	ClassDB::bind_method(D_METHOD("get_current_path"), &ShipNavigator::get_current_path);
@@ -82,6 +85,7 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
 	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
+	ClassDB::bind_method(D_METHOD("get_debug_threat_zones"), &ShipNavigator::get_debug_threat_zones);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -123,7 +127,10 @@ ShipNavigator::ShipNavigator() {
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
 	bot_id_ = 0;
-	replan_frame_counter_ = 0;
+	dstar_start_node_ = -1;
+	dstar_goal_node_ = -1;
+	dstar_initialized_ = false;
+	dstar_converged_ = false;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -137,9 +144,15 @@ void ShipNavigator::set_map(Ref<NavigationMap> p_map) {
 	map = p_map;
 }
 
+void ShipNavigator::set_waypoint_graph(Ref<WaypointGraph> p_graph) {
+	waypoint_graph_ = p_graph;
+	dstar_initialized_ = false;
+	dstar_converged_ = false;
+	replan_requested_ = true;
+}
+
 void ShipNavigator::set_bot_id(int id) {
 	bot_id_ = id;
-	replan_frame_counter_ = id % REPLAN_INTERVAL;
 }
 
 int ShipNavigator::get_bot_id() const {
@@ -215,6 +228,9 @@ void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_
 
 	if (position_changed || heading_changed) {
 		replan_requested_ = true;
+		// Goal changed — D* Lite needs full reinitialization
+		dstar_initialized_ = false;
+		dstar_converged_ = false;
 	}
 }
 
@@ -292,315 +308,17 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 
 void ShipNavigator::clear_threat_zones() {
 	threat_zones_.clear();
+	threat_grid_dirty_ = true;
 }
 
 void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius, float soft_radius) {
 	threat_zones_.emplace_back(position, hard_radius, soft_radius);
+	threat_grid_dirty_ = true;
 }
 
-void ShipNavigator::stamp_threat_grid(PathSearch &search) const {
-	if (threat_zones_.empty()) {
-		search.threat_zones.clear();
-		search.threat_cost.clear();
-		search.threat_grid_width = 0;
-		search.threat_grid_height = 0;
-		return;
-	}
-
-	if (map.is_null() || !map->is_built()) {
-		search.threat_zones.clear();
-		search.threat_cost.clear();
-		return;
-	}
-
-	// Copy threat data into the search state
-	search.threat_zones = threat_zones_;
-
-	// Use the nav map's bounds but at halved resolution (100m cells vs 50m)
-	float nav_cell = map->get_cell_size_value();
-	search.threat_cell_size = nav_cell * 2.0f;  // 100m cells
-
-	// Get map bounds from the NavigationMap's grid dimensions
-	// The map's world bounds: min_x..max_x, min_z..max_z
-	// We can compute them from grid_width * cell_size
-	int nav_w = map->get_grid_width();
-	int nav_h = map->get_grid_height();
-
-	// Threat grid dimensions = nav grid / 2 (rounded up)
-	search.threat_grid_width  = (nav_w + 1) / 2;
-	search.threat_grid_height = (nav_h + 1) / 2;
-
-	// The threat grid shares the same world-space origin as the nav grid.
-	// Threat cell [tx, tz] covers nav cells [tx*2, tz*2] through [tx*2+1, tz*2+1].
-	search.threat_min_x = map->get_min_x();
-	search.threat_min_z = map->get_min_z();
-
-	int total_threat_cells = search.threat_grid_width * search.threat_grid_height;
-	search.threat_cost.assign(total_threat_cells, 0.0f);
-
-	// Stamp each threat zone onto the threat grid
-	const float THREAT_WEIGHT = 20.0f;  // Peak cost multiplier at hard boundary
-
-	for (const auto &tz : search.threat_zones) {
-		// Convert threat position to threat grid coordinates
-		float tgx = (tz.position.x - search.threat_min_x) / search.threat_cell_size;
-		float tgz = (tz.position.y - search.threat_min_z) / search.threat_cell_size;
-
-		// Bounding box in threat grid cells
-		float radius_cells = tz.soft_radius / search.threat_cell_size;
-		int min_tx = std::max(0, static_cast<int>(tgx - radius_cells));
-		int max_tx = std::min(search.threat_grid_width - 1, static_cast<int>(tgx + radius_cells));
-		int min_tz = std::max(0, static_cast<int>(tgz - radius_cells));
-		int max_tz = std::min(search.threat_grid_height - 1, static_cast<int>(tgz + radius_cells));
-
-		float hard_sq = tz.hard_radius * tz.hard_radius;
-		float soft_sq = tz.soft_radius * tz.soft_radius;
-
-		for (int tz_idx = min_tz; tz_idx <= max_tz; tz_idx++) {
-			for (int tx = min_tx; tx <= max_tx; tx++) {
-				// World position of this threat cell center
-				float wx = search.threat_min_x + (tx + 0.5f) * search.threat_cell_size;
-				float wz = search.threat_min_z + (tz_idx + 0.5f) * search.threat_cell_size;
-
-				float dx = wx - tz.position.x;
-				float dz = wz - tz.position.y;
-				float dist_sq = dx * dx + dz * dz;
-
-				if (dist_sq >= soft_sq) continue;
-
-				float cost;
-				if (dist_sq <= hard_sq) {
-					// Inside hard radius — maximum penalty
-					cost = THREAT_WEIGHT;
-				} else {
-					// Between hard and soft — quadratic ramp
-					float dist = std::sqrt(dist_sq);
-					float t = (tz.soft_radius - dist) / (tz.soft_radius - tz.hard_radius);
-					cost = THREAT_WEIGHT * t * t;
-				}
-
-				// Accumulate (multiple threats can overlap)
-				int idx = tz_idx * search.threat_grid_width + tx;
-				search.threat_cost[idx] += cost;
-			}
-		}
-	}
-
-	// ================================================================
-	// Pocket-filling flood fill
-	// ================================================================
-	// Threat zones abutting land or other threat zones can create isolated
-	// pockets of low-cost water that the A* can never reach from the ship.
-	// If a destination lands in such a pocket the search exhausts its budget.
-	//
-	// Fix: flood-fill from the ship's position on the threat grid, treating
-	// cells with high threat cost OR non-navigable terrain as walls.  Any
-	// navigable-water cell NOT reached by the fill is in an isolated pocket
-	// and gets stamped with maximum threat cost so that:
-	//   1. The A* won't waste iterations trying to reach it.
-	//   2. The GDScript _adjust_destination_for_threats() (which checks
-	//      against the same soft_radius) will push the destination out.
-
-	const float POCKET_THREAT_THRESHOLD = THREAT_WEIGHT * 0.5f; // 10.0 — cells above this act as walls for flood fill
-	const float POCKET_FILL_COST = THREAT_WEIGHT;               // cost stamped into pocket cells
-
-	// Minimum SDF value for a threat cell to be considered "water".
-	// Use the search clearance so we match what the A* considers passable.
-	// Fall back to a reasonable default if clearance is tiny.
-	float water_sdf_threshold = std::max(search.clearance_world, 1.0f);
-
-	// Convert ship position to threat grid coordinates
-	int ship_tx = static_cast<int>((state.position.x - search.threat_min_x) / search.threat_cell_size);
-	int ship_tz = static_cast<int>((state.position.y - search.threat_min_z) / search.threat_cell_size);
-	ship_tx = std::max(0, std::min(ship_tx, search.threat_grid_width - 1));
-	ship_tz = std::max(0, std::min(ship_tz, search.threat_grid_height - 1));
-
-	// Reusable visited mask (one byte per threat cell)
-	std::vector<uint8_t> visited(total_threat_cells, 0);
-
-	// BFS queue — indices into the threat grid
-	std::queue<int> bfs;
-
-	int start_tidx = ship_tz * search.threat_grid_width + ship_tx;
-	visited[start_tidx] = 1;
-	bfs.push(start_tidx);
-
-	const int fd4x[] = { -1, 1, 0, 0 };
-	const int fd4z[] = { 0, 0, -1, 1 };
-
-	while (!bfs.empty()) {
-		int ci = bfs.front();
-		bfs.pop();
-
-		int cx = ci % search.threat_grid_width;
-		int cz = ci / search.threat_grid_width;
-
-		for (int d = 0; d < 4; d++) {
-			int nx = cx + fd4x[d];
-			int nz = cz + fd4z[d];
-			if (nx < 0 || nx >= search.threat_grid_width ||
-				nz < 0 || nz >= search.threat_grid_height) continue;
-
-			int nidx = nz * search.threat_grid_width + nx;
-			if (visited[nidx]) continue;
-			visited[nidx] = 1;
-
-			// Wall if threat cost is too high
-			if (search.threat_cost[nidx] >= POCKET_THREAT_THRESHOLD) continue;
-
-			// Wall if terrain is not navigable water at this threat cell
-			float wx = search.threat_min_x + (nx + 0.5f) * search.threat_cell_size;
-			float wz_pos = search.threat_min_z + (nz + 0.5f) * search.threat_cell_size;
-			float sdf = map->get_distance(wx, wz_pos);
-			if (sdf < water_sdf_threshold) continue;
-
-			bfs.push(nidx);
-		}
-	}
-
-	// Any navigable-water cell not visited is in an isolated pocket — fill it
-	for (int tz_idx = 0; tz_idx < search.threat_grid_height; tz_idx++) {
-		for (int tx = 0; tx < search.threat_grid_width; tx++) {
-			int idx = tz_idx * search.threat_grid_width + tx;
-			if (visited[idx]) continue;
-			// Only fill cells that are actually water (don't stamp land cells)
-			if (search.threat_cost[idx] >= POCKET_FILL_COST) continue;
-			float wx = search.threat_min_x + (tx + 0.5f) * search.threat_cell_size;
-			float wz_pos = search.threat_min_z + (tz_idx + 0.5f) * search.threat_cell_size;
-			float sdf = map->get_distance(wx, wz_pos);
-			if (sdf < water_sdf_threshold) continue;
-			// This is navigable water trapped in a pocket — fill it
-			search.threat_cost[idx] = POCKET_FILL_COST;
-		}
-	}
-}
-
-// ============================================================================
-// Threat-aware line helpers
-// ============================================================================
-
-bool ShipNavigator::line_crosses_threat(Vector2 from, Vector2 to) const {
-	if (threat_zones_.empty()) return false;
-
-	// Walk the line in fixed steps and check against every threat zone's
-	// hard radius.  Step size = half the smallest hard radius so we never
-	// skip over a zone entirely.
-	float min_hard = std::numeric_limits<float>::max();
-	for (const auto &tz : threat_zones_) {
-		if (tz.hard_radius < min_hard) min_hard = tz.hard_radius;
-	}
-	float step = std::max(min_hard * 0.5f, 50.0f);
-
-	Vector2 diff = to - from;
-	float length = diff.length();
-	if (length < 1.0f) return false;
-
-	Vector2 dir = diff / length;
-	int n_steps = static_cast<int>(length / step) + 1;
-
-	for (int i = 0; i <= n_steps; i++) {
-		float t = std::min(static_cast<float>(i) * step, length);
-		Vector2 pt = from + dir * t;
-
-		for (const auto &tz : threat_zones_) {
-			float dx = pt.x - tz.position.x;
-			float dz = pt.y - tz.position.y;
-			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-bool ShipNavigator::threat_line_of_sight(const PathSearch &search,
-										 int x0, int z0, int x1, int z1,
-										 float threshold) {
-	if (search.threat_cost.empty() || search.threat_grid_width <= 0) {
-		return true;  // no threat grid — always clear
-	}
-
-	// Bresenham walk on the NAV grid; at each step map to the threat grid
-	// and reject if the threat cost meets or exceeds the threshold.
-	int dx = std::abs(x1 - x0);
-	int dz = std::abs(z1 - z0);
-	int sx = (x0 < x1) ? 1 : -1;
-	int sz = (z0 < z1) ? 1 : -1;
-	int cx = x0, cz = z0;
-
-	auto check = [&](int nx, int nz) -> bool {
-		int tx = nx / 2;
-		int tz_t = nz / 2;
-		if (tx < 0 || tx >= search.threat_grid_width ||
-			tz_t < 0 || tz_t >= search.threat_grid_height) return true;
-		return search.threat_cost[tz_t * search.threat_grid_width + tx] < threshold;
-	};
-
-	if (!check(cx, cz)) return false;
-	if (dx == 0 && dz == 0) return true;
-
-	int err = dx - dz;
-	while (!(cx == x1 && cz == z1)) {
-		int e2 = 2 * err;
-		bool step_x = (e2 > -dz) || (e2 == -dz && dx > 0);
-		bool step_z = (e2 < dx)  || (e2 == dx  && dz > 0);
-		if (step_x && step_z) {
-			if (!check(cx + sx, cz)) return false;
-			if (!check(cx, cz + sz)) return false;
-			err -= dz;
-			err += dx;
-			cx += sx;
-			cz += sz;
-		} else if (step_x) {
-			err -= dz;
-			cx += sx;
-		} else {
-			err += dx;
-			cz += sz;
-		}
-		if (!check(cx, cz)) return false;
-	}
-	return true;
-}
-
-void ShipNavigator::force_astar_search(PathSearch &search) const {
-	// Set up the A* state that begin_path_search skipped when it took the
-	// terrain-only LOS shortcut.  sx/sz/ex/ez and from/to/clearance are
-	// already valid from the begin call.
-	int gw = map->get_grid_width();
-	int gh = map->get_grid_height();
-	search.grid_width = gw;
-	search.grid_height = gh;
-	search.cell_size = map->get_cell_size_value();
-	search.turning_radius = 0.0f;
-
-	int total_cells = gw * gh;
-	search.allocate(total_cells);
-	search.current_gen++;
-	if (search.current_gen == 0) {
-		std::fill(search.open_gen.begin(), search.open_gen.end(), 0);
-		std::fill(search.closed_gen.begin(), search.closed_gen.end(), 0);
-		search.current_gen = 1;
-	}
-
-	int si = search.sz * gw + search.sx;
-	int ei = search.ez * gw + search.ex;
-	search.start_idx = si;
-	search.end_idx   = ei;
-
-	search.g_cost[si] = 0.0f;
-	search.open_gen[si] = search.current_gen;
-	float h = std::sqrt(
-		static_cast<float>((search.ex - search.sx) * (search.ex - search.sx) +
-		                   (search.ez - search.sz) * (search.ez - search.sz)));
-	search.open_set.push({h, si});
-	search.parent[si] = si;
-	search.parent_dir[si] = -1;
-
-	search.max_iterations = std::min(total_cells, 300000);
-	search.found = false;
-	search.complete = false;
-	search.active = true;
+void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius) {
+	threat_zones_.emplace_back(enemy_id, position, hard_radius, soft_radius);
+	threat_grid_dirty_ = true;
 }
 
 // ============================================================================
@@ -694,6 +412,20 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 	return result;
 }
 
+Array ShipNavigator::get_debug_threat_zones() const {
+	Array result;
+	for (const auto &tz : threat_zones_) {
+		Dictionary d;
+		d["id"] = tz.id;
+		d["x"] = tz.position.x;
+		d["z"] = tz.position.y;
+		d["hard_radius"] = tz.hard_radius;
+		d["soft_radius"] = tz.soft_radius;
+		result.push_back(d);
+	}
+	return result;
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -752,6 +484,16 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
 
+	// Rebuild threat spatial grid whenever the threat list was modified this frame.
+	if (threat_grid_dirty_) {
+		if (!threat_zones_.empty()) {
+			threat_grid_.build(threat_zones_, ThreatGrid::default_cell_size(threat_zones_));
+		} else {
+			threat_grid_ = ThreatGrid{};
+		}
+		threat_grid_dirty_ = false;
+	}
+
 	// Transition to EMERGENCY if grounded or SDF indicates on land,
 	// but NOT if the ship is already at the destination within tolerance.
 	if (nav_state != NavState::EMERGENCY) {
@@ -797,42 +539,29 @@ void ShipNavigator::update_normal(float delta) {
 		}
 	}
 
-	// --- 1. Path planning (event-driven + periodic refresh) ---
+	// --- 1. D* Lite path planning ---
 	auto plan_t0 = std::chrono::steady_clock::now();
-
-	// Periodic replan every REPLAN_INTERVAL frames, staggered by bot_id
-	replan_frame_counter_++;
-	if (replan_frame_counter_ >= REPLAN_INTERVAL) {
-		replan_frame_counter_ = 0;
-		replan_requested_ = true;
-	}
 
 	timing_replan_reason = 0;
 
-	if constexpr (USE_ASYNC_PATHFINDING) {
-		// Async mode: start_plan + tick_plan across frames
-		if (plan_phase != PlanPhase::IDLE) {
-			timing_replan_reason = 4; // ticking ongoing plan
-		} else if (replan_requested_) {
-			timing_replan_reason = 1;
-		}
+	if (replan_requested_ || !dstar_initialized_) {
+		// Full (re)initialization — goal changed or first frame
+		timing_replan_reason = 1;
+		start_plan();
+		replan_requested_ = false;
+	}
 
-		if (timing_replan_reason == 1 && plan_phase == PlanPhase::IDLE) {
-			start_plan();
-			replan_requested_ = false;
-		}
-
-		if (plan_phase != PlanPhase::IDLE) {
-			tick_plan();
-			if (timing_replan_reason == 0) timing_replan_reason = 4;
-		}
-	} else {
-		// Sync mode: full search in one frame
-		if (replan_requested_) {
-			timing_replan_reason = 1;
-			run_plan_sync();
-			replan_requested_ = false;
-		}
+	if (plan_phase == PlanPhase::COMPUTING) {
+		// Initial convergence or ongoing computation
+		timing_replan_reason = 4;
+		tick_plan();
+	} else if (plan_phase == PlanPhase::DONE) {
+		// Result ready — accept it
+		accept_plan_result(plan_forward_result);
+		plan_phase = PlanPhase::IDLE;
+	} else if (dstar_initialized_ && dstar_converged_) {
+		// Incremental repair — threats may have moved
+		dstar_incremental_update();
 	}
 
 	timing_plan_phase_val = static_cast<int>(plan_phase);
@@ -1223,11 +952,74 @@ void ShipNavigator::update_emergency(float delta) {
 }
 
 // ============================================================================
+// D* Lite path extraction → PathResult with string pulling
+// ============================================================================
+
+PathResult ShipNavigator::build_path_from_dstar() const {
+	PathResult result;
+	result.valid = false;
+	result.total_distance = 0.0f;
+
+	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return result;
+	if (!dstar_.has_path()) return result;
+
+	std::vector<int> node_path = dstar_.extract_path();
+	if (node_path.empty()) return result;
+
+	// Convert node indices to world positions
+	std::vector<Vector2> raw;
+	raw.push_back(state.position); // ship's exact position
+	for (int ni : node_path) {
+		raw.push_back(waypoint_graph_->node_position(ni));
+	}
+	raw.push_back(target.position); // exact destination
+
+	// String pulling: collapse redundant intermediate waypoints via LOS checks
+	float clearance = plan_min_clearance;
+	std::vector<Vector2> pulled;
+	pulled.push_back(raw[0]);
+
+	size_t anchor = 0;
+	while (anchor < raw.size() - 1) {
+		size_t farthest = anchor + 1;
+
+		// Try to skip ahead as far as possible with clear LOS
+		for (size_t test = raw.size() - 1; test > anchor + 1; test--) {
+			if (waypoint_graph_->straight_line_clear(raw[anchor], raw[test],
+													  clearance, threat_zones_)) {
+				farthest = test;
+				break;
+			}
+		}
+
+		pulled.push_back(raw[farthest]);
+		anchor = farthest;
+	}
+
+	// Compute total distance
+	float total = 0.0f;
+	for (size_t i = 1; i < pulled.size(); i++) {
+		total += pulled[i - 1].distance_to(pulled[i]);
+	}
+
+	result.waypoints = pulled;
+	result.flags.resize(pulled.size(), WP_NONE);
+	result.total_distance = total;
+	result.valid = true;
+	return result;
+}
+
+// ============================================================================
 // Plan management (extracted from old update_planning)
 // ============================================================================
 
+// ============================================================================
+// start_plan — initialise D* Lite for the current goal using virtual nodes
+// ============================================================================
+
 void ShipNavigator::start_plan() {
-	if (map.is_null() || !map->is_built()) {
+	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
+		map.is_null() || !map->is_built()) {
 		path_valid = false;
 		plan_phase = PlanPhase::IDLE;
 		return;
@@ -1238,149 +1030,66 @@ void ShipNavigator::start_plan() {
 		plan_min_clearance + params.ship_beam * 0.5f,
 		plan_min_clearance * 2.0f);
 
-	// Begin forward search — simple 8-direction MR A* (no heading awareness)
-	bool immediate = map->begin_path_search(
-		path_search, state.position, target.position,
-		plan_min_clearance, 0.0f);
-
-	// If the terrain-only LOS shortcut fired but the straight line crosses
-	// a threat zone, reject the shortcut and force A* so the path routes
-	// around detection bubbles.
-	if (immediate && !threat_zones_.empty() &&
-		line_crosses_threat(state.position, target.position)) {
-		force_astar_search(path_search);
-		immediate = false;
-	}
-
-	// Stamp enemy threat zones onto the search's threat overlay
-	if (!immediate && path_search.active) {
-		stamp_threat_grid(path_search);
-	}
-
-	if (immediate) {
-		plan_forward_result = path_search.result;
+	// Straight-line pre-check: skip graph entirely if clear
+	if (waypoint_graph_->straight_line_clear(state.position, target.position,
+											  plan_min_clearance, threat_zones_)) {
+		PathResult direct;
+		direct.waypoints.push_back(state.position);
+		direct.waypoints.push_back(target.position);
+		direct.flags.push_back(WP_NONE);
+		direct.flags.push_back(WP_NONE);
+		direct.valid = true;
+		direct.total_distance = state.position.distance_to(target.position);
+		plan_forward_result = direct;
+		dstar_initialized_ = false;
+		dstar_converged_ = false;
 		plan_phase = PlanPhase::DONE;
-	} else if (path_search.active) {
-		plan_phase = PlanPhase::FORWARD;
-	} else {
-		plan_forward_result = PathResult();
-		plan_phase = PlanPhase::FALLBACK;
+		return;
 	}
+
+	// Find nearest graph nodes for start and goal
+	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
+	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
+
+	if (dstar_start_node_ < 0 || dstar_goal_node_ < 0) {
+		plan_forward_result = PathResult();
+		plan_phase = PlanPhase::DONE;
+		return;
+	}
+
+	// O(1) reachability check (virtual nodes inherit component from neighbors)
+	if (!waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
+		plan_forward_result = PathResult();
+		plan_phase = PlanPhase::DONE;
+		return;
+	}
+
+	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
+	dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+					  plan_min_clearance, threat_zones_);
+	prev_threats_ = threat_zones_;
+	dstar_initialized_ = true;
+	dstar_converged_ = false;
+	plan_phase = PlanPhase::COMPUTING;
 }
 
 void ShipNavigator::tick_plan() {
-	// --- FORWARD phase ---
-	if (plan_phase == PlanPhase::FORWARD) {
-		bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
-		if (complete) {
-			plan_forward_result = map->finish_path_search(path_search);
-			if (!plan_forward_result.valid || plan_forward_result.waypoints.empty()) {
-				plan_phase = PlanPhase::FALLBACK;
-			} else {
-				plan_phase = PlanPhase::DONE;
-			}
-		}
-		return;
+	if (plan_phase != PlanPhase::COMPUTING || !dstar_initialized_) return;
+
+	// Run D* Lite with frame budget (larger budget during initial convergence)
+	dstar_converged_ = dstar_.compute_shortest_path(DSTAR_INIT_BUDGET);
+
+	// Try to extract a path
+	plan_forward_result = build_path_from_dstar();
+	if (plan_forward_result.valid || dstar_converged_) {
+		plan_phase = PlanPhase::DONE;
 	}
-
-	// --- FALLBACK phase ---
-	if (plan_phase == PlanPhase::FALLBACK) {
-		if (!path_search.active) {
-			path_search.complete = false;
-			bool immediate = map->begin_path_search(
-				path_search, state.position, target.position,
-				plan_min_clearance * 0.5f, 0.0f);
-			// Reject terrain-only LOS shortcut if it crosses a threat zone
-			if (immediate && !threat_zones_.empty() &&
-				line_crosses_threat(state.position, target.position)) {
-				force_astar_search(path_search);
-				immediate = false;
-			}
-			if (!immediate && path_search.active) {
-				stamp_threat_grid(path_search);
-			}
-			if (immediate) {
-				plan_forward_result = path_search.result;
-				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
-					plan_phase = PlanPhase::DONE;
-				} else {
-					plan_phase = PlanPhase::GRID_FALLBACK;
-				}
-				return;
-			} else if (!path_search.active) {
-				plan_forward_result = PathResult();
-				plan_phase = PlanPhase::GRID_FALLBACK;
-				return;
-			}
-		}
-
-		if (path_search.active) {
-			bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
-			if (complete) {
-				plan_forward_result = map->finish_path_search(path_search);
-				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
-					plan_phase = PlanPhase::DONE;
-				} else {
-					plan_phase = PlanPhase::GRID_FALLBACK;
-				}
-			}
-		}
-		return;
-	}
-
-	// --- GRID_FALLBACK phase ---
-	if (plan_phase == PlanPhase::GRID_FALLBACK) {
-		if (!path_search.active) {
-			path_search.complete = false;
-			float grid_fb_clearance = map->get_cell_size_value() * 0.5f;
-			bool immediate = map->begin_path_search(
-				path_search, state.position, target.position,
-				grid_fb_clearance, 0.0f);
-			// Reject terrain-only LOS shortcut if it crosses a threat zone
-			if (immediate && !threat_zones_.empty() &&
-				line_crosses_threat(state.position, target.position)) {
-				force_astar_search(path_search);
-				immediate = false;
-			}
-			if (!immediate && path_search.active) {
-				stamp_threat_grid(path_search);
-			}
-			if (immediate) {
-				plan_forward_result = path_search.result;
-				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
-					map->post_process_path_clearance(plan_forward_result, plan_min_clearance);
-				}
-				plan_phase = PlanPhase::DONE;
-				return;
-			} else if (!path_search.active) {
-				plan_forward_result = PathResult();
-				plan_phase = PlanPhase::DONE;
-				return;
-			}
-		}
-
-		if (path_search.active) {
-			bool complete = map->continue_path_search(path_search, PLAN_ITER_BUDGET);
-			if (complete) {
-				plan_forward_result = map->finish_path_search(path_search);
-				if (plan_forward_result.valid && !plan_forward_result.waypoints.empty()) {
-					map->post_process_path_clearance(plan_forward_result, plan_min_clearance);
-				}
-				plan_phase = PlanPhase::DONE;
-			}
-		}
-		return;
-	}
-
-	// --- DONE phase ---
-	if (plan_phase == PlanPhase::DONE) {
-		accept_plan_result(plan_forward_result);
-		plan_phase = PlanPhase::IDLE;
-	}
+	// else: not converged yet, keep ticking next frame
 }
 
 void ShipNavigator::run_plan_sync() {
-	if (map.is_null() || !map->is_built()) {
+	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
+		map.is_null() || !map->is_built()) {
 		path_valid = false;
 		return;
 	}
@@ -1390,72 +1099,88 @@ void ShipNavigator::run_plan_sync() {
 		plan_min_clearance + params.ship_beam * 0.5f,
 		plan_min_clearance * 2.0f);
 
-	// Phase 1: Full clearance search
-	bool immediate = map->begin_path_search(
-		path_search, state.position, target.position,
-		plan_min_clearance, 0.0f);
-
-	// Reject terrain-only LOS shortcut if it crosses a threat zone
-	if (immediate && !threat_zones_.empty() &&
-		line_crosses_threat(state.position, target.position)) {
-		force_astar_search(path_search);
-		immediate = false;
+	// Straight-line pre-check
+	if (waypoint_graph_->straight_line_clear(state.position, target.position,
+											  plan_min_clearance, threat_zones_)) {
+		PathResult direct;
+		direct.waypoints.push_back(state.position);
+		direct.waypoints.push_back(target.position);
+		direct.flags.push_back(WP_NONE);
+		direct.flags.push_back(WP_NONE);
+		direct.valid = true;
+		direct.total_distance = state.position.distance_to(target.position);
+		accept_plan_result(direct);
+		plan_phase = PlanPhase::IDLE;
+		return;
 	}
 
-	if (!immediate && path_search.active) {
-		stamp_threat_grid(path_search);
-		map->continue_path_search(path_search, SYNC_ITER_LIMIT);
-	}
+	// Find nearest graph nodes for start and goal
+	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
+	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
 
-	PathResult result;
-	if (path_search.complete && path_search.found) {
-		result = map->finish_path_search(path_search);
-	}
+	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
+		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
+		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+						  plan_min_clearance, threat_zones_);
+		prev_threats_ = threat_zones_;
+		dstar_initialized_ = true;
+		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
 
-	// Phase 2: Reduced clearance fallback
-	if (!result.valid || result.waypoints.empty()) {
-		immediate = map->begin_path_search(
-			path_search, state.position, target.position,
-			plan_min_clearance * 0.5f, 0.0f);
-		if (immediate && !threat_zones_.empty() &&
-			line_crosses_threat(state.position, target.position)) {
-			force_astar_search(path_search);
-			immediate = false;
-		}
-		if (!immediate && path_search.active) {
-			stamp_threat_grid(path_search);
-			map->continue_path_search(path_search, SYNC_ITER_LIMIT);
-		}
-		if (path_search.complete && path_search.found) {
-			result = map->finish_path_search(path_search);
+		PathResult result = build_path_from_dstar();
+		if (result.valid) {
+			accept_plan_result(result);
+			plan_phase = PlanPhase::IDLE;
+			return;
 		}
 	}
 
-	// Phase 3: Minimum clearance (grid cell) fallback
-	if (!result.valid || result.waypoints.empty()) {
-		float grid_fb_clearance = map->get_cell_size_value() * 0.5f;
-		immediate = map->begin_path_search(
-			path_search, state.position, target.position,
-			grid_fb_clearance, 0.0f);
-		if (immediate && !threat_zones_.empty() &&
-			line_crosses_threat(state.position, target.position)) {
-			force_astar_search(path_search);
-			immediate = false;
-		}
-		if (!immediate && path_search.active) {
-			stamp_threat_grid(path_search);
-			map->continue_path_search(path_search, SYNC_ITER_LIMIT);
-		}
-		if (path_search.complete && path_search.found) {
-			result = map->finish_path_search(path_search);
-			if (result.valid && !result.waypoints.empty()) {
-				map->post_process_path_clearance(result, plan_min_clearance);
+	// No path found
+	path_valid = false;
+	dstar_initialized_ = false;
+	plan_phase = PlanPhase::IDLE;
+}
+
+// ============================================================================
+// D* Lite incremental repair — runs every frame when path is active
+// ============================================================================
+
+void ShipNavigator::dstar_incremental_update() {
+	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
+
+	// 1. Detect threat changes and update node blocking
+	bool threats_changed = false;
+	if (threat_zones_.size() != prev_threats_.size()) {
+		threats_changed = true;
+	} else {
+		for (size_t i = 0; i < threat_zones_.size(); i++) {
+			if (threat_zones_[i].position.distance_squared_to(prev_threats_[i].position) > 100.0f ||
+				std::abs(threat_zones_[i].hard_radius - prev_threats_[i].hard_radius) > 1.0f) {
+				threats_changed = true;
+				break;
 			}
 		}
 	}
 
-	accept_plan_result(result);
-	plan_phase = PlanPhase::IDLE;
+	if (threats_changed) {
+		dstar_.update_threats(threat_zones_);
+		prev_threats_ = threat_zones_;
+	}
+
+	// 2. Update start node if ship has moved to a different nearest node
+	int new_start = waypoint_graph_->find_nearest_node(state.position);
+	if (new_start >= 0 && new_start != dstar_start_node_) {
+		dstar_start_node_ = new_start;
+		dstar_.advance_start(new_start);
+	}
+
+	// 3. Run repair with small budget
+	dstar_.compute_shortest_path(DSTAR_REPAIR_BUDGET);
+
+	// 4. Re-extract path (may have changed due to repairs)
+	PathResult result = build_path_from_dstar();
+	if (result.valid) {
+		accept_plan_result(result);
+	}
 }
 
 // ============================================================================
@@ -1663,6 +1388,30 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	float soft_clearance = get_soft_clearance();
 	float lookahead = get_lookahead_distance();
 
+	// --- Threat zone pre-filter (spatial grid) ---
+	// Build nearby_threat_indices_ once per steering call so the hot
+	// arc-scoring loops iterate only over threats that could touch the arc.
+	// query_region returns duplicates when a threat spans multiple cells;
+	// sort+unique collapses them.
+	nearby_threat_indices_.clear();
+	threat_grid_.query_region(state.position, lookahead, nearby_threat_indices_);
+	std::sort(nearby_threat_indices_.begin(), nearby_threat_indices_.end());
+	nearby_threat_indices_.erase(
+		std::unique(nearby_threat_indices_.begin(), nearby_threat_indices_.end()),
+		nearby_threat_indices_.end());
+
+	// Per-nearby-threat "already inside" flag.
+	// When true, that threat switches from "disqualify-on-enter" to "escape" mode:
+	// arcs are not blanket-disqualified (which hands control to the terrain-only
+	// fallback), and instead a depth-weighted penalty guides arcs outward.
+	nearby_threat_inside_.assign(nearby_threat_indices_.size(), false);
+	for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+		const auto &tz = threat_zones_[nearby_threat_indices_[k]];
+		nearby_threat_inside_[k] =
+			state.position.distance_squared_to(tz.position) <
+			tz.hard_radius * tz.hard_radius;
+	}
+
 	// --- Adaptive clearance: halve when already inside the clearance zone ---
 	// If the ship is already closer to terrain than hard_clearance, insisting
 	// on full clearance causes oscillation: the ship drives forward into the
@@ -1703,7 +1452,17 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 	bool shells_safe = incoming_shells_.empty();
 
-	if (terrain_safe && obstacles_safe && shells_safe) {
+	bool threat_zones_safe = true;
+	for (int ti : nearby_threat_indices_) {
+		const auto &tz = threat_zones_[ti];
+		float dist = state.position.distance_to(tz.position);
+		if (dist < tz.soft_radius + lookahead) {
+			threat_zones_safe = false;
+			break;
+		}
+	}
+
+	if (terrain_safe && obstacles_safe && shells_safe && threat_zones_safe) {
 		// Cache a debug arc for visualization even on the fast path.
 		float fast_path_lookahead = params.turning_circle_radius * 1.5f;
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
@@ -1819,6 +1578,26 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		}
 		if (terrain_blocked) continue;
 
+		// --- (a2) Threat zone hard-radius: disqualify arcs that enter the hard radius ---
+		// Exception: threats the ship is already inside use escape-penalty mode
+		// (nearby_threat_inside_[k] == true).  Disqualifying all arcs for those would
+		// trigger the terrain-only fallback, causing the ship to steer into the threat.
+		bool threat_blocked = false;
+		for (const auto &pt : arc) {
+			if (arrival_time >= 0.0f && pt.time > arrival_time) break;
+			for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+				if (nearby_threat_inside_[k]) continue; // already inside — escape via penalty
+				const auto &tz = threat_zones_[nearby_threat_indices_[k]];
+				float dist = pt.position.distance_to(tz.position);
+				if (dist < tz.hard_radius) {
+					threat_blocked = true;
+					break;
+				}
+			}
+			if (threat_blocked) break;
+		}
+		if (threat_blocked) continue;
+
 		// --- (b) Alignment time / arrival time ---
 		// If the arc physically reached the waypoint before aligning, use
 		// the arrival time directly (travel_time = 0).  Otherwise use the
@@ -1869,6 +1648,35 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				total_time *= 2.0f;
 				any_collision = true;
 			}
+		}
+
+		// --- (d) Threat zone soft-radius penalty ---
+		// Normal mode:  ramp from 0 at soft_radius boundary to 2 s at hard_radius.
+		// Escape mode (already inside hard_radius): depth-proportional penalty up to
+		// 4 s per sample, incentivising arcs that move outward rather than lingering
+		// or going deeper.  No blanket disqualification so the scorer can rank
+		// "escape left" vs "escape right" instead of collapsing to the fallback.
+		{
+			float tz_penalty = 0.0f;
+			for (const auto &pt : arc) {
+				if (arrival_time >= 0.0f && pt.time > arrival_time) break;
+				for (int k = 0; k < (int)nearby_threat_indices_.size(); ++k) {
+					const auto &tz = threat_zones_[nearby_threat_indices_[k]];
+					float dist = pt.position.distance_to(tz.position);
+					if (nearby_threat_inside_[k]) {
+						// Escape mode: penalise arcs that stay inside or go deeper.
+						if (dist < tz.hard_radius) {
+							float depth_frac = 1.0f - (dist / tz.hard_radius);
+							tz_penalty += depth_frac * 4.0f;
+						}
+					} else if (dist < tz.soft_radius && tz.soft_radius > tz.hard_radius) {
+						float penetration = 1.0f - (dist - tz.hard_radius) / (tz.soft_radius - tz.hard_radius);
+						penetration = std::max(0.0f, std::min(1.0f, penetration));
+						tz_penalty += penetration * 2.0f;  // 2 s penalty per fully-penetrated sample
+					}
+				}
+			}
+			total_time += tz_penalty;
 		}
 
 		// --- Shell & torpedo threat penalty ---
@@ -2053,16 +1861,23 @@ void ShipNavigator::accept_plan_result(const PathResult &forward_result) {
 			}
 		}
 	} else {
-		// Path planning failed — use direct line to destination as fallback
-		current_path = PathResult();
-		current_path.waypoints.push_back(state.position);
-		current_path.waypoints.push_back(target.position);
-		current_path.flags.push_back(WP_NONE);
-		current_path.flags.push_back(WP_NONE);
-		current_path.valid = true;
-		current_path.total_distance = state.position.distance_to(target.position);
-		path_valid = true;
-		current_wp_index = 1;
+		// Path planning came back invalid (no route found or D* Lite not yet
+		// converged to a solution).  Prefer keeping the previous path — the
+		// ship can continue following a stale-but-valid route while the search
+		// retries next frame.  Only fall back to the direct destination line
+		// when there is no prior path at all (e.g. very first navigation call).
+		if (!path_valid || current_path.waypoints.empty()) {
+			current_path = PathResult();
+			current_path.waypoints.push_back(state.position);
+			current_path.waypoints.push_back(target.position);
+			current_path.flags.push_back(WP_NONE);
+			current_path.flags.push_back(WP_NONE);
+			current_path.valid = true;
+			current_path.total_distance = state.position.distance_to(target.position);
+			path_valid = true;
+			current_wp_index = 1;
+		}
+		// else: keep current_path and path_valid unchanged
 	}
 }
 

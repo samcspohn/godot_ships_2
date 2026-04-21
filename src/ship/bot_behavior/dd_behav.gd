@@ -22,7 +22,6 @@ var closest_enemy: Ship
 var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
 var _skill_torpedo_run: SkillTorpedoRun = SkillTorpedoRun.new()
-var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_kite: SkillKite = SkillKite.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
@@ -64,6 +63,14 @@ func get_hunting_params() -> Dictionary:
 		approach_multiplier = 0.8,      # DDs hunt aggressively
 		cautious_hp_threshold = 0.3,
 	}
+
+func get_concealment_radius_multiplier() -> float:
+	## DDs increase detection-avoidance circle by up to 50% as HP drops,
+	## so they route farther around enemies when damaged rather than retreating.
+	if _ship == null:
+		return 1.0
+	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+	return lerp(1.5, 1.0, hp_ratio)
 
 func _roll_flank_depth() -> float:
 	return randf_range(0.4, 0.9)
@@ -262,6 +269,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; set true below if undetected
+	wants_to_be_concealed = false  # reset each tick; set true below via probe
 	var ctx = SkillContext.create(ship, target, server, self)
 	_init_flank_identity(ship, server)
 
@@ -280,17 +288,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_hunt.execute(ctx, {})
 		_active_skill_name = &"Hunt"
 
-	# ── 2. Critical HP → retreat, fallback kite ───────────────────────────────
-	elif hp_ratio < 0.3:
-		intent = _skill_retreat.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"Retreat"
-		else:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
-			if intent:
-				_active_skill_name = &"Kite"
-
-	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
+	# ── 2. Target is a DD → kite + broadside post-process, fallback hunt ──────
 	elif target != null and target.ship_class == Ship.ShipClass.DD:
 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.5, "angle_to_threat_deg": 20.0})
 		if intent:
@@ -300,7 +298,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_hunt.execute(ctx, {})
 			_active_skill_name = &"Hunt"
 
-	# ── 4. No torpedo controller → spot, fallback hunt ───────────────────────
+	# ── 3. No torpedo controller → spot, fallback hunt ───────────────────────
 	elif ship.torpedo_controller == null:
 		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
 		_active_skill_name = &"Spot"
@@ -308,7 +306,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_hunt.execute(ctx, {})
 			_active_skill_name = &"Hunt"
 
-	# ── 5. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
+	# ── 4. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
 	elif _get_max_torp_reload() >= 1.0 and target != null and target.ship_class != Ship.ShipClass.DD:
 		intent = _skill_torpedo_run.execute(ctx, {})
 		if intent:
@@ -321,7 +319,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				intent = _skill_hunt.execute(ctx, {})
 				_active_skill_name = &"Hunt"
 
-	# ── 6. Reloading → spot, fallback hunt ───────────────────────────────────
+	# ── 5. Reloading → spot, fallback hunt ───────────────────────────────────
 	else:
 		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
 		_active_skill_name = &"Spot"
@@ -337,6 +335,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# DDs always want stealth routing when undetected — both spotting runs and
 	# torpedo approaches rely on staying outside enemy detection zones in transit
 	wants_stealth = not ship.visible_to_enemy
+
+	# Concealment probe: suppress guns when detected + bloom active + enemy
+	# is far enough away that going dark would actually drop us off detection.
+	# DDs should always try to go dark when the opportunity exists.
+	wants_to_be_concealed = _probe_concealment(server)
 
 	# Post-process spread (skip for Retreat and Kite)
 	if _active_skill_name != &"Retreat" and _active_skill_name != &"Kite":
@@ -380,38 +383,6 @@ func _intent_sail_forward(ship: Ship) -> NavIntent:
 	return NavIntent.create(dest, atan2(fwd.x, fwd.z))
 
 
-func _get_retreat_intent(ship: Ship, enemy: Array[Ship], friendly: Array[Ship], concealment_radius: float, hp_ratio: float, separation: Vector3, server: GameServer) -> NavIntent:
-	"""Calculate retreat position when spotted. Returns POSE intent with retreat heading."""
-	closest_enemy = enemy[0]
-	var closest_enemy_dist = (closest_enemy.global_position - ship.global_position).length()
-	for s in enemy:
-		var dist = (s.global_position - ship.global_position).length()
-		if dist < closest_enemy_dist:
-			closest_enemy = s
-			closest_enemy_dist = dist
-
-	var retreat_dir = (ship.global_position - closest_enemy.global_position).normalized()
-	var desired_position = ship.global_position + retreat_dir * concealment_radius * 2.0
-
-	# Only bias toward team if below 50% HP
-	if hp_ratio < 0.5:
-		var nearest_friendly_pos = Vector3.ZERO
-		if server:
-			var nearest_cluster = server.get_nearest_friendly_cluster(ship.global_position, ship.team.team_id)
-			if nearest_cluster.size() > 0:
-				nearest_friendly_pos = nearest_cluster.center
-			else:
-				nearest_friendly_pos = server.get_team_avg_position(ship.team.team_id)
-		else:
-			for s in friendly:
-				nearest_friendly_pos += s.global_position
-			nearest_friendly_pos /= friendly.size()
-		desired_position = desired_position * 0.8 + nearest_friendly_pos * 0.2
-
-	desired_position += separation * 500.0
-	desired_position = _get_valid_nav_point(desired_position)
-	var retreat_heading = _calc_approach_heading(ship, desired_position)
-	return NavIntent.create(desired_position, retreat_heading)
 
 
 func _get_torpedo_run_intent(ship: Ship, target: Ship, concealment_radius: float, separation: Vector3) -> NavIntent:

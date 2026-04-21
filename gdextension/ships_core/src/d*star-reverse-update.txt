@@ -1,0 +1,278 @@
+Godot Ships 2 — D* Lite Forward Search Update Plan
+====================================================
+Updating from: backward D* Lite (goal→ship) with 8 proxy nodes per threat
+Updating to:   forward D* Lite (ship→goal) with smooth goal node + escape edge
+
+
+OVERVIEW OF CHANGES
+-------------------
+Three separable changes, each independently testable:
+
+  1. Reverse search direction (ship→goal instead of goal→ship)
+  2. Replace fixed destination with a moving goal node
+  3. Add escape edge handling for invalid start positions
+
+Existing proxy node ring (8 nodes per threat) is unchanged.
+Existing edge cost function (SDF + detection circle march) is unchanged.
+Existing graph structure is unchanged.
+
+Do them in order. Validate each before proceeding.
+
+
+CHANGE 1: REVERSE SEARCH DIRECTION
+------------------------------------
+Currently:
+  - Search initializes at goal (g=0, rhs=0)
+  - g values represent cost from each node TO goal
+  - km accumulates as ship advances waypoints
+
+After:
+  - Search initializes at ship position node (g=0, rhs=0)
+  - g values represent cost from ship TO each node
+  - km accumulates as goal node advances (role reversal)
+
+Code changes:
+
+  a) Initialization
+     Before: initialize goal node with g=0, rhs=0
+     After:  initialize ship node with g=0, rhs=0
+             all other nodes g=INF, rhs=INF
+
+  b) rhs computation
+     Before: rhs(s) = min over successors  of (edge_cost(s,n) + g(n))
+     After:  rhs(s) = min over predecessors of (edge_cost(p,s) + g(p))
+     Note: if graph edges are undirected this is the same operation,
+           just confirm your adjacency list is symmetric.
+
+  c) Path extraction
+     Before: trace predecessor pointers from start toward goal
+     After:  trace successor pointers from goal toward ship
+             (or store explicit next-hop pointers during search,
+              whichever matches your current extraction method)
+
+  d) km accumulator
+     Before: km += h(last_ship_pos, current_ship_pos) on waypoint advance
+     After:  km += h(last_goal_pos, current_goal_pos) on goal node advance
+
+  e) Heuristic direction
+     Before: h(s) = estimated distance from s to ship (start)
+     After:  h(s) = estimated distance from s to goal
+     Euclidean distance is symmetric so the function body is identical,
+     just confirm which node you are passing as the reference point.
+
+  f) compute_shortest_path termination condition
+     Before: terminates when ship's start node is locally consistent
+     After:  terminates when goal node is locally consistent
+
+Validation:
+  - Static map, fixed ship, fixed destination
+  - Path produced should be identical to backward search
+  - Run both versions on several test cases and diff the waypoint lists
+
+
+CHANGE 2: MOVING GOAL NODE
+----------------------------
+Currently:
+  - Destination is a fixed node wired into the graph at query time
+  - Goal change requires full reinitialize
+
+After:
+  - Goal node is a persistent node, always in the graph
+  - Goal node has its own mini-path toward the desired destination
+  - Goal node advances along that path each frame
+  - D* Lite sees only edge cost updates, never a goal change
+
+New struct:
+
+  GoalNode {
+    Vec2              pos
+    Vec2              desired_destination
+    vector<Vec2>      path_to_destination
+    int               path_index
+    float             speed              // tunable, suggest 1.5x ship speed
+    vector<int>       current_neighbors  // graph nodes within max_edge_dist
+  }
+
+New functions:
+
+  on_desired_destination_changed(Vec2 desired):
+    resolved = snap_to_valid(desired)
+    goal_node.desired_destination = resolved
+    goal_node.path_to_destination = astar(graph, goal_node.pos, resolved)
+    goal_node.path_index = 0
+    // does NOT reinitialize D* Lite
+
+  goal_node_tick(float dt):
+    if path empty: return
+    next = path_to_destination[path_index]
+    step = goal_node.speed * dt
+    if distance(goal_node.pos, next) <= step:
+      goal_node.pos = next
+      path_index++
+    else:
+      goal_node.pos += normalize(next - goal_node.pos) * step
+    rewire_goal_node()
+
+  rewire_goal_node():
+    new_neighbors = spatial_index.nodes_within(goal_node.pos, max_edge_dist)
+
+    // Edges that no longer exist → INF
+    for N in old_neighbors but not new_neighbors:
+      set edge_cost(goal_node, N) = INF
+      dstar.update_vertex(N)
+
+    // New edges → finite cost if valid
+    for N in new_neighbors but not old_neighbors:
+      cost = recompute_edge_cost(goal_node.pos, graph.node_pos[N])
+      add_edge(goal_node, N, cost)
+      dstar.update_vertex(N)
+
+    // Existing edges → update cost if changed
+    for N in both:
+      new_cost = recompute_edge_cost(goal_node.pos, graph.node_pos[N])
+      if new_cost != cached_cost(goal_node, N):
+        dstar.update_vertex(N)
+
+    goal_node.current_neighbors = new_neighbors
+
+    // km update — goal node is now the "moving end"
+    km += h(old_goal_pos, goal_node.pos)
+
+Snap pipeline (needed for on_desired_destination_changed):
+
+  snap_to_valid(Vec2 pos) → Vec2:
+    for pass in 0..8:
+      if sdf.sample(pos) < ship_radius:
+        pos = snap_from_terrain(pos)     // follow SDF gradient
+      for each threat T with rating > 3.5:
+        if distance(pos, T.pos) < T.concealment_radius:
+          pos = snap_from_circle(pos, T) // push to circle boundary + margin
+      if is_valid(pos): return pos
+    // fallback — always valid by construction
+    return graph.spatial_index.nearest_navigable_node(pos).pos
+
+  snap_from_terrain(Vec2 pos) → Vec2:
+    p = pos
+    for i in 0..32:
+      d = sdf.sample(p)
+      if d >= ship_radius: return p
+      p += sdf.gradient(p) * (ship_radius - d + margin)
+    return graph.spatial_index.nearest_navigable_node(pos).pos
+
+  snap_from_circle(Vec2 pos, Ship T) → Vec2:
+    dir = normalize(pos - T.pos)
+    if length too small: dir = Vec2(1, 0)
+    boundary = T.pos + dir * (T.concealment_radius + margin)
+    if sdf.sample(boundary) < ship_radius:
+      return snap_from_terrain(boundary)
+    return boundary
+
+Validation:
+  - Slowly move desired destination a few meters per frame
+  - Confirm D* Lite performs only edge cost updates, no reinitializes
+  - Confirm goal node path is smooth and stays in valid space
+  - Move desired destination to opposite side of map
+  - Confirm goal node traverses correctly, ship follows
+
+
+CHANGE 3: ESCAPE EDGE FOR INVALID START
+-----------------------------------------
+Currently:
+  - Ship node assumed to always be in valid space
+  - Behavior undefined if ship enters detection zone
+
+After:
+  - Ship start node wired normally when valid
+  - When invalid, a single escape edge connects ship to nearest
+    valid graph node, search propagates from there
+
+This is evaluated every time the ship node position updates.
+
+  rewire_ship_node():
+    if is_valid(ship.pos):
+      // Normal wiring — connect to all neighbors within max_edge_dist
+      wire_normally(ship_node, ship.pos)
+      return
+
+    // Ship is in invalid space — find escape
+    int escape = spatial_index.nearest_navigable_node(ship.pos)
+    float escape_cost = distance(ship.pos, graph.node_pos[escape])
+
+    // Single escape edge, ignores invalidity of the space crossed
+    // Ship is already there — cost is just the distance out
+    clear_all_edges(ship_node)
+    add_edge(ship_node, escape, escape_cost)
+    dstar.update_vertex(escape)
+
+Key point: the escape edge does NOT validate against detection circles
+or SDF. The ship is physically present in that space regardless. The
+cost is real (distance to exit) but the edge is always added.
+
+Validation:
+  - Place ship inside a detection circle
+  - Confirm search produces a path out rather than failing
+  - Confirm escape edge cost is reflected in path cost
+  - Move ship back to valid space, confirm normal wiring resumes
+  - Test ship inside both terrain overlap and detection circle simultaneously
+
+
+FRAME BUDGET AND ORDERING
+---------------------------
+Each frame, operations run in this order:
+
+  1. goal_node_tick(dt)
+       → moves goal node, calls rewire_goal_node()
+       → feeds update_vertex calls into D* Lite queue
+
+  2. on_enemy_ships_moved()
+       → for each enemy that moved significantly:
+           recompute incident edge costs on proxy ring nodes
+           feed update_vertex calls into D* Lite queue
+
+  3. rewire_ship_node()
+       → update ship start node position and edges
+       → feed update_vertex calls into D* Lite queue
+
+  4. dstar.compute_shortest_path(max_iterations: 500)
+       → drains queue up to budget
+       → partial update is fine — ship follows stale path for 1-2 frames
+
+  5. extract_path()
+       → trace from goal node back to ship node via successor pointers
+       → string pull
+       → update ship waypoints
+
+All update_vertex calls from steps 1-3 accumulate in the queue before
+compute_shortest_path runs. This batches the repair work efficiently.
+
+
+WHAT DOES NOT CHANGE
+---------------------
+  - Waypoint graph construction (SDF Poisson disk + densification)
+  - 8 proxy node ring per threat ship
+  - Edge cost function (SDF march + detection circle check)
+  - Spatial index (KD-tree over node positions)
+  - String pulling on raw path output
+  - Straight-line pre-check before touching graph
+  - Per-ship-class edge cost evaluation
+
+
+OPEN QUESTIONS
+--------------
+  - Goal node speed tuning: start at 1.5x ship speed, adjust until
+    pursuit behavior feels responsive without causing D* Lite to
+    process large repairs every frame.
+
+  - Escape edge and proxy nodes: if the ship is inside its own proxy
+    ring (inside a detection zone it created), the escape edge should
+    target a node outside that ring. The nearest_navigable_node call
+    handles this automatically since proxy ring nodes inside the circle
+    are invalid too — confirm spatial index excludes invalid nodes
+    from nearest-neighbor queries.
+
+  - Goal node path replanning: if the goal node's own path to the
+    desired destination becomes blocked mid-traverse (a new detection
+    circle closes the route), the goal node needs to replan its
+    mini-path. Add a periodic validity check on the next waypoint
+    in goal_node.path_to_destination and trigger astar replan if
+    the next edge is now invalid.
