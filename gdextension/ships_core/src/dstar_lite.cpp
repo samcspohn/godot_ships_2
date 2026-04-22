@@ -39,13 +39,15 @@ void DStarLite::remove_open(int s) {
 
 void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 						   float ship_radius,
-						   const std::vector<ThreatZone>& threat_zones) {
+						   const std::vector<ThreatZone>& threat_zones,
+						   const ThreatGrid* threat_grid) {
 	graph_ = graph;
 	start_ = start;
 	goal_ = goal;
 	km_ = 0.0f;
 	ship_radius_ = ship_radius;
 	threat_zones_ = threat_zones;
+	threat_grid_ = threat_grid;
 
 	int n = graph_->node_count();
 
@@ -75,18 +77,39 @@ void DStarLite::update_vertex(int u) {
 			return;
 		}
 
-		// Threat zone (detection circle) blocking — unchanged.
+		// Threat zone (detection circle) blocking — grid-accelerated.
+		// The grid buckets threats by hard_radius, so candidates returned by
+		// query_point(pos) are the only zones whose bbox covers pos. We still
+		// do the exact distance check per candidate.
 		if (!threat_zones_.empty()) {
 			Vector2 pos = graph_->node_position(u);
-			for (const auto& tz : threat_zones_) {
-				float dx = pos.x - tz.position.x;
-				float dz = pos.y - tz.position.y;
-				if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
-					rhs_[u] = INF;
-					remove_open(u);
-					if (g_[u] != rhs_[u]) insert_open(u);
-					return;
+			bool blocked = false;
+			if (threat_grid_ && !threat_grid_->empty()) {
+				const auto& candidates = threat_grid_->query_point(pos);
+				for (int ti : candidates) {
+					const auto& tz = threat_zones_[ti];
+					float dx = pos.x - tz.position.x;
+					float dz = pos.y - tz.position.y;
+					if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
+						blocked = true;
+						break;
+					}
 				}
+			} else {
+				for (const auto& tz : threat_zones_) {
+					float dx = pos.x - tz.position.x;
+					float dz = pos.y - tz.position.y;
+					if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
+						blocked = true;
+						break;
+					}
+				}
+			}
+			if (blocked) {
+				rhs_[u] = INF;
+				remove_open(u);
+				if (g_[u] != rhs_[u]) insert_open(u);
+				return;
 			}
 		}
 	}
@@ -163,17 +186,20 @@ bool DStarLite::compute_shortest_path(int max_iterations) {
 	return (iters < max_iterations);
 }
 
-void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones) {
+void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones,
+							   const ThreatGrid* new_grid) {
 	if (!graph_) return;
 
-	std::vector<ThreatZone> old_zones = threat_zones_;
+	std::vector<ThreatZone> old_zones = std::move(threat_zones_);
 	threat_zones_ = new_zones;
+	threat_grid_ = new_grid;
 
-	// Mark nodes that may have changed blocking status:
-	// those inside or near old zone circles (might be unblocked now)
-	// and those inside or near new zone circles (might be newly blocked).
+	// Candidate set: every node inside the hard_radius of any old or new zone.
+	// Per-zone get_edges_near queries the graph's own spatial grid — one call
+	// per zone, bounded by the zone's own radius (tight).  The navigator
+	// rebuilds its threat grid in-place before calling us, so we only have
+	// a ThreatGrid snapshot for the NEW zone set, not the old one.
 	std::vector<bool> affected(graph_->node_count(), false);
-
 	auto mark_zone = [&](const ThreatZone& tz) {
 		auto near = graph_->get_edges_near(tz.position, tz.hard_radius);
 		for (const auto& [a, b] : near) {
@@ -181,14 +207,48 @@ void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones) {
 			affected[b] = true;
 		}
 	};
-
 	for (const auto& tz : old_zones) mark_zone(tz);
 	for (const auto& tz : new_zones) mark_zone(tz);
 
-	for (int i = 0; i < graph_->node_count(); i++) {
-		if (affected[i] && graph_->node_active(i)) {
-			update_vertex(i);
+	// Narrow: only nodes whose blocking state actually flipped need
+	// update_vertex. Most ticks have small zone movements with no flips, so
+	// this skips the bulk of work.
+	// - was_blocked: linear over old_zones (no snapshot grid).
+	// - is_blocked_now: grid->query_point → O(1) bucket of candidate zones
+	//   followed by exact distance checks. Same pattern as update_vertex.
+	auto was_blocked = [&](Vector2 pos) -> bool {
+		for (const auto& tz : old_zones) {
+			float dx = pos.x - tz.position.x;
+			float dz = pos.y - tz.position.y;
+			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) return true;
 		}
+		return false;
+	};
+	auto is_blocked_now = [&](Vector2 pos) -> bool {
+		if (new_zones.empty()) return false;
+		if (threat_grid_ && !threat_grid_->empty()) {
+			const auto& cands = threat_grid_->query_point(pos);
+			for (int ti : cands) {
+				const auto& tz = new_zones[ti];
+				float dx = pos.x - tz.position.x;
+				float dz = pos.y - tz.position.y;
+				if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) return true;
+			}
+			return false;
+		}
+		for (const auto& tz : new_zones) {
+			float dx = pos.x - tz.position.x;
+			float dz = pos.y - tz.position.y;
+			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) return true;
+		}
+		return false;
+	};
+
+	for (int i = 0; i < graph_->node_count(); i++) {
+		if (!affected[i] || !graph_->node_active(i)) continue;
+		Vector2 pos = graph_->node_position(i);
+		if (was_blocked(pos) == is_blocked_now(pos)) continue;
+		update_vertex(i);
 	}
 }
 

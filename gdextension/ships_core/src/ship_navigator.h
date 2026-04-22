@@ -157,6 +157,14 @@ private:
 	// to detect changes and trigger D* Lite repairs.
 	std::vector<ThreatZone> prev_threat_zones_;
 
+	// Spatial acceleration grid over threat_zones_. Rebuilt lazily when
+	// threat_zones_ mutates (clear_threat_zones / add_threat_zone_ex).
+	// D* Lite holds a non-owning pointer into this while path is live.
+	ThreatGrid threat_grid_;
+	bool threat_grid_dirty_ = false;
+
+	void rebuild_threat_grid_if_dirty();
+
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
 	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
@@ -316,8 +324,8 @@ public:
 
 	// --- Enemy threat avoidance (stealth pathfinding) ---
 	void clear_threat_zones();
-	void add_threat_zone(Vector2 position, float hard_radius, float soft_radius);
-	void add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius);
+	void add_threat_zone(Vector2 position, float hard_radius);
+	void add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius);
 
 	// --- Path / trajectory info ---
 

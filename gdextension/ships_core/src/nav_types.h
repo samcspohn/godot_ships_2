@@ -290,26 +290,24 @@ inline float throttle_to_speed_fraction(int throttle) {
 struct ThreatZone {
     int id;                // enemy ship ID (for proxy-ring matching; -1 = unidentified)
     Vector2 position;      // world XZ position of the enemy ship
-    float hard_radius;     // inner radius — very high cost (our concealment radius)
-    float soft_radius;     // outer radius — cost ramps from 0 at soft to max at hard
+    float hard_radius;     // detection/blocking radius (querying ship's concealment + buffer)
 
-    ThreatZone() : id(-1), position(Vector2()), hard_radius(0.0f), soft_radius(0.0f) {}
-    ThreatZone(Vector2 p_pos, float p_hard, float p_soft)
-        : id(-1), position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
-    ThreatZone(int p_id, Vector2 p_pos, float p_hard, float p_soft)
-        : id(p_id), position(p_pos), hard_radius(p_hard), soft_radius(p_soft) {}
+    ThreatZone() : id(-1), position(Vector2()), hard_radius(0.0f) {}
+    ThreatZone(Vector2 p_pos, float p_hard)
+        : id(-1), position(p_pos), hard_radius(p_hard) {}
+    ThreatZone(int p_id, Vector2 p_pos, float p_hard)
+        : id(p_id), position(p_pos), hard_radius(p_hard) {}
 };
 
 // ============================================================================
 // Spatial acceleration grid for ThreatZone queries.
 //
-// Threats register into every cell whose bounding box their soft_radius circle
-// overlaps.  This makes both hard_radius (blocking) and soft_radius (penalty)
-// queries conservative-but-correct: the caller always performs an exact
-// distance check on the returned candidates.
+// Threats register into every cell whose hard_radius bounding box overlaps.
+// Callers must still perform an exact distance check on returned candidates.
 //
-// Cell size should be approximately the concealment (hard) radius.
-// With uniform radii each circle spans at most a 3x3 patch of cells.
+// Cell size is set to the largest hard_radius in the set, so every circle
+// spans at most a 3x3 patch of cells (tight bbox: 2r wide → 2 cells → +1
+// for the center cell's partial coverage = 3 cells along each axis).
 // ============================================================================
 struct ThreatGrid {
 	std::vector<std::vector<int>> cells; // flat [gz * w + gx] -> threat indices
@@ -336,13 +334,13 @@ struct ThreatGrid {
 
 		cell_size = p_cell_size;
 
-		// Tight bounding box of all soft-radius circles
+		// Tight bounding box of all hard-radius circles
 		float mn_x =  std::numeric_limits<float>::infinity();
 		float mn_z =  std::numeric_limits<float>::infinity();
 		float mx_x = -std::numeric_limits<float>::infinity();
 		float mx_z = -std::numeric_limits<float>::infinity();
 		for (const auto& tz : threats) {
-			float r = tz.soft_radius;
+			float r = tz.hard_radius;
 			mn_x = std::min(mn_x, tz.position.x - r);
 			mn_z = std::min(mn_z, tz.position.y - r); // Vector2.y == world-Z
 			mx_x = std::max(mx_x, tz.position.x + r);
@@ -355,10 +353,10 @@ struct ThreatGrid {
 		grid_h   = (int)std::ceil((mx_z - mn_z) / cell_size) + 1;
 		cells.assign((size_t)grid_w * grid_h, {});
 
-		// Register each threat in all cells its soft_radius bounding box overlaps
+		// Register each threat in all cells its hard_radius bounding box overlaps
 		for (int ti = 0; ti < (int)threats.size(); ++ti) {
 			const auto& tz = threats[ti];
-			float r  = tz.soft_radius;
+			float r  = tz.hard_radius;
 			int cx0  = std::max(0,          cx(tz.position.x - r));
 			int cz0  = std::max(0,          cz(tz.position.y - r));
 			int cx1  = std::min(grid_w - 1, cx(tz.position.x + r));

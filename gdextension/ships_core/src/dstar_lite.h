@@ -65,8 +65,11 @@ private:
 	// Ship parameters for edge cost computation
 	float ship_radius_ = 25.0f;
 
-	// Current threat list (per-ship concealment zones, plain circles)
+	// Current threat list (per-ship concealment zones, plain circles).
+	// Paired with threat_grid_ for fast per-node blocking queries; the grid
+	// is a non-owning pointer into ShipNavigator (which keeps them in sync).
 	std::vector<ThreatZone> threat_zones_;
+	const ThreatGrid* threat_grid_ = nullptr;
 
 	// --- Internal methods ---
 
@@ -88,9 +91,13 @@ public:
 	// --- Initialization ---
 
 	// Set up for a new path query. Computes all edge costs and runs initial search.
+	// |threat_grid| must point at a grid built from |threat_zones| (or be null when
+	// the zone list is empty). The pointer is held non-owning for the lifetime of
+	// this search; the caller must keep both alive until the next initialize().
 	void initialize(const WaypointGraph* graph, int start, int goal,
 					float ship_radius,
-					const std::vector<ThreatZone>& threat_zones);
+					const std::vector<ThreatZone>& threat_zones,
+					const ThreatGrid* threat_grid);
 
 	// --- Core search ---
 
@@ -101,8 +108,10 @@ public:
 	// --- Incremental updates ---
 
 	// Call when threat zones change. Recomputes affected node blocking
-	// and marks dirty nodes for repair.
-	void update_threats(const std::vector<ThreatZone>& new_zones);
+	// and marks dirty nodes for repair. |new_grid| is the grid rebuilt over
+	// |new_zones|; both pointers are held non-owning.
+	void update_threats(const std::vector<ThreatZone>& new_zones,
+						const ThreatGrid* new_grid);
 
 	// Call when proxy node positions have changed. Recomputes costs
 	// for the specified edges.

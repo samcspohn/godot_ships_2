@@ -67,9 +67,9 @@ void ShipNavigator::_bind_methods() {
 
 	// Enemy threat avoidance (stealth pathfinding)
 	ClassDB::bind_method(D_METHOD("clear_threat_zones"), &ShipNavigator::clear_threat_zones);
-	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius", "soft_radius"),
+	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius"),
 		&ShipNavigator::add_threat_zone);
-	ClassDB::bind_method(D_METHOD("add_threat_zone_ex", "enemy_id", "position", "hard_radius", "soft_radius"),
+	ClassDB::bind_method(D_METHOD("add_threat_zone_ex", "enemy_id", "position", "hard_radius"),
 		&ShipNavigator::add_threat_zone_ex);
 
 	// Path info
@@ -308,14 +308,23 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 
 void ShipNavigator::clear_threat_zones() {
 	threat_zones_.clear();
+	threat_grid_dirty_ = true;
 }
 
-void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius, float soft_radius) {
-	add_threat_zone_ex(-1, position, hard_radius, soft_radius);
+void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius) {
+	add_threat_zone_ex(-1, position, hard_radius);
 }
 
-void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius) {
-	threat_zones_.emplace_back(enemy_id, position, hard_radius, soft_radius);
+void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius) {
+	threat_zones_.emplace_back(enemy_id, position, hard_radius);
+	threat_grid_dirty_ = true;
+}
+
+void ShipNavigator::rebuild_threat_grid_if_dirty() {
+	if (!threat_grid_dirty_) return;
+	float cs = ThreatGrid::default_cell_size(threat_zones_);
+	threat_grid_.build(threat_zones_, cs);
+	threat_grid_dirty_ = false;
 }
 
 // ============================================================================
@@ -417,7 +426,6 @@ Array ShipNavigator::get_debug_threat_zones() const {
 		d["x"]           = tz.position.x;
 		d["z"]           = tz.position.y;
 		d["hard_radius"] = tz.hard_radius;
-		d["soft_radius"] = tz.soft_radius;
 		result.push_back(d);
 	}
 	return result;
@@ -1052,8 +1060,9 @@ void ShipNavigator::start_plan() {
 	}
 
 	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
+	rebuild_threat_grid_if_dirty();
 	dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-					  plan_min_clearance, threat_zones_);
+					  plan_min_clearance, threat_zones_, &threat_grid_);
 	prev_threat_zones_ = threat_zones_;
 	dstar_initialized_ = true;
 	dstar_converged_ = false;
@@ -1107,8 +1116,9 @@ void ShipNavigator::run_plan_sync() {
 
 	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
 		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
+		rebuild_threat_grid_if_dirty();
 		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, threat_zones_);
+						  plan_min_clearance, threat_zones_, &threat_grid_);
 		prev_threat_zones_ = threat_zones_;
 		dstar_initialized_ = true;
 		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
@@ -1149,7 +1159,8 @@ void ShipNavigator::dstar_incremental_update() {
 	}
 
 	if (threats_changed) {
-		dstar_.update_threats(threat_zones_);
+		rebuild_threat_grid_if_dirty();
+		dstar_.update_threats(threat_zones_, &threat_grid_);
 		prev_threat_zones_ = threat_zones_;
 	}
 
