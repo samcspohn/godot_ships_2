@@ -164,9 +164,9 @@ func get_evasion_params() -> Dictionary:
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	"""Weight for threat calculation based on enemy ship class."""
 	match ship_class:
-		Ship.ShipClass.BB: return 1.5
+		Ship.ShipClass.BB: return 1.0
 		Ship.ShipClass.CA: return 1.0
-		Ship.ShipClass.DD: return 0.5
+		Ship.ShipClass.DD: return 1.0
 	return 1.0
 
 func get_concealment_radius_multiplier() -> float:
@@ -209,6 +209,7 @@ func can_fire_guns() -> bool:
 	## Each ship class gates firing in its own engage_target override.
 	return true
 
+var last_probe_pos = Vector3.ZERO
 func _probe_concealment(server: GameServer) -> bool:
 	## Returns true when the ship should suppress gun fire to let bloom decay
 	## and attempt to re-enter concealment.
@@ -219,8 +220,6 @@ func _probe_concealment(server: GameServer) -> bool:
 	##   3. The nearest enemy is BEYOND the ship's base (no-bloom) concealment
 	##      radius, meaning if we stop firing the bloom can decay and we would
 	##      eventually drop off detection.
-	##   4. No enemy is closer than 60 % of our base concealment radius
-	##      (if they're nearly on top of us, going dark doesn't help).
 	if not _ship.visible_to_enemy:
 		return false
 
@@ -244,12 +243,19 @@ func _probe_concealment(server: GameServer) -> bool:
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
 		var d = enemy.global_position.distance_to(_ship.global_position)
-		if d < nearest_dist:
+		var los = _is_los_blocked_with_clearance(_ship.global_position, enemy.global_position)
+		if d < nearest_dist and los == false:
 			nearest_dist = d
 
-	# If any enemy is closer than 60 % of base concealment, going dark won't help
-	if nearest_dist < base_radius * 0.6:
+	if nearest_dist < base_radius:
 		return false
+
+	if last_probe_pos.distance_to(_ship.global_position) > 1000.0 and concealment_node.bloom_value > 0.0:
+		return true
+	elif last_probe_pos.distance_to(_ship.global_position) > 1000.0 and concealment_node.bloom_value <= 0.0:
+		last_probe_pos = _ship.global_position
+		return false
+
 
 	# If nearest enemy is already beyond base detection radius we can go dark
 	return nearest_dist > base_radius
@@ -1481,7 +1487,7 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 		return cw
 	return ccw
 
-func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = false, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
+func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = true, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
 	"""Find the best island cover position given a desired engagement range and
 	a primary target.  Scores each island by distance-to-travel + deviation from
 	desired_range to the nearest enemy cluster.
@@ -1640,12 +1646,11 @@ func get_desired_position(_friendly: Array[Ship], enemy: Array[Ship], target: Sh
 
 func get_threat_score(server: GameServer) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
-	## Each spotted enemy within its own gun range contributes weighted range
-	## pressure, scaled by get_threat_class_weight() so class matchups matter
-	## (e.g. BBs weigh heavily against CAs, DDs weigh heavily against BBs).
-	## Multiple enemies in range compound additively.
-	## Low own HP amplifies the result up to 2×.
-	## 5 threat-weight units ≈ maximum threat (clamp at 1.0).
+	## Each spotted enemy within its own gun range contributes a per-enemy threat
+	## via an asymptotic function (1 − e^−x), so threat approaches 1 as the raw
+	## pressure increases but never exceeds it. Raw pressure is
+	##   enemy_hp / my_hp × range_pressure × class_w
+	## Multiple enemies compound multiplicatively via raw_threat *= (1 − this_threat).
 	## Subclasses override get_threat_class_weight() to tune per-class fear.
 	var my_hp  = _ship.health_controller.current_hp
 	var max_hp = _ship.health_controller.max_hp
@@ -1653,30 +1658,43 @@ func get_threat_score(server: GameServer) -> float:
 	var hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
 
 	var spotted = server.get_valid_targets(_ship.team.team_id)
-	if spotted.is_empty():
+	var unspotted = server.get_unspotted_enemies(_ship.team.team_id)
+	var enemies = spotted + unspotted.keys()
+	if enemies.is_empty():
 		# No visible enemies — only own HP loss contributes a small residual threat
 		return hp_pressure * 0.3
 
-	var raw_threat: float = 0.0
-	for enemy in spotted:
+	var raw_threat: float = 1.0
+	for enemy in enemies:
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
 		var dist        = enemy.global_position.distance_to(_ship.global_position)
 		var enemy_range = enemy.artillery_controller.get_params()._range
+		var enemy_hp    = enemy.health_controller.current_hp
 		# Only count enemies whose guns can plausibly reach us
-		if enemy_range <= 0.0 or dist > enemy_range * 1.1:
+		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
 		var range_pressure = clampf(1.0 - (dist / enemy_range), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
-		raw_threat += range_pressure * class_w
+		# raw_threat *= (1.0 - range_pressure * class_w)
+		# Asymptotic: approaches 1 as raw pressure increases, never exceeds it.
+		# 1 − e^(−x): x=0 → 0.0, x=1 → 0.63, x=2 → 0.86, x→∞ → 1.0
+		var raw_val = enemy_hp / my_hp * range_pressure * class_w
+		var this_threat = 1.0 - exp(-raw_val)
+		if not enemy.visible_to_enemy:
+			this_threat *= 0.1  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
+		raw_threat *= (1.0 - this_threat)
 
-	# Low HP amplifies perceived threat so damaged ships play more defensively
-	raw_threat *= lerpf(1.0, 2.0, hp_pressure)
+	# # Low HP amplifies perceived threat so damaged ships play more defensively
+	# raw_threat *= lerpf(1.0, 2.0, hp_pressure)
 
-	# Normalize: 5 threat-weight units ≈ maximum threat
-	return clampf(raw_threat / 5.0, 0.0, 1.0)
+	# # Normalize: 5 threat-weight units ≈ maximum threat
+	# return clampf(raw_threat / 5.0, 0.0, 1.0)
+	# raw_threat *= hp_ratio
+	return clampf(1 - raw_threat, 0.0, 1.0)
+
 
 var original_dest = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:

@@ -8,6 +8,7 @@
 
 #include "nav_types.h"
 
+
 namespace godot {
 
 class WaypointGraph;
@@ -41,6 +42,8 @@ private:
 	// Graph reference (not owned)
 	const WaypointGraph* graph_ = nullptr;
 
+
+
 	// Per-node state
 	// g_[s]   = current best known cost from s TO goal
 	// rhs_[s] = one-step lookahead value (min over successors)
@@ -62,8 +65,8 @@ private:
 	// Ship parameters for edge cost computation
 	float ship_radius_ = 25.0f;
 
-	// Current threat list (per-ship concealment zones)
-	std::vector<ThreatZone> threats_;
+	// Current threat list (per-ship concealment zones, plain circles)
+	std::vector<ThreatZone> threat_zones_;
 
 	// Cached edge costs -- mirrors graph adjacency structure.
 	// edge_costs_[node][neighbor_order] = current cost of that edge.
@@ -76,11 +79,6 @@ private:
 	// --- Edge cache validity tracking ---
 	const WaypointGraph* cache_graph_      = nullptr;
 	float                cache_ship_radius_ = -1.0f;
-
-	// --- Threat spatial grid ---
-	// Rebuilt whenever threats_ changes.  Used in update_vertex for O(1)
-	// node-blocking lookups instead of iterating the full threats_ list.
-	ThreatGrid threat_grid_;
 
 	// --- Internal methods ---
 
@@ -110,7 +108,8 @@ public:
 
 	// Set up for a new path query. Computes all edge costs and runs initial search.
 	void initialize(const WaypointGraph* graph, int start, int goal,
-					float ship_radius, const std::vector<ThreatZone>& threats);
+					float ship_radius,
+					const std::vector<ThreatZone>& threat_zones);
 
 	// --- Core search ---
 
@@ -120,9 +119,9 @@ public:
 
 	// --- Incremental updates ---
 
-	// Call when threat zones change. Recomputes affected edge costs
+	// Call when threat zones change. Recomputes affected node blocking
 	// and marks dirty nodes for repair.
-	void update_threats(const std::vector<ThreatZone>& new_threats);
+	void update_threats(const std::vector<ThreatZone>& new_zones);
 
 	// Call when proxy node positions have changed. Recomputes costs
 	// for the specified edges.
@@ -151,7 +150,7 @@ public:
 	bool is_initialized() const { return graph_ != nullptr && goal_ >= 0; }
 	int get_start() const { return start_; }
 	int get_goal() const { return goal_; }
-	const std::vector<ThreatZone>& get_threats() const { return threats_; }
+	const std::vector<ThreatZone>& get_threat_zones() const { return threat_zones_; }
 };
 
 } // namespace godot

@@ -20,7 +20,7 @@ var _spotted_stamp_ms: int = 0
 const SPOTTED_STAMP_DURATION_MS: int = 60000
 
 
-func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
+func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
 	var ship = ctx.ship
 	var target = ctx.target
 	var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)

@@ -30,6 +30,7 @@ class NavigationMap : public RefCounted {
 private:
 	// --- SDF Grid ---
 	std::vector<float> sdf_grid;  // Signed distance values; positive = water, negative = land
+	std::vector<float> height_grid;  // Max terrain height per cell; 0.0f = water
 	int grid_width;
 	int grid_height;
 	float cell_size;
@@ -118,24 +119,25 @@ private:
 
 	// Bilinear interpolation of SDF at fractional grid coordinates
 	float sample_bilinear(float gx, float gz) const;
+	float sample_height_bilinear(float gx, float gz) const;
 
 	// --- SDF construction internals ---
 
 	// Rasterize a triangle onto the binary land/water grid
 	void rasterize_triangle(const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
-							std::vector<bool> &land_mask);
+							std::vector<bool> &land_mask, std::vector<float> &height_grid);
 
 	// Rasterize a box shape onto the land mask
 	void rasterize_box(const Vector3 &center, const Vector3 &half_extents,
-					   const Transform3D &transform, std::vector<bool> &land_mask);
+					   const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid);
 
 	// Rasterize a sphere shape onto the land mask
 	void rasterize_sphere(const Vector3 &center, float radius,
-						  const Transform3D &transform, std::vector<bool> &land_mask);
+						  const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid);
 
 	// Rasterize a cylinder shape onto the land mask
 	void rasterize_cylinder(const Vector3 &center, float radius, float height,
-							const Transform3D &transform, std::vector<bool> &land_mask);
+							const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid);
 
 	// Compute exact signed distances from a binary land mask using jump flood algorithm
 	void compute_sdf_from_mask(const std::vector<bool> &land_mask);
@@ -412,6 +414,14 @@ public:
 
 	// Get raw SDF data as a flat float array (row-major, for heatmap visualization)
 	PackedFloat32Array get_sdf_data() const;
+
+	// Get raw height data as a flat float array (row-major, max terrain Y per cell; 0.0f = water)
+	PackedFloat32Array get_height_data() const;
+
+	// Get terrain height at a world XZ position via bilinear interpolation
+	float get_terrain_height(float x, float z) const;
+
+
 
 	// Get grid dimensions
 	int get_grid_width() const;

@@ -346,47 +346,44 @@ static func sim_can_shoot_over_terrain_static(
 	shell_params: ShellParams,
 	ship: Ship
 ) -> ShootOver:
-	flight_time = min(flight_time, 100)
-	var shell_sim_position: Vector3 = pos
 	var space_state = Engine.get_main_loop().get_root().get_world_3d().direct_space_state
-	var ray = PhysicsRayQueryParameters3D.new()
-	ray.collide_with_bodies = true
-	ray.collision_mask = 1 | (1 << 1) | (1 << 3) # Collide with terrain | armor | water
-	var t = 0.5
-	while t < flight_time + 0.5:
-		ray.from = shell_sim_position
-		ray.to = ProjectilePhysicsWithDragV2.calculate_position_at_time(
-			pos,
-			launch_vector,
-			t,
-			shell_params,
-		)
-		var result = space_state.intersect_ray(ray)
-		if not result.is_empty():
-			if result.has("collider") and result["collider"] is ArmorPart:
-				var armor_part: ArmorPart = result["collider"] as ArmorPart
-				if armor_part.ship.team.team_id != ship.team.team_id:
-					return ShootOver.new(true, true)
-				elif armor_part.ship == ship:
-					# Hitting own ship, add to exclude and recast
-					var exclude = ray.exclude
-					exclude.append(armor_part.get_rid())
-					ray.exclude = exclude
-					continue
-				elif armor_part.ship.team.team_id == ship.team.team_id:
-					return ShootOver.new(true, false)
-					# return false # dont hit friendly ships
-				# var armor_part: ArmorPart = result["collider"] as ArmorPart
-				# if armor_part.ship.team.team_id != ship.team.team_id:
-				# 	return true
-				# elif armor_part.ship.team.team_id == ship.team.team_id:
-				# 	return false # dont hit friendly ships
-				# elif armor_part.ship == ship:
-				# 	# Hitting own ship, ignore
-				# 	pass
-			elif result["position"].y > 0.00001: # Hit terrain
-				return ShootOver.new(false, true)
 
-		shell_sim_position = ray.to
-		t += 0.5
+	# Exclude own ship's OBB from the broadphase ray so we don't block on ourselves.
+	var exclude_rids: Array = []
+	if PrecisionPhysicsWorld != null:
+		var entry: Dictionary = PrecisionPhysicsWorld.get_ship_entry(ship)
+		if not entry.is_empty():
+			exclude_rids.append(entry["obb_body"].get_rid())
+
+	# Delegate the heavy loop to C++:
+	#   - Terrain: zero-cost height-grid lookup via NavigationMap (no physics queries)
+	#   - Ships:   single segment ray per step against OBB broadphase layer (1 << 4)
+	var result: Dictionary = ProjectilePhysicsWithDragV2.sim_can_shoot_over_terrain(
+		pos,
+		launch_vector,
+		flight_time,
+		shell_params,
+		NavigationMapManager.get_map(),
+		space_state,
+		exclude_rids
+	)
+
+	# Terrain blocked the shot.
+	if result["terrain_blocked"]:
+		return ShootOver.new(false, true)
+
+	# An OBB was hit — resolve team identity in GDScript.
+	if result["obb_hit"]:
+		var collider = result["obb_collider"]
+		if collider != null and PrecisionPhysicsWorld != null:
+			var hit_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(collider)
+			if hit_ship != null:
+				if hit_ship.team.team_id != ship.team.team_id:
+					# Enemy ship is in the flight path — firing is allowed.
+					return ShootOver.new(true, true)
+				else:
+					# Friendly ship is in the flight path — do not fire.
+					return ShootOver.new(true, false)
+
+	# Nothing blocked the trajectory.
 	return ShootOver.new(true, true)

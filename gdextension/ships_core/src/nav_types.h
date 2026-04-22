@@ -400,6 +400,8 @@ private:
 	int cz(float wz) const { return (int)std::floor((wz - origin_z) / cell_size); }
 };
 
+
+
 // Resumable A* search state — one per ship for async pathfinding.
 // Buffers are allocated once (matching grid size) and reused via generation counters.
 struct PathSearch {
@@ -446,9 +448,6 @@ struct PathSearch {
     float threat_min_x = 0.0f;
     float threat_min_z = 0.0f;
 
-    // Source threat data (copied from navigator at search start)
-    std::vector<ThreatZone> threat_zones;
-
     PathSearch() = default;
 
     void allocate(int total_cells) {
@@ -470,7 +469,6 @@ struct PathSearch {
         active = false;
         complete = false;
         result = PathResult();
-        threat_zones.clear();
         // Note: threat_cost is not cleared here — it's rebuilt per-search by stamp_threats()
     }
 };

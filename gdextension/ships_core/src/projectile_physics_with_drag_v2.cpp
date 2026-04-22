@@ -32,6 +32,10 @@ void ProjectilePhysicsWithDragV2::_bind_methods() {
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_absolute_max_range", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_absolute_max_range);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_max_range_from_angle", "angle", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_max_range_from_angle);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_angle_from_max_range", "max_range", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_angle_from_max_range);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2",
+		D_METHOD("sim_can_shoot_over_terrain", "start_pos", "launch_vector", "flight_time",
+				 "shell_params", "nav_map", "space_state", "exclude_rids"),
+		&ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain);
 }
 
 ProjectilePhysicsWithDragV2::ProjectilePhysicsWithDragV2() {
@@ -771,6 +775,86 @@ double ProjectilePhysicsWithDragV2::calculate_angle_from_max_range(double max_ra
 	}
 
 	return (min_angle + max_angle) / 2.0;
+}
+
+Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
+		const Vector3 &start_pos,
+		const Vector3 &launch_vector,
+		double flight_time,
+		const Ref<Resource> &shell_params,
+		const Ref<NavigationMap> &nav_map,
+		PhysicsDirectSpaceState3D *space_state,
+		const Array &exclude_rids) {
+
+	Dictionary result;
+	result["terrain_blocked"] = false;
+	result["obb_hit"] = false;
+	result["obb_collider"] = Variant();
+	result["obb_position"] = Vector3();
+
+	double clamped_time = std::min(flight_time, 100.0);
+
+	// Build the OBB ray query once (reused across steps)
+	Ref<PhysicsRayQueryParameters3D> obb_ray;
+	if (space_state != nullptr) {
+		obb_ray.instantiate();
+		obb_ray->set_collide_with_bodies(true);
+		obb_ray->set_collide_with_areas(false);
+		obb_ray->set_hit_back_faces(true);
+		obb_ray->set_hit_from_inside(true);   // shells may start inside large OBBs
+		obb_ray->set_collision_mask(1 << 4);  // OBB_COLLISION_LAYER
+
+		// Convert the generic Array of RIDs to TypedArray<RID>
+		TypedArray<RID> exclude_typed;
+		for (int i = 0; i < exclude_rids.size(); i++) {
+			exclude_typed.append(exclude_rids[i]);
+		}
+		obb_ray->set_exclude(exclude_typed);
+	}
+
+	Vector3 prev_pos = start_pos;
+	double t = 0.5;
+
+	while (t <= clamped_time + 0.5) {
+		Vector3 curr_pos = calculate_position_at_time(start_pos, launch_vector, t, shell_params);
+
+		// ----------------------------------------------------------------
+		// Terrain check --- zero physics queries, pure height grid lookup
+		// ----------------------------------------------------------------
+		if (nav_map.is_valid() && nav_map->is_built()) {
+			float sdf_dist = nav_map->get_distance((float)curr_pos.x, (float)curr_pos.z);
+			// Only sample the height grid when near land (SDF < 200 m).
+			// Water cells have height 0, so the y <= terrain_h check would
+			// never trigger there anyway -- this is just an early-out for perf.
+			if (sdf_dist < 200.0f) {
+				float terrain_h = nav_map->get_terrain_height((float)curr_pos.x, (float)curr_pos.z);
+				if (terrain_h > 0.001f && (float)curr_pos.y <= terrain_h) {
+					result["terrain_blocked"] = true;
+					return result;
+				}
+			}
+		}
+
+		// ----------------------------------------------------------------
+		// OBB broadphase check --- one segment ray per step
+		// ----------------------------------------------------------------
+		if (space_state != nullptr && obb_ray.is_valid()) {
+			obb_ray->set_from(prev_pos);
+			obb_ray->set_to(curr_pos);
+			Dictionary hit = space_state->intersect_ray(obb_ray);
+			if (!hit.is_empty()) {
+				result["obb_hit"] = true;
+				result["obb_collider"] = hit["collider"];
+				result["obb_position"] = hit["position"];
+				return result;
+			}
+		}
+
+		prev_pos = curr_pos;
+		t += 0.5;
+	}
+
+	return result;
 }
 
 } // namespace godot

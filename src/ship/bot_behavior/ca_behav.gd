@@ -60,8 +60,8 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 2.5
-		Ship.ShipClass.CA: return 1.2
+		Ship.ShipClass.BB: return 1.0
+		Ship.ShipClass.CA: return 1.0
 		Ship.ShipClass.DD: return 0.5
 	return 1.0
 
@@ -456,7 +456,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_cover.execute(ctx, cover_params, true)
 			if intent != null:
 				_active_skill_name = &"FindCover"
-			_suppress_guns = not _skill_cover.is_complete(ctx)
+			# _suppress_guns = not _skill_cover.is_complete(ctx)
 			# Route around detection zones only when undetected, heading to cover,
 			# and not carrying torpedoes (torpedo CAs push close regardless)
 			wants_stealth = not ship.visible_to_enemy and ship.torpedo_controller == null
@@ -468,6 +468,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if wants_to_be_concealed:
 				_suppress_guns = true
 
+	_suppress_guns = false
 	# ── Fallback ────────────────────────────────────────────────────────────
 	if intent == null:
 		intent = _skill_angle.execute(ctx, {})

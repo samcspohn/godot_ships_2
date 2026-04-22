@@ -7,11 +7,17 @@
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/classes/physics_direct_space_state3d.hpp>
+#include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/variant/rid.hpp>
+#include "navigation_map.h"
 
 namespace godot {
 
 /// Analytical ballistics with quadratic drag.
-/// Supports angles from -π/2 to π/2 (downward to upward, forward only).
+/// Supports angles from -PI/2 to PI/2 (downward to upward, forward only).
 /// All methods are static and take ShellParams as an argument.
 class ProjectilePhysicsWithDragV2 : public RefCounted {
 	GDCLASS(ProjectilePhysicsWithDragV2, RefCounted)
@@ -108,7 +114,7 @@ public:
 	/// Calculate launch vector to lead a moving target with drag effects
 	/// @param start_pos Starting position
 	/// @param target_pos Current target position
-	/// @param target_velocity Target's velocity vector
+	/// @param target_velocity Target velocity vector
 	/// @param shell_params Resource with speed, drag, vt, tau properties
 	/// @return Array [launch_vector, time_to_target, predicted_target_position] or [null, -1, null] if no solution
 	static Array calculate_leading_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
@@ -138,6 +144,25 @@ public:
 	/// @param shell_params Resource with speed, drag, vt, tau properties
 	/// @return Required launch angle in radians
 	static double calculate_angle_from_max_range(double max_range, const Ref<Resource> &shell_params);
+
+	/// Simulate trajectory clearance over terrain and ships.
+	/// @param start_pos    Muzzle position
+	/// @param launch_vector Initial velocity vector
+	/// @param flight_time  Expected time of flight (capped to 100s)
+	/// @param shell_params ShellParams resource
+	/// @param nav_map      NavigationMap for terrain height lookup (may be null)
+	/// @param space_state  PhysicsDirectSpaceState3D for OBB raycasting (may be null)
+	/// @param exclude_rids Array of RIDs to exclude from OBB ray (e.g. own ship's OBB)
+	/// @return Dictionary { terrain_blocked: bool, obb_hit: bool, obb_collider: Object, obb_position: Vector3 }
+	static Dictionary sim_can_shoot_over_terrain(
+		const Vector3 &start_pos,
+		const Vector3 &launch_vector,
+		double flight_time,
+		const Ref<Resource> &shell_params,
+		const Ref<NavigationMap> &nav_map,
+		PhysicsDirectSpaceState3D *space_state,
+		const Array &exclude_rids
+	);
 
 private:
 	//==========================================================================

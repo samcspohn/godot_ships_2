@@ -560,8 +560,7 @@ std::vector<std::pair<int,int>> WaypointGraph::get_edges_near(Vector2 pos, float
 // Edge cost computation
 // ============================================================================
 
-float WaypointGraph::compute_edge_cost(int from, int to, float ship_radius,
-										const std::vector<ThreatZone>& threats) const {
+float WaypointGraph::compute_edge_cost(int from, int to, float ship_radius) const {
 	if (from < 0 || from >= (int)positions_.size()) return INF_COST;
 	if (to < 0 || to >= (int)positions_.size()) return INF_COST;
 	if (!active_[from] || !active_[to]) return INF_COST;
@@ -577,33 +576,15 @@ float WaypointGraph::compute_edge_cost(int from, int to, float ship_radius,
 }
 
 float WaypointGraph::compute_terrain_edge_cost(int from, int to, float ship_radius) const {
-	static const std::vector<ThreatZone> no_threats;
-	return compute_edge_cost(from, to, ship_radius, no_threats);
+	return compute_edge_cost(from, to, ship_radius);
 }
 
-bool WaypointGraph::straight_line_clear(Vector2 from, Vector2 to, float ship_radius,
-										 const std::vector<ThreatZone>& threats) const {
+bool WaypointGraph::straight_line_clear(Vector2 from, Vector2 to, float ship_radius) const {
 	if (nav_map_.is_null()) return false;
 
-	// Terrain check
+	// Terrain check only — threat zone routing is handled by D* Lite node blocking.
 	RayResult ray = nav_map_->raycast_internal(from, to, ship_radius);
 	if (ray.hit) return false;
-
-	// Threat check
-	if (!threats.empty()) {
-		Vector2 ab = to - from;
-		float ab_len_sq = ab.dot(ab);
-		for (const auto& tz : threats) {
-			float t = 0.0f;
-			if (ab_len_sq > 0.0f) {
-				t = (tz.position - from).dot(ab) / ab_len_sq;
-				t = std::clamp(t, 0.0f, 1.0f);
-			}
-			Vector2 closest = from + ab * t;
-			if (closest.distance_squared_to(tz.position) < tz.hard_radius * tz.hard_radius)
-				return false;
-		}
-	}
 
 	return true;
 }

@@ -122,18 +122,16 @@ public:
 	std::vector<std::pair<int,int>> get_edges_near(Vector2 pos, float radius) const;
 
 	// --- Edge cost computation ---
-	// Full cost including terrain clearance check and threat zone avoidance.
+	// Full cost including terrain clearance check.
 	// Returns INFINITY if blocked.
-	float compute_edge_cost(int from, int to, float ship_radius,
-						    const std::vector<ThreatZone>& threats) const;
+	float compute_edge_cost(int from, int to, float ship_radius) const;
 
 	// Terrain-only cost (no threats). Returns INFINITY if corridor blocked.
 	float compute_terrain_edge_cost(int from, int to, float ship_radius) const;
 
 	// Straight-line check from arbitrary world position to another,
-	// considering terrain and threats. Returns true if clear.
-	bool straight_line_clear(Vector2 from, Vector2 to, float ship_radius,
-							 const std::vector<ThreatZone>& threats) const;
+	// considering terrain only. Returns true if clear.
+	bool straight_line_clear(Vector2 from, Vector2 to, float ship_radius) const;
 
 	// --- Proxy ring management ---
 	// Add 8 proxy nodes around an enemy ship. Returns their node indices.

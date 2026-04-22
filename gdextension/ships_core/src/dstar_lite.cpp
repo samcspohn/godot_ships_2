@@ -39,7 +39,7 @@ float DStarLite::recompute_edge_cost_for(int node, int neighbor_order) const {
 	const auto& adj = graph_->neighbors(node);
 	if (neighbor_order < 0 || neighbor_order >= (int)adj.size()) return INF;
 	int target = adj[neighbor_order].target;
-	return graph_->compute_edge_cost(node, target, ship_radius_, threats_);
+	return graph_->compute_edge_cost(node, target, ship_radius_);
 }
 
 float DStarLite::edge_cost_cached(int node, int neighbor_order) const {
@@ -57,13 +57,14 @@ int DStarLite::find_neighbor_order(int from, int to) const {
 }
 
 void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
-						   float ship_radius, const std::vector<ThreatZone>& threats) {
+						   float ship_radius,
+						   const std::vector<ThreatZone>& threat_zones) {
 	graph_ = graph;
 	start_ = start;
 	goal_ = goal;
 	km_ = 0.0f;
 	ship_radius_ = ship_radius;
-	threats_ = threats;
+	threat_zones_ = threat_zones;
 
 	int n = graph_->node_count();
 
@@ -92,7 +93,7 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 			edge_costs_[i].resize(adj.size());
 			for (int j = 0; j < (int)adj.size(); j++) {
 				edge_costs_[i][j] = graph_->compute_edge_cost(i, adj[j].target,
-															   ship_radius_, threats_);
+															   ship_radius_);
 			}
 		}
 		cache_graph_       = graph_;
@@ -110,27 +111,19 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 	// Backward D* Lite: goal_ is the source, rhs[goal_] = 0
 	rhs_[goal_] = 0.0f;
 	insert_open(goal_);
-
-	// Build threat spatial grid for fast node-blocking lookups in update_vertex.
-	if (!threats_.empty()) {
-		threat_grid_.build(threats_, ThreatGrid::default_cell_size(threats_));
-	} else {
-		threat_grid_ = ThreatGrid{};
-	}
 }
 
 void DStarLite::update_vertex(int u) {
 	// Backward search: rhs(u) = min over successors s of (edge_cost(u->s) + g(s))
 	// In our undirected graph, successors == neighbors.
-	// Node-level detection-circle blocking.
+	// Node-level detection circle blocking.
 	// goal_ is the source -- exempt it and start_ (ship) from blocking.
-	// If u is inside any threat hard_radius, it is unreachable.
-	if (u != goal_ && u != start_ && !threats_.empty()) {
+	if (u != goal_ && u != start_ && !threat_zones_.empty()) {
 		Vector2 pos = graph_->node_position(u);
-		for (int ti : threat_grid_.query_point(pos)) {
-			const auto& tz = threats_[ti];
-			if (pos.distance_squared_to(tz.position) <
-					tz.hard_radius * tz.hard_radius) {
+		for (const auto& tz : threat_zones_) {
+			float dx = pos.x - tz.position.x;
+			float dz = pos.y - tz.position.y;
+			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
 				rhs_[u] = INF;
 				remove_open(u);
 				if (g_[u] != rhs_[u]) insert_open(u);
@@ -211,27 +204,18 @@ bool DStarLite::compute_shortest_path(int max_iterations) {
 	return (iters < max_iterations);
 }
 
-void DStarLite::update_threats(const std::vector<ThreatZone>& new_threats) {
+void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones) {
 	if (!graph_) return;
 
-	std::vector<ThreatZone> old_threats = threats_;
-	threats_ = new_threats;
-
-	// Rebuild threat grid for updated positions.
-	if (!threats_.empty()) {
-		threat_grid_.build(threats_, ThreatGrid::default_cell_size(threats_));
-	} else {
-		threat_grid_ = ThreatGrid{};
-	}
+	std::vector<ThreatZone> old_zones = threat_zones_;
+	threat_zones_ = new_zones;
 
 	// Mark nodes that may have changed blocking status:
-	// those inside or near old circles (might be unblocked now)
-	// and those inside or near new circles (might be newly blocked).
-	// Search radius = hard_radius only -- we only care about nodes
-	// whose inside/outside status changed, not about far-away edge costs.
+	// those inside or near old zone circles (might be unblocked now)
+	// and those inside or near new zone circles (might be newly blocked).
 	std::vector<bool> affected(graph_->node_count(), false);
 
-	auto mark_circle = [&](const ThreatZone& tz) {
+	auto mark_zone = [&](const ThreatZone& tz) {
 		auto near = graph_->get_edges_near(tz.position, tz.hard_radius);
 		for (const auto& [a, b] : near) {
 			affected[a] = true;
@@ -239,8 +223,8 @@ void DStarLite::update_threats(const std::vector<ThreatZone>& new_threats) {
 		}
 	};
 
-	for (const auto& tz : old_threats) mark_circle(tz);
-	for (const auto& tz : new_threats) mark_circle(tz);
+	for (const auto& tz : old_zones) mark_zone(tz);
+	for (const auto& tz : new_zones) mark_zone(tz);
 
 	for (int i = 0; i < graph_->node_count(); i++) {
 		if (affected[i] && graph_->node_active(i)) {
@@ -259,7 +243,7 @@ void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edge
 			if (order_ab >= (int)edge_costs_[a].size()) {
 				edge_costs_[a].resize(order_ab + 1, INF);
 			}
-			float new_cost = graph_->compute_edge_cost(a, b, ship_radius_, threats_);
+			float new_cost = graph_->compute_edge_cost(a, b, ship_radius_);
 			if (new_cost != edge_costs_[a][order_ab]) {
 				edge_costs_[a][order_ab] = new_cost;
 				// Edge a->b cost changed: in backward search rhs(a) may change
@@ -272,7 +256,7 @@ void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edge
 			if (order_ba >= (int)edge_costs_[b].size()) {
 				edge_costs_[b].resize(order_ba + 1, INF);
 			}
-			float new_cost = graph_->compute_edge_cost(b, a, ship_radius_, threats_);
+			float new_cost = graph_->compute_edge_cost(b, a, ship_radius_);
 			if (new_cost != edge_costs_[b][order_ba]) {
 				edge_costs_[b][order_ba] = new_cost;
 				// Edge b->a cost changed: in backward search rhs(b) may change

@@ -69,6 +69,9 @@ void NavigationMap::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cell_size_value"), &NavigationMap::get_cell_size_value);
 	ClassDB::bind_method(D_METHOD("is_built"), &NavigationMap::is_built);
 	ClassDB::bind_method(D_METHOD("get_island_count"), &NavigationMap::get_island_count);
+	// Height grid queries
+	ClassDB::bind_method(D_METHOD("get_terrain_height", "x", "z"), &NavigationMap::get_terrain_height);
+	ClassDB::bind_method(D_METHOD("get_height_data"), &NavigationMap::get_height_data);
 }
 
 // ============================================================================
@@ -154,6 +157,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	// is NOT marked as land. This prevents rectangular base meshes from
 	// inflating island footprints in the SDF.
 	std::vector<bool> land_mask(total_cells, false);
+	std::vector<float> height_grid(total_cells, 0.0f);
 
 	int island_count = island_bodies.size();
 	UtilityFunctions::print("[NavigationMap] Processing ", island_count, " island bodies...");
@@ -192,7 +196,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 					Vector3 v2 = shape_transform.xform(faces[f * 3 + 2]);
 					// rasterize_triangle now internally filters by Y > 0
 					if (std::max({v0.y, v1.y, v2.y}) > 0.0f) above_water_tris++;
-					rasterize_triangle(v0, v1, v2, land_mask);
+					rasterize_triangle(v0, v1, v2, land_mask, height_grid);
 				}
 				UtilityFunctions::print("[NavigationMap]     ConcavePolygon: ", face_count,
 										" tris, ", above_water_tris, " above waterline");
@@ -211,7 +215,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 						Vector3 v0 = shape_transform.xform(points[0]);
 						Vector3 v1 = shape_transform.xform(points[p]);
 						Vector3 v2 = shape_transform.xform(points[p + 1]);
-						rasterize_triangle(v0, v1, v2, land_mask);
+						rasterize_triangle(v0, v1, v2, land_mask, height_grid);
 					}
 				}
 				shapes_processed++;
@@ -222,7 +226,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 			Ref<BoxShape3D> box = shape;
 			if (box.is_valid()) {
 				Vector3 half_extents = box->get_size() * 0.5f;
-				rasterize_box(Vector3(0, 0, 0), half_extents, shape_transform, land_mask);
+				rasterize_box(Vector3(0, 0, 0), half_extents, shape_transform, land_mask, height_grid);
 				shapes_processed++;
 				continue;
 			}
@@ -231,7 +235,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 			Ref<SphereShape3D> sphere = shape;
 			if (sphere.is_valid()) {
 				float radius = sphere->get_radius();
-				rasterize_sphere(Vector3(0, 0, 0), radius, shape_transform, land_mask);
+				rasterize_sphere(Vector3(0, 0, 0), radius, shape_transform, land_mask, height_grid);
 				shapes_processed++;
 				continue;
 			}
@@ -241,7 +245,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 			if (cylinder.is_valid()) {
 				float radius = cylinder->get_radius();
 				float height = cylinder->get_height();
-				rasterize_cylinder(Vector3(0, 0, 0), radius, height, shape_transform, land_mask);
+				rasterize_cylinder(Vector3(0, 0, 0), radius, height, shape_transform, land_mask, height_grid);
 				shapes_processed++;
 				continue;
 			}
@@ -273,6 +277,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	// Step 5: Allocate reusable A* buffers
 	allocate_astar_buffers();
 
+	this->height_grid = std::move(height_grid);
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Build complete. ", islands.size(), " islands detected, ",
 							region_count, " navigable regions.");
@@ -390,6 +395,7 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 
 	// --- Cast one ray per grid cell ---
 	std::vector<bool> land_mask(total_cells, false);
+	std::vector<float> height_grid(total_cells, 0.0f);
 	int land_cells = 0;
 
 	for (int iz = 0; iz < grid_height; iz++) {
@@ -406,7 +412,9 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 				Vector3 hit_pos = result["position"];
 				// Hit point above the waterline (Y > 0) means land
 				if (hit_pos.y > 0.0f) {
-					land_mask[iz * grid_width + ix] = true;
+					int idx = iz * grid_width + ix;
+					land_mask[idx] = true;
+					height_grid[idx] = std::max(height_grid[idx], hit_pos.y);
 					land_cells++;
 				}
 			}
@@ -424,6 +432,7 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 	// Allocate reusable A* buffers
 	allocate_astar_buffers();
 
+	this->height_grid = std::move(height_grid);
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Raycast build complete. ", islands.size(), " islands detected, ",
 							region_count, " navigable regions.");
@@ -434,7 +443,7 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 // ============================================================================
 
 void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, const Vector3 &v2,
-									   std::vector<bool> &land_mask) {
+									   std::vector<bool> &land_mask, std::vector<float> &height_grid) {
 	// Project triangle to XZ plane and rasterize onto the grid.
 	// AGGRESSIVE rasterization: mark ANY cell that the triangle touches, even partially.
 	// This ensures no land above water is ever treated as empty/navigable.
@@ -574,7 +583,9 @@ void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, con
 
 			if (overlaps) {
 				if (all_above) {
-					land_mask[iz * grid_width + ix] = true;
+					int idx = iz * grid_width + ix;
+					land_mask[idx] = true;
+					height_grid[idx] = std::max(height_grid[idx], max_y);
 				} else {
 					// Mixed triangle: interpolate Y at cell center using barycentric coords.
 					// If center is outside triangle, use nearest-point clamping to be aggressive:
@@ -600,7 +611,9 @@ void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, con
 						float w2 = e0 * inv_area;
 						float y_at_cell = w0 * v0.y + w1 * v1.y + w2 * v2.y;
 						if (y_at_cell > 0.0f) {
-							land_mask[iz * grid_width + ix] = true;
+							int idx = iz * grid_width + ix;
+							land_mask[idx] = true;
+							height_grid[idx] = std::max(height_grid[idx], y_at_cell);
 						}
 					} else {
 						// Cell overlaps triangle but center is outside (edge/corner overlap).
@@ -626,7 +639,9 @@ void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, con
 						}
 						float y_at_nearest = w0 * v0.y + w1 * v1.y + w2 * v2.y;
 						if (y_at_nearest > 0.0f) {
-							land_mask[iz * grid_width + ix] = true;
+							int idx = iz * grid_width + ix;
+							land_mask[idx] = true;
+							height_grid[idx] = std::max(height_grid[idx], y_at_nearest);
 						}
 					}
 				}
@@ -636,7 +651,7 @@ void NavigationMap::rasterize_triangle(const Vector3 &v0, const Vector3 &v1, con
 }
 
 void NavigationMap::rasterize_box(const Vector3 &center, const Vector3 &half_extents,
-								  const Transform3D &transform, std::vector<bool> &land_mask) {
+								  const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid) {
 	// Generate 8 corners of the box, transform to world, project to XZ.
 	// Only mark cells as land if the box extends above the waterline (Y > 0).
 	Vector3 corners[8];
@@ -695,7 +710,9 @@ void NavigationMap::rasterize_box(const Vector3 &center, const Vector3 &half_ext
 				Vector3 local_top(local.x, center.y + half_extents.y, local.z);
 				Vector3 world_top = transform.xform(local_top);
 				if (world_top.y > 0.0f) {
-					land_mask[iz * grid_width + ix] = true;
+					int idx = iz * grid_width + ix;
+					land_mask[idx] = true;
+					height_grid[idx] = std::max(height_grid[idx], world_top.y);
 				}
 			}
 		}
@@ -703,7 +720,7 @@ void NavigationMap::rasterize_box(const Vector3 &center, const Vector3 &half_ext
 }
 
 void NavigationMap::rasterize_sphere(const Vector3 &center, float radius,
-									 const Transform3D &transform, std::vector<bool> &land_mask) {
+									 const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid) {
 	Vector3 world_center = transform.xform(center);
 
 	// Skip if the entire sphere is below the waterline
@@ -738,14 +755,22 @@ void NavigationMap::rasterize_sphere(const Vector3 &center, float radius,
 			float dx = static_cast<float>(ix) - gx_center;
 			float dz = static_cast<float>(iz) - gz_center;
 			if (dx * dx + dz * dz <= grid_radius * grid_radius) {
-				land_mask[iz * grid_width + ix] = true;
+				float wx_cell, wz_cell;
+				grid_to_world(ix, iz, wx_cell, wz_cell);
+				float cell_dx = wx_cell - world_center.x;
+				float cell_dz = wz_cell - world_center.z;
+				float dist_sq = cell_dx * cell_dx + cell_dz * cell_dz;
+				float top_y = world_center.y + std::sqrt(std::max(0.0f, radius * radius - dist_sq));
+				int idx = iz * grid_width + ix;
+				land_mask[idx] = true;
+				height_grid[idx] = std::max(height_grid[idx], top_y);
 			}
 		}
 	}
 }
 
 void NavigationMap::rasterize_cylinder(const Vector3 &center, float radius, float height,
-									   const Transform3D &transform, std::vector<bool> &land_mask) {
+									   const Transform3D &transform, std::vector<bool> &land_mask, std::vector<float> &height_grid) {
 	// Check if the top of the cylinder is above the waterline
 	Vector3 world_top = transform.xform(center + Vector3(0, height * 0.5f, 0));
 	if (world_top.y <= 0.0f) return; // Entire cylinder is below water
@@ -769,7 +794,9 @@ void NavigationMap::rasterize_cylinder(const Vector3 &center, float radius, floa
 			float dx = static_cast<float>(ix) - gx_center;
 			float dz = static_cast<float>(iz) - gz_center;
 			if (dx * dx + dz * dz <= grid_radius * grid_radius) {
-				land_mask[iz * grid_width + ix] = true;
+				int idx = iz * grid_width + ix;
+				land_mask[idx] = true;
+				height_grid[idx] = std::max(height_grid[idx], world_top.y);
 			}
 		}
 	}
@@ -1108,6 +1135,29 @@ float NavigationMap::sample_bilinear(float gx, float gz) const {
 	return v0 * (1.0f - fz) + v1 * fz;
 }
 
+float NavigationMap::sample_height_bilinear(float gx, float gz) const {
+	gx = std::max(0.0f, std::min(gx, static_cast<float>(grid_width - 1)));
+	gz = std::max(0.0f, std::min(gz, static_cast<float>(grid_height - 1)));
+
+	int x0 = static_cast<int>(std::floor(gx));
+	int z0 = static_cast<int>(std::floor(gz));
+	int x1 = std::min(x0 + 1, grid_width - 1);
+	int z1 = std::min(z0 + 1, grid_height - 1);
+
+	float fx = gx - static_cast<float>(x0);
+	float fz = gz - static_cast<float>(z0);
+
+	float v00 = height_grid[z0 * grid_width + x0];
+	float v10 = height_grid[z0 * grid_width + x1];
+	float v01 = height_grid[z1 * grid_width + x0];
+	float v11 = height_grid[z1 * grid_width + x1];
+
+	float v0 = v00 * (1.0f - fx) + v10 * fx;
+	float v1 = v01 * (1.0f - fx) + v11 * fx;
+
+	return v0 * (1.0f - fz) + v1 * fz;
+}
+
 // ============================================================================
 // SDF queries
 // ============================================================================
@@ -1131,6 +1181,20 @@ float NavigationMap::get_distance(float x, float z) const {
 	}
 
 	return sample_bilinear(gx, gz);
+}
+
+float NavigationMap::get_terrain_height(float x, float z) const {
+	if (!built || height_grid.empty()) return 0.0f;
+
+	float gx, gz;
+	world_to_grid(x, z, gx, gz);
+
+	if (gx < 0.0f || gx >= static_cast<float>(grid_width) ||
+		gz < 0.0f || gz >= static_cast<float>(grid_height)) {
+		return 0.0f;
+	}
+
+	return sample_height_bilinear(gx, gz);
 }
 
 Vector2 NavigationMap::get_gradient(float x, float z) const {
@@ -1187,102 +1251,29 @@ RayResult NavigationMap::raycast_internal(Vector2 from, Vector2 to, float cleara
 		return result;
 	}
 
-	// Use grid-cell DDA traversal to ensure every cell the ray passes through
-	// is checked. The previous sphere-tracing approach used bilinear interpolation
-	// of the SDF which can overestimate distances near land boundaries, causing
-	// the ray to skip over land cells entirely (false negatives for LOS checks).
+	// Sphere tracing: at each position, the SDF value is the distance to the
+	// nearest obstacle, so we can jump by (sdf - clearance) along the ray
+	// each step, skipping empty space cheaply.
+	Vector2 dir_norm = dir / total_dist;
+	float t = 0.0f;
 
-	// Convert endpoints to grid coordinates
-	float gx0, gz0, gx1, gz1;
-	world_to_grid(from.x, from.y, gx0, gz0);
-	world_to_grid(to.x, to.y, gx1, gz1);
+	while (t <= total_dist) {
+		Vector2 pos = from + dir_norm * t;
+		float d = get_distance(pos.x, pos.y);
 
-	// Current grid cell
-	int cx = static_cast<int>(std::floor(gx0));
-	int cz = static_cast<int>(std::floor(gz0));
-
-	// Target grid cell
-	int end_cx = static_cast<int>(std::floor(gx1));
-	int end_cz = static_cast<int>(std::floor(gz1));
-
-	// DDA direction
-	float dx = gx1 - gx0;
-	float dz = gz1 - gz0;
-
-	int step_x = (dx >= 0.0f) ? 1 : -1;
-	int step_z = (dz >= 0.0f) ? 1 : -1;
-
-	// Distance in world units for one full grid cell step along each axis
-	// (how far the ray travels in world units to cross one cell in x or z)
-	float t_delta_x = (std::abs(dx) > 1e-8f) ? (total_dist / std::abs(dx)) : 1e30f;
-	float t_delta_z = (std::abs(dz) > 1e-8f) ? (total_dist / std::abs(dz)) : 1e30f;
-
-	// Distance to the first grid boundary crossing along each axis
-	float t_max_x, t_max_z;
-	if (std::abs(dx) > 1e-8f) {
-		float next_boundary_x = (step_x > 0) ? (std::floor(gx0) + 1.0f) : std::floor(gx0);
-		t_max_x = (next_boundary_x - gx0) / dx * total_dist;
-		// Clamp small negative values from floating point
-		if (t_max_x < 0.0f) t_max_x = 0.0f;
-	} else {
-		t_max_x = 1e30f;
-	}
-	if (std::abs(dz) > 1e-8f) {
-		float next_boundary_z = (step_z > 0) ? (std::floor(gz0) + 1.0f) : std::floor(gz0);
-		t_max_z = (next_boundary_z - gz0) / dz * total_dist;
-		if (t_max_z < 0.0f) t_max_z = 0.0f;
-	} else {
-		t_max_z = 1e30f;
-	}
-
-	// Check the starting cell
-	if (in_bounds(cx, cz) && get_cell(cx, cz) < clearance) {
-		result.hit = true;
-		result.position = from;
-		result.distance = 0.0f;
-		result.penetration = clearance - get_cell(cx, cz);
-		return result;
-	}
-
-	// Walk cells along the ray using DDA
-	// Track the parametric distance along the ray (in world units) for hit position
-	int max_steps = std::abs(end_cx - cx) + std::abs(end_cz - cz) + 2;
-	for (int step_count = 0; step_count < max_steps; step_count++) {
-		// Advance to the next cell boundary
-		float t_cross;
-		if (t_max_x < t_max_z) {
-			t_cross = t_max_x;
-			cx += step_x;
-			t_max_x += t_delta_x;
-		} else {
-			t_cross = t_max_z;
-			cz += step_z;
-			t_max_z += t_delta_z;
-		}
-
-		if (t_cross > total_dist) break;
-
-		// Check this cell using raw SDF (no bilinear interpolation)
-		if (!in_bounds(cx, cz) || get_cell(cx, cz) < clearance) {
-			// Hit land or obstacle — compute the world-space hit position
-			// Use the crossing distance as the approximate hit point
-			Vector2 step_dir = dir / total_dist;
+		if (d < clearance) {
 			result.hit = true;
-			result.position = from + step_dir * t_cross;
-			result.distance = t_cross;
-			float cell_sdf = in_bounds(cx, cz) ? get_cell(cx, cz) : 0.0f;
-			result.penetration = clearance - cell_sdf;
+			result.position = pos;
+			result.distance = t;
+			result.penetration = clearance - d;
 			return result;
 		}
-	}
 
-	// Also check the endpoint cell explicitly (may differ from last DDA cell due to rounding)
-	if (in_bounds(end_cx, end_cz) && get_cell(end_cx, end_cz) < clearance) {
-		result.hit = true;
-		result.position = to;
-		result.distance = total_dist;
-		result.penetration = clearance - get_cell(end_cx, end_cz);
-		return result;
+		// Jump by the safe radius; clamp to at least a small epsilon to
+		// guarantee forward progress when d is nearly equal to clearance.
+		float jump = d - clearance;
+		if (jump < 0.1f) jump = 0.1f;
+		t += jump;
 	}
 
 	return result;
@@ -2688,6 +2679,15 @@ PackedFloat32Array NavigationMap::get_sdf_data() const {
 	return result;
 }
 
+PackedFloat32Array NavigationMap::get_height_data() const {
+	PackedFloat32Array result;
+	result.resize(static_cast<int>(height_grid.size()));
+	for (size_t i = 0; i < height_grid.size(); i++) {
+		result[static_cast<int>(i)] = height_grid[i];
+	}
+	return result;
+}
+
 int NavigationMap::get_grid_width() const {
 	return grid_width;
 }
@@ -2707,3 +2707,5 @@ bool NavigationMap::is_built() const {
 int NavigationMap::get_island_count() const {
 	return static_cast<int>(islands.size());
 }
+
+
