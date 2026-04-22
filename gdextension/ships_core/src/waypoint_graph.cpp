@@ -64,19 +64,27 @@ void WaypointGraph::build(Ref<NavigationMap> map, float min_ship_radius) {
 	active_.clear();
 	proxy_rings_.clear();
 	component_.clear();
+	node_sdf_.clear();
 	static_count_ = 0;
 	component_count_ = 0;
 
 	nav_map_ = map;
 	min_ship_radius_ = min_ship_radius;
 
-	// Phase 1: Poisson disk sampling (SDF-weighted density)
-	poisson_disk_sample(min_ship_radius);
+	// Phase 1: Poisson disk sampling — use minimal margin so all navigable water gets nodes.
+	// Per-ship terrain clearance filtering is handled by DStarLite::update_vertex at path time.
+	poisson_disk_sample(0.0f);
 
 	// Phase 2: Narrow corridor densification
-	densify_corridors(min_ship_radius);
+	densify_corridors(0.0f);
 
 	static_count_ = (int)positions_.size();
+
+	// Cache SDF at each static node — DStarLite uses this to filter nodes per ship_radius.
+	node_sdf_.resize(static_count_);
+	for (int i = 0; i < static_count_; i++) {
+		node_sdf_[i] = nav_map_->get_distance(positions_[i].x, positions_[i].y);
+	}
 
 	// Initialize metadata for static nodes
 	is_proxy_.resize(static_count_, false);
@@ -91,7 +99,8 @@ void WaypointGraph::build(Ref<NavigationMap> map, float min_ship_radius) {
 	// Phase 3: Edge construction
 	adj_.resize(static_count_);
 	for (int i = 0; i < static_count_; i++) {
-		connect_node_to_graph(i, min_ship_radius);
+		// Use minimal structural clearance; per-ship corridor checks happen via compute_edge_cost.
+		connect_node_to_graph(i, 1.0f);
 	}
 
 	int total_edges = get_edge_count();
@@ -121,7 +130,9 @@ void WaypointGraph::poisson_disk_sample(float min_radius) {
 	float max_x = min_x + (nav_map_->get_grid_width() - 1) * nav_map_->get_cell_size_value();
 	float max_z = min_z + (nav_map_->get_grid_height() - 1) * nav_map_->get_cell_size_value();
 
-	float navigable_threshold = min_radius + NODE_MARGIN;
+	// Nodes are placed wherever water is at least NODE_MARGIN from terrain.
+	// Per-ship filtering (larger ships skipping tight nodes) is done at pathfinding time.
+	float navigable_threshold = NODE_MARGIN;
 
 	// Background grid for fast proximity checks (cell size = R_MIN_TIGHT / sqrt(2))
 	float bg_cell = R_MIN_TIGHT / 1.41421356f;
@@ -240,8 +251,8 @@ void WaypointGraph::densify_corridors(float min_radius) {
 	int gw = nav_map_->get_grid_width();
 	int gh = nav_map_->get_grid_height();
 
-	float low = min_radius;
-	float high = min_radius * 3.0f;
+	float low  = NODE_MARGIN;           // tightest band to densify
+	float high = NODE_MARGIN * 3.0f;    // upper bound of the narrow-corridor zone
 	float min_spacing = R_MIN_TIGHT * 0.5f;
 
 	for (int gz = 0; gz < gh; gz++) {
@@ -474,6 +485,11 @@ bool WaypointGraph::node_active(int idx) const {
 	return active_[idx];
 }
 
+float WaypointGraph::node_sdf(int idx) const {
+	if (idx < 0 || idx >= (int)node_sdf_.size()) return 0.0f;
+	return node_sdf_[idx];
+}
+
 bool WaypointGraph::node_is_proxy(int idx) const {
 	if (idx < 0 || idx >= (int)is_proxy_.size()) return false;
 	return is_proxy_[idx];
@@ -614,6 +630,7 @@ Array WaypointGraph::add_proxy_ring(int enemy_id, Vector2 center, float radius) 
 
 		int idx = (int)positions_.size();
 		positions_.push_back(pos);
+		node_sdf_.push_back(nav_map_.is_null() ? 0.0f : nav_map_->get_distance(pos.x, pos.y));
 		adj_.emplace_back();
 		is_proxy_.push_back(true);
 		proxy_owner_.push_back(enemy_id);
@@ -635,7 +652,7 @@ Array WaypointGraph::add_proxy_ring(int enemy_id, Vector2 center, float radius) 
 	// Connect each proxy node to nearby static graph nodes
 	for (int idx : ring.node_indices) {
 		add_to_spatial_grid(idx);
-		connect_node_to_graph(idx, min_ship_radius_, MAX_EDGE_LENGTH);
+		connect_node_to_graph(idx, 1.0f, MAX_EDGE_LENGTH);    // structural clearance only
 	}
 
 	// Assign components: proxy nodes inherit component from any connected static node
@@ -672,6 +689,11 @@ void WaypointGraph::update_proxy_ring(int enemy_id, Vector2 new_center) {
 		float angle = (float)i / PROXY_RING_SIZE * 6.28318530f;
 		positions_[idx] = Vector2(new_center.x + std::cos(angle) * ring.radius,
 								  new_center.y + std::sin(angle) * ring.radius);
+
+		// Keep SDF cache in sync with moved proxy position.
+		if (idx < (int)node_sdf_.size()) {
+			node_sdf_[idx] = nav_map_.is_null() ? 0.0f : nav_map_->get_distance(positions_[idx].x, positions_[idx].y);
+		}
 
 		add_to_spatial_grid(idx);
 	}

@@ -72,6 +72,9 @@ private:
 	std::vector<int> component_;
 	int component_count_ = 0;
 
+	// --- Per-node SDF cache (populated during build; used by D* Lite for per-ship filtering) ---
+	std::vector<float> node_sdf_;
+
 	// --- Internal helpers ---
 	void build_spatial_grid();
 	void add_to_spatial_grid(int idx);
@@ -111,6 +114,7 @@ public:
 	int static_node_count() const { return static_count_; }
 	Vector2 node_position(int idx) const;
 	bool node_active(int idx) const;
+	float node_sdf(int idx) const;     // SDF at this node's position (> 0 = open water)
 	bool node_is_proxy(int idx) const;
 	int node_proxy_owner(int idx) const;
 	const std::vector<GraphEdge>& neighbors(int idx) const;

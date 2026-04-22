@@ -116,18 +116,30 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 void DStarLite::update_vertex(int u) {
 	// Backward search: rhs(u) = min over successors s of (edge_cost(u->s) + g(s))
 	// In our undirected graph, successors == neighbors.
-	// Node-level detection circle blocking.
-	// goal_ is the source -- exempt it and start_ (ship) from blocking.
-	if (u != goal_ && u != start_ && !threat_zones_.empty()) {
-		Vector2 pos = graph_->node_position(u);
-		for (const auto& tz : threat_zones_) {
-			float dx = pos.x - tz.position.x;
-			float dz = pos.y - tz.position.y;
-			if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
-				rhs_[u] = INF;
-				remove_open(u);
-				if (g_[u] != rhs_[u]) insert_open(u);
-				return;
+	// Per-ship node-level filters: skip nodes too close to terrain or inside a threat zone.
+	// start_ is exempt so the ship can always plan outward from its current position.
+	if (u != goal_ && u != start_) {
+		// SDF-based terrain clearance: block nodes whose terrain margin is narrower than
+		// this ship's radius.  This replaces the old per-ship build-time node exclusion.
+		if (graph_->node_sdf(u) < ship_radius_) {
+			rhs_[u] = INF;
+			remove_open(u);
+			if (g_[u] != rhs_[u]) insert_open(u);
+			return;
+		}
+
+		// Threat zone (detection circle) blocking — unchanged.
+		if (!threat_zones_.empty()) {
+			Vector2 pos = graph_->node_position(u);
+			for (const auto& tz : threat_zones_) {
+				float dx = pos.x - tz.position.x;
+				float dz = pos.y - tz.position.y;
+				if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
+					rhs_[u] = INF;
+					remove_open(u);
+					if (g_[u] != rhs_[u]) insert_open(u);
+					return;
+				}
 			}
 		}
 	}
