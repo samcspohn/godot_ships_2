@@ -99,7 +99,7 @@ void WaypointGraph::build(Ref<NavigationMap> map, float min_ship_radius) {
 	// Phase 3: Edge construction
 	adj_.resize(static_count_);
 	for (int i = 0; i < static_count_; i++) {
-		// Use minimal structural clearance; per-ship corridor checks happen via compute_edge_cost.
+		// Use minimal structural clearance; per-ship corridor checks happen via min_sdf on the edge.
 		connect_node_to_graph(i, 1.0f);
 	}
 
@@ -357,6 +357,27 @@ std::vector<int> WaypointGraph::spatial_query(Vector2 pos, float radius) const {
 // Edge construction
 // ============================================================================
 
+float WaypointGraph::compute_edge_min_sdf(Vector2 a, Vector2 b) const {
+	if (nav_map_.is_null()) return 0.0f;
+	float dist = a.distance_to(b);
+	if (dist < 1.0f) return nav_map_->get_distance(a.x, a.y);
+
+	// Sample at sub-cell intervals along the edge.
+	float step = nav_map_->get_cell_size_value() * 0.5f;
+	if (step < 1.0f) step = 1.0f;
+	int steps = static_cast<int>(dist / step) + 2;
+
+	float min_val = nav_map_->get_distance(a.x, a.y);
+	for (int i = 1; i <= steps; i++) {
+		float t = static_cast<float>(i) / static_cast<float>(steps);
+		float px = a.x + (b.x - a.x) * t;
+		float py = a.y + (b.y - a.y) * t;
+		float s = nav_map_->get_distance(px, py);
+		if (s < min_val) min_val = s;
+	}
+	return min_val;
+}
+
 bool WaypointGraph::corridor_clear(Vector2 a, Vector2 b, float clearance) const {
 	if (nav_map_.is_null()) return false;
 	RayResult ray = nav_map_->raycast_internal(a, b, clearance);
@@ -368,8 +389,9 @@ void WaypointGraph::add_edge(int a, int b, float weight) {
 	for (const auto& e : adj_[a]) {
 		if (e.target == b) return;
 	}
-	adj_[a].push_back({b, weight});
-	adj_[b].push_back({a, weight});
+	float ms = compute_edge_min_sdf(positions_[a], positions_[b]);
+	adj_[a].push_back({b, weight, ms});
+	adj_[b].push_back({a, weight, ms});
 }
 
 void WaypointGraph::remove_edges_for_node(int idx) {
@@ -576,25 +598,6 @@ std::vector<std::pair<int,int>> WaypointGraph::get_edges_near(Vector2 pos, float
 // Edge cost computation
 // ============================================================================
 
-float WaypointGraph::compute_edge_cost(int from, int to, float ship_radius) const {
-	if (from < 0 || from >= (int)positions_.size()) return INF_COST;
-	if (to < 0 || to >= (int)positions_.size()) return INF_COST;
-	if (!active_[from] || !active_[to]) return INF_COST;
-
-	Vector2 a = positions_[from];
-	Vector2 b = positions_[to];
-
-	// Terrain corridor check
-	if (!corridor_clear(a, b, ship_radius)) return INF_COST;
-
-	float base = a.distance_to(b);
-	return base;
-}
-
-float WaypointGraph::compute_terrain_edge_cost(int from, int to, float ship_radius) const {
-	return compute_edge_cost(from, to, ship_radius);
-}
-
 bool WaypointGraph::straight_line_clear(Vector2 from, Vector2 to, float ship_radius) const {
 	if (nav_map_.is_null()) return false;
 
@@ -701,15 +704,17 @@ void WaypointGraph::update_proxy_ring(int enemy_id, Vector2 new_center) {
 	// Update ring edge weights (distances between adjacent proxies don't change
 	// since relative positions are the same, but connections to static nodes do)
 	for (int idx : ring.node_indices) {
-		// Update base_weight for all edges to/from this proxy
+		// Update base_weight and min_sdf for all edges to/from this proxy
 		for (auto& e : adj_[idx]) {
 			e.base_weight = positions_[idx].distance_to(positions_[e.target]);
+			e.min_sdf = compute_edge_min_sdf(positions_[idx], positions_[e.target]);
 		}
 		// Also update the reverse entries
 		for (auto& e : adj_[idx]) {
 			for (auto& re : adj_[e.target]) {
 				if (re.target == idx) {
 					re.base_weight = e.base_weight;
+					re.min_sdf = e.min_sdf;
 					break;
 				}
 			}

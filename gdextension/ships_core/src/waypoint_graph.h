@@ -20,7 +20,8 @@ namespace godot {
 // Edge in the sparse waypoint graph
 struct GraphEdge {
 	int target;        // target node index
-	float base_weight; // Euclidean distance (terrain-only cost)
+	float base_weight; // Euclidean distance
+	float min_sdf;     // minimum terrain SDF sampled along this corridor
 };
 
 class WaypointGraph : public RefCounted {
@@ -84,6 +85,9 @@ private:
 	std::vector<int> spatial_query(Vector2 pos, float radius) const;
 
 	bool corridor_clear(Vector2 a, Vector2 b, float clearance) const;
+
+	// Scan the corridor from a to b and return the minimum SDF encountered.
+	float compute_edge_min_sdf(Vector2 a, Vector2 b) const;
 	void connect_node_to_graph(int idx, float clearance,
 							   float max_dist = MAX_EDGE_LENGTH);
 	void add_edge(int a, int b, float weight);
@@ -126,13 +130,6 @@ public:
 	std::vector<std::pair<int,int>> get_edges_near(Vector2 pos, float radius) const;
 
 	// --- Edge cost computation ---
-	// Full cost including terrain clearance check.
-	// Returns INFINITY if blocked.
-	float compute_edge_cost(int from, int to, float ship_radius) const;
-
-	// Terrain-only cost (no threats). Returns INFINITY if corridor blocked.
-	float compute_terrain_edge_cost(int from, int to, float ship_radius) const;
-
 	// Straight-line check from arbitrary world position to another,
 	// considering terrain only. Returns true if clear.
 	bool straight_line_clear(Vector2 from, Vector2 to, float ship_radius) const;

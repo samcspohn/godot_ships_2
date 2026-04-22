@@ -68,18 +68,6 @@ private:
 	// Current threat list (per-ship concealment zones, plain circles)
 	std::vector<ThreatZone> threat_zones_;
 
-	// Cached edge costs -- mirrors graph adjacency structure.
-	// edge_costs_[node][neighbor_order] = current cost of that edge.
-	//
-	// The cache is valid as long as the graph pointer and ship_radius are
-	// unchanged.  Terrain is static, so a goal-only change does NOT
-	// require a rebuild.  Tracked via cache_graph_ / cache_ship_radius_.
-	std::vector<std::vector<float>> edge_costs_;
-
-	// --- Edge cache validity tracking ---
-	const WaypointGraph* cache_graph_      = nullptr;
-	float                cache_ship_radius_ = -1.0f;
-
 	// --- Internal methods ---
 
 	float h(int a, int b) const;
@@ -91,14 +79,7 @@ private:
 	// D* Lite UpdateVertex operation (backward formulation)
 	void update_vertex(int u);
 
-	// Recompute the cached cost for a specific edge (from, neighbor_index)
-	float recompute_edge_cost_for(int node, int neighbor_order) const;
 
-	// Look up cached cost from node to its neighbor at the given order
-	float edge_cost_cached(int node, int neighbor_order) const;
-
-	// Find the neighbor order (index into adj_[from]) for a given target
-	int find_neighbor_order(int from, int to) const;
 
 public:
 	DStarLite();

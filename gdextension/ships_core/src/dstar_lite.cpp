@@ -35,26 +35,7 @@ void DStarLite::remove_open(int s) {
 	in_open_[s] = false;
 }
 
-float DStarLite::recompute_edge_cost_for(int node, int neighbor_order) const {
-	const auto& adj = graph_->neighbors(node);
-	if (neighbor_order < 0 || neighbor_order >= (int)adj.size()) return INF;
-	int target = adj[neighbor_order].target;
-	return graph_->compute_edge_cost(node, target, ship_radius_);
-}
 
-float DStarLite::edge_cost_cached(int node, int neighbor_order) const {
-	if (node < 0 || node >= (int)edge_costs_.size()) return INF;
-	if (neighbor_order < 0 || neighbor_order >= (int)edge_costs_[node].size()) return INF;
-	return edge_costs_[node][neighbor_order];
-}
-
-int DStarLite::find_neighbor_order(int from, int to) const {
-	const auto& adj = graph_->neighbors(from);
-	for (int i = 0; i < (int)adj.size(); i++) {
-		if (adj[i].target == to) return i;
-	}
-	return -1;
-}
 
 void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 						   float ship_radius,
@@ -73,40 +54,6 @@ void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 	in_open_.assign(n, false);
 	stored_key_.resize(n);
 	open_set_.clear();
-
-	// Build edge cost cache -- but only when the graph or ship_radius
-	// actually changed.  Terrain is static; a goal-only change does not
-	// invalidate any cached edge cost.  Skipping this loop is the dominant
-	// saving when the destination drifts (O(E) DDA raycasts avoided).
-	const int n_cached = (int)edge_costs_.size();
-	const bool full_rebuild = (graph_ != cache_graph_ ||
-	                           ship_radius_ != cache_ship_radius_ ||
-	                           n_cached == 0);
-	if (full_rebuild) {
-		edge_costs_.resize(n);
-		for (int i = 0; i < n; i++) {
-			if (!graph_->node_active(i)) {
-				edge_costs_[i].clear();
-				continue;
-			}
-			const auto& adj = graph_->neighbors(i);
-			edge_costs_[i].resize(adj.size());
-			for (int j = 0; j < (int)adj.size(); j++) {
-				edge_costs_[i][j] = graph_->compute_edge_cost(i, adj[j].target,
-															   ship_radius_);
-			}
-		}
-		cache_graph_       = graph_;
-		cache_ship_radius_ = ship_radius_;
-	} else if (n > n_cached) {
-		// Graph grew (proxy nodes added since last full build).
-		// Extend with INF -- notify_edges_changed() will fill real costs in.
-		edge_costs_.resize(n);
-		for (int i = n_cached; i < n; i++) {
-			const auto& adj = graph_->neighbors(i);
-			edge_costs_[i].assign(adj.size(), INF);
-		}
-	}
 
 	// Backward D* Lite: goal_ is the source, rhs[goal_] = 0
 	rhs_[goal_] = 0.0f;
@@ -148,11 +95,11 @@ void DStarLite::update_vertex(int u) {
 		// goal_ is the source -- its rhs stays 0
 		float best = INF;
 		const auto& adj = graph_->neighbors(u);
-		for (int j = 0; j < (int)adj.size(); j++) {
-			int s = adj[j].target;
-			if (!graph_->node_active(s)) continue;
-			float cost = edge_cost_cached(u, j);
-			float val = cost + g_[s];
+		for (const auto& e : adj) {
+			if (!graph_->node_active(e.target)) continue;
+			// Per-ship edge traversability: corridor must be wide enough for this ship.
+			if (e.min_sdf < ship_radius_) continue;
+			float val = e.base_weight + g_[e.target];
 			if (val < best) best = val;
 		}
 		rhs_[u] = best;
@@ -247,34 +194,13 @@ void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones) {
 
 void DStarLite::notify_edges_changed(const std::vector<std::pair<int,int>>& edges) {
 	if (!graph_) return;
-
+	// min_sdf values are already updated in the graph by WaypointGraph::update_proxy_ring.
+	// Just re-evaluate rhs for the endpoints so D* Lite repairs propagate.
 	for (const auto& [a, b] : edges) {
-		// Update cached cost for a->b
-		int order_ab = find_neighbor_order(a, b);
-		if (order_ab >= 0) {
-			if (order_ab >= (int)edge_costs_[a].size()) {
-				edge_costs_[a].resize(order_ab + 1, INF);
-			}
-			float new_cost = graph_->compute_edge_cost(a, b, ship_radius_);
-			if (new_cost != edge_costs_[a][order_ab]) {
-				edge_costs_[a][order_ab] = new_cost;
-				// Edge a->b cost changed: in backward search rhs(a) may change
-				update_vertex(a);
-			}
-		}
-		// Update cached cost for b->a
-		int order_ba = find_neighbor_order(b, a);
-		if (order_ba >= 0) {
-			if (order_ba >= (int)edge_costs_[b].size()) {
-				edge_costs_[b].resize(order_ba + 1, INF);
-			}
-			float new_cost = graph_->compute_edge_cost(b, a, ship_radius_);
-			if (new_cost != edge_costs_[b][order_ba]) {
-				edge_costs_[b][order_ba] = new_cost;
-				// Edge b->a cost changed: in backward search rhs(b) may change
-				update_vertex(b);
-			}
-		}
+		if (a >= 0 && a < graph_->node_count() && graph_->node_active(a))
+			update_vertex(a);
+		if (b >= 0 && b < graph_->node_count() && graph_->node_active(b))
+			update_vertex(b);
 	}
 }
 
@@ -300,14 +226,13 @@ std::vector<int> DStarLite::extract_path() const {
 		const auto& adj = graph_->neighbors(current);
 		int best_next = -1;
 		float best_cost = INF;
-		for (int j = 0; j < (int)adj.size(); j++) {
-			int s = adj[j].target;
-			if (!graph_->node_active(s)) continue;
-			float c = edge_cost_cached(current, j);
-			float val = c + g_[s];
+		for (const auto& e : adj) {
+			if (!graph_->node_active(e.target)) continue;
+			if (e.min_sdf < ship_radius_) continue;
+			float val = e.base_weight + g_[e.target];
 			if (val < best_cost) {
 				best_cost = val;
-				best_next = s;
+				best_next = e.target;
 			}
 		}
 		if (best_next < 0 || best_cost >= INF) break;
