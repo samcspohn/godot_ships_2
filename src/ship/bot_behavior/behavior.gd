@@ -169,11 +169,6 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.DD: return 1.0
 	return 1.0
 
-func get_concealment_radius_multiplier() -> float:
-	## Returns a multiplier applied to detection-avoidance radii during stealth routing.
-	## Base value is 1.0 (no change). Subclasses override to scale with ship state.
-	return 1.0
-
 # ============================================================================
 # TACTICAL STATE HELPERS
 # ============================================================================

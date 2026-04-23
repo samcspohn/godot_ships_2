@@ -155,6 +155,14 @@ var _last_path_destination: Vector3 = Vector3.ZERO
 
 var should_query_behavior: bool = false
 
+## Cached effective detection-avoidance radius used to pick a ThreatRegistry
+## bin.  Constant for the ship's lifetime once ship + concealment are ready;
+## 0 means "not yet computable, retry lazily".
+var _threat_effective_radius: float = 0.0
+## Whether the navigator currently holds a ThreatBin subscription.  Avoids
+## redundant set_threat_source churn when wants_stealth is stable.
+var _threat_subscribed: bool = false
+
 
 # ===========================================================================
 # LIFECYCLE
@@ -284,7 +292,7 @@ func _physics_process(delta: float) -> void:
 		# Full obstacle refresh: clear everything, re-add ships, re-add torpedoes.
 		# This is the only place clear_obstacles() is called.
 		_update_obstacles()
-		_update_threat_zones()
+		_sync_threat_subscription()
 
 		# Event checks involve server queries — deferred to slot, not every frame.
 		if _event_cooldown <= 0.0:
@@ -548,68 +556,28 @@ func _update_shell_threats() -> void:
 
 
 ## Push the intent's destination out of enemy threat zones so the pathfinder
-## goal is in pathable territory.  Only active when SNEAKING — mirrors the
-## same condition used by _update_threat_zones().
-##
-## For every enemy whose hard_radius covers the destination we push the
-## destination radially away from that enemy until it sits just outside the
-## hard_radius.  After all pushes we re-validate against terrain so the
-## adjusted point is still in navigable water.
+## goal is in pathable territory.  Only called when wants_stealth (see
+## _update_nav_intent); reads the shared bin zones via navigator instead of
+## re-gathering enemy positions here.
 func _adjust_destination_for_threats(intent: NavIntent) -> void:
-	if behavior == null:
+	if behavior == null or navigator == null:
 		return
 
-	# Read concealment — same radius used by _update_threat_zones
-	var my_concealment: float = 0.0
-	if _ship.concealment != null and _ship.concealment.params != null:
-		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
-	if my_concealment <= 0.0:
+	var threats: Array = navigator.get_debug_threat_zones()
+	if threats.is_empty():
 		return
 
-	# HP-based radius scaling (matches _update_threat_zones)
-	var radius_mult: float = behavior.get_concealment_radius_multiplier()
-	var hard_radius_base: float = (my_concealment + _ship.movement_controller.turning_circle_radius * 2.0) * radius_mult
-	# Small buffer so the destination lands clearly outside the hard edge
 	var push_margin: float = 100.0
-
 	var dest := Vector2(intent.target_position.x, intent.target_position.z)
 	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var was_adjusted := false
 
-	# Collect enemy positions with per-threat hard radii
-	# Array of {pos: Vector2, radius: float}
-	var threats: Array = []
-	var enemies = server_node.get_valid_targets(_ship.team.team_id)
-	for enemy_ship in enemies:
-		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			threats.append({
-				pos = Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z),
-				radius = hard_radius_base
-			})
-
-	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
-	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
-	var now: float = Time.get_ticks_msec() / 1000.0
-	const STALE_DECAY_SECONDS: float = 100.0
-	for enemy_ship in unspotted.keys():
-		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			var last_time: float = unspotted_times.get(enemy_ship, now)
-			var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
-			if decay <= 0.0:
-				continue  # Fully decayed — no longer a routing obstacle
-			var lp: Vector3 = unspotted[enemy_ship]
-			threats.append({
-				pos = Vector2(lp.x, lp.z),
-				radius = hard_radius_base * decay
-			})
-
-	# Iteratively push the destination out of every overlapping threat zone.
 	var max_passes := 4
 	for _pass in max_passes:
 		var pushed_this_pass := false
 		for t in threats:
-			var epos: Vector2 = t.pos
-			var hard_radius: float = t.radius
+			var epos := Vector2(t["x"], t["z"])
+			var hard_radius: float = t["hard_radius"]
 			var to_dest := dest - epos
 			var dist := to_dest.length()
 			if dist < hard_radius + push_margin:
@@ -628,7 +596,6 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 		if not pushed_this_pass:
 			break
 
-	# Re-validate against terrain so we don't push into land
 	if was_adjusted and NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
@@ -641,47 +608,46 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 		intent.target_position = Vector3(dest.x, 0.0, dest.y)
 
 
-func _update_threat_zones() -> void:
-	navigator.clear_threat_zones()
-
-	if behavior == null or not behavior.wants_stealth:
+## Toggle the navigator's subscription to the shared ThreatRegistry based on
+## behavior.wants_stealth.  Called from the staggered update slot so state
+## transitions (spotted <-> hidden) flip subscription at most once per
+## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
+func _sync_threat_subscription() -> void:
+	if behavior == null or server_node == null or server_node.threat_registry == null:
+		if _threat_subscribed:
+			navigator.clear_threat_source()
+			_threat_subscribed = false
 		return
 
-	# Use our base concealment radius as the avoidance distance
-	var my_concealment: float = 0.0
-	if _ship.concealment != null and _ship.concealment.params != null:
-		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
-	if my_concealment <= 0.0:
+	if not behavior.wants_stealth:
+		if _threat_subscribed:
+			navigator.clear_threat_source()
+			_threat_subscribed = false
 		return
 
-	# HP-based radius scaling (e.g. DDs scale up to 1.5x at low HP)
-	var radius_mult: float = behavior.get_concealment_radius_multiplier()
+	if _threat_subscribed:
+		return
 
-	var hard_radius: float = (my_concealment + _ship.movement_controller.turning_circle_radius * 2.0) * radius_mult
+	if _threat_effective_radius <= 0.0:
+		# Retry lazily — concealment params may not be initialized at _ready.
+		_threat_effective_radius = _compute_threat_effective_radius()
+		if _threat_effective_radius <= 0.0:
+			return
 
-	# Register all known spotted enemy positions as threat zones (full radius)
-	var enemies = server_node.get_valid_targets(_ship.team.team_id)
-	for enemy in enemies:
-		if not is_instance_valid(enemy) or not enemy.is_alive():
-			continue
-		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
-		navigator.add_threat_zone(pos_2d, hard_radius)
+	navigator.set_threat_source(server_node.threat_registry, _ship.team.team_id, _threat_effective_radius)
+	_threat_subscribed = true
 
-	# Unspotted enemies: radius decays linearly to 0 over 100 seconds
-	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
-	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
-	var now: float = Time.get_ticks_msec() / 1000.0
-	const STALE_DECAY_SECONDS: float = 100.0
-	for enemy_ship in unspotted.keys():
-		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
-			continue
-		var last_time: float = unspotted_times.get(enemy_ship, now)
-		var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
-		if decay <= 0.0:
-			continue  # Zone fully decayed — skip
-		var last_pos: Vector3 = unspotted[enemy_ship]
-		var pos_2d = Vector2(last_pos.x, last_pos.z)
-		navigator.add_threat_zone(pos_2d, hard_radius * decay)
+
+func _compute_threat_effective_radius() -> float:
+	if _ship == null or _ship.concealment == null or _ship.concealment.params == null:
+		return 0.0
+	var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if conceal <= 0.0:
+		return 0.0
+	var turn: float = 0.0
+	if _ship.movement_controller != null:
+		turn = _ship.movement_controller.turning_circle_radius
+	return conceal + turn * 2.0
 
 
 # ===========================================================================

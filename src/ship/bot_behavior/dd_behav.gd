@@ -64,14 +64,6 @@ func get_hunting_params() -> Dictionary:
 		cautious_hp_threshold = 0.3,
 	}
 
-func get_concealment_radius_multiplier() -> float:
-	## DDs increase detection-avoidance circle by up to 50% as HP drops,
-	## so they route farther around enemies when damaged rather than retreating.
-	if _ship == null:
-		return 1.0
-	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-	return lerp(1.5, 1.0, hp_ratio)
-
 func _roll_flank_depth() -> float:
 	return randf_range(0.4, 0.9)
 

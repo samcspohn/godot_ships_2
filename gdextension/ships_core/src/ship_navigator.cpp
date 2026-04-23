@@ -66,11 +66,9 @@ void ShipNavigator::_bind_methods() {
 		&ShipNavigator::add_incoming_shell);
 
 	// Enemy threat avoidance (stealth pathfinding)
-	ClassDB::bind_method(D_METHOD("clear_threat_zones"), &ShipNavigator::clear_threat_zones);
-	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius"),
-		&ShipNavigator::add_threat_zone);
-	ClassDB::bind_method(D_METHOD("add_threat_zone_ex", "enemy_id", "position", "hard_radius"),
-		&ShipNavigator::add_threat_zone_ex);
+	ClassDB::bind_method(D_METHOD("set_threat_source", "registry", "team_id", "effective_radius"),
+		&ShipNavigator::set_threat_source);
+	ClassDB::bind_method(D_METHOD("clear_threat_source"), &ShipNavigator::clear_threat_source);
 
 	// Path info
 	ClassDB::bind_method(D_METHOD("get_current_path"), &ShipNavigator::get_current_path);
@@ -134,6 +132,11 @@ ShipNavigator::ShipNavigator() {
 }
 
 ShipNavigator::~ShipNavigator() {
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_bin_ = nullptr;
+	threat_registry_.unref();
 }
 
 // ============================================================================
@@ -306,25 +309,52 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 	incoming_shells_.emplace_back(id, landing_pos, time_remaining, caliber, landing_dir, threat_half_len);
 }
 
-void ShipNavigator::clear_threat_zones() {
-	threat_zones_.clear();
-	threat_grid_dirty_ = true;
+void ShipNavigator::set_threat_source(Ref<ThreatRegistry> registry, int team_id, float effective_radius) {
+	ThreatBin* new_bin = nullptr;
+	if (registry.is_valid()) {
+		new_bin = registry->acquire_bin(team_id, effective_radius);
+	}
+	if (new_bin == threat_bin_) {
+		// Already pointing at this exact bin — drop the duplicate ref we
+		// just acquired and bail.
+		if (registry.is_valid() && new_bin) {
+			registry->release_bin(new_bin);
+		}
+		return;
+	}
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_registry_ = registry;
+	threat_bin_ = new_bin;
+	threat_last_version_ = 0; // force refresh next push
+	if (dstar_initialized_) {
+		push_threats_to_dstar();
+	}
 }
 
-void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius) {
-	add_threat_zone_ex(-1, position, hard_radius);
+void ShipNavigator::clear_threat_source() {
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_bin_ = nullptr;
+	threat_registry_.unref();
+	threat_last_version_ = 0;
+	if (dstar_initialized_) {
+		std::vector<ThreatZone> empty;
+		dstar_.update_threats(empty, nullptr);
+	}
 }
 
-void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius) {
-	threat_zones_.emplace_back(enemy_id, position, hard_radius);
-	threat_grid_dirty_ = true;
-}
-
-void ShipNavigator::rebuild_threat_grid_if_dirty() {
-	if (!threat_grid_dirty_) return;
-	float cs = ThreatGrid::default_cell_size(threat_zones_);
-	threat_grid_.build(threat_zones_, cs);
-	threat_grid_dirty_ = false;
+void ShipNavigator::push_threats_to_dstar() {
+	if (threat_bin_) {
+		dstar_.update_threats(threat_bin_->zones, &threat_bin_->grid);
+		threat_last_version_ = threat_bin_->version;
+	} else {
+		std::vector<ThreatZone> empty;
+		dstar_.update_threats(empty, nullptr);
+		threat_last_version_ = 0;
+	}
 }
 
 // ============================================================================
@@ -420,7 +450,8 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 
 Array ShipNavigator::get_debug_threat_zones() const {
 	Array result;
-	for (const auto &tz : threat_zones_) {
+	if (!threat_bin_) return result;
+	for (const auto &tz : threat_bin_->zones) {
 		Dictionary d;
 		d["id"]          = tz.id;
 		d["x"]           = tz.position.x;
@@ -1060,10 +1091,16 @@ void ShipNavigator::start_plan() {
 	}
 
 	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
-	rebuild_threat_grid_if_dirty();
-	dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-					  plan_min_clearance, threat_zones_, &threat_grid_);
-	prev_threat_zones_ = threat_zones_;
+	if (threat_bin_) {
+		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+						  plan_min_clearance, threat_bin_->zones, &threat_bin_->grid);
+		threat_last_version_ = threat_bin_->version;
+	} else {
+		std::vector<ThreatZone> empty;
+		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+						  plan_min_clearance, empty, nullptr);
+		threat_last_version_ = 0;
+	}
 	dstar_initialized_ = true;
 	dstar_converged_ = false;
 	plan_phase = PlanPhase::COMPUTING;
@@ -1116,10 +1153,16 @@ void ShipNavigator::run_plan_sync() {
 
 	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
 		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
-		rebuild_threat_grid_if_dirty();
-		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, threat_zones_, &threat_grid_);
-		prev_threat_zones_ = threat_zones_;
+		if (threat_bin_) {
+			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+							  plan_min_clearance, threat_bin_->zones, &threat_bin_->grid);
+			threat_last_version_ = threat_bin_->version;
+		} else {
+			std::vector<ThreatZone> empty;
+			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+							  plan_min_clearance, empty, nullptr);
+			threat_last_version_ = 0;
+		}
 		dstar_initialized_ = true;
 		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
 
@@ -1144,24 +1187,11 @@ void ShipNavigator::run_plan_sync() {
 void ShipNavigator::dstar_incremental_update() {
 	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
 
-	// 1. Detect threat zone changes and update node blocking.
-	bool threats_changed = false;
-	if (threat_zones_.size() != prev_threat_zones_.size()) {
-		threats_changed = true;
-	} else {
-		for (size_t i = 0; i < threat_zones_.size(); i++) {
-			if (threat_zones_[i].position.distance_squared_to(prev_threat_zones_[i].position) > 100.0f ||
-				std::abs(threat_zones_[i].hard_radius - prev_threat_zones_[i].hard_radius) > 1.0f) {
-				threats_changed = true;
-				break;
-			}
-		}
-	}
-
-	if (threats_changed) {
-		rebuild_threat_grid_if_dirty();
-		dstar_.update_threats(threat_zones_, &threat_grid_);
-		prev_threat_zones_ = threat_zones_;
+	// 1. Detect threat zone changes via bin version diff (the registry bumps
+	//    the version once per global tick when the bin is rebuilt).
+	uint64_t live_version = threat_bin_ ? threat_bin_->version : 0;
+	if (live_version != threat_last_version_) {
+		push_threats_to_dstar();
 	}
 
 	// 2. Update start node if ship has moved to a different nearest node

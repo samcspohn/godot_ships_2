@@ -16,6 +16,7 @@
 #include "navigation_map.h"
 #include "waypoint_graph.h"
 #include "dstar_lite.h"
+#include "threat_registry.h"
 
 namespace godot {
 
@@ -148,22 +149,17 @@ private:
 	std::vector<IncomingShell> incoming_shells_;
 
 	// --- Enemy threat zones (for stealth pathfinding) ---
-	// Registered by GDScript when the DD is in SNEAKING state.
-	// D* Lite uses these to block waypoint graph nodes that are visible
-	// from an enemy (circle containment + LOS raycast check).
-	std::vector<ThreatZone> threat_zones_;
+	// Registered by GDScript when the bot wants to route around enemy
+	// detection radii.  ShipNavigator references a shared ThreatBin owned
+	// by a ThreatRegistry; multiple ships with the same (team, binned
+	// effective_radius) share the same zones + grid.
+	Ref<ThreatRegistry> threat_registry_;
+	ThreatBin* threat_bin_ = nullptr;
+	uint64_t threat_last_version_ = 0;
 
-	// Previous frame's threat zones — used by dstar_incremental_update
-	// to detect changes and trigger D* Lite repairs.
-	std::vector<ThreatZone> prev_threat_zones_;
-
-	// Spatial acceleration grid over threat_zones_. Rebuilt lazily when
-	// threat_zones_ mutates (clear_threat_zones / add_threat_zone_ex).
-	// D* Lite holds a non-owning pointer into this while path is live.
-	ThreatGrid threat_grid_;
-	bool threat_grid_dirty_ = false;
-
-	void rebuild_threat_grid_if_dirty();
+	// Push the current bin's zones into D* Lite (or an empty zone set if
+	// no bin is attached).  Updates threat_last_version_.
+	void push_threats_to_dstar();
 
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
 	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
@@ -323,9 +319,11 @@ public:
 	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber, Vector2 landing_dir, float threat_half_len);
 
 	// --- Enemy threat avoidance (stealth pathfinding) ---
-	void clear_threat_zones();
-	void add_threat_zone(Vector2 position, float hard_radius);
-	void add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius);
+	// Subscribe this navigator to a (team_id, effective_radius) bin in the
+	// shared registry.  Drops any previous subscription.  Pass an invalid
+	// Ref<> to unsubscribe (equivalent to clear_threat_source).
+	void set_threat_source(Ref<ThreatRegistry> registry, int team_id, float effective_radius);
+	void clear_threat_source();
 
 	// --- Path / trajectory info ---
 
