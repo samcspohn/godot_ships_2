@@ -1193,6 +1193,12 @@ func _physics_process(_delta: float) -> void:
 	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
 		_update_threat_registry()
 
+	# Per-frame: advance one terrain probe per enemy arc.  Cheap; spreads the
+	# raycast cost so a full 12-arc refresh per enemy completes every 12
+	# frames.  NavigationMap is required.
+	if threat_registry != null and NavigationMapManager.is_map_ready():
+		threat_registry.tick_arcs(NavigationMapManager.get_map())
+
 
 ## Publish the latest per-team enemy position + decay lists to the shared
 ## ThreatRegistry.  Called once per THREAT_UPDATE_INTERVAL frames globally;
@@ -1205,10 +1211,12 @@ func _update_threat_registry() -> void:
 
 
 func _publish_team_threats(team_id: int) -> void:
+	var ids := PackedInt32Array()
 	var data := PackedVector3Array()
 	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
 	for enemy in valid_targets:
 		if is_instance_valid(enemy) and enemy.is_alive():
+			ids.append(int(enemy.get_instance_id()))
 			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
 
 	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
@@ -1222,6 +1230,7 @@ func _publish_team_threats(team_id: int) -> void:
 		if decay <= 0.0:
 			continue
 		var lp: Vector3 = unspotted[enemy_ship]
+		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(lp.x, lp.z, decay))
 
-	threat_registry.update_team(team_id, data)
+	threat_registry.update_team(team_id, ids, data)

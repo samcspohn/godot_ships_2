@@ -1679,7 +1679,7 @@ func get_threat_score(server: GameServer) -> float:
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
 		var this_threat = 1.0 - exp(-raw_val)
 		if not enemy.visible_to_enemy:
-			this_threat *= 0.1  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
+			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
 		raw_threat *= (1.0 - this_threat)
 
 	# # Low HP amplifies perceived threat so damaged ships play more defensively

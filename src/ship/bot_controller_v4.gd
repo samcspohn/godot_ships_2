@@ -563,49 +563,27 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if behavior == null or navigator == null:
 		return
 
-	var threats: Array = navigator.get_debug_threat_zones()
-	if threats.is_empty():
-		return
-
-	var push_margin: float = 100.0
 	var dest := Vector2(intent.target_position.x, intent.target_position.z)
 	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
-	var was_adjusted := false
 
-	var max_passes := 4
-	for _pass in max_passes:
-		var pushed_this_pass := false
-		for t in threats:
-			var epos := Vector2(t["x"], t["z"])
-			var hard_radius: float = t["hard_radius"]
-			var to_dest := dest - epos
-			var dist := to_dest.length()
-			if dist < hard_radius + push_margin:
-				var push_dir: Vector2
-				if dist > 1.0:
-					push_dir = to_dest / dist
-				else:
-					var fallback := ship_pos - epos
-					if fallback.length() > 1.0:
-						push_dir = fallback.normalized()
-					else:
-						push_dir = Vector2(1.0, 0.0)
-				dest = epos + push_dir * (hard_radius + push_margin)
-				pushed_this_pass = true
-				was_adjusted = true
-		if not pushed_this_pass:
-			break
+	# Cell-boundary push: ask the navigator to walk |dest| out of any blocked
+	# arc cells via cardinal-cell BFS through the bin's BlockedGrid.  This
+	# replaces the old radial push-out-of-circle approach, which oscillated
+	# between overlapping circles and didn't account for terrain-trimmed arcs.
+	var result: Dictionary = navigator.adjust_destination_for_threats(ship_pos, dest)
+	if not result.get("adjusted", false):
+		return
 
-	if was_adjusted and NavigationMapManager.is_map_ready():
+	dest = result["position"]
+
+	if NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
 		var turning_radius: float = movement.turning_circle_radius
 		if not nav_map.is_navigable(dest.x, dest.y, clearance):
 			var safe := nav_map.safe_nav_point(ship_pos, dest, clearance, turning_radius)
 			dest = safe["position"]
-		intent.target_position = Vector3(dest.x, 0.0, dest.y)
-	elif was_adjusted:
-		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+	intent.target_position = Vector3(dest.x, 0.0, dest.y)
 
 
 ## Toggle the navigator's subscription to the shared ThreatRegistry based on
@@ -1005,19 +983,31 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
 
-		# --- o) Threat zones (concealment circles the pathfinder avoids) ---
-		var threat_zones = navigator.get_debug_threat_zones()
-		for tz in threat_zones:
-			var tz_pos = Vector3(tz["x"], 6.0, tz["z"])
-			var hard_r: float = tz["hard_radius"]
-			# Draw the hard-radius circle as line segments
-			var circle_steps := 16
-			for s in range(circle_steps):
-				var a0 := (float(s) / float(circle_steps)) * TAU
-				var a1 := (float(s + 1) / float(circle_steps)) * TAU
-				var p0 := Vector3(tz_pos.x + hard_r * cos(a0), 6.0, tz_pos.z + hard_r * sin(a0))
-				var p1 := Vector3(tz_pos.x + hard_r * cos(a1), 6.0, tz_pos.z + hard_r * sin(a1))
-				Debug.draw_line(p0, p1, Color(1.0, 0.0, 0.0, 0.5))
+		# --- o) Threat arcs (terrain-limited 30° wedges the pathfinder avoids) ---
+		var threat_arcs = navigator.get_debug_threat_arcs()
+		var arc_color := Color(1.0, 0.0, 0.0, 0.5)
+		var arc_segments := 8
+		for tz in threat_arcs:
+			var ox: float = tz["x"]
+			var oz: float = tz["z"]
+			var bearing: float = tz["bearing"]
+			var half_angle: float = tz["half_angle"]
+			var length: float = tz["length"]
+			var a0: float = bearing - half_angle
+			var a1: float = bearing + half_angle
+			var origin := Vector3(ox, 6.0, oz)
+			var p_left := Vector3(ox + length * cos(a0), 6.0, oz + length * sin(a0))
+			var p_right := Vector3(ox + length * cos(a1), 6.0, oz + length * sin(a1))
+			# Two radial edges
+			Debug.draw_line(origin, p_left, arc_color)
+			Debug.draw_line(origin, p_right, arc_color)
+			# Outer arc, sampled
+			for s in range(arc_segments):
+				var t0 := lerpf(a0, a1, float(s) / float(arc_segments))
+				var t1 := lerpf(a0, a1, float(s + 1) / float(arc_segments))
+				var q0 := Vector3(ox + length * cos(t0), 6.0, oz + length * sin(t0))
+				var q1 := Vector3(ox + length * cos(t1), 6.0, oz + length * sin(t1))
+				Debug.draw_line(q0, q1, arc_color)
 
 
 		# --- p) Torpedo & shell threat lines ---

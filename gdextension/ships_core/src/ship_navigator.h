@@ -148,16 +148,16 @@ private:
 	// --- Incoming shell avoidance ---
 	std::vector<IncomingShell> incoming_shells_;
 
-	// --- Enemy threat zones (for stealth pathfinding) ---
+	// --- Enemy threat arcs (for stealth pathfinding) ---
 	// Registered by GDScript when the bot wants to route around enemy
-	// detection radii.  ShipNavigator references a shared ThreatBin owned
-	// by a ThreatRegistry; multiple ships with the same (team, binned
-	// effective_radius) share the same zones + grid.
+	// detection coverage.  ShipNavigator references a shared ThreatBin
+	// owned by a ThreatRegistry; multiple ships with the same (team,
+	// binned effective_radius) share the same arc list + BlockedGrid.
 	Ref<ThreatRegistry> threat_registry_;
 	ThreatBin* threat_bin_ = nullptr;
 	uint64_t threat_last_version_ = 0;
 
-	// Push the current bin's zones into D* Lite (or an empty zone set if
+	// Push the current bin's arcs into D* Lite (or an empty arc set if
 	// no bin is attached).  Updates threat_last_version_.
 	void push_threats_to_dstar();
 
@@ -339,7 +339,13 @@ public:
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
 
-	Array get_debug_threat_zones() const;
+	Array get_debug_threat_arcs() const;
+
+	// Adjust |dest| out of any blocked threat-arc cells via cardinal-cell
+	// BFS through the bin's BlockedGrid.  Returns Dictionary { position:
+	// Vector2, adjusted: bool }.  Returns dest unchanged if no bin
+	// subscription is active or dest is already in open water.
+	Dictionary adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const;
 
 	// --- Timing (microseconds) ---
 	float get_timing_update_us() const { return timing_update_us; }

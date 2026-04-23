@@ -83,7 +83,9 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
 	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
-	ClassDB::bind_method(D_METHOD("get_debug_threat_zones"), &ShipNavigator::get_debug_threat_zones);
+	ClassDB::bind_method(D_METHOD("get_debug_threat_arcs"), &ShipNavigator::get_debug_threat_arcs);
+	ClassDB::bind_method(D_METHOD("adjust_destination_for_threats", "ship_pos", "dest"),
+		&ShipNavigator::adjust_destination_for_threats);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -341,17 +343,17 @@ void ShipNavigator::clear_threat_source() {
 	threat_registry_.unref();
 	threat_last_version_ = 0;
 	if (dstar_initialized_) {
-		std::vector<ThreatZone> empty;
+		std::vector<ThreatArc> empty;
 		dstar_.update_threats(empty, nullptr);
 	}
 }
 
 void ShipNavigator::push_threats_to_dstar() {
 	if (threat_bin_) {
-		dstar_.update_threats(threat_bin_->zones, &threat_bin_->grid);
+		dstar_.update_threats(threat_bin_->arcs, &threat_bin_->grid);
 		threat_last_version_ = threat_bin_->version;
 	} else {
-		std::vector<ThreatZone> empty;
+		std::vector<ThreatArc> empty;
 		dstar_.update_threats(empty, nullptr);
 		threat_last_version_ = 0;
 	}
@@ -448,18 +450,41 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 	return result;
 }
 
-Array ShipNavigator::get_debug_threat_zones() const {
+Array ShipNavigator::get_debug_threat_arcs() const {
 	Array result;
 	if (!threat_bin_) return result;
-	for (const auto &tz : threat_bin_->zones) {
+	for (const auto &a : threat_bin_->arcs) {
 		Dictionary d;
-		d["id"]          = tz.id;
-		d["x"]           = tz.position.x;
-		d["z"]           = tz.position.y;
-		d["hard_radius"] = tz.hard_radius;
+		d["id"]         = a.enemy_id;
+		d["x"]          = a.origin.x;
+		d["z"]          = a.origin.y;
+		d["bearing"]    = a.bearing;
+		d["half_angle"] = a.half_angle;
+		d["length"]     = a.length;
 		result.push_back(d);
 	}
 	return result;
+}
+
+Dictionary ShipNavigator::adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const {
+	Dictionary out;
+	out["position"] = dest;
+	out["adjusted"] = false;
+	if (!threat_bin_ || threat_bin_->grid.empty()) return out;
+
+	if (!threat_bin_->grid.is_blocked(dest)) return out;
+
+	// BFS up to a generous radius so a destination deep inside an arc set
+	// can still escape.  Cell size is ~length/30 (~200m for 6km arcs), so
+	// 256 cells of search reach is several km.
+	Vector2 adjusted;
+	if (!threat_bin_->grid.find_nearest_unblocked(dest, 256, adjusted)) {
+		return out;
+	}
+	out["position"] = adjusted;
+	out["adjusted"] = true;
+	(void)ship_pos; // currently unused; reserved for future bias toward ship_pos
+	return out;
 }
 
 // ============================================================================
@@ -1093,10 +1118,10 @@ void ShipNavigator::start_plan() {
 	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
 	if (threat_bin_) {
 		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, threat_bin_->zones, &threat_bin_->grid);
+						  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
 		threat_last_version_ = threat_bin_->version;
 	} else {
-		std::vector<ThreatZone> empty;
+		std::vector<ThreatArc> empty;
 		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
 						  plan_min_clearance, empty, nullptr);
 		threat_last_version_ = 0;
@@ -1155,10 +1180,10 @@ void ShipNavigator::run_plan_sync() {
 		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
 		if (threat_bin_) {
 			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-							  plan_min_clearance, threat_bin_->zones, &threat_bin_->grid);
+							  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
 			threat_last_version_ = threat_bin_->version;
 		} else {
-			std::vector<ThreatZone> empty;
+			std::vector<ThreatArc> empty;
 			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
 							  plan_min_clearance, empty, nullptr);
 			threat_last_version_ = 0;
