@@ -1482,7 +1482,9 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 		return cw
 	return ccw
 
-func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = true, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
+func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = true, sort_by_proximity: bool = true, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
+	prioritize_cover = true
+	sort_by_proximity = true
 	"""Find the best island cover position given a desired engagement range and
 	a primary target.  Scores each island by distance-to-travel + deviation from
 	desired_range to the nearest enemy cluster.
@@ -1670,7 +1672,7 @@ func get_threat_score(server: GameServer) -> float:
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(1.0 - (dist / enemy_range), 0.0, 1.0)
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 2.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
 		# raw_threat *= (1.0 - range_pressure * class_w)
@@ -1681,6 +1683,14 @@ func get_threat_score(server: GameServer) -> float:
 		if not enemy.visible_to_enemy:
 			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
 		raw_threat *= (1.0 - this_threat)
+
+	# var friendly = server.get_team_ships(_ship.team.team_id)
+	# for mate in friendly:
+	# 	var dist = mate.global_position.distance_to(_ship.global_position)
+	# 	if mate != _ship and mate.health_controller.is_alive() and dist < 4000.0:
+	# 		# Nearby allies reduce threat via their own HP ratio (more HP = more support they can provide)
+	# 		var mate_hp_ratio = mate.health_controller.current_hp / mate.health_controller.max_hp if mate.health_controller.max_hp > 0.0 else 0.0
+	# 		raw_threat *= lerpf(1.0, 2.0, mate_hp_ratio)
 
 	# # Low HP amplifies perceived threat so damaged ships play more defensively
 	# raw_threat *= lerpf(1.0, 2.0, hp_pressure)

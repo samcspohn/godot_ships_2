@@ -162,10 +162,10 @@ private:
 	void push_threats_to_dstar();
 
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
-	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
+	static constexpr float SHELL_THREAT_WEIGHT_BASE = 20.0f;  // base penalty — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
-	static constexpr float PARALLEL_BONUS_WEIGHT = 0.5f;    // perpendicularity penalty — low so proximity dominates over angling
-	static constexpr float GAP_CLEARANCE_PENALTY = 3.0f;     // penalty when ship barely fits between lines
+	static constexpr float PARALLEL_BONUS_WEIGHT = 0.6f;    // perpendicularity penalty — low so proximity dominates over angling
+	static constexpr float GAP_CLEARANCE_PENALTY = 1.0f;     // penalty when ship barely fits between lines
 	static constexpr float TORPEDO_LINE_HALF_LEN = 600.0f;   // half-length of torpedo threat line
 	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
 

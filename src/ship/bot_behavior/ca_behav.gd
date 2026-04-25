@@ -420,63 +420,86 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
 
-	if threat < 0.25:
-		# Low threat — push and engage
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.5})
+	# if threat < 0.49:
+	# 	# Low threat — push and engage
+	# 	intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.5})
+	# 	if intent != null:
+	# 		_active_skill_name = &"Push"
+
+	# elif threat < 0.6:
+	# 	# Medium threat
+	# 	if dist > gun_range:
+	# 		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.6})
+	# 		if intent != null:
+	# 			_active_skill_name = &"Angle"
+	# 	elif dist > 5000.0:
+	# 		intent = _skill_cover.execute(ctx, cover_params)
+	# 		if intent != null:
+	# 			_active_skill_name = &"FindCover"
+	# 		else:
+	# 			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
+	# 			if intent != null:
+	# 				_active_skill_name = &"Angle"
+	# 	else:
+	# 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
+	# 		if intent != null:
+	# 			_active_skill_name = &"Kite"
+
+	# else:
+	# 	# High threat (>= 0.6)
+	# 	if dist < 5000.0:
+	# 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65, "angle_to_threat_deg": 25.0})
+	# 		if intent != null:
+	# 			_active_skill_name = &"AngledReverse"
+	# 		_suppress_guns = false
+	# 	else:
+	# 		intent = _skill_cover.execute(ctx, cover_params, true)
+	# 		if intent != null:
+	# 			_active_skill_name = &"FindCover"
+	# 		# _suppress_guns = not _skill_cover.is_complete(ctx)
+	# 		# Route around detection zones only when undetected, heading to cover,
+	# 		# and not carrying torpedoes (torpedo CAs push close regardless)
+	# 		wants_stealth = not ship.visible_to_enemy and ship.torpedo_controller == null
+	# 		# Concealment probe: suppress guns when detected + bloom active + enemy
+	# 		# far enough that going dark would drop us off detection.
+	# 		# Only applies for non-torpedo CAs in cover-seeking mode.
+	# 		if ship.torpedo_controller == null:
+	# 			wants_to_be_concealed = _probe_concealment(server)
+	# 		if wants_to_be_concealed:
+	# 			_suppress_guns = true
+
+	# _suppress_guns = false
+	# # ── Fallback ────────────────────────────────────────────────────────────
+	# if intent == null:
+	# 	intent = _skill_angle.execute(ctx, {})
+	# 	if intent != null:
+	# 		_active_skill_name = &"Angle"
+	# if intent == null:
+	# 	intent = _intent_sail_forward(ship)
+	# 	_active_skill_name = &"SailForward"
+	if threat < 0.5:
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.0})
 		if intent != null:
 			_active_skill_name = &"Push"
-
-	elif threat < 0.6:
-		# Medium threat
-		if dist > gun_range:
-			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.6})
+	else:
+		intent = _skill_cover.execute(ctx, cover_params, true)
+		if intent != null:
+			_active_skill_name = &"FindCover"
+		else:
+			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
 			if intent != null:
 				_active_skill_name = &"Angle"
-		elif dist > 5000.0:
-			intent = _skill_cover.execute(ctx, cover_params)
-			if intent != null:
-				_active_skill_name = &"FindCover"
-			else:
-				intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
-				if intent != null:
-					_active_skill_name = &"Angle"
-		else:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
-			if intent != null:
-				_active_skill_name = &"Kite"
 
+	if threat > 0.85:
+		wants_stealth = true
+		wants_to_be_concealed = _probe_concealment(server)
 	else:
-		# High threat (>= 0.6)
-		if dist < 5000.0:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65, "angle_to_threat_deg": 25.0})
-			if intent != null:
-				_active_skill_name = &"AngledReverse"
-			_suppress_guns = false
-		else:
-			intent = _skill_cover.execute(ctx, cover_params, true)
-			if intent != null:
-				_active_skill_name = &"FindCover"
-			# _suppress_guns = not _skill_cover.is_complete(ctx)
-			# Route around detection zones only when undetected, heading to cover,
-			# and not carrying torpedoes (torpedo CAs push close regardless)
-			wants_stealth = not ship.visible_to_enemy and ship.torpedo_controller == null
-			# Concealment probe: suppress guns when detected + bloom active + enemy
-			# far enough that going dark would drop us off detection.
-			# Only applies for non-torpedo CAs in cover-seeking mode.
-			if ship.torpedo_controller == null:
-				wants_to_be_concealed = _probe_concealment(server)
-			if wants_to_be_concealed:
-				_suppress_guns = true
+		wants_stealth = false
+		wants_to_be_concealed = false
 
-	_suppress_guns = false
-	# ── Fallback ────────────────────────────────────────────────────────────
-	if intent == null:
-		intent = _skill_angle.execute(ctx, {})
-		if intent != null:
-			_active_skill_name = &"Angle"
-	if intent == null:
-		intent = _intent_sail_forward(ship)
-		_active_skill_name = &"SailForward"
+	if wants_to_be_concealed:
+		_suppress_guns = true
+
 
 	# ── Post-process: broadside ──────────────────────────────────────────────
 	if _active_skill_name in [&"Kite", &"Angle", &"AngledReverse", &"Push"]:

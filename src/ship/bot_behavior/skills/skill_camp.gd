@@ -23,6 +23,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var range_ratio = params.get("desired_range_ratio", 0.65)
 	var jitter = params.get("jitter_radius", 500.0)
 	var focus_threshold = params.get("focus_threshold", 3)
+	var here = params.get("here", true)
 
 	var danger_center = ctx.behavior._get_spotted_danger_center()
 	if danger_center == Vector3.ZERO:
@@ -81,5 +82,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var current_heading = ctx.behavior._get_ship_heading()
 	if absf(angle_difference(current_heading, heading)) > PI / 2.0:
 		heading = ctx.behavior._normalize_angle(heading + PI)
+
+	if here:
+		return NavIntent.create(ship.global_position, heading, jitter)
 
 	return NavIntent.create(_locked_position, heading, jitter)

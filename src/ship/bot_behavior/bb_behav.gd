@@ -273,14 +273,22 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	elif threat < 0.25:
 		# Low threat: push directly at 40% gun range
 		_skill_cover.reset()
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.4})
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.0})
 		if intent:
-			_active_skill_name = &"Angle"
-	elif threat < 0.6:
+			_active_skill_name = &"Push"
+	elif threat < 0.4:
+		intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
+		if intent:
+			_active_skill_name = &"Flank"
+	elif threat < 0.5:
+		intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.5})
+		if intent:
+			_active_skill_name = &"Camp"
+	elif threat < 0.7:
 		# Medium threat: camp/flank near island — cover at 60% range, fall back to camp at 0.65 ratio
-		intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.6})
+		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
 		if intent != null:
-			_active_skill_name = &"FindCover"
+			_active_skill_name = &"Kite"
 		else:
 			intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.65})
 			if intent:

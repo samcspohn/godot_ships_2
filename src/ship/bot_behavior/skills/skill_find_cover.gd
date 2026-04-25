@@ -55,7 +55,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 
 	# Find new island if needed
 	if not _nav_destination_valid:
-		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
+		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, true, active_spotted_pos)
 		if island.is_empty():
 			return null  # No cover available — caller falls back
 		_set_island(island)
@@ -64,7 +64,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _cover_recalc_ms >= recalc_cooldown:
 		_cover_recalc_ms = now_ms
-		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
+		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, true, active_spotted_pos)
 		if not island.is_empty():
 			_set_island(island)
 		elif not _nav_destination_valid:
