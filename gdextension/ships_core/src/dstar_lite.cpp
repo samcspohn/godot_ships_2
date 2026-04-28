@@ -39,13 +39,15 @@ void DStarLite::remove_open(int s) {
 
 void DStarLite::initialize(const WaypointGraph* graph, int start, int goal,
 						   float ship_radius,
-						   const std::vector<ThreatZone>& threat_zones) {
+						   const std::vector<ThreatArc>& threat_arcs,
+						   const BlockedGrid* threat_grid) {
 	graph_ = graph;
 	start_ = start;
 	goal_ = goal;
 	km_ = 0.0f;
 	ship_radius_ = ship_radius;
-	threat_zones_ = threat_zones;
+	threat_arcs_ = threat_arcs;
+	threat_grid_ = threat_grid;
 
 	int n = graph_->node_count();
 
@@ -75,18 +77,17 @@ void DStarLite::update_vertex(int u) {
 			return;
 		}
 
-		// Threat zone (detection circle) blocking — unchanged.
-		if (!threat_zones_.empty()) {
+		// Threat arc blocking — pure cell-membership test against the
+		// pre-rasterized BlockedGrid.  No per-arc geometry check at query
+		// time; the grid is conservative at cell boundaries which is
+		// acceptable per the design spec.
+		if (threat_grid_ && !threat_grid_->empty()) {
 			Vector2 pos = graph_->node_position(u);
-			for (const auto& tz : threat_zones_) {
-				float dx = pos.x - tz.position.x;
-				float dz = pos.y - tz.position.y;
-				if (dx * dx + dz * dz < tz.hard_radius * tz.hard_radius) {
-					rhs_[u] = INF;
-					remove_open(u);
-					if (g_[u] != rhs_[u]) insert_open(u);
-					return;
-				}
+			if (threat_grid_->is_blocked(pos)) {
+				rhs_[u] = INF;
+				remove_open(u);
+				if (g_[u] != rhs_[u]) insert_open(u);
+				return;
 			}
 		}
 	}
@@ -163,32 +164,77 @@ bool DStarLite::compute_shortest_path(int max_iterations) {
 	return (iters < max_iterations);
 }
 
-void DStarLite::update_threats(const std::vector<ThreatZone>& new_zones) {
+void DStarLite::update_threats(const std::vector<ThreatArc>& new_arcs,
+							   const BlockedGrid* new_grid) {
 	if (!graph_) return;
 
-	std::vector<ThreatZone> old_zones = threat_zones_;
-	threat_zones_ = new_zones;
+	// Snapshot the previous arc set so we can scope the affected-node
+	// search to the union of old + new coverage AND test "was blocked"
+	// without depending on the prior grid pointer (which aliases new_grid
+	// when the registry rebuilds bin grids in place).
+	std::vector<ThreatArc> old_arcs = std::move(threat_arcs_);
+	threat_arcs_ = new_arcs;
+	threat_grid_ = new_grid;
 
-	// Mark nodes that may have changed blocking status:
-	// those inside or near old zone circles (might be unblocked now)
-	// and those inside or near new zone circles (might be newly blocked).
-	std::vector<bool> affected(graph_->node_count(), false);
-
-	auto mark_zone = [&](const ThreatZone& tz) {
-		auto near = graph_->get_edges_near(tz.position, tz.hard_radius);
-		for (const auto& [a, b] : near) {
-			affected[a] = true;
-			affected[b] = true;
+	// Affected candidate set: every node within the radial reach of any
+	// old or new arc.  Many arcs share an origin (12 per enemy ship), so
+	// dedupe by (origin, max_reach) and issue one get_edges_near per
+	// enemy — 12x fewer graph queries than per-arc marking.
+	struct Site { Vector2 origin; float reach; };
+	std::vector<Site> sites;
+	sites.reserve(old_arcs.size() + new_arcs.size());
+	auto add_arc_to_sites = [&](const ThreatArc& a) {
+		for (auto& s : sites) {
+			if (s.origin.x == a.origin.x && s.origin.y == a.origin.y) {
+				if (a.length > s.reach) s.reach = a.length;
+				return;
+			}
 		}
+		sites.push_back({a.origin, a.length});
+	};
+	for (const auto& a : old_arcs) add_arc_to_sites(a);
+	for (const auto& a : new_arcs) add_arc_to_sites(a);
+
+	std::vector<bool> affected(graph_->node_count(), false);
+	for (const auto& s : sites) {
+		auto near = graph_->get_edges_near(s.origin, s.reach);
+		for (const auto& [u, v] : near) {
+			affected[u] = true;
+			affected[v] = true;
+		}
+	}
+
+	// Narrow: only nodes whose blocking state actually flipped need
+	// update_vertex.  "now" is O(1) on the new grid; "was" we re-derive
+	// from the old arc list via point-in-wedge geometry, since the old
+	// grid pointer no longer reflects the prior state.
+	auto in_arc = [](const ThreatArc& a, Vector2 pos) -> bool {
+		float dx = pos.x - a.origin.x;
+		float dz = pos.y - a.origin.y;
+		float L = a.length;
+		if (dx * dx + dz * dz > L * L) return false;
+		float cos_b = std::cos(a.bearing);
+		float sin_b = std::sin(a.bearing);
+		float fwd = dx * cos_b + dz * sin_b;
+		if (fwd < 0.0f || fwd > L) return false;
+		float side = -dx * sin_b + dz * cos_b;
+		return std::abs(side) <= fwd * std::tan(a.half_angle);
+	};
+	auto was_blocked = [&](Vector2 pos) -> bool {
+		for (const auto& a : old_arcs) {
+			if (in_arc(a, pos)) return true;
+		}
+		return false;
+	};
+	auto is_blocked_now = [&](Vector2 pos) -> bool {
+		return threat_grid_ && !threat_grid_->empty() && threat_grid_->is_blocked(pos);
 	};
 
-	for (const auto& tz : old_zones) mark_zone(tz);
-	for (const auto& tz : new_zones) mark_zone(tz);
-
 	for (int i = 0; i < graph_->node_count(); i++) {
-		if (affected[i] && graph_->node_active(i)) {
-			update_vertex(i);
-		}
+		if (!affected[i] || !graph_->node_active(i)) continue;
+		Vector2 pos = graph_->node_position(i);
+		if (was_blocked(pos) == is_blocked_now(pos)) continue;
+		update_vertex(i);
 	}
 }
 

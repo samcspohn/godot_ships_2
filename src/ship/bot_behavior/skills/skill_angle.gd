@@ -84,13 +84,14 @@ static func calc_heading(base_bearing: float, ctx: SkillContext, params: Diction
 				best_diff = diff
 				chosen = candidates[j]
 		# Weight: closer threats matter more, heavier classes matter more
-		var dist_weight = 1.0 - clampf(threat["dist"] / threat["enemy_range"], 0.0, 1.0)
+		var normalized_dist = clampf(threat["dist"] / threat["enemy_range"], 0.0, 1.0)
+		var dist_weight = exp(-6.0 * normalized_dist)
 		var cw_weight: float = class_weights.get(threat["ship_class"], 1.0)
 		var w = dist_weight * cw_weight
 		heading_sum += Vector2(sin(chosen), cos(chosen)) * w
 		total_weight += w
 
-	if total_weight < 0.001:
+	if total_weight < 0.000001:
 		return base_bearing
 
 	var avg = heading_sum / total_weight
@@ -113,15 +114,21 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var gun_range = ship.artillery_controller.get_params()._range
 	var desired_dist = gun_range * params.get("desired_range_ratio", 0.55)
 	var enemy_dist = to_enemy.length()
-	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * 1000.0
-	if enemy_dist > gun_range:
-		dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.8
-	elif enemy_dist > desired_dist * 1.3:
-		dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.5
-	elif enemy_dist < desired_dist * 0.4:
-		dest = ship.global_position - to_enemy.normalized() * 1000.0
-	dest.y = 0.0
-	# var dest = to_enemy.normalized() * 2000.0 + ship.global_position
-	dest = ctx.behavior._get_valid_nav_point(dest)
-	return NavIntent.create(dest, enemy_bearing)
+	var dest = ship.global_position + to_enemy.normalized() * 1000.0
+	return NavIntent.create(dest, heading)
+	# var is_directional := true
+	# if enemy_dist > gun_range:
+	# 	dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.8
+	# 	is_directional = false
+	# elif enemy_dist > desired_dist * 1.3:
+	# 	dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.5
+	# 	is_directional = false
+	# elif enemy_dist < desired_dist * 0.4:
+	# 	dest = ship.global_position - to_enemy.normalized() * 1000.0
+	# 	is_directional = false
+	# dest.y = 0.0
+	# # var dest = to_enemy.normalized() * 2000.0 + ship.global_position
+	# dest = ctx.behavior._get_valid_nav_point(dest)
+	# var intent := NavIntent.create(dest, enemy_bearing)
+	# intent.directional = is_directional
+	# return intent

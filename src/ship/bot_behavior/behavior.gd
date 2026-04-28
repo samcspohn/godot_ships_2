@@ -169,11 +169,6 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.DD: return 1.0
 	return 1.0
 
-func get_concealment_radius_multiplier() -> float:
-	## Returns a multiplier applied to detection-avoidance radii during stealth routing.
-	## Base value is 1.0 (no change). Subclasses override to scale with ship state.
-	return 1.0
-
 # ============================================================================
 # TACTICAL STATE HELPERS
 # ============================================================================
@@ -209,56 +204,96 @@ func can_fire_guns() -> bool:
 	## Each ship class gates firing in its own engage_target override.
 	return true
 
-var last_probe_pos = Vector3.ZERO
 func _probe_concealment(server: GameServer) -> bool:
-	## Returns true when the ship should suppress gun fire to let bloom decay
-	## and attempt to re-enter concealment.
+	## Returns true when guns should be suppressed to protect or achieve
+	## concealment.
 	##
-	## Conditions (all must be true):
-	##   1. Ship is currently detected by the enemy.
-	##   2. There is active firing bloom (concealment.bloom_value > 0).
-	##   3. The nearest enemy is BEYOND the ship's base (no-bloom) concealment
-	##      radius, meaning if we stop firing the bloom can decay and we would
-	##      eventually drop off detection.
-	if not _ship.visible_to_enemy:
-		return false
+	## Decision tree:
+	##   1. No spotted enemies:
+	##      → If detected with active bloom, a concealed ship has LOS; inject
+	##        proxy and suppress. Otherwise safe to fire.
+	##   2. For each spotted enemy:
+	##      a. LOS blocked by terrain → skip (terrain shields us from them).
+	##      b. LOS unblocked + we are already detected + enemy inside base
+	##         radius → suppression is useless (they see us regardless) → false.
+	##      c. LOS unblocked → open water; firing will expose/keep us exposed
+	##        → suppress_useful = true.
+	##   3. All spotted enemies have blocked LOS:
+	##      → If detected, a concealed ship must have LOS; inject proxy + suppress.
+	##      → If not detected, terrain shields us from all threats; safe to fire.
+	##   4. Return suppress_useful.
+	##
+	## NOTE: intentionally no top-level visible_to_enemy guard — we suppress
+	## proactively in open water even before the ship is detected so that bloom
+	## never builds up in the first place.
 
 	var concealment_node = _ship.concealment
 	if concealment_node == null:
 		return false
 
-	# Only probe if we actually have bloom right now
-	if concealment_node.bloom_value <= 0.0:
-		return false
-
 	var base_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
 
 	var spotted = server.get_valid_targets(_ship.team.team_id)
+
+	# No spotted enemies at all
 	if spotted.is_empty():
+		# If we are detected with bloom, a concealed ship must have direct LOS.
+		if _ship.visible_to_enemy and concealment_node.bloom_value > 0.0:
+			_inject_proxy_spotter(server)
+			return true
 		return false
 
-	# Find nearest enemy distance
-	var nearest_dist: float = INF
+	var all_los_blocked: bool = true
+	var suppress_useful: bool = false
+
 	for enemy in spotted:
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
 		var d = enemy.global_position.distance_to(_ship.global_position)
-		var los = _is_los_blocked_with_clearance(_ship.global_position, enemy.global_position)
-		if d < nearest_dist and los == false:
-			nearest_dist = d
+		var los_blocked = _is_los_blocked_with_clearance(_ship.global_position, enemy.global_position)
 
-	if nearest_dist < base_radius:
+		if not los_blocked:
+			all_los_blocked = false
+			if _ship.visible_to_enemy and d < base_radius:
+				# Already detected and enemy is inside base detection radius
+				# with direct LOS — suppressing bloom won't make them lose us.
+				return false
+			# Open-water enemy: firing creates or sustains bloom that exposes us.
+			suppress_useful = true
+
+	if all_los_blocked:
+		if _ship.visible_to_enemy:
+			# Terrain covers every spotted enemy yet we are still detected —
+			# a concealed ship must have direct LOS.
+			_inject_proxy_spotter(server)
+			return true
+		# Not detected and all enemies behind terrain — safe to fire.
 		return false
 
-	if last_probe_pos.distance_to(_ship.global_position) > 1000.0 and concealment_node.bloom_value > 0.0:
-		return true
-	elif last_probe_pos.distance_to(_ship.global_position) > 1000.0 and concealment_node.bloom_value <= 0.0:
-		last_probe_pos = _ship.global_position
-		return false
+	return suppress_useful
 
 
-	# If nearest enemy is already beyond base detection radius we can go dark
-	return nearest_dist > base_radius
+func _inject_proxy_spotter(server: GameServer) -> void:
+	## If concealment.spotted_by is a valid, living, currently-unspotted ship,
+	## write it into the server's unspotted-enemies dict so the navigation and
+	## threat systems treat it as a known threat even though it is concealed.
+	var concealment_node = _ship.concealment
+	if concealment_node == null:
+		return
+	var spotter: Ship = concealment_node.spotted_by
+	if not is_instance_valid(spotter):
+		return
+	if not spotter.health_controller.is_alive():
+		return
+	# Don't inject if the spotter is already in the spotted (visible) list
+	var spotted = server.get_valid_targets(_ship.team.team_id)
+	if spotter in spotted:
+		return
+	var my_team: int = _ship.team.team_id
+	var unspotted: Dictionary = server.team_0_unspotted_enemies if my_team == 0 else server.team_1_unspotted_enemies
+	var unspotted_times: Dictionary = server.team_0_unspotted_times if my_team == 0 else server.team_1_unspotted_times
+	unspotted[spotter] = spotter.global_position
+	unspotted_times[spotter] = Time.get_ticks_msec() / 1000.0
 
 # ============================================================================
 # NAVIGATION UTILITIES
@@ -1351,20 +1386,16 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = false) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
 
 	Generates two rings of candidate points — shore-line positions and offset
-	positions pushed out by 2.5× clearance.  When sort_by_proximity is true
-	(ship is already on this island), candidates are sorted by distance to the
-	ship so the nearest viable point wins.  Otherwise the original angle-priority
-	order is preserved (best hide heading first).
-
-	When spotted_position is provided (non-zero), candidates must also block LOS
-	to that position — this prevents the ship from shuffling between equally
-	exposed spots after being detected.
+	positions pushed out by 2.5× clearance.  When sort_by_proximity is true,
+	candidates are sorted by distance to the ship so the nearest viable point
+	wins.  Otherwise the original angle-priority order is preserved (best hide
+	heading first).
 	Returns { "pos": Vector3, "can_shoot": bool } or empty dict."""
 	var clearance = _get_ship_clearance()
 	if not NavigationMapManager.is_map_ready():
@@ -1439,11 +1470,6 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 		if hidden_count < threat_count:
 			continue
 
-		# If we have a spotted-position stamp, also require LOS blocked to it
-		if spotted_position != Vector3.ZERO:
-			if not _is_los_blocked_with_clearance(pos, spotted_position):
-				continue
-
 		var can_shoot_any: bool = false
 		if shell_params != null:
 			for t_ship in targets:
@@ -1487,133 +1513,7 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 		return cw
 	return ccw
 
-func _get_cover_position(desired_range: float, target: Ship, prioritize_cover: bool = true, sort_by_proximity: bool = false, spotted_position: Vector3 = Vector3.ZERO) -> Dictionary:
-	"""Find the best island cover position given a desired engagement range and
-	a primary target.  Scores each island by distance-to-travel + deviation from
-	desired_range to the nearest enemy cluster.
 
-	Returns {id, center, radius, dest, can_shoot} or empty dict if no viable
-	island exists.  The 'dest' is a fully validated cover position (concealed
-	from all threats, shootable over terrain when possible)."""
-	if not NavigationMapManager.is_map_ready():
-		return {}
-
-	var islands = NavigationMapManager.get_islands()
-	if islands.is_empty():
-		return {}
-
-	var ship = _ship
-	var my_pos = ship.global_position
-	var gun_range = ship.artillery_controller.get_params()._range
-	var min_safe_range = gun_range * 0.35
-
-	var threats = _gather_threat_positions(ship)
-	var server_node: GameServer = ship.get_node_or_null("/root/Server")
-	if server_node == null:
-		return {}
-	var targets = server_node.get_valid_targets(ship.team.team_id)
-	var enemy_clusters = server_node.get_enemy_clusters(ship.team.team_id)
-
-	var best_id: int = -1
-	var best_score: float = INF
-	var best_pos: Vector3 = Vector3.ZERO
-	var best_radius: float = 0.0
-	var best_dest: Vector3 = Vector3.ZERO
-	var best_can_shoot: bool = false
-
-	islands.sort_custom(func(a, b):
-		var center_a = Vector3(a["center"].x, 0.0, a["center"].y)
-		var center_b = Vector3(b["center"].x, 0.0, b["center"].y)
-		var dist_a = my_pos.distance_to(center_a) - a["radius"]
-		var dist_b = my_pos.distance_to(center_b) - b["radius"]
-		return dist_a < dist_b
-	)
-
-	for isl in islands:
-		var center_2d: Vector2 = isl["center"]
-		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
-		var isl_radius: float = isl["radius"]
-		var eff_dist = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
-
-		var hide_h: float
-		if threats.size() > 0:
-			hide_h = _compute_hide_heading(isl_pos, threats)
-		else:
-			hide_h = atan2(_cached_safe_dir.x, _cached_safe_dir.z)
-
-		var cover_result = _find_cover_position_on_island(isl_pos, isl_radius, hide_h, threats, targets, sort_by_proximity, spotted_position)
-		if cover_result.is_empty():
-			continue
-
-		var dest: Vector3 = cover_result["pos"]
-		var dest_validated_shootable: bool = cover_result["can_shoot"]
-		if not cover_result["can_shoot"]:
-			continue
-
-		# Find the nearest enemy cluster to this cover destination.
-		var nearest_cluster_center = Vector3.ZERO
-		var nearest_cluster_dist = INF
-		for cluster in enemy_clusters:
-			var d = dest.distance_to(cluster.center)
-			if d < nearest_cluster_dist:
-				for cluster_ship: Ship in cluster.ships:
-					if cluster_ship.ship_class != Ship.ShipClass.DD: # override in function, for now for CA, skip dd only clusters since we want to kill them rather than relocate
-						nearest_cluster_dist = d
-						nearest_cluster_center = cluster.center
-						break
-
-		if nearest_cluster_center != Vector3.ZERO:
-			var dest_to_cluster = nearest_cluster_dist
-
-			if dest_to_cluster > gun_range:
-				continue
-			if dest_to_cluster < min_safe_range:
-				continue
-
-			# var score: float = eff_dist + absf(dest_to_cluster - desired_range) * 0.3
-
-			# if not dest_validated_shootable:
-			# 	continue
-			var score = absf(1.0 - absf(dest_to_cluster / desired_range))
-
-
-			if score < (0.3 if not prioritize_cover else 1.0):
-				best_score = score
-				best_id = isl["id"]
-				best_pos = isl_pos
-				best_radius = isl_radius
-				best_dest = dest
-				best_can_shoot = dest_validated_shootable
-
-				return {
-					"id": best_id,
-					"center": best_pos,
-					"radius": best_radius,
-					"dest": best_dest,
-					"can_shoot": best_can_shoot,
-				}
-		else:
-			var score = eff_dist
-			if not dest_validated_shootable:
-				score += 5000.0
-			if score < best_score:
-				best_score = score
-				best_id = isl["id"]
-				best_pos = isl_pos
-				best_radius = isl_radius
-				best_dest = dest
-				best_can_shoot = dest_validated_shootable
-
-	if best_id < 0:
-		return {}
-
-	return {
-		"id": best_id,
-		"center": best_pos,
-		"radius": best_radius,
-		"dest": best_dest,
-		"can_shoot": best_can_shoot,
-	}
 
 # ============================================================================
 # DEFAULT POSITIONING (can be overridden)
@@ -1675,7 +1575,7 @@ func get_threat_score(server: GameServer) -> float:
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(1.0 - (dist / enemy_range), 0.0, 1.0)
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 2.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
 		# raw_threat *= (1.0 - range_pressure * class_w)
@@ -1684,8 +1584,16 @@ func get_threat_score(server: GameServer) -> float:
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
 		var this_threat = 1.0 - exp(-raw_val)
 		if not enemy.visible_to_enemy:
-			this_threat *= 0.1  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
+			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
 		raw_threat *= (1.0 - this_threat)
+
+	# var friendly = server.get_team_ships(_ship.team.team_id)
+	# for mate in friendly:
+	# 	var dist = mate.global_position.distance_to(_ship.global_position)
+	# 	if mate != _ship and mate.health_controller.is_alive() and dist < 4000.0:
+	# 		# Nearby allies reduce threat via their own HP ratio (more HP = more support they can provide)
+	# 		var mate_hp_ratio = mate.health_controller.current_hp / mate.health_controller.max_hp if mate.health_controller.max_hp > 0.0 else 0.0
+	# 		raw_threat *= lerpf(1.0, 2.0, mate_hp_ratio)
 
 	# # Low HP amplifies perceived threat so damaged ships play more defensively
 	# raw_threat *= lerpf(1.0, 2.0, hp_pressure)

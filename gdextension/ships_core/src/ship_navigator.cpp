@@ -19,6 +19,8 @@ void ShipNavigator::_bind_methods() {
 	// Setup
 	ClassDB::bind_method(D_METHOD("set_map", "map"), &ShipNavigator::set_map);
 	ClassDB::bind_method(D_METHOD("set_waypoint_graph", "graph"), &ShipNavigator::set_waypoint_graph);
+	ClassDB::bind_method(D_METHOD("set_hpa_graph", "graph"), &ShipNavigator::set_hpa_graph);
+	ClassDB::bind_method(D_METHOD("get_hpa_graph"), &ShipNavigator::get_hpa_graph);
 	ClassDB::bind_method(D_METHOD("set_ship_params",
 		"turning_circle_radius", "rudder_response_time",
 		"acceleration_time", "deceleration_time",
@@ -66,11 +68,9 @@ void ShipNavigator::_bind_methods() {
 		&ShipNavigator::add_incoming_shell);
 
 	// Enemy threat avoidance (stealth pathfinding)
-	ClassDB::bind_method(D_METHOD("clear_threat_zones"), &ShipNavigator::clear_threat_zones);
-	ClassDB::bind_method(D_METHOD("add_threat_zone", "position", "hard_radius", "soft_radius"),
-		&ShipNavigator::add_threat_zone);
-	ClassDB::bind_method(D_METHOD("add_threat_zone_ex", "enemy_id", "position", "hard_radius", "soft_radius"),
-		&ShipNavigator::add_threat_zone_ex);
+	ClassDB::bind_method(D_METHOD("set_threat_source", "registry", "team_id", "effective_radius"),
+		&ShipNavigator::set_threat_source);
+	ClassDB::bind_method(D_METHOD("clear_threat_source"), &ShipNavigator::clear_threat_source);
 
 	// Path info
 	ClassDB::bind_method(D_METHOD("get_current_path"), &ShipNavigator::get_current_path);
@@ -85,7 +85,9 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
 	ClassDB::bind_method(D_METHOD("get_debug_torpedo_threat_points"), &ShipNavigator::get_debug_torpedo_threat_points);
-	ClassDB::bind_method(D_METHOD("get_debug_threat_zones"), &ShipNavigator::get_debug_threat_zones);
+	ClassDB::bind_method(D_METHOD("get_debug_threat_arcs"), &ShipNavigator::get_debug_threat_arcs);
+	ClassDB::bind_method(D_METHOD("adjust_destination_for_threats", "ship_pos", "dest"),
+		&ShipNavigator::adjust_destination_for_threats);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -134,6 +136,11 @@ ShipNavigator::ShipNavigator() {
 }
 
 ShipNavigator::~ShipNavigator() {
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_bin_ = nullptr;
+	threat_registry_.unref();
 }
 
 // ============================================================================
@@ -144,8 +151,12 @@ void ShipNavigator::set_map(Ref<NavigationMap> p_map) {
 	map = p_map;
 }
 
-void ShipNavigator::set_waypoint_graph(Ref<WaypointGraph> p_graph) {
-	waypoint_graph_ = p_graph;
+void ShipNavigator::set_hpa_graph(Ref<HpaGraph> graph) {
+	hpa_graph_ = graph;
+}
+
+void ShipNavigator::set_waypoint_graph(Ref<WaypointGraph> graph) {
+	waypoint_graph_ = graph;
 	dstar_initialized_ = false;
 	dstar_converged_ = false;
 	replan_requested_ = true;
@@ -280,6 +291,11 @@ bool ShipNavigator::is_collision_imminent() const {
 
 void ShipNavigator::register_obstacle(int id, Vector2 position, Vector2 velocity, float radius, float length) {
 	obstacles[id] = DynamicObstacle(id, position, velocity, radius, length);
+	// Forward circular obstacle to HPA* for cluster-level blocking
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		float effective_radius = std::max(radius, length * 0.5f) + get_ship_clearance();
+		hpa_graph_->add_obstacle(id, position, effective_radius);
+	}
 }
 
 void ShipNavigator::update_obstacle(int id, Vector2 position, Vector2 velocity) {
@@ -288,14 +304,30 @@ void ShipNavigator::update_obstacle(int id, Vector2 position, Vector2 velocity) 
 		it->second.position = position;
 		it->second.velocity = velocity;
 	}
+	// Re-register obstacle at new position in HPA*
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		// Find the original radius/length for this obstacle
+		auto oit = obstacles.find(id);
+		if (oit != obstacles.end()) {
+			const DynamicObstacle &obs = oit->second;
+			float effective_radius = std::max(obs.radius, obs.length * 0.5f) + get_ship_clearance();
+			hpa_graph_->add_obstacle(id, position, effective_radius);
+		}
+	}
 }
 
 void ShipNavigator::remove_obstacle(int id) {
 	obstacles.erase(id);
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		hpa_graph_->remove_obstacle(id);
+	}
 }
 
 void ShipNavigator::clear_obstacles() {
 	obstacles.clear();
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		hpa_graph_->clear_obstacles();
+	}
 }
 
 void ShipNavigator::clear_incoming_shells() {
@@ -306,16 +338,57 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 	incoming_shells_.emplace_back(id, landing_pos, time_remaining, caliber, landing_dir, threat_half_len);
 }
 
-void ShipNavigator::clear_threat_zones() {
-	threat_zones_.clear();
+void ShipNavigator::set_threat_source(Ref<ThreatRegistry> registry, int team_id, float effective_radius) {
+	ThreatBin* new_bin = nullptr;
+	if (registry.is_valid()) {
+		new_bin = registry->acquire_bin(team_id, effective_radius);
+	}
+	if (new_bin == threat_bin_) {
+		// Already pointing at this exact bin — drop the duplicate ref we
+		// just acquired and bail.
+		if (registry.is_valid() && new_bin) {
+			registry->release_bin(new_bin);
+		}
+		return;
+	}
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_registry_ = registry;
+	threat_bin_ = new_bin;
+	threat_last_version_ = 0; // force refresh next push
+	if (dstar_initialized_) {
+		push_threats_to_dstar();
+	}
 }
 
-void ShipNavigator::add_threat_zone(Vector2 position, float hard_radius, float soft_radius) {
-	add_threat_zone_ex(-1, position, hard_radius, soft_radius);
+void ShipNavigator::clear_threat_source() {
+	if (threat_bin_ && threat_registry_.is_valid()) {
+		threat_registry_->release_bin(threat_bin_);
+	}
+	threat_bin_ = nullptr;
+	threat_registry_.unref();
+	threat_last_version_ = 0;
+	// Clear the HPA* cluster-level threat layer immediately so paths are
+	// no longer routed around the now-removed detection zones.
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		hpa_graph_->clear_threat_arcs();
+	}
+	if (dstar_initialized_) {
+		std::vector<ThreatArc> empty;
+		dstar_.update_threats(empty, nullptr);
+	}
 }
 
-void ShipNavigator::add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius) {
-	threat_zones_.emplace_back(enemy_id, position, hard_radius, soft_radius);
+void ShipNavigator::push_threats_to_dstar() {
+	if (threat_bin_) {
+		dstar_.update_threats(threat_bin_->arcs, &threat_bin_->grid);
+		threat_last_version_ = threat_bin_->version;
+	} else {
+		std::vector<ThreatArc> empty;
+		dstar_.update_threats(empty, nullptr);
+		threat_last_version_ = 0;
+	}
 }
 
 // ============================================================================
@@ -409,18 +482,41 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 	return result;
 }
 
-Array ShipNavigator::get_debug_threat_zones() const {
+Array ShipNavigator::get_debug_threat_arcs() const {
 	Array result;
-	for (const auto &tz : threat_zones_) {
+	if (!threat_bin_) return result;
+	for (const auto &a : threat_bin_->arcs) {
 		Dictionary d;
-		d["id"]          = tz.id;
-		d["x"]           = tz.position.x;
-		d["z"]           = tz.position.y;
-		d["hard_radius"] = tz.hard_radius;
-		d["soft_radius"] = tz.soft_radius;
+		d["id"]         = a.enemy_id;
+		d["x"]          = a.origin.x;
+		d["z"]          = a.origin.y;
+		d["bearing"]    = a.bearing;
+		d["half_angle"] = a.half_angle;
+		d["length"]     = a.length;
 		result.push_back(d);
 	}
 	return result;
+}
+
+Dictionary ShipNavigator::adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const {
+	Dictionary out;
+	out["position"] = dest;
+	out["adjusted"] = false;
+	if (!threat_bin_ || threat_bin_->grid.empty()) return out;
+
+	if (!threat_bin_->grid.is_blocked(dest)) return out;
+
+	// BFS up to a generous radius so a destination deep inside an arc set
+	// can still escape.  Cell size is ~length/30 (~200m for 6km arcs), so
+	// 256 cells of search reach is several km.
+	Vector2 adjusted;
+	if (!threat_bin_->grid.find_nearest_unblocked(dest, 256, adjusted)) {
+		return out;
+	}
+	out["position"] = adjusted;
+	out["adjusted"] = true;
+	(void)ship_pos; // currently unused; reserved for future bias toward ship_pos
+	return out;
 }
 
 // ============================================================================
@@ -574,7 +670,9 @@ void ShipNavigator::update_normal(float delta) {
 	// maneuver_radius: zone around the destination where the ship is allowed
 	// to overshoot and perform multi-point turns to align heading.  The ship
 	// may oscillate forward/reverse within this zone while aligning.
-	float maneuver_radius = std::max(arrived_radius, params.turning_circle_radius * 1.0f);
+	// Always extends at least one TCR beyond arrived_radius so the intermediate
+	// moderate-speed zone exists even when hold_radius is large.
+	float maneuver_radius = arrived_radius + std::max(params.turning_circle_radius, get_stopping_distance());
 
 	// approach_radius: outer zone where deceleration begins.
 	// Set to TCR so the ship drives straight at the destination and only
@@ -644,8 +742,15 @@ void ShipNavigator::update_normal(float delta) {
 			bool dest_ahead = dest_along >= 0.0f;
 
 			if (dist_to_dest < arrived_radius) {
-				// Very close but heading not aligned — creep to give rudder authority
-				desired_magnitude = 1;
+				// Inside arrived zone but heading not aligned — scale throttle to
+				// heading error so the rudder has enough authority to turn quickly.
+				// Large misalignment demands more speed; near-aligned ships creep.
+				if (heading_error > static_cast<float>(Math_PI / 4.0))
+					desired_magnitude = 3;  // >45°: aggressive turn
+				else if (heading_error > static_cast<float>(Math_PI / 8.0))
+					desired_magnitude = 2;  // >22.5°: moderate turn
+				else
+					desired_magnitude = 1;  // close to aligned: creep
 				direction = dest_ahead ? DesiredDirection::FORWARD : DesiredDirection::BACKWARD;
 			} else {
 				// Drifted within maneuver zone — head back toward destination
@@ -1005,17 +1110,39 @@ PathResult ShipNavigator::build_path_from_dstar() const {
 // ============================================================================
 
 void ShipNavigator::start_plan() {
+	plan_min_clearance = get_ship_clearance();
+	plan_comfortable_clearance = std::min(
+		plan_min_clearance + params.ship_beam * 0.5f,
+		plan_min_clearance * 2.0f);
+
+	// -----------------------------------------------------------------------
+	// HPA* path: use hierarchical A* when the graph is available.
+	// The abstract A* runs in microseconds, so we complete planning
+	// synchronously and go straight to DONE.
+	// -----------------------------------------------------------------------
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
+		map.is_valid() && map->is_built()) {
+
+		PathResult pr = hpa_graph_->find_path(state.position, target.position);
+		if (pr.valid && !pr.waypoints.empty()) {
+			plan_forward_result = pr;
+			dstar_initialized_ = false;
+			dstar_converged_   = false;
+			plan_phase = PlanPhase::DONE;
+			return;
+		}
+		// HPA* failed (e.g. isolated cluster) — fall through to D* Lite
+	}
+
+	// -----------------------------------------------------------------------
+	// D* Lite fallback
+	// -----------------------------------------------------------------------
 	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
 		map.is_null() || !map->is_built()) {
 		path_valid = false;
 		plan_phase = PlanPhase::IDLE;
 		return;
 	}
-
-	plan_min_clearance = get_ship_clearance();
-	plan_comfortable_clearance = std::min(
-		plan_min_clearance + params.ship_beam * 0.5f,
-		plan_min_clearance * 2.0f);
 
 	// Straight-line pre-check: skip graph entirely if clear
 	if (waypoint_graph_->straight_line_clear(state.position, target.position,
@@ -1052,9 +1179,16 @@ void ShipNavigator::start_plan() {
 	}
 
 	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
-	dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-					  plan_min_clearance, threat_zones_);
-	prev_threat_zones_ = threat_zones_;
+	if (threat_bin_) {
+		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+						  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
+		threat_last_version_ = threat_bin_->version;
+	} else {
+		std::vector<ThreatArc> empty;
+		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+						  plan_min_clearance, empty, nullptr);
+		threat_last_version_ = 0;
+	}
 	dstar_initialized_ = true;
 	dstar_converged_ = false;
 	plan_phase = PlanPhase::COMPUTING;
@@ -1075,16 +1209,35 @@ void ShipNavigator::tick_plan() {
 }
 
 void ShipNavigator::run_plan_sync() {
+	plan_min_clearance = get_ship_clearance();
+	plan_comfortable_clearance = std::min(
+		plan_min_clearance + params.ship_beam * 0.5f,
+		plan_min_clearance * 2.0f);
+
+	// -----------------------------------------------------------------------
+	// HPA* synchronous path
+	// -----------------------------------------------------------------------
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
+		map.is_valid() && map->is_built()) {
+
+		PathResult pr = hpa_graph_->find_path(state.position, target.position);
+		if (pr.valid && !pr.waypoints.empty()) {
+			accept_plan_result(pr);
+			dstar_initialized_ = false;
+			plan_phase = PlanPhase::IDLE;
+			return;
+		}
+		// HPA* failed — fall through to D* Lite
+	}
+
+	// -----------------------------------------------------------------------
+	// D* Lite fallback
+	// -----------------------------------------------------------------------
 	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
 		map.is_null() || !map->is_built()) {
 		path_valid = false;
 		return;
 	}
-
-	plan_min_clearance = get_ship_clearance();
-	plan_comfortable_clearance = std::min(
-		plan_min_clearance + params.ship_beam * 0.5f,
-		plan_min_clearance * 2.0f);
 
 	// Straight-line pre-check
 	if (waypoint_graph_->straight_line_clear(state.position, target.position,
@@ -1107,9 +1260,16 @@ void ShipNavigator::run_plan_sync() {
 
 	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
 		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
-		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, threat_zones_);
-		prev_threat_zones_ = threat_zones_;
+		if (threat_bin_) {
+			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+							  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
+			threat_last_version_ = threat_bin_->version;
+		} else {
+			std::vector<ThreatArc> empty;
+			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
+							  plan_min_clearance, empty, nullptr);
+			threat_last_version_ = 0;
+		}
 		dstar_initialized_ = true;
 		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
 
@@ -1132,25 +1292,49 @@ void ShipNavigator::run_plan_sync() {
 // ============================================================================
 
 void ShipNavigator::dstar_incremental_update() {
-	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
+	// -----------------------------------------------------------------------
+	// HPA* incremental update: when obstacle blocking changes trigger a
+	// replan request, re-run HPA* find_path synchronously (the abstract A*
+	// is fast enough that per-frame repair budgets are not needed).
+	// -----------------------------------------------------------------------
+	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
+		// Threat arc changes: rasterize arcs directly onto the Level-1
+		// cluster grid.  This replaces the separate BlockedGrid-based circle
+		// approximation and respects the actual wedge geometry at cluster
+		// granularity — O(num_clusters × num_arcs), typically < 1 ms.
+		if (threat_bin_) {
+			uint64_t live_version = threat_bin_->version;
+			if (live_version != threat_last_version_) {
+				hpa_graph_->stamp_threat_arcs(threat_bin_->arcs);
+				threat_last_version_ = live_version;
+				push_threats_to_dstar(); // keep D* Lite + BlockedGrid in sync
+				                         // for adjust_destination_for_threats()
+			}
+		} else {
+			// No threat source attached — ensure cluster threat layer is clear
+			hpa_graph_->clear_threat_arcs();
+		}
 
-	// 1. Detect threat zone changes and update node blocking.
-	bool threats_changed = false;
-	if (threat_zones_.size() != prev_threat_zones_.size()) {
-		threats_changed = true;
-	} else {
-		for (size_t i = 0; i < threat_zones_.size(); i++) {
-			if (threat_zones_[i].position.distance_squared_to(prev_threat_zones_[i].position) > 100.0f ||
-				std::abs(threat_zones_[i].hard_radius - prev_threat_zones_[i].hard_radius) > 1.0f) {
-				threats_changed = true;
-				break;
+		// Re-plan with HPA* to pick up any cluster blocking changes
+		if (replan_requested_ || !path_valid) {
+			PathResult pr = hpa_graph_->find_path(state.position, target.position);
+			if (pr.valid && !pr.waypoints.empty()) {
+				accept_plan_result(pr);
 			}
 		}
+		return;
 	}
 
-	if (threats_changed) {
-		dstar_.update_threats(threat_zones_);
-		prev_threat_zones_ = threat_zones_;
+	// -----------------------------------------------------------------------
+	// D* Lite incremental repair (original path)
+	// -----------------------------------------------------------------------
+	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
+
+	// 1. Detect threat zone changes via bin version diff (the registry bumps
+	//    the version once per global tick when the bin is rebuilt).
+	uint64_t live_version = threat_bin_ ? threat_bin_->version : 0;
+	if (live_version != threat_last_version_) {
+		push_threats_to_dstar();
 	}
 
 	// 2. Update start node if ship has moved to a different nearest node
@@ -1430,6 +1614,20 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		wp_target = current_path.waypoints[current_wp_index];
 	}
 	float wp_reach_radius = get_reach_radius();
+
+	// When at/near destination (path exhausted or already within reach radius),
+	// predict_arc_to_heading would target a point essentially underfoot, causing
+	// dist_to_target < 1 and skipping the alignment check entirely.  Replace
+	// wp_target with a virtual point far along the desired heading so candidates
+	// are correctly scored for final bearing alignment.
+	{
+		bool path_exhausted_here = !path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size());
+		float dist_to_wp = state.position.distance_to(wp_target);
+		if (path_exhausted_here || dist_to_wp < wp_reach_radius) {
+			float th = target.heading;
+			wp_target = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
+		}
+	}
 
 	// --- Ship-obstacle hitter determination ---
 	float our_heading_x = std::sin(state.heading);

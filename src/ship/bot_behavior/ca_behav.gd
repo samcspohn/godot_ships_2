@@ -173,7 +173,18 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 4
 			else:
-				offset.y = _target.movement_controller.ship_height / 2
+				var fire_pos = null
+				var priority_fires = [1,2,0,3]
+				for i in priority_fires:
+				# for fire: Fire in _target.fire_manager.fires:
+					var fire: Fire = _target.fire_manager.fires[i]
+					if fire.lifetime <= 0:
+						fire_pos = fire.position
+						break
+				if fire_pos != null:
+					offset = fire_pos
+				else:
+					offset.y = _target.movement_controller.ship_height / 2
 		Ship.ShipClass.CA:
 			if is_broadside:
 				if dist < 10000:
@@ -384,7 +395,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var cover_params = {
 		"desired_range": desired_range,
 		"recalc_cooldown_ms": _COVER_RECALC_COOLDOWN_MS,
-		"push_timeout_ms": 20000
 	}
 
 	var intent: NavIntent = null
@@ -420,20 +430,32 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
 
-	if threat < 0.25:
-		# Low threat — push and engage
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.5})
+	if threat < 0.5:
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.0})
 		if intent != null:
 			_active_skill_name = &"Push"
-
-	elif threat < 0.6:
-		# Medium threat
-		if dist > gun_range:
-			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.6})
+	elif dist < 6000.0 && ship.visible_to_enemy:
+		# High threat and enemy is close — find the optimal presentation angle
+		# then choose angle skill (bow-in) or kite (stern-in) accordingly.
+		var to_nearest = nearest.global_position - ship.global_position
+		to_nearest.y = 0.0
+		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+		var bow_diff = absf(angle_difference(optimal_heading, enemy_bearing))
+		if bow_diff < PI * 0.5:
+			# Optimal heading is bow-in — angle toward enemy
+			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
 			if intent != null:
 				_active_skill_name = &"Angle"
-		elif dist > 5000.0:
-			intent = _skill_cover.execute(ctx, cover_params)
+		else:
+			# Optimal heading is stern-in — kite away while keeping guns on target
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
+			if intent != null:
+				_active_skill_name = &"Kite"
+	else:
+		if not ship.visible_to_enemy:
+			# Undetected — seek cover as normal, fall back to angle
+			intent = _skill_cover.execute(ctx, cover_params, true)
 			if intent != null:
 				_active_skill_name = &"FindCover"
 			else:
@@ -441,42 +463,60 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				if intent != null:
 					_active_skill_name = &"Angle"
 		else:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
-			if intent != null:
-				_active_skill_name = &"Kite"
+			# Detected but enemy is far — check if cover destination is on the way
+			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
+			if cover_intent != null and nearest != null:
+				var cover_dest = _skill_cover._nav_destination
+				var to_cover = cover_dest - ship.global_position
+				to_cover.y = 0.0
+				var dist_to_cover = to_cover.length()
+				# Angle tolerance scales with distance to cover:
+				#   70 deg when cover is <= 1000 m away (almost there, accept wide detours)
+				#   10 deg when cover is >= 5000 m away (far detour is too costly)
+				var t = clampf((dist_to_cover - 1000.0) / 4000.0, 0.0, 1.0)
+				var angle_tol = lerpf(deg_to_rad(70.0), deg_to_rad(10.0), t)
+				# Optimal heading relative to the nearest enemy
+				var to_nearest = nearest.global_position - ship.global_position
+				to_nearest.y = 0.0
+				var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+				var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+				var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
+				var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
+				if bearing_diff > angle_tol:
+					# Cover is too far off the optimal angle — kite instead
+					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
+					if intent != null:
+						_active_skill_name = &"Kite"
+					else:
+						intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
+						if intent != null:
+							_active_skill_name = &"Angle"
+				else:
+					intent = cover_intent
+					_active_skill_name = &"FindCover"
+			else:
+				# No cover available or no spotted target — fall back to angle
+				if cover_intent != null:
+					intent = cover_intent
+					_active_skill_name = &"FindCover"
+				else:
+					intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
+					if intent != null:
+						_active_skill_name = &"Angle"
+
+	if threat > 0.85:
+		wants_stealth = true
+		wants_to_be_concealed = _probe_concealment(server)
 
 	else:
-		# High threat (>= 0.6)
-		if dist < 5000.0:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65, "angle_to_threat_deg": 25.0})
-			if intent != null:
-				_active_skill_name = &"AngledReverse"
-			_suppress_guns = false
-		else:
-			intent = _skill_cover.execute(ctx, cover_params, true)
-			if intent != null:
-				_active_skill_name = &"FindCover"
-			# _suppress_guns = not _skill_cover.is_complete(ctx)
-			# Route around detection zones only when undetected, heading to cover,
-			# and not carrying torpedoes (torpedo CAs push close regardless)
-			wants_stealth = not ship.visible_to_enemy and ship.torpedo_controller == null
-			# Concealment probe: suppress guns when detected + bloom active + enemy
-			# far enough that going dark would drop us off detection.
-			# Only applies for non-torpedo CAs in cover-seeking mode.
-			if ship.torpedo_controller == null:
-				wants_to_be_concealed = _probe_concealment(server)
-			if wants_to_be_concealed:
-				_suppress_guns = true
+		wants_stealth = false
+		wants_to_be_concealed = false
 
-	_suppress_guns = false
-	# ── Fallback ────────────────────────────────────────────────────────────
-	if intent == null:
-		intent = _skill_angle.execute(ctx, {})
-		if intent != null:
-			_active_skill_name = &"Angle"
-	if intent == null:
-		intent = _intent_sail_forward(ship)
-		_active_skill_name = &"SailForward"
+	if wants_to_be_concealed:
+		_suppress_guns = true
+	else:
+		_suppress_guns = false
+
 
 	# ── Post-process: broadside ──────────────────────────────────────────────
 	if _active_skill_name in [&"Kite", &"Angle", &"AngledReverse", &"Push"]:

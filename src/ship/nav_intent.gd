@@ -25,6 +25,12 @@ var heading_tolerance: float = 0.2618
 ## Near-terrain flag: relaxes terrain collision avoidance so the ship can hug islands
 var near_terrain: bool = false
 
+## Directional flag: when true, the destination is a heading direction rather than a
+## fixed world-space point. The bot controller will continuously reproject
+## target_position as (currentShipPos + fwd * 5000) every path-update tick,
+## preventing the destination from going stale between behavior queries.
+var directional: bool = false
+
 
 ## Create a navigation intent
 static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618) -> NavIntent:

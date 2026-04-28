@@ -14,7 +14,9 @@
 // From navigation
 #include "navigation_map.h"
 #include "waypoint_graph.h"
+#include "hpa_graph.h"
 #include "ship_navigator.h"
+#include "threat_registry.h"
 
 // From game_systems
 #include "projectile_data.h"
@@ -42,6 +44,8 @@ void initialize_ships_core_module(ModuleInitializationLevel p_level) {
 	// Register navigation classes
 	GDREGISTER_CLASS(NavigationMap);
 	GDREGISTER_CLASS(WaypointGraph);
+	GDREGISTER_CLASS(HpaGraph);
+	GDREGISTER_CLASS(ThreatRegistry);
 	GDREGISTER_CLASS(ShipNavigator);
 }
 

@@ -29,7 +29,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	# Gather all known enemy positions for threat checking
 	var threat_positions: Array = ctx.behavior._gather_threat_positions(ship)
-	var soft_radius: float = concealment_radius + 500.0  # must match _update_threat_zones
+	# Scoring radius: detection boundary + small buffer. Heuristic-only, not
+	# tied to what the pathfinder consumes.
+	var scoring_radius: float = concealment_radius + 500.0
 
 	# Enemy fleet centroid — used to determine "our side" vs "their side"
 	var enemy_centroid := _get_enemy_centroid(threat_positions)
@@ -102,7 +104,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			score += SCORE_WEIGHT_BEAM_ANGLE * beam_quality
 
 		# 4) Threat clearance score: prefer candidates outside threat zones
-		var threat_score := _score_threat_clearance(candidate_2d, threat_positions, soft_radius)
+		var threat_score := _score_threat_clearance(candidate_2d, threat_positions, scoring_radius)
 		score += SCORE_WEIGHT_THREAT_CLEAR * threat_score
 
 		if score > best_score:
@@ -118,7 +120,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# better to fall through to Flank/Hunt than to send the pathfinder on
 	# an impossible quest.
 	var best_2d := Vector2(best_pos.x, best_pos.z)
-	var threats_covering_best := _count_covering_threats(best_2d, threat_positions, soft_radius)
+	var threats_covering_best := _count_covering_threats(best_2d, threat_positions, concealment_radius)
 	if threats_covering_best >= 3:
 		# Surrounded by 3+ threat zones — torpedo run is suicidal, abort
 		return null
@@ -134,7 +136,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 ## Score how clear a candidate position is from threat zones.
 ## Returns 1.0 if fully clear, 0.0 if deep inside multiple zones.
-func _score_threat_clearance(pos: Vector2, threat_positions: Array, soft_radius: float) -> float:
+func _score_threat_clearance(pos: Vector2, threat_positions: Array, scoring_radius: float) -> float:
 	if threat_positions.is_empty():
 		return 1.0
 
@@ -142,25 +144,22 @@ func _score_threat_clearance(pos: Vector2, threat_positions: Array, soft_radius:
 	for tp in threat_positions:
 		var tp_2d := Vector2(tp.x, tp.z)
 		var dist := pos.distance_to(tp_2d)
-		if dist < soft_radius:
-			# Quadratic ramp: 1.0 at center, 0.0 at soft edge
-			var t := (soft_radius - dist) / soft_radius
+		if dist < scoring_radius:
+			# Quadratic ramp: 1.0 at center, 0.0 at edge
+			var t := (scoring_radius - dist) / scoring_radius
 			total_penalty += t * t
 
 	# Normalize: 0 penalty = 1.0 score, heavy penalty = 0.0
 	return clampf(1.0 - total_penalty * 0.5, 0.0, 1.0)
 
 
-## Count how many threat zones fully cover the candidate position (inside hard radius).
-func _count_covering_threats(pos: Vector2, threat_positions: Array, soft_radius: float) -> int:
+## Count how many threat zones fully cover the candidate position (inside the
+## caller-supplied radius — the DD's concealment radius by default).
+func _count_covering_threats(pos: Vector2, threat_positions: Array, cover_radius: float) -> int:
 	var count := 0
-	# Use a tighter radius for "covering" — inside the hard detection zone
-	var hard_radius := soft_radius - 500.0  # undo the safety margin
-	if hard_radius <= 0.0:
-		hard_radius = soft_radius * 0.5
 	for tp in threat_positions:
 		var tp_2d := Vector2(tp.x, tp.z)
-		if pos.distance_to(tp_2d) < hard_radius:
+		if pos.distance_to(tp_2d) < cover_radius:
 			count += 1
 	return count
 

@@ -41,6 +41,14 @@ var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
 var gun_updated = false
 var map: Map = null
 
+# Shared threat registry — every bot holds a pointer into a bin here instead
+# of maintaining its own threat list.  Bots subscribe with their
+# (team_id, effective_radius); the global tick below republishes enemy
+# positions once per THREAT_UPDATE_INTERVAL frames.
+var threat_registry: ThreatRegistry = ThreatRegistry.new()
+const THREAT_UPDATE_INTERVAL: int = 4
+const THREAT_STALE_DECAY_SECONDS: float = 100.0
+
 # Match state
 var match_active: bool = false
 var match_ended: bool = false
@@ -1181,3 +1189,48 @@ func _physics_process(_delta: float) -> void:
 
 	team_0_valid_targets = _get_valid_targets(0)
 	team_1_valid_targets = _get_valid_targets(1)
+
+	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
+		_update_threat_registry()
+
+	# Per-frame: advance one terrain probe per enemy arc.  Cheap; spreads the
+	# raycast cost so a full 12-arc refresh per enemy completes every 12
+	# frames.  NavigationMap is required.
+	if threat_registry != null and NavigationMapManager.is_map_ready():
+		threat_registry.tick_arcs(NavigationMapManager.get_map())
+
+
+## Publish the latest per-team enemy position + decay lists to the shared
+## ThreatRegistry.  Called once per THREAT_UPDATE_INTERVAL frames globally;
+## bots read their bin's zones on-demand (no per-ship gathering).
+func _update_threat_registry() -> void:
+	if threat_registry == null:
+		return
+	_publish_team_threats(0)
+	_publish_team_threats(1)
+
+
+func _publish_team_threats(team_id: int) -> void:
+	var ids := PackedInt32Array()
+	var data := PackedVector3Array()
+	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
+	for enemy in valid_targets:
+		if is_instance_valid(enemy) and enemy.is_alive():
+			ids.append(int(enemy.get_instance_id()))
+			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
+
+	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
+	var now: float = Time.get_ticks_msec() / 1000.0
+	for enemy_ship in unspotted.keys():
+		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
+			continue
+		var last_time: float = unspotted_times.get(enemy_ship, now)
+		var decay: float = 1.0 - clamp((now - last_time) / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
+		if decay <= 0.0:
+			continue
+		var lp: Vector3 = unspotted[enemy_ship]
+		ids.append(int(enemy_ship.get_instance_id()))
+		data.append(Vector3(lp.x, lp.z, decay))
+
+	threat_registry.update_team(team_id, ids, data)

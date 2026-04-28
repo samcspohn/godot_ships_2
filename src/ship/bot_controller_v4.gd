@@ -66,7 +66,7 @@ var target_scan_timer: float = 0.0
 ## How often to update obstacle positions (frames)
 const OBSTACLE_UPDATE_INTERVAL: int = 4
 ## Maximum distance to register a ship as an obstacle
-const OBSTACLE_REGISTER_RANGE: float = 5000.0
+const OBSTACLE_REGISTER_RANGE: float = 2000.0
 
 ## Maximum distance to register a torpedo as an obstacle
 @export var torpedo_track_range: float = 3000.0
@@ -80,7 +80,7 @@ const SHELL_QUERY_RANGE: float = 1000.0
 ## How often to force a path replan (frames). Between replans the navigator
 ## continues arc-based threat avoidance with the last known destination.
 ## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
-const PATH_UPDATE_INTERVAL: int = 8
+const PATH_UPDATE_INTERVAL: int = 6
 ## Distance (m) the intent destination must jump to trigger an immediate path
 ## replan, bypassing the PATH_UPDATE_INTERVAL cooldown.
 const PATH_SIGNIFICANT_MOVE: float = 1000.0
@@ -109,7 +109,7 @@ var _last_raw_intent: NavIntent = null
 const INTENT_POSITION_REUSE_THRESHOLD: float = 100.0
 
 ## Heading threshold (radians) below which a heading change is considered trivial.
-const INTENT_HEADING_REUSE_THRESHOLD: float = 0.35  # ~20 degrees
+const INTENT_HEADING_REUSE_THRESHOLD: float = deg_to_rad(1)  # 1 degrees
 
 # ===========================================================================
 # EVENT-DRIVEN INTENT TRIGGERS
@@ -154,6 +154,14 @@ var _last_hp_bracket: int = -1
 var _last_path_destination: Vector3 = Vector3.ZERO
 
 var should_query_behavior: bool = false
+
+## Cached effective detection-avoidance radius used to pick a ThreatRegistry
+## bin.  Constant for the ship's lifetime once ship + concealment are ready;
+## 0 means "not yet computable, retry lazily".
+var _threat_effective_radius: float = 0.0
+## Whether the navigator currently holds a ThreatBin subscription.  Avoids
+## redundant set_threat_source churn when wants_stealth is stable.
+var _threat_subscribed: bool = false
 
 
 # ===========================================================================
@@ -284,7 +292,7 @@ func _physics_process(delta: float) -> void:
 		# Full obstacle refresh: clear everything, re-add ships, re-add torpedoes.
 		# This is the only place clear_obstacles() is called.
 		_update_obstacles()
-		_update_threat_zones()
+		_sync_threat_subscription()
 
 		# Event checks involve server queries — deferred to slot, not every frame.
 		if _event_cooldown <= 0.0:
@@ -427,6 +435,18 @@ func _execute_nav_intent() -> void:
 	if _last_intent == null:
 		navigator.navigate_to(Vector3(destination.x, 0.0, destination.z), get_ship_heading(), 0.0)
 		return
+	# For directional intents (Angle heading-only, Kite) the destination is not a
+	# fixed world-space point — it encodes a desired heading.  Reproject it every
+	# path-update tick so the navigator always receives a fresh target rather than
+	# one that was baked against the ship's position up to MAX_BEHAVIOR_INTERVAL ago.
+	# _last_intent.target_position is intentionally NOT mutated so that
+	# _is_intent_similar() can still compare raw skill outputs correctly.
+	# var nav_pos: Vector3 = _last_intent.target_position
+	# if _last_intent.directional:
+	# 	var h: float = _last_intent.target_heading
+	# 	nav_pos = _ship.global_position + Vector3(sin(h), 0.0, cos(h)) * 5000.0
+	# 	nav_pos.y = 0.0
+	# 	destination = nav_pos
 	navigator.navigate_to(
 		_last_intent.target_position,
 		_last_intent.target_heading,
@@ -547,142 +567,77 @@ func _update_shell_threats() -> void:
 		)
 
 
-## Push the intent's destination out of enemy threat zones so the A* goal
-## is in pathable territory.  Only active when SNEAKING — mirrors the same
-## condition used by _update_threat_zones().
-##
-## For every enemy whose soft_radius covers the destination we push the
-## destination radially away from that enemy until it sits just outside the
-## soft_radius.  After all pushes we re-validate against terrain so the
-## adjusted point is still in navigable water.
+## Push the intent's destination out of enemy threat zones so the pathfinder
+## goal is in pathable territory.  Only called when wants_stealth (see
+## _update_nav_intent); reads the shared bin zones via navigator instead of
+## re-gathering enemy positions here.
 func _adjust_destination_for_threats(intent: NavIntent) -> void:
-	if behavior == null:
+	if behavior == null or navigator == null:
 		return
-
-	# Read concealment — same radii used by _update_threat_zones
-	var my_concealment: float = 0.0
-	if _ship.concealment != null and _ship.concealment.params != null:
-		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
-	if my_concealment <= 0.0:
-		return
-
-	# HP-based radius scaling (matches _update_threat_zones)
-	var radius_mult: float = behavior.get_concealment_radius_multiplier()
-	var soft_radius_base: float = (my_concealment + 500.0) * radius_mult  # must match _update_threat_zones
-	# Small buffer so the destination lands clearly outside the soft edge
-	var push_margin: float = 100.0
 
 	var dest := Vector2(intent.target_position.x, intent.target_position.z)
 	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
-	var was_adjusted := false
 
-	# Collect enemy positions with per-threat soft radii
-	# Array of {pos: Vector2, radius: float}
-	var threats: Array = []
-	var enemies = server_node.get_valid_targets(_ship.team.team_id)
-	for enemy_ship in enemies:
-		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			threats.append({
-				pos = Vector2(enemy_ship.global_position.x, enemy_ship.global_position.z),
-				radius = soft_radius_base
-			})
+	# Cell-boundary push: ask the navigator to walk |dest| out of any blocked
+	# arc cells via cardinal-cell BFS through the bin's BlockedGrid.  This
+	# replaces the old radial push-out-of-circle approach, which oscillated
+	# between overlapping circles and didn't account for terrain-trimmed arcs.
+	var result: Dictionary = navigator.adjust_destination_for_threats(ship_pos, dest)
+	if not result.get("adjusted", false):
+		return
 
-	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
-	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
-	var now: float = Time.get_ticks_msec() / 1000.0
-	const STALE_DECAY_SECONDS: float = 100.0
-	for enemy_ship in unspotted.keys():
-		if is_instance_valid(enemy_ship) and enemy_ship.is_alive():
-			var last_time: float = unspotted_times.get(enemy_ship, now)
-			var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
-			if decay <= 0.0:
-				continue  # Fully decayed — no longer a routing obstacle
-			var lp: Vector3 = unspotted[enemy_ship]
-			threats.append({
-				pos = Vector2(lp.x, lp.z),
-				radius = soft_radius_base * decay
-			})
+	dest = result["position"]
 
-	# Iteratively push the destination out of every overlapping threat zone.
-	var max_passes := 4
-	for _pass in max_passes:
-		var pushed_this_pass := false
-		for t in threats:
-			var epos: Vector2 = t.pos
-			var soft_radius: float = t.radius
-			var to_dest := dest - epos
-			var dist := to_dest.length()
-			if dist < soft_radius + push_margin:
-				var push_dir: Vector2
-				if dist > 1.0:
-					push_dir = to_dest / dist
-				else:
-					var fallback := ship_pos - epos
-					if fallback.length() > 1.0:
-						push_dir = fallback.normalized()
-					else:
-						push_dir = Vector2(1.0, 0.0)
-				dest = epos + push_dir * (soft_radius + push_margin)
-				pushed_this_pass = true
-				was_adjusted = true
-		if not pushed_this_pass:
-			break
-
-	# Re-validate against terrain so we don't push into land
-	if was_adjusted and NavigationMapManager.is_map_ready():
+	if NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
 		var turning_radius: float = movement.turning_circle_radius
 		if not nav_map.is_navigable(dest.x, dest.y, clearance):
 			var safe := nav_map.safe_nav_point(ship_pos, dest, clearance, turning_radius)
 			dest = safe["position"]
-		intent.target_position = Vector3(dest.x, 0.0, dest.y)
-	elif was_adjusted:
-		intent.target_position = Vector3(dest.x, 0.0, dest.y)
+	intent.target_position = Vector3(dest.x, 0.0, dest.y)
 
 
-func _update_threat_zones() -> void:
-	navigator.clear_threat_zones()
-
-	if behavior == null or not behavior.wants_stealth:
+## Toggle the navigator's subscription to the shared ThreatRegistry based on
+## behavior.wants_stealth.  Called from the staggered update slot so state
+## transitions (spotted <-> hidden) flip subscription at most once per
+## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
+func _sync_threat_subscription() -> void:
+	if behavior == null or server_node == null or server_node.threat_registry == null:
+		if _threat_subscribed:
+			navigator.clear_threat_source()
+			_threat_subscribed = false
 		return
 
-	# Use our base concealment radius as the avoidance distance
-	var my_concealment: float = 0.0
-	if _ship.concealment != null and _ship.concealment.params != null:
-		my_concealment = (_ship.concealment.params.p() as ConcealmentParams).radius
-	if my_concealment <= 0.0:
+	if not behavior.wants_stealth:
+		if _threat_subscribed:
+			navigator.clear_threat_source()
+			_threat_subscribed = false
 		return
 
-	# HP-based radius scaling (e.g. DDs scale up to 1.5x at low HP)
-	var radius_mult: float = behavior.get_concealment_radius_multiplier()
+	if _threat_subscribed:
+		return
 
-	var hard_radius: float = (my_concealment + _ship.movement_controller.turning_circle_radius * 2.0) * radius_mult
-	var soft_radius: float = (my_concealment + 500.0) * radius_mult  # 500m safety margin
+	if _threat_effective_radius <= 0.0:
+		# Retry lazily — concealment params may not be initialized at _ready.
+		_threat_effective_radius = _compute_threat_effective_radius()
+		if _threat_effective_radius <= 0.0:
+			return
 
-	# Register all known spotted enemy positions as threat zones (full radius)
-	var enemies = server_node.get_valid_targets(_ship.team.team_id)
-	for enemy in enemies:
-		if not is_instance_valid(enemy) or not enemy.is_alive():
-			continue
-		var pos_2d = Vector2(enemy.global_position.x, enemy.global_position.z)
-		navigator.add_threat_zone(pos_2d, hard_radius, soft_radius)
+	navigator.set_threat_source(server_node.threat_registry, _ship.team.team_id, _threat_effective_radius)
+	_threat_subscribed = true
 
-	# Unspotted enemies: radius decays linearly to 0 over 100 seconds
-	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
-	var unspotted_times = server_node.get_unspotted_enemy_times(_ship.team.team_id)
-	var now: float = Time.get_ticks_msec() / 1000.0
-	const STALE_DECAY_SECONDS: float = 100.0
-	for enemy_ship in unspotted.keys():
-		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
-			continue
-		var last_time: float = unspotted_times.get(enemy_ship, now)
-		var decay: float = 1.0 - clamp((now - last_time) / STALE_DECAY_SECONDS, 0.0, 1.0)
-		if decay <= 0.0:
-			continue  # Zone fully decayed — skip
-		var last_pos: Vector3 = unspotted[enemy_ship]
-		var pos_2d = Vector2(last_pos.x, last_pos.z)
-		navigator.add_threat_zone(pos_2d, hard_radius * decay, soft_radius * decay)
+
+func _compute_threat_effective_radius() -> float:
+	if _ship == null or _ship.concealment == null or _ship.concealment.params == null:
+		return 0.0
+	var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if conceal <= 0.0:
+		return 0.0
+	var turn: float = 0.0
+	if _ship.movement_controller != null:
+		turn = _ship.movement_controller.turning_circle_radius
+	return conceal + turn * 2.0
 
 
 # ===========================================================================
@@ -1040,19 +995,12 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
 
-		# --- o) Threat zones (concealment circles the pathfinder avoids) ---
-		var threat_zones = navigator.get_debug_threat_zones()
-		for tz in threat_zones:
-			var tz_pos = Vector3(tz["x"], 6.0, tz["z"])
-			var hard_r: float = tz["hard_radius"]
-			# Draw the hard-radius circle as line segments
-			var circle_steps := 16
-			for s in range(circle_steps):
-				var a0 := (float(s) / float(circle_steps)) * TAU
-				var a1 := (float(s + 1) / float(circle_steps)) * TAU
-				var p0 := Vector3(tz_pos.x + hard_r * cos(a0), 6.0, tz_pos.z + hard_r * sin(a0))
-				var p1 := Vector3(tz_pos.x + hard_r * cos(a1), 6.0, tz_pos.z + hard_r * sin(a1))
-				Debug.draw_line(p0, p1, Color(1.0, 0.0, 0.0, 0.5))
+		# --- o) Threat arcs (terrain-limited 30° wedges the pathfinder avoids) ---
+		var threat_arcs = navigator.get_debug_threat_arcs()
+		var arc_color := Color(1.0, 0.0, 0.0, 0.5)
+		for tz in threat_arcs:
+			var origin := Vector3(tz["x"], 6.0, tz["z"])
+			Debug.draw_arc(origin, tz["bearing"], tz["half_angle"], tz["length"], arc_color, 8)
 
 
 		# --- p) Torpedo & shell threat lines ---

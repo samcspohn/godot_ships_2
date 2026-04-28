@@ -28,6 +28,7 @@ enum DrawType {
 	SQUARE,   # 5
 	LABEL,    # 6
 	CONE,     # 7
+	ARC,      # 8  — wedge (two radii + arc) on the XZ plane
 }
 
 # Byte stride per command (fixed-size types only).
@@ -39,6 +40,7 @@ enum DrawType {
 # SQUARE: pos(3) + width(1) + height(1) + color(4) + filled(1 as float) = 10 floats = 40 bytes
 # LABEL:  variable — pos(3) + color(4) + font_size(1) + text_byte_count(1i) = 36 bytes header, then text bytes (padded to 4)
 # CONE:   pos(3) + rot(3) + cone_height(1) + top_radius(1) + bottom_radius(1) + color(4) + radial_segments(1) = 14 floats = 56 bytes
+# ARC:    pos(3) + bearing(1) + half_angle(1) + length(1) + color(4) + segments(1 int as float) = 11 floats = 44 bytes
 
 const STRIDE_ARROW  := 48  # 12 floats
 const STRIDE_SPHERE := 32  #  8 floats
@@ -46,6 +48,7 @@ const STRIDE_CIRCLE := 36  #  9 floats
 const STRIDE_LINE   := 40  # 10 floats
 const STRIDE_SQUARE := 40  # 10 floats
 const STRIDE_CONE   := 56  # 14 floats
+const STRIDE_ARC    := 44  # 11 floats
 # PATH and LABEL are variable-length
 
 # ============================================================================
@@ -495,6 +498,20 @@ func draw_cone(position: Vector3, rotation_euler: Vector3 = Vector3.ZERO, cone_h
 	_buf_color(dt, color)
 	_buf_f32(dt, float(radial_segments))
 
+## Wedge arc (two radii + outer arc) on the XZ plane at position.
+## |bearing| is the sector centre in radians (0 = +X, π/2 = +Z).
+## |half_angle| is the half-aperture in radians (e.g. π/12 for a 30° wedge).
+## Layout: pos(3f) + bearing(1f) + half_angle(1f) + length(1f) + color(4f) + segments(1f) = 11 floats = 44 bytes
+func draw_arc(position: Vector3, bearing: float, half_angle: float, length: float, color: Color = Color.RED, segments: int = 8) -> void:
+	var dt := DrawType.ARC
+	_ensure_buffer(dt)
+	_buf_vec3(dt, position)
+	_buf_f32(dt, bearing)
+	_buf_f32(dt, half_angle)
+	_buf_f32(dt, length)
+	_buf_color(dt, color)
+	_buf_f32(dt, float(segments))
+
 # ============================================================================
 # Server: flush draw commands to client
 # ============================================================================
@@ -557,6 +574,8 @@ func _decode_client_buffers() -> void:
 				_decode_labels(buf)
 			DrawType.CONE:
 				_decode_fixed_stride(buf, draw_type, STRIDE_CONE)
+			DrawType.ARC:
+				_decode_fixed_stride(buf, draw_type, STRIDE_ARC)
 
 func _decode_fixed_stride(buf: PackedByteArray, draw_type: int, stride: int) -> void:
 	if not _client_type_commands.has(draw_type):
@@ -605,6 +624,14 @@ func _decode_fixed_stride(buf: PackedByteArray, draw_type: int, stride: int) -> 
 				var color := Color(buf.decode_float(offset + 36), buf.decode_float(offset + 40), buf.decode_float(offset + 44), buf.decode_float(offset + 48))
 				var segs := int(buf.decode_float(offset + 52))
 				cmds.append([pos, rot, cone_height, top_r, bottom_r, color, segs])
+			DrawType.ARC:
+				var pos := Vector3(buf.decode_float(offset), buf.decode_float(offset + 4), buf.decode_float(offset + 8))
+				var bearing := buf.decode_float(offset + 12)
+				var half_angle := buf.decode_float(offset + 16)
+				var arc_length := buf.decode_float(offset + 20)
+				var color := Color(buf.decode_float(offset + 24), buf.decode_float(offset + 28), buf.decode_float(offset + 32), buf.decode_float(offset + 36))
+				var segs := int(buf.decode_float(offset + 40))
+				cmds.append([pos, bearing, half_angle, arc_length, color, segs])
 		offset += stride
 
 func _decode_paths(buf: PackedByteArray) -> void:
@@ -761,6 +788,10 @@ func _build_key(draw_type: int, cmd: Array) -> String:
 		DrawType.CONE:
 			# cmd: [pos, rot, cone_height, top_radius, bottom_radius, color, radial_segments]
 			return "cone:%.1f:%.1f:%.1f:%d" % [cmd[2], cmd[3], cmd[4], cmd[6]]
+		DrawType.ARC:
+			# cmd: [pos, bearing, half_angle, length, color, segments]
+			# bearing is excluded — applied as a Y-rotation transform, not baked into the mesh
+			return "arc:%.1f:%.4f:%d" % [cmd[3], cmd[2], cmd[5]]
 	return "unknown:%d" % draw_type
 
 # ============================================================================
@@ -785,6 +816,8 @@ func _build_node(draw_type: int, cmd: Array, idx: int) -> Node3D:
 			return _build_label_node(cmd, idx)
 		DrawType.CONE:
 			return _build_cone_node(cmd, idx)
+		DrawType.ARC:
+			return _build_arc_node(cmd, idx)
 	return null
 
 func _make_unshaded_material(color: Color) -> StandardMaterial3D:
@@ -1019,6 +1052,8 @@ func _update_node(draw_type: int, cmd: Array, node: Node3D) -> void:
 			_update_label_node(cmd, node)
 		DrawType.CONE:
 			_update_cone_node(cmd, node)
+		DrawType.ARC:
+			_update_arc_node(cmd, node)
 	node.visible = true
 
 func _update_arrow(cmd: Array, node: Node3D) -> void:
@@ -1091,6 +1126,46 @@ func _update_cone_node(cmd: Array, node: Node3D) -> void:
 	node.global_position = cmd[0]
 	node.rotation = cmd[1]
 	var color: Color = cmd[5]
+	if node is MeshInstance3D:
+		var mat := (node as MeshInstance3D).material_override as StandardMaterial3D
+		if mat and mat.albedo_color != color:
+			mat.albedo_color = color
+
+func _build_arc_node(cmd: Array, idx: int) -> MeshInstance3D:
+	# cmd: [pos, bearing, half_angle, length, color, segments]
+	# Mesh is built in local space centred on +X (bearing=0).
+	# The bearing is baked into the node's Y rotation by _update_arc_node so
+	# the mesh only needs rebuilding when shape params (length/half_angle/segments) change.
+	var half_angle: float = cmd[2]
+	var arc_length: float = cmd[3]
+	var color: Color    = cmd[4]
+	var segments: int   = cmd[5]
+
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	# Trace: origin → arc from -half_angle to +half_angle → origin
+	# This gives both radial edges and the outer arc in one strip.
+	im.surface_add_vertex(Vector3.ZERO)
+	for i in range(segments + 1):
+		var a := lerpf(-half_angle, half_angle, float(i) / float(segments))
+		im.surface_add_vertex(Vector3(cos(a) * arc_length, 0.0, sin(a) * arc_length))
+	im.surface_add_vertex(Vector3.ZERO)
+	im.surface_end()
+
+	var node := MeshInstance3D.new()
+	node.name = "DebugArc_%d" % idx
+	node.mesh = im
+	node.material_override = _make_unshaded_material(color)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+func _update_arc_node(cmd: Array, node: Node3D) -> void:
+	# cmd: [pos, bearing, half_angle, length, color, segments]
+	# bearing rotates the local +X mesh to the correct world direction.
+	# Convention: angle θ → world point (cos θ, 0, sin θ), so rotation.y = -bearing.
+	node.global_position = cmd[0]
+	node.rotation.y = -cmd[1]
+	var color: Color = cmd[4]
 	if node is MeshInstance3D:
 		var mat := (node as MeshInstance3D).material_override as StandardMaterial3D
 		if mat and mat.albedo_color != color:

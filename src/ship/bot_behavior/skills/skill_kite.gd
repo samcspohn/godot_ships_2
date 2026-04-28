@@ -27,4 +27,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
 
-	return NavIntent.create(dest, heading)
+	var intent := NavIntent.create(dest, heading)
+	intent.directional = true
+	return intent

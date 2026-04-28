@@ -16,6 +16,8 @@
 #include "navigation_map.h"
 #include "waypoint_graph.h"
 #include "dstar_lite.h"
+#include "hpa_graph.h"
+#include "threat_registry.h"
 
 namespace godot {
 
@@ -58,6 +60,12 @@ private:
 	int dstar_goal_node_ = -1;      // goal nearest waypoint graph node (goal node idx)
 	bool dstar_initialized_ = false;
 	bool dstar_converged_ = false;
+
+	// --- HPA* (Hierarchical A*) pathfinding ---
+	// When set, replaces D* Lite + WaypointGraph for strategic path planning.
+	// Dynamic obstacles are forwarded to hpa_graph_ for cluster-level blocking,
+	// giving O(clusters) updates instead of O(nodes).
+	Ref<HpaGraph> hpa_graph_;
 
 
 
@@ -147,21 +155,24 @@ private:
 	// --- Incoming shell avoidance ---
 	std::vector<IncomingShell> incoming_shells_;
 
-	// --- Enemy threat zones (for stealth pathfinding) ---
-	// Registered by GDScript when the DD is in SNEAKING state.
-	// D* Lite uses these to block waypoint graph nodes that are visible
-	// from an enemy (circle containment + LOS raycast check).
-	std::vector<ThreatZone> threat_zones_;
+	// --- Enemy threat arcs (for stealth pathfinding) ---
+	// Registered by GDScript when the bot wants to route around enemy
+	// detection coverage.  ShipNavigator references a shared ThreatBin
+	// owned by a ThreatRegistry; multiple ships with the same (team,
+	// binned effective_radius) share the same arc list + BlockedGrid.
+	Ref<ThreatRegistry> threat_registry_;
+	ThreatBin* threat_bin_ = nullptr;
+	uint64_t threat_last_version_ = 0;
 
-	// Previous frame's threat zones — used by dstar_incremental_update
-	// to detect changes and trigger D* Lite repairs.
-	std::vector<ThreatZone> prev_threat_zones_;
+	// Push the current bin's arcs into D* Lite (or an empty arc set if
+	// no bin is attached).  Updates threat_last_version_.
+	void push_threats_to_dstar();
 
 	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
-	static constexpr float SHELL_THREAT_WEIGHT_BASE = 30.0f;  // base penalty — scaled by ship size and health
+	static constexpr float SHELL_THREAT_WEIGHT_BASE = 20.0f;  // base penalty — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
-	static constexpr float PARALLEL_BONUS_WEIGHT = 0.5f;    // perpendicularity penalty — low so proximity dominates over angling
-	static constexpr float GAP_CLEARANCE_PENALTY = 3.0f;     // penalty when ship barely fits between lines
+	static constexpr float PARALLEL_BONUS_WEIGHT = 0.6f;    // perpendicularity penalty — low so proximity dominates over angling
+	static constexpr float GAP_CLEARANCE_PENALTY = 1.0f;     // penalty when ship barely fits between lines
 	static constexpr float TORPEDO_LINE_HALF_LEN = 600.0f;   // half-length of torpedo threat line
 	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
 
@@ -257,6 +268,13 @@ public:
 	void set_map(Ref<NavigationMap> p_map);
 	void set_waypoint_graph(Ref<WaypointGraph> p_graph);
 
+	/// Attach a pre-built HpaGraph.  When set, start_plan / run_plan_sync
+	/// use hierarchical A* instead of D* Lite.  Dynamic obstacles are also
+	/// forwarded to hpa_graph_ for cluster-level blocking.
+	/// Pass an invalid Ref<> to detach and fall back to D* Lite.
+	void set_hpa_graph(Ref<HpaGraph> graph);
+	Ref<HpaGraph> get_hpa_graph() const { return hpa_graph_; }
+
 	void set_ship_params(
 		float turning_circle_radius,
 		float rudder_response_time,
@@ -315,9 +333,11 @@ public:
 	void add_incoming_shell(int id, Vector2 landing_pos, float time_remaining, float caliber, Vector2 landing_dir, float threat_half_len);
 
 	// --- Enemy threat avoidance (stealth pathfinding) ---
-	void clear_threat_zones();
-	void add_threat_zone(Vector2 position, float hard_radius, float soft_radius);
-	void add_threat_zone_ex(int enemy_id, Vector2 position, float hard_radius, float soft_radius);
+	// Subscribe this navigator to a (team_id, effective_radius) bin in the
+	// shared registry.  Drops any previous subscription.  Pass an invalid
+	// Ref<> to unsubscribe (equivalent to clear_threat_source).
+	void set_threat_source(Ref<ThreatRegistry> registry, int team_id, float effective_radius);
+	void clear_threat_source();
 
 	// --- Path / trajectory info ---
 
@@ -333,7 +353,13 @@ public:
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
 
-	Array get_debug_threat_zones() const;
+	Array get_debug_threat_arcs() const;
+
+	// Adjust |dest| out of any blocked threat-arc cells via cardinal-cell
+	// BFS through the bin's BlockedGrid.  Returns Dictionary { position:
+	// Vector2, adjusted: bool }.  Returns dest unchanged if no bin
+	// subscription is active or dest is already in open water.
+	Dictionary adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const;
 
 	// --- Timing (microseconds) ---
 	float get_timing_update_us() const { return timing_update_us; }

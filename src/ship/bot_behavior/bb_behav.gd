@@ -41,8 +41,8 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 1.0
-		Ship.ShipClass.CA: return 1.5
+		Ship.ShipClass.BB: return 0.5
+		Ship.ShipClass.CA: return 1.0
 		Ship.ShipClass.DD: return 2.0
 	return 1.0
 
@@ -250,6 +250,15 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var params = get_positioning_params()
 	var gun_range = ship.artillery_controller.get_params()._range
 	var threat = get_threat_score(server)
+	var nearest: Ship = null
+	var _nearest_dist: float = INF
+	for _e in spotted:
+		if is_instance_valid(_e) and _e.health_controller.is_alive():
+			var _d = ship.global_position.distance_to(_e.global_position)
+			if _d < _nearest_dist:
+				_nearest_dist = _d
+				nearest = _e
+	var dist: float = _nearest_dist
 
 	var _prev_skill_name = _active_skill_name
 	var intent: NavIntent = null
@@ -273,14 +282,40 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	elif threat < 0.25:
 		# Low threat: push directly at 40% gun range
 		_skill_cover.reset()
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.4})
+		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.0})
 		if intent:
-			_active_skill_name = &"Angle"
-	elif threat < 0.6:
+			_active_skill_name = &"Push"
+	elif dist < 6000.0 and nearest != null:
+		# High-ish threat (>= 0.65) AND enemy is close — calculate the optimal
+		# presentation angle and choose angle skill (bow-in) or kite (stern-in).
+		var to_nearest = nearest.global_position - ship.global_position
+		to_nearest.y = 0.0
+		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+		var bow_diff = absf(angle_difference(optimal_heading, enemy_bearing))
+		if bow_diff < PI * 0.5:
+			# Optimal heading is bow-in — angle toward enemy
+			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
+			if intent != null:
+				_active_skill_name = &"Angle"
+		else:
+			# Optimal heading is stern-in — kite away while keeping guns on target
+			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
+			if intent != null:
+				_active_skill_name = &"Kite"
+	elif threat < 0.4:
+		intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
+		if intent:
+			_active_skill_name = &"Flank"
+	elif threat < 0.65:
+		intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.5})
+		if intent:
+			_active_skill_name = &"Camp"
+	elif threat < 0.8:
 		# Medium threat: camp/flank near island — cover at 60% range, fall back to camp at 0.65 ratio
-		intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.6})
+		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
 		if intent != null:
-			_active_skill_name = &"FindCover"
+			_active_skill_name = &"Kite"
 		else:
 			intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.65})
 			if intent:

@@ -1,23 +1,17 @@
 class_name SkillFindCover
 extends BotSkill
 
+var _broadside: SkillBroadside = SkillBroadside.new()
+
 var _target_island_id: int = -1
 var _target_island_pos: Vector3 = Vector3.ZERO
 var _target_island_radius: float = 0.0
 var _nav_destination: Vector3 = Vector3.ZERO
 var _nav_destination_valid: bool = false
 var _cover_recalc_ms: int = 0
-var _last_in_range_ms: int = 0
 var _arrived: bool = false
 var can_shoot: bool = false
 var _dist_to_dest: float = 0.0
-
-# Spotted-position stamp: recorded when the ship arrives at cover but is still
-# visible to the enemy.  Candidate positions must also block LOS to this point
-# so the ship doesn't just shuffle between two equally exposed spots.
-var _spotted_stamp_pos: Vector3 = Vector3.ZERO
-var _spotted_stamp_ms: int = 0
-const SPOTTED_STAMP_DURATION_MS: int = 60000
 
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
@@ -25,46 +19,28 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	var target = ctx.target
 	var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)
 	var recalc_cooldown = params.get("recalc_cooldown_ms", 3000)
-	var push_timeout = params.get("push_timeout_ms", 20000)
 
-	# Track in-range enemies
-	var gun_range = ship.artillery_controller.get_params()._range
-	for enemy in ctx.server.get_valid_targets(ship.team.team_id):
-		if enemy.global_position.distance_to(ship.global_position) <= gun_range:
-			_last_in_range_ms = Time.get_ticks_msec()
-			break
-
-	# Push timeout: change island after N seconds without in-range targets
-	if _nav_destination_valid and Time.get_ticks_msec() - _last_in_range_ms > push_timeout:
-		_nav_destination_valid = false
-		_last_in_range_ms = Time.get_ticks_msec()
-
-	# Spotted-position stamping: if arrived but still visible, record where we
-	# were spotted so future candidate evaluation blocks LOS to this point too.
-	if _arrived and ship.visible_to_enemy:
-		_spotted_stamp_pos = ship.global_position
-		_spotted_stamp_ms = Time.get_ticks_msec()
-
-	# Expire the stamp after 60 seconds
-	if _spotted_stamp_pos != Vector3.ZERO and Time.get_ticks_msec() - _spotted_stamp_ms > SPOTTED_STAMP_DURATION_MS:
-		_spotted_stamp_pos = Vector3.ZERO
-		_spotted_stamp_ms = 0
-
-	# Build the spotted position to pass down (Vector3.ZERO means none)
-	var active_spotted_pos: Vector3 = _spotted_stamp_pos
-
-	# Find new island if needed
+	# Find initial island if we don't have one yet
 	if not _nav_destination_valid:
-		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
+		var island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
 		if island.is_empty():
 			return null  # No cover available — caller falls back
 		_set_island(island)
 
-	# Periodically recalc cover position
+	# Periodically recalculate cover position
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _cover_recalc_ms >= recalc_cooldown:
 		_cover_recalc_ms = now_ms
-		var island = ctx.behavior._get_cover_position(desired_range, target, prioritize_cover, _arrived, active_spotted_pos)
+		var island: Dictionary
+		if _arrived and _target_island_id >= 0:
+			# Already in cover: prefer staying on the same island, only move if
+			# it can no longer provide a shootable position.
+			island = _recalc_same_island(ctx, target)
+			if island.is_empty():
+				island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
+		else:
+			island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
+
 		if not island.is_empty():
 			_set_island(island)
 		elif not _nav_destination_valid:
@@ -80,10 +56,11 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 
 	var heading = ctx.behavior._tangential_heading(_target_island_pos, _nav_destination)
 
-	# Check shootability (shell arc over terrain)
+	# Check shootability (shell arc over terrain) from current or destination position
 	can_shoot = false
 	var check_pos = ship.global_position if _arrived else _nav_destination
 	var shell_params = ship.artillery_controller.get_shell_params()
+	var gun_range = ship.artillery_controller.get_params()._range
 	if shell_params != null:
 		for enemy in ctx.server.get_valid_targets(ship.team.team_id):
 			if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
@@ -99,14 +76,169 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 				can_shoot = true
 				break
 
+	var broadside_bias: float = params.get("broadside_bias", 0.4)
+
 	if _arrived:
-		var intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
-		intent.near_terrain = true
-		return intent
+		var arrived_intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
+		arrived_intent.near_terrain = true
+		return _broadside.apply(arrived_intent, ctx, {"oscillation_bias": broadside_bias})
 
 	var intent = NavIntent.create(_nav_destination, heading)
 	intent.near_terrain = true
-	return intent
+	return _broadside.apply(intent, ctx, {"oscillation_bias": broadside_bias})
+
+
+# ---------------------------------------------------------------------------
+# Recalculate the best position on the island we are already holding.
+# Returns empty dict if the island can no longer provide a shootable position.
+# ---------------------------------------------------------------------------
+func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
+	var ship = ctx.ship
+	var threats = ctx.behavior._gather_threat_positions(ship)
+	var targets = ctx.server.get_valid_targets(ship.team.team_id)
+	ctx.behavior._ensure_safe_dir(ship, ctx.server)
+
+	var hide_h: float
+	if threats.size() > 0:
+		hide_h = ctx.behavior._compute_hide_heading(_target_island_pos, threats)
+	else:
+		hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
+
+	var cover_result = ctx.behavior._find_cover_position_on_island(
+		_target_island_pos, _target_island_radius, hide_h, threats, targets, true
+	)
+	if cover_result.is_empty() or not cover_result["can_shoot"]:
+		return {}
+
+	return {
+		"id": _target_island_id,
+		"center": _target_island_pos,
+		"radius": _target_island_radius,
+		"dest": cover_result["pos"],
+		"can_shoot": cover_result["can_shoot"],
+	}
+
+
+# ---------------------------------------------------------------------------
+# Search all islands for the best cover position.
+#
+# When prioritize_cover is true (default): islands are sorted by proximity and
+# the first island that offers a shootable cover position is returned — i.e.
+# "nearest island that works".
+#
+# When prioritize_cover is false: all viable islands are scored by how close
+# the engagement distance to the nearest enemy cluster is to desired_range,
+# and the best-scoring island is returned.
+#
+# In both modes islands are always evaluated nearest-first so ties naturally
+# resolve toward the ship's current position.
+# ---------------------------------------------------------------------------
+func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship, prioritize_cover: bool = true) -> Dictionary:
+	if not NavigationMapManager.is_map_ready():
+		return {}
+
+	var islands = NavigationMapManager.get_islands()
+	if islands.is_empty():
+		return {}
+
+	var ship = ctx.ship
+	var my_pos = ship.global_position
+	var gun_range = ship.artillery_controller.get_params()._range
+	var min_safe_range = gun_range * 0.35
+
+	var threats = ctx.behavior._gather_threat_positions(ship)
+	if ctx.server == null:
+		return {}
+	var targets = ctx.server.get_valid_targets(ship.team.team_id)
+	var enemy_clusters = ctx.server.get_enemy_clusters(ship.team.team_id)
+
+	ctx.behavior._ensure_safe_dir(ship, ctx.server)
+
+	# Always sort islands by proximity — nearest edge of island to ship wins ties
+	islands.sort_custom(func(a, b):
+		var ca = Vector3(a["center"].x, 0.0, a["center"].y)
+		var cb = Vector3(b["center"].x, 0.0, b["center"].y)
+		return my_pos.distance_to(ca) - a["radius"] < my_pos.distance_to(cb) - b["radius"]
+	)
+
+	var best_id: int = -1
+	var best_score: float = INF
+	var best_pos: Vector3 = Vector3.ZERO
+	var best_radius: float = 0.0
+	var best_dest: Vector3 = Vector3.ZERO
+	var best_can_shoot: bool = false
+
+	for isl in islands:
+		var center_2d: Vector2 = isl["center"]
+		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
+		var isl_radius: float = isl["radius"]
+
+		var hide_h: float
+		if threats.size() > 0:
+			hide_h = ctx.behavior._compute_hide_heading(isl_pos, threats)
+		else:
+			hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
+
+		# Always sort candidate positions on the island by proximity to the ship
+		var cover_result = ctx.behavior._find_cover_position_on_island(
+			isl_pos, isl_radius, hide_h, threats, targets, true
+		)
+		# Only consider islands where we can actually shoot from cover
+		if cover_result.is_empty() or not cover_result["can_shoot"]:
+			continue
+
+		var dest: Vector3 = cover_result["pos"]
+
+		if prioritize_cover:
+			# Nearest viable island — return immediately (list is already sorted)
+			return {
+				"id": isl["id"],
+				"center": isl_pos,
+				"radius": isl_radius,
+				"dest": dest,
+				"can_shoot": true,
+			}
+
+		# ── Range-optimising mode ────────────────────────────────────────────
+		# Find the nearest non-DD enemy cluster to score engagement distance.
+		var nearest_cluster_dist = INF
+		var nearest_cluster_valid = false
+		for cluster in enemy_clusters:
+			var d = dest.distance_to(cluster.center)
+			if d < nearest_cluster_dist:
+				for cluster_ship: Ship in cluster.ships:
+					if cluster_ship.ship_class != Ship.ShipClass.DD:
+						nearest_cluster_dist = d
+						nearest_cluster_valid = true
+						break
+
+		var score: float
+		if nearest_cluster_valid:
+			if nearest_cluster_dist > gun_range or nearest_cluster_dist < min_safe_range:
+				continue
+			score = absf(1.0 - nearest_cluster_dist / desired_range)
+		else:
+			# No cluster data — fall back to proximity score
+			score = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
+
+		if score < best_score:
+			best_score = score
+			best_id = isl["id"]
+			best_pos = isl_pos
+			best_radius = isl_radius
+			best_dest = dest
+			best_can_shoot = true
+
+	if best_id < 0:
+		return {}
+
+	return {
+		"id": best_id,
+		"center": best_pos,
+		"radius": best_radius,
+		"dest": best_dest,
+		"can_shoot": best_can_shoot,
+	}
 
 
 func _set_island(island: Dictionary) -> void:
@@ -115,20 +247,18 @@ func _set_island(island: Dictionary) -> void:
 	_target_island_radius = island["radius"]
 	_nav_destination = island["dest"]
 	_nav_destination_valid = true
-	if _last_in_range_ms == 0:
-		_last_in_range_ms = Time.get_ticks_msec()
 
 
-func is_complete(ctx: SkillContext) -> bool:
+func is_complete(_ctx: SkillContext) -> bool:
 	return _arrived
+
 
 func get_dist() -> float:
 	return _dist_to_dest
+
 
 func reset() -> void:
 	_target_island_id = -1
 	_nav_destination_valid = false
 	_arrived = false
 	can_shoot = false
-	_spotted_stamp_pos = Vector3.ZERO
-	_spotted_stamp_ms = 0
