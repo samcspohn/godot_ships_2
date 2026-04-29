@@ -23,6 +23,7 @@ var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
 var _skill_torpedo_run: SkillTorpedoRun = SkillTorpedoRun.new()
 var _skill_kite: SkillKite = SkillKite.new()
+var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
@@ -280,12 +281,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_hunt.execute(ctx, {})
 		_active_skill_name = &"Hunt"
 
-	# ── 2. Detected → kite away and shoot; shed detection ASAP ──────────────
+	# ── 2. Detected → retreat directly away from danger center; shed detection ASAP ──
 	elif ship.visible_to_enemy:
-		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65, "angle_to_threat_deg": 25.0})
+		intent = _skill_retreat.execute(ctx, {})
 		if intent:
-			_active_skill_name = &"Kite"
-			intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.2})
+			_active_skill_name = &"Retreat"
 		else:
 			intent = _skill_hunt.execute(ctx, {})
 			_active_skill_name = &"Hunt"

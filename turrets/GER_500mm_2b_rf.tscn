@@ -10,6 +10,7 @@ script = ExtResource("2_goysy")
 _sound = ExtResource("3_k7la6")
 pitch = 0.5
 variance = 0.07
+max_rotation_angle = 0.0
 glb_path = "uid://geicgbdeyrwl"
 
 [node name="500mmTurret_col" parent="." index="1" unique_id=2079403705]

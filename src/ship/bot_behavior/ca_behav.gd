@@ -500,23 +500,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Detected but enemy is far — check if cover destination is on the way
 			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
 			if cover_intent != null and nearest != null:
-				var cover_dest = _skill_cover._nav_destination
-				var to_cover = cover_dest - ship.global_position
-				to_cover.y = 0.0
-				var dist_to_cover = to_cover.length()
-				# Angle tolerance scales with distance to cover:
-				#   70 deg when cover is <= 1000 m away (almost there, accept wide detours)
-				#   10 deg when cover is >= 5000 m away (far detour is too costly)
-				var t = clampf((dist_to_cover - 1000.0) / 4000.0, 0.0, 1.0)
-				var angle_tol = lerpf(deg_to_rad(70.0), deg_to_rad(10.0), t)
-				# Optimal heading relative to the nearest enemy
-				var to_nearest = nearest.global_position - ship.global_position
-				to_nearest.y = 0.0
-				var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-				var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
-				var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
-				var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
-				if bearing_diff > angle_tol:
+				if not _skill_cover.is_cover_on_the_way(ctx, nearest):
 					# Cover is too far off the optimal angle — kite instead
 					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
 					if intent != null:

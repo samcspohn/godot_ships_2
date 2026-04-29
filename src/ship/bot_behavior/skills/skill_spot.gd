@@ -15,9 +15,9 @@ extends BotSkill
 const CANDIDATE_COUNT := 16
 
 ## Fraction of enemy concealment radius to stay inside (detection margin).
-const SPOT_MARGIN     := 0.88
+const SPOT_MARGIN     := 1.0
 ## Fraction of our own concealment radius to stay outside (stealth margin).
-const SAFE_MARGIN     := 1.10
+const SAFE_MARGIN     := 1.50
 
 ## Scoring weights — must sum to 1.0.
 const W_COVERAGE := 0.55   # how many spotted enemies are kept detected
@@ -94,9 +94,15 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var best_score := -INF
 	var best_pos   := Vector3.ZERO
 
+	# Sample a 180° arc on the side of the centroid facing our ship so the
+	# chosen position is always between us and the enemy, not behind them.
+	var to_ship_dir := ship_2d - centroid_2d
+	var base_angle: float = atan2(to_ship_dir.y, to_ship_dir.x) if to_ship_dir.length_squared() > 1.0 else 0.0
+
 	for i in CANDIDATE_COUNT:
-		var angle := (TAU / CANDIDATE_COUNT) * i
-		var dir   := Vector2(cos(angle), sin(angle))
+		var t_frac := float(i) / (CANDIDATE_COUNT - 1) if CANDIDATE_COUNT > 1 else 0.5
+		var angle  := base_angle - PI * 0.5 + PI * t_frac
+		var dir    := Vector2(cos(angle), sin(angle))
 		var c2d   := centroid_2d + dir * ring_radius
 		var c3d   := ctx.behavior._get_valid_nav_point(Vector3(c2d.x, 0.0, c2d.y))
 		c2d = Vector2(c3d.x, c3d.z)
@@ -151,4 +157,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var intent := NavIntent.create(best_pos, heading)
 	intent.throttle_override = throttle
+	# The spotting position is deliberately inside the enemy detection zone —
+	# do not let _adjust_destination_for_threats BFS-push it to the wrong boundary.
+	intent.skip_threat_adjustment = true
 	return intent

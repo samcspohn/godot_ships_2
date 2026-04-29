@@ -173,12 +173,17 @@ struct DynamicObstacle {
 	int id;
 	Vector2 position;
 	Vector2 velocity;
-	float radius;
-	float length;  // ship length — used for size-based avoidance priority; 0 = torpedo
+	float radius;   // half-beam of the obstacle hull (beam / 2); used as circular radius for torpedoes
+	float length;   // full ship length — used for OBB half-length and size priority; 0 = torpedo
+	float heading;  // bow direction (radians, forward = (sin h, cos h)); inferred from velocity and
+	                // updated each frame by update_obstacle when the ship is moving
 
-	DynamicObstacle() : id(-1), position(Vector2()), velocity(Vector2()), radius(0.0f), length(0.0f) {}
+	DynamicObstacle() : id(-1), position(Vector2()), velocity(Vector2()), radius(0.0f), length(0.0f), heading(0.0f) {}
 	DynamicObstacle(int p_id, Vector2 p_pos, Vector2 p_vel, float p_radius, float p_length = 0.0f)
-		: id(p_id), position(p_pos), velocity(p_vel), radius(p_radius), length(p_length) {}
+		: id(p_id), position(p_pos), velocity(p_vel), radius(p_radius), length(p_length) {
+		float vlen = std::sqrt(p_vel.x * p_vel.x + p_vel.y * p_vel.y);
+		heading = (vlen > 0.5f) ? std::atan2(p_vel.x, p_vel.y) : 0.0f;
+	}
 
 	// Returns true when this obstacle represents a torpedo rather than a ship.
 	bool is_torpedo() const {

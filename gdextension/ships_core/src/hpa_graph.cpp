@@ -411,9 +411,9 @@ PathResult HpaGraph::refine_path_impl(
 
 	if (abs_path.size() < 2) return result;
 
-	// Start with the true 'from' position
-	result.waypoints.push_back(from);
-	result.flags.push_back(WP_NONE);
+	// ── Step 1: Assemble raw waypoints from precomputed edge paths ───────────
+	std::vector<Vector2> raw;
+	raw.push_back(from);
 
 	for (int i = 0; i + 1 < (int)abs_path.size(); ++i) {
 		int cur_id  = abs_path[i];
@@ -429,44 +429,75 @@ PathResult HpaGraph::refine_path_impl(
 
 		if (edge && !edge->waypoints.empty()) {
 			// Use precomputed waypoints; skip the first one if it duplicates
-			// the last waypoint already added (avoids repeated positions).
+			// the last point already added (avoids repeated positions).
 			const std::vector<Vector2> &wps = edge->waypoints;
 			int start_wi = 0;
-			if (!result.waypoints.empty() &&
-				result.waypoints.back().distance_to(wps.front()) < cell_size_ * 0.5f) {
+			if (!raw.empty() &&
+				raw.back().distance_to(wps.front()) < cell_size_ * 0.5f) {
 				start_wi = 1;
 			}
 			for (int wi = start_wi; wi < (int)wps.size(); ++wi) {
-				result.waypoints.push_back(wps[wi]);
-				result.flags.push_back(WP_NONE);
+				raw.push_back(wps[wi]);
 			}
 		} else {
 			// Fallback: straight line to the next abstract node position
 			if (next_id < (int)nodes.size()) {
 				Vector2 np(nodes[next_id].wx, nodes[next_id].wz);
-				if (result.waypoints.empty() ||
-					result.waypoints.back().distance_to(np) > cell_size_ * 0.1f) {
-					result.waypoints.push_back(np);
-					result.flags.push_back(WP_NONE);
+				if (raw.empty() ||
+					raw.back().distance_to(np) > cell_size_ * 0.1f) {
+					raw.push_back(np);
 				}
 			}
 		}
 	}
 
-	// Ensure the last waypoint is the exact destination
-	if (result.waypoints.empty() ||
-		result.waypoints.back().distance_to(to) > cell_size_ * 0.5f) {
-		result.waypoints.push_back(to);
-		result.flags.push_back(WP_NONE);
+	// Ensure exact destination at the end
+	if (raw.empty() || raw.back().distance_to(to) > cell_size_ * 0.5f) {
+		raw.push_back(to);
 	} else {
-		// Replace the last point with the exact destination for precision
-		result.waypoints.back() = to;
+		raw.back() = to;
 	}
 
-	// Compute total distance
-	for (int i = 0; i + 1 < (int)result.waypoints.size(); ++i) {
-		result.total_distance +=
-			result.waypoints[i].distance_to(result.waypoints[i + 1]);
+	if (raw.size() < 2) return result;
+
+	// ── Step 2: String pulling — greedy LOS simplification ──────────────────
+	// Convert a world coordinate to the nearest grid cell index, clamped to
+	// the valid grid range.
+	auto to_gx = [&](float wx) -> int {
+		int gx = static_cast<int>((wx - min_x_) / cell_size_);
+		return std::max(0, std::min(gx, grid_w_ - 1));
+	};
+	auto to_gz = [&](float wz) -> int {
+		int gz = static_cast<int>((wz - min_z_) / cell_size_);
+		return std::max(0, std::min(gz, grid_h_ - 1));
+	};
+
+	std::vector<Vector2> pulled;
+	pulled.push_back(raw.front());
+
+	size_t anchor = 0;
+	while (anchor < raw.size() - 1) {
+		size_t farthest = anchor + 1;
+		// Try to reach as far forward as possible with a clear LOS.
+		for (size_t test = raw.size() - 1; test > anchor + 1; --test) {
+			if (nav_map_->line_of_sight(
+					to_gx(raw[anchor].x), to_gz(raw[anchor].y),
+					to_gx(raw[test].x),   to_gz(raw[test].y),
+					clearance_)) {
+				farthest = test;
+				break;
+			}
+		}
+		pulled.push_back(raw[farthest]);
+		anchor = farthest;
+	}
+
+	// ── Step 3: Package result ───────────────────────────────────────────────
+	result.waypoints = pulled;
+	result.flags.assign(pulled.size(), WP_NONE);
+
+	for (size_t i = 0; i + 1 < pulled.size(); ++i) {
+		result.total_distance += pulled[i].distance_to(pulled[i + 1]);
 	}
 
 	result.valid = true;
@@ -545,10 +576,13 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
 			std::vector<Vector2> wps_fwd(pr.waypoints.begin(), pr.waypoints.end());
 			std::vector<Vector2> wps_rev(wps_fwd.rbegin(), wps_fwd.rend());
 
-			// vid → entrance nid
-			q_adj[vid].push_back({ nid, cost, cid, wps_fwd });
-			// entrance nid → vid  (append to existing adjacency)
-			q_adj[nid].push_back({ vid, cost, cid, wps_rev });
+			// vid → entrance nid.  Use via_cluster = -1 so threat-blocked
+			// cluster stamps don't strand the virtual start/goal node: the
+			// ship is already inside the cluster and needs to escape, not
+			// route "through" it in the HPA* sense.
+			q_adj[vid].push_back({ nid, cost, -1, wps_fwd });
+			// entrance nid → vid
+			q_adj[nid].push_back({ vid, cost, -1, wps_rev });
 
 			any = true;
 		}
@@ -658,59 +692,125 @@ TypedArray<Dictionary> HpaGraph::get_debug_clusters() const {
 // stamp_threat_arcs / clear_threat_arcs
 // ============================================================================
 
-// Point-in-arc wedge test.  Returns true if (px, pz) lies within the
-// radial sector defined by arc: distance <= arc.length AND angular
-// difference from arc.bearing <= arc.half_angle.
+// Normalise an angle difference into (-π, π].
+static inline float norm_angle_diff(float d) {
+	while (d >  3.14159265f) d -= 6.28318530f;
+	while (d < -3.14159265f) d += 6.28318530f;
+	return d;
+}
+
+// True if (px, pz) lies inside the circular sector defined by arc.
 static bool point_in_arc(float px, float pz, const ThreatArc &arc) {
 	float dx = px - arc.origin.x;
 	float dz = pz - arc.origin.y;
 	float dist_sq = dx * dx + dz * dz;
 	if (dist_sq > arc.length * arc.length) return false;
 	if (dist_sq < 0.01f) return true; // origin itself — always inside
-
-	float bearing = std::atan2(dz, dx);
-	float diff    = bearing - arc.bearing;
-	// Normalise to (-π, π]
-	while (diff >  3.14159265f) diff -= 6.28318530f;
-	while (diff < -3.14159265f) diff += 6.28318530f;
-	return std::abs(diff) <= arc.half_angle;
+	return std::abs(norm_angle_diff(std::atan2(dz, dx) - arc.bearing)) <= arc.half_angle;
 }
 
-// Test whether a cluster's rectangular cell range overlaps a ThreatArc.
-// We probe 9 representative points (corners, edge midpoints, centre).
-// Additionally, if the arc origin sits inside the cluster AABB we block
-// it immediately — this catches narrow arcs whose centre line passes
-// through without hitting any sample point.
+// True if segment (ax,az)-(bx,bz) has any part inside the AABB [x0,x1]×[z0,z1].
+// Uses Liang-Barsky parametric clipping — exact, no sqrt required.
+static bool segment_clips_aabb(
+	float ax, float az, float bx, float bz,
+	float x0, float z0, float x1, float z1)
+{
+	float dx = bx - ax, dz = bz - az;
+	float t0 = 0.0f, t1 = 1.0f;
+	auto clip = [&](float p, float q) -> bool {
+		if (p == 0.0f) return q >= 0.0f;
+		float r = q / p;
+		if (p < 0.0f) { if (r > t1) return false; if (r > t0) t0 = r; }
+		else          { if (r < t0) return false; if (r < t1) t1 = r; }
+		return true;
+	};
+	return clip(-dx, ax - x0) && clip(dx, x1 - ax) &&
+	       clip(-dz, az - z0) && clip(dz, z1 - az) &&
+	       t0 <= t1;
+}
+
+// True if the curved outer boundary of the sector (circle of radius R centred at
+// (ox,oz), spanning bearing ± half_angle) crosses any edge of the AABB.
+static bool arc_clips_aabb(
+	float ox, float oz, float R, float bearing, float half,
+	float x0, float z0, float x1, float z1)
+{
+	// For each AABB edge, solve the circle-segment quadratic and accept any
+	// intersection whose angle from the arc origin falls within the arc span.
+	auto check_edge = [&](float ex0, float ez0, float ex1, float ez1) -> bool {
+		float dx = ex1 - ex0, dz = ez1 - ez0;
+		float fx = ex0 - ox,  fz = ez0 - oz;
+		float a = dx*dx + dz*dz;
+		if (a < 1e-12f) return false;
+		float b    = 2.0f * (fx*dx + fz*dz);
+		float c    = fx*fx + fz*fz - R*R;
+		float disc = b*b - 4.0f*a*c;
+		if (disc < 0.0f) return false;
+		float sq     = std::sqrt(disc);
+		float inv2a  = 0.5f / a;
+		for (int s = -1; s <= 1; s += 2) {
+			float t = (-b + (float)s * sq) * inv2a;
+			if (t < 0.0f || t > 1.0f) continue;
+			float px = ex0 + t * dx, pz = ez0 + t * dz;
+			if (std::abs(norm_angle_diff(std::atan2(pz - oz, px - ox) - bearing)) <= half)
+				return true;
+		}
+		return false;
+	};
+	return check_edge(x0, z0, x1, z0) ||  // bottom
+	       check_edge(x1, z0, x1, z1) ||  // right
+	       check_edge(x0, z1, x1, z1) ||  // top
+	       check_edge(x0, z0, x0, z1);    // left
+}
+
+// Exact sector–AABB overlap test.  Returns true iff the circular sector
+// defined by arc intersects the axis-aligned box [wx0,wx1]×[wz0,wz1].
+//
+// Four exhaustive conditions (any one is sufficient):
+//   1. Arc origin inside the AABB.
+//   2. Any AABB corner inside the sector.
+//   3. Either straight radial edge of the sector clips the AABB.
+//   4. The curved arc boundary clips any AABB edge.
+//
+// The fast reject uses the closest point on the AABB to the arc origin,
+// which is tighter than the old centre-to-centre + box-diagonal test and
+// avoids a square-root.
 static bool cluster_overlaps_arc(float wx0, float wz0, float wx1, float wz1,
                                  const ThreatArc &arc)
 {
-	// Fast reject: AABB of cluster vs circle bounding the arc
-	float mid_x  = (wx0 + wx1) * 0.5f;
-	float mid_z  = (wz0 + wz1) * 0.5f;
-	float half_w = (wx1 - wx0) * 0.5f;
-	float half_h = (wz1 - wz0) * 0.5f;
-	float box_reach = std::sqrt(half_w * half_w + half_h * half_h);
-	float dx_o = arc.origin.x - mid_x;
-	float dz_o = arc.origin.y - mid_z;
-	float dist_o = std::sqrt(dx_o * dx_o + dz_o * dz_o);
-	// If the circle can't possibly reach the cluster AABB, skip
-	if (dist_o > arc.length + box_reach) return false;
+	float R = arc.length;
 
-	// If the arc origin is inside the cluster, block immediately
+	// ── Fast reject: closest point on AABB to arc origin vs R ────────────
+	float near_x = std::max(wx0, std::min(arc.origin.x, wx1));
+	float near_z = std::max(wz0, std::min(arc.origin.y, wz1));
+	{
+		float dx = arc.origin.x - near_x, dz = arc.origin.y - near_z;
+		if (dx*dx + dz*dz > R*R) return false;
+	}
+
+	// 1. Arc origin inside AABB
 	if (arc.origin.x >= wx0 && arc.origin.x <= wx1 &&
-	    arc.origin.y >= wz0 && arc.origin.y <= wz1) {
+	    arc.origin.y >= wz0 && arc.origin.y <= wz1)
 		return true;
-	}
 
-	// Sample 9 points: 4 corners, 4 edge midpoints, 1 centre
-	const float xs[3] = { wx0, mid_x, wx1 };
-	const float zs[3] = { wz0, mid_z, wz1 };
-	for (int zi = 0; zi < 3; ++zi) {
-		for (int xi = 0; xi < 3; ++xi) {
-			if (point_in_arc(xs[xi], zs[zi], arc)) return true;
-		}
-	}
-	return false;
+	// 2. Any AABB corner inside the sector
+	if (point_in_arc(wx0, wz0, arc) || point_in_arc(wx1, wz0, arc) ||
+	    point_in_arc(wx1, wz1, arc) || point_in_arc(wx0, wz1, arc))
+		return true;
+
+	// 3. Either radial edge intersects the AABB
+	float angle_l = arc.bearing - arc.half_angle;
+	float angle_r = arc.bearing + arc.half_angle;
+	float lx = arc.origin.x + R * std::cos(angle_l), lz = arc.origin.y + R * std::sin(angle_l);
+	float rx = arc.origin.x + R * std::cos(angle_r), rz = arc.origin.y + R * std::sin(angle_r);
+	if (segment_clips_aabb(arc.origin.x, arc.origin.y, lx, lz, wx0, wz0, wx1, wz1) ||
+	    segment_clips_aabb(arc.origin.x, arc.origin.y, rx, rz, wx0, wz0, wx1, wz1))
+		return true;
+
+	// 4. Curved arc boundary crosses an AABB edge
+	return arc_clips_aabb(arc.origin.x, arc.origin.y, R,
+	                      arc.bearing, arc.half_angle,
+	                      wx0, wz0, wx1, wz1);
 }
 
 void HpaGraph::stamp_threat_arcs(const std::vector<ThreatArc> &arcs) {

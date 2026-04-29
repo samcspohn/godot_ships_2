@@ -11,6 +11,7 @@ extends Node
 
 var _map: NavigationMap = null
 var _waypoint_graph: WaypointGraph = null
+var _hpa_graph: HpaGraph = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
 
@@ -101,7 +102,7 @@ func build_map_raycast(island_bodies: Array[StaticBody3D], map_bounds: Rect2,
 
 	_build_waypoint_graph()
 
-## Build the shared WaypointGraph from the NavigationMap (called internally after map build).
+## Build the shared WaypointGraph and HpaGraph from the NavigationMap (called internally after map build).
 func _build_waypoint_graph() -> void:
 	if _map == null or not _map.is_built():
 		return
@@ -117,6 +118,17 @@ func _build_waypoint_graph() -> void:
 		_waypoint_graph.get_edge_count()
 	])
 
+	start_time = Time.get_ticks_msec()
+	_hpa_graph = HpaGraph.new()
+	_hpa_graph.build(_map, DEFAULT_MIN_SHIP_RADIUS)
+	elapsed = Time.get_ticks_msec() - start_time
+
+	print("[NavigationMapManager] HpaGraph built in %.1f ms — %d nodes across %d clusters" % [
+		elapsed,
+		_hpa_graph.get_node_count(),
+		_hpa_graph.get_cluster_count()
+	])
+
 ## Returns the shared NavigationMap instance, or null if not yet built.
 func get_map() -> NavigationMap:
 	return _map
@@ -124,6 +136,10 @@ func get_map() -> NavigationMap:
 ## Returns the shared WaypointGraph instance, or null if not yet built.
 func get_waypoint_graph() -> WaypointGraph:
 	return _waypoint_graph
+
+## Returns the shared HpaGraph instance, or null if not yet built.
+func get_hpa_graph() -> HpaGraph:
+	return _hpa_graph
 
 ## Returns true if the map has been built and is ready for use.
 func is_map_ready() -> bool:

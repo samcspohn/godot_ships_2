@@ -168,16 +168,17 @@ private:
 	// no bin is attached).  Updates threat_last_version_.
 	void push_threats_to_dstar();
 
-	static constexpr float SHELL_THREAT_RADIUS   = 500.0f;  // max dist from threat line for scoring
-	static constexpr float SHELL_THREAT_WEIGHT_BASE = 20.0f;  // base penalty — scaled by ship size and health
-	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
-	static constexpr float PARALLEL_BONUS_WEIGHT = 0.6f;    // perpendicularity penalty — low so proximity dominates over angling
-	static constexpr float GAP_CLEARANCE_PENALTY = 1.0f;     // penalty when ship barely fits between lines
-	static constexpr float TORPEDO_LOOKAHEAD_DIST = 3000.0f; // distance ahead of torpedo nose for threat line
-	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
+	static constexpr float SHELL_THREAT_WEIGHT_BASE   = 40.0f;   // base penalty seconds — scaled by ship size and health
+	static constexpr float TORPEDO_VIRTUAL_CALIBER    = 2000.0f; // virtual caliber for torpedo threat lines
+	static constexpr float TORPEDO_LOOKAHEAD_DIST     = 3000.0f; // distance ahead of torpedo nose for threat line
+	static constexpr float SHELL_OVERSHOOT_LEN        = 15.0f;   // line extension past impact point
+
+	// OBB intersection scoring modifiers
+	static constexpr float GRAZE_MIN_FACTOR     = 0.15f;   // minimum penalty factor for a dead end-on hit (sin curve floor)
+	static constexpr float BOW_STERN_CLIP_START = 0.80f;   // fwd fraction beyond which bow/stern clip reduction kicks in
+	static constexpr float BOW_STERN_MIN_FACTOR = 0.30f;   // minimum penalty factor at the extreme hull tip
 
 	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
-	static float distance_to_line_segment(Vector2 point, Vector2 seg_center, Vector2 seg_dir, float half_len);
 
 	float get_dynamic_threat_weight() const;
 

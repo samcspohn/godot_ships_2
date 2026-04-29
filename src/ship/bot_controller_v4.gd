@@ -193,6 +193,13 @@ func _ready() -> void:
 	else:
 		push_warning("[BotControllerV4] WaypointGraph not yet built — navigator will pathfind without graph")
 
+	# Connect to the shared HpaGraph (built alongside NavigationMap)
+	var hpa_graph = NavigationMapManager.get_hpa_graph()
+	if hpa_graph != null:
+		navigator.set_hpa_graph(hpa_graph)
+	else:
+		push_warning("[BotControllerV4] HpaGraph not yet built — navigator will fall back to straight-line paths")
+
 	# Set ship kinematic parameters from the movement controller
 	# These match ShipMovementV4's exported properties
 	navigator.set_ship_params(
@@ -223,6 +230,9 @@ func _deferred_init() -> void:
 		var wp_graph = NavigationMapManager.get_waypoint_graph()
 		if wp_graph != null:
 			navigator.set_waypoint_graph(wp_graph)
+		var hpa_graph = NavigationMapManager.get_hpa_graph()
+		if hpa_graph != null:
+			navigator.set_hpa_graph(hpa_graph)
 
 	# Pass bot_id to navigator for staggered periodic replanning
 	if navigator != null:
@@ -423,7 +433,8 @@ func _update_nav_intent() -> void:
 			_last_intent.target_position = Vector3(safe["position"].x, 0.0, safe["position"].y)
 
 	# --- Push destination out of enemy threat zones when sneaking ---
-	if _last_intent != null and behavior != null and behavior.wants_stealth:
+	if _last_intent != null and behavior != null and behavior.wants_stealth \
+			and not _last_intent.skip_threat_adjustment:
 		_adjust_destination_for_threats(_last_intent)
 
 	# Track destination for debug drawing
@@ -483,7 +494,8 @@ func _update_obstacles() -> void:
 		var pos_2d = Vector2(ship.global_position.x, ship.global_position.z)
 		var vel_2d = Vector2(ship.linear_velocity.x, ship.linear_velocity.z)
 		var ship_length = ship.movement_controller.ship_length if ship.movement_controller else 200.0
-		var radius = ship_length * 0.5
+		var ship_beam = ship.movement_controller.ship_beam if ship.movement_controller else 20.0
+		var radius = ship_beam * 0.5  # half-beam — used for OBB half-beam in navigator
 		# print("[Obstacle %s] Registering ship %s as obstacle at dist=%.0f" % [_ship.name, ship.name, dist])
 		navigator.register_obstacle(ship_id, pos_2d, vel_2d, radius, ship_length)
 
@@ -980,6 +992,30 @@ func _emit_debug_draws() -> void:
 			var t = float(i) / float(max(trajectory.size() - 1, 1))
 			var color = Color(0.0, 1.0 - t * 0.5, 0.0)
 			Debug.draw_im_sphere(pt, 15.0, color)
+
+		# --- k0) Navigator OBB wireframe ---
+		# Draws the oriented bounding box the C++ navigator uses for shell-hit scoring.
+		# 4 hull edges (white) + keel and beam centre-lines (faint white).
+		var obb_heading := get_ship_heading()
+		var obb_hsl := movement.ship_length * 0.5
+		var obb_hsb := movement.ship_beam   * 0.5
+		var obb_fwd  := Vector3(sin(obb_heading), 0.0,  cos(obb_heading))
+		var obb_stbd := Vector3(cos(obb_heading), 0.0, -sin(obb_heading))
+		var obb_ctr  := Vector3(ship_pos.x, 3.0, ship_pos.z)
+		var obb_col  := Color(1.0, 1.0, 1.0, 0.85)
+		var obb_dim  := Color(1.0, 1.0, 1.0, 0.35)
+		# Corners: bow-stbd, bow-port, stern-port, stern-stbd
+		var obb_bs := obb_ctr + obb_fwd * obb_hsl + obb_stbd * obb_hsb
+		var obb_bp := obb_ctr + obb_fwd * obb_hsl - obb_stbd * obb_hsb
+		var obb_sp := obb_ctr - obb_fwd * obb_hsl - obb_stbd * obb_hsb
+		var obb_ss := obb_ctr - obb_fwd * obb_hsl + obb_stbd * obb_hsb
+		Debug.draw_line(obb_bs, obb_bp, obb_col)   # bow edge
+		Debug.draw_line(obb_bp, obb_sp, obb_col)   # port side
+		Debug.draw_line(obb_sp, obb_ss, obb_col)   # stern edge
+		Debug.draw_line(obb_ss, obb_bs, obb_col)   # starboard side
+		# Keel line and beam centre-line (orientation guides)
+		Debug.draw_line(obb_ctr + obb_fwd  * obb_hsl, obb_ctr - obb_fwd  * obb_hsl, obb_dim)
+		Debug.draw_line(obb_ctr + obb_stbd * obb_hsb, obb_ctr - obb_stbd * obb_hsb, obb_dim)
 
 		# --- k) Clearance circles ---
 		var clearance_r = navigator.get_clearance_radius()

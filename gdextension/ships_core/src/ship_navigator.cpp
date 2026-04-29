@@ -291,9 +291,13 @@ bool ShipNavigator::is_collision_imminent() const {
 
 void ShipNavigator::register_obstacle(int id, Vector2 position, Vector2 velocity, float radius, float length) {
 	obstacles[id] = DynamicObstacle(id, position, velocity, radius, length);
-	// Forward circular obstacle to HPA* for cluster-level blocking
+	// Forward circular obstacle to HPA* for cluster-level blocking.
+	// Use only ship_beam as the padding margin (not full ship clearance) since
+	// HPA* is a high-level planner and fine-grained avoidance is handled by
+	// the arc simulation.  Over-inflating the radius here causes ships to route
+	// excessively far around other ships.
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
-		float effective_radius = std::max(radius, length * 0.5f) + get_ship_clearance();
+		float effective_radius = std::max(radius, length * 0.5f) + params.ship_beam;
 		hpa_graph_->add_obstacle(id, position, effective_radius);
 	}
 }
@@ -303,6 +307,11 @@ void ShipNavigator::update_obstacle(int id, Vector2 position, Vector2 velocity) 
 	if (it != obstacles.end()) {
 		it->second.position = position;
 		it->second.velocity = velocity;
+		// Keep heading updated from velocity; retain last known heading when parked.
+		float vlen = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+		if (vlen > 0.5f) {
+			it->second.heading = std::atan2(velocity.x, velocity.y);
+		}
 	}
 	// Re-register obstacle at new position in HPA*
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
@@ -310,7 +319,7 @@ void ShipNavigator::update_obstacle(int id, Vector2 position, Vector2 velocity) 
 		auto oit = obstacles.find(id);
 		if (oit != obstacles.end()) {
 			const DynamicObstacle &obs = oit->second;
-			float effective_radius = std::max(obs.radius, obs.length * 0.5f) + get_ship_clearance();
+			float effective_radius = std::max(obs.radius, obs.length * 0.5f) + params.ship_beam;
 			hpa_graph_->add_obstacle(id, position, effective_radius);
 		}
 	}
@@ -622,28 +631,24 @@ void ShipNavigator::update_normal(float delta) {
 		}
 	}
 
-	// --- 1. D* Lite path planning ---
+	// --- 1. HPA* path planning ---
 	auto plan_t0 = std::chrono::steady_clock::now();
 
 	timing_replan_reason = 0;
 
-	if (replan_requested_ || !dstar_initialized_) {
-		// Full (re)initialization — goal changed or first frame
+	if (replan_requested_ || !path_valid) {
+		// Full replan — goal changed, first frame, or no valid path yet
 		timing_replan_reason = 1;
 		start_plan();
 		replan_requested_ = false;
 	}
 
-	if (plan_phase == PlanPhase::COMPUTING) {
-		// Initial convergence or ongoing computation
-		timing_replan_reason = 4;
-		tick_plan();
-	} else if (plan_phase == PlanPhase::DONE) {
-		// Result ready — accept it
+	if (plan_phase == PlanPhase::DONE) {
+		// HPA* always completes synchronously — accept immediately
 		accept_plan_result(plan_forward_result);
 		plan_phase = PlanPhase::IDLE;
-	} else if (dstar_initialized_ && dstar_converged_) {
-		// Incremental repair — threats may have moved
+	} else if (plan_phase == PlanPhase::IDLE && path_valid) {
+		// Incremental update: re-stamp threats and replan when version changes
 		dstar_incremental_update();
 	}
 
@@ -1116,9 +1121,9 @@ void ShipNavigator::start_plan() {
 		plan_min_clearance * 2.0f);
 
 	// -----------------------------------------------------------------------
-	// HPA* path: use hierarchical A* when the graph is available.
-	// The abstract A* runs in microseconds, so we complete planning
-	// synchronously and go straight to DONE.
+	// HPA* path (primary): threat-aware hierarchical A*.
+	// The abstract search runs in microseconds so planning always completes
+	// synchronously — no COMPUTING phase is needed.
 	// -----------------------------------------------------------------------
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
 		map.is_valid() && map->is_built()) {
@@ -1126,27 +1131,21 @@ void ShipNavigator::start_plan() {
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
 			plan_forward_result = pr;
-			dstar_initialized_ = false;
-			dstar_converged_   = false;
 			plan_phase = PlanPhase::DONE;
 			return;
 		}
-		// HPA* failed (e.g. isolated cluster) — fall through to D* Lite
+		// HPA* failed (e.g. isolated cluster) — fall through to straight-line
 	}
 
 	// -----------------------------------------------------------------------
-	// D* Lite fallback
+	// Straight-line fallback: only when no active threat subscription and
+	// terrain is clear.  When threat_bin_ is set, always let HPA* route so
+	// that stealth ships never short-circuit around threat-arc avoidance.
 	// -----------------------------------------------------------------------
-	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
-		map.is_null() || !map->is_built()) {
-		path_valid = false;
-		plan_phase = PlanPhase::IDLE;
-		return;
-	}
-
-	// Straight-line pre-check: skip graph entirely if clear
-	if (waypoint_graph_->straight_line_clear(state.position, target.position,
-											  plan_min_clearance)) {
+	if (waypoint_graph_.is_valid() && waypoint_graph_->is_built() &&
+		!threat_bin_ &&
+		waypoint_graph_->straight_line_clear(state.position, target.position,
+											 plan_min_clearance)) {
 		PathResult direct;
 		direct.waypoints.push_back(state.position);
 		direct.waypoints.push_back(target.position);
@@ -1155,43 +1154,49 @@ void ShipNavigator::start_plan() {
 		direct.valid = true;
 		direct.total_distance = state.position.distance_to(target.position);
 		plan_forward_result = direct;
-		dstar_initialized_ = false;
-		dstar_converged_ = false;
 		plan_phase = PlanPhase::DONE;
 		return;
 	}
 
-	// Find nearest graph nodes for start and goal
-	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
-	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
+	// -----------------------------------------------------------------------
+	// Last resort: step along the straight line and stop just before the
+	// first terrain / threat obstacle so the ship doesn't drive blindly
+	// through land or a detection zone.
+	// -----------------------------------------------------------------------
+	{
+		Vector2 dir = target.position - state.position;
+		float total = dir.length();
 
-	if (dstar_start_node_ < 0 || dstar_goal_node_ < 0) {
-		plan_forward_result = PathResult();
+		PathResult direct;
+		direct.waypoints.push_back(state.position);
+
+		if (total > plan_min_clearance && map.is_valid() && map->is_built()) {
+			Vector2 dir_n = dir / total;
+			float step = std::max(plan_min_clearance, 50.0f);
+			float best_dist = 0.0f;
+			for (float d = step; ; d += step) {
+				float test_d = std::min(d, total);
+				Vector2 test = state.position + dir_n * test_d;
+				if (map->get_distance(test.x, test.y) < plan_min_clearance) break;
+				if (threat_bin_ && threat_bin_->grid.is_blocked(test)) break;
+				best_dist = test_d;
+				if (test_d >= total) break;
+			}
+			if (best_dist > plan_min_clearance)
+				direct.waypoints.push_back(state.position + dir_n * best_dist);
+		}
+
+		if (direct.waypoints.size() < 2)
+			direct.waypoints.push_back(state.position);  // stuck — stay put
+
+		direct.flags.assign(direct.waypoints.size(), WP_NONE);
+		direct.valid = true;
+		direct.total_distance = 0.0f;
+		for (size_t i = 0; i + 1 < direct.waypoints.size(); ++i)
+			direct.total_distance += direct.waypoints[i].distance_to(direct.waypoints[i + 1]);
+		plan_forward_result = direct;
 		plan_phase = PlanPhase::DONE;
-		return;
 	}
-
-	// O(1) reachability check (virtual nodes inherit component from neighbors)
-	if (!waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
-		plan_forward_result = PathResult();
-		plan_phase = PlanPhase::DONE;
-		return;
-	}
-
-	// Initialize D* Lite (backward search: goal seeded at rhs=0, start is termination check)
-	if (threat_bin_) {
-		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
-		threat_last_version_ = threat_bin_->version;
-	} else {
-		std::vector<ThreatArc> empty;
-		dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-						  plan_min_clearance, empty, nullptr);
-		threat_last_version_ = 0;
-	}
-	dstar_initialized_ = true;
-	dstar_converged_ = false;
-	plan_phase = PlanPhase::COMPUTING;
 }
 
 void ShipNavigator::tick_plan() {
@@ -1215,7 +1220,7 @@ void ShipNavigator::run_plan_sync() {
 		plan_min_clearance * 2.0f);
 
 	// -----------------------------------------------------------------------
-	// HPA* synchronous path
+	// HPA* path (primary)
 	// -----------------------------------------------------------------------
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
 		map.is_valid() && map->is_built()) {
@@ -1223,25 +1228,18 @@ void ShipNavigator::run_plan_sync() {
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
 			accept_plan_result(pr);
-			dstar_initialized_ = false;
 			plan_phase = PlanPhase::IDLE;
 			return;
 		}
-		// HPA* failed — fall through to D* Lite
 	}
 
 	// -----------------------------------------------------------------------
-	// D* Lite fallback
+	// Straight-line fallback (terrain-only, no threats)
 	// -----------------------------------------------------------------------
-	if (waypoint_graph_.is_null() || !waypoint_graph_->is_built() ||
-		map.is_null() || !map->is_built()) {
-		path_valid = false;
-		return;
-	}
-
-	// Straight-line pre-check
-	if (waypoint_graph_->straight_line_clear(state.position, target.position,
-											  plan_min_clearance)) {
+	if (waypoint_graph_.is_valid() && waypoint_graph_->is_built() &&
+		!threat_bin_ &&
+		waypoint_graph_->straight_line_clear(state.position, target.position,
+											 plan_min_clearance)) {
 		PathResult direct;
 		direct.waypoints.push_back(state.position);
 		direct.waypoints.push_back(target.position);
@@ -1254,37 +1252,43 @@ void ShipNavigator::run_plan_sync() {
 		return;
 	}
 
-	// Find nearest graph nodes for start and goal
-	dstar_start_node_ = waypoint_graph_->find_nearest_node(state.position);
-	dstar_goal_node_  = waypoint_graph_->find_nearest_node(target.position);
+	// -----------------------------------------------------------------------
+	// Last resort: stop short of terrain/threats along the straight line
+	// -----------------------------------------------------------------------
+	{
+		Vector2 dir = target.position - state.position;
+		float total = dir.length();
 
-	if (dstar_start_node_ >= 0 && dstar_goal_node_ >= 0 &&
-		waypoint_graph_->same_component(dstar_start_node_, dstar_goal_node_)) {
-		if (threat_bin_) {
-			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-							  plan_min_clearance, threat_bin_->arcs, &threat_bin_->grid);
-			threat_last_version_ = threat_bin_->version;
-		} else {
-			std::vector<ThreatArc> empty;
-			dstar_.initialize(waypoint_graph_.ptr(), dstar_start_node_, dstar_goal_node_,
-							  plan_min_clearance, empty, nullptr);
-			threat_last_version_ = 0;
-		}
-		dstar_initialized_ = true;
-		dstar_converged_ = dstar_.compute_shortest_path(DSTAR_SYNC_LIMIT);
+		PathResult direct;
+		direct.waypoints.push_back(state.position);
 
-		PathResult result = build_path_from_dstar();
-		if (result.valid) {
-			accept_plan_result(result);
-			plan_phase = PlanPhase::IDLE;
-			return;
+		if (total > plan_min_clearance && map.is_valid() && map->is_built()) {
+			Vector2 dir_n = dir / total;
+			float step = std::max(plan_min_clearance, 50.0f);
+			float best_dist = 0.0f;
+			for (float d = step; ; d += step) {
+				float test_d = std::min(d, total);
+				Vector2 test = state.position + dir_n * test_d;
+				if (map->get_distance(test.x, test.y) < plan_min_clearance) break;
+				if (threat_bin_ && threat_bin_->grid.is_blocked(test)) break;
+				best_dist = test_d;
+				if (test_d >= total) break;
+			}
+			if (best_dist > plan_min_clearance)
+				direct.waypoints.push_back(state.position + dir_n * best_dist);
 		}
+
+		if (direct.waypoints.size() < 2)
+			direct.waypoints.push_back(state.position);
+
+		direct.flags.assign(direct.waypoints.size(), WP_NONE);
+		direct.valid = true;
+		direct.total_distance = 0.0f;
+		for (size_t i = 0; i + 1 < direct.waypoints.size(); ++i)
+			direct.total_distance += direct.waypoints[i].distance_to(direct.waypoints[i + 1]);
+		accept_plan_result(direct);
+		plan_phase = PlanPhase::IDLE;
 	}
-
-	// No path found
-	path_valid = false;
-	dstar_initialized_ = false;
-	plan_phase = PlanPhase::IDLE;
 }
 
 // ============================================================================
@@ -1292,65 +1296,29 @@ void ShipNavigator::run_plan_sync() {
 // ============================================================================
 
 void ShipNavigator::dstar_incremental_update() {
-	// -----------------------------------------------------------------------
-	// HPA* incremental update: when obstacle blocking changes trigger a
-	// replan request, re-run HPA* find_path synchronously (the abstract A*
-	// is fast enough that per-frame repair budgets are not needed).
-	// -----------------------------------------------------------------------
-	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
-		// Threat arc changes: rasterize arcs directly onto the Level-1
-		// cluster grid.  This replaces the separate BlockedGrid-based circle
-		// approximation and respects the actual wedge geometry at cluster
-		// granularity — O(num_clusters × num_arcs), typically < 1 ms.
-		if (threat_bin_) {
-			uint64_t live_version = threat_bin_->version;
-			if (live_version != threat_last_version_) {
-				hpa_graph_->stamp_threat_arcs(threat_bin_->arcs);
-				threat_last_version_ = live_version;
-				push_threats_to_dstar(); // keep D* Lite + BlockedGrid in sync
-				                         // for adjust_destination_for_threats()
-			}
-		} else {
-			// No threat source attached — ensure cluster threat layer is clear
-			hpa_graph_->clear_threat_arcs();
+	if (!hpa_graph_.is_valid() || !hpa_graph_->is_built()) return;
+
+	// Restamp threat arcs onto the cluster grid when the bin version changes.
+	if (threat_bin_) {
+		uint64_t live_version = threat_bin_->version;
+		if (live_version != threat_last_version_) {
+			hpa_graph_->stamp_threat_arcs(threat_bin_->arcs);
+			threat_last_version_ = live_version;
+			// Trigger a replan so the updated threat layout is reflected
+			// in the active path immediately.
+			replan_requested_ = true;
 		}
+	} else {
+		hpa_graph_->clear_threat_arcs();
+	}
 
-		// Re-plan with HPA* to pick up any cluster blocking changes
-		if (replan_requested_ || !path_valid) {
-			PathResult pr = hpa_graph_->find_path(state.position, target.position);
-			if (pr.valid && !pr.waypoints.empty()) {
-				accept_plan_result(pr);
-			}
+	// Re-plan with HPA* when stale or explicitly requested.
+	if (replan_requested_ || !path_valid) {
+		PathResult pr = hpa_graph_->find_path(state.position, target.position);
+		if (pr.valid && !pr.waypoints.empty()) {
+			accept_plan_result(pr);
 		}
-		return;
-	}
-
-	// -----------------------------------------------------------------------
-	// D* Lite incremental repair (original path)
-	// -----------------------------------------------------------------------
-	if (!dstar_initialized_ || !waypoint_graph_.is_valid()) return;
-
-	// 1. Detect threat zone changes via bin version diff (the registry bumps
-	//    the version once per global tick when the bin is rebuilt).
-	uint64_t live_version = threat_bin_ ? threat_bin_->version : 0;
-	if (live_version != threat_last_version_) {
-		push_threats_to_dstar();
-	}
-
-	// 2. Update start node if ship has moved to a different nearest node
-	int new_start = waypoint_graph_->find_nearest_node(state.position);
-	if (new_start >= 0 && new_start != dstar_start_node_) {
-		dstar_start_node_ = new_start;
-		dstar_.advance_start(new_start);
-	}
-
-	// 3. Run repair with small budget
-	dstar_.compute_shortest_path(DSTAR_REPAIR_BUDGET);
-
-	// 4. Re-extract path (may have changed due to repairs)
-	PathResult result = build_path_from_dstar();
-	if (result.valid) {
-		accept_plan_result(result);
+		replan_requested_ = false;
 	}
 }
 
@@ -1373,15 +1341,7 @@ void ShipNavigator::dstar_incremental_update() {
 // Shell threat scoring — evaluates a candidate arc against all threat lines
 // =============================================================================
 
-// Static helper: distance from a point to a line segment defined by center, direction, half-length
-float ShipNavigator::distance_to_line_segment(Vector2 point, Vector2 seg_center, Vector2 seg_dir, float half_len) {
-	Vector2 to_point = point - seg_center;
-	float projection = to_point.dot(seg_dir);
-	// Clamp projection to segment bounds
-	projection = std::max(-half_len, std::min(projection, half_len));
-	Vector2 closest = seg_center + seg_dir * projection;
-	return point.distance_to(closest);
-}
+
 
 float ShipNavigator::get_dynamic_threat_weight() const {
 	// Ship size factor: smaller ships dodge more aggressively
@@ -1400,13 +1360,14 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 	if (arc.size() < 2) return 0.0f;
 
 	// Collect all threat lines: each has a center, direction, half-length,
-	// time of relevance, and caliber.
+	// time of relevance, caliber, and whether it is a torpedo.
 	struct ThreatLine {
 		Vector2 center;
 		Vector2 dir;        // normalized direction
 		float half_len;
 		float time;         // time_remaining (when it matters)
 		float caliber;
+		bool is_torpedo;
 	};
 
 	std::vector<ThreatLine> threat_lines;
@@ -1415,8 +1376,7 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 	// --- Shell threat lines ---
 	// The landing point is near the TIP of the line. The danger zone trails
 	// backward along the shell's travel direction (toward its origin) and
-	// extends SHELL_OVERSHOOT_LEN past the impact point. The segment runs
-	// from (landing_pos - dir * 2*half_len) to (landing_pos + dir * overshoot).
+	// extends SHELL_OVERSHOOT_LEN past the impact point.
 	for (const auto &shell : incoming_shells_) {
 		if (shell.time_remaining <= 0.0f) continue;
 		float total_half = shell.threat_half_len + SHELL_OVERSHOOT_LEN * 0.5f;
@@ -1426,6 +1386,7 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 		tl.half_len = total_half;
 		tl.time = shell.time_remaining;
 		tl.caliber = shell.caliber;
+		tl.is_torpedo = false;
 		threat_lines.push_back(tl);
 	}
 
@@ -1441,110 +1402,123 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 		// Project ship onto torpedo path to find closest approach time
 		Vector2 to_ship = state.position - obs.position;
 		float t_closest = to_ship.dot(torp_dir) / torp_speed;
-
-		// Only care about future torpedoes
 		if (t_closest < 0.0f) t_closest = 0.0f;
 
-		// Threat line emitted from torpedo nose, extending TORPEDO_LOOKAHEAD_DIST ahead
 		ThreatLine tl;
 		tl.center = obs.position + torp_dir * (TORPEDO_LOOKAHEAD_DIST * 0.5f);
 		tl.dir = torp_dir;
 		tl.half_len = TORPEDO_LOOKAHEAD_DIST * 0.5f;
 		tl.time = t_closest;
 		tl.caliber = TORPEDO_VIRTUAL_CALIBER;
+		tl.is_torpedo = true;
 		threat_lines.push_back(tl);
 	}
 
 	if (threat_lines.empty()) return 0.0f;
 
+	// Ship half-extents for OBB intersection test
+	const float hsl = params.ship_length * 0.5f;   // half-length (bow/stern)
+	const float hsb = params.ship_beam   * 0.5f;   // half-beam  (port/starboard)
+
 	float total_threat = 0.0f;
-	float ship_beam = params.ship_beam;
 
-	// --- Score each threat line against the arc ---
-	// Option C: sample multiple arc points in a time window around impact,
-	// and use the WORST (closest to threat line) point.  An arc that is
-	// committed to moving away will have its closest point early in the
-	// window and be farther away at impact time, producing a better score
-	// than an oscillating arc that hovers near the threat the whole time.
 	for (const auto &tl : threat_lines) {
-		float cal_weight = (tl.caliber * tl.caliber) / (200.0f * 200.0f);
+		const float cal_weight = (tl.caliber * tl.caliber) / (200.0f * 200.0f);
 
-		// Time window: sample arc points from (impact - window) to (impact + window)
-		float t_lo = std::max(0.0f, tl.time - DODGE_THREAT_WINDOW);
-		float t_hi = tl.time + DODGE_THREAT_WINDOW;
+		// Time window: check arc points from (impact - window) to (impact + window)
+		const float t_lo = std::max(0.0f, tl.time - DODGE_THREAT_WINDOW);
+		const float t_hi = tl.time + DODGE_THREAT_WINDOW;
 
-		// Find the arc point with minimum distance to the threat line
-		// within the time window.  This is the worst-case exposure.
-		float min_dist = SHELL_THREAT_RADIUS;  // start at cutoff
-		const ArcPoint *worst_point = nullptr;
+		float worst_penalty = 0.0f;
+		bool found_window_point = false;
+
+		// Lambda: test the threat line segment against the ship OBB at a given arc point
+		// and update worst_penalty if a hit is confirmed.
+		auto score_at_point = [&](const ArcPoint &apt) {
+			// Ship local axes from heading (forward = (sin h, cos h), starboard = (cos h, -sin h))
+			const float fx = std::sin(apt.heading);
+			const float fz = std::cos(apt.heading);
+
+			// Threat segment endpoints relative to ship center, projected into ship local frame.
+			// Local X = forward (keel), Local Y = starboard.
+			const Vector2 rel_a = tl.center - tl.dir * tl.half_len - apt.position;
+			const Vector2 rel_b = tl.center + tl.dir * tl.half_len - apt.position;
+
+			const float a_fwd  = rel_a.x * fx + rel_a.y * fz;
+			const float a_stbd = rel_a.x * fz - rel_a.y * fx;
+			const float b_fwd  = rel_b.x * fx + rel_b.y * fz;
+			const float b_stbd = rel_b.x * fz - rel_b.y * fx;
+
+			const float d_fwd  = b_fwd  - a_fwd;
+			const float d_stbd = b_stbd - a_stbd;
+
+			// Liang-Barsky clip of segment against AABB [-hsl, hsl] x [-hsb, hsb].
+			// For each boundary: p is the "rate of change toward boundary", q is the
+			// "signed distance from start to boundary". p<0 → entering (update t0),
+			// p>0 → leaving (update t1), p≈0 → parallel (reject if outside).
+			float t0 = 0.0f, t1 = 1.0f;
+			const float p[4] = { -d_fwd,  d_fwd,  -d_stbd,  d_stbd  };
+			const float q[4] = {  a_fwd + hsl,  hsl - a_fwd,  a_stbd + hsb,  hsb - a_stbd };
+
+			for (int k = 0; k < 4; k++) {
+				if (std::abs(p[k]) < 1e-6f) {
+					if (q[k] < 0.0f) return;   // parallel and outside this boundary → no hit
+				} else {
+					const float t = q[k] / p[k];
+					if (p[k] < 0.0f) t0 = std::max(t0, t);
+					else             t1 = std::min(t1, t);
+				}
+				if (t0 > t1) return;            // clipped out → no hit
+			}
+
+			// --- OBB intersection confirmed: compute penalty factor ---
+			float penalty_factor = 1.0f;
+
+			if (!tl.is_torpedo) {
+				// (a) Angle modifier: smooth gradient across the full approach angle.
+				//     cos_keel = 1 → end-on (grazing), 0 → broadside (worst).
+				//     sin_keel = 0 → end-on, 1 → broadside.
+				//     penalty scales linearly from GRAZE_MIN_FACTOR at end-on to 1.0
+				//     at broadside, giving a continuous reward for angling the ship.
+				const float cos_keel = std::abs(tl.dir.x * fx + tl.dir.y * fz);
+				const float sin_keel = std::sqrt(std::max(0.0f, 1.0f - cos_keel * cos_keel));
+				penalty_factor *= GRAZE_MIN_FACTOR + (1.0f - GRAZE_MIN_FACTOR) * sin_keel;
+
+				// (b) Bow/stern clip modifier: if the intersection midpoint along the keel
+				//     is in the outermost portion of the hull, reduce the penalty.
+				const float hit_mid_fwd = a_fwd + (t0 + t1) * 0.5f * d_fwd;
+				const float fwd_frac = std::abs(hit_mid_fwd) / hsl;
+				if (fwd_frac > BOW_STERN_CLIP_START) {
+					const float ct = std::min((fwd_frac - BOW_STERN_CLIP_START) / (1.0f - BOW_STERN_CLIP_START), 1.0f);
+					penalty_factor *= 1.0f - ct * (1.0f - BOW_STERN_MIN_FACTOR);
+				}
+			}
+
+			const float penalty = cal_weight * penalty_factor;
+			if (penalty > worst_penalty) worst_penalty = penalty;
+		};
+
+		// Check all arc points within the time window
 		for (size_t i = 0; i < arc.size(); i++) {
 			if (arc[i].time < t_lo) continue;
 			if (arc[i].time > t_hi) break;
-			float d = distance_to_line_segment(arc[i].position, tl.center, tl.dir, tl.half_len);
-			if (d < min_dist) {
-				min_dist = d;
-				worst_point = &arc[i];
+			found_window_point = true;
+			score_at_point(arc[i]);
+		}
+
+		// Fallback: if no arc point fell within the window (arc too short to reach
+		// impact time), use the arc point nearest to the impact time.
+		if (!found_window_point) {
+			const ArcPoint *nearest = &arc.back();
+			float best_dt = std::abs(arc.back().time - tl.time);
+			for (size_t i = 0; i + 1 < arc.size(); i++) {
+				float dt = std::abs(arc[i].time - tl.time);
+				if (dt < best_dt) { best_dt = dt; nearest = &arc[i]; }
 			}
+			score_at_point(*nearest);
 		}
 
-		// If no arc point was within the window, check the impact-time point
-		// as a fallback (original single-point behavior)
-		if (worst_point == nullptr) {
-			const ArcPoint *at_impact = &arc.back();
-			for (size_t i = 0; i < arc.size(); i++) {
-				if (arc[i].time >= tl.time) {
-					at_impact = &arc[i];
-					break;
-				}
-			}
-			float d = distance_to_line_segment(at_impact->position, tl.center, tl.dir, tl.half_len);
-			if (d >= SHELL_THREAT_RADIUS) continue;
-			min_dist = d;
-			worst_point = at_impact;
-		}
-
-		// --- (a) Distance to threat line — uses worst point in window ---
-		float norm_dist = min_dist / SHELL_THREAT_RADIUS;
-		float proximity_threat = (1.0f - norm_dist) * (1.0f - norm_dist);
-
-		// --- (b) Perpendicularity penalty ---
-		// Ship heading at worst point: sin(heading) = +X, cos(heading) = +Z
-		Vector2 ship_dir(std::sin(worst_point->heading), std::cos(worst_point->heading));
-		// Cross product magnitude = |sin(angle between)|
-		float cross = std::abs(ship_dir.x * tl.dir.y - ship_dir.y * tl.dir.x);
-		// cross = 0 when parallel (good), 1 when perpendicular (bad)
-		// Blend: score = proximity * (1 + PARALLEL_BONUS_WEIGHT * perpendicularity)
-		float perpendicularity_factor = 1.0f + PARALLEL_BONUS_WEIGHT * cross;
-
-		total_threat += cal_weight * proximity_threat * perpendicularity_factor;
-	}
-
-	// --- Gap clearance penalty: penalize when ship barely fits between lines ---
-	if (threat_lines.size() >= 2) {
-		// For the arc endpoint, find the two closest threat lines
-		const ArcPoint &endpoint = arc.back();
-
-		float min_dist1 = std::numeric_limits<float>::infinity();
-		float min_dist2 = std::numeric_limits<float>::infinity();
-
-		for (const auto &tl : threat_lines) {
-			float d = distance_to_line_segment(endpoint.position, tl.center, tl.dir, tl.half_len);
-			if (d < min_dist1) {
-				min_dist2 = min_dist1;
-				min_dist1 = d;
-			} else if (d < min_dist2) {
-				min_dist2 = d;
-			}
-		}
-
-		// Gap = distance between the two closest threat lines as seen from the ship
-		// If the ship barely fits, penalize
-		float gap = min_dist1 + min_dist2;
-		if (gap < ship_beam * 3.0f && gap > 0.01f) {
-			// Normalized: 0 when gap = 3*beam, 1 when gap = 0
-			float squeeze = 1.0f - (gap / (ship_beam * 3.0f));
-			total_threat += GAP_CLEARANCE_PENALTY * squeeze * squeeze;
-		}
+		total_threat += worst_penalty;
 	}
 
 	return total_threat;
@@ -1585,7 +1559,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	}
 
 	bool obstacles_safe = true;
-	float engagement_range = lookahead + params.max_speed * 30.0f;
+	float engagement_range = lookahead + params.max_speed * 10.0f;
 	for (const auto &[id, obs] : obstacles) {
 		if (skip_ship_obstacles_ && !obs.is_torpedo()) continue;
 		float dist = state.position.distance_to(obs.position);
@@ -1774,7 +1748,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				hitter = (bow_dot > 0.3f);
 			}
 			if (hitter) {
-				total_time *= 2.0f;
+				// Scale penalty by urgency: imminent collisions (ttc ≤ 10s) get
+				// the full penalty; distant ones taper off so the ship doesn't
+				// take wild detours to avoid ships that are far away and will
+				// likely have re-planned by the time they get close.
+				float urgency = std::min(1.0f, 10.0f / std::max(obs_info.time_to_collision, 1.0f));
+				total_time += urgency * 60.0f;
 				any_collision = true;
 			}
 		}
@@ -2318,9 +2297,55 @@ float ShipNavigator::check_arc_obstacles(const std::vector<ArcPoint> &arc) const
 	return check_arc_obstacles_detailed(arc).time_to_collision;
 }
 
+// ---------------------------------------------------------------------------
+// 2D OBB-OBB separating axis test (SAT).
+// Each OBB is defined by a center position, a heading (radians, forward axis
+// = (sin h, cos h)), a half-length along the forward axis, and a half-beam
+// perpendicular to it.  Returns true when the boxes overlap (collision).
+// ---------------------------------------------------------------------------
+static inline bool obb_obb_overlap_2d(
+	Vector2 a_pos, float a_heading, float a_hl, float a_hb,
+	Vector2 b_pos, float b_heading, float b_hl, float b_hb)
+{
+	// Local axes for each OBB  (forward = (sin h, cos h), right = (cos h, -sin h))
+	const float fa_x = std::sin(a_heading), fa_y = std::cos(a_heading);
+	const float ra_x = fa_y,               ra_y = -fa_x;
+	const float fb_x = std::sin(b_heading), fb_y = std::cos(b_heading);
+	const float rb_x = fb_y,               rb_y = -fb_x;
+
+	// Center separation
+	const float tx = b_pos.x - a_pos.x;
+	const float ty = b_pos.y - a_pos.y;
+
+	// Precompute absolute cross-axis dot products (used across all four axes)
+	const float c00 = std::abs(fa_x * fb_x + fa_y * fb_y);  // |fwd_a · fwd_b|
+	const float c01 = std::abs(fa_x * rb_x + fa_y * rb_y);  // |fwd_a · rgt_b|
+	const float c10 = std::abs(ra_x * fb_x + ra_y * fb_y);  // |rgt_a · fwd_b|
+	const float c11 = std::abs(ra_x * rb_x + ra_y * rb_y);  // |rgt_a · rgt_b|
+
+	// Test axis 1: A forward
+	if (std::abs(tx * fa_x + ty * fa_y) > a_hl + b_hl * c00 + b_hb * c01) return false;
+	// Test axis 2: A right (starboard)
+	if (std::abs(tx * ra_x + ty * ra_y) > a_hb + b_hl * c10 + b_hb * c11) return false;
+	// Test axis 3: B forward
+	if (std::abs(tx * fb_x + ty * fb_y) > b_hl + a_hl * c00 + a_hb * c10) return false;
+	// Test axis 4: B right (starboard)
+	if (std::abs(tx * rb_x + ty * rb_y) > b_hb + a_hl * c01 + a_hb * c11) return false;
+
+	return true; // no separating axis found — boxes overlap
+}
+
 ObstacleCollisionInfo ShipNavigator::check_arc_obstacles_detailed(const std::vector<ArcPoint> &arc) const {
 	ObstacleCollisionInfo result;
-	float clearance = get_ship_clearance();
+
+	// Safety margin added to our OBB on every face so the ship maintains a
+	// small buffer beyond hull-to-hull contact.
+	const float margin  = params.ship_beam * 0.5f;
+	const float our_hl  = params.ship_length * 0.5f + margin;
+	const float our_hb  = params.ship_beam   * 0.5f + margin;
+
+	// Fallback circle clearance for torpedo obstacles (no orientation info).
+	const float torp_clearance = get_ship_clearance();
 
 	for (const auto &[id, obs] : obstacles) {
 		// When parked, skip non-torpedo obstacles — the moving ship should
@@ -2329,9 +2354,22 @@ ObstacleCollisionInfo ShipNavigator::check_arc_obstacles_detailed(const std::vec
 
 		for (const auto &pt : arc) {
 			Vector2 obs_pos = obs.position + obs.velocity * pt.time;
-			float dist = pt.position.distance_to(obs_pos);
+			bool collision = false;
 
-			if (dist < clearance + obs.radius) {
+			if (obs.length > 0.0f) {
+				// Ship obstacle: OBB-OBB separating axis test.
+				// obs.radius is the obstacle's half-beam; obs.length is its full length.
+				// The obstacle heading is kept up-to-date by update_obstacle().
+				collision = obb_obb_overlap_2d(
+					pt.position, pt.heading, our_hl, our_hb,
+					obs_pos, obs.heading, obs.length * 0.5f, obs.radius);
+			} else {
+				// Torpedo (or unknown circular obstacle): fall back to circle test.
+				float dist = pt.position.distance_to(obs_pos);
+				collision = (dist < torp_clearance + obs.radius);
+			}
+
+			if (collision) {
 				if (pt.time < result.time_to_collision) {
 					result.has_collision = true;
 					result.time_to_collision = pt.time;

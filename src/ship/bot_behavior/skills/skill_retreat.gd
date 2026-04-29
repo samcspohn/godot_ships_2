@@ -1,29 +1,30 @@
 class_name SkillRetreat
 extends BotSkill
+## Pure disengagement — navigate directly away from the aggregate danger center.
+## No broadside angle optimisation; heading is the raw away-bearing so the ship
+## accelerates out of detection range as fast as possible.
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
-	var enemies = ctx.server.get_valid_targets(ship.team.team_id)
-	if enemies.is_empty():
+
+	var spotted_center = ctx.behavior._get_spotted_danger_center()
+	var danger_center = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
+	if danger_center == Vector3.ZERO:
 		return null
 
-	# Find closest enemy
-	var closest = enemies[0]
-	var closest_dist = (closest.global_position - ship.global_position).length()
-	for e in enemies:
-		var d = (e.global_position - ship.global_position).length()
-		if d < closest_dist:
-			closest = e
-			closest_dist = d
+	var to_danger = danger_center - ship.global_position
+	to_danger.y = 0.0
+	if to_danger.length_squared() < 1.0:
+		return null
 
-	var concealment_radius = (ship.concealment.params.p() as ConcealmentParams).radius
-	var retreat_mult = params.get("retreat_multiplier", 2.0)
-	var retreat_dir = (ship.global_position - closest.global_position).normalized()
-	var desired_pos = ship.global_position + retreat_dir * concealment_radius * retreat_mult
+	var away_bearing = atan2(-to_danger.x, -to_danger.z)
 
 	# Bias toward friendlies when low HP
 	var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
 	var friendly_threshold = params.get("friendly_bias_hp_threshold", 0.5)
+	var retreat_dir = Vector3(sin(away_bearing), 0.0, cos(away_bearing))
+	var desired_pos = ship.global_position + retreat_dir * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
+
 	if hp_ratio < friendly_threshold:
 		var friendly_weight = params.get("friendly_bias_weight", 0.2)
 		var nearest_cluster = ctx.server.get_nearest_friendly_cluster(ship.global_position, ship.team.team_id)
@@ -37,5 +38,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	desired_pos.y = 0.0
 	desired_pos = ctx.behavior._get_valid_nav_point(desired_pos)
-	var heading = atan2((desired_pos - ship.global_position).x, (desired_pos - ship.global_position).z)
-	return NavIntent.create(desired_pos, heading)
+
+	var final_bearing = atan2((desired_pos - ship.global_position).x, (desired_pos - ship.global_position).z)
+	var intent := NavIntent.create(desired_pos, final_bearing)
+	intent.directional = true
+	return intent

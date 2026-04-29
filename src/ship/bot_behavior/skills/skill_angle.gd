@@ -120,7 +120,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var desired_dist = gun_range * params.get("desired_range_ratio", 0.55)
 	var enemy_dist = to_enemy.length()
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * max(2000.0, ship.movement_controller.turning_circle_radius * 2.0)
+	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
 	return NavIntent.create(dest, enemy_bearing)
 	# var is_directional := true
 	# if enemy_dist > gun_range:

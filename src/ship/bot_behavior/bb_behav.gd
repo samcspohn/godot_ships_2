@@ -315,6 +315,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
 		if intent:
 			_active_skill_name = &"Flank"
+			if _ship.visible_to_enemy:
+				var _intent = _skill_angle.execute(ctx, {})
+				if _intent:
+					intent.target_position = intent.target_position.lerp(_intent.target_position, 0.5)
+					intent.target_heading = _intent.target_heading
 	elif threat < 0.65:
 		intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.5})
 		if intent:
@@ -330,13 +335,19 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				_active_skill_name = &"Camp"
 	else:
 		# High threat: take cover — cover at 70% range, fall back to kite
-		intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.7})
-		if intent != null:
+		var cover_intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.7})
+		if cover_intent != null and nearest != null and _skill_cover.is_cover_on_the_way(ctx, nearest):
+			intent = cover_intent
 			_active_skill_name = &"FindCover"
 		else:
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75, "pull_toward_friendly_weight": 0.3})
-			if intent:
-				_active_skill_name = &"Kite"
+			if cover_intent != null and nearest == null:
+				# No nearest enemy to evaluate angle — accept cover unconditionally
+				intent = cover_intent
+				_active_skill_name = &"FindCover"
+			else:
+				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75, "pull_toward_friendly_weight": 0.3})
+				if intent:
+					_active_skill_name = &"Kite"
 
 	# Fallback chain
 	if intent == null:

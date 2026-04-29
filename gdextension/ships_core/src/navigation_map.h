@@ -203,9 +203,6 @@ private:
 
 	// --- Pathfinding internals ---
 
-	// Line-of-sight check on the SDF grid with clearance (Bresenham supercover)
-	bool line_of_sight(int x0, int z0, int x1, int z1, float clearance) const;
-
 	// Heuristic: Euclidean distance in grid cells
 	inline float heuristic(int x0, int z0, int x1, int z1) const {
 		float dx = static_cast<float>(x1 - x0);
@@ -288,6 +285,10 @@ public:
 	// Internal pathfinding returning PathResult struct (MR-accelerated 8-direction A*)
 	PathResult find_path_internal(Vector2 from, Vector2 to, float clearance,
 								  float turning_radius = 0.0f) const;
+
+	// Line-of-sight check on the SDF grid with clearance (Bresenham supercover).
+	// Grid coordinates; used internally and by HpaGraph for path simplification.
+	bool line_of_sight(int x0, int z0, int x1, int z1, float clearance) const;
 
 	// --- Async pathfinding (per-ship search state) ---
 

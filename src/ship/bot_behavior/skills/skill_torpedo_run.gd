@@ -31,7 +31,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var threat_positions: Array = ctx.behavior._gather_threat_positions(ship)
 	# Scoring radius: detection boundary + small buffer. Heuristic-only, not
 	# tied to what the pathfinder consumes.
-	var scoring_radius: float = concealment_radius + 500.0
+	var scoring_radius: float = concealment_radius * 1.25 + 500.0
 
 	# Enemy fleet centroid — used to determine "our side" vs "their side"
 	var enemy_centroid := _get_enemy_centroid(threat_positions)
@@ -39,7 +39,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# Launch distance: place candidates just outside the DD's own detection
 	# radius from the target — close enough for a good shot, but not inside
 	# the detection boundary.
-	var launch_dist: float = concealment_radius * 1.25
+	var launch_dist: float = concealment_radius * 1.25 + 500.0
 
 	# --- Generate and score candidate positions around the target ---
 	var ship_pos_2d := Vector2(ship.global_position.x, ship.global_position.z)

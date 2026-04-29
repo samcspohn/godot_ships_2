@@ -87,10 +87,12 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	if _arrived:
 		var arrived_intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
 		arrived_intent.near_terrain = true
+		arrived_intent.skip_threat_adjustment = true
 		return _broadside.apply(arrived_intent, ctx, {"oscillation_bias": broadside_bias})
 
 	var intent = NavIntent.create(_nav_destination, heading)
 	intent.near_terrain = true
+	intent.skip_threat_adjustment = true
 	return _broadside.apply(intent, ctx, {"oscillation_bias": broadside_bias})
 
 
@@ -305,3 +307,34 @@ func reset() -> void:
 	_nav_destination_valid = false
 	_arrived = false
 	can_shoot = false
+
+
+# ---------------------------------------------------------------------------
+# Returns true if the current cover destination is reasonably "on the way"
+# relative to the optimal engagement heading toward `nearest`.
+#
+# Angle tolerance scales with distance to cover:
+#   70° when cover is <= 1000 m away  (almost there — accept wide detours)
+#   10° when cover is >= 5000 m away  (far detour is too costly)
+#
+# Call this AFTER execute() so that _nav_destination is up to date.
+# ---------------------------------------------------------------------------
+func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
+	if not _nav_destination_valid:
+		return false
+	var ship = ctx.ship
+	var to_cover = _nav_destination - ship.global_position
+	to_cover.y = 0.0
+	var dist_to_cover = to_cover.length()
+
+	var t = clampf((dist_to_cover - 500.0) / 4000.0, 0.0, 1.0)
+	var angle_tol = lerpf(deg_to_rad(65.0), deg_to_rad(10.0), t)
+
+	var to_nearest = nearest.global_position - ship.global_position
+	to_nearest.y = 0.0
+	var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+	var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+	var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
+	var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
+
+	return bearing_diff <= angle_tol

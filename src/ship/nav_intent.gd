@@ -25,6 +25,14 @@ var heading_tolerance: float = 0.2618
 ## Near-terrain flag: relaxes terrain collision avoidance so the ship can hug islands
 var near_terrain: bool = false
 
+## When true, _adjust_destination_for_threats will not BFS-push this destination
+## out of blocked threat-arc cells.  Set by SkillFindCover and any other skill
+## whose computed destination is deliberately inside a detection zone (e.g. a
+## cover position behind an island).  The path planner's threat-cost edge weights
+## still route the approach around detection for as long as possible; only the
+## final waypoint pin is preserved as-is.
+var skip_threat_adjustment: bool = false
+
 ## Directional flag: when true, the destination is a heading direction rather than a
 ## fixed world-space point. The bot controller will continuously reproject
 ## target_position as (currentShipPos + fwd * 5000) every path-update tick,
