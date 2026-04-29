@@ -173,7 +173,7 @@ private:
 	static constexpr float TORPEDO_VIRTUAL_CALIBER = 2000.0f; // virtual caliber for torpedo threat lines
 	static constexpr float PARALLEL_BONUS_WEIGHT = 0.6f;    // perpendicularity penalty — low so proximity dominates over angling
 	static constexpr float GAP_CLEARANCE_PENALTY = 1.0f;     // penalty when ship barely fits between lines
-	static constexpr float TORPEDO_LINE_HALF_LEN = 600.0f;   // half-length of torpedo threat line
+	static constexpr float TORPEDO_LOOKAHEAD_DIST = 3000.0f; // distance ahead of torpedo nose for threat line
 	static constexpr float SHELL_OVERSHOOT_LEN   = 15.0f;    // line extension past impact point
 
 	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;

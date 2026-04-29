@@ -260,7 +260,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 
 var base_intent_pos = null
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
-	wants_stealth = false  # reset each tick; set true below if undetected
+	wants_stealth = false  # reset each tick; always set true at end for DD
 	wants_to_be_concealed = false  # reset each tick; set true below via probe
 	var ctx = SkillContext.create(ship, target, server, self)
 	_init_flank_identity(ship, server)
@@ -280,7 +280,17 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_hunt.execute(ctx, {})
 		_active_skill_name = &"Hunt"
 
-	# ── 2. Target is a DD → kite + broadside post-process, fallback hunt ──────
+	# ── 2. Detected → kite away and shoot; shed detection ASAP ──────────────
+	elif ship.visible_to_enemy:
+		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65, "angle_to_threat_deg": 25.0})
+		if intent:
+			_active_skill_name = &"Kite"
+			intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.2})
+		else:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+
+	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
 	elif target != null and target.ship_class == Ship.ShipClass.DD:
 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.5, "angle_to_threat_deg": 20.0})
 		if intent:
@@ -290,7 +300,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_hunt.execute(ctx, {})
 			_active_skill_name = &"Hunt"
 
-	# ── 3. No torpedo controller → spot, fallback hunt ───────────────────────
+	# ── 4. No torpedo controller → spot, fallback hunt ───────────────────────
 	elif ship.torpedo_controller == null:
 		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
 		_active_skill_name = &"Spot"
@@ -298,20 +308,29 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_hunt.execute(ctx, {})
 			_active_skill_name = &"Hunt"
 
-	# ── 4. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
+	# ── 5. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
 	elif _get_max_torp_reload() >= 1.0 and target != null and target.ship_class != Ship.ShipClass.DD:
-		intent = _skill_torpedo_run.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"TorpedoRun"
-		# Null intent — fall through to spotting
-		if intent == null:
-			intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
+		# If a closer unspotted BB/CA is within striking range, spot it first —
+		# a point-blank run on a revealed target is worth the delay.
+		if _has_better_unspotted_torp_target(ship, target, server):
+			intent = _skill_spot.execute(ctx, {})
 			_active_skill_name = &"Spot"
 			if intent == null:
 				intent = _skill_hunt.execute(ctx, {})
 				_active_skill_name = &"Hunt"
+		else:
+			intent = _skill_torpedo_run.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"TorpedoRun"
+			# Null intent — fall through to spotting
+			if intent == null:
+				intent = _skill_spot.execute(ctx, {})
+				_active_skill_name = &"Spot"
+				if intent == null:
+					intent = _skill_hunt.execute(ctx, {})
+					_active_skill_name = &"Hunt"
 
-	# ── 5. Reloading → spot, fallback hunt ───────────────────────────────────
+	# ── 6. Reloading → spot, fallback hunt ───────────────────────────────────
 	else:
 		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
 		_active_skill_name = &"Spot"
@@ -324,9 +343,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _intent_sail_forward(ship)
 		_active_skill_name = &"SailForward"
 
-	# DDs always want stealth routing when undetected — both spotting runs and
-	# torpedo approaches rely on staying outside enemy detection zones in transit
-	wants_stealth = not ship.visible_to_enemy
+	# DDs always use stealth-aware routing: when undetected this keeps them
+	# outside enemy detection zones in transit; when detected it routes them
+	# back toward cover so they shed detection as fast as possible.
+	wants_stealth = true
 
 	# Concealment probe: suppress guns when detected + bloom active + enemy
 	# is far enough away that going dark would actually drop us off detection.
@@ -470,13 +490,39 @@ func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
 		return atan2(to_dest.x, to_dest.z)
 	return _get_ship_heading()
 
+## Returns true when there is an unspotted non-DD enemy that is both within
+## 1.5× torpedo range AND closer to us than the current spotted target.
+## In that case it is worth spotting first for a better torpedo run.
+func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server: GameServer) -> bool:
+	if ship.torpedo_controller == null:
+		return false
+	var torp_range: float = ship.torpedo_controller.get_params()._range
+	if torp_range <= 0.0:
+		return false
+
+	var scan_radius: float = torp_range * 1.5
+	var current_dist: float = ship.global_position.distance_to(current_target.global_position) \
+		if current_target != null else INF
+
+	var unspotted := server.get_unspotted_enemies(ship.team.team_id)
+	for s in unspotted.keys():
+		if not is_instance_valid(s):
+			continue
+		if s.ship_class == Ship.ShipClass.DD:
+			continue  # DDs are poor torpedo targets
+		var last_pos: Vector3 = unspotted[s]
+		var dist: float = ship.global_position.distance_to(last_pos)
+		if dist <= scan_radius and dist < current_dist:
+			return true
+	return false
+
 func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done)
 	if _ship.visible_to_enemy and can_fire_guns():
 		super.engage_target(target)
 	else:
 		# Aim turrets but don't fire
-		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
+		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
 
 	# Torpedoes are always managed
 	update_torpedo_aim(target)

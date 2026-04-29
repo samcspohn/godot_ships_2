@@ -62,7 +62,7 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 1.0
 		Ship.ShipClass.CA: return 1.0
-		Ship.ShipClass.DD: return 0.5
+		Ship.ShipClass.DD: return 0.1
 	return 1.0
 
 func get_target_weights() -> Dictionary:
@@ -139,14 +139,14 @@ func get_theatened(server: GameServer) -> bool:
 # ============================================================================
 
 func _can_shoot_over(target: Ship) -> bool:
-	var target_pos = target.global_position + target_aim_offset(target)
+	var target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	for gun in _ship.artillery_controller.guns:
 		if gun.sim_can_shoot_over_terrain(target_pos):
 			return true
 	return false
 
 func engage_target(target: Ship) -> void:
-	var aim_pos = target.global_position + target_aim_offset(target)
+	var aim_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	if not can_fire_guns():
 		_ship.artillery_controller.set_aim_input(aim_pos)
 		return
@@ -165,14 +165,41 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	var offset = Vector3.ZERO
 
 	ammo = ShellParams.ShellType.HE
-	var is_broadside = abs(sin(angle)) > sin(deg_to_rad(45))
+	var ap_auto_bounce: float = _ship.artillery_controller.get_params().shell1.auto_bounce
+	var is_broadside = abs(angle - PI / 2.0) < ap_auto_bounce
+	var bow_in = angle < PI / 2.0
+	var stern_in = !bow_in
 
 	match _target.ship_class:
 		Ship.ShipClass.BB:
+			if dist < 6000: # brawling range
+				if is_broadside:
+					ammo = ShellParams.ShellType.AP
+					if _target.health_controller.casemate.pool1 > 0:
+						offset.y = _target.movement_controller.ship_height / 4
+					elif _target.health_controller.bow.pool1 > 0 and bow_in:
+						offset.z = -_target.movement_controller.ship_length / 4
+						offset.y = _target.movement_controller.ship_height / 5
+					elif _target.health_controller.stern.pool1 > 0 and stern_in:
+						offset.z = _target.movement_controller.ship_length / 4
+						offset.y = _target.movement_controller.ship_height / 5
+					else:
+						offset.y = _target.movement_controller.ship_height / 4
+				else:
+					ammo = ShellParams.ShellType.HE
+					if _target.health_controller.bow.pool1 > 0 and bow_in:
+						offset.z = -_target.movement_controller.ship_length / 4
+						offset.y = _target.movement_controller.ship_height / 5
+					elif _target.health_controller.stern.pool1 > 0 and stern_in:
+						offset.z = _target.movement_controller.ship_length / 4
+						offset.y = _target.movement_controller.ship_height / 5
+					else: # superstrucure
+						offset.y = _target.movement_controller.ship_height / 2
+
 			if is_broadside and dist < 8000:
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 4
-			else:
+			else: # angled and/or farther than 6000
 				var fire_pos = null
 				var priority_fires = [1,2,0,3]
 				for i in priority_fires:
@@ -185,6 +212,9 @@ func target_aim_offset(_target: Ship) -> Vector3:
 					offset = fire_pos
 				else:
 					offset.y = _target.movement_controller.ship_height / 2
+
+
+
 		Ship.ShipClass.CA:
 			if is_broadside:
 				if dist < 10000:
@@ -441,7 +471,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		to_nearest.y = 0.0
 		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
 		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
-		var bow_diff = absf(angle_difference(optimal_heading, enemy_bearing))
+		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
 		if bow_diff < PI * 0.5:
 			# Optimal heading is bow-in — angle toward enemy
 			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
@@ -457,6 +487,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Undetected — seek cover as normal, fall back to angle
 			intent = _skill_cover.execute(ctx, cover_params, true)
 			if intent != null:
+				if _ship.global_position.distance_to(_skill_cover._nav_destination) > 1500.0:
+					_suppress_guns = true
+				else:
+					_suppress_guns = false
 				_active_skill_name = &"FindCover"
 			else:
 				intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})

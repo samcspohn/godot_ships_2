@@ -156,6 +156,10 @@ func target_aim_offset(_target: Ship) -> Vector3:
 					# AP will punch through the thin plating regardless of angle
 					ammo = ShellParams.ShellType.AP
 					offset.y = 0.1
+					if is_bow_on:
+						offset.z -= _target.movement_controller.ship_length * 0.25
+					else:
+						offset.z += _target.movement_controller.ship_length * 0.25
 				else:
 					# Thick bow/stern — AP will bounce, use HE on superstructure
 					ammo = ShellParams.ShellType.HE
@@ -166,6 +170,10 @@ func target_aim_offset(_target: Ship) -> Vector3:
 					# AP through the bow/stern plate into the hull
 					ammo = ShellParams.ShellType.AP
 					offset.y = 0.1
+					if is_bow_on:
+						offset.z -= _target.movement_controller.ship_length * 0.25
+					else:
+						offset.z += _target.movement_controller.ship_length * 0.25
 				else:
 					# Can't overmatch — AP at superstructure for reliable damage
 					ammo = ShellParams.ShellType.AP
@@ -292,7 +300,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		to_nearest.y = 0.0
 		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
 		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
-		var bow_diff = absf(angle_difference(optimal_heading, enemy_bearing))
+		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
 		if bow_diff < PI * 0.5:
 			# Optimal heading is bow-in — angle toward enemy
 			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})

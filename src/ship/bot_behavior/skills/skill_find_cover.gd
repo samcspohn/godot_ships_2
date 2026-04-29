@@ -37,8 +37,14 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 			# it can no longer provide a shootable position.
 			island = _recalc_same_island(ctx, target)
 			if island.is_empty():
+				# Committed island can no longer provide cover while arrived —
+				# clear commitment so _get_cover_position skips it and picks
+				# the next viable candidate.
+				_target_island_id = -1
 				island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
 		else:
+			# Not yet arrived — _get_cover_position will honour the commitment
+			# internally: try the cached island first, skip it on failure.
 			island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
 
 		if not island.is_empty():
@@ -65,7 +71,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 		for enemy in ctx.server.get_valid_targets(ship.team.team_id):
 			if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 				continue
-			var tgt = enemy.global_position + ctx.behavior.target_aim_offset(enemy)
+			var tgt = enemy.global_position + enemy.global_basis * ctx.behavior.target_aim_offset(enemy)
 			if check_pos.distance_to(tgt) > gun_range:
 				continue
 			var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(check_pos, tgt, shell_params)
@@ -168,7 +174,44 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 	var best_dest: Vector3 = Vector3.ZERO
 	var best_can_shoot: bool = false
 
+	# ── Commitment: try the cached island first ───────────────────────────
+	# If we already have a committed island, evaluate it before the sorted
+	# search. If it still provides shootable cover we return immediately,
+	# honouring the commitment. If it fails we record its id so the main
+	# loop can skip it and find the next viable candidate.
+	var skip_committed_id: int = -1
+	if _target_island_id >= 0:
+		for isl in islands:
+			if isl["id"] != _target_island_id:
+				continue
+			var c2d: Vector2 = isl["center"]
+			var c_pos = Vector3(c2d.x, 0.0, c2d.y)
+			var c_rad: float = isl["radius"]
+			var c_hide_h: float
+			if threats.size() > 0:
+				c_hide_h = ctx.behavior._compute_hide_heading(c_pos, threats)
+			else:
+				c_hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
+			var c_result = ctx.behavior._find_cover_position_on_island(
+				c_pos, c_rad, c_hide_h, threats, targets, true
+			)
+			if not c_result.is_empty() and c_result["can_shoot"]:
+				# Committed island still valid — stay with it.
+				return {
+					"id": isl["id"],
+					"center": c_pos,
+					"radius": c_rad,
+					"dest": c_result["pos"],
+					"can_shoot": true,
+				}
+			# Committed island can no longer provide cover — exclude it from
+			# the upcoming search so we pick the next best candidate.
+			skip_committed_id = _target_island_id
+			break
+
 	for isl in islands:
+		if isl["id"] == skip_committed_id:
+			continue
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
 		var isl_radius: float = isl["radius"]

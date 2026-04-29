@@ -109,13 +109,19 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
 
 	var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
+	# Ensure the course is always within 90° of the enemy bearing so the ship
+	# sails toward/across the enemy rather than away.  Flipping 180° keeps the
+	# same broadside presentation on the same side.
+	if absf(angle_difference(heading, enemy_bearing)) > PI * 0.5:
+		heading = wrapf(heading + PI, -PI, PI)
 
 	# Maintain engagement range
 	var gun_range = ship.artillery_controller.get_params()._range
 	var desired_dist = gun_range * params.get("desired_range_ratio", 0.55)
 	var enemy_dist = to_enemy.length()
-	var dest = ship.global_position + to_enemy.normalized() * 1000.0
-	return NavIntent.create(dest, heading)
+	var fwd = Vector3(sin(heading), 0.0, cos(heading))
+	var dest = ship.global_position + fwd * max(2000.0, ship.movement_controller.turning_circle_radius * 2.0)
+	return NavIntent.create(dest, enemy_bearing)
 	# var is_directional := true
 	# if enemy_dist > gun_range:
 	# 	dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.8

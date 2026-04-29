@@ -36,12 +36,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# Enemy fleet centroid — used to determine "our side" vs "their side"
 	var enemy_centroid := _get_enemy_centroid(threat_positions)
 
-	# Launch distance: get as close as possible while staying hidden.
-	# The DD's concealment radius is the detection boundary — place the
-	# destination just inside it so torpedoes are launched at point-blank
-	# range for maximum hit probability.  Longer-range opportunistic
-	# launches are handled separately by the torpedo aiming system.
-	var launch_dist: float = concealment_radius * 0.9
+	# Launch distance: place candidates just outside the DD's own detection
+	# radius from the target — close enough for a good shot, but not inside
+	# the detection boundary.
+	var launch_dist: float = concealment_radius * 1.25
 
 	# --- Generate and score candidate positions around the target ---
 	var ship_pos_2d := Vector2(ship.global_position.x, ship.global_position.z)
@@ -124,6 +122,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if threats_covering_best >= 3:
 		# Surrounded by 3+ threat zones — torpedo run is suicidal, abort
 		return null
+
+	# Push the chosen position clear of every known threat by at least one
+	# concealment radius so the DD isn't sitting inside an enemy's detection
+	# zone when it arrives.
+	best_pos = ctx.behavior._push_clear_of_threats(best_pos, threat_positions, concealment_radius)
 
 	# Final validation
 	best_pos = ctx.behavior._get_valid_nav_point(best_pos)

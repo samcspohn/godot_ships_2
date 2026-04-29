@@ -453,19 +453,19 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 
 		Vector2 torp_dir = obs.velocity / torp_speed;
 
-		// Project ship onto torpedo path to find closest approach
+		// Line emitted from torpedo nose, extending TORPEDO_LOOKAHEAD_DIST ahead
+		Vector2 line_start = obs.position;
+		Vector2 line_end   = obs.position + torp_dir * TORPEDO_LOOKAHEAD_DIST;
+		Vector2 line_center = obs.position + torp_dir * (TORPEDO_LOOKAHEAD_DIST * 0.5f);
+
+		// Time until torpedo reaches closest point to ship
 		Vector2 to_ship = state.position - obs.position;
 		float t_closest = to_ship.dot(torp_dir) / torp_speed;
 		if (t_closest < 0.0f) t_closest = 0.0f;
 
-		// Torpedo: line centered on closest approach (torpedo is moving through)
-		Vector2 torp_center = obs.position + torp_dir * torp_speed * t_closest;
-		Vector2 line_start = torp_center - torp_dir * TORPEDO_LINE_HALF_LEN;
-		Vector2 line_end   = torp_center + torp_dir * TORPEDO_LINE_HALF_LEN;
-
 		Dictionary d;
-		d["landing_x"] = torp_center.x;
-		d["landing_z"] = torp_center.y;
+		d["landing_x"] = line_center.x;
+		d["landing_z"] = line_center.y;
 		d["time_remaining"] = t_closest;
 		d["caliber"] = TORPEDO_VIRTUAL_CALIBER;
 		d["line_start_x"] = line_start.x;
@@ -474,7 +474,7 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 		d["line_end_z"] = line_end.y;
 		d["line_dir_x"] = torp_dir.x;
 		d["line_dir_z"] = torp_dir.y;
-		d["line_half_len"] = TORPEDO_LINE_HALF_LEN;
+		d["line_half_len"] = TORPEDO_LOOKAHEAD_DIST * 0.5f;
 		d["is_torpedo"] = true;
 		result.push_back(d);
 	}
@@ -1445,13 +1445,11 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 		// Only care about future torpedoes
 		if (t_closest < 0.0f) t_closest = 0.0f;
 
-		// Center of the torpedo threat line at the time of closest approach
-		Vector2 torp_center = obs.position + torp_dir * torp_speed * t_closest;
-
+		// Threat line emitted from torpedo nose, extending TORPEDO_LOOKAHEAD_DIST ahead
 		ThreatLine tl;
-		tl.center = torp_center;
+		tl.center = obs.position + torp_dir * (TORPEDO_LOOKAHEAD_DIST * 0.5f);
 		tl.dir = torp_dir;
-		tl.half_len = TORPEDO_LINE_HALF_LEN;
+		tl.half_len = TORPEDO_LOOKAHEAD_DIST * 0.5f;
 		tl.time = t_closest;
 		tl.caliber = TORPEDO_VIRTUAL_CALIBER;
 		threat_lines.push_back(tl);

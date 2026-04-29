@@ -1016,7 +1016,7 @@ func can_hit_target(target: Ship) -> bool:
 	if shell_params == null:
 		return false
 
-	var adjusted_target_pos = target.global_position + target_aim_offset(target)
+	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 
 	# Use leading calculation so the sim check matches what we'd actually fire
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
@@ -1297,6 +1297,30 @@ func _safe_validate(ship: Ship, pos: Vector3) -> Vector3:
 		pos = NavigationMapManager.validate_destination(ship.global_position, pos, clearance, turning_radius)
 	return pos
 
+func _push_clear_of_threats(pos: Vector3, threat_positions: Array, min_dist: float) -> Vector3:
+	"""Iteratively push pos away from every threat position until it is at least
+	min_dist from all of them.  Runs up to 8 relaxation passes.  The result
+	still needs to be fed through _get_valid_nav_point to clear land."""
+	for _pass in range(8):
+		var any_violation := false
+		for tp in threat_positions:
+			var tp3 := tp as Vector3
+			var offset := pos - tp3
+			offset.y = 0.0
+			var dist := offset.length()
+			if dist < min_dist:
+				any_violation = true
+				var push_dir: Vector3
+				if dist > 0.1:
+					push_dir = offset.normalized()
+				else:
+					push_dir = Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
+				pos += push_dir * (min_dist - dist)
+				pos.y = 0.0
+		if not any_violation:
+			break
+	return pos
+
 func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
 	"""Determine the 'safe' direction: toward our spawn from the ship,
 	or away from the nearest enemy cluster if spawn is unavailable."""
@@ -1475,7 +1499,7 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 			for t_ship in targets:
 				if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
 					continue
-				var target_pos = t_ship.global_position + target_aim_offset(t_ship)
+				var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
 				if pos.distance_to(target_pos) > gun_range:
 					continue
 				var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
@@ -1575,7 +1599,7 @@ func get_threat_score(server: GameServer) -> float:
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 2.0), 0.0, 1.0)
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
 		# raw_threat *= (1.0 - range_pressure * class_w)
@@ -1648,15 +1672,15 @@ func engage_target(target: Ship):
 		return
 
 	if not can_fire_guns():
-		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
+		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
 		return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
 	if wants_to_be_concealed:
-		_ship.artillery_controller.set_aim_input(target.global_position + target_aim_offset(target))
+		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
 		return
 
-	var adjusted_target_pos = target.global_position + target_aim_offset(target)
+	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
