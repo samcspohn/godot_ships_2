@@ -93,10 +93,7 @@ func get_params() -> TurretParams:
 # func get_shell() -> ShellParams:
 # 	return controller.get_shell_params()
 
-func notify_gun_updated():
-	var server: GameServer = get_tree().root.get_node_or_null("Server")
-	if server != null and _Utils.authority():
-		server.gun_updated = true
+
 
 func cleanup():
 	# detach from parent for easier management
@@ -118,7 +115,7 @@ func cleanup():
 
 	base_rotation = rotation.y
 
-	notify_gun_updated.call_deferred()
+
 
 func _ready() -> void:
 

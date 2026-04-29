@@ -268,6 +268,7 @@ func fire(mod: TargetMod = null) -> void:
 	if _Utils.authority():
 		if !disabled && reload >= 1.0 and can_fire:
 			var muzzles_pos = get_muzzles_position()
+			var first_shell := true
 			for m in muzzles:
 				# var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
 				var h_grouping = get_params().h_grouping * (mod.h_grouping if mod else 1.0)
@@ -278,7 +279,8 @@ func fire(mod: TargetMod = null) -> void:
 				if dispersed_velocity != null:
 					var t = ProjectileManager.get_current_time()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
-					TcpThreadPool.send_fire_gun(id, dispersed_velocity, m.global_position, t, _id)
+					TcpThreadPool.send_display_shell(_id, m.global_position, dispersed_velocity, t, get_shell(), self, first_shell)
+					first_shell = false
 				else:
 					pass
 					# print(aim)

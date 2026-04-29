@@ -38,7 +38,7 @@ var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
 var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
 
-var gun_updated = false
+
 var map: Map = null
 
 # Shared threat registry — every bot holds a pointer into a bin here instead
@@ -778,17 +778,8 @@ func get_nearest_friendly_cluster(position: Vector3, team_id: int) -> Dictionary
 # 			continue
 # 		# ship.set_input(data.get("input", [0,0]), data.get("aim_point", Vector3.ZERO))
 
-func find_all_guns(node: Node) -> Array:
-	var guns: Array = []
-	if node is Gun:
-		guns.append(node)
-	for child in node.get_children():
-		guns += find_all_guns(child)
-	return guns
 
-@rpc("authority", "reliable", "call_remote")
-func init_guns(gun_paths):
-	TcpThreadPool.initialize_guns(gun_paths)
+
 
 func defer_sync_ship(friendly: int, player_name: String, ship_data: Variant):
 	if not players.has(player_name):
@@ -994,25 +985,10 @@ func _physics_process(_delta: float) -> void:
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 | (1 << 3) # only terrain
 
-	if players_size != players.size() or gun_updated:
-		gun_updated = false
+	if players_size != players.size():
 		players_size = players.size()
 		print("Players size changed, now: ", players_size)
-		var guns = find_all_guns(get_tree().root)
-		var i = 0
-		var gun_paths: Array[String] = []
-		for gun: Gun in guns:
-			var path = str(gun.get_path())
-			gun.id = i
-			gun_paths.push_back(path)
-			i += 1
-		#TcpThreadPool.initialize_guns(gun_paths)
-		for p in players.values():
-			var ship: Ship = p[0]
-			if ship.team.is_bot:
-				continue
-			var pid = p[2]
-			init_guns.rpc_id(pid, gun_paths)
+
 
 
 	closest_enemies_that_can_see.clear()
