@@ -1,38 +1,30 @@
 extends Node
 class_name ArmorSystemV2
 
-## Enhanced Armor System V2 for simplified JSON structure
-## Works with {"node_path": [armor_array]} format with direct face indexing
+## Armor System V2
+## Works with {"node_path": [armor_array]} format with direct face indexing.
+## Armor data is never duplicated: armor_data is a reference to the shared
+## dictionary stored in the ArmorRegistry autoload singleton.
 
 var armor_data: Dictionary = {}
 var loaded_ship_path: String = ""
 
 signal armor_data_loaded(ship_path: String)
 
-func load_armor_data(json_path: String) -> bool:
-	"""Load armor data from simplified JSON file"""
-	var file = FileAccess.open(json_path, FileAccess.READ)
-	if file == null:
-		print("Failed to load armor data from: ", json_path)
+func load_from_glb(glb_path: String) -> bool:
+	"""Load armor data from a GLB file via the ArmorRegistry cache.
+	If the data was already loaded for this path, the existing cached
+	Dictionary is returned instantly with no re-extraction."""
+	var data: Dictionary = ArmorRegistry.get_or_load(glb_path)
+	if data.is_empty():
+		print("ArmorSystemV2: no armor data available for '", glb_path, "'")
 		return false
 
-	var json_text = file.get_as_text()
-	file.close()
+	# Assign by reference — all ArmorSystemV2 instances for the same GLB
+	# share one Dictionary object in memory.
+	armor_data = data
+	loaded_ship_path = glb_path.get_file().get_basename()
 
-	var json = JSON.new()
-	var parse_result = json.parse(json_text)
-	if parse_result != OK:
-		print("Failed to parse armor JSON: ", json.get_error_message())
-		return false
-
-	armor_data = json.data
-	loaded_ship_path = json_path.get_file().get_basename().replace("_hierarchy_armor", "")
-
-	var total_faces = 0
-	for node_path in armor_data.keys():
-		total_faces += armor_data[node_path].size()
-
-	# print("Loaded armor data for ", armor_data.size(), " nodes with ", total_faces, " armored faces")
 	armor_data_loaded.emit(loaded_ship_path)
 	return true
 

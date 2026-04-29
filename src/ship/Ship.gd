@@ -55,7 +55,7 @@ var beam: float = 0.0
 
 # Armor system configuration
 @export_file("*.glb") var ship_model_glb_path: String
-@export var auto_extract_armor: bool = true
+
 
 signal reset_mods # resets static and dynamic to base
 signal reset_dynamic_mods
@@ -689,41 +689,18 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		enable_backface_collision_recursive(child)
 
 func initialize_armor_system() -> void:
-	"""Initialize the armor system - extract and load armor data"""
-	# print("🛡️ Initializing armor system for ship...")
-
-	# Validate and resolve the GLB path
+	"""Initialize the armor system by loading armor data from the GLB via ArmorRegistry."""
 	var resolved_glb_path = resolve_glb_path(ship_model_glb_path)
 	if resolved_glb_path.is_empty():
 		print("   ❌ Invalid or missing GLB path: ", ship_model_glb_path)
 		return
 
-	# Create armor system instance
 	armor_system = ArmorSystemV2.new()
 	add_child(armor_system)
 
-	# Determine paths
-	var model_name = resolved_glb_path.get_file().get_basename()
-	var ship_dir = resolved_glb_path.get_base_dir()
-	var armor_json_path = ship_dir + "/" + model_name + "_armor.json"
-
-	# print("   Ship model: ", resolved_glb_path)
-	# print("   Armor data: ", armor_json_path)
-
-	# Check if armor JSON already exists
-	if FileAccess.file_exists(armor_json_path):
-		# print("   ✅ Found existing armor data, loading...")
-		var success = armor_system.load_armor_data(armor_json_path)
-		if success:
-			pass
-			# print("   ✅ Armor system initialized successfully")
-		else:
-			print("   ❌ Failed to load existing armor data")
-	elif auto_extract_armor:
-		# print("   🔧 No armor data found, extracting from GLB...")
-		extract_and_load_armor_data(resolved_glb_path, armor_json_path)
-	# else:
-		# print("   ⚠️ No armor data found and auto-extraction disabled")
+	var success = armor_system.load_from_glb(resolved_glb_path)
+	if not success:
+		print("   ❌ Failed to load armor data for: ", resolved_glb_path)
 
 	enable_backface_collision_recursive(self)
 	print("done")
@@ -794,27 +771,7 @@ func _setup_hull_collision() -> void:
 	print("   ✅ Hull collision setup complete")
 
 
-func extract_and_load_armor_data(resolved_glb_path: String, armor_json_path: String) -> void:
-	"""Extract armor data from GLB and save it locally"""
-	# Load the extractor
-	var extractor_script = load("res://src/armor/enhanced_armor_extractor_v2.gd")
-	var extractor = extractor_script.new()
 
-	print("      Extracting armor data from GLB...")
-	var success = extractor.extract_armor_with_mapping_to_json(resolved_glb_path, armor_json_path)
-
-	if success:
-		print("      ✅ Armor extraction completed")
-		print("      📁 Saved to: ", armor_json_path)
-
-		# Load the newly extracted data
-		success = armor_system.load_armor_data(armor_json_path)
-		if success:
-			print("      ✅ Armor system initialized successfully")
-		else:
-			print("      ❌ Failed to load extracted armor data")
-	else:
-		print("      ❌ Armor extraction failed")
 
 func get_armor_at_hit_point(hit_node: Node3D, face_index: int) -> int:
 	"""Get armor thickness at a specific hit point"""
