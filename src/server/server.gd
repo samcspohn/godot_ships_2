@@ -1169,11 +1169,6 @@ func _physics_process(_delta: float) -> void:
 	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
 		_update_threat_registry()
 
-	# Per-frame: advance one terrain probe per enemy arc.  Cheap; spreads the
-	# raycast cost so a full 12-arc refresh per enemy completes every 12
-	# frames.  NavigationMap is required.
-	if threat_registry != null and NavigationMapManager.is_map_ready():
-		threat_registry.tick_arcs(NavigationMapManager.get_map())
 
 
 ## Publish the latest per-team enemy position + decay lists to the shared

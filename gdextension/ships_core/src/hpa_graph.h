@@ -83,7 +83,7 @@ class HpaGraph : public RefCounted {
 	GDCLASS(HpaGraph, RefCounted)
 
 public:
-	static constexpr int DEFAULT_CLUSTER_SIZE = 32;
+	static constexpr int DEFAULT_CLUSTER_SIZE = 16;
 
 	// ------------------------------------------------------------------
 	// Lifecycle
@@ -137,6 +137,11 @@ public:
 	TypedArray<Dictionary> get_debug_nodes()    const;
 	TypedArray<Dictionary> get_debug_edges()    const;
 	TypedArray<Dictionary> get_debug_clusters() const;
+	// Reads the currently-stamped global blocked state (reflects last stamp_threats call).
+	TypedArray<Dictionary> get_debug_threat_clusters() const;
+	// Pure query: computes blocked clusters for the given threat set without touching
+	// cluster_threat_blocked_.  Always reflects the caller's own threat bin.
+	TypedArray<Dictionary> compute_debug_threat_clusters(const std::vector<ThreatCircle> &threats) const;
 
 protected:
 	static void _bind_methods();
@@ -167,7 +172,7 @@ private:
 	std::vector<int>                 cluster_block_count_;
 
 	// Per-cluster threat-arc blocked flags (parallel to clusters_).
-	// Stamped wholesale each time the ThreatBin version changes.
+	// Stamped wholesale each time stamp_threats() is called.
 	// Separate from cluster_block_count_ so obstacle blocking and threat
 	// blocking can be cleared independently.
 	std::vector<uint8_t>             cluster_threat_blocked_;
@@ -185,14 +190,13 @@ private:
 	void build_entrances();
 	void build_intracluster_edges();
 
-	// Threat-arc rasterization onto the Level-1 cluster grid.
-	// stamp_threat_arcs() tests every cluster's representative points
-	// against each wedge and sets cluster_threat_blocked_ in one pass.
-	// clear_threat_arcs() zeroes the vector (called when source is removed).
-	// Both are O(num_clusters * num_arcs) and typically run in < 1 ms.
+	// Threat rasterization onto the Level-1 cluster grid.
+	// stamp_threats() tests every navigable cluster: clusters within a
+	// threat circle that have line-of-sight to the threat origin are marked
+	// blocked. clear_threats() zeroes the vector.
 public:
-	void stamp_threat_arcs(const std::vector<ThreatArc>& arcs);
-	void clear_threat_arcs();
+	void stamp_threats(const std::vector<ThreatCircle>& threats);
+	void clear_threats();
 private:
 
 	// ------------------------------------------------------------------

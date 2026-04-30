@@ -290,82 +290,22 @@ inline float throttle_to_speed_fraction(int throttle) {
 	}
 }
 
-// Enemy ship detection arc — one of 12 wedges that together replace the
-// classic full-circle threat radius.  Each arc represents the radial extent
-// of detection in a 30 deg sector, terrain-limited by raycasting the
-// underlying SDF.  origin/bearing are world-frame; length is the radial
-// reach in metres (already capped to bin radius * decay).
-struct ThreatArc {
-	int     enemy_id;     // ship instance ID; -1 = unidentified
-	Vector2 origin;       // enemy world XZ
-	float   bearing;      // sector centre, radians (0 = +X, π/2 = +Z)
-	float   half_angle;   // sector half-aperture, radians (15 deg = π/12)
-	float   length;       // radial reach in world metres
+// ============================================================================
+// Per-enemy circular threat zone.  Replaces the old 12-arc sector model.
+// radius is already the effective value (bin_radius * decay), ready to use.
+// ============================================================================
+struct ThreatCircle {
+	int     enemy_id;  // ship instance ID; -1 = unidentified
+	Vector2 origin;    // enemy world XZ
+	float   radius;    // effective detection radius in world metres
 
-	ThreatArc()
-		: enemy_id(-1), origin(Vector2()), bearing(0.0f),
-		  half_angle(0.0f), length(0.0f) {}
-	ThreatArc(int p_id, Vector2 p_origin, float p_bearing,
-	          float p_half_angle, float p_length)
-		: enemy_id(p_id), origin(p_origin), bearing(p_bearing),
-		  half_angle(p_half_angle), length(p_length) {}
+	ThreatCircle()
+		: enemy_id(-1), origin(Vector2()), radius(0.0f) {}
+	ThreatCircle(int p_id, Vector2 p_origin, float p_radius)
+		: enemy_id(p_id), origin(p_origin), radius(p_radius) {}
 };
 
-// ============================================================================
-// Per-cell binary blocked grid built from a set of ThreatArcs.
-//
-// Each cell is a single byte (0 = open, 1 = blocked).  An arc stamps every
-// cell whose centre falls inside the wedge.  Consumers (D* Lite, destination
-// adjustment) check cell membership only — no per-arc geometry test at
-// query time.  This trades a small amount of conservative over-blocking at
-// cell boundaries for an O(1) point query.
-// ============================================================================
-struct BlockedGrid {
-	std::vector<uint8_t> blocked; // [iz*grid_w + ix] -> 0/1
-	int   grid_w    = 0;
-	int   grid_h    = 0;
-	float cell_size = 1.0f;
-	float origin_x  = 0.0f;
-	float origin_z  = 0.0f;
 
-	bool empty() const { return blocked.empty(); }
-
-	// Suggested cell size from an arc set: a fraction of the longest arc,
-	// clamped to a sensible floor.  ~15 cells across the longest arc gives
-	// adequate angular resolution for 30 deg wedges while keeping
-	// rasterization cost bounded.  Floor at 200 m so very short arcs do
-	// not produce a fine-grained grid.
-	static float default_cell_size(const std::vector<ThreatArc>& arcs) {
-		float L = 0.0f;
-		for (const auto& a : arcs) L = std::max(L, a.length);
-		float cs = L / 15.0f;
-		if (cs < 200.0f) cs = 200.0f;
-		return cs;
-	}
-
-	// Build (or rebuild) the grid.  Bounds are derived from arc extents.
-	void build(const std::vector<ThreatArc>& arcs, float p_cell_size);
-
-	// O(1) blocked test: returns true if pos lies in a stamped cell.
-	bool is_blocked(Vector2 pos) const {
-		if (blocked.empty()) return false;
-		int ix = cx(pos.x), iz = cz(pos.y);
-		if (ix < 0 || ix >= grid_w || iz < 0 || iz >= grid_h) return false;
-		return blocked[(size_t)iz * grid_w + ix] != 0;
-	}
-
-	// Find the nearest unblocked cell centre to |pos| via BFS over
-	// 4-connected cell neighbours.  Returns true and writes |out| if an
-	// unblocked cell is reached within max_radius_cells; otherwise returns
-	// false and leaves |out| untouched.  The BFS expands along cell
-	// boundaries (cardinal moves), which is what callers want when sliding
-	// a destination out of a blocked region.
-	bool find_nearest_unblocked(Vector2 pos, int max_radius_cells, Vector2& out) const;
-
-private:
-	int cx(float wx) const { return (int)std::floor((wx - origin_x) / cell_size); }
-	int cz(float wz) const { return (int)std::floor((wz - origin_z) / cell_size); }
-};
 
 
 
@@ -405,16 +345,6 @@ struct PathSearch {
     // Immediate result (set by begin if LOS path found)
     PathResult result;
 
-    // --- Enemy threat avoidance overlay ---
-    // Stamped at half-resolution (each threat cell covers 2x2 nav cells).
-    // Values: 0.0 = no threat, >0 = cost multiplier penalty.
-    std::vector<float> threat_cost;
-    int threat_grid_width = 0;
-    int threat_grid_height = 0;
-    float threat_cell_size = 100.0f;   // world units per threat cell
-    float threat_min_x = 0.0f;
-    float threat_min_z = 0.0f;
-
     PathSearch() = default;
 
     void allocate(int total_cells) {
@@ -436,7 +366,6 @@ struct PathSearch {
         active = false;
         complete = false;
         result = PathResult();
-        // Note: threat_cost is not cleared here — it's rebuilt per-search by stamp_threats()
     }
 };
 

@@ -6,6 +6,26 @@
 
 namespace godot {
 
+// True if segment (ax,az)-(bx,bz) clips any part of the AABB [x0,x1]×[z0,z1].
+// Uses Liang-Barsky parametric clipping — exact, no sqrt required.
+static bool segment_clips_aabb(
+	float ax, float az, float bx, float bz,
+	float x0, float z0, float x1, float z1)
+{
+	float dx = bx - ax, dz = bz - az;
+	float t0 = 0.0f, t1 = 1.0f;
+	auto clip = [&](float p, float q) -> bool {
+		if (p == 0.0f) return q >= 0.0f;
+		float r = q / p;
+		if (p < 0.0f) { if (r > t1) return false; if (r > t0) t0 = r; }
+		else          { if (r < t0) return false; if (r < t1) t1 = r; }
+		return true;
+	};
+	return clip(-dx, ax - x0) && clip(dx, x1 - ax) &&
+	       clip(-dz, az - z0) && clip(dz, z1 - az) &&
+	       t0 <= t1;
+}
+
 // ============================================================================
 // _bind_methods
 // ============================================================================
@@ -28,6 +48,7 @@ void HpaGraph::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_debug_nodes"), &HpaGraph::get_debug_nodes);
 	ClassDB::bind_method(D_METHOD("get_debug_edges"), &HpaGraph::get_debug_edges);
 	ClassDB::bind_method(D_METHOD("get_debug_clusters"), &HpaGraph::get_debug_clusters);
+	ClassDB::bind_method(D_METHOD("get_debug_threat_clusters"), &HpaGraph::get_debug_threat_clusters);
 }
 
 HpaGraph::HpaGraph() = default;
@@ -472,18 +493,44 @@ PathResult HpaGraph::refine_path_impl(
 		return std::max(0, std::min(gz, grid_h_ - 1));
 	};
 
+	// Threat-cluster gate: reject a shortcut whose world-space segment clips
+	// any cluster that has been stamped as threat-blocked.  Uses the same
+	// cluster AABB expansion (+half-cell) as stamp_threats so the two
+	// tests are geometrically consistent.  When no threats are active every
+	// entry in cluster_threat_blocked_ is 0, so the inner loop exits
+	// immediately and there is no performance cost.
+	auto threat_cluster_clear = [&](float ax, float az, float bx, float bz) -> bool {
+		for (int cid = 0; cid < static_cast<int>(clusters_.size()); ++cid) {
+			if (cluster_threat_blocked_[cid] == 0) continue;
+			const Cluster &cl = clusters_[cid];
+			float wx0, wz0, wx1, wz1;
+			grid_to_world(cl.x0, cl.z0, wx0, wz0);
+			grid_to_world(cl.x1, cl.z1, wx1, wz1);
+			float hc = cell_size_ * 0.5f;
+			wx0 -= hc; wz0 -= hc;
+			wx1 += hc; wz1 += hc;
+			if (segment_clips_aabb(ax, az, bx, bz, wx0, wz0, wx1, wz1))
+				return false;
+		}
+		return true;
+	};
+
 	std::vector<Vector2> pulled;
 	pulled.push_back(raw.front());
 
 	size_t anchor = 0;
 	while (anchor < raw.size() - 1) {
 		size_t farthest = anchor + 1;
-		// Try to reach as far forward as possible with a clear LOS.
+		// Try to reach as far forward as possible with a clear LOS that also
+		// avoids threat-blocked clusters (mirrors finish_path_search behaviour).
 		for (size_t test = raw.size() - 1; test > anchor + 1; --test) {
 			if (nav_map_->line_of_sight(
 					to_gx(raw[anchor].x), to_gz(raw[anchor].y),
 					to_gx(raw[test].x),   to_gz(raw[test].y),
-					clearance_)) {
+					clearance_) &&
+				threat_cluster_clear(
+					raw[anchor].x, raw[anchor].y,
+					raw[test].x,   raw[test].y)) {
 				farthest = test;
 				break;
 			}
@@ -689,162 +736,123 @@ TypedArray<Dictionary> HpaGraph::get_debug_clusters() const {
 }
 
 // ============================================================================
-// stamp_threat_arcs / clear_threat_arcs
+// stamp_threats / clear_threats
 // ============================================================================
 
-// Normalise an angle difference into (-π, π].
-static inline float norm_angle_diff(float d) {
-	while (d >  3.14159265f) d -= 6.28318530f;
-	while (d < -3.14159265f) d += 6.28318530f;
-	return d;
-}
-
-// True if (px, pz) lies inside the circular sector defined by arc.
-static bool point_in_arc(float px, float pz, const ThreatArc &arc) {
-	float dx = px - arc.origin.x;
-	float dz = pz - arc.origin.y;
-	float dist_sq = dx * dx + dz * dz;
-	if (dist_sq > arc.length * arc.length) return false;
-	if (dist_sq < 0.01f) return true; // origin itself — always inside
-	return std::abs(norm_angle_diff(std::atan2(dz, dx) - arc.bearing)) <= arc.half_angle;
-}
-
-// True if segment (ax,az)-(bx,bz) has any part inside the AABB [x0,x1]×[z0,z1].
-// Uses Liang-Barsky parametric clipping — exact, no sqrt required.
-static bool segment_clips_aabb(
-	float ax, float az, float bx, float bz,
-	float x0, float z0, float x1, float z1)
-{
-	float dx = bx - ax, dz = bz - az;
-	float t0 = 0.0f, t1 = 1.0f;
-	auto clip = [&](float p, float q) -> bool {
-		if (p == 0.0f) return q >= 0.0f;
-		float r = q / p;
-		if (p < 0.0f) { if (r > t1) return false; if (r > t0) t0 = r; }
-		else          { if (r < t0) return false; if (r < t1) t1 = r; }
-		return true;
-	};
-	return clip(-dx, ax - x0) && clip(dx, x1 - ax) &&
-	       clip(-dz, az - z0) && clip(dz, z1 - az) &&
-	       t0 <= t1;
-}
-
-// True if the curved outer boundary of the sector (circle of radius R centred at
-// (ox,oz), spanning bearing ± half_angle) crosses any edge of the AABB.
-static bool arc_clips_aabb(
-	float ox, float oz, float R, float bearing, float half,
-	float x0, float z0, float x1, float z1)
-{
-	// For each AABB edge, solve the circle-segment quadratic and accept any
-	// intersection whose angle from the arc origin falls within the arc span.
-	auto check_edge = [&](float ex0, float ez0, float ex1, float ez1) -> bool {
-		float dx = ex1 - ex0, dz = ez1 - ez0;
-		float fx = ex0 - ox,  fz = ez0 - oz;
-		float a = dx*dx + dz*dz;
-		if (a < 1e-12f) return false;
-		float b    = 2.0f * (fx*dx + fz*dz);
-		float c    = fx*fx + fz*fz - R*R;
-		float disc = b*b - 4.0f*a*c;
-		if (disc < 0.0f) return false;
-		float sq     = std::sqrt(disc);
-		float inv2a  = 0.5f / a;
-		for (int s = -1; s <= 1; s += 2) {
-			float t = (-b + (float)s * sq) * inv2a;
-			if (t < 0.0f || t > 1.0f) continue;
-			float px = ex0 + t * dx, pz = ez0 + t * dz;
-			if (std::abs(norm_angle_diff(std::atan2(pz - oz, px - ox) - bearing)) <= half)
-				return true;
-		}
-		return false;
-	};
-	return check_edge(x0, z0, x1, z0) ||  // bottom
-	       check_edge(x1, z0, x1, z1) ||  // right
-	       check_edge(x0, z1, x1, z1) ||  // top
-	       check_edge(x0, z0, x0, z1);    // left
-}
-
-// Exact sector–AABB overlap test.  Returns true iff the circular sector
-// defined by arc intersects the axis-aligned box [wx0,wx1]×[wz0,wz1].
-//
-// Four exhaustive conditions (any one is sufficient):
-//   1. Arc origin inside the AABB.
-//   2. Any AABB corner inside the sector.
-//   3. Either straight radial edge of the sector clips the AABB.
-//   4. The curved arc boundary clips any AABB edge.
-//
-// The fast reject uses the closest point on the AABB to the arc origin,
-// which is tighter than the old centre-to-centre + box-diagonal test and
-// avoids a square-root.
-static bool cluster_overlaps_arc(float wx0, float wz0, float wx1, float wz1,
-                                 const ThreatArc &arc)
-{
-	float R = arc.length;
-
-	// ── Fast reject: closest point on AABB to arc origin vs R ────────────
-	float near_x = std::max(wx0, std::min(arc.origin.x, wx1));
-	float near_z = std::max(wz0, std::min(arc.origin.y, wz1));
-	{
-		float dx = arc.origin.x - near_x, dz = arc.origin.y - near_z;
-		if (dx*dx + dz*dz > R*R) return false;
-	}
-
-	// 1. Arc origin inside AABB
-	if (arc.origin.x >= wx0 && arc.origin.x <= wx1 &&
-	    arc.origin.y >= wz0 && arc.origin.y <= wz1)
-		return true;
-
-	// 2. Any AABB corner inside the sector
-	if (point_in_arc(wx0, wz0, arc) || point_in_arc(wx1, wz0, arc) ||
-	    point_in_arc(wx1, wz1, arc) || point_in_arc(wx0, wz1, arc))
-		return true;
-
-	// 3. Either radial edge intersects the AABB
-	float angle_l = arc.bearing - arc.half_angle;
-	float angle_r = arc.bearing + arc.half_angle;
-	float lx = arc.origin.x + R * std::cos(angle_l), lz = arc.origin.y + R * std::sin(angle_l);
-	float rx = arc.origin.x + R * std::cos(angle_r), rz = arc.origin.y + R * std::sin(angle_r);
-	if (segment_clips_aabb(arc.origin.x, arc.origin.y, lx, lz, wx0, wz0, wx1, wz1) ||
-	    segment_clips_aabb(arc.origin.x, arc.origin.y, rx, rz, wx0, wz0, wx1, wz1))
-		return true;
-
-	// 4. Curved arc boundary crosses an AABB edge
-	return arc_clips_aabb(arc.origin.x, arc.origin.y, R,
-	                      arc.bearing, arc.half_angle,
-	                      wx0, wz0, wx1, wz1);
-}
-
-void HpaGraph::stamp_threat_arcs(const std::vector<ThreatArc> &arcs) {
+void HpaGraph::stamp_threats(const std::vector<ThreatCircle> &threats) {
 	// Reset threat layer
 	std::fill(cluster_threat_blocked_.begin(), cluster_threat_blocked_.end(), 0);
 
-	if (arcs.empty() || clusters_.empty()) return;
+	if (threats.empty() || clusters_.empty() || !nav_map_.is_valid()) return;
 
-	// Pre-cache the cell_size in world units so grid_to_world is cheap
-	// (it already uses the cached min_x_/min_z_/cell_size_ fields).
 	for (const Cluster &c : clusters_) {
 		if (!c.navigable) continue;
 
-		// World-space AABB of this cluster (cell centres at the corners)
-		float wx0, wz0, wx1, wz1;
-		grid_to_world(c.x0, c.z0, wx0, wz0);
-		grid_to_world(c.x1, c.z1, wx1, wz1);
-		// Expand by half a cell so AABB covers entire cell footprint
-		float hc = cell_size_ * 0.5f;
-		wx0 -= hc; wz0 -= hc;
-		wx1 += hc; wz1 += hc;
+		// World coords of this cluster's centre cell
+		int mid_gx = (c.x0 + c.x1) / 2;
+		int mid_gz = (c.z0 + c.z1) / 2;
+		float cx_world, cz_world;
+		grid_to_world(mid_gx, mid_gz, cx_world, cz_world);
 
-		for (const ThreatArc &arc : arcs) {
-			if (arc.length <= 0.0f) continue;
-			if (cluster_overlaps_arc(wx0, wz0, wx1, wz1, arc)) {
+		for (const ThreatCircle &t : threats) {
+			if (t.radius <= 0.0f) continue;
+			float dx = cx_world - t.origin.x;
+			float dz = cz_world - t.origin.y;
+			if (dx * dx + dz * dz > t.radius * t.radius) continue;
+
+			// LOS from cluster centre to threat origin (clearance 0 — any terrain blocks).
+			int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
+			int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
+			gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
+			gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
+
+			if (nav_map_->line_of_sight(mid_gx, mid_gz, gx_t, gz_t, 0.0f)) {
 				cluster_threat_blocked_[c.id] = 1;
-				break; // no need to test remaining arcs for this cluster
+				break;  // cluster is blocked — no need to test remaining threats
 			}
 		}
 	}
 }
 
-void HpaGraph::clear_threat_arcs() {
+void HpaGraph::clear_threats() {
 	std::fill(cluster_threat_blocked_.begin(), cluster_threat_blocked_.end(), 0);
+}
+
+// ============================================================================
+// get_debug_threat_clusters
+// ============================================================================
+
+TypedArray<Dictionary> HpaGraph::get_debug_threat_clusters() const {
+	TypedArray<Dictionary> out;
+	if (!built_) return out;
+	for (int cid = 0; cid < static_cast<int>(clusters_.size()); ++cid) {
+		if (cluster_threat_blocked_[cid] == 0) continue;
+		const Cluster &cl = clusters_[cid];
+		float wx0, wz0, wx1, wz1;
+		grid_to_world(cl.x0, cl.z0, wx0, wz0);
+		grid_to_world(cl.x1, cl.z1, wx1, wz1);
+		float hc = cell_size_ * 0.5f;
+		Dictionary d;
+		d["x0"] = wx0 - hc;
+		d["z0"] = wz0 - hc;
+		d["x1"] = wx1 + hc;
+		d["z1"] = wz1 + hc;
+		out.push_back(d);
+	}
+	return out;
+}
+
+// ============================================================================
+// compute_debug_threat_clusters
+// Pure query version: performs the same circle + LOS test as stamp_threats but
+// writes results directly into the output array rather than cluster_threat_blocked_.
+// Safe to call from any ship's navigator without disturbing shared routing state.
+// ============================================================================
+
+TypedArray<Dictionary> HpaGraph::compute_debug_threat_clusters(
+		const std::vector<ThreatCircle> &threats) const {
+	TypedArray<Dictionary> out;
+	if (!built_ || threats.empty() || !nav_map_.is_valid()) return out;
+
+	for (const Cluster &c : clusters_) {
+		if (!c.navigable) continue;
+
+		int mid_gx = (c.x0 + c.x1) / 2;
+		int mid_gz = (c.z0 + c.z1) / 2;
+		float cx_world, cz_world;
+		grid_to_world(mid_gx, mid_gz, cx_world, cz_world);
+
+		bool blocked = false;
+		for (const ThreatCircle &t : threats) {
+			if (t.radius <= 0.0f) continue;
+			float dx = cx_world - t.origin.x;
+			float dz = cz_world - t.origin.y;
+			if (dx * dx + dz * dz > t.radius * t.radius) continue;
+
+			int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
+			int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
+			gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
+			gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
+
+			if (nav_map_->line_of_sight(mid_gx, mid_gz, gx_t, gz_t, 0.0f)) {
+				blocked = true;
+				break;
+			}
+		}
+		if (!blocked) continue;
+
+		float wx0, wz0, wx1, wz1;
+		grid_to_world(c.x0, c.z0, wx0, wz0);
+		grid_to_world(c.x1, c.z1, wx1, wz1);
+		float hc = cell_size_ * 0.5f;
+		Dictionary d;
+		d["x0"] = wx0 - hc;
+		d["z0"] = wz0 - hc;
+		d["x1"] = wx1 + hc;
+		d["z1"] = wz1 + hc;
+		out.push_back(d);
+	}
+	return out;
 }
 
 } // namespace godot

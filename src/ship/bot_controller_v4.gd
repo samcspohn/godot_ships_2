@@ -191,13 +191,6 @@ func _ready() -> void:
 	else:
 		push_warning("[BotControllerV4] NavigationMap not yet built — navigator will operate without terrain data")
 
-	# Connect to the shared WaypointGraph (built alongside NavigationMap)
-	var wp_graph = NavigationMapManager.get_waypoint_graph()
-	if wp_graph != null:
-		navigator.set_waypoint_graph(wp_graph)
-	else:
-		push_warning("[BotControllerV4] WaypointGraph not yet built — navigator will pathfind without graph")
-
 	# Connect to the shared HpaGraph (built alongside NavigationMap)
 	var hpa_graph = NavigationMapManager.get_hpa_graph()
 	if hpa_graph != null:
@@ -232,9 +225,6 @@ func _deferred_init() -> void:
 	# Re-check map and waypoint graph in case they were built after our _ready
 	if navigator != null and NavigationMapManager.is_map_ready():
 		navigator.set_map(NavigationMapManager.get_map())
-		var wp_graph = NavigationMapManager.get_waypoint_graph()
-		if wp_graph != null:
-			navigator.set_waypoint_graph(wp_graph)
 		var hpa_graph = NavigationMapManager.get_hpa_graph()
 		if hpa_graph != null:
 			navigator.set_hpa_graph(hpa_graph)
@@ -1102,12 +1092,16 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
 			_emit_sdf_tiles(clearance_r)
 
-		# --- o) Threat arcs (terrain-limited 30° wedges the pathfinder avoids) ---
-		var threat_arcs = navigator.get_debug_threat_arcs()
-		var arc_color := Color(1.0, 0.0, 0.0, 0.5)
-		for tz in threat_arcs:
-			var origin := Vector3(tz["x"], 6.0, tz["z"])
-			Debug.draw_arc(origin, tz["bearing"], tz["half_angle"], tz["length"], arc_color, 8)
+		# --- o) Threat-blocked HPA clusters (circles with LOS to a detection source) ---
+		var threat_clusters = navigator.get_debug_threat_clusters()
+		var cluster_color := Color(1.0, 0.0, 0.0, 0.4)
+		for tc in threat_clusters:
+			var cx: float = (tc["x0"] + tc["x1"]) * 0.5
+			var cz: float = (tc["z0"] + tc["z1"]) * 0.5
+			var w: float = tc["x1"] - tc["x0"]
+			var h: float = tc["z1"] - tc["z0"]
+			var margin := 50.0
+			Debug.draw_square(Vector3(cx, 5.0, cz), w - margin, h - margin, cluster_color, true)
 
 
 		# --- p) Torpedo & shell threat lines ---

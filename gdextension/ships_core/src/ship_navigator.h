@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 #include <vector>
 #include <unordered_map>
@@ -14,8 +15,6 @@
 
 #include "nav_types.h"
 #include "navigation_map.h"
-#include "waypoint_graph.h"
-#include "dstar_lite.h"
 #include "hpa_graph.h"
 #include "threat_registry.h"
 
@@ -27,7 +26,6 @@ class ShipNavigator : public RefCounted {
 private:
 	// --- References ---
 	Ref<NavigationMap> map;
-	Ref<WaypointGraph> waypoint_graph_;
 
 	// --- Ship configuration ---
 	ShipParams params;
@@ -54,17 +52,10 @@ private:
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
 
-	// --- D* Lite pathfinding state ---
-	DStarLite dstar_;
-	int dstar_start_node_ = -1;     // current nearest waypoint graph node (ship node idx)
-	int dstar_goal_node_ = -1;      // goal nearest waypoint graph node (goal node idx)
-	bool dstar_initialized_ = false;
-	bool dstar_converged_ = false;
-
 	// --- HPA* (Hierarchical A*) pathfinding ---
-	// When set, replaces D* Lite + WaypointGraph for strategic path planning.
-	// Dynamic obstacles are forwarded to hpa_graph_ for cluster-level blocking,
-	// giving O(clusters) updates instead of O(nodes).
+	// When set, strategic path planning uses hierarchical A* for fast
+	// threat-aware routing.  Dynamic obstacles are forwarded to hpa_graph_
+	// for cluster-level blocking, giving O(clusters) updates instead of O(nodes).
 	Ref<HpaGraph> hpa_graph_;
 
 
@@ -73,14 +64,6 @@ private:
 
 
 
-	// Convert D* Lite node path to PathResult with string pulling
-	PathResult build_path_from_dstar() const;
-
-	// --- Pathfinding ---
-	static constexpr int DSTAR_INIT_BUDGET = 2000;        // per-frame budget during initial convergence
-	static constexpr int DSTAR_REPAIR_BUDGET = 200;       // per-frame budget for incremental repairs
-	static constexpr int DSTAR_SYNC_LIMIT = 50000;        // max iterations for synchronous planning
-
 	enum class DesiredDirection : int {
 		FORWARD = 0,
 		BACKWARD = 1,
@@ -88,7 +71,7 @@ private:
 
 	enum class PlanPhase : int {
 		IDLE = 0,
-		COMPUTING = 1,   // D* Lite initial convergence in progress
+		COMPUTING = 1,   // reserved (unused since HPA* is always synchronous)
 		DONE = 2,        // result ready, accept on next tick
 	};
 
@@ -171,14 +154,12 @@ private:
 	// Registered by GDScript when the bot wants to route around enemy
 	// detection coverage.  ShipNavigator references a shared ThreatBin
 	// owned by a ThreatRegistry; multiple ships with the same (team,
-	// binned effective_radius) share the same arc list + BlockedGrid.
+	// binned effective_radius) share the same threat circle list.
 	Ref<ThreatRegistry> threat_registry_;
 	ThreatBin* threat_bin_ = nullptr;
 	uint64_t threat_last_version_ = 0;
 
-	// Push the current bin's arcs into D* Lite (or an empty arc set if
-	// no bin is attached).  Updates threat_last_version_.
-	void push_threats_to_dstar();
+
 
 	static constexpr float SHELL_THREAT_WEIGHT_BASE   = 40.0f;   // base penalty seconds — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER    = 2000.0f; // virtual caliber for torpedo threat lines
@@ -258,12 +239,12 @@ private:
 	void update_emergency(float delta);
 
 	// --- Plan management ---
-	void start_plan();       // initializes D* Lite for current goal
-	void tick_plan();        // runs budgeted D* Lite computation
-	void run_plan_sync();    // runs D* Lite synchronously to completion
+	void start_plan();       // runs HPA* planning
+	void tick_plan();        // (stub) D* Lite removed
+	void run_plan_sync();    // runs HPA* planning synchronously
 
-	// D* Lite incremental repair — handles threat changes + start advancement
-	void dstar_incremental_update();
+	// HPA* incremental repair — handles threat changes
+	void hpa_incremental_update();
 
 	// --- Steering output helpers ---
 
@@ -279,12 +260,10 @@ public:
 	// --- Setup ---
 
 	void set_map(Ref<NavigationMap> p_map);
-	void set_waypoint_graph(Ref<WaypointGraph> p_graph);
 
 	/// Attach a pre-built HpaGraph.  When set, start_plan / run_plan_sync
-	/// use hierarchical A* instead of D* Lite.  Dynamic obstacles are also
-	/// forwarded to hpa_graph_ for cluster-level blocking.
-	/// Pass an invalid Ref<> to detach and fall back to D* Lite.
+	/// use hierarchical A*.
+	/// Pass an invalid Ref<> to detach.
 	void set_hpa_graph(Ref<HpaGraph> graph);
 	Ref<HpaGraph> get_hpa_graph() const { return hpa_graph_; }
 
@@ -366,12 +345,12 @@ public:
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
 
-	Array get_debug_threat_arcs() const;
+	TypedArray<Dictionary> get_debug_threat_clusters() const;
 
-	// Adjust |dest| out of any blocked threat-arc cells via cardinal-cell
-	// BFS through the bin's BlockedGrid.  Returns Dictionary { position:
-	// Vector2, adjusted: bool }.  Returns dest unchanged if no bin
-	// subscription is active or dest is already in open water.
+	// Adjust |dest| away from threat circles (circle+LOS model).
+	// Returns Dictionary { position: Vector2, adjusted: bool }.
+	// Returns dest unchanged if no bin subscription is active or
+	// dest is already outside all threat circles.
 	Dictionary adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const;
 
 	// --- Timing (microseconds) ---

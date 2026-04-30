@@ -1,7 +1,5 @@
 #include "threat_registry.h"
 
-#include "navigation_map.h"
-
 #include <godot_cpp/core/class_db.hpp>
 
 #include <cmath>
@@ -11,8 +9,6 @@ using namespace godot;
 void ThreatRegistry::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_team", "team_id", "ids", "positions_with_decay"),
 		&ThreatRegistry::update_team);
-	ClassDB::bind_method(D_METHOD("tick_arcs", "nav_map"),
-		&ThreatRegistry::tick_arcs);
 	ClassDB::bind_method(D_METHOD("reset"), &ThreatRegistry::reset);
 	ClassDB::bind_method(D_METHOD("get_bin_count"), &ThreatRegistry::get_bin_count);
 }
@@ -74,17 +70,10 @@ void ThreatRegistry::update_team(int team_id,
 		if (decay <= 0.0f) continue;
 
 		auto& es = team.enemies[eid];
-		bool is_new = (es.enemy_id == -1);
 		es.enemy_id = eid;
 		es.position = Vector2(pwd.x, pwd.y);
 		es.decay = decay;
 		es.seen_this_tick = true;
-		if (is_new) {
-			// Fresh enemy: leave arc_length defaults (MAX_PROBE) so the bin
-			// initially blocks everything within radius until tick_arcs has
-			// trimmed each sector down.
-			es.next_arc = 0;
-		}
 	}
 
 	// Prune stale entries
@@ -94,27 +83,6 @@ void ThreatRegistry::update_team(int team_id,
 	}
 
 	rebuild_team_bins(team_id);
-}
-
-void ThreatRegistry::tick_arcs(Ref<NavigationMap> nav_map) {
-	if (nav_map.is_null() || !nav_map->is_built()) return;
-
-	for (auto& tkv : teams_) {
-		for (auto& ekv : tkv.second.enemies) {
-			EnemyArcState& es = ekv.second;
-			int idx = es.next_arc % EnemyArcState::NUM_ARCS;
-			es.next_arc = (uint8_t)((idx + 1) % EnemyArcState::NUM_ARCS);
-
-			float bearing = EnemyArcState::arc_bearing(idx);
-			Vector2 dir(std::cos(bearing), std::sin(bearing));
-			Vector2 to = es.position + dir * EnemyArcState::MAX_PROBE;
-
-			// clearance=0 — we want the first solid-terrain hit, not a
-			// navigability test for the ship's footprint.
-			RayResult r = nav_map->raycast_internal(es.position, to, 0.0f);
-			es.arc_length[idx] = r.hit ? r.distance : EnemyArcState::MAX_PROBE;
-		}
-	}
 }
 
 void ThreatRegistry::reset() {
@@ -131,31 +99,17 @@ void ThreatRegistry::rebuild_team_bins(int team_id) {
 }
 
 void ThreatRegistry::rebuild_bin(ThreatBin* bin) {
-	bin->arcs.clear();
+	bin->threats.clear();
 	auto it = teams_.find(bin->team_id);
 	if (it != teams_.end()) {
 		const auto& team = it->second;
-		bin->arcs.reserve(team.enemies.size() * EnemyArcState::NUM_ARCS);
+		bin->threats.reserve(team.enemies.size());
 		for (const auto& ekv : team.enemies) {
 			const EnemyArcState& es = ekv.second;
 			float radius_eff = bin->radius * es.decay;
 			if (radius_eff <= 0.0f) continue;
-			for (int i = 0; i < EnemyArcState::NUM_ARCS; ++i) {
-				float L = std::min(es.arc_length[i], radius_eff);
-				if (L < EnemyArcState::MIN_LENGTH) L = EnemyArcState::MIN_LENGTH;
-				if (L > radius_eff) L = radius_eff;
-				if (L <= 0.0f) continue;
-				bin->arcs.emplace_back(es.enemy_id, es.position,
-				                       EnemyArcState::arc_bearing(i),
-				                       EnemyArcState::HALF_ANGLE, L);
-			}
+			bin->threats.emplace_back(es.enemy_id, es.position, radius_eff);
 		}
-	}
-	if (bin->arcs.empty()) {
-		bin->grid = BlockedGrid();
-	} else {
-		float cs = BlockedGrid::default_cell_size(bin->arcs);
-		bin->grid.build(bin->arcs, cs);
 	}
 	bin->version += 1;
 }

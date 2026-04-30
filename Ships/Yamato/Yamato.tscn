@@ -356,7 +356,7 @@ min_rotation_angle = 3.550527668390999
 max_rotation_angle = 0.0
 
 [node name="IJN_127mm_2b_type89_001" parent="TurretMount_IJN_127mm_2b_type89_001" parent_id_path=PackedInt32Array(1075487614) index="0" unique_id=1975681058 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.7033516630035357
+min_rotation_angle = 3.703351663003536
 max_rotation_angle = 5.917817407708942
 
 [node name="IJN_127mm_2b_type89_002" parent="TurretMount_IJN_127mm_2b_type89_002" parent_id_path=PackedInt32Array(1693909112) index="0" unique_id=116410538 instance=ExtResource("11_566e5")]
@@ -383,11 +383,11 @@ min_rotation_angle = 3.7189098722010105
 max_rotation_angle = 5.944731590656524
 
 [node name="IJN_127mm_2b_type89_008" parent="TurretMount_IJN_127mm_2b_type89_008" parent_id_path=PackedInt32Array(875286562) index="0" unique_id=457444380 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.1764992386296798
+min_rotation_angle = 3.17649923862968
 max_rotation_angle = 5.759586531581287
 
 [node name="IJN_127mm_2b_type89_009" parent="TurretMount_IJN_127mm_2b_type89_009" parent_id_path=PackedInt32Array(984505377) index="0" unique_id=1377025100 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.059949123184242836
+min_rotation_angle = 0.05994912318424283
 max_rotation_angle = 2.8099800957108707
 
 [node name="IJN_127mm_2b_type89_010" parent="TurretMount_IJN_127mm_2b_type89_010" parent_id_path=PackedInt32Array(1912044882) index="0" unique_id=597935310 instance=ExtResource("11_566e5")]

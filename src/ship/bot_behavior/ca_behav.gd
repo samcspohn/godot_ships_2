@@ -520,6 +520,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 						intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
 						if intent != null:
 							_active_skill_name = &"Angle"
+
+					intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.3)
 				else:
 					intent = cover_intent
 					_active_skill_name = &"FindCover"

@@ -358,127 +358,180 @@ func _get_overextension_score(enemy: Ship) -> float:
 	var projection = enemy_from_enemy_spawn.dot(spawn_axis)
 	return clampf(projection / total_distance, 0.0, 1.0)
 
+# func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
+# 	"""Configurable target selection using weights from get_target_weights().
+# 	Prefers targets we can actually hit (not behind cover) over ones we can't.
+# 	Balances proximity threats against overextended enemies using a weight system:
+# 	 - Enemies very close to the bot get a strong proximity boost.
+# 	 - Enemies farthest into friendly territory get an overextension bonus.
+# 	 - When no enemy is dangerously close, the most overextended enemy wins."""
+# 	var weights = get_target_weights()
+# 	var gun_range = _ship.artillery_controller.get_params()._range
+# 	var proximity_override_dist: float = weights.get("proximity_override_distance", 3000.0)
+# 	var overextension_bonus: float = weights.get("overextension_bonus", 2.0)
+# 	var overextension_weight: float = weights.get("overextension_weight", 0.4)
+
+# 	# --- First pass: compute base priority and overextension for every target ---
+# 	var candidate_data: Array[Dictionary] = []
+# 	var max_overextension: float = 0.0
+# 	var has_close_threat: bool = false
+
+# 	for ship in targets:
+# 		var disp = ship.global_position - _ship.global_position
+# 		var dist = disp.length()
+# 		var angle = (-ship.basis.z).angle_to(disp)
+# 		var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
+
+# 		# Calculate apparent size (broadside profile)
+# 		var priority: float = 0.0
+# 		if weights.prefer_broadside:
+# 			priority = ship.movement_controller.ship_length / dist * abs(sin(angle)) + ship.movement_controller.ship_beam / dist * abs(cos(angle))
+# 		else:
+# 			priority = ship.movement_controller.ship_length / dist
+
+# 		# Apply class modifier
+# 		var class_mods: Dictionary = weights.class_modifiers
+# 		if class_mods.has(ship.ship_class):
+# 			priority *= class_mods[ship.ship_class]
+
+# 		# Combine with range and HP weights
+# 		var size_contrib = priority * weights.size_weight
+# 		var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
+# 		var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
+# 		priority = size_contrib + range_contrib + hp_contrib
+
+# 		# Boost targets within range
+# 		if dist <= gun_range:
+# 			priority *= weights.in_range_multiplier
+
+# 		# Apply flanking priority boost
+# 		var flank_info = _get_flanking_info(ship)
+# 		if flank_info.is_flanking:
+# 			var flank_multiplier = weights.get("flanking_multiplier", 5.0)
+# 			var depth_scale = 1.0 + flank_info.penetration_depth
+# 			priority *= flank_multiplier * depth_scale
+
+# 		# Overextension score: how far into friendly territory this enemy is
+# 		var overext = _get_overextension_score(ship)
+# 		if overext > max_overextension:
+# 			max_overextension = overext
+
+# 		# Track whether any enemy is dangerously close
+# 		if dist < proximity_override_dist:
+# 			has_close_threat = true
+
+# 		var shootable = dist <= gun_range and can_hit_target(ship)
+# 		candidate_data.append({
+# 			ship = ship,
+# 			base_priority = priority,
+# 			dist = dist,
+# 			overextension = overext,
+# 			shootable = shootable,
+# 		})
+
+# 	# --- Second pass: apply overextension vs proximity weighting ---
+# 	var best_shootable_target: Ship = null
+# 	var best_shootable_priority: float = -1.0
+# 	var best_fallback_target: Ship = null
+# 	var best_fallback_priority: float = -1.0
+
+# 	for data in candidate_data:
+# 		var priority: float = data.base_priority
+# 		var dist: float = data.dist
+# 		var overext: float = data.overextension
+# 		var ship: Ship = data.ship
+
+# 		# Overextension contribution: reward enemies deeper into friendly territory
+# 		if max_overextension > 0.0 and overextension_weight > 0.0:
+# 			# Normalized 0-1 among current targets (most forward = 1.0)
+# 			var relative_overext = overext / max_overextension
+# 			var overext_contrib = relative_overext * overextension_weight
+# 			priority += overext_contrib
+
+# 			# Extra bonus for the most overextended target when nothing is dangerously close
+# 			if not has_close_threat and relative_overext > 0.9:
+# 				priority *= overextension_bonus
+
+# 		# Proximity override: if this enemy is very close, give a strong boost
+# 		if dist < proximity_override_dist:
+# 			# Scales from 1.0 at the threshold up to 3.0 at point-blank
+# 			var proximity_factor = 1.0 + 2.0 * (1.0 - dist / proximity_override_dist)
+# 			priority *= proximity_factor
+
+# 		# Sort into shootable vs fallback
+# 		if data.shootable:
+# 			if priority > best_shootable_priority:
+# 				best_shootable_target = ship
+# 				best_shootable_priority = priority
+# 		else:
+# 			if priority > best_fallback_priority:
+# 				best_fallback_target = ship
+# 				best_fallback_priority = priority
+
+# 	# Prefer shootable targets; only fall back to blocked targets if nothing is shootable
+# 	var best_target = best_shootable_target if best_shootable_target != null else best_fallback_target
+
+# 	# Stick to last target if nearby and alive, but only if it's still shootable
+# 	if best_target != null and last_target != null and last_target.is_alive():
+# 		if last_target.position.distance_to(best_target.position) < 1000:
+# 			# If last target is shootable (or both are blocked), keep it for stability
+# 			if best_shootable_target == null or can_hit_target(last_target):
+# 				return last_target
+
+# 	return best_target
+
+func get_potential_target_weight(target: Ship) -> float:
+	var weight = 0.0
+	var my_range = _ship.artillery_controller.get_params()._range
+
+	# var weights = get_target_weights()
+	# var gun_range = _ship.artillery_controller.get_params()._range
+	# var disp = target.global_position - _ship.global_position
+	# var dist = disp.length()
+	# var angle = (-target.basis.z).angle_to(disp)
+	# var hp_ratio = target.health_controller.current_hp / target.health_controller.max_hp
+
+	# if weights.prefer_broadside:
+	# 	weight = target.movement_controller.ship_length / dist * abs(sin(angle)) + target.movement_controller.ship_beam / dist * abs(cos(angle))
+	# else:
+	# 	weight = target.movement_controller.ship_length / dist
+
+	# # Apply class modifier
+	# var class_mods: Dictionary = weights.class_modifiers
+	# if class_mods.has(target.ship_class):
+	# 	weight *= class_mods[target.ship_class]
+
+	# # Combine with range and HP weights
+	# var size_contrib = weight * weights.size_weight
+	# var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
+	# var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
+	# weight = size_contrib + range_contrib + hp_contrib
+
+	# # Boost targets within range
+	# if dist <= gun_range:
+	# 	weight *= weights.in_range_multiplier
+
+	weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
+
+	return weight
+
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
-	"""Configurable target selection using weights from get_target_weights().
-	Prefers targets we can actually hit (not behind cover) over ones we can't.
-	Balances proximity threats against overextended enemies using a weight system:
-	 - Enemies very close to the bot get a strong proximity boost.
-	 - Enemies farthest into friendly territory get an overextension bonus.
-	 - When no enemy is dangerously close, the most overextended enemy wins."""
-	var weights = get_target_weights()
-	var gun_range = _ship.artillery_controller.get_params()._range
-	var proximity_override_dist: float = weights.get("proximity_override_distance", 3000.0)
-	var overextension_bonus: float = weights.get("overextension_bonus", 2.0)
-	var overextension_weight: float = weights.get("overextension_weight", 0.4)
+	var new_target = null
+	var target_weight = 0.0
+	var last_target_weight = INF
+	if last_target != null and last_target.is_alive() and last_target.visible_to_enemy and can_hit_target(last_target):
+		last_target_weight = get_potential_target_weight(last_target)
+		new_target = last_target
+		target_weight = last_target_weight
+	for potential in targets:
+		if potential.visible_to_enemy and not can_hit_target(potential):
+			continue
+		var weight = get_potential_target_weight(potential)
+		if abs(weight - last_target_weight) > 0.1 and weight > target_weight:
+			new_target = potential
+			target_weight = weight
+	return new_target
 
-	# --- First pass: compute base priority and overextension for every target ---
-	var candidate_data: Array[Dictionary] = []
-	var max_overextension: float = 0.0
-	var has_close_threat: bool = false
-
-	for ship in targets:
-		var disp = ship.global_position - _ship.global_position
-		var dist = disp.length()
-		var angle = (-ship.basis.z).angle_to(disp)
-		var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
-
-		# Calculate apparent size (broadside profile)
-		var priority: float = 0.0
-		if weights.prefer_broadside:
-			priority = ship.movement_controller.ship_length / dist * abs(sin(angle)) + ship.movement_controller.ship_beam / dist * abs(cos(angle))
-		else:
-			priority = ship.movement_controller.ship_length / dist
-
-		# Apply class modifier
-		var class_mods: Dictionary = weights.class_modifiers
-		if class_mods.has(ship.ship_class):
-			priority *= class_mods[ship.ship_class]
-
-		# Combine with range and HP weights
-		var size_contrib = priority * weights.size_weight
-		var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
-		var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
-		priority = size_contrib + range_contrib + hp_contrib
-
-		# Boost targets within range
-		if dist <= gun_range:
-			priority *= weights.in_range_multiplier
-
-		# Apply flanking priority boost
-		var flank_info = _get_flanking_info(ship)
-		if flank_info.is_flanking:
-			var flank_multiplier = weights.get("flanking_multiplier", 5.0)
-			var depth_scale = 1.0 + flank_info.penetration_depth
-			priority *= flank_multiplier * depth_scale
-
-		# Overextension score: how far into friendly territory this enemy is
-		var overext = _get_overextension_score(ship)
-		if overext > max_overextension:
-			max_overextension = overext
-
-		# Track whether any enemy is dangerously close
-		if dist < proximity_override_dist:
-			has_close_threat = true
-
-		var shootable = dist <= gun_range and can_hit_target(ship)
-		candidate_data.append({
-			ship = ship,
-			base_priority = priority,
-			dist = dist,
-			overextension = overext,
-			shootable = shootable,
-		})
-
-	# --- Second pass: apply overextension vs proximity weighting ---
-	var best_shootable_target: Ship = null
-	var best_shootable_priority: float = -1.0
-	var best_fallback_target: Ship = null
-	var best_fallback_priority: float = -1.0
-
-	for data in candidate_data:
-		var priority: float = data.base_priority
-		var dist: float = data.dist
-		var overext: float = data.overextension
-		var ship: Ship = data.ship
-
-		# Overextension contribution: reward enemies deeper into friendly territory
-		if max_overextension > 0.0 and overextension_weight > 0.0:
-			# Normalized 0-1 among current targets (most forward = 1.0)
-			var relative_overext = overext / max_overextension
-			var overext_contrib = relative_overext * overextension_weight
-			priority += overext_contrib
-
-			# Extra bonus for the most overextended target when nothing is dangerously close
-			if not has_close_threat and relative_overext > 0.9:
-				priority *= overextension_bonus
-
-		# Proximity override: if this enemy is very close, give a strong boost
-		if dist < proximity_override_dist:
-			# Scales from 1.0 at the threshold up to 3.0 at point-blank
-			var proximity_factor = 1.0 + 2.0 * (1.0 - dist / proximity_override_dist)
-			priority *= proximity_factor
-
-		# Sort into shootable vs fallback
-		if data.shootable:
-			if priority > best_shootable_priority:
-				best_shootable_target = ship
-				best_shootable_priority = priority
-		else:
-			if priority > best_fallback_priority:
-				best_fallback_target = ship
-				best_fallback_priority = priority
-
-	# Prefer shootable targets; only fall back to blocked targets if nothing is shootable
-	var best_target = best_shootable_target if best_shootable_target != null else best_fallback_target
-
-	# Stick to last target if nearby and alive, but only if it's still shootable
-	if best_target != null and last_target != null and last_target.is_alive():
-		if last_target.position.distance_to(best_target.position) < 1000:
-			# If last target is shootable (or both are blocked), keep it for stability
-			if best_shootable_target == null or can_hit_target(last_target):
-				return last_target
-
-	return best_target
 
 func pick_ammo(target: Ship) -> int:
 	var ammo = ShellParams.ShellType.AP
@@ -1410,7 +1463,7 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = false) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = true) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).

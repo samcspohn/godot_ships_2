@@ -32,7 +32,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	if now_ms - _cover_recalc_ms >= recalc_cooldown:
 		_cover_recalc_ms = now_ms
 		var island: Dictionary
-		if _arrived and _target_island_id >= 0:
+		if _target_island_id >= 0:
 			# Already in cover: prefer staying on the same island, only move if
 			# it can no longer provide a shootable position.
 			island = _recalc_same_island(ctx, target)
@@ -104,7 +104,7 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var ship = ctx.ship
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
-	ctx.behavior._ensure_safe_dir(ship, ctx.server)
+	# ctx.behavior._ensure_safe_dir(ship, ctx.server)
 
 	var hide_h: float
 	if threats.size() > 0:
@@ -330,7 +330,7 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 		return true
 
 	var t = clampf((dist_to_cover - 500.0) / 4000.0, 0.0, 1.0)
-	var angle_tol = lerpf(deg_to_rad(65.0), deg_to_rad(10.0), t)
+	var angle_tol = lerpf(deg_to_rad(65.0), deg_to_rad(20.0), t)
 
 	var to_nearest = nearest.global_position - ship.global_position
 	to_nearest.y = 0.0
