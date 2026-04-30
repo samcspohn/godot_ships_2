@@ -622,7 +622,7 @@ void ShipNavigator::update(float delta) {
 // ============================================================================
 
 void ShipNavigator::update_normal(float delta) {
-	// --- 0. Tick dodge commitment timer ---
+	// --- 0. Tick commitment timers ---
 	if (dodge_commitment_timer_ > 0.0f) {
 		dodge_commitment_timer_ -= delta;
 		if (dodge_commitment_timer_ <= 0.0f) {
@@ -724,6 +724,7 @@ void ShipNavigator::update_normal(float delta) {
 			desired_rudder = compute_rudder_to_heading(target.heading, false);
 			desired_magnitude = 0;
 			direction = DesiredDirection::FORWARD;
+			align_commit_active_ = false;
 
 		} else if (dist_to_dest < maneuver_radius) {
 			// Inside the maneuver zone — multi-point turn.
@@ -756,12 +757,38 @@ void ShipNavigator::update_normal(float delta) {
 					desired_magnitude = 2;  // >22.5°: moderate turn
 				else
 					desired_magnitude = 1;  // close to aligned: creep
-				direction = dest_ahead ? DesiredDirection::FORWARD : DesiredDirection::BACKWARD;
+
+				// Option A: pick the direction that gives full rudder authority for
+				// the needed heading correction, ignoring dest_along.  At tiny
+				// distances dest_along is noise and flipping it inverts the rudder,
+				// cancelling the turn every frame.
+				float rudder_fwd = compute_rudder_to_heading(target.heading, false);
+				float rudder_rev = compute_rudder_to_heading(target.heading, true);
+				DesiredDirection best_dir =
+					(std::abs(rudder_fwd) >= std::abs(rudder_rev))
+					? DesiredDirection::FORWARD
+					: DesiredDirection::BACKWARD;
+
+				// Option B: commit to that direction until the ship has traveled
+				// one bounce radius from where the direction was chosen.  Each
+				// stroke of the multi-point turn completes naturally before the
+				// direction is reconsidered; sizing to ship_beam gives a distance
+				// that scales with the vessel.
+				float bounce_radius = std::max(params.turning_circle_radius, ALIGN_BOUNCE_RADIUS_DEFAULT);
+				if (!align_commit_active_
+				    || state.position.distance_to(align_commit_pos_) >= bounce_radius) {
+					align_committed_dir_ = best_dir;
+					align_commit_pos_ = state.position;
+					align_commit_active_ = true;
+				}
+				direction = align_committed_dir_;
 			} else {
 				// Drifted within maneuver zone — head back toward destination
-				// at moderate speed while turning
+				// at moderate speed while turning.  dest_along is reliable here
+				// (ship is meaningfully displaced from the destination).
 				desired_magnitude = 2;
 				direction = dest_ahead ? DesiredDirection::FORWARD : DesiredDirection::BACKWARD;
+				align_commit_active_ = false;  // reset alignment commit when outside arrived zone
 			}
 
 			bool reversing = (direction == DesiredDirection::BACKWARD);

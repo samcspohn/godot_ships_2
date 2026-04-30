@@ -150,6 +150,18 @@ private:
 	static constexpr float DODGE_COMMITMENT_BIAS     = 50.0f;   // seconds of penalty added to candidates opposing the committed direction
 	static constexpr float DODGE_THREAT_WINDOW       = 10.0f;   // seconds before/after impact to sample arc points (Option C)
 
+	// --- Heading-align direction commitment ---
+	// When the ship is inside arrived_radius and aligning to target heading,
+	// lock FORWARD/BACKWARD until the ship has traveled ALIGN_BOUNCE_RADIUS from
+	// the position where the direction was chosen.  This lets each stroke of a
+	// multi-point turn complete before re-evaluating, without being time-based.
+	DesiredDirection align_committed_dir_ = DesiredDirection::FORWARD;
+	Vector2 align_commit_pos_;
+	bool align_commit_active_ = false;
+	// Re-evaluate direction once the ship moves this far from the commit point.
+	// Sized to ship_beam at runtime; this constant is a fallback.
+	static constexpr float ALIGN_BOUNCE_RADIUS_DEFAULT = 30.0f;
+
 	static constexpr float PARKED_SPEED_THRESHOLD = 10.0f;
 
 	// --- Incoming shell avoidance ---
