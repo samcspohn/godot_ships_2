@@ -460,7 +460,7 @@ void _ProjectileManager::_process(double delta) {
 
 	// Update shell positions in GPU renderer and trail particles
 	_process_trails_only(current_time);
-	current_time += delta * shell_time_multiplier;
+	current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites
 }
 
 void _ProjectileManager::_process_trails_only(double current_time) {
@@ -481,7 +481,7 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 		if (!shell_params.is_valid()) {
 			continue;
 		}
-		double t = (current_time - p->get_start_time());
+		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
 		if (t < 2.0) {
 			t += step_size * (1.0 - (2.0 - t) / 2.0); // Smoothly interpolate time for the first 2 seconds to avoid trail popping
 		} else {
@@ -554,7 +554,7 @@ void _ProjectileManager::sync_time(double server_time) {
 void _ProjectileManager::_physics_process(double delta) {
 	// double current_time = Time::get_singleton()->get_unix_time_from_system();
 	rpc("sync_time", current_time);
-	current_time += delta * shell_time_multiplier;
+	current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites
 
 	Window *root = get_tree()->get_root();
 	Ref<World3D> world = root->get_world_3d();
@@ -582,7 +582,7 @@ void _ProjectileManager::_physics_process(double delta) {
 		}
 
 
-		double t = (current_time - p->get_start_time());
+		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
 		// t = _ProjectileManager::time_warp(t, p->get_params()) * shell_time_multiplier;
 
 
@@ -855,7 +855,7 @@ int _ProjectileManager::fire_bullet(const Vector3 &vel, const Vector3 &pos, cons
 			entry.shell_id = id;
 			entry.landing_x = impact.x;
 			entry.landing_z = impact.z;
-			entry.time_to_impact = static_cast<float>(flight_time);
+			entry.time_to_impact = static_cast<float>(flight_time / shell_time_multiplier);  // store as raw seconds
 			entry.fire_time = static_cast<float>(current_time);
 			entry.caliber = caliber;
 			entry.team_id = team_id;
@@ -1375,8 +1375,8 @@ Array _ProjectileManager::get_shells_near_position(Vector2 position, float radiu
 				float dz = e.landing_z - position.y;
 				if (dx * dx + dz * dz > radius_sq) continue;
 
-				float time_remaining = (e.fire_time + e.time_to_impact - static_cast<float>(current_time))
-				                       / static_cast<float>(shell_time_multiplier);
+				float time_remaining = e.fire_time + e.time_to_impact - static_cast<float>(current_time);
+				// fire_time and time_to_impact are both raw seconds; no scaling needed
 				if (time_remaining <= 0.0f) continue;
 
 				Dictionary d;

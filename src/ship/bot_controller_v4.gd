@@ -29,6 +29,11 @@ var _debug_turn_sim_points_undesired: Array[Vector3] = []
 var _debug_shell_obstacles: Array = []  # [{landing_x, landing_z, time_remaining, caliber, landing_vx, landing_vz, threat_half_len}]
 var debug_draw_turn_sim: bool = true
 
+## Per-shooter last recorded projectile launch time (ProjectileManager time units).
+## Keyed by instance_id (int) to avoid holding live object references.
+## Used to skip LKP updates from projectiles older than already-stored intel.
+var _shooter_lkp_launch_times: Dictionary = {}
+
 var debug_log_interval: float = 2.0
 var debug_log_timer: float = 0.0
 var debug_log: bool = false
@@ -542,6 +547,10 @@ func _register_torpedo_obstacles() -> void:
 		if dist > torpedo_track_range:
 			continue
 
+		# Detected enemy torpedo — update the shooter's last known position to
+		# where it was launched from (start_position is set at fire time).
+		_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t)
+
 		var obs_id: int = TORPEDO_ID_OFFSET - i
 		var pos_2d := Vector2(torp.position.x, torp.position.z)
 		# Velocity: torpedo direction × speed × game speed multiplier
@@ -564,7 +573,17 @@ func _update_shell_threats() -> void:
 
 	_debug_shell_obstacles = shells
 
+	# Look up each shell's ProjectileData to extract the shooter and launch
+	# position, then update the server's last-known-position intel.
+	var projectiles = ProjectileManager.get_projectiles()
+
 	for s in shells:
+		var sid := s["shell_id"] as int
+		if sid < projectiles.size():
+			var pdata = projectiles[sid]
+			if pdata != null:
+				_update_lkp_from_shooter(pdata.get_owner(), pdata.get_start_position(), pdata.get_start_time())
+
 		var vx: float = s["landing_vx"]
 		var vz: float = s["landing_vz"]
 		var spd: float = sqrt(vx * vx + vz * vz)
@@ -577,6 +596,58 @@ func _update_shell_threats() -> void:
 			landing_dir,
 			s["threat_half_len"]
 		)
+
+
+## Update the server's unspotted-enemy last-known-position for a ship that
+## revealed itself by firing a shell or torpedo.
+## - shooter    : the Object returned by ProjectileData.get_owner() or TorpedoData.owner
+## - launch_pos  : world position where the projectile originated (start_position)
+## - launch_time : ProjectileManager time when the projectile was fired (used to
+##                 reject stale updates — we only keep the most recent launch's intel)
+func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time: float) -> void:
+	if not is_instance_valid(shooter):
+		return
+	if not shooter is Ship:
+		return
+	var s := shooter as Ship
+	if not s.health_controller.is_alive():
+		return
+	if server_node == null:
+		return
+	var my_team_id: int = _ship.team.team_id if _ship.team else -1
+	if s.team == null or s.team.team_id == my_team_id:
+		return  # Ignore friendly fire (shouldn't reach here due to upstream filters)
+	# Early-return: skip if we already have intel from an equal or newer launch.
+	# torp.t and ProjectileData.start_time are both in ProjectileManager accumulated
+	# time units (torpedo_launcher.gd was switched from Unix time to PM time).
+	var sid: int = s.get_instance_id()
+	if _shooter_lkp_launch_times.get(sid, -INF) >= launch_time:
+		return
+	# Only update the unspotted dict when the shooter is not currently visible.
+	# If they are already a valid (spotted) target there is nothing to update.
+	var valid_targets: Array = server_node.get_valid_targets(my_team_id)
+	if valid_targets.has(s):
+		return
+	# Write the launch position as fresh intel into the unspotted-enemy dicts.
+	# Flattening Y keeps it consistent with how every other LKP is stored.
+	var flat_pos := Vector3(launch_pos.x, 0.0, launch_pos.z)
+	var unspotted: Dictionary = server_node.team_0_unspotted_enemies if my_team_id == 0 else server_node.team_1_unspotted_enemies
+	var times: Dictionary   = server_node.team_0_unspotted_times    if my_team_id == 0 else server_node.team_1_unspotted_times
+	unspotted[s] = flat_pos
+	# Use the wall-clock equivalent of the launch time so the staleness decay
+	# in _publish_team_threats reflects how long ago the shot was actually fired,
+	# not merely when this bot happened to detect the projectile.
+	times[s]     = _pm_time_to_wall_time(launch_time)
+	_shooter_lkp_launch_times[sid] = launch_time
+
+
+## Convert a ProjectileManager accumulated time value to its wall-clock equivalent
+## (seconds from Time.get_ticks_msec baseline).  PM time is now raw seconds so
+## this is a simple base-offset shift — no multiplier division needed.
+func _pm_time_to_wall_time(pm_time: float) -> float:
+	var pm_now: float   = ProjectileManager.get_current_time()
+	var wall_now: float = Time.get_ticks_msec() / 1000.0
+	return wall_now - (pm_now - pm_time)
 
 
 ## Push the intent's destination out of enemy threat zones so the pathfinder

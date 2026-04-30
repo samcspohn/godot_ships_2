@@ -194,7 +194,7 @@ func _setup_torpedo_indicators() -> void:
 	_torpedo_indicators = indicators
 
 func _process(_delta: float) -> void:
-	var current_time = Time.get_unix_time_from_system()
+	var current_time = ProjectileManager.get_current_time()
 
 	if camera == null:
 		return
@@ -255,7 +255,7 @@ func _process(_delta: float) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	var current_time = Time.get_unix_time_from_system()
+	var current_time = ProjectileManager.get_current_time()
 	var space_state = get_tree().root.get_world_3d().direct_space_state
 	var id = 0
 	var collision: Dictionary = {}

@@ -81,7 +81,7 @@ func fire() -> void:
 				#var dispersion_point = dispersion_calculator.calculate_dispersion_point(_aim_point, self.global_position)
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
 				#if aim[0] != null:
-				var t = float(Time.get_unix_time_from_system())
+				var t = ProjectileManager.get_current_time()
 				var _id = (TorpedoManager as _TorpedoManager).fireTorpedo(-m.global_basis.z + offset,m.global_position, get_torp(), t, _ship, get_params()._range ,self)
 				var server: GameServer = get_tree().root.get_node_or_null("/root/Server")
 				# notify team of torpedo launch

@@ -9,8 +9,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship_pos = ship.global_position
 
 	var enemy_avg = ctx.server.get_enemy_avg_position(ship.team.team_id)
-	if enemy_avg == Vector3.ZERO:
-		return null
+	# if enemy_avg == Vector3.ZERO:
+	# 	return null
 
 	# --- Dynamic battle center ---
 	# Average the positions of all ships (friendly + known enemies) within gun range.

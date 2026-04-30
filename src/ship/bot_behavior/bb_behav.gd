@@ -273,12 +273,16 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	if not has_enemies:
 		# No enemies at all — hunt then chase
-		intent = _skill_hunt.execute(ctx, {})
-		_active_skill_name = &"Hunt"
-		if intent == null:
-			intent = _skill_chase.execute(ctx, {})
-			if intent:
-				_active_skill_name = &"Chase"
+		intent = _skill_flank.execute(ctx, {})
+		if intent:
+			_active_skill_name = &"Flank"
+		else:
+			intent = _skill_hunt.execute(ctx, {})
+			_active_skill_name = &"Hunt"
+			if intent == null:
+				intent = _skill_chase.execute(ctx, {})
+				if intent:
+					_active_skill_name = &"Chase"
 	elif not has_spotted:
 		# Enemies exist but none spotted — chase then hunt
 		intent = _skill_chase.execute(ctx, {})
