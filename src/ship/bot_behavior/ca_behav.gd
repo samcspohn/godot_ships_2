@@ -535,18 +535,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 					if intent != null:
 						_active_skill_name = &"Angle"
 
-	if threat > 0.85:
-		wants_stealth = true
-		wants_to_be_concealed = _probe_concealment(server)
+	# if threat > 0.85:
+	# 	wants_stealth = true
+	# 	wants_to_be_concealed = _probe_concealment(server)
 
-	else:
-		wants_stealth = false
-		wants_to_be_concealed = false
+	# else:
+	# 	wants_stealth = false
+	# 	wants_to_be_concealed = false
 
-	if wants_to_be_concealed:
-		_suppress_guns = true
-	else:
-		_suppress_guns = false
+	# if wants_to_be_concealed:
+	# 	_suppress_guns = true
+	# else:
+	# 	_suppress_guns = false
 
 
 	# ── Post-process: broadside ──────────────────────────────────────────────

@@ -12,6 +12,8 @@ var _cover_recalc_ms: int = 0
 var _arrived: bool = false
 var can_shoot: bool = false
 var _dist_to_dest: float = 0.0
+var _last_valid_cover_pos: Vector3 = Vector3.ZERO
+var _last_valid_cover_pos_set: bool = false
 
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
@@ -98,13 +100,67 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 
 # ---------------------------------------------------------------------------
 # Recalculate the best position on the island we are already holding.
-# Returns empty dict if the island can no longer provide a shootable position.
+# Returns empty dict only when the island is genuinely no longer viable:
+#   • No concealed position exists at all, OR
+#   • Enemies ARE visible yet none can be shot from any position on the island.
+# If no enemies are currently visible we cannot assess shootability, so we
+# stay put rather than thrashing to a different island.
 # ---------------------------------------------------------------------------
 func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var ship = ctx.ship
+	var my_pos: Vector3 = ship.global_position
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
-	# ctx.behavior._ensure_safe_dir(ship, ctx.server)
+
+	# ── Fastest path: re-validate the last known-good cover position ─────────
+	# This is a fixed world point that was previously confirmed as hidden AND
+	# shootable.  A cheap LOS + shoot check is all we need; no geometry search.
+	if _last_valid_cover_pos_set and threats.size() > 0:
+		var cached_pos := _last_valid_cover_pos
+		var cached_hidden := true
+		for threat_pos in threats:
+			if not ctx.behavior._is_los_blocked_with_clearance(cached_pos, threat_pos):
+				cached_hidden = false
+				break
+		if cached_hidden:
+			var can_shoot_cached := _can_shoot_from(ctx, cached_pos, targets)
+			if targets.is_empty() or can_shoot_cached:
+				return {
+					"id": _target_island_id,
+					"center": _target_island_pos,
+					"radius": _target_island_radius,
+					"dest": cached_pos,
+					"can_shoot": can_shoot_cached,
+				}
+		# Cached position no longer valid — clear it and keep searching.
+		_last_valid_cover_pos_set = false
+
+	# ── Fast path: current position is already concealed ─────────────────────
+	# Skip the full candidate search when the ship is already hidden from every
+	# known threat.  Stamp the current world position as the destination so it
+	# doesn't slowly drift with the ship between recalc ticks.
+	if threats.size() > 0:
+		var all_hidden := true
+		for threat_pos in threats:
+			if not ctx.behavior._is_los_blocked_with_clearance(my_pos, threat_pos):
+				all_hidden = false
+				break
+		if all_hidden:
+			var can_shoot_here := _can_shoot_from(ctx, my_pos, targets)
+			if targets.is_empty() or can_shoot_here:
+				if can_shoot_here:
+					_last_valid_cover_pos = my_pos
+					_last_valid_cover_pos_set = true
+				return {
+					"id": _target_island_id,
+					"center": _target_island_pos,
+					"radius": _target_island_radius,
+					"dest": my_pos,
+					"can_shoot": can_shoot_here,
+				}
+			# Concealed but visible enemies are not shootable from here →
+			# fall through so the candidate search tries a better spot on
+			# this same island before considering abandoning it.
 
 	var hide_h: float
 	if threats.size() > 0:
@@ -115,15 +171,28 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var cover_result = ctx.behavior._find_cover_position_on_island(
 		_target_island_pos, _target_island_radius, hide_h, threats, targets, true
 	)
-	if cover_result.is_empty() or not cover_result["can_shoot"]:
+
+	# Island can't conceal us at all — abandon it.
+	if cover_result.is_empty():
 		return {}
 
+	# Enemies are visible but we provably can't shoot any of them from this
+	# island — it's no longer a viable firing position, so move on.
+	if targets.size() > 0 and not cover_result["can_shoot"]:
+		return {}
+
+	# Either can shoot, or no enemies are currently spotted (can't assess
+	# shootability) — stay on the island.  Cache the position when shootable.
+	var result_can_shoot: bool = cover_result.get("can_shoot", false)
+	if result_can_shoot:
+		_last_valid_cover_pos = cover_result["pos"]
+		_last_valid_cover_pos_set = true
 	return {
 		"id": _target_island_id,
 		"center": _target_island_pos,
 		"radius": _target_island_radius,
 		"dest": cover_result["pos"],
-		"can_shoot": cover_result["can_shoot"],
+		"can_shoot": result_can_shoot,
 	}
 
 
@@ -197,14 +266,17 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 			var c_result = ctx.behavior._find_cover_position_on_island(
 				c_pos, c_rad, c_hide_h, threats, targets, true
 			)
-			if not c_result.is_empty() and c_result["can_shoot"]:
-				# Committed island still valid — stay with it.
+			# Stay on committed island when:
+			#   • it can still conceal us AND we can shoot, OR
+			#   • it can still conceal us AND no enemies are visible (can't
+			#     assess shootability — don't thrash to a different island).
+			if not c_result.is_empty() and (targets.is_empty() or c_result["can_shoot"]):
 				return {
 					"id": isl["id"],
 					"center": c_pos,
 					"radius": c_rad,
 					"dest": c_result["pos"],
-					"can_shoot": true,
+					"can_shoot": c_result.get("can_shoot", false),
 				}
 			# Committed island can no longer provide cover — exclude it from
 			# the upcoming search so we pick the next best candidate.
@@ -287,11 +359,39 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 
 
 func _set_island(island: Dictionary) -> void:
+	if _target_island_id != island["id"]:
+		# Switching islands — cached position belongs to the old island.
+		_last_valid_cover_pos_set = false
 	_target_island_id = island["id"]
 	_target_island_pos = island["center"]
 	_target_island_radius = island["radius"]
 	_nav_destination = island["dest"]
 	_nav_destination_valid = true
+
+
+# ---------------------------------------------------------------------------
+# Returns true if any valid target can be hit with a ballistic arc from
+# from_pos.  Mirrors the shootability check in execute().
+# ---------------------------------------------------------------------------
+func _can_shoot_from(ctx: SkillContext, from_pos: Vector3, targets: Array) -> bool:
+	var ship = ctx.ship
+	var shell_params = ship.artillery_controller.get_shell_params()
+	if shell_params == null:
+		return false
+	var gun_range = ship.artillery_controller.get_params()._range
+	for t_ship in targets:
+		if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+			continue
+		var tgt = t_ship.global_position + t_ship.global_basis * ctx.behavior.target_aim_offset(t_ship)
+		if from_pos.distance_to(tgt) > gun_range:
+			continue
+		var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(from_pos, tgt, shell_params)
+		if sol[0] == null:
+			continue
+		var result = Gun.sim_can_shoot_over_terrain_static(from_pos, sol[0], sol[1], shell_params, ship)
+		if result.can_shoot_over_terrain:
+			return true
+	return false
 
 
 func is_complete(_ctx: SkillContext) -> bool:
@@ -307,6 +407,7 @@ func reset() -> void:
 	_nav_destination_valid = false
 	_arrived = false
 	can_shoot = false
+	_last_valid_cover_pos_set = false
 
 
 # ---------------------------------------------------------------------------
@@ -326,10 +427,10 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 	var to_cover = _nav_destination - ship.global_position
 	to_cover.y = 0.0
 	var dist_to_cover = to_cover.length()
-	if dist_to_cover < 500.0:
+	if dist_to_cover < 750.0:
 		return true
 
-	var t = clampf((dist_to_cover - 500.0) / 4000.0, 0.0, 1.0)
+	var t = clampf((dist_to_cover - 750.0) / 4000.0, 0.0, 1.0)
 	var angle_tol = lerpf(deg_to_rad(65.0), deg_to_rad(20.0), t)
 
 	var to_nearest = nearest.global_position - ship.global_position
