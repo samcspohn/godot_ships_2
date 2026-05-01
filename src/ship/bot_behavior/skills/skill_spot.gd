@@ -109,28 +109,19 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 		var score := 0.0
 
-		# 1) Coverage: fraction of targets kept within their detection radius.
-		#    A target only counts as covered if terrain doesn't block LOS to it —
-		#    a position behind an island is useless for spotting.
+		# 1+2) Single pass: compute coverage and stealth together to avoid
+		#      calling is_los_blocked_2d twice on the same candidate-target pair.
 		var covered := 0
-		for t: Dictionary in targets:
-			var t2d  := Vector2((t.pos as Vector3).x, (t.pos as Vector3).z)
-			var dist := c2d.distance_to(t2d)
-			if dist <= (t.concealment as float) * spot_margin:
-				if not NavigationMapManager.is_los_blocked_2d(c2d, t2d):
-					covered += 1
-		score += W_COVERAGE * (float(covered) / targets.size())
-
-		# 2) Stealth: penalise proximity to any enemy's detection zone.
-		#    Only penalise when the enemy actually has LOS to us — if terrain
-		#    blocks their view we are already concealed regardless of distance.
 		var stealth := 1.0
 		for t: Dictionary in targets:
 			var t2d  := Vector2((t.pos as Vector3).x, (t.pos as Vector3).z)
 			var dist := c2d.distance_to(t2d)
-			if dist < my_concealment * safe_margin:
-				if not NavigationMapManager.is_los_blocked_2d(c2d, t2d):
-					stealth -= 1.0 / targets.size()
+			var los_blocked := NavigationMapManager.is_los_blocked_2d(c2d, t2d)
+			if dist <= (t.concealment as float) * spot_margin and not los_blocked:
+				covered += 1
+			if dist < my_concealment * safe_margin and not los_blocked:
+				stealth -= 1.0 / targets.size()
+		score += W_COVERAGE * (float(covered) / targets.size())
 		score += W_STEALTH * clampf(stealth, 0.0, 1.0)
 
 		# 3) Distance: prefer candidates close to our current position.

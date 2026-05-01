@@ -5,7 +5,6 @@ var _chase_target_id: int = -1
 var _last_known_pos: Vector3 = Vector3.ZERO
 var _last_known_velocity: Vector3 = Vector3.ZERO
 var _last_seen_time: float = 0.0
-var _chase_started: float = 0.0
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
@@ -32,7 +31,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 				_last_known_pos = pos
 				_last_known_velocity = s.linear_velocity if s is Ship else Vector3.ZERO
 				_last_seen_time = now
-				_chase_started = now
 
 	if _chase_target_id == -1:
 		return null

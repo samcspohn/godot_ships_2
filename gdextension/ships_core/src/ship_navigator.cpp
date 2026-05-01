@@ -1548,12 +1548,14 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	// dist_to_target < 1 and skipping the alignment check entirely.  Replace
 	// wp_target with a virtual point far along the desired heading so candidates
 	// are correctly scored for final bearing alignment.
+	bool wp_is_virtual = false;
 	{
 		bool path_exhausted_here = !path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size());
 		float dist_to_wp = state.position.distance_to(wp_target);
 		if (path_exhausted_here || dist_to_wp < wp_reach_radius) {
 			float th = target.heading;
 			wp_target = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
+			wp_is_virtual = true;
 		}
 	}
 
@@ -1639,10 +1641,25 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		// waypoint, the ship will stop advancing — terrain beyond that point
 		// is irrelevant.  This prevents arcs aimed at a destination near an
 		// island from being disqualified by terrain the ship will never reach.
+		// When wp_target is the virtual heading alignment point, also stop at
+		// heading alignment: the ship re-evaluates steering there, so terrain
+		// beyond the alignment point is irrelevant (critical for multi-point turns
+		// near terrain — the reversing arc aligns before it would reach any shore).
 		bool terrain_blocked = false;
 		float arrival_time = -1.0f;  // time at which arc reaches the waypoint
+		constexpr float heading_align_thresh = 0.087f;  // ~5°, matches predict_arc_to_heading
 		if (map.is_valid() && map->is_built()) {
 			for (const auto &pt : arc) {
+				if (wp_is_virtual) {
+					Vector2 to_vp = wp_target - pt.position;
+					if (to_vp.length() > 1.0f) {
+						float desired_h = std::atan2(to_vp.x, to_vp.y);
+						if (std::abs(angle_difference(pt.heading, desired_h)) < heading_align_thresh) {
+							arrival_time = pt.time;
+							break;
+						}
+					}
+				}
 				// Check if this point has reached the waypoint
 				if (pt.position.distance_to(wp_target) < wp_reach_radius) {
 					arrival_time = pt.time;
@@ -1690,6 +1707,18 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			if (endpoint_speed < 1.0f) endpoint_speed = 1.0f;
 			float travel_time = endpoint_dist / endpoint_speed;
 			total_time = alignment_time + travel_time;
+
+			// Penalise residual heading error so arcs that nearly align beat
+			// arcs that don't turn at all — matters most when all candidates
+			// exhaust max_time without achieving alignment.
+			if (wp_is_virtual) {
+				Vector2 to_vp = wp_target - arc.back().position;
+				if (to_vp.length() > 1.0f) {
+					float desired_h = std::atan2(to_vp.x, to_vp.y);
+					float final_h_err = std::abs(angle_difference(arc.back().heading, desired_h));
+					total_time += (final_h_err / Math_PI) * 60.0f;
+				}
+			}
 		}
 
 		// --- (c) Obstacle check ---
@@ -2162,9 +2191,9 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 			// Check alignment at emit points only — atan2 is expensive and
 			// arc-point granularity is sufficient for avoidance scoring.
-			// The minimum-distance guard ensures enough arc points exist for
-			// terrain/obstacle checks before we allow early exit.
-			if (rudder_settled && total_distance >= lookahead_distance) {
+			// Terrain checking beyond alignment is handled by select_best_steering
+			// (it stops at the alignment point), so no minimum-distance guard needed.
+			if (rudder_settled) {
 				Vector2 to_target = target_pos - sim_pos;
 				float dist_to_target = to_target.length();
 				if (dist_to_target > 1.0f) {

@@ -1,6 +1,9 @@
 class_name SkillAngle
 extends BotSkill
 
+static var _cache: Dictionary = {}
+static var _cache_frame: int = -1
+
 ## Calculate the best heading by scoring candidates against all threats whose
 ## gun range * 0.8 encapsulates our ship.  Each threat uses its own ship class
 ## to determine the ideal presentation angle.
@@ -8,6 +11,14 @@ extends BotSkill
 ## - ctx: SkillContext for access to behavior helpers and server
 ## - params: Dictionary, may contain "angle_ranges" overrides
 static func calc_heading(base_bearing: float, ctx: SkillContext, params: Dictionary) -> float:
+	var frame := Engine.get_physics_frames()
+	if frame != _cache_frame:
+		_cache.clear()
+		_cache_frame = frame
+	var key := str(ctx.ship.get_instance_id()) + "|" + str(base_bearing) + "|" + str(params.hash())
+	if _cache.has(key):
+		return _cache[key]
+
 	var ship = ctx.ship
 
 	var default_ranges = {
@@ -91,50 +102,10 @@ static func calc_heading(base_bearing: float, ctx: SkillContext, params: Diction
 		heading_sum += Vector2(sin(chosen), cos(chosen)) * w
 		total_weight += w
 
-	if total_weight < 0.000001:
-		return base_bearing
+	var result := base_bearing
+	if total_weight >= 0.000001:
+		var avg = heading_sum / total_weight
+		result = atan2(avg.x, avg.y)
+	_cache[key] = result
+	return result
 
-	var avg = heading_sum / total_weight
-	return atan2(avg.x, avg.y)
-
-func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
-	var target = ctx.target
-	if target == null:
-		return null
-	var ship = ctx.ship
-	var to_enemy = target.global_position - ship.global_position
-	to_enemy.y = 0.0
-	if to_enemy.length_squared() < 1.0:
-		return null
-	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
-
-	var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
-	# Ensure the course is always within 90° of the enemy bearing so the ship
-	# sails toward/across the enemy rather than away.  Flipping 180° keeps the
-	# same broadside presentation on the same side.
-	if absf(angle_difference(heading, enemy_bearing)) > PI * 0.5:
-		heading = wrapf(heading + PI, -PI, PI)
-
-	# Maintain engagement range
-	var gun_range = ship.artillery_controller.get_params()._range
-	var desired_dist = gun_range * params.get("desired_range_ratio", 0.55)
-	var enemy_dist = to_enemy.length()
-	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
-	return NavIntent.create(dest, enemy_bearing)
-	# var is_directional := true
-	# if enemy_dist > gun_range:
-	# 	dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.8
-	# 	is_directional = false
-	# elif enemy_dist > desired_dist * 1.3:
-	# 	dest = ship.global_position + to_enemy.normalized() * (enemy_dist - desired_dist) * 0.5
-	# 	is_directional = false
-	# elif enemy_dist < desired_dist * 0.4:
-	# 	dest = ship.global_position - to_enemy.normalized() * 1000.0
-	# 	is_directional = false
-	# dest.y = 0.0
-	# # var dest = to_enemy.normalized() * 2000.0 + ship.global_position
-	# dest = ctx.behavior._get_valid_nav_point(dest)
-	# var intent := NavIntent.create(dest, enemy_bearing)
-	# intent.directional = is_directional
-	# return intent

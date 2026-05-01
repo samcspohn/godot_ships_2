@@ -130,7 +130,7 @@ private:
 	float dodge_committed_rudder_;   // rudder sign of committed dodge (-1/+1), 0 = no commitment
 	float dodge_commitment_timer_;   // seconds remaining in commitment
 	static constexpr float DODGE_COMMITMENT_DURATION = 0.5f;   // minimum seconds to hold a dodge direction
-	static constexpr float DODGE_COMMITMENT_BIAS     = 50.0f;   // seconds of penalty added to candidates opposing the committed direction
+	static constexpr float DODGE_COMMITMENT_BIAS     = 10.0f;   // seconds of penalty added to candidates opposing the committed direction
 	static constexpr float DODGE_THREAT_WINDOW       = 10.0f;   // seconds before/after impact to sample arc points (Option C)
 
 	// --- Heading-align direction commitment ---

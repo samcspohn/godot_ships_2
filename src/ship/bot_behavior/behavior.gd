@@ -56,6 +56,8 @@ var _spawn_cache_initialized: bool = false
 # Active skill name for debug
 var _active_skill_name: StringName = &""
 
+var _fwd = null
+
 ## Set to true by each ship class in get_nav_intent when the ship wants the
 ## bot controller to route around enemy detection zones during transit.
 ## Reset to false at the start of every get_nav_intent call so it is always
@@ -1574,6 +1576,18 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 		return { "pos": best_concealed_fallback, "can_shoot": false }
 
 	return {}
+
+func _intent_sail_forward(ship: Ship) -> NavIntent:
+	if _fwd == null:
+		_fwd = -ship.global_transform.basis.z
+	var fwd = _fwd
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.1:
+		fwd = Vector3(0, 0, -1)
+	var dest = ship.global_position + fwd.normalized() * 5000.0
+	dest.y = 0.0
+	dest = _get_valid_nav_point(dest)
+	return NavIntent.create(dest, atan2(fwd.x, fwd.z))
 
 func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 	"""Compute a heading tangential to the island center from from_pos.

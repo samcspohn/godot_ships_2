@@ -4,7 +4,6 @@ extends BotSkill
 ## Locked camping position — only updated when the new desired position
 ## differs by more than _relock_distance from the current lock.
 var _locked_position: Vector3 = Vector3.ZERO
-# var _locked_heading: float = 0.0
 var _has_lock: bool = false
 
 ## Distance threshold (meters) before we accept a new camping position.
@@ -22,7 +21,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var gun_range = ship.artillery_controller.get_params()._range
 	var range_ratio = params.get("desired_range_ratio", 0.65)
 	var jitter = params.get("jitter_radius", ship.movement_controller.turning_circle_radius * 2.0)
-	var focus_threshold = params.get("focus_threshold", 3)
 	var here = params.get("here", true)
 
 	var danger_center = ctx.behavior._get_spotted_danger_center()

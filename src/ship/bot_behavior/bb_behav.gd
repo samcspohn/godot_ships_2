@@ -8,14 +8,6 @@ var _overmatch_cache: Dictionary = {}
 
 const OVERMATCH_RATIO_THRESHOLD: float = 0.4  # 40% of faces must be overmatchable to prefer AP
 
-# Arc movement state
-var current_arc_direction: int = 0
-var arc_direction_timer: float = 0.0
-var arc_direction_initialized: bool = false
-const ARC_DIRECTION_CHANGE_TIME: float = 30.0
-const ARC_MOVEMENT_SPEED: float = 0.15
-const MIN_SAFE_ANGLE_FROM_THREAT: float = PI / 3.0
-
 # Skills
 var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
@@ -25,7 +17,7 @@ var _skill_camp: SkillCamp = SkillCamp.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_cover: SkillFindCover = SkillFindCover.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
-var _skill_angle: SkillAngle = SkillAngle.new()
+var _skill_push: SkillPush = SkillPush.new()
 
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
@@ -201,47 +193,6 @@ func target_aim_offset(_target: Ship) -> Vector3:
 			offset.z -= _target.movement_controller.ship_length * 0.2
 	return offset
 
-func _apply_arc_movement(base_position: Vector3, danger_center: Vector3, engagement_range: float, server_node: GameServer) -> Vector3:
-	"""Apply continuous arc movement around danger center to avoid parking."""
-	var my_pos = _ship.global_position
-
-	var to_me = my_pos - danger_center
-	to_me.y = 0.0
-	var current_angle = atan2(to_me.x, to_me.z)
-
-	var friendly_angle = current_angle
-	if server_node:
-		var friendly_avg = server_node.get_team_avg_position(_ship.team.team_id)
-		if friendly_avg != Vector3.ZERO:
-			var to_friendly = friendly_avg - danger_center
-			to_friendly.y = 0.0
-			friendly_angle = atan2(to_friendly.x, to_friendly.z)
-
-	# Initialize arc direction
-	if not arc_direction_initialized:
-		arc_direction_initialized = true
-		var angle_to_friendly = _normalize_angle(friendly_angle - current_angle)
-		current_arc_direction = -1 if angle_to_friendly > 0 else 1
-
-	# Update arc direction periodically
-	arc_direction_timer += 1.0 / Engine.physics_ticks_per_second
-	if arc_direction_timer >= ARC_DIRECTION_CHANGE_TIME:
-		arc_direction_timer = 0.0
-		var angle_to_friendly = _normalize_angle(friendly_angle - current_angle)
-		var preferred_direction = -sign(angle_to_friendly) if abs(angle_to_friendly) > 0.1 else current_arc_direction
-		current_arc_direction = 1 if preferred_direction > 0 else -1
-
-	# Apply arc movement
-	var arc_movement = ARC_MOVEMENT_SPEED * current_arc_direction
-	var new_angle = current_angle + arc_movement
-
-	var arc_position = danger_center + Vector3(sin(new_angle), 0, cos(new_angle)) * engagement_range
-	arc_position.y = 0.0
-
-	# Blend between tactical position and arc position
-	var blend_factor = 0.3
-	return base_position * (1.0 - blend_factor) + arc_position * blend_factor
-
 # ============================================================================
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
@@ -292,9 +243,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if intent:
 				_active_skill_name = &"Hunt"
 	elif threat < 0.25:
-		# Low threat: push directly at 40% gun range
+		# Low threat: push directly toward the enemy
 		_skill_cover.reset()
-		intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.0})
+		intent = _skill_push.execute(ctx, {})
 		if intent:
 			_active_skill_name = &"Push"
 	elif dist < 6000.0 and nearest != null:
@@ -306,10 +257,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
 		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
 		if bow_diff < PI * 0.5:
-			# Optimal heading is bow-in — angle toward enemy
-			intent = _skill_angle.execute(ctx, {"desired_range_ratio": 0.65})
+			# Optimal heading is bow-in — push toward enemy
+			intent = _skill_push.execute(ctx, {})
 			if intent != null:
-				_active_skill_name = &"Angle"
+				_active_skill_name = &"Push"
 		else:
 			# Optimal heading is stern-in — kite away while keeping guns on target
 			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
@@ -320,7 +271,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		if intent:
 			_active_skill_name = &"Flank"
 			if _ship.visible_to_enemy:
-				var _intent = _skill_angle.execute(ctx, {})
+				var _intent = _skill_push.execute(ctx, {})
 				if _intent:
 					intent.target_position = intent.target_position.lerp(_intent.target_position, 0.5)
 					intent.target_heading = _intent.target_heading
@@ -373,7 +324,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	# Post-process spread when skill is not FindCover, Angle, or Kite
-	if _active_skill_name not in [&"FindCover", &"Angle", &"Kite"]:
+	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
 
 	return intent
