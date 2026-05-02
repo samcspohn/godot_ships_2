@@ -20,6 +20,7 @@ var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
+var _skill_push: SkillPush = SkillPush.new()
 
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
@@ -264,6 +265,22 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var hp_ratio          = ship.health_controller.current_hp / ship.health_controller.max_hp
 	var concealment_radius: float = (ship.concealment.params.p() as ConcealmentParams).radius
 	var pos_params        = get_positioning_params()
+	var threat 			  = get_threat_score(server)
+
+
+	var _spot_chase_hunt = func():
+		var _intent
+		if threat < 0.5:
+			_intent = _skill_chase.execute(ctx, {})
+			if _intent:
+				_active_skill_name = &"Chase"
+		if threat >= 0.5 or _intent == null:
+			_intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
+			_active_skill_name = &"Spot"
+			if _intent == null:
+				_intent = _skill_hunt.execute(ctx, {})
+				_active_skill_name = &"Hunt"
+		return _intent
 
 	var intent: NavIntent = null
 
@@ -274,12 +291,14 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# ── 2. Detected → retreat directly away from danger center; shed detection ASAP ──
 	elif ship.visible_to_enemy:
-		intent = _skill_retreat.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"Retreat"
+		if threat < 0.5:
+			intent = _skill_push.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Push"
 		else:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
+			intent = _skill_retreat.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Retreat"
 
 	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
 	elif target != null and target.ship_class == Ship.ShipClass.DD:
@@ -293,41 +312,25 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# ── 4. No torpedo controller → spot, fallback hunt ───────────────────────
 	elif ship.torpedo_controller == null:
-		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
-		_active_skill_name = &"Spot"
-		if intent == null:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
+		intent = _spot_chase_hunt.call()
 
 	# ── 5. Torpedoes ready → torpedo run (non-DD targets only) ───────────────
 	elif _get_max_torp_reload() >= 1.0 and target != null and target.ship_class != Ship.ShipClass.DD:
 		# If a closer unspotted BB/CA is within striking range, spot it first —
 		# a point-blank run on a revealed target is worth the delay.
 		if _has_better_unspotted_torp_target(ship, target, server):
-			intent = _skill_spot.execute(ctx, {})
-			_active_skill_name = &"Spot"
-			if intent == null:
-				intent = _skill_hunt.execute(ctx, {})
-				_active_skill_name = &"Hunt"
+			intent = _spot_chase_hunt.call()
 		else:
 			intent = _skill_torpedo_run.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"TorpedoRun"
 			# Null intent — fall through to spotting
 			if intent == null:
-				intent = _skill_spot.execute(ctx, {})
-				_active_skill_name = &"Spot"
-				if intent == null:
-					intent = _skill_hunt.execute(ctx, {})
-					_active_skill_name = &"Hunt"
+				intent = _spot_chase_hunt.call()
 
 	# ── 6. Reloading → spot, fallback hunt ───────────────────────────────────
 	else:
-		intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
-		_active_skill_name = &"Spot"
-		if intent == null:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
+		intent = _spot_chase_hunt.call()
 
 	# Final fallback
 	if intent == null:
@@ -337,7 +340,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# DDs always use stealth-aware routing: when undetected this keeps them
 	# outside enemy detection zones in transit; when detected it routes them
 	# back toward cover so they shed detection as fast as possible.
-	wants_stealth = true
+	if threat > 0.5:
+		wants_stealth = true
 
 	# Concealment probe: suppress guns when detected + bloom active + enemy
 	# is far enough away that going dark would actually drop us off detection.

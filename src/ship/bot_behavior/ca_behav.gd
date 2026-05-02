@@ -196,7 +196,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 					else: # superstrucure
 						offset.y = _target.movement_controller.ship_height / 2
 
-			if is_broadside and dist < 8000:
+			if is_broadside and dist < 10000:
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 4
 			else: # angled and/or farther than 6000
@@ -354,6 +354,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# 	intent = _intent_sail_forward(ship)
 		# 	_active_skill_name = &"SailForward"
 		# return intent
+		intent = _skill_cover.execute(ctx, cover_params, true)
+		if intent != null:
+			_active_skill_name = &"FindCover"
+			return intent
 		intent = _skill_flank.execute(ctx, {})
 		if intent != null:
 			_active_skill_name = &"Flank"
@@ -387,10 +391,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var gun_range = ship.artillery_controller.get_params()._range
 
 	if threat < 0.5:
-		intent = _skill_push.execute(ctx, {})
-		if intent != null:
-			_active_skill_name = &"Push"
-	elif dist < 6000.0 && ship.visible_to_enemy:
+		# Push toward the enemy — but prefer a closer unspotted enemy
+		# over crossing the map to fight a distant detected one.
+		var _unspotted_near = _nearest_unspotted_info(server)
+		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range:
+			intent = _skill_chase.execute(ctx, {})
+			if intent != null:
+				_active_skill_name = &"Chase"
+		if intent == null:
+			intent = _skill_push.execute(ctx, {})
+			if intent != null:
+				_active_skill_name = &"Push"
+	elif dist < 5000.0 && ship.visible_to_enemy:
 		# High threat and enemy is close — find the optimal presentation angle
 		# then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		var to_nearest = nearest.global_position - ship.global_position
@@ -413,7 +425,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Undetected — seek cover as normal, fall back to angle
 			intent = _skill_cover.execute(ctx, cover_params, true)
 			if intent != null:
-				if _ship.global_position.distance_to(_skill_cover._nav_destination) > 1500.0:
+				if _ship.global_position.distance_to(_skill_cover._nav_destination) > 750.0:
 					_suppress_guns = true
 				else:
 					_suppress_guns = false
@@ -425,9 +437,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		else:
 			# Detected but enemy is far — check if cover destination is on the way
 			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
-			if cover_intent != null and nearest != null:
+			if cover_intent != null and nearest != null and threat > 0.85:
 				if not _skill_cover.is_cover_on_the_way(ctx, nearest):
-					# Cover is too far off the optimal angle — kite instead
+				# Cover is too far off the optimal angle — kite instead
 					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
 					if intent != null:
 						_active_skill_name = &"Kite"
@@ -449,6 +461,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 					intent = _skill_push.execute(ctx, {})
 					if intent != null:
 						_active_skill_name = &"Push"
+
+	var _a = _probe_concealment(server)
 
 	# if threat > 0.85:
 	# 	wants_stealth = true

@@ -209,6 +209,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var params = get_positioning_params()
 	var gun_range = ship.artillery_controller.get_params()._range
 	var threat = get_threat_score(server)
+	var _unspotted_near = _nearest_unspotted_info(server)
+
 	var nearest: Ship = null
 	var _nearest_dist: float = INF
 	for _e in spotted:
@@ -243,11 +245,17 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if intent:
 				_active_skill_name = &"Hunt"
 	elif threat < 0.25:
-		# Low threat: push directly toward the enemy
+		# Low threat: push toward the enemy — but prefer a closer unspotted enemy
+		# over crossing the map to fight a distant detected one.
 		_skill_cover.reset()
-		intent = _skill_push.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"Push"
+		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range * 0.75:
+			intent = _skill_chase.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Chase"
+		if intent == null:
+			intent = _skill_push.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Push"
 	elif dist < 6000.0 and nearest != null:
 		# High-ish threat (>= 0.65) AND enemy is close — calculate the optimal
 		# presentation angle and choose angle skill (bow-in) or kite (stern-in).
@@ -267,31 +275,27 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if intent != null:
 				_active_skill_name = &"Kite"
 	elif threat < 0.4:
-		intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
-		if intent:
-			_active_skill_name = &"Flank"
-			if _ship.visible_to_enemy:
-				var _intent = _skill_push.execute(ctx, {})
-				if _intent:
-					intent.target_position = intent.target_position.lerp(_intent.target_position, 0.5)
-					intent.target_heading = _intent.target_heading
+		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist or dist > gun_range * 0.75:
+			intent = _skill_chase.execute(ctx, {})
+			if intent:
+				_active_skill_name = &"Chase"
+		if intent == null:
+			intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
+			if intent:
+				_active_skill_name = &"Flank"
+				if _ship.visible_to_enemy:
+					var _intent = _skill_push.execute(ctx, {})
+					if _intent:
+						intent.target_position = intent.target_position.lerp(_intent.target_position, 0.2)
+						intent.target_heading = _intent.target_heading
 	elif threat < 0.65:
-		intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.5})
+		intent = _skill_camp.execute(ctx, {"here": true})
 		if intent:
 			_active_skill_name = &"Camp"
-	elif threat < 0.8:
-		# Medium threat: camp/flank near island — cover at 60% range, fall back to camp at 0.65 ratio
-		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.6})
-		if intent != null:
-			_active_skill_name = &"Kite"
-		else:
-			intent = _skill_camp.execute(ctx, {"desired_range_ratio": 0.65})
-			if intent:
-				_active_skill_name = &"Camp"
 	else:
 		# High threat: take cover — cover at 70% range, fall back to kite
-		var cover_intent = _skill_cover.execute(ctx, {"desired_range": gun_range * 0.7})
-		if cover_intent != null and nearest != null and _skill_cover.is_cover_on_the_way(ctx, nearest):
+		var cover_intent = _skill_cover.execute(ctx, {})
+		if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy):
 			intent = cover_intent
 			_active_skill_name = &"FindCover"
 		else:
@@ -300,7 +304,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				intent = cover_intent
 				_active_skill_name = &"FindCover"
 			else:
-				intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.75, "pull_toward_friendly_weight": 0.3})
+				intent = _skill_kite.execute(ctx, {})
 				if intent:
 					_active_skill_name = &"Kite"
 
@@ -319,8 +323,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
 
-	# Post-process broadside when skill is not Hunt or SailForward
-	if _active_skill_name != &"Hunt" and _active_skill_name != &"SailForward":
+	 # Post-process broadside when skill is not Hunt or SailForward
+	if _active_skill_name not in  [&"Hunt", &"Flank", &"SailForward", &"Chase", &"Push"]:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	# Post-process spread when skill is not FindCover, Angle, or Kite

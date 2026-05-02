@@ -85,7 +85,7 @@ const SHELL_QUERY_RANGE: float = 1000.0
 ## How often to force a path replan (frames). Between replans the navigator
 ## continues arc-based threat avoidance with the last known destination.
 ## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
-const PATH_UPDATE_INTERVAL: int = 6
+const PATH_UPDATE_INTERVAL: int = 12
 ## Distance (m) the intent destination must jump to trigger an immediate path
 ## replan, bypassing the PATH_UPDATE_INTERVAL cooldown.
 const PATH_SIGNIFICANT_MOVE: float = 1000.0
@@ -241,6 +241,9 @@ func _deferred_init() -> void:
 # ===========================================================================
 # MAIN LOOP
 # ===========================================================================
+static var perf_dict: Dictionary = {}
+static var perf_frame: int = 0
+
 
 func _physics_process(delta: float) -> void:
 	if _ship == null or movement == null or navigator == null:
@@ -1283,6 +1286,23 @@ func _emit_debug_draws() -> void:
 		var label_text = "\n".join(lines)
 		if not label_text.is_empty():
 			Debug.draw_label(_ship.global_position + Vector3(-100, 100, 0), label_text)
+
+	# --- r) Danger center (red circle + arrow + spotted/unspotted label) ---
+	if behavior != null:
+		var spotted_dc: Vector3 = behavior._get_spotted_danger_center()
+		var danger_dc: Vector3 = spotted_dc if spotted_dc != Vector3.ZERO \
+				else behavior._get_danger_center()
+		if danger_dc != Vector3.ZERO:
+			var dc_pos := Vector3(danger_dc.x, 10.0, danger_dc.z)
+			var to_dc: Vector3 = danger_dc - ship_pos
+			to_dc.y = 0.0
+			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
+			Debug.draw_arrow(
+					Vector3(ship_pos.x, 10.0, ship_pos.z),
+					to_dc.normalized(), to_dc.length(), Color.RED, 40.0)
+			var src_label: String = "spotted" if spotted_dc != Vector3.ZERO else "cluster"
+			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
+					"Danger [%s]" % src_label, Color.RED)
 
 
 ## Sample SDF tiles near the ship and emit draw_square commands for each.

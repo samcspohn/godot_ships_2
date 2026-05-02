@@ -159,17 +159,20 @@ func _guns_aimed_toward_broadside(guns: Array, ship_heading: float, threat_beari
 
 
 ## Find the ship heading (world-space) at which all guns can bear on the threat,
-## choosing the one closest to `preferred_heading`.
+## choosing the one that requires the least total turret traversal from their
+## current positions (i.e. favours the side the guns are already aimed toward).
 ##
 ## Approach: for each candidate ship heading we check whether every turret's
 ## firing arc (in world space) contains the threat bearing.  We sample headings
-## around the full circle and return the valid one nearest to the preferred
-## heading.  If no heading allows all guns, we fall back to the heading that
-## maximises the number of guns that can fire.
+## around the full circle and score each valid heading by the sum of traversal
+## each gun must still rotate to aim at the threat.  Ties are broken by
+## proximity to `preferred_heading`.  If no heading allows all guns, we fall
+## back to the heading that maximises the number of guns that can fire.
 func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_heading: float) -> float:
 	var best_heading: float = preferred_heading
 	var best_diff: float = PI * 2.0
 	var best_gun_count: int = -1
+	var best_traversal_cost: float = INF
 
 	# We want to check: "if the ship were facing `candidate_heading`, how many
 	# guns could bear on `threat_bearing`?"
@@ -186,17 +189,43 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 		var candidate: float = -PI + i * SAMPLE_STEP  # sample -PI .. +PI
 		var guns_bearing: int = _count_guns_bearing(guns, candidate, threat_bearing)
 
+		if guns_bearing < best_gun_count:
+			continue
+
+		# Primary tiebreaker: prefer the heading the guns are already traversed
+		# toward — measured as total local rotation each bearing gun still needs.
+		var traversal_cost: float = _total_traversal_cost(guns, candidate, threat_bearing)
 		var diff: float = absf(angle_difference(preferred_heading, candidate))
 
-		if guns_bearing > best_gun_count or (guns_bearing == best_gun_count and diff < best_diff):
+		var is_better: bool = (guns_bearing > best_gun_count
+			or (guns_bearing == best_gun_count and traversal_cost < best_traversal_cost)
+			or (guns_bearing == best_gun_count and traversal_cost == best_traversal_cost and diff < best_diff))
+		if is_better:
 			best_gun_count = guns_bearing
+			best_traversal_cost = traversal_cost
 			best_diff = diff
 			best_heading = candidate
 
 	# If we found a heading where ALL guns fire, great.
 	# Otherwise we still return the best we found (maximises gun count while
-	# being close to preferred heading).
+	# preferring the side guns are already on).
 	return best_heading
+
+
+## Sum the absolute local traversal each *bearing* gun must still rotate to
+## aim at the threat when the ship faces `ship_heading`.  Lower = guns are
+## already closer to the correct side, so this heading should be preferred.
+func _total_traversal_cost(guns: Array, ship_heading: float, threat_bearing: float) -> float:
+	var total: float = 0.0
+	for gun in guns:
+		if not _can_gun_bear(gun, ship_heading, threat_bearing):
+			continue
+		# Local angle the gun must point to face the threat from this heading.
+		var needed_local: float = threat_bearing - ship_heading - gun.base_rotation
+		# Normalise to (-PI, PI] so angle_difference arithmetic is consistent.
+		needed_local = atan2(sin(needed_local), cos(needed_local))
+		total += absf(angle_difference(gun.rotation.y, needed_local))
+	return total
 
 
 ## Count how many guns can bear on `threat_bearing` if the ship were facing

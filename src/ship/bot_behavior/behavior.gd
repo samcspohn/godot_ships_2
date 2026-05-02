@@ -58,6 +58,14 @@ var _active_skill_name: StringName = &""
 
 var _fwd = null
 
+# Per-frame result caches — cleared automatically on frame change
+var _danger_center_cache: Vector3 = Vector3.ZERO
+var _danger_center_frame: int = -1
+var _spotted_danger_center_cache: Vector3 = Vector3.ZERO
+var _spotted_danger_center_frame: int = -1
+var _threat_score_cache: float = 0.0
+var _threat_score_frame: int = -1
+
 ## Set to true by each ship class in get_nav_intent when the ship wants the
 ## bot controller to route around enemy detection zones during transit.
 ## Reset to false at the start of every get_nav_intent call so it is always
@@ -143,8 +151,8 @@ func get_cover_search_params() -> Dictionary:
 	"""Override to customize cover position search tuning."""
 	return {
 		angle_step = deg_to_rad(10.0),
-		angle_half_span = PI / 3.0,
-		los_clearance = -50.0,
+		angle_half_span = PI / 2.0,
+		los_clearance = -75.0,
 	}
 
 func get_hunting_params() -> Dictionary:
@@ -650,113 +658,101 @@ func _get_danger_center() -> Vector3:
 	"""Calculate threat-weighted center of known enemies.
 	Spotted enemies are weighted much more heavily than stale last-known
 	positions so that unspotted ghosts don't pull ships away from the fight."""
+	var frame := Engine.get_physics_frames()
+	if frame == _danger_center_frame:
+		return _danger_center_cache
+	var result := Vector3.ZERO
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-	if server_node == null:
-		return Vector3.ZERO
-
-	# If we have spotted enemies, strongly prefer using their positions.
-	# Only fall back to full cluster data (which includes stale unspotted
-	# positions) when nothing is currently visible.
-	var spotted = server_node.get_valid_targets(_ship.team.team_id)
-	var has_spotted = spotted.size() > 0
-
-	var enemy_clusters = server_node.get_enemy_clusters(_ship.team.team_id)
-
-	if enemy_clusters.is_empty():
-		# No cluster data at all — try the known-enemy average as last resort
-		return server_node.get_enemy_avg_position(_ship.team.team_id)
-
-	var weighted_pos = Vector3.ZERO
-	var total_weight = 0.0
-
-	for cluster in enemy_clusters:
-		var cluster_pos: Vector3 = cluster.center
-		var to_cluster = cluster_pos - _ship.global_position
-		var dist = to_cluster.length()
-
-		if dist < 1.0:
-			dist = 1.0
-
-		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
-
-		var cluster_threat = 0.0
-		var cluster_has_spotted = false
-		for ship in cluster.ships:
-			if ship != null and is_instance_valid(ship):
-				cluster_threat += get_threat_class_weight(ship.ship_class)
-				# Check if this ship is currently spotted (in valid_targets)
-				if spotted.has(ship):
-					cluster_has_spotted = true
-			else:
-				cluster_threat += 1.0
-
-		# De-weight clusters composed entirely of stale/unspotted positions
-		# when we DO have spotted enemies elsewhere.  This prevents ghost
-		# clusters from pulling the danger center (and therefore engagement
-		# range calculations) away from the actual fight.
-		var freshness_factor = 1.0
-		if has_spotted and not cluster_has_spotted:
-			freshness_factor = 0.1  # 10% weight for purely stale clusters
-
-		var weight = base_weight * max(cluster_threat, 1.0) * freshness_factor
-		weighted_pos += cluster_pos * weight
-		total_weight += weight
-
-	#if total_weight < 0.001:
-		#return Vector3.ZERO
-
-	return weighted_pos / total_weight
+	if server_node != null:
+		var spotted = server_node.get_valid_targets(_ship.team.team_id)
+		var has_spotted = spotted.size() > 0
+		var enemy_clusters = server_node.get_enemy_clusters(_ship.team.team_id)
+		if enemy_clusters.is_empty():
+			result = server_node.get_enemy_avg_position(_ship.team.team_id)
+		else:
+			var weighted_pos = Vector3.ZERO
+			var total_weight = 0.0
+			for cluster in enemy_clusters:
+				var cluster_pos: Vector3 = cluster.center
+				var to_cluster = cluster_pos - _ship.global_position
+				var dist = to_cluster.length()
+				if dist < 1.0:
+					dist = 1.0
+				var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
+				var cluster_threat = 0.0
+				var cluster_has_spotted = false
+				for ship in cluster.ships:
+					if ship != null and is_instance_valid(ship):
+						cluster_threat += get_threat_class_weight(ship.ship_class)
+						if spotted.has(ship):
+							cluster_has_spotted = true
+					else:
+						cluster_threat += 1.0
+				var freshness_factor = 1.0
+				if has_spotted and not cluster_has_spotted:
+					freshness_factor = 0.1
+				var weight = base_weight * max(cluster_threat, 1.0) * freshness_factor
+				weighted_pos += cluster_pos * weight
+				total_weight += weight
+			if total_weight >= 0.001:
+				result = weighted_pos / total_weight
+			if is_nan(result.x) or is_nan(result.y) or is_nan(result.z):
+				print("NaN detected in danger center calculation! Resetting to zero.")
+				result = Vector3.ZERO
+	_danger_center_cache = result
+	_danger_center_frame = frame
+	return result
 
 func _get_spotted_danger_center() -> Vector3:
 	"""Calculate threat-weighted center of currently spotted enemies.
 	unspotted enemies are included at very low weight
 	Returns Vector3.ZERO if no enemies are spotted.
 	Use this when positioning must be based on confirmed, live threats."""
+	var frame := Engine.get_physics_frames()
+	if frame == _spotted_danger_center_frame:
+		return _spotted_danger_center_cache
+	var result := Vector3.ZERO
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-	if server_node == null:
-		return Vector3.ZERO
-
-	var spotted = server_node.get_valid_targets(_ship.team.team_id)
-	var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
-	if spotted.size() == 0:
-		return Vector3.ZERO
-
-	var weighted_pos = Vector3.ZERO
-	var total_weight = 0.0
-
-	for ship in spotted:
-		if ship == null or not is_instance_valid(ship):
-			continue
-		var to_ship = ship.global_position - _ship.global_position
-		var dist = to_ship.length()
-		if dist < 1.0:
-			dist = 1.0
-
-		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
-		var threat = get_threat_class_weight(ship.ship_class)
-		var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
-		if dist > ship_range:
-			threat *= 0.1  # De-weight spotted enemies that are out of their effective range
-		var weight = base_weight * threat
-		weighted_pos += ship.global_position * weight
-		total_weight += weight
-
-	for ship in unspotted.keys():
-		var last_pos: Vector3 = unspotted[ship]
-		var to_ship = last_pos - _ship.global_position
-		var dist = to_ship.length()
-		if dist < 1.0:
-			dist = 1.0
-
-		var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
-		var threat = get_threat_class_weight(ship.ship_class) if is_instance_valid(ship) else 1.0
-		var weight = base_weight * threat * 0.03  # De-weight unspotted positions
-		weighted_pos += last_pos * weight
-		total_weight += weight
-	#if total_weight < 0.001:
-		#return Vector3.ZERO
-
-	return weighted_pos / total_weight
+	if server_node != null:
+		var spotted = server_node.get_valid_targets(_ship.team.team_id)
+		var unspotted = server_node.get_unspotted_enemies(_ship.team.team_id)
+		var weighted_pos = Vector3.ZERO
+		var total_weight = 0.0
+		# if spotted.size() > 0:
+		for ship in spotted:
+			if ship == null or not is_instance_valid(ship):
+				continue
+			var to_ship = ship.global_position - _ship.global_position
+			var dist = to_ship.length()
+			if dist < 1.0:
+				dist = 1.0
+			var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
+			var threat = get_threat_class_weight(ship.ship_class)
+			var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
+			if dist > ship_range:
+				threat *= 0.1
+			var weight = base_weight * threat
+			weighted_pos += ship.global_position * weight
+			total_weight += weight
+		for ship in unspotted.keys():
+			var last_pos: Vector3 = unspotted[ship]
+			var to_ship = last_pos - _ship.global_position
+			var dist = to_ship.length()
+			if dist < 1.0:
+				dist = 1.0
+			var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
+			var threat = get_threat_class_weight(ship.ship_class) if is_instance_valid(ship) else 1.0
+			var weight = base_weight * threat * 0.5
+			weighted_pos += last_pos * weight
+			total_weight += weight
+		if total_weight >= 0.001:
+			result = weighted_pos / total_weight
+		if is_nan(result.x) or is_nan(result.y) or is_nan(result.z):
+			print("NaN detected in danger center calculation! Resetting to zero.")
+			result = Vector3.ZERO
+	_spotted_danger_center_cache = result
+	_spotted_danger_center_frame = frame
+	return result
 
 func _get_nearest_enemy() -> Dictionary:
 	"""Find the nearest known enemy. Returns {position, distance, ship} or empty dict."""
@@ -789,6 +785,26 @@ func _get_nearest_enemy() -> Dictionary:
 		return {}
 
 	return {position = nearest_pos, distance = nearest_dist, ship = nearest_ship}
+
+func _nearest_unspotted_info(server: GameServer) -> Dictionary:
+	"""Returns last-known position info for the nearest unspotted enemy.
+	Keys: ship, position, distance.  Returns empty dict if none exists."""
+	var unspotted := server.get_unspotted_enemies(_ship.team.team_id)
+	var best_ship = null
+	var best_pos  := Vector3.ZERO
+	var best_dist := INF
+	for s in unspotted.keys():
+		if not is_instance_valid(s):
+			continue
+		var last_pos: Vector3 = unspotted[s]
+		var d := _ship.global_position.distance_to(last_pos)
+		if d < best_dist:
+			best_dist = d
+			best_pos  = last_pos
+			best_ship = s
+	if best_ship == null:
+		return {}
+	return {ship = best_ship, position = best_pos, distance = best_dist}
 
 func _initialize_spawn_cache() -> void:
 	"""Initialize spawn position cache for flanking detection."""
@@ -1524,11 +1540,11 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	if candidates.is_empty():
 		return {}
 
-	# --- Phase 2: Optionally sort candidates by proximity to ship ---
-	if sort_by_proximity:
-		candidates.sort_custom(func(a: Vector3, b: Vector3) -> bool:
-			return a.distance_to(my_pos) < b.distance_to(my_pos)
-		)
+	# --- Phase 2: sort candidates by proximity to ship ---
+	# if sort_by_proximity:
+	candidates.sort_custom(func(a: Vector3, b: Vector3) -> bool:
+		return a.distance_to(my_pos) < b.distance_to(my_pos)
+	)
 
 	# --- Phase 3: Evaluate candidates in order ---
 	var best_concealed_fallback: Vector3 = Vector3.ZERO
@@ -1643,6 +1659,9 @@ func get_threat_score(server: GameServer) -> float:
 	##   enemy_hp / my_hp × range_pressure × class_w
 	## Multiple enemies compound multiplicatively via raw_threat *= (1 − this_threat).
 	## Subclasses override get_threat_class_weight() to tune per-class fear.
+	var frame := Engine.get_physics_frames()
+	if frame == _threat_score_frame:
+		return _threat_score_cache
 	var my_hp  = _ship.health_controller.current_hp
 	var max_hp = _ship.health_controller.max_hp
 	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
@@ -1652,8 +1671,9 @@ func get_threat_score(server: GameServer) -> float:
 	var unspotted = server.get_unspotted_enemies(_ship.team.team_id)
 	var enemies = spotted + unspotted.keys()
 	if enemies.is_empty():
-		# No visible enemies — only own HP loss contributes a small residual threat
-		return hp_pressure * 0.3
+		_threat_score_cache = hp_pressure * 0.3
+		_threat_score_frame = frame
+		return _threat_score_cache
 
 	var raw_threat: float = 1.0
 	for enemy in enemies:
@@ -1692,7 +1712,9 @@ func get_threat_score(server: GameServer) -> float:
 	# # Normalize: 5 threat-weight units ≈ maximum threat
 	# return clampf(raw_threat / 5.0, 0.0, 1.0)
 	# raw_threat *= hp_ratio
-	return clampf(1 - raw_threat, 0.0, 1.0)
+	_threat_score_cache = clampf(1 - raw_threat, 0.0, 1.0)
+	_threat_score_frame = frame
+	return _threat_score_cache
 
 
 var original_dest = null

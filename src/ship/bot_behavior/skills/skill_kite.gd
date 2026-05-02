@@ -22,6 +22,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var heading = SkillAngle.calc_heading(away_bearing, ctx, params)
 
+
+	# var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
+	if absf(angle_difference(heading, danger_bearing + PI)) > PI * 0.5:
+		heading = wrapf(heading + PI, -PI, PI)
+
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
 	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
 	dest.y = 0.0

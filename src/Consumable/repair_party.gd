@@ -21,9 +21,11 @@ func _init():
 	# ship.add_child(heal_effect)
 	# ship.add_dynamic_mod(effect)
 
-func _proc(delta, ship):
-	var heal = ship.health_controller.max_hp * heal_percent / duration * delta
-	ship.health_controller.heal(heal)
+func _proc(_delta, ship):
+	@warning_ignore("integer_division")
+	if (Engine.get_physics_frames() + Engine.physics_ticks_per_second / 2) % Engine.physics_ticks_per_second == 0: # tick every second
+		var heal = ship.health_controller.max_hp * heal_percent / duration
+		ship.health_controller.heal(heal)
 
 # func remove_effect(ship: Ship) -> void:
 # 	# ship.remove_dynamic_mod(effect)

@@ -17,85 +17,103 @@ var _last_valid_cover_pos_set: bool = false
 
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
-	var ship = ctx.ship
-	var target = ctx.target
-	var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)
-	var recalc_cooldown = params.get("recalc_cooldown_ms", 3000)
+	# var ship = ctx.ship
+	# var target = ctx.target
+	# var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)
+	# var recalc_cooldown = params.get("recalc_cooldown_ms", 3000)
 
-	# Find initial island if we don't have one yet
-	if not _nav_destination_valid:
-		var island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
-		if island.is_empty():
-			return null  # No cover available — caller falls back
-		_set_island(island)
+	# # Find initial island if we don't have one yet
+	# if not _nav_destination_valid:
+	# 	var island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
+	# 	if island.is_empty():
+	# 		return null  # No cover available — caller falls back
+	# 	_set_island(island)
 
-	# Periodically recalculate cover position
-	var now_ms = Time.get_ticks_msec()
-	if now_ms - _cover_recalc_ms >= recalc_cooldown:
-		_cover_recalc_ms = now_ms
-		var island: Dictionary
-		if _target_island_id >= 0:
-			# Already in cover: prefer staying on the same island, only move if
-			# it can no longer provide a shootable position.
-			island = _recalc_same_island(ctx, target)
-			if island.is_empty():
-				# Committed island can no longer provide cover while arrived —
-				# clear commitment so _get_cover_position skips it and picks
-				# the next viable candidate.
-				_target_island_id = -1
-				island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
-		else:
-			# Not yet arrived — _get_cover_position will honour the commitment
-			# internally: try the cached island first, skip it on failure.
-			island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
+	# # Periodically recalculate cover position
+	# var now_ms = Time.get_ticks_msec()
+	# if now_ms - _cover_recalc_ms >= recalc_cooldown:
+	# 	_cover_recalc_ms = now_ms
+	# 	var island: Dictionary
+	# 	if _target_island_id >= 0:
+	# 		# Already in cover: prefer staying on the same island, only move if
+	# 		# it can no longer provide a shootable position.
+	# 		island = _recalc_same_island(ctx, target)
+	# 		if island.is_empty():
+	# 			# Committed island can no longer provide cover while arrived —
+	# 			# clear commitment so _get_cover_position skips it and picks
+	# 			# the next viable candidate.
+	# 			_target_island_id = -1
+	# 			island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
+	# 	else:
+	# 		# Not yet arrived — _get_cover_position will honour the commitment
+	# 		# internally: try the cached island first, skip it on failure.
+	# 		island = _get_cover_position(ctx, desired_range, target, prioritize_cover)
 
-		if not island.is_empty():
-			_set_island(island)
-		elif not _nav_destination_valid:
-			return null  # No cover available and no previous destination to fall back on
+	# 	if not island.is_empty():
+	# 		_set_island(island)
+	# 	elif not _nav_destination_valid:
+	# 		return null  # No cover available and no previous destination to fall back on
 
-	# Approach / station-keep
-	var dist = ship.global_position.distance_to(_nav_destination)
-	_dist_to_dest = dist
-	var clearance = ctx.behavior._get_ship_clearance()
-	var arrival_radius = clearance * 2.0
-	var exit_radius = clearance * 3.5
-	_arrived = dist < exit_radius if _arrived else dist < arrival_radius
+	# # Approach / station-keep
+	# var dist = ship.global_position.distance_to(_nav_destination)
+	# _dist_to_dest = dist
+	# var clearance = ctx.behavior._get_ship_clearance()
+	# var arrival_radius = clearance * 2.0
+	# var exit_radius = clearance * 3.5
+	# _arrived = dist < exit_radius if _arrived else dist < arrival_radius
 
+	var d = _get_cover_position(ctx)
+	if d.is_empty():
+		return null
+	_set_island(d)
+	# "id": isl["id"],
+	# "center": isl_pos,
+	# "radius": isl_radius,
+	# "dest": dest,
+	# "can_shoot": true,
 	var heading = ctx.behavior._tangential_heading(_target_island_pos, _nav_destination)
 
-	# Check shootability (shell arc over terrain) from current or destination position
-	can_shoot = false
-	var check_pos = ship.global_position if _arrived else _nav_destination
-	var shell_params = ship.artillery_controller.get_shell_params()
-	var gun_range = ship.artillery_controller.get_params()._range
-	if shell_params != null:
-		for enemy in ctx.server.get_valid_targets(ship.team.team_id):
-			if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
-				continue
-			var tgt = enemy.global_position + enemy.global_basis * ctx.behavior.target_aim_offset(enemy)
-			if check_pos.distance_to(tgt) > gun_range:
-				continue
-			var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(check_pos, tgt, shell_params)
-			if sol[0] == null:
-				continue
-			var result = Gun.sim_can_shoot_over_terrain_static(check_pos, sol[0], sol[1], shell_params, ship)
-			if result.can_shoot_over_terrain:
-				can_shoot = true
-				break
+	return NavIntent.create(d["dest"], heading)
 
-	var broadside_bias: float = params.get("broadside_bias", 0.4)
 
-	if _arrived:
-		var arrived_intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
-		arrived_intent.near_terrain = true
-		arrived_intent.skip_threat_adjustment = true
-		return _broadside.apply(arrived_intent, ctx, {"oscillation_bias": broadside_bias})
+	# var heading = ctx.behavior._tangential_heading(_target_island_pos, _nav_destination)
 
-	var intent = NavIntent.create(_nav_destination, heading)
-	intent.near_terrain = true
-	intent.skip_threat_adjustment = true
-	return _broadside.apply(intent, ctx, {"oscillation_bias": broadside_bias})
+	# # Check shootability (shell arc over terrain) from current or destination position
+	# can_shoot = false
+	# var check_pos = ship.global_position if _arrived else _nav_destination
+	# var shell_params = ship.artillery_controller.get_shell_params()
+	# var gun_range = ship.artillery_controller.get_params()._range
+	# if shell_params != null:
+	# 	for enemy in ctx.server.get_valid_targets(ship.team.team_id):
+	# 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
+	# 			continue
+	# 		var tgt = enemy.global_position + enemy.global_basis * ctx.behavior.target_aim_offset(enemy)
+	# 		if check_pos.distance_to(tgt) > gun_range:
+	# 			continue
+	# 		var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(check_pos, tgt, shell_params)
+	# 		if sol[0] == null:
+	# 			continue
+	# 		var result = Gun.sim_can_shoot_over_terrain_static(check_pos, sol[0], sol[1], shell_params, ship)
+	# 		if result.can_shoot_over_terrain:
+	# 			can_shoot = true
+	# 			break
+
+	# var broadside_bias: float = params.get("broadside_bias", 0.4)
+
+	# if _arrived:
+	# 	var arrived_intent = NavIntent.create(_nav_destination, heading, arrival_radius * 0.5)
+	# 	arrived_intent.near_terrain = true
+	# 	arrived_intent.skip_threat_adjustment = true
+	# 	return _broadside.apply(arrived_intent, ctx, {"oscillation_bias": broadside_bias})
+
+	# var intent = NavIntent.create(_nav_destination, heading)
+	# intent.near_terrain = true
+	# intent.skip_threat_adjustment = true
+	# return _broadside.apply(intent, ctx, {"oscillation_bias": broadside_bias})
+	# _get_cover_position(ctx)
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +213,9 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 		"can_shoot": result_can_shoot,
 	}
 
+var curr_dest_island_id: int = -1
+var curr_dest_island_pos: Vector3 = Vector3.ZERO
+var curr_heading: float = 0.0
 
 # ---------------------------------------------------------------------------
 # Search all islands for the best cover position.
@@ -210,7 +231,7 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 # In both modes islands are always evaluated nearest-first so ties naturally
 # resolve toward the ship's current position.
 # ---------------------------------------------------------------------------
-func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship, prioritize_cover: bool = true) -> Dictionary:
+func _get_cover_position(ctx: SkillContext) -> Dictionary:
 	if not NavigationMapManager.is_map_ready():
 		return {}
 
@@ -221,7 +242,7 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 	var ship = ctx.ship
 	var my_pos = ship.global_position
 	var gun_range = ship.artillery_controller.get_params()._range
-	var min_safe_range = gun_range * 0.35
+	# var min_safe_range = gun_range * 0.35
 
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	if ctx.server == null:
@@ -231,6 +252,42 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 
 	ctx.behavior._ensure_safe_dir(ship, ctx.server)
 
+	# ── No-enemy shortcut ────────────────────────────────────────────────────
+	# When there are no known threats or valid targets, skip the full cover
+	# search.  Assume the threat is at the world origin (Vector3.ZERO) and
+	# return the point on the nearest island that lies on the far side from
+	# that origin.  Honour any existing island commitment to avoid thrashing.
+	if threats.is_empty() and targets.is_empty():
+		var shortcut_isl: Dictionary = {}
+		var shortcut_dist: float = INF
+		for isl in islands:
+			var c2d: Vector2 = isl["center"]
+			var isl_pos := Vector3(c2d.x, 0.0, c2d.y)
+			# If we already have a committed island, prefer it unconditionally.
+			if _target_island_id >= 0 and isl["id"] == _target_island_id:
+				shortcut_isl = isl
+				break
+			var d: float = my_pos.distance_to(isl_pos) - isl["radius"]
+			if d < shortcut_dist:
+				shortcut_dist = d
+				shortcut_isl = isl
+		if shortcut_isl.is_empty():
+			return {}
+		var sc2d: Vector2 = shortcut_isl["center"]
+		var sc_pos := Vector3(sc2d.x, 0.0, sc2d.y)
+		var sc_radius: float = shortcut_isl["radius"]
+		# Direction from assumed threat (origin) toward the island — place cover
+		# on the far side so the island body sits between us and the threat.
+		var away_dir := sc_pos.normalized() if sc_pos.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
+		var dest := sc_pos + away_dir * sc_radius * 0.9
+		return {
+			"id": shortcut_isl["id"],
+			"center": sc_pos,
+			"radius": sc_radius,
+			"dest": dest,
+			"can_shoot": false,
+		}
+
 	# Always sort islands by proximity — nearest edge of island to ship wins ties
 	islands.sort_custom(func(a, b):
 		var ca = Vector3(a["center"].x, 0.0, a["center"].y)
@@ -238,12 +295,12 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 		return my_pos.distance_to(ca) - a["radius"] < my_pos.distance_to(cb) - b["radius"]
 	)
 
-	var best_id: int = -1
-	var best_score: float = INF
-	var best_pos: Vector3 = Vector3.ZERO
-	var best_radius: float = 0.0
-	var best_dest: Vector3 = Vector3.ZERO
-	var best_can_shoot: bool = false
+	# var best_id: int = -1
+	# var best_score: float = INF
+	# var best_pos: Vector3 = Vector3.ZERO
+	# var best_radius: float = 0.0
+	# var best_dest: Vector3 = Vector3.ZERO
+	# var best_can_shoot: bool = false
 
 	# ── Commitment: try the cached island first ───────────────────────────
 	# If we already have a committed island, evaluate it before the sorted
@@ -251,37 +308,37 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 	# honouring the commitment. If it fails we record its id so the main
 	# loop can skip it and find the next viable candidate.
 	var skip_committed_id: int = -1
-	if _target_island_id >= 0:
-		for isl in islands:
-			if isl["id"] != _target_island_id:
-				continue
-			var c2d: Vector2 = isl["center"]
-			var c_pos = Vector3(c2d.x, 0.0, c2d.y)
-			var c_rad: float = isl["radius"]
-			var c_hide_h: float
-			if threats.size() > 0:
-				c_hide_h = ctx.behavior._compute_hide_heading(c_pos, threats)
-			else:
-				c_hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
-			var c_result = ctx.behavior._find_cover_position_on_island(
-				c_pos, c_rad, c_hide_h, threats, targets, true
-			)
-			# Stay on committed island when:
-			#   • it can still conceal us AND we can shoot, OR
-			#   • it can still conceal us AND no enemies are visible (can't
-			#     assess shootability — don't thrash to a different island).
-			if not c_result.is_empty() and (targets.is_empty() or c_result["can_shoot"]):
-				return {
-					"id": isl["id"],
-					"center": c_pos,
-					"radius": c_rad,
-					"dest": c_result["pos"],
-					"can_shoot": c_result.get("can_shoot", false),
-				}
-			# Committed island can no longer provide cover — exclude it from
-			# the upcoming search so we pick the next best candidate.
-			skip_committed_id = _target_island_id
-			break
+	# if _target_island_id >= 0:
+	# 	for isl in islands:
+	# 		if isl["id"] != _target_island_id:
+	# 			continue
+	# 		var c2d: Vector2 = isl["center"]
+	# 		var c_pos = Vector3(c2d.x, 0.0, c2d.y)
+	# 		var c_rad: float = isl["radius"]
+	# 		var c_hide_h: float
+	# 		if threats.size() > 0:
+	# 			c_hide_h = ctx.behavior._compute_hide_heading(c_pos, threats)
+	# 		else:
+	# 			c_hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
+	# 		var c_result = ctx.behavior._find_cover_position_on_island(
+	# 			c_pos, c_rad, c_hide_h, threats, targets, true
+	# 		)
+	# 		# Stay on committed island when:
+	# 		#   • it can still conceal us AND we can shoot, OR
+	# 		#   • it can still conceal us AND no enemies are visible (can't
+	# 		#     assess shootability — don't thrash to a different island).
+	# 		if not c_result.is_empty() and (targets.is_empty() or c_result["can_shoot"]):
+	# 			return {
+	# 				"id": isl["id"],
+	# 				"center": c_pos,
+	# 				"radius": c_rad,
+	# 				"dest": c_result["pos"],
+	# 				"can_shoot": c_result.get("can_shoot", false),
+	# 			}
+	# 		# Committed island can no longer provide cover — exclude it from
+	# 		# the upcoming search so we pick the next best candidate.
+	# 		skip_committed_id = _target_island_id
+	# 		break
 
 	for isl in islands:
 		if isl["id"] == skip_committed_id:
@@ -306,56 +363,56 @@ func _get_cover_position(ctx: SkillContext, desired_range: float, _target: Ship,
 
 		var dest: Vector3 = cover_result["pos"]
 
-		if prioritize_cover:
-			# Nearest viable island — return immediately (list is already sorted)
-			return {
-				"id": isl["id"],
-				"center": isl_pos,
-				"radius": isl_radius,
-				"dest": dest,
-				"can_shoot": true,
-			}
+		# if prioritize_cover:
+		# Nearest viable island — return immediately (list is already sorted)
+		return {
+			"id": isl["id"],
+			"center": isl_pos,
+			"radius": isl_radius,
+			"dest": dest,
+			"can_shoot": true,
+		}
 
-		# ── Range-optimising mode ────────────────────────────────────────────
-		# Find the nearest non-DD enemy cluster to score engagement distance.
-		var nearest_cluster_dist = INF
-		var nearest_cluster_valid = false
-		for cluster in enemy_clusters:
-			var d = dest.distance_to(cluster.center)
-			if d < nearest_cluster_dist:
-				for cluster_ship: Ship in cluster.ships:
-					if cluster_ship.ship_class != Ship.ShipClass.DD:
-						nearest_cluster_dist = d
-						nearest_cluster_valid = true
-						break
+	# 	# ── Range-optimising mode ────────────────────────────────────────────
+	# 	# Find the nearest non-DD enemy cluster to score engagement distance.
+	# 	var nearest_cluster_dist = INF
+	# 	var nearest_cluster_valid = false
+	# 	for cluster in enemy_clusters:
+	# 		var d = dest.distance_to(cluster.center)
+	# 		if d < nearest_cluster_dist:
+	# 			for cluster_ship: Ship in cluster.ships:
+	# 				if cluster_ship.ship_class != Ship.ShipClass.DD:
+	# 					nearest_cluster_dist = d
+	# 					nearest_cluster_valid = true
+	# 					break
 
-		var score: float
-		if nearest_cluster_valid:
-			if nearest_cluster_dist > gun_range or nearest_cluster_dist < min_safe_range:
-				continue
-			score = absf(1.0 - nearest_cluster_dist / desired_range)
-		else:
-			# No cluster data — fall back to proximity score
-			score = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
+	# 	var score: float
+	# 	if nearest_cluster_valid:
+	# 		if nearest_cluster_dist > gun_range or nearest_cluster_dist < min_safe_range:
+	# 			continue
+	# 		score = absf(1.0 - nearest_cluster_dist / desired_range)
+	# 	else:
+	# 		# No cluster data — fall back to proximity score
+	# 		score = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
 
-		if score < best_score:
-			best_score = score
-			best_id = isl["id"]
-			best_pos = isl_pos
-			best_radius = isl_radius
-			best_dest = dest
-			best_can_shoot = true
+	# 	if score < best_score:
+	# 		best_score = score
+	# 		best_id = isl["id"]
+	# 		best_pos = isl_pos
+	# 		best_radius = isl_radius
+	# 		best_dest = dest
+	# 		best_can_shoot = true
 
-	if best_id < 0:
-		return {}
+	# if best_id < 0:
+	return {}
 
-	return {
-		"id": best_id,
-		"center": best_pos,
-		"radius": best_radius,
-		"dest": best_dest,
-		"can_shoot": best_can_shoot,
-	}
+	# return {
+	# 	"id": best_id,
+	# 	"center": best_pos,
+	# 	"radius": best_radius,
+	# 	"dest": best_dest,
+	# 	"can_shoot": best_can_shoot,
+	# }
 
 
 func _set_island(island: Dictionary) -> void:
@@ -431,7 +488,7 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 		return true
 
 	var t = clampf((dist_to_cover - 750.0) / 4000.0, 0.0, 1.0)
-	var angle_tol = lerpf(deg_to_rad(65.0), deg_to_rad(20.0), t)
+	var angle_tol = lerpf(deg_to_rad(75.0), deg_to_rad(15.0), t)
 
 	var to_nearest = nearest.global_position - ship.global_position
 	to_nearest.y = 0.0
@@ -439,5 +496,7 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 	var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
 	var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
 	var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
+	if bearing_diff > PI / 2.0: # bearing is behind us
+		bearing_diff = PI - bearing_diff # convert to smaller angle on the other side
 
 	return bearing_diff <= angle_tol

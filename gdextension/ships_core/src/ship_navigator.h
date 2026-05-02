@@ -83,9 +83,6 @@ private:
 	// --- Replan trigger (event-driven, not timer-based) ---
 	bool replan_requested_;
 
-	// --- Constants ---
-	static constexpr float HEADING_TOLERANCE = 180.0 / 3.14159f;
-
 	// --- Steering output ---
 	float out_rudder;
 	int out_throttle;

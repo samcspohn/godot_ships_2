@@ -21,7 +21,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		heading = wrapf(heading + PI, -PI, PI)
 
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
+	var dest = ship.global_position + fwd * to_enemy.length()
 	dest.y = 0.0
-	dest = ctx.behavior._get_valid_nav_point(dest)
-	return NavIntent.create(dest, enemy_bearing)
+
+	# dest = ctx.behavior._get_valid_nav_point(dest)
+	return NavIntent.create(dest, heading)

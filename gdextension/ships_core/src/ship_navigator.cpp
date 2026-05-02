@@ -214,22 +214,11 @@ void ShipNavigator::set_state(
 
 void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance) {
 	Vector2 new_pos(p_target.x, p_target.z);
-	float dist_change = new_pos.distance_to(target.position);
-	bool position_changed = dist_change > params.turning_circle_radius * 0.5f;
-
-	// Detect heading change (> ~15°)
-	float heading_diff = std::abs(p_heading - target.heading);
-	if (heading_diff > Math_PI) heading_diff = Math_TAU - heading_diff;
-	bool heading_changed = heading_diff > HEADING_TOLERANCE;
-
 	target.position = new_pos;
 	target.heading = p_heading;
 	target.hold_radius = p_hold_radius;
 	target.heading_tolerance = p_heading_tolerance;
-
-	if (position_changed || heading_changed) {
-		replan_requested_ = true;
-	}
+	replan_requested_ = true;
 }
 
 void ShipNavigator::stop() {
