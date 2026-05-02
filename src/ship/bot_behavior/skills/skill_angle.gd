@@ -22,8 +22,8 @@ static func calc_heading(base_bearing: float, ctx: SkillContext, params: Diction
 	var ship = ctx.ship
 
 	var default_ranges = {
-		Ship.ShipClass.BB: Vector2(deg_to_rad(25), deg_to_rad(31)),
-		Ship.ShipClass.CA: Vector2(deg_to_rad(0), deg_to_rad(30)),
+		Ship.ShipClass.BB: Vector2(deg_to_rad(25), deg_to_rad(29)),
+		Ship.ShipClass.CA: Vector2(deg_to_rad(0), deg_to_rad(29)),
 		Ship.ShipClass.DD: Vector2(deg_to_rad(0), deg_to_rad(40)),
 	}
 	var ranges = params.get("angle_ranges", default_ranges)
@@ -32,7 +32,7 @@ static func calc_heading(base_bearing: float, ctx: SkillContext, params: Diction
 	var class_weights = {
 		Ship.ShipClass.BB: 3.0,
 		Ship.ShipClass.CA: 2.0,
-		Ship.ShipClass.DD: 1.0,
+		Ship.ShipClass.DD: 0.2,
 		Ship.ShipClass.CV: 0.5,
 	}
 
@@ -108,4 +108,3 @@ static func calc_heading(base_bearing: float, ctx: SkillContext, params: Diction
 		result = atan2(avg.x, avg.y)
 	_cache[key] = result
 	return result
-

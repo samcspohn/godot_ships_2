@@ -39,8 +39,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bot_id"), &ShipNavigator::get_bot_id);
 
 	// Navigation commands
-	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance"),
-		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f));
+	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance", "heading_weight"),
+		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f), DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("stop"), &ShipNavigator::stop);
 
 	ClassDB::bind_method(D_METHOD("set_grounded", "grounded"), &ShipNavigator::set_grounded);
@@ -212,12 +212,13 @@ void ShipNavigator::set_state(
 // Navigation commands
 // ============================================================================
 
-void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance) {
+void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance, float p_heading_weight) {
 	Vector2 new_pos(p_target.x, p_target.z);
 	target.position = new_pos;
 	target.heading = p_heading;
 	target.hold_radius = p_hold_radius;
 	target.heading_tolerance = p_heading_tolerance;
+	target.heading_weight = clamp_f(p_heading_weight, 0.0f, 1.0f);
 	replan_requested_ = true;
 }
 
@@ -795,6 +796,27 @@ void ShipNavigator::update_normal(float delta) {
 
 	// Resolve direction + magnitude into a throttle value for the rest of the pipeline
 	int desired_throttle = resolve_throttle(direction, desired_magnitude);
+
+	// --- 3.5. Heading weight: blend desired_rudder toward target heading ---
+	// When heading_weight > 0 the behavior wants the ship to orient at a specific
+	// angle (e.g. broadside) rather than simply navigate to the destination.
+	// Blending desired_rudder here shifts the candidate distribution in
+	// select_best_steering so arcs centered on the heading-pursuit rudder are
+	// evaluated first.  At weight = 1 we also ensure the ship keeps enough
+	// throttle to maintain steerage way.
+	if (target.heading_weight > 0.001f) {
+		bool reversing_now = (direction == DesiredDirection::BACKWARD);
+		float heading_rudder = compute_rudder_to_heading(target.heading, reversing_now);
+		desired_rudder = lerp_f(desired_rudder, heading_rudder, target.heading_weight);
+		if (target.heading_weight >= 0.999f) {
+			// Full heading pursuit — keep ship moving so the rudder has authority.
+			if (desired_magnitude < 2) {
+				desired_magnitude = 2;
+				direction = DesiredDirection::FORWARD;
+			}
+			desired_throttle = resolve_throttle(direction, desired_magnitude);
+		}
+	}
 
 	// --- 4. Scored candidate steering ---
 	// One unified function replaces terrain-aware rudder, avoidance blending,
@@ -1610,6 +1632,16 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	int best_throttle = desired_throttle;
 	bool any_collision = false;
 
+	// Heading-weight mode: pre-compute a virtual waypoint 10 km along target.heading.
+	// Each arc is scored by how quickly it aligns with this heading; the result is
+	// blended with the normal destination-arrival score proportionally to heading_weight.
+	bool has_heading_weight = (target.heading_weight > 0.001f);
+	Vector2 heading_vp;
+	if (has_heading_weight) {
+		float th = target.heading;
+		heading_vp = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
+	}
+
 
 
 	for (int i = 0; i < n_candidates; ++i) {
@@ -1708,6 +1740,38 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 					total_time += (final_h_err / Math_PI) * 60.0f;
 				}
 			}
+		}
+
+		// --- (b.5) Heading-weight blend ---
+		// When heading_weight > 0, score this arc by how quickly it aligns with
+		// target.heading and blend that score into total_time.  Terrain/obstacle
+		// penalties are applied AFTER the blend so they remain equally repulsive
+		// regardless of the navigation mode.
+		if (has_heading_weight) {
+			constexpr float ha_thresh = 0.087f;  // ~5° — mirrors heading_align_thresh above
+			float heading_align_time = std::numeric_limits<float>::infinity();
+			for (const auto &hpt : arc) {
+				Vector2 to_hvp = heading_vp - hpt.position;
+				if (to_hvp.length() > 1.0f) {
+					float desired_h = std::atan2(to_hvp.x, to_hvp.y);
+					if (std::abs(angle_difference(hpt.heading, desired_h)) < ha_thresh) {
+						heading_align_time = hpt.time;
+						break;
+					}
+				}
+			}
+			if (heading_align_time == std::numeric_limits<float>::infinity()) {
+				// Heading not achieved within arc — penalise by residual heading error.
+				Vector2 to_hvp = heading_vp - arc.back().position;
+				if (to_hvp.length() > 1.0f) {
+					float desired_h = std::atan2(to_hvp.x, to_hvp.y);
+					float h_err = std::abs(angle_difference(arc.back().heading, desired_h));
+					heading_align_time = arc.back().time + (h_err / Math_PI) * 60.0f;
+				} else {
+					heading_align_time = arc.back().time;
+				}
+			}
+			total_time = lerp_f(total_time, heading_align_time, target.heading_weight);
 		}
 
 		// --- (c) Obstacle check ---

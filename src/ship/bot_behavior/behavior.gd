@@ -726,7 +726,7 @@ func _get_spotted_danger_center() -> Vector3:
 			var dist = to_ship.length()
 			if dist < 1.0:
 				dist = 1.0
-			var base_weight = 1.0 / (dist * dist / 10000.0 + 1.0)
+			var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
 			var threat = get_threat_class_weight(ship.ship_class)
 			var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
 			if dist > ship_range:

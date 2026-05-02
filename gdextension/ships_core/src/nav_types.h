@@ -240,10 +240,11 @@ struct NavTarget {
 	float heading;            // Desired heading on arrival (radians)
 	float hold_radius;        // 0 = arrive and stop, >0 = station-keep within this radius
 	float heading_tolerance;  // Acceptable heading error to consider settled (radians)
+	float heading_weight;     // 0=normal nav to destination, 1=purely pursue this heading angle
 
 	NavTarget()
 		: position(Vector2()), heading(0.0f), hold_radius(0.0f),
-		  heading_tolerance(0.2618f) {}  // default ~15 degrees
+		  heading_tolerance(0.2618f), heading_weight(0.0f) {}
 };
 
 // --- Math utilities ---

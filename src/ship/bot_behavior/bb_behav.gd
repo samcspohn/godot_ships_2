@@ -256,7 +256,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"Push"
-	elif dist < 6000.0 and nearest != null:
+	elif dist < 6000.0 and nearest != null and !ship.visible_to_enemy:
 		# High-ish threat (>= 0.65) AND enemy is close — calculate the optimal
 		# presentation angle and choose angle skill (bow-in) or kite (stern-in).
 		var to_nearest = nearest.global_position - ship.global_position
@@ -324,7 +324,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_skill_camp.reset()
 
 	 # Post-process broadside when skill is not Hunt or SailForward
-	if _active_skill_name not in  [&"Hunt", &"Flank", &"SailForward", &"Chase", &"Push"]:
+	if _active_skill_name not in  [&"Hunt", &"Flank", &"SailForward", &"Chase"]:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	# Post-process spread when skill is not FindCover, Angle, or Kite

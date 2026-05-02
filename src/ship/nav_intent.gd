@@ -39,12 +39,20 @@ var skip_threat_adjustment: bool = false
 ## preventing the destination from going stale between behavior queries.
 var directional: bool = false
 
+## Heading weight: 0 = normal navigation to target_position with heading alignment on
+## arrival; 1 = navigator purely pursues target_heading — arc candidates are scored
+## by how quickly/closely they align with the desired heading rather than how close
+## they travel toward the destination.  Terrain avoidance is always active.
+## Intermediate values blend the two scoring modes proportionally.
+var heading_weight: float = 0.0
+
 
 ## Create a navigation intent
-static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618) -> NavIntent:
+static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618, hw: float = 0.0) -> NavIntent:
 	var i = NavIntent.new()
 	i.target_position = pos
 	i.target_heading = heading
 	i.hold_radius = radius
 	i.heading_tolerance = tol
+	i.heading_weight = hw
 	return i

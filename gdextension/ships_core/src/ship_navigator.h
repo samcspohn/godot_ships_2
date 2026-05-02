@@ -294,7 +294,7 @@ public:
 	void set_bot_id(int id);
 	int get_bot_id() const;
 
-	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f);
+	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f, float heading_weight = 0.0f);
 	void stop();
 
 	// --- Grounded state (from movement controller via BotControllerV4) ---
