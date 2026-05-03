@@ -262,7 +262,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		var to_nearest = nearest.global_position - ship.global_position
 		to_nearest.y = 0.0
 		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+		var optimal_heading = SkillAngle.calc_heading(ctx, {})
+		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
+		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
 		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
 		if bow_diff < PI * 0.5:
 			# Optimal heading is bow-in — push toward enemy
@@ -327,9 +329,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if _active_skill_name not in  [&"Hunt", &"Flank", &"SailForward", &"Chase"]:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
+	var _a = _probe_concealment(server)
 	# Post-process spread when skill is not FindCover, Angle, or Kite
 	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
-		intent = _skill_spread.apply(intent, ctx, {"spread_distance": params.spread_distance, "spread_multiplier": params.spread_multiplier})
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
 
 	return intent
 

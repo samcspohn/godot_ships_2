@@ -844,19 +844,65 @@ func update_ship_ui():
 				ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
 			if ship.team.team_id == camera_controller._ship.team.team_id: # friendly
-				var active_consumables = ship.consumable_manager.get_active_icons()
-				for consumable: TextureRect in ui.status.get_children():
-					if consumable.texture not in active_consumables:
-						consumable.queue_free()
-				for icon in active_consumables:
-					var already_has = false
-					for consumable: TextureRect in ui.status.get_children():
-						if consumable.texture == icon:
-							already_has = true
-					if not already_has:
-						var new_icon = friendly_consumable_status_texturerect.duplicate()
-						new_icon.texture = icon
-						ui.status.add_child(new_icon)
+				var alt_held: bool = Input.is_key_pressed(KEY_ALT)
+				var desired_mode: String = "alt" if alt_held else "normal"
+				var current_mode: String = ui.status.get_meta("consumable_mode", "")
+
+				# If the display mode changed, flush all children and wait one frame
+				if current_mode != desired_mode:
+					for child in ui.status.get_children():
+						child.queue_free()
+					ui.status.set_meta("consumable_mode", desired_mode)
+					# Shift the status bar up/down to fit the taller alt widgets
+					if desired_mode == "alt":
+						ui.status.offset_top = -52.0
+						ui.status.offset_bottom = -2.0
+					else:
+						ui.status.offset_top = -22.0
+						ui.status.offset_bottom = -2.0
+
+				elif desired_mode == "alt":
+					# ---- ALT mode: show all equipped consumables with count + timer ----
+					var consumables = ship.consumable_manager.equipped_consumables
+					var valid_children: Array = []
+					for _c in ui.status.get_children():
+						if not _c.is_queued_for_deletion():
+							valid_children.append(_c)
+
+					if valid_children.size() != consumables.size():
+						# Rebuild widgets when consumable count changes
+						for child in ui.status.get_children():
+							child.queue_free()
+						for item in consumables:
+							var widget = _create_alt_consumable_widget(item, ship.consumable_manager)
+							ui.status.add_child(widget)
+					else:
+						# Just refresh the labels each frame
+						for i in range(consumables.size()):
+							_update_alt_consumable_widget(valid_children[i], consumables[i], ship.consumable_manager)
+
+				else:
+					# ---- NORMAL mode: show only active-effect icons ----
+					var active_consumables = ship.consumable_manager.get_active_icons()
+					for consumable in ui.status.get_children():
+						if consumable.is_queued_for_deletion():
+							continue
+						var is_active_icon = (consumable is TextureRect) and active_consumables.has((consumable as TextureRect).texture)
+						if not is_active_icon:
+							consumable.queue_free()
+					for icon in active_consumables:
+						var already_has = false
+						for consumable in ui.status.get_children():
+							if consumable.is_queued_for_deletion():
+								continue
+							if consumable is TextureRect and (consumable as TextureRect).texture == icon:
+								already_has = true
+						if not already_has:
+							var new_icon = friendly_consumable_status_texturerect.duplicate()
+							new_icon.texture = icon
+							ui.status.add_child(new_icon)
+
+
 
 			if ship.team.team_id != camera_controller._ship.team.team_id:
 				# Update target indicator visibility
@@ -1434,6 +1480,81 @@ func update_consumable_ui():
 					cooldown_bar.visible = false
 			else:
 				button.disabled = true
+
+# ============================================================
+# region Friendly alt-consumable widget helpers
+# ============================================================
+
+## Build a VBoxContainer widget that shows one consumable's icon, stack count, and timer.
+func _create_alt_consumable_widget(item: ConsumableItem, manager: ConsumableManager) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 1)
+
+	# Icon
+	var icon_rect := TextureRect.new()
+	icon_rect.name = "Icon"
+	icon_rect.texture = item.icon
+	icon_rect.custom_minimum_size = Vector2(18, 18)
+	icon_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(icon_rect)
+
+	# Count label  (e.g. "2/3" or "∞")
+	var count_lbl := Label.new()
+	count_lbl.name = "CountLabel"
+	count_lbl.add_theme_font_size_override("font_size", 9)
+	count_lbl.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	count_lbl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(count_lbl)
+
+	# Timer label  (e.g. "CD 12s", "→ 5s", or "")
+	var timer_lbl := Label.new()
+	timer_lbl.name = "TimerLabel"
+	timer_lbl.add_theme_font_size_override("font_size", 9)
+	timer_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	timer_lbl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(timer_lbl)
+
+	_update_alt_consumable_widget(box, item, manager)
+	return box
+
+## Refresh the labels inside a widget built by _create_alt_consumable_widget.
+func _update_alt_consumable_widget(
+		widget: Control, item: ConsumableItem, manager: ConsumableManager) -> void:
+	var count_lbl  := widget.get_node("CountLabel")  as Label
+	var timer_lbl  := widget.get_node("TimerLabel")  as Label
+	var icon_rect  := widget.get_node("Icon")        as TextureRect
+
+	# Dim the icon when the consumable is exhausted
+	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
+
+	# Count
+	if item.max_stack == -1:
+		count_lbl.text = "∞"
+		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
+	else:
+		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
+		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
+
+	# Timer
+	var cooldown_left: float = manager.cooldowns.get(item.id, 0.0)
+	var active_left:   float = manager.active_effects.get(item.id, 0.0)
+	if active_left > 0.0:
+		# Consumable is actively running - show remaining duration in cyan
+		timer_lbl.text = "→%.0fs" % active_left
+		timer_lbl.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0, 0.95))
+	elif cooldown_left > 0.0:
+		# On cooldown - show remaining cooldown in yellow
+		timer_lbl.text = "%.0fs" % cooldown_left
+		timer_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2, 0.9))
+	else:
+		timer_lbl.text = ""
+
+# endregion
 
 # Function to set the current secondary target
 func set_secondary_target(target_ship: Ship) -> void:

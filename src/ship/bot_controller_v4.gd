@@ -567,6 +567,17 @@ func _update_shell_threats() -> void:
 
 	_debug_shell_obstacles = shells
 
+	# Prune stale or invalid entries from the active-shooters dict.
+	var now_sec: float = Time.get_ticks_msec() / 1000.0
+	var expired_keys: Array = []
+	for shooter_ship in behavior.active_shooters_at_me:
+		if not is_instance_valid(shooter_ship) \
+				or not shooter_ship.health_controller.is_alive() \
+				or now_sec > behavior.active_shooters_at_me[shooter_ship]:
+			expired_keys.append(shooter_ship)
+	for k in expired_keys:
+		behavior.active_shooters_at_me.erase(k)
+
 	# Look up each shell's ProjectileData to extract the shooter and launch
 	# position, then update the server's last-known-position intel.
 	var projectiles = ProjectileManager.get_projectiles()
@@ -615,9 +626,20 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# torp.t and ProjectileData.start_time are both in ProjectileManager accumulated
 	# time units (torpedo_launcher.gd was switched from Unix time to PM time).
 	var sid: int = s.get_instance_id()
+	# Always register (or refresh) this enemy as actively shooting at us.
+	# Expiry = now + 1.5 x shooter's reload time, so we keep them flagged even
+	# when no shells are currently in the air (reload window gap).
+	# This runs before the launch_time gate so every in-flight shell keeps refreshing
+	# the window, not just the first detection per salvo.
+	if behavior != null and s.artillery_controller != null:
+		var reload_sec: float = s.artillery_controller.get_params().reload_time
+		var expiry: float = Time.get_ticks_msec() / 1000.0 + 1.5 * reload_sec
+		# Only extend the expiry, never shorten an existing window.
+		if expiry > behavior.active_shooters_at_me.get(s, -INF):
+			behavior.active_shooters_at_me[s] = expiry
+
 	if _shooter_lkp_launch_times.get(sid, -INF) >= launch_time:
 		return
-	# Only update the unspotted dict when the shooter is not currently visible.
 	# If they are already a valid (spotted) target there is nothing to update.
 	var valid_targets: Array = server_node.get_valid_targets(my_team_id)
 	if valid_targets.has(s):
@@ -1283,6 +1305,8 @@ func _emit_debug_draws() -> void:
 				var filled := int(round(torp_reload * 10.0))
 				var bar := "█".repeat(filled) + "░".repeat(10 - filled)
 				lines.append("Torps: [%s] %d%%" % [bar, int(torp_reload * 100.0)])
+			var stats: Stats = _ship.get_node("Modules/Stats")
+			lines.append("Dmg: %d  Pot: %d" % [stats.total_damage, stats.potential_damage])
 
 		var label_text = "\n".join(lines)
 		if not label_text.is_empty():
@@ -1298,9 +1322,9 @@ func _emit_debug_draws() -> void:
 			var to_dc: Vector3 = danger_dc - ship_pos
 			to_dc.y = 0.0
 			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
-			Debug.draw_arrow(
-					Vector3(ship_pos.x, 10.0, ship_pos.z),
-					to_dc.normalized(), to_dc.length(), Color.RED, 40.0)
+			# Debug.draw_arrow(
+			# 		Vector3(ship_pos.x, 10.0, ship_pos.z),
+			# 		to_dc.normalized(), to_dc.length(), Color.RED, 40.0)
 			var src_label: String = "spotted" if spotted_dc != Vector3.ZERO else "cluster"
 			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
 					"Danger [%s]" % src_label, Color.RED)

@@ -62,7 +62,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	# var exit_radius = clearance * 3.5
 	# _arrived = dist < exit_radius if _arrived else dist < arrival_radius
 
-	var d = _get_cover_position(ctx)
+	var d = _get_cover_position(ctx, params)
 	if d.is_empty():
 		return null
 	_set_island(d)
@@ -231,7 +231,7 @@ var curr_heading: float = 0.0
 # In both modes islands are always evaluated nearest-first so ties naturally
 # resolve toward the ship's current position.
 # ---------------------------------------------------------------------------
-func _get_cover_position(ctx: SkillContext) -> Dictionary:
+func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	if not NavigationMapManager.is_map_ready():
 		return {}
 
@@ -242,13 +242,14 @@ func _get_cover_position(ctx: SkillContext) -> Dictionary:
 	var ship = ctx.ship
 	var my_pos = ship.global_position
 	var gun_range = ship.artillery_controller.get_params()._range
+	var max_desired_range = gun_range * params.get("max_range", 0.7)
 	# var min_safe_range = gun_range * 0.35
 
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	if ctx.server == null:
 		return {}
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
-	var enemy_clusters = ctx.server.get_enemy_clusters(ship.team.team_id)
+	# var enemy_clusters = ctx.server.get_enemy_clusters(ship.team.team_id)
 
 	ctx.behavior._ensure_safe_dir(ship, ctx.server)
 
@@ -292,6 +293,8 @@ func _get_cover_position(ctx: SkillContext) -> Dictionary:
 	islands.sort_custom(func(a, b):
 		var ca = Vector3(a["center"].x, 0.0, a["center"].y)
 		var cb = Vector3(b["center"].x, 0.0, b["center"].y)
+		if a["id"] == _target_island_id and my_pos.distance_to(ca) - a['radius'] < max_desired_range:
+			return true
 		return my_pos.distance_to(ca) - a["radius"] < my_pos.distance_to(cb) - b["radius"]
 	)
 
@@ -355,7 +358,7 @@ func _get_cover_position(ctx: SkillContext) -> Dictionary:
 
 		# Always sort candidate positions on the island by proximity to the ship
 		var cover_result = ctx.behavior._find_cover_position_on_island(
-			isl_pos, isl_radius, hide_h, threats, targets, true
+			isl_pos, isl_radius, hide_h, threats, targets, max_desired_range
 		)
 		# Only consider islands where we can actually shoot from cover
 		if cover_result.is_empty() or not cover_result["can_shoot"]:
@@ -493,7 +496,7 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 	var to_nearest = nearest.global_position - ship.global_position
 	to_nearest.y = 0.0
 	var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-	var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+	var optimal_heading = SkillAngle.calc_heading(ctx, {})
 	var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
 	var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
 	if bearing_diff > PI / 2.0: # bearing is behind us

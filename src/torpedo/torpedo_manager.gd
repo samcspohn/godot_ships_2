@@ -8,6 +8,7 @@ var bulletId: int = 0
 # @onready var particles: GPUParticles3D
 @onready var multi_mesh: MultiMeshInstance3D
 var ray_query = PhysicsRayQueryParameters3D.new()
+var _pd_shape_query := PhysicsShapeQueryParameters3D.new()
 const TORPEDO_SPEED_MULTIPLIER = 3.0
 var transforms = PackedFloat32Array()
 var camera: Camera3D = null
@@ -33,6 +34,7 @@ class TorpedoData:
 	var emitter_id: int = -1  # GPU wake particle emitter ID
 	var launcher: TorpedoLauncher
 	var armed: bool = false
+	var ships_passed: Array[Ship] = []
 
 	func initialize(pos: Vector3, dir: Vector3, _params: TorpedoParams, _t: float, _owner: Ship, __range: float, tl: TorpedoLauncher, _armed: bool = false) -> void:
 		self.position = pos
@@ -45,6 +47,7 @@ class TorpedoData:
 		self.emitter_id = -1
 		self.launcher = tl
 		self.armed = _armed
+		self.ships_passed = []
 
 
 func _ready():
@@ -58,6 +61,15 @@ func _ready():
 		ray_query.collide_with_areas = true
 		ray_query.collide_with_bodies = true
 		ray_query.collision_mask = 1 | (1 << 1)
+
+		# Pre-allocate the proximity shape used to detect enemy ships for
+		# potential-damage accounting.  500 m sphere, OBB broadphase layer.
+		var pd_sphere := SphereShape3D.new()
+		pd_sphere.radius = 500.0
+		_pd_shape_query.shape = pd_sphere
+		_pd_shape_query.collision_mask = PrecisionPhysicsWorld.OBB_COLLISION_LAYER
+		_pd_shape_query.collide_with_bodies = true
+		_pd_shape_query.collide_with_areas = false
 
 		(func():
 			# Wait for server node to be ready
@@ -295,6 +307,20 @@ func _physics_process(_delta: float) -> void:
 			continue
 
 		ray_query.to = p.position
+
+		# Proximity check: find enemy ships within 500 m using the OBB broadphase.
+		_pd_shape_query.transform = Transform3D(Basis.IDENTITY, p.position)
+		var pd_results: Array = space_state.intersect_shape(_pd_shape_query)
+		for result in pd_results:
+			var hit_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(result.get("collider"))
+			if hit_ship == null or p.ships_passed.has(hit_ship):
+				continue
+			if hit_ship.team == null or p.owner.team == null:
+				continue
+			if hit_ship.team.team_id == p.owner.team.team_id:
+				continue
+			hit_ship.stats.potential_damage += p.params.damage
+			p.ships_passed.append(hit_ship)
 
 		# Perform the raycast
 		collision = space_state.intersect_ray(ray_query)

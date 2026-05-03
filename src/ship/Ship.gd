@@ -167,6 +167,7 @@ func _ready() -> void:
 	upgrades._ship = self
 	skills._ship = self
 	stats = Stats.new()
+	stats.name = "Stats"
 	stats._ship = self
 	$Modules.add_child(stats)
 

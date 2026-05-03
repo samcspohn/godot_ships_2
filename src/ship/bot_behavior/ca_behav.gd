@@ -85,7 +85,7 @@ func get_target_weights() -> Dictionary:
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.65,
+		base_range_ratio = 0.7,
 		range_increase_when_damaged = 0.30,
 		min_safe_distance_ratio = 0.40,
 		flank_bias_healthy = 0.6,
@@ -196,7 +196,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 					else: # superstrucure
 						offset.y = _target.movement_controller.ship_height / 2
 
-			if is_broadside and dist < 10000:
+			if is_broadside and dist < 12000:
 				ammo = ShellParams.ShellType.AP
 				offset.y = _target.movement_controller.ship_height / 4
 			else: # angled and/or farther than 6000
@@ -336,10 +336,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_update_enemy_tracking(ship, server, spotted)
 
 	var pos_params = get_positioning_params()
-	var desired_range = _get_desired_range(pos_params)
+	# var desired_range = _get_desired_range(pos_params)
 	var cover_params = {
-		"desired_range": desired_range,
-		"recalc_cooldown_ms": _COVER_RECALC_COOLDOWN_MS,
+		"desired_range": pos_params.base_range_ratio,
 	}
 
 	var intent: NavIntent = null
@@ -408,7 +407,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		var to_nearest = nearest.global_position - ship.global_position
 		to_nearest.y = 0.0
 		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-		var optimal_heading = SkillAngle.calc_heading(enemy_bearing, ctx, {})
+		var optimal_heading = SkillAngle.calc_heading(ctx, {})
+		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
+		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
 		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
 		if bow_diff < PI * 0.5:
 			# Optimal heading is bow-in — push toward enemy
@@ -483,10 +484,53 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.4})
 
 	# ── Post-process: spread ─────────────────────────────────────────────────
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"AngledReverse"]:
-		intent = _skill_spread.apply(intent, ctx, {
-			"spread_distance": pos_params.spread_distance,
-			"spread_multiplier": pos_params.spread_multiplier
-		})
+	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
 
 	return intent
+
+
+# var repair = -1
+# var damage_control = -1
+
+func try_use_consumable():
+	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+	var max_hp = _ship.health_controller.max_hp
+	var healable = _ship.health_controller.healable_damage
+
+	if repair == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
+				repair = c.id
+				break
+
+	if damage_control == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
+				damage_control = c.id
+				break
+	var heal_percent_per_repair = _ship.consumable_manager.equipped_consumables[repair].heal_percent if repair != -1 else 0
+	var heal_per_repair = max_hp * heal_percent_per_repair
+	# var effective_heal = min(healable, heal_per_repair)
+
+	if healable > heal_per_repair or hp < 0.25:
+		if repair != -1:
+			_ship.consumable_manager.use_consumable(repair)
+
+	var fires = _ship.fire_manager.get_active_fires()
+	if fires > 0:
+		if hp > 0.60 and fires >= 2:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+		elif fires >= 1:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+
+	var floods = _ship.flood_manager.get_active_floods()
+	if floods > 0:
+		if hp > 0.60 and floods >= 2:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)
+		elif floods >= 1:
+			if damage_control != -1:
+				_ship.consumable_manager.use_consumable(damage_control)

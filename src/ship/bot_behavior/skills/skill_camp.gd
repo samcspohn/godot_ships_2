@@ -72,7 +72,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# so turrets track the enemy even while the position is locked).
 	var to_danger_now = danger_center - _locked_position
 	to_danger_now.y = 0.0
-	var heading = SkillAngle.calc_heading(atan2(to_danger_now.x, to_danger_now.z), ctx, params)
+	var heading = SkillAngle.calc_heading(ctx, params)
 
 	# If the heading is more than 90° off our current heading, flip it so we
 	# present the stern angle instead of executing a large turn while camping.

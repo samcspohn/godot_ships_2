@@ -86,6 +86,12 @@ var wants_stealth: bool = false
 ##   BB  : always false
 var wants_to_be_concealed: bool = false
 
+## Enemies currently shooting at this bot.
+## Maps Ship -> float wall-clock expiry (seconds). An enemy is kept for 1.5x its
+## reload time after its last detected shell so the window stays open even when
+## no projectiles are in the air. Managed by BotControllerV4; use .has(ship) in skills.
+var active_shooters_at_me: Dictionary = {}  # Ship -> float expiry_sec
+
 # Skill instances (created in subclass _init or on first use)
 var _skills: Dictionary = {}  # StringName -> BotSkill
 
@@ -1481,7 +1487,7 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, sort_by_proximity: bool = true) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
@@ -1552,7 +1558,7 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	for pos in candidates:
 		var any_in_range = false
 		for threat_pos in threats:
-			if pos.distance_to(threat_pos) <= gun_range:
+			if pos.distance_to(threat_pos) <= max_range:
 				any_in_range = true
 				break
 		if not any_in_range:
@@ -1869,6 +1875,8 @@ var damage_control = -1
 
 func try_use_consumable():
 	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
+	var max_hp = _ship.health_controller.max_hp
+	var healable = _ship.health_controller.healable_damage
 
 	if repair == -1:
 		for c in _ship.consumable_manager.equipped_consumables:
@@ -1881,8 +1889,11 @@ func try_use_consumable():
 			if c.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
 				damage_control = c.id
 				break
+	var heal_percent_per_repair = _ship.consumable_manager.equipped_consumables[repair].heal_percent if repair != -1 else 0
+	var heal_per_repair = max_hp * heal_percent_per_repair
+	# var effective_heal = min(healable, heal_per_repair)
 
-	if hp < 0.5:
+	if healable > heal_per_repair or hp < 0.25:
 		if repair != -1:
 			_ship.consumable_manager.use_consumable(repair)
 

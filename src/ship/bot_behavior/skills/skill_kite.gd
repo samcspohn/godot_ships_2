@@ -7,25 +7,26 @@ extends BotSkill
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
 
-	var spotted_center = ctx.behavior._get_spotted_danger_center()
-	var danger_center = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
-	if danger_center == Vector3.ZERO:
-		return null
+	# var spotted_center = ctx.behavior._get_spotted_danger_center()
+	# var danger_center = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
+	# if danger_center == Vector3.ZERO:
+	# 	return null
 
-	var to_danger = danger_center - ship.global_position
-	to_danger.y = 0.0
-	if to_danger.length_squared() < 1.0:
-		return null
+	# var to_danger = danger_center - ship.global_position
+	# to_danger.y = 0.0
+	# if to_danger.length_squared() < 1.0:
+	# 	return null
 
-	var danger_bearing = atan2(to_danger.x, to_danger.z)
-	var away_bearing = ctx.behavior._normalize_angle(danger_bearing + PI)
+	# var danger_bearing = atan2(to_danger.x, to_danger.z)
+	# var away_bearing = ctx.behavior._normalize_angle(danger_bearing + PI)
 
-	var heading = SkillAngle.calc_heading(away_bearing, ctx, params)
+	var heading = SkillAngle.calc_heading(ctx, params)
 
 
-	# var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
-	if absf(angle_difference(heading, danger_bearing + PI)) > PI * 0.5:
-		heading = wrapf(heading + PI, -PI, PI)
+	# # var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
+	# if absf(angle_difference(heading, danger_bearing + PI)) > PI * 0.5:
+	heading = wrapf(heading + PI, -PI, PI)
+
 
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
 	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
