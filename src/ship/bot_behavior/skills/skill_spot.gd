@@ -143,12 +143,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		if to_dest.length_squared() > 1.0 \
 		else ctx.behavior._get_ship_heading()
 
-	# Full speed while repositioning; ease off when nearly at the sweet spot.
-	var throttle := 4 if to_dest.length() > 800.0 else 2
+	# # Full speed while repositioning; ease off when nearly at the sweet spot.
+	# var throttle := 4 if to_dest.length() > 800.0 else 2
 
 	var intent := NavIntent.create(best_pos, heading)
-	intent.throttle_override = throttle
+	# intent.throttle_override = throttle
 	# The spotting position is deliberately inside the enemy detection zone —
 	# do not let _adjust_destination_for_threats BFS-push it to the wrong boundary.
-	intent.skip_threat_adjustment = true
+	# intent.skip_threat_adjustment = true
 	return intent

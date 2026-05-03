@@ -349,7 +349,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_to_be_concealed = _probe_concealment(server)
 
 	# Post-process spread (skip for Retreat and Kite)
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Retreat"]:
+	if _active_skill_name == &"Spot":
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 5000.0, "spread_multiplier": 1.0})
+		
+	elif _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Retreat"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
 
 	return intent

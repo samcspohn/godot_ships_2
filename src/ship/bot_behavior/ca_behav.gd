@@ -449,7 +449,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 						if intent != null:
 							_active_skill_name = &"Push"
 
-					intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.3)
+					intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.1)
 				else:
 					intent = cover_intent
 					_active_skill_name = &"FindCover"
@@ -480,8 +480,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 
 	# ── Post-process: broadside ──────────────────────────────────────────────
-	if _active_skill_name in [&"Kite", &"AngledReverse", &"Push"]:
-		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.4})
+	# if _active_skill_name not in [&"Chase"]:
+	intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.4})
 
 	# ── Post-process: spread ─────────────────────────────────────────────────
 	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:

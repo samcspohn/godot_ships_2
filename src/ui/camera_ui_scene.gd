@@ -1487,8 +1487,24 @@ func update_consumable_ui():
 
 ## Build a VBoxContainer widget that shows one consumable's icon, stack count, and timer.
 func _create_alt_consumable_widget(item: ConsumableItem, manager: ConsumableManager) -> Control:
+	# Outer panel with a dark semi-transparent rounded background
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.05, 0.62)
+	style.corner_radius_top_left = 3
+	style.corner_radius_top_right = 3
+	style.corner_radius_bottom_left = 3
+	style.corner_radius_bottom_right = 3
+	style.content_margin_left = 3.0
+	style.content_margin_right = 3.0
+	style.content_margin_top = 2.0
+	style.content_margin_bottom = 2.0
+	panel.add_theme_stylebox_override("panel", style)
+
 	var box := VBoxContainer.new()
+	box.name = "Box"
 	box.add_theme_constant_override("separation", 1)
+	panel.add_child(box)
 
 	# Icon
 	var icon_rect := TextureRect.new()
@@ -1517,15 +1533,15 @@ func _create_alt_consumable_widget(item: ConsumableItem, manager: ConsumableMana
 	timer_lbl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(timer_lbl)
 
-	_update_alt_consumable_widget(box, item, manager)
-	return box
+	_update_alt_consumable_widget(panel, item, manager)
+	return panel
 
 ## Refresh the labels inside a widget built by _create_alt_consumable_widget.
 func _update_alt_consumable_widget(
 		widget: Control, item: ConsumableItem, manager: ConsumableManager) -> void:
-	var count_lbl  := widget.get_node("CountLabel")  as Label
-	var timer_lbl  := widget.get_node("TimerLabel")  as Label
-	var icon_rect  := widget.get_node("Icon")        as TextureRect
+	var count_lbl  := widget.get_node("Box/CountLabel")  as Label
+	var timer_lbl  := widget.get_node("Box/TimerLabel")  as Label
+	var icon_rect  := widget.get_node("Box/Icon")        as TextureRect
 
 	# Dim the icon when the consumable is exhausted
 	var exhausted := item.max_stack != -1 and item.current_stack <= 0

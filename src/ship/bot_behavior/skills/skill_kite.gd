@@ -29,7 +29,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 4.0)
+	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 8.0)
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
 

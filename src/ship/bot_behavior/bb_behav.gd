@@ -236,7 +236,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				intent = _skill_chase.execute(ctx, {})
 				if intent:
 					_active_skill_name = &"Chase"
-	elif not has_spotted:
+	elif not has_spotted or (nearest != null and dist > gun_range):
 		# Enemies exist but none spotted — chase then hunt
 		intent = _skill_chase.execute(ctx, {})
 		_active_skill_name = &"Chase"
@@ -261,7 +261,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# presentation angle and choose angle skill (bow-in) or kite (stern-in).
 		var to_nearest = nearest.global_position - ship.global_position
 		to_nearest.y = 0.0
-		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		# var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
 		var optimal_heading = SkillAngle.calc_heading(ctx, {})
 		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
 		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
@@ -331,7 +331,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var _a = _probe_concealment(server)
 	# Post-process spread when skill is not FindCover, Angle, or Kite
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
+	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Camp"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
 
 	return intent

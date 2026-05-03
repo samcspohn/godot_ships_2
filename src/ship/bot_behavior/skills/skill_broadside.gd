@@ -46,12 +46,20 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 
 	# We need a threat position to compute gun bearings against.
 	var threat_pos: Vector3 = Vector3.ZERO
+	# var to_threat: Vector3
 	if target != null and is_instance_valid(target):
 		threat_pos = target.global_position
+		var _threat_pos = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+			ship.global_position,
+			threat_pos,
+			target.linear_velocity,
+			ship.artillery_controller.get_params().shell1)[2]
+		if _threat_pos != null:
+			threat_pos = _threat_pos
 	else:
-		var spotted_center = ctx.behavior._get_spotted_danger_center()
-		threat_pos = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
-	if threat_pos == Vector3.ZERO:
+	# 	var spotted_center = ctx.behavior._get_spotted_danger_center()
+	# 	threat_pos = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
+	# if threat_pos == Vector3.ZERO:
 		return intent
 
 	var guns: Array = ship.artillery_controller.guns
@@ -110,43 +118,71 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 ## ---------------------------------------------------------------------------
 
 ## Find the ship heading (world-space) at which all guns can bear on the threat,
-## choosing the one that requires the least total turret traversal from their
-## current positions (i.e. favours the side the guns are already aimed toward).
+## staying as close to `preferred_heading` as possible.
 ##
-## Approach: for each candidate ship heading we check whether every turret's
-## firing arc (in world space) contains the threat bearing.  We sample headings
-## around the full circle and score each valid heading by the sum of traversal
-## each gun must still rotate to aim at the threat.  Ties are broken by
-## proximity to `preferred_heading`.  If no heading allows all guns, we fall
-## back to the heading that maximises the number of guns that can fire.
+## The threat is to either the port or starboard side of `preferred_heading`,
+## and either ahead of or behind the perpendicular.  For each of those four
+## quadrants exactly one gun-set/limit binds: e.g. when the threat is in the
+## port-front quadrant, every front gun can already swing to it (their port
+## limit reaches at least to broadside), so the constraint is the back guns'
+## port limit (their `min`).  We pick the most-restrictive such gun and rotate
+## the ship just enough to place the threat at that limit — or, if the threat
+## is already inside every gun's arc, return `preferred_heading` unchanged.
 func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_heading: float) -> float:
-	var best_heading: float = preferred_heading
-	var best_diff: float = PI * 2.0
-	var best_gun_count: int = -1
-	var best_traversal_cost: float = INF
+	# `diff` is the threat's local angle relative to the ship at preferred_heading.
+	# Convention: 0 = forward, +π/2 = port, ±π = back, -π/2 = starboard.
+	var diff: float = angle_difference(preferred_heading, threat_bearing)
+	var candidate: float
+	var preferred_ok: bool
 
-	var step_count: int = int(TAU / SAMPLE_STEP)
+	if diff >= 0.0:
+		# Threat to port. Same-side broadside ≈ +π/2.
+		if diff < PI * 0.5:
+			# Port-front quadrant: bound by back guns' port limit (their min).
+			# Pick the largest min — the most restrictive port reach.
+			var worst: float = 0.0
+			for gun: Turret in guns:
+				if gun.position.z > 0.0 and gun.min_rotation_angle > worst:
+					worst = gun.min_rotation_angle
+			candidate = worst
+			# Preferred works iff threat is already past every back gun's min.
+			preferred_ok = diff >= candidate
+		else:
+			# Port-back quadrant: bound by front guns' port limit (their max).
+			# Pick the smallest max — the most restrictive port reach.
+			var worst: float = PI
+			for gun: Turret in guns:
+				if gun.position.z < 0.0 and gun.max_rotation_angle < worst:
+					worst = gun.max_rotation_angle
+			candidate = worst
+			preferred_ok = diff <= candidate
+	else:
+		# Threat to starboard. Same-side broadside ≈ -π/2.
+		if diff > -PI * 0.5:
+			# Starboard-front quadrant: bound by back guns' starboard limit (their max).
+			# Pick the smallest max in [0, TAU] — most restrictive starboard reach.
+			var worst: float = TAU
+			for gun: Turret in guns:
+				if gun.position.z > 0.0 and gun.max_rotation_angle < worst:
+					worst = gun.max_rotation_angle
+			candidate = worst - TAU  # convert to signed [-π, π]
+			preferred_ok = diff <= candidate
+		else:
+			# Starboard-back quadrant: bound by front guns' starboard limit (their min).
+			# Pick the largest min in [0, TAU] — most restrictive starboard reach.
+			var worst: float = PI
+			for gun: Turret in guns:
+				if gun.position.z < 0.0 and gun.min_rotation_angle > worst:
+					worst = gun.min_rotation_angle
+			candidate = worst - TAU  # convert to signed
+			preferred_ok = diff >= candidate
 
-	for i in step_count:
-		var candidate: float = -PI + i * SAMPLE_STEP  # sample -PI .. +PI
-		var guns_bearing: int = _count_guns_bearing(guns, candidate, threat_bearing)
+	if preferred_ok:
+		return preferred_heading
 
-		if guns_bearing < best_gun_count:
-			continue
-
-		var traversal_cost: float = _total_traversal_cost(guns, candidate, threat_bearing)
-		var diff: float = absf(angle_difference(preferred_heading, candidate))
-
-		var is_better: bool = (guns_bearing > best_gun_count
-			or (guns_bearing == best_gun_count and traversal_cost < best_traversal_cost)
-			or (guns_bearing == best_gun_count and traversal_cost == best_traversal_cost and diff < best_diff))
-		if is_better:
-			best_gun_count = guns_bearing
-			best_traversal_cost = traversal_cost
-			best_diff = diff
-			best_heading = candidate
-
-	return best_heading
+	# Rotate the ship so the threat lands exactly at the binding gun's limit.
+	return wrapf(threat_bearing - candidate, -PI, PI)
+	# return preferred_heading + angle_difference(preferred_heading, threat_bearing + candidate)
 
 
 ## Sum the absolute local traversal each *bearing* gun must still rotate to
