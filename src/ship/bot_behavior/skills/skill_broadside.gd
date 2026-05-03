@@ -43,11 +43,13 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 		return intent
 
 	var target = ctx.target
-
+	var gun_range = ctx.ship.artillery_controller.get_params()._range
 	# We need a threat position to compute gun bearings against.
 	var threat_pos: Vector3 = Vector3.ZERO
 	# var to_threat: Vector3
 	if target != null and is_instance_valid(target):
+		if target.global_position.distance_to(ctx.ship.global_position) > gun_range:
+			return intent
 		threat_pos = target.global_position
 		var _threat_pos = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 			ship.global_position,
