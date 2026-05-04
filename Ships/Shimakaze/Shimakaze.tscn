@@ -144,6 +144,8 @@ metadata/_custom_type_script = "uid://cq5883re36gh7"
 [sub_resource type="Resource" id="Resource_4im3p"]
 resource_local_to_scene = true
 script = ExtResource("9_okiv0")
+duration_reduction = 0.9
+damage_reduction = 0.6
 icon = ExtResource("10_jewkh")
 disabled_icon = ExtResource("9_22e6m")
 duration = 10.0

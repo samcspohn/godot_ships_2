@@ -1314,18 +1314,13 @@ func _emit_debug_draws() -> void:
 
 	# --- r) Danger center (red circle + arrow + spotted/unspotted label) ---
 	if behavior != null:
-		var spotted_dc: Vector3 = behavior._get_spotted_danger_center()
-		var danger_dc: Vector3 = spotted_dc if spotted_dc != Vector3.ZERO \
-				else behavior._get_danger_center()
+		var danger_dc: Vector3 = behavior._get_spotted_danger_center()
 		if danger_dc != Vector3.ZERO:
 			var dc_pos := Vector3(danger_dc.x, 10.0, danger_dc.z)
 			var to_dc: Vector3 = danger_dc - ship_pos
 			to_dc.y = 0.0
 			Debug.draw_circle(dc_pos, 300.0, Color.RED, 32)
-			# Debug.draw_arrow(
-			# 		Vector3(ship_pos.x, 10.0, ship_pos.z),
-			# 		to_dc.normalized(), to_dc.length(), Color.RED, 40.0)
-			var src_label: String = "spotted" if spotted_dc != Vector3.ZERO else "cluster"
+			var src_label: String = "spotted"
 			Debug.draw_label(dc_pos + Vector3(0.0, 150.0, 0.0),
 					"Danger [%s]" % src_label, Color.RED)
 

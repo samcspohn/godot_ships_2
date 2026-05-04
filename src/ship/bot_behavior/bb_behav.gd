@@ -76,32 +76,6 @@ func get_hunting_params() -> Dictionary:
 func _roll_flank_depth() -> float:
 	return randf_range(0.1, 0.3)
 
-func get_theatened(server: GameServer) -> bool:
-	## TODO: add dispersion + caliber checks to this
-	var spotted = server.get_valid_targets(_ship.team.team_id)
-	var my_hp = _ship.health_controller.current_hp
-	var hp_ratio = my_hp / _ship.health_controller.max_hp
-	var desired_dist = clampf(1.0 - hp_ratio + 0.3, 0.3, 1.0)
-	var total_hp: float = 0.0
-	for enemy in spotted:
-		var dist = enemy.global_position.distance_to(_ship.global_position)
-		var enemy_range = enemy.artillery_controller.get_params()._range
-		var enemy_hp = enemy.health_controller.current_hp
-		total_hp += enemy_hp
-		match enemy.ship_class:
-			Ship.ShipClass.BB:
-				if enemy_hp > my_hp * 0.9:
-					return true
-			Ship.ShipClass.CA:
-				if enemy_hp > my_hp * 0.7:
-					return true
-			Ship.ShipClass.DD:
-				if dist < enemy_range * desired_dist * 0.8:
-					return true
-	if total_hp > my_hp * 1.5:
-		return true
-	return false
-
 # ============================================================================
 # AMMO AND AIM - Class-specific targeting logic
 # ============================================================================
@@ -248,7 +222,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# Low threat: push toward the enemy — but prefer a closer unspotted enemy
 		# over crossing the map to fight a distant detected one.
 		_skill_cover.reset()
-		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range * 0.75:
+		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range * 0.85:
 			intent = _skill_chase.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"Chase"

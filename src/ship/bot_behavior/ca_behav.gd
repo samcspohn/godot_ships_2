@@ -41,7 +41,6 @@ var _skill_chase: SkillChase = SkillChase.new()
 var _skill_cover: SkillFindCover = SkillFindCover.new()
 var _skill_kite: SkillKite = SkillKite.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
-var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_push: SkillPush = SkillPush.new()
@@ -94,13 +93,7 @@ func get_positioning_params() -> Dictionary:
 		spread_multiplier = 2.0,
 	}
 
-func get_island_cover_params() -> Dictionary:
-	return {
-		aggressive_range = 0.60,
-		defensive_range = 0.70,
-		abandon_too_close = 0.35,
-		abandon_too_far = 0.80,
-	}
+
 
 func get_hunting_params() -> Dictionary:
 	return {
@@ -112,27 +105,6 @@ func should_evade(_destination: Vector3) -> bool:
 	if not _ship.visible_to_enemy:
 		return false
 	return true
-
-func get_theatened(server: GameServer) -> bool:
-	## TODO: add dispersion + caliber checks to this
-	var spotted = server.get_valid_targets(_ship.team.team_id)
-	var my_hp = _ship.health_controller.current_hp
-	var hp_ratio = my_hp / _ship.health_controller.max_hp
-	var desired_dist = clampf(1.0 - hp_ratio + 0.5, 0.5, 1.0)
-	for enemy in spotted:
-		var dist = enemy.global_position.distance_to(_ship.global_position)
-		var enemy_range = enemy.artillery_controller.get_params()._range
-		var enemy_hp = enemy.health_controller.current_hp
-		match enemy.ship_class:
-			Ship.ShipClass.BB:
-				if dist < enemy_range * clamp(desired_dist, 0.7, 1.0) and enemy_hp > my_hp * 0.5:
-					return true
-			Ship.ShipClass.CA:
-				if dist < enemy_range * desired_dist and enemy_hp > my_hp:
-					return true
-			Ship.ShipClass.DD:
-				pass
-	return false
 
 # ============================================================================
 # AMMO AND AIM
@@ -494,43 +466,4 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 # var damage_control = -1
 
 func try_use_consumable():
-	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
-	var max_hp = _ship.health_controller.max_hp
-	var healable = _ship.health_controller.healable_damage
-
-	if repair == -1:
-		for c in _ship.consumable_manager.equipped_consumables:
-			if c.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-				repair = c.id
-				break
-
-	if damage_control == -1:
-		for c in _ship.consumable_manager.equipped_consumables:
-			if c.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
-				damage_control = c.id
-				break
-	var heal_percent_per_repair = _ship.consumable_manager.equipped_consumables[repair].heal_percent if repair != -1 else 0
-	var heal_per_repair = max_hp * heal_percent_per_repair
-	# var effective_heal = min(healable, heal_per_repair)
-
-	if healable > heal_per_repair or hp < 0.25:
-		if repair != -1:
-			_ship.consumable_manager.use_consumable(repair)
-
-	var fires = _ship.fire_manager.get_active_fires()
-	if fires > 0:
-		if hp > 0.60 and fires >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif fires >= 1:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-
-	var floods = _ship.flood_manager.get_active_floods()
-	if floods > 0:
-		if hp > 0.60 and floods >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif floods >= 1:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
+	super.try_use_consumable()

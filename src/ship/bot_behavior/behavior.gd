@@ -59,8 +59,6 @@ var _active_skill_name: StringName = &""
 var _fwd = null
 
 # Per-frame result caches — cleared automatically on frame change
-var _danger_center_cache: Vector3 = Vector3.ZERO
-var _danger_center_frame: int = -1
 var _spotted_danger_center_cache: Vector3 = Vector3.ZERO
 var _spotted_danger_center_frame: int = -1
 var _threat_score_cache: float = 0.0
@@ -149,9 +147,7 @@ func get_positioning_params() -> Dictionary:
 		spread_multiplier = 2.0,
 	}
 
-func get_island_cover_params() -> Dictionary:
-	"""Override to customize island cover behavior. Return empty dict to disable."""
-	return {}  # Base class doesn't use island cover by default
+
 
 func get_cover_search_params() -> Dictionary:
 	"""Override to customize cover position search tuning."""
@@ -526,7 +522,8 @@ func get_potential_target_weight(target: Ship) -> float:
 	# # Boost targets within range
 	# if dist <= gun_range:
 	# 	weight *= weights.in_range_multiplier
-
+	var hp = target.health_controller.current_hp
+	var hp_ratio = hp / target.health_controller.max_hp
 	weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
 
 	return weight
@@ -650,7 +647,7 @@ func _calculate_evasion_heading(target: Ship, threat_bearing: float, delta: floa
 
 func _get_weighted_threat_bearing() -> Variant:
 	"""Returns bearing to weighted average of enemy clusters. null if no threats."""
-	var danger_center = _get_danger_center()
+	var danger_center = _get_spotted_danger_center()
 	if danger_center == Vector3.ZERO:
 		return null
 	var to_danger = danger_center - _ship.global_position
@@ -660,54 +657,7 @@ func _get_weighted_threat_bearing() -> Variant:
 # THREAT ANALYSIS
 # ============================================================================
 
-func _get_danger_center() -> Vector3:
-	"""Calculate threat-weighted center of known enemies.
-	Spotted enemies are weighted much more heavily than stale last-known
-	positions so that unspotted ghosts don't pull ships away from the fight."""
-	var frame := Engine.get_physics_frames()
-	if frame == _danger_center_frame:
-		return _danger_center_cache
-	var result := Vector3.ZERO
-	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-	if server_node != null:
-		var spotted = server_node.get_valid_targets(_ship.team.team_id)
-		var has_spotted = spotted.size() > 0
-		var enemy_clusters = server_node.get_enemy_clusters(_ship.team.team_id)
-		if enemy_clusters.is_empty():
-			result = server_node.get_enemy_avg_position(_ship.team.team_id)
-		else:
-			var weighted_pos = Vector3.ZERO
-			var total_weight = 0.0
-			for cluster in enemy_clusters:
-				var cluster_pos: Vector3 = cluster.center
-				var to_cluster = cluster_pos - _ship.global_position
-				var dist = to_cluster.length()
-				if dist < 1.0:
-					dist = 1.0
-				var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
-				var cluster_threat = 0.0
-				var cluster_has_spotted = false
-				for ship in cluster.ships:
-					if ship != null and is_instance_valid(ship):
-						cluster_threat += get_threat_class_weight(ship.ship_class)
-						if spotted.has(ship):
-							cluster_has_spotted = true
-					else:
-						cluster_threat += 1.0
-				var freshness_factor = 1.0
-				if has_spotted and not cluster_has_spotted:
-					freshness_factor = 0.1
-				var weight = base_weight * max(cluster_threat, 1.0) * freshness_factor
-				weighted_pos += cluster_pos * weight
-				total_weight += weight
-			if total_weight >= 0.001:
-				result = weighted_pos / total_weight
-			if is_nan(result.x) or is_nan(result.y) or is_nan(result.z):
-				print("NaN detected in danger center calculation! Resetting to zero.")
-				result = Vector3.ZERO
-	_danger_center_cache = result
-	_danger_center_frame = frame
-	return result
+
 
 func _get_spotted_danger_center() -> Vector3:
 	"""Calculate threat-weighted center of currently spotted enemies.
@@ -926,82 +876,7 @@ func _get_flanking_direction(danger_center: Vector3, friendly_avg: Vector3) -> i
 	var angle_to_danger = _normalize_angle(danger_bearing - current_heading)
 	return 1 if angle_to_danger > 0 else -1
 
-# ============================================================================
-# TACTICAL POSITIONING
-# ============================================================================
 
-func _calculate_tactical_position(desired_range: float, min_safe_distance: float, flank_bias: float = 0.0) -> Vector3:
-	"""Calculate position based on tactical situation.
-	Uses spotted-only danger center when spotted enemies exist, so ships
-	position relative to actual visible threats rather than stale ghosts."""
-	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
-	if server_node == null:
-		return _ship.global_position
-
-	# Prefer spotted-only center for positioning so stale unspotted positions
-	# don't anchor engagement range around a phantom location.
-	var spotted_center = _get_spotted_danger_center()
-	var danger_center = spotted_center if spotted_center != Vector3.ZERO else _get_danger_center()
-	if danger_center == Vector3.ZERO:
-		return _ship.global_position
-
-	var friendly_avg = server_node.get_team_avg_position(_ship.team.team_id)
-	# var nearest = _get_nearest_enemy()
-
-	var to_me = _ship.global_position - danger_center
-	to_me.y = 0.0
-	var current_angle = atan2(to_me.x, to_me.z)
-
-	# Only trigger retreat on currently visible enemies — stale last-known positions
-	# (unspotted ships) should not push the BB backward.
-	var retreat_factor = 0.0
-	var valid_targets = server_node.get_valid_targets(_ship.team.team_id)
-	var nearest_visible_dist = INF
-	var nearest_visible_pos = Vector3.ZERO
-	for s in valid_targets:
-		var d = _ship.global_position.distance_to(s.global_position)
-		if d < nearest_visible_dist:
-			nearest_visible_dist = d
-			nearest_visible_pos = s.global_position
-	if nearest_visible_dist < min_safe_distance:
-		retreat_factor = 1.0 - (nearest_visible_dist / min_safe_distance)
-		retreat_factor = clamp(retreat_factor, 0.0, 1.0)
-
-	var target_dist = desired_range
-	if retreat_factor > 0:
-		target_dist = lerp(desired_range, desired_range * 1.5, retreat_factor)
-
-	var flank_direction = _get_flanking_direction(danger_center, friendly_avg)
-	var flank_angle = flank_bias * (PI / 4.0) * flank_direction
-	var target_angle = current_angle + flank_angle
-
-	if retreat_factor > 0 and nearest_visible_pos != Vector3.ZERO:
-		var nearest_pos: Vector3 = nearest_visible_pos
-		var to_nearest = nearest_pos - _ship.global_position
-		to_nearest.y = 0.0
-		var nearest_bearing = atan2(to_nearest.x, to_nearest.z)
-		var away_bearing = _normalize_angle(nearest_bearing + PI)
-
-		var retreat_pos = _ship.global_position + Vector3(sin(away_bearing), 0, cos(away_bearing)) * 1000.0
-		var retreat_to_danger = retreat_pos - danger_center
-		var retreat_arc_angle = atan2(retreat_to_danger.x, retreat_to_danger.z)
-
-		target_angle = lerp_angle(target_angle, retreat_arc_angle, retreat_factor * 0.5)
-
-	var target_pos = danger_center + Vector3(sin(target_angle), 0, cos(target_angle)) * target_dist
-
-	if friendly_avg != Vector3.ZERO:
-		var to_friendly = friendly_avg - target_pos
-		to_friendly.y = 0.0
-		var friendly_dist = to_friendly.length()
-		var max_extend_dist = 5000.0
-
-		if friendly_dist > max_extend_dist:
-			var pull_back = (friendly_dist - max_extend_dist) / friendly_dist
-			target_pos = target_pos + to_friendly * pull_back * 0.5
-
-	target_pos.y = 0.0
-	return target_pos
 
 func _calculate_spread_offset(friendly: Array[Ship], min_spread_distance: float, multiplier: float = 2.0) -> Vector3:
 	"""Calculate offset to avoid clumping with teammates."""
@@ -1415,7 +1290,7 @@ func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
 		if away.length_squared() > 1.0:
 			return away.normalized()
 
-	var danger = _get_danger_center()
+	var danger = _get_spotted_danger_center()
 	if danger != Vector3.ZERO:
 		var away = ship.global_position - danger
 		away.y = 0.0
@@ -1629,32 +1504,7 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 
 
 # ============================================================================
-# DEFAULT POSITIONING (can be overridden)
-# ============================================================================
-
-func get_desired_position(_friendly: Array[Ship], enemy: Array[Ship], target: Ship, current_destination: Vector3) -> Vector3:
-	"""Returns the desired position for the bot. Override for class-specific behavior."""
-	var desired_pos = Vector3.ZERO
-	if target != null:
-		var dist = _ship.position.distance_to(target.position)
-		if dist > 4000 or dist < 500:
-			desired_pos = target.position
-		else:
-			var t = dist / _ship.movement_controller.max_speed
-			desired_pos = target.position + target.linear_velocity * min(t * 0.2, 20.0)
-	elif enemy.size() > 0:
-		var closest_enemy = enemy[0]
-		for enemy_ship in enemy:
-			var enemy_dist = _ship.position.distance_to(enemy_ship.position)
-			if enemy_dist < closest_enemy.position.distance_to(_ship.position):
-				closest_enemy = enemy_ship
-		desired_pos = closest_enemy.global_position
-	else:
-		desired_pos = current_destination
-	return _get_valid_nav_point(desired_pos)
-
-# ============================================================================
-# NAVINTENT — default implementation for V4 bot controller
+# NAVINTENT — V4 bot controller interface
 # ============================================================================
 
 func get_threat_score(server: GameServer) -> float:
@@ -1723,39 +1573,7 @@ func get_threat_score(server: GameServer) -> float:
 	return _threat_score_cache
 
 
-var original_dest = null
-func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
-	"""Returns a NavIntent for the V4 bot controller.  Base implementation wraps
-	the legacy get_desired_position() + evasion heading so that all behaviors
-	work with BotControllerV4 without modification.  Subclasses should override
-	this to return POSE / STATION_KEEP intents where appropriate.
 
-	Always returns POSE (never bare POSITION) so the navigator always has heading
-	guidance. The bot controller further validates the pose via physics simulation."""
-
-	var friendly = server.get_team_ships(ship.team.team_id)
-	var enemy = server.get_valid_targets(ship.team.team_id)
-
-	# --- compute destination via legacy positioning ---
-	if original_dest == null:
-		original_dest = ship.global_position + Vector3(0,0,20_000) * (1 if ship.team.team_id == 0 else -1)
-	var current_dest = original_dest
-	var dest = get_desired_position(friendly, enemy, target, current_dest)
-
-	# --- check if evasion heading should override ---
-	if ship.visible_to_enemy and target != null:
-		var heading_info = get_desired_heading(target, _get_ship_heading(), 0.0, dest)
-		if heading_info.get("use_evasion", false):
-			return NavIntent.create(dest, heading_info.heading)
-
-	# --- compute approach heading so we always return POSE ---
-	var to_dest = dest - ship.global_position
-	to_dest.y = 0.0
-	var approach_heading: float = _get_ship_heading()  # fallback: current heading
-	if to_dest.length_squared() > 1.0:
-		approach_heading = atan2(to_dest.x, to_dest.z)
-
-	return NavIntent.create(dest, approach_heading)
 
 # ============================================================================
 # COMBAT

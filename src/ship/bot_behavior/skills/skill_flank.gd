@@ -52,7 +52,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# 	for p in enemy_pos:
 	# 		sum += p
 	# 	battle_center = sum / float(enemy_pos.size())
-	var battle_center = ctx.behavior._get_danger_center()
+	var battle_center = ctx.behavior._get_spotted_danger_center()
 	var friendly_center: Vector3
 	if friendly_pos.is_empty():
 		friendly_center = Vector3.ZERO

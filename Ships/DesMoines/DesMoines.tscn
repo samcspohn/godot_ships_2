@@ -173,9 +173,11 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_oonm6"]
 resource_local_to_scene = true
 script = ExtResource("12_vfelm")
+duration_reduction = 0.8
+damage_reduction = 0.55
 icon = ExtResource("11_3nwwl")
 disabled_icon = ExtResource("10_o5kiv")
-cooldown_time = 60.0
+cooldown_time = 40.0
 duration = 20.0
 max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"

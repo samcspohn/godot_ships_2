@@ -25,8 +25,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var danger_center = ctx.behavior._get_spotted_danger_center()
 	if danger_center == Vector3.ZERO:
-		danger_center = ctx.behavior._get_danger_center()
-	if danger_center == Vector3.ZERO:
 		return null
 
 	var to_danger = danger_center - ship.global_position

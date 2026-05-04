@@ -24,5 +24,5 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var dest = ship.global_position + fwd * to_enemy.length()
 	dest.y = 0.0
 
-	# dest = ctx.behavior._get_valid_nav_point(dest)
+	dest = ctx.behavior._get_valid_nav_point(dest)
 	return NavIntent.create(dest, heading)
