@@ -59,7 +59,7 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 1.0
+		Ship.ShipClass.BB: return 0.8
 		Ship.ShipClass.CA: return 1.0
 		Ship.ShipClass.DD: return 0.1
 	return 1.0
@@ -315,6 +315,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var intent: NavIntent = null
 	_suppress_guns = false
+	var previous_intent = _active_skill_name
 
 	# ── No enemies at all ───────────────────────────────────────────────────
 	if not has_enemies:
@@ -356,7 +357,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		return intent
 
 	# ── Threat-score + distance decision tree ───────────────────────────────
-	var threat = get_threat_score(server)
+	var threat = get_threat_score(ctx)
 	var nearest = _pick_nearest_spotted(ship, spotted)
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
@@ -378,7 +379,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		var to_nearest = nearest.global_position - ship.global_position
 		to_nearest.y = 0.0
-		var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		# var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
 		var optimal_heading = SkillAngle.calc_heading(ctx, {})
 		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
 		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
@@ -453,11 +454,15 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	# ── Post-process: broadside ──────────────────────────────────────────────
 	# if _active_skill_name not in [&"Chase"]:
-	intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.4})
+	intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
+	if previous_intent == &"FindCover" and _active_skill_name != &"FindCover":
+		_skill_cover.reset()
 	# ── Post-process: spread ─────────────────────────────────────────────────
 	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
+	if _active_skill_name in [&"FindCover", &"Push", &"Kite"]:
+		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 250.0, "spread_multiplier": 1.0})
 
 	return intent
 

@@ -572,10 +572,20 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
 	int from_cid = world_to_cluster(from);
 	int to_cid   = world_to_cluster(to);
 
+	bool threat_layer_active = false;
+	for (uint8_t blocked : cluster_threat_blocked_) {
+		if (blocked != 0) {
+			threat_layer_active = true;
+			break;
+		}
+	}
+
 	// -----------------------------------------------------------------------
-	// Fast path: same cluster — delegate directly to the grid-level planner
+	// Fast path: same cluster — delegate directly to the grid-level planner.
+	// Disabled while threat clusters are active so we don't bypass threat
+	// avoidance with a threat-blind grid path.
 	// -----------------------------------------------------------------------
-	if (from_cid == to_cid) {
+	if (from_cid == to_cid && !threat_layer_active) {
 		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
 	}
 
@@ -646,8 +656,15 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
 	int start_id = connect_point(from, from_cid);
 	int goal_id  = connect_point(to,   to_cid);
 
-	// Fall back to direct grid A* if we couldn't connect either endpoint
+	// Fall back to direct grid A* if we couldn't connect either endpoint.
+	// When threat clusters are active, returning a threat-blind fallback can
+	// cause frame-to-frame oscillation between avoidance and direct routes.
 	if (start_id < 0 || goal_id < 0) {
+		if (threat_layer_active) {
+			PathResult no_path;
+			no_path.valid = false;
+			return no_path;
+		}
 		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
 	}
 
@@ -656,7 +673,13 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
 		abstract_astar_impl(q_nodes, q_adj, start_id, goal_id);
 
 	if (abs_path.empty()) {
-		// Abstract A* found no route; fall back to direct grid A*
+		// Abstract A* found no route; avoid threat-blind fallback while threats
+		// are active.
+		if (threat_layer_active) {
+			PathResult no_path;
+			no_path.valid = false;
+			return no_path;
+		}
 		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
 	}
 

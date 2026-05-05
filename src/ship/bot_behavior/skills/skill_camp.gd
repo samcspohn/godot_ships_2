@@ -44,6 +44,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	candidate_pos.y = 0.0
 	candidate_pos = ctx.behavior._get_valid_nav_point(candidate_pos)
 
+	if here:
+		candidate_pos = ship.global_position
+
 	# --- Position lock logic ---
 	# Only update the locked position when:
 	#   1. We don't have a lock yet, OR
@@ -79,7 +82,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if absf(angle_difference(current_heading, heading)) > PI / 2.0:
 		heading = ctx.behavior._normalize_angle(heading + PI)
 
-	if here:
-		return NavIntent.create(ship.global_position, heading, jitter)
+	# if here:
+	# 	return NavIntent.create(ship.global_position, heading, jitter)
 
 	return NavIntent.create(_locked_position, heading, jitter)

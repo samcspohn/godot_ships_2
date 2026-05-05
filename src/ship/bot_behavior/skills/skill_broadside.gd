@@ -38,6 +38,7 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	if intent == null:
 		return null
 
+	# return intent
 	var ship = ctx.ship
 	if ship == null or not is_instance_valid(ship):
 		return intent
@@ -79,7 +80,18 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# Using the navigation heading as the preferred direction ensures the chosen
 	# broadside side is always the one that least disrupts the ship's travel
 	# (e.g. kiting away, covering behind an island, pushing forward).
+	# # Do not perturb transit/path-following heading.
+	# # Only apply broadside shaping after the navigator reports arrival.
+	# if ctx.navigator != null and not ctx.navigator.is_arrived():
+	# 	return intent
+
 	var desired_heading: float = intent.target_heading
+	if ctx.navigator != null and !ctx.navigator.is_arrived():
+		var wp: Vector3 = ctx.navigator.get_current_waypoint()
+		var to_wp: Vector3 = wp - ship.global_position
+		to_wp.y = 0.0
+		if to_wp.length_squared() >= 1.0:
+			desired_heading = atan2(to_wp.x, to_wp.z)
 	var broadside_heading: float = _find_best_all_guns_heading(guns, threat_bearing, desired_heading)
 
 	# --- Oscillation: blend the target heading between navigation and broadside ---
@@ -94,6 +106,13 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# near broadside when bias is high.
 	var t: float = (sin(_osc_timer * TAU / osc_period) + 1.0) * 0.5
 	var blend: float = clampf(t * (1.0 + osc_bias) - osc_bias * 0.5, 0.0, 1.0)
+
+	# Gate the swing-out: only expose the citadel once the guns are already
+	# traversed close to their needed angle at the broadside heading.  When
+	# turrets still have a long way to rotate, blend → 0 and the ship stays
+	# near its navigation heading rather than presenting its side for nothing.
+	var guns_in_position: float = _guns_in_position_fraction(guns, broadside_heading, threat_bearing)
+	blend *= guns_in_position
 
 	# Final target heading: gradually morphs from navigation heading toward broadside.
 	var final_heading: float = _lerp_angle(desired_heading, broadside_heading, blend)
@@ -185,6 +204,34 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 	# Rotate the ship so the threat lands exactly at the binding gun's limit.
 	return wrapf(threat_bearing - candidate, -PI, PI)
 	# return preferred_heading + angle_difference(preferred_heading, threat_bearing + candidate)
+
+
+## Returns a 0..1 value representing how close the bearing guns already are
+## to the traversal angle they will need once the ship reaches broadside_heading.
+## 1.0 = all guns perfectly on-target from that heading (safe to swing out).
+## 0.0 = guns still need ≥ MAX_TRAVERSAL_RAD of rotation.
+func _guns_in_position_fraction(guns: Array, broadside_heading: float, threat_bearing: float) -> float:
+	# Treat 90° (π/2) of remaining traversal as "fully out of position".
+	const MAX_TRAVERSAL_RAD: float = PI * 0.5
+	var total_fraction: float = 0.0
+	var bearing_count: int = 0
+
+	for gun: Turret in guns:
+		if not _can_gun_bear(gun, broadside_heading, threat_bearing):
+			continue
+		bearing_count += 1
+
+		# Where the gun must point (in local ship space) when the ship is at broadside_heading.
+		var needed_local: float = threat_bearing - broadside_heading - gun.base_rotation
+		needed_local = atan2(sin(needed_local), cos(needed_local))
+
+		# How far the gun still needs to rotate from its current position.
+		var traversal_remaining: float = absf(angle_difference(gun.rotation.y, needed_local))
+		total_fraction += 1.0 - clampf(traversal_remaining / MAX_TRAVERSAL_RAD, 0.0, 1.0)
+
+	if bearing_count == 0:
+		return 0.0
+	return total_fraction / float(bearing_count)
 
 
 ## Sum the absolute local traversal each *bearing* gun must still rotate to

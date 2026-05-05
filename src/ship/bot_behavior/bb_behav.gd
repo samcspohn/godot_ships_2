@@ -182,7 +182,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var has_enemies = has_spotted or not unspotted.is_empty()
 	var params = get_positioning_params()
 	var gun_range = ship.artillery_controller.get_params()._range
-	var threat = get_threat_score(server)
+	var threat = get_threat_score(ctx)
 	var _unspotted_near = _nearest_unspotted_info(server)
 
 	var nearest: Ship = null
@@ -298,9 +298,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# Reset camp lock when switching away from Camp
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
+	if _prev_skill_name == &"FindCover" and _active_skill_name != &"FindCover":
+		_skill_cover.reset()
 
 	 # Post-process broadside when skill is not Hunt or SailForward
-	if _active_skill_name not in  [&"Hunt", &"Flank", &"SailForward", &"Chase"]:
+	if _active_skill_name not in  [&"Hunt", &"SailForward"]:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	var _a = _probe_concealment(server)

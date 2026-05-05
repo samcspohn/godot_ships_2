@@ -79,6 +79,7 @@ void ShipNavigator::_bind_methods() {
 	// Debug
 	ClassDB::bind_method(D_METHOD("get_desired_heading"), &ShipNavigator::get_desired_heading);
 	ClassDB::bind_method(D_METHOD("get_distance_to_destination"), &ShipNavigator::get_distance_to_destination);
+	ClassDB::bind_method(D_METHOD("is_arrived"), &ShipNavigator::is_arrived);
 
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
@@ -400,6 +401,12 @@ float ShipNavigator::get_desired_heading() const {
 
 float ShipNavigator::get_distance_to_destination() const {
 	return state.position.distance_to(target.position);
+}
+
+bool ShipNavigator::is_arrived() const {
+	const float dist_to_dest = state.position.distance_to(target.position);
+	const float arrived_radius = std::max(target.hold_radius, params.ship_beam * 2.0f);
+	return dist_to_dest < arrived_radius;
 }
 
 // ============================================================================
@@ -1087,9 +1094,20 @@ void ShipNavigator::start_plan() {
 	// HPA* path (primary): threat-aware hierarchical A*.
 	// The abstract search runs in microseconds so planning always completes
 	// synchronously — no COMPUTING phase is needed.
+	//
+	// Important: apply this navigator's threat layer immediately before each
+	// HPA* query.  HpaGraph is shared by many ships; another ship may have
+	// stamped a different threat set (or cleared threats) earlier in the frame.
 	// -----------------------------------------------------------------------
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
 		map.is_valid() && map->is_built()) {
+
+		if (threat_bin_) {
+			hpa_graph_->stamp_threats(threat_bin_->threats);
+			threat_last_version_ = threat_bin_->version;
+		} else {
+			hpa_graph_->clear_threats();
+		}
 
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
@@ -1185,6 +1203,13 @@ void ShipNavigator::run_plan_sync() {
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
 		map.is_valid() && map->is_built()) {
 
+		if (threat_bin_) {
+			hpa_graph_->stamp_threats(threat_bin_->threats);
+			threat_last_version_ = threat_bin_->version;
+		} else {
+			hpa_graph_->clear_threats();
+		}
+
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
 			accept_plan_result(pr);
@@ -1265,22 +1290,25 @@ void ShipNavigator::run_plan_sync() {
 void ShipNavigator::hpa_incremental_update() {
 	if (!hpa_graph_.is_valid() || !hpa_graph_->is_built()) return;
 
-	// Restamp threat arcs onto the cluster grid when the bin version changes.
+	// If our bin version changed, schedule an immediate replan.
 	if (threat_bin_) {
 		uint64_t live_version = threat_bin_->version;
 		if (live_version != threat_last_version_) {
-			hpa_graph_->stamp_threats(threat_bin_->threats);
 			threat_last_version_ = live_version;
-			// Trigger a replan so the updated threat layout is reflected
-			// in the active path immediately.
 			replan_requested_ = true;
 		}
-	} else {
-		hpa_graph_->clear_threats();
 	}
 
 	// Re-plan with HPA* when stale or explicitly requested.
 	if (replan_requested_ || !path_valid) {
+		// Apply this navigator's threat layer right before query time.
+		if (threat_bin_) {
+			hpa_graph_->stamp_threats(threat_bin_->threats);
+			threat_last_version_ = threat_bin_->version;
+		} else {
+			hpa_graph_->clear_threats();
+		}
+
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
 			accept_plan_result(pr);
@@ -1642,6 +1670,29 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		heading_vp = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
 	}
 
+	// --- Exit-heading: precompute remaining path context for (b.75) ---
+	// Score each candidate by its total cost to destination:
+	//   time_to_wp_target  +  turn_time_to_align_with_next_segment
+	// The remaining travel from wp_target onward is identical for all candidates
+	// and cancels out, so only the arrival-heading mismatch at wp_target matters.
+	// wp_is_virtual already handles "destination underfoot" by suppressing the penalty.
+	Vector2 next_goal_after_wp = target.position;  // first goal after wp_target
+	float desired_exit_heading  = 0.0f;            // heading from wp_target → next_goal
+	bool  apply_exit_penalty    = false;
+	if (!wp_is_virtual && path_valid) {
+		int next_idx = current_wp_index + 1;
+		if (next_idx < static_cast<int>(current_path.waypoints.size())) {
+			next_goal_after_wp = current_path.waypoints[next_idx];
+		}
+		Vector2 to_next    = next_goal_after_wp - wp_target;
+		float   to_next_len = to_next.length();
+		if (to_next_len > 1.0f) {
+			desired_exit_heading = std::atan2(to_next.x, to_next.y);
+			apply_exit_penalty   = true;
+		}
+	}
+
+
 
 
 	for (int i = 0; i < n_candidates; ++i) {
@@ -1774,6 +1825,63 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			total_time = lerp_f(total_time, heading_align_time, target.heading_weight);
 		}
 
+		// --- (b.75) Exit-heading penalty: remaining full-path cost ---
+		// Estimate the heading at which the ship will arrive at wp_target.
+		//
+		// Two cases:
+		//   arrival_time >= 0  — an arc point physically reached wp_target.  Use the
+		//                        *travel direction* of that point: bow heading for forward
+		//                        candidates, -bow (stern direction) for reverse candidates.
+		//                        Do NOT use arc.back(): the arc may have continued past
+		//                        wp_target hunting for bow-alignment on the other side,
+		//                        giving a spurious 180° heading error for a valid forward arc.
+		//   arrival_time < 0   — arc terminated at the bow-alignment point.  The ship then
+		//                        drives forward from that point to wp_target, so arrival
+		//                        heading == direction from alignment endpoint to wp_target.
+		//
+		// The penalty is scaled by remaining path distance so it vanishes when the
+		// destination is close: reversing to a nearby final waypoint is fine and should
+		// still win, but reversing past an intermediate waypoint on a long journey is
+		// correctly penalised.
+		if (apply_exit_penalty) {
+			float arrival_h;
+			if (arrival_time >= 0.0f) {
+				// Find the first arc point within wp_reach_radius of wp_target.
+				float h_at_wp = arc.back().heading;  // fallback
+				for (const auto &pt : arc) {
+					if (pt.position.distance_to(wp_target) < wp_reach_radius) {
+						h_at_wp = pt.heading;
+						break;
+					}
+				}
+				if (cand_throttle < 0) {
+					// Reversing: travel direction is the stern direction = bow + 180°.
+					arrival_h = normalize_angle(h_at_wp + static_cast<float>(Math_PI));
+				} else {
+					// Forward: travel direction equals bow heading.
+					arrival_h = h_at_wp;
+				}
+			} else {
+				// Arc stopped at bow-alignment point; ship then drives forward to wp_target.
+				// Arrival heading = direction from arc endpoint to wp_target.
+				Vector2 d_wp     = wp_target - arc.back().position;
+				float   d_wp_len = d_wp.length();
+				arrival_h = (d_wp_len > 1.0f)
+				          ? std::atan2(d_wp.x, d_wp.y)
+				          : arc.back().heading;
+			}
+			float exit_err = std::abs(angle_difference(arrival_h, desired_exit_heading));
+			// Pure turn-time cost: how long does it take to rotate by exit_err
+			// at the ship's turning rate?  Half-turning-circle time == 180° rotation.
+			// No scaling: the remaining path distance is constant across all candidates
+			// so it doesn't affect ordering.  wp_is_virtual already handles the
+			// "destination is close" case by setting apply_exit_penalty = false.
+			float fwd_speed = throttle_to_speed(4);
+			if (fwd_speed < 1.0f) fwd_speed = 1.0f;
+			float half_tc_time = (static_cast<float>(Math_PI) * params.turning_circle_radius) / fwd_speed;
+			total_time += (exit_err / static_cast<float>(Math_PI)) * half_tc_time;
+		}
+
 		// --- (c) Obstacle check ---
 		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(arc);
 
@@ -1887,50 +1995,27 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 // ============================================================================
 
 float ShipNavigator::compute_pure_pursuit_rudder() const {
-	float R = params.turning_circle_radius;
-	float speed = std::max(std::abs(state.current_speed), 1.0f);
-	float lookahead = std::max(R * 2.0f, speed * 5.0f);
-	Vector2 lookahead_pt = find_path_lookahead(lookahead);
+	Vector2 wp;
+	if (!current_path.waypoints.empty() && current_wp_index < (int)current_path.waypoints.size()) {
+		wp = current_path.waypoints[current_wp_index];
+	} else {
+		wp = target.position;
+	}
 
-	Vector2 to_target = lookahead_pt - state.position;
+	Vector2 to_wp = wp - state.position;
 	float forward_x = std::sin(state.heading);
 	float forward_z = std::cos(state.heading);
-	float along  = to_target.x * forward_x + to_target.y * forward_z;
-	float lateral = to_target.x * forward_z - to_target.y * forward_x;
-	float dist_sq = to_target.x * to_target.x + to_target.y * to_target.y;
-	if (dist_sq < 1.0f) dist_sq = 1.0f;
+	float along = to_wp.x * forward_x + to_wp.y * forward_z;
 
-	float curvature = 2.0f * lateral / dist_sq;
-	float rudder = clamp_f(-curvature * R, -1.0f, 1.0f);
-
-	// If target is behind, steer directly
 	if (along < 0.0f) {
-		Vector2 wp = current_path.waypoints[current_wp_index];
-		rudder = compute_rudder_to_position(wp, false);
-		return rudder;
+		return compute_rudder_to_position(wp, false);
 	}
 
-	// Enforce maximum rudder when the heading error to the current waypoint is
-	// large.  Pure pursuit smooths curvature over the lookahead distance, which
-	// naturally produces reduced rudder even when a full turn is needed (e.g.
-	// at speed*5 lookahead and a 30° error the formula gives only ~0.5 rudder).
-	// Compare against the direct heading-based rudder to the waypoint and take
-	// whichever is more aggressive, so the ship always turns as tightly as
-	// possible to align ASAP.
-	if (!current_path.waypoints.empty() && current_wp_index < (int)current_path.waypoints.size()) {
-		Vector2 wp = current_path.waypoints[current_wp_index];
-		Vector2 to_wp = wp - state.position;
-		if (to_wp.length_squared() > 1.0f) {
-			float wp_heading = std::atan2(to_wp.x, to_wp.y);
-			float heading_rudder = compute_rudder_to_heading(wp_heading);
-			// Use the more aggressive rudder (larger magnitude wins)
-			if (std::abs(heading_rudder) > std::abs(rudder)) {
-				rudder = heading_rudder;
-			}
-		}
+	if (to_wp.length_squared() > 1.0f) {
+		float wp_heading = std::atan2(to_wp.x, to_wp.y);
+		return compute_rudder_to_heading(wp_heading);
 	}
-
-	return rudder;
+	return 0.0f;
 }
 
 // ============================================================================
@@ -2180,6 +2265,9 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	// (clamped to max_time), so the tiny error on that one step is negligible.
 	const float exp_decay = std::exp(-lateral_drag * integration_dt);
 
+	// After the arc aligns with target_pos, switch to straight so the avoidance
+	// system can check terrain on the straight segment from alignment to waypoint.
+	float effective_rudder = commanded_rudder;
 	bool aligned = false;
 	while (sim_time < max_time && total_distance < max_arc_distance) {
 		float dt = integration_dt;
@@ -2187,12 +2275,12 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 		if (dt < 0.001f) break;
 
 		if (params.rudder_response_time > 0.001f) {
-			sim_rudder = move_toward_f(sim_rudder, commanded_rudder, dt / params.rudder_response_time);
+			sim_rudder = move_toward_f(sim_rudder, effective_rudder, dt / params.rudder_response_time);
 		} else {
-			sim_rudder = commanded_rudder;
+			sim_rudder = effective_rudder;
 		}
 
-		if (!rudder_settled && std::abs(sim_rudder - commanded_rudder) < 0.01f) {
+		if (!rudder_settled && std::abs(sim_rudder - effective_rudder) < 0.01f) {
 			rudder_settled = true;
 		}
 
@@ -2244,9 +2332,14 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 			// Check alignment at emit points only — atan2 is expensive and
 			// arc-point granularity is sufficient for avoidance scoring.
-			// Terrain checking beyond alignment is handled by select_best_steering
-			// (it stops at the alignment point), so no minimum-distance guard needed.
-			if (rudder_settled) {
+			// After alignment, switch to straight (rudder 0) and continue
+			// simulating so select_best_steering can check terrain on the
+			// straight segment from alignment point to waypoint.
+			if (aligned) {
+				if (sim_pos.distance_to(target_pos) < emit_interval) {
+					break;
+				}
+			} else if (rudder_settled) {
 				Vector2 to_target = target_pos - sim_pos;
 				float dist_to_target = to_target.length();
 				if (dist_to_target > 1.0f) {
@@ -2254,7 +2347,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 					float heading_error = std::abs(angle_difference(sim_heading, desired_heading));
 					if (heading_error < alignment_threshold) {
 						aligned = true;
-						break;
+						effective_rudder = 0.0f;
 					}
 				}
 			}
@@ -2592,29 +2685,3 @@ bool ShipNavigator::is_waypoint_in_turning_dead_zone(Vector2 waypoint) const {
 	return (dist_starboard < threshold || dist_port < threshold);
 }
 
-Vector2 ShipNavigator::find_path_lookahead(float lookahead_dist) const {
-	if (!path_valid || current_path.waypoints.empty()) return target.position;
-
-	int last = static_cast<int>(current_path.waypoints.size()) - 1;
-	int idx = current_wp_index;
-	if (idx > last) idx = last;
-
-	Vector2 pos = state.position;
-	float remaining = lookahead_dist;
-
-	while (remaining > 0.0f && idx <= last) {
-		Vector2 wp = current_path.waypoints[idx];
-		float seg_dist = pos.distance_to(wp);
-
-		if (seg_dist >= remaining) {
-			Vector2 dir = (wp - pos).normalized();
-			return pos + dir * remaining;
-		}
-
-		remaining -= seg_dist;
-		pos = wp;
-		idx++;
-	}
-
-	return current_path.waypoints[last];
-}

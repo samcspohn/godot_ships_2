@@ -217,7 +217,6 @@ private:
 	bool is_waypoint_reached(Vector2 waypoint) const;
 	bool is_waypoint_in_turning_dead_zone(Vector2 waypoint) const;
 	float get_reach_radius() const;
-	Vector2 find_path_lookahead(float lookahead_dist) const;
 
 	// --- Pure pursuit steering ---
 	float compute_pure_pursuit_rudder() const;
@@ -338,6 +337,7 @@ public:
 
 	float get_desired_heading() const;
 	float get_distance_to_destination() const;
+	bool is_arrived() const;
 
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }

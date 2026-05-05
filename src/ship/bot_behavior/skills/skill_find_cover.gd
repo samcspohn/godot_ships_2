@@ -15,6 +15,17 @@ var _dist_to_dest: float = 0.0
 var _last_valid_cover_pos: Vector3 = Vector3.ZERO
 var _last_valid_cover_pos_set: bool = false
 
+const _TEAM_COVER_CLAIM_TTL_MS: int = 6000
+const _TEAM_COVER_MIN_SEPARATION_MULT: float = 3.0
+
+# Team-shared reservations: team_id -> ship_instance_id -> claim dictionary
+# claim = {"pos": Vector3, "island_id": int, "updated_ms": int}
+static var _team_cover_claims: Dictionary = {}
+
+# Last key used by this skill instance; allows reset() to release reservation.
+var _claimed_team_id: int = -1
+var _claimed_ship_id: int = -1
+
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
 	# var ship = ctx.ship
@@ -64,8 +75,10 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 
 	var d = _get_cover_position(ctx, params)
 	if d.is_empty():
+		_release_cover_claim()
 		return null
 	_set_island(d)
+	_reserve_cover_claim(ctx, d)
 	# "id": isl["id"],
 	# "center": isl_pos,
 	# "radius": isl_radius,
@@ -113,7 +126,80 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	# _get_cover_position(ctx)
 
 
+func _resolve_min_cover_separation(ctx: SkillContext, params: Dictionary) -> float:
+	var default_sep = ctx.behavior._get_ship_clearance() * _TEAM_COVER_MIN_SEPARATION_MULT
+	return params.get("min_cover_separation", default_sep)
 
+func _prune_team_cover_claims(team_id: int, now_ms: int) -> void:
+	if not _team_cover_claims.has(team_id):
+		return
+	var team_claims: Dictionary = _team_cover_claims[team_id]
+	for ship_id in team_claims.keys():
+		var entry: Dictionary = team_claims[ship_id]
+		if now_ms - int(entry.get("updated_ms", 0)) > _TEAM_COVER_CLAIM_TTL_MS:
+			team_claims.erase(ship_id)
+	if team_claims.is_empty():
+		_team_cover_claims.erase(team_id)
+	else:
+		_team_cover_claims[team_id] = team_claims
+
+func _collect_other_claim_positions(ctx: SkillContext) -> Array:
+	var claims: Array = []
+	if ctx.server == null or ctx.ship == null:
+		return claims
+	var team_id = ctx.ship.team.team_id
+	var now_ms = Time.get_ticks_msec()
+	_prune_team_cover_claims(team_id, now_ms)
+	if not _team_cover_claims.has(team_id):
+		return claims
+	var my_ship_id = ctx.ship.get_instance_id()
+	var team_claims: Dictionary = _team_cover_claims[team_id]
+	for ship_id in team_claims.keys():
+		if int(ship_id) == my_ship_id:
+			continue
+		var entry: Dictionary = team_claims[ship_id]
+		var p: Vector3 = entry.get("pos", Vector3.ZERO)
+		if p != Vector3.ZERO:
+			claims.append(p)
+	return claims
+
+func _has_cover_spacing_conflict(pos: Vector3, claim_positions: Array, min_cover_separation: float) -> bool:
+	if min_cover_separation <= 0.0 or claim_positions.is_empty():
+		return false
+	for claim_pos in claim_positions:
+		if pos.distance_to(claim_pos) < min_cover_separation:
+			return true
+	return false
+
+func _reserve_cover_claim(ctx: SkillContext, island: Dictionary) -> void:
+	if ctx.server == null or ctx.ship == null:
+		return
+	var team_id = ctx.ship.team.team_id
+	var ship_id = ctx.ship.get_instance_id()
+	var now_ms = Time.get_ticks_msec()
+	_prune_team_cover_claims(team_id, now_ms)
+	var team_claims: Dictionary = _team_cover_claims.get(team_id, {})
+	team_claims[ship_id] = {
+		"pos": island["dest"],
+		"island_id": island["id"],
+		"updated_ms": now_ms,
+	}
+	_team_cover_claims[team_id] = team_claims
+	_claimed_team_id = team_id
+	_claimed_ship_id = ship_id
+
+func _release_cover_claim() -> void:
+	if _claimed_team_id < 0 or _claimed_ship_id < 0:
+		return
+	if _team_cover_claims.has(_claimed_team_id):
+		var team_claims: Dictionary = _team_cover_claims[_claimed_team_id]
+		team_claims.erase(_claimed_ship_id)
+		if team_claims.is_empty():
+			_team_cover_claims.erase(_claimed_team_id)
+		else:
+			_team_cover_claims[_claimed_team_id] = team_claims
+	_claimed_team_id = -1
+	_claimed_ship_id = -1
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +215,9 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var my_pos: Vector3 = ship.global_position
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
+	var max_desired_range = ship.artillery_controller.get_params()._range * 0.7
+	var min_cover_separation = ctx.behavior._get_ship_clearance() * _TEAM_COVER_MIN_SEPARATION_MULT
+	var other_claim_positions = _collect_other_claim_positions(ctx)
 
 	# ── Fastest path: re-validate the last known-good cover position ─────────
 	# This is a fixed world point that was previously confirmed as hidden AND
@@ -142,7 +231,8 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 				break
 		if cached_hidden:
 			var can_shoot_cached := _can_shoot_from(ctx, cached_pos, targets)
-			if targets.is_empty() or can_shoot_cached:
+			var cached_conflict = _has_cover_spacing_conflict(cached_pos, other_claim_positions, min_cover_separation)
+			if (targets.is_empty() or can_shoot_cached) and not cached_conflict:
 				return {
 					"id": _target_island_id,
 					"center": _target_island_pos,
@@ -165,7 +255,8 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 				break
 		if all_hidden:
 			var can_shoot_here := _can_shoot_from(ctx, my_pos, targets)
-			if targets.is_empty() or can_shoot_here:
+			var current_conflict = _has_cover_spacing_conflict(my_pos, other_claim_positions, min_cover_separation)
+			if (targets.is_empty() or can_shoot_here) and not current_conflict:
 				if can_shoot_here:
 					_last_valid_cover_pos = my_pos
 					_last_valid_cover_pos_set = true
@@ -187,7 +278,14 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 		hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
 
 	var cover_result = ctx.behavior._find_cover_position_on_island(
-		_target_island_pos, _target_island_radius, hide_h, threats, targets, true
+		_target_island_pos,
+		_target_island_radius,
+		hide_h,
+		threats,
+		targets,
+		max_desired_range,
+		other_claim_positions,
+		min_cover_separation
 	)
 
 	# Island can't conceal us at all — abandon it.
@@ -252,6 +350,8 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	# var enemy_clusters = ctx.server.get_enemy_clusters(ship.team.team_id)
 
 	ctx.behavior._ensure_safe_dir(ship, ctx.server)
+	var min_cover_separation = _resolve_min_cover_separation(ctx, params)
+	var other_claim_positions = _collect_other_claim_positions(ctx)
 
 	# ── No-enemy shortcut ────────────────────────────────────────────────────
 	# When there are no known threats or valid targets, skip the full cover
@@ -274,20 +374,51 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 				shortcut_isl = isl
 		if shortcut_isl.is_empty():
 			return {}
+
 		var sc2d: Vector2 = shortcut_isl["center"]
 		var sc_pos := Vector3(sc2d.x, 0.0, sc2d.y)
 		var sc_radius: float = shortcut_isl["radius"]
 		# Direction from assumed threat (origin) toward the island — place cover
 		# on the far side so the island body sits between us and the threat.
 		var away_dir := sc_pos.normalized() if sc_pos.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
-		var dest := sc_pos + away_dir * sc_radius * 0.9
-		return {
+		var fallback_dest := sc_pos + away_dir * sc_radius * 0.9
+		var fallback_result := {
 			"id": shortcut_isl["id"],
 			"center": sc_pos,
 			"radius": sc_radius,
-			"dest": dest,
+			"dest": fallback_dest,
 			"can_shoot": false,
 		}
+
+		if not _has_cover_spacing_conflict(fallback_dest, other_claim_positions, min_cover_separation):
+			return fallback_result
+
+		var best_alt: Dictionary = {}
+		var best_alt_dist: float = INF
+		for isl in islands:
+			if isl["id"] == shortcut_isl["id"]:
+				continue
+			var c2d_alt: Vector2 = isl["center"]
+			var isl_pos_alt := Vector3(c2d_alt.x, 0.0, c2d_alt.y)
+			var isl_radius_alt: float = isl["radius"]
+			var away_dir_alt := isl_pos_alt.normalized() if isl_pos_alt.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
+			var dest_alt := isl_pos_alt + away_dir_alt * isl_radius_alt * 0.9
+			if _has_cover_spacing_conflict(dest_alt, other_claim_positions, min_cover_separation):
+				continue
+			var d_alt: float = my_pos.distance_to(isl_pos_alt) - isl_radius_alt
+			if d_alt < best_alt_dist:
+				best_alt_dist = d_alt
+				best_alt = {
+					"id": isl["id"],
+					"center": isl_pos_alt,
+					"radius": isl_radius_alt,
+					"dest": dest_alt,
+					"can_shoot": false,
+				}
+		if not best_alt.is_empty():
+			return best_alt
+
+		return fallback_result
 
 	# Always sort islands by proximity — nearest edge of island to ship wins ties
 	islands.sort_custom(func(a, b):
@@ -298,54 +429,9 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 		return my_pos.distance_to(ca) - a["radius"] < my_pos.distance_to(cb) - b["radius"]
 	)
 
-	# var best_id: int = -1
-	# var best_score: float = INF
-	# var best_pos: Vector3 = Vector3.ZERO
-	# var best_radius: float = 0.0
-	# var best_dest: Vector3 = Vector3.ZERO
-	# var best_can_shoot: bool = false
-
-	# ── Commitment: try the cached island first ───────────────────────────
-	# If we already have a committed island, evaluate it before the sorted
-	# search. If it still provides shootable cover we return immediately,
-	# honouring the commitment. If it fails we record its id so the main
-	# loop can skip it and find the next viable candidate.
-	var skip_committed_id: int = -1
-	# if _target_island_id >= 0:
-	# 	for isl in islands:
-	# 		if isl["id"] != _target_island_id:
-	# 			continue
-	# 		var c2d: Vector2 = isl["center"]
-	# 		var c_pos = Vector3(c2d.x, 0.0, c2d.y)
-	# 		var c_rad: float = isl["radius"]
-	# 		var c_hide_h: float
-	# 		if threats.size() > 0:
-	# 			c_hide_h = ctx.behavior._compute_hide_heading(c_pos, threats)
-	# 		else:
-	# 			c_hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
-	# 		var c_result = ctx.behavior._find_cover_position_on_island(
-	# 			c_pos, c_rad, c_hide_h, threats, targets, true
-	# 		)
-	# 		# Stay on committed island when:
-	# 		#   • it can still conceal us AND we can shoot, OR
-	# 		#   • it can still conceal us AND no enemies are visible (can't
-	# 		#     assess shootability — don't thrash to a different island).
-	# 		if not c_result.is_empty() and (targets.is_empty() or c_result["can_shoot"]):
-	# 			return {
-	# 				"id": isl["id"],
-	# 				"center": c_pos,
-	# 				"radius": c_rad,
-	# 				"dest": c_result["pos"],
-	# 				"can_shoot": c_result.get("can_shoot", false),
-	# 			}
-	# 		# Committed island can no longer provide cover — exclude it from
-	# 		# the upcoming search so we pick the next best candidate.
-	# 		skip_committed_id = _target_island_id
-	# 		break
+	var spacing_conflict_fallback: Dictionary = {}
 
 	for isl in islands:
-		if isl["id"] == skip_committed_id:
-			continue
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
 		var isl_radius: float = isl["radius"]
@@ -358,17 +444,21 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 
 		# Always sort candidate positions on the island by proximity to the ship
 		var cover_result = ctx.behavior._find_cover_position_on_island(
-			isl_pos, isl_radius, hide_h, threats, targets, max_desired_range
+			isl_pos,
+			isl_radius,
+			hide_h,
+			threats,
+			targets,
+			max_desired_range,
+			other_claim_positions,
+			min_cover_separation
 		)
 		# Only consider islands where we can actually shoot from cover
 		if cover_result.is_empty() or not cover_result["can_shoot"]:
 			continue
 
 		var dest: Vector3 = cover_result["pos"]
-
-		# if prioritize_cover:
-		# Nearest viable island — return immediately (list is already sorted)
-		return {
+		var island_result := {
 			"id": isl["id"],
 			"center": isl_pos,
 			"radius": isl_radius,
@@ -376,46 +466,19 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 			"can_shoot": true,
 		}
 
-	# 	# ── Range-optimising mode ────────────────────────────────────────────
-	# 	# Find the nearest non-DD enemy cluster to score engagement distance.
-	# 	var nearest_cluster_dist = INF
-	# 	var nearest_cluster_valid = false
-	# 	for cluster in enemy_clusters:
-	# 		var d = dest.distance_to(cluster.center)
-	# 		if d < nearest_cluster_dist:
-	# 			for cluster_ship: Ship in cluster.ships:
-	# 				if cluster_ship.ship_class != Ship.ShipClass.DD:
-	# 					nearest_cluster_dist = d
-	# 					nearest_cluster_valid = true
-	# 					break
+		if cover_result.get("spacing_conflict", false):
+			if spacing_conflict_fallback.is_empty():
+				spacing_conflict_fallback = island_result
+			continue
 
-	# 	var score: float
-	# 	if nearest_cluster_valid:
-	# 		if nearest_cluster_dist > gun_range or nearest_cluster_dist < min_safe_range:
-	# 			continue
-	# 		score = absf(1.0 - nearest_cluster_dist / desired_range)
-	# 	else:
-	# 		# No cluster data — fall back to proximity score
-	# 		score = maxf(isl_pos.distance_to(my_pos) - isl_radius, 0.0)
+		# if prioritize_cover:
+		# Nearest viable island — return immediately (list is already sorted)
+		return island_result
 
-	# 	if score < best_score:
-	# 		best_score = score
-	# 		best_id = isl["id"]
-	# 		best_pos = isl_pos
-	# 		best_radius = isl_radius
-	# 		best_dest = dest
-	# 		best_can_shoot = true
+	if not spacing_conflict_fallback.is_empty():
+		return spacing_conflict_fallback
 
-	# if best_id < 0:
 	return {}
-
-	# return {
-	# 	"id": best_id,
-	# 	"center": best_pos,
-	# 	"radius": best_radius,
-	# 	"dest": best_dest,
-	# 	"can_shoot": best_can_shoot,
-	# }
 
 
 func _set_island(island: Dictionary) -> void:
@@ -463,6 +526,7 @@ func get_dist() -> float:
 
 
 func reset() -> void:
+	_release_cover_claim()
 	_target_island_id = -1
 	_nav_destination_valid = false
 	_arrived = false

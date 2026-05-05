@@ -525,6 +525,10 @@ func get_potential_target_weight(target: Ship) -> float:
 	var hp = target.health_controller.current_hp
 	var hp_ratio = hp / target.health_controller.max_hp
 	weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
+	if can_hit_target(target):
+		weight *= 10.0
+	if target.visible_to_enemy:
+		weight *= 10.0
 
 	return weight
 
@@ -537,8 +541,8 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		new_target = last_target
 		target_weight = last_target_weight
 	for potential in targets:
-		if potential.visible_to_enemy and not can_hit_target(potential):
-			continue
+		# if potential.visible_to_enemy and not can_hit_target(potential):
+		# 	continue
 		var weight = get_potential_target_weight(potential)
 		if abs(weight - last_target_weight) > 0.1 and weight > target_weight:
 			new_target = potential
@@ -688,6 +692,9 @@ func _get_spotted_danger_center() -> Vector3:
 			if dist > ship_range:
 				threat *= 0.1
 			var weight = base_weight * threat
+			if active_shooters_at_me.has(ship):
+				weight *= 5.0  # Boost weight for enemies actively shooting at us
+				# Optionally, could also factor in how recently they shot at us based on expiry time
 			weighted_pos += ship.global_position * weight
 			total_weight += weight
 		for ship in unspotted.keys():
@@ -698,7 +705,12 @@ func _get_spotted_danger_center() -> Vector3:
 				dist = 1.0
 			var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
 			var threat = get_threat_class_weight(ship.ship_class) if is_instance_valid(ship) else 1.0
+			var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
+			if dist > ship_range:
+				threat *= 0.1
 			var weight = base_weight * threat * 0.5
+			if active_shooters_at_me.has(ship):
+				weight *= 5.0  # Boost weight for enemies actively shooting at us
 			weighted_pos += last_pos * weight
 			total_weight += weight
 		if total_weight >= 0.001:
@@ -1228,11 +1240,18 @@ func _gather_threat_positions(ship: Ship) -> Array:
 		threats.append(unspotted[enemy_ship])
 	return threats
 
-func _get_ship_clearance() -> float:
-	"""Use the navigator's hard clearance — single source of truth."""
+func get_navigator() -> ShipNavigator:
+	"""Expose the owning BotControllerV4 navigator to skills via SkillContext."""
 	var controller = get_parent()
 	if controller and controller.navigator:
-		return controller.navigator.get_clearance_radius()
+		return controller.navigator
+	return null
+
+func _get_ship_clearance() -> float:
+	"""Use the navigator's hard clearance — single source of truth."""
+	var nav := get_navigator()
+	if nav != null:
+		return nav.get_clearance_radius()
 	return 100.0
 
 func _get_turning_radius() -> float:
@@ -1362,7 +1381,7 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
@@ -1387,6 +1406,7 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var threat_count = threats.size()
 	var my_pos = _ship.global_position
+	var enforce_spacing := min_separation > 0.0 and not avoid_positions.is_empty()
 
 	# --- Phase 1: Collect all candidate positions ---
 	var candidates: Array[Vector3] = []
@@ -1429,6 +1449,8 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 
 	# --- Phase 3: Evaluate candidates in order ---
 	var best_concealed_fallback: Vector3 = Vector3.ZERO
+	var best_conflict_shootable: Vector3 = Vector3.ZERO
+	var best_conflict_concealed: Vector3 = Vector3.ZERO
 
 	for pos in candidates:
 		var any_in_range = false
@@ -1445,6 +1467,13 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 				hidden_count += 1
 		if hidden_count < threat_count:
 			continue
+
+		var spacing_conflict := false
+		if enforce_spacing:
+			for avoid_pos in avoid_positions:
+				if pos.distance_to(avoid_pos) < min_separation:
+					spacing_conflict = true
+					break
 
 		var can_shoot_any: bool = false
 		if shell_params != null:
@@ -1464,13 +1493,26 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 					break
 
 		if can_shoot_any:
-			return { "pos": pos, "can_shoot": true }
-
-		if best_concealed_fallback == Vector3.ZERO:
-			best_concealed_fallback = pos
+			if spacing_conflict:
+				if best_conflict_shootable == Vector3.ZERO:
+					best_conflict_shootable = pos
+			else:
+				return { "pos": pos, "can_shoot": true, "spacing_conflict": false }
+		else:
+			if spacing_conflict:
+				if best_conflict_concealed == Vector3.ZERO:
+					best_conflict_concealed = pos
+			elif best_concealed_fallback == Vector3.ZERO:
+				best_concealed_fallback = pos
 
 	if best_concealed_fallback != Vector3.ZERO:
-		return { "pos": best_concealed_fallback, "can_shoot": false }
+		return { "pos": best_concealed_fallback, "can_shoot": false, "spacing_conflict": false }
+
+	if best_conflict_shootable != Vector3.ZERO:
+		return { "pos": best_conflict_shootable, "can_shoot": true, "spacing_conflict": true }
+
+	if best_conflict_concealed != Vector3.ZERO:
+		return { "pos": best_conflict_concealed, "can_shoot": false, "spacing_conflict": true }
 
 	return {}
 
@@ -1506,8 +1548,7 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 # ============================================================================
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
-
-func get_threat_score(server: GameServer) -> float:
+func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
 	## Each spotted enemy within its own gun range contributes a per-enemy threat
 	## via an asymptotic function (1 − e^−x), so threat approaches 1 as the raw
@@ -1515,6 +1556,7 @@ func get_threat_score(server: GameServer) -> float:
 	##   enemy_hp / my_hp × range_pressure × class_w
 	## Multiple enemies compound multiplicatively via raw_threat *= (1 − this_threat).
 	## Subclasses override get_threat_class_weight() to tune per-class fear.
+	var server: GameServer = ctx.server
 	var frame := Engine.get_physics_frames()
 	if frame == _threat_score_frame:
 		return _threat_score_cache
@@ -1549,6 +1591,10 @@ func get_threat_score(server: GameServer) -> float:
 		# Asymptotic: approaches 1 as raw pressure increases, never exceeds it.
 		# 1 − e^(−x): x=0 → 0.0, x=1 → 0.63, x=2 → 0.86, x→∞ → 1.0
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
+		if ctx.behavior.active_shooters_at_me.has(enemy):
+			raw_val *= 2.0
+		else:
+			raw_val *= 0.5
 		var this_threat = 1.0 - exp(-raw_val)
 		if not enemy.visible_to_enemy:
 			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
@@ -1679,7 +1725,7 @@ func get_debug_skill_info() -> Dictionary:
 			info["bloom"] = _ship.concealment.bloom_value
 		var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 		if server_node != null:
-			info["threat"] = get_threat_score(server_node)
+			info["threat"] = _threat_score_cache
 		if _ship.torpedo_controller != null:
 			info["torp_reload"] = _get_max_torp_reload()
 	return info

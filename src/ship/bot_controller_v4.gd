@@ -633,7 +633,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# the window, not just the first detection per salvo.
 	if behavior != null and s.artillery_controller != null:
 		var reload_sec: float = s.artillery_controller.get_params().reload_time
-		var expiry: float = Time.get_ticks_msec() / 1000.0 + 1.5 * reload_sec
+		var expiry: float = Time.get_ticks_msec() / 1000.0 + 4.0 * reload_sec
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry
@@ -1000,7 +1000,9 @@ func _emit_debug_draws() -> void:
 	# --- a) Desired heading arrow (GREEN, above ship) ---
 	var heading_pos = ship_pos
 	heading_pos.y += 100.0
-	Debug.draw_arrow(heading_pos, _debug_desired_heading_vector, 200.0, Color.GREEN, 10.0)
+	var desired_heading = _last_intent.target_heading
+	var desired_heading_vec = Vector3(sin(desired_heading), 0.0, cos(desired_heading)).normalized()
+	Debug.draw_arrow(heading_pos, desired_heading_vec, 200.0, Color.GREEN, 10.0)
 
 	# --- b) Heading + rudder arrow (CYAN) ---
 	if _debug_heading_rudder_vector.length() > 0.1:
@@ -1049,8 +1051,9 @@ func _emit_debug_draws() -> void:
 		Debug.draw_cone(target_pos, Vector3(PI, 0.0, 0.0), 60.0, 0.0, 30.0, Color.RED, 4)
 
 	# --- g) Destination marker (green cone pointing down) ---
-	if destination != Vector3.ZERO:
-		Debug.draw_cone(Vector3(destination.x, 120.0, destination.z), Vector3(PI, 0.0, 0.0), 80.0, 0.0, 40.0, Color(0.0, 1.0, 0.4, 0.9), 4)
+	# if destination != Vector3.ZERO:
+	var dest = _last_intent.target_position
+	Debug.draw_cone(Vector3(dest.x, 120.0, dest.z), Vector3(PI, 0.0, 0.0), 80.0, 0.0, 40.0, Color(0.0, 1.0, 0.4, 0.9), 4)
 
 	# --- Navigator-dependent draws ---
 	if navigator != null:

@@ -265,7 +265,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var hp_ratio          = ship.health_controller.current_hp / ship.health_controller.max_hp
 	var concealment_radius: float = (ship.concealment.params.p() as ConcealmentParams).radius
 	var pos_params        = get_positioning_params()
-	var threat 			  = get_threat_score(server)
+	var threat 			  = get_threat_score(ctx)
 
 
 	var _spot_chase_hunt = func():
