@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <cstdint>
 #include <cmath>
 #include <limits>
 
@@ -46,6 +47,8 @@ private:
 
 	// --- Bot identity (for staggered replanning) ---
 	int bot_id_;
+	static constexpr int REPLAN_STAGGER_FRAMES = 6;
+	uint64_t nav_update_tick_ = 0;
 
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
@@ -92,8 +95,55 @@ private:
 	float timing_update_us;
 	float timing_avoidance_us;
 	float timing_plan_us;
-	int timing_replan_reason;  // 0=none, 1=requested, 2=no_path, 3=deviated, 4=ticking
+	float timing_steering_us;
+	int timing_replan_reason;  // 0=none, 1=requested, 2=no_path, 3=deviated, 4=ticking, 5=stagger_wait
 	int timing_plan_phase_val; // current PlanPhase as int
+
+	// --- Runtime performance aggregates (spike-oriented) ---
+	uint64_t perf_frame_count_;
+	float perf_spike_threshold_us_;
+	float perf_report_interval_s_;
+	float perf_report_accum_s_;
+	bool perf_tracking_enabled_ = false;
+
+	static constexpr int PERF_SPIKE_PHASE_COUNT = 6;
+	uint64_t perf_phase_count_[PERF_SPIKE_PHASE_COUNT];
+	float perf_phase_avg_update_us_[PERF_SPIKE_PHASE_COUNT];
+	float perf_phase_avg_plan_us_[PERF_SPIKE_PHASE_COUNT];
+	float perf_phase_avg_avoidance_us_[PERF_SPIKE_PHASE_COUNT];
+	float perf_phase_avg_steering_us_[PERF_SPIKE_PHASE_COUNT];
+
+	uint64_t perf_window_frame_count_;
+	float perf_window_update_sum_us_;
+	float perf_window_plan_sum_us_;
+	float perf_window_avoidance_sum_us_;
+	float perf_window_steering_sum_us_;
+
+	float perf_avg_update_us_;
+	float perf_avg_plan_us_;
+	float perf_avg_avoidance_us_;
+	float perf_avg_steering_us_;
+
+	float perf_max_update_us_;
+	float perf_max_plan_us_;
+	float perf_max_avoidance_us_;
+	float perf_max_steering_us_;
+
+	uint64_t perf_update_spike_count_;
+	uint64_t perf_plan_spike_count_;
+	uint64_t perf_avoidance_spike_count_;
+	uint64_t perf_steering_spike_count_;
+
+	float perf_worst_update_spike_us_;
+	float perf_worst_plan_spike_us_;
+	float perf_worst_avoidance_spike_us_;
+	float perf_worst_steering_spike_us_;
+
+	int perf_last_steering_candidates_total_;
+	int perf_last_steering_candidates_simulated_;
+	int perf_last_steering_terrain_rejects_;
+	int perf_last_steering_short_arc_rejects_;
+	int perf_last_steering_arc_points_simulated_;
 
 	// --- Debug visualization: the actual simulated arc that won scoring ---
 	std::vector<ArcPoint> winning_arc;
@@ -354,8 +404,16 @@ public:
 	float get_timing_update_us() const { return timing_update_us; }
 	float get_timing_avoidance_us() const { return timing_avoidance_us; }
 	float get_timing_plan_us() const { return timing_plan_us; }
+	float get_timing_steering_us() const { return timing_steering_us; }
 	int get_timing_replan_reason() const { return timing_replan_reason; }
 	int get_timing_plan_phase() const { return timing_plan_phase_val; }
+
+	Dictionary get_perf_metrics() const;
+	void reset_perf_metrics();
+	void set_perf_spike_threshold_us(float threshold_us);
+	float get_perf_spike_threshold_us() const;
+	void set_perf_tracking_enabled(bool enabled);
+	bool is_perf_tracking_enabled() const;
 
 	// --- Backward-compatible API stubs ---
 

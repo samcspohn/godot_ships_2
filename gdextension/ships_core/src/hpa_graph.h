@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <queue>
 #include <unordered_map>
@@ -107,8 +108,9 @@ public:
 	bool is_built() const { return built_; }
 
 	/// Find a path from world-space 'from' to 'to'.
-	/// Falls back to nav_map_->find_path_internal() when both points
-	/// share the same cluster.
+	/// Uses HPA connectors for endpoint attachment and does not fall back to
+	/// a global grid-level A* if endpoint attachment fails.
+	/// For same-cluster, threat-free queries it may still use local grid search.
 	PathResult find_path(Vector2 from, Vector2 to) const;
 
 	/// Convenience wrapper — returns only the waypoint positions as a
@@ -142,6 +144,14 @@ public:
 	// Pure query: computes blocked clusters for the given threat set without touching
 	// cluster_threat_blocked_.  Always reflects the caller's own threat bin.
 	TypedArray<Dictionary> compute_debug_threat_clusters(const std::vector<ThreatCircle> &threats) const;
+
+	// Performance diagnostics (query-time, runtime focused)
+	Dictionary get_perf_metrics() const;
+	void reset_perf_metrics();
+	void set_perf_spike_threshold_us(float threshold_us);
+	float get_perf_spike_threshold_us() const;
+	void set_perf_tracking_enabled(bool enabled);
+	bool is_perf_tracking_enabled() const;
 
 protected:
 	static void _bind_methods();
@@ -181,6 +191,56 @@ private:
 	std::unordered_map<int, HpaObstacle> obstacles_;
 
 	bool built_ = false;
+
+	struct PerfStats {
+		uint64_t query_count = 0;
+		uint64_t success_count = 0;
+		uint64_t failure_count = 0;
+
+		float last_total_us = 0.0f;
+		float last_connect_us = 0.0f;
+		float last_abstract_us = 0.0f;
+		float last_refine_us = 0.0f;
+		float last_start_connect_us = 0.0f;
+		float last_goal_connect_us = 0.0f;
+
+		float avg_total_us = 0.0f;
+		float avg_connect_us = 0.0f;
+		float avg_abstract_us = 0.0f;
+		float avg_refine_us = 0.0f;
+
+		float max_total_us = 0.0f;
+		float max_connect_us = 0.0f;
+		float max_abstract_us = 0.0f;
+		float max_refine_us = 0.0f;
+
+		int last_connector_los_attempts = 0;
+		int last_connector_los_hits = 0;
+		int last_connector_local_search_runs = 0;
+		int last_connector_local_expansions = 0;
+		int last_connector_portal_candidates = 0;
+
+		float avg_connector_los_attempts = 0.0f;
+		float avg_connector_los_hits = 0.0f;
+		float avg_connector_local_search_runs = 0.0f;
+		float avg_connector_local_expansions = 0.0f;
+		float avg_connector_portal_candidates = 0.0f;
+
+		float spike_threshold_us = 2500.0f;
+		uint64_t spike_count = 0;
+		float worst_spike_us = 0.0f;
+
+		float report_interval_s = 5.0f;
+		uint64_t last_report_wall_us = 0;
+		uint64_t window_queries = 0;
+		float window_total_sum_us = 0.0f;
+		float window_connect_sum_us = 0.0f;
+		float window_abstract_sum_us = 0.0f;
+		float window_refine_sum_us = 0.0f;
+	};
+
+	mutable PerfStats perf_;
+	bool perf_tracking_enabled_ = false;
 
 	// ------------------------------------------------------------------
 	// Build helpers

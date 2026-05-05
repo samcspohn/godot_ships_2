@@ -164,6 +164,7 @@ metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 [sub_resource type="Resource" id="Resource_s4v2q"]
 script = ExtResource("9_cvobt")
 max_buildup = 200.0
+buildup_reduction_rate = 0.02
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_y7d2n"]

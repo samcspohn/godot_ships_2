@@ -2,6 +2,7 @@
 
 #include <godot_cpp/core/class_db.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace godot;
@@ -99,17 +100,49 @@ void ThreatRegistry::rebuild_team_bins(int team_id) {
 }
 
 void ThreatRegistry::rebuild_bin(ThreatBin* bin) {
-	bin->threats.clear();
+	std::vector<ThreatCircle> new_threats;
 	auto it = teams_.find(bin->team_id);
 	if (it != teams_.end()) {
 		const auto& team = it->second;
-		bin->threats.reserve(team.enemies.size());
+		new_threats.reserve(team.enemies.size());
 		for (const auto& ekv : team.enemies) {
 			const EnemyArcState& es = ekv.second;
 			float radius_eff = bin->radius * es.decay;
 			if (radius_eff <= 0.0f) continue;
-			bin->threats.emplace_back(es.enemy_id, es.position, radius_eff);
+			new_threats.emplace_back(es.enemy_id, es.position, radius_eff);
 		}
 	}
+
+	// Deterministic ordering prevents spurious "changes" from unordered_map
+	// iteration order differences across rebuilds.
+	std::sort(new_threats.begin(), new_threats.end(), [](const ThreatCircle &a, const ThreatCircle &b) {
+		return a.enemy_id < b.enemy_id;
+	});
+
+	bool changed = (new_threats.size() != bin->threats.size());
+	if (!changed) {
+		constexpr float POS_EPS = 0.01f;
+		constexpr float RADIUS_EPS = 0.01f;
+		for (size_t i = 0; i < new_threats.size(); ++i) {
+			const ThreatCircle &a = new_threats[i];
+			const ThreatCircle &b = bin->threats[i];
+			if (a.enemy_id != b.enemy_id) {
+				changed = true;
+				break;
+			}
+			if (std::abs(a.origin.x - b.origin.x) > POS_EPS ||
+				std::abs(a.origin.y - b.origin.y) > POS_EPS ||
+				std::abs(a.radius - b.radius) > RADIUS_EPS) {
+				changed = true;
+				break;
+			}
+		}
+	}
+
+	if (!changed) {
+		return; // No semantic change; keep version stable.
+	}
+
+	bin->threats = std::move(new_threats);
 	bin->version += 1;
 }

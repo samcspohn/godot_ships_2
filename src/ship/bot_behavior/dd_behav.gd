@@ -38,7 +38,7 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 1.0
 		Ship.ShipClass.CA: return 2.0   # CAs are DD hunters
-		Ship.ShipClass.DD: return 1.0
+		Ship.ShipClass.DD: return 0.5
 	return 1.0
 
 func get_positioning_params() -> Dictionary:
@@ -351,7 +351,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# Post-process spread (skip for Retreat and Kite)
 	if _active_skill_name == &"Spot":
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 5000.0, "spread_multiplier": 1.0})
-		
+
 	elif _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Retreat"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
 

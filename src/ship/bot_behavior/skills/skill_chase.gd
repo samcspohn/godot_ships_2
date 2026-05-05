@@ -8,6 +8,7 @@ func execute(ctx: SkillContext, _params: Dictionary) -> NavIntent:
 	if unspotted.is_empty():
 		return null
 
+	# TODO: implement displacement prediction for unspotted targets, rather than just chasing the last known position. This is especially important for fast ships like Interceptors that can quickly outpace the bot's pursuit.
 	# Find the nearest unspotted enemy by last known position
 	var best_pos: Vector3
 	var best_dist := INF

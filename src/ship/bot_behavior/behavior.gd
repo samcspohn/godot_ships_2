@@ -152,7 +152,7 @@ func get_positioning_params() -> Dictionary:
 func get_cover_search_params() -> Dictionary:
 	"""Override to customize cover position search tuning."""
 	return {
-		angle_step = deg_to_rad(10.0),
+		angle_step = deg_to_rad(20.0),
 		angle_half_span = PI / 2.0,
 		los_clearance = -75.0,
 	}
@@ -540,6 +540,9 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		last_target_weight = get_potential_target_weight(last_target)
 		new_target = last_target
 		target_weight = last_target_weight
+	targets.sort_custom(func(a: Ship, b: Ship) -> bool:
+		return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
+	)
 	for potential in targets:
 		# if potential.visible_to_enemy and not can_hit_target(potential):
 		# 	continue
@@ -547,6 +550,7 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		if abs(weight - last_target_weight) > 0.1 and weight > target_weight:
 			new_target = potential
 			target_weight = weight
+			break;
 	return new_target
 
 
@@ -1244,6 +1248,10 @@ func get_navigator() -> ShipNavigator:
 	"""Expose the owning BotControllerV4 navigator to skills via SkillContext."""
 	var controller = get_parent()
 	if controller and controller.navigator:
+		# BotControllerV4 now stores a GDScript profiling wrapper.
+		# Skills still expect the native ShipNavigator interface.
+		if controller.navigator.has_method("get_raw"):
+			return controller.navigator.get_raw()
 		return controller.navigator
 	return null
 
@@ -1348,21 +1356,29 @@ func _compute_hide_heading(island_center: Vector3, threats: Array) -> float:
 	return atan2(sum_sin, sum_cos) + PI
 
 func _sdf_walk_to_shore(island_center: Vector3, direction: Vector3, island_radius: float, clearance: float) -> Vector3:
-	"""Walk the SDF outward from island_center along direction until we find a
-	point with enough clearance for the ship.  Returns Vector3.ZERO on failure."""
-	# var max_dist = island_radius + 500.0
-	var dist = 0.0
-	for i in range(50):
+	"""Sphere-trace from near the island edge until we reach a point with
+	at least `clearance` SDF distance from land. Returns Vector3.ZERO on failure."""
+	if not NavigationMapManager.is_map_ready():
+		return Vector3.ZERO
+
+	# Start close to expected shoreline instead of marching from island center.
+	var dist = maxf(island_radius - clearance, 0.0)
+	var min_step = maxf(clearance * 0.25, 8.0)
+	var max_dist = island_radius + maxf(clearance * 6.0, 600.0)
+
+	for _i in range(24):
+		if dist > max_dist:
+			break
 		var test = island_center + direction * dist
 		test.y = 0.0
 		var sdf = NavigationMapManager.get_distance(test)
-		if sdf >= clearance:
+		var clearance_error = clearance - sdf
+		if clearance_error <= 0.0:
 			return test
-		if sdf < 0.0:
-			dist += maxf(-sdf, 25.0)
-		else:
-			# dist += maxf(clearance - sdf, 25.0)\
-			dist += sdf
+
+		# Sphere-tracing step against an inflated (clearance) shoreline.
+		dist += maxf(clearance_error, min_step)
+
 	return Vector3.ZERO
 
 func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
@@ -1404,106 +1420,95 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 
 	var shell_params = _ship.artillery_controller.get_shell_params()
 	var gun_range = _ship.artillery_controller.get_params()._range
+	var gun_range_sq = gun_range * gun_range
+	var max_range_sq = max_range * max_range
 	var threat_count = threats.size()
 	var my_pos = _ship.global_position
 	var enforce_spacing := min_separation > 0.0 and not avoid_positions.is_empty()
+	var min_separation_sq = min_separation * min_separation
 
-	# --- Phase 1: Collect all candidate positions ---
-	var candidates: Array[Vector3] = []
-	var offset_clearance = clearance * 1.5
-
-	var offset: float = 0.0
-	while offset <= angle_half_span + 0.001:
-		var angles_to_test: Array[float] = []
-		if offset < 0.001:
-			angles_to_test.append(0.0)
-		else:
-			angles_to_test.append(offset)
-			angles_to_test.append(-offset)
-
-		for a_off in angles_to_test:
-			var heading = hide_heading + a_off
-			var dir = Vector3(sin(heading), 0.0, cos(heading))
-
-			# Ring 1: shore-line position (standard clearance)
-			var shore_pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
-			if shore_pos != Vector3.ZERO:
-				candidates.append(shore_pos)
-
-			# Ring 2: offset position pushed out by 2.5× clearance
-			var offset_pos = _sdf_walk_to_shore(island_center, dir, island_radius, offset_clearance)
-			if offset_pos != Vector3.ZERO:
-				if shore_pos == Vector3.ZERO or offset_pos.distance_to(shore_pos) > clearance * 0.5:
-					candidates.append(offset_pos)
-
-		offset += angle_step
-
-	if candidates.is_empty():
-		return {}
-
-	# --- Phase 2: sort candidates by proximity to ship ---
-	# if sort_by_proximity:
-	candidates.sort_custom(func(a: Vector3, b: Vector3) -> bool:
-		return a.distance_to(my_pos) < b.distance_to(my_pos)
-	)
-
-	# --- Phase 3: Evaluate candidates in order ---
+	# Evaluate candidates immediately in travel-friendly angular order:
+	# start from the ship-facing side of the island, then expand left/right.
 	var best_concealed_fallback: Vector3 = Vector3.ZERO
 	var best_conflict_shootable: Vector3 = Vector3.ZERO
 	var best_conflict_concealed: Vector3 = Vector3.ZERO
+	var offset_clearance = clearance * 2.0
+	var min_ring_separation_sq = (clearance * 0.5) * (clearance * 0.5)
+	var ship_to_island_heading = atan2(my_pos.x - island_center.x, my_pos.z - island_center.z)
+	var max_steps = int(ceil(angle_half_span / maxf(angle_step, 0.001)))
 
-	for pos in candidates:
-		var any_in_range = false
-		for threat_pos in threats:
-			if pos.distance_to(threat_pos) <= max_range:
-				any_in_range = true
-				break
-		if not any_in_range:
-			continue
+	for step_idx in range(max_steps + 1):
+		var offset = float(step_idx) * angle_step
+		for side in range(1 if step_idx == 0 else 2):
+			var signed_offset = 0.0 if step_idx == 0 else (offset if side == 0 else -offset)
+			var heading = ship_to_island_heading + signed_offset
 
-		var hidden_count: int = 0
-		for threat_pos in threats:
-			if _is_los_blocked_with_clearance(pos, threat_pos):
-				hidden_count += 1
-		if hidden_count < threat_count:
-			continue
+			# Only keep headings inside the hide window around hide_heading.
+			if absf(angle_difference(hide_heading, heading)) > angle_half_span + 0.001:
+				continue
 
-		var spacing_conflict := false
-		if enforce_spacing:
-			for avoid_pos in avoid_positions:
-				if pos.distance_to(avoid_pos) < min_separation:
-					spacing_conflict = true
-					break
+			var dir = Vector3(sin(heading), 0.0, cos(heading))
+			var shore_pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
+			var offset_pos = _sdf_walk_to_shore(island_center, dir, island_radius, offset_clearance)
 
-		var can_shoot_any: bool = false
-		if shell_params != null:
-			for t_ship in targets:
-				if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+			for ring in range(2):
+				var pos = shore_pos if ring == 0 else offset_pos
+				if pos == Vector3.ZERO:
 					continue
-				var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
-				if pos.distance_to(target_pos) > gun_range:
+				if ring == 1 and shore_pos != Vector3.ZERO and pos.distance_squared_to(shore_pos) <= min_ring_separation_sq:
 					continue
-				var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
-				var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
-				if sol[0] == null:
-					continue
-				var shoot_result = Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship)
-				if shoot_result.can_shoot_over_terrain:
-					can_shoot_any = true
-					break
 
-		if can_shoot_any:
-			if spacing_conflict:
-				if best_conflict_shootable == Vector3.ZERO:
-					best_conflict_shootable = pos
-			else:
-				return { "pos": pos, "can_shoot": true, "spacing_conflict": false }
-		else:
-			if spacing_conflict:
-				if best_conflict_concealed == Vector3.ZERO:
-					best_conflict_concealed = pos
-			elif best_concealed_fallback == Vector3.ZERO:
-				best_concealed_fallback = pos
+				var any_in_range = false
+				for threat_pos in threats:
+					if pos.distance_squared_to(threat_pos) <= max_range_sq:
+						any_in_range = true
+						break
+				if not any_in_range:
+					continue
+
+				var hidden_count: int = 0
+				for threat_pos in threats:
+					if _is_los_blocked_with_clearance(pos, threat_pos):
+						hidden_count += 1
+				if hidden_count < threat_count:
+					continue
+
+				var spacing_conflict := false
+				if enforce_spacing:
+					for avoid_pos in avoid_positions:
+						if pos.distance_squared_to(avoid_pos) < min_separation_sq:
+							spacing_conflict = true
+							break
+
+				var can_shoot_any: bool = false
+				if shell_params != null:
+					var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
+					for t_ship in targets:
+						if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+							continue
+						var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
+						if pos.distance_squared_to(target_pos) > gun_range_sq:
+							continue
+						var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
+						if sol[0] == null:
+							continue
+						var shoot_result = Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship)
+						if shoot_result.can_shoot_over_terrain:
+							can_shoot_any = true
+							break
+
+				if can_shoot_any:
+					if spacing_conflict:
+						if best_conflict_shootable == Vector3.ZERO:
+							best_conflict_shootable = pos
+					else:
+						return { "pos": pos, "can_shoot": true, "spacing_conflict": false }
+				else:
+					if spacing_conflict:
+						if best_conflict_concealed == Vector3.ZERO:
+							best_conflict_concealed = pos
+					elif best_concealed_fallback == Vector3.ZERO:
+						best_concealed_fallback = pos
 
 	if best_concealed_fallback != Vector3.ZERO:
 		return { "pos": best_concealed_fallback, "can_shoot": false, "spacing_conflict": false }
@@ -1592,7 +1597,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		# 1 − e^(−x): x=0 → 0.0, x=1 → 0.63, x=2 → 0.86, x→∞ → 1.0
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
 		if ctx.behavior.active_shooters_at_me.has(enemy):
-			raw_val *= 2.0
+			raw_val *= 1.5
 		else:
 			raw_val *= 0.5
 		var this_threat = 1.0 - exp(-raw_val)

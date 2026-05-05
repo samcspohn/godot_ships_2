@@ -2,6 +2,7 @@
 #include "godot_cpp/templates/safe_refcount.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <cmath>
 #include <algorithm>
@@ -93,8 +94,15 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
 	ClassDB::bind_method(D_METHOD("get_timing_avoidance_us"), &ShipNavigator::get_timing_avoidance_us);
 	ClassDB::bind_method(D_METHOD("get_timing_plan_us"), &ShipNavigator::get_timing_plan_us);
+	ClassDB::bind_method(D_METHOD("get_timing_steering_us"), &ShipNavigator::get_timing_steering_us);
 	ClassDB::bind_method(D_METHOD("get_timing_replan_reason"), &ShipNavigator::get_timing_replan_reason);
 	ClassDB::bind_method(D_METHOD("get_timing_plan_phase"), &ShipNavigator::get_timing_plan_phase);
+	ClassDB::bind_method(D_METHOD("get_perf_metrics"), &ShipNavigator::get_perf_metrics);
+	ClassDB::bind_method(D_METHOD("reset_perf_metrics"), &ShipNavigator::reset_perf_metrics);
+	ClassDB::bind_method(D_METHOD("set_perf_spike_threshold_us", "threshold_us"), &ShipNavigator::set_perf_spike_threshold_us);
+	ClassDB::bind_method(D_METHOD("get_perf_spike_threshold_us"), &ShipNavigator::get_perf_spike_threshold_us);
+	ClassDB::bind_method(D_METHOD("set_perf_tracking_enabled", "enabled"), &ShipNavigator::set_perf_tracking_enabled);
+	ClassDB::bind_method(D_METHOD("is_perf_tracking_enabled"), &ShipNavigator::is_perf_tracking_enabled);
 
 	// Backward-compatible stub
 	ClassDB::bind_method(D_METHOD("get_simulated_path"), &ShipNavigator::get_simulated_path);
@@ -119,8 +127,48 @@ ShipNavigator::ShipNavigator() {
 	timing_update_us = 0.0f;
 	timing_avoidance_us = 0.0f;
 	timing_plan_us = 0.0f;
+	timing_steering_us = 0.0f;
 	timing_replan_reason = 0;
 	timing_plan_phase_val = 0;
+
+	perf_frame_count_ = 0;
+	perf_spike_threshold_us_ = 2500.0f;
+	perf_report_interval_s_ = 5.0f;
+	perf_report_accum_s_ = 0.0f;
+	perf_tracking_enabled_ = false;
+	for (int i = 0; i < PERF_SPIKE_PHASE_COUNT; ++i) {
+		perf_phase_count_[i] = 0;
+		perf_phase_avg_update_us_[i] = 0.0f;
+		perf_phase_avg_plan_us_[i] = 0.0f;
+		perf_phase_avg_avoidance_us_[i] = 0.0f;
+		perf_phase_avg_steering_us_[i] = 0.0f;
+	}
+	perf_window_frame_count_ = 0;
+	perf_window_update_sum_us_ = 0.0f;
+	perf_window_plan_sum_us_ = 0.0f;
+	perf_window_avoidance_sum_us_ = 0.0f;
+	perf_window_steering_sum_us_ = 0.0f;
+	perf_avg_update_us_ = 0.0f;
+	perf_avg_plan_us_ = 0.0f;
+	perf_avg_avoidance_us_ = 0.0f;
+	perf_avg_steering_us_ = 0.0f;
+	perf_max_update_us_ = 0.0f;
+	perf_max_plan_us_ = 0.0f;
+	perf_max_avoidance_us_ = 0.0f;
+	perf_max_steering_us_ = 0.0f;
+	perf_update_spike_count_ = 0;
+	perf_plan_spike_count_ = 0;
+	perf_avoidance_spike_count_ = 0;
+	perf_steering_spike_count_ = 0;
+	perf_worst_update_spike_us_ = 0.0f;
+	perf_worst_plan_spike_us_ = 0.0f;
+	perf_worst_avoidance_spike_us_ = 0.0f;
+	perf_worst_steering_spike_us_ = 0.0f;
+	perf_last_steering_candidates_total_ = 0;
+	perf_last_steering_candidates_simulated_ = 0;
+	perf_last_steering_terrain_rejects_ = 0;
+	perf_last_steering_short_arc_rejects_ = 0;
+	perf_last_steering_arc_points_simulated_ = 0;
 
 	skip_ship_obstacles_ = false;
 	health_fraction_ = 1.0f;
@@ -129,6 +177,7 @@ ShipNavigator::ShipNavigator() {
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
 	bot_id_ = 0;
+	nav_update_tick_ = 0;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -220,7 +269,12 @@ void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_
 	target.hold_radius = p_hold_radius;
 	target.heading_tolerance = p_heading_tolerance;
 	target.heading_weight = clamp_f(p_heading_weight, 0.0f, 1.0f);
+
+	// By design, navigate_to() is the expensive planning trigger.
+	// set_state() stays per-frame steering/avoidance only.
 	replan_requested_ = true;
+	run_plan_sync();
+	replan_requested_ = false;
 }
 
 void ShipNavigator::stop() {
@@ -409,6 +463,129 @@ bool ShipNavigator::is_arrived() const {
 	return dist_to_dest < arrived_radius;
 }
 
+Dictionary ShipNavigator::get_perf_metrics() const {
+	Dictionary d;
+	d["tracking_enabled"] = perf_tracking_enabled_;
+	d["frame_count"] = static_cast<int64_t>(perf_frame_count_);
+	d["spike_threshold_us"] = perf_spike_threshold_us_;
+	d["report_interval_s"] = perf_report_interval_s_;
+	d["report_accum_s"] = perf_report_accum_s_;
+	int cur_phase = static_cast<int>(perf_frame_count_ % PERF_SPIKE_PHASE_COUNT);
+	d["spike_phase_count"] = PERF_SPIKE_PHASE_COUNT;
+	d["spike_phase_warmup_samples"] = 3;
+	d["current_phase_idx"] = cur_phase;
+	d["current_phase_samples"] = static_cast<int64_t>(perf_phase_count_[cur_phase]);
+	d["current_phase_avg_update_us"] = perf_phase_avg_update_us_[cur_phase];
+	d["current_phase_avg_plan_us"] = perf_phase_avg_plan_us_[cur_phase];
+	d["current_phase_avg_avoidance_us"] = perf_phase_avg_avoidance_us_[cur_phase];
+	d["current_phase_avg_steering_us"] = perf_phase_avg_steering_us_[cur_phase];
+
+	d["last_update_us"] = timing_update_us;
+	d["last_plan_us"] = timing_plan_us;
+	d["last_avoidance_us"] = timing_avoidance_us;
+	d["last_steering_us"] = timing_steering_us;
+	d["last_replan_reason"] = timing_replan_reason;
+	d["last_plan_phase"] = timing_plan_phase_val;
+
+	d["avg_update_us"] = perf_avg_update_us_;
+	d["avg_plan_us"] = perf_avg_plan_us_;
+	d["avg_avoidance_us"] = perf_avg_avoidance_us_;
+	d["avg_steering_us"] = perf_avg_steering_us_;
+	if (perf_window_frame_count_ > 0) {
+		float inv = 1.0f / static_cast<float>(perf_window_frame_count_);
+		d["window_avg_update_us"] = perf_window_update_sum_us_ * inv;
+		d["window_avg_plan_us"] = perf_window_plan_sum_us_ * inv;
+		d["window_avg_avoidance_us"] = perf_window_avoidance_sum_us_ * inv;
+		d["window_avg_steering_us"] = perf_window_steering_sum_us_ * inv;
+	} else {
+		d["window_avg_update_us"] = 0.0f;
+		d["window_avg_plan_us"] = 0.0f;
+		d["window_avg_avoidance_us"] = 0.0f;
+		d["window_avg_steering_us"] = 0.0f;
+	}
+
+	d["max_update_us"] = perf_max_update_us_;
+	d["max_plan_us"] = perf_max_plan_us_;
+	d["max_avoidance_us"] = perf_max_avoidance_us_;
+	d["max_steering_us"] = perf_max_steering_us_;
+
+	d["update_spike_count"] = static_cast<int64_t>(perf_update_spike_count_);
+	d["plan_spike_count"] = static_cast<int64_t>(perf_plan_spike_count_);
+	d["avoidance_spike_count"] = static_cast<int64_t>(perf_avoidance_spike_count_);
+	d["steering_spike_count"] = static_cast<int64_t>(perf_steering_spike_count_);
+
+	d["worst_update_spike_us"] = perf_worst_update_spike_us_;
+	d["worst_plan_spike_us"] = perf_worst_plan_spike_us_;
+	d["worst_avoidance_spike_us"] = perf_worst_avoidance_spike_us_;
+	d["worst_steering_spike_us"] = perf_worst_steering_spike_us_;
+
+	d["last_steering_candidates_total"] = perf_last_steering_candidates_total_;
+	d["last_steering_candidates_simulated"] = perf_last_steering_candidates_simulated_;
+	d["last_steering_terrain_rejects"] = perf_last_steering_terrain_rejects_;
+	d["last_steering_short_arc_rejects"] = perf_last_steering_short_arc_rejects_;
+	d["last_steering_arc_points_simulated"] = perf_last_steering_arc_points_simulated_;
+
+	return d;
+}
+
+void ShipNavigator::reset_perf_metrics() {
+	float threshold = perf_spike_threshold_us_;
+	float report_interval = perf_report_interval_s_;
+	perf_frame_count_ = 0;
+	perf_report_accum_s_ = 0.0f;
+	for (int i = 0; i < PERF_SPIKE_PHASE_COUNT; ++i) {
+		perf_phase_count_[i] = 0;
+		perf_phase_avg_update_us_[i] = 0.0f;
+		perf_phase_avg_plan_us_[i] = 0.0f;
+		perf_phase_avg_avoidance_us_[i] = 0.0f;
+		perf_phase_avg_steering_us_[i] = 0.0f;
+	}
+	perf_window_frame_count_ = 0;
+	perf_window_update_sum_us_ = 0.0f;
+	perf_window_plan_sum_us_ = 0.0f;
+	perf_window_avoidance_sum_us_ = 0.0f;
+	perf_window_steering_sum_us_ = 0.0f;
+	perf_avg_update_us_ = 0.0f;
+	perf_avg_plan_us_ = 0.0f;
+	perf_avg_avoidance_us_ = 0.0f;
+	perf_avg_steering_us_ = 0.0f;
+	perf_max_update_us_ = 0.0f;
+	perf_max_plan_us_ = 0.0f;
+	perf_max_avoidance_us_ = 0.0f;
+	perf_max_steering_us_ = 0.0f;
+	perf_update_spike_count_ = 0;
+	perf_plan_spike_count_ = 0;
+	perf_avoidance_spike_count_ = 0;
+	perf_steering_spike_count_ = 0;
+	perf_worst_update_spike_us_ = 0.0f;
+	perf_worst_plan_spike_us_ = 0.0f;
+	perf_worst_avoidance_spike_us_ = 0.0f;
+	perf_worst_steering_spike_us_ = 0.0f;
+	perf_last_steering_candidates_total_ = 0;
+	perf_last_steering_candidates_simulated_ = 0;
+	perf_last_steering_terrain_rejects_ = 0;
+	perf_last_steering_short_arc_rejects_ = 0;
+	perf_last_steering_arc_points_simulated_ = 0;
+	perf_spike_threshold_us_ = threshold;
+	perf_report_interval_s_ = report_interval;
+}
+
+void ShipNavigator::set_perf_spike_threshold_us(float threshold_us) {
+	perf_spike_threshold_us_ = std::max(0.0f, threshold_us);
+}
+
+float ShipNavigator::get_perf_spike_threshold_us() const {
+	return perf_spike_threshold_us_;
+}
+
+void ShipNavigator::set_perf_tracking_enabled(bool enabled) {
+	perf_tracking_enabled_ = enabled;
+}
+
+bool ShipNavigator::is_perf_tracking_enabled() const {
+	return perf_tracking_enabled_;
+}
+
 // ============================================================================
 // Backward-compatible API stub
 // ============================================================================
@@ -566,6 +743,16 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
 
+	// Always advance navigation cadence tick, even when performance tracking
+	// is disabled. Replan staggering relies on this tick.
+	nav_update_tick_++;
+
+	// Reset stage timings every frame so emergency-mode frames don't retain
+	// stale NORMAL-mode values.
+	timing_plan_us = 0.0f;
+	timing_avoidance_us = 0.0f;
+	timing_steering_us = 0.0f;
+
 	// Transition to EMERGENCY if grounded or SDF indicates on land,
 	// but NOT if the ship is already at the destination within tolerance.
 	if (nav_state != NavState::EMERGENCY) {
@@ -595,6 +782,134 @@ void ShipNavigator::update(float delta) {
 
 	auto t1 = std::chrono::steady_clock::now();
 	timing_update_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
+
+	if (!perf_tracking_enabled_) {
+		return;
+	}
+
+	int phase_idx = static_cast<int>(perf_frame_count_ % PERF_SPIKE_PHASE_COUNT);
+	uint64_t phase_samples = perf_phase_count_[phase_idx];
+	const uint64_t phase_warmup_samples = 3;
+	float phase_base_update_us = perf_phase_avg_update_us_[phase_idx];
+	float phase_base_plan_us = perf_phase_avg_plan_us_[phase_idx];
+	float phase_base_avoidance_us = perf_phase_avg_avoidance_us_[phase_idx];
+	float phase_base_steering_us = perf_phase_avg_steering_us_[phase_idx];
+
+	perf_frame_count_++;
+	auto update_ema = [&](float &ema, float sample) {
+		if (perf_frame_count_ <= 1) ema = sample;
+		else ema = ema * 0.9f + sample * 0.1f;
+	};
+
+	update_ema(perf_avg_update_us_, timing_update_us);
+	update_ema(perf_avg_plan_us_, timing_plan_us);
+	update_ema(perf_avg_avoidance_us_, timing_avoidance_us);
+	update_ema(perf_avg_steering_us_, timing_steering_us);
+
+	perf_max_update_us_ = std::max(perf_max_update_us_, timing_update_us);
+	perf_max_plan_us_ = std::max(perf_max_plan_us_, timing_plan_us);
+	perf_max_avoidance_us_ = std::max(perf_max_avoidance_us_, timing_avoidance_us);
+	perf_max_steering_us_ = std::max(perf_max_steering_us_, timing_steering_us);
+
+	bool spike = false;
+	if (phase_samples >= phase_warmup_samples) {
+		if (timing_update_us >= phase_base_update_us + perf_spike_threshold_us_) {
+			perf_update_spike_count_++;
+			perf_worst_update_spike_us_ = std::max(perf_worst_update_spike_us_, timing_update_us);
+			spike = true;
+		}
+		if (timing_plan_us >= phase_base_plan_us + perf_spike_threshold_us_) {
+			perf_plan_spike_count_++;
+			perf_worst_plan_spike_us_ = std::max(perf_worst_plan_spike_us_, timing_plan_us);
+			spike = true;
+		}
+		if (timing_avoidance_us >= phase_base_avoidance_us + perf_spike_threshold_us_) {
+			perf_avoidance_spike_count_++;
+			perf_worst_avoidance_spike_us_ = std::max(perf_worst_avoidance_spike_us_, timing_avoidance_us);
+			spike = true;
+		}
+		if (timing_steering_us >= phase_base_steering_us + perf_spike_threshold_us_) {
+			perf_steering_spike_count_++;
+			perf_worst_steering_spike_us_ = std::max(perf_worst_steering_spike_us_, timing_steering_us);
+			spike = true;
+		}
+	}
+
+	auto update_phase_ema = [&](float &avg, float sample) {
+		if (phase_samples == 0) avg = sample;
+		else avg = avg * 0.9f + sample * 0.1f;
+	};
+	update_phase_ema(perf_phase_avg_update_us_[phase_idx], timing_update_us);
+	update_phase_ema(perf_phase_avg_plan_us_[phase_idx], timing_plan_us);
+	update_phase_ema(perf_phase_avg_avoidance_us_[phase_idx], timing_avoidance_us);
+	update_phase_ema(perf_phase_avg_steering_us_[phase_idx], timing_steering_us);
+	perf_phase_count_[phase_idx] = phase_samples + 1;
+
+	perf_window_frame_count_++;
+	perf_window_update_sum_us_ += timing_update_us;
+	perf_window_plan_sum_us_ += timing_plan_us;
+	perf_window_avoidance_sum_us_ += timing_avoidance_us;
+	perf_window_steering_sum_us_ += timing_steering_us;
+	if (delta > 0.0f) {
+		perf_report_accum_s_ += delta;
+	}
+
+	if (spike) {
+		UtilityFunctions::print(
+			"[ShipNavigator][SPIKE] bot=", bot_id_,
+			" phase=", phase_idx,
+			" phase_samples=", static_cast<int64_t>(phase_samples),
+			" update_us=", timing_update_us,
+			" plan_us=", timing_plan_us,
+			" avoid_us=", timing_avoidance_us,
+			" steering_us=", timing_steering_us,
+			" phase_base(update/plan/avoid/steer)=",
+			phase_base_update_us, "/", phase_base_plan_us, "/", phase_base_avoidance_us, "/", phase_base_steering_us,
+			" delta_threshold_us=", perf_spike_threshold_us_,
+			" cand=", perf_last_steering_candidates_simulated_, "/", perf_last_steering_candidates_total_,
+			" terrain_rejects=", perf_last_steering_terrain_rejects_,
+			" short_arcs=", perf_last_steering_short_arc_rejects_,
+			" arc_pts=", perf_last_steering_arc_points_simulated_,
+			" replan_reason=", timing_replan_reason,
+			" nav_state=", static_cast<int>(nav_state));
+	}
+
+	if (perf_report_accum_s_ >= perf_report_interval_s_ && perf_window_frame_count_ > 0) {
+		float inv = 1.0f / static_cast<float>(perf_window_frame_count_);
+		float phase_peak_update = 0.0f;
+		float phase_peak_plan = 0.0f;
+		float phase_peak_avoid = 0.0f;
+		float phase_peak_steer = 0.0f;
+		for (int i = 0; i < PERF_SPIKE_PHASE_COUNT; ++i) {
+			phase_peak_update = std::max(phase_peak_update, perf_phase_avg_update_us_[i]);
+			phase_peak_plan = std::max(phase_peak_plan, perf_phase_avg_plan_us_[i]);
+			phase_peak_avoid = std::max(phase_peak_avoid, perf_phase_avg_avoidance_us_[i]);
+			phase_peak_steer = std::max(phase_peak_steer, perf_phase_avg_steering_us_[i]);
+		}
+		UtilityFunctions::print(
+			"[ShipNavigator][AVG 5s] bot=", bot_id_,
+			" frames=", static_cast<int64_t>(perf_window_frame_count_),
+			" avg_update_us=", perf_window_update_sum_us_ * inv,
+			" avg_plan_us=", perf_window_plan_sum_us_ * inv,
+			" avg_avoid_us=", perf_window_avoidance_sum_us_ * inv,
+			" avg_steering_us=", perf_window_steering_sum_us_ * inv,
+			" phase_peak(update/plan/avoid/steer)=",
+			phase_peak_update, "/", phase_peak_plan, "/", phase_peak_avoid, "/", phase_peak_steer,
+			" spikes(update/plan/avoid/steer)=",
+			static_cast<int64_t>(perf_update_spike_count_), "/",
+			static_cast<int64_t>(perf_plan_spike_count_), "/",
+			static_cast<int64_t>(perf_avoidance_spike_count_), "/",
+			static_cast<int64_t>(perf_steering_spike_count_));
+
+		perf_window_frame_count_ = 0;
+		perf_window_update_sum_us_ = 0.0f;
+		perf_window_plan_sum_us_ = 0.0f;
+		perf_window_avoidance_sum_us_ = 0.0f;
+		perf_window_steering_sum_us_ = 0.0f;
+		while (perf_report_accum_s_ >= perf_report_interval_s_) {
+			perf_report_accum_s_ -= perf_report_interval_s_;
+		}
+	}
 }
 
 // ============================================================================
@@ -611,31 +926,12 @@ void ShipNavigator::update_normal(float delta) {
 		}
 	}
 
-	// --- 1. HPA* path planning ---
-	auto plan_t0 = std::chrono::steady_clock::now();
-
+	// --- 1. Plan bookkeeping only (no replanning here) ---
+	// Replanning is event-driven from navigate_to().  This keeps set_state()
+	// lightweight and prevents periodic planning spikes in per-frame updates.
 	timing_replan_reason = 0;
-
-	if (replan_requested_ || !path_valid) {
-		// Full replan — goal changed, first frame, or no valid path yet
-		timing_replan_reason = 1;
-		start_plan();
-		replan_requested_ = false;
-	}
-
-	if (plan_phase == PlanPhase::DONE) {
-		// HPA* always completes synchronously — accept immediately
-		accept_plan_result(plan_forward_result);
-		plan_phase = PlanPhase::IDLE;
-	} else if (plan_phase == PlanPhase::IDLE && path_valid) {
-		// Incremental update: re-stamp threats and replan when version changes
-		hpa_incremental_update();
-	}
-
 	timing_plan_phase_val = static_cast<int>(plan_phase);
-
-	auto plan_t1 = std::chrono::steady_clock::now();
-	timing_plan_us = std::chrono::duration<float, std::micro>(plan_t1 - plan_t0).count();
+	timing_plan_us = 0.0f;
 
 	// --- 2. Advance waypoints ---
 	if (path_valid) advance_waypoint();
@@ -835,6 +1131,7 @@ void ShipNavigator::update_normal(float delta) {
 
 	auto avoid_t1 = std::chrono::steady_clock::now();
 	timing_avoidance_us = std::chrono::duration<float, std::micro>(avoid_t1 - avoid_t0).count();
+	timing_steering_us = timing_avoidance_us;
 
 	float final_rudder = choice.rudder;
 	int final_throttle = choice.throttle;
@@ -1301,6 +1598,14 @@ void ShipNavigator::hpa_incremental_update() {
 
 	// Re-plan with HPA* when stale or explicitly requested.
 	if (replan_requested_ || !path_valid) {
+		int frame_phase = static_cast<int>(nav_update_tick_ % REPLAN_STAGGER_FRAMES);
+		int bot_phase = ((bot_id_ % REPLAN_STAGGER_FRAMES) + REPLAN_STAGGER_FRAMES) % REPLAN_STAGGER_FRAMES;
+		bool replan_slot = (frame_phase == bot_phase);
+		if (path_valid && !replan_slot) {
+			if (timing_replan_reason == 0) timing_replan_reason = 5; // stagger wait
+			return;
+		}
+
 		// Apply this navigator's threat layer right before query time.
 		if (threat_bin_) {
 			hpa_graph_->stamp_threats(threat_bin_->threats);
@@ -1522,6 +1827,12 @@ float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) co
 ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_rudder, int desired_throttle) {
 	SteeringChoice result = { desired_rudder, desired_throttle, false };
 
+	int steering_candidates_total = 0;
+	int steering_candidates_simulated = 0;
+	int steering_terrain_rejects = 0;
+	int steering_short_arc_rejects = 0;
+	int steering_arc_points_simulated = 0;
+
 	float hard_clearance = get_ship_clearance();
 	float soft_clearance = get_soft_clearance();
 	float lookahead = get_lookahead_distance();
@@ -1570,6 +1881,11 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		// Cache a debug arc for visualization even on the fast path.
 		float fast_path_lookahead = params.turning_circle_radius * 1.5f;
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
+		perf_last_steering_candidates_total_ = 1;
+		perf_last_steering_candidates_simulated_ = 1;
+		perf_last_steering_terrain_rejects_ = 0;
+		perf_last_steering_short_arc_rejects_ = 0;
+		perf_last_steering_arc_points_simulated_ = static_cast<int>(winning_arc.size());
 		return result;
 	}
 
@@ -1646,6 +1962,8 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	add_candidate(-1.0f, -1);
 	add_candidate(1.0f, -1);
 
+	steering_candidates_total = n_candidates;
+
 	// --- Simulation parameters ---
 	// Simulate long enough for the ship to complete a full turning circle
 	// (the go-around case) plus some margin.
@@ -1702,7 +2020,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		// Simulate until heading aligns with waypoint
 		auto arc = predict_arc_to_heading(cand_rudder, cand_throttle, wp_target,
 		                                   sim_lookahead, sim_max_time);
-		if (arc.size() < 2) continue;
+		if (arc.size() < 2) {
+			steering_short_arc_rejects++;
+			continue;
+		}
+		steering_candidates_simulated++;
+		steering_arc_points_simulated += static_cast<int>(arc.size());
 
 		// Early termination: if alignment time already exceeds the best,
 		// this candidate cannot win (travel_time can only add to it).
@@ -1744,7 +2067,10 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				}
 			}
 		}
-		if (terrain_blocked) continue;
+		if (terrain_blocked) {
+			steering_terrain_rejects++;
+			continue;
+		}
 
 		// --- (b) Alignment time / arrival time ---
 		// If the arc physically reached the waypoint before aligning, use
@@ -1939,6 +2265,8 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		for (int i = 0; i < n_candidates; ++i) {
 			auto arc = predict_arc_internal(candidates[i].rudder, candidates[i].throttle, lookahead);
 			if (arc.empty()) continue;
+			steering_candidates_simulated++;
+			steering_arc_points_simulated += static_cast<int>(arc.size());
 
 			float min_sdf = std::numeric_limits<float>::infinity();
 			if (map.is_valid() && map->is_built()) {
@@ -1961,6 +2289,12 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	result.rudder = best_rudder;
 	result.throttle = best_throttle;
 	result.collision_imminent = any_collision || (best_rudder != desired_rudder) || (best_throttle != desired_throttle);
+
+	perf_last_steering_candidates_total_ = steering_candidates_total;
+	perf_last_steering_candidates_simulated_ = steering_candidates_simulated;
+	perf_last_steering_terrain_rejects_ = steering_terrain_rejects;
+	perf_last_steering_short_arc_rejects_ = steering_short_arc_rejects;
+	perf_last_steering_arc_points_simulated_ = steering_arc_points_simulated;
 
 	// --- Option B: Set dodge commitment when threats caused a rudder change ---
 	// If shells/torpedoes are present and the winning rudder differs from

@@ -2,6 +2,8 @@ extends Node
 
 class_name BotControllerV4
 
+const ProfiledShipNavigatorScript = preload("res://src/ship/profiled_ship_navigator.gd")
+
 ## Bot Controller V4 — Uses ShipNavigator (C++ GDExtension) for navigation
 ## instead of NavigationAgent3D + proxy + raycasts.
 ##
@@ -45,7 +47,7 @@ var debug_log: bool = false
 var _ship: Ship
 var server_node: GameServer
 var movement: ShipMovementV4
-var navigator: ShipNavigator
+var navigator
 var behavior: BotBehavior
 
 # ===========================================================================
@@ -69,7 +71,7 @@ var target_scan_timer: float = 0.0
 # ===========================================================================
 
 ## How often to update obstacle positions (frames)
-const OBSTACLE_UPDATE_INTERVAL: int = 4
+const OBSTACLE_UPDATE_INTERVAL: int = 12
 ## Maximum distance to register a ship as an obstacle
 const OBSTACLE_REGISTER_RANGE: float = 2000.0
 
@@ -94,8 +96,9 @@ const PATH_SIGNIFICANT_MOVE: float = 1000.0
 # INTENT SYSTEM
 # ===========================================================================
 
-## Min/max interval for behavior queries. Event-driven triggers can force
-## early re-queries (subject to MIN), while MAX ensures periodic updates.
+## Min/max interval for behavior queries.
+## - MIN: normal stagger cadence target (roughly one slot cycle at 20 fps)
+## - MAX: safety fallback so intent is never stale for too long
 const MIN_BEHAVIOR_INTERVAL: float = 0.3
 const MAX_BEHAVIOR_INTERVAL: float = 2.0
 var _behavior_timer: float = 0.0
@@ -181,8 +184,8 @@ func _ready() -> void:
 	server_node = get_tree().root.get_node("/root/Server")
 	movement = get_node("../MovementController")
 
-	# Initialize the C++ ShipNavigator
-	navigator = ShipNavigator.new()
+	# Initialize the profiled GDScript wrapper around the C++ ShipNavigator
+	navigator = ProfiledShipNavigatorScript.new()
 
 	# Connect to the shared NavigationMap (built by NavigationMapManager autoload)
 	var nav_map = NavigationMapManager.get_map()
@@ -268,7 +271,7 @@ func _physics_process(delta: float) -> void:
 	# inside the slot _update_obstacles() handles the full clear + re-add.
 	# =========================================================================
 
-	if Engine.get_physics_frames() % 3 == bot_id % 3:
+	if Engine.get_physics_frames() % 2 == bot_id % 2:
 		navigator.set_state(
 			_ship.global_position,
 			_ship.linear_velocity,
@@ -307,18 +310,23 @@ func _physics_process(delta: float) -> void:
 			_check_intent_events()
 
 		# --- Get navigation intent from behavior ---
-		if _force_intent_next_frame:
+		# Periodic behavior queries run on the bot's staggered slot cadence.
+		# At 20 physics fps with OBSTACLE_UPDATE_INTERVAL=6, this is ~0.3s and
+		# yields ~4 bots doing intent work per frame (for 23 bots total).
+		var periodic_behavior_due: bool = _behavior_timer >= MIN_BEHAVIOR_INTERVAL
+		var stale_behavior_due: bool = _behavior_timer >= MAX_BEHAVIOR_INTERVAL
+
+		if _force_intent_next_frame and _behavior_timer >= MIN_BEHAVIOR_INTERVAL:
 			should_query_behavior = true
 			_force_target_rescan = true
 			_force_intent_next_frame = false
 			_event_cooldown = EVENT_COOLDOWN_DURATION
-			_behavior_timer = 0.0
-		elif _behavior_timer >= MAX_BEHAVIOR_INTERVAL:
+		elif periodic_behavior_due or stale_behavior_due or _last_intent == null:
 			should_query_behavior = true
-			_behavior_timer = 0.0
 
 		if should_query_behavior:
 			should_query_behavior = false
+			_behavior_timer = 0.0
 			_update_nav_intent()
 
 	# =========================================================================
@@ -397,8 +405,6 @@ func _physics_process(delta: float) -> void:
 
 func _update_nav_intent() -> void:
 	var _dbg := int(_ship.name) < 1004
-	var friendly = server_node.get_team_ships(_ship.team.team_id)
-	var enemy = server_node.get_valid_targets(_ship.team.team_id)
 
 	var new_intent: NavIntent = null
 
@@ -633,7 +639,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# the window, not just the first detection per salvo.
 	if behavior != null and s.artillery_controller != null:
 		var reload_sec: float = s.artillery_controller.get_params().reload_time
-		var expiry: float = Time.get_ticks_msec() / 1000.0 + 4.0 * reload_sec
+		var expiry: float = Time.get_ticks_msec() / 1000.0 + 100.0
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry
@@ -1117,8 +1123,8 @@ func _emit_debug_draws() -> void:
 			var soft_pos = Vector3(ship_pos.x, 4.0, ship_pos.z)
 			Debug.draw_circle(soft_pos, soft_clearance_r, Color(1.0, 0.8, 0.0, 0.5), 64)
 
-		# --- l) SDF tile squares ---
-		if clearance_r > 0.0 and NavigationMapManager.is_map_ready():
+		# --- l) SDF tile overlay (client samples its local NavigationMap) ---
+		if clearance_r > 0.0:
 			_emit_sdf_tiles(clearance_r)
 
 		# --- o) Threat-blocked HPA clusters (circles with LOS to a detection source) ---
@@ -1328,48 +1334,9 @@ func _emit_debug_draws() -> void:
 					"Danger [%s]" % src_label, Color.RED)
 
 
-## Sample SDF tiles near the ship and emit draw_square commands for each.
+## Enqueue a client-side SDF overlay command; tile sampling happens on the client.
 func _emit_sdf_tiles(clearance: float) -> void:
-	var nav_map = NavigationMapManager.get_map()
-	if nav_map == null:
-		return
-	var cell_size: float = nav_map.get_cell_size_value()
-	if cell_size <= 0.0:
-		return
-
-	var world_pos = _ship.global_position
-	var half_range: float = 1000.0
-	var start_x: float = snappedf(world_pos.x - half_range, cell_size)
-	var start_z: float = snappedf(world_pos.z - half_range, cell_size)
-	var end_x: float = world_pos.x + half_range
-	var end_z: float = world_pos.z + half_range
-	var tile_size: float = cell_size * 0.9
-
-	var cx: float = start_x
-	while cx <= end_x:
-		var cz: float = start_z
-		while cz <= end_z:
-			var dist: float = nav_map.get_distance(cx, cz)
-			# Only draw tiles near land — skip deep open water
-			if dist < clearance * 3.0:
-				var color: Color
-				if dist < -clearance:
-					# Deep inside land — black
-					color = Color(0.1, 0.1, 0.1, 0.35)
-				elif dist < 0.0:
-					# Inside land — solid red
-					color = Color(0.9, 0.1, 0.1, 0.35)
-				elif dist < clearance:
-					# Too close for this ship — orange/yellow gradient
-					var t: float = dist / clearance
-					color = Color(1.0, 0.3 + t * 0.5, 0.0, 0.3)
-				else:
-					# Navigable — green, more transparent the further from land
-					var t: float = clampf((dist - clearance) / (clearance * 2.0), 0.0, 1.0)
-					color = Color(0.0, 0.7, 0.3, 0.25 - t * 0.15)
-				Debug.draw_square(Vector3(cx, 3.0, cz), tile_size, tile_size, color, true)
-			cz += cell_size
-		cx += cell_size
+	Debug.draw_sdf_tiles(_ship.global_position, clearance, 1000.0, 3.0)
 
 
 ## Get the debug heading vector (for local access by camera)

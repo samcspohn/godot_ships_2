@@ -20,15 +20,16 @@ class_name _Debug
 # Draw command types
 # ============================================================================
 enum DrawType {
-	ARROW,    # 0
-	SPHERE,   # 1
-	CIRCLE,   # 2
-	LINE,     # 3
-	PATH,     # 4
-	SQUARE,   # 5
-	LABEL,    # 6
-	CONE,     # 7
-	ARC,      # 8  — wedge (two radii + arc) on the XZ plane
+	ARROW,     # 0
+	SPHERE,    # 1
+	CIRCLE,    # 2
+	LINE,      # 3
+	PATH,      # 4
+	SQUARE,    # 5
+	LABEL,     # 6
+	CONE,      # 7
+	ARC,       # 8  — wedge (two radii + arc) on the XZ plane
+	SDF_TILES, # 9  — client-side SDF tile overlay sampled from local NavigationMap
 }
 
 # Byte stride per command (fixed-size types only).
@@ -41,6 +42,7 @@ enum DrawType {
 # LABEL:  variable — pos(3) + color(4) + font_size(1) + text_byte_count(1i) = 36 bytes header, then text bytes (padded to 4)
 # CONE:   pos(3) + rot(3) + cone_height(1) + top_radius(1) + bottom_radius(1) + color(4) + radial_segments(1) = 14 floats = 56 bytes
 # ARC:    pos(3) + bearing(1) + half_angle(1) + length(1) + color(4) + segments(1 int as float) = 11 floats = 44 bytes
+# SDF:    center(3) + clearance(1) + half_range(1) + draw_y(1) = 6 floats = 24 bytes
 
 const STRIDE_ARROW  := 48  # 12 floats
 const STRIDE_SPHERE := 32  #  8 floats
@@ -49,6 +51,7 @@ const STRIDE_LINE   := 40  # 10 floats
 const STRIDE_SQUARE := 40  # 10 floats
 const STRIDE_CONE   := 56  # 14 floats
 const STRIDE_ARC    := 44  # 11 floats
+const STRIDE_SDF    := 24  #  6 floats
 # PATH and LABEL are variable-length
 
 # ============================================================================
@@ -467,6 +470,18 @@ func draw_square(position: Vector3, width: float, height: float, color: Color = 
 	_buf_color(dt, color)
 	_buf_f32(dt, 1.0 if filled else 0.0)
 
+## Client-side SDF tile overlay centered near a ship.
+## Layout: center(3f) + clearance(1f) + half_range(1f) + draw_y(1f) = 6 floats = 24 bytes
+func draw_sdf_tiles(center: Vector3, clearance: float, half_range: float = 1000.0, draw_y: float = 3.0) -> void:
+	if clearance <= 0.0:
+		return
+	var dt := DrawType.SDF_TILES
+	_ensure_buffer(dt)
+	_buf_vec3(dt, center)
+	_buf_f32(dt, clearance)
+	_buf_f32(dt, half_range)
+	_buf_f32(dt, draw_y)
+
 ## 3D label (billboard text) at position.
 ## Variable layout: pos(3f) + color(4f) + font_size(1f) + text_byte_len(1i) = 36 bytes header, then text bytes (padded to 4-byte boundary)
 func draw_label(position: Vector3, text: String, color: Color = Color.WHITE, font_size: int = 16) -> void:
@@ -576,6 +591,8 @@ func _decode_client_buffers() -> void:
 				_decode_fixed_stride(buf, draw_type, STRIDE_CONE)
 			DrawType.ARC:
 				_decode_fixed_stride(buf, draw_type, STRIDE_ARC)
+			DrawType.SDF_TILES:
+				_decode_fixed_stride(buf, draw_type, STRIDE_SDF)
 
 func _decode_fixed_stride(buf: PackedByteArray, draw_type: int, stride: int) -> void:
 	if not _client_type_commands.has(draw_type):
@@ -632,6 +649,12 @@ func _decode_fixed_stride(buf: PackedByteArray, draw_type: int, stride: int) -> 
 				var color := Color(buf.decode_float(offset + 24), buf.decode_float(offset + 28), buf.decode_float(offset + 32), buf.decode_float(offset + 36))
 				var segs := int(buf.decode_float(offset + 40))
 				cmds.append([pos, bearing, half_angle, arc_length, color, segs])
+			DrawType.SDF_TILES:
+				var center := Vector3(buf.decode_float(offset), buf.decode_float(offset + 4), buf.decode_float(offset + 8))
+				var clearance := buf.decode_float(offset + 12)
+				var half_range := buf.decode_float(offset + 16)
+				var draw_y := buf.decode_float(offset + 20)
+				cmds.append([center, clearance, half_range, draw_y])
 		offset += stride
 
 func _decode_paths(buf: PackedByteArray) -> void:
@@ -753,6 +776,19 @@ func _clear_mesh_pool() -> void:
 	_mesh_keys.clear()
 	_active_keys.clear()
 
+func _get_nav_cell_size_fallback() -> float:
+	if NavigationMapManager == null or not NavigationMapManager.is_map_ready():
+		return 50.0
+	var nav_map: NavigationMap = NavigationMapManager.get_map()
+	if nav_map == null:
+		return 50.0
+	var cell_size := nav_map.get_cell_size_value()
+	return cell_size if cell_size > 0.0 else 50.0
+
+func _get_sdf_snapped_origin(pos: Vector3) -> Vector3:
+	var cell := _get_nav_cell_size_fallback()
+	return Vector3(snappedf(pos.x, cell), 0.0, snappedf(pos.z, cell))
+
 ## Build a construction key from an array-based command.
 ## Encodes shape type + params that require mesh reconstruction when they change.
 ## Transform-only params are excluded so we can update without rebuilding.
@@ -792,6 +828,10 @@ func _build_key(draw_type: int, cmd: Array) -> String:
 			# cmd: [pos, bearing, half_angle, length, color, segments]
 			# bearing is excluded — applied as a Y-rotation transform, not baked into the mesh
 			return "arc:%.1f:%.4f:%d" % [cmd[3], cmd[2], cmd[5]]
+		DrawType.SDF_TILES:
+			# cmd: [center, clearance, half_range, draw_y]
+			var snapped_origin := _get_sdf_snapped_origin(cmd[0])
+			return "sdf:%.0f:%.0f:%.1f:%.1f:%.1f" % [snapped_origin.x, snapped_origin.z, cmd[1], cmd[2], cmd[3]]
 	return "unknown:%d" % draw_type
 
 # ============================================================================
@@ -818,6 +858,8 @@ func _build_node(draw_type: int, cmd: Array, idx: int) -> Node3D:
 			return _build_cone_node(cmd, idx)
 		DrawType.ARC:
 			return _build_arc_node(cmd, idx)
+		DrawType.SDF_TILES:
+			return _build_sdf_tiles_node(cmd, idx)
 	return null
 
 func _make_unshaded_material(color: Color) -> StandardMaterial3D:
@@ -827,6 +869,16 @@ func _make_unshaded_material(color: Color) -> StandardMaterial3D:
 	mat.no_depth_test = true
 	if color.a < 1.0:
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return mat
+
+func _make_vertex_color_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color.WHITE
+	mat.vertex_color_use_as_albedo = true
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
 func _build_arrow(cmd: Array, idx: int) -> MeshInstance3D:
@@ -988,6 +1040,83 @@ func _build_square_node(cmd: Array, idx: int) -> MeshInstance3D:
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return node
 
+func _build_sdf_tiles_node(cmd: Array, idx: int) -> MeshInstance3D:
+	# cmd: [center, clearance, half_range, draw_y]
+	if NavigationMapManager == null or not NavigationMapManager.is_map_ready():
+		return null
+	var nav_map: NavigationMap = NavigationMapManager.get_map()
+	if nav_map == null:
+		return null
+
+	var cell_size: float = nav_map.get_cell_size_value()
+	if cell_size <= 0.0:
+		return null
+
+	var center: Vector3 = cmd[0]
+	var clearance: float = cmd[1]
+	var half_range: float = cmd[2]
+	var draw_y: float = cmd[3]
+	if clearance <= 0.0 or half_range <= 0.0:
+		return null
+
+	var snapped_origin := _get_sdf_snapped_origin(center)
+	var start_x: float = snappedf(center.x - half_range, cell_size)
+	var start_z: float = snappedf(center.z - half_range, cell_size)
+	var end_x: float = center.x + half_range
+	var end_z: float = center.z + half_range
+	var tile_size: float = cell_size * 0.9
+	var half_tile: float = tile_size * 0.5
+
+	var im := ImmediateMesh.new()
+	var surface_started := false
+	var tiles_emitted := 0
+
+	var cx: float = start_x
+	while cx <= end_x:
+		var cz: float = start_z
+		while cz <= end_z:
+			var dist: float = nav_map.get_distance(cx, cz)
+			if dist < clearance * 3.0:
+				if not surface_started:
+					im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+					surface_started = true
+				var color: Color
+				if dist < -clearance:
+					color = Color(0.1, 0.1, 0.1, 0.35)
+				elif dist < 0.0:
+					color = Color(0.9, 0.1, 0.1, 0.35)
+				elif dist < clearance:
+					var t_close: float = dist / clearance
+					color = Color(1.0, 0.3 + t_close * 0.5, 0.0, 0.3)
+				else:
+					var t_far: float = clampf((dist - clearance) / (clearance * 2.0), 0.0, 1.0)
+					color = Color(0.0, 0.7, 0.3, 0.25 - t_far * 0.15)
+
+				var lx: float = cx - snapped_origin.x
+				var lz: float = cz - snapped_origin.z
+				im.surface_set_color(color)
+				im.surface_add_vertex(Vector3(lx - half_tile, draw_y, lz - half_tile))
+				im.surface_add_vertex(Vector3(lx + half_tile, draw_y, lz - half_tile))
+				im.surface_add_vertex(Vector3(lx + half_tile, draw_y, lz + half_tile))
+				im.surface_add_vertex(Vector3(lx - half_tile, draw_y, lz - half_tile))
+				im.surface_add_vertex(Vector3(lx + half_tile, draw_y, lz + half_tile))
+				im.surface_add_vertex(Vector3(lx - half_tile, draw_y, lz + half_tile))
+				tiles_emitted += 1
+			cz += cell_size
+		cx += cell_size
+
+	if not surface_started or tiles_emitted <= 0:
+		return null
+	im.surface_end()
+
+	var node := MeshInstance3D.new()
+	node.name = "DebugSdfTiles_%d" % idx
+	node.mesh = im
+	node.material_override = _make_vertex_color_material()
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.position = snapped_origin
+	return node
+
 func _build_label_node(cmd: Array, idx: int) -> Label3D:
 	# cmd: [pos, text, color, font_size]
 	var color: Color = cmd[2]
@@ -1054,6 +1183,8 @@ func _update_node(draw_type: int, cmd: Array, node: Node3D) -> void:
 			_update_cone_node(cmd, node)
 		DrawType.ARC:
 			_update_arc_node(cmd, node)
+		DrawType.SDF_TILES:
+			_update_sdf_tiles_node(cmd, node)
 	node.visible = true
 
 func _update_arrow(cmd: Array, node: Node3D) -> void:
@@ -1108,6 +1239,11 @@ func _update_square_node(cmd: Array, node: Node3D) -> void:
 		var mat := (node as MeshInstance3D).material_override as StandardMaterial3D
 		if mat and mat.albedo_color != color:
 			mat.albedo_color = color
+
+func _update_sdf_tiles_node(cmd: Array, node: Node3D) -> void:
+	# cmd: [center, clearance, half_range, draw_y]
+	var center: Vector3 = cmd[0]
+	node.global_position = _get_sdf_snapped_origin(center)
 
 func _update_label_node(cmd: Array, node: Node3D) -> void:
 	# cmd: [pos, text, color, font_size]

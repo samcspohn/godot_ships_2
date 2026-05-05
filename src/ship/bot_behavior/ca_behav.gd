@@ -399,10 +399,27 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Undetected — seek cover as normal, fall back to angle
 			intent = _skill_cover.execute(ctx, cover_params, true)
 			if intent != null:
-				if _ship.global_position.distance_to(_skill_cover._nav_destination) > 750.0:
-					_suppress_guns = true
-				else:
+				# if _ship.global_position.distance_to(_skill_cover._nav_destination) > 750.0:
+				# 	_suppress_guns = true
+				# else:
+				# 	_suppress_guns = false
+				var los_blocked = true
+				for enemy in spotted:
+					var _dist = enemy.global_position.distance_to(ship.global_position)
+					if _dist < gun_range and !_is_los_blocked_with_clearance(ship.global_position, enemy.global_position):
+						los_blocked = false
+						break
+				if los_blocked:
+					for pos in unspotted.values():
+						var _dist = pos.distance_to(ship.global_position)
+						if _dist < gun_range and !_is_los_blocked_with_clearance(ship.global_position, pos):
+							los_blocked = false
+							break
+				if los_blocked:
 					_suppress_guns = false
+				else:
+					_suppress_guns = true
+
 				_active_skill_name = &"FindCover"
 			else:
 				intent = _skill_push.execute(ctx, {})
@@ -412,7 +429,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# Detected but enemy is far — check if cover destination is on the way
 			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
 			if cover_intent != null and nearest != null and threat > 0.85:
-				if not _skill_cover.is_cover_on_the_way(ctx, nearest):
+				if not _skill_cover.is_cover_on_the_way(ctx, nearest) and active_shooters_at_me.size() > 0:
 				# Cover is too far off the optimal angle — kite instead
 					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
 					if intent != null:

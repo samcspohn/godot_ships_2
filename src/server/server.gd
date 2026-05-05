@@ -22,6 +22,10 @@ var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.
 # Timestamps (seconds, from Time.get_ticks_msec()/1000) of when each ship went unspotted
 var team_0_unspotted_times: Dictionary = {}  # Ship -> float
 var team_1_unspotted_times: Dictionary = {}  # Ship -> float
+# One-time bootstrap per team: after the first visual spot, seed LKPs for
+# still-hidden enemies so bots can begin coordinated hunting immediately.
+var team_0_first_spot_lkp_seeded: bool = false
+var team_1_first_spot_lkp_seeded: bool = false
 
 # Clustering data for bot AI
 var team_0_clusters: Array[Dictionary] = []  # Array of {center: Vector3, ships: Array[Ship]}
@@ -518,6 +522,28 @@ func get_all_ships() -> Array:
 		if is_instance_valid(ship):
 			all_ships.append(ship)
 	return all_ships
+
+
+func _team_has_spotted_enemy(team_id: int) -> bool:
+	for ship in _get_enemy_ships(team_id):
+		if not is_instance_valid(ship):
+			continue
+		if ship.health_controller.is_alive() and ship.visible_to_enemy:
+			return true
+	return false
+
+
+func _seed_first_spot_unspotted_lkps(team_id: int) -> void:
+	var enemy_team_id := 1 if team_id == 0 else 0
+	var unspotted: Dictionary = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var times: Dictionary = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
+	for enemy in _get_team(enemy_team_id):
+		if not is_instance_valid(enemy):
+			continue
+		if enemy.visible_to_enemy:
+			continue
+		unspotted[enemy] = enemy.global_position
+		times[enemy] = current_time
 
 
 func _update_team_clusters():
@@ -1030,6 +1056,15 @@ func _physics_process(_delta: float) -> void:
 				closest_dist = dist
 		if closest_enemy != null:
 			spotted.concealment.spotted_by = closest_enemy
+
+	# One-time per team: once they spot any enemy at all, snapshot current
+	# positions of every still-hidden enemy as LKPs.
+	if not team_0_first_spot_lkp_seeded and _team_has_spotted_enemy(0):
+		_seed_first_spot_unspotted_lkps(0)
+		team_0_first_spot_lkp_seeded = true
+	if not team_1_first_spot_lkp_seeded and _team_has_spotted_enemy(1):
+		_seed_first_spot_unspotted_lkps(1)
+		team_1_first_spot_lkp_seeded = true
 
 	for p_name in players:
 		var p: Ship = players[p_name][0]

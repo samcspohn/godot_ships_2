@@ -2,6 +2,7 @@
 
 #include <godot_cpp/variant/utility_functions.hpp>
 
+#include <chrono>
 #include <cstring>
 
 namespace godot {
@@ -49,6 +50,12 @@ void HpaGraph::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_debug_edges"), &HpaGraph::get_debug_edges);
 	ClassDB::bind_method(D_METHOD("get_debug_clusters"), &HpaGraph::get_debug_clusters);
 	ClassDB::bind_method(D_METHOD("get_debug_threat_clusters"), &HpaGraph::get_debug_threat_clusters);
+	ClassDB::bind_method(D_METHOD("get_perf_metrics"), &HpaGraph::get_perf_metrics);
+	ClassDB::bind_method(D_METHOD("reset_perf_metrics"), &HpaGraph::reset_perf_metrics);
+	ClassDB::bind_method(D_METHOD("set_perf_spike_threshold_us", "threshold_us"), &HpaGraph::set_perf_spike_threshold_us);
+	ClassDB::bind_method(D_METHOD("get_perf_spike_threshold_us"), &HpaGraph::get_perf_spike_threshold_us);
+	ClassDB::bind_method(D_METHOD("set_perf_tracking_enabled", "enabled"), &HpaGraph::set_perf_tracking_enabled);
+	ClassDB::bind_method(D_METHOD("is_perf_tracking_enabled"), &HpaGraph::is_perf_tracking_enabled);
 }
 
 HpaGraph::HpaGraph() = default;
@@ -556,21 +563,155 @@ PathResult HpaGraph::refine_path_impl(
 // ============================================================================
 
 PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
-	if (!built_) {
-		PathResult r; r.valid = false; return r;
-	}
+	using Clock = std::chrono::steady_clock;
+	auto query_t0 = Clock::now();
 
-	// Determine grid cells and owning clusters for from / to
-	auto world_to_cluster = [&](Vector2 wp) -> int {
-		int gx = static_cast<int>((wp.x - min_x_) / cell_size_);
-		int gz = static_cast<int>((wp.y - min_z_) / cell_size_);
-		gx = std::max(0, std::min(gx, grid_w_ - 1));
-		gz = std::max(0, std::min(gz, grid_h_ - 1));
-		return cluster_id(cell_cx(gx), cell_cz(gz));
+	float connect_us = 0.0f;
+	float abstract_us = 0.0f;
+	float refine_us = 0.0f;
+	float start_connect_us = 0.0f;
+	float goal_connect_us = 0.0f;
+
+	int connector_los_attempts = 0;
+	int connector_los_hits = 0;
+	int connector_local_search_runs = 0;
+	int connector_local_expansions = 0;
+	int connector_portal_candidates = 0;
+
+	PathResult no_path;
+	no_path.valid = false;
+	no_path.total_distance = 0.0f;
+
+	auto finalize_query = [&](PathResult r) -> PathResult {
+		if (!perf_tracking_enabled_) {
+			return r;
+		}
+
+		auto query_t1 = Clock::now();
+		float total_us = std::chrono::duration<float, std::micro>(query_t1 - query_t0).count();
+
+		perf_.query_count++;
+		if (r.valid) perf_.success_count++;
+		else perf_.failure_count++;
+
+		perf_.last_total_us = total_us;
+		perf_.last_connect_us = connect_us;
+		perf_.last_abstract_us = abstract_us;
+		perf_.last_refine_us = refine_us;
+		perf_.last_start_connect_us = start_connect_us;
+		perf_.last_goal_connect_us = goal_connect_us;
+
+		perf_.last_connector_los_attempts = connector_los_attempts;
+		perf_.last_connector_los_hits = connector_los_hits;
+		perf_.last_connector_local_search_runs = connector_local_search_runs;
+		perf_.last_connector_local_expansions = connector_local_expansions;
+		perf_.last_connector_portal_candidates = connector_portal_candidates;
+
+		auto update_ema = [&](float &ema, float sample) {
+			if (perf_.query_count <= 1) ema = sample;
+			else ema = ema * 0.9f + sample * 0.1f;
+		};
+
+		update_ema(perf_.avg_total_us, total_us);
+		update_ema(perf_.avg_connect_us, connect_us);
+		update_ema(perf_.avg_abstract_us, abstract_us);
+		update_ema(perf_.avg_refine_us, refine_us);
+
+		update_ema(perf_.avg_connector_los_attempts, static_cast<float>(connector_los_attempts));
+		update_ema(perf_.avg_connector_los_hits, static_cast<float>(connector_los_hits));
+		update_ema(perf_.avg_connector_local_search_runs, static_cast<float>(connector_local_search_runs));
+		update_ema(perf_.avg_connector_local_expansions, static_cast<float>(connector_local_expansions));
+		update_ema(perf_.avg_connector_portal_candidates, static_cast<float>(connector_portal_candidates));
+
+		perf_.max_total_us = std::max(perf_.max_total_us, total_us);
+		perf_.max_connect_us = std::max(perf_.max_connect_us, connect_us);
+		perf_.max_abstract_us = std::max(perf_.max_abstract_us, abstract_us);
+		perf_.max_refine_us = std::max(perf_.max_refine_us, refine_us);
+
+		perf_.window_queries++;
+		perf_.window_total_sum_us += total_us;
+		perf_.window_connect_sum_us += connect_us;
+		perf_.window_abstract_sum_us += abstract_us;
+		perf_.window_refine_sum_us += refine_us;
+
+		if (total_us >= perf_.spike_threshold_us) {
+			perf_.spike_count++;
+			perf_.worst_spike_us = std::max(perf_.worst_spike_us, total_us);
+			UtilityFunctions::print(
+				"[HpaGraph][SPIKE] total_us=", total_us,
+				" connect_us=", connect_us,
+				" abstract_us=", abstract_us,
+				" refine_us=", refine_us,
+				" los=", connector_los_hits, "/", connector_los_attempts,
+				" local_runs=", connector_local_search_runs,
+				" local_exp=", connector_local_expansions,
+				" portals=", connector_portal_candidates,
+				" spikes=", static_cast<int64_t>(perf_.spike_count));
+		}
+
+		uint64_t now_wall_us = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::microseconds>(query_t1.time_since_epoch()).count());
+		if (perf_.last_report_wall_us == 0) {
+			perf_.last_report_wall_us = now_wall_us;
+		}
+		uint64_t report_interval_us = static_cast<uint64_t>(perf_.report_interval_s * 1000000.0f);
+		if (report_interval_us == 0) report_interval_us = 5000000;
+		if (now_wall_us - perf_.last_report_wall_us >= report_interval_us) {
+			float inv = (perf_.window_queries > 0) ? (1.0f / static_cast<float>(perf_.window_queries)) : 0.0f;
+			float w_avg_total = perf_.window_total_sum_us * inv;
+			float w_avg_connect = perf_.window_connect_sum_us * inv;
+			float w_avg_abstract = perf_.window_abstract_sum_us * inv;
+			float w_avg_refine = perf_.window_refine_sum_us * inv;
+			float elapsed_s = static_cast<float>(now_wall_us - perf_.last_report_wall_us) / 1000000.0f;
+			if (elapsed_s <= 0.0f) elapsed_s = perf_.report_interval_s;
+			float qps = static_cast<float>(perf_.window_queries) / elapsed_s;
+			UtilityFunctions::print(
+				"[HpaGraph][AVG 5s] queries=", static_cast<int64_t>(perf_.window_queries),
+				" qps=", qps,
+				" avg_total_us=", w_avg_total,
+				" avg_connect_us=", w_avg_connect,
+				" avg_abstract_us=", w_avg_abstract,
+				" avg_refine_us=", w_avg_refine,
+				" max_total_us=", perf_.max_total_us,
+				" spike_count=", static_cast<int64_t>(perf_.spike_count));
+			perf_.window_queries = 0;
+			perf_.window_total_sum_us = 0.0f;
+			perf_.window_connect_sum_us = 0.0f;
+			perf_.window_abstract_sum_us = 0.0f;
+			perf_.window_refine_sum_us = 0.0f;
+			perf_.last_report_wall_us = now_wall_us;
+		}
+
+		return r;
 	};
 
-	int from_cid = world_to_cluster(from);
-	int to_cid   = world_to_cluster(to);
+	if (!built_) {
+		return finalize_query(no_path);
+	}
+
+	auto world_to_cell = [&](Vector2 wp, int &gx, int &gz) {
+		gx = static_cast<int>((wp.x - min_x_) / cell_size_);
+		gz = static_cast<int>((wp.y - min_z_) / cell_size_);
+		gx = std::max(0, std::min(gx, grid_w_ - 1));
+		gz = std::max(0, std::min(gz, grid_h_ - 1));
+	};
+
+	auto make_direct = [&](Vector2 a, Vector2 b) -> PathResult {
+		PathResult r;
+		r.waypoints.push_back(a);
+		r.waypoints.push_back(b);
+		r.flags.assign(2, WP_NONE);
+		r.total_distance = a.distance_to(b);
+		r.valid = true;
+		return r;
+	};
+
+	int from_gx = 0, from_gz = 0, to_gx = 0, to_gz = 0;
+	world_to_cell(from, from_gx, from_gz);
+	world_to_cell(to, to_gx, to_gz);
+
+	int from_cid = cluster_id(cell_cx(from_gx), cell_cz(from_gz));
+	int to_cid   = cluster_id(cell_cx(to_gx), cell_cz(to_gz));
 
 	bool threat_layer_active = false;
 	for (uint8_t blocked : cluster_threat_blocked_) {
@@ -580,110 +721,279 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to) const {
 		}
 	}
 
-	// -----------------------------------------------------------------------
-	// Fast path: same cluster — delegate directly to the grid-level planner.
-	// Disabled while threat clusters are active so we don't bypass threat
-	// avoidance with a threat-blind grid path.
-	// -----------------------------------------------------------------------
+	// Same-cluster fast path. Keep this disabled while threats are active so
+	// we don't bypass HPA threat blocking with a threat-blind local path.
 	if (from_cid == to_cid && !threat_layer_active) {
-		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
+		if (nav_map_->line_of_sight(from_gx, from_gz, to_gx, to_gz, clearance_)) {
+			return finalize_query(make_direct(from, to));
+		}
+		auto t0 = Clock::now();
+		PathResult local = nav_map_->find_path_internal(from, to, clearance_, 0.0f);
+		auto t1 = Clock::now();
+		refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
+		return finalize_query(local);
 	}
 
-	// -----------------------------------------------------------------------
-	// Hierarchical path: copy the permanent graph and augment with two
-	// temporary nodes for 'from' and 'to'.
-	// -----------------------------------------------------------------------
+	// Hierarchical query graph: permanent graph + two temporary endpoint nodes.
 	std::vector<AbNode>              q_nodes = nodes_;
 	std::vector<std::vector<AbEdge>> q_adj   = adj_;
 
-	// Helper: connect world point wp to all entrance nodes in cluster cid.
-	// Adds a virtual node at index q_nodes.size() with edges to/from entrances.
-	// Returns the virtual node id, or -1 if cluster has no reachable entrances.
-	auto connect_point = [&](Vector2 wp, int cid) -> int {
-		const Cluster &c = clusters_[cid];
-		if (c.node_ids.empty()) return -1;
+	constexpr int   MAX_CONNECT_RING       = 2;
+	constexpr int   MAX_PORTAL_CANDIDATES  = 24;
+	constexpr int   MAX_LOCAL_EXPANSIONS   = 30000;
+	constexpr float WP_MERGE_EPSILON_SCALE = 0.1f;
+
+	auto connect_point = [&](Vector2 wp, int wp_gx, int wp_gz, int center_cid) -> int {
+		if (center_cid < 0 || center_cid >= static_cast<int>(clusters_.size())) return -1;
 
 		int vid = static_cast<int>(q_nodes.size());
-		int gx  = static_cast<int>((wp.x - min_x_) / cell_size_);
-		int gz  = static_cast<int>((wp.y - min_z_) / cell_size_);
-		gx = std::max(0, std::min(gx, grid_w_ - 1));
-		gz = std::max(0, std::min(gz, grid_h_ - 1));
-
 		AbNode vn;
 		vn.id         = vid;
-		vn.cluster_id = cid;
-		vn.gx         = gx;
-		vn.gz         = gz;
+		vn.cluster_id = center_cid;
+		vn.gx         = wp_gx;
+		vn.gz         = wp_gz;
 		vn.wx         = wp.x;
 		vn.wz         = wp.y;
 		q_nodes.push_back(vn);
-		q_adj.push_back({});  // empty adjacency for this virtual node
+		q_adj.push_back({});
+
+		auto add_connector_edge = [&](int nid, float cost, const std::vector<Vector2> &wps_fwd) {
+			if (cost <= 0.0f) {
+				const AbNode &n = nodes_[nid];
+				cost = wp.distance_to(Vector2(n.wx, n.wz));
+			}
+			std::vector<Vector2> wps_rev(wps_fwd.rbegin(), wps_fwd.rend());
+			// via_cluster = -1: endpoint attachment edges must remain usable even
+			// if the owning cluster is currently blocked by threat/obstacle stamps.
+			q_adj[vid].push_back({ nid, cost, -1, wps_fwd });
+			q_adj[nid].push_back({ vid, cost, -1, wps_rev });
+		};
 
 		bool any = false;
-		for (int nid : c.node_ids) {
-			const AbNode &n = nodes_[nid];
-			Vector2 np(n.wx, n.wz);
+		const Cluster &cc = clusters_[center_cid];
 
-			PathResult pr = nav_map_->find_path_internal(wp, np, clearance_, 0.0f);
-			if (!pr.valid || pr.waypoints.empty()) continue;
+		for (int ring = 0; ring <= MAX_CONNECT_RING; ++ring) {
+			std::vector<uint8_t> allowed_clusters(clusters_.size(), 0);
+			int cx0 = std::max(0, cc.cx - ring);
+			int cx1 = std::min(ncx_ - 1, cc.cx + ring);
+			int cz0 = std::max(0, cc.cz - ring);
+			int cz1 = std::min(ncz_ - 1, cc.cz + ring);
 
-			float cost = pr.total_distance;
-			if (cost <= 0.0f) cost = wp.distance_to(np);
+			for (int cz = cz0; cz <= cz1; ++cz) {
+				for (int cx = cx0; cx <= cx1; ++cx) {
+					int cid = cluster_id(cx, cz);
+					allowed_clusters[cid] = 1;
+				}
+			}
 
-			std::vector<Vector2> wps_fwd(pr.waypoints.begin(), pr.waypoints.end());
-			std::vector<Vector2> wps_rev(wps_fwd.rbegin(), wps_fwd.rend());
+			std::vector<int> candidate_nodes;
+			candidate_nodes.reserve(64);
+			for (int cid = 0; cid < static_cast<int>(clusters_.size()); ++cid) {
+				if (!allowed_clusters[cid]) continue;
+				for (int nid : clusters_[cid].node_ids) {
+					candidate_nodes.push_back(nid);
+				}
+			}
+			if (candidate_nodes.empty()) continue;
 
-			// vid → entrance nid.  Use via_cluster = -1 so threat-blocked
-			// cluster stamps don't strand the virtual start/goal node: the
-			// ship is already inside the cluster and needs to escape, not
-			// route "through" it in the HPA* sense.
-			q_adj[vid].push_back({ nid, cost, -1, wps_fwd });
-			// entrance nid → vid
-			q_adj[nid].push_back({ vid, cost, -1, wps_rev });
+			std::sort(candidate_nodes.begin(), candidate_nodes.end(), [&](int a, int b) {
+				float dax = nodes_[a].wx - wp.x;
+				float daz = nodes_[a].wz - wp.y;
+				float dbx = nodes_[b].wx - wp.x;
+				float dbz = nodes_[b].wz - wp.y;
+				return (dax * dax + daz * daz) < (dbx * dbx + dbz * dbz);
+			});
+			if (static_cast<int>(candidate_nodes.size()) > MAX_PORTAL_CANDIDATES) {
+				candidate_nodes.resize(MAX_PORTAL_CANDIDATES);
+			}
+			connector_portal_candidates += static_cast<int>(candidate_nodes.size());
 
-			any = true;
+			std::vector<uint8_t> connected(candidate_nodes.size(), 0);
+
+			// Fast path: direct LOS to portal node skips all local search.
+			for (size_t i = 0; i < candidate_nodes.size(); ++i) {
+				int nid = candidate_nodes[i];
+				const AbNode &n = nodes_[nid];
+				connector_los_attempts++;
+				if (!nav_map_->line_of_sight(wp_gx, wp_gz, n.gx, n.gz, clearance_)) {
+					continue;
+				}
+				connector_los_hits++;
+
+				std::vector<Vector2> wps;
+				wps.push_back(wp);
+				Vector2 np(n.wx, n.wz);
+				if (wp.distance_to(np) > cell_size_ * WP_MERGE_EPSILON_SCALE) {
+					wps.push_back(np);
+				}
+				add_connector_edge(nid, wp.distance_to(np), wps);
+				connected[i] = 1;
+				any = true;
+			}
+
+			std::vector<int> unresolved_indices;
+			for (size_t i = 0; i < candidate_nodes.size(); ++i) {
+				if (!connected[i]) unresolved_indices.push_back(static_cast<int>(i));
+			}
+
+			if (!unresolved_indices.empty() && cell_nav(wp_gx, wp_gz)) {
+				connector_local_search_runs++;
+				using PQ = std::pair<float, int>;
+				std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
+
+				const int total_cells = grid_w_ * grid_h_;
+				const float INF = std::numeric_limits<float>::infinity();
+				std::vector<float> dist(total_cells, INF);
+				std::vector<int> parent(total_cells, -1);
+				std::vector<uint8_t> closed(total_cells, 0);
+				std::unordered_map<int, std::vector<int>> targets_by_cell;
+				targets_by_cell.reserve(unresolved_indices.size());
+
+				auto cell_idx = [&](int gx, int gz) -> int { return gz * grid_w_ + gx; };
+
+				for (int tix : unresolved_indices) {
+					int nid = candidate_nodes[tix];
+					int tidx = cell_idx(nodes_[nid].gx, nodes_[nid].gz);
+					targets_by_cell[tidx].push_back(tix);
+				}
+
+				int start_idx = cell_idx(wp_gx, wp_gz);
+				dist[start_idx] = 0.0f;
+				parent[start_idx] = start_idx;
+				open.push({ 0.0f, start_idx });
+
+				const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+				const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+				int expansions = 0;
+				int remaining_target_cells = static_cast<int>(targets_by_cell.size());
+
+				while (!open.empty() && remaining_target_cells > 0 && expansions < MAX_LOCAL_EXPANSIONS) {
+					auto [cg, ci] = open.top();
+					open.pop();
+					if (closed[ci]) continue;
+					closed[ci] = 1;
+					expansions++;
+
+					auto hit = targets_by_cell.find(ci);
+					if (hit != targets_by_cell.end()) {
+						for (int tix : hit->second) {
+							if (connected[tix]) continue;
+							int nid = candidate_nodes[tix];
+
+							std::vector<Vector2> rev_cells;
+							int cur = ci;
+							while (cur != start_idx) {
+								if (cur < 0) break;
+								int cx = cur % grid_w_;
+								int cz = cur / grid_w_;
+								float wx, wz;
+								grid_to_world(cx, cz, wx, wz);
+								rev_cells.push_back(Vector2(wx, wz));
+								int pi = parent[cur];
+								if (pi == cur) break;
+								cur = pi;
+							}
+							if (cur != start_idx) continue;
+
+							std::reverse(rev_cells.begin(), rev_cells.end());
+							std::vector<Vector2> wps_fwd;
+							wps_fwd.reserve(rev_cells.size() + 2);
+							wps_fwd.push_back(wp);
+							for (const Vector2 &p : rev_cells) {
+								if (wps_fwd.back().distance_to(p) > cell_size_ * WP_MERGE_EPSILON_SCALE) {
+									wps_fwd.push_back(p);
+								}
+							}
+							Vector2 np(nodes_[nid].wx, nodes_[nid].wz);
+							if (wps_fwd.back().distance_to(np) > cell_size_ * WP_MERGE_EPSILON_SCALE) {
+								wps_fwd.push_back(np);
+							}
+
+							add_connector_edge(nid, dist[ci], wps_fwd);
+							connected[tix] = 1;
+							any = true;
+						}
+						targets_by_cell.erase(hit);
+						remaining_target_cells--;
+					}
+
+					int cx = ci % grid_w_;
+					int cz = ci / grid_w_;
+					for (int d = 0; d < 8; ++d) {
+						int nx = cx + dx8[d];
+						int nz = cz + dz8[d];
+						if (nx < 0 || nx >= grid_w_ || nz < 0 || nz >= grid_h_) continue;
+
+						int n_cid = cluster_id(cell_cx(nx), cell_cz(nz));
+						if (!allowed_clusters[n_cid]) continue;
+						if (!cell_nav(nx, nz)) continue;
+
+						bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
+						if (is_diag) {
+							int ax = cx + dx8[d];
+							int az = cz;
+							int bx = cx;
+							int bz = cz + dz8[d];
+							if (!cell_nav(ax, az) || !cell_nav(bx, bz)) continue;
+						}
+
+						float step = is_diag ? (cell_size_ * 1.41421356f) : cell_size_;
+						int nidx = cell_idx(nx, nz);
+						float ng = cg + step;
+						if (ng >= dist[nidx]) continue;
+						dist[nidx] = ng;
+						parent[nidx] = ci;
+						open.push({ ng, nidx });
+					}
+				}
+				connector_local_expansions += expansions;
+			}
+
+			if (any) {
+				break; // Use nearest ring that can connect this endpoint.
+			}
 		}
 
 		if (!any) {
-			// No reachable entrance; remove the virtual node
 			q_nodes.pop_back();
 			q_adj.pop_back();
 			return -1;
 		}
+
 		return vid;
 	};
 
-	int start_id = connect_point(from, from_cid);
-	int goal_id  = connect_point(to,   to_cid);
+	auto c0 = Clock::now();
+	int start_id = connect_point(from, from_gx, from_gz, from_cid);
+	auto c1 = Clock::now();
+	start_connect_us = std::chrono::duration<float, std::micro>(c1 - c0).count();
 
-	// Fall back to direct grid A* if we couldn't connect either endpoint.
-	// When threat clusters are active, returning a threat-blind fallback can
-	// cause frame-to-frame oscillation between avoidance and direct routes.
+	auto c2 = Clock::now();
+	int goal_id  = connect_point(to, to_gx, to_gz, to_cid);
+	auto c3 = Clock::now();
+	goal_connect_us = std::chrono::duration<float, std::micro>(c3 - c2).count();
+	connect_us = start_connect_us + goal_connect_us;
+
+	// No global grid-level fallback here: if endpoints cannot be connected
+	// through the HPA connector pipeline, report no path.
 	if (start_id < 0 || goal_id < 0) {
-		if (threat_layer_active) {
-			PathResult no_path;
-			no_path.valid = false;
-			return no_path;
-		}
-		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
+		return finalize_query(no_path);
 	}
 
-	// Run abstract A*
-	std::vector<int> abs_path =
-		abstract_astar_impl(q_nodes, q_adj, start_id, goal_id);
-
+	auto a0 = Clock::now();
+	std::vector<int> abs_path = abstract_astar_impl(q_nodes, q_adj, start_id, goal_id);
+	auto a1 = Clock::now();
+	abstract_us = std::chrono::duration<float, std::micro>(a1 - a0).count();
 	if (abs_path.empty()) {
-		// Abstract A* found no route; avoid threat-blind fallback while threats
-		// are active.
-		if (threat_layer_active) {
-			PathResult no_path;
-			no_path.valid = false;
-			return no_path;
-		}
-		return nav_map_->find_path_internal(from, to, clearance_, 0.0f);
+		return finalize_query(no_path);
 	}
 
-	return refine_path_impl(abs_path, q_nodes, q_adj, from, to);
+	auto r0 = Clock::now();
+	PathResult refined = refine_path_impl(abs_path, q_nodes, q_adj, from, to);
+	auto r1 = Clock::now();
+	refine_us = std::chrono::duration<float, std::micro>(r1 - r0).count();
+
+	return finalize_query(refined);
 }
 
 // ============================================================================
@@ -756,6 +1066,87 @@ TypedArray<Dictionary> HpaGraph::get_debug_clusters() const {
 		out.push_back(d);
 	}
 	return out;
+}
+
+Dictionary HpaGraph::get_perf_metrics() const {
+	Dictionary d;
+	d["tracking_enabled"] = perf_tracking_enabled_;
+	d["query_count"] = static_cast<int64_t>(perf_.query_count);
+	d["success_count"] = static_cast<int64_t>(perf_.success_count);
+	d["failure_count"] = static_cast<int64_t>(perf_.failure_count);
+
+	d["last_total_us"] = perf_.last_total_us;
+	d["last_connect_us"] = perf_.last_connect_us;
+	d["last_start_connect_us"] = perf_.last_start_connect_us;
+	d["last_goal_connect_us"] = perf_.last_goal_connect_us;
+	d["last_abstract_us"] = perf_.last_abstract_us;
+	d["last_refine_us"] = perf_.last_refine_us;
+
+	d["avg_total_us"] = perf_.avg_total_us;
+	d["avg_connect_us"] = perf_.avg_connect_us;
+	d["avg_abstract_us"] = perf_.avg_abstract_us;
+	d["avg_refine_us"] = perf_.avg_refine_us;
+
+	d["max_total_us"] = perf_.max_total_us;
+	d["max_connect_us"] = perf_.max_connect_us;
+	d["max_abstract_us"] = perf_.max_abstract_us;
+	d["max_refine_us"] = perf_.max_refine_us;
+
+	d["last_connector_los_attempts"] = perf_.last_connector_los_attempts;
+	d["last_connector_los_hits"] = perf_.last_connector_los_hits;
+	d["last_connector_local_search_runs"] = perf_.last_connector_local_search_runs;
+	d["last_connector_local_expansions"] = perf_.last_connector_local_expansions;
+	d["last_connector_portal_candidates"] = perf_.last_connector_portal_candidates;
+
+	d["avg_connector_los_attempts"] = perf_.avg_connector_los_attempts;
+	d["avg_connector_los_hits"] = perf_.avg_connector_los_hits;
+	d["avg_connector_local_search_runs"] = perf_.avg_connector_local_search_runs;
+	d["avg_connector_local_expansions"] = perf_.avg_connector_local_expansions;
+	d["avg_connector_portal_candidates"] = perf_.avg_connector_portal_candidates;
+
+	d["spike_threshold_us"] = perf_.spike_threshold_us;
+	d["spike_count"] = static_cast<int64_t>(perf_.spike_count);
+	d["worst_spike_us"] = perf_.worst_spike_us;
+	d["report_interval_s"] = perf_.report_interval_s;
+	d["window_queries"] = static_cast<int64_t>(perf_.window_queries);
+	if (perf_.window_queries > 0) {
+		float inv = 1.0f / static_cast<float>(perf_.window_queries);
+		d["window_avg_total_us"] = perf_.window_total_sum_us * inv;
+		d["window_avg_connect_us"] = perf_.window_connect_sum_us * inv;
+		d["window_avg_abstract_us"] = perf_.window_abstract_sum_us * inv;
+		d["window_avg_refine_us"] = perf_.window_refine_sum_us * inv;
+	} else {
+		d["window_avg_total_us"] = 0.0f;
+		d["window_avg_connect_us"] = 0.0f;
+		d["window_avg_abstract_us"] = 0.0f;
+		d["window_avg_refine_us"] = 0.0f;
+	}
+
+	return d;
+}
+
+void HpaGraph::reset_perf_metrics() {
+	float threshold = perf_.spike_threshold_us;
+	float report_interval = perf_.report_interval_s;
+	perf_ = PerfStats();
+	perf_.spike_threshold_us = threshold;
+	perf_.report_interval_s = report_interval;
+}
+
+void HpaGraph::set_perf_spike_threshold_us(float threshold_us) {
+	perf_.spike_threshold_us = std::max(0.0f, threshold_us);
+}
+
+float HpaGraph::get_perf_spike_threshold_us() const {
+	return perf_.spike_threshold_us;
+}
+
+void HpaGraph::set_perf_tracking_enabled(bool enabled) {
+	perf_tracking_enabled_ = enabled;
+}
+
+bool HpaGraph::is_perf_tracking_enabled() const {
+	return perf_tracking_enabled_;
 }
 
 // ============================================================================

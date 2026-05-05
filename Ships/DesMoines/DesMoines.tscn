@@ -32,7 +32,7 @@
 [sub_resource type="Resource" id="Resource_4jnyp"]
 resource_local_to_scene = true
 script = ExtResource("3_s7tx1")
-citadel_repair = 0.4
+citadel_repair = 0.5
 pen_repair = 0.7
 light_repair = 0.925
 torpedo_protection = 0.2
@@ -196,6 +196,7 @@ metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 [sub_resource type="Resource" id="Resource_d0r0t"]
 script = ExtResource("10_rqfqd")
 max_buildup = 200.0
+buildup_reduction_rate = 0.02
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_67mgq"]
