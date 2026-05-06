@@ -1006,7 +1006,7 @@ func _emit_debug_draws() -> void:
 	# --- a) Desired heading arrow (GREEN, above ship) ---
 	var heading_pos = ship_pos
 	heading_pos.y += 100.0
-	var desired_heading = _last_intent.target_heading
+	var desired_heading = _last_intent.target_heading if _last_intent else 0.0
 	var desired_heading_vec = Vector3(sin(desired_heading), 0.0, cos(desired_heading)).normalized()
 	Debug.draw_arrow(heading_pos, desired_heading_vec, 200.0, Color.GREEN, 10.0)
 
@@ -1058,7 +1058,7 @@ func _emit_debug_draws() -> void:
 
 	# --- g) Destination marker (green cone pointing down) ---
 	# if destination != Vector3.ZERO:
-	var dest = _last_intent.target_position
+	var dest = _last_intent.target_position if _last_intent else Vector3.ZERO
 	Debug.draw_cone(Vector3(dest.x, 120.0, dest.z), Vector3(PI, 0.0, 0.0), 80.0, 0.0, 40.0, Color(0.0, 1.0, 0.4, 0.9), 4)
 
 	# --- Navigator-dependent draws ---

@@ -722,10 +722,11 @@ float ShipNavigator::throttle_to_speed(int throttle) const {
 }
 
 float ShipNavigator::get_reach_radius() const {
-	float base = params.ship_length;
-	float speed_factor = std::abs(state.current_speed) * 2.0f;
-	float turn_factor = params.turning_circle_radius * 0.3f;
-	return std::max(base, std::min(turn_factor, speed_factor));
+	// float base = params.ship_length;
+	// float speed_factor = std::abs(state.current_speed) * 2.0f;
+	// float turn_factor = params.turning_circle_radius * 0.3f;
+	// return std::max(base, std::min(turn_factor, speed_factor));
+	return params.turning_circle_radius;
 }
 
 void ShipNavigator::set_steering_output(float rudder, int throttle, bool collision) {
@@ -1939,7 +1940,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	// Keeping only three discrete choices eliminates near-ties between
 	// intermediate values (0.3, 0.6) that caused frame-to-frame oscillation
 	// when two candidates scored within floating-point noise of each other.
-	const float rudder_offsets[] = { 0.0f, -1.0f, 1.0f };
+	const float rudder_offsets[] = { 0.0f, 0.3, -0.3 , 0.6, -0.6, -1.0f, 1.0f };
 	constexpr int N_OFFSETS = 3;
 
 	// +1 for full opposite rudder, +3 for reverse candidates (0, ±1.0)
@@ -1968,6 +1969,10 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 	// Reverse candidates — hard-over only, same rationale as forward.
 	add_candidate(0.0f, -1);
+	add_candidate(-0.3f, -1);
+	add_candidate(0.3f, -1);
+	add_candidate(-0.6f, -1);
+	add_candidate(0.6f, -1);
 	add_candidate(-1.0f, -1);
 	add_candidate(1.0f, -1);
 
@@ -3054,4 +3059,3 @@ bool ShipNavigator::is_waypoint_in_turning_dead_zone(Vector2 waypoint) const {
 
 	return (dist_starboard < threshold || dist_port < threshold);
 }
-
