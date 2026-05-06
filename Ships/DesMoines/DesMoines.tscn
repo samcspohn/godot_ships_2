@@ -123,6 +123,7 @@ h_grouping = 2.1
 v_grouping = 2.1
 base_spread = 0.015
 reload_time = 6.0
+traverse_speed = 6.0
 _range = 13500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 

@@ -525,10 +525,10 @@ func get_potential_target_weight(target: Ship) -> float:
 	var hp = target.health_controller.current_hp
 	var hp_ratio = hp / target.health_controller.max_hp
 	weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
-	if can_hit_target(target):
-		weight *= 10.0
-	if target.visible_to_enemy:
-		weight *= 10.0
+	# if can_hit_target(target):
+	# 	weight *= 10.0
+	# if target.visible_to_enemy:
+	# 	weight *= 10.0
 
 	return weight
 
@@ -547,7 +547,7 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 		# if potential.visible_to_enemy and not can_hit_target(potential):
 		# 	continue
 		var weight = get_potential_target_weight(potential)
-		if abs(weight - last_target_weight) > 0.1 and weight > target_weight:
+		if abs(weight - last_target_weight) > 0.1 and weight > target_weight and potential.visible_to_enemy and can_hit_target(potential):
 			new_target = potential
 			target_weight = weight
 			break;
@@ -1382,7 +1382,7 @@ func _sdf_walk_to_shore(island_center: Vector3, direction: Vector3, island_radiu
 	return Vector3.ZERO
 
 func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
-	"""LOS check with clearance buffer — treats islands as slightly larger than
+	"""LOS check with clearance buffer — treats islands as slightly smaller than
 	the raw SDF to account for imperfect island modelling (off by ~1 cell)."""
 	if not NavigationMapManager.is_map_ready():
 		return false

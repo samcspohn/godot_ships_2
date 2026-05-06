@@ -1406,7 +1406,7 @@ void ShipNavigator::start_plan() {
 			hpa_graph_->clear_threats();
 		}
 
-		PathResult pr = hpa_graph_->find_path(state.position, target.position);
+		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
 		if (pr.valid && !pr.waypoints.empty()) {
 			plan_forward_result = pr;
 			plan_phase = PlanPhase::DONE;
@@ -1507,7 +1507,7 @@ void ShipNavigator::run_plan_sync() {
 			hpa_graph_->clear_threats();
 		}
 
-		PathResult pr = hpa_graph_->find_path(state.position, target.position);
+		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
 		if (pr.valid && !pr.waypoints.empty()) {
 			accept_plan_result(pr);
 			plan_phase = PlanPhase::IDLE;
@@ -1899,19 +1899,29 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	float wp_reach_radius = get_reach_radius();
 
 	// When at/near destination (path exhausted or already within reach radius),
-	// predict_arc_to_heading would target a point essentially underfoot, causing
-	// dist_to_target < 1 and skipping the alignment check entirely.  Replace
-	// wp_target with a virtual point far along the desired heading so candidates
-	// are correctly scored for final bearing alignment.
+	// the correct steering is already encoded in desired_rudder via
+	// compute_rudder_to_heading().  Skip arc simulation entirely — using a
+	// virtual 10 km heading point caused both hard-turn candidates to score
+	// identically (equal endpoint distance + heading error) producing
+	// frame-to-frame oscillation between forward/straight and hard rudder
+	// or between forward and reverse.
 	bool wp_is_virtual = false;
 	{
 		bool path_exhausted_here = !path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size());
 		float dist_to_wp = state.position.distance_to(wp_target);
 		if (path_exhausted_here || dist_to_wp < wp_reach_radius) {
-			float th = target.heading;
-			wp_target = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
 			wp_is_virtual = true;
 		}
+	}
+	if (wp_is_virtual) {
+		winning_arc = predict_arc_internal(desired_rudder, desired_throttle,
+		                                    params.turning_circle_radius * 1.5f);
+		perf_last_steering_candidates_total_ = 1;
+		perf_last_steering_candidates_simulated_ = 1;
+		perf_last_steering_terrain_rejects_ = 0;
+		perf_last_steering_short_arc_rejects_ = 0;
+		perf_last_steering_arc_points_simulated_ = static_cast<int>(winning_arc.size());
+		return result;
 	}
 
 	// --- Ship-obstacle hitter determination ---
@@ -1925,12 +1935,15 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		int throttle;
 	};
 
-	// Forward candidates: desired ± offsets
-	const float rudder_offsets[] = { 0.0f, -0.3f, 0.3f, -0.6f, 0.6f, -1.0f, 1.0f };
-	constexpr int N_OFFSETS = 7;
+	// Forward candidates: desired rudder plus the two hard-over extremes.
+	// Keeping only three discrete choices eliminates near-ties between
+	// intermediate values (0.3, 0.6) that caused frame-to-frame oscillation
+	// when two candidates scored within floating-point noise of each other.
+	const float rudder_offsets[] = { 0.0f, -1.0f, 1.0f };
+	constexpr int N_OFFSETS = 3;
 
-	// +1 for full opposite rudder, +5 for reverse candidates (0, ±0.5, ±1.0)
-	Candidate candidates[N_OFFSETS + 6];
+	// +1 for full opposite rudder, +3 for reverse candidates (0, ±1.0)
+	Candidate candidates[N_OFFSETS + 4];
 	int n_candidates = 0;
 
 	auto add_candidate = [&](float r, int t) {
@@ -1953,12 +1966,8 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		add_candidate(opposite_rudder, desired_throttle);
 	}
 
-	// Reverse candidates — full rudder spread so the ship can maneuver
-	// while backing up.  Reverse is naturally penalised by slower speed
-	// producing longer alignment + travel times.
+	// Reverse candidates — hard-over only, same rationale as forward.
 	add_candidate(0.0f, -1);
-	add_candidate(-0.5f, -1);
-	add_candidate(0.5f, -1);
 	add_candidate(-1.0f, -1);
 	add_candidate(1.0f, -1);
 
@@ -2082,7 +2091,19 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			total_time = arrival_time;
 		} else {
 			float alignment_time = arc.back().time;
+
+			// Use the closest approach to the waypoint over the entire arc,
+			// not just the endpoint.  After heading alignment the arc continues
+			// straight and can overshoot or drift slightly past the waypoint;
+			// two symmetric candidates (e.g. hard-left vs hard-right) often
+			// end up with near-identical endpoint distances, causing their
+			// scores to tie and the winner to flip every frame.  Minimum
+			// distance captures which arc actually gets closer to the target.
 			float endpoint_dist = arc.back().position.distance_to(wp_target);
+			for (const auto &pt : arc) {
+				float d = pt.position.distance_to(wp_target);
+				if (d < endpoint_dist) endpoint_dist = d;
+			}
 
 			// When a reverse candidate ends with the bow aligned toward the
 			// waypoint, the ship will switch to forward throttle on the next
@@ -2599,22 +2620,25 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	// (clamped to max_time), so the tiny error on that one step is negligible.
 	const float exp_decay = std::exp(-lateral_drag * integration_dt);
 
-	// After the arc aligns with target_pos, switch to straight so the avoidance
-	// system can check terrain on the straight segment from alignment to waypoint.
-	float effective_rudder = commanded_rudder;
-	bool aligned = false;
+	// Simulate at the commanded rudder until the bow aligns with the direction
+	// to target_pos, then stop.  Remaining travel is estimated analytically in
+	// select_best_steering (endpoint_dist / speed).  The post-alignment straight
+	// segment was removed: it rarely passed accurately through the waypoint
+	// (5° threshold leaves a residual cross-track error), so both left- and
+	// right-turn candidates landed at nearly identical endpoint distances and
+	// produced frame-to-frame oscillation.
 	while (sim_time < max_time && total_distance < max_arc_distance) {
 		float dt = integration_dt;
 		if (sim_time + dt > max_time) dt = max_time - sim_time;
 		if (dt < 0.001f) break;
 
 		if (params.rudder_response_time > 0.001f) {
-			sim_rudder = move_toward_f(sim_rudder, effective_rudder, dt / params.rudder_response_time);
+			sim_rudder = move_toward_f(sim_rudder, commanded_rudder, dt / params.rudder_response_time);
 		} else {
-			sim_rudder = effective_rudder;
+			sim_rudder = commanded_rudder;
 		}
 
-		if (!rudder_settled && std::abs(sim_rudder - effective_rudder) < 0.01f) {
+		if (!rudder_settled && std::abs(sim_rudder - commanded_rudder) < 0.01f) {
 			rudder_settled = true;
 		}
 
@@ -2664,24 +2688,16 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 			arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, sim_time));
 			next_emit_dist += emit_interval;
 
-			// Check alignment at emit points only — atan2 is expensive and
-			// arc-point granularity is sufficient for avoidance scoring.
-			// After alignment, switch to straight (rudder 0) and continue
-			// simulating so select_best_steering can check terrain on the
-			// straight segment from alignment point to waypoint.
-			if (aligned) {
-				if (sim_pos.distance_to(target_pos) < emit_interval) {
-					break;
-				}
-			} else if (rudder_settled) {
+			// Check alignment at emit points only (atan2 is expensive).
+			// Stop as soon as the bow points at the target — the scoring in
+			// select_best_steering estimates the remaining travel analytically.
+			if (rudder_settled) {
 				Vector2 to_target = target_pos - sim_pos;
-				float dist_to_target = to_target.length();
-				if (dist_to_target > 1.0f) {
+				if (to_target.length() > 1.0f) {
 					float desired_heading = std::atan2(to_target.x, to_target.y);
 					float heading_error = std::abs(angle_difference(sim_heading, desired_heading));
 					if (heading_error < alignment_threshold) {
-						aligned = true;
-						effective_rudder = 0.0f;
+						break;
 					}
 				}
 			}
@@ -2891,7 +2907,27 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading, bool rever
 	if (abs_effective_diff < 0.02f) {
 		rudder = 0.0f;
 	} else if (abs_effective_diff > full_rudder_threshold) {
-		rudder = (effective_diff > 0.0f) ? -1.0f : 1.0f;
+		// --- Near-180° stability fix ---
+		// When abs_effective_diff is near ±π the sign of effective_diff is
+		// unreliable: a sub-ULP perturbation in the ship's position flips
+		// angle_difference() between +π and −π, causing the rudder to
+		// alternate between −1 and +1 every frame (net ≈ 0, so the ship
+		// drives straight away from the target).
+		// Use state continuity as tiebreaker: current_rudder → angular
+		// velocity → deterministic default.
+		// Convention: negative rudder = right turn = positive angular_velocity_y.
+		constexpr float near_pi_threshold = static_cast<float>(Math_PI * 0.85);
+		if (abs_effective_diff > near_pi_threshold) {
+			if (std::abs(state.current_rudder) > 0.05f) {
+				rudder = (state.current_rudder < 0.0f) ? -1.0f : 1.0f;
+			} else if (std::abs(state.angular_velocity_y) > 0.001f) {
+				rudder = (state.angular_velocity_y > 0.0f) ? -1.0f : 1.0f;
+			} else {
+				rudder = -1.0f;  // deterministic default: start a right turn
+			}
+		} else {
+			rudder = (effective_diff > 0.0f) ? -1.0f : 1.0f;
+		}
 	} else {
 		float t = (abs_effective_diff - 0.02f) / (full_rudder_threshold - 0.02f);
 		rudder = lerp_f(0.1f, 1.0f, t);

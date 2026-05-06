@@ -639,7 +639,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# the window, not just the first detection per salvo.
 	if behavior != null and s.artillery_controller != null:
 		var reload_sec: float = s.artillery_controller.get_params().reload_time
-		var expiry: float = Time.get_ticks_msec() / 1000.0 + 100.0
+		var expiry: float = Time.get_ticks_msec() / 1000.0 + 60.0
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry

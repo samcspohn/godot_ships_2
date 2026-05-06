@@ -26,27 +26,16 @@ namespace godot {
 // Plain data structures (no Godot reflection needed)
 // ---------------------------------------------------------------------------
 
-struct AbNode {
-	int   id;
-	int   cluster_id;
-	int   gx, gz;       // grid cell coordinates
-	float wx, wz;       // world coordinates
-};
-
-struct AbEdge {
-	int                  to;
-	float                cost;
-	int                  via_cluster; // -1 = inter-cluster boundary step
-	std::vector<Vector2> waypoints;
-};
-
 struct Cluster {
-	int  id;
-	int  cx, cz;        // cluster grid coordinates
-	int  x0, z0;        // inclusive cell range start
-	int  x1, z1;        // inclusive cell range end
-	std::vector<int> node_ids;
-	bool navigable;
+	int   id;
+	int   cx, cz;        // cluster grid coordinates
+	int   x0, z0;        // inclusive cell range start
+	int   x1, z1;        // inclusive cell range end
+	float max_sdf;       // max SDF in cluster  (most open water cell)
+	float min_sdf;       // min SDF in cluster  (closest to land)
+	float wx_center;     // world X of cluster centre
+	float wz_center;     // world Z of cluster centre
+	bool  navigable;     // max_sdf >= build clearance
 };
 
 // ---------------------------------------------------------------------------
@@ -60,24 +49,27 @@ struct HpaObstacle {
 };
 
 // ---------------------------------------------------------------------------
-// HpaGraph — Two-level Hierarchical A* navigation graph.
+// HpaGraph — Cluster-grid hierarchical navigation graph.
 //
 // Level 0 : SDF grid cells (stored in NavigationMap).
-// Level 1 : Fixed-size rectangular clusters of grid cells.
+// Level 1 : Fixed-size rectangular clusters.
 //
-// For each pair of adjacent clusters the shared border is scanned for
-// maximal runs of navigable cell pairs.  Each run produces ONE abstract
-// "entrance" node on each side of the border, joined by a trivial
-// inter-cluster edge (cost = one cell step).
+// Each cluster stores max_sdf and min_sdf (scanned at build time).
+// No portal/entrance nodes are precomputed.
 //
-// Within each cluster, all pairs of entrance nodes are connected by
-// intra-cluster edges whose cost and waypoints are precomputed via
-// NavigationMap::find_path_internal().
+// find_path(from, to, q_cl):
+//   1. Direct LOS shortcut with q_cl.
+//   2. A* over the cluster grid — skips clusters whose max_sdf < q_cl
+//      (no navigable cell for this ship).
+//   3. Assembles waypoints from open-water cluster centres; terrain
+//      clusters are bridged by NavigationMap::find_path_internal.
+//   4. Greedy string-pulling with q_cl to remove redundant waypoints.
 //
-// Dynamic circular obstacles are handled by incrementing a per-cluster
-// block count.  Abstract A* simply skips any intra-cluster edge whose
-// via_cluster has a positive block count, effectively cutting off whole
-// regions with a single array check rather than iterating nodes.
+// "Open water" cluster: min_sdf >= q_cl (all cells safe for this ship).
+// "Terrain" cluster   : max_sdf >= q_cl but min_sdf < q_cl (has land).
+// "Impassable"        : max_sdf < q_cl (no navigable cell).
+//
+// Dynamic circular obstacles are handled by per-cluster block counts.
 // ---------------------------------------------------------------------------
 
 class HpaGraph : public RefCounted {
@@ -108,14 +100,15 @@ public:
 	bool is_built() const { return built_; }
 
 	/// Find a path from world-space 'from' to 'to'.
-	/// Uses HPA connectors for endpoint attachment and does not fall back to
-	/// a global grid-level A* if endpoint attachment fails.
-	/// For same-cluster, threat-free queries it may still use local grid search.
-	PathResult find_path(Vector2 from, Vector2 to) const;
+	/// query_clearance: ship clearance (ship_length/2 + ship_beam).  When
+	/// <= 0, falls back to the clearance passed to build().
+	PathResult find_path(Vector2 from, Vector2 to,
+						 float query_clearance = -1.0f) const;
 
 	/// Convenience wrapper — returns only the waypoint positions as a
 	/// PackedVector2Array for GDScript callers.
-	PackedVector2Array find_path_packed(Vector2 from, Vector2 to) const;
+	PackedVector2Array find_path_packed(Vector2 from, Vector2 to,
+										 float query_clearance = -1.0f) const;
 
 	// Dynamic obstacles ------------------------------------------------
 
@@ -133,7 +126,8 @@ public:
 
 	// Statistics / debug -----------------------------------------------
 
-	int get_node_count()    const { return static_cast<int>(nodes_.size()); }
+	// No portal nodes in the new design; returns 0 for backward compat.
+	int get_node_count()    const { return 0; }
 	int get_cluster_count() const { return static_cast<int>(clusters_.size()); }
 
 	TypedArray<Dictionary> get_debug_nodes()    const;
@@ -175,8 +169,6 @@ private:
 	float min_z_   = 0.0f;
 
 	std::vector<Cluster>             clusters_;
-	std::vector<AbNode>              nodes_;
-	std::vector<std::vector<AbEdge>> adj_;   // adj_[node_id]
 
 	// Per-cluster obstacle block counts (parallel to clusters_)
 	std::vector<int>                 cluster_block_count_;
@@ -247,8 +239,6 @@ private:
 	// ------------------------------------------------------------------
 
 	void build_clusters();
-	void build_entrances();
-	void build_intracluster_edges();
 
 	// Threat rasterization onto the Level-1 cluster grid.
 	// stamp_threats() tests every navigable cluster: clusters within a
@@ -263,23 +253,11 @@ private:
 	// Query helpers
 	// ------------------------------------------------------------------
 
-	/// Run abstract A* on an (optionally augmented) copy of the graph.
-	/// Returns an ordered list of node ids from start to goal,
-	/// or an empty vector if no path exists.
-	std::vector<int> abstract_astar_impl(
-			const std::vector<AbNode>&               nodes,
-			const std::vector<std::vector<AbEdge>>&  adj,
-			int start,
-			int goal) const;
-
-	/// Expand an abstract node-id sequence back into a smooth
-	/// world-space PathResult.
-	PathResult refine_path_impl(
-			const std::vector<int>&                  abs_path,
-			const std::vector<AbNode>&               nodes,
-			const std::vector<std::vector<AbEdge>>&  adj,
-			Vector2 from,
-			Vector2 to) const;
+	/// A* over the cluster grid.  Returns ordered cluster IDs from
+	/// from_cid to to_cid (inclusive), or empty if no path exists.
+	/// Clusters with max_sdf < q_cl are treated as impassable.
+	std::vector<int> cluster_astar(
+			int from_cid, int to_cid, float q_cl) const;
 
 	// ------------------------------------------------------------------
 	// Inline coordinate / SDF helpers
@@ -302,6 +280,7 @@ private:
 		wz = min_z_ + (static_cast<float>(gz) + 0.5f) * cell_size_;
 	}
 
+	// cell_nav: kept for obstacle helpers that still need it.
 	inline bool cell_nav(int gx, int gz) const {
 		if (gx < 0 || gx >= grid_w_ || gz < 0 || gz >= grid_h_) return false;
 		float wx, wz;

@@ -430,7 +430,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
 			if cover_intent != null and nearest != null and threat > 0.85:
 				if not _skill_cover.is_cover_on_the_way(ctx, nearest) and active_shooters_at_me.size() > 0:
-				# Cover is too far off the optimal angle — kite instead
+				# Cover is too far off the optimal angle and there are active shooters — kite instead
 					intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
 					if intent != null:
 						_active_skill_name = &"Kite"

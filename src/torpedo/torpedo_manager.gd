@@ -362,6 +362,7 @@ func _physics_process(_delta: float) -> void:
 							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
 					track_torpedo_damage_dealt(p.owner, dmg_sunk[0], collision.position)
+					p.owner.stats.damage_ship(ship, dmg_sunk[0])
 					# Apply flooding damage
 					apply_flood_damage(p, ship, collision.position)
 			self.destroyTorpedo(id, collision.position)

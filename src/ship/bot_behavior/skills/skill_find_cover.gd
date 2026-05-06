@@ -14,6 +14,7 @@ var can_shoot: bool = false
 var _dist_to_dest: float = 0.0
 var _last_valid_cover_pos: Vector3 = Vector3.ZERO
 var _last_valid_cover_pos_set: bool = false
+var _last_valid_intent: NavIntent = null
 
 const _TEAM_COVER_CLAIM_TTL_MS: int = 6000
 const _TEAM_COVER_MIN_SEPARATION_MULT: float = 3.0
@@ -28,6 +29,14 @@ var _claimed_ship_id: int = -1
 
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
+	if _last_valid_intent != null and _is_last_intent_still_valid(ctx, params):
+		if _target_island_id >= 0:
+			_reserve_cover_claim(ctx, {
+				"id": _target_island_id,
+				"dest": _last_valid_intent.target_position,
+			})
+		return _last_valid_intent
+
 	# var ship = ctx.ship
 	# var target = ctx.target
 	# var desired_range = params.get("desired_range", ship.artillery_controller.get_params()._range * 0.6)
@@ -76,6 +85,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	var d = _get_cover_position(ctx, params)
 	if d.is_empty():
 		_release_cover_claim()
+		_last_valid_intent = null
 		return null
 	_set_island(d)
 	_reserve_cover_claim(ctx, d)
@@ -85,8 +95,10 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	# "dest": dest,
 	# "can_shoot": true,
 	var heading = ctx.behavior._tangential_heading(_target_island_pos, _nav_destination)
+	var intent := NavIntent.create(d["dest"], heading)
+	_last_valid_intent = intent
 
-	return NavIntent.create(d["dest"], heading)
+	return intent
 
 
 	# var heading = ctx.behavior._tangential_heading(_target_island_pos, _nav_destination)
@@ -496,6 +508,33 @@ func _set_island(island: Dictionary) -> void:
 # Returns true if any valid target can be hit with a ballistic arc from
 # from_pos.  Mirrors the shootability check in execute().
 # ---------------------------------------------------------------------------
+func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary) -> bool:
+	if _last_valid_intent == null or not _nav_destination_valid:
+		return false
+	if ctx.ship == null or ctx.server == null:
+		return false
+
+	var pos: Vector3 = _last_valid_intent.target_position
+	var ship = ctx.ship
+	var threats = ctx.behavior._gather_threat_positions(ship)
+	for threat_pos in threats:
+		if not ctx.behavior._is_los_blocked_with_clearance(pos, threat_pos):
+			return false
+
+	var targets = ctx.server.get_valid_targets(ship.team.team_id)
+	var can_shoot_here := targets.is_empty() or _can_shoot_from(ctx, pos, targets)
+	if not can_shoot_here:
+		return false
+
+	var min_cover_separation = _resolve_min_cover_separation(ctx, params)
+	var other_claim_positions = _collect_other_claim_positions(ctx)
+	if _has_cover_spacing_conflict(pos, other_claim_positions, min_cover_separation):
+		return false
+
+	can_shoot = not targets.is_empty()
+	return true
+
+
 func _can_shoot_from(ctx: SkillContext, from_pos: Vector3, targets: Array) -> bool:
 	var ship = ctx.ship
 	var shell_params = ship.artillery_controller.get_shell_params()
@@ -532,6 +571,7 @@ func reset() -> void:
 	_arrived = false
 	can_shoot = false
 	_last_valid_cover_pos_set = false
+	_last_valid_intent = null
 
 
 # ---------------------------------------------------------------------------
