@@ -29,7 +29,7 @@ var _last_known_enemy_pos: Vector3 = Vector3.ZERO
 var _last_known_enemy_valid: bool = false
 
 var _fire_suppressed: bool = false
-var _suppress_guns: bool = false
+# var _suppress_guns: bool = false
 
 # Cover recalculation cooldown (ms) — when spotted, recalc at most this often
 const _COVER_RECALC_COOLDOWN_MS: int = 3000

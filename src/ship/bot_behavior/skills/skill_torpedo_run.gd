@@ -72,6 +72,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		candidate_3d = ctx.behavior._get_valid_nav_point(candidate_3d)
 		candidate_2d = Vector2(candidate_3d.x, candidate_3d.z)
 
+		# Discard any candidate from which terrain would block the torpedo path
+		var target_3d: Vector3 = target.global_position
+		if ctx.behavior.is_land_blocking_torpedo_path(candidate_3d, target_3d):
+			continue
+
 		# --- Score this candidate ---
 		var score: float = 0.0
 

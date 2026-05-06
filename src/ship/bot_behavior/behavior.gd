@@ -98,6 +98,8 @@ var _flank_side: int = 0      # -1 left, +1 right, 0 unassigned
 var _flank_depth: float = 0.0
 var _flank_initialized: bool = false
 
+var _suppress_guns: bool = false
+
 # ============================================================================
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
 # ============================================================================
@@ -697,7 +699,7 @@ func _get_spotted_danger_center() -> Vector3:
 				threat *= 0.1
 			var weight = base_weight * threat
 			if active_shooters_at_me.has(ship):
-				weight *= 5.0  # Boost weight for enemies actively shooting at us
+				weight *= 10.0  # Boost weight for enemies actively shooting at us
 				# Optionally, could also factor in how recently they shot at us based on expiry time
 			weighted_pos += ship.global_position * weight
 			total_weight += weight
@@ -714,7 +716,7 @@ func _get_spotted_danger_center() -> Vector3:
 				threat *= 0.1
 			var weight = base_weight * threat * 0.5
 			if active_shooters_at_me.has(ship):
-				weight *= 5.0  # Boost weight for enemies actively shooting at us
+				weight *= 10.0  # Boost weight for enemies actively shooting at us
 			weighted_pos += last_pos * weight
 			total_weight += weight
 		if total_weight >= 0.001:
@@ -1596,9 +1598,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		# Asymptotic: approaches 1 as raw pressure increases, never exceeds it.
 		# 1 − e^(−x): x=0 → 0.0, x=1 → 0.63, x=2 → 0.86, x→∞ → 1.0
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
-		if ctx.behavior.active_shooters_at_me.has(enemy):
-			raw_val *= 1.5
-		else:
+		if !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
 		var this_threat = 1.0 - exp(-raw_val)
 		if not enemy.visible_to_enemy:

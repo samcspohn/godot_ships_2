@@ -177,7 +177,7 @@ private:
 	float dodge_committed_rudder_;   // rudder sign of committed dodge (-1/+1), 0 = no commitment
 	float dodge_commitment_timer_;   // seconds remaining in commitment
 	static constexpr float DODGE_COMMITMENT_DURATION = 0.5f;   // minimum seconds to hold a dodge direction
-	static constexpr float DODGE_COMMITMENT_BIAS     = 100.0f;   // seconds of penalty added to candidates opposing the committed direction
+	static constexpr float DODGE_COMMITMENT_BIAS     = 150.0f;   // seconds of penalty added to candidates opposing the committed direction
 	static constexpr float DODGE_THREAT_WINDOW       = 10.0f;   // seconds before/after impact to sample arc points (Option C)
 
 	// --- Heading-align direction commitment ---
@@ -208,7 +208,7 @@ private:
 
 
 
-	static constexpr float SHELL_THREAT_WEIGHT_BASE   = 40.0f;   // base penalty seconds — scaled by ship size and health
+	static constexpr float SHELL_THREAT_WEIGHT_BASE   = 30.0f;   // base penalty seconds — scaled by ship size and health
 	static constexpr float TORPEDO_VIRTUAL_CALIBER    = 2000.0f; // virtual caliber for torpedo threat lines
 	static constexpr float TORPEDO_LOOKAHEAD_DIST     = 3000.0f; // distance ahead of torpedo nose for threat line
 	static constexpr float SHELL_OVERSHOOT_LEN        = 15.0f;   // line extension past impact point

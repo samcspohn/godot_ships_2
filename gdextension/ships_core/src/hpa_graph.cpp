@@ -782,23 +782,36 @@ void HpaGraph::stamp_threats(const std::vector<ThreatCircle> &threats) {
 	for (const Cluster &c : clusters_) {
 		if (!c.navigable) continue;
 
-		int mid_gx = (c.x0 + c.x1) / 2;
-		int mid_gz = (c.z0 + c.z1) / 2;
-		float cx_world, cz_world;
-		grid_to_world(mid_gx, mid_gz, cx_world, cz_world);
+		// Grid coords of the 4 cluster corner cells.
+		// Testing all corners (rather than just the centre) conservatively marks
+		// clusters where the threat has line-of-sight to any part of the boundary.
+		const int corner_gx[4] = { c.x0, c.x1, c.x0, c.x1 };
+		const int corner_gz[4] = { c.z0, c.z0, c.z1, c.z1 };
 
 		for (const ThreatCircle &t : threats) {
 			if (t.radius <= 0.0f) continue;
-			float dx = cx_world - t.origin.x;
-			float dz = cz_world - t.origin.y;
-			if (dx * dx + dz * dz > t.radius * t.radius) continue;
 
 			int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
 			int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
 			gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
 			gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
 
-			if (nav_map_->line_of_sight(mid_gx, mid_gz, gx_t, gz_t, 0.0f)) {
+			const float r2 = t.radius * t.radius;
+			bool threatened = false;
+
+			for (int i = 0; i < 4 && !threatened; ++i) {
+				float wx, wz;
+				grid_to_world(corner_gx[i], corner_gz[i], wx, wz);
+				float dx = wx - t.origin.x;
+				float dz = wz - t.origin.y;
+				if (dx * dx + dz * dz > r2) continue;
+
+				if (nav_map_->line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0f)) {
+					threatened = true;
+				}
+			}
+
+			if (threatened) {
 				cluster_threat_blocked_[c.id] = 1;
 				break;
 			}
@@ -846,27 +859,34 @@ TypedArray<Dictionary> HpaGraph::compute_debug_threat_clusters(
 	for (const Cluster &c : clusters_) {
 		if (!c.navigable) continue;
 
-		int mid_gx = (c.x0 + c.x1) / 2;
-		int mid_gz = (c.z0 + c.z1) / 2;
-		float cx_world, cz_world;
-		grid_to_world(mid_gx, mid_gz, cx_world, cz_world);
+		// Grid coords of the 4 cluster corner cells (mirrors stamp_threats logic).
+		const int corner_gx[4] = { c.x0, c.x1, c.x0, c.x1 };
+		const int corner_gz[4] = { c.z0, c.z0, c.z1, c.z1 };
 
 		bool blocked = false;
 		for (const ThreatCircle &t : threats) {
 			if (t.radius <= 0.0f) continue;
-			float dx = cx_world - t.origin.x;
-			float dz = cz_world - t.origin.y;
-			if (dx * dx + dz * dz > t.radius * t.radius) continue;
 
 			int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
 			int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
 			gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
 			gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
 
-			if (nav_map_->line_of_sight(mid_gx, mid_gz, gx_t, gz_t, 0.0f)) {
-				blocked = true;
-				break;
+			const float r2 = t.radius * t.radius;
+
+			for (int i = 0; i < 4 && !blocked; ++i) {
+				float wx, wz;
+				grid_to_world(corner_gx[i], corner_gz[i], wx, wz);
+				float dx = wx - t.origin.x;
+				float dz = wz - t.origin.y;
+				if (dx * dx + dz * dz > r2) continue;
+
+				if (nav_map_->line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0f)) {
+					blocked = true;
+				}
 			}
+
+			if (blocked) break;
 		}
 		if (!blocked) continue;
 

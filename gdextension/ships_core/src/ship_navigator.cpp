@@ -1941,10 +1941,10 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	// intermediate values (0.3, 0.6) that caused frame-to-frame oscillation
 	// when two candidates scored within floating-point noise of each other.
 	const float rudder_offsets[] = { 0.0f, 0.3, -0.3 , 0.6, -0.6, -1.0f, 1.0f };
-	constexpr int N_OFFSETS = 3;
+	constexpr int N_OFFSETS = 7;
 
 	// +1 for full opposite rudder, +3 for reverse candidates (0, ±1.0)
-	Candidate candidates[N_OFFSETS + 4];
+	Candidate candidates[N_OFFSETS + 1 + 7];
 	int n_candidates = 0;
 
 	auto add_candidate = [&](float r, int t) {

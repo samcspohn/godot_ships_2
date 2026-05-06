@@ -271,9 +271,14 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var _spot_chase_hunt = func():
 		var _intent
 		if threat < 0.5:
-			_intent = _skill_chase.execute(ctx, {})
-			if _intent:
-				_active_skill_name = &"Chase"
+			if spotted.size() > 0:
+				_intent = _skill_push.execute(ctx, {})
+				if _intent:
+					_active_skill_name = &"Push"
+			else:
+				_intent = _skill_chase.execute(ctx, {})
+				if _intent:
+					_active_skill_name = &"Chase"
 		if threat >= 0.5 or _intent == null:
 			_intent = _skill_spot.execute(ctx, {"approach_distance": concealment_radius})
 			_active_skill_name = &"Spot"
@@ -301,14 +306,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				_active_skill_name = &"Retreat"
 
 	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
-	elif target != null and target.ship_class == Ship.ShipClass.DD:
-		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.5, "angle_to_threat_deg": 20.0})
-		if intent:
-			_active_skill_name = &"Kite"
-			intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.3})
-		else:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
+	elif target != null:
+		intent = _spot_chase_hunt.call()
 
 	# ── 4. No torpedo controller → spot, fallback hunt ───────────────────────
 	elif ship.torpedo_controller == null:
@@ -342,6 +341,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# back toward cover so they shed detection as fast as possible.
 	if threat > 0.5:
 		wants_stealth = true
+		_suppress_guns = true
+	else:
+		_suppress_guns = false
 
 	# Concealment probe: suppress guns when detected + bloom active + enemy
 	# is far enough away that going dark would actually drop us off detection.
@@ -354,6 +356,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	elif _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Retreat"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
+
+	if _active_skill_name not in [&"Retreat", &"Spot"]:
+		intent = _skill_broadside.apply(intent, ctx, {})
 
 	return intent
 
@@ -389,7 +394,7 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 
 func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done)
-	if _ship.visible_to_enemy and can_fire_guns():
+	if _ship.visible_to_enemy or not _suppress_guns and can_fire_guns():
 		super.engage_target(target)
 	else:
 		# Aim turrets but don't fire
