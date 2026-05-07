@@ -117,10 +117,6 @@ ShipNavigator::ShipNavigator() {
 	grounded_ = false;
 	current_wp_index = 0;
 	path_valid = false;
-	plan_phase = PlanPhase::IDLE;
-	plan_min_clearance = 0.0f;
-	plan_comfortable_clearance = 0.0f;
-	replan_requested_ = true;  // plan on first frame
 	out_rudder = 0.0f;
 	out_throttle = 0;
 	out_collision_imminent = false;
@@ -180,7 +176,6 @@ ShipNavigator::ShipNavigator() {
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
 	bot_id_ = 0;
-	nav_update_tick_ = 0;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -273,11 +268,8 @@ void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_
 	target.heading_tolerance = p_heading_tolerance;
 	target.heading_weight = clamp_f(p_heading_weight, 0.0f, 1.0f);
 
-	// By design, navigate_to() is the expensive planning trigger.
-	// set_state() stays per-frame steering/avoidance only.
-	replan_requested_ = true;
+	// navigate_to() is the synchronous planning trigger.
 	run_plan_sync();
-	replan_requested_ = false;
 }
 
 void ShipNavigator::stop() {
@@ -753,10 +745,6 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
 
-	// Always advance navigation cadence tick, even when performance tracking
-	// is disabled. Replan staggering relies on this tick.
-	nav_update_tick_++;
-
 	// Reset stage timings every frame so emergency-mode frames don't retain
 	// stale NORMAL-mode values.
 	timing_plan_us = 0.0f;
@@ -940,7 +928,7 @@ void ShipNavigator::update_normal(float delta) {
 	// Replanning is event-driven from navigate_to().  This keeps set_state()
 	// lightweight and prevents periodic planning spikes in per-frame updates.
 	timing_replan_reason = 0;
-	timing_plan_phase_val = static_cast<int>(plan_phase);
+	timing_plan_phase_val = 0;
 	timing_plan_us = 0.0f;
 
 	// --- 2. Advance waypoints ---
@@ -1412,7 +1400,6 @@ void ShipNavigator::update_emergency(float delta) {
 		if (dist_to_dest_em < arrived_radius_em && heading_error_em < target.heading_tolerance) {
 			nav_state = NavState::NORMAL;
 			emergency_initialized = false;
-			replan_requested_ = true;
 			return;
 		}
 	}
@@ -1435,7 +1422,6 @@ void ShipNavigator::update_emergency(float delta) {
 		if (arc_time > 0.0f && ttc >= arc_time) {
 			nav_state = NavState::NORMAL;
 			emergency_initialized = false;
-			replan_requested_ = true;
 			return;
 		}
 	}
@@ -1447,131 +1433,13 @@ void ShipNavigator::update_emergency(float delta) {
 // Plan management
 // ============================================================================
 
-// ============================================================================
-// start_plan — runs HPA* planning for the current goal
-// ============================================================================
-
-void ShipNavigator::start_plan() {
-	plan_min_clearance = get_ship_clearance();
-	plan_comfortable_clearance = std::min(
-		plan_min_clearance + params.ship_beam * 0.5f,
-		plan_min_clearance * 2.0f);
+void ShipNavigator::run_plan_sync() {
+	const float plan_min_clearance = get_ship_clearance();
 
 	// -----------------------------------------------------------------------
 	// HPA* path (primary): threat-aware hierarchical A*.
-	// The abstract search runs in microseconds so planning always completes
-	// synchronously — no COMPUTING phase is needed.
-	//
-	// Important: apply this navigator's threat layer immediately before each
-	// HPA* query.  HpaGraph is shared by many ships; another ship may have
-	// stamped a different threat set (or cleared threats) earlier in the frame.
-	// -----------------------------------------------------------------------
-	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
-		map.is_valid() && map->is_built()) {
-
-		if (threat_bin_) {
-			hpa_graph_->stamp_threats(threat_bin_->threats);
-			threat_last_version_ = threat_bin_->version;
-		} else {
-			hpa_graph_->clear_threats();
-		}
-
-		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
-		if (pr.valid && !pr.waypoints.empty()) {
-			// Always end at the exact destination — HPA* snaps to grid nodes
-			// so the final grid node may not be target.position.
-			if (pr.waypoints.back().distance_to(target.position) > 1.0f) {
-				pr.waypoints.push_back(target.position);
-				pr.flags.push_back(WP_NONE);
-			}
-			plan_forward_result = pr;
-			plan_phase = PlanPhase::DONE;
-			return;
-		}
-		// HPA* failed (e.g. isolated cluster) — fall through to straight-line
-	}
-
-	// -----------------------------------------------------------------------
-	// Straight-line fallback: only when no active threat subscription and
-	// terrain is clear.  When threat_bin_ is set, always let HPA* route so
-	// that stealth ships never short-circuit around threat-arc avoidance.
-	// -----------------------------------------------------------------------
-	if (!threat_bin_ && map.is_valid() && map->is_built()) {
-		RayResult los = map->raycast_internal(state.position, target.position, plan_min_clearance);
-		if (!los.hit) {
-			PathResult direct;
-			direct.waypoints.push_back(state.position);
-			direct.waypoints.push_back(target.position);
-			direct.flags.push_back(WP_NONE);
-			direct.flags.push_back(WP_NONE);
-			direct.valid = true;
-			direct.total_distance = state.position.distance_to(target.position);
-			plan_forward_result = direct;
-			plan_phase = PlanPhase::DONE;
-			return;
-		}
-	}
-
-	// -----------------------------------------------------------------------
-	// Last resort: step along the straight line and stop just before the
-	// first terrain / threat obstacle so the ship doesn't drive blindly
-	// through land or a detection zone.
-	// -----------------------------------------------------------------------
-	{
-		Vector2 dir = target.position - state.position;
-		float total = dir.length();
-
-		PathResult direct;
-		direct.waypoints.push_back(state.position);
-
-		if (total > plan_min_clearance && map.is_valid() && map->is_built()) {
-			Vector2 dir_n = dir / total;
-			float step = std::max(plan_min_clearance, 50.0f);
-			float best_dist = 0.0f;
-			for (float d = step; ; d += step) {
-				float test_d = std::min(d, total);
-				Vector2 test = state.position + dir_n * test_d;
-				if (map->get_distance(test.x, test.y) < plan_min_clearance) break;
-				if (threat_bin_) {
-					bool in_threat = false;
-					for (const auto &t : threat_bin_->threats) {
-						float dx = test.x - t.origin.x, dz = test.y - t.origin.y;
-						if (dx*dx + dz*dz < t.radius*t.radius) { in_threat = true; break; }
-					}
-					if (in_threat) break;
-				}
-				best_dist = test_d;
-				if (test_d >= total) break;
-			}
-			if (best_dist > plan_min_clearance)
-				direct.waypoints.push_back(state.position + dir_n * best_dist);
-		}
-
-		if (direct.waypoints.size() < 2)
-			direct.waypoints.push_back(target.position);  // blocked — destination is goal even if unreachable now
-
-		direct.flags.assign(direct.waypoints.size(), WP_NONE);
-		direct.valid = true;
-		direct.total_distance = 0.0f;
-		for (size_t i = 0; i + 1 < direct.waypoints.size(); ++i)
-			direct.total_distance += direct.waypoints[i].distance_to(direct.waypoints[i + 1]);
-		plan_forward_result = direct;
-		plan_phase = PlanPhase::DONE;
-	}
-}
-
-void ShipNavigator::tick_plan() {
-	// D* Lite removed — HPA* planning is always synchronous via start_plan().
-}
-
-void ShipNavigator::run_plan_sync() {
-	plan_min_clearance = get_ship_clearance();
-	plan_comfortable_clearance = std::min(
-		plan_min_clearance + params.ship_beam * 0.5f,
-		plan_min_clearance * 2.0f);
-
-	// -----------------------------------------------------------------------
-	// HPA* path (primary)
+	// HpaGraph is shared by many ships; apply this navigator's threat layer
+	// immediately before each query so the correct threats are stamped.
 	// -----------------------------------------------------------------------
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
 		map.is_valid() && map->is_built()) {
@@ -1592,9 +1460,15 @@ void ShipNavigator::run_plan_sync() {
 				pr.flags.push_back(WP_NONE);
 			}
 			accept_plan_result(pr);
-			plan_phase = PlanPhase::IDLE;
 			return;
 		}
+		// HPA* failed — retain the previous path rather than overwriting it with
+		// a straight-line fallback.  The ship continues following its existing
+		// route while navigate_to() retries on the next call.
+		if (path_valid && !current_path.waypoints.empty()) {
+			return;
+		}
+		// No prior path available — fall through to straight-line fallbacks.
 	}
 
 	// -----------------------------------------------------------------------
@@ -1611,7 +1485,6 @@ void ShipNavigator::run_plan_sync() {
 			direct.valid = true;
 			direct.total_distance = state.position.distance_to(target.position);
 			accept_plan_result(direct);
-			plan_phase = PlanPhase::IDLE;
 			return;
 		}
 	}
@@ -1658,53 +1531,6 @@ void ShipNavigator::run_plan_sync() {
 		for (size_t i = 0; i + 1 < direct.waypoints.size(); ++i)
 			direct.total_distance += direct.waypoints[i].distance_to(direct.waypoints[i + 1]);
 		accept_plan_result(direct);
-		plan_phase = PlanPhase::IDLE;
-	}
-}
-
-// ============================================================================
-// HPA* incremental repair — runs every frame when path is active
-// ============================================================================
-
-void ShipNavigator::hpa_incremental_update() {
-	if (!hpa_graph_.is_valid() || !hpa_graph_->is_built()) return;
-
-	// If our bin version changed, schedule an immediate replan.
-	if (threat_bin_) {
-		uint64_t live_version = threat_bin_->version;
-		if (live_version != threat_last_version_) {
-			threat_last_version_ = live_version;
-			replan_requested_ = true;
-		}
-	}
-
-	// Re-plan with HPA* when stale or explicitly requested.
-	if (replan_requested_ || !path_valid) {
-		int frame_phase = static_cast<int>(nav_update_tick_ % REPLAN_STAGGER_FRAMES);
-		int bot_phase = ((bot_id_ % REPLAN_STAGGER_FRAMES) + REPLAN_STAGGER_FRAMES) % REPLAN_STAGGER_FRAMES;
-		bool replan_slot = (frame_phase == bot_phase);
-		if (path_valid && !replan_slot) {
-			if (timing_replan_reason == 0) timing_replan_reason = 5; // stagger wait
-			return;
-		}
-
-		// Apply this navigator's threat layer right before query time.
-		if (threat_bin_) {
-			hpa_graph_->stamp_threats(threat_bin_->threats);
-			threat_last_version_ = threat_bin_->version;
-		} else {
-			hpa_graph_->clear_threats();
-		}
-
-		PathResult pr = hpa_graph_->find_path(state.position, target.position);
-		if (pr.valid && !pr.waypoints.empty()) {
-			if (pr.waypoints.back().distance_to(target.position) > 1.0f) {
-				pr.waypoints.push_back(target.position);
-				pr.flags.push_back(WP_NONE);
-			}
-			accept_plan_result(pr);
-		}
-		replan_requested_ = false;
 	}
 }
 
@@ -1892,10 +1718,13 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 		? map->get_distance(state.position.x, state.position.y)
 		: std::numeric_limits<float>::infinity();
 
-	// --- Adaptive clearance: halve when already inside the clearance zone ---
-	// Prevents oscillation where every arc is disqualified because the ship is
-	// marginally inside its own hard clearance zone.
-	if (sdf_here < hard_clearance) hard_clearance *= 0.5f;
+	// --- Adaptive clearance: halve when close to land ---
+	// When the SDF at the ship's position is below 1.5 × hard clearance the ship
+	// is entering a tight region.  Halving the simulated clearance lets the
+	// planner find arcs through the passage instead of disqualifying every
+	// candidate and oscillating in place.
+	if (sdf_here < hard_clearance * 1.5f) hard_clearance *= 0.75f;
+	else if (sdf_here < hard_clearance) hard_clearance *= 0.5f;
 
 	// --- Parked-ship filter ---
 	skip_ship_obstacles_ = (std::abs(state.current_speed) < PARKED_SPEED_THRESHOLD

@@ -10,6 +10,7 @@ class_name HitEffects_
 @export var explosion_template: ParticleTemplate
 @export var sparks_template: ParticleTemplate
 @export var muzzle_blast_template: ParticleTemplate
+@export var wake_template: ParticleTemplate
 
 # Particle counts per effect type
 const SPLASH_PARTICLES: int = 20
@@ -26,6 +27,7 @@ func splash_effect(pos: Vector3, size: float) -> void:
 	if splash_template == null:
 		return
 	splash_template.emit(pos, Vector3.UP, size, SPLASH_PARTICLES, 4.0 / size)
+	wake_template.emit(pos + Vector3(0.0, 0.2, 0.0), Vector3.ZERO, size * 8, 1, 4.0 / size)
 
 func he_explosion_effect(pos: Vector3, size: float, dir: Vector3) -> void:
 	if explosion_template == null:

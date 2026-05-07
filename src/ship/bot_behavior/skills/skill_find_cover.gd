@@ -545,9 +545,13 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary) -> bool:
 		return false
 	if ctx.ship == null or ctx.server == null:
 		return false
-
 	var pos: Vector3 = _last_valid_intent.target_position
 	var ship = ctx.ship
+
+	# if an island is outside desired range, its validity is ignored for better cover options
+	if pos.distance_to(ship.global_position) > ship.artillery_controller.get_params()._range * 0.75:
+		return false
+
 	var threats = ctx.behavior._gather_threat_positions(ship)
 	for threat_pos in threats:
 		if not ctx.behavior._is_los_blocked_with_clearance(pos, threat_pos):

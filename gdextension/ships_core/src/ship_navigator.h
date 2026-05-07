@@ -45,10 +45,8 @@ private:
 	Vector2 emergency_grounding_pos;   // position when emergency mode was entered
 	bool emergency_initialized;        // true once grounding pos has been recorded
 
-	// --- Bot identity (for staggered replanning) ---
+	// --- Bot identity ---
 	int bot_id_;
-	static constexpr int REPLAN_STAGGER_FRAMES = 6;
-	uint64_t nav_update_tick_ = 0;
 
 	// --- Path data (SINGLE source of truth) ---
 	PathResult current_path;          // From NavigationMap::find_path_internal
@@ -61,30 +59,12 @@ private:
 	// for cluster-level blocking, giving O(clusters) updates instead of O(nodes).
 	Ref<HpaGraph> hpa_graph_;
 
-
-
-
-
-
-
 	enum class DesiredDirection : int {
 		FORWARD = 0,
 		BACKWARD = 1,
 	};
 
-	enum class PlanPhase : int {
-		IDLE = 0,
-		COMPUTING = 1,   // reserved (unused since HPA* is always synchronous)
-		DONE = 2,        // result ready, accept on next tick
-	};
 
-	PlanPhase plan_phase;
-	PathResult plan_forward_result;
-	float plan_min_clearance;
-	float plan_comfortable_clearance;
-
-	// --- Replan trigger (event-driven, not timer-based) ---
-	bool replan_requested_;
 
 	// --- Steering output ---
 	float out_rudder;
@@ -96,8 +76,8 @@ private:
 	float timing_avoidance_us;
 	float timing_plan_us;
 	float timing_steering_us;
-	int timing_replan_reason;  // 0=none, 1=requested, 2=no_path, 3=deviated, 4=ticking, 5=stagger_wait
-	int timing_plan_phase_val; // current PlanPhase as int
+	int timing_replan_reason;  // 0=none (all non-zero codes currently unused)
+	int timing_plan_phase_val; // always 0; kept for GDScript compatibility
 
 	// --- Runtime performance aggregates (spike-oriented) ---
 	uint64_t perf_frame_count_;
@@ -321,12 +301,7 @@ private:
 	void update_emergency(float delta);
 
 	// --- Plan management ---
-	void start_plan();       // runs HPA* planning
-	void tick_plan();        // (stub) D* Lite removed
-	void run_plan_sync();    // runs HPA* planning synchronously
-
-	// HPA* incremental repair — handles threat changes
-	void hpa_incremental_update();
+	void run_plan_sync(); // synchronous HPA* planning, called from navigate_to()
 
 	// --- Steering output helpers ---
 
@@ -343,8 +318,7 @@ public:
 
 	void set_map(Ref<NavigationMap> p_map);
 
-	/// Attach a pre-built HpaGraph.  When set, start_plan / run_plan_sync
-	/// use hierarchical A*.
+	/// Attach a pre-built HpaGraph for synchronous HPA* route planning.
 	/// Pass an invalid Ref<> to detach.
 	void set_hpa_graph(Ref<HpaGraph> graph);
 	Ref<HpaGraph> get_hpa_graph() const { return hpa_graph_; }

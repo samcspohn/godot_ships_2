@@ -14,6 +14,11 @@ const TRIANGLE_OFFSET_Y: float = -2.0  # Offset above the torpedo position (nega
 const OUTLINE_WIDTH: float = 1.5
 const OUTLINE_COLOR: Color = Color(0, 0, 0, 0.6)
 
+# Detection dot — shown when the torpedo is visible_to_enemy
+const DETECTION_DOT_RADIUS: float = 2.0
+const DETECTION_DOT_GAP: float = 2.0  # Gap between triangle base and dot centre
+const DETECTION_DOT_COLOR: Color = Color(1.0, 0.8, 0.1, 0.95)  # Yellow-orange
+
 # Proximity indicator constants
 const PROXIMITY_CIRCLE_RADIUS_RATIO: float = 0.25  # 70% of min screen dimension / 2 = 35% radius
 const PROXIMITY_DETECTION_RANGE: float = 2000.0  # World-unit range to detect nearby torpedoes
@@ -30,6 +35,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_time_elapsed += delta
+	queue_redraw()  # Self-driven — keeps indicators alive even if TorpedoManager skips its call
 
 func _draw() -> void:
 	if torpedo_manager == null:
@@ -81,6 +87,11 @@ func _draw() -> void:
 
 		# Draw filled triangle
 		draw_colored_polygon(points, color)
+
+		# Draw detection dot above the chevron when the torpedo is spotted by the enemy
+		if torp.visible_to_enemy:
+			var dot_y: float = left.y - DETECTION_DOT_GAP - DETECTION_DOT_RADIUS
+			draw_circle(Vector2(screen_pos.x, dot_y), DETECTION_DOT_RADIUS, DETECTION_DOT_COLOR)
 
 	# --- Proximity circle indicators (new behavior) ---
 	if local_ship == null or !local_ship.is_inside_tree():

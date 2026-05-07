@@ -84,7 +84,8 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# # Only apply broadside shaping after the navigator reports arrival.
 	# if ctx.navigator != null and not ctx.navigator.is_arrived():
 	# 	return intent
-
+	#if ship.name == "1002":
+		#pass
 	var desired_heading: float = intent.target_heading
 	# if ctx.navigator != null and !ctx.navigator.is_arrived():
 	if ship.global_position.distance_squared_to(intent.target_position) > ship.movement_controller.turning_circle_radius:

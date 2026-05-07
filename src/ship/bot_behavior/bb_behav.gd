@@ -34,8 +34,8 @@ func get_evasion_params() -> Dictionary:
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 0.7
-		Ship.ShipClass.CA: return 1.5
-		Ship.ShipClass.DD: return 2.0
+		Ship.ShipClass.CA: return 2.0
+		Ship.ShipClass.DD: return 4.0
 	return 1.0
 
 func get_target_weights() -> Dictionary:

@@ -26,11 +26,13 @@ var torpedo_target_position: Vector3 = Vector3.ZERO
 var has_valid_torpedo_solution: bool = false
 var current_torpedo_range: float = 0.0
 
-# Torpedo lead tracking
-var last_lead_angle: float = 0.0
-var lead_angle_change_rate: float = 0.0
-var last_lead_update_time: float = 0.0
-const LEAD_ANGLE_SMOOTHING: float = 0.3
+# Long-term velocity average for torpedo prediction
+# EMA with a ~100s time constant ≈ average displacement over the last 100 seconds,
+# with recent frames weighted more heavily than old ones.
+var _torp_avg_target: Ship = null
+var _torp_vel_ema: Vector3 = Vector3.ZERO
+const TORP_VEL_EMA_SECONDS: float = 100.0   # long-average time constant
+const TORP_BLEND_REFERENCE_TIME: float = 15.0 # flight time (s) at which the long average reaches full weight
 
 # Torpedo spread parameters
 const SPREAD_ANGLE_BASE: float = 0.05
@@ -1047,10 +1049,30 @@ func update_torpedo_aim(target_ship: Ship):
 	current_torpedo_range = distance_to_target
 
 	var torpedo_speed = torpedo_controller.get_torp_params().speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER
+
+	# --- Velocity prediction: blend current velocity with long-term average ---
+	# Reset EMA when target changes so we don't carry over a different ship's history.
+	if _torp_avg_target != target_ship:
+		_torp_avg_target = target_ship
+		_torp_vel_ema = target_ship.linear_velocity
+
+	# EMA alpha: each frame nudges the average toward current velocity.
+	# Time constant of 100s means the average reflects ~100s of position displacement,
+	# naturally weighting recent frames more than old ones.
+	var dt: float = 1.0 / Engine.physics_ticks_per_second
+	var ema_alpha: float = clamp(dt / TORP_VEL_EMA_SECONDS, 0.0, 1.0)
+	_torp_vel_ema = lerp(_torp_vel_ema, target_ship.linear_velocity, ema_alpha)
+
+	# Short flight time: trust current velocity (target's exact heading matters).
+	# Long flight time: trust the long average (best predictor of where they'll actually be).
+	var rough_flight_time: float = distance_to_target / torpedo_speed
+	var blend: float = clamp(rough_flight_time / TORP_BLEND_REFERENCE_TIME, 0.0, 1.0)
+	var predicted_vel: Vector3 = lerp(target_ship.linear_velocity, _torp_vel_ema, blend)
+
 	torpedo_target_position = calculate_interception_point(
 		_ship.global_position,
 		target_ship.global_position,
-		target_ship.linear_velocity,
+		predicted_vel,
 		torpedo_speed
 	)
 
@@ -1058,26 +1080,8 @@ func update_torpedo_aim(target_ship: Ship):
 	if interception_distance > torpedo_range * 0.95:
 		return
 
-	var current_time = Time.get_ticks_msec() / 1000.0
-	var to_lead = torpedo_target_position - _ship.global_position
-	var current_lead_angle = atan2(to_lead.x, to_lead.z)
-
-	if last_lead_update_time > 0:
-		var dt = current_time - last_lead_update_time
-		if dt > 0.01:
-			var angle_diff = current_lead_angle - last_lead_angle
-			while angle_diff > PI:
-				angle_diff -= TAU
-			while angle_diff < -PI:
-				angle_diff += TAU
-			var new_rate = angle_diff / dt
-			lead_angle_change_rate = lerp(lead_angle_change_rate, new_rate, LEAD_ANGLE_SMOOTHING)
-
-	last_lead_angle = current_lead_angle
-	last_lead_update_time = current_time
-
-	var flight_time = interception_distance / torpedo_speed
-	var predicted_angle_offset = lead_angle_change_rate * flight_time * 0.5
+	var to_lead := torpedo_target_position - _ship.global_position
+	var base_angle := atan2(to_lead.x, to_lead.z)
 
 	var range_km = distance_to_target / 1000.0
 	var spread_angle = SPREAD_ANGLE_BASE + SPREAD_ANGLE_PER_KM * range_km
@@ -1085,7 +1089,7 @@ func update_torpedo_aim(target_ship: Ship):
 	var spread_offsets = [-2, -1, 0, 1, 2]
 
 	for offset in spread_offsets:
-		var torpedo_angle = current_lead_angle + predicted_angle_offset + (offset * spread_angle)
+		var torpedo_angle = base_angle + (offset * spread_angle)
 		var torpedo_direction = Vector3(sin(torpedo_angle), 0, cos(torpedo_angle))
 		var torpedo_aim_point = _ship.global_position + torpedo_direction * interception_distance
 		torpedo_aim_point.y = 0
@@ -1099,9 +1103,9 @@ func update_torpedo_aim(target_ship: Ship):
 
 	if current_salvo_positions.size() > 0:
 		has_valid_torpedo_solution = true
-		var center_idx: int = int(float(current_salvo_positions.size()) / 2.0)
-		var center_pos = current_salvo_positions[center_idx]
-		torpedo_controller.set_aim_input(center_pos)
+		# True center of the surviving spread positions (not pre-filter size)
+		var center_idx: int = int(current_salvo_positions.size() * 0.5)
+		torpedo_controller.set_aim_input(current_salvo_positions[center_idx])
 
 	var range_ratio = clamp(distance_to_target / RANGE_FOR_MAX_INTERVAL, 0.0, 1.0)
 	torpedo_fire_interval = lerp(MIN_TORPEDO_INTERVAL, MAX_TORPEDO_INTERVAL, range_ratio)

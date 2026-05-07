@@ -213,8 +213,9 @@ func calculate_dispersed_launch(
 	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
 
 	# Scale to actual angular dispersion
+	const VERTICAL_SPREAD: float = 0.8
 	var h_angle := h_offset * base_spread * 0.5
-	var v_angle := v_offset * base_spread * 0.5
+	var v_angle := v_offset * base_spread * 0.5 * VERTICAL_SPREAD
 
 	# Build local frame around launch direction
 	var forward := launch_velocity.normalized()

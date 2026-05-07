@@ -135,10 +135,11 @@ func target_aim_offset(_target: Ship) -> Vector3:
 	var angle = (-_target.basis.z).angle_to(disp)
 	var dist = disp.length()
 	var offset = Vector3.ZERO
+	var dist_ratio: float = dist / _ship.artillery_controller.get_params()._range
 
 	ammo = ShellParams.ShellType.HE
 	var ap_auto_bounce: float = _ship.artillery_controller.get_params().shell1.auto_bounce
-	var is_broadside = abs(angle - PI / 2.0) < ap_auto_bounce
+	var is_broadside = abs(angle - PI / 2.0) < lerp(ap_auto_bounce, PI * 0.25, pow(dist_ratio, 3.0))
 	var bow_in = angle < PI / 2.0
 	var stern_in = !bow_in
 

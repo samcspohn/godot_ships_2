@@ -64,6 +64,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		friendly_center = sum / float(friendly_pos.size())
 	battle_center.y = 0.0
 
+
+	var target = ctx.target
+	if target != null and is_instance_valid(target):
+		var dist_to_center = ship_pos.distance_to(battle_center)
+		var dist_to_target = ship_pos.distance_to(target.global_position)
+		if dist_to_center > 0.0:
+			battle_center = battle_center.lerp(target.global_position, clamp(1.0 - dist_to_target / dist_to_center, 0.0, 1.0))
+
 	# Dynamic radius: preserve the ship's current distance from the battle center.
 	# This means the ship stays on the same conceptual orbit and just slides along it.
 	var to_center = Vector3(ship_pos.x - battle_center.x, 0.0, ship_pos.z - battle_center.z)

@@ -197,11 +197,15 @@ func _setup_torpedo_indicators() -> void:
 	var canvas_layer = CanvasLayer.new()
 	canvas_layer.name = "TorpedoIndicatorLayer"
 	canvas_layer.layer = 100
+	# Prevent any ship-death processing-disable from cascading here.
+	canvas_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(canvas_layer)
 
 	var indicators = preload("res://src/torpedo/torpedo_indicators.gd").new()
 	indicators.name = "TorpedoIndicators"
 	indicators.torpedo_manager = self
+	# Always process so _time_elapsed and self-driven queue_redraw() keep running.
+	indicators.process_mode = Node.PROCESS_MODE_ALWAYS
 	canvas_layer.add_child(indicators)
 	_torpedo_indicators = indicators
 
@@ -296,6 +300,7 @@ func _physics_process(_delta: float) -> void:
 						for player in server._get_team_ships(0 if p.owner.team.team_id == 1 else 1):
 							if not player.team.is_bot:
 								p.launcher.fire_client.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.armed)
+						notify_detected(id)
 						if p.armed:
 							notify_armed(id) # Update indicators for enemy teams
 						break
@@ -371,15 +376,35 @@ func _physics_process(_delta: float) -> void:
 
 func notify_armed(id: int):
 	var torpedo: TorpedoData = self.torpedos[id]
-	var friendly_ships = server.get_team_ships(torpedo.owner.team.team_id)
+	# Use _get_team_ships (includes dead players) so a player who died still
+	# receives the arm notification and sees the indicator on their screen.
+	var friendly_ships = server._get_team_ships(torpedo.owner.team.team_id)
 	for f in friendly_ships:
 		if !f.team.is_bot:
 			arm_torp.rpc_id(f.peer_id, id)
 	if torpedo.visible_to_enemy:
-		var enemy_ships = server.get_team_ships(0 if torpedo.owner.team.team_id == 1 else 1)
+		var enemy_ships = server._get_team_ships(0 if torpedo.owner.team.team_id == 1 else 1)
 		for e in enemy_ships:
 			if !e.team.is_bot:
 				arm_torp.rpc_id(e.peer_id, id)
+
+@rpc("call_remote", "reliable", "authority")
+func notify_torpedo_detected(id: int):
+	if id < 0 or id >= self.torpedos.size():
+		return
+	var torpedo: TorpedoData = self.torpedos[id]
+	if torpedo == null:
+		return
+	torpedo.visible_to_enemy = true
+
+func notify_detected(id: int):
+	var torpedo: TorpedoData = self.torpedos[id]
+	var friendly_ships = server.get_team_ships(torpedo.owner.team.team_id)
+	for ship in friendly_ships:
+		if !ship.team.is_bot:
+			notify_torpedo_detected.rpc_id(ship.peer_id, id)
+
+
 
 
 @rpc("call_remote", "reliable", "authority")
