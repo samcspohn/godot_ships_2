@@ -236,8 +236,13 @@ private:
 
 	// OBB intersection scoring modifiers
 	static constexpr float GRAZE_MIN_FACTOR     = 0.15f;   // minimum penalty factor for a dead end-on hit (autobounce floor)
-	static constexpr float BOW_STERN_CLIP_START = 0.80f;   // fwd fraction beyond which bow/stern clip reduction kicks in
-	static constexpr float BOW_STERN_MIN_FACTOR = 0.30f;   // minimum penalty factor at the extreme hull tip
+	static constexpr float BOW_STERN_CLIP_START = 0.80f;   // fwd fraction beyond which bow/stern hit is hard-rejected (no gradual falloff)
+
+	// Pure-pursuit deviation gate
+	// The winning arc must reduce combined threat by at least this fraction (relative
+	// to the pure-pursuit arc's threat) before we deviate from the navigator's
+	// desired rudder.  Prevents unnecessary jinking for marginal gains.
+	static constexpr float PURE_PURSUIT_MIN_IMPROVEMENT = 0.15f;
 
 	// --- Two-pass threat score (returned by score_arc_shell_threat) ---
 	struct ThreatEval {

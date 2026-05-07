@@ -306,6 +306,15 @@ func _inject_proxy_spotter(server: GameServer) -> void:
 	var my_team: int = _ship.team.team_id
 	var unspotted: Dictionary = server.team_0_unspotted_enemies if my_team == 0 else server.team_1_unspotted_enemies
 	var unspotted_times: Dictionary = server.team_0_unspotted_times if my_team == 0 else server.team_1_unspotted_times
+	# Only refresh the stored position when the last known position no longer
+	# has line-of-sight to us.  If the old position still has clear LOS to our
+	# ship the spotter may not have moved — keeping the stale position prevents
+	# bots from being omniscient about a concealed spotter's exact location.
+	# We always write on first contact (spotter not yet in the dict).
+	if spotter in unspotted:
+		var last_known: Vector3 = unspotted[spotter]
+		if not NavigationMapManager.is_los_blocked(last_known, _ship.global_position):
+			return
 	unspotted[spotter] = spotter.global_position
 	unspotted_times[spotter] = Time.get_ticks_msec() / 1000.0
 

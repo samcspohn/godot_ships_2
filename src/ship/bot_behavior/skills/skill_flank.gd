@@ -84,7 +84,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var flank_pos = battle_center + Vector3(sin(target_angle), 0.0, cos(target_angle)) * dynamic_radius
 
 	flank_pos = ctx.behavior._get_valid_nav_point(flank_pos)
-	return NavIntent.create(flank_pos, target_angle + PI / 2.0aa)
+	return NavIntent.create(flank_pos, target_angle + PI * 0.5 * side)
 
 	# # Angle of this ship on the dynamic circle (from battle center)
 	# var ship_angle = atan2(to_center.x, to_center.z)

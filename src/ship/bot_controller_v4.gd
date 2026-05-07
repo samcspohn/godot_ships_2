@@ -1194,8 +1194,10 @@ func _emit_debug_draws() -> void:
 			else:
 				zone_color = Color(0.0, 0.7, 1.0, 0.6)
 
-			Debug.draw_circle(Vector3(ca._nav_destination.x, draw_y + 2.0, ca._nav_destination.z), ca._cover_zone_radius, zone_color, 48)
-			Debug.draw_im_sphere(Vector3(ca._nav_destination.x, 30.0, ca._nav_destination.z), 20.0, zone_color)
+			# var dest = _last_intent.target_position if _last_intent else Vector3.ZERO
+
+			Debug.draw_circle(Vector3(dest.x, draw_y + 2.0, dest.z), ca._cover_zone_radius, zone_color, 48)
+			Debug.draw_im_sphere(Vector3(dest.x, 30.0, dest.z), 20.0, zone_color)
 
 			# LOS lines from ship to each threat
 			var threats: Array = behavior._gather_threat_positions(_ship)
@@ -1205,16 +1207,34 @@ func _emit_debug_draws() -> void:
 				var los_color = Color(0.0, 1.0, 0.0, 0.6) if blocked else Color(1.0, 0.0, 0.0, 0.8)
 				Debug.draw_line(Vector3(ship_los_pos.x, 25.0, ship_los_pos.z), Vector3(threat_pos.x, 25.0, threat_pos.z), los_color)
 
-	# --- n) CA tactical: enemy clusters + nearby islands ---
+	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:
-		var clusters = server_node.get_enemy_clusters(_ship.team.team_id)
-		for cluster in clusters:
-			var center: Vector3 = cluster.center
-			var ship_count: int = cluster.ships.size()
-			var sphere_size: float = 30.0 + ship_count * 15.0
-			Debug.draw_im_sphere(Vector3(center.x, 38.0, center.z), sphere_size, Color(1.0, 0.2, 0.0, 0.7))
-			var cluster_radius: float = 300.0 + ship_count * 200.0
-			Debug.draw_circle(Vector3(center.x, 8.0, center.z), cluster_radius, Color(1.0, 0.3, 0.0, 0.4), 32)
+		var my_team_id: int = _ship.team.team_id if _ship.team else -1
+		var now_sec: float = Time.get_ticks_msec() / 1000.0
+		const STALE_MAX: float = 120.0  # seconds until fully faded
+
+		# Spotted enemies — bright red circle + sphere at their live position
+		var spotted_enemies = server_node.get_valid_targets(my_team_id)
+		for enemy in spotted_enemies:
+			if not is_instance_valid(enemy):
+				continue
+			var epos := Vector3(enemy.global_position.x, 20.0, enemy.global_position.z)
+			Debug.draw_im_sphere(epos, 30.0, Color(1.0, 0.1, 0.1, 0.9))
+			Debug.draw_circle(epos, 350.0, Color(1.0, 0.2, 0.2, 0.5), 16)
+
+		# Unspotted enemies — yellow circle + sphere at last known position, fading by staleness
+		var unspotted_enemies: Dictionary = server_node.get_unspotted_enemies(my_team_id)
+		var unspotted_times: Dictionary = server_node.get_unspotted_enemy_times(my_team_id)
+		for enemy in unspotted_enemies:
+			if not is_instance_valid(enemy):
+				continue
+			var lkp: Vector3 = unspotted_enemies[enemy]
+			var last_time: float = unspotted_times.get(enemy, now_sec)
+			var staleness: float = clampf((now_sec - last_time) / STALE_MAX, 0.0, 1.0)
+			var alpha: float = lerpf(0.7, 0.15, staleness)
+			var lkp_pos := Vector3(lkp.x, 20.0, lkp.z)
+			Debug.draw_im_sphere(lkp_pos, 20.0, Color(1.0, 0.85, 0.0, alpha))
+			Debug.draw_circle(lkp_pos, 350.0, Color(1.0, 0.85, 0.0, alpha * 0.5), 16)
 
 		# Nearby islands
 		if NavigationMapManager.is_map_ready():

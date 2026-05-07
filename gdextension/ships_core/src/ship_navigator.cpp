@@ -1816,15 +1816,14 @@ ShipNavigator::ThreatEval ShipNavigator::score_arc_shell_threat(const std::vecto
 		//     0 = broadside hit                   → 1.0
 		const float cos_keel = std::abs(shell.landing_dir.x * fx + shell.landing_dir.y * fz);
 		const float sin_keel = std::sqrt(std::max(0.0f, 1.0f - cos_keel * cos_keel));
-		float angle_factor = GRAZE_MIN_FACTOR + (1.0f - GRAZE_MIN_FACTOR) * sin_keel;
+		const float angle_factor = GRAZE_MIN_FACTOR + (1.0f - GRAZE_MIN_FACTOR) * sin_keel;
 
-		// Bow/stern clip: extreme hull tips deflect more
+		// Bow/stern hard cutoff: shells landing in the extreme forward/aft section
+		// (beyond BOW_STERN_CLIP_START fraction of the half-length) are rejected
+		// entirely.  Angled bow/stern armour bounces these shells regardless of
+		// calibre — no gradual falloff.
 		const float fwd_frac = std::abs(along_keel) / std::max(hsl, 0.01f);
-		if (fwd_frac > BOW_STERN_CLIP_START) {
-			const float ct = std::min((fwd_frac - BOW_STERN_CLIP_START)
-			                          / (1.0f - BOW_STERN_CLIP_START), 1.0f);
-			angle_factor *= 1.0f - ct * (1.0f - BOW_STERN_MIN_FACTOR);
-		}
+		if (fwd_frac > BOW_STERN_CLIP_START) continue;
 
 		result.shell_score += cal_weight * angle_factor;
 	}
@@ -2372,6 +2371,40 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	if (best_idx == -1) {
 		for (int i = 0; i < n_pass; ++i) {
 			if (pass_data[i].nav_score <= best_nav + 1e-3f) { best_idx = i; break; }
+		}
+	}
+
+	// =========================================================
+	// Pure-pursuit baseline gate
+	// Only deviate from the navigator's desired rudder when the
+	// winning arc offers a meaningful reduction in combined threat.
+	// If the improvement over pure pursuit is < PURE_PURSUIT_MIN_IMPROVEMENT
+	// (15 %), revert to pure pursuit to avoid unnecessary jinking.
+	// Disabled when stuck_override_active_ (nav intent must push through).
+	// =========================================================
+	if (best_idx != -1 && !stuck_override_active_ && !shells_safe) {
+		// Find pass_data entry that matches the pure-pursuit candidate
+		// (desired_rudder, desired_throttle).  It is always added first as
+		// rudder_offsets[0] == 0, so the closest-rudder match at the right
+		// throttle will be it.
+		int pp_idx = -1;
+		float pp_rudder_diff = std::numeric_limits<float>::infinity();
+		for (int i = 0; i < n_pass; ++i) {
+			if (pass_data[i].throttle != desired_throttle) continue;
+			const float diff = std::abs(pass_data[i].rudder - desired_rudder);
+			if (diff < pp_rudder_diff) { pp_rudder_diff = diff; pp_idx = i; }
+		}
+		if (pp_idx != -1 && best_idx != pp_idx) {
+			const float pp_threat  = pass_data[pp_idx].threats.combined();
+			const float win_threat = pass_data[best_idx].threats.combined();
+			// Only gate when pure pursuit actually has a non-trivial threat score.
+			// When pp_threat == 0 both arcs are equally safe and nav score already
+			// governs, so no gating is needed.
+			if (pp_threat > 1e-4f) {
+				const float improvement = (pp_threat - win_threat) / pp_threat;
+				if (improvement < PURE_PURSUIT_MIN_IMPROVEMENT)
+					best_idx = pp_idx;
+			}
 		}
 	}
 
