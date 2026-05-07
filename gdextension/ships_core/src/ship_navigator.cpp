@@ -174,6 +174,9 @@ ShipNavigator::ShipNavigator() {
 	health_fraction_ = 1.0f;
 	dodge_committed_rudder_ = 0.0f;
 	dodge_commitment_timer_ = 0.0f;
+	direction_conflict_timer_ = 0.0f;
+	stuck_override_active_ = false;
+	stuck_override_timer_ = 0.0f;
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
 	bot_id_ = 0;
@@ -458,9 +461,14 @@ float ShipNavigator::get_distance_to_destination() const {
 }
 
 bool ShipNavigator::is_arrived() const {
-	const float dist_to_dest = state.position.distance_to(target.position);
+	// Use the final waypoint in the path (always target.position after planning)
+	// so arrival tracking is consistent with path state.  Falls back to
+	// target.position if no path has been planned yet.
+	Vector2 final_node = (path_valid && !current_path.waypoints.empty())
+		? current_path.waypoints.back()
+		: target.position;
 	const float arrived_radius = std::max(target.hold_radius, params.ship_beam * 2.0f);
-	return dist_to_dest < arrived_radius;
+	return state.position.distance_to(final_node) < arrived_radius;
 }
 
 Dictionary ShipNavigator::get_perf_metrics() const {
@@ -605,10 +613,11 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 
 		Vector2 torp_dir = obs.velocity / torp_speed;
 
-		// Line emitted from torpedo nose, extending TORPEDO_LOOKAHEAD_DIST ahead
-		Vector2 line_start = obs.position;
-		Vector2 line_end   = obs.position + torp_dir * TORPEDO_LOOKAHEAD_DIST;
-		Vector2 line_center = obs.position + torp_dir * (TORPEDO_LOOKAHEAD_DIST * 0.5f);
+		// Line emitted from torpedo nose for debug visualization (3000 m lookahead)
+		constexpr float TORP_VIS_DIST = 3000.0f;
+		Vector2 line_start  = obs.position;
+		Vector2 line_end    = obs.position + torp_dir * TORP_VIS_DIST;
+		Vector2 line_center = obs.position + torp_dir * (TORP_VIS_DIST * 0.5f);
 
 		// Time until torpedo reaches closest point to ship
 		Vector2 to_ship = state.position - obs.position;
@@ -626,7 +635,7 @@ Array ShipNavigator::get_debug_torpedo_threat_points() const {
 		d["line_end_z"] = line_end.y;
 		d["line_dir_x"] = torp_dir.x;
 		d["line_dir_z"] = torp_dir.y;
-		d["line_half_len"] = TORPEDO_LOOKAHEAD_DIST * 0.5f;
+		d["line_half_len"] = TORP_VIS_DIST * 0.5f;
 		d["is_torpedo"] = true;
 		result.push_back(d);
 	}
@@ -1069,11 +1078,22 @@ void ShipNavigator::update_normal(float delta) {
 			}
 
 			bool reversing = (direction == DesiredDirection::BACKWARD);
-			desired_rudder = compute_rudder_to_heading(target.heading, reversing);
+			if (dist_to_dest < arrived_radius) {
+				// Inside arrived zone but heading wrong: pure heading alignment.
+				desired_rudder = compute_rudder_to_heading(target.heading, reversing);
+			} else {
+				// Outside arrived zone: steer toward the destination position so a
+				// perpendicular or lateral offset is corrected.  Heading alignment
+				// happens naturally once the ship is within arrived_radius.
+				desired_rudder = compute_rudder_to_position(target.position, reversing);
+			}
 
 		} else {
-			// Approach zone: decelerate toward destination, steer to align heading
-			desired_rudder = compute_rudder_to_heading(target.heading);
+			// Approach zone: decelerate toward destination.
+			// Steer toward the destination position (not just the arrival heading)
+			// so the ship doesn't sail past a destination that is perpendicular
+			// to its current heading.
+			desired_rudder = compute_rudder_to_position(target.position);
 			desired_magnitude = compute_magnitude_for_approach(dist_to_dest);
 			direction = DesiredDirection::FORWARD;
 		}
@@ -1133,6 +1153,55 @@ void ShipNavigator::update_normal(float delta) {
 	auto avoid_t1 = std::chrono::steady_clock::now();
 	timing_avoidance_us = std::chrono::duration<float, std::micro>(avoid_t1 - avoid_t0).count();
 	timing_steering_us = timing_avoidance_us;
+
+	// --- 4.1. Stuck / bow-in detection ---
+	// Detect when the navigator wants to reverse (destination is directly behind)
+	// but incoming shell threats keep overriding to forward candidates, keeping
+	// the ship bow-in toward the target it can't reach.
+	//
+	// Key insight: a forward turn-around does NOT trigger this — during a u-turn
+	// desired_throttle is forward, so nav and steering AGREE.  The conflict only
+	// accumulates when nav explicitly wants reverse AND threats keep choosing forward.
+	//
+	// Once the conflict persists long enough (scaled by the ship's turnaround time),
+	// stuck_override_active_ is set: shell threat budget is zeroed so the ship can
+	// push through the incoming fire to execute the reverse maneuver.  Torpedo
+	// threats still apply — the ship accepts shell risk, not torpedo risk.
+	{
+		const bool nav_wants_reverse       = (desired_throttle < 0);
+		const bool threat_overrode_forward = (choice.throttle >= 0 && nav_wants_reverse);
+
+		// Scale threshold and override duration by the ship's turnaround time
+		const float turnaround_time = static_cast<float>(Math_PI)
+		                              * params.turning_circle_radius
+		                              / std::max(params.max_speed, 1.0f);
+		const float stuck_threshold  = std::max(STUCK_MIN_SECS,  turnaround_time * STUCK_TCR_FACTOR);
+		const float override_dur     = std::max(STUCK_OVERRIDE_MIN, turnaround_time * STUCK_OVERRIDE_FACTOR);
+
+		// Tick down active override
+		if (stuck_override_timer_ > 0.0f) {
+			stuck_override_timer_ -= delta;
+			if (stuck_override_timer_ <= 0.0f) {
+				stuck_override_timer_ = 0.0f;
+				stuck_override_active_ = false;
+			}
+		}
+
+		if (threat_overrode_forward && !stuck_override_active_) {
+			direction_conflict_timer_ += delta;
+			if (direction_conflict_timer_ >= stuck_threshold) {
+				direction_conflict_timer_ = 0.0f;
+				stuck_override_active_   = true;
+				stuck_override_timer_    = override_dur;
+				// Clear dodge commitment — we're breaking through, not dodging
+				dodge_committed_rudder_ = 0.0f;
+				dodge_commitment_timer_ = 0.0f;
+			}
+		} else if (!threat_overrode_forward) {
+			// Progress being made: decay conflict timer at 2× rate
+			direction_conflict_timer_ = std::max(0.0f, direction_conflict_timer_ - delta * 2.0f);
+		}
+	}
 
 	float final_rudder = choice.rudder;
 	int final_throttle = choice.throttle;
@@ -1409,6 +1478,12 @@ void ShipNavigator::start_plan() {
 
 		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
 		if (pr.valid && !pr.waypoints.empty()) {
+			// Always end at the exact destination — HPA* snaps to grid nodes
+			// so the final grid node may not be target.position.
+			if (pr.waypoints.back().distance_to(target.position) > 1.0f) {
+				pr.waypoints.push_back(target.position);
+				pr.flags.push_back(WP_NONE);
+			}
 			plan_forward_result = pr;
 			plan_phase = PlanPhase::DONE;
 			return;
@@ -1473,7 +1548,7 @@ void ShipNavigator::start_plan() {
 		}
 
 		if (direct.waypoints.size() < 2)
-			direct.waypoints.push_back(state.position);  // stuck — stay put
+			direct.waypoints.push_back(target.position);  // blocked — destination is goal even if unreachable now
 
 		direct.flags.assign(direct.waypoints.size(), WP_NONE);
 		direct.valid = true;
@@ -1510,6 +1585,12 @@ void ShipNavigator::run_plan_sync() {
 
 		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
 		if (pr.valid && !pr.waypoints.empty()) {
+			// Always end at the exact destination — HPA* snaps to grid nodes
+			// so the final grid node may not be target.position.
+			if (pr.waypoints.back().distance_to(target.position) > 1.0f) {
+				pr.waypoints.push_back(target.position);
+				pr.flags.push_back(WP_NONE);
+			}
 			accept_plan_result(pr);
 			plan_phase = PlanPhase::IDLE;
 			return;
@@ -1569,7 +1650,7 @@ void ShipNavigator::run_plan_sync() {
 		}
 
 		if (direct.waypoints.size() < 2)
-			direct.waypoints.push_back(state.position);
+			direct.waypoints.push_back(target.position);  // blocked — destination is goal even if unreachable now
 
 		direct.flags.assign(direct.waypoints.size(), WP_NONE);
 		direct.valid = true;
@@ -1617,6 +1698,10 @@ void ShipNavigator::hpa_incremental_update() {
 
 		PathResult pr = hpa_graph_->find_path(state.position, target.position);
 		if (pr.valid && !pr.waypoints.empty()) {
+			if (pr.waypoints.back().distance_to(target.position) > 1.0f) {
+				pr.waypoints.push_back(target.position);
+				pr.flags.push_back(WP_NONE);
+			}
 			accept_plan_result(pr);
 		}
 		replan_requested_ = false;
@@ -1654,175 +1739,139 @@ float ShipNavigator::get_dynamic_threat_weight() const {
 	// health 1.0 → 1.0, health 0.0 → 2.5
 	float health_factor = 2.5f - 1.5f * health_fraction_;  // lerp(2.5, 1.0, health)
 
-	return SHELL_THREAT_WEIGHT_BASE * size_factor * health_factor;
+	return 30.0f * size_factor * health_factor;
 }
 
-float ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) const {
-	if (arc.size() < 2) return 0.0f;
+ShipNavigator::ThreatEval ShipNavigator::score_arc_shell_threat(const std::vector<ArcPoint> &arc) const {
+	ThreatEval result;
+	if (arc.size() < 2) return result;
 
-	// Collect all threat lines: each has a center, direction, half-length,
-	// time of relevance, caliber, and whether it is a torpedo.
-	struct ThreatLine {
-		Vector2 center;
-		Vector2 dir;        // normalized direction
-		float half_len;
-		float time;         // time_remaining (when it matters)
-		float caliber;
-		bool is_torpedo;
-	};
+	// Ship half-extents for OBB test
+	const float hsl = params.ship_length * 0.5f;  // half-length (bow/stern)
+	const float hsb = params.ship_beam   * 0.5f;  // half-beam  (port/starboard)
 
-	std::vector<ThreatLine> threat_lines;
-	threat_lines.reserve(incoming_shells_.size() + obstacles.size());
+	// --- Adaptive time tolerance ---
+	// eff_tol is the maximum acceptable gap between a shell's impact time and
+	// the nearest arc sample.  It is driven purely by the arc's own sampling
+	// density (1.5× the mean inter-point interval) so that shells are only
+	// tested when the arc actually covers the relevant time window.  A 2-second
+	// floor handles instantaneous arcs (single point, arc_dt_mean == 0).
+	const float arc_duration = arc.back().time - arc.front().time;
+	const float arc_dt_mean  = (arc.size() > 1) ? arc_duration / float(arc.size() - 1) : 0.0f;
+	const float eff_tol = std::max(SHELL_TIME_TOLERANCE, arc_dt_mean * 1.5f);
 
-	// --- Shell threat lines ---
-	// The landing point is near the TIP of the line. The danger zone trails
-	// backward along the shell's travel direction (toward its origin) and
-	// extends SHELL_OVERSHOOT_LEN past the impact point.
+	// =========================================================
+	// SHELLS  —  temporal point intersection
+	//
+	// For each shell, find the arc point whose simulation time is
+	// closest to shell.time_remaining.  If the gap is within the
+	// adaptive tolerance, project the shell's landing point into
+	// the ship's OBB at that arc point's position/heading.
+	// Penalty factor:
+	//   • end-on (bow or stern toward incoming shell) → GRAZE_MIN_FACTOR (autobounce)
+	//   • broadside                                  → 1.0 (maximum damage)
+	//   • bow/stern hull-tip clips                   → further reduced
+	// =========================================================
 	for (const auto &shell : incoming_shells_) {
-		if (shell.time_remaining <= 0.0f) continue;
-		float total_half = shell.threat_half_len + SHELL_OVERSHOOT_LEN * 0.5f;
-		ThreatLine tl;
-		tl.center = shell.landing_pos - shell.landing_dir * (shell.threat_half_len - SHELL_OVERSHOOT_LEN * 0.5f);
-		tl.dir = shell.landing_dir;
-		tl.half_len = total_half;
-		tl.time = shell.time_remaining;
-		tl.caliber = shell.caliber;
-		tl.is_torpedo = false;
-		threat_lines.push_back(tl);
+		if (shell.time_remaining < 0.5f) continue;  // about to land, no time to dodge
+
+		// Skip shells whose impact time is beyond the arc's simulated range.
+		// Without this check, shells landing well after the arc ends could be
+		// tested against the arc's endpoint position, which may be far from
+		// where the ship would actually be at the shell's impact time.
+		if (shell.time_remaining > arc.back().time + eff_tol) continue;
+
+		const float cal_weight = (shell.caliber * shell.caliber) / (200.0f * 200.0f);
+
+		// Find arc point nearest in time to shell impact
+		const ArcPoint *best_apt = nullptr;
+		float best_dt = std::numeric_limits<float>::infinity();
+		for (const auto &apt : arc) {
+			const float dt = std::abs(apt.time - shell.time_remaining);
+			if (dt < best_dt) { best_dt = dt; best_apt = &apt; }
+		}
+		if (best_apt == nullptr || best_dt > eff_tol) continue;
+
+		// Ship local frame at this arc point
+		const float fx = std::sin(best_apt->heading);
+		const float fz = std::cos(best_apt->heading);
+
+		// Shell landing point relative to ship center, in ship local frame
+		// along_keel > 0 = toward bow; along_beam > 0 = toward starboard
+		const Vector2 rel       = shell.landing_pos - best_apt->position;
+		const float along_keel  = rel.x * fx + rel.y * fz;
+		const float along_beam  = rel.x * fz - rel.y * fx;
+
+		// OBB check — use exact hull dimensions only.
+		// An arc scores a shell hit only when the shell's predicted landing
+		// position falls within the ship's actual bounding box at the matched
+		// arc point.  No extra keel or beam margin is added: proximity is not
+		// a hit.  This prevents dodging shells that would miss the ship.
+		if (std::abs(along_keel) > hsl) continue;
+		if (std::abs(along_beam) > hsb) continue;
+
+		// Angle factor: shell arriving end-on is partially autobounced.
+		//   cos_keel = |cos(angle between shell travel dir and ship keel)|:
+		//     1 = bow/stern approach (autobounce) → GRAZE_MIN_FACTOR
+		//     0 = broadside hit                   → 1.0
+		const float cos_keel = std::abs(shell.landing_dir.x * fx + shell.landing_dir.y * fz);
+		const float sin_keel = std::sqrt(std::max(0.0f, 1.0f - cos_keel * cos_keel));
+		float angle_factor = GRAZE_MIN_FACTOR + (1.0f - GRAZE_MIN_FACTOR) * sin_keel;
+
+		// Bow/stern clip: extreme hull tips deflect more
+		const float fwd_frac = std::abs(along_keel) / std::max(hsl, 0.01f);
+		if (fwd_frac > BOW_STERN_CLIP_START) {
+			const float ct = std::min((fwd_frac - BOW_STERN_CLIP_START)
+			                          / (1.0f - BOW_STERN_CLIP_START), 1.0f);
+			angle_factor *= 1.0f - ct * (1.0f - BOW_STERN_MIN_FACTOR);
+		}
+
+		result.shell_score += cal_weight * angle_factor;
 	}
 
-	// --- Torpedo threat lines (single line per torpedo, not sampled points) ---
+	// =========================================================
+	// TORPEDOES  —  temporal point intersection
+	//
+	// For each torpedo, project its position forward to the time
+	// of each arc point and check if it falls within the ship's
+	// OBB (extended by the torpedo's radius).  Torpedoes always
+	// do full damage regardless of impact angle.
+	// Accumulate the worst penalty across all arc points.
+	// =========================================================
 	for (const auto &[id, obs] : obstacles) {
 		if (!obs.is_torpedo()) continue;
 
-		float torp_speed = obs.velocity.length();
+		const float torp_speed = obs.velocity.length();
 		if (torp_speed < 1.0f) continue;
 
-		Vector2 torp_dir = obs.velocity / torp_speed;
+		const float cal_weight = (TORPEDO_VIRTUAL_CALIBER * TORPEDO_VIRTUAL_CALIBER)
+		                         / (200.0f * 200.0f);
+		float worst = 0.0f;
 
-		// Project ship onto torpedo path to find closest approach time
-		Vector2 to_ship = state.position - obs.position;
-		float t_closest = to_ship.dot(torp_dir) / torp_speed;
-		if (t_closest < 0.0f) t_closest = 0.0f;
+		for (const auto &apt : arc) {
+			// Project torpedo position to arc time
+			const Vector2 torp_pos = obs.position + obs.velocity * apt.time;
 
-		ThreatLine tl;
-		tl.center = obs.position + torp_dir * (TORPEDO_LOOKAHEAD_DIST * 0.5f);
-		tl.dir = torp_dir;
-		tl.half_len = TORPEDO_LOOKAHEAD_DIST * 0.5f;
-		tl.time = t_closest;
-		tl.caliber = TORPEDO_VIRTUAL_CALIBER;
-		tl.is_torpedo = true;
-		threat_lines.push_back(tl);
-	}
-
-	if (threat_lines.empty()) return 0.0f;
-
-	// Ship half-extents for OBB intersection test
-	const float hsl = params.ship_length * 0.5f;   // half-length (bow/stern)
-	const float hsb = params.ship_beam   * 0.5f;   // half-beam  (port/starboard)
-
-	float total_threat = 0.0f;
-
-	for (const auto &tl : threat_lines) {
-		const float cal_weight = (tl.caliber * tl.caliber) / (200.0f * 200.0f);
-
-		// Time window: check arc points from (impact - window) to (impact + window)
-		const float t_lo = std::max(0.0f, tl.time - DODGE_THREAT_WINDOW);
-		const float t_hi = tl.time + DODGE_THREAT_WINDOW;
-
-		float worst_penalty = 0.0f;
-		bool found_window_point = false;
-
-		// Lambda: test the threat line segment against the ship OBB at a given arc point
-		// and update worst_penalty if a hit is confirmed.
-		auto score_at_point = [&](const ArcPoint &apt) {
-			// Ship local axes from heading (forward = (sin h, cos h), starboard = (cos h, -sin h))
+			// Ship local frame
 			const float fx = std::sin(apt.heading);
 			const float fz = std::cos(apt.heading);
 
-			// Threat segment endpoints relative to ship center, projected into ship local frame.
-			// Local X = forward (keel), Local Y = starboard.
-			const Vector2 rel_a = tl.center - tl.dir * tl.half_len - apt.position;
-			const Vector2 rel_b = tl.center + tl.dir * tl.half_len - apt.position;
+			const Vector2 rel      = torp_pos - apt.position;
+			const float along_keel = rel.x * fx + rel.y * fz;
+			const float along_beam = rel.x * fz - rel.y * fx;
 
-			const float a_fwd  = rel_a.x * fx + rel_a.y * fz;
-			const float a_stbd = rel_a.x * fz - rel_a.y * fx;
-			const float b_fwd  = rel_b.x * fx + rel_b.y * fz;
-			const float b_stbd = rel_b.x * fz - rel_b.y * fx;
+			// Clearance: hull half-extents + torpedo body radius
+			if (std::abs(along_keel) > hsl + obs.radius) continue;
+			if (std::abs(along_beam) > hsb + obs.radius) continue;
 
-			const float d_fwd  = b_fwd  - a_fwd;
-			const float d_stbd = b_stbd - a_stbd;
-
-			// Liang-Barsky clip of segment against AABB [-hsl, hsl] x [-hsb, hsb].
-			// For each boundary: p is the "rate of change toward boundary", q is the
-			// "signed distance from start to boundary". p<0 → entering (update t0),
-			// p>0 → leaving (update t1), p≈0 → parallel (reject if outside).
-			float t0 = 0.0f, t1 = 1.0f;
-			const float p[4] = { -d_fwd,  d_fwd,  -d_stbd,  d_stbd  };
-			const float q[4] = {  a_fwd + hsl,  hsl - a_fwd,  a_stbd + hsb,  hsb - a_stbd };
-
-			for (int k = 0; k < 4; k++) {
-				if (std::abs(p[k]) < 1e-6f) {
-					if (q[k] < 0.0f) return;   // parallel and outside this boundary → no hit
-				} else {
-					const float t = q[k] / p[k];
-					if (p[k] < 0.0f) t0 = std::max(t0, t);
-					else             t1 = std::min(t1, t);
-				}
-				if (t0 > t1) return;            // clipped out → no hit
-			}
-
-			// --- OBB intersection confirmed: compute penalty factor ---
-			float penalty_factor = 1.0f;
-
-			if (!tl.is_torpedo) {
-				// (a) Angle modifier: smooth gradient across the full approach angle.
-				//     cos_keel = 1 → end-on (grazing), 0 → broadside (worst).
-				//     sin_keel = 0 → end-on, 1 → broadside.
-				//     penalty scales linearly from GRAZE_MIN_FACTOR at end-on to 1.0
-				//     at broadside, giving a continuous reward for angling the ship.
-				const float cos_keel = std::abs(tl.dir.x * fx + tl.dir.y * fz);
-				const float sin_keel = std::sqrt(std::max(0.0f, 1.0f - cos_keel * cos_keel));
-				penalty_factor *= GRAZE_MIN_FACTOR + (1.0f - GRAZE_MIN_FACTOR) * sin_keel;
-
-				// (b) Bow/stern clip modifier: if the intersection midpoint along the keel
-				//     is in the outermost portion of the hull, reduce the penalty.
-				const float hit_mid_fwd = a_fwd + (t0 + t1) * 0.5f * d_fwd;
-				const float fwd_frac = std::abs(hit_mid_fwd) / hsl;
-				if (fwd_frac > BOW_STERN_CLIP_START) {
-					const float ct = std::min((fwd_frac - BOW_STERN_CLIP_START) / (1.0f - BOW_STERN_CLIP_START), 1.0f);
-					penalty_factor *= 1.0f - ct * (1.0f - BOW_STERN_MIN_FACTOR);
-				}
-			}
-
-			const float penalty = cal_weight * penalty_factor;
-			if (penalty > worst_penalty) worst_penalty = penalty;
-		};
-
-		// Check all arc points within the time window
-		for (size_t i = 0; i < arc.size(); i++) {
-			if (arc[i].time < t_lo) continue;
-			if (arc[i].time > t_hi) break;
-			found_window_point = true;
-			score_at_point(arc[i]);
+			// Torpedo hit — full damage, no angle discount
+			if (cal_weight > worst) worst = cal_weight;
 		}
 
-		// Fallback: if no arc point fell within the window (arc too short to reach
-		// impact time), use the arc point nearest to the impact time.
-		if (!found_window_point) {
-			const ArcPoint *nearest = &arc.back();
-			float best_dt = std::abs(arc.back().time - tl.time);
-			for (size_t i = 0; i + 1 < arc.size(); i++) {
-				float dt = std::abs(arc[i].time - tl.time);
-				if (dt < best_dt) { best_dt = dt; nearest = &arc[i]; }
-			}
-			score_at_point(*nearest);
-		}
-
-		total_threat += worst_penalty;
+		result.torpedo_score += worst;
 	}
 
-	return total_threat;
+	return result;
 }
 
 ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_rudder, int desired_throttle) {
@@ -1835,465 +1884,393 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	int steering_arc_points_simulated = 0;
 
 	float hard_clearance = get_ship_clearance();
-	float soft_clearance = get_soft_clearance();
-	float lookahead = get_lookahead_distance();
+	float soft_clearance  = get_soft_clearance();
+	float lookahead       = get_lookahead_distance();
+
+	// Compute current SDF once — reused for adaptive clearance, fast-exit,
+	// and soft-terrain penalty tracking inside the candidate loop.
+	const float sdf_here = (map.is_valid() && map->is_built())
+		? map->get_distance(state.position.x, state.position.y)
+		: std::numeric_limits<float>::infinity();
 
 	// --- Adaptive clearance: halve when already inside the clearance zone ---
-	// If the ship is already closer to terrain than hard_clearance, insisting
-	// on full clearance causes oscillation: the ship drives forward into the
-	// zone, every arc is disqualified, it reverses out, then drives back in.
-	// Instead, accept the situation and halve the threshold so the ship can
-	// continue navigating.  Full clearance is restored naturally once the
-	// ship moves to open water (SDF > hard_clearance on the next frame).
-	if (map.is_valid() && map->is_built()) {
-		float sdf_here = map->get_distance(state.position.x, state.position.y);
-		if (sdf_here < hard_clearance) {
-			hard_clearance *= 0.5f;
-		}
-	}
+	// Prevents oscillation where every arc is disqualified because the ship is
+	// marginally inside its own hard clearance zone.
+	if (sdf_here < hard_clearance) hard_clearance *= 0.5f;
 
 	// --- Parked-ship filter ---
 	skip_ship_obstacles_ = (std::abs(state.current_speed) < PARKED_SPEED_THRESHOLD
 	                         && desired_throttle <= 0);
 
-	// --- Fast early-exit: skip when clearly safe ---
-	bool terrain_safe = false;
-	if (map.is_valid() && map->is_built()) {
-		float sdf_here = map->get_distance(state.position.x, state.position.y);
-		if (sdf_here > lookahead + soft_clearance) {
-			terrain_safe = true;
-		}
-	}
+	// --- Fast early-exit: skip when clearly safe and no threats at all ---
+	// Threshold: sdf > lookahead + hard_clearance means no arc of length
+	// 'lookahead' can possibly reach the hard-clearance zone.
+	// (Using soft_clearance here would make the threshold enormous for large
+	// ships — e.g. 1530 m for a battleship — forcing full simulation even in
+	// open water hundreds of metres from land.)
+	bool terrain_safe = (sdf_here > lookahead + hard_clearance);
 
 	bool obstacles_safe = true;
 	float engagement_range = lookahead + params.max_speed * 10.0f;
 	for (const auto &[id, obs] : obstacles) {
 		if (skip_ship_obstacles_ && !obs.is_torpedo()) continue;
-		float dist = state.position.distance_to(obs.position);
-		if (dist < engagement_range) {
+		if (state.position.distance_to(obs.position) < engagement_range) {
 			obstacles_safe = false;
 			break;
 		}
 	}
 
-	bool shells_safe = incoming_shells_.empty();
+	// shells_safe: true when no shell can possibly intercept the ship before
+	// landing.  Quick geometric pre-filter: if the ship's maximum reachable
+	// radius in the shell's remaining flight time does not overlap the landing
+	// position (padded by half the ship's extents), the shell is guaranteed to
+	// miss without any arc simulation.
+	bool shells_safe = true;
+	if (!incoming_shells_.empty()) {
+		const float quick_hsl = params.ship_length * 0.5f;
+		const float quick_hsb = params.ship_beam   * 0.5f;
+		for (const auto &shell : incoming_shells_) {
+			if (shell.time_remaining < 0.5f) continue;
+			const float max_reach = params.max_speed * shell.time_remaining + quick_hsl + quick_hsb;
+			if (state.position.distance_to(shell.landing_pos) <= max_reach) {
+				shells_safe = false;
+				break;
+			}
+		}
+	}
 
 	if (terrain_safe && obstacles_safe && shells_safe) {
-		// Cache a debug arc for visualization even on the fast path.
 		float fast_path_lookahead = params.turning_circle_radius * 1.5f;
 		winning_arc = predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
-		perf_last_steering_candidates_total_ = 1;
+		perf_last_steering_candidates_total_     = 1;
 		perf_last_steering_candidates_simulated_ = 1;
-		perf_last_steering_terrain_rejects_ = 0;
-		perf_last_steering_short_arc_rejects_ = 0;
+		perf_last_steering_terrain_rejects_      = 0;
+		perf_last_steering_short_arc_rejects_    = 0;
 		perf_last_steering_arc_points_simulated_ = static_cast<int>(winning_arc.size());
 		return result;
 	}
 
-
-
-	// --- Determine waypoint target for alignment scoring ---
+	// --- Determine waypoint target ---
 	Vector2 wp_target = target.position;
 	if (path_valid && current_wp_index < static_cast<int>(current_path.waypoints.size())) {
 		wp_target = current_path.waypoints[current_wp_index];
 	}
 	float wp_reach_radius = get_reach_radius();
 
-	// When at/near destination (path exhausted or already within reach radius),
-	// the correct steering is already encoded in desired_rudder via
-	// compute_rudder_to_heading().  Skip arc simulation entirely — using a
-	// virtual 10 km heading point caused both hard-turn candidates to score
-	// identically (equal endpoint distance + heading error) producing
-	// frame-to-frame oscillation between forward/straight and hard rudder
-	// or between forward and reverse.
+	// wp_is_virtual: score by heading alignment only when the ship is truly
+	// AT the steering target (within arrived_radius ≈ 2 × ship_beam).
+	// Using TCR or path_exhausted as the trigger caused heading-only scoring
+	// when the destination was still far away and perpendicular, making
+	// reverse candidates (half the turn-around time of a forward circle)
+	// beat correct forward turns.
 	bool wp_is_virtual = false;
 	{
-		bool path_exhausted_here = !path_valid || current_wp_index >= static_cast<int>(current_path.waypoints.size());
-		float dist_to_wp = state.position.distance_to(wp_target);
-		if (path_exhausted_here || dist_to_wp < wp_reach_radius) {
+		const float arrived_r = std::max(target.hold_radius, params.ship_beam * 2.0f);
+		if (state.position.distance_to(wp_target) < arrived_r)
 			wp_is_virtual = true;
-		}
-	}
-	if (wp_is_virtual) {
-		winning_arc = predict_arc_internal(desired_rudder, desired_throttle,
-		                                    params.turning_circle_radius * 1.5f);
-		perf_last_steering_candidates_total_ = 1;
-		perf_last_steering_candidates_simulated_ = 1;
-		perf_last_steering_terrain_rejects_ = 0;
-		perf_last_steering_short_arc_rejects_ = 0;
-		perf_last_steering_arc_points_simulated_ = static_cast<int>(winning_arc.size());
-		return result;
 	}
 
-	// --- Ship-obstacle hitter determination ---
-	float our_heading_x = std::sin(state.heading);
-	float our_heading_z = std::cos(state.heading);
-	Vector2 our_fwd(our_heading_x, our_heading_z);
+	// --- Ship forward vector (used for obstacle hitter check) ---
+	Vector2 our_fwd(std::sin(state.heading), std::cos(state.heading));
 
 	// --- Build candidate list ---
-	struct Candidate {
-		float rudder;
-		int throttle;
-	};
+	struct Candidate { float rudder; int throttle; };
 
-	// Forward candidates: desired rudder plus the two hard-over extremes.
-	// Keeping only three discrete choices eliminates near-ties between
-	// intermediate values (0.3, 0.6) that caused frame-to-frame oscillation
-	// when two candidates scored within floating-point noise of each other.
-	const float rudder_offsets[] = { 0.0f, 0.3, -0.3 , 0.6, -0.6, -1.0f, 1.0f };
-	constexpr int N_OFFSETS = 7;
-
-	// +1 for full opposite rudder, +3 for reverse candidates (0, ±1.0)
-	Candidate candidates[N_OFFSETS + 1 + 7];
+	const float rudder_offsets[] = { 0.0f, 0.3f, -0.3f, 0.6f, -0.6f, -1.0f, 1.0f };
+	constexpr int N_OFFSETS = 3;
+	Candidate candidates[N_OFFSETS + 8];
 	int n_candidates = 0;
 
 	auto add_candidate = [&](float r, int t) {
 		r = clamp_f(r, -1.0f, 1.0f);
-		for (int j = 0; j < n_candidates; ++j) {
+		for (int j = 0; j < n_candidates; ++j)
 			if (std::abs(candidates[j].rudder - r) < 0.05f && candidates[j].throttle == t) return;
-		}
 		candidates[n_candidates++] = { r, t };
 	};
 
-	// Forward candidates at desired throttle
-	for (int i = 0; i < N_OFFSETS; ++i) {
+	for (int i = 0; i < N_OFFSETS; ++i)
 		add_candidate(desired_rudder + rudder_offsets[i], desired_throttle);
-	}
 
-	// Full opposite rudder — covers the go-around case when desired_rudder
-	// is far from ±1.0 and the offset candidates don't reach it.
-	if (std::abs(desired_rudder) > 0.15f) {
-		float opposite_rudder = (desired_rudder > 0.0f) ? -1.0f : 1.0f;
-		add_candidate(opposite_rudder, desired_throttle);
-	}
+	if (std::abs(desired_rudder) > 0.15f)
+		add_candidate((desired_rudder > 0.0f) ? -1.0f : 1.0f, desired_throttle);
 
-	// Reverse candidates — hard-over only, same rationale as forward.
-	add_candidate(0.0f, -1);
+	add_candidate( 0.0f, -1);
 	add_candidate(-0.3f, -1);
-	add_candidate(0.3f, -1);
+	add_candidate( 0.3f, -1);
 	add_candidate(-0.6f, -1);
-	add_candidate(0.6f, -1);
+	add_candidate( 0.6f, -1);
 	add_candidate(-1.0f, -1);
-	add_candidate(1.0f, -1);
+	add_candidate( 1.0f, -1);
 
 	steering_candidates_total = n_candidates;
 
 	// --- Simulation parameters ---
-	// Simulate long enough for the ship to complete a full turning circle
-	// (the go-around case) plus some margin.
-	float turn_circumference = 2.0f * Math_PI * params.turning_circle_radius;
-	float sim_lookahead = std::max(turn_circumference, lookahead * 2.0f);
-	float sim_max_time = 120.0f;
+	const float turn_circumference = 2.0f * static_cast<float>(Math_PI) * params.turning_circle_radius;
+	const float sim_lookahead = std::max(turn_circumference, lookahead * 2.0f);
+	const float sim_max_time  = 120.0f;
+	constexpr float heading_align_thresh = 0.087f;  // ~5 degrees
 
-	// --- Score each candidate: alignment_time + travel_time (lowest wins) ---
-	float dynamic_threat_weight = get_dynamic_threat_weight();
-	float best_time = std::numeric_limits<float>::infinity();
-	float best_rudder = desired_rudder;
-	int best_throttle = desired_throttle;
-	bool any_collision = false;
+	// --- Exit-heading: precompute remaining path context (normal path only) ---
+	Vector2 next_goal_after_wp = target.position;
+	float desired_exit_heading = 0.0f;
+	bool  apply_exit_penalty   = false;
+	if (!wp_is_virtual && path_valid) {
+		int next_idx = current_wp_index + 1;
+		if (next_idx < static_cast<int>(current_path.waypoints.size()))
+			next_goal_after_wp = current_path.waypoints[next_idx];
+		Vector2 to_next = next_goal_after_wp - wp_target;
+		if (to_next.length() > 1.0f) {
+			desired_exit_heading = std::atan2(to_next.x, to_next.y);
+			apply_exit_penalty   = true;
+		}
+	}
 
-	// Heading-weight mode: pre-compute a virtual waypoint 10 km along target.heading.
-	// Each arc is scored by how quickly it aligns with this heading; the result is
-	// blended with the normal destination-arrival score proportionally to heading_weight.
-	bool has_heading_weight = (target.heading_weight > 0.001f);
+	// --- Heading-weight mode (normal path only) ---
+	bool    has_heading_weight = (target.heading_weight > 0.001f);
 	Vector2 heading_vp;
 	if (has_heading_weight) {
 		float th = target.heading;
 		heading_vp = state.position + Vector2(std::sin(th), std::cos(th)) * 10000.0f;
 	}
 
-	// --- Exit-heading: precompute remaining path context for (b.75) ---
-	// Score each candidate by its total cost to destination:
-	//   time_to_wp_target  +  turn_time_to_align_with_next_segment
-	// The remaining travel from wp_target onward is identical for all candidates
-	// and cancels out, so only the arrival-heading mismatch at wp_target matters.
-	// wp_is_virtual already handles "destination underfoot" by suppressing the penalty.
-	Vector2 next_goal_after_wp = target.position;  // first goal after wp_target
-	float desired_exit_heading  = 0.0f;            // heading from wp_target → next_goal
-	bool  apply_exit_penalty    = false;
-	if (!wp_is_virtual && path_valid) {
-		int next_idx = current_wp_index + 1;
-		if (next_idx < static_cast<int>(current_path.waypoints.size())) {
-			next_goal_after_wp = current_path.waypoints[next_idx];
-		}
-		Vector2 to_next    = next_goal_after_wp - wp_target;
-		float   to_next_len = to_next.length();
-		if (to_next_len > 1.0f) {
-			desired_exit_heading = std::atan2(to_next.x, to_next.y);
-			apply_exit_penalty   = true;
-		}
-	}
+	// =========================================================
+	// Two-pass scoring storage
+	//   nav_score  = pure navigation cost (no threat penalty)
+	//   threats    = shell + torpedo hit scores (dimensionless)
+	// Selection: find best_nav; filter to best_nav + budget;
+	//            pick the candidate with the lowest effective threat.
+	// =========================================================
+	struct PassEntry {
+		float      rudder;
+		int        throttle;
+		float      nav_score;
+		ThreatEval threats;
+		bool       any_obs_collision;
+	};
+	static constexpr int MAX_PASS_ENTRIES = 24;
+	PassEntry pass_data[MAX_PASS_ENTRIES];
+	int n_pass = 0;
+	bool any_collision = false;
 
-
-
-
+	// =========================================================
+	// Per-candidate scoring loop
+	// =========================================================
 	for (int i = 0; i < n_candidates; ++i) {
-		float cand_rudder = candidates[i].rudder;
-		int cand_throttle = candidates[i].throttle;
+		const float cand_rudder   = candidates[i].rudder;
+		const int   cand_throttle = candidates[i].throttle;
 
-		// Simulate until heading aligns with waypoint
-		auto arc = predict_arc_to_heading(cand_rudder, cand_throttle, wp_target,
-		                                   sim_lookahead, sim_max_time);
-		if (arc.size() < 2) {
-			steering_short_arc_rejects++;
-			continue;
-		}
-		steering_candidates_simulated++;
-		steering_arc_points_simulated += static_cast<int>(arc.size());
+		if (wp_is_virtual) {
+			// ---- At-destination: score by heading alignment time ----
+			// predict_arc_internal gives a free-running arc not tied to a waypoint
+			// arrival condition, avoiding the symmetric-scoring tie that the old
+			// virtual-waypoint approach produced.
+			auto arc = predict_arc_internal(cand_rudder, cand_throttle, sim_lookahead);
+			if (arc.size() < 2) { steering_short_arc_rejects++; continue; }
+			steering_candidates_simulated++;
+			steering_arc_points_simulated += static_cast<int>(arc.size());
 
-		// Early termination: if alignment time already exceeds the best,
-		// this candidate cannot win (travel_time can only add to it).
-		if (arc.back().time >= best_time) continue;
+			// Terrain: check arc points up to the immediate stroke horizon.
+			// At destination the ship executes short strokes and re-evaluates
+			// every frame, so checking the full 3700+ m arc would falsely block
+			// forward candidates that clip terrain only far into a circular arc
+			// they will never complete.  Cap the check at 'lookahead' of cumulative
+			// arc distance — enough to detect truly imminent terrain without
+			// penalising multi-point turns near the coastline.
+			bool  terrain_blocked = false;
+			float soft_min_sdf    = std::numeric_limits<float>::infinity();
+			if (map.is_valid() && map->is_built()) {
+				float arc_dist = 0.0f;
+				Vector2 prev = arc.front().position;
+				for (const auto &pt : arc) {
+					arc_dist += pt.position.distance_to(prev);
+					prev = pt.position;
+					if (arc_dist > lookahead) break;  // beyond immediate re-eval horizon
+					const float sdf = map->get_distance(pt.position.x, pt.position.y);
+					if (sdf < hard_clearance) { terrain_blocked = true; break; }
+					if (sdf < soft_clearance && sdf < soft_min_sdf) soft_min_sdf = sdf;
+				}
+			}
+			if (terrain_blocked) { steering_terrain_rejects++; continue; }
 
-		// --- (a) Terrain safety: disqualify if any point enters hard clearance ---
-		// Truncate the check at the destination: once an arc point reaches the
-		// waypoint, the ship will stop advancing — terrain beyond that point
-		// is irrelevant.  This prevents arcs aimed at a destination near an
-		// island from being disqualified by terrain the ship will never reach.
-		// When wp_target is the virtual heading alignment point, also stop at
-		// heading alignment: the ship re-evaluates steering there, so terrain
-		// beyond the alignment point is irrelevant (critical for multi-point turns
-		// near terrain — the reversing arc aligns before it would reach any shore).
-		bool terrain_blocked = false;
-		float arrival_time = -1.0f;  // time at which arc reaches the waypoint
-		constexpr float heading_align_thresh = 0.087f;  // ~5°, matches predict_arc_to_heading
-		if (map.is_valid() && map->is_built()) {
+			// Nav score: time until bow (forward) or stern (reverse) aligns with target.heading.
+			// For reverse candidates the effective heading is bow + π — the direction
+			// the ship will present when it switches back to forward drive.
+			float effective_target_h = (cand_throttle < 0)
+				? normalize_angle(target.heading + static_cast<float>(Math_PI))
+				: target.heading;
+			float nav_score = std::numeric_limits<float>::infinity();
 			for (const auto &pt : arc) {
-				if (wp_is_virtual) {
-					Vector2 to_vp = wp_target - pt.position;
-					if (to_vp.length() > 1.0f) {
-						float desired_h = std::atan2(to_vp.x, to_vp.y);
-						if (std::abs(angle_difference(pt.heading, desired_h)) < heading_align_thresh) {
-							arrival_time = pt.time;
+				if (std::abs(angle_difference(pt.heading, effective_target_h)) < heading_align_thresh) {
+					nav_score = pt.time;
+					break;
+				}
+			}
+			if (nav_score == std::numeric_limits<float>::infinity()) {
+				// Did not align within arc — penalise by residual heading error
+				float h_err = std::abs(angle_difference(arc.back().heading, effective_target_h));
+				nav_score = arc.back().time + (h_err / static_cast<float>(Math_PI)) * 60.0f;
+			}
+
+			// Obstacle collision penalty (part of nav cost)
+			bool obs_col = false;
+			ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(arc);
+			if (obs_info.has_collision && !obs_info.is_torpedo) {
+				Vector2 to_obs = obs_info.obstacle_position - state.position;
+				if (to_obs.length() > 0.1f && our_fwd.dot(to_obs.normalized()) > 0.3f) {
+					float urgency = std::min(1.0f, 10.0f / std::max(obs_info.time_to_collision, 1.0f));
+					nav_score += urgency * 60.0f;
+					obs_col = true;
+				}
+			}
+
+			ThreatEval threats = score_arc_shell_threat(arc);
+
+			// Soft terrain penalty: prefer arcs that stay outside soft_clearance
+			// when the ship is currently outside it.  When already inside
+			// (e.g. spawned near terrain), all arcs share the same starting
+			// position so suppress the penalty to avoid non-discriminating inflation.
+			if (sdf_here >= soft_clearance && soft_min_sdf < soft_clearance) {
+				const float pen_t = 1.0f - clamp_f(
+					(soft_min_sdf - hard_clearance) / std::max(soft_clearance - hard_clearance, 1.0f),
+					0.0f, 1.0f);
+				nav_score += pen_t * SOFT_TERRAIN_PENALTY;
+			}
+
+			if (n_pass < MAX_PASS_ENTRIES)
+				pass_data[n_pass++] = { cand_rudder, cand_throttle, nav_score, threats, obs_col };
+
+		} else {
+			// ---- Normal: predict_arc_to_heading + arrival/alignment scoring ----
+			auto arc = predict_arc_to_heading(cand_rudder, cand_throttle, wp_target,
+			                                   sim_lookahead, sim_max_time);
+			if (arc.size() < 2) { steering_short_arc_rejects++; continue; }
+			steering_candidates_simulated++;
+			steering_arc_points_simulated += static_cast<int>(arc.size());
+
+			// Terrain check with waypoint-arrival early stop.
+			// Also track minimum SDF for the soft-terrain penalty below.
+			bool  terrain_blocked = false;
+			float arrival_time    = -1.0f;
+			float soft_min_sdf    = std::numeric_limits<float>::infinity();
+			if (map.is_valid() && map->is_built()) {
+				for (const auto &pt : arc) {
+					if (pt.position.distance_to(wp_target) < wp_reach_radius) {
+						arrival_time = pt.time;
+						break;
+					}
+					const float sdf = map->get_distance(pt.position.x, pt.position.y);
+					if (sdf < hard_clearance) { terrain_blocked = true; break; }
+					if (sdf < soft_clearance && sdf < soft_min_sdf) soft_min_sdf = sdf;
+				}
+			}
+			if (terrain_blocked) { steering_terrain_rejects++; continue; }
+
+			// Nav score: arrival or alignment time + estimated travel
+			float nav_score;
+			if (arrival_time >= 0.0f) {
+				nav_score = arrival_time;
+			} else {
+				const float alignment_time = arc.back().time;
+				// Closest approach to waypoint across the full arc (prevents tie on overshoot)
+				float endpoint_dist = arc.back().position.distance_to(wp_target);
+				for (const auto &pt : arc) {
+					float d = pt.position.distance_to(wp_target);
+					if (d < endpoint_dist) endpoint_dist = d;
+				}
+				// Reverse candidates: score remaining travel at forward speed
+				// (ship will switch to forward after bow-alignment).
+				const float endpoint_speed = (cand_throttle < 0)
+					? throttle_to_speed(3)
+					: std::abs(arc.back().speed);
+				nav_score = alignment_time + endpoint_dist / std::max(endpoint_speed, 1.0f);
+			}
+
+			// Heading-weight blend
+			if (has_heading_weight) {
+				float heading_align_time = std::numeric_limits<float>::infinity();
+				for (const auto &hpt : arc) {
+					Vector2 to_hvp = heading_vp - hpt.position;
+					if (to_hvp.length() > 1.0f) {
+						float desired_h = std::atan2(to_hvp.x, to_hvp.y);
+						if (std::abs(angle_difference(hpt.heading, desired_h)) < heading_align_thresh) {
+							heading_align_time = hpt.time;
 							break;
 						}
 					}
 				}
-				// Check if this point has reached the waypoint
-				if (pt.position.distance_to(wp_target) < wp_reach_radius) {
-					arrival_time = pt.time;
-					break;  // stop checking — ship stops here
-				}
-				float sdf = map->get_distance(pt.position.x, pt.position.y);
-				if (sdf < hard_clearance) {
-					terrain_blocked = true;
-					break;
-				}
-			}
-		}
-		if (terrain_blocked) {
-			steering_terrain_rejects++;
-			continue;
-		}
-
-		// --- (b) Alignment time / arrival time ---
-		// If the arc physically reached the waypoint before aligning, use
-		// the arrival time directly (travel_time = 0).  Otherwise use the
-		// alignment time + estimated travel.
-		float total_time;
-		if (arrival_time >= 0.0f) {
-			// Arc passed through the waypoint — score is just the arrival time
-			total_time = arrival_time;
-		} else {
-			float alignment_time = arc.back().time;
-
-			// Use the closest approach to the waypoint over the entire arc,
-			// not just the endpoint.  After heading alignment the arc continues
-			// straight and can overshoot or drift slightly past the waypoint;
-			// two symmetric candidates (e.g. hard-left vs hard-right) often
-			// end up with near-identical endpoint distances, causing their
-			// scores to tie and the winner to flip every frame.  Minimum
-			// distance captures which arc actually gets closer to the target.
-			float endpoint_dist = arc.back().position.distance_to(wp_target);
-			for (const auto &pt : arc) {
-				float d = pt.position.distance_to(wp_target);
-				if (d < endpoint_dist) endpoint_dist = d;
-			}
-
-			// When a reverse candidate ends with the bow aligned toward the
-			// waypoint, the ship will switch to forward throttle on the next
-			// frame.  Score the remaining travel using forward speed instead
-			// of the slow reverse speed.  This prevents oscillation: without
-			// this, reverse candidates are over-penalised by the slow reverse
-			// speed, so the ship reverses just far enough to unblock a forward
-			// path, drives forward into the shore again, and repeats.
-			float endpoint_speed;
-			if (cand_throttle < 0) {
-				// Bow is aligned with the waypoint — estimate travel at
-				// the forward speed the ship will use after switching.
-				// Use a moderate forward throttle (magnitude 3) as a
-				// reasonable estimate of the speed the navigator will
-				// command once it resumes forward travel.
-				endpoint_speed = throttle_to_speed(3);
-			} else {
-				endpoint_speed = std::abs(arc.back().speed);
-			}
-			if (endpoint_speed < 1.0f) endpoint_speed = 1.0f;
-			float travel_time = endpoint_dist / endpoint_speed;
-			total_time = alignment_time + travel_time;
-
-			// Penalise residual heading error so arcs that nearly align beat
-			// arcs that don't turn at all — matters most when all candidates
-			// exhaust max_time without achieving alignment.
-			if (wp_is_virtual) {
-				Vector2 to_vp = wp_target - arc.back().position;
-				if (to_vp.length() > 1.0f) {
-					float desired_h = std::atan2(to_vp.x, to_vp.y);
-					float final_h_err = std::abs(angle_difference(arc.back().heading, desired_h));
-					total_time += (final_h_err / Math_PI) * 60.0f;
-				}
-			}
-		}
-
-		// --- (b.5) Heading-weight blend ---
-		// When heading_weight > 0, score this arc by how quickly it aligns with
-		// target.heading and blend that score into total_time.  Terrain/obstacle
-		// penalties are applied AFTER the blend so they remain equally repulsive
-		// regardless of the navigation mode.
-		if (has_heading_weight) {
-			constexpr float ha_thresh = 0.087f;  // ~5° — mirrors heading_align_thresh above
-			float heading_align_time = std::numeric_limits<float>::infinity();
-			for (const auto &hpt : arc) {
-				Vector2 to_hvp = heading_vp - hpt.position;
-				if (to_hvp.length() > 1.0f) {
-					float desired_h = std::atan2(to_hvp.x, to_hvp.y);
-					if (std::abs(angle_difference(hpt.heading, desired_h)) < ha_thresh) {
-						heading_align_time = hpt.time;
-						break;
+				if (heading_align_time == std::numeric_limits<float>::infinity()) {
+					Vector2 to_hvp = heading_vp - arc.back().position;
+					if (to_hvp.length() > 1.0f) {
+						float desired_h = std::atan2(to_hvp.x, to_hvp.y);
+						float h_err = std::abs(angle_difference(arc.back().heading, desired_h));
+						heading_align_time = arc.back().time + (h_err / static_cast<float>(Math_PI)) * 60.0f;
+					} else {
+						heading_align_time = arc.back().time;
 					}
 				}
+				nav_score = lerp_f(nav_score, heading_align_time, target.heading_weight);
 			}
-			if (heading_align_time == std::numeric_limits<float>::infinity()) {
-				// Heading not achieved within arc — penalise by residual heading error.
-				Vector2 to_hvp = heading_vp - arc.back().position;
-				if (to_hvp.length() > 1.0f) {
-					float desired_h = std::atan2(to_hvp.x, to_hvp.y);
-					float h_err = std::abs(angle_difference(arc.back().heading, desired_h));
-					heading_align_time = arc.back().time + (h_err / Math_PI) * 60.0f;
-				} else {
-					heading_align_time = arc.back().time;
-				}
-			}
-			total_time = lerp_f(total_time, heading_align_time, target.heading_weight);
-		}
 
-		// --- (b.75) Exit-heading penalty: remaining full-path cost ---
-		// Estimate the heading at which the ship will arrive at wp_target.
-		//
-		// Two cases:
-		//   arrival_time >= 0  — an arc point physically reached wp_target.  Use the
-		//                        *travel direction* of that point: bow heading for forward
-		//                        candidates, -bow (stern direction) for reverse candidates.
-		//                        Do NOT use arc.back(): the arc may have continued past
-		//                        wp_target hunting for bow-alignment on the other side,
-		//                        giving a spurious 180° heading error for a valid forward arc.
-		//   arrival_time < 0   — arc terminated at the bow-alignment point.  The ship then
-		//                        drives forward from that point to wp_target, so arrival
-		//                        heading == direction from alignment endpoint to wp_target.
-		//
-		// The penalty is scaled by remaining path distance so it vanishes when the
-		// destination is close: reversing to a nearby final waypoint is fine and should
-		// still win, but reversing past an intermediate waypoint on a long journey is
-		// correctly penalised.
-		if (apply_exit_penalty) {
-			float arrival_h;
-			if (arrival_time >= 0.0f) {
-				// Find the first arc point within wp_reach_radius of wp_target.
-				float h_at_wp = arc.back().heading;  // fallback
-				for (const auto &pt : arc) {
-					if (pt.position.distance_to(wp_target) < wp_reach_radius) {
-						h_at_wp = pt.heading;
-						break;
+			// Exit-heading penalty
+			if (apply_exit_penalty) {
+				float arrival_h;
+				if (arrival_time >= 0.0f) {
+					float h_at_wp = arc.back().heading;
+					for (const auto &pt : arc) {
+						if (pt.position.distance_to(wp_target) < wp_reach_radius) { h_at_wp = pt.heading; break; }
 					}
-				}
-				if (cand_throttle < 0) {
-					// Reversing: travel direction is the stern direction = bow + 180°.
-					arrival_h = normalize_angle(h_at_wp + static_cast<float>(Math_PI));
+					arrival_h = (cand_throttle < 0)
+						? normalize_angle(h_at_wp + static_cast<float>(Math_PI))
+						: h_at_wp;
 				} else {
-					// Forward: travel direction equals bow heading.
-					arrival_h = h_at_wp;
+					Vector2 d_wp = wp_target - arc.back().position;
+					arrival_h = (d_wp.length() > 1.0f) ? std::atan2(d_wp.x, d_wp.y) : arc.back().heading;
 				}
-			} else {
-				// Arc stopped at bow-alignment point; ship then drives forward to wp_target.
-				// Arrival heading = direction from arc endpoint to wp_target.
-				Vector2 d_wp     = wp_target - arc.back().position;
-				float   d_wp_len = d_wp.length();
-				arrival_h = (d_wp_len > 1.0f)
-				          ? std::atan2(d_wp.x, d_wp.y)
-				          : arc.back().heading;
+				const float exit_err = std::abs(angle_difference(arrival_h, desired_exit_heading));
+				const float fwd_speed = std::max(throttle_to_speed(4), 1.0f);
+				const float half_tc = (static_cast<float>(Math_PI) * params.turning_circle_radius) / fwd_speed;
+				nav_score += (exit_err / static_cast<float>(Math_PI)) * half_tc;
 			}
-			float exit_err = std::abs(angle_difference(arrival_h, desired_exit_heading));
-			// Pure turn-time cost: how long does it take to rotate by exit_err
-			// at the ship's turning rate?  Half-turning-circle time == 180° rotation.
-			// No scaling: the remaining path distance is constant across all candidates
-			// so it doesn't affect ordering.  wp_is_virtual already handles the
-			// "destination is close" case by setting apply_exit_penalty = false.
-			float fwd_speed = throttle_to_speed(4);
-			if (fwd_speed < 1.0f) fwd_speed = 1.0f;
-			float half_tc_time = (static_cast<float>(Math_PI) * params.turning_circle_radius) / fwd_speed;
-			total_time += (exit_err / static_cast<float>(Math_PI)) * half_tc_time;
-		}
 
-		// --- (c) Obstacle check ---
-		ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(arc);
-
-		if (obs_info.has_collision && !obs_info.is_torpedo) {
-			Vector2 to_obs = obs_info.obstacle_position - state.position;
-			float to_obs_len = to_obs.length();
-			bool hitter = false;
-			if (to_obs_len > 0.1f) {
-				float bow_dot = our_fwd.dot(to_obs / to_obs_len);
-				hitter = (bow_dot > 0.3f);
-			}
-			if (hitter) {
-				// Scale penalty by urgency: imminent collisions (ttc ≤ 10s) get
-				// the full penalty; distant ones taper off so the ship doesn't
-				// take wild detours to avoid ships that are far away and will
-				// likely have re-planned by the time they get close.
-				float urgency = std::min(1.0f, 10.0f / std::max(obs_info.time_to_collision, 1.0f));
-				total_time += urgency * 60.0f;
-				any_collision = true;
-			}
-		}
-
-		// --- Shell & torpedo threat penalty ---
-		// Scores real shells (from incoming_shells_) and virtual shell landings
-		// generated procedurally from torpedo obstacle paths.
-		{
-			float threat_penalty = score_arc_shell_threat(arc);
-			total_time += threat_penalty * dynamic_threat_weight;
-
-			// --- Option B: Dodge commitment bias ---
-			// If we're committed to a dodge direction, penalize candidates
-			// that turn the opposite way.  This prevents frame-to-frame
-			// oscillation when symmetric threats produce mirror-image arcs.
-			if (threat_penalty > 0.0f && dodge_committed_rudder_ != 0.0f) {
-				// Check if this candidate opposes the committed direction
-				bool opposes = (cand_rudder * dodge_committed_rudder_ < -0.01f);
-				if (opposes) {
-					total_time += DODGE_COMMITMENT_BIAS;
+			// Obstacle collision penalty (part of nav cost)
+			bool obs_col = false;
+			ObstacleCollisionInfo obs_info = check_arc_obstacles_detailed(arc);
+			if (obs_info.has_collision && !obs_info.is_torpedo) {
+				Vector2 to_obs = obs_info.obstacle_position - state.position;
+				if (to_obs.length() > 0.1f && our_fwd.dot(to_obs.normalized()) > 0.3f) {
+					float urgency = std::min(1.0f, 10.0f / std::max(obs_info.time_to_collision, 1.0f));
+					nav_score += urgency * 60.0f;
+					obs_col = true;
 				}
 			}
-		}
 
-		if (total_time < best_time) {
-			best_time = total_time;
-			best_rudder = cand_rudder;
-			best_throttle = cand_throttle;
-			winning_arc = std::move(arc);
-		}
-	}
+			ThreatEval threats = score_arc_shell_threat(arc);
 
-	// If ALL candidates were disqualified (every arc enters hard clearance),
-	// fall back: pick the candidate whose minimum SDF is least bad.
-	if (best_time == std::numeric_limits<float>::infinity()) {
+			// Soft terrain penalty: same logic as the wp_is_virtual branch.
+			if (sdf_here >= soft_clearance && soft_min_sdf < soft_clearance) {
+				const float pen_t = 1.0f - clamp_f(
+					(soft_min_sdf - hard_clearance) / std::max(soft_clearance - hard_clearance, 1.0f),
+					0.0f, 1.0f);
+				nav_score += pen_t * SOFT_TERRAIN_PENALTY;
+			}
+
+			if (n_pass < MAX_PASS_ENTRIES)
+				pass_data[n_pass++] = { cand_rudder, cand_throttle, nav_score, threats, obs_col };
+		}
+	} // end candidate loop
+
+	// =========================================================
+	// Terrain-blocked fallback
+	// If every candidate was disqualified by terrain, choose the
+	// one whose arc reaches the highest minimum SDF.
+	// =========================================================
+	if (n_pass == 0) {
 		float least_bad_sdf = -std::numeric_limits<float>::infinity();
 		for (int i = 0; i < n_candidates; ++i) {
 			auto arc = predict_arc_internal(candidates[i].rudder, candidates[i].throttle, lookahead);
 			if (arc.empty()) continue;
 			steering_candidates_simulated++;
 			steering_arc_points_simulated += static_cast<int>(arc.size());
-
 			float min_sdf = std::numeric_limits<float>::infinity();
 			if (map.is_valid() && map->is_built()) {
 				for (const auto &pt : arc) {
@@ -2301,48 +2278,135 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 					if (sdf < min_sdf) min_sdf = sdf;
 				}
 			}
-
 			if (min_sdf > least_bad_sdf) {
-				least_bad_sdf = min_sdf;
-				best_rudder = candidates[i].rudder;
-				best_throttle = candidates[i].throttle;
+				least_bad_sdf   = min_sdf;
+				result.rudder   = candidates[i].rudder;
+				result.throttle = candidates[i].throttle;
 				winning_arc = std::move(arc);
 			}
 		}
-		any_collision = true;
+		result.collision_imminent = true;
+		perf_last_steering_candidates_total_     = steering_candidates_total;
+		perf_last_steering_candidates_simulated_ = steering_candidates_simulated;
+		perf_last_steering_terrain_rejects_      = steering_terrain_rejects;
+		perf_last_steering_short_arc_rejects_    = steering_short_arc_rejects;
+		perf_last_steering_arc_points_simulated_ = steering_arc_points_simulated;
+		return result;
 	}
 
-	result.rudder = best_rudder;
-	result.throttle = best_throttle;
-	result.collision_imminent = any_collision || (best_rudder != desired_rudder) || (best_throttle != desired_throttle);
+	// =========================================================
+	// Two-pass selection
+	// =========================================================
+	// Pass 1: best pure-navigation score
+	float best_nav = std::numeric_limits<float>::infinity();
+	for (int i = 0; i < n_pass; ++i)
+		if (pass_data[i].nav_score < best_nav) best_nav = pass_data[i].nav_score;
 
-	perf_last_steering_candidates_total_ = steering_candidates_total;
-	perf_last_steering_candidates_simulated_ = steering_candidates_simulated;
-	perf_last_steering_terrain_rejects_ = steering_terrain_rejects;
-	perf_last_steering_short_arc_rejects_ = steering_short_arc_rejects;
-	perf_last_steering_arc_points_simulated_ = steering_arc_points_simulated;
+	// Pass 2: threat budgets
+	// Shell budget: how many extra nav-seconds we accept to get a better shell angle.
+	//   Zeroed when stuck_override_active_ (ship pushes through shell fire).
+	// Torpedo budget: much larger — surviving a torpedo is worth a major detour.
+	bool has_torpedoes = false;
+	for (const auto &[id, obs] : obstacles)
+		if (obs.is_torpedo()) { has_torpedoes = true; break; }
 
-	// --- Option B: Set dodge commitment when threats caused a rudder change ---
-	// If shells/torpedoes are present and the winning rudder differs from
-	// the desired rudder, commit to that dodge direction so we don't flip
-	// back next frame.
-	bool threats_active = !incoming_shells_.empty();
-	if (!threats_active) {
-		for (const auto &[id, obs] : obstacles) {
-			if (obs.is_torpedo()) { threats_active = true; break; }
+	const float shell_budget   = (shells_safe || stuck_override_active_) ? 0.0f : SHELL_NAV_BUDGET;
+	const float torpedo_budget = has_torpedoes ? TORPEDO_NAV_BUDGET : 0.0f;
+	const float budget_threshold = best_nav + shell_budget + torpedo_budget;
+
+	// Pre-compute the minimum raw threat among budget-eligible candidates.
+	// Normalising to relative scores means the best-achievable threat = 0.
+	// When all arcs are hit equally (min > 0, e.g. ship stationary broadside),
+	// every relative score is 0 and nav_score becomes the natural tiebreaker —
+	// the arc that gets the ship to the destination wins instead of one that
+	// merely presents a slightly different angle to the incoming shell.
+	float min_shell_eligible = 0.0f;
+	float min_torp_eligible  = 0.0f;
+	{
+		float ms = std::numeric_limits<float>::infinity();
+		float mt = std::numeric_limits<float>::infinity();
+		for (int i = 0; i < n_pass; ++i) {
+			if (pass_data[i].nav_score > budget_threshold) continue;
+			if (!stuck_override_active_)
+				ms = std::min(ms, pass_data[i].threats.shell_score);
+			mt = std::min(mt, pass_data[i].threats.torpedo_score);
+		}
+		if (ms < std::numeric_limits<float>::infinity()) min_shell_eligible = ms;
+		if (mt < std::numeric_limits<float>::infinity()) min_torp_eligible  = mt;
+	}
+
+	// Pass 2: pick lowest relative threat within budget, nav_score as tiebreaker.
+	int   best_idx        = -1;
+	float best_eff_threat = std::numeric_limits<float>::infinity();
+	for (int i = 0; i < n_pass; ++i) {
+		if (pass_data[i].nav_score > budget_threshold) continue;
+		if (pass_data[i].any_obs_collision) any_collision = true;
+
+		// Shell score: suppressed during stuck override; otherwise normalised to
+		// best-achievable so that "equally bad" arcs all score 0 here.
+		const float shell_t = stuck_override_active_ ? 0.0f
+		                    : (pass_data[i].threats.shell_score - min_shell_eligible);
+		float eff_threat = shell_t + (pass_data[i].threats.torpedo_score - min_torp_eligible);
+
+		// Commitment bias: penalise candidates opposing the committed dodge direction,
+		// but only when this arc is strictly worse than the minimum-threat arc.
+		if (dodge_committed_rudder_ != 0.0f && eff_threat > 0.0f) {
+			if (pass_data[i].rudder * dodge_committed_rudder_ < -0.01f)
+				eff_threat += DODGE_COMMITMENT_BIAS;
+		}
+
+		// Primary criterion: lowest relative threat.
+		// Tiebreaker (within floating-point noise): lowest nav_score.
+		const bool better_threat = (eff_threat < best_eff_threat);
+		const bool equal_threat  = (!better_threat && eff_threat <= best_eff_threat + 1e-4f);
+		const bool better_nav    = (best_idx >= 0 && pass_data[i].nav_score < pass_data[best_idx].nav_score);
+
+		if (better_threat || (equal_threat && better_nav)) {
+			best_eff_threat = eff_threat;
+			best_idx = i;
 		}
 	}
-	if (threats_active && std::abs(best_rudder - desired_rudder) > 0.1f) {
-		float rudder_sign = (best_rudder > 0.0f) ? 1.0f : -1.0f;
-		// Only set commitment if it's a new direction or reinforcing the same one
+
+	// Safety fallback: best_nav is always within budget, so best_idx should
+	// never be -1 when n_pass > 0.  Guard anyway.
+	if (best_idx == -1) {
+		for (int i = 0; i < n_pass; ++i) {
+			if (pass_data[i].nav_score <= best_nav + 1e-3f) { best_idx = i; break; }
+		}
+	}
+
+	result.rudder   = pass_data[best_idx].rudder;
+	result.throttle = pass_data[best_idx].throttle;
+
+	// Re-simulate winning arc for visualization
+	winning_arc = predict_arc_internal(result.rudder, result.throttle, sim_lookahead);
+
+	result.collision_imminent = any_collision
+		|| (result.rudder   != desired_rudder)
+		|| (result.throttle != desired_throttle);
+
+	perf_last_steering_candidates_total_     = steering_candidates_total;
+	perf_last_steering_candidates_simulated_ = steering_candidates_simulated;
+	perf_last_steering_terrain_rejects_      = steering_terrain_rejects;
+	perf_last_steering_short_arc_rejects_    = steering_short_arc_rejects;
+	perf_last_steering_arc_points_simulated_ = steering_arc_points_simulated;
+
+	// --- Update dodge commitment ---
+	// threats_active: mirrors the shells_safe reachability check so that
+	// non-threatening shells (landing too far to reach) do not prevent the
+	// commitment timer from clearing.
+	bool threats_active = !shells_safe;
+	if (!threats_active)
+		for (const auto &[id, obs] : obstacles)
+			if (obs.is_torpedo()) { threats_active = true; break; }
+
+	if (threats_active && std::abs(result.rudder - desired_rudder) > 0.1f) {
+		float rudder_sign = (result.rudder > 0.0f) ? 1.0f : -1.0f;
 		if (dodge_committed_rudder_ == 0.0f || rudder_sign == dodge_committed_rudder_) {
 			dodge_committed_rudder_ = rudder_sign;
 			dodge_commitment_timer_ = DODGE_COMMITMENT_DURATION;
 		}
-		// If the best candidate opposes the current commitment, only override
-		// if the score difference is decisive (commitment timer expired naturally)
 	} else if (!threats_active) {
-		// No threats — clear commitment immediately
 		dodge_committed_rudder_ = 0.0f;
 		dodge_commitment_timer_ = 0.0f;
 	}
@@ -3031,7 +3095,17 @@ bool ShipNavigator::is_waypoint_reached(Vector2 waypoint) const {
 	Vector2 forward(std::sin(state.heading), std::cos(state.heading));
 	float along_track = to_wp.x * forward.x + to_wp.y * forward.y;
 
-	if (along_track < 0.0f && dist < reach_radius * 2.0f) return true;
+	// "Passed" check: waypoint is behind the ship AND we passed close to it.
+	// The cross-track distance (perpendicular offset from the ship's track line)
+	// must also be within reach_radius.  Without this guard, a waypoint that is
+	// far away but almost perpendicular (barely behind the ship's equator) would
+	// be wrongly marked as reached — causing the path to be consumed prematurely
+	// and leaving the ship with no waypoints to steer toward.
+	if (along_track < 0.0f && dist < reach_radius * 2.0f) {
+		// cross_track = perpendicular distance from waypoint to ship's heading line
+		float cross_track = std::abs(to_wp.x * forward.y - to_wp.y * forward.x);
+		return cross_track < reach_radius;
+	}
 
 	return false;
 }

@@ -28,9 +28,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			continue
 		if friendly.global_position.distance_to(ship_pos) <= gun_range:
 			friendly_pos.append(friendly.global_position)
-
+	var enemies_in_range := 0
 	# Spotted enemies within gun range
-	for enemy in ctx.server.get_valid_targets(ship.team.team_id):
+	var spotted = ctx.server.get_valid_targets(ship.team.team_id)
+	for enemy in spotted:
 		if not is_instance_valid(enemy):
 			continue
 		if enemy.global_position.distance_to(ship_pos) <= gun_range:
@@ -67,6 +68,10 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# This means the ship stays on the same conceptual orbit and just slides along it.
 	var to_center = Vector3(ship_pos.x - battle_center.x, 0.0, ship_pos.z - battle_center.z)
 	var dynamic_radius = max(to_center.length(), MIN_RADIUS)
+	if spotted.size() == 0 and unspotted.size() == 0:
+		pass
+	else:
+		dynamic_radius *= pow(float(enemy_pos.size()) / 12.0, 0.5)
 
 	# destination is point on the circle defined by battle_center + dynamic_radius
 	# the destination is 45 deg from the ships current position away from friendly average
@@ -79,7 +84,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var flank_pos = battle_center + Vector3(sin(target_angle), 0.0, cos(target_angle)) * dynamic_radius
 
 	flank_pos = ctx.behavior._get_valid_nav_point(flank_pos)
-	return NavIntent.create(flank_pos, target_angle + PI)
+	return NavIntent.create(flank_pos, target_angle + PI / 2.0aa)
 
 	# # Angle of this ship on the dynamic circle (from battle center)
 	# var ship_angle = atan2(to_center.x, to_center.z)

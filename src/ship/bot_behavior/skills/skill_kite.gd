@@ -19,6 +19,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	# var danger_bearing = atan2(to_danger.x, to_danger.z)
 	# var away_bearing = ctx.behavior._normalize_angle(danger_bearing + PI)
+	var can_reverse = params.get("can_reverse", false)
 
 	var heading = SkillAngle.calc_heading(ctx, params)
 
@@ -29,7 +30,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 8.0)
+	var dest
+	if can_reverse:
+		dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 1.5
+	else:
+		dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 8.0)
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
 

@@ -432,13 +432,45 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 
 		return fallback_result
 
-	# Always sort islands by proximity — nearest edge of island to ship wins ties
+	# Pre-compute a hide-aware travel cost for each island so the sort
+	# comparator stays O(1) per comparison.  Cost combines:
+	#   - edge_dist : distance from the ship to the nearest island edge
+	#   - arc_cost  : arc the ship must travel around the island to reach
+	#                 the hide side = angle_diff (0..PI) * island_radius
+	# The hide side of every island is the face pointing directly away from
+	# the spotted danger centre -- one shared reference point, computed once.
+	var _danger_center: Vector3 = ctx.behavior._get_spotted_danger_center()
+	var _use_danger_center: bool = _danger_center != Vector3.ZERO
+
+	var _island_travel_cost: Dictionary = {}
+	for _sort_isl in islands:
+		var _sc2d: Vector2 = _sort_isl["center"]
+		var _sisl_pos := Vector3(_sc2d.x, 0.0, _sc2d.y)
+		var _sisl_radius: float = _sort_isl["radius"]
+		var _edge_dist := maxf(my_pos.distance_to(_sisl_pos) - _sisl_radius, 0.0)
+
+		var _arc_cost := 0.0
+		if _use_danger_center:
+			# Hide direction: from danger centre toward island centre (the far side).
+			var _hide_dir := _sisl_pos - _danger_center
+			_hide_dir.y = 0.0
+			# Ship direction: from island centre toward the ship.
+			var _ship_dir: Vector3 = my_pos - _sisl_pos
+			_ship_dir.y = 0.0
+			if _hide_dir.length_squared() > 1.0 and _ship_dir.length_squared() > 1.0:
+				var _cos_a := _hide_dir.normalized().dot(_ship_dir.normalized())
+				# acos gives the unsigned angle (0..PI) between the two directions.
+				_arc_cost = acos(clampf(_cos_a, -1.0, 1.0)) * _sisl_radius
+
+		_island_travel_cost[_sort_isl["id"]] = _edge_dist + _arc_cost
+
+	# Sort islands by estimated navigation cost; committed island is kept
+	# first as long as it is still within firing range.
 	islands.sort_custom(func(a, b):
 		var ca = Vector3(a["center"].x, 0.0, a["center"].y)
-		var cb = Vector3(b["center"].x, 0.0, b["center"].y)
-		if a["id"] == _target_island_id and my_pos.distance_to(ca) - a['radius'] < max_desired_range:
+		if a["id"] == _target_island_id and my_pos.distance_to(ca) - a["radius"] < max_desired_range:
 			return true
-		return my_pos.distance_to(ca) - a["radius"] < my_pos.distance_to(cb) - b["radius"]
+		return _island_travel_cost[a["id"]] < _island_travel_cost[b["id"]]
 	)
 
 	var spacing_conflict_fallback: Dictionary = {}

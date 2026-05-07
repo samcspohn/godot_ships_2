@@ -33,8 +33,8 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 0.5
-		Ship.ShipClass.CA: return 1.0
+		Ship.ShipClass.BB: return 0.7
+		Ship.ShipClass.CA: return 1.5
 		Ship.ShipClass.DD: return 2.0
 	return 1.0
 
@@ -198,102 +198,158 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var _prev_skill_name = _active_skill_name
 	var intent: NavIntent = null
 
+	# if not has_enemies:
+	# 	# No enemies at all — hunt then chase
+	# 	intent = _skill_flank.execute(ctx, {})
+	# 	if intent:
+	# 		_active_skill_name = &"Flank"
+	# 	else:
+	# 		intent = _skill_hunt.execute(ctx, {})
+	# 		_active_skill_name = &"Hunt"
+	# 		if intent == null:
+	# 			intent = _skill_chase.execute(ctx, {})
+	# 			if intent:
+	# 				_active_skill_name = &"Chase"
+	# elif not has_spotted or (nearest != null and dist > gun_range):
+	# 	# Enemies exist but none spotted — chase then hunt
+	# 	intent = _skill_chase.execute(ctx, {})
+	# 	_active_skill_name = &"Chase"
+	# 	if intent == null:
+	# 		intent = _skill_hunt.execute(ctx, {})
+	# 		if intent:
+	# 			_active_skill_name = &"Hunt"
+	# elif threat < 0.25:
+	# 	# Low threat: push toward the enemy — but prefer a closer unspotted enemy
+	# 	# over crossing the map to fight a distant detected one.
+	# 	_skill_cover.reset()
+	# 	if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range * 0.85:
+	# 		intent = _skill_chase.execute(ctx, {})
+	# 		if intent:
+	# 			_active_skill_name = &"Chase"
+	# 	if intent == null:
+	# 		intent = _skill_push.execute(ctx, {})
+	# 		if intent:
+	# 			_active_skill_name = &"Push"
+	# elif dist < 6000.0 and nearest != null and !ship.visible_to_enemy:
+	# 	# High-ish threat (>= 0.65) AND enemy is close — calculate the optimal
+	# 	# presentation angle and choose angle skill (bow-in) or kite (stern-in).
+	# 	var to_nearest = nearest.global_position - ship.global_position
+	# 	to_nearest.y = 0.0
+	# 	# var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+	# 	var optimal_heading = SkillAngle.calc_heading(ctx, {})
+	# 	# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
+	# 	# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
+	# 	var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
+	# 	if bow_diff < PI * 0.5:
+	# 		# Optimal heading is bow-in — push toward enemy
+	# 		intent = _skill_push.execute(ctx, {})
+	# 		if intent != null:
+	# 			_active_skill_name = &"Push"
+	# 	else:
+	# 		# Optimal heading is stern-in — kite away while keeping guns on target
+	# 		intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
+	# 		if intent != null:
+	# 			_active_skill_name = &"Kite"
+	# elif threat < 0.4:
+	# 	if not _unspotted_near.is_empty() and _unspotted_near.distance < dist or dist > gun_range * 0.75:
+	# 		intent = _skill_chase.execute(ctx, {})
+	# 		if intent:
+	# 			_active_skill_name = &"Chase"
+	# 	if intent == null:
+	# 		intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
+	# 		if intent:
+	# 			_active_skill_name = &"Flank"
+	# 			if _ship.visible_to_enemy:
+	# 				var _intent = _skill_push.execute(ctx, {})
+	# 				if _intent:
+	# 					intent.target_position = intent.target_position.lerp(_intent.target_position, 0.2)
+	# 					intent.target_heading = _intent.target_heading
+	# elif threat < 0.65:
+	# 	intent = _skill_camp.execute(ctx, {"here": true})
+	# 	if intent:
+	# 		_active_skill_name = &"Camp"
+	# else:
+	# 	# High threat: take cover — cover at 70% range, fall back to kite
+	# 	var cover_intent = _skill_cover.execute(ctx, {})
+	# 	if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy):
+	# 		intent = cover_intent
+	# 		_active_skill_name = &"FindCover"
+	# 	else:
+	# 		if cover_intent != null and nearest == null:
+	# 			# No nearest enemy to evaluate angle — accept cover unconditionally
+	# 			intent = cover_intent
+	# 			_active_skill_name = &"FindCover"
+	# 		else:
+	# 			intent = _skill_kite.execute(ctx, {})
+	# 			if intent:
+	# 				_active_skill_name = &"Kite"
+
+	# # Fallback chain
+	# if intent == null:
+	# 	intent = _skill_chase.execute(ctx, {})
+	# 	if intent:
+	# 		_active_skill_name = &"Chase"
+	# if intent == null:
+	# 	var fwd = ship.global_position - ship.basis.z * 10000
+	# 	fwd.y = 0.0
+	# 	intent = NavIntent.create(_get_valid_nav_point(fwd), _calc_approach_heading(ship, fwd))
+	# 	_active_skill_name = &"SailForward"
+
+	# if close and visible_to_enemy
+	# 	if threat < 0.5
+	# 		push
+	# 	else
+	# 		kite
+	# threat < 0.2
+	# 	flank
+	# threat < 0.5
+	# 	camp
+	# else
+	# 	kite/cover
 	if not has_enemies:
 		# No enemies at all — hunt then chase
 		intent = _skill_flank.execute(ctx, {})
 		if intent:
 			_active_skill_name = &"Flank"
-		else:
-			intent = _skill_hunt.execute(ctx, {})
-			_active_skill_name = &"Hunt"
-			if intent == null:
-				intent = _skill_chase.execute(ctx, {})
-				if intent:
-					_active_skill_name = &"Chase"
-	elif not has_spotted or (nearest != null and dist > gun_range):
+	elif spotted.size() == 0 and unspotted.size() > 0:
 		# Enemies exist but none spotted — chase then hunt
 		intent = _skill_chase.execute(ctx, {})
 		_active_skill_name = &"Chase"
-		if intent == null:
-			intent = _skill_hunt.execute(ctx, {})
-			if intent:
-				_active_skill_name = &"Hunt"
-	elif threat < 0.25:
-		# Low threat: push toward the enemy — but prefer a closer unspotted enemy
-		# over crossing the map to fight a distant detected one.
-		_skill_cover.reset()
-		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist and dist > gun_range * 0.85:
-			intent = _skill_chase.execute(ctx, {})
-			if intent:
-				_active_skill_name = &"Chase"
-		if intent == null:
-			intent = _skill_push.execute(ctx, {})
-			if intent:
-				_active_skill_name = &"Push"
-	elif dist < 6000.0 and nearest != null and !ship.visible_to_enemy:
-		# High-ish threat (>= 0.65) AND enemy is close — calculate the optimal
-		# presentation angle and choose angle skill (bow-in) or kite (stern-in).
-		var to_nearest = nearest.global_position - ship.global_position
-		to_nearest.y = 0.0
-		# var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-		var optimal_heading = SkillAngle.calc_heading(ctx, {})
-		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
-		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
-		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
-		if bow_diff < PI * 0.5:
-			# Optimal heading is bow-in — push toward enemy
-			intent = _skill_push.execute(ctx, {})
-			if intent != null:
-				_active_skill_name = &"Push"
-		else:
-			# Optimal heading is stern-in — kite away while keeping guns on target
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
-			if intent != null:
-				_active_skill_name = &"Kite"
-	elif threat < 0.4:
-		if not _unspotted_near.is_empty() and _unspotted_near.distance < dist or dist > gun_range * 0.75:
-			intent = _skill_chase.execute(ctx, {})
-			if intent:
-				_active_skill_name = &"Chase"
-		if intent == null:
-			intent = _skill_flank.execute(ctx, {"desired_range_ratio": 0.5, "flank_bias": params.flank_bias_healthy})
-			if intent:
-				_active_skill_name = &"Flank"
-				if _ship.visible_to_enemy:
-					var _intent = _skill_push.execute(ctx, {})
-					if _intent:
-						intent.target_position = intent.target_position.lerp(_intent.target_position, 0.2)
-						intent.target_heading = _intent.target_heading
-	elif threat < 0.65:
-		intent = _skill_camp.execute(ctx, {"here": true})
-		if intent:
-			_active_skill_name = &"Camp"
 	else:
-		# High threat: take cover — cover at 70% range, fall back to kite
-		var cover_intent = _skill_cover.execute(ctx, {})
-		if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy):
-			intent = cover_intent
-			_active_skill_name = &"FindCover"
-		else:
-			if cover_intent != null and nearest == null:
-				# No nearest enemy to evaluate angle — accept cover unconditionally
-				intent = cover_intent
-				_active_skill_name = &"FindCover"
+		if _nearest_dist < 6000.0 and ship.visible_to_enemy:
+
+			if threat < 0.5:
+				intent = _skill_push.execute(ctx, {"can_reverse": true})
+				if intent:
+					_active_skill_name = &"Push"
 			else:
-				intent = _skill_kite.execute(ctx, {})
+				intent = _skill_kite.execute(ctx, {"can_reverse": true})
 				if intent:
 					_active_skill_name = &"Kite"
+		else:
+			if threat < 0.4:
+				intent = _skill_flank.execute(ctx, {})
+				if intent:
+					_active_skill_name = &"Flank"
+			# elif threat < 0.4:
+			# 	intent = _skill_push.execute(ctx, {})
+			# 	if intent:
+			# 		_active_skill_name = &"Push"
+			elif threat < 0.5:
+				intent = _skill_camp.execute(ctx, {"here": true})
+				if intent:
+					_active_skill_name = &"Camp"
+			else:
+				var cover_intent = _skill_cover.execute(ctx, {})
+				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty()):
+					intent = cover_intent
+					_active_skill_name = &"FindCover"
+				else:
+					intent = _skill_kite.execute(ctx, {})
+					if intent:
+						_active_skill_name = &"Kite"
 
-	# Fallback chain
-	if intent == null:
-		intent = _skill_chase.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"Chase"
-	if intent == null:
-		var fwd = ship.global_position - ship.basis.z * 10000
-		fwd.y = 0.0
-		intent = NavIntent.create(_get_valid_nav_point(fwd), _calc_approach_heading(ship, fwd))
-		_active_skill_name = &"SailForward"
+
 
 	# Reset camp lock when switching away from Camp
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":

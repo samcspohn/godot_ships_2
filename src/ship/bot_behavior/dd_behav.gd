@@ -121,7 +121,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 			if torpedo_range > 0:
 				priority = priority * 0.3 + (1.0 - dist / torpedo_range) * 0.7
 			if ship.ship_class == Ship.ShipClass.BB:
-				priority *= 3.0  # BBs are prime torpedo targets
+				priority *= 2.0  # BBs are prime torpedo targets
 		else:
 			# Visible - prioritize gun targets
 			priority = (1.0 - dist / gun_range)

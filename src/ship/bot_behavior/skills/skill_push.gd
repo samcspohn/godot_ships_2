@@ -14,14 +14,22 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	to_enemy.y = 0.0
 	if to_enemy.length_squared() < 1.0:
 		return null
-	# var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
+	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
 
 	var heading = SkillAngle.calc_heading(ctx, params)
+	# mix enemy bearing with threat bearing
+	heading = lerp_angle(enemy_bearing, heading, 0.2)
+
+	var can_reverse = params.get("can_reverse", false)
 	# if absf(angle_difference(heading, enemy_bearing)) > PI * 0.5:
 	# 	heading = wrapf(heading + PI, -PI, PI)
 
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest = ship.global_position + fwd * to_enemy.length()
+	var dest
+	if can_reverse:
+		dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 1.5
+	else:
+		dest = ship.global_position + fwd * to_enemy.length()
 	dest.y = 0.0
 
 	dest = ctx.behavior._get_valid_nav_point(dest)

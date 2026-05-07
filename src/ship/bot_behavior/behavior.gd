@@ -545,6 +545,9 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	targets.sort_custom(func(a: Ship, b: Ship) -> bool:
 		return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
 	)
+	if new_target != null:
+		new_target = targets[0] if targets.size() > 0 else null
+
 	for potential in targets:
 		# if potential.visible_to_enemy and not can_hit_target(potential):
 		# 	continue
@@ -719,7 +722,7 @@ func _get_spotted_danger_center() -> Vector3:
 				weight *= 10.0  # Boost weight for enemies actively shooting at us
 			weighted_pos += last_pos * weight
 			total_weight += weight
-		if total_weight >= 0.001:
+		if total_weight >= 0.00001:
 			result = weighted_pos / total_weight
 		if is_nan(result.x) or is_nan(result.y) or is_nan(result.z):
 			print("NaN detected in danger center calculation! Resetting to zero.")

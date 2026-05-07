@@ -86,7 +86,8 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# 	return intent
 
 	var desired_heading: float = intent.target_heading
-	if ctx.navigator != null and !ctx.navigator.is_arrived():
+	# if ctx.navigator != null and !ctx.navigator.is_arrived():
+	if ship.global_position.distance_squared_to(intent.target_position) > ship.movement_controller.turning_circle_radius:
 		var wp: Vector3 = ctx.navigator.get_current_waypoint()
 		var to_wp: Vector3 = wp - ship.global_position
 		to_wp.y = 0.0
@@ -115,7 +116,8 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	blend *= guns_in_position
 
 	# Final target heading: gradually morphs from navigation heading toward broadside.
-	var final_heading: float = _lerp_angle(desired_heading, broadside_heading, blend)
+	# var final_heading: float = _lerp_angle(desired_heading, broadside_heading, blend)
+	var final_heading: float = broadside_heading
 
 	# --- Heading weight driven by actual gun reload state ---
 	# Average reload fraction across all guns (0 = all just fired, 1 = all ready).
@@ -123,13 +125,18 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	#   - Just fired  → reload ≈ 0 → heading_weight ≈ 0 → navigator steers freely
 	#   - Mid reload  → reload rises → heading_weight rises → navigator starts angling
 	#   - Guns ready  → reload = 1  → heading_weight = 1  → ship is at broadside, fires
-	var total_reload: float = 0.0
-	for gun in guns:
-		total_reload += gun.reload
-	var guns_ready: float = total_reload / float(guns.size())  # 0..1
+	# var total_reload: float = 0.0
+	# for gun in guns:
+	# 	total_reload += gun.reload
+	var reloaded = 0.0
+	for gun: Gun in guns:
+		if gun.reload >= 1.0:
+			reloaded = 1.0
+			break
+	# var guns_ready: float = total_reload / float(guns.size()) * 2.0  # 0..1
 
 	intent.target_heading = final_heading
-	intent.heading_weight = guns_ready
+	intent.heading_weight = reloaded
 
 	return intent
 

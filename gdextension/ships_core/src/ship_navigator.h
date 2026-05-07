@@ -177,8 +177,32 @@ private:
 	float dodge_committed_rudder_;   // rudder sign of committed dodge (-1/+1), 0 = no commitment
 	float dodge_commitment_timer_;   // seconds remaining in commitment
 	static constexpr float DODGE_COMMITMENT_DURATION = 0.5f;   // minimum seconds to hold a dodge direction
-	static constexpr float DODGE_COMMITMENT_BIAS     = 150.0f;   // seconds of penalty added to candidates opposing the committed direction
-	static constexpr float DODGE_THREAT_WINDOW       = 10.0f;   // seconds before/after impact to sample arc points (Option C)
+	static constexpr float DODGE_COMMITMENT_BIAS     = 150.0f;  // threat-score penalty added to candidates opposing committed direction
+
+	// --- Two-pass threat budgets ---
+	// Budgets are in navigation-seconds: how many extra seconds of travel time
+	// we are willing to accept in order to improve the threat score.
+	// Shells nudge heading; torpedoes justify a major detour.
+	static constexpr float SHELL_NAV_BUDGET     = 50.0f;   // extra nav-seconds for better shell angle
+	static constexpr float TORPEDO_NAV_BUDGET   = 500.0f;  // extra nav-seconds for torpedo evasion
+	static constexpr float SHELL_TIME_TOLERANCE = 2.0f;    // floor for eff_tol in score_arc_shell_threat (seconds); arc sampling density drives the real value
+	static constexpr float SOFT_TERRAIN_PENALTY = 15.0f;   // nav-seconds added when an arc enters the soft-clearance zone (nudge, not disqualification)
+
+	// --- Stuck / bow-in detection ---
+	// Accumulated when the navigator wants reverse (destination is behind) but
+	// threat scoring keeps choosing forward candidates.  Once the threshold
+	// (scaled by the ship's turning-circle time) is exceeded, a stuck-override
+	// activates: shell threats are suppressed in the budget so the ship can
+	// push through and execute the needed reverse maneuver.  Torpedo threats
+	// still apply during the override — the ship accepts shell risk, not torpedo risk.
+	static constexpr float STUCK_TCR_FACTOR      = 0.25f;  // threshold = max(STUCK_MIN, π*TCR/max_speed * this)
+	static constexpr float STUCK_MIN_SECS        = 5.0f;   // minimum conflict seconds before override triggers
+	static constexpr float STUCK_OVERRIDE_FACTOR = 0.20f;  // override_duration = max(STUCK_OVERRIDE_MIN, π*TCR/max_speed * this)
+	static constexpr float STUCK_OVERRIDE_MIN    = 4.0f;   // minimum override duration (seconds)
+
+	float direction_conflict_timer_;   // seconds nav wanted reverse but threat chose forward
+	bool  stuck_override_active_;      // when true, shell threat budget is zeroed
+	float stuck_override_timer_;       // seconds remaining in the current stuck override
 
 	// --- Heading-align direction commitment ---
 	// When the ship is inside arrived_radius and aligning to target heading,
@@ -208,17 +232,24 @@ private:
 
 
 
-	static constexpr float SHELL_THREAT_WEIGHT_BASE   = 30.0f;   // base penalty seconds — scaled by ship size and health
-	static constexpr float TORPEDO_VIRTUAL_CALIBER    = 2000.0f; // virtual caliber for torpedo threat lines
-	static constexpr float TORPEDO_LOOKAHEAD_DIST     = 3000.0f; // distance ahead of torpedo nose for threat line
-	static constexpr float SHELL_OVERSHOOT_LEN        = 15.0f;   // line extension past impact point
+	static constexpr float TORPEDO_VIRTUAL_CALIBER    = 2000.0f; // virtual caliber for torpedo threat (mm equivalent)
 
 	// OBB intersection scoring modifiers
-	static constexpr float GRAZE_MIN_FACTOR     = 0.15f;   // minimum penalty factor for a dead end-on hit (sin curve floor)
+	static constexpr float GRAZE_MIN_FACTOR     = 0.15f;   // minimum penalty factor for a dead end-on hit (autobounce floor)
 	static constexpr float BOW_STERN_CLIP_START = 0.80f;   // fwd fraction beyond which bow/stern clip reduction kicks in
 	static constexpr float BOW_STERN_MIN_FACTOR = 0.30f;   // minimum penalty factor at the extreme hull tip
 
-	float score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
+	// --- Two-pass threat score (returned by score_arc_shell_threat) ---
+	struct ThreatEval {
+		float shell_score    = 0.0f;  // dimensionless: sum of cal_weight * angle_factor for hitting shells
+		float torpedo_score  = 0.0f;  // dimensionless: cal_weight for any torpedo intersection
+		float combined() const { return shell_score + torpedo_score; }
+	};
+
+	// Evaluate shell + torpedo threats along an arc.
+	// Returns separate shell and torpedo scores so the caller can apply
+	// different budgets and suppress shells when stuck_override is active.
+	ThreatEval score_arc_shell_threat(const std::vector<ArcPoint> &arc) const;
 
 	float get_dynamic_threat_weight() const;
 
