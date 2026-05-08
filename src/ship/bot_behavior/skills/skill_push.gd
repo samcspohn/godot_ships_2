@@ -27,7 +27,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var fwd = Vector3(sin(heading), 0.0, cos(heading))
 	var dest
 	if can_reverse:
-		dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 1.5
+		dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 2.0
 	else:
 		dest = ship.global_position + fwd * to_enemy.length()
 	dest.y = 0.0

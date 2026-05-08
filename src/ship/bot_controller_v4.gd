@@ -81,6 +81,9 @@ const OBSTACLE_REGISTER_RANGE: float = 2000.0
 const TORPEDO_HIT_RADIUS: float = 20.0
 ## ID namespace base for torpedo obstacles (negative, never collides with ship instance IDs)
 const TORPEDO_ID_OFFSET: int = -100000
+## Number of armed, visible, enemy torpedoes currently within torpedo_track_range.
+## Updated every frame by _register_torpedo_obstacles(); read by behavior for hydro decisions.
+var tracked_torpedo_count: int = 0
 
 ## Maximum distance to query for incoming shells
 const SHELL_QUERY_RANGE: float = 1000.0
@@ -524,6 +527,7 @@ func _register_torpedo_obstacles() -> void:
 		return
 
 	var my_team_id: int = _ship.team.team_id if _ship.team else -1
+	tracked_torpedo_count = 0
 
 	for i in tm.torpedos.size():
 		var torp: _TorpedoManager.TorpedoData = tm.torpedos[i]
@@ -553,9 +557,10 @@ func _register_torpedo_obstacles() -> void:
 
 		var obs_id: int = TORPEDO_ID_OFFSET - i
 		var pos_2d := Vector2(torp.position.x, torp.position.z)
-		# Velocity: torpedo direction × speed × game speed multiplier
+		# Velocity: torpedo direction x speed x game speed multiplier
 		var vel_2d := Vector2(torp.direction.x, torp.direction.z) * torp.params.speed * _TorpedoManager.TORPEDO_SPEED_MULTIPLIER
 
+		tracked_torpedo_count += 1
 		# length = 0.0 flags this as a torpedo to the C++ avoidance logic
 		# (distinguishable from ships which always have length > 0).
 		navigator.register_obstacle(obs_id, pos_2d, vel_2d, TORPEDO_HIT_RADIUS, 0.0)

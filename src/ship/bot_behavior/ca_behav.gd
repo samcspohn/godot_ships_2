@@ -59,9 +59,9 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 0.8
-		Ship.ShipClass.CA: return 1.0
-		Ship.ShipClass.DD: return 0.1
+		Ship.ShipClass.BB: return 1.4
+		Ship.ShipClass.CA: return 1.4
+		Ship.ShipClass.DD: return 0.3
 	return 1.0
 
 func get_target_weights() -> Dictionary:
@@ -375,24 +375,24 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-	elif dist < 5000.0 && ship.visible_to_enemy:
-		# High threat and enemy is close — find the optimal presentation angle
-		# then choose angle skill (bow-in) or kite (stern-in) accordingly.
-		var to_nearest = nearest.global_position - ship.global_position
-		to_nearest.y = 0.0
-		# var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-		var optimal_heading = SkillAngle.calc_heading(ctx, {})
-		# if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
-		# 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
-		var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
-		if bow_diff < PI * 0.5:
+	elif dist < 8000.0 && ship.visible_to_enemy:
+		# # High threat and enemy is close — find the optimal presentation angle
+		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
+		# var to_nearest = nearest.global_position - ship.global_position
+		# to_nearest.y = 0.0
+		# # var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		# var optimal_heading = SkillAngle.calc_heading(ctx, {})
+		# # if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
+		# # 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
+		# var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
+		if threat < 0.5:
 			# Optimal heading is bow-in — push toward enemy
-			intent = _skill_push.execute(ctx, {})
+			intent = _skill_push.execute(ctx, {"can_reverse": true})
 			if intent != null:
 				_active_skill_name = &"Push"
 		else:
 			# Optimal heading is stern-in — kite away while keeping guns on target
-			intent = _skill_kite.execute(ctx, {"desired_range_ratio": 0.65})
+			intent = _skill_kite.execute(ctx, {"can_reverse": true})
 			if intent != null:
 				_active_skill_name = &"Kite"
 	else:

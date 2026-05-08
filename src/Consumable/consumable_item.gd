@@ -17,7 +17,9 @@ enum ConsumableType {
 	DAMAGE_CONTROL,
 	RADAR_BOOST,
 	REPAIR_PARTY,
-	SMOKE_SCREEN
+	SMOKE_SCREEN,
+	HYDROACOUSTIC_SEARCH,
+	RADAR,
 }
 
 @export var type: ConsumableType

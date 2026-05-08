@@ -316,7 +316,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent = _skill_chase.execute(ctx, {})
 		_active_skill_name = &"Chase"
 	else:
-		if _nearest_dist < 6000.0 and ship.visible_to_enemy:
+		if _nearest_dist < 8000.0 and ship.visible_to_enemy:
 
 			if threat < 0.5:
 				intent = _skill_push.execute(ctx, {"can_reverse": true})
@@ -327,7 +327,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				if intent:
 					_active_skill_name = &"Kite"
 		else:
-			if threat < 0.4:
+			if threat < 0.4 or _nearest_dist > gun_range:
 				intent = _skill_flank.execute(ctx, {})
 				if intent:
 					_active_skill_name = &"Flank"

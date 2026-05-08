@@ -275,6 +275,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				_intent = _skill_push.execute(ctx, {})
 				if _intent:
 					_active_skill_name = &"Push"
+					wants_stealth = false
+					wants_to_be_concealed = false
+					_suppress_guns = false
 			else:
 				_intent = _skill_chase.execute(ctx, {})
 				if _intent:
@@ -300,6 +303,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"Push"
+			wants_stealth = false
+			wants_to_be_concealed = false
 		else:
 			intent = _skill_retreat.execute(ctx, {})
 			if intent:

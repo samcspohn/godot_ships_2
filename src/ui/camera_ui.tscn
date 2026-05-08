@@ -84,7 +84,20 @@ offset_left = -60.0
 offset_top = -10.0
 offset_right = -30.0
 offset_bottom = 20.0
-color = Color(1, 1, 0, 0.8)
+color = Color(0.08, 0.08, 0.08, 0.9)
+
+[node name="IndicatorColor" type="ColorRect" parent="MainContainer/VisibilityIndicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 1, 0, 0.9)
 
 [node name="CrosshairContainer" type="Control" parent="MainContainer" unique_id=1888053963]
 z_index = 2

@@ -8,7 +8,7 @@ var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FireManager = null
 var last_hit_time: float = 0
-const TIME_TO_DECAY: float = 30.0
+# const TIME_TO_DECAY: float = 30.0
 var _params: FireParams:
 	get:
 		return manager.fparams.p() as FireParams
@@ -23,8 +23,8 @@ var _owner: Ship = null
 
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
-		curr_buildup += a
-		last_hit_time = Time.get_ticks_msec() / 1000.0
+		curr_buildup += a + 0.33 * (randf() - 0.5) # add some randomness to buildup
+		last_hit_time = Time.get_ticks_msec() / 1000.0 + a * 0.5
 		if curr_buildup >= _rparams.max_buildup:
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "fire"})
@@ -47,10 +47,11 @@ func _ready():
 	else:
 		set_physics_process(false)
 
-func _physics_process(delta: float) -> void:
+func _physics_process(_delta: float) -> void:
+	var sec_tic = Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0
 	if _Utils.authority():
 		if lifetime > 0:
-			if Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0: # tick every second
+			if sec_tic: # tick every second
 				_sync.rpc(lifetime)
 				damage(1.0)
 				var d = _params.dur
@@ -58,8 +59,8 @@ func _physics_process(delta: float) -> void:
 				if lifetime <= 0:
 					fire_emitter.stop_emitting()
 					_sync_deactivate.rpc()
-		elif curr_buildup < _rparams.max_buildup and last_hit_time + TIME_TO_DECAY < Time.get_ticks_msec() / 1000.0:
-			curr_buildup -= delta * _rparams.max_buildup * _rparams.buildup_reduction_rate
+		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time > Time.get_ticks_msec() / 1000.0: # last hit is decay time
+			curr_buildup -= _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
 
 func damage(delta):

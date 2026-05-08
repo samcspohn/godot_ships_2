@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="HydroacousticSearch" format=3 uid="uid://cv6jnnhx7qnla"]
+
+[ext_resource type="Texture2D" uid="uid://1x11ey51wuki" path="res://icons/hydroacoustic_search_active.svg" id="1_21qch"]
+[ext_resource type="Script" uid="uid://cqqs4n31im4sh" path="res://src/Consumable/hydroacoustic_search.gd" id="1_81raf"]
+[ext_resource type="Texture2D" uid="uid://dsa4gjkh8wy6c" path="res://icons/hydroacoustic_search_inactive.svg" id="2_i88au"]
+
+[resource]
+script = ExtResource("1_81raf")
+torpedo_detection_range = 4000.0
+spotting_range = 5000.0
+name = "Long Range Hydroacoustic Search"
+icon = ExtResource("1_21qch")
+disabled_icon = ExtResource("2_i88au")
+cooldown_time = 120.0
+duration = 120.0
+max_stack = 4
+type = 5
+metadata/_custom_type_script = "uid://cqqs4n31im4sh"

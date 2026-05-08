@@ -4,6 +4,6 @@
 render_priority = -1
 transparency = 1
 depth_draw_mode = 1
-albedo_color = Color(0.12941177, 0.35686275, 0.6784314, 0.9411765)
+albedo_color = Color(0.12941177, 0.35686275, 0.6784314, 0.96862745)
 metallic = 0.3
 roughness = 0.05

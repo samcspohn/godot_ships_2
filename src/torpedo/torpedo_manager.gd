@@ -295,7 +295,9 @@ func _physics_process(_delta: float) -> void:
 			if server != null:
 				var enemy_ships = server.get_team_ships(0 if p.owner.team.team_id == 1 else 1)
 				for ship in enemy_ships:
-					if p.position.distance_squared_to(ship.global_position) < p.params.detection_range * p.params.detection_range: # Visibility range
+					var cp := ship.concealment.params.p() as ConcealmentParams
+					var eff_range: float = max(p.params.detection_range * cp.torpedo_detection_multiplier, cp.torpedo_detection_range_override)
+					if p.position.distance_squared_to(ship.global_position) < eff_range * eff_range:
 						p.visible_to_enemy = true
 						for player in server._get_team_ships(0 if p.owner.team.team_id == 1 else 1):
 							if not player.team.is_bot:
@@ -399,7 +401,7 @@ func notify_torpedo_detected(id: int):
 
 func notify_detected(id: int):
 	var torpedo: TorpedoData = self.torpedos[id]
-	var friendly_ships = server.get_team_ships(torpedo.owner.team.team_id)
+	var friendly_ships = server._get_team_ships(torpedo.owner.team.team_id)
 	for ship in friendly_ships:
 		if !ship.team.is_bot:
 			notify_torpedo_detected.rpc_id(ship.peer_id, id)

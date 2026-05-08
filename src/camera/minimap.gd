@@ -4,12 +4,14 @@ class_name Minimap
 
 # Constants
 const SHIP_MARKER_SIZE = 30
-const CONSUMABLE_ICON_SIZE = 24 # Base size for consumable icons on minimap
+const CONSUMABLE_ICON_SIZE = 28 # Base size for consumable icons on minimap
 const SHIP_NAME_FONT_SIZE = 10 # Base font size for ship names on minimap
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White
 const FRIENDLY_COLOR = Color(0, 1, 0, 1) # Green
 const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
 const FOV_ARC_COLOR = Color(0.5, 0.8, 1.0, 0.25) # Translucent light blue
+const HYDRO_RANGE_COLOR = Color(0.4, 0.85, 1.0, 0.85) # Light cyan for active hydroacoustic range
+const RADAR_RANGE_COLOR = Color(0.0, 0.706, 0.627, 1.0) # blue green for active radar range
 const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
 const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
@@ -242,7 +244,9 @@ enum ShipState {
 	ENEMY,
 	UNDETECTED,
 	DETECTED,
-	DEAD
+	DEAD,
+	HYDRO_CONTACT,  # Hydro acoustic ping — known position, not visible
+	RADAR_CONTACT,  # Radar ping — known position, not visible
 }
 
 # Draw signal handler
@@ -262,7 +266,7 @@ func _on_canvas_draw() -> void:
 		var tracked_pos = dict["pos"]
 		var tracked_rot = dict["rot"]
 		if is_instance_valid(tracked_ship):
-			if tracked_ship.visible_to_enemy and tracked_ship.team.team_id != player_ship.team.team_id:
+			if (tracked_ship.visible_to_enemy or tracked_ship.hydro_detected or tracked_ship.radar_detected) and tracked_ship.team.team_id != player_ship.team.team_id:
 				dict.init = true
 			if !dict.init and tracked_ship.team.team_id != player_ship.team.team_id:
 				continue
@@ -276,6 +280,10 @@ func _on_canvas_draw() -> void:
 				ship_state = ShipState.DEAD
 			elif tracked_ship.visible_to_enemy and is_friendly:
 				ship_state = ShipState.DETECTED
+			elif !is_friendly and !tracked_ship.visible_to_enemy and tracked_ship.radar_detected:
+				ship_state = ShipState.RADAR_CONTACT
+			elif !is_friendly and !tracked_ship.visible_to_enemy and tracked_ship.hydro_detected:
+				ship_state = ShipState.HYDRO_CONTACT
 			elif !is_friendly and !tracked_ship.visible_to_enemy:
 				ship_state = ShipState.UNDETECTED
 
@@ -285,16 +293,25 @@ func _on_canvas_draw() -> void:
 					color = FRIENDLY_COLOR
 				ShipState.ENEMY: color = ENEMY_COLOR
 				ShipState.UNDETECTED: color = Color(0.4, 0.4, 0.4, 1) # Gray for undetected
+				ShipState.HYDRO_CONTACT: color = HYDRO_RANGE_COLOR  # Cyan for hydro ping
+				ShipState.RADAR_CONTACT: color = RADAR_RANGE_COLOR  # Red for radar ping
 				ShipState.DETECTED: color = FRIENDLY_COLOR # Orange for detected
 				ShipState.DEAD: color = Color(0.2, 0.2, 0.2, 1) # Dark gray for dead
 				_: color = Color(1, 1, 1, 1) # Default to white
 
 			# if (ship as Ship).visible_to_enemy:
-			if ship_state == ShipState.DETECTED:
-				var col = Color.GOLD
-				col.a = 0.7
-				ship_auras_to_draw.append({"pos": tracked_pos, "rot": -tracked_rot, "color": col})
-				# draw_ship_aura_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, col, 1.3)
+			if is_friendly and tracked_ship.detection_type != Ship.DetectionType.NONE:
+				var det_col: Color
+				if tracked_ship.detection_type == Ship.DetectionType.RADAR:
+					det_col = RADAR_RANGE_COLOR
+					det_col.a = 0.7
+				elif tracked_ship.detection_type == Ship.DetectionType.HYDRO:
+					det_col = HYDRO_RANGE_COLOR
+					det_col.a = 0.7
+				else:
+					det_col = Color.GOLD
+					det_col.a = 0.7
+				ship_auras_to_draw.append({"pos": tracked_pos, "rot": -tracked_rot, "color": det_col})
 			# Get active consumable icons for friendly ships
 			var consumable_icons = []
 			if is_friendly and tracked_ship.consumable_manager:
@@ -313,6 +330,16 @@ func _on_canvas_draw() -> void:
 			draw_range_circle_on_minimap(ship.global_position, controller.get_params()._range, Color.DARK_KHAKI)
 
 	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0)
+
+	# Draw Hydroacoustic Search spotting radius when the consumable is active
+	var hydro_range := _get_active_hydro_spotting_range(ship)
+	if hydro_range > 0.0:
+		draw_dashed_circle_on_minimap(ship.global_position, hydro_range, HYDRO_RANGE_COLOR, 3.0, 4.0, 3.0)
+
+	# Draw Radar spotting radius when the consumable is active
+	var radar_range := _get_active_radar_spotting_range(ship)
+	if radar_range > 0.0:
+		draw_dashed_circle_on_minimap(ship.global_position, radar_range, RADAR_RANGE_COLOR, 3.0, 4.0, 3.0)
 
 
 	# Draw ship auras first
@@ -343,12 +370,30 @@ func _on_canvas_draw() -> void:
 		return
 	_draw_aim_point(minimap_pos)
 
-func draw_dashed_circle_on_minimap(world_position: Vector3, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0) -> void:
+func draw_dashed_circle_on_minimap(world_position: Vector3, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0, width: float = 2.0) -> void:
 	var minimap_pos = world_to_minimap_position(world_position)
 	var minimap_radius = radius * scale_factor.x
-	_draw_dashed_circle(minimap_pos, minimap_radius, color, dash_length, gap_length)
+	_draw_dashed_circle(minimap_pos, minimap_radius, color, dash_length, gap_length, width)
 
-func _draw_dashed_circle(center: Vector2, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0) -> void:
+## Returns the active HydroacousticSearch spotting_range for [ship], or -1 if not active.
+func _get_active_hydro_spotting_range(ship: Ship) -> float:
+	if not ship.consumable_manager:
+		return -1.0
+	for item in ship.consumable_manager.equipped_consumables:
+		if item is HydroacousticSearch:
+			return item.spotting_range
+	return -1.0
+
+## Returns the active Radar spotting_range for [ship], or -1 if not active.
+func _get_active_radar_spotting_range(ship: Ship) -> float:
+	if not ship.consumable_manager:
+		return -1.0
+	for item in ship.consumable_manager.equipped_consumables:
+		if item is Radar:
+			return item.spotting_range
+	return -1.0
+
+func _draw_dashed_circle(center: Vector2, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0, width: float = 2.0) -> void:
 	var circumference = TAU * radius
 	var num_dashes = int(circumference / (dash_length + gap_length))
 	var angle_step = TAU / num_dashes
@@ -360,7 +405,7 @@ func _draw_dashed_circle(center: Vector2, radius: float, color: Color, dash_leng
 		var start_point = center + Vector2(cos(start_angle), sin(start_angle)) * radius
 		var end_point = center + Vector2(cos(end_angle), sin(end_angle)) * radius
 
-		ship_markers_canvas.draw_line(start_point, end_point, color, 2.0)
+		ship_markers_canvas.draw_line(start_point, end_point, color, width)
 
 func draw_ship_aura_on_minimap(world_position: Vector3, ship_rotation: float, color: Color, marker_size: float = 1.0) -> void:
 	var minimap_pos = world_to_minimap_position(world_position)

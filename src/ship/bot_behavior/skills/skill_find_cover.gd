@@ -365,73 +365,6 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	var min_cover_separation = _resolve_min_cover_separation(ctx, params)
 	var other_claim_positions = _collect_other_claim_positions(ctx)
 
-	# ── No-enemy shortcut ────────────────────────────────────────────────────
-	# When there are no known threats or valid targets, skip the full cover
-	# search.  Assume the threat is at the world origin (Vector3.ZERO) and
-	# return the point on the nearest island that lies on the far side from
-	# that origin.  Honour any existing island commitment to avoid thrashing.
-	if threats.is_empty() and targets.is_empty():
-		var shortcut_isl: Dictionary = {}
-		var shortcut_dist: float = INF
-		for isl in islands:
-			var c2d: Vector2 = isl["center"]
-			var isl_pos := Vector3(c2d.x, 0.0, c2d.y)
-			# If we already have a committed island, prefer it unconditionally.
-			if _target_island_id >= 0 and isl["id"] == _target_island_id:
-				shortcut_isl = isl
-				break
-			var d: float = my_pos.distance_to(isl_pos) - isl["radius"]
-			if d < shortcut_dist:
-				shortcut_dist = d
-				shortcut_isl = isl
-		if shortcut_isl.is_empty():
-			return {}
-
-		var sc2d: Vector2 = shortcut_isl["center"]
-		var sc_pos := Vector3(sc2d.x, 0.0, sc2d.y)
-		var sc_radius: float = shortcut_isl["radius"]
-		# Direction from assumed threat (origin) toward the island — place cover
-		# on the far side so the island body sits between us and the threat.
-		var away_dir := sc_pos.normalized() if sc_pos.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
-		var fallback_dest := sc_pos + away_dir * sc_radius * 0.9
-		var fallback_result := {
-			"id": shortcut_isl["id"],
-			"center": sc_pos,
-			"radius": sc_radius,
-			"dest": fallback_dest,
-			"can_shoot": false,
-		}
-
-		if not _has_cover_spacing_conflict(fallback_dest, other_claim_positions, min_cover_separation):
-			return fallback_result
-
-		var best_alt: Dictionary = {}
-		var best_alt_dist: float = INF
-		for isl in islands:
-			if isl["id"] == shortcut_isl["id"]:
-				continue
-			var c2d_alt: Vector2 = isl["center"]
-			var isl_pos_alt := Vector3(c2d_alt.x, 0.0, c2d_alt.y)
-			var isl_radius_alt: float = isl["radius"]
-			var away_dir_alt := isl_pos_alt.normalized() if isl_pos_alt.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
-			var dest_alt := isl_pos_alt + away_dir_alt * isl_radius_alt * 0.9
-			if _has_cover_spacing_conflict(dest_alt, other_claim_positions, min_cover_separation):
-				continue
-			var d_alt: float = my_pos.distance_to(isl_pos_alt) - isl_radius_alt
-			if d_alt < best_alt_dist:
-				best_alt_dist = d_alt
-				best_alt = {
-					"id": isl["id"],
-					"center": isl_pos_alt,
-					"radius": isl_radius_alt,
-					"dest": dest_alt,
-					"can_shoot": false,
-				}
-		if not best_alt.is_empty():
-			return best_alt
-
-		return fallback_result
-
 	# Pre-compute a hide-aware travel cost for each island so the sort
 	# comparator stays O(1) per comparison.  Cost combines:
 	#   - edge_dist : distance from the ship to the nearest island edge
@@ -439,6 +372,8 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	#                 the hide side = angle_diff (0..PI) * island_radius
 	# The hide side of every island is the face pointing directly away from
 	# the spotted danger centre -- one shared reference point, computed once.
+	# When there is no danger centre (no enemies), arc_cost is always 0 so the
+	# sort reduces to a pure proximity sort, which is exactly what we want.
 	var _danger_center: Vector3 = ctx.behavior._get_spotted_danger_center()
 	var _use_danger_center: bool = _danger_center != Vector3.ZERO
 
@@ -472,6 +407,29 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 			return true
 		return _island_travel_cost[a["id"]] < _island_travel_cost[b["id"]]
 	)
+
+	# ── No-enemy shortcut ────────────────────────────────────────────────────
+	# When there are no known threats or valid targets, skip the full cover
+	# search.  The islands are already sorted nearest-first (arc_cost == 0 with
+	# no danger centre), so just walk the list and return the first island that
+	# has no spacing conflict.  Honour any existing island commitment via the
+	# sort comparator above (committed island sorts first when in range).
+	if threats.is_empty() and targets.is_empty():
+		for isl in islands:
+			var c2d: Vector2 = isl["center"]
+			var isl_pos := Vector3(c2d.x, 0.0, c2d.y)
+			var isl_radius: float = isl["radius"]
+			var away_dir := isl_pos.normalized() if isl_pos.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
+			var dest := isl_pos + away_dir * isl_radius * 0.9
+			if not _has_cover_spacing_conflict(dest, other_claim_positions, min_cover_separation):
+				return {
+					"id": isl["id"],
+					"center": isl_pos,
+					"radius": isl_radius,
+					"dest": dest,
+					"can_shoot": false,
+				}
+		return {}
 
 	var spacing_conflict_fallback: Dictionary = {}
 
@@ -549,7 +507,7 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary) -> bool:
 	var ship = ctx.ship
 
 	# if an island is outside desired range, its validity is ignored for better cover options
-	if pos.distance_to(ship.global_position) > ship.artillery_controller.get_params()._range * 0.75:
+	if pos.distance_to(ship.global_position) > ship.artillery_controller.get_params()._range * 1.0: # adjust to 1 for more safety
 		return false
 
 	var threats = ctx.behavior._gather_threat_positions(ship)

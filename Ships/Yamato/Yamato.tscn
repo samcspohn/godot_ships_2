@@ -19,10 +19,10 @@
 [ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="11_pue0t"]
 [ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="12_buwu7"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="12_g21k6"]
-[ext_resource type="Texture2D" uid="uid://puaa0vxr1j33" path="res://icons/auto-repair (1).png" id="13_g21k6"]
+[ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="12_ssrv5"]
+[ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="13_0yy7r"]
 [ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="13_jppql"]
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="14_g7l6b"]
-[ext_resource type="Texture2D" uid="uid://cjpfk83wkq47p" path="res://icons/auto-repair.png" id="14_uq1it"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="15_g7l6b"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="15_uql7x"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="16_4avny"]
@@ -184,8 +184,8 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_26rxh"]
 resource_local_to_scene = true
 script = ExtResource("15_g7l6b")
-icon = ExtResource("14_uq1it")
-disabled_icon = ExtResource("13_g21k6")
+icon = ExtResource("13_0yy7r")
+disabled_icon = ExtResource("12_ssrv5")
 cooldown_time = 80.0
 duration = 30.0
 max_stack = -1
@@ -194,11 +194,12 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_ssrv5"]
 script = ExtResource("16_4avny")
+heal_percent = 0.15
 icon = ExtResource("15_uql7x")
 disabled_icon = ExtResource("14_g7l6b")
 cooldown_time = 80.0
-duration = 30.0
-max_stack = 4
+duration = 20.0
+max_stack = 5
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
 [sub_resource type="Resource" id="Resource_g21k6"]

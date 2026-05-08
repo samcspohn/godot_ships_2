@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!--
+    Gear: 8 teeth, center=(32,32), r_inner=14, r_outer=20, hub_r=6
+    Tooth half-angle = 9°, valley span = 27° at r_inner
+    Gear path starts at angle 351° (=-9°) on r_inner and traces clockwise.
+    Hub hole uses even-odd fill rule to punch out center.
+  -->
+  <path fill-rule="evenodd" fill="#555555" d="
+    M 45.83 29.81
+    L 51.75 28.87  A 20 20 0 0 1 51.75 35.13  L 45.83 34.19
+    A 14 14 0 0 1 43.33 40.23
+    L 48.18 43.76  A 20 20 0 0 1 43.76 48.18  L 40.23 43.33
+    A 14 14 0 0 1 34.19 45.83
+    L 35.13 51.75  A 20 20 0 0 1 28.87 51.75  L 29.81 45.83
+    A 14 14 0 0 1 23.77 43.33
+    L 20.24 48.18  A 20 20 0 0 1 15.82 43.76  L 20.67 40.23
+    A 14 14 0 0 1 18.17 34.19
+    L 12.25 35.13  A 20 20 0 0 1 12.25 28.87  L 18.17 29.81
+    A 14 14 0 0 1 20.67 23.77
+    L 15.82 20.24  A 20 20 0 0 1 20.24 15.82  L 23.77 20.67
+    A 14 14 0 0 1 29.81 18.17
+    L 28.87 12.25  A 20 20 0 0 1 35.13 12.25  L 34.19 18.17
+    A 14 14 0 0 1 40.23 20.67
+    L 43.76 15.82  A 20 20 0 0 1 48.18 20.24  L 43.33 23.77
+    A 14 14 0 0 1 45.83 29.81 Z
+    M 38 32 A 6 6 0 0 0 26 32 A 6 6 0 0 0 38 32 Z"/>
+
+  <!--
+    Open-end wrench in natural (horizontal) orientation then rotated 45°.
+    Natural shape: jaw (C-cup) on left at x=13, r=11 semicircle opening left.
+    Handle on right x=24..50, 8px thick (y=28..36).
+    Prongs: y=21..28 (top) and y=36..43 (bottom), each 7px tall.
+    Right cap: 4px radius semicircle.
+    Rotated 45° clockwise → jaw moves to upper-left, handle to lower-right.
+  -->
+  <path fill="#555555" transform="rotate(45, 32, 32)"
+    d="M 50 28 L 24 28 L 24 21 L 13 21
+       A 11 11 0 0 0 13 43
+       L 24 43 L 24 36 L 50 36
+       A 4 4 0 0 1 50 28 Z"/>
+</svg>

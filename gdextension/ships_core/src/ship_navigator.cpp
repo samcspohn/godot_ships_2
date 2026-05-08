@@ -459,7 +459,8 @@ bool ShipNavigator::is_arrived() const {
 	Vector2 final_node = (path_valid && !current_path.waypoints.empty())
 		? current_path.waypoints.back()
 		: target.position;
-	const float arrived_radius = std::max(target.hold_radius, params.ship_beam * 2.0f);
+	// const float arrived_radius = std::max(target.hold_radius, params.ship_beam * 2.0f);
+	const float arrived_radius = params.turning_circle_radius;
 	return state.position.distance_to(final_node) < arrived_radius;
 }
 
@@ -1693,6 +1694,39 @@ ShipNavigator::ThreatEval ShipNavigator::score_arc_shell_threat(const std::vecto
 			if (cal_weight > worst) worst = cal_weight;
 		}
 
+		// Arc extrapolation: predict_arc_to_heading may terminate early when
+		// the bow aligns with the waypoint (the common case when heading
+		// straight toward a distant destination).  The resulting arc may cover
+		// only a few seconds while the torpedo arrives much later.  Extend the
+		// ship's last known position/heading/speed straight ahead up to 90 s
+		// total so distant-but-incoming torpedoes are not missed on the
+		// straight-ahead candidate — giving the dodge candidates a real
+		// threat advantage to beat.
+		if (worst == 0.0f && !arc.empty()) {
+			const ArcPoint &last_pt   = arc.back();
+			const float     ext_fx    = std::sin(last_pt.heading);
+			const float     ext_fz    = std::cos(last_pt.heading);
+			const float     ext_speed = std::max(std::abs(last_pt.speed), 1.0f);
+			const float     step_dist = std::max(hsl * 2.0f, 50.0f);
+			const float     step_time = step_dist / ext_speed;
+			constexpr float max_ext_time = 90.0f;
+			for (float t = last_pt.time + step_time; t <= max_ext_time; t += step_time) {
+				const float   dt_ext     = t - last_pt.time;
+				const Vector2 ship_pos(
+					last_pt.position.x + ext_fx * ext_speed * dt_ext,
+					last_pt.position.y + ext_fz * ext_speed * dt_ext);
+				const Vector2 torp_pos_ext = obs.position + obs.velocity * t;
+				const Vector2 rel_ext      = torp_pos_ext - ship_pos;
+				const float along_keel_ext = rel_ext.x * ext_fx + rel_ext.y * ext_fz;
+				const float along_beam_ext = rel_ext.x * ext_fz - rel_ext.y * ext_fx;
+				if (std::abs(along_keel_ext) <= hsl + obs.radius &&
+				    std::abs(along_beam_ext) <= hsb + obs.radius) {
+					worst = cal_weight;
+					break;
+				}
+			}
+		}
+
 		result.torpedo_score += worst;
 	}
 
@@ -1739,10 +1773,16 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	bool terrain_safe = (sdf_here > lookahead + hard_clearance);
 
 	bool obstacles_safe = true;
-	float engagement_range = lookahead + params.max_speed * 10.0f;
+	const float engagement_range = lookahead + params.max_speed * 10.0f;
 	for (const auto &[id, obs] : obstacles) {
 		if (skip_ship_obstacles_ && !obs.is_torpedo()) continue;
-		if (state.position.distance_to(obs.position) < engagement_range) {
+		// Torpedoes can be fast and far — use 90 s of torpedo travel as the
+		// engagement horizon so the ship begins dodging well before impact.
+		// Ship obstacles use the normal lookahead-based range.
+		const float check_range = obs.is_torpedo()
+			? obs.velocity.length() * 90.0f + params.ship_length
+			: engagement_range;
+		if (state.position.distance_to(obs.position) < check_range) {
 			obstacles_safe = false;
 			break;
 		}
@@ -1805,7 +1845,9 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	struct Candidate { float rudder; int throttle; };
 
 	const float rudder_offsets[] = { 0.0f, 0.3f, -0.3f, 0.6f, -0.6f, -1.0f, 1.0f };
-	constexpr int N_OFFSETS = 3;
+	// Include all 7 offsets (±0.3, ±0.6, ±1.0) so the ship can execute hard
+	// full-rudder turns to dodge torpedoes — previously only ±0.3 were tried.
+	constexpr int N_OFFSETS = 7;
 	Candidate candidates[N_OFFSETS + 8];
 	int n_candidates = 0;
 

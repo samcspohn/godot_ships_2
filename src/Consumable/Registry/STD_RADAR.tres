@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="Radar" format=3 uid="uid://6m2xxh0m03s"]
+
+[ext_resource type="Script" uid="uid://bru4u5x5x8b0u" path="res://src/Consumable/radar.gd" id="1_j7v5u"]
+[ext_resource type="Texture2D" uid="uid://cj05qg3h1vrch" path="res://icons/radar_inactive.svg" id="1_ka1ce"]
+[ext_resource type="Texture2D" uid="uid://boj8sk2vg634h" path="res://icons/radar_active.svg" id="2_wnres"]
+
+[resource]
+script = ExtResource("1_j7v5u")
+name = "standard radar"
+icon = ExtResource("2_wnres")
+disabled_icon = ExtResource("1_ka1ce")
+cooldown_time = 120.0
+duration = 40.0
+max_stack = 4
+type = 6

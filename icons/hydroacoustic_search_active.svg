@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- Sonar emitter -->
+  <circle cx="32" cy="32" r="4" fill="#00CCFF"/>
+
+  <!-- Acoustic waves – right side -->
+  <path d="M 32 24 A 8 8 0 0 1 32 40"       stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 32 17 A 15 15 0 0 1 32 47"     stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 32 10 A 22 22 0 0 1 32 54"     stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Acoustic waves – left side -->
+  <path d="M 32 24 A 8 8 0 0 0 32 40"       stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 32 17 A 15 15 0 0 0 32 47"     stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+  <path d="M 32 10 A 22 22 0 0 0 32 54"     stroke="#00CCFF" stroke-width="4" stroke-linecap="round"/>
+</svg>

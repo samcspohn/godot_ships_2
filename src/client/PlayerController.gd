@@ -183,6 +183,10 @@ func _input(event: InputEvent) -> void:
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 1)
 	elif event.is_action_pressed("consumable_3"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 2)
+	elif event.is_action_pressed("consumable_4"):
+		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 3)
+	elif event.is_action_pressed("consumable_5"):
+		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 4)
 
 	if event.is_action_pressed("toggle_secondaries"):
 		c_toggle_secondaries_enabled.rpc_id(1)

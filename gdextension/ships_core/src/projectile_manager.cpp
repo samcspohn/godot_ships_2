@@ -770,36 +770,34 @@ void _ProjectileManager::_physics_process(double delta) {
 						int owner_team_id = owner_team->get("team_id");
 						int team_id = team->get("team_id");
 
-						// Skip friendly fire
-						if (team_id == owner_team_id) {
-							break;
-						}
+						// Skip damage for friendly fire, but still let the shell be destroyed below
+						if (team_id != owner_team_id) {
+							bool is_penetration = (rpc_result_type == PENETRATION || rpc_result_type == CITADEL); // PENETRATION
+							Ref<Resource> params = p->get_params();
+							bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
+							damage_type = is_secondary ? 4 : 0; // 0 = SHELL, 4 = SECONDARY
+							Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, damage_type, damage_level, owner);
 
-						bool is_penetration = (rpc_result_type == PENETRATION || rpc_result_type == CITADEL); // PENETRATION
-						Ref<Resource> params = p->get_params();
-						bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
-						damage_type = is_secondary ? 4 : 0; // 0 = SHELL, 4 = SECONDARY
-						Array dmg_sunk = health_controller->call("apply_damage", damage, base_damage, armor_part_var, is_penetration, damage_type, damage_level, owner);
+							// Apply fire damage
+							apply_fire_damage(p, ship, explosion_position);
 
-						// Apply fire damage
-						apply_fire_damage(p, ship, explosion_position);
+							// Delegate all stat tracking to GDScript Stats.record_hit()
+							if (dmg_sunk.size() > 0) {
+								Variant stats_var = owner->get("stats");
+								if (stats_var.get_type() != Variant::NIL) {
+									Object *stats = Object::cast_to<Object>(stats_var);
+									if (stats) {
+										Ref<Resource> params = p->get_params();
+										bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
+										bool sunk = dmg_sunk.size() > 1 && (bool)dmg_sunk[1];
+										Vector3 hit_position = ship->call("get_global_position");
+										double hit_damage = dmg_sunk[0];
 
-						// Delegate all stat tracking to GDScript Stats.record_hit()
-						if (dmg_sunk.size() > 0) {
-							Variant stats_var = owner->get("stats");
-							if (stats_var.get_type() != Variant::NIL) {
-								Object *stats = Object::cast_to<Object>(stats_var);
-								if (stats) {
-									Ref<Resource> params = p->get_params();
-									bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
-									bool sunk = dmg_sunk.size() > 1 && (bool)dmg_sunk[1];
-									Vector3 hit_position = ship->call("get_global_position");
-									double hit_damage = dmg_sunk[0];
-
-									stats->call("record_hit", armor_result_type, hit_damage, is_secondary, hit_position, sunk, ship);
+										stats->call("record_hit", armor_result_type, hit_damage, is_secondary, hit_position, sunk, ship);
+									}
 								}
 							}
-						}
+						} // end if (team_id != owner_team_id)
 					}
 				} else {
 					UtilityFunctions::push_error("ProjectileManager: Ship does NOT have health_controller member variable");

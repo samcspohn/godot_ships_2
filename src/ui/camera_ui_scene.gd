@@ -55,6 +55,7 @@ var kill_feed: KillFeed = null
 
 # Visibility indicator
 @onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
+@onready var visibility_indicator_color: ColorRect = $MainContainer/VisibilityIndicator/IndicatorColor
 
 # Terrain hit indicator
 @onready var terrain_hit_indicator: ColorRect = $MainContainer/CrosshairContainer/TerrainIndicator
@@ -154,6 +155,8 @@ var tracked_ships = {}
 var ship_ui_elements = {}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
+var _status_refresh_timer: float = 0.0
+const STATUS_REFRESH_INTERVAL: float = 0.1  # Refresh consumable status widgets at 10 hz
 
 # Target tracking for secondaries
 var current_secondary_target: Ship = null
@@ -302,12 +305,12 @@ func _ready():
 	# Connect to match end signal
 	_Utils.match_ended.connect(_on_match_ended)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if match_ended:
 		return
 	if not is_instance_valid(camera_controller):
 		return
-	update_ship_ui()
+	update_ship_ui(delta)
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
 
@@ -556,13 +559,24 @@ func initialize_for_ship():
 			hit_stat_counters.set_stats(camera_controller._ship.stats)
 
 func update_visibility_indicator():
-	"""Update the visibility indicator based on ship's visible_to_enemy flag"""
+	"""Update the visibility indicator color based on the ship's detection type."""
 	if not camera_controller or not camera_controller._ship:
 		visibility_indicator.visible = false
 		return
 
-	# Show the yellow indicator when the ship is visible to enemies
-	visibility_indicator.visible = camera_controller._ship.visible_to_enemy
+	var ship := camera_controller._ship
+	match ship.detection_type:
+		Ship.DetectionType.RADAR:
+			visibility_indicator.visible = true
+			visibility_indicator_color.color = Color(0.0, 0.706, 0.627, 1.0)  # Red
+		Ship.DetectionType.HYDRO:
+			visibility_indicator.visible = true
+			visibility_indicator_color.color = Color(0.4, 0.85, 1.0, 0.9)  # Cyan
+		Ship.DetectionType.LOS:
+			visibility_indicator.visible = true
+			visibility_indicator_color.color = Color(1, 1, 0, 0.9)  # Yellow
+		_:  # DetectionType.NONE
+			visibility_indicator.visible = false
 
 func update_terrain_hit_indicator(is_hitting_terrain: bool):
 	"""Show or hide the terrain hit indicator"""
@@ -799,6 +813,37 @@ func setup_ship_ui(ship):
 		status_indicator = ship_container.get_node("FriendlyStatus")
 		status_indicator.get_child(0).queue_free()
 
+	# Pre-build consumable status widgets once at registration so update_ship_ui
+	# only needs to toggle .visible and write label text — never add/remove nodes.
+	var normal_icons: Array = []
+	var alt_widgets: Array = []
+	var alt_refs: Array = []
+	if not is_enemy and ship.consumable_manager:
+		for item in ship.consumable_manager.equipped_consumables:
+			# Normal mode: one icon per consumable, shown only while the effect is active
+			var icon_rect := TextureRect.new()
+			icon_rect.texture = item.icon
+			icon_rect.custom_minimum_size = Vector2(18, 18)
+			icon_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+			icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon_rect.visible = false
+			status_indicator.add_child(icon_rect)
+			normal_icons.append(icon_rect)
+
+			# Alt mode: full count+timer widget, shown when ALT is held
+			var widget := _create_alt_consumable_widget(item, ship.consumable_manager)
+			widget.visible = false
+			status_indicator.add_child(widget)
+			alt_widgets.append(widget)
+
+			# Cache the three inner nodes so updates never call get_node()
+			alt_refs.append({
+				"icon":  widget.get_node("Box/Icon")        as TextureRect,
+				"count": widget.get_node("Box/CountLabel") as Label,
+				"timer": widget.get_node("Box/TimerLabel") as Label,
+			})
+		status_indicator.set_meta("consumable_mode", "normal")
+
 	# Set the ship name
 	name_label.text = ship.name
 	ship_hp_label.text = "%d/%d" % [ship.health_controller.current_hp, ship.health_controller.max_hp]
@@ -810,10 +855,19 @@ func setup_ship_ui(ship):
 		"hp_bar": ship_hp_bar,
 		"hp_label": ship_hp_label,
 		"target_indicator": target_indicator,
-		"status": status_indicator
+		"status": status_indicator,
+		"normal_icons": normal_icons,
+		"alt_widgets": alt_widgets,
+		"alt_refs": alt_refs,
 	}
 
-func update_ship_ui():
+func update_ship_ui(delta: float = 0.0):
+	# Tick status-refresh throttle (shared across all ships per frame)
+	_status_refresh_timer -= delta
+	var should_refresh_status: bool = _status_refresh_timer <= 0.0
+	if should_refresh_status:
+		_status_refresh_timer = STATUS_REFRESH_INTERVAL
+
 	# Periodically search for new ships
 	# var current_time = Time.get_ticks_msec() / 1000.0
 	# var should_search = tracked_ships.is_empty() or (current_time - last_ship_search_time > ship_search_interval)
@@ -847,60 +901,38 @@ func update_ship_ui():
 				var alt_held: bool = Input.is_key_pressed(KEY_ALT)
 				var desired_mode: String = "alt" if alt_held else "normal"
 				var current_mode: String = ui.status.get_meta("consumable_mode", "")
+				var normal_icons: Array = ui["normal_icons"]
+				var alt_widgets: Array = ui["alt_widgets"]
+				var alt_refs: Array  = ui["alt_refs"]
+				var consumables      = ship.consumable_manager.equipped_consumables
 
-				# If the display mode changed, flush all children and wait one frame
+				# --- Mode switch: flip which widget set is visible, update container height ---
 				if current_mode != desired_mode:
-					for child in ui.status.get_children():
-						child.queue_free()
 					ui.status.set_meta("consumable_mode", desired_mode)
-					# Shift the status bar up/down to fit the taller alt widgets
 					if desired_mode == "alt":
-						ui.status.offset_top = -52.0
+						ui.status.offset_top    = -52.0
 						ui.status.offset_bottom = -2.0
+						for icon in normal_icons:
+							icon.visible = false
+						for widget in alt_widgets:
+							widget.visible = true
 					else:
-						ui.status.offset_top = -22.0
+						ui.status.offset_top    = -22.0
 						ui.status.offset_bottom = -2.0
+						for widget in alt_widgets:
+							widget.visible = false
 
-				elif desired_mode == "alt":
-					# ---- ALT mode: show all equipped consumables with count + timer ----
-					var consumables = ship.consumable_manager.equipped_consumables
-					var valid_children: Array = []
-					for _c in ui.status.get_children():
-						if not _c.is_queued_for_deletion():
-							valid_children.append(_c)
+				# --- Normal mode: sync icon visibility every frame (trivially cheap) ---
+				if desired_mode == "normal":
+					for i in range(normal_icons.size()):
+						var item: ConsumableItem = consumables[i] if i < consumables.size() else null
+						normal_icons[i].visible = item != null and ship.consumable_manager.active_effects.has(item.id)
 
-					if valid_children.size() != consumables.size():
-						# Rebuild widgets when consumable count changes
-						for child in ui.status.get_children():
-							child.queue_free()
-						for item in consumables:
-							var widget = _create_alt_consumable_widget(item, ship.consumable_manager)
-							ui.status.add_child(widget)
-					else:
-						# Just refresh the labels each frame
-						for i in range(consumables.size()):
-							_update_alt_consumable_widget(valid_children[i], consumables[i], ship.consumable_manager)
-
-				else:
-					# ---- NORMAL mode: show only active-effect icons ----
-					var active_consumables = ship.consumable_manager.get_active_icons()
-					for consumable in ui.status.get_children():
-						if consumable.is_queued_for_deletion():
-							continue
-						var is_active_icon = (consumable is TextureRect) and active_consumables.has((consumable as TextureRect).texture)
-						if not is_active_icon:
-							consumable.queue_free()
-					for icon in active_consumables:
-						var already_has = false
-						for consumable in ui.status.get_children():
-							if consumable.is_queued_for_deletion():
-								continue
-							if consumable is TextureRect and (consumable as TextureRect).texture == icon:
-								already_has = true
-						if not already_has:
-							var new_icon = friendly_consumable_status_texturerect.duplicate()
-							new_icon.texture = icon
-							ui.status.add_child(new_icon)
+				# --- Alt mode: update labels at STATUS_REFRESH_INTERVAL to avoid per-frame theme override spam ---
+				elif should_refresh_status:
+					for i in range(alt_refs.size()):
+						if i < consumables.size():
+							_update_alt_consumable_widget_refs(alt_refs[i], consumables[i], ship.consumable_manager)
 
 
 
@@ -1535,6 +1567,35 @@ func _create_alt_consumable_widget(item: ConsumableItem, manager: ConsumableMana
 
 	_update_alt_consumable_widget(panel, item, manager)
 	return panel
+
+## Refresh alt-mode labels using pre-cached node refs (zero get_node calls).
+func _update_alt_consumable_widget_refs(
+		refs: Dictionary, item: ConsumableItem, manager: ConsumableManager) -> void:
+	var icon_rect: TextureRect = refs["icon"]
+	var count_lbl: Label       = refs["count"]
+	var timer_lbl: Label       = refs["timer"]
+
+	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
+
+	if item.max_stack == -1:
+		count_lbl.text = "∞"
+		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
+	else:
+		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
+		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
+
+	var cooldown_left: float = manager.cooldowns.get(item.id, 0.0)
+	var active_left:   float = manager.active_effects.get(item.id, 0.0)
+	if active_left > 0.0:
+		timer_lbl.text = "→%.0fs" % active_left
+		timer_lbl.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0, 0.95))
+	elif cooldown_left > 0.0:
+		timer_lbl.text = "%.0fs" % cooldown_left
+		timer_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2, 0.9))
+	else:
+		timer_lbl.text = ""
 
 ## Refresh the labels inside a widget built by _create_alt_consumable_widget.
 func _update_alt_consumable_widget(

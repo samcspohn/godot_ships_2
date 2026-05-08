@@ -1757,6 +1757,8 @@ func get_debug_skill_info() -> Dictionary:
 
 var repair = -1
 var damage_control = -1
+var hydroacoustic_search: int = -1
+var radar: int = -1
 
 func try_use_consumable():
 	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
@@ -1799,3 +1801,170 @@ func try_use_consumable():
 		elif floods >= 1:
 			if damage_control != -1:
 				_ship.consumable_manager.use_consumable(damage_control)
+
+	# --- Hydroacoustic Search ---
+	if hydroacoustic_search == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.HYDROACOUSTIC_SEARCH:
+				hydroacoustic_search = c.id
+				break
+
+	if hydroacoustic_search != -1:
+		if _should_use_hydro():
+			_ship.consumable_manager.use_consumable(hydroacoustic_search)
+
+	# --- Radar ---
+	if radar == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.RADAR:
+				radar = c.id
+				break
+
+	if radar != -1:
+		if _should_use_radar():
+			_ship.consumable_manager.use_consumable(radar)
+
+
+func _should_use_hydro() -> bool:
+	# Decides whether to activate Hydroacoustic Search without omniscient
+	# knowledge.  Only information that is legitimately visible to this team
+	# is considered, so bots cannot cheat.
+	#
+	# Triggers:
+	#   1. Already-detected enemy torpedoes (visible_to_enemy == true) are
+	#      within ~8 km and pointed generally toward this ship.
+	#   2. A spotted enemy DD is within torpedo-threat range (~8 km).
+	#   3. This ship is spotted but no visible enemy is close enough to
+	#   account for it - a concealed ship must be nearby.
+	#   4. An enemy DD was last seen at close range (<8 km) recently (<45 s).
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return false
+
+	var my_team: int = _ship.team.team_id
+
+	# --- Trigger 1: already-tracked incoming torpedo ---
+	# BotControllerV4._register_torpedo_obstacles() already filters for armed,
+	# visible (detected), enemy torpedoes within torpedo_track_range and keeps
+	# a live count.  Re-scanning TorpedoManager here would be redundant.
+	var controller = get_parent()
+	if controller != null and controller.get("tracked_torpedo_count") != null:
+		if (controller.tracked_torpedo_count as int) > 0:
+			return true
+
+	# --- Trigger 2: spotted enemy DD within torpedo-threat range ---
+	var spotted := server_node.get_valid_targets(my_team)
+	for enemy in spotted:
+		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
+			continue
+		if enemy.ship_class == Ship.ShipClass.DD:
+			var dist := enemy.global_position.distance_to(_ship.global_position)
+			if dist < 8000.0:
+				return true
+
+	# --- Trigger 3: spotted by a ship we cannot see ---
+	# If we are detected but no visible enemy is close enough to account for
+	# our detection, a concealed ship must be within our concealment radius.
+	# Using hydro here is a legitimate deduction, not omniscient knowledge.
+	if _ship.visible_to_enemy and _ship.concealment != null:
+		var my_concealment := _ship.concealment.get_concealment()
+		var has_visible_spotter := false
+		for enemy in spotted:
+			if not is_instance_valid(enemy):
+				continue
+			var dist := enemy.global_position.distance_to(_ship.global_position)
+			if dist <= my_concealment:
+				has_visible_spotter = true
+				break
+		if not has_visible_spotter:
+			return true
+
+	# --- Trigger 4: unspotted enemy DD recently seen within hydro spotting range ---
+	# The unspotted-enemies dict is also written by _refresh_hydro_lkp() every
+	# HYDRO_LKP_INTERVAL seconds, which keeps the timestamp perpetually fresh for
+	# any DD in another friendly's hydro cone.  Using 8 000 m here (double the
+	# default 4 000 m hydro spotting range) caused trigger 4 to fire on DDs that
+	# are well outside the range where this ship's hydro would actually help.
+	# Fix: gate on the actual hydro spotting range (+ 1 km lead for movement).
+	var hydro_threat_range := 5000.0  # conservative default if consumable not found
+	if hydroacoustic_search != -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.id == hydroacoustic_search and c is HydroacousticSearch:
+				hydro_threat_range = c.spotting_range + 1000.0
+				break
+	var unspotted := server_node.get_unspotted_enemies(my_team)
+	var unspotted_times := server_node.get_unspotted_enemy_times(my_team)
+	var current_time := Time.get_ticks_msec() / 1000.0
+	for enemy in unspotted.keys():
+		if not is_instance_valid(enemy):
+			continue
+		if not (enemy.ship_class == Ship.ShipClass.DD):
+			continue  # only DDs carry torps worth reacting to
+		var elapsed: float = current_time - unspotted_times.get(enemy, 0.0)
+		if elapsed > 45.0:
+			continue  # last-known position too stale to act on
+		var last_pos: Vector3 = unspotted[enemy]
+		var dist := last_pos.distance_to(_ship.global_position)
+		if dist < hydro_threat_range:
+			return true
+
+	return false
+
+
+func _should_use_radar() -> bool:
+	# Decides whether to activate Radar without omniscient knowledge.
+	# Only information legitimately available to this bot is used.
+	#
+	# Triggers:
+	#   1. This ship is detected but no visible enemy is within radar range
+	#      (~8 km) to account for it — a concealed enemy must be nearby.
+	#   2. An unspotted enemy has a recent LKP (< 30 s) within radar range —
+	#      the LKP is already in the shared unspotted-enemies table so this is
+	#      not omniscient; it capitalises on information the team already has.
+	#   3. This ship's detection_type is HYDRO or RADAR — an enemy with active
+	#      detection is within ~4–8 km.  If no enemy is currently visible,
+	#      firing radar may flush out that concealed spotter.
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return false
+
+	var my_team: int = _ship.team.team_id
+	const RADAR_RANGE: float = 8000.0
+
+	var spotted := server_node.get_valid_targets(my_team)
+
+	# --- Trigger 1: detected but no visible enemy within radar range ---
+	if _ship.visible_to_enemy and _ship.concealment != null:
+		var has_close_visible := false
+		for enemy in spotted:
+			if not is_instance_valid(enemy):
+				continue
+			if enemy.global_position.distance_to(_ship.global_position) <= RADAR_RANGE:
+				has_close_visible = true
+				break
+		if not has_close_visible:
+			return true
+
+	# --- Trigger 2: recent unspotted LKP within radar range ---
+	var unspotted       := server_node.get_unspotted_enemies(my_team)
+	var unspotted_times := server_node.get_unspotted_enemy_times(my_team)
+	var current_time    := Time.get_ticks_msec() / 1000.0
+	for enemy in unspotted.keys():
+		if not is_instance_valid(enemy):
+			continue
+		var elapsed: float = current_time - unspotted_times.get(enemy, 0.0)
+		if elapsed > 30.0:
+			continue  # LKP too stale; enemy has likely moved away
+		var dist := (unspotted[enemy] as Vector3).distance_to(_ship.global_position)
+		if dist < RADAR_RANGE:
+			return true
+
+	# --- Trigger 3: being detected by active sonar/radar with no visible enemies ---
+	# detection_type is server-authoritative state the bot legitimately reads.
+	# HYDRO means an enemy pinger is within ~4 km; RADAR within ~8 km.
+	# If no enemy is currently visible, the concealed pinger may be within radar range.
+	if (_ship.detection_type == Ship.DetectionType.HYDRO or \
+			_ship.detection_type == Ship.DetectionType.RADAR) and spotted.is_empty():
+		return true
+
+	return false

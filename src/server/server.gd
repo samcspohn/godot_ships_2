@@ -22,6 +22,24 @@ var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.
 # Timestamps (seconds, from Time.get_ticks_msec()/1000) of when each ship went unspotted
 var team_0_unspotted_times: Dictionary = {}  # Ship -> float
 var team_1_unspotted_times: Dictionary = {}  # Ship -> float
+# Hydro LKP system.
+# hydro_lkp      – frozen last-known position per ship (updated every HYDRO_LKP_INTERVAL s).
+# hydro_lkp_times– server time of the last position refresh.
+# hydro_in_range – ships that were in hydro range THIS physics frame (cleared each frame).
+var team_0_hydro_lkp: Dictionary = {}        # Ship -> Vector3
+var team_1_hydro_lkp: Dictionary = {}
+var team_0_hydro_lkp_times: Dictionary = {}  # Ship -> float
+var team_1_hydro_lkp_times: Dictionary = {}
+var team_0_hydro_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
+var team_1_hydro_in_range: Dictionary = {}
+const HYDRO_LKP_INTERVAL: float = 4.0       # Seconds between frozen-position refreshes
+# Radar LKP system — mirrors the hydro system but uses radar_spotting_range_override.
+var team_0_radar_lkp: Dictionary = {}        # Ship -> Vector3
+var team_1_radar_lkp: Dictionary = {}
+var team_0_radar_lkp_times: Dictionary = {}  # Ship -> float
+var team_1_radar_lkp_times: Dictionary = {}
+var team_0_radar_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
+var team_1_radar_in_range: Dictionary = {}
 # One-time bootstrap per team: after the first visual spot, seed LKPs for
 # still-hidden enemies so bots can begin coordinated hunting immediately.
 var team_0_first_spot_lkp_seeded: bool = false
@@ -249,7 +267,7 @@ func spawn_player(id, player_name):
 	var spawn_map = get_node("GameWorld/Env").get_child(0)
 	var team_spawn_point: Vector3 = (spawn_map.get_node("Spawn").get_child(team_id) as Node3D).global_position
 
-	if team_info["team"].size() == 2:
+	if team_info["team"].size() <= 4:
 		team_spawn_point *= 0.15
 
 	var right_of_spawn = Vector3.UP.cross(team_spawn_point).normalized()
@@ -874,8 +892,15 @@ const UNSPOTTED_TIME = 100.0
 
 func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	# var dist = spotter.global_position.distance_to(spotted.global_position)
-	if spotted.concealment.get_concealment() > dist:
+	# Hydroacoustic Search (or any future consumable) can set a spotting_range_override
+	# on the spotter, forcing detection of any enemy within that radius regardless
+	# of the spotted ship's concealment radius.
+	var hydro_override: float = (spotter.concealment.params.p() as ConcealmentParams).spotting_range_override
+	var radar_override: float = (spotter.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
+	var spotting_override: float = max(hydro_override, radar_override)
+	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
 		spotted.visible_to_enemy = true
+		spotted.detection_type = max(spotted.detection_type, Ship.DetectionType.LOS)
 		if !visible_toggled[spotted]:
 			if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
 				spotted.concealment.spotted_by = spotter
@@ -1019,6 +1044,10 @@ func _physics_process(_delta: float) -> void:
 
 	closest_enemies_that_can_see.clear()
 	visible_toggled.clear()
+	team_0_hydro_in_range.clear()
+	team_1_hydro_in_range.clear()
+	team_0_radar_in_range.clear()
+	team_1_radar_in_range.clear()
 
 	for p in players.values():
 		var ship: Ship = p[0]
@@ -1027,6 +1056,7 @@ func _physics_process(_delta: float) -> void:
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
+		ship.detection_type = Ship.DetectionType.NONE
 
 	for p_idx in players.size() - 1:
 		var p_name = players.keys()[p_idx]
@@ -1040,10 +1070,56 @@ func _physics_process(_delta: float) -> void:
 				ray_query.to = p2.global_position
 				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
-				if collision.is_empty(): # can see each other no obstacles (add concealment)
-					var dist = p.global_position.distance_to(p2.global_position)
+				var has_los: bool = collision.is_empty()
+				var dist: float = p.global_position.distance_to(p2.global_position)
+				if has_los:
 					handle_spot(p, p2, dist)
 					handle_spot(p2, p, dist)
+				# Hydro detection — no LOS required.
+				# Sets HYDRO detection type (overrides LOS via higher enum value).
+				# LKP position is frozen and only refreshed every HYDRO_LKP_INTERVAL s;
+				# a per-frame ping keeps hydro_detected true on the client while in range;
+				# a clear-packet sets it false the moment the ship leaves range.
+				var p_hydro := (p.concealment.params.p() as ConcealmentParams).spotting_range_override
+				if p_hydro > 0.0 and dist < p_hydro:
+					p2.detection_type = Ship.DetectionType.HYDRO  # p detects p2 — always HYDRO
+					# Counter-spot: p's own pings are audible to p2.  Only mark p as HYDRO-detected
+					# if p is not already spotted by LOS — LOS takes priority for the pinger.
+					if p.detection_type != Ship.DetectionType.LOS:
+						p.detection_type = Ship.DetectionType.HYDRO
+					if not p2.visible_to_enemy:
+						_refresh_hydro_lkp(p.team.team_id, p2)
+						_refresh_hydro_lkp(p2.team.team_id, p)  # counter-spot LKP
+				var p2_hydro := (p2.concealment.params.p() as ConcealmentParams).spotting_range_override
+				if p2_hydro > 0.0 and dist < p2_hydro:
+					p.detection_type = Ship.DetectionType.HYDRO  # p2 detects p — always HYDRO
+					# Counter-spot: same rule for p2.
+					if p2.detection_type != Ship.DetectionType.LOS:
+						p2.detection_type = Ship.DetectionType.HYDRO
+					if not p.visible_to_enemy:
+						_refresh_hydro_lkp(p2.team.team_id, p)
+						_refresh_hydro_lkp(p.team.team_id, p2)  # counter-spot LKP
+				# Radar detection — same no-LOS logic as hydro but uses radar_spotting_range_override.
+				# RADAR has higher enum priority than HYDRO so it overrides if both are active.
+				var p_radar := (p.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
+				if p_radar > 0.0 and dist < p_radar:
+					p2.detection_type = Ship.DetectionType.RADAR  # p detects p2 — always RADAR
+					# Counter-spot: p's own pings are audible to p2.  Only mark p as RADAR-detected
+					# if p is not already spotted by LOS — LOS takes priority for the pinger.
+					if p.detection_type != Ship.DetectionType.LOS:
+						p.detection_type = Ship.DetectionType.RADAR
+					if not p2.visible_to_enemy:
+						_refresh_radar_lkp(p.team.team_id, p2)
+						_refresh_radar_lkp(p2.team.team_id, p)  # counter-spot LKP
+				var p2_radar := (p2.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
+				if p2_radar > 0.0 and dist < p2_radar:
+					p.detection_type = Ship.DetectionType.RADAR  # p2 detects p — always RADAR
+					# Counter-spot: same rule for p2.
+					if p2.detection_type != Ship.DetectionType.LOS:
+						p2.detection_type = Ship.DetectionType.RADAR
+					if not p.visible_to_enemy:
+						_refresh_radar_lkp(p2.team.team_id, p)
+						_refresh_radar_lkp(p.team.team_id, p2)  # counter-spot LKP
 
 	for spotted in closest_enemies_that_can_see.keys():
 		var closest_enemy: Ship = null
@@ -1098,6 +1174,27 @@ func _physics_process(_delta: float) -> void:
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			team_1_unspotted_enemies.erase(ship)
 			team_1_unspotted_times.erase(ship)
+	# Clean up dead ships from hydro LKP tables
+	for ship in team_0_hydro_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_0_hydro_lkp.erase(ship)
+			team_0_hydro_lkp_times.erase(ship)
+	for ship in team_1_hydro_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_1_hydro_lkp.erase(ship)
+			team_1_hydro_lkp_times.erase(ship)
+	# Clean up dead ships from radar LKP tables
+	for ship in team_0_radar_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_0_radar_lkp.erase(ship)
+			team_0_radar_lkp_times.erase(ship)
+	for ship in team_1_radar_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_1_radar_lkp.erase(ship)
+			team_1_radar_lkp_times.erase(ship)
+
+	_send_hydro_syncs()
+	_send_radar_syncs()
 
 	# if c > 2:
 	# 	c = 0
@@ -1240,3 +1337,120 @@ func _publish_team_threats(team_id: int) -> void:
 		data.append(Vector3(lp.x, lp.z, decay))
 
 	threat_registry.update_team(team_id, ids, data)
+
+
+func _refresh_hydro_lkp(team_id: int, ship: Ship) -> void:
+	"""Mark ship as in hydro range this frame and refresh its frozen LKP position
+	when first contacted or every HYDRO_LKP_INTERVAL seconds thereafter."""
+	var active    := team_0_hydro_in_range   if team_id == 0 else team_1_hydro_in_range
+	var lkp       := team_0_hydro_lkp        if team_id == 0 else team_1_hydro_lkp
+	var lkp_times := team_0_hydro_lkp_times  if team_id == 0 else team_1_hydro_lkp_times
+
+	active[ship] = true  # Visible this frame
+
+	if not lkp.has(ship) or current_time - lkp_times.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
+		lkp[ship]       = ship.global_position
+		lkp_times[ship] = current_time
+		# Keep bot-AI unspotted tables fresh on the same cadence
+		var unspotted       := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+		var unspotted_times := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+		unspotted[ship]       = ship.global_position
+		unspotted_times[ship] = current_time
+
+
+func _send_hydro_syncs() -> void:
+	"""Send per-frame hydro pings and one-shot clear packets to human players.
+	- Ships in hydro_in_range: send sync_unspotted(frozen_pos, true) every frame.
+	- Ships in hydro_lkp but not in_range: send sync_unspotted(last_pos, false) once,
+	  then erase from the LKP table."""
+	for team_id in [0, 1]:
+		var active    := team_0_hydro_in_range   if team_id == 0 else team_1_hydro_in_range
+		var lkp       := team_0_hydro_lkp        if team_id == 0 else team_1_hydro_lkp
+		var lkp_times := team_0_hydro_lkp_times  if team_id == 0 else team_1_hydro_lkp_times
+
+		# Active pings — ship is currently in hydro range
+		for ship in active.keys():
+			if not is_instance_valid(ship):
+				continue
+			# If the ship is also LOS-visible, use its real position so the hydro
+			# ping doesn't conflict with the normal LOS sync and cause flickering.
+			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 1)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
+
+		# Clear packets — ship just left hydro range (present in lkp, absent from active)
+		for ship in lkp.keys():
+			if active.has(ship):
+				continue
+			if not is_instance_valid(ship) or ship.health_controller.is_dead():
+				lkp.erase(ship)
+				lkp_times.erase(ship)
+				continue
+			var pos: Vector3 = lkp[ship]
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 1)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
+			lkp.erase(ship)
+			lkp_times.erase(ship)
+
+
+func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
+	"""Mark ship as in radar range this frame and refresh its frozen LKP position
+	if first contact or HYDRO_LKP_INTERVAL seconds have elapsed."""
+	var active   := team_0_radar_in_range   if team_id == 0 else team_1_radar_in_range
+	var lkp      := team_0_radar_lkp        if team_id == 0 else team_1_radar_lkp
+	var lkp_t    := team_0_radar_lkp_times  if team_id == 0 else team_1_radar_lkp_times
+
+	active[ship] = true
+
+	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
+		lkp[ship]  = ship.global_position
+		lkp_t[ship] = current_time
+		var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+		var u_times   := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+		unspotted[ship] = ship.global_position
+		u_times[ship]   = current_time
+
+
+func _send_radar_syncs() -> void:
+	"""Mirror of _send_hydro_syncs but uses source = 2 (Radar)."""
+	for team_id in [0, 1]:
+		var active := team_0_radar_in_range   if team_id == 0 else team_1_radar_in_range
+		var lkp    := team_0_radar_lkp        if team_id == 0 else team_1_radar_lkp
+		var lkp_t  := team_0_radar_lkp_times  if team_id == 0 else team_1_radar_lkp_times
+
+		for ship in active.keys():
+			if not is_instance_valid(ship):
+				continue
+			# Same LOS-priority fix as hydro: use real position when LOS is active.
+			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 2)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
+
+		for ship in lkp.keys():
+			if active.has(ship):
+				continue
+			if not is_instance_valid(ship) or ship.health_controller.is_dead():
+				lkp.erase(ship)
+				lkp_t.erase(ship)
+				continue
+			var pos: Vector3 = lkp[ship]
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 2)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
+			lkp.erase(ship)
+			lkp_t.erase(ship)

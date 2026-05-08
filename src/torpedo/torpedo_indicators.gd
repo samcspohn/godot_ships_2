@@ -9,14 +9,14 @@ extends Control
 
 var torpedo_manager: _TorpedoManager
 
-const TRIANGLE_SIZE: float = 5.0
+const TRIANGLE_SIZE: float = 2.5
 const TRIANGLE_OFFSET_Y: float = -2.0  # Offset above the torpedo position (negative = up)
 const OUTLINE_WIDTH: float = 1.5
 const OUTLINE_COLOR: Color = Color(0, 0, 0, 0.6)
 
 # Detection dot — shown when the torpedo is visible_to_enemy
-const DETECTION_DOT_RADIUS: float = 2.0
-const DETECTION_DOT_GAP: float = 2.0  # Gap between triangle base and dot centre
+const DETECTION_DOT_RADIUS: float = 1.2
+const DETECTION_DOT_GAP: float = 1.0  # Gap between triangle base and dot centre
 const DETECTION_DOT_COLOR: Color = Color(1.0, 0.8, 0.1, 0.95)  # Yellow-orange
 
 # Proximity indicator constants
