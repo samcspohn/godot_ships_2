@@ -9,6 +9,7 @@ extends Node
 @onready var shell_replayer: ShellReplayer = $SubViewportContainer/SubViewport/World3D/ShellReplayer
 @onready var torpedo_replayer: TorpedoReplayer = $SubViewportContainer/SubViewport/World3D/TorpedoReplayer
 @onready var replay_camera: Camera3D = $SubViewportContainer/SubViewport/World3D/ReplayCamera
+@onready var _audio_listener: AudioListener3D = $SubViewportContainer/SubViewport/World3D/ReplayCamera/AudioListener3D
 
 # UI references
 @onready var back_button: Button = $UI/UIRoot/TopBar/HBox/BackButton
@@ -62,6 +63,10 @@ func _ready() -> void:
 	scrubber.value_changed.connect(_on_scrubber_value_changed)
 	scrubber.drag_started.connect(func(): _scrubber_dragging = true)
 	scrubber.drag_ended.connect(func(_val): _scrubber_dragging = false)
+
+	# Make the AudioListener3D current so all AudioStreamPlayer3D nodes inside
+	# the SubViewport spatialize relative to the replay camera position.
+	_audio_listener.make_current()
 
 	# Build speed buttons
 	var speeds = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]

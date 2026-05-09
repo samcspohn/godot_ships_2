@@ -30,7 +30,7 @@ const SHIP_SUNK         = 0x60
 # File format magic / version
 # ---------------------------------------------------------------------------
 const MAGIC: int   = 0x52455050  # "REPP"
-const VERSION: int = 1
+const VERSION: int = 2
 
 # ---------------------------------------------------------------------------
 # Ship manifest entry (populated from the header when reading a replay)

@@ -31,6 +31,12 @@ const KNOTS_TO_MS: float = 0.514444
 ##   emitter_id : int                – GPU wake particle emitter ID (-1 if none)
 var _active_torpedos: Dictionary = {}
 
+## When true, skip GPU emitter allocation for all active torpedos.
+## Set by ReplayPlayback during seek to prevent spurious trails from the
+## re-spawned torpedos jumping from their recorded start position to the
+## current seek position.
+var is_seeking: bool = false
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -71,11 +77,10 @@ func spawn_torpedo(event: Dictionary) -> void:
 	instance.mesh = cylinder
 	add_child(instance)
 
-	# ---- Wake particle emitter ----
-	var emitter_id: int = -1
-	var start_pos: Vector3 = event.get("start_pos", Vector3.ZERO)
-	if is_instance_valid(HitEffects) and HitEffects.wake_template != null:
-		emitter_id = HitEffects.wake_template.allocate_emitter(start_pos, 1.0, 0.2, 1.0, 0.0)
+	# Wake emitter is allocated lazily in update_torpedos() at the torpedo's
+	# actual position rather than here at start_pos.  This avoids a spurious
+	# trail stretching from the original fire point to the seek destination
+	# whenever spawn_torpedo() is called during a seek.
 
 	_active_torpedos[torp_id] = {
 		"event"        : event,
@@ -83,9 +88,8 @@ func spawn_torpedo(event: Dictionary) -> void:
 		"material"     : mat,
 		"armed"        : false,
 		"detected"     : false,
-		# Use preamble "timestamp" (replay-relative wall time) as the fire reference.
 		"fire_timestamp" : event.get("timestamp", 0.0),
-		"emitter_id"   : emitter_id,
+		"emitter_id"   : -1,
 	}
 
 
@@ -142,7 +146,17 @@ func update_torpedos(current_time: float) -> void:
 			mesh_inst.global_position = pos
 		mesh_inst.visible = true
 
-		# Update wake emitter position.
+		# ---- Wake emitter (lazy allocation) ----
+		# Allocate at the torpedo's current position, not at start_pos.  This
+		# ensures seek-restored torpedoes start their trail where they actually
+		# are rather than dragging a line from the original fire point.
+		if not is_seeking and entry.emitter_id < 0:
+			if is_instance_valid(HitEffects) and HitEffects.wake_template != null:
+				entry.emitter_id = HitEffects.wake_template.allocate_emitter(
+					pos, 1.0, 0.2, 1.0, 0.0)
+				_active_torpedos[torp_id] = entry
+
+		# Update existing wake emitter position.
 		if entry.emitter_id >= 0:
 			ParticleTemplate.update_emitter_position(entry.emitter_id, pos)
 

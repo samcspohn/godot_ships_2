@@ -40,6 +40,8 @@ var _data: PackedByteArray = PackedByteArray()
 var _reader: StreamPeerBuffer = StreamPeerBuffer.new()
 var _ship_count: int = 0
 var _gun_counts: Array = []          # gun count per ship_id index
+var _secondary_gun_counts: Array = []
+var _version: int = 0
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -77,12 +79,18 @@ func load_file(path: String) -> Error:
 		"index_offset": index_offset,
 	}
 	_ship_count = ship_count
+	_version = version
+	if version != 2:
+		push_warning("ReplayFileReader: version %d loaded (expected 2), secondary gun data may be missing" % version)
 
 	# ---- Ship manifest ----
 	ships.clear()
 	_gun_counts.clear()
 	_gun_counts.resize(256)   # indexed by ship_id (u8)
 	_gun_counts.fill(0)
+	_secondary_gun_counts.clear()
+	_secondary_gun_counts.resize(256)
+	_secondary_gun_counts.fill(0)
 
 	for _i in ship_count:
 		var entry := _parse_manifest_entry()
@@ -90,6 +98,7 @@ func load_file(path: String) -> Error:
 		var sid: int = entry.get("ship_id", 0)
 		if sid < 256:
 			_gun_counts[sid] = entry.get("gun_count", 0)
+			_secondary_gun_counts[sid] = entry.get("secondary_gun_count", 0)
 
 	# ---- Index block ----
 	snapshot_index.clear()
@@ -206,6 +215,7 @@ func _parse_manifest_entry() -> Dictionary:
 	var ship_name: String    = _read_manifest_string()
 	var scene_path: String   = _read_manifest_string()
 	var gun_count: int       = _reader.get_u8()
+	var secondary_gun_count: int = _reader.get_u8() if _version >= 2 else 0
 	var fire_count: int      = _reader.get_u8()
 	var flood_count: int     = _reader.get_u8()
 	var consumable_count: int = _reader.get_u8()
@@ -225,6 +235,7 @@ func _parse_manifest_entry() -> Dictionary:
 		"ship_name":       ship_name,
 		"scene_path":      scene_path,
 		"gun_count":       gun_count,
+		"secondary_gun_count": secondary_gun_count,
 		"fire_count":      fire_count,
 		"flood_count":     flood_count,
 		"consumable_count": consumable_count,
@@ -270,6 +281,18 @@ func _parse_snapshot(reader: StreamPeerBuffer) -> Dictionary:
 			var reload: float = reader.get_float()
 			guns.append({"rot_y": tr_y, "barrel_rot_x": br_x, "reload": reload})
 
+		# v2: secondary gun state — active flag + optional per-gun transforms
+		var secondary_active: bool = false
+		var secondary_guns: Array = []
+		if _version >= 2:
+			var sec_gc: int = _secondary_gun_counts[sid] if sid < _secondary_gun_counts.size() else 0
+			secondary_active = reader.get_u8() != 0
+			if secondary_active:
+				for _sg in sec_gc:
+					var s_rot_y: float = reader.get_float()
+					var s_br_x:  float = reader.get_float()
+					secondary_guns.append({"rot_y": s_rot_y, "barrel_rot_x": s_br_x})
+
 		snap[sid] = {
 			"pos":            Vector3(pos_x, 0.0, pos_z),
 			"rot_y":          rot_y,
@@ -285,6 +308,8 @@ func _parse_snapshot(reader: StreamPeerBuffer) -> Dictionary:
 			"flood_mask":     flood_mask,
 			"consumable_mask": cons_mask,
 			"guns":           guns,
+			"secondary_active": secondary_active,
+			"secondary_guns":  secondary_guns,
 		}
 	return snap
 
@@ -507,6 +532,8 @@ func _find_events_start() -> int:
 		var splen: int = _reader.get_u8()
 		if splen > 0: _reader.get_data(splen)
 		var gc: int = _reader.get_u8()   # gun_count
+		if _version >= 2:
+			_reader.get_u8()  # secondary_gun_count (v2+)
 		_reader.get_u8()  # fire_count
 		_reader.get_u8()  # flood_count
 		var cc: int = _reader.get_u8()  # consumable_count

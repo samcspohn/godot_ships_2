@@ -21,6 +21,7 @@ const SNAPSHOT_INTERVAL: float  = 0.2   # 5 Hz
 var _ships: Array        = []            # Array[Ship], index = ship_id
 var _ship_to_id: Dictionary = {}         # Ship -> int (ship_id)
 var _ship_gun_counts: Array = []         # Array[int], gun count per ship (from manifest)
+var _ship_secondary_gun_counts: Array = []  # Array[int], secondary gun count per ship
 
 # Snapshot seek-table built in memory, flushed to EOF in end_match()
 # Each entry: { timestamp: float, offset: int }
@@ -54,6 +55,7 @@ func begin_match(ships: Array, map_id: int) -> void:
 	_ships = []
 	_ship_to_id = {}
 	_ship_gun_counts = []
+	_ship_secondary_gun_counts = []
 	for i in range(ships.size()):
 		var ship: Ship = ships[i]
 		_ships.append(ship)
@@ -61,6 +63,11 @@ func begin_match(ships: Array, map_id: int) -> void:
 		_ship_gun_counts.append(
 			ship.artillery_controller.guns.size() if ship.artillery_controller else 0
 		)
+		var sec_count: int = 0
+		if ship.secondary_controller:
+			for _sc in ship.secondary_controller.sub_controllers:
+				sec_count += _sc.guns.size()
+		_ship_secondary_gun_counts.append(sec_count)
 
 	# --- open replay file -------------------------------------------------
 	DirAccess.make_dir_recursive_absolute("user://replays")
@@ -107,6 +114,8 @@ func begin_match(ships: Array, map_id: int) -> void:
 
 		var gun_count: int = _ship_gun_counts[i]
 		_file.store_8(gun_count)
+		var secondary_gun_count: int = _ship_secondary_gun_counts[i] if i < _ship_secondary_gun_counts.size() else 0
+		_file.store_8(secondary_gun_count)
 
 		var fire_count: int = ship.fire_manager.fires.size() if ship.fire_manager else 0
 		_file.store_8(fire_count)
@@ -230,6 +239,7 @@ func _write_snapshot() -> void:
 				_file.store_8(0)
 			for _j in range(gc * 3):   # gc guns × 3 floats each
 				_file.store_float(0.0)
+			_file.store_8(0)   # secondary_active = 0 (not active, guns at base)
 			continue
 
 		# --- position / orientation -------------------------------------------
@@ -315,6 +325,23 @@ func _write_snapshot() -> void:
 					_file.store_float(0.0)
 					_file.store_float(0.0)
 
+		# --- secondary gun state (v2: active flag + conditional per-gun transforms) ---
+		# Only write per-gun data when the secondary controller is actively tracking;
+		# otherwise a single 0-byte pass flag is written and the replay resets to base.
+		var sec_active: bool = false
+		if ship.secondary_controller:
+			sec_active = ship.secondary_controller.active
+		_file.store_8(1 if sec_active else 0)
+		if sec_active and ship.secondary_controller:
+			for sc in ship.secondary_controller.sub_controllers:
+				for gun in sc.guns:
+					if is_instance_valid(gun):
+						_file.store_float(gun.rotation.y)
+						_file.store_float(gun.barrel.rotation.x)
+					else:
+						_file.store_float(0.0)
+						_file.store_float(0.0)
+
 # ---------------------------------------------------------------------------
 # Shell events
 # ---------------------------------------------------------------------------
@@ -333,9 +360,11 @@ func record_shell_fired(
 	_file.store_8(_ship_to_id.get(ship, 255))
 	_file.store_8(gun_index    if gun_index    >= 0 else 255)
 	_file.store_8(muzzle_index if muzzle_index >= 0 else 0)
-	# shell_type: 0 = primary/AP, 1 = secondary/HE
-	var shell_type: int = 1 if (shell_params != null and shell_params._secondary) else 0
-	_file.store_8(shell_type)
+	# shell_type byte (v2): bit 0 = is_secondary, bit 1 = is_AP
+	#   0 = primary HE,  1 = secondary HE,  2 = primary AP,  3 = secondary AP
+	var _is_sec: int = 1 if (shell_params != null and shell_params._secondary) else 0
+	var _is_ap:  int = 2 if (shell_params != null and shell_params.type == ShellParams.ShellType.AP) else 0
+	_file.store_8(_is_sec | _is_ap)
 	# muzzle world position
 	_file.store_float(muzzle_pos.x)
 	_file.store_float(muzzle_pos.y)

@@ -130,6 +130,8 @@ func seek(t: float) -> void:
 	if reader == null:
 		return
 
+	_begin_seeking()
+
 	t = clampf(t, 0.0, reader.total_duration)
 	current_time = t
 
@@ -221,6 +223,10 @@ func seek(t: float) -> void:
 									torpedo_replayer.mark_detected(tid)
 
 	time_changed.emit(t)
+
+	# Defer the clear so the seeking flags stay hot through the first
+	# _process() frame after seek — preventing emitter allocation on that frame.
+	call_deferred("_end_seeking")
 
 
 ## Begin (or resume) playback.  If the cursor is at the end, rewind to 0 first.
@@ -395,6 +401,36 @@ func _handle_event(ev: Dictionary) -> void:
 		ReplayEvent.MATCH_END:
 			is_playing = false
 			playback_ended.emit()
+
+# ---------------------------------------------------------------------------
+# Seek emitter management
+# ---------------------------------------------------------------------------
+
+## Freeze all spatial-displacement emitters before seek work begins.
+## Called at the top of seek() so that re-spawned shells/torpedoes cannot
+## start allocating new trails until the seek has fully settled.
+func _begin_seeking() -> void:
+	if shell_replayer != null:
+		shell_replayer.is_seeking = true
+	if torpedo_replayer != null:
+		torpedo_replayer.is_seeking = true
+	for gs in ghost_ships:
+		if is_instance_valid(gs):
+			gs.freeze_particles()
+
+
+## Re-enable emitter allocation and thaw ship particles.
+## Called deferred (one frame after seek()) so the first post-seek _process()
+## frame also skips emitter allocation, preventing a single-frame burst.
+func _end_seeking() -> void:
+	if shell_replayer != null:
+		shell_replayer.is_seeking = false
+	if torpedo_replayer != null:
+		torpedo_replayer.is_seeking = false
+	for gs in ghost_ships:
+		if is_instance_valid(gs):
+			gs.thaw_particles()
+
 
 # ---------------------------------------------------------------------------
 # Private helpers

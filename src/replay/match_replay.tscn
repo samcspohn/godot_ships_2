@@ -4,6 +4,41 @@
 [ext_resource type="Script" uid="uid://6nw8wymt8ume" path="res://src/replay/shell_replayer.gd" id="2_shell"]
 [ext_resource type="Script" uid="uid://blebawk5hed72" path="res://src/replay/torpedo_replayer.gd" id="3_torpedo"]
 
+[sub_resource type="Environment" id="Environment_replay"]
+background_mode = 1
+background_color = Color(0.48170042, 0.7273144, 0.83541787, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.72783875, 0.8694468, 0.93703485, 1)
+ambient_light_energy = 0.4
+ssr_max_steps = 512
+ssr_fade_in = 0.43922582
+ssr_fade_out = 42.224144
+ssr_depth_tolerance = 128.0
+ssao_enabled = true
+ssao_intensity = 0.14
+ssao_power = 28.47406
+ssao_detail = 5.0
+ssao_horizon = 0.0
+ssao_sharpness = 0.0
+ssao_ao_channel_affect = 1.0
+ssil_intensity = 0.81
+glow_enabled = true
+glow_intensity = 0.25
+glow_hdr_threshold = 1.2
+glow_hdr_luminance_cap = 256.0
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.45490196, 0.7058824, 0.8156863, 1)
+fog_light_energy = 1.3
+fog_sun_scatter = 0.11
+fog_density = 0.5175
+fog_depth_curve = 0.9330345
+fog_depth_begin = 0.0
+fog_depth_end = 50000.0
+volumetric_fog_density = 0.0
+volumetric_fog_length = 50000.0
+volumetric_fog_detail_spread = 0.5
+
 [node name="MatchReplay" type="Node" unique_id=913428629]
 script = ExtResource("1_script")
 
@@ -17,6 +52,7 @@ stretch = true
 
 [node name="SubViewport" type="SubViewport" parent="SubViewportContainer" unique_id=531711481]
 handle_input_locally = false
+audio_listener_enable_3d = true
 size = Vector2i(1920, 1080)
 render_target_update_mode = 4
 
@@ -30,15 +66,15 @@ script = ExtResource("2_shell")
 [node name="TorpedoReplayer" type="Node3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=742100497]
 script = ExtResource("3_torpedo")
 
-[node name="Sun" type="DirectionalLight3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=944576109]
-transform = Transform3D(0.70710677, -0.49999997, 0.49999997, 0, 0.70710677, 0.70710677, -0.70710677, -0.49999997, 0.49999997, 0, 0, 0)
-light_energy = 1.5
-shadow_enabled = true
+[node name="WorldEnvironment" type="WorldEnvironment" parent="SubViewportContainer/SubViewport/World3D" unique_id=1234567890]
+environment = SubResource("Environment_replay")
 
 [node name="ReplayCamera" type="Camera3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=694739479]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 3000, -3000)
-near = 1.0
-far = 50000.0
+near = 5.0
+far = 60000.0
+
+[node name="AudioListener3D" type="AudioListener3D" parent="SubViewportContainer/SubViewport/World3D/ReplayCamera" unique_id=844736211]
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1513835804]
 
