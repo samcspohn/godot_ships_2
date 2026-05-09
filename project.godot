@@ -51,6 +51,7 @@ SoundEffectManager="*res://audio/SoundEffectManager.tscn"
 SkillsRegistry="*res://Skills/SkillsRegistry.tscn"
 UpgradeRegistry="*res://src/autoload/UpgradeRegistry.tscn"
 NavigationMapManager="*res://src/autoload/navigation_map_manager.gd"
+ReplayRecorder="*res://src/replay/replay_recorder.gd"
 
 [display]
 

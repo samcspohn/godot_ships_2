@@ -1,0 +1,68 @@
+[gd_scene format=3 uid="uid://dqgbp28ahjpx1"]
+
+[ext_resource type="Script" uid="uid://c8vrima4r4mda" path="res://src/replay/replay_browser.gd" id="1_script"]
+
+[node name="ReplayBrowser" type="Control" unique_id=2106372794]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="Background" type="ColorRect" parent="." unique_id=1415761513]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.07, 0.12, 1)
+
+[node name="VBox" type="VBoxContainer" parent="." unique_id=1053977192]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.1
+anchor_top = 0.05
+anchor_right = 0.9
+anchor_bottom = 0.95
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="VBox" unique_id=681902871]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Match Replays"
+horizontal_alignment = 1
+
+[node name="ReplayList" type="ItemList" parent="VBox" unique_id=1921417383]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="InfoLabel" type="Label" parent="VBox" unique_id=1330812370]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+text = "Select a replay to view details."
+autowrap_mode = 3
+
+[node name="Buttons" type="HBoxContainer" parent="VBox" unique_id=105953265]
+layout_mode = 2
+alignment = 1
+
+[node name="PlayButton" type="Button" parent="VBox/Buttons" unique_id=1207130184]
+custom_minimum_size = Vector2(180, 40)
+layout_mode = 2
+disabled = true
+text = "▶ Watch Replay"
+
+[node name="DeleteButton" type="Button" parent="VBox/Buttons" unique_id=802026463]
+custom_minimum_size = Vector2(100, 40)
+layout_mode = 2
+disabled = true
+text = "Delete"
+
+[node name="BackButton" type="Button" parent="VBox/Buttons" unique_id=1996945064]
+custom_minimum_size = Vector2(150, 40)
+layout_mode = 2
+text = "< Back to Port"

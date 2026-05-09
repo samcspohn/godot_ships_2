@@ -279,6 +279,12 @@ func fire(mod: TargetMod = null) -> void:
 				if dispersed_velocity != null:
 					var t = ProjectileManager.get_current_time()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
+					# --- replay hook ---
+					var _gun_index: int = controller.guns.find(self) if controller else -1
+					ReplayRecorder.record_shell_fired(
+							_ship, _gun_index, muzzles.find(m),
+							m.global_position, dispersed_velocity, t, get_shell(),
+							ProjectileManager.get_last_shell_uid())
 					TcpThreadPool.send_display_shell(_id, m.global_position, dispersed_velocity, t, get_shell(), self, first_shell)
 					first_shell = false
 				else:

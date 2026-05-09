@@ -353,6 +353,17 @@ func spawn_player(id, player_name):
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
 	match_active = true
+	# --- Replay: begin recording once ALL ships (human + bots) are in the world.
+	# Guard with players_spawned_bots so the hook only fires in the human
+	# player's spawn_player call AFTER the bot-spawning loop completes,
+	# not in each individual bot's spawn_player call.
+	if _Utils.authority() and players_spawned_bots:
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null and not _rr._match_active:
+			var _all_ships: Array = []
+			for _p_name in players:
+				_all_ships.append(players[_p_name][0])
+			_rr.begin_match(_all_ships, 0)  # map_id 0 = default map
 
 @rpc("call_remote", "reliable")
 func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
@@ -953,6 +964,14 @@ func _broadcast_match_end():
 		if not ship.team.is_bot:
 			var peer_id = p[2]
 			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
+
+	# Finalize the replay file server-side.
+	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
+	# so we must call end_match() directly here on the server.
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null and _rr._match_active:
+			_rr.end_match(winning_team)
 
 func _notify_matchmaker_available():
 	"""Send UDP notification to the matchmaker that this server is available."""

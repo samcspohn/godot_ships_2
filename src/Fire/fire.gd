@@ -32,6 +32,10 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			fire_emitter.start_emitting()
 			_sync_activate.rpc()
 			lifetime = 1
+			# --- replay hook ---
+			if _Utils.authority():
+				var zone_index := manager.fires.find(self)
+				ReplayRecorder.record_fire_started(_ship, zone_index, __owner)
 			curr_buildup = 0
 			return true
 	return false
@@ -58,6 +62,9 @@ func _physics_process(_delta: float) -> void:
 				lifetime -= 1.0 / d
 				if lifetime <= 0:
 					fire_emitter.stop_emitting()
+					# --- replay hook ---
+					var zone_index := manager.fires.find(self)
+					ReplayRecorder.record_fire_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
 		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time > Time.get_ticks_msec() / 1000.0: # last hit is decay time
 			curr_buildup -= _rparams.max_buildup * _rparams.buildup_reduction_rate

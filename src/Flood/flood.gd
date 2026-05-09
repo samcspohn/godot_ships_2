@@ -27,6 +27,10 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			bubbles.emitting = true
 			_sync_activate.rpc()
 			lifetime = 1
+			# --- replay hook ---
+			if _Utils.authority():
+				var zone_index := manager.floods.find(self)
+				ReplayRecorder.record_flood_started(_ship, zone_index, __owner)
 			curr_buildup = 0
 			return true
 	return false
@@ -59,6 +63,9 @@ func _physics_process(delta: float) -> void:
 				if lifetime <= 0:
 					water.emitting = false
 					bubbles.emitting = false
+					# --- replay hook ---
+					var zone_index := manager.floods.find(self)
+					ReplayRecorder.record_flood_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
 		elif curr_buildup < _params.max_buildup:
 			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate

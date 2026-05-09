@@ -5,6 +5,7 @@ extends Control
 @onready var single_player_button: Button = $TopBar/HBoxContainer/SinglePlayerButton
 @onready var replay_button: Button = $TopBar/HBoxContainer/ReplayButton
 @onready var name_value_label: Label = $TopBar/HBoxContainer/NameValue
+@onready var _topbar_hbox: HBoxContainer = $TopBar/HBoxContainer
 @onready var status_label: Label = $TopBar/StatusLabel
 # @onready var tab_container: TabContainer = $TopBar
 @onready var ship_tab = $HBoxContainer/TabContainer/Ship
@@ -23,6 +24,11 @@ func _ready():
 	connect_button.pressed.connect(_on_connect_pressed)
 	single_player_button.pressed.connect(_on_single_player_pressed)
 	replay_button.pressed.connect(_on_replay_pressed)
+
+	var match_replays_btn = Button.new()
+	match_replays_btn.text = "Match Replays"
+	match_replays_btn.pressed.connect(_on_match_replays_pressed)
+	_topbar_hbox.add_child(match_replays_btn)
 	original_modulate = connect_button.modulate
 
 	# Hook up network signals
@@ -227,3 +233,6 @@ func _on_skill_toggled(skill_id: String, enabled: bool):
 
 func _on_replay_pressed():
 	get_tree().change_scene_to_file("res://src/port/shell_replay.tscn")
+
+func _on_match_replays_pressed():
+	get_tree().change_scene_to_file("res://src/replay/replay_browser.tscn")

@@ -1,7 +1,7 @@
 extends Node
 
 var available_servers = []
-var min_players = 4
+var min_players = 2
 var connecting_clients = {}
 var available_ports = []  # List to track available ports
 var port_range_start = 28970  # Starting port for game servers
@@ -248,7 +248,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Define team composition: 10 ships per team
 	# # Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 12
+	const num_ships_per_team = 1
 	# var class_counts = {
 	# 	SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
 	# 	SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),

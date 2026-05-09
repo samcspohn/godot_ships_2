@@ -490,7 +490,7 @@ func _calculate_target_info():
 			var cam_to_target = target_pos - ray_origin
 			cam_to_target.y = 0.0
 
-			var broadside_factor = 0.0
+			var broadside_factor = 0.2
 			if target_lateral.length_squared() > 0.001 and cam_to_target.length_squared() > 0.001:
 				broadside_factor = absf(target_lateral.normalized().dot(cam_to_target.normalized()))
 			# Power curve with identity exponent (1.0) for now — easy to tune later

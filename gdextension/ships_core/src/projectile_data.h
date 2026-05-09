@@ -24,6 +24,7 @@ private:
 	int frame_count;
 	Array exclude; // Array of Ships to exclude from collision
 	int emitter_id;
+	uint32_t shell_uid;
 
 protected:
 	static void _bind_methods();
@@ -61,6 +62,9 @@ public:
 
 	// Increment frame count
 	void increment_frame_count();
+
+	uint32_t get_shell_uid() const;
+	void set_shell_uid(uint32_t p_shell_uid);
 };
 
 } // namespace godot
