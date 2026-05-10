@@ -66,10 +66,14 @@ var armor_overlay: ArmorViewportOverlay
 # ---------------------------------------------------------------------------
 var _armor_log_reader: ArmorLogReader = null
 var _armor_hits_list:  ItemList       = null
-var _armor_log_hits:   Array          = []   ## Array[Dictionary], parsed hits
+var _armor_log_hits:   Array          = []   ## Array[Dictionary], parsed hits (master, never filtered)
+var _filtered_hits:    Array          = []   ## Array[Dictionary], after applying active filters
 var _armor_log_file_dialog: FileDialog = null
 var _current_ship_scene_path: String = ""   ## scene path of the currently loaded ship
 var _vis: ArmorTrailVisualizer = null   ## shows selected hit path in World3D
+var _filter_victim_btn: OptionButton = null  ## victim ship filter
+var _filter_result_btn: OptionButton = null  ## hit result filter
+var _filter_count_lbl:  Label        = null  ## "X / Y hits" counter
 
 ## Result type int -> readable string (matches ArmorInteraction.HitResult)
 const _HIT_RESULT_NAMES: Array = [
@@ -143,6 +147,40 @@ func _setup_armor_log_browser() -> void:
 	path_lbl.name = "ArmorLogPathLabel"
 	hbox.add_child(path_lbl)
 
+	# Row: Victim filter
+	var vic_row := HBoxContainer.new()
+	vbox.add_child(vic_row)
+	var vic_lbl := Label.new()
+	vic_lbl.text = "Victim:"
+	vic_lbl.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	vic_row.add_child(vic_lbl)
+	_filter_victim_btn = OptionButton.new()
+	_filter_victim_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_filter_victim_btn.item_selected.connect(_on_filter_changed)
+	_filter_victim_btn.add_item("All Victims")
+	_filter_victim_btn.disabled = true
+	vic_row.add_child(_filter_victim_btn)
+
+	# Row: Result filter
+	var res_row := HBoxContainer.new()
+	vbox.add_child(res_row)
+	var res_lbl := Label.new()
+	res_lbl.text = "Result:"
+	res_lbl.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	res_row.add_child(res_lbl)
+	_filter_result_btn = OptionButton.new()
+	_filter_result_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_filter_result_btn.item_selected.connect(_on_filter_changed)
+	_filter_result_btn.add_item("All Results")
+	_filter_result_btn.disabled = true
+	res_row.add_child(_filter_result_btn)
+
+	# Count label: "X / Y hits"
+	_filter_count_lbl = Label.new()
+	_filter_count_lbl.text = ""
+	_filter_count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	vbox.add_child(_filter_count_lbl)
+
 	# Hits list — expands to fill available sidebar height
 	_armor_hits_list = ItemList.new()
 	_armor_hits_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -176,23 +214,12 @@ func _on_armor_log_file_selected(path: String) -> void:
 		_armor_log_reader = null
 		return
 
-	# Populate lists
+	# Master list — sorted by timestamp, never filtered.
 	_armor_log_hits = _armor_log_reader.hits_by_uid.values()
-	# Sort by timestamp
 	_armor_log_hits.sort_custom(func(a, b): return a.get("timestamp", 0.0) < b.get("timestamp", 0.0))
 
-	_armor_hits_list.clear()
-	for hit in _armor_log_hits:
-		var ts: float        = hit.get("timestamp", 0.0)
-		var ht: int          = hit.get("final_hit_type", 0)
-		var steps: Array     = hit.get("steps", [])
-		var cal: float       = hit.get("caliber", 0.0)
-		var att_name: String = hit.get("attacker_name", "?")
-		var st: int          = hit.get("shell_type", 1)  # 0=HE, 1=AP
-		var type_name: String = "HE" if st == 0 else "AP"
-		var ht_name: String  = _HIT_RESULT_NAMES[clampi(ht, 0, _HIT_RESULT_NAMES.size() - 1)]
-		_armor_hits_list.add_item("T+%.1fs  %s:%s:%.0fmm  %-14s  %d plates" % [
-			ts, att_name, type_name, cal, ht_name, steps.size()])
+	_populate_filter_dropdowns()
+	_rebuild_filter()
 
 	# Update path label
 	var path_lbl: Label = get_node_or_null("CanvasLayer/UIPanel/VBoxContainer/ArmorLogPathLabel")
@@ -200,12 +227,76 @@ func _on_armor_log_file_selected(path: String) -> void:
 		path_lbl.text = path.get_file()
 
 	_vis.armor_log_reader = _armor_log_reader
-	result_label.text = "Loaded: %d hits" % _armor_log_hits.size()
+
+func _populate_filter_dropdowns() -> void:
+	# --- Victim dropdown ---
+	_filter_victim_btn.clear()
+	_filter_victim_btn.add_item("All Victims")  # index 0 — always means "no filter"
+	# Collect unique victim_ship_id → player_name pairs, then sort by player name.
+	var seen_victims: Dictionary = {}  # ship_id → player_name
+	for hit in _armor_log_hits:
+		var vid: int         = hit.get("victim_ship_id", 255)
+		var vname: String    = hit.get("victim_player_name", "?")
+		seen_victims[vid] = vname
+	var victim_pairs: Array = seen_victims.keys()
+	victim_pairs.sort_custom(func(a, b): return seen_victims[a] < seen_victims[b])
+	for vid in victim_pairs:
+		_filter_victim_btn.add_item(seen_victims[vid], vid)  # explicit ship_id as item id
+	_filter_victim_btn.select(0)
+	_filter_victim_btn.disabled = false
+
+	# --- Result dropdown ---
+	_filter_result_btn.clear()
+	_filter_result_btn.add_item("All Results")  # index 0 — always means "no filter"
+	# Collect only results that appear in this log, in HitResult order.
+	var seen_results: Dictionary = {}  # hit_type_int → true
+	for hit in _armor_log_hits:
+		seen_results[hit.get("final_hit_type", 0)] = true
+	for ht in range(_HIT_RESULT_NAMES.size()):
+		if seen_results.has(ht):
+			_filter_result_btn.add_item(_HIT_RESULT_NAMES[ht], ht)  # explicit HitResult int as item id
+	_filter_result_btn.select(0)
+	_filter_result_btn.disabled = false
+
+func _on_filter_changed(_idx: int) -> void:
+	_rebuild_filter()
+
+func _rebuild_filter() -> void:
+	# Index 0 is always the "All" entry — selected==0 means no filter on that axis.
+	var vic_sel: int = _filter_victim_btn.selected
+	var res_sel: int = _filter_result_btn.selected
+	var vic_id: int  = -1 if vic_sel <= 0 else _filter_victim_btn.get_item_id(vic_sel)
+	var res_id: int  = -1 if res_sel <= 0 else _filter_result_btn.get_item_id(res_sel)
+
+	_filtered_hits = []
+	for hit in _armor_log_hits:
+		if vic_id != -1 and hit.get("victim_ship_id", 255) != vic_id:
+			continue
+		if res_id != -1 and hit.get("final_hit_type", 0) != res_id:
+			continue
+		_filtered_hits.append(hit)
+
+	_filter_count_lbl.text = "%d / %d hits" % [_filtered_hits.size(), _armor_log_hits.size()]
+	_populate_hits_list()
+
+func _populate_hits_list() -> void:
+	_armor_hits_list.clear()
+	for hit in _filtered_hits:
+		var ts: float        = hit.get("timestamp", 0.0)
+		var ht: int          = hit.get("final_hit_type", 0)
+		var steps: Array     = hit.get("steps", [])
+		var cal: float       = hit.get("caliber", 0.0)
+		var att_name: String = hit.get("attacker_name", "?")
+		var st: int          = hit.get("shell_type", 1)  # 0=HE, 1=AP
+		var stype_str: String = "HE" if st == 0 else "AP"
+		var ht_name: String  = _HIT_RESULT_NAMES[clampi(ht, 0, _HIT_RESULT_NAMES.size() - 1)]
+		_armor_hits_list.add_item("T+%.1fs  %s:%s:%.0fmm  %-14s  %d plates" % [
+			ts, att_name, stype_str, cal, ht_name, steps.size()])
 
 func _on_armor_hit_selected(idx: int) -> void:
-	if idx < 0 or idx >= _armor_log_hits.size():
+	if idx < 0 or idx >= _filtered_hits.size():
 		return
-	var hit: Dictionary = _armor_log_hits[idx]
+	var hit: Dictionary = _filtered_hits[idx]
 
 	# Load the victim ship from the scene path stored in the armor log.
 	# Reuse the existing instance if it's already the correct ship type.
@@ -251,17 +342,17 @@ func _on_armor_hit_selected(idx: int) -> void:
 	var ht_name: String = _HIT_RESULT_NAMES[clampi(hit.get("final_hit_type", 0), 0, _HIT_RESULT_NAMES.size() - 1)]
 	var st_sel: int = hit.get("shell_type", 1)
 	var type_name_sel: String = "HE" if st_sel == 0 else "AP"
-	result_label.text = "T+%.1fs  %s %s  (%d plates)  victim:%d" % [
+	var vic_pname: String = hit.get("victim_player_name", "?")
+	var vic_sname: String = hit.get("victim_name", "?")
+	result_label.text = "T+%.1fs  %s %s  (%d plates)  victim: %s (%s)" % [
 		hit.get("timestamp", 0.0), type_name_sel, ht_name,
-		steps.size(), hit.get("victim_ship_id", 255)]
+		steps.size(), vic_pname, vic_sname]
 
 func _format_hit_details(hit: Dictionary) -> String:
 	var lines: PackedStringArray = PackedStringArray()
 
 	var ts: float    = hit.get("timestamp", 0.0)
 	var ht: int      = hit.get("final_hit_type", 0)
-	var att: int     = hit.get("attacker_ship_id", 255)
-	var vic: int     = hit.get("victim_ship_id", 255)
 	var vx: float    = hit.get("victim_pos_x", 0.0)
 	var vz: float    = hit.get("victim_pos_z", 0.0)
 	var vy: float    = hit.get("victim_rot_y", 0.0)
@@ -269,9 +360,10 @@ func _format_hit_details(hit: Dictionary) -> String:
 	var steps: Array  = hit.get("steps", [])
 	var ht_name: String = _HIT_RESULT_NAMES[clampi(ht, 0, _HIT_RESULT_NAMES.size() - 1)]
 
-	lines.append("=== Armor Hit @ T+%.2fs ===" % ts)
+	lines.append("=== Armor Hit @ T+%.2fs ==" % ts)
 	lines.append("Result:   %s  [%s]" % [ht_name, "HE" if hit.get("shell_type", 1) == 0 else "AP"])
-	lines.append("Attacker: ship %d    Victim: ship %d" % [att, vic])
+	lines.append("Attacker: %s (%s)" % [hit.get("attacker_player_name", "?"), hit.get("attacker_name", "?")])
+	lines.append("Victim:   %s (%s)" % [hit.get("victim_player_name", "?"), hit.get("victim_name", "?")])
 	lines.append("Victim pos: (%.1f, %.1f)  rot_y: %.1f°" % [vx, vz, rad_to_deg(vy)])
 	lines.append("Shell stopped at: (%.1f, %.1f, %.1f)" % [fpos.x, fpos.y, fpos.z])
 	lines.append("Armor plates hit: %d" % steps.size())

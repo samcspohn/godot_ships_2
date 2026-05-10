@@ -11,16 +11,18 @@ extends RefCounted
 class_name ArmorLogReader
 
 const MAGIC:   int = 0x41524D4C   # "ARML"
-const VERSION: int = 6
+const VERSION: int = 7
 
 ## All parsed hit records, indexed by shell_uid.
 ## Each value is a Dictionary with keys:
 ##   timestamp(float) shell_uid(int) final_hit_type(int)
-##   attacker_ship_id(int)  attacker_name(String)
-##   victim_ship_id(int)    victim_name(String)  victim_scene_path(String)
+##   attacker_ship_id(int)  attacker_name(String)        ← ship class (e.g. Wotan)
+##                          attacker_player_name(String) ← player name (e.g. 1001)
+##   victim_ship_id(int)    victim_name(String)          ← ship class
+##                          victim_player_name(String)   ← player name
+##                          victim_scene_path(String)
 ##   victim_pos_x(float) victim_pos_z(float) victim_rot_y(float)
-##   shell_type(int)  victim_scene_path(String)
-##   caliber(float)
+##   shell_type(int)  caliber(float)
 ##   steps: Array[Dictionary]  — see _parse_step() for per-step keys
 ##   final_pos: Vector3
 var hits_by_uid: Dictionary = {}
@@ -45,17 +47,20 @@ func load_file(path: String) -> Error:
 		return ERR_FILE_UNRECOGNIZED
 
 	# Ship info table: Array[Dictionary] indexed by ship_id.
-	# Each entry: { "name": String, "scene_path": String }
+	# Each entry: { "player_name": String, "ship_name": String, "scene_path": String }
 	var ship_count: int  = f.get_8()
 	var ship_table: Array = []
 	for _i in range(ship_count):
-		var name_len:    int              = f.get_8()
-		var name_bytes:  PackedByteArray  = f.get_buffer(name_len)
+		var pname_len:   int              = f.get_8()
+		var pname_bytes: PackedByteArray  = f.get_buffer(pname_len)
+		var sname_len:   int              = f.get_8()
+		var sname_bytes: PackedByteArray  = f.get_buffer(sname_len)
 		var scene_len:   int              = f.get_8()
 		var scene_bytes: PackedByteArray  = f.get_buffer(scene_len)
 		ship_table.append({
-			"name":       name_bytes.get_string_from_utf8(),
-			"scene_path": scene_bytes.get_string_from_utf8(),
+			"player_name": pname_bytes.get_string_from_utf8(),
+			"ship_name":   sname_bytes.get_string_from_utf8(),
+			"scene_path":  scene_bytes.get_string_from_utf8(),
 		})
 
 	var hit_count: int = f.get_32()
@@ -84,11 +89,13 @@ func _parse_hit(f: FileAccess, ship_table: Array) -> Dictionary:
 	d["final_hit_type"]   = f.get_8()
 	var att_id: int       = f.get_8()
 	var vic_id: int       = f.get_8()
-	d["attacker_ship_id"] = att_id
-	d["victim_ship_id"]   = vic_id
-	d["attacker_name"]    = ship_table[att_id]["name"]       if att_id < ship_table.size() else ""
-	d["victim_name"]      = ship_table[vic_id]["name"]       if vic_id < ship_table.size() else ""
-	d["victim_scene_path"]= ship_table[vic_id]["scene_path"] if vic_id < ship_table.size() else ""
+	d["attacker_ship_id"]     = att_id
+	d["victim_ship_id"]       = vic_id
+	d["attacker_name"]        = ship_table[att_id]["ship_name"]    if att_id < ship_table.size() else ""
+	d["attacker_player_name"] = ship_table[att_id]["player_name"]  if att_id < ship_table.size() else ""
+	d["victim_name"]          = ship_table[vic_id]["ship_name"]    if vic_id < ship_table.size() else ""
+	d["victim_player_name"]   = ship_table[vic_id]["player_name"]  if vic_id < ship_table.size() else ""
+	d["victim_scene_path"]    = ship_table[vic_id]["scene_path"]   if vic_id < ship_table.size() else ""
 	d["victim_pos_x"]     = f.get_double()
 	d["victim_pos_z"]     = f.get_double()
 	d["victim_rot_y"]     = f.get_double()

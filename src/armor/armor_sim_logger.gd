@@ -1,12 +1,13 @@
 ## ArmorSimLogger — autoload that records AP shell armor interaction data to
 ## a binary companion file (.armorlog) written alongside each .replay file.
 ##
-## Binary format (.armorlog) — VERSION 6:
+## Binary format (.armorlog) — VERSION 7:
 ##   Header: MAGIC(u32) VERSION(u8)
 ##           ship_count(u8)
 ##           for each ship (indexed by ship_id):
-##             name_len(u8)       name_bytes[...]        ← ship.ship_name
-##             scene_path_len(u8) scene_path_bytes[...]  ← ship.scene_file_path
+##             player_name_len(u8) player_name_bytes[...] ← ship.name (player/node name)
+##             ship_name_len(u8)   ship_name_bytes[...]   ← ship.ship_name (class like Wotan)
+##             scene_path_len(u8)  scene_path_bytes[...]  ← ship.scene_file_path
 ##           hit_count(u32)   ← placeholder; patched by end_log()
 ##   Per hit: timestamp(f64) shell_uid(u32) final_hit_type(u8)
 ##            attacker_id(u8) victim_id(u8)   ← both index into ship table
@@ -22,7 +23,7 @@
 extends Node
 
 const MAGIC:   int = 0x41524D4C  # "ARML"
-const VERSION: int = 6
+const VERSION: int = 7
 
 var _file:             FileAccess  = null
 var _match_start_time: float       = 0.0
@@ -69,18 +70,24 @@ func begin_log(replay_path: String, ship_to_id: Dictionary) -> void:
 			continue
 		var sid: int = ship_to_id[ship_node]
 		_ship_table[sid] = {
-			"name":  ship_node.ship_name,
-			"scene": ship_node.scene_file_path,
+			"player_name": ship_node.name,            # node/player name (e.g. "1001")
+			"ship_name":   ship_node.ship_name,       # ship class name (e.g. "Wotan")
+			"scene":       ship_node.scene_file_path,
 		}
 
-	# Write table: count then per-entry (name + scene_path), in ship_id order.
+	# Write table: count then per-entry (player_name + ship_name + scene_path), in ship_id order.
 	_file.store_8(mini(_ship_table.size(), 255))
 	for entry in _ship_table:
-		var name_bytes: PackedByteArray = (entry["name"] as String).to_utf8_buffer()
-		if name_bytes.size() > 255:
-			name_bytes.resize(255)
-		_file.store_8(name_bytes.size())
-		_file.store_buffer(name_bytes)
+		var pname_bytes: PackedByteArray = (entry["player_name"] as String).to_utf8_buffer()
+		if pname_bytes.size() > 255:
+			pname_bytes.resize(255)
+		_file.store_8(pname_bytes.size())
+		_file.store_buffer(pname_bytes)
+		var sname_bytes: PackedByteArray = (entry["ship_name"] as String).to_utf8_buffer()
+		if sname_bytes.size() > 255:
+			sname_bytes.resize(255)
+		_file.store_8(sname_bytes.size())
+		_file.store_buffer(sname_bytes)
 		var scene_bytes: PackedByteArray = (entry["scene"] as String).to_utf8_buffer()
 		if scene_bytes.size() > 255:
 			scene_bytes.resize(255)
