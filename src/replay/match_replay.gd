@@ -40,6 +40,8 @@ const CAM_MIN_DIST: float = 200.0
 const CAM_MAX_DIST: float = 30000.0
 
 var _follow_ship_id: int = -1   # -1 = free orbit
+var _armor_log_reader: ArmorLogReader = null
+var _armor_trail_visualizer: ArmorTrailVisualizer = null
 var _scrubber_dragging: bool = false
 var _speed_buttons: Array = []
 
@@ -124,6 +126,26 @@ func _ready() -> void:
 	playback.shell_replayer = shell_replayer
 	playback.torpedo_replayer = torpedo_replayer
 	shell_replayer.ghost_ships = ghost_ships
+
+	# Create the armor trail visualizer and load the companion .armorlog if present.
+	_armor_trail_visualizer = ArmorTrailVisualizer.new()
+	_armor_trail_visualizer.name        = "ArmorTrailVisualizer"
+	_armor_trail_visualizer.camera      = replay_camera
+	_armor_trail_visualizer.show_labels = false
+	world_3d.add_child(_armor_trail_visualizer)
+
+	var armor_log_path: String = _Utils.pending_replay_path.get_basename() + ".armorlog"
+	if FileAccess.file_exists(armor_log_path):
+		_armor_log_reader = ArmorLogReader.new()
+		var alog_err: Error = _armor_log_reader.load_file(armor_log_path)
+		if alog_err != OK:
+			push_warning("MatchReplay: could not load armor log '%s' (error %d)" % [armor_log_path, alog_err])
+			_armor_log_reader = null
+		else:
+			_armor_trail_visualizer.armor_log_reader = _armor_log_reader
+
+	_armor_trail_visualizer.ghost_ships = ghost_ships
+	playback.armor_trail_visualizer = _armor_trail_visualizer
 
 	# Load map
 	var map_id = playback.reader.header.get("map_id", 0)

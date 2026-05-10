@@ -2,12 +2,8 @@
 extends Node
 
 # References to UI elements
-@onready var text_input: TextEdit = $CanvasLayer/UIPanel/VBoxContainer/TextInput
-@onready var play_button: Button = $CanvasLayer/UIPanel/VBoxContainer/HBoxContainer/PlayButton
-@onready var validate_button: Button = $CanvasLayer/UIPanel/VBoxContainer/HBoxContainer/ValidateButton
-@onready var back_button: Button = $CanvasLayer/UIPanel/VBoxContainer/HBoxContainer/BackButton
-@onready var result_label: Label = $CanvasLayer/UIPanel/VBoxContainer/ResultLabel
-@onready var validation_label: Label = $CanvasLayer/UIPanel/VBoxContainer/ValidationLabel
+@onready var back_button: Button = $CanvasLayer/UIPanel/BackButton
+var result_label: Label = null   ## created programmatically in _setup_armor_log_browser
 
 # References to 3D world elements
 @onready var world_3d: Node3D = $CanvasLayer/SubViewportContainer/SubViewport/World3D
@@ -65,10 +61,28 @@ var last_mouse_pos: Vector2 = Vector2.ZERO
 # Armor overlay system
 var armor_overlay: ArmorViewportOverlay
 
+# ---------------------------------------------------------------------------
+# Armor Log Browser — added programmatically in _ready()
+# ---------------------------------------------------------------------------
+var _armor_log_reader: ArmorLogReader = null
+var _armor_hits_list:  ItemList       = null
+var _armor_log_hits:   Array          = []   ## Array[Dictionary], parsed hits
+var _armor_log_file_dialog: FileDialog = null
+var _current_ship_scene_path: String = ""   ## scene path of the currently loaded ship
+var _vis: ArmorTrailVisualizer = null   ## shows selected hit path in World3D
+
+## Result type int -> readable string (matches ArmorInteraction.HitResult)
+const _HIT_RESULT_NAMES: Array = [
+	"PENETRATION", "PARTIAL_PEN", "RICOCHET", "OVERPENETRATION",
+	"SHATTER", "CITADEL", "CITADEL_OVERPEN", "WATER", "TERRAIN"
+]
+## Step result int -> readable string (matches ArmorInteraction.ArmorResult)
+const _STEP_RESULT_NAMES: Array = [
+	"RICOCHET", "OVERPEN", "PEN", "PARTIAL_PEN", "SHATTER"
+]
+
 func _ready():
 	# Connect button signals
-	play_button.pressed.connect(_on_play_pressed)
-	validate_button.pressed.connect(_on_validate_pressed)
 	back_button.pressed.connect(_on_back_pressed)
 
 	# Create shell mesh
@@ -84,9 +98,18 @@ func _ready():
 	camera_rotation = Vector2(-PI / 6, 0)  # Start with slight downward angle
 	update_camera_transform()
 
+	# Armor path visualizer — shows selected armor log hit as lines + spheres.
+	_vis = ArmorTrailVisualizer.new()
+	_vis.camera    = camera
+	_vis.is_playing  = false
+	_vis.is_seeking  = false
+	world_3d.add_child(_vis)
+
 	# Setup armor overlay in embedded mode — overlay composites inside the
 	# SubViewportContainer alongside the 3D SubViewport
 	_setup_armor_overlay()
+
+	_setup_armor_log_browser()
 
 func _setup_armor_overlay():
 	armor_overlay = ArmorViewportOverlay.new()
@@ -96,7 +119,198 @@ func _setup_armor_overlay():
 	add_child(armor_overlay)
 	armor_overlay.setup_embedded(camera, sub_viewport_container, sub_viewport)
 
+# ---------------------------------------------------------------------------
+# Armor Log Browser Setup
+# ---------------------------------------------------------------------------
+
+func _setup_armor_log_browser() -> void:
+	var vbox: VBoxContainer = $CanvasLayer/UIPanel/VBoxContainer
+
+	# Row: Load button + file path label
+	var hbox := HBoxContainer.new()
+	vbox.add_child(hbox)
+
+	var load_btn := Button.new()
+	load_btn.text = "Load Armor Log"
+	load_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	load_btn.pressed.connect(_on_load_armor_log_pressed)
+	hbox.add_child(load_btn)
+
+	var path_lbl := Label.new()
+	path_lbl.text = "No file loaded"
+	path_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	path_lbl.clip_text = true
+	path_lbl.name = "ArmorLogPathLabel"
+	hbox.add_child(path_lbl)
+
+	# Hits list — expands to fill available sidebar height
+	_armor_hits_list = ItemList.new()
+	_armor_hits_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_armor_hits_list.item_selected.connect(_on_armor_hit_selected)
+	vbox.add_child(_armor_hits_list)
+
+	# One-line summary label shown below the list when a hit is selected
+	result_label = Label.new()
+	result_label.text = ""
+	result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	result_label.custom_minimum_size = Vector2(0, 48)
+	vbox.add_child(result_label)
+
+	# FileDialog
+	_armor_log_file_dialog = FileDialog.new()
+	_armor_log_file_dialog.file_mode   = FileDialog.FILE_MODE_OPEN_FILE
+	_armor_log_file_dialog.access      = FileDialog.ACCESS_FILESYSTEM
+	_armor_log_file_dialog.add_filter("*.armorlog", "Armor Log Files")
+	_armor_log_file_dialog.current_dir = ProjectSettings.globalize_path("user://replays")
+	_armor_log_file_dialog.file_selected.connect(_on_armor_log_file_selected)
+	add_child(_armor_log_file_dialog)
+
+func _on_load_armor_log_pressed() -> void:
+	_armor_log_file_dialog.popup_centered_ratio(0.6)
+
+func _on_armor_log_file_selected(path: String) -> void:
+	_armor_log_reader = ArmorLogReader.new()
+	var err: Error = _armor_log_reader.load_file(path)
+	if err != OK:
+		result_label.text = "Failed to load armor log (error %d)" % err
+		_armor_log_reader = null
+		return
+
+	# Populate lists
+	_armor_log_hits = _armor_log_reader.hits_by_uid.values()
+	# Sort by timestamp
+	_armor_log_hits.sort_custom(func(a, b): return a.get("timestamp", 0.0) < b.get("timestamp", 0.0))
+
+	_armor_hits_list.clear()
+	for hit in _armor_log_hits:
+		var ts: float        = hit.get("timestamp", 0.0)
+		var ht: int          = hit.get("final_hit_type", 0)
+		var steps: Array     = hit.get("steps", [])
+		var cal: float       = hit.get("caliber", 0.0)
+		var att_name: String = hit.get("attacker_name", "?")
+		var st: int          = hit.get("shell_type", 1)  # 0=HE, 1=AP
+		var type_name: String = "HE" if st == 0 else "AP"
+		var ht_name: String  = _HIT_RESULT_NAMES[clampi(ht, 0, _HIT_RESULT_NAMES.size() - 1)]
+		_armor_hits_list.add_item("T+%.1fs  %s:%s:%.0fmm  %-14s  %d plates" % [
+			ts, att_name, type_name, cal, ht_name, steps.size()])
+
+	# Update path label
+	var path_lbl: Label = get_node_or_null("CanvasLayer/UIPanel/VBoxContainer/ArmorLogPathLabel")
+	if path_lbl:
+		path_lbl.text = path.get_file()
+
+	_vis.armor_log_reader = _armor_log_reader
+	result_label.text = "Loaded: %d hits" % _armor_log_hits.size()
+
+func _on_armor_hit_selected(idx: int) -> void:
+	if idx < 0 or idx >= _armor_log_hits.size():
+		return
+	var hit: Dictionary = _armor_log_hits[idx]
+
+	# Load the victim ship from the scene path stored in the armor log.
+	# Reuse the existing instance if it's already the correct ship type.
+	var scene_path: String = hit.get("victim_scene_path", "")
+	if scene_path != "":
+		if scene_path != _current_ship_scene_path:
+			if ship != null and is_instance_valid(ship):
+				ship.queue_free()
+				ship = null
+			var ship_scene = load(scene_path)
+			if ship_scene != null:
+				ship = ship_scene.instantiate()
+				world_3d.add_child(ship)
+				if ship is RigidBody3D:
+					ship.gravity_scale = 0.0
+					ship.freeze = true
+				_enable_armor_overlay(ship)
+				_current_ship_scene_path = scene_path
+		if ship != null and is_instance_valid(ship):
+			ship.global_position = Vector3(
+				hit.get("victim_pos_x", 0.0),
+				ship.global_position.y,
+				hit.get("victim_pos_z", 0.0))
+			ship.rotation.y = hit.get("victim_rot_y", 0.0)
+
+	# Show armor path in 3D — clear previous, then display selected hit.
+	_vis.on_begin_seek()
+	_vis.on_shell_hit({"shell_uid": hit.get("shell_uid", -1)})
+
+	# Focus camera on the centroid of the hit's waypoints.
+	var steps: Array    = hit.get("steps", [])
+	var final_pos: Vector3 = hit.get("final_pos", Vector3.ZERO)
+	var center: Vector3 = final_pos
+	for step in steps:
+		center += step.get("pos", Vector3.ZERO)
+	if steps.size() > 0:
+		center /= float(steps.size() + 1)
+	camera_target   = center
+	camera_distance = 30.0
+	update_camera_transform()
+
+	# Show a brief summary — full details are visible in the 3D view.
+	var ht_name: String = _HIT_RESULT_NAMES[clampi(hit.get("final_hit_type", 0), 0, _HIT_RESULT_NAMES.size() - 1)]
+	var st_sel: int = hit.get("shell_type", 1)
+	var type_name_sel: String = "HE" if st_sel == 0 else "AP"
+	result_label.text = "T+%.1fs  %s %s  (%d plates)  victim:%d" % [
+		hit.get("timestamp", 0.0), type_name_sel, ht_name,
+		steps.size(), hit.get("victim_ship_id", 255)]
+
+func _format_hit_details(hit: Dictionary) -> String:
+	var lines: PackedStringArray = PackedStringArray()
+
+	var ts: float    = hit.get("timestamp", 0.0)
+	var ht: int      = hit.get("final_hit_type", 0)
+	var att: int     = hit.get("attacker_ship_id", 255)
+	var vic: int     = hit.get("victim_ship_id", 255)
+	var vx: float    = hit.get("victim_pos_x", 0.0)
+	var vz: float    = hit.get("victim_pos_z", 0.0)
+	var vy: float    = hit.get("victim_rot_y", 0.0)
+	var fpos: Vector3 = hit.get("final_pos", Vector3.ZERO)
+	var steps: Array  = hit.get("steps", [])
+	var ht_name: String = _HIT_RESULT_NAMES[clampi(ht, 0, _HIT_RESULT_NAMES.size() - 1)]
+
+	lines.append("=== Armor Hit @ T+%.2fs ===" % ts)
+	lines.append("Result:   %s  [%s]" % [ht_name, "HE" if hit.get("shell_type", 1) == 0 else "AP"])
+	lines.append("Attacker: ship %d    Victim: ship %d" % [att, vic])
+	lines.append("Victim pos: (%.1f, %.1f)  rot_y: %.1f°" % [vx, vz, rad_to_deg(vy)])
+	lines.append("Shell stopped at: (%.1f, %.1f, %.1f)" % [fpos.x, fpos.y, fpos.z])
+	lines.append("Armor plates hit: %d" % steps.size())
+	lines.append("")
+
+	for i in steps.size():
+		var s: Dictionary   = steps[i]
+		var res: int        = s.get("result", 2)
+		var res_name: String = _STEP_RESULT_NAMES[clampi(res, 0, _STEP_RESULT_NAMES.size() - 1)]
+		var cit: bool       = s.get("is_citadel", false)
+		var amm: float      = s.get("armor_mm", 0.0)
+		var emm: float      = s.get("effective_mm", 0.0)
+		var ang: float      = rad_to_deg(s.get("impact_angle", 0.0))
+		var pen: float      = s.get("pen", 0.0)
+		var intg: float     = s.get("integrity", 1.0)
+		var path: String    = s.get("armor_path", "?")
+		var pos: Vector3    = s.get("pos", Vector3.ZERO)
+		var spd: float      = s.get("vel", Vector3.ZERO).length()
+
+		lines.append("[Step %d] %s%s" % [i + 1, res_name, "  [CITADEL]" if cit else ""])
+		lines.append("  Part:    %s" % path)
+		lines.append("  Armor:   %.0fmm / %.0fmm eff  (angle %.1f°)" % [amm, emm, ang])
+		var is_he: bool = hit.get("shell_type", 1) == 0
+		if is_he:
+			lines.append("  Overmatch: %.0fmm threshold   Speed: %.0f m/s" % [pen, spd])
+		else:
+			lines.append("  Pen:     %.0fmm   Integrity: %.2f   Speed: %.0f m/s" % [pen, intg, spd])
+		lines.append("  Pos:     (%.1f, %.1f, %.1f)" % [pos.x, pos.y, pos.z])
+		lines.append("")
+
+	return "\n".join(lines)
+
 func _input(event):
+	# Only process camera input when the mouse is over the 3D viewport.
+	var mouse_pos: Vector2   = get_viewport().get_mouse_position()
+	var vp_rect:   Rect2     = sub_viewport_container.get_global_rect()
+	if not vp_rect.has_point(mouse_pos):
+		return
+
 	# Handle mouse button for camera rotation
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
@@ -229,12 +443,8 @@ func _on_back_pressed():
 	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")
 
 func start_replay():
-	# Parse the input text
-	var input_text = text_input.text
-	if input_text.strip_edges().is_empty():
-		push_warning("No input text to parse")
-		return
-
+	# Text-paste workflow removed — start_replay requires events set externally.
+	var input_text: String = ""
 	events = ShellEventParser.parse_events(input_text)
 
 	if events.is_empty():
@@ -275,7 +485,6 @@ func start_replay():
 	time_accumulator = 0.0
 	is_playing = true
 	shell.visible = true
-	play_button.text = "Stop"
 	hit_citadel = false
 	over_penetration = false
 	last_armor_result = ""
@@ -320,7 +529,6 @@ func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
 
 func stop_replay():
 	is_playing = false
-	play_button.text = "Play Replay"
 	shell.visible = false
 	if ship != null:
 		_disable_armor_overlay(ship)
@@ -351,7 +559,6 @@ func process_replay(delta: float):
 		# Check if we've reached the end
 		if current_event_index >= events.size():
 			is_playing = false
-			play_button.text = "Replay"
 			calculate_final_result()
 			break
 
@@ -557,16 +764,11 @@ func calculate_final_result():
 #region Validation Mode
 
 func start_validation():
-	# Parse the input text
-	var input_text = text_input.text
-	if input_text.strip_edges().is_empty():
-		validation_label.text = "Validation: No input text"
-		return
-
+	var input_text: String = ""
 	events = ShellEventParser.parse_events(input_text)
 
 	if events.is_empty():
-		validation_label.text = "Validation: No events parsed"
+		push_warning("start_validation: no events (text-paste workflow removed)")
 		return
 
 	# Load the ship
@@ -577,7 +779,6 @@ func start_validation():
 			break
 
 	if ship_scene_path.is_empty():
-		validation_label.text = "Validation: No ship scene path"
 		return
 
 	# Remove old ship if exists
@@ -588,7 +789,6 @@ func start_validation():
 	# Load and instantiate the ship
 	var ship_scene = load(ship_scene_path)
 	if ship_scene == null:
-		validation_label.text = "Validation: Failed to load ship scene"
 		return
 
 	ship = ship_scene.instantiate()
@@ -613,7 +813,6 @@ func start_validation():
 	# Extract shell parameters from events
 	var shell_params = extract_shell_params()
 	if shell_params == null:
-		validation_label.text = "Validation: Failed to extract shell parameters"
 		return
 
 	# Position camera to view the ship and shell trajectory
@@ -632,8 +831,6 @@ func start_validation():
 	_validation_pending = true
 
 	is_validating = true
-	validate_button.text = "Stop Validation"
-	validation_label.text = "Validation: Waiting for physics frame..."
 
 func stop_validation():
 	_validation_pending = false
@@ -643,7 +840,6 @@ func stop_validation():
 	# if ship != null:
 	# 	_disable_armor_overlay(ship)
 	is_validating = false
-	validate_button.text = "Validate"
 
 func extract_shell_params() -> Dictionary:
 	# Extract initial shell state from the first Shell event
@@ -912,9 +1108,6 @@ func print_comparison_results(sim_events: Array, sim_result):
 
 	print("\\n==========================================\\n")
 
-	# Update validation label
-	var validation_text = "Validation: See console for detailed comparison"
-	validation_label.text = validation_text
-	validation_label.add_theme_color_override("font_color", Color.GREEN)
+	print("Validation: See console for detailed comparison")
 
 #endregion

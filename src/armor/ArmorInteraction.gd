@@ -534,6 +534,7 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		face_index: int, fuze: float,
 		hit_water: bool, events) -> ArmorResultData:
 
+	var struct_steps: Array = []
 	var first_hit_normal := hit_normal
 	var first_hit_pos := hit_position
 	var params:ShellParams = projectile.params
@@ -585,14 +586,48 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# HE Shell Processing
 	if params.type == ShellParams.ShellType.HE:
 		var armor_mm: float = hit_node.get_armor(face_index)
-
 		var result_armor := hit_node
 
+		# Calculate impact angle for logging (velocities are world-space; normal is local).
+		var he_local_vel := ship_basis_inv * impact_velocity
+		var he_impact_angle := _calculate_impact_angle(he_local_vel.normalized(), hit_normal)
+
+		var he_final_result: HitResult
+		var he_step_result: int
 		if params.overmatch >= armor_mm:
-			var hit_result := HitResult.CITADEL if hit_node.is_citadel else HitResult.PENETRATION
-			return ArmorResultData.new(hit_result, first_hit_pos, result_armor, impact_velocity, ship, first_hit_normal)
+			he_final_result = HitResult.CITADEL if hit_node.is_citadel else HitResult.PENETRATION
+			he_step_result  = int(ArmorResult.PEN)
 		else:
-			return ArmorResultData.new(HitResult.SHATTER, first_hit_pos, result_armor, Vector3.ZERO, ship, first_hit_normal)
+			he_final_result = HitResult.SHATTER
+			he_step_result  = int(ArmorResult.SHATTER)
+
+		# Build a single-step log entry for the HE impact and write to the armor log.
+		var he_steps: Array = [{
+			"result":       he_step_result,
+			"is_citadel":   hit_node.is_citadel,
+			"armor_mm":     armor_mm,
+			"effective_mm": armor_mm,  # HE uses raw thickness (no obliquity correction)
+			"impact_angle": he_impact_angle,
+			"pen":          float(params.overmatch),
+			"integrity":    1.0,
+			"pos":          first_hit_pos,
+			"vel":          impact_velocity,
+			"armor_path":   hit_node.armor_path,
+		}]
+		if is_instance_valid(ArmorSimLogger) and ArmorSimLogger._file != null:
+			ArmorSimLogger.record_hit(
+				projectile.get_shell_uid() if projectile != null else 0,
+				int(he_final_result),
+				projectile.get_owner() if projectile != null else null,
+				ship,
+				ship.global_position,
+				ship.rotation.y,
+				int(params.type),
+				params.caliber,
+				he_steps,
+				first_hit_pos
+			)
+		return ArmorResultData.new(he_final_result, first_hit_pos, result_armor, impact_velocity, ship, first_hit_normal)
 
 	# APC Shell Processing Loop
 	var iteration := 0
@@ -708,6 +743,21 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			rad_to_deg(impact_angle), deflection_mult, _log_normal.x, _log_normal.y, _log_normal.z,
 			hit_node.ship.name, hit_node.is_citadel])
 
+		# Collect structured data for binary armor sim log.
+		# pos = world-space entry point into this plate; vel = world-space exit velocity.
+		struct_steps.append({
+			"result":       int(result),
+			"is_citadel":   hit_node.is_citadel,
+			"armor_mm":     armor_mm,
+			"effective_mm": e_armor,
+			"impact_angle": impact_angle,
+			"pen":          shell.pen,
+			"integrity":    shell.integrity,
+			"pos":          ship_xform * hit_position,
+			"vel":          ship_basis * shell.velocity,
+			"armor_path":   hit_node.armor_path,
+		})
+
 		# Check termination
 		if result == ArmorResult.SHATTER or result == ArmorResult.PARTIAL_PEN or shell.get_speed() < MIN_VELOCITY:
 			shell.calc_end_position()
@@ -761,10 +811,24 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if (damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN) and (ship.ship_name == "Yamato" or ship.ship_name == "Wotan"):
-	# if true:
-		for e in events:
-			print(e)
+	# Write AP armor interaction data to the binary log (replaces per-ship debug print).
+	# Only logged when at least one armor plate interaction occurred (AP shells that
+	# actually reached the hull — HE shells and water hits return early, leaving
+	# struct_steps empty, and are therefore never logged here).
+	if not struct_steps.is_empty() and is_instance_valid(ArmorSimLogger) and ArmorSimLogger._file != null:
+		var _final_log_pos: Vector3 = ship_xform * shell.end_position
+		ArmorSimLogger.record_hit(
+			projectile.get_shell_uid() if projectile != null else 0,
+			int(damage_result),
+			projectile.get_owner() if projectile != null else null,
+			ship,
+			ship.global_position,
+			ship.rotation.y,
+			int(params.type),
+			params.caliber,
+			struct_steps,
+			_final_log_pos
+		)
 
 	# Transform shell velocity back to world space for the result
 	var final_world_vel := ship_basis * shell.velocity

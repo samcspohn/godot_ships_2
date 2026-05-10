@@ -148,6 +148,10 @@ func begin_match(ships: Array, map_id: int) -> void:
 	_prev_detection   = {}
 	_prev_visible     = {}
 
+	# Begin armor sim companion log alongside this replay.
+	if is_instance_valid(ArmorSimLogger):
+		ArmorSimLogger.begin_log(filename, _ship_to_id)
+
 	# --- connect global signals -------------------------------------------
 	if not _Utils.kill_feed_event.is_connected(_on_kill_feed_event):
 		_Utils.kill_feed_event.connect(_on_kill_feed_event)
@@ -608,6 +612,10 @@ func end_match(winning_team: int) -> void:
 
 	_file.close()
 	_file = null
+
+	# Close the armor sim companion log.
+	if is_instance_valid(ArmorSimLogger):
+		ArmorSimLogger.end_log()
 
 	# --- disconnect signals -----------------------------------------------
 	if _Utils.kill_feed_event.is_connected(_on_kill_feed_event):

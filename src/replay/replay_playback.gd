@@ -50,6 +50,9 @@ var shell_replayer: ShellReplayer = null
 ## Optional TorpedoReplayer child – assign before calling play()/seek().
 var torpedo_replayer: TorpedoReplayer = null
 
+## Optional ArmorTrailVisualizer – set by match_replay.gd after scene setup.
+var armor_trail_visualizer = null   ## ArmorTrailVisualizer
+
 ## Current playback cursor in seconds since match start.
 var current_time: float = 0.0
 
@@ -236,11 +239,15 @@ func play() -> void:
 	if current_time >= reader.total_duration:
 		seek(0.0)
 	is_playing = true
+	if armor_trail_visualizer != null:
+		armor_trail_visualizer.is_playing = true
 
 
 ## Pause playback.
 func pause() -> void:
 	is_playing = false
+	if armor_trail_visualizer != null:
+		armor_trail_visualizer.is_playing = false
 
 
 ## Set the playback speed multiplier (0.25 – 8.0 typical).
@@ -386,6 +393,8 @@ func _handle_event(ev: Dictionary) -> void:
 		ReplayEvent.SHELL_HIT:
 			if shell_replayer != null:
 				shell_replayer.on_shell_hit(ev)
+			if armor_trail_visualizer != null:
+				armor_trail_visualizer.on_shell_hit(ev)
 
 		ReplayEvent.SHIP_SUNK:
 			var ship_id: int = ev.get("victim_ship_id", -1)
@@ -414,6 +423,9 @@ func _begin_seeking() -> void:
 		shell_replayer.is_seeking = true
 	if torpedo_replayer != null:
 		torpedo_replayer.is_seeking = true
+	if armor_trail_visualizer != null:
+		armor_trail_visualizer.is_seeking = true
+		armor_trail_visualizer.on_begin_seek()
 	for gs in ghost_ships:
 		if is_instance_valid(gs):
 			gs.freeze_particles()
@@ -427,6 +439,10 @@ func _end_seeking() -> void:
 		shell_replayer.is_seeking = false
 	if torpedo_replayer != null:
 		torpedo_replayer.is_seeking = false
+	if armor_trail_visualizer != null:
+		armor_trail_visualizer.is_seeking = false
+		armor_trail_visualizer.on_end_seek()
+		armor_trail_visualizer.is_playing = is_playing
 	for gs in ghost_ships:
 		if is_instance_valid(gs):
 			gs.thaw_particles()
