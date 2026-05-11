@@ -470,7 +470,8 @@ func _execute_nav_intent() -> void:
 		_last_intent.target_heading,
 		_last_intent.hold_radius,
 		_last_intent.heading_tolerance,
-		_last_intent.heading_weight
+		_last_intent.heading_weight,
+		_last_intent.force_reverse
 	)
 
 ## Get the current NavIntent mode as a human-readable string (for debug overlay)

@@ -71,10 +71,12 @@ environment = SubResource("Environment_replay")
 
 [node name="ReplayCamera" type="Camera3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=694739479]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 3000, -3000)
+fov = 40.0
 near = 5.0
 far = 60000.0
 
 [node name="AudioListener3D" type="AudioListener3D" parent="SubViewportContainer/SubViewport/World3D/ReplayCamera" unique_id=844736211]
+current = true
 
 [node name="UI" type="CanvasLayer" parent="." unique_id=1513835804]
 

@@ -40,12 +40,28 @@ var over_penetration: bool = false
 var last_armor_result: String = ""
 var shell_velocity_zero: bool = false
 
-# Validation mode
+# ---------------------------------------------------------------------------
+# Validation mode — re-runs ArmorInteraction.process_travel on the logged hit
+# inside a separate SubViewport so paths don't overlap.
+# ---------------------------------------------------------------------------
 var is_validating: bool = false
 var validation_results: Array = []
 var _validation_pending: bool = false
 var _validation_shell_data: Dictionary = {}
 var _validation_wait_frames: int = 0
+
+# Per-hit validation (armor log browser)
+var _validate_btn:            Button               = null  ## enabled when a hit is selected
+var _val_viewport_container:  SubViewportContainer = null
+var _val_viewport:            SubViewport          = null
+var _val_world_3d:            Node3D               = null
+var _val_camera:              Camera3D             = null
+var _val_ship:                Node3D               = null
+var _val_vis:                 ArmorTrailVisualizer = null
+var _val_pending:             bool                 = false
+var _val_hit_data:            Dictionary           = {}
+var _val_wait_frames:         int                  = 0
+var _val_header_lbl:          Label                = null  ## "SIMULATION" overlay label
 
 
 # Camera control
@@ -66,6 +82,7 @@ var armor_overlay: ArmorViewportOverlay
 # ---------------------------------------------------------------------------
 var _armor_log_reader: ArmorLogReader = null
 var _armor_hits_list:  ItemList       = null
+var _hit_steps_list:   ItemList       = null  ## per-step breakdown of the currently selected hit
 var _armor_log_hits:   Array          = []   ## Array[Dictionary], parsed hits (master, never filtered)
 var _filtered_hits:    Array          = []   ## Array[Dictionary], after applying active filters
 var _armor_log_file_dialog: FileDialog = null
@@ -74,6 +91,18 @@ var _vis: ArmorTrailVisualizer = null   ## shows selected hit path in World3D
 var _filter_victim_btn: OptionButton = null  ## victim ship filter
 var _filter_result_btn: OptionButton = null  ## hit result filter
 var _filter_count_lbl:  Label        = null  ## "X / Y hits" counter
+
+## Fallback ShellParams values taken from the H44 500 mm AP shell (Resource_sdl3k in H44.tscn).
+## Used when validating VERSION 7 armor logs that predate shell-param storage.
+const _FB_CALIBER:    float = 500.0
+const _FB_MASS:       float = 1850.0
+const _FB_DRAG:       float = 1.5999999999999955e-05
+const _FB_PEN_MOD:    float = 1.0
+const _FB_AUTO_BOUNCE:    float = 1.0471975511965976  ## deg_to_rad(60)
+const _FB_RICOCHET_ANGLE: float = 0.7853981633974483  ## deg_to_rad(45)
+const _FB_OVERMATCH:       int  = 34
+const _FB_ARMING_THRESH:   int  = 83
+const _FB_FUZE_DELAY:  float = 0.035
 
 ## Result type int -> readable string (matches ArmorInteraction.HitResult)
 const _HIT_RESULT_NAMES: Array = [
@@ -194,6 +223,26 @@ func _setup_armor_log_browser() -> void:
 	result_label.custom_minimum_size = Vector2(0, 48)
 	vbox.add_child(result_label)
 
+	# Validate button — disabled until a hit is selected
+	_validate_btn = Button.new()
+	_validate_btn.text = "Validate Hit"
+	_validate_btn.disabled = true
+	_validate_btn.pressed.connect(_on_validate_pressed)
+	vbox.add_child(_validate_btn)
+
+	# Separator + steps header
+	vbox.add_child(HSeparator.new())
+	var steps_hdr := Label.new()
+	steps_hdr.text = "Armor Steps"
+	steps_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(steps_hdr)
+
+	# Steps list — shows per-plate details for the selected hit
+	_hit_steps_list = ItemList.new()
+	_hit_steps_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_hit_steps_list.allow_reselect = true
+	vbox.add_child(_hit_steps_list)
+
 	# FileDialog
 	_armor_log_file_dialog = FileDialog.new()
 	_armor_log_file_dialog.file_mode   = FileDialog.FILE_MODE_OPEN_FILE
@@ -281,6 +330,9 @@ func _rebuild_filter() -> void:
 
 func _populate_hits_list() -> void:
 	_armor_hits_list.clear()
+	_hit_steps_list.clear()
+	_validate_btn.disabled = true
+	_teardown_validation_viewport()
 	for hit in _filtered_hits:
 		var ts: float        = hit.get("timestamp", 0.0)
 		var ht: int          = hit.get("final_hit_type", 0)
@@ -347,6 +399,17 @@ func _on_armor_hit_selected(idx: int) -> void:
 	result_label.text = "T+%.1fs  %s %s  (%d plates)  victim: %s (%s)" % [
 		hit.get("timestamp", 0.0), type_name_sel, ht_name,
 		steps.size(), vic_pname, vic_sname]
+
+	# Enable the validate button now that a hit is selected.
+	_validate_btn.disabled = false
+
+	# Populate steps list with per-plate detail lines.
+	_hit_steps_list.clear()
+	var is_he: bool = hit.get("shell_type", 1) == 0
+	for i in steps.size():
+		_hit_steps_list.add_item(_format_step_line(i, steps[i], is_he))
+	if steps.is_empty():
+		_hit_steps_list.add_item("(no armor plates recorded)")
 
 func _format_hit_details(hit: Dictionary) -> String:
 	var lines: PackedStringArray = PackedStringArray()
@@ -462,6 +525,14 @@ func _physics_process(delta: float):
 			_validation_pending = false
 			run_validation_simulation(_validation_shell_data)
 
+	# Run per-hit armor-log validation on the physics thread
+	if _val_pending:
+		if _val_wait_frames > 0:
+			_val_wait_frames -= 1
+		else:
+			_val_pending = false
+			_run_validate_simulation(_val_hit_data)
+
 func create_shell():
 	# Create a simple sphere to represent the shell
 	shell = MeshInstance3D.new()
@@ -522,14 +593,6 @@ func _on_play_pressed():
 	else:
 		# Start playback
 		start_replay()
-
-func _on_validate_pressed():
-	if is_validating:
-		# Stop validation
-		stop_validation()
-	else:
-		# Start validation
-		start_validation()
 
 func _on_back_pressed():
 	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")
@@ -1198,8 +1261,521 @@ func print_comparison_results(sim_events: Array, sim_result):
 	else:
 		print("Final Simulated Result: NO HIT")
 
-	print("\\n==========================================\\n")
+	print("\n==========================================\n")
 
 	print("Validation: See console for detailed comparison")
+
+#endregion
+
+# ===========================================================================
+# Per-Hit Armor-Log Validation
+# ===========================================================================
+#region Armor-Log Validation
+
+func _on_validate_pressed() -> void:
+	var sel: PackedInt32Array = _armor_hits_list.get_selected_items()
+	if sel.is_empty():
+		return
+	var hit: Dictionary = _filtered_hits[sel[0]]
+	_setup_validation_viewport()
+	_start_validate_for_hit(hit)
+
+
+func _setup_validation_viewport() -> void:
+	_teardown_validation_viewport()
+
+	# Shrink the main replay viewport to the top half.
+	sub_viewport_container.anchor_bottom = 0.5
+
+	# Create a bottom-half SubViewportContainer for the simulation.
+	_val_viewport_container = SubViewportContainer.new()
+	_val_viewport_container.anchor_left   = 0.0
+	_val_viewport_container.anchor_right  = 1.0
+	_val_viewport_container.anchor_top    = 0.5
+	_val_viewport_container.anchor_bottom = 1.0
+	_val_viewport_container.offset_left   = 372.0
+	_val_viewport_container.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_val_viewport_container.grow_vertical   = Control.GROW_DIRECTION_BOTH
+	_val_viewport_container.stretch = true
+	$CanvasLayer.add_child(_val_viewport_container)
+
+	_val_viewport = SubViewport.new()
+	_val_viewport.handle_input_locally   = false
+	_val_viewport.size                   = Vector2i(1920, 1080)
+	_val_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_val_viewport_container.add_child(_val_viewport)
+
+	_val_world_3d = Node3D.new()
+	_val_world_3d.name = "ValWorld3D"
+	_val_viewport.add_child(_val_world_3d)
+
+	_val_camera = Camera3D.new()
+	_val_world_3d.add_child(_val_camera)
+
+	var light := DirectionalLight3D.new()
+	light.transform = Transform3D(Basis.from_euler(Vector3(PI / 4.0, PI / 4.0, 0.0)), Vector3.ZERO)
+	light.shadow_enabled = true
+	_val_world_3d.add_child(light)
+
+	_val_vis = ArmorTrailVisualizer.new()
+	_val_vis.camera     = _val_camera
+	_val_vis.is_playing = false   # freeze visual timer so trails don't expire
+	_val_vis.is_seeking = false
+	_val_vis.show_labels = true
+	_val_world_3d.add_child(_val_vis)
+
+	# Label overlaid at the top of the validation viewport.
+	_val_header_lbl = Label.new()
+	_val_header_lbl.text = "SIMULATION"
+	_val_header_lbl.add_theme_color_override("font_color", Color(0.0, 1.0, 1.0))
+	_val_header_lbl.anchor_left   = 0.0
+	_val_header_lbl.anchor_right  = 1.0
+	_val_header_lbl.anchor_top    = 0.5
+	_val_header_lbl.anchor_bottom = 0.5
+	_val_header_lbl.offset_left   = 376.0
+	_val_header_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	$CanvasLayer.add_child(_val_header_lbl)
+
+
+func _teardown_validation_viewport() -> void:
+	# Explicitly free the validation ship from the main world before the viewport goes.
+	if _val_ship != null and is_instance_valid(_val_ship):
+		_val_ship.queue_free()
+	_val_ship = null
+
+	if _val_viewport_container != null and is_instance_valid(_val_viewport_container):
+		_val_viewport_container.queue_free()
+	_val_viewport_container = null
+	_val_viewport           = null
+	_val_world_3d           = null
+	_val_camera             = null
+	_val_vis                = null
+	_val_pending            = false
+
+	if _val_header_lbl != null and is_instance_valid(_val_header_lbl):
+		_val_header_lbl.queue_free()
+	_val_header_lbl = null
+
+	# Restore the main viewport to full height.
+	sub_viewport_container.anchor_bottom = 1.0
+
+
+func _start_validate_for_hit(hit: Dictionary) -> void:
+	if hit.is_empty():
+		return
+
+	var scene_path: String = hit.get("victim_scene_path", "")
+	if scene_path.is_empty():
+		push_error("ShellReplay validate: hit has no victim_scene_path")
+		return
+
+	# Spawn the victim ship in the MAIN world so process_travel can raycast against it.
+	if _val_ship != null and is_instance_valid(_val_ship):
+		_val_ship.queue_free()
+		_val_ship = null
+
+	var ship_scene = load(scene_path)
+	if ship_scene == null:
+		push_error("ShellReplay validate: failed to load scene '%s'" % scene_path)
+		return
+
+	_val_ship = ship_scene.instantiate()
+	world_3d.add_child(_val_ship)
+
+	if _val_ship is RigidBody3D:
+		_val_ship.gravity_scale = 0.0
+		_val_ship.freeze = true
+
+	_val_ship.global_position = Vector3(
+		hit.get("victim_pos_x", 0.0),
+		0.0,
+		hit.get("victim_pos_z", 0.0))
+	_val_ship.rotation.y = hit.get("victim_rot_y", 0.0)
+
+	# Build ShellParams from fields stored in the armor log (VERSION 8+).
+	# VERSION 7 logs omit these fields; fall back to H44 500 mm AP values.
+	var params := ShellParams.new()
+	params.caliber              = hit.get("caliber",              _FB_CALIBER)
+	params.type                 = hit.get("shell_type",           1)
+	params.mass                 = hit.get("shell_mass",           _FB_MASS)
+	params.penetration_modifier = hit.get("shell_pen_modifier",   _FB_PEN_MOD)
+	params.auto_bounce          = hit.get("shell_auto_bounce",    _FB_AUTO_BOUNCE)
+	params.ricochet_angle       = hit.get("shell_ricochet_angle", _FB_RICOCHET_ANGLE)
+	params.overmatch            = hit.get("shell_overmatch",      _FB_OVERMATCH)
+	params.arming_threshold     = hit.get("shell_arming_threshold", _FB_ARMING_THRESH)
+	params.fuze_delay           = hit.get("shell_fuze_delay",     _FB_FUZE_DELAY)
+	params.drag                 = hit.get("shell_drag",           0.0)  # unused by process_travel
+	params._update_derived_values()
+
+	# Reconstruct entry state from the first logged step.
+	var steps: Array = hit.get("steps", [])
+	if steps.is_empty():
+		push_error("ShellReplay validate: hit has no steps — cannot reconstruct entry position")
+		return
+
+	var first_step: Dictionary = steps[0]
+	# impact_vel = velocity BEFORE the first plate interaction (stored from V9).
+	# For older logs fall back to the exit velocity; direction error is small for
+	# PEN/OVERPEN but may be significant for RICOCHET (see _reconstruct_ricochet_entry).
+	var vel_fallback: Vector3 = first_step.get("vel", Vector3.ZERO)
+	var impact_vel:   Vector3 = first_step.get("impact_vel", vel_fallback)
+	var hit_pos:      Vector3 = first_step.get("pos", Vector3.ZERO)
+
+	# Flag ricochets in pre-V9 logs so the sim thread can reconstruct the true
+	# entry direction via a narrowphase normal query on the loaded ship.
+	var needs_recon: bool = (
+		not first_step.has("impact_vel") and
+		first_step.get("result", -1) == 0)  # 0 = ArmorResult.RICOCHET
+
+	_val_hit_data = {
+		"params":      params,
+		"hit_pos":     hit_pos,
+		"velocity":    impact_vel,
+		"logged_hit":  hit,
+		"first_step":  first_step,   # kept for reconstruction
+		"needs_ricochet_reconstruction": needs_recon,
+	}
+
+	_val_camera.global_transform = camera.global_transform
+
+	# Wait 2 physics frames for the validation ship's collision shapes to
+	# register in the physics server before raycasting.
+	_val_wait_frames = 2
+	_val_pending     = true
+
+
+func _run_validate_simulation(val_data: Dictionary) -> void:
+	# Called from _physics_process — PhysicsDirectSpaceState3D is safe here.
+	var vel:     Vector3 = val_data["velocity"]
+	var hit_pos: Vector3 = val_data["hit_pos"]
+
+	# For pre-V9 ricochet first-steps, attempt to reconstruct the true entry
+	# velocity using a narrowphase normal query on the already-loaded ship.
+	if val_data.get("needs_ricochet_reconstruction", false):
+		var recon: Vector3 = _reconstruct_ricochet_entry(
+			val_data["first_step"], val_data["params"])
+		if recon != Vector3.ZERO:
+			print("[ShellReplay] Reconstructed ricochet entry vel: %s  (stored exit vel was: %s)" % [recon, vel])
+			vel = recon
+		else:
+			push_warning("[ShellReplay] Ricochet entry reconstruction failed, using exit vel as fallback")
+	var vel_dir: Vector3 = vel.normalized()
+
+	# Step prev_pos back by the ship's longest AABB dimension + 5 m so the ray
+	# always starts well outside the hull regardless of hit location.
+	var ship_aabb:   AABB  = (_val_ship as Ship).aabb
+	var ship_length: float = maxf(maxf(ship_aabb.size.x, ship_aabb.size.y), ship_aabb.size.z)
+	var prev_pos:    Vector3 = hit_pos - vel_dir * (ship_length + 5.0)
+	var current_pos: Vector3 = hit_pos + vel_dir * 0.1
+
+	var projectile := ProjectileData.new()
+	var dummy_owner := Ship.new()   # attacker placeholder; excluded from raycasts
+	projectile.initialize(
+		prev_pos,
+		vel,
+		0.0,
+		val_data["params"],
+		dummy_owner,
+		[])
+	projectile.frame_count = 1   # enables the 10 m backward ray extension in process_travel
+	projectile.position    = current_pos
+
+	# Raycast against the main world where _val_ship lives.
+	var space_state: PhysicsDirectSpaceState3D = world_3d.get_world_3d().direct_space_state
+
+	var sim_events: Array = []
+	var struct_out: Array = []
+	var result: ArmorInteraction.ArmorResultData = ArmorInteraction.process_travel(
+		projectile, prev_pos, 1.0 / 20.0, space_state, sim_events, struct_out)
+
+	call_deferred("_on_validate_complete", val_data["logged_hit"], struct_out, result, sim_events)
+
+
+## Return a prev_pos that is `margin` metres outside the victim ship's OBB along
+## the inverse shell direction.  Uses ray-vs-OBB slab intersection in ship-local
+## space; falls back to `hit_pos - dir * 15` if the OBB cannot be found.
+func _prev_pos_outside_obb(victim: Node3D, hit_pos: Vector3, vel_dir: Vector3, margin: float) -> Vector3:
+	const FALLBACK_DIST: float = 15.0
+	const AXIS_EPSILON:  float = 1e-7
+
+	if not (victim is Ship):
+		return hit_pos - vel_dir * FALLBACK_DIST
+
+	var entry: Dictionary = PrecisionPhysicsWorld.get_ship_entry(victim as Ship)
+	if entry.is_empty():
+		return hit_pos - vel_dir * FALLBACK_DIST
+
+	var obb_body: StaticBody3D = entry["obb_body"] as StaticBody3D
+	if not is_instance_valid(obb_body):
+		return hit_pos - vel_dir * FALLBACK_DIST
+
+	var col_shape_node: CollisionShape3D = obb_body.get_child(0) as CollisionShape3D
+	if col_shape_node == null or not (col_shape_node.shape is BoxShape3D):
+		return hit_pos - vel_dir * FALLBACK_DIST
+
+	var box_shape: BoxShape3D  = col_shape_node.shape as BoxShape3D
+	var half_ext:  Vector3     = box_shape.size * 0.5
+
+	# World-space centre of the box.
+	var obb_center: Vector3 = obb_body.global_transform * col_shape_node.position
+	var obb_basis:  Basis   = obb_body.global_transform.basis
+	var obb_basis_inv: Basis = obb_basis.inverse()
+
+	# Ray in OBB-local space: origin at hit_pos, direction = -vel_dir (backward).
+	var local_origin: Vector3 = obb_basis_inv * (hit_pos - obb_center)
+	var local_dir:    Vector3 = obb_basis_inv * (-vel_dir)
+
+	# Slab intersection — find the earliest exit face going in local_dir.
+	var t_exit: float = INF
+	for i in 3:
+		if abs(local_dir[i]) < AXIS_EPSILON:
+			# Ray is parallel to this slab; if outside it, no intersection.
+			if abs(local_origin[i]) > half_ext[i]:
+				return hit_pos - vel_dir * FALLBACK_DIST
+			# Otherwise the slab is always hit — don't constrain t_exit on this axis.
+		else:
+			var t1: float = (-half_ext[i] - local_origin[i]) / local_dir[i]
+			var t2: float = ( half_ext[i] - local_origin[i]) / local_dir[i]
+			# t_exit for this axis is the face we reach first going forward.
+			t_exit = minf(t_exit, maxf(t1, t2))
+
+	if t_exit <= 0.0 or t_exit == INF:
+		# hit_pos is already outside (or on the boundary going outward).
+		return hit_pos - vel_dir * margin
+
+	# Exit point in world space, then step back another `margin` metres.
+	var exit_local: Vector3 = local_origin + local_dir * t_exit
+	var exit_world: Vector3 = obb_basis * exit_local + obb_center
+	return exit_world - vel_dir * margin
+
+
+## Reverse-engineer the shell entry velocity for a ricochet step from pre-V9 logs
+## where impact_vel was not stored.
+##
+## The ricochet transform is:
+##   v_exit = v_entry - n̂·(v_entry·n̂)·(2-e)
+## which means:
+##   v_entry = v_exit - n̂·cosθ·s·(2-e)
+## where s = entry speed, θ = impact_angle, e = energy_loss.
+##
+## s is recoverable from the energy equation:
+##   s = exit_speed / sqrt(1 - e·(2-e)·cos²θ)
+##
+## n̂ is obtained by casting a ray along -v_exit back into the plate via
+## PrecisionPhysicsWorld.narrowphase_hit (uses the ship's private precision space).
+##
+## Returns Vector3.ZERO on failure so the caller can fall back gracefully.
+func _reconstruct_ricochet_entry(step: Dictionary, params: ShellParams) -> Vector3:
+	var v_exit:      Vector3 = step.get("vel",          Vector3.ZERO)
+	var impact_angle: float  = step.get("impact_angle", 0.0)
+	var pen:          float  = step.get("pen",          0.0)
+	var armor_mm:     float  = step.get("armor_mm",     0.0)
+	var e_armor:      float  = step.get("effective_mm", 0.0)
+	var hit_pos:      Vector3 = step.get("pos",         Vector3.ZERO)
+
+	var exit_speed: float = v_exit.length()
+	if exit_speed < 1.0:
+		return Vector3.ZERO
+
+	# --- Determine energy_loss (mirrors _process_hit logic) ---
+	var energy_loss: float
+	if impact_angle > params.auto_bounce:
+		energy_loss = 0.1   # autobounce
+	else:
+		var k_nose: float = _ArmorInteraction.get_k_nose(params)
+		var obliquity: Dictionary = _ArmorInteraction.calculate_obliquity_multiplier(
+			impact_angle, armor_mm, params.caliber, k_nose)
+		var physics_armor: float = e_armor * obliquity["deflection"]
+		energy_loss = clampf(pen * cos(impact_angle) / maxf(physics_armor, 0.1), 0.0, 0.8)
+
+	# --- Entry speed from energy equation ---
+	var cos_theta: float = cos(impact_angle)
+	var denom: float = 1.0 - energy_loss * (2.0 - energy_loss) * cos_theta * cos_theta
+	if denom <= 1e-6:
+		return Vector3.ZERO
+	var entry_speed: float = exit_speed / sqrt(denom)
+
+	# --- Surface normal via narrowphase query ---
+	# Cast a ray along the reversed exit direction back into the plate.
+	# The ship must already be loaded and registered (guaranteed by the 2-frame wait).
+	if not is_instance_valid(_val_ship):
+		return Vector3.ZERO
+	var exit_dir: Vector3 = v_exit.normalized()
+	var narrow_from: Vector3 = hit_pos + exit_dir * 2.0
+	var narrow_to:   Vector3 = hit_pos - exit_dir * 5.0
+	var narrow_hit: Dictionary = PrecisionPhysicsWorld.narrowphase_hit(
+		_val_ship as Ship, narrow_from, narrow_to)
+	if narrow_hit.is_empty():
+		return Vector3.ZERO
+
+	var n_hat: Vector3 = narrow_hit["world_normal"]
+	# Ensure n̂ faces outward: it should point in the same half-space as v_exit.
+	if n_hat.dot(v_exit) < 0.0:
+		n_hat = -n_hat
+
+	# --- Reconstruct entry velocity ---
+	# v_entry = v_exit - n̂ · cosθ · entry_speed · (2 - energy_loss)
+	return v_exit - n_hat * (cos_theta * entry_speed * (2.0 - energy_loss))
+
+
+## Called on the main thread after the physics-thread simulation finishes.
+func _on_validate_complete(
+		logged_hit: Dictionary,
+		struct_out:  Array,
+		result:      ArmorInteraction.ArmorResultData,
+		sim_events:  Array) -> void:
+
+	# Feed the simulated hit directly into the validation ArmorTrailVisualizer.
+	if _val_vis != null and is_instance_valid(_val_vis) and not struct_out.is_empty():
+		var sim_hit: Dictionary = struct_out[0]
+		_val_vis._hit_queue[0] = {
+			"hit_data":        sim_hit,
+			"wall_time_added": Time.get_ticks_msec() / 1000.0,
+			"visual_elapsed":  0.0,
+		}
+
+	# Populate the steps panel with a logged-vs-simulated comparison.
+	_populate_validation_comparison(logged_hit, struct_out, result)
+
+	# Detailed comparison to the console for numeric inspection.
+	_print_validate_comparison(logged_hit, struct_out, result, sim_events)
+
+
+## Rebuild _hit_steps_list showing logged steps on top, simulated below.
+func _populate_validation_comparison(
+		logged_hit: Dictionary,
+		struct_out:  Array,
+		result:      ArmorInteraction.ArmorResultData) -> void:
+
+	_hit_steps_list.clear()
+
+	var logged_steps: Array = logged_hit.get("steps", [])
+	var sim_steps:    Array = []
+	var sim_final_type: int = -1
+	if not struct_out.is_empty():
+		sim_steps      = struct_out[0].get("steps", [])
+		sim_final_type = struct_out[0].get("final_hit_type", -1)
+
+	var is_he: bool = logged_hit.get("shell_type", 1) == 0
+
+	# --- Logged section ---
+	_hit_steps_list.add_item("=== LOGGED  (%d plates)" % logged_steps.size())
+	for i in logged_steps.size():
+		_hit_steps_list.add_item(_format_step_line(i, logged_steps[i], is_he))
+	var log_result_name: String = _HIT_RESULT_NAMES[
+		clampi(logged_hit.get("final_hit_type", 0), 0, _HIT_RESULT_NAMES.size() - 1)]
+	_hit_steps_list.add_item("  Final: %s" % log_result_name)
+
+	_hit_steps_list.add_item("")
+
+	# --- Simulated section ---
+	_hit_steps_list.add_item("=== SIMULATED  (%d plates)" % sim_steps.size())
+	for i in sim_steps.size():
+		_hit_steps_list.add_item(_format_step_line(i, sim_steps[i], is_he))
+
+	var sim_result_name: String
+	if result != null:
+		sim_result_name = ArmorInteraction.HitResult.keys()[
+			ArmorInteraction.HitResult.values().find(result.result_type)]
+	elif sim_final_type >= 0:
+		sim_result_name = _HIT_RESULT_NAMES[clampi(sim_final_type, 0, _HIT_RESULT_NAMES.size() - 1)]
+	else:
+		sim_result_name = "(no result)"
+	_hit_steps_list.add_item("  Final: %s" % sim_result_name)
+
+	_hit_steps_list.add_item("")
+
+	# --- Match / mismatch verdict ---
+	var logged_final: int   = logged_hit.get("final_hit_type", -1)
+	var sim_final_ev: int   = result.result_type if result != null else sim_final_type
+	if logged_final == sim_final_ev:
+		_hit_steps_list.add_item("MATCH  (same final result)")
+	else:
+		_hit_steps_list.add_item("MISMATCH  logged=%s  sim=%s" % [log_result_name, sim_result_name])
+
+
+## Format a single armor-plate step as a one-line string for the steps list.
+func _format_step_line(i: int, s: Dictionary, is_he: bool) -> String:
+	var res: int          = s.get("result", 2)
+	var res_name: String  = _STEP_RESULT_NAMES[clampi(res, 0, _STEP_RESULT_NAMES.size() - 1)]
+	var cit: bool         = s.get("is_citadel", false)
+	var amm: float        = s.get("armor_mm", 0.0)
+	var emm: float        = s.get("effective_mm", 0.0)
+	var ang: float        = rad_to_deg(s.get("impact_angle", 0.0))
+	var pen: float        = s.get("pen", 0.0)
+	var intg: float       = s.get("integrity", 1.0)
+	var spd: float        = s.get("vel", Vector3.ZERO).length()
+	var path: String      = s.get("armor_path", "?")
+	var cit_tag: String   = "  [CIT]" if cit else ""
+	if is_he:
+		return "[%d] %s%s  %s  %.0f/%.0fmm eff  %.1f\u00b0  thr %.0fmm  spd %.0fm/s" % [
+			i + 1, res_name, cit_tag, path, amm, emm, ang, pen, spd]
+	else:
+		return "[%d] %s%s  %s  %.0f/%.0fmm eff  %.1f\u00b0  pen %.0fmm  intg %.2f  spd %.0fm/s" % [
+			i + 1, res_name, cit_tag, path, amm, emm, ang, pen, intg, spd]
+
+
+## Print a side-by-side numeric comparison to the console for deep inspection.
+func _print_validate_comparison(
+		logged_hit: Dictionary,
+		struct_out:  Array,
+		result:      ArmorInteraction.ArmorResultData,
+		sim_events:  Array) -> void:
+
+	print("\n========== ARMOR LOG VALIDATION ==========")
+	var ts: float = logged_hit.get("timestamp", 0.0)
+	print("Hit T+%.2fs  attacker=%s  victim=%s" % [
+		ts,
+		logged_hit.get("attacker_name", "?"),
+		logged_hit.get("victim_name",   "?")])
+	print("Shell: %s  caliber=%.0fmm  mass=%.1fkg  pen_mod=%.3f" % [
+		"HE" if logged_hit.get("shell_type", 1) == 0 else "AP",
+		logged_hit.get("caliber", 0.0),
+		logged_hit.get("shell_mass", -1.0),
+		logged_hit.get("shell_pen_modifier", -1.0)])
+
+	print("\n--- LOGGED STEPS ---")
+	var logged_steps: Array = logged_hit.get("steps", [])
+	for i in logged_steps.size():
+		var s: Dictionary = logged_steps[i]
+		print("  [%d] %s  %s  %.0f/%.0fmm eff  angle=%.1f\u00b0  pen=%.1f  intg=%.3f  spd=%.1f" % [
+			i + 1,
+			_STEP_RESULT_NAMES[clampi(s.get("result", 2), 0, _STEP_RESULT_NAMES.size() - 1)],
+			s.get("armor_path", "?"),
+			s.get("armor_mm", 0.0), s.get("effective_mm", 0.0),
+			rad_to_deg(s.get("impact_angle", 0.0)),
+			s.get("pen", 0.0), s.get("integrity", 1.0),
+			s.get("vel", Vector3.ZERO).length()])
+	var log_res_name: String = _HIT_RESULT_NAMES[
+		clampi(logged_hit.get("final_hit_type", 0), 0, _HIT_RESULT_NAMES.size() - 1)]
+	print("  Final logged: %s" % log_res_name)
+
+	print("\n--- SIMULATED STEPS ---")
+	if not struct_out.is_empty():
+		var sim_steps: Array = struct_out[0].get("steps", [])
+		for i in sim_steps.size():
+			var s: Dictionary = sim_steps[i]
+			print("  [%d] %s  %s  %.0f/%.0fmm eff  angle=%.1f\u00b0  pen=%.1f  intg=%.3f  spd=%.1f" % [
+				i + 1,
+				_STEP_RESULT_NAMES[clampi(s.get("result", 2), 0, _STEP_RESULT_NAMES.size() - 1)],
+				s.get("armor_path", "?"),
+				s.get("armor_mm", 0.0), s.get("effective_mm", 0.0),
+				rad_to_deg(s.get("impact_angle", 0.0)),
+				s.get("pen", 0.0), s.get("integrity", 1.0),
+				s.get("vel", Vector3.ZERO).length()])
+	var sim_res_name: String
+	if result != null:
+		sim_res_name = ArmorInteraction.HitResult.keys()[
+			ArmorInteraction.HitResult.values().find(result.result_type)]
+	else:
+		sim_res_name = "(null)"
+	print("  Final simulated: %s" % sim_res_name)
+
+	print("\n--- SIMULATION STRING EVENTS ---")
+	for ev in sim_events:
+		if ev is String:
+			print("  " + ev)
+
+	print("==========================================\n")
 
 #endregion

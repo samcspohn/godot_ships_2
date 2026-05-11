@@ -363,6 +363,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
 
+	var nearest_unspotted_dist = INF
+	for pos in unspotted.values():
+		var d = ship.global_position.distance_to(pos)
+		if d < nearest_unspotted_dist:
+			nearest_unspotted_dist = d
+
 	if threat < 0.5:
 		# Push toward the enemy — but prefer a closer unspotted enemy
 		# over crossing the map to fight a distant detected one.
@@ -375,26 +381,40 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-	elif dist < 8000.0 && ship.visible_to_enemy:
+	elif (dist < 8000.0 or nearest_unspotted_dist < 8000.0) and ship.visible_to_enemy:
 		# # High threat and enemy is close — find the optimal presentation angle
 		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		# var to_nearest = nearest.global_position - ship.global_position
 		# to_nearest.y = 0.0
 		# # var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-		# var optimal_heading = SkillAngle.calc_heading(ctx, {})
+		var angle_to_enemy = SkillAngle.calc_heading(ctx, {})
 		# # if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
 		# # 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
-		# var bow_diff = absf(angle_difference(optimal_heading, _get_ship_heading()))
+		var bow_diff = absf(angle_difference(angle_to_enemy, _get_ship_heading()))
 		if threat < 0.5:
 			# Optimal heading is bow-in — push toward enemy
-			intent = _skill_push.execute(ctx, {"can_reverse": true})
+			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
+				# threat behind — reverse to close the gap stern-first
+				if bow_diff > PI * 0.5:
+					intent.force_reverse = true
+					intent.target_heading = wrapf(intent.target_heading + PI, -PI, PI)
+
 		else:
 			# Optimal heading is stern-in — kite away while keeping guns on target
-			intent = _skill_kite.execute(ctx, {"can_reverse": true})
+			intent = _skill_kite.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Kite"
+				# threat is ahead — reverse away from enemy
+				if bow_diff < PI * 0.5:
+					intent.force_reverse = true
+					intent.target_heading = wrapf(intent.target_heading + PI, -PI, PI)
+
+		# if too close to terrain, prioritize
+		if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller.turning_circle_radius * 4.0:
+			intent.heading_weight = 0.9
+
 	else:
 		if not ship.visible_to_enemy:
 			# Undetected — seek cover as normal, fall back to angle

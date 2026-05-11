@@ -1607,7 +1607,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 4.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
 		# raw_threat *= (1.0 - range_pressure * class_w)

@@ -19,6 +19,11 @@ var hold_radius: float = 0.0
 ## Optional throttle override (-1 = navigator decides)
 var throttle_override: int = -1
 
+## When true, the navigator will use reverse propulsion to reach the destination.
+## Applies to all en-route and approach phases; heading-alignment in the
+## maneuver/arrived zones is unaffected and governed by the navigator.
+var force_reverse: bool = false
+
 ## Heading tolerance: acceptable heading error to consider settled (radians, default ~15°)
 var heading_tolerance: float = 0.2618
 

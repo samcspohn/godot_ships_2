@@ -34,7 +34,7 @@ var _cam_distance: float = 5000.0
 var _cam_target: Vector3 = Vector3.ZERO
 var _is_dragging: bool = false
 var _last_mouse: Vector2 = Vector2.ZERO
-const CAM_ROTATE_SPEED: float = 0.005
+const CAM_ROTATE_SPEED: float = 0.002
 const CAM_ZOOM_SPEED: float = 300.0
 const CAM_MIN_DIST: float = 200.0
 const CAM_MAX_DIST: float = 30000.0
@@ -251,7 +251,7 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _is_dragging:
 		var delta = event.position - _last_mouse
 		_cam_yaw -= delta.x * CAM_ROTATE_SPEED
-		_cam_pitch = clamp(_cam_pitch - delta.y * CAM_ROTATE_SPEED, deg_to_rad(5.0), deg_to_rad(89.0))
+		_cam_pitch = clamp(_cam_pitch + delta.y * CAM_ROTATE_SPEED, deg_to_rad(5.0), deg_to_rad(89.0))
 		_last_mouse = event.position
 
 	if event is InputEventKey and event.pressed and not event.echo:

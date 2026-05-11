@@ -317,15 +317,25 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_active_skill_name = &"Chase"
 	else:
 		if _nearest_dist < 8000.0 and ship.visible_to_enemy:
-
+			var angle_to_enemy = SkillAngle.calc_heading(ctx, {})
+			var bow_diff = absf(angle_difference(angle_to_enemy, _get_ship_heading()))
 			if threat < 0.5:
-				intent = _skill_push.execute(ctx, {"can_reverse": true})
-				if intent:
+				# Optimal heading is bow-in — push toward enemy
+				intent = _skill_push.execute(ctx, {})
+				if intent != null:
 					_active_skill_name = &"Push"
+					# threat behind — reverse to close the gap stern-first
+					if bow_diff > PI * 0.5:
+						intent.force_reverse = true
+
 			else:
-				intent = _skill_kite.execute(ctx, {"can_reverse": true})
-				if intent:
+				# Optimal heading is stern-in — kite away while keeping guns on target
+				intent = _skill_kite.execute(ctx, {})
+				if intent != null:
 					_active_skill_name = &"Kite"
+					# threat is ahead — reverse away from enemy
+					if bow_diff < PI * 0.5:
+						intent.force_reverse = true
 		else:
 			if threat < 0.4 or _nearest_dist > gun_range:
 				intent = _skill_flank.execute(ctx, {})

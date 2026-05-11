@@ -1,7 +1,7 @@
 ## ArmorSimLogger — autoload that records AP shell armor interaction data to
 ## a binary companion file (.armorlog) written alongside each .replay file.
 ##
-## Binary format (.armorlog) — VERSION 7:
+## Binary format (.armorlog) — VERSION 9:
 ##   Header: MAGIC(u32) VERSION(u8)
 ##           ship_count(u8)
 ##           for each ship (indexed by ship_id):
@@ -14,16 +14,19 @@
 ##            victim_pos_x(f64) victim_pos_z(f64) victim_rot_y(f64)
 ##            shell_type(u8)   ← ShellParams.ShellType (0=HE, 1=AP)
 ##            caliber(f64)
+##            shell_mass(f64) shell_pen_modifier(f64) shell_auto_bounce(f64)
+##            shell_ricochet_angle(f64) shell_overmatch(u8) shell_arming_threshold(u8)
+##            shell_fuze_delay(f64)
 ##            step_count(u8) [per-step data...] final_pos(3×f64)
 ##   Per step: result(u8) is_citadel(u8) armor_mm(f64) effective_mm(f64)
 ##             impact_angle(f64) pen(f64) integrity(f64) pos(3×f64) vel(3×f64)
-##             armor_path_len(u8) armor_path_bytes
+##             impact_vel(3×f64) armor_path_len(u8) armor_path_bytes
 ##
 ## All real-valued fields use f64 (store_double / get_double).
 extends Node
 
 const MAGIC:   int = 0x41524D4C  # "ARML"
-const VERSION: int = 7
+const VERSION: int = 9
 
 var _file:             FileAccess  = null
 var _match_start_time: float       = 0.0
@@ -127,7 +130,8 @@ func record_hit(
 		shell_type:       int,
 		caliber:          float,
 		steps:            Array,
-		final_pos:        Vector3) -> void:
+		final_pos:        Vector3,
+		shell_params:     ShellParams) -> void:
 	if _file == null:
 		return
 	var attacker_id: int = _ship_to_id.get(attacker_ship, 255)
@@ -142,6 +146,13 @@ func record_hit(
 	_file.store_double(victim_rot_y)
 	_file.store_8(shell_type & 0xFF)
 	_file.store_double(caliber)
+	_file.store_double(shell_params.mass)
+	_file.store_double(shell_params.penetration_modifier)
+	_file.store_double(shell_params.auto_bounce)
+	_file.store_double(shell_params.ricochet_angle)
+	_file.store_8(clampi(shell_params.overmatch, 0, 255))
+	_file.store_8(clampi(shell_params.arming_threshold, 0, 255))
+	_file.store_double(shell_params.fuze_delay)
 	var sc: int = mini(steps.size(), 255)
 	_file.store_8(sc)
 	for i in range(sc):
@@ -171,6 +182,10 @@ func _write_step(step: Dictionary) -> void:
 	_file.store_double(vel.x)
 	_file.store_double(vel.y)
 	_file.store_double(vel.z)
+	var impact_vel: Vector3 = step.get("impact_vel", Vector3.ZERO)
+	_file.store_double(impact_vel.x)
+	_file.store_double(impact_vel.y)
+	_file.store_double(impact_vel.z)
 	var armor_path: String          = step.get("armor_path", "")
 	var path_bytes: PackedByteArray = armor_path.to_utf8_buffer()
 	if path_bytes.size() > 63:

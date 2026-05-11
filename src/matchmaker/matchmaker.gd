@@ -11,6 +11,7 @@ var port_range_end = 29000    # Ending port for game servers
 const SHIP_CLASS_BB = 0  # Battleship
 const SHIP_CLASS_CA = 1  # Cruiser
 const SHIP_CLASS_DD = 2  # Destroyer
+const NUM_SHIPS_PER_TEAM = 12
 
 # Ship data: path -> {class, tier}
 const SHIP_DATA = {
@@ -248,13 +249,12 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Define team composition: 10 ships per team
 	# # Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 1
 	# var class_counts = {
-	# 	SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
-	# 	SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
-	# 	SHIP_CLASS_DD: floor(num_ships_per_team / 3.0)
+	# 	SHIP_CLASS_BB: floor(NUM_SHIPS_PER_TEAM / 3.0),
+	# 	SHIP_CLASS_CA: floor(NUM_SHIPS_PER_TEAM / 3.0),
+	# 	SHIP_CLASS_DD: floor(NUM_SHIPS_PER_TEAM / 3.0)
 	# }
-	# var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
+	# var left_over = NUM_SHIPS_PER_TEAM - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
 	# var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
 	# # var bonus_class = classes[randi() % classes.size()]
 	# var bonus_class = SHIP_CLASS_BB
@@ -293,7 +293,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Build 3 clusters, each with one ship per class
 	# # A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
-	# var num_clusters = ceili(num_ships_per_team / 3.0)
+	# var num_clusters = ceili(NUM_SHIPS_PER_TEAM / 3.0)
 	# var clusters = []
 
 	# # Track consumption index per class
@@ -358,7 +358,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		"is_player": true
 	})
 	var class_index = (player_ship_class + 1) % classes.size()
-	for i in range(num_ships_per_team - 1):
+	for i in range(NUM_SHIPS_PER_TEAM - 1):
 		var ship_class = classes[class_index]
 		var ship_path = SHIPS_BY_CLASS[ship_class][randi() % SHIPS_BY_CLASS[ship_class].size()]  # Just take a random ship of that class
 		# var is_player = (ship_class == player_ship_class)

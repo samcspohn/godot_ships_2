@@ -98,11 +98,15 @@ func setup(entry: Dictionary) -> void:
 
 	# Name label
 	_name_label = Label3D.new()
-	_name_label.text  = entry.get("ship_name", "???") + "\n" + entry.get("player_name", "")
-	_name_label.font_size = 24
-	_name_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_name_label.modulate  = Color(0.2, 1.0, 0.2) if team_id == 0 else Color(1.0, 0.3, 0.3)
-	_name_label.position  = Vector3(0.0, 25.0, 0.0)
+	_name_label.text         = entry.get("ship_name", "???") + "\n" + entry.get("player_name", "")
+	_name_label.font_size    = 24
+	_name_label.pixel_size   = 0.00025   # default 0.01 makes the label a ~0.24-unit speck
+	_name_label.billboard    = BaseMaterial3D.BILLBOARD_ENABLED
+	_name_label.fixed_size   = true   # constant screen-space size regardless of distance
+	_name_label.no_depth_test = true  # render on top of ship geometry
+	_name_label.outline_size  = 6     # improves legibility against varied backgrounds
+	_name_label.modulate     = Color(0.2, 1.0, 0.2) if team_id == 0 else Color(1.0, 0.3, 0.3)
+	_name_label.position     = Vector3(0.0, 50.0, 0.0)
 	add_child(_name_label)
 
 

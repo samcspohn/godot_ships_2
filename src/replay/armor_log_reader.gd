@@ -4,14 +4,17 @@
 ## After load_file(), use get_hit_by_uid(shell_uid) to retrieve armor
 ## interaction data for a specific shell.
 ##
-## VERSION 5 format: unified ship table in header (name + scene_path per ship_id);
+## VERSION 8 format: unified ship table in header (name + scene_path per ship_id);
 ## attacker_id and victim_id index into that table.  caliber(f64) added per hit.
+## Per-hit shell params added: shell_mass(f64) shell_pen_modifier(f64) shell_auto_bounce(f64)
+## shell_ricochet_angle(f64) shell_overmatch(u8) shell_arming_threshold(u8) shell_fuze_delay(f64).
 ## All earlier versions are rejected with ERR_FILE_UNRECOGNIZED.
 extends RefCounted
 class_name ArmorLogReader
 
 const MAGIC:   int = 0x41524D4C   # "ARML"
-const VERSION: int = 7
+const VERSION:     int = 9
+const VERSION_MIN: int = 7   ## oldest version still accepted (missing shell param fields)
 
 ## All parsed hit records, indexed by shell_uid.
 ## Each value is a Dictionary with keys:
@@ -41,10 +44,12 @@ func load_file(path: String) -> Error:
 	if magic != MAGIC:
 		push_error("ArmorLogReader: bad magic 0x%X in '%s'" % [magic, path])
 		return ERR_FILE_CORRUPT
-	if version != VERSION:
-		push_error("ArmorLogReader: version %d not supported (expected %d) in '%s' — re-record to upgrade." % [
-			version, VERSION, path])
+	if version < VERSION_MIN or version > VERSION:
+		push_error("ArmorLogReader: version %d not supported (expected %d..%d) in '%s' — re-record to upgrade." % [
+			version, VERSION_MIN, VERSION, path])
 		return ERR_FILE_UNRECOGNIZED
+	if version < VERSION:
+		push_warning("ArmorLogReader: version %d log — shell param fields absent, validation will use fallback params." % version)
 
 	# Ship info table: Array[Dictionary] indexed by ship_id.
 	# Each entry: { "player_name": String, "ship_name": String, "scene_path": String }
@@ -67,7 +72,7 @@ func load_file(path: String) -> Error:
 	for _i in range(hit_count):
 		if f.get_position() >= f.get_length():
 			break
-		var hit := _parse_hit(f, ship_table)
+		var hit := _parse_hit(f, ship_table, version)
 		if hit.is_empty():
 			break
 		hits_by_uid[hit["shell_uid"]] = hit
@@ -82,7 +87,7 @@ func get_hit_by_uid(shell_uid: int) -> Dictionary:
 # Private helpers
 # ---------------------------------------------------------------------------
 
-func _parse_hit(f: FileAccess, ship_table: Array) -> Dictionary:
+func _parse_hit(f: FileAccess, ship_table: Array, version: int = VERSION) -> Dictionary:
 	var d: Dictionary = {}
 	d["timestamp"]        = f.get_double()
 	d["shell_uid"]        = f.get_32()
@@ -99,17 +104,26 @@ func _parse_hit(f: FileAccess, ship_table: Array) -> Dictionary:
 	d["victim_pos_x"]     = f.get_double()
 	d["victim_pos_z"]     = f.get_double()
 	d["victim_rot_y"]     = f.get_double()
-	d["shell_type"]       = f.get_8()
-	d["caliber"]          = f.get_double()
+	d["shell_type"] = f.get_8()
+	d["caliber"]    = f.get_double()
+	if version >= 8:
+		d["shell_mass"]             = f.get_double()
+		d["shell_pen_modifier"]     = f.get_double()
+		d["shell_auto_bounce"]      = f.get_double()
+		d["shell_ricochet_angle"]   = f.get_double()
+		d["shell_overmatch"]        = f.get_8()
+		d["shell_arming_threshold"] = f.get_8()
+		d["shell_fuze_delay"]       = f.get_double()
+	# v7 and below: shell param keys intentionally absent — caller uses fallback
 	var step_count: int   = f.get_8()
 	var steps: Array      = []
 	for _i in range(step_count):
-		steps.append(_parse_step(f))
+		steps.append(_parse_step(f, version))
 	d["steps"]     = steps
 	d["final_pos"] = Vector3(f.get_double(), f.get_double(), f.get_double())
 	return d
 
-func _parse_step(f: FileAccess) -> Dictionary:
+func _parse_step(f: FileAccess, version: int = VERSION) -> Dictionary:
 	var s: Dictionary = {}
 	s["result"]       = f.get_8()
 	s["is_citadel"]   = f.get_8() != 0
@@ -120,6 +134,9 @@ func _parse_step(f: FileAccess) -> Dictionary:
 	s["integrity"]    = f.get_double()
 	s["pos"]          = Vector3(f.get_double(), f.get_double(), f.get_double())
 	s["vel"]          = Vector3(f.get_double(), f.get_double(), f.get_double())
+	if version >= 9:
+		s["impact_vel"] = Vector3(f.get_double(), f.get_double(), f.get_double())
+	# v8 and below: impact_vel absent — caller uses steps[i-1].vel as approximation
 	var path_len: int               = f.get_8()
 	var path_bytes: PackedByteArray = f.get_buffer(path_len)
 	s["armor_path"]   = path_bytes.get_string_from_utf8()
