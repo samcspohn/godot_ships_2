@@ -10,6 +10,10 @@ var player_controller: PlayerController
 #@export var hp_manager: HPManager  # Add reference to hit points
 @export var projectile_speed: float = 800.0 # Realistic speed for naval artillery (m/s)
 @export var projectile_drag_coefficient: float = 0.0 # 380mm shell drag
+# Lock-on aim assist: the elevation-preserving billboard plane is engaged
+# when the aim ray is within (target_angular_radius * this_factor) of the
+# target's bounding sphere. Outside that window, water-plane aim is used.
+@export var aim_assist_angular_factor: float = 1.75
 
 # Camera mode
 enum CameraMode {THIRD_PERSON, SNIPER, FREE_LOOK}
@@ -482,99 +486,69 @@ func _calculate_target_info():
 			# Direct hit on locked target — use it exactly
 			aim_position = result.position
 		else:
-			# Calculate broadside factor: how broadside the target is relative to camera
-			# 1.0 = perfectly broadside, 0.0 = bow/stern on
-			var target_pos = locked_target.global_position
-			var target_lateral = locked_target.global_basis.x
-			target_lateral.y = 0.0
-			var cam_to_target = target_pos - ray_origin
-			cam_to_target.y = 0.0
-
-			var broadside_factor = 0.2
-			if target_lateral.length_squared() > 0.001 and cam_to_target.length_squared() > 0.001:
-				broadside_factor = absf(target_lateral.normalized().dot(cam_to_target.normalized()))
-			# Power curve with identity exponent (1.0) for now — easy to tune later
-			# -  **Exponent = 1.0**: Linear. The blend between plane and water is proportional to the broadside angle.
-			#  At 45° you get roughly 50/50.
-
-			# - **Exponent > 1.0** (e.g. 2.0): The broadside factor gets *squashed down*.
-			#  The target needs to be more broadside before the plane starts dominating.
-			#  At 45° with exponent 2.0, `broadside_factor ≈ 0.5² = 0.25`, so you'd still be 75% water-mode.
-			#  This **keeps water-mode active longer** as the target rotates,
-			#  meaning leading feels natural for a wider range of angles and the plane only takes over when the target is clearly broadside.
-
-			# - **Exponent < 1.0** (e.g. 0.5): The broadside factor gets *pushed up*.
-			#  Even a slightly angled target snaps toward plane-mode quickly.
-			#  At 45° with exponent 0.5, `broadside_factor ≈ 0.5^0.5 ≈ 0.71`, so you'd be 71% plane-mode.
-			#  This **favors the vertical plane** for most angles,
-			#  only falling back to water when the target is nearly bow/stern-on.
-			var blend_exponent = 0.0
-			broadside_factor = pow(broadside_factor, blend_exponent)
-
-			# --- Plane intersection (vertical plane aligned with target's heading) ---
-			var plane_normal = locked_target.global_basis.x
-			plane_normal.y = 0.0
-			if plane_normal.length_squared() > 0.001:
-				plane_normal = plane_normal.normalized()
-			else:
-				# Fallback if lateral axis is degenerate
-				var fallback = cam_to_target
-				if fallback.length_squared() > 0.001:
-					plane_normal = fallback.normalized()
-				else:
-					plane_normal = Vector3.RIGHT
-
-			var plane = Plane(plane_normal, plane_normal.dot(target_pos))
-			var plane_point = plane.intersects_ray(ray_origin, aim_direction)
-
-			# Validate plane intersection
-			if plane_point != null:
-				var to_plane_point = plane_point - ray_origin
-				if to_plane_point.dot(aim_direction) < 0.0:
-					plane_point = null
-				else:
-					var target_dist = ray_origin.distance_to(target_pos)
-					var offset = plane_point - target_pos
-					offset.y = 0.0
-					var max_lateral_dist = maxf(target_dist * 0.5, 500.0)
-					if offset.length() > max_lateral_dist:
-						plane_point = null
-
-			# --- Water intersection (aim ray vs water plane at y=0) ---
-			var water_plane = Plane(Vector3.UP, 0.0)
+			# --- Water plane intersection (baseline / fallback) ---
+			var water_plane := Plane(Vector3.UP, 0.0)
 			var water_point = water_plane.intersects_ray(ray_origin, aim_direction)
-
-			# If water intersection is behind camera or doesn't exist, fallback
 			if water_point != null:
-				var to_water = water_point - ray_origin
+				var to_water: Vector3 = water_point - ray_origin
 				if to_water.dot(aim_direction) < 0.0:
 					water_point = null
 
-			# Priority: water hit (if closer than plane) → plane with XZ blend from water
-			var plane_dist = INF
-			var water_dist = INF
-			if plane_point != null:
-				plane_dist = ray_origin.distance_to(plane_point)
-			if water_point != null:
-				water_dist = ray_origin.distance_to(water_point)
+			# --- Elevation-preserving billboard plane ---
+			# A vertical plane through the target whose normal is the horizontal
+			# camera->target direction. This plane is always camera-facing and
+			# never goes edge-on to the aim ray, so it works the same regardless
+			# of target aspect (broadside, bow-on, stern-on, mid-turn).
+			#
+			# Engaged only when the aim ray is angularly close to the ship's
+			# bounding sphere. Outside that window we fall back to the water hit
+			# so leading and short fall-of-shot read naturally.
+			#
+			# Disabled in aerial view (top-down) — the plane is meaningless there.
+			var plane_point = null
+			var use_plane := false
+			if current_aim_mode != AimMode.AERIAL:
+				var target_pos: Vector3 = locked_target.global_position
+				var cam_to_target: Vector3 = target_pos - ray_origin
+				var horiz := Vector3(cam_to_target.x, 0.0, cam_to_target.z)
+				if horiz.length_squared() > 0.001:
+					var plane_normal: Vector3 = horiz.normalized()
+					var plane := Plane(plane_normal, plane_normal.dot(target_pos))
+					plane_point = plane.intersects_ray(ray_origin, aim_direction)
+					if plane_point != null:
+						var to_plane: Vector3 = plane_point - ray_origin
+						if to_plane.dot(aim_direction) < 0.0:
+							plane_point = null
 
-			if water_point != null and water_dist <= plane_dist:
-				# Water is closer than plane — use water directly (e.g. aiming low in front of target)
-				aim_position = water_point
-			elif plane_point != null:
-				# Plane is closer — blend XZ with water for lead, keep Y from plane for elevation
-				if water_point != null:
-					aim_position = Vector3(
-						plane_point.x * broadside_factor + water_point.x * (1.0 - broadside_factor),
-						plane_point.y,
-						plane_point.z * broadside_factor + water_point.z * (1.0 - broadside_factor)
-					)
-				else:
-					aim_position = plane_point
+					if plane_point != null:
+						var plane_hit: Vector3 = plane_point
+						# Angular gating: how close is the aim ray to the target's
+						# bounding sphere?
+						var target_dist: float = maxf(cam_to_target.length(), 1.0)
+						var bsphere_radius: float = locked_target.aabb.size.length() * 0.5
+						if bsphere_radius < 1.0:
+							bsphere_radius = 50.0 # guard if aabb not populated yet
+						var target_ang_radius: float = atan(bsphere_radius / target_dist)
+						var aim_to_target_angle: float = aim_direction.angle_to(cam_to_target / target_dist)
+						var ang_threshold: float = target_ang_radius * aim_assist_angular_factor
+
+						if aim_to_target_angle <= ang_threshold:
+							# Clamp the plane hit into a slightly-grown ship-local AABB
+							# so we never drift far from the hull even within the window.
+							var local_pt: Vector3 = locked_target.to_local(plane_hit)
+							var local_box: AABB = locked_target.aabb.grow(bsphere_radius * 0.15)
+							local_pt.x = clampf(local_pt.x, local_box.position.x, local_box.position.x + local_box.size.x)
+							local_pt.y = clampf(local_pt.y, local_box.position.y, local_box.position.y + local_box.size.y)
+							local_pt.z = clampf(local_pt.z, local_box.position.z, local_box.position.z + local_box.size.z)
+							plane_point = locked_target.to_global(local_pt)
+							use_plane = true
+
+			if use_plane:
+				aim_position = plane_point
 			elif water_point != null:
 				aim_position = water_point
 			elif result:
-				# Fallback to whatever the ray hit (terrain, etc.)
+				# Last-ditch: whatever the (armor|water) ray hit
 				aim_position = result.position
 			else:
 				aim_position = ray_origin + aim_direction * ray_length

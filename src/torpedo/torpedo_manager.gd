@@ -243,18 +243,20 @@ func _process(_delta: float) -> void:
 
 		# Update wake particle emitter position
 		if p.emitter_id >= 0:
-			ParticleTemplate.update_emitter_position(p.emitter_id, p.position)
+			var pos = p.position
+			pos.y = 0.2 # Keep wake on water surface
+			ParticleTemplate.update_emitter_position(p.emitter_id, pos)
 
 		id += 1
 		#var offset = p.position - p.trail_pos
 		#if (p.position - p.start_position).length_squared() < 80:
 			#continue
 		#var offset_length = offset.length()
-		const step_size = 20
+		# const step_size = 20
 		#var vel = offset.normalized()
 		#offset = vel * step_size
 
-		var trans = Transform3D.IDENTITY.translated(p.position)
+		# var trans = Transform3D.IDENTITY.translated(p.position)
 		#while :
 		# particles.emit_particle(trans, (p.position - prev_pos).normalized() , Color.WHITE,Color.WHITE, 5)
 		#trans = trans.translated(p.position)

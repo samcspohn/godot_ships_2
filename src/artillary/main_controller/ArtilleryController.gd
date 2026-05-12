@@ -29,7 +29,7 @@ func get_weapon_ui() -> Array[Button]:
 	return [shell1, shell2]
 
 func get_aim_ui() -> Dictionary:
-	var ship_position = _ship.global_position
+	var ship_position = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
 	var shell_params: ShellParams = get_shell_params()
 	var time_to_target = -1
 	var penetration_power = -1

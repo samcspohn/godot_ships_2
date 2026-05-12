@@ -69,7 +69,7 @@ func get_aim_ui() -> Dictionary:
 			"penetration_power": penetration_power,
 			"time_to_target": time_to_target
 		}
-	var ship_position = _ship.global_position
+	var ship_position = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
 	var _aim_point = aim_point as Vector3
 
 	var max_range = -1

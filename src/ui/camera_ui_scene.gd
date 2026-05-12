@@ -820,15 +820,29 @@ func setup_ship_ui(ship):
 	var alt_refs: Array = []
 	if not is_enemy and ship.consumable_manager:
 		for item in ship.consumable_manager.equipped_consumables:
-			# Normal mode: one icon per consumable, shown only while the effect is active
+			# Normal mode: one icon per consumable inside a dark background panel,
+			# shown only while the effect is active
+			var icon_panel := PanelContainer.new()
+			var panel_style := StyleBoxFlat.new()
+			panel_style.bg_color = Color(0.05, 0.05, 0.05, 0.62)
+			panel_style.corner_radius_top_left = 3
+			panel_style.corner_radius_top_right = 3
+			panel_style.corner_radius_bottom_left = 3
+			panel_style.corner_radius_bottom_right = 3
+			panel_style.content_margin_left = 3.0
+			panel_style.content_margin_right = 3.0
+			panel_style.content_margin_top = 2.0
+			panel_style.content_margin_bottom = 2.0
+			icon_panel.add_theme_stylebox_override("panel", panel_style)
 			var icon_rect := TextureRect.new()
 			icon_rect.texture = item.icon
 			icon_rect.custom_minimum_size = Vector2(18, 18)
 			icon_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 			icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			icon_rect.visible = false
-			status_indicator.add_child(icon_rect)
-			normal_icons.append(icon_rect)
+			icon_panel.add_child(icon_rect)
+			icon_panel.visible = false
+			status_indicator.add_child(icon_panel)
+			normal_icons.append(icon_panel)
 
 			# Alt mode: full count+timer widget, shown when ALT is held
 			var widget := _create_alt_consumable_widget(item, ship.consumable_manager)

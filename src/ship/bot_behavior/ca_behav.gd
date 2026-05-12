@@ -285,6 +285,8 @@ func _pick_nearest_spotted(ship: Ship, spotted: Array) -> Ship:
 # NAVINTENT — Primary entry point (V4 bot controller)
 # ============================================================================
 
+var forced_skill = null
+
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; set true below if conditions are met
 	wants_to_be_concealed = false  # reset each tick; set true below via probe
@@ -369,6 +371,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		if d < nearest_unspotted_dist:
 			nearest_unspotted_dist = d
 
+	var forced = false
 	if threat < 0.5:
 		# Push toward the enemy — but prefer a closer unspotted enemy
 		# over crossing the map to fight a distant detected one.
@@ -384,9 +387,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	elif (dist < 8000.0 or nearest_unspotted_dist < 8000.0) and ship.visible_to_enemy:
 		# # High threat and enemy is close — find the optimal presentation angle
 		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
-		# var to_nearest = nearest.global_position - ship.global_position
-		# to_nearest.y = 0.0
-		# # var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
+		# forced = true
+		# if forced_skill != null:
+		# 	intent = forced_skill.execute(ctx, {})
+		# 	# _active_skill_name = &"ForcedIntent"
+		# 	# forced_skill = null
+		# 	# return intent
+		# else:
 		var angle_to_enemy = SkillAngle.calc_heading(ctx, {})
 		# # if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
 		# # 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
@@ -410,10 +417,17 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				if bow_diff < PI * 0.5:
 					intent.force_reverse = true
 					intent.target_heading = wrapf(intent.target_heading + PI, -PI, PI)
+		intent.heading_weight = 0.5
 
-		# if too close to terrain, prioritize
+		# TODO: improve by checking if desired heading is toward terrain to avoid navigating around and showing broadside
 		if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller.turning_circle_radius * 4.0:
-			intent.heading_weight = 0.9
+			# if _active_skill_name == &"Push":
+			# 	forced_skill = _skill_kite
+			# 	_active_skill_name = &"ForcedKite"
+			# elif _active_skill_name == &"Kite":
+			# 	forced_skill = _skill_push
+			# 	_active_skill_name = &"ForcedPush"
+			intent.heading_weight = 1.0
 
 	else:
 		if not ship.visible_to_enemy:
@@ -476,6 +490,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var _a = _probe_concealment(server)
 
+	if !forced:
+		forced_skill = null
 	# if threat > 0.85:
 	# 	wants_stealth = true
 	# 	wants_to_be_concealed = _probe_concealment(server)
@@ -490,17 +506,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# 	_suppress_guns = false
 
 
-	# ── Post-process: broadside ──────────────────────────────────────────────
-	# if _active_skill_name not in [&"Chase"]:
-	intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	if previous_intent == &"FindCover" and _active_skill_name != &"FindCover":
 		_skill_cover.reset()
 	# ── Post-process: spread ─────────────────────────────────────────────────
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite"]:
+	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
-	if _active_skill_name in [&"FindCover", &"Push", &"Kite"]:
+	if _active_skill_name in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 250.0, "spread_multiplier": 1.0})
+
+	# ── Post-process: broadside ──────────────────────────────────────────────
+	# if _active_skill_name not in [&"Chase"]:
+	# intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	return intent
 

@@ -50,29 +50,29 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 [sub_resource type="Resource" id="Resource_vp8fe"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 9988.333333333334
-pool2 = 19976.666666666668
+pool1 = 7683.333333333333
+pool2 = 15366.666666666666
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3dafd"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 5378.333333333333
-pool2 = 10756.666666666666
+pool1 = 3073.3333333333335
+pool2 = 6146.666666666667
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_d6neb"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 5378.333333333333
-pool2 = 10756.666666666666
+pool1 = 3073.3333333333335
+pool2 = 6146.666666666667
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_bsnob"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
-pool1 = 7683.333333333333
-pool2 = 15366.666666666666
+pool1 = 4610.0
+pool2 = 9220.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_m8khc"]
@@ -229,7 +229,10 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_8wi57")
 _max_hp = 46100.0
-casemate_percent = 0.65
+bow_percent = 0.2
+stern_percent = 0.2
+superstructure_percent = 0.3
+casemate_percent = 0.5
 citadel = SubResource("Resource_1hsc6")
 casemate = SubResource("Resource_vp8fe")
 bow = SubResource("Resource_3dafd")

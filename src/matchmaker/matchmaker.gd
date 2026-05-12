@@ -36,16 +36,16 @@ const SHIPS_BY_CLASS = {
 		"res://Ships/Shimakaze/Shimakaze.tscn"
 	]
 }
-
+var udp
 func _ready():
 	# Available ports start empty — servers register themselves via UDP
 	available_ports = []
 
 	# Setup UDP beacon for server discovery
-	var udp = PacketPeerUDP.new()
+	udp = PacketPeerUDP.new()
 	udp.bind(28961)  # Matchmaker port
 
-	while true:
+func _process(_delta: float) -> void:
 		if udp.get_available_packet_count() > 0:
 			var packet = udp.get_packet()
 			var sender_ip = udp.get_packet_ip()
@@ -57,7 +57,7 @@ func _ready():
 			var err = json.parse(packet_str)
 			if err != OK:
 				push_error("Failed to parse packet data")
-				continue
+				return
 			var packet_result = json.data
 			if packet_result["request"] == "request_server":
 				# Track this connecting client
@@ -74,13 +74,13 @@ func _ready():
 				if port > 0:
 					release_port(port)
 					print("Matchmaker: Server on port ", port, " is now available")
-				continue
+					return
 			elif packet_result["request"] == "server_register":
 				var port = int(packet_result.get("port", 0))
 				if port > 0:
 					release_port(port)
 					print("Matchmaker: Server registered on port ", port)
-				continue
+					return
 
 			# Check if we have a single player request
 			var single_player_client = null
@@ -95,7 +95,7 @@ func _ready():
 				var server_port = find_available_port()
 				if server_port == -1:
 					push_error("No available ports for game server!")
-					continue
+					return
 
 				# Create team info for single player vs 4 bots
 				var team = {}
@@ -131,7 +131,7 @@ func _ready():
 
 				# Remove the single player client from queue
 				connecting_clients.erase(single_player_client)
-				continue
+				return
 
 			# Check if we have enough multiplayer clients to start a game
 			if connecting_clients.size() >= min_players:
@@ -142,13 +142,13 @@ func _ready():
 						multiplayer_clients.append(client)
 
 				if multiplayer_clients.size() < min_players:
-					continue  # Not enough multiplayer clients yet
+					return  # Not enough multiplayer clients yet
 
 				# Find an available port for the server
 				var server_port = find_available_port()
 				if server_port == -1:
 					push_error("No available ports for game server!")
-					continue
+					return
 
 				# Send team info to the server (as a file for simplicity)
 				var team = {}
