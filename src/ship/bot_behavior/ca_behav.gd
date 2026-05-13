@@ -365,11 +365,22 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
 
-	var nearest_unspotted_dist = INF
-	for pos in unspotted.values():
-		var d = ship.global_position.distance_to(pos)
-		if d < nearest_unspotted_dist:
-			nearest_unspotted_dist = d
+	# var nearest_unspotted_dist = INF
+	# for pos in unspotted.values():
+	# 	var d = ship.global_position.distance_to(pos)
+	# 	if d < nearest_unspotted_dist:
+	# 		nearest_unspotted_dist = d
+	var nearest_threat_dist = INF
+	for s in unspotted:
+		if (s as Ship).ship_class != Ship.ShipClass.DD:
+			var d = ship.global_position.distance_to(unspotted[s])
+			if d < nearest_threat_dist:
+				nearest_threat_dist = d
+	for s in spotted:
+		if s.ship_class != Ship.ShipClass.DD:
+			var d = ship.global_position.distance_to(s.global_position)
+			if d < nearest_threat_dist:
+				nearest_threat_dist = d
 
 	var forced = false
 	if threat < 0.5:
@@ -384,7 +395,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-	elif (dist < 8000.0 or nearest_unspotted_dist < 8000.0) and ship.visible_to_enemy:
+	elif (nearest_threat_dist < 8000.0) and ship.visible_to_enemy:
 		# # High threat and enemy is close — find the optimal presentation angle
 		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		# forced = true

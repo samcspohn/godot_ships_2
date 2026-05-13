@@ -181,8 +181,14 @@ func _apply_citadel_guarantee() -> void:
 		var scale_factor := (0.5 + randf() * 0.4) / sqrt(closest_d)
 		_shuffled_radii[closest_idx] *= scale_factor
 
-const PROXIMITY_MAX_MULTIPLIER: float = 5.0
-const PROXIMITY_TAPER_RANGE_FRACTION: float = 0.5
+# Dispersion curve. The maximum physical dispersion (meters at max range) is
+# derived from the per-gun `base_spread` (radians) so per-gun tuning works again:
+#     MAX_DISPERSION_METERS = base_spread * max_range
+# The close-range anchor is expressed as a fraction of that maximum.
+# A power curve is fit through (0, 0), (CLOSE_RANGE, fraction*MAX), and (max_range, MAX).
+const CLOSE_DISPERSION_FRACTION: float = 0.33  # close-range dispersion as % of max
+const CLOSE_RANGE_METERS: float = 3000.0          # the anchor for close-range tuning
+const MAX_DISPERSION_ANGLE_RAD: float = 0.5      # safety cap at point-blank
 
 ## Perturbs a launch vector by applying dispersion as angular offsets.
 ## h = lateral (perpendicular to aim in horizontal plane)
@@ -201,13 +207,22 @@ func calculate_dispersed_launch(
 	var dist_to_target := (aim_point - gun_position).length()
 	var launch_velocity: Vector3 = a[0]
 
-	# Proximity spread: PROXIMITY_MAX_MULTIPLIER x at point-blank, tapers asymptotically
-	# to ~1x at PROXIMITY_TAPER_RANGE_FRACTION * max_range.
-	# k is chosen so the excess is ~1% of its point-blank value at the taper range.
-	var proximity_k := log(100.0) / (PROXIMITY_TAPER_RANGE_FRACTION * max_range)
-	base_spread *= 1.0 + (PROXIMITY_MAX_MULTIPLIER - 1.0) * exp(-proximity_k * dist_to_target)
+	# Power-curve dispersion in meters: meters(d) = MAX * (d/max_range)^p
+	# MAX is set by the gun's base_spread (radians) projected to max_range,
+	# and p is chosen so meters(CLOSE_RANGE_METERS) == CLOSE_DISPERSION_FRACTION * MAX.
+	# Passes through (0,0) automatically and reaches MAX at max_range.
+	var max_dispersion_m := base_spread * max_range
+	var p := log(CLOSE_DISPERSION_FRACTION) / log(CLOSE_RANGE_METERS / max_range)
+	var dispersion_m := max_dispersion_m \
+			* pow(clampf(dist_to_target / max_range, 0.0, 1.0), p)
 
-	# return launch_velocity
+	# Convert physical dispersion to the angular spread the rotation code expects.
+	# Clamp distance away from zero and clamp angle to avoid pathological rotations
+	# at extreme close range (where meters/d blows up because p < 1).
+	var _base_spread: float = minf(
+			dispersion_m / maxf(dist_to_target, 1.0),
+			MAX_DISPERSION_ANGLE_RAD)
+
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo()
 
@@ -224,9 +239,9 @@ func calculate_dispersed_launch(
 	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
 
 	# Scale to actual angular dispersion
-	const VERTICAL_SPREAD: float = 1.0
-	var h_angle := h_offset * base_spread * 0.5
-	var v_angle := v_offset * base_spread * 0.5 * VERTICAL_SPREAD
+	const VERTICAL_SPREAD: float = 0.5
+	var h_angle := h_offset * _base_spread * 0.5
+	var v_angle := v_offset * _base_spread * 0.5 * VERTICAL_SPREAD
 
 	# Build local frame around launch direction
 	var forward := launch_velocity.normalized()

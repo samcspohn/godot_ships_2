@@ -46,9 +46,11 @@ void HpaGraph::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_obstacles"), &HpaGraph::clear_obstacles);
 	ClassDB::bind_method(D_METHOD("get_node_count"), &HpaGraph::get_node_count);
 	ClassDB::bind_method(D_METHOD("get_cluster_count"), &HpaGraph::get_cluster_count);
+	ClassDB::bind_method(D_METHOD("get_sub_cluster_count"), &HpaGraph::get_sub_cluster_count);
 	ClassDB::bind_method(D_METHOD("get_debug_nodes"), &HpaGraph::get_debug_nodes);
 	ClassDB::bind_method(D_METHOD("get_debug_edges"), &HpaGraph::get_debug_edges);
 	ClassDB::bind_method(D_METHOD("get_debug_clusters"), &HpaGraph::get_debug_clusters);
+	ClassDB::bind_method(D_METHOD("get_debug_sub_clusters"), &HpaGraph::get_debug_sub_clusters);
 	ClassDB::bind_method(D_METHOD("get_debug_threat_clusters"), &HpaGraph::get_debug_threat_clusters);
 	ClassDB::bind_method(D_METHOD("get_perf_metrics"), &HpaGraph::get_perf_metrics);
 	ClassDB::bind_method(D_METHOD("reset_perf_metrics"), &HpaGraph::reset_perf_metrics);
@@ -68,8 +70,11 @@ HpaGraph::~HpaGraph() = default;
 void HpaGraph::build(Ref<NavigationMap> map, float clearance, int cluster_size) {
 	built_ = false;
 	clusters_.clear();
+	sub_clusters_.clear();
 	cluster_block_count_.clear();
 	cluster_threat_blocked_.clear();
+	threat_blocked_cids_.clear();
+	threat_blocked_count_ = 0;
 	obstacles_.clear();
 
 	if (!map.is_valid() || !map->is_built()) {
@@ -89,20 +94,49 @@ void HpaGraph::build(Ref<NavigationMap> map, float clearance, int cluster_size) 
 	ncx_ = (grid_w_ + cluster_size_ - 1) / cluster_size_;
 	ncz_ = (grid_h_ + cluster_size_ - 1) / cluster_size_;
 
+	// Sub-cluster sizing: keep sub_size_ tied to the default ratio.  Require
+	// cluster_size_ to be a positive integer multiple of sub_size_ so each
+	// macro contains a whole number of subs and indexing stays trivial.
+	sub_size_ = DEFAULT_SUB_SIZE;
+	if (sub_size_ <= 0 || cluster_size_ % sub_size_ != 0) {
+		UtilityFunctions::print(
+			"[HpaGraph] build: cluster_size (", cluster_size_,
+			") must be a positive multiple of sub_size (", sub_size_,
+			") \u2014 aborting build");
+		return;
+	}
+	subs_per_macro_side_ = cluster_size_ / sub_size_;
+	nsubx_ = ncx_ * subs_per_macro_side_;
+	nsubz_ = ncz_ * subs_per_macro_side_;
+
+	// Constant cluster A* step costs: every neighbour edge in the cluster
+	// grid is exactly one cluster wide (cardinal) or one cluster diagonal.
+	// No need to recompute sqrt for every expansion.
+	cardinal_step_cost_ = static_cast<float>(cluster_size_) * cell_size_;
+	diagonal_step_cost_ = cardinal_step_cost_ * 1.41421356237f;
+
 	UtilityFunctions::print(
 		"[HpaGraph] building ", ncx_, "x", ncz_,
-		" clusters (", cluster_size_, " cells each) on grid ",
-		grid_w_, "x", grid_h_);
+		" clusters (", cluster_size_, " cells each) and ",
+		nsubx_, "x", nsubz_, " sub-clusters (", sub_size_,
+		" cells each) on grid ", grid_w_, "x", grid_h_);
 
 	build_clusters();
+	build_sub_clusters();
 
 	int navigable_count = 0;
 	for (const Cluster &c : clusters_)
 		if (c.navigable) ++navigable_count;
 
+	int sub_navigable_count = 0;
+	for (const SubCluster &s : sub_clusters_)
+		if (s.navigable) ++sub_navigable_count;
+
 	UtilityFunctions::print(
 		"[HpaGraph] built: ", (int)clusters_.size(), " clusters (",
-		navigable_count, " navigable)");
+		navigable_count, " navigable), ",
+		(int)sub_clusters_.size(), " sub-clusters (",
+		sub_navigable_count, " navigable)");
 
 	built_ = true;
 }
@@ -132,6 +166,13 @@ void HpaGraph::build_clusters() {
 			c.x1  = std::min(c.x0 + cluster_size_ - 1, grid_w_ - 1);
 			c.z1  = std::min(c.z0 + cluster_size_ - 1, grid_h_ - 1);
 
+			// Macro→sub range (always a full subs_per_macro_side_ × ... block;
+			// out-of-grid subs are clamped/marked impassable in build_sub_clusters).
+			c.sub_x0 = cx * subs_per_macro_side_;
+			c.sub_z0 = cz * subs_per_macro_side_;
+			c.sub_x1 = c.sub_x0 + subs_per_macro_side_ - 1;
+			c.sub_z1 = c.sub_z0 + subs_per_macro_side_ - 1;
+
 			// Cluster centre (world coords of the middle cell).
 			grid_to_world((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2,
 			              c.wx_center, c.wz_center);
@@ -151,6 +192,81 @@ void HpaGraph::build_clusters() {
 			c.max_sdf  = max_sdf;
 			c.min_sdf  = min_sdf;
 			c.navigable = (max_sdf >= clearance_);
+		}
+	}
+}
+
+// ============================================================================
+// build_sub_clusters
+// ============================================================================
+//
+// One sub-cluster per (sub_size_ × sub_size_) cell block.  The sub grid is
+// always exactly ncx_*subs_per_macro_side_ × ncz_*subs_per_macro_side_, even
+// if the underlying cell grid isn't a multiple of cluster_size_.  Subs that
+// fall fully outside the cell grid are marked non-navigable; partial subs
+// scan only their in-bounds cells.
+//
+void HpaGraph::build_sub_clusters() {
+	int total = nsubx_ * nsubz_;
+	sub_clusters_.assign(total, SubCluster{});
+
+	const float NEG_INF = -std::numeric_limits<float>::infinity();
+	const float POS_INF =  std::numeric_limits<float>::infinity();
+
+	for (int scz = 0; scz < nsubz_; ++scz) {
+		for (int scx = 0; scx < nsubx_; ++scx) {
+			int sid = sub_id(scx, scz);
+			SubCluster &s = sub_clusters_[sid];
+			s.id  = sid;
+			s.scx = scx;
+			s.scz = scz;
+
+			// Parent macro.
+			int parent_cx = scx / subs_per_macro_side_;
+			int parent_cz = scz / subs_per_macro_side_;
+			s.parent_cid = cluster_id(parent_cx, parent_cz);
+
+			// Cell range in the underlying SDF grid.
+			int x0 = scx * sub_size_;
+			int z0 = scz * sub_size_;
+			int x1 = x0 + sub_size_ - 1;
+			int z1 = z0 + sub_size_ - 1;
+
+			// Wholly outside the cell grid — mark impassable, no SDF scan.
+			if (x0 >= grid_w_ || z0 >= grid_h_) {
+				s.x0 = x0; s.z0 = z0; s.x1 = x1; s.z1 = z1;
+				s.max_sdf = NEG_INF;
+				s.min_sdf = NEG_INF;
+				s.navigable = false;
+				// Centre still computed for debug/visualisation.
+				grid_to_world((x0 + x1) / 2, (z0 + z1) / 2,
+				              s.wx_center, s.wz_center);
+				continue;
+			}
+
+			// Clamp to cell grid (last column/row of subs may be partial).
+			s.x0 = x0;
+			s.z0 = z0;
+			s.x1 = std::min(x1, grid_w_ - 1);
+			s.z1 = std::min(z1, grid_h_ - 1);
+
+			grid_to_world((s.x0 + s.x1) / 2, (s.z0 + s.z1) / 2,
+			              s.wx_center, s.wz_center);
+
+			float max_sdf = NEG_INF;
+			float min_sdf = POS_INF;
+			for (int gz = s.z0; gz <= s.z1; ++gz) {
+				for (int gx = s.x0; gx <= s.x1; ++gx) {
+					float wx, wz;
+					grid_to_world(gx, gz, wx, wz);
+					float sdf = nav_map_->get_distance(wx, wz);
+					if (sdf > max_sdf) max_sdf = sdf;
+					if (sdf < min_sdf) min_sdf = sdf;
+				}
+			}
+			s.max_sdf   = max_sdf;
+			s.min_sdf   = min_sdf;
+			s.navigable = (max_sdf >= clearance_);
 		}
 	}
 }
@@ -280,10 +396,7 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 					if (clusters_[cid_z].max_sdf < q_cl) continue;
 				}
 
-				const Cluster &nc = clusters_[ncid];
-				float step_dx = nc.wx_center - cc.wx_center;
-				float step_dz = nc.wz_center - cc.wz_center;
-				float step_cost = std::sqrt(step_dx * step_dx + step_dz * step_dz);
+				float step_cost = is_diag ? diagonal_step_cost_ : cardinal_step_cost_;
 				float ng = g[cur] + step_cost;
 
 				if (ng < g[ncid]) {
@@ -301,6 +414,126 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 	for (int c = to_cid; c != -1; c = parent[c]) {
 		path.push_back(c);
 		if (c == from_cid) break;
+	}
+	std::reverse(path.begin(), path.end());
+	return path;
+}
+
+// ============================================================================
+// sub_cluster_astar
+// A* on the sub-cluster grid.  Returns ordered sub-cluster IDs
+// from_sid → to_sid.  Sub-clusters with max_sdf < q_cl are impassable.
+// If allowed_macros is supplied, only sub-clusters whose parent macro is
+// flagged are considered passable (corridor constraint).
+// ============================================================================
+
+std::vector<int> HpaGraph::sub_cluster_astar(
+		int from_sid, int to_sid, float q_cl,
+		const std::vector<uint8_t>* allowed_macros) const {
+	if (from_sid == to_sid) return { from_sid };
+	const int N = static_cast<int>(sub_clusters_.size());
+	if (from_sid < 0 || to_sid < 0 || from_sid >= N || to_sid >= N) return {};
+
+	const float INF = std::numeric_limits<float>::infinity();
+
+	// Step costs at sub-cluster granularity — constant, no per-edge sqrt.
+	const float sub_card = static_cast<float>(sub_size_) * cell_size_;
+	const float sub_diag = sub_card * 1.41421356237f;
+
+	std::vector<float> g(N, INF);
+	std::vector<int>   parent(N, -1);
+	std::vector<bool>  closed(N, false);
+
+	const SubCluster &goal_s = sub_clusters_[to_sid];
+	auto heur = [&](int sid) -> float {
+		const SubCluster &s = sub_clusters_[sid];
+		float dx = s.wx_center - goal_s.wx_center;
+		float dz = s.wz_center - goal_s.wz_center;
+		return std::sqrt(dx * dx + dz * dz);
+	};
+
+	auto macro_allowed = [&](int parent_cid) -> bool {
+		if (!allowed_macros) return true;
+		if (parent_cid < 0 || parent_cid >= static_cast<int>(allowed_macros->size())) return false;
+		return (*allowed_macros)[parent_cid] != 0;
+	};
+
+	// The goal sub may legitimately lie in a non-allowed macro (e.g. start/goal
+	// pinned to a coastal macro the abstract pass excluded); waive the corridor
+	// rule for from_sid and to_sid only.
+	auto sub_passable = [&](int sid) -> bool {
+		const SubCluster &s = sub_clusters_[sid];
+		if (s.max_sdf < q_cl) return false;
+		if (sid == from_sid || sid == to_sid) return true;
+		if (!macro_allowed(s.parent_cid)) return false;
+		// Re-use macro-level obstacle/threat blocking.  A sub inside a blocked
+		// macro is blocked too — except when it's the goal sub (mirror of the
+		// macro A* rule that lets the path reach a blocked goal).
+		if (cluster_blocked(s.parent_cid)) return false;
+		return true;
+	};
+
+	if (!sub_passable(from_sid) && from_sid != to_sid) {
+		// from_sid impassable on its own merits (max_sdf < q_cl) — caller must
+		// have picked a bad start.  Bail rather than silently routing nowhere.
+		return {};
+	}
+
+	using PQ = std::pair<float, int>;
+	std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
+
+	g[from_sid] = 0.0f;
+	open.push({ heur(from_sid), from_sid });
+
+	while (!open.empty()) {
+		auto [f, cur] = open.top(); open.pop();
+		if (closed[cur]) continue;
+		closed[cur] = true;
+		if (cur == to_sid) break;
+
+		const SubCluster &cs = sub_clusters_[cur];
+
+		for (int dz = -1; dz <= 1; ++dz) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				if (dx == 0 && dz == 0) continue;
+
+				int nscx = cs.scx + dx;
+				int nscz = cs.scz + dz;
+				if (nscx < 0 || nscx >= nsubx_ || nscz < 0 || nscz >= nsubz_) continue;
+
+				int nsid = sub_id(nscx, nscz);
+				if (closed[nsid]) continue;
+				if (!sub_passable(nsid)) continue;
+
+				// Diagonal corner-cutting rule: both cardinal neighbours must
+				// also be passable, otherwise we'd slip through an impassable
+				// corner that the ship physically cannot fit through.
+				bool is_diag = (dx != 0 && dz != 0);
+				if (is_diag) {
+					int sid_x = sub_id(cs.scx + dx, cs.scz);
+					int sid_z = sub_id(cs.scx,      cs.scz + dz);
+					if (!sub_passable(sid_x)) continue;
+					if (!sub_passable(sid_z)) continue;
+				}
+
+				float step_cost = is_diag ? sub_diag : sub_card;
+				float ng = g[cur] + step_cost;
+
+				if (ng < g[nsid]) {
+					g[nsid] = ng;
+					parent[nsid] = cur;
+					open.push({ ng + heur(nsid), nsid });
+				}
+			}
+		}
+	}
+
+	if (g[to_sid] == INF) return {};
+
+	std::vector<int> path;
+	for (int c = to_sid; c != -1; c = parent[c]) {
+		path.push_back(c);
+		if (c == from_sid) break;
 	}
 	std::reverse(path.begin(), path.end());
 	return path;
@@ -447,20 +680,18 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 	int to_cid   = cluster_id(cell_cx(to_gx),   cell_cz(to_gz));
 
 	// ── Threat layer ───────────────────────────────────────────────────────
-	bool threat_layer_active = false;
-	for (uint8_t b : cluster_threat_blocked_)
-		if (b) { threat_layer_active = true; break; }
+	bool threat_layer_active = (threat_blocked_count_ > 0);
 
 	// Reject a LOS segment that clips any threat-blocked cluster AABB.
+	// Iterates the compact threat_blocked_cids_ list rather than every cluster.
 	auto threat_clear = [&](const Vector2 &a, const Vector2 &b) -> bool {
 		if (!threat_layer_active) return true;
-		for (int cid = 0; cid < static_cast<int>(clusters_.size()); ++cid) {
-			if (!cluster_threat_blocked_[cid]) continue;
+		const float hc = cell_size_ * 0.5f;
+		for (int cid : threat_blocked_cids_) {
 			const Cluster &cl = clusters_[cid];
 			float wx0, wz0, wx1, wz1;
 			grid_to_world(cl.x0, cl.z0, wx0, wz0);
 			grid_to_world(cl.x1, cl.z1, wx1, wz1);
-			float hc = cell_size_ * 0.5f;
 			if (segment_clips_aabb(a.x, a.y, b.x, b.y,
 			                       wx0 - hc, wz0 - hc, wx1 + hc, wz1 + hc))
 				return false;
@@ -481,49 +712,164 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		return finalize_query(r);
 	}
 
-	// ── Step 2: Same-cluster / short-range local pathfind ──────────────────
-	if (from_cid == to_cid) {
-		auto t0 = Clock::now();
-		PathResult local = nav_map_->find_path_internal(from, to, q_cl);
-		auto t1 = Clock::now();
-		refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
-		connector_local_search_runs++;
-		return finalize_query(local);
-	}
+	// ── Step 2: Build guide-point sequence ─────────────────────────────────────
+	// Two cases:
+	//   (a) Same macro      → sub A* within from_cid produces the guide.
+	//   (b) Cross macro     → macro A* produces a corridor; per-macro sub
+	//                         picking refines the guide.
+	// Either way the result is a `guide` vector ending in `to`, fed to a
+	// unified Step 5 connector below.
+	//
+	// Open-cell rule (mirrors macro behaviour for subs):
+	//   is_sub_open(sid)  := sub_clusters_[sid].min_sdf >= q_cl   (fully safe)
+	//   is_cluster_open   := analogous, at macro layer
+	// Only "open" intermediate centres are emitted as guides; coastal/terrain
+	// stretches are bridged by LOS / sub A* / cell A* in the connector.
 
-	// ── Step 3: Cluster A* ─────────────────────────────────────────────────
-	auto t_abs0 = Clock::now();
-	std::vector<int> cluster_path = cluster_astar(from_cid, to_cid, q_cl);
-	auto t_abs1 = Clock::now();
-	abstract_us = std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
-
-	if (cluster_path.empty()) return finalize_query(no_path);
-
-	// ── Step 4: Build guide points ─────────────────────────────────────────
-	// Use open-water cluster centres (min_sdf >= q_cl) as guide waypoints.
-	// Terrain clusters (min_sdf < q_cl) are omitted; the LOS+local-A* pass
-	// below naturally routes through them using the ship's real clearance.
 	auto is_cluster_open = [&](int cid) -> bool {
 		return cid >= 0 &&
 		       cid < static_cast<int>(clusters_.size()) &&
 		       clusters_[cid].min_sdf >= q_cl;
 	};
+	auto is_sub_open = [&](int sid) -> bool {
+		return sid >= 0 &&
+		       sid < static_cast<int>(sub_clusters_.size()) &&
+		       sub_clusters_[sid].min_sdf >= q_cl;
+	};
+
+	int from_sid = sub_id(cell_scx(from_gx), cell_scz(from_gz));
+	int to_sid   = sub_id(cell_scx(to_gx),   cell_scz(to_gz));
 
 	std::vector<Vector2> guide;
+	guide.reserve(8);
 	guide.push_back(from);
-	// Skip first (from_cid) and last (to_cid) cluster — they're covered by
-	// the from/to endpoints themselves.
-	for (int i = 1; i + 1 < static_cast<int>(cluster_path.size()); ++i) {
-		int cid = cluster_path[i];
-		if (is_cluster_open(cid)) {
-			guide.emplace_back(clusters_[cid].wx_center, clusters_[cid].wz_center);
-		}
-	}
-	guide.push_back(to);
 
-	// ── Step 5: Connect guide points ───────────────────────────────────────
-	// For each consecutive pair: straight line when LOS with q_cl is clear,
-	// otherwise a local A* call using the ship's actual clearance.
+	// allowed_macros: per-macro 0/1 mask used by sub_cluster_astar() to
+	// constrain corridor searches.  Sized once and shared between the
+	// same-macro fast path and the per-pair connector below.
+	std::vector<uint8_t> allowed_macros(clusters_.size(), 0);
+
+	if (from_cid == to_cid) {
+		// (a) Same macro — sub A* over this single macro, no corridor needed.
+		allowed_macros[from_cid] = 1;
+
+		if (from_sid != to_sid) {
+			auto t_abs0 = Clock::now();
+			std::vector<int> sub_path = sub_cluster_astar(
+				from_sid, to_sid, q_cl, &allowed_macros);
+			auto t_abs1 = Clock::now();
+			abstract_us += std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
+
+			if (sub_path.empty()) {
+				// Sub A* failed inside a single macro that the LOS shortcut
+				// already rejected.  Fall straight to cell A* — this is the
+				// near-terrain start/end case the user described.
+				auto t0 = Clock::now();
+				PathResult local = nav_map_->find_path_internal(from, to, q_cl);
+				auto t1 = Clock::now();
+				refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
+				connector_local_search_runs++;
+				return finalize_query(local);
+			}
+
+			for (int i = 1; i + 1 < static_cast<int>(sub_path.size()); ++i) {
+				int sid = sub_path[i];
+				if (is_sub_open(sid))
+					guide.emplace_back(sub_clusters_[sid].wx_center,
+					                   sub_clusters_[sid].wz_center);
+			}
+		}
+		guide.push_back(to);
+	} else {
+		// (b) Cross macro — macro A* then sub-aware guide selection.
+		auto t_abs0 = Clock::now();
+		std::vector<int> cluster_path = cluster_astar(from_cid, to_cid, q_cl);
+		auto t_abs1 = Clock::now();
+		abstract_us = std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
+
+		if (cluster_path.empty()) return finalize_query(no_path);
+
+		// Corridor mask: every macro on the abstract path plus its 8 neighbours.
+		// Gives the per-pair sub A* room to detour around in-corridor terrain
+		// without ballooning into a global search.
+		for (int cid : cluster_path) {
+			const Cluster &cc = clusters_[cid];
+			for (int dz = -1; dz <= 1; ++dz) {
+				for (int dx = -1; dx <= 1; ++dx) {
+					int nx = cc.cx + dx;
+					int nz = cc.cz + dz;
+					if (nx < 0 || nx >= ncx_ || nz < 0 || nz >= ncz_) continue;
+					allowed_macros[cluster_id(nx, nz)] = 1;
+				}
+			}
+		}
+
+		// Pick the open sub-cluster inside `cid` whose centre is closest to
+		// the chord prev_g → next_g.  Returns -1 if no open sub exists.
+		auto best_open_sub_near_chord = [&](int cid,
+		                                     const Vector2 &prev_g,
+		                                     const Vector2 &next_g) -> int {
+			const Cluster &c = clusters_[cid];
+			int best = -1;
+			float best_d2 = std::numeric_limits<float>::infinity();
+			Vector2 dir = next_g - prev_g;
+			float L2 = dir.x * dir.x + dir.y * dir.y;
+			for (int scz = c.sub_z0; scz <= c.sub_z1; ++scz) {
+				for (int scx = c.sub_x0; scx <= c.sub_x1; ++scx) {
+					if (scx >= nsubx_ || scz >= nsubz_) continue;
+					int sid = sub_id(scx, scz);
+					if (!is_sub_open(sid)) continue;
+					const SubCluster &s = sub_clusters_[sid];
+					Vector2 p(s.wx_center, s.wz_center);
+					float d2;
+					if (L2 > 1e-6f) {
+						Vector2 dp = p - prev_g;
+						float t = (dp.x * dir.x + dp.y * dir.y) / L2;
+						Vector2 proj = prev_g + dir * t;
+						Vector2 e = p - proj;
+						d2 = e.x * e.x + e.y * e.y;
+					} else {
+						Vector2 e = p - prev_g;
+						d2 = e.x * e.x + e.y * e.y;
+					}
+					if (d2 < best_d2) { best_d2 = d2; best = sid; }
+				}
+			}
+			return best;
+		};
+
+		for (int i = 1; i + 1 < static_cast<int>(cluster_path.size()); ++i) {
+			int cid = cluster_path[i];
+			if (is_cluster_open(cid)) {
+				guide.emplace_back(clusters_[cid].wx_center, clusters_[cid].wz_center);
+			} else {
+				// Partly-coastal macro — promote its best open sub to a guide
+				// rather than skipping it (current behaviour).  If no sub is
+				// open, fall back to skipping; the connector will bridge it.
+				Vector2 prev_g = guide.back();
+				Vector2 next_g;
+				if (i + 1 < static_cast<int>(cluster_path.size())) {
+					int ncid = cluster_path[i + 1];
+					next_g = Vector2(clusters_[ncid].wx_center, clusters_[ncid].wz_center);
+				} else {
+					next_g = to;
+				}
+				int best_sid = best_open_sub_near_chord(cid, prev_g, next_g);
+				if (best_sid >= 0) {
+					const SubCluster &s = sub_clusters_[best_sid];
+					guide.emplace_back(s.wx_center, s.wz_center);
+				}
+			}
+		}
+		guide.push_back(to);
+	}
+
+	// ── Step 5: Connect guide points ─────────────────────────────────────────
+	// Per consecutive (A,B) pair:
+	//   1. LOS at q_cl (+ threat) — cheapest.
+	//   2. Sub A* in the corridor; emit its open intermediate sub centres.
+	//   3. Cell A* (NavigationMap::find_path_internal) — last resort, used
+	//      mostly when the route threads near terrain.
 	auto t_ref0 = Clock::now();
 
 	std::vector<Vector2> waypoints;
@@ -546,19 +892,52 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		if (los_ok) {
 			connector_los_hits++;
 			waypoints.push_back(B);
-		} else {
-			// Local A* bridges the terrain with the ship's actual clearance.
-			connector_local_search_runs++;
-			PathResult local = nav_map_->find_path_internal(A, B, q_cl);
-			if (local.valid && local.waypoints.size() >= 2) {
-				for (int j = 1; j < static_cast<int>(local.waypoints.size()); ++j) {
-					if (waypoints.back().distance_to(local.waypoints[j]) > merge_eps)
-						waypoints.push_back(local.waypoints[j]);
+			continue;
+		}
+
+		// LOS failed — try sub A* across the corridor.
+		int a_sid = sub_id(cell_scx(ax), cell_scz(az));
+		int b_sid = sub_id(cell_scx(bx), cell_scz(bz));
+		bool sub_helped = false;
+
+		if (a_sid != b_sid) {
+			std::vector<int> sub_path =
+				sub_cluster_astar(a_sid, b_sid, q_cl, &allowed_macros);
+
+			// Count open intermediates — only worth using if the sub layer
+			// produced at least one open detour point; otherwise the route
+			// is genuinely terrain-threading and cell A* is the right tool.
+			int open_intermediates = 0;
+			for (int j = 1; j + 1 < static_cast<int>(sub_path.size()); ++j)
+				if (is_sub_open(sub_path[j])) ++open_intermediates;
+
+			if (!sub_path.empty() && open_intermediates > 0) {
+				for (int j = 1; j + 1 < static_cast<int>(sub_path.size()); ++j) {
+					int sid = sub_path[j];
+					if (!is_sub_open(sid)) continue;
+					const SubCluster &s = sub_clusters_[sid];
+					Vector2 P(s.wx_center, s.wz_center);
+					if (waypoints.back().distance_to(P) > merge_eps)
+						waypoints.push_back(P);
 				}
-			} else {
-				// Local pathfind failed; keep the guide point as a fallback.
-				waypoints.push_back(B);
+				if (waypoints.back().distance_to(B) > merge_eps)
+					waypoints.push_back(B);
+				sub_helped = true;
 			}
+		}
+
+		if (sub_helped) continue;
+
+		// Sub A* couldn't help — fall back to cell A* on this segment.
+		connector_local_search_runs++;
+		PathResult local = nav_map_->find_path_internal(A, B, q_cl);
+		if (local.valid && local.waypoints.size() >= 2) {
+			for (int j = 1; j < static_cast<int>(local.waypoints.size()); ++j) {
+				if (waypoints.back().distance_to(local.waypoints[j]) > merge_eps)
+					waypoints.push_back(local.waypoints[j]);
+			}
+		} else {
+			waypoints.push_back(B);
 		}
 	}
 
@@ -688,6 +1067,29 @@ TypedArray<Dictionary> HpaGraph::get_debug_clusters() const {
 	return out;
 }
 
+TypedArray<Dictionary> HpaGraph::get_debug_sub_clusters() const {
+	TypedArray<Dictionary> out;
+	for (const SubCluster &s : sub_clusters_) {
+		Dictionary d;
+		float wx0, wz0, wx1, wz1;
+		grid_to_world(s.x0, s.z0, wx0, wz0);
+		grid_to_world(s.x1, s.z1, wx1, wz1);
+		float hc = cell_size_ * 0.5f;
+		d["id"]         = s.id;
+		d["parent_cid"] = s.parent_cid;
+		d["x0"]         = wx0 - hc;
+		d["z0"]         = wz0 - hc;
+		d["x1"]         = wx1 + hc;
+		d["z1"]         = wz1 + hc;
+		d["navigable"]  = s.navigable;
+		d["max_sdf"]    = s.max_sdf;
+		d["min_sdf"]    = s.min_sdf;
+		d["center"]     = Vector2(s.wx_center, s.wz_center);
+		out.push_back(d);
+	}
+	return out;
+}
+
 // ============================================================================
 // get_perf_metrics
 // ============================================================================
@@ -777,28 +1179,35 @@ bool HpaGraph::is_perf_tracking_enabled() const {
 
 void HpaGraph::stamp_threats(const std::vector<ThreatCircle> &threats) {
 	std::fill(cluster_threat_blocked_.begin(), cluster_threat_blocked_.end(), 0);
+	threat_blocked_cids_.clear();
+	threat_blocked_count_ = 0;
 	if (threats.empty() || clusters_.empty() || !nav_map_.is_valid()) return;
 
-	for (const Cluster &c : clusters_) {
-		if (!c.navigable) continue;
+	for (const ThreatCircle &t : threats) {
+		if (t.radius <= 0.0f) continue;
 
-		// Grid coords of the 4 cluster corner cells.
-		// Testing all corners (rather than just the centre) conservatively marks
-		// clusters where the threat has line-of-sight to any part of the boundary.
-		const int corner_gx[4] = { c.x0, c.x1, c.x0, c.x1 };
-		const int corner_gz[4] = { c.z0, c.z0, c.z1, c.z1 };
+		int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
+		int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
+		gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
+		gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
 
-		for (const ThreatCircle &t : threats) {
-			if (t.radius <= 0.0f) continue;
+		const float r2 = t.radius * t.radius;
 
-			int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
-			int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
-			gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
-			gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
+		// Only candidate clusters whose AABB overlaps the threat circle are
+		// worth testing — avoids the previous O(clusters × threats) sweep.
+		std::vector<int> candidates = clusters_in_radius(t.origin, t.radius);
+		for (int cid : candidates) {
+			if (cluster_threat_blocked_[cid]) continue;  // already blocked by another threat
+			const Cluster &c = clusters_[cid];
+			if (!c.navigable) continue;
 
-			const float r2 = t.radius * t.radius;
+			// Grid coords of the 4 cluster corner cells.
+			// Testing all corners (rather than just the centre) conservatively marks
+			// clusters where the threat has line-of-sight to any part of the boundary.
+			const int corner_gx[4] = { c.x0, c.x1, c.x0, c.x1 };
+			const int corner_gz[4] = { c.z0, c.z0, c.z1, c.z1 };
+
 			bool threatened = false;
-
 			for (int i = 0; i < 4 && !threatened; ++i) {
 				float wx, wz;
 				grid_to_world(corner_gx[i], corner_gz[i], wx, wz);
@@ -812,15 +1221,19 @@ void HpaGraph::stamp_threats(const std::vector<ThreatCircle> &threats) {
 			}
 
 			if (threatened) {
-				cluster_threat_blocked_[c.id] = 1;
-				break;
+				cluster_threat_blocked_[cid] = 1;
+				threat_blocked_cids_.push_back(cid);
 			}
 		}
 	}
+
+	threat_blocked_count_ = static_cast<int>(threat_blocked_cids_.size());
 }
 
 void HpaGraph::clear_threats() {
 	std::fill(cluster_threat_blocked_.begin(), cluster_threat_blocked_.end(), 0);
+	threat_blocked_cids_.clear();
+	threat_blocked_count_ = 0;
 }
 
 // ============================================================================
