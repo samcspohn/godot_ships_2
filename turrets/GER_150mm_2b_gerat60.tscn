@@ -11,7 +11,7 @@ _sound = ExtResource("3_mt5ug")
 pitch = 3.5
 volume = 0.8
 variance = 0.25
-max_rotation_angle = 0.0
+slew_max_angle = 0.0
 glb_path = "uid://c7kxmqf5odbws"
 
 [node name="150mmTurret_col" parent="." index="1" unique_id=172200676]

@@ -319,39 +319,39 @@ layers = 0
 material_override = ExtResource("2_iwiyp")
 
 [node name="AMER_203mm_3b_auto" parent="TurretMount_AMER_203mm_3b_auto" parent_id_path=PackedInt32Array(876245156) index="0" unique_id=1956302209 instance=ExtResource("3_6vusf")]
-min_rotation_angle = 3.735004599267865
-max_rotation_angle = 2.583087292951608
+slew_min_angle = 3.735004599267865
+slew_max_angle = 2.583087292951608
 
 [node name="AMER_203mm_3b_auto_001" parent="TurretMount_AMER_203mm_3b_auto_001" parent_id_path=PackedInt32Array(1719978036) index="0" unique_id=251681090 instance=ExtResource("3_6vusf")]
-min_rotation_angle = 3.717551306747922
-max_rotation_angle = 2.565634000431664
+slew_min_angle = 3.717551306747922
+slew_max_angle = 2.565634000431664
 
 [node name="AMER_203mm_3b_auto_002" parent="TurretMount_AMER_203mm_3b_auto_002" parent_id_path=PackedInt32Array(26832061) index="0" unique_id=1416805328 instance=ExtResource("3_6vusf")]
-min_rotation_angle = 0.5235987755982988
-max_rotation_angle = 5.759586531581287
+slew_min_angle = 0.5235987755982988
+slew_max_angle = 5.759586531581287
 
 [node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(1912505962) index="0" unique_id=1615687452 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 3.8048177693476384
-max_rotation_angle = 2.4609142453120048
+slew_min_angle = 3.8048177693476384
+slew_max_angle = 2.4609142453120048
 
 [node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" parent_id_path=PackedInt32Array(1047804310) index="0" unique_id=682537352 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 3.7000980142279785
-max_rotation_angle = 0.01745329251994329
+slew_min_angle = 3.7000980142279785
+slew_max_angle = 0.01745329251994329
 
 [node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" parent_id_path=PackedInt32Array(2008469374) index="0" unique_id=1985526730 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 3.1590459461097367
-max_rotation_angle = 5.777039824101231
+slew_min_angle = 3.1590459461097367
+slew_max_angle = 5.777039824101231
 
 [node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" parent_id_path=PackedInt32Array(1608014968) index="0" unique_id=948304072 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 0.6130340650300443
-max_rotation_angle = 5.670813783287063
+slew_min_angle = 0.6130340650300443
+slew_max_angle = 5.670813783287063
 
 [node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" parent_id_path=PackedInt32Array(1901408931) index="0" unique_id=2100547642 instance=ExtResource("4_4rujh")]
-max_rotation_angle = 2.670353755551324
+slew_max_angle = 2.670353755551324
 
 [node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" parent_id_path=PackedInt32Array(1078615411) index="0" unique_id=972041099 instance=ExtResource("4_4rujh")]
-min_rotation_angle = 0.6108652381980153
-max_rotation_angle = 3.138127185371957
+slew_min_angle = 0.6108652381980153
+slew_max_angle = 3.138127185371957
 
 [node name="Hull_Bow_col" parent="." index="20" unique_id=774684309]
 layers = 0

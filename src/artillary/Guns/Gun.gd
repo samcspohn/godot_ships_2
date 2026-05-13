@@ -3,9 +3,9 @@ class_name Gun
 extends Turret
 
 # Properties for editor
-# @export var rotation_limits_enabled: bool = true
-# @export var min_rotation_angle: float = deg_to_rad(90)
-# @export var max_rotation_angle: float = deg_to_rad(180)
+# @export var slew_limits_enabled: bool = true
+# @export var slew_min_angle: float = deg_to_rad(90)
+# @export var slew_max_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
 var dispersion_calculator: DispersionCalculator
@@ -184,10 +184,7 @@ func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(global_position, target, get_shell())
 	if sol[0] != null and get_dist(target) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
-		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-		if a[1]:
-			return false
-		return true
+		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func get_leading_position(target: Vector3, target_velocity: Vector3):
@@ -200,10 +197,7 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
 	if sol[0] != null and get_dist(sol[2]) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(sol[2])
-		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-		if a[1]:
-			return false
-		return true
+		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func get_muzzles_position() -> Vector3:

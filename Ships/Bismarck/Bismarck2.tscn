@@ -51,26 +51,26 @@ fires = [NodePath("../../FireNodes/Fire4"), NodePath("../../FireNodes/Fire3"), N
 
 [node name="380mmTurret" parent="Hull" index="20" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_nf7q3")
-min_rotation_angle = 3.735
-max_rotation_angle = 2.54818
+slew_min_angle = 3.735
+slew_max_angle = 2.54818
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 
 [node name="380mmTurret_001" parent="Hull" index="21" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_nf7q3")
-min_rotation_angle = 3.63028
-max_rotation_angle = 2.6529
+slew_min_angle = 3.63028
+slew_max_angle = 2.6529
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 
 [node name="380mmTurret_002" parent="Hull" index="22" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_nf7q3")
-min_rotation_angle = 0.802851
-max_rotation_angle = 5.39307
+slew_min_angle = 0.802851
+slew_max_angle = 5.39307
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 
 [node name="380mmTurret_003" parent="Hull" index="23" node_paths=PackedStringArray("dispersion_calculator")]
 script = ExtResource("3_nf7q3")
-min_rotation_angle = 0.593412
-max_rotation_angle = 5.67232
+slew_min_angle = 0.593412
+slew_max_angle = 5.67232
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." index="2"]

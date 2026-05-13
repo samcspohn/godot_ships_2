@@ -105,10 +105,10 @@ func _redraw(gizmo):
 	gizmo.add_mesh(base_mesh, get_material("main", gizmo))
 	
 	# Draw rotation limits if enabled
-	if turret.rotation_limits_enabled:
+	if turret.slew_limits_enabled:
 		# Convert stored angles to display angles by subtracting 180 degrees (π radians)
-		var min_angle_rad = turret.min_rotation_angle - PI
-		var max_angle_rad = turret.max_rotation_angle - PI
+		var min_angle_rad = turret.slew_min_angle - PI
+		var max_angle_rad = turret.slew_max_angle - PI
 		
 		# Normalize display angles to [0, 2π] range
 		while min_angle_rad < 0:
@@ -261,9 +261,9 @@ func _commit_handle(gizmo, handle_id, secondary, restore, cancel):
 			storage_angle -= TAU
 		
 		if handle_id == 0:
-			turret.min_rotation_angle = storage_angle
+			turret.slew_min_angle = storage_angle
 		else:
-			turret.max_rotation_angle = storage_angle
+			turret.slew_max_angle = storage_angle
 		return
 	
 	var undo_redo = EditorInterface.get_editor_undo_redo()
@@ -277,12 +277,12 @@ func _commit_handle(gizmo, handle_id, secondary, restore, cancel):
 	
 	if handle_id == 0:
 		undo_redo.create_action("Change Min Angle")
-		undo_redo.add_do_property(turret, "min_rotation_angle", turret.min_rotation_angle)
-		undo_redo.add_undo_property(turret, "min_rotation_angle", restore_storage_angle)
+		undo_redo.add_do_property(turret, "slew_min_angle", turret.slew_min_angle)
+		undo_redo.add_undo_property(turret, "slew_min_angle", restore_storage_angle)
 	else:
 		undo_redo.create_action("Change Max Angle")
-		undo_redo.add_do_property(turret, "max_rotation_angle", turret.max_rotation_angle)
-		undo_redo.add_undo_property(turret, "max_rotation_angle", restore_storage_angle)
+		undo_redo.add_do_property(turret, "slew_max_angle", turret.slew_max_angle)
+		undo_redo.add_undo_property(turret, "slew_max_angle", restore_storage_angle)
 	
 	undo_redo.commit_action()
 
@@ -304,7 +304,7 @@ func _set_handle(gizmo, handle_id, secondary, camera, screen_pos):
 	var intersection = plane.intersects_ray(ray_origin, ray_direction)
 	if intersection == null:
 		# Return display angle (stored angle minus 180 degrees)
-		var stored_angle = turret.min_rotation_angle if (handle_id == 0) else turret.max_rotation_angle
+		var stored_angle = turret.slew_min_angle if (handle_id == 0) else turret.slew_max_angle
 		var display_angle = stored_angle - PI
 		while display_angle < 0:
 			display_angle += TAU
@@ -334,9 +334,9 @@ func _set_handle(gizmo, handle_id, secondary, camera, screen_pos):
 		storage_angle -= TAU
 	
 	if handle_id == 0:
-		turret.min_rotation_angle = storage_angle
+		turret.slew_min_angle = storage_angle
 	else:
-		turret.max_rotation_angle = storage_angle
+		turret.slew_max_angle = storage_angle
 	
 	return display_angle
 

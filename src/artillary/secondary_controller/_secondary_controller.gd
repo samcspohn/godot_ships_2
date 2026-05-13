@@ -245,6 +245,7 @@ func _physics_process(delta: float) -> void:
 		if r > max_range:
 			max_range = r
 
+	active = false
 	guns_shooting_at_aim_point.clear()
 	if aim_point != null:
 		var ship_pos = _ship.global_position
@@ -254,6 +255,7 @@ func _physics_process(delta: float) -> void:
 		for sc in sub_controllers:
 			for g in sc.guns:
 				if g.is_aimpoint_valid(aim_point):
+					active = true
 					guns_shooting_at_aim_point[g] = true
 					g.dispersion_calculator = man_dispersion_calculator
 					g._aim(aim_point, delta)
@@ -277,7 +279,6 @@ func _physics_process(delta: float) -> void:
 	if enemies_in_range.size() == 0 and !active:
 		return
 
-	active = false
 	targets_guns.clear()
 	var num_guns = 0
 	# var gi = 0

@@ -276,16 +276,16 @@ material_override = ExtResource("24_3jgu3")
 [node name="IJN_610mm_5t_002" parent="TurretMount_IJN_610mm_5t_002" parent_id_path=PackedInt32Array(1331525729) index="0" unique_id=2146048259 instance=ExtResource("13_q7yd3")]
 
 [node name="IJN_127mm_2b_3rd_yr" parent="TurretMount_IJN_127mm_2b_3rd_yr" parent_id_path=PackedInt32Array(1395696044) index="0" unique_id=431845732 instance=ExtResource("3_l33cj")]
-min_rotation_angle = 3.466413074652885
-max_rotation_angle = 2.7870165630889936
+slew_min_angle = 3.466413074652885
+slew_max_angle = 2.7870165630889936
 
 [node name="IJN_127mm_2b_3rd_yr_001" parent="TurretMount_IJN_127mm_2b_3rd_yr_001" parent_id_path=PackedInt32Array(819800851) index="0" unique_id=596089931 instance=ExtResource("3_l33cj")]
-min_rotation_angle = 0.3983302351100093
-max_rotation_angle = 5.886675619346533
+slew_min_angle = 0.3983302351100093
+slew_max_angle = 5.886675619346533
 
 [node name="IJN_127mm_2b_3rd_yr_002" parent="TurretMount_IJN_127mm_2b_3rd_yr_002" parent_id_path=PackedInt32Array(1432784181) index="0" unique_id=159467483 instance=ExtResource("3_l33cj")]
-min_rotation_angle = 0.653058470700457
-max_rotation_angle = 5.705911526789212
+slew_min_angle = 0.653058470700457
+slew_max_angle = 5.705911526789212
 
 [node name="Hull_Bow_col" parent="." index="10" unique_id=41769346]
 layers = 0
