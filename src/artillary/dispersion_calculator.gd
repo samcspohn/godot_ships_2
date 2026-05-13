@@ -181,6 +181,8 @@ func _apply_citadel_guarantee() -> void:
 		var scale_factor := (0.5 + randf() * 0.4) / sqrt(closest_d)
 		_shuffled_radii[closest_idx] *= scale_factor
 
+const PROXIMITY_MAX_MULTIPLIER: float = 5.0
+const PROXIMITY_TAPER_RANGE_FRACTION: float = 0.5
 
 ## Perturbs a launch vector by applying dispersion as angular offsets.
 ## h = lateral (perpendicular to aim in horizontal plane)
@@ -192,10 +194,19 @@ func calculate_dispersed_launch(
 		shell_params: ShellParams,
 		h_grouping: float,
 		v_grouping: float,
-		base_spread: float) -> Vector3:
+		base_spread: float,
+		max_range: float) -> Vector3:
 
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
+	var dist_to_target := (aim_point - gun_position).length()
 	var launch_velocity: Vector3 = a[0]
+
+	# Proximity spread: PROXIMITY_MAX_MULTIPLIER x at point-blank, tapers asymptotically
+	# to ~1x at PROXIMITY_TAPER_RANGE_FRACTION * max_range.
+	# k is chosen so the excess is ~1% of its point-blank value at the taper range.
+	var proximity_k := log(100.0) / (PROXIMITY_TAPER_RANGE_FRACTION * max_range)
+	base_spread *= 1.0 + (PROXIMITY_MAX_MULTIPLIER - 1.0) * exp(-proximity_k * dist_to_target)
+
 	# return launch_velocity
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo()
@@ -213,7 +224,7 @@ func calculate_dispersed_launch(
 	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
 
 	# Scale to actual angular dispersion
-	const VERTICAL_SPREAD: float = 0.8
+	const VERTICAL_SPREAD: float = 1.0
 	var h_angle := h_offset * base_spread * 0.5
 	var v_angle := v_offset * base_spread * 0.5 * VERTICAL_SPREAD
 

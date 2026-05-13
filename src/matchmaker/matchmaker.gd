@@ -11,7 +11,7 @@ var port_range_end = 29000    # Ending port for game servers
 const SHIP_CLASS_BB = 0  # Battleship
 const SHIP_CLASS_CA = 1  # Cruiser
 const SHIP_CLASS_DD = 2  # Destroyer
-const NUM_SHIPS_PER_TEAM = 12
+const NUM_SHIPS_PER_TEAM = 1
 
 # Ship data: path -> {class, tier}
 const SHIP_DATA = {
@@ -97,11 +97,27 @@ func _process(_delta: float) -> void:
 					push_error("No available ports for game server!")
 					return
 
-				# Create team info for single player vs 4 bots
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
+				# team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
+				# --- TEMPORARY: player ship on team 0, H44 bot on team 1 ---
+				team = {
+					client_data["player_name"]: {
+						"team": "0",
+						"player_id": client_data["player_name"],
+						"ship": client_data["ship"],
+						"is_bot": false,
+						"spawn_position": 0
+					},
+					"1001": {
+						"team": "1",
+						"player_id": "1001",
+						"ship": "res://Ships/H44/H44.tscn",
+						"is_bot": true,
+						"spawn_position": 0
+					}
+				}
 
 				var team_info = {
 					"team": team

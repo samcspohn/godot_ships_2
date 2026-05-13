@@ -1784,22 +1784,17 @@ func try_use_consumable():
 		if repair != -1:
 			_ship.consumable_manager.use_consumable(repair)
 
-	var fires = _ship.fire_manager.get_active_fires()
-	if fires > 0:
-		if hp > 0.60 and fires >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif fires >= 1:
-			if damage_control != -1:
+	if damage_control != -1:
+		var fires = _ship.fire_manager.get_active_fires()
+		if fires > 0:
+			if (hp < 0.5 and fires >= 1) or fires >= 2:
 				_ship.consumable_manager.use_consumable(damage_control)
 
-	var floods = _ship.flood_manager.get_active_floods()
-	if floods > 0:
-		if hp > 0.60 and floods >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif floods >= 1:
-			if damage_control != -1:
+
+	if damage_control != -1:
+		var floods = _ship.flood_manager.get_active_floods()
+		if floods > 0:
+			if (hp < 0.5 and floods >= 1) or floods >= 2:
 				_ship.consumable_manager.use_consumable(damage_control)
 
 	# --- Hydroacoustic Search ---

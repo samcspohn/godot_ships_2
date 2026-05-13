@@ -13,7 +13,6 @@ var player_controller: PlayerController
 # Lock-on aim assist: the elevation-preserving billboard plane is engaged
 # when the aim ray is within (target_angular_radius * this_factor) of the
 # target's bounding sphere. Outside that window, water-plane aim is used.
-@export var aim_assist_angular_factor: float = 1.75
 
 # Camera mode
 enum CameraMode {THIRD_PERSON, SNIPER, FREE_LOOK}
@@ -461,6 +460,7 @@ func _calculate_target_info():
 		var ray_length = 200000.0
 		var space_state = get_world_3d().direct_space_state
 		var ray_origin = aim.global_position
+		var weapon_ctrl = player_controller.current_weapon_controller
 
 		# Raycast against armor and water
 		var ray_params = PhysicsRayQueryParameters3D.new()
@@ -482,76 +482,100 @@ func _calculate_target_info():
 			if collider is ArmorPart and collider.ship == locked_target:
 				hit_locked_target = true
 
-		if hit_locked_target:
-			# Direct hit on locked target — use it exactly
-			aim_position = result.position
-		else:
-			# --- Water plane intersection (baseline / fallback) ---
+		# --- Shared blend quantities (used by all branches below) ---
+		var cam_to_target: Vector3 = locked_target.global_position - ray_origin
+		var cam_to_h := Vector3(cam_to_target.x, 0.0, cam_to_target.z)
+		var ship_fwd_h := Vector3(-locked_target.global_transform.basis.z.x, 0.0, -locked_target.global_transform.basis.z.z)
+
+		# 0 = broadside, 1 = bow/stern-on
+		var bow_stern_factor: float = 0.0
+		if ship_fwd_h.length_squared() > 0.001 and cam_to_h.length_squared() > 0.001:
+			bow_stern_factor = absf(ship_fwd_h.normalized().dot(cam_to_h.normalized()))
+
+		# Primary point: direct armor hit on the locked target if the ray struck
+		# it, otherwise the vertical billboard plane through the ship. Computed
+		# here so the impact-angle query can use it as the aim target.
+		var primary_point: Variant = null
+		var primary_dist: float = INF
+		if current_aim_mode != AimMode.AERIAL:
+			if hit_locked_target:
+				primary_point = result.position
+				primary_dist = (result.position - ray_origin).length()
+			elif cam_to_h.length_squared() > 0.001:
+				var plane_normal: Vector3 = cam_to_h.normalized()
+				var plane := Plane(plane_normal, plane_normal.dot(locked_target.global_position))
+				var pp = plane.intersects_ray(ray_origin, aim_direction)
+				if pp != null:
+					var to_plane: Vector3 = pp - ray_origin
+					if to_plane.dot(aim_direction) > 0.0:
+						primary_point = pp
+						primary_dist = to_plane.length()
+
+		# sin(impact_angle_from_horizontal) at the primary point:
+		# 0 at flat fire (shell hits the vertical plane perpendicularly → no
+		# water shift needed), 1 at vertical plunge (shell parallel to the
+		# plane → full shift allowed). Falls back to water-level if no primary.
+		var impact_angle_cap: float = 1.0
+		if current_aim_mode != AimMode.AERIAL and weapon_ctrl.has_method("get_landing_velocity_to_point_horizontal"):
+			# Use a horizontal (y=0 ↔ y=0) firing solution to the locked
+			# target's water-level position. This makes the impact angle a
+			# stable function of range only, so tilting the camera up/down
+			# across the ship's superstructure does not cause the aim point
+			# to wobble between the ship and the water intercept.
+			var vel_target := Vector3(locked_target.global_position.x, 0.0, locked_target.global_position.z)
+			var impact_vel: Vector3 = weapon_ctrl.get_landing_velocity_to_point_horizontal(vel_target)
+			if impact_vel != Vector3.ZERO:
+				if impact_vel.y >= 0.0:
+					impact_angle_cap = 0.0
+				else:
+					var horiz_speed: float = Vector2(impact_vel.x, impact_vel.z).length()
+					var impact_angle_rad: float = atan2(-impact_vel.y, maxf(horiz_speed, 0.0001))
+					impact_angle_cap = pow(sin(maxf(impact_angle_rad, 0.0)), 0.4)
+
+		# Final water lerp weight: linear from 0 → impact_angle_cap as the
+		# ship rotates from broadside to bow/stern-on.
+		var water_blend: float = bow_stern_factor * impact_angle_cap
+
+		if current_aim_mode == AimMode.AERIAL:
 			var water_plane := Plane(Vector3.UP, 0.0)
 			var water_point = water_plane.intersects_ray(ray_origin, aim_direction)
+			if water_point != null and (water_point - ray_origin).dot(aim_direction) > 0.0:
+				aim_position = water_point
+			else:
+				aim_position = ray_origin + aim_direction * ray_length
+		else:
+			# Water intersection
+			var water_plane := Plane(Vector3.UP, 0.0)
+			var water_point = water_plane.intersects_ray(ray_origin, aim_direction)
+			if water_point != null and (water_point - ray_origin).dot(aim_direction) < 0.0:
+				water_point = null
+			var water_dist: float = INF
 			if water_point != null:
-				var to_water: Vector3 = water_point - ray_origin
-				if to_water.dot(aim_direction) < 0.0:
-					water_point = null
+				water_dist = (water_point - ray_origin).length()
 
-			# --- Elevation-preserving billboard plane ---
-			# A vertical plane through the target whose normal is the horizontal
-			# camera->target direction. This plane is always camera-facing and
-			# never goes edge-on to the aim ray, so it works the same regardless
-			# of target aspect (broadside, bow-on, stern-on, mid-turn).
-			#
-			# Engaged only when the aim ray is angularly close to the ship's
-			# bounding sphere. Outside that window we fall back to the water hit
-			# so leading and short fall-of-shot read naturally.
-			#
-			# Disabled in aerial view (top-down) — the plane is meaningless there.
-			var plane_point = null
-			var use_plane := false
-			if current_aim_mode != AimMode.AERIAL:
-				var target_pos: Vector3 = locked_target.global_position
-				var cam_to_target: Vector3 = target_pos - ray_origin
-				var horiz := Vector3(cam_to_target.x, 0.0, cam_to_target.z)
-				if horiz.length_squared() > 0.001:
-					var plane_normal: Vector3 = horiz.normalized()
-					var plane := Plane(plane_normal, plane_normal.dot(target_pos))
-					plane_point = plane.intersects_ray(ray_origin, aim_direction)
-					if plane_point != null:
-						var to_plane: Vector3 = plane_point - ray_origin
-						if to_plane.dot(aim_direction) < 0.0:
-							plane_point = null
-
-					if plane_point != null:
-						var plane_hit: Vector3 = plane_point
-						# Angular gating: how close is the aim ray to the target's
-						# bounding sphere?
-						var target_dist: float = maxf(cam_to_target.length(), 1.0)
-						var bsphere_radius: float = locked_target.aabb.size.length() * 0.5
-						if bsphere_radius < 1.0:
-							bsphere_radius = 50.0 # guard if aabb not populated yet
-						var target_ang_radius: float = atan(bsphere_radius / target_dist)
-						var aim_to_target_angle: float = aim_direction.angle_to(cam_to_target / target_dist)
-						var ang_threshold: float = target_ang_radius * aim_assist_angular_factor
-
-						if aim_to_target_angle <= ang_threshold:
-							# Clamp the plane hit into a slightly-grown ship-local AABB
-							# so we never drift far from the hull even within the window.
-							var local_pt: Vector3 = locked_target.to_local(plane_hit)
-							var local_box: AABB = locked_target.aabb.grow(bsphere_radius * 0.15)
-							local_pt.x = clampf(local_pt.x, local_box.position.x, local_box.position.x + local_box.size.x)
-							local_pt.y = clampf(local_pt.y, local_box.position.y, local_box.position.y + local_box.size.y)
-							local_pt.z = clampf(local_pt.z, local_box.position.z, local_box.position.z + local_box.size.z)
-							plane_point = locked_target.to_global(local_pt)
-							use_plane = true
-
-			if use_plane:
-				aim_position = plane_point
+			# Water closer → use water. Primary closer → blend toward water
+			# by water_blend (bow/stern factor × impact angle cap).
+			if water_point != null and water_dist <= primary_dist:
+				aim_position = water_point
+			elif primary_point != null:
+				if water_point != null:
+					aim_position = (primary_point as Vector3).lerp(water_point, water_blend)
+				else:
+					aim_position = primary_point
 			elif water_point != null:
 				aim_position = water_point
 			elif result:
-				# Last-ditch: whatever the (armor|water) ray hit
 				aim_position = result.position
 			else:
 				aim_position = ray_origin + aim_direction * ray_length
+
+		# Normalize the locked-on aim to the trajectory's water intercept
+		# (y=0) so downstream code (gun aiming, UI, lead indicators) sees a
+		# consistent water-level target regardless of whether aim_position
+		# came from a direct armor hit, the billboard plane, or the
+		# water-offset point.
+		# if weapon_ctrl.has_method("get_water_intercept_for_aim_point"):
+		# 	aim_position = weapon_ctrl.get_water_intercept_for_aim_point(aim_position)
 
 	else:
 		var aim_direction = - aim.basis.z.normalized()

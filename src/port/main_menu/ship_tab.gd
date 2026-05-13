@@ -316,6 +316,9 @@ func _apply_armor_visibility() -> void:
 ## With the dual-viewport system, armor meshes should always be hidden (layers=0)
 ## in the main viewport — they are rendered in the armor overlay viewport instead.
 func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
+	# Secondary guns have no armor; skip their subtrees.
+	if node is Gun and node.controller is SecSubController:
+		return
 	if node is MeshInstance3D and String(node.name).contains("_col"):
 		node.layers = 1 if enabled else 0
 	for child in node.get_children():

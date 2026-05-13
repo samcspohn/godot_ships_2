@@ -34,7 +34,7 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			_owner.stats.fire_count += 1
 			fire_emitter.start_emitting()
 			_sync_activate.rpc()
-			lifetime = 1
+			lifetime = 1.0
 			# --- replay hook ---
 			if _Utils.authority():
 				var zone_index := manager.fires.find(self)

@@ -102,7 +102,7 @@ func _can_overmatch_stern(target: Ship) -> bool:
 	return _get_cached_overmatch(target).stern >= OVERMATCH_RATIO_THRESHOLD
 
 func target_aim_offset(_target: Ship) -> Vector3:
-	var disp = _target.global_position - _ship.global_position
+	var disp = _ship.global_position - _target.global_position
 	var angle = (-_target.basis.z).angle_to(disp)
 	var offset = Vector3(0, 0, 0)
 	angle = abs(angle)

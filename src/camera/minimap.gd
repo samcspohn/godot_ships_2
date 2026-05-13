@@ -42,6 +42,7 @@ static var snapshot_camera: Camera3D
 static var minimap_viewport: SubViewport
 
 func _ready():
+	mm_idx = GameSettings.minimap_size_idx
 	setup_minimap()
 
 	# Apply existing texture if available
@@ -222,6 +223,9 @@ func _input(_event: InputEvent) -> void:
 
 	if prev_mmidx == mm_idx:
 		return
+
+	GameSettings.minimap_size_idx = mm_idx
+	GameSettings.save_settings()
 
 	# Update parent panel size using anchoring - this automatically handles positioning
 	var parent_panel = get_parent()

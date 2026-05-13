@@ -133,6 +133,56 @@ func _ready() -> void:
 	else:
 		set_physics_process(false)
 
+## Returns the 3D velocity vector at impact for a ballistic trajectory to target_pos.
+## Returns Vector3.ZERO if no firing solution exists (e.g. target out of range).
+func get_landing_velocity_to_point(target_pos: Vector3) -> Vector3:
+	var ship_position = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
+	var shell_params: ShellParams = get_shell_params()
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+		ship_position, target_pos, shell_params
+	)
+	var launch_vector = launch_result[0]
+	if not launch_vector:
+		return Vector3.ZERO
+	return ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+		launch_vector, launch_result[1], shell_params
+	)
+
+## Returns the 3D velocity vector at impact for a ballistic trajectory whose
+## start and end are both projected to the water plane (y=0). Useful for
+## producing a stable, range-only impact angle that does not jitter as the
+## camera tilts up/down across a ship's superstructure.
+func get_landing_velocity_to_point_horizontal(target_pos: Vector3) -> Vector3:
+	var ship_pos_h := Vector3(_ship.global_position.x, 0.0, _ship.global_position.z)
+	var target_pos_h := Vector3(target_pos.x, 0.0, target_pos.z)
+	var shell_params: ShellParams = get_shell_params()
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+		ship_pos_h, target_pos_h, shell_params
+	)
+	var launch_vector = launch_result[0]
+	if not launch_vector:
+		return Vector3.ZERO
+	return ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+		launch_vector, launch_result[1], shell_params
+	)
+
+## Given an aim point at any altitude, returns the water-level (y=0) point on
+## the same ballistic trajectory. Lets the camera normalize a deck/altitude aim
+## into the trajectory's water intercept so downstream code (gun aiming, UI)
+## sees a consistent water-level target. Falls back to the input on no solution.
+func get_water_intercept_for_aim_point(aim_point_in: Vector3) -> Vector3:
+	var ship_position = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
+	var shell_params: ShellParams = get_shell_params()
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+		ship_position, aim_point_in, shell_params
+	)
+	var launch_vector = launch_result[0]
+	if not launch_vector:
+		return aim_point_in
+	return ProjectilePhysicsWithDragV2.calculate_impact_position(
+		ship_position, launch_vector, shell_params
+	)
+
 func set_aim_input(target_point: Vector3) -> void:
 	# var ship_pos = _ship.global_position
 	# ship_pos.y = 0

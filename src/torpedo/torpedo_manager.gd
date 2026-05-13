@@ -322,7 +322,7 @@ func _physics_process(_delta: float) -> void:
 		var pd_results: Array = space_state.intersect_shape(_pd_shape_query)
 		for result in pd_results:
 			var hit_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(result.get("collider"))
-			if hit_ship == null or p.ships_passed.has(hit_ship):
+			if hit_ship == null or p.ships_passed.has(hit_ship) or !hit_ship.is_alive():
 				continue
 			if hit_ship.team == null or p.owner.team == null:
 				continue

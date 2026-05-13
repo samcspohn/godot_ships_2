@@ -479,6 +479,13 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system by loading armor data from the GLB via ArmorRegistry."""
+	# Secondary guns (controlled by SecSubController) intentionally have no armor.
+	# The GLB-imported StaticBody3D nodes must still be removed so they don't
+	# collide with the physics world and cause the ship to sink.
+	if controller is SecSubController:
+		remove_static_bodies(self)
+		return
+
 	var resolved_glb_path = _ship.resolve_glb_path(glb_path)
 	if resolved_glb_path.is_empty():
 		print("   ❌ Invalid or missing GLB path: ", glb_path)
@@ -503,6 +510,20 @@ func initialize_armor_system() -> void:
 				PrecisionPhysicsWorld.add_armor_part(_ship, part)
 
 	print("done")
+
+func remove_static_bodies(node: Node) -> void:
+	# Collect first to avoid mutating the tree while iterating children.
+	var to_free: Array[StaticBody3D] = []
+	collect_static_bodies(node, to_free)
+	for body in to_free:
+		body.queue_free()
+
+func collect_static_bodies(node: Node, out: Array[StaticBody3D]) -> void:
+	if node is StaticBody3D:
+		out.append(node as StaticBody3D)
+		return  # Don't recurse into the body; its children go with it.
+	for child in node.get_children():
+		collect_static_bodies(child, out)
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""

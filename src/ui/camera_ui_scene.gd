@@ -167,6 +167,7 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 
 # Battle end screen
 var match_ended: bool = false
+var _options_menu: Control = null
 
 # Floating damage accumulator (damage dealt, anchored to hit world position)
 const DAMAGE_ACCUM_WINDOW: float = 0.25
@@ -305,6 +306,25 @@ func _ready():
 	# Connect to match end signal
 	_Utils.match_ended.connect(_on_match_ended)
 
+	# Setup options menu
+	_options_menu = $OptionsMenu
+	_options_menu.get_node("Panel/VBox/ResumeButton").pressed.connect(_hide_options_menu)
+	_options_menu.get_node("Panel/VBox/QuitMatchButton").pressed.connect(_on_quit_match_pressed)
+	var _bw_check: CheckBox = _options_menu.get_node("Panel/VBox/BorderlessWindowCheck")
+	_bw_check.button_pressed = GameSettings.borderless_window
+	_bw_check.toggled.connect(_on_borderless_window_toggled)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if match_ended:
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			if _options_menu and _options_menu.visible:
+				_hide_options_menu()
+			else:
+				_show_options_menu()
+			get_viewport().set_input_as_handled()
+
 func _process(delta: float) -> void:
 	if match_ended:
 		return
@@ -313,6 +333,53 @@ func _process(delta: float) -> void:
 	update_ship_ui(delta)
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
+
+func _show_options_menu() -> void:
+	if not _options_menu:
+		return
+	$MainContainer.visible = false
+	_options_menu.visible = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	# Disable PlayerController._input so gun-firing clicks can't slip through
+	# while the menu is open. GUI Button input is a separate pathway and still works.
+	if player_controller:
+		player_controller.set_process_input(false)
+
+func _hide_options_menu() -> void:
+	if not _options_menu:
+		return
+	_options_menu.visible = false
+	$MainContainer.visible = true
+	# Re-enable player input and restore the mouse mode PlayerController expects.
+	if not player_controller:
+		return
+	player_controller.set_process_input(true)
+	if player_controller.mouse_captured:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _on_quit_match_pressed() -> void:
+	match_ended = true  # Prevent _on_match_ended from redirecting to battle_end_screen
+	if server:
+		server.player_quit_match.rpc_id(1)
+	_disable_battle_processing()
+	if camera_controller:
+		if camera_controller.third_person_view:
+			camera_controller.third_person_view.queue_free()
+		if camera_controller.free_look_view:
+			camera_controller.free_look_view.queue_free()
+		if camera_controller.sniper_view:
+			camera_controller.sniper_view.queue_free()
+		if camera_controller.aerial_view:
+			camera_controller.aerial_view.queue_free()
+		camera_controller.queue_free()
+	ProjectileManager.clear_all()
+	(TorpedoManager as _TorpedoManager).clear_all()
+	get_tree().change_scene_to_file.call_deferred("res://src/port/main_menu/main_menu.tscn")
+
+func _on_borderless_window_toggled(pressed: bool) -> void:
+	GameSettings.borderless_window = pressed
+	GameSettings.apply_display_settings()
+	GameSettings.save_settings()
 
 func _setup_kill_feed():
 	"""Setup the kill feed component positioned directly above the minimap."""
