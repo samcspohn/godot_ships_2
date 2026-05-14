@@ -405,6 +405,32 @@ func record_shell_hit(
 	_file.store_32(shell_uid)
 
 # ---------------------------------------------------------------------------
+# Shell damage event (v3)
+# ---------------------------------------------------------------------------
+## Recorded from Stats.record_hit() when a shell actually deals damage to a ship.
+## Carries the data needed to drive replay-side stat counters (per-weapon damage,
+## per-victim damage, hit-type flashes). Logically distinct from SHELL_HIT, which
+## describes a visual termination point.
+func record_shell_damage(
+		attacker: Ship,
+		victim: Ship,
+		hit_type: int,
+		damage: float,
+		is_secondary: bool,
+		position: Vector3) -> void:
+	if not _match_active or _file == null:
+		return
+	_write_preamble(ReplayEvent.SHELL_DAMAGE)
+	_file.store_8(_ship_to_id.get(attacker, 255))
+	_file.store_8(_ship_to_id.get(victim,   255))
+	_file.store_8(hit_type)
+	_file.store_8(1 if is_secondary else 0)
+	_file.store_float(damage)
+	_file.store_float(position.x)
+	_file.store_float(position.y)
+	_file.store_float(position.z)
+
+# ---------------------------------------------------------------------------
 # Fire events
 # ---------------------------------------------------------------------------
 func record_fire_started(ship: Ship, zone_index: int, caused_by: Ship) -> void:

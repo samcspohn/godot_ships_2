@@ -8,6 +8,7 @@ const EVT_MATCH_END        := 0x01
 const EVT_SNAPSHOT         := 0x02
 const EVT_SHELL_FIRED      := 0x10
 const EVT_SHELL_HIT        := 0x11
+const EVT_SHELL_DAMAGE     := 0x12
 const EVT_TORPEDO_FIRED    := 0x20
 const EVT_TORPEDO_ARMED    := 0x21
 const EVT_TORPEDO_DETECTED := 0x22
@@ -80,8 +81,8 @@ func load_file(path: String) -> Error:
 	}
 	_ship_count = ship_count
 	_version = version
-	if version != 2:
-		push_warning("ReplayFileReader: version %d loaded (expected 2), secondary gun data may be missing" % version)
+	if version != 2 and version != 3:
+		push_warning("ReplayFileReader: version %d loaded (expected 2 or 3); some fields may be missing or wrong" % version)
 
 	# ---- Ship manifest ----
 	ships.clear()
@@ -378,6 +379,14 @@ func _parse_event(reader: StreamPeerBuffer, timestamp: float, event_type: int) -
 			d["hit_type"]         = reader.get_u8()
 			d["hit_pos"]          = Vector3(reader.get_float(), reader.get_float(), reader.get_float())
 			d["shell_uid"]        = reader.get_32()
+
+		EVT_SHELL_DAMAGE:
+			d["attacker_ship_id"] = reader.get_u8()
+			d["victim_ship_id"]   = reader.get_u8()
+			d["hit_type"]         = reader.get_u8()
+			d["is_secondary"]     = reader.get_u8() != 0
+			d["damage"]           = reader.get_float()
+			d["hit_pos"]          = Vector3(reader.get_float(), reader.get_float(), reader.get_float())
 
 		EVT_TORPEDO_FIRED:
 			d["ship_id"]         = reader.get_u8()

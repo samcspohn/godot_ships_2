@@ -34,6 +34,12 @@ signal playback_ended()
 ## Emitted once after load_replay() succeeds.
 signal replay_loaded()
 
+## Emitted at the end of seek() with the new current_time. Listeners that
+## maintain event-derived state (e.g. ReplayStatsAccumulator) use this to
+## reset and rebuild from t=0..new_time, since seek() does NOT re-emit
+## events through event_fired.
+signal seek_jumped(new_time: float)
+
 # ---------------------------------------------------------------------------
 # Public state
 # ---------------------------------------------------------------------------
@@ -226,6 +232,7 @@ func seek(t: float) -> void:
 									torpedo_replayer.mark_detected(tid)
 
 	time_changed.emit(t)
+	seek_jumped.emit(t)
 
 	# Defer the clear so the seeking flags stay hot through the first
 	# _process() frame after seek — preventing emitter allocation on that frame.

@@ -15,11 +15,13 @@ extends Node
 @onready var back_button: Button = $UI/UIRoot/TopBar/HBox/BackButton
 @onready var match_info_label: Label = $UI/UIRoot/TopBar/HBox/MatchInfoLabel
 @onready var ship_follow_option: OptionButton = $UI/UIRoot/TopBar/HBox/ShipFollowOption
-@onready var kill_feed: VBoxContainer = $UI/UIRoot/SidePanel/VBox/KillFeed
 @onready var play_pause_button: Button = $UI/UIRoot/BottomBar/VBox/Controls/PlayPauseButton
 @onready var speed_container: HBoxContainer = $UI/UIRoot/BottomBar/VBox/Controls/SpeedContainer
 @onready var time_label: Label = $UI/UIRoot/BottomBar/VBox/Controls/TimeLabel
 @onready var scrubber: HSlider = $UI/UIRoot/BottomBar/VBox/Scrubber
+
+# In-replay HUD (instantiated in _ready, populated after playback loads)
+var replay_hud: ReplayHUD = null
 
 # ---------------------------------------------------------------------------
 # State
@@ -53,7 +55,6 @@ func _ready() -> void:
 
 	# Connect playback signals
 	playback.time_changed.connect(_on_time_changed)
-	playback.event_fired.connect(_on_event_fired)
 	playback.playback_ended.connect(_on_playback_ended)
 	if playback.has_signal("replay_loaded"):
 		playback.replay_loaded.connect(_on_replay_loaded)
@@ -89,16 +90,18 @@ func _ready() -> void:
 	bar_style.corner_radius_bottom_left = 6
 	bar_style.corner_radius_bottom_right = 6
 
-	var side_style = StyleBoxFlat.new()
-	side_style.bg_color = Color(0.05, 0.05, 0.1, 0.85)
-	side_style.corner_radius_top_left = 6
-	side_style.corner_radius_top_right = 6
-	side_style.corner_radius_bottom_left = 6
-	side_style.corner_radius_bottom_right = 6
-
 	$UI/UIRoot/BottomBar.add_theme_stylebox_override("panel", bar_style)
-	$UI/UIRoot/SidePanel.add_theme_stylebox_override("panel", side_style)
 	$UI/UIRoot/TopBar.add_theme_stylebox_override("panel", bar_style.duplicate())
+
+	# Hide the legacy side panel kill-feed if it exists (kill feed now lives in ReplayHUD).
+	var legacy_side_panel: Node = get_node_or_null("UI/UIRoot/SidePanel")
+	if legacy_side_panel:
+		legacy_side_panel.queue_free()
+
+	# Instantiate the in-replay HUD now (binding happens after playback loads).
+	replay_hud = ReplayHUD.new()
+	replay_hud.name = "ReplayHUD"
+	add_child(replay_hud)
 
 	# Load the replay file
 	var err = playback.load_replay(_Utils.pending_replay_path)
@@ -121,6 +124,14 @@ func _ready() -> void:
 
 	# Hand ghost ships to playback
 	playback.setup_ghost_ships(ghost_ships)
+
+	# Hand ghost ships + playback to the HUD; this also wires its event listener.
+	replay_hud.bind(playback, ghost_ships)
+	# Default to following the first ship (matches the OptionButton default selection).
+	if playback.reader.ships.size() > 0:
+		var first_id: int = playback.reader.ships[0].get("ship_id", -1)
+		_follow_ship_id = first_id
+		replay_hud.set_followed_ship_id(first_id)
 
 	# Hook up weapon replayers
 	playback.shell_replayer = shell_replayer
@@ -181,53 +192,11 @@ func _on_time_changed(t: float) -> void:
 	if not _scrubber_dragging:
 		scrubber.value = t / max(playback.get_duration(), 1.0)
 
-func _on_event_fired(event: Dictionary) -> void:
-	if event.get("type", -1) == ReplayEvent.SHIP_SUNK:
-		_add_kill_feed_entry(event)
-
 func _on_replay_loaded() -> void:
 	_refresh_match_info()
 
 func _on_playback_ended() -> void:
 	play_pause_button.text = "▶"
-
-# ---------------------------------------------------------------------------
-# Kill feed
-# ---------------------------------------------------------------------------
-func _add_kill_feed_entry(event: Dictionary) -> void:
-	var victim_name = "Unknown"
-	var sinker_name = "Unknown"
-	for ship in playback.reader.ships:
-		if ship.get("ship_id") == event.get("victim_ship_id"):
-			victim_name = ship.get("ship_name", "Unknown")
-		if ship.get("ship_id") == event.get("sinker_ship_id"):
-			sinker_name = ship.get("ship_name", "Unknown")
-
-	var panel = PanelContainer.new()
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.15, 0.05, 0.05, 0.9)
-	style.corner_radius_top_left = 4
-	style.corner_radius_top_right = 4
-	style.corner_radius_bottom_left = 4
-	style.corner_radius_bottom_right = 4
-	panel.add_theme_stylebox_override("panel", style)
-
-	var label = Label.new()
-	label.text = sinker_name + " ⚓ " + victim_name
-	label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
-	panel.add_child(label)
-
-	kill_feed.add_child(panel)
-
-	# Keep max 6 entries
-	while kill_feed.get_child_count() > 6:
-		kill_feed.get_child(0).queue_free()
-
-	# Fade out after 10 seconds
-	var tween = create_tween()
-	tween.tween_interval(8.0)
-	tween.tween_property(panel, "modulate:a", 0.0, 2.0)
-	tween.tween_callback(panel.queue_free)
 
 # ---------------------------------------------------------------------------
 # Scrubber
@@ -297,6 +266,8 @@ func _on_play_pause_pressed() -> void:
 func _on_ship_follow_selected(index: int) -> void:
 	var ship_id = ship_follow_option.get_item_id(index)
 	_follow_ship_id = ship_id
+	if replay_hud:
+		replay_hud.set_followed_ship_id(ship_id)
 
 func _on_back_pressed() -> void:
 	playback.pause()

@@ -207,21 +207,22 @@ func calculate_dispersed_launch(
 	var dist_to_target := (aim_point - gun_position).length()
 	var launch_velocity: Vector3 = a[0]
 
-	# Power-curve dispersion in meters: meters(d) = MAX * (d/max_range)^p
-	# MAX is set by the gun's base_spread (radians) projected to max_range,
-	# and p is chosen so meters(CLOSE_RANGE_METERS) == CLOSE_DISPERSION_FRACTION * MAX.
-	# Passes through (0,0) automatically and reaches MAX at max_range.
-	var max_dispersion_m := base_spread * max_range
-	var p := log(CLOSE_DISPERSION_FRACTION) / log(CLOSE_RANGE_METERS / max_range)
-	var dispersion_m := max_dispersion_m \
-			* pow(clampf(dist_to_target / max_range, 0.0, 1.0), p)
+	# # Power-curve dispersion in meters: meters(d) = MAX * (d/max_range)^p
+	# # MAX is set by the gun's base_spread (radians) projected to max_range,
+	# # and p is chosen so meters(CLOSE_RANGE_METERS) == CLOSE_DISPERSION_FRACTION * MAX.
+	# # Passes through (0,0) automatically and reaches MAX at max_range.
+	# var max_dispersion_m := base_spread * max_range
+	# var p := log(CLOSE_DISPERSION_FRACTION) / log(CLOSE_RANGE_METERS / max_range)
+	# var dispersion_m := max_dispersion_m \
+	# 		* pow(clampf(dist_to_target / max_range, 0.0, 1.0), p)
 
-	# Convert physical dispersion to the angular spread the rotation code expects.
-	# Clamp distance away from zero and clamp angle to avoid pathological rotations
-	# at extreme close range (where meters/d blows up because p < 1).
-	var _base_spread: float = minf(
-			dispersion_m / maxf(dist_to_target, 1.0),
-			MAX_DISPERSION_ANGLE_RAD)
+	# # Convert physical dispersion to the angular spread the rotation code expects.
+	# # Clamp distance away from zero and clamp angle to avoid pathological rotations
+	# # at extreme close range (where meters/d blows up because p < 1).
+	# var _base_spread: float = minf(
+	# 		dispersion_m / maxf(dist_to_target, 1.0),
+	# 		MAX_DISPERSION_ANGLE_RAD)
+	var _base_spread: float = (1.0 - (dist_to_target / max_range)) * base_spread * 1.0 + base_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo()

@@ -10,7 +10,7 @@ func _init():
 	# icon = preload("res://icons/auto-repair.png")
 
 # buffs
-const reload_per_additional_enemy = 0.025
+const reload_per_additional_enemy = 0.05
 const reload_for_one_enemy = 0.9
 
 # nerfs

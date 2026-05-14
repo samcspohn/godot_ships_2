@@ -13,6 +13,7 @@ const MATCH_END         = 0x01
 const SNAPSHOT          = 0x02
 const SHELL_FIRED       = 0x10
 const SHELL_HIT         = 0x11
+const SHELL_DAMAGE      = 0x12
 const TORPEDO_FIRED     = 0x20
 const TORPEDO_ARMED     = 0x21
 const TORPEDO_DETECTED  = 0x22
@@ -30,7 +31,7 @@ const SHIP_SUNK         = 0x60
 # File format magic / version
 # ---------------------------------------------------------------------------
 const MAGIC: int   = 0x52455050  # "REPP"
-const VERSION: int = 2
+const VERSION: int = 3
 
 # ---------------------------------------------------------------------------
 # Ship manifest entry (populated from the header when reading a replay)

@@ -216,6 +216,14 @@ func apply_snapshot(ship_data: Dictionary) -> void:
 	rotation.y     = ship_data.get("rot_y", 0.0)
 	current_hp     = ship_data.get("hp", 0.0)
 
+	# Bootstrap max_hp from the first snapshot that carries a non-zero HP.
+	# The replay format does not record max_hp explicitly; the ship's HP at the
+	# start of the match is its max. We also raise max_hp if a later snapshot
+	# ever exceeds the previously-recorded max (e.g. a future format addition
+	# bumps the starting HP), so the value remains a true upper bound.
+	if current_hp > max_hp:
+		max_hp = current_hp
+
 	var flags: int = ship_data.get("flags", 0)
 	visible_to_enemy = (flags & 0x01) != 0
 	detection_type   = (flags >> 1) & 0x03
