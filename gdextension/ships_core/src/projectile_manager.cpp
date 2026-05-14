@@ -114,6 +114,7 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ids_reuse"), &_ProjectileManager::get_ids_reuse);
 	ClassDB::bind_method(D_METHOD("get_shell_param_ids"), &_ProjectileManager::get_shell_param_ids);
 	ClassDB::bind_method(D_METHOD("get_bullet_id"), &_ProjectileManager::get_bullet_id);
+	ClassDB::bind_method(D_METHOD("get_last_shell_uid"), &_ProjectileManager::get_last_shell_uid);
 	ClassDB::bind_method(D_METHOD("get_gpu_renderer"), &_ProjectileManager::get_gpu_renderer);
 	ClassDB::bind_method(D_METHOD("get_compute_particle_system"), &_ProjectileManager::get_compute_particle_system);
 	ClassDB::bind_method(D_METHOD("get_camera"), &_ProjectileManager::get_camera);
@@ -155,6 +156,7 @@ _ProjectileManager::_ProjectileManager() {
 	shell_time_multiplier = 2.0;
 	next_id = 0;
 	bullet_id = 0;
+	_next_shell_uid = 1;
 	gpu_renderer = nullptr;
 	compute_particle_system = nullptr;
 	trail_template = Ref<Resource>();
@@ -206,6 +208,7 @@ void _ProjectileManager::clear_all() {
 	shell_param_ids.clear();
 	next_id = 0;
 	bullet_id = 0;
+	_next_shell_uid = 1;
 
 	// Clear shell landing grid
 	shell_landings.clear();
@@ -790,10 +793,11 @@ void _ProjectileManager::_physics_process(double delta) {
 										Ref<Resource> params = p->get_params();
 										bool is_secondary = params.is_valid() && (bool)params->get("_secondary");
 										bool sunk = dmg_sunk.size() > 1 && (bool)dmg_sunk[1];
-										Vector3 hit_position = ship->call("get_global_position");
 										double hit_damage = dmg_sunk[0];
 
-										stats->call("record_hit", armor_result_type, hit_damage, is_secondary, hit_position, sunk, ship);
+										// Use the surface contact point (explosion_position from ArmorInteraction)
+										// rather than the ship centre so replay hit effects land on the hull.
+										stats->call("record_hit", armor_result_type, hit_damage, is_secondary, explosion_position, sunk, ship);
 									}
 								}
 							}
@@ -831,6 +835,7 @@ int _ProjectileManager::fire_bullet(const Vector3 &vel, const Vector3 &pos, cons
 	Ref<ProjectileData> bullet;
 	bullet.instantiate();
 	bullet->initialize(pos, vel, t, shell, owner, exclude);
+	bullet->set_shell_uid(_next_shell_uid++);
 
 	projectiles[id] = bullet;
 
@@ -958,6 +963,27 @@ void _ProjectileManager::fire_bullet_client(const Vector3 &pos, const Vector3 &v
 }
 
 void _ProjectileManager::destroy_bullet_rpc(int id, const Vector3 &position, int hit_result, const Vector3 &normal) {
+	// --- Replay recording ---------------------------------------------------
+	// Read owner/params BEFORE the slot is cleared so we can identify the shell.
+	// hit_result uses the C++ RPC enum:
+	//   PENETRATION=0, RICOCHET=1, OVERPENETRATION=2, SHATTER=3,
+	//   NOHIT=4, CITADEL=5, WATER=6
+	if (has_node("/root/ReplayRecorder") && id < (int)projectiles.size()) {
+		Variant bullet_var = projectiles[id];
+		if (bullet_var.get_type() != Variant::NIL) {
+			Ref<ProjectileData> bullet = bullet_var;
+			if (bullet.is_valid()) {
+				Node *rr = get_node<Node>("/root/ReplayRecorder");
+				Object *owner_obj = bullet->get_owner();
+				uint32_t uid = bullet->get_shell_uid();
+				// victim = null → stored as 255 in the replay file (no target ship).
+				rr->call("record_shell_hit", owner_obj, (Object *)nullptr,
+						 hit_result, position, (int64_t)uid);
+			}
+		}
+	}
+	// ------------------------------------------------------------------------
+
 	projectiles[id] = Variant();
 	shell_grid_remove(id);
 	ids_reuse.append(id);
@@ -1260,6 +1286,10 @@ Dictionary _ProjectileManager::get_shell_param_ids() const {
 
 int _ProjectileManager::get_bullet_id() const {
 	return bullet_id;
+}
+
+uint32_t _ProjectileManager::get_last_shell_uid() const {
+	return _next_shell_uid > 0 ? _next_shell_uid - 1 : 0;
 }
 
 Node *_ProjectileManager::get_gpu_renderer() const {

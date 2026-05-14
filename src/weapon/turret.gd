@@ -1,9 +1,21 @@
 extends Node3D
 class_name Turret
 
-@export var rotation_limits_enabled: bool = true
-@export var min_rotation_angle: float = deg_to_rad(0)
-@export var max_rotation_angle: float = deg_to_rad(360)
+## Slew limits constrain where the mount is physically allowed to point.
+## Set slew_limits_enabled = false for unrestricted 360 degree rotation. When
+## enabled, slew_min_angle == slew_max_angle is a degenerate empty arc (the
+## mount considers no bearing valid) — use that as a sentinel for "this scene
+## has not yet had its slew arc configured".
+@export var slew_limits_enabled: bool = true
+@export var slew_min_angle: float = deg_to_rad(0)
+@export var slew_max_angle: float = deg_to_rad(360)
+
+## Optional firing arcs, independent of slew limits. When empty, validity
+## checks fall back to the slew arc (preserving original Gun semantics). When
+## populated, a target bearing is considered valid only if it lies in at least
+## one arc — useful for weapons (e.g. torpedo launchers) that may rotate
+## through a full circle but only fire over selected sectors.
+@export var fire_arcs: Array[FireArc] = []
 
 # @onready var barrel: Node3D = get_child(0).get_child(0)
 # var sound: AudioStreamPlayer3D
@@ -156,213 +168,106 @@ func _ready() -> void:
 # 		if !disabled && reload < 1.0:
 # 			reload = min(reload + delta / get_params().reload_time, 1.0)
 
-# Normalize angle to the range [0, 2π]
-func normalize_angle_0_2pi(angle: float) -> float:
-	while angle < 0:
-		angle += TAU
+# ---------------------------------------------------------------------------
+# Slew-limit math
+#
+# All checks are framed in offset-from-slew_min space:
+#
+#   offset(a) = wrapf(a - slew_min_angle, 0, TAU)   in [0, TAU)
+#   arc_width = wrapf(slew_max_angle - slew_min_angle, 0, TAU)
+#                                                   in [0, TAU)
+#
+# Valid arc is offset in [0, arc_width]; dead zone is (arc_width, TAU).
+# slew_min_angle == slew_max_angle is a degenerate empty arc (arc_width = 0,
+# nothing valid). For unrestricted 360 degree rotation set
+# slew_limits_enabled = false instead.
+# ---------------------------------------------------------------------------
 
-	while angle >= TAU:
-		angle -= TAU
+func _arc_width() -> float:
+	return wrapf(slew_max_angle - slew_min_angle, 0.0, TAU)
 
-	return angle
+func _offset_from_slew_min(angle: float) -> float:
+	#return wrapf(angle - slew_min_angle, 0.0, TAU)
+	var a = angle - slew_min_angle
+	var b = wrapf(a, 0.0, TAU)
+	return b
 
-
-# Apply rotation limits to a desired rotation
+## Returns [adjusted_delta, blocked].
+##   blocked == true  => requested target lies in the dead zone; delta points
+##                       to the nearest reachable boundary along the originally
+##                       requested direction.
+##   blocked == false => target reachable; delta may differ from input (long
+##                       way around) to avoid crossing the dead zone.
 func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 	# If rotation limits are not enabled, return the desired delta as is
-	if not rotation_limits_enabled or desired_delta == 0:
+	if not slew_limits_enabled or desired_delta == 0.0:
 		return [desired_delta, false]
 
-	# Normalize the current angle to [0, 2π]
-	var normalized_current = normalize_angle_0_2pi(current_angle)
+	var arc: float = _arc_width()
+	var off: float = _offset_from_slew_min(current_angle)
 
-	# Calculate the target angle after applying the delta
-	var target_angle = normalize_angle_0_2pi(normalized_current + desired_delta)
+	# Case A: current angle is inside the dead zone.
+	if off > arc:
+		# Sub-case A1: target lies in the valid arc — slew toward it via
+		# whichever boundary entry produces the shorter total path
+		# (dead-zone exit + traversal through the arc to the target).
+		var target_off_w: float = wrapf(off + desired_delta, 0.0, TAU)
+		if target_off_w <= arc:
+			var path_via_min: float = (TAU - off) + target_off_w           # CCW: -> slew_min -> target
+			var path_via_max: float = (off - arc) + (arc - target_off_w)   # CW : -> slew_max -> target
+			return [path_via_min, false] if path_via_min <= path_via_max else [-path_via_max, false]
+		# Sub-case A2: target also in the dead zone — slew to nearest boundary.
+		var to_min: float = TAU - off       # CCW distance back to slew_min
+		var to_max: float = off - arc       # CW  distance back to slew_max
+		return [to_min, true] if to_min <= to_max else [-to_max, true]
 
-	# Check if the target angle is in the valid region
-	var is_target_valid = false
-	if min_rotation_angle <= max_rotation_angle:
-		# Valid region is [min, max]
-		is_target_valid = (target_angle >= min_rotation_angle and target_angle <= max_rotation_angle)
+	# Case B: current is valid. Try the desired delta as-is.
+	var target_off: float = off + desired_delta
+	if target_off >= 0.0 and target_off <= arc:
+		return [desired_delta, false]
+
+	# Case C: shortest path leaves the arc — try the long way around.
+	var alt_delta: float = desired_delta + (TAU if desired_delta < 0.0 else -TAU)
+	var alt_target: float = off + alt_delta
+	if alt_target >= 0.0 and alt_target <= arc:
+		return [alt_delta, false]
+
+	# Case D: target is genuinely in the dead zone. Slew toward whichever
+	# boundary (slew_min or slew_max) is angularly closer to the target.
+	var target_off_wrapped: float = wrapf(target_off, 0.0, TAU)  # in (arc, TAU)
+	var target_to_min: float = TAU - target_off_wrapped          # CCW: target -> 0
+	var target_to_max: float = target_off_wrapped - arc           # CW : target -> arc
+	if target_to_min <= target_to_max:
+		return [-off, true]                                      # hit slew_min
 	else:
-		# Valid region wraps around: [min, 2π] ∪ [0, max]
-		is_target_valid = (target_angle >= min_rotation_angle or target_angle <= max_rotation_angle)
+		return [arc - off, true]                                 # hit slew_max
 
-	# If target is valid, check if the rotation path crosses the invalid region
-	if is_target_valid:
-		# Check if we're rotating through the invalid region
-		var crosses_invalid = false
 
-		if min_rotation_angle <= max_rotation_angle:
-			# The invalid region is [0, min) ∪ (max, 2π)
-			var invalid_region = TAU - (max_rotation_angle - min_rotation_angle)
-			if desired_delta > 0: # Clockwise rotation
-				crosses_invalid = normalized_current <= max_rotation_angle + 0.01 and normalized_current + desired_delta > max_rotation_angle + invalid_region
-			else: # Counter-clockwise rotation
-				crosses_invalid = normalized_current >= min_rotation_angle - 0.01 and normalized_current + desired_delta < min_rotation_angle - invalid_region
-		else:
-			# The invalid region is (max, min)
-			if desired_delta > 0: # Clockwise rotation
-				# Check if we start in the lower valid region and would end up past the min boundary
-				if normalized_current <= max_rotation_angle:
-					crosses_invalid = (normalized_current + desired_delta) > min_rotation_angle
-				else:
-					# Starting in upper valid region, can't cross invalid by going clockwise
-					crosses_invalid = false
-			else: # Counter-clockwise rotation
-				# Check if we start in the upper valid region and would end up below the max boundary
-				if normalized_current >= min_rotation_angle:
-					crosses_invalid = (normalized_current + desired_delta) < max_rotation_angle
-				else:
-					# Starting in lower valid region, can't cross invalid by going counter-clockwise
-					crosses_invalid = false
-			# print("Crosses invalid (wrap): ", crosses_invalid)
-
-		if crosses_invalid:
-			# If we would cross the invalid region, go the other way around the circle
-			if desired_delta > 0:
-				# Was going clockwise, now go counter-clockwise
-				return [desired_delta - TAU, false]
-			else:
-				# Was going counter-clockwise, now go clockwise
-				return [desired_delta + TAU, false]
-		else:
-			# No invalid region crossed, return the desired delta unchanged
-			return [desired_delta, false]
-	else:
-		# Target is in the invalid region, find the nearest valid boundary
-		var dist_to_min = min(abs(target_angle - min_rotation_angle), TAU - abs(target_angle - min_rotation_angle))
-		var dist_to_max = min(abs(target_angle - max_rotation_angle), TAU - abs(target_angle - max_rotation_angle))
-
-		if min_rotation_angle <= max_rotation_angle:
-			if dist_to_min <= dist_to_max:
-				# Min angle is closer, go to min angle
-				return [min_rotation_angle - normalized_current, true]
-			else:
-				# Max angle is closer, go to max angle
-				return [max_rotation_angle - normalized_current, true]
-		else:
-			if dist_to_min <= dist_to_max:
-				# Min angle is closer, go to min angle
-				return [-normalize_angle_0_2pi(TAU - (min_rotation_angle - normalized_current)), true]
-			else:
-				# Max angle is closer, go to max angle
-				return [normalize_angle_0_2pi(TAU - (max_rotation_angle - normalized_current)), true]
-
-# Ensure rotation is within the valid range
+## Snap rotation.y to the nearest valid boundary if currently in the dead zone.
 func clamp_to_rotation_limits() -> void:
-	if not rotation_limits_enabled:
+	if not slew_limits_enabled:
 		return
-
-	# Normalize the current angle to [0, 2π]
-	var normalized_current = normalize_angle_0_2pi(rotation.y)
-
-	# Check if the current angle is in the valid region
-	var is_valid = false
-	if min_rotation_angle <= max_rotation_angle:
-		# Valid region is [min, max]
-		is_valid = (normalized_current >= min_rotation_angle and normalized_current <= max_rotation_angle)
-	else:
-		# Valid region wraps around: [min, 2π] ∪ [0, max]
-		is_valid = (normalized_current >= min_rotation_angle or normalized_current <= max_rotation_angle)
-
-	# If current angle is not valid, clamp to nearest boundary
-	if not is_valid:
-		var dist_to_min = min(abs(normalized_current - min_rotation_angle), TAU - abs(normalized_current - min_rotation_angle))
-		var dist_to_max = min(abs(normalized_current - max_rotation_angle), TAU - abs(normalized_current - max_rotation_angle))
-
-		if dist_to_min <= dist_to_max:
-			# Min angle is closer
-			rotation.y = min_rotation_angle
-		else:
-			# Max angle is closer
-			rotation.y = max_rotation_angle
-
-# Simplified versions of the rotation functions
-func normalize_angle_0_2pi_simple(angle: float) -> float:
-	return fmod(angle + TAU * 1000, TAU)
-
-func apply_rotation_limits_simple(current_angle: float, desired_delta: float) -> Array:
-	if not rotation_limits_enabled or desired_delta == 0:
-		return [desired_delta, false]
-
-	var current = normalize_angle_0_2pi_simple(current_angle)
-	var target = normalize_angle_0_2pi_simple(current + desired_delta)
-
-	# Check if target is in valid range
-	var is_valid: bool
-	if min_rotation_angle <= max_rotation_angle:
-		is_valid = target >= min_rotation_angle and target <= max_rotation_angle
-	else:
-		is_valid = target >= min_rotation_angle or target <= max_rotation_angle
-
-	if is_valid:
-		# Check if shortest rotation path crosses invalid region
-		var crosses_invalid = false
-
-		if min_rotation_angle <= max_rotation_angle:
-			# Valid region is [min, max], invalid regions are [0, min) and (max, 2π]
-			# Check if we cross through either invalid region
-			if desired_delta > 0:
-				# Going clockwise - check if we cross from valid region through invalid back to valid
-				if current >= min_rotation_angle and current <= max_rotation_angle:
-					# We're in valid region, check if we go past max then wrap to target
-					var steps_to_max = max_rotation_angle - current
-					crosses_invalid = desired_delta > steps_to_max and desired_delta > (TAU - current + target)
-			else:
-				# Going counter-clockwise - check if we cross from valid region through invalid back to valid
-				if current >= min_rotation_angle and current <= max_rotation_angle:
-					# We're in valid region, check if we go below min then wrap to target
-					var steps_to_min = current - min_rotation_angle
-					crosses_invalid = abs(desired_delta) > steps_to_min and abs(desired_delta) > (current + TAU - target)
-		else:
-			# Valid region wraps: [min, 2π] ∪ [0, max], invalid region is (max, min)
-			if desired_delta > 0 and current <= max_rotation_angle:
-				# Starting in lower valid region, check if we cross invalid region to upper valid region
-				crosses_invalid = target >= min_rotation_angle and (current + desired_delta) > min_rotation_angle
-			elif desired_delta < 0 and current >= min_rotation_angle:
-				# Starting in upper valid region, check if we cross invalid region to lower valid region
-				crosses_invalid = target <= max_rotation_angle and (current + desired_delta) < max_rotation_angle
-
-		if crosses_invalid:
-			# Take the longer path around the circle to avoid invalid region
-			return [desired_delta + (TAU if desired_delta < 0 else -TAU), false]
-
-		return [desired_delta, false]
-	else:
-		# Target invalid, find nearest boundary
-		var to_min = min_rotation_angle - current
-		var to_max = max_rotation_angle - current
-
-		# Normalize deltas to shortest path
-		if abs(to_min) > PI:
-			to_min += TAU if to_min < 0 else -TAU
-		if abs(to_max) > PI:
-			to_max += TAU if to_max < 0 else -TAU
-
-		return [to_min if abs(to_min) <= abs(to_max) else to_max, true]
-
-func clamp_to_rotation_limits_simple() -> void:
-	if not rotation_limits_enabled:
+	var arc: float = _arc_width()
+	var off: float = _offset_from_slew_min(rotation.y)
+	if off <= arc:
 		return
+	var to_min: float = TAU - off
+	var to_max: float = off - arc
+	rotation.y = slew_min_angle if to_min <= to_max else slew_max_angle
 
-	var current = normalize_angle_0_2pi_simple(rotation.y)
-	var is_valid: bool
 
-	if min_rotation_angle <= max_rotation_angle:
-		is_valid = current >= min_rotation_angle and current <= max_rotation_angle
-	else:
-		is_valid = current >= min_rotation_angle or current <= max_rotation_angle
-
-	if not is_valid:
-		var to_min = abs(current - min_rotation_angle)
-		var to_max = abs(current - max_rotation_angle)
-
-		# Account for circular distance
-		to_min = min(to_min, TAU - to_min)
-		to_max = min(to_max, TAU - to_max)
-
-		rotation.y = min_rotation_angle if to_min <= to_max else max_rotation_angle
+## Returns true if the given world-space yaw lies in any defined fire arc.
+## When fire_arcs is empty, falls back to the slew arc (preserving original
+## Gun behavior); when slew limits are also disabled, always returns true.
+func is_angle_in_fire_arcs(angle: float) -> bool:
+	if fire_arcs.is_empty():
+		if not slew_limits_enabled:
+			return true
+		return _offset_from_slew_min(angle) <= _arc_width()
+	for a in fire_arcs:
+		if a != null and a.contains(angle):
+			return true
+	return false
 
 # returns true if turning
 func return_to_base(delta: float) -> bool:
@@ -422,10 +327,7 @@ func is_aimpoint_valid(aim_point: Vector3) -> bool:
 	var dist = get_dist(aim_point)
 	if dist < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(aim_point)
-		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-		if a[1]:
-			return false
-		return true
+		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool: # virtual
@@ -442,6 +344,8 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool: # 
 func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
 	if disabled:
 		return INF
+	if name == "GER_150mm_2b_gerat60_009" and _ship.name == "1":
+		pass
 	# Cache constants
 	# const TURRET_ROT_SPEED_DEG: float = 40.0
 
@@ -455,18 +359,18 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
 
 	var desired_local_angle_delta: float = get_angle_to_target(aim_point)
 
-	# Apply rotation limits
+	# Slew clamping: produces a delta the mount may legally rotate by.
 	var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
 	var adjusted_angle: float = a[0]
-	_valid_target = not a[1]
-	# var adjusted_angle = desired_local_angle
+	# Firing validity is a separate question: does the *target bearing* lie in
+	# any fire arc? (When fire_arcs is empty this falls back to slew arc, which
+	# is equivalent to the previous `not a[1]` behavior.)
+	_valid_target = is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	var turret_angle_delta: float = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 	if _return_to_base and not _valid_target:
-		# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
 		adjusted_angle = base_rotation - rotation.y
 		if abs(adjusted_angle) > PI:
 			adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
-		_valid_target = not a[1]
 		turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 
 	# Apply rotation
@@ -479,6 +383,13 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system by loading armor data from the GLB via ArmorRegistry."""
+	# Secondary guns (controlled by SecSubController) intentionally have no armor.
+	# The GLB-imported StaticBody3D nodes must still be removed so they don't
+	# collide with the physics world and cause the ship to sink.
+	if controller is SecSubController:
+		remove_static_bodies(self)
+		return
+
 	var resolved_glb_path = _ship.resolve_glb_path(glb_path)
 	if resolved_glb_path.is_empty():
 		print("   ❌ Invalid or missing GLB path: ", glb_path)
@@ -503,6 +414,20 @@ func initialize_armor_system() -> void:
 				PrecisionPhysicsWorld.add_armor_part(_ship, part)
 
 	print("done")
+
+func remove_static_bodies(node: Node) -> void:
+	# Collect first to avoid mutating the tree while iterating children.
+	var to_free: Array[StaticBody3D] = []
+	collect_static_bodies(node, to_free)
+	for body in to_free:
+		body.queue_free()
+
+func collect_static_bodies(node: Node, out: Array[StaticBody3D]) -> void:
+	if node is StaticBody3D:
+		out.append(node as StaticBody3D)
+		return  # Don't recurse into the body; its children go with it.
+	for child in node.get_children():
+		collect_static_bodies(child, out)
 
 func enable_backface_collision_recursive(node: Node) -> void:
 	var path: String = ""

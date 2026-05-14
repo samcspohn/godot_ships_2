@@ -3,9 +3,9 @@ class_name Gun
 extends Turret
 
 # Properties for editor
-# @export var rotation_limits_enabled: bool = true
-# @export var min_rotation_angle: float = deg_to_rad(90)
-# @export var max_rotation_angle: float = deg_to_rad(180)
+# @export var slew_limits_enabled: bool = true
+# @export var slew_min_angle: float = deg_to_rad(90)
+# @export var slew_max_angle: float = deg_to_rad(180)
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
 var dispersion_calculator: DispersionCalculator
@@ -52,6 +52,21 @@ class SimShell:
 
 var shell_sim: SimShell = SimShell.new()
 var sim_shell_in_flight: bool = false
+
+const MIN_ELEVATION_ANGLE: float = deg_to_rad(-5)
+var _max_elevation_angle: float = NAN  # lazily cached; NAN = not yet computed
+
+func _get_max_elevation_angle() -> float:
+	if is_nan(_max_elevation_angle):
+		var max_range: float = get_params()._range
+		var muzzles_pos: Vector3 = get_muzzles_position()
+		# Shoot at max range on a flat plane to find the required elevation angle.
+		var max_range_target: Vector3 = muzzles_pos + Vector3(max_range, 0, 0)
+		var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, max_range_target, get_shell())
+		assert(sol[0] != null, "Gun._get_max_elevation_angle: no valid launch solution for max range — check shell params and _range")
+		var dir: Vector3 = sol[0]
+		_max_elevation_angle = atan2(dir.y, Vector2(dir.x, dir.z).length())
+	return _max_elevation_angle
 
 func to_dict() -> Dictionary:
 	return {
@@ -101,6 +116,9 @@ func from_bytes(b: PackedByteArray, full: bool) -> void:
 
 func get_params() -> GunParams:
 	return controller.get_params()
+
+func get_base_params() -> GunParams:
+	return controller.get_base_params()
 
 func get_shell() -> ShellParams:
 	return controller.get_shell_params()
@@ -169,10 +187,7 @@ func valid_target(target: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(global_position, target, get_shell())
 	if sol[0] != null and get_dist(target) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(target)
-		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-		if a[1]:
-			return false
-		return true
+		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func get_leading_position(target: Vector3, target_velocity: Vector3):
@@ -185,10 +200,7 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 	var sol = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
 	if sol[0] != null and get_dist(sol[2]) < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(sol[2])
-		var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-		if a[1]:
-			return false
-		return true
+		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func get_muzzles_position() -> Vector3:
@@ -239,9 +251,16 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 
 	if !is_nan(elevation_delta):
 		barrel.rotate(Vector3.RIGHT, elevation_delta)
-	# barrel.rotation.x = clamp(barrel.rotation.x, deg_to_rad(-5), deg_to_rad(30))
 
-	if abs(desired_elevation_delta) < 0.015 and abs(desired_local_angle_delta) < 0.02 and _valid_target:
+	# Clamp elevation: never depress below -5°; never elevate beyond max-range angle.
+	barrel.rotation.x = clamp(barrel.rotation.x, MIN_ELEVATION_ANGLE, _get_max_elevation_angle())
+
+	# Elevation is "satisfied" when aimed closely enough, OR when the barrel is pinned
+	# at the minimum depression limit and the target wants it even lower — fire anyway.
+	var at_min_depression: bool = barrel.rotation.x <= MIN_ELEVATION_ANGLE + 0.001 and desired_elevation_delta < 0
+	var elevation_satisfied: bool = desired_elevation_delta != INF and (abs(desired_elevation_delta) < 0.015 or at_min_depression)
+
+	if elevation_satisfied and abs(desired_local_angle_delta) < 0.02 and _valid_target:
 		can_fire = true
 	else:
 		can_fire = false
@@ -274,11 +293,17 @@ func fire(mod: TargetMod = null) -> void:
 				var h_grouping = get_params().h_grouping * (mod.h_grouping if mod else 1.0)
 				var v_grouping = get_params().v_grouping * (mod.v_grouping if mod else 1.0)
 				var base_spread = get_params().base_spread * (mod.base_spread if mod else 1.0)
-				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), h_grouping, v_grouping, base_spread)
+				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), h_grouping, v_grouping, base_spread, get_params()._range)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = ProjectileManager.get_current_time()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
+					# --- replay hook ---
+					var _gun_index: int = controller.guns.find(self) if controller else -1
+					ReplayRecorder.record_shell_fired(
+							_ship, _gun_index, muzzles.find(m),
+							m.global_position, dispersed_velocity, t, get_shell(),
+							ProjectileManager.get_last_shell_uid())
 					TcpThreadPool.send_display_shell(_id, m.global_position, dispersed_velocity, t, get_shell(), self, first_shell)
 					first_shell = false
 				else:

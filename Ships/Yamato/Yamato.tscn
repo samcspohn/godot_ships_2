@@ -334,71 +334,71 @@ layers = 0
 material_override = ExtResource("2_vrlwt")
 
 [node name="IJN_460mm_3b_type94" parent="TurretMount_IJN_460mm_3b_type94" parent_id_path=PackedInt32Array(527601173) index="0" unique_id=1467724788 instance=ExtResource("7_073m0")]
-min_rotation_angle = 0.5319847180187836
-max_rotation_angle = 5.759586531581287
+slew_min_angle = 0.5319847180187836
+slew_max_angle = 5.759586531581287
 
 [node name="IJN_460mm_3b_type94_001" parent="TurretMount_IJN_460mm_3b_type94_001" parent_id_path=PackedInt32Array(341855240) index="0" unique_id=2054163920 instance=ExtResource("7_073m0")]
-min_rotation_angle = 3.641256634904862
-max_rotation_angle = 2.6903140410368156
+slew_min_angle = 3.641256634904862
+slew_max_angle = 2.6903140410368156
 
 [node name="IJN_460mm_3b_type94_002" parent="TurretMount_IJN_460mm_3b_type94_002" parent_id_path=PackedInt32Array(1805470654) index="0" unique_id=353634193 instance=ExtResource("7_073m0")]
-min_rotation_angle = 3.636927002699438
-max_rotation_angle = 2.6020769113995392
+slew_min_angle = 3.636927002699438
+slew_max_angle = 2.6020769113995392
 
 [node name="IJN_155mm_3b_3rd_yr" parent="TurretMount_IJN_155mm_3b_3rd_yr" parent_id_path=PackedInt32Array(67039675) index="0" unique_id=2017582157 instance=ExtResource("10_rniut")]
-min_rotation_angle = 0.6044881220841987
-max_rotation_angle = 5.670959853499079
+slew_min_angle = 0.6044881220841987
+slew_max_angle = 5.670959853499079
 
 [node name="IJN_155mm_3b_3rd_yr_001" parent="TurretMount_IJN_155mm_3b_3rd_yr_001" parent_id_path=PackedInt32Array(1324242310) index="0" unique_id=399046460 instance=ExtResource("10_rniut")]
-min_rotation_angle = 3.7938938012743977
-max_rotation_angle = 2.4776352929415246
+slew_min_angle = 3.7938938012743977
+slew_max_angle = 2.4776352929415246
 
 [node name="IJN_127mm_2b_type89" parent="TurretMount_IJN_127mm_2b_type89" parent_id_path=PackedInt32Array(1686137792) index="0" unique_id=1502498868 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.550527668390999
-max_rotation_angle = 0.0
+slew_min_angle = 3.550527668390999
+slew_max_angle = 0.0
 
 [node name="IJN_127mm_2b_type89_001" parent="TurretMount_IJN_127mm_2b_type89_001" parent_id_path=PackedInt32Array(1075487614) index="0" unique_id=1975681058 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.703351663003536
-max_rotation_angle = 5.917817407708942
+slew_min_angle = 3.703351663003536
+slew_max_angle = 5.917817407708942
 
 [node name="IJN_127mm_2b_type89_002" parent="TurretMount_IJN_127mm_2b_type89_002" parent_id_path=PackedInt32Array(1693909112) index="0" unique_id=116410538 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.235100880258535
-max_rotation_angle = 5.965975713269422
+slew_min_angle = 3.235100880258535
+slew_max_angle = 5.965975713269422
 
 [node name="IJN_127mm_2b_type89_003" parent="TurretMount_IJN_127mm_2b_type89_003" parent_id_path=PackedInt32Array(1860097896) index="0" unique_id=718648876 instance=ExtResource("11_566e5")]
-max_rotation_angle = 2.8347453171260284
+slew_max_angle = 2.8347453171260284
 
 [node name="IJN_127mm_2b_type89_004" parent="TurretMount_IJN_127mm_2b_type89_004" parent_id_path=PackedInt32Array(1984452048) index="0" unique_id=768634134 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.3752673775452937
-max_rotation_angle = 2.652900463031381
+slew_min_angle = 0.3752673775452937
+slew_max_angle = 2.652900463031381
 
 [node name="IJN_127mm_2b_type89_005" parent="TurretMount_IJN_127mm_2b_type89_005" parent_id_path=PackedInt32Array(925000850) index="0" unique_id=1532643473 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.3204716670711756
-max_rotation_angle = 3.1534656127749017
+slew_min_angle = 0.3204716670711756
+slew_max_angle = 3.1534656127749017
 
 [node name="IJN_127mm_2b_type89_006" parent="TurretMount_IJN_127mm_2b_type89_006" parent_id_path=PackedInt32Array(181879183) index="0" unique_id=1070500107 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.485398110576185
-max_rotation_angle = 6.22272294245389
+slew_min_angle = 3.485398110576185
+slew_max_angle = 6.22272294245389
 
 [node name="IJN_127mm_2b_type89_007" parent="TurretMount_IJN_127mm_2b_type89_007" parent_id_path=PackedInt32Array(426807182) index="0" unique_id=1144862863 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.7189098722010105
-max_rotation_angle = 5.944731590656524
+slew_min_angle = 3.7189098722010105
+slew_max_angle = 5.944731590656524
 
 [node name="IJN_127mm_2b_type89_008" parent="TurretMount_IJN_127mm_2b_type89_008" parent_id_path=PackedInt32Array(875286562) index="0" unique_id=457444380 instance=ExtResource("11_566e5")]
-min_rotation_angle = 3.17649923862968
-max_rotation_angle = 5.759586531581287
+slew_min_angle = 3.17649923862968
+slew_max_angle = 5.759586531581287
 
 [node name="IJN_127mm_2b_type89_009" parent="TurretMount_IJN_127mm_2b_type89_009" parent_id_path=PackedInt32Array(984505377) index="0" unique_id=1377025100 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.05994912318424283
-max_rotation_angle = 2.8099800957108707
+slew_min_angle = 0.05994912318424283
+slew_max_angle = 2.8099800957108707
 
 [node name="IJN_127mm_2b_type89_010" parent="TurretMount_IJN_127mm_2b_type89_010" parent_id_path=PackedInt32Array(1912044882) index="0" unique_id=597935310 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.2617993877991494
-max_rotation_angle = 2.8099800957108707
+slew_min_angle = 0.2617993877991494
+slew_max_angle = 2.8099800957108707
 
 [node name="IJN_127mm_2b_type89_011" parent="TurretMount_IJN_127mm_2b_type89_011" parent_id_path=PackedInt32Array(920464303) index="0" unique_id=876511193 instance=ExtResource("11_566e5")]
-min_rotation_angle = 0.4537856055185257
-max_rotation_angle = 3.12413936106985
+slew_min_angle = 0.4537856055185257
+slew_max_angle = 3.12413936106985
 
 [node name="Hull_Citadel_col" parent="." index="31" unique_id=76087076]
 layers = 0

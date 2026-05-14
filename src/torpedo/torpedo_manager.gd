@@ -226,7 +226,7 @@ func _process(_delta: float) -> void:
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		#var prev_pos = p.position
 		p.position = p.direction * p.params.speed * t + p.start_position
-		p.position.y = max(p.position.y - t * 10, 0.1)
+		p.position.y = max(p.position.y - t * 10, -2.0)
 		update_transform_pos(id, p.position)
 
 		# # Client-side arming check (mirrors server _physics_process logic)
@@ -243,18 +243,20 @@ func _process(_delta: float) -> void:
 
 		# Update wake particle emitter position
 		if p.emitter_id >= 0:
-			ParticleTemplate.update_emitter_position(p.emitter_id, p.position)
+			var pos = p.position
+			pos.y = 0.2 # Keep wake on water surface
+			ParticleTemplate.update_emitter_position(p.emitter_id, pos)
 
 		id += 1
 		#var offset = p.position - p.trail_pos
 		#if (p.position - p.start_position).length_squared() < 80:
 			#continue
 		#var offset_length = offset.length()
-		const step_size = 20
+		# const step_size = 20
 		#var vel = offset.normalized()
 		#offset = vel * step_size
 
-		var trans = Transform3D.IDENTITY.translated(p.position)
+		# var trans = Transform3D.IDENTITY.translated(p.position)
 		#while :
 		# particles.emit_particle(trans, (p.position - prev_pos).normalized() , Color.WHITE,Color.WHITE, 5)
 		#trans = trans.translated(p.position)
@@ -285,7 +287,7 @@ func _physics_process(_delta: float) -> void:
 		ray_query.from = p.position
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position = p.direction * p.params.speed * t + p.start_position
-		p.position.y = max(p.position.y - t * 10, 0.1)
+		p.position.y = max(p.position.y - t * 10, -2.0)
 		if !p.armed:
 			if p.start_position.distance_to(p.position) > p.params.arming_distance:
 				p.armed = true
@@ -320,7 +322,7 @@ func _physics_process(_delta: float) -> void:
 		var pd_results: Array = space_state.intersect_shape(_pd_shape_query)
 		for result in pd_results:
 			var hit_ship: Ship = PrecisionPhysicsWorld.get_ship_from_obb(result.get("collider"))
-			if hit_ship == null or p.ships_passed.has(hit_ship):
+			if hit_ship == null or p.ships_passed.has(hit_ship) or !hit_ship.is_alive():
 				continue
 			if hit_ship.team == null or p.owner.team == null:
 				continue
@@ -377,6 +379,12 @@ func _physics_process(_delta: float) -> void:
 
 
 func notify_armed(id: int):
+	# --- Replay hook ---
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null:
+			_rr.record_torpedo_armed(id)
+	# --------------------
 	var torpedo: TorpedoData = self.torpedos[id]
 	# Use _get_team_ships (includes dead players) so a player who died still
 	# receives the arm notification and sees the indicator on their screen.
@@ -400,6 +408,12 @@ func notify_torpedo_detected(id: int):
 	torpedo.visible_to_enemy = true
 
 func notify_detected(id: int):
+	# --- Replay hook ---
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null:
+			_rr.record_torpedo_detected(id)
+	# --------------------
 	var torpedo: TorpedoData = self.torpedos[id]
 	var friendly_ships = server._get_team_ships(torpedo.owner.team.team_id)
 	for ship in friendly_ships:
@@ -486,6 +500,19 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float,
 	var torp: TorpedoData = TorpedoData.new()
 	torp.initialize(pos, vel, params, t, _owner, _range, launcher)
 	self.torpedos.set(id, torp)
+	# --- Replay hook ---
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null:
+			var _launcher_index: int = 0
+			if _owner != null and _owner.torpedo_controller != null:
+				var _launchers = _owner.torpedo_controller.launchers
+				if launcher != null and _launchers != null:
+					var _found: int = _launchers.find(launcher)
+					if _found >= 0:
+						_launcher_index = _found
+			_rr.record_torpedo_fired(_owner, _launcher_index, id, pos, vel.normalized(), t, params, _range)
+	# --------------------
 	return id
 	#for p in multiplayer.get_peers():
 		#self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
@@ -539,7 +566,12 @@ func destroyTorpedo_c(id, pos: Vector3) -> void:
 #@rpc("authority", "reliable")
 func destroyTorpedo(id, position) -> void:
 	# var bullet: ProjectileData = self.projectiles.get(id)
-
+	# --- Replay hook ---
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null:
+			_rr.record_torpedo_destroyed(id, position, null)
+	# --------------------
 	self.torpedos.set(id, null)
 	#self.projectiles.erase(id)
 	self.ids_reuse.append(id)

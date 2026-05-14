@@ -48,6 +48,7 @@ private:
 	Array ids_reuse; // Array of ints for ID reuse
 	Dictionary shell_param_ids; // Dictionary[int, ShellParams]
 	int bullet_id;
+	uint32_t _next_shell_uid;  // monotonically-increasing unique shell identifier
 
 	// GPU renderer (GPUProjectileRenderer)
 	Node *gpu_renderer;
@@ -159,6 +160,7 @@ public:
 	int get_bullet_id() const;
 	Node *get_gpu_renderer() const;
 	Node *get_compute_particle_system() const;
+	uint32_t get_last_shell_uid() const;
 
 	Ref<Resource> get_trail_template() const;
 	Camera3D *get_camera() const;

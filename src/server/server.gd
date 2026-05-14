@@ -124,14 +124,23 @@ func _on_peer_connected(id):
 
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
-	# After match is complete, check if all human players have left
-	if match_complete:
+	if not match_complete:
+		# Mid-match: mark disconnected human player as having left, then check if all are gone.
+		for p_name in players:
+			if players[p_name][2] == id:
+				var ship: Ship = players[p_name][0]
+				if not ship.team.is_bot and not _players_quit.has(p_name):
+					_players_quit.append(p_name)
+					print("Player ", p_name, " disconnected mid-match (treated as quit)")
+				break
+		_check_all_players_quit()
+	else:
+		# After match is complete, check if all human players have left.
 		var humans_remaining = 0
 		for p_name in players:
 			var p = players[p_name]
 			var ship: Ship = p[0]
 			if not ship.team.is_bot:
-				# Check if this peer is still connected
 				var peer_id = p[2]
 				if peer_id != id and multiplayer.get_peers().has(peer_id):
 					humans_remaining += 1
@@ -353,6 +362,17 @@ func spawn_player(id, player_name):
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
 	match_active = true
+	# --- Replay: begin recording once ALL ships (human + bots) are in the world.
+	# Guard with players_spawned_bots so the hook only fires in the human
+	# player's spawn_player call AFTER the bot-spawning loop completes,
+	# not in each individual bot's spawn_player call.
+	if _Utils.authority() and players_spawned_bots:
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null and not _rr._match_active:
+			var _all_ships: Array = []
+			for _p_name in players:
+				_all_ships.append(players[_p_name][0])
+			_rr.begin_match(_all_ships, 0)  # map_id 0 = default map
 
 @rpc("call_remote", "reliable")
 func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
@@ -954,6 +974,14 @@ func _broadcast_match_end():
 			var peer_id = p[2]
 			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
 
+	# Finalize the replay file server-side.
+	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
+	# so we must call end_match() directly here on the server.
+	if _Utils.authority():
+		var _rr = get_node_or_null("/root/ReplayRecorder")
+		if _rr != null and _rr._match_active:
+			_rr.end_match(winning_team)
+
 func _notify_matchmaker_available():
 	"""Send UDP notification to the matchmaker that this server is available."""
 	var port = NetworkManager.server_port
@@ -973,6 +1001,8 @@ func _reset_server():
 	re-creates the game world and re-registers with the matchmaker."""
 	print("=== Server resetting for new match ===")
 
+	_players_quit.clear()
+
 	# Clear projectile and torpedo managers before reload to prevent
 	# stale references to freed ships/nodes causing null crashes
 	ProjectileManager.clear_all()
@@ -988,7 +1018,47 @@ func notify_match_end(winning_team: int, leaderboard: Array):
 	_Utils.match_result["leaderboard"] = leaderboard
 	_Utils.match_ended.emit(winning_team)
 
+@rpc("any_peer", "call_remote", "reliable")
+func player_quit_match() -> void:
+	"""Called by a client when the player deliberately quits the match."""
+	if not _Utils.authority():
+		return
+	var caller_id: int = multiplayer.get_remote_sender_id()
+	for p_name in players:
+		if players[p_name][2] == caller_id:
+			if not _players_quit.has(p_name):
+				_players_quit.append(p_name)
+				print("Player ", p_name, " quit the match")
+			break
+	_check_all_players_quit()
+
+func _check_all_players_quit() -> void:
+	"""End the match if every non-bot player has quit or disconnected."""
+	if match_complete or match_ended:
+		return
+	if players.is_empty():
+		return  # No players yet — match hasn't started
+	for p_name in players:
+		var ship: Ship = players[p_name][0]
+		if not ship.team.is_bot and not _players_quit.has(p_name):
+			return  # At least one human is still in the match
+	print("All human players have left — stamping replay end and resetting")
+	match_ended = true
+	_end_match_abandoned()
+	match_complete = true
+	_reset_server()
+
+func _end_match_abandoned() -> void:
+	"""Write the replay end-stamp for a match that ended without a victor."""
+	if not _Utils.authority():
+		return
+	var _rr = get_node_or_null("/root/ReplayRecorder")
+	if _rr != null and _rr._match_active:
+		_rr.end_match(255)  # 255 (u8) = no winner / match abandoned
+
 var match_complete = false
+var _players_quit: Array = []  # Player names who explicitly quit or disconnected mid-match
+
 func _physics_process(_delta: float) -> void:
 	if match_complete:
 		return

@@ -271,75 +271,75 @@ layers = 0
 material_override = ExtResource("14_pww3p")
 
 [node name="GER_380mm_2b" parent="TurretMount_GER_380mm_2b" index="0" unique_id=546784362 instance=ExtResource("14_5uw5v")]
-min_rotation_angle = 3.7524578917878086
-max_rotation_angle = 2.530727415391778
+slew_min_angle = 3.7524578917878086
+slew_max_angle = 2.530727415391778
 
 [node name="GER_380mm_2b_rf" parent="TurretMount_GER_380mm_2b_rf" index="0" unique_id=647117565 instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 3.7524578917878086
-max_rotation_angle = 2.530727415391778
+slew_min_angle = 3.7524578917878086
+slew_max_angle = 2.530727415391778
 
 [node name="GER_380mm_2b_rf_001" parent="TurretMount_GER_380mm_2b_rf_001" index="0" unique_id=189670155 instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 0.6108652381980153
-max_rotation_angle = 5.672320068981571
+slew_min_angle = 0.6108652381980153
+slew_max_angle = 5.672320068981571
 
 [node name="GER_380mm_2b_rf_002" parent="TurretMount_GER_380mm_2b_rf_002" index="0" unique_id=253299539 instance=ExtResource("16_1b7x2")]
-min_rotation_angle = 0.6108652381980153
-max_rotation_angle = 5.672320068981571
+slew_min_angle = 0.6108652381980153
+slew_max_angle = 5.672320068981571
 
 [node name="GER_150mm_2b_rf" parent="TurretMount_GER_150mm_2b_rf" index="0" unique_id=121848396 instance=ExtResource("17_jx7aj")]
-min_rotation_angle = 3.416402039123504
-max_rotation_angle = 6.2768461891615575
+slew_min_angle = 3.416402039123504
+slew_max_angle = 6.2768461891615575
 
 [node name="GER_150mm_2b_rf_001" parent="TurretMount_GER_150mm_2b_rf_001" index="0" unique_id=1393813942 instance=ExtResource("17_jx7aj")]
-min_rotation_angle = 0.0018859508715554
-max_rotation_angle = 2.9345538463017977
+slew_min_angle = 0.0018859508715554
+slew_max_angle = 2.9345538463017977
 
 [node name="GER_150mm_2b" parent="TurretMount_GER_150mm_2b" index="0" unique_id=920726055 instance=ExtResource("18_hcq8l")]
-min_rotation_angle = 3.7312221275363617
-max_rotation_angle = 0.01012819121078401
+slew_min_angle = 3.7312221275363617
+slew_max_angle = 0.01012819121078401
 
 [node name="GER_150mm_2b_001" parent="TurretMount_GER_150mm_2b_001" index="0" unique_id=1139302195 instance=ExtResource("18_hcq8l")]
-min_rotation_angle = 3.1590459461097367
-max_rotation_angle = 6.1086523819801535
+slew_min_angle = 3.1590459461097367
+slew_max_angle = 6.1086523819801535
 
 [node name="GER_150mm_2b_002" parent="TurretMount_GER_150mm_2b_002" index="0" unique_id=602898471 instance=ExtResource("18_hcq8l")]
-min_rotation_angle = 0.2792526803190927
-max_rotation_angle = 3.141592653589793
+slew_min_angle = 0.2792526803190927
+slew_max_angle = 3.141592653589793
 
 [node name="GER_150mm_2b_003" parent="TurretMount_GER_150mm_2b_003" index="0" unique_id=1266383701 instance=ExtResource("18_hcq8l")]
-max_rotation_angle = 2.6179938779914944
+slew_max_angle = 2.6179938779914944
 
 [node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" index="0" unique_id=98366039 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 3.420845333908886
-max_rotation_angle = 0.0
+slew_min_angle = 3.420845333908886
+slew_max_angle = 0.0
 
 [node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" index="0" unique_id=604163652 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 3.36186195118043
-max_rotation_angle = 6.15304730352228
+slew_min_angle = 3.36186195118043
+slew_max_angle = 6.15304730352228
 
 [node name="GER_105mm_2b_002" parent="TurretMount_GER_105mm_2b_002" index="0" unique_id=427742826 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 3.2585142140268153
-max_rotation_angle = 6.0817159007645785
+slew_min_angle = 3.2585142140268153
+slew_max_angle = 6.0817159007645785
 
 [node name="GER_105mm_2b_003" parent="TurretMount_GER_105mm_2b_003" index="0" unique_id=1476640044 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 3.1665003080596836
-max_rotation_angle = 5.973077247203072
+slew_min_angle = 3.1665003080596836
+slew_max_angle = 5.973077247203072
 
 [node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" index="0" unique_id=662552976 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 0.32652345383915105
-max_rotation_angle = 3.141592653589793
+slew_min_angle = 0.32652345383915105
+slew_max_angle = 3.141592653589793
 
 [node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" index="0" unique_id=657187972 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 0.20248286862908405
-max_rotation_angle = 3.036455550222673
+slew_min_angle = 0.20248286862908405
+slew_max_angle = 3.036455550222673
 
 [node name="GER_105mm_2b_006" parent="TurretMount_GER_105mm_2b_006" index="0" unique_id=572488726 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 0.09748192736781648
-max_rotation_angle = 2.9638556402871927
+slew_min_angle = 0.09748192736781648
+slew_max_angle = 2.9638556402871927
 
 [node name="GER_105mm_2b_007" parent="TurretMount_GER_105mm_2b_007" index="0" unique_id=1609571633 instance=ExtResource("19_1k3lc")]
-min_rotation_angle = 0.00398590263774245
-max_rotation_angle = 2.8422316975614645
+slew_min_angle = 0.00398590263774245
+slew_max_angle = 2.8422316975614645
 
 [node name="Hull_Citadel_col" parent="." index="36"]
 layers = 0

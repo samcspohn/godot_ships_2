@@ -25,13 +25,20 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a + 0.33 * (randf() - 0.5) # add some randomness to buildup
 		last_hit_time = Time.get_ticks_msec() / 1000.0 + a * 0.5
-		if curr_buildup >= _rparams.max_buildup:
+		var random_threshold = _rparams.max_buildup * 0.67
+		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
+
+		if curr_buildup >= _rparams.max_buildup or (rand_value > 0 and randf() < rand_value):
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "fire"})
 			_owner.stats.fire_count += 1
 			fire_emitter.start_emitting()
 			_sync_activate.rpc()
-			lifetime = 1
+			lifetime = 1.0
+			# --- replay hook ---
+			if _Utils.authority():
+				var zone_index := manager.fires.find(self)
+				ReplayRecorder.record_fire_started(_ship, zone_index, __owner)
 			curr_buildup = 0
 			return true
 	return false
@@ -58,6 +65,9 @@ func _physics_process(_delta: float) -> void:
 				lifetime -= 1.0 / d
 				if lifetime <= 0:
 					fire_emitter.stop_emitting()
+					# --- replay hook ---
+					var zone_index := manager.fires.find(self)
+					ReplayRecorder.record_fire_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
 		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time > Time.get_ticks_msec() / 1000.0: # last hit is decay time
 			curr_buildup -= _rparams.max_buildup * _rparams.buildup_reduction_rate
@@ -75,6 +85,10 @@ func damage(delta):
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
+		# --- replay hook (v4): record the actual damage applied this tick so
+		# the replay HUD can rebuild fire_damage / total_damage bidirectionally.
+		if _Utils.authority() and dmg_sunk[0] > 0.0:
+			ReplayRecorder.record_fire_damage(_owner, _ship, dmg_sunk[0])
 
 @rpc("authority", "unreliable_ordered")
 func _sync(l):

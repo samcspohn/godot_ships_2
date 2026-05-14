@@ -231,6 +231,10 @@ func populate_armor_meshes(ship_node: Node, part_visibility: Dictionary = {}):
 	_collect_armor_meshes(ship_node, ship_node, part_visibility)
 
 func _collect_armor_meshes(node: Node, ship_root: Node, part_visibility: Dictionary):
+	# Secondary guns intentionally have no armor in gameplay; skip their entire subtrees.
+	if node is Gun and node.controller is SecSubController:
+		return
+
 	if node is MeshInstance3D and String(node.name).contains("_col"):
 		var part_type = _get_part_type_for_mesh_name(String(node.name))
 		var is_visible = part_visibility.get(part_type, true)

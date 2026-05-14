@@ -1,4 +1,4 @@
-extends Node
+extends Node3D
 class_name FloodManager
 
 @export var params: FloodParams
@@ -17,6 +17,10 @@ func _ready() -> void:
 	params = params.instantiate(_ship) as FloodParams
 	#for f in floods:
 		#f.manager = self
+	floods.clear()
 	for f: Flood in get_children():
 		f.manager = self
 		floods.append(f)
+	floods.sort_custom(func(a: Flood, b: Flood) -> bool:
+		return a.position.z < b.position.z
+	)

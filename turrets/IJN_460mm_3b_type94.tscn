@@ -9,7 +9,7 @@
 script = ExtResource("2_k2ag4")
 _sound = ExtResource("3_8r8mq")
 pitch = 0.55
-max_rotation_angle = 0.0
+slew_max_angle = 0.0
 glb_path = "uid://1b0ujjomsbmw"
 
 [node name="Turret_col" parent="." index="1" unique_id=633093453]

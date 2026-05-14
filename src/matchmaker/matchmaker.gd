@@ -1,7 +1,7 @@
 extends Node
 
 var available_servers = []
-var min_players = 4
+var min_players = 2
 var connecting_clients = {}
 var available_ports = []  # List to track available ports
 var port_range_start = 28970  # Starting port for game servers
@@ -11,6 +11,7 @@ var port_range_end = 29000    # Ending port for game servers
 const SHIP_CLASS_BB = 0  # Battleship
 const SHIP_CLASS_CA = 1  # Cruiser
 const SHIP_CLASS_DD = 2  # Destroyer
+const NUM_SHIPS_PER_TEAM = 12
 
 # Ship data: path -> {class, tier}
 const SHIP_DATA = {
@@ -35,16 +36,16 @@ const SHIPS_BY_CLASS = {
 		"res://Ships/Shimakaze/Shimakaze.tscn"
 	]
 }
-
+var udp
 func _ready():
 	# Available ports start empty — servers register themselves via UDP
 	available_ports = []
 
 	# Setup UDP beacon for server discovery
-	var udp = PacketPeerUDP.new()
+	udp = PacketPeerUDP.new()
 	udp.bind(28961)  # Matchmaker port
 
-	while true:
+func _process(_delta: float) -> void:
 		if udp.get_available_packet_count() > 0:
 			var packet = udp.get_packet()
 			var sender_ip = udp.get_packet_ip()
@@ -56,7 +57,7 @@ func _ready():
 			var err = json.parse(packet_str)
 			if err != OK:
 				push_error("Failed to parse packet data")
-				continue
+				return
 			var packet_result = json.data
 			if packet_result["request"] == "request_server":
 				# Track this connecting client
@@ -73,13 +74,13 @@ func _ready():
 				if port > 0:
 					release_port(port)
 					print("Matchmaker: Server on port ", port, " is now available")
-				continue
+					return
 			elif packet_result["request"] == "server_register":
 				var port = int(packet_result.get("port", 0))
 				if port > 0:
 					release_port(port)
 					print("Matchmaker: Server registered on port ", port)
-				continue
+					return
 
 			# Check if we have a single player request
 			var single_player_client = null
@@ -94,13 +95,31 @@ func _ready():
 				var server_port = find_available_port()
 				if server_port == -1:
 					push_error("No available ports for game server!")
-					continue
+					return
 
-				# Create team info for single player vs 4 bots
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
+				if false:
+					team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
+				else:
+					# --- TEMPORARY: player ship on team 0, H44 bot on team 1 ---
+					team = {
+						client_data["player_name"]: {
+							"team": "0",
+							"player_id": client_data["player_name"],
+							"ship": client_data["ship"],
+							"is_bot": false,
+							"spawn_position": 0
+						},
+						"1001": {
+							"team": "1",
+							"player_id": "1001",
+							"ship": "res://Ships/H44/H44.tscn",
+							"is_bot": true,
+							"spawn_position": 0
+						}
+					}
 
 				var team_info = {
 					"team": team
@@ -130,7 +149,7 @@ func _ready():
 
 				# Remove the single player client from queue
 				connecting_clients.erase(single_player_client)
-				continue
+				return
 
 			# Check if we have enough multiplayer clients to start a game
 			if connecting_clients.size() >= min_players:
@@ -141,13 +160,13 @@ func _ready():
 						multiplayer_clients.append(client)
 
 				if multiplayer_clients.size() < min_players:
-					continue  # Not enough multiplayer clients yet
+					return  # Not enough multiplayer clients yet
 
 				# Find an available port for the server
 				var server_port = find_available_port()
 				if server_port == -1:
 					push_error("No available ports for game server!")
-					continue
+					return
 
 				# Send team info to the server (as a file for simplicity)
 				var team = {}
@@ -248,13 +267,12 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Define team composition: 10 ships per team
 	# # Randomly choose which class gets 4 ships (others get 3)
-	const num_ships_per_team = 12
 	# var class_counts = {
-	# 	SHIP_CLASS_BB: floor(num_ships_per_team / 3.0),
-	# 	SHIP_CLASS_CA: floor(num_ships_per_team / 3.0),
-	# 	SHIP_CLASS_DD: floor(num_ships_per_team / 3.0)
+	# 	SHIP_CLASS_BB: floor(NUM_SHIPS_PER_TEAM / 3.0),
+	# 	SHIP_CLASS_CA: floor(NUM_SHIPS_PER_TEAM / 3.0),
+	# 	SHIP_CLASS_DD: floor(NUM_SHIPS_PER_TEAM / 3.0)
 	# }
-	# var left_over = num_ships_per_team - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
+	# var left_over = NUM_SHIPS_PER_TEAM - (class_counts[SHIP_CLASS_BB] + class_counts[SHIP_CLASS_CA] + class_counts[SHIP_CLASS_DD])
 	# var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
 	# # var bonus_class = classes[randi() % classes.size()]
 	# var bonus_class = SHIP_CLASS_BB
@@ -293,7 +311,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	# # Build 3 clusters, each with one ship per class
 	# # A cluster is an array of {"class": ship_class, "ship": ship_path, "is_player": bool}
-	# var num_clusters = ceili(num_ships_per_team / 3.0)
+	# var num_clusters = ceili(NUM_SHIPS_PER_TEAM / 3.0)
 	# var clusters = []
 
 	# # Track consumption index per class
@@ -358,7 +376,7 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		"is_player": true
 	})
 	var class_index = (player_ship_class + 1) % classes.size()
-	for i in range(num_ships_per_team - 1):
+	for i in range(NUM_SHIPS_PER_TEAM - 1):
 		var ship_class = classes[class_index]
 		var ship_path = SHIPS_BY_CLASS[ship_class][randi() % SHIPS_BY_CLASS[ship_class].size()]  # Just take a random ship of that class
 		# var is_player = (ship_class == player_ship_class)

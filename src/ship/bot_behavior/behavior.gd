@@ -1607,7 +1607,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
 		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 4.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
 		# raw_threat *= (1.0 - range_pressure * class_w)
@@ -1784,22 +1784,17 @@ func try_use_consumable():
 		if repair != -1:
 			_ship.consumable_manager.use_consumable(repair)
 
-	var fires = _ship.fire_manager.get_active_fires()
-	if fires > 0:
-		if hp > 0.60 and fires >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif fires >= 1:
-			if damage_control != -1:
+	if damage_control != -1:
+		var fires = _ship.fire_manager.get_active_fires()
+		if fires > 0:
+			if (hp < 0.5 and fires >= 1) or fires >= 2:
 				_ship.consumable_manager.use_consumable(damage_control)
 
-	var floods = _ship.flood_manager.get_active_floods()
-	if floods > 0:
-		if hp > 0.60 and floods >= 2:
-			if damage_control != -1:
-				_ship.consumable_manager.use_consumable(damage_control)
-		elif floods >= 1:
-			if damage_control != -1:
+
+	if damage_control != -1:
+		var floods = _ship.flood_manager.get_active_floods()
+		if floods > 0:
+			if (hp < 0.5 and floods >= 1) or floods >= 2:
 				_ship.consumable_manager.use_consumable(damage_control)
 
 	# --- Hydroacoustic Search ---

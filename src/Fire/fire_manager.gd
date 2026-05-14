@@ -1,4 +1,4 @@
-extends Node
+extends Node3D
 class_name FireManager
 
 @export var fparams: FireParams
@@ -37,9 +37,13 @@ func _ready() -> void:
 	# _params.init(params)
 	#for f in fires:
 		#f.manager = self
+	fires.clear()
 	for f: Fire in get_children():
 		f.manager = self
 		fires.append(f)
+	fires.sort_custom(func(a: Fire, b: Fire) -> bool:
+		return a.position.z < b.position.z
+	)
 
 	# _ship.reset_mods.connect(params.reset)
 	# _ship.reset_dynamic_mods.connect(params.reset_dynamic_mod)

@@ -1574,8 +1574,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.00826359, 6.5129, -55.0917
 mesh = SubResource("ArrayMesh_381u2")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
-min_rotation_angle = 3.7001
-max_rotation_angle = 2.51327
+slew_min_angle = 3.7001
+slew_max_angle = 2.51327
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 params = ExtResource("3_c267j")
 
@@ -1595,8 +1595,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.00826359, 3.2548, -73.2684
 mesh = SubResource("ArrayMesh_11qox")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
-min_rotation_angle = 3.61283
-max_rotation_angle = 2.72271
+slew_min_angle = 3.61283
+slew_max_angle = 2.72271
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 params = ExtResource("3_c267j")
 
@@ -1616,8 +1616,8 @@ transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.008
 mesh = SubResource("ArrayMesh_rtpuf")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
-min_rotation_angle = 0.457666
-max_rotation_angle = 5.69938
+slew_min_angle = 0.457666
+slew_max_angle = 5.69938
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 params = ExtResource("3_c267j")
 
@@ -1637,8 +1637,8 @@ transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.008
 mesh = SubResource("ArrayMesh_d2mwy")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
-min_rotation_angle = 0.522182
-max_rotation_angle = 5.70627
+slew_min_angle = 0.522182
+slew_max_angle = 5.70627
 dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
 params = ExtResource("3_c267j")
 

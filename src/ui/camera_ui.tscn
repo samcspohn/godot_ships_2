@@ -56,6 +56,25 @@ corner_radius_bottom_left = 2
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_team_hp_friendly"]
 bg_color = Color(0.2, 0.9, 0.4, 1)
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_options_panel"]
+bg_color = Color(0.05, 0.05, 0.12, 0.95)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.3, 0.3, 0.5, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_options_quit_btn"]
+bg_color = Color(0.45, 0.08, 0.08, 1.0)
+corner_radius_top_left = 5
+corner_radius_top_right = 5
+corner_radius_bottom_right = 5
+corner_radius_bottom_left = 5
+
 [node name="CameraUI" type="CanvasLayer" unique_id=531607714]
 script = ExtResource("1_kk7j4")
 reloading_gun_color = Color(1, 0.95, 0, 1)
@@ -713,3 +732,66 @@ theme_override_font_sizes/font_size = 9
 text = "text"
 horizontal_alignment = 1
 uppercase = true
+
+[node name="OptionsMenu" type="Control" parent="." unique_name_in_owner=true]
+visible = false
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Dim" type="ColorRect" parent="OptionsMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+mouse_filter = 0
+
+[node name="Panel" type="PanelContainer" parent="OptionsMenu"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -130.0
+offset_top = -100.0
+offset_right = 130.0
+offset_bottom = 100.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_options_panel")
+
+[node name="VBox" type="VBoxContainer" parent="OptionsMenu/Panel"]
+layout_mode = 2
+custom_minimum_size = Vector2(260, 0)
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="OptionsMenu/Panel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+text = "Options"
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="OptionsMenu/Panel/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Resume"
+
+[node name="BorderlessWindowCheck" type="CheckBox" parent="OptionsMenu/Panel/VBox"]
+layout_mode = 2
+text = "Fullscreen (Borderless)"
+
+[node name="QuitMatchButton" type="Button" parent="OptionsMenu/Panel/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+theme_override_styles/normal = SubResource("StyleBoxFlat_options_quit_btn")
+theme_override_colors/font_color = Color(1.0, 0.5, 0.5, 1.0)
+text = "Quit Match"

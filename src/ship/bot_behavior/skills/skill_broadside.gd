@@ -87,7 +87,7 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	#if ship.name == "1002":
 		#pass
 	var desired_heading: float = intent.target_heading
-	if ctx.navigator != null and !ctx.navigator.is_arrived():
+	if ctx.navigator != null and !ctx.navigator.is_arrived() and intent.heading_weight <= 0.0:
 	# if ship.global_position.distance_squared_to(intent.target_position) > ship.movement_controller.turning_circle_radius:
 		var wp: Vector3 = ctx.navigator.get_current_waypoint()
 		var to_wp: Vector3 = wp - ship.global_position
@@ -171,8 +171,8 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 			# Pick the largest min — the most restrictive port reach.
 			var worst: float = 0.0
 			for gun: Turret in guns:
-				if gun.position.z > 0.0 and gun.min_rotation_angle > worst:
-					worst = gun.min_rotation_angle
+				if gun.position.z > 0.0 and gun.slew_min_angle > worst:
+					worst = gun.slew_min_angle
 			candidate = worst
 			# Preferred works iff threat is already past every back gun's min.
 			preferred_ok = diff >= candidate
@@ -181,8 +181,8 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 			# Pick the smallest max — the most restrictive port reach.
 			var worst: float = PI
 			for gun: Turret in guns:
-				if gun.position.z < 0.0 and gun.max_rotation_angle < worst:
-					worst = gun.max_rotation_angle
+				if gun.position.z < 0.0 and gun.slew_max_angle < worst:
+					worst = gun.slew_max_angle
 			candidate = worst
 			preferred_ok = diff <= candidate
 	else:
@@ -192,8 +192,8 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 			# Pick the smallest max in [0, TAU] — most restrictive starboard reach.
 			var worst: float = TAU
 			for gun: Turret in guns:
-				if gun.position.z > 0.0 and gun.max_rotation_angle < worst:
-					worst = gun.max_rotation_angle
+				if gun.position.z > 0.0 and gun.slew_max_angle < worst:
+					worst = gun.slew_max_angle
 			candidate = worst - TAU  # convert to signed [-π, π]
 			preferred_ok = diff <= candidate
 		else:
@@ -201,8 +201,8 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 			# Pick the largest min in [0, TAU] — most restrictive starboard reach.
 			var worst: float = PI
 			for gun: Turret in guns:
-				if gun.position.z < 0.0 and gun.min_rotation_angle > worst:
-					worst = gun.min_rotation_angle
+				if gun.position.z < 0.0 and gun.slew_min_angle > worst:
+					worst = gun.slew_min_angle
 			candidate = worst - TAU  # convert to signed
 			preferred_ok = diff >= candidate
 
@@ -269,11 +269,11 @@ func _count_guns_bearing(guns: Array, ship_heading: float, threat_bearing: float
 ## Check if a single gun/turret can bear on the threat given a hypothetical
 ## ship heading.
 func _can_gun_bear(gun: Turret, ship_heading: float, threat_bearing: float) -> bool:
-	if not gun.rotation_limits_enabled:
+	if not gun.slew_limits_enabled:
 		return true  # No limits means 360° traverse
 
-	var arc_min: float = _normalize_0_tau(ship_heading + gun.base_rotation + gun.min_rotation_angle)
-	var arc_max: float = _normalize_0_tau(ship_heading + gun.base_rotation + gun.max_rotation_angle)
+	var arc_min: float = _normalize_0_tau(ship_heading + gun.base_rotation + gun.slew_min_angle)
+	var arc_max: float = _normalize_0_tau(ship_heading + gun.base_rotation + gun.slew_max_angle)
 	var target_angle: float = _normalize_0_tau(threat_bearing)
 
 	if arc_min <= arc_max:

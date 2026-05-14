@@ -7,6 +7,9 @@ signal match_ended(winning_team: int)
 # Match result data - persists across scene changes (autoload)
 var match_result: Dictionary = {}
 
+## Path to the replay file that was just recorded; consumed by the post-match UI.
+var pending_replay_path: String = ""
+
 var debug_instance: MeshInstance3D
 var debug_mesh: ImmediateMesh
 

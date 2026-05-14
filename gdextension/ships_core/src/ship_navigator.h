@@ -258,7 +258,7 @@ private:
 
 	std::vector<ArcPoint> predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 												 Vector2 target_pos, float lookahead_distance,
-												 float max_time = 60.0f) const;
+												 float max_time = 60.0f, bool reverse_alignment = false) const;
 
 	float check_arc_collision(const std::vector<ArcPoint> &arc,
 							  float hard_clearance, float soft_clearance) const;
@@ -353,7 +353,7 @@ public:
 	void set_bot_id(int id);
 	int get_bot_id() const;
 
-	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f, float heading_weight = 0.0f);
+	void navigate_to(Vector3 target, float heading, float hold_radius = 0.0f, float heading_tolerance = 0.2618f, float heading_weight = 0.0f, bool prefer_reverse = false);
 	void stop();
 
 	// --- Grounded state (from movement controller via BotControllerV4) ---

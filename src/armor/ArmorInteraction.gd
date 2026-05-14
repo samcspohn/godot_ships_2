@@ -254,15 +254,15 @@ static func calculate_ricochet_velocity(velocity: Vector3, normal: Vector3, impa
 #
 #
 func process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
-		space_state: PhysicsDirectSpaceState3D, events = []) -> ArmorResultData:
-			var res = _process_travel(projectile, prev_pos, t, space_state, events)
+		space_state: PhysicsDirectSpaceState3D, events = [], struct_out = null) -> ArmorResultData:
+			var res = _process_travel(projectile, prev_pos, t, space_state, events, struct_out)
 			if projectile.position.y < 0.0 and res == null:
 				print("[ERROR] process_travel: projectile is underwater (y=%.3f) but no water hit detected")
 			return res
 
 
 func _process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
-		space_state: PhysicsDirectSpaceState3D, events = []) -> ArmorResultData:
+		space_state: PhysicsDirectSpaceState3D, events = [], struct_out = null) -> ArmorResultData:
 
 	if prev_pos.y < 0.0:
 		print("[ERROR] process_travel: prev_pos is underwater (y=%.3f) — projectile should have been destroyed on a previous frame" % prev_pos.y)
@@ -276,7 +276,7 @@ func _process_travel(projectile: ProjectileData, prev_pos: Vector3, t: float,
 	# shells skipping past a hull surface in a single frame).
 	var extended_from := prev_pos if projectile.frame_count == 0 else prev_pos - travel.normalized() * 10.0
 
-	return _process_travel_precision(projectile, prev_pos, curr_pos, extended_from, t, space_state, events)
+	return _process_travel_precision(projectile, prev_pos, curr_pos, extended_from, t, space_state, events, struct_out)
 
 
 ## Build OBB RID exclude list and ship instance-ID exclude list from projectile
@@ -348,7 +348,7 @@ func _handle_water_entry2(water_hit: Vector3, projectile: ProjectileData, entry_
 ## compare distances, and handle the closest interaction first.
 func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 		curr_pos: Vector3, extended_from: Vector3, t: float,
-		space_state: PhysicsDirectSpaceState3D, events) -> ArmorResultData:
+		space_state: PhysicsDirectSpaceState3D, events, struct_out = null) -> ArmorResultData:
 
 	var excludes := _build_exclude_lists(projectile)
 	var main_space = space_state
@@ -495,9 +495,11 @@ func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 			return ArmorResultData.new(HitResult.WATER, water_result['position'], null, Vector3.ZERO, null, Vector3.ZERO)
 
 	if precision_dist < INF and precision_ship != null:
-		return _process_hit(precision_hit['armor'], precision_hit['world_pos'],
-			precision_hit['world_normal'], projectile, precision_vel,
-			precision_hit['face_index'], fuze, hit_water, events)
+		return _process_hit(precision_hit['armor'],
+			precision_hit['world_pos'], precision_hit['world_normal'],
+			precision_hit['local_pos'], precision_hit['local_normal'],
+			projectile, precision_vel,
+			precision_hit['face_index'], fuze, hit_water, events, struct_out)
 
 	# # 2. Ship is closest → process hit (apply water drag if armor is submerged)
 	# # ------------------------------------------------------------------
@@ -528,28 +530,41 @@ func _process_travel_precision(projectile: ProjectileData, prev_pos: Vector3,
 	# ------------------------------------------------------------------
 	return null
 
-const EPSILON: float = 0.0001
-func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector3,
+const EPSILON: float = 0.0002
+func _process_hit(hit_node: ArmorPart, world_hit_position: Vector3, world_hit_normal: Vector3,
+		local_hit_position: Vector3, local_hit_normal: Vector3,
 		projectile: ProjectileData, impact_velocity: Vector3,
 		face_index: int, fuze: float,
-		hit_water: bool, events) -> ArmorResultData:
+		hit_water: bool, events, struct_out = null) -> ArmorResultData:
 
-	var first_hit_normal := hit_normal
-	var first_hit_pos := hit_position
+	var struct_steps: Array = []
+	# first_hit_normal/first_hit_pos are in WORLD space and are only used for the
+	# returned ArmorResultData (explosion location, surface normal for VFX). All
+	# in-loop math operates exclusively in ship-local space to preserve
+	# floating-point precision when the ship is far from the world origin.
+	var first_hit_normal := world_hit_normal
+	var first_hit_pos := world_hit_position
 	var params:ShellParams = projectile.params
 	var ship := hit_node.ship
 	var first_hit_node := hit_node
 	var overmatch_first_armor := false
 
-	# Transform everything into ship-local space so that floating-point
-	# precision is maximised (the precision world sits at the origin).
+	# Cache transforms for converting back to world space when logging / returning.
+	# IMPORTANT: do NOT round-trip the local hit position through world space —
+	# at large world coordinates (e.g. ~16 km) the float32 precision loss can
+	# exceed the EPSILON offset used to push subsequent rays past plate surfaces,
+	# which causes ghost-ricochets where the next ray restarts inside the same
+	# plate and immediately hits its back face.
 	var ship_xform := ship.global_transform
-	var ship_inv_xform := ship_xform.affine_inverse()
 	var ship_basis := ship_xform.basis
-	var ship_basis_inv := ship_inv_xform.basis
+	var ship_basis_inv := ship_basis.inverse()
 
-	hit_position = ship_inv_xform * hit_position
-	hit_normal = (ship_basis_inv * hit_normal).normalized()
+	# Use the local-space hit point/normal directly — these came straight from
+	# the precision raycast (which runs in the ship's origin-centered world) and
+	# carry full FP precision. Only the velocity needs a basis-only rotation
+	# (no translation, so no precision loss).
+	var hit_position := local_hit_position
+	var hit_normal := local_hit_normal.normalized()
 
 	var shell := _ShellData.new()
 	shell.position = hit_position
@@ -585,14 +600,52 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 	# HE Shell Processing
 	if params.type == ShellParams.ShellType.HE:
 		var armor_mm: float = hit_node.get_armor(face_index)
-
 		var result_armor := hit_node
 
+		# Calculate impact angle for logging (velocities are world-space; normal is local).
+		var he_local_vel := ship_basis_inv * impact_velocity
+		var he_impact_angle := _calculate_impact_angle(he_local_vel.normalized(), hit_normal)
+
+		var he_final_result: HitResult
+		var he_step_result: int
 		if params.overmatch >= armor_mm:
-			var hit_result := HitResult.CITADEL if hit_node.is_citadel else HitResult.PENETRATION
-			return ArmorResultData.new(hit_result, first_hit_pos, result_armor, impact_velocity, ship, first_hit_normal)
+			he_final_result = HitResult.CITADEL if hit_node.is_citadel else HitResult.PENETRATION
+			he_step_result  = int(ArmorResult.PEN)
 		else:
-			return ArmorResultData.new(HitResult.SHATTER, first_hit_pos, result_armor, Vector3.ZERO, ship, first_hit_normal)
+			he_final_result = HitResult.SHATTER
+			he_step_result  = int(ArmorResult.SHATTER)
+
+		# Build a single-step log entry for the HE impact and write to the armor log.
+		var he_steps: Array = [{
+			"result":       he_step_result,
+			"is_citadel":   hit_node.is_citadel,
+			"armor_mm":     armor_mm,
+			"effective_mm": armor_mm,  # HE uses raw thickness (no obliquity correction)
+			"impact_angle": he_impact_angle,
+			"pen":          float(params.overmatch),
+			"integrity":    1.0,
+			"pos":          first_hit_pos,
+			"vel":          impact_velocity,
+			"impact_vel":   impact_velocity,   # same as vel for HE (single-plate, no modification)
+			"armor_path":   hit_node.armor_path,
+		}]
+		if is_instance_valid(ArmorSimLogger) and ArmorSimLogger._file != null:
+			ArmorSimLogger.record_hit(
+				projectile.get_shell_uid() if projectile != null else 0,
+				int(he_final_result),
+				projectile.get_owner() if projectile != null else null,
+				ship,
+				ship.global_position,
+				ship.rotation.y,
+				int(params.type),
+				params.caliber,
+				he_steps,
+				first_hit_pos,
+				params
+			)
+		if struct_out != null:
+			struct_out.append({"steps": he_steps, "final_pos": first_hit_pos, "final_hit_type": int(he_final_result)})
+		return ArmorResultData.new(he_final_result, first_hit_pos, result_armor, impact_velocity, ship, first_hit_normal)
 
 	# APC Shell Processing Loop
 	var iteration := 0
@@ -646,10 +699,14 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 		# Above ~80° no realistic naval shell can maintain nose-first penetration.
 		# The energy model already makes this near-impossible, but the hard cap
 		# prevents numerical edge cases at extreme grazing angles.
-		elif impact_angle > params.auto_bounce:
+		elif impact_angle >= params.auto_bounce:
 			result = ArmorResult.RICOCHET
 			# Grazing hit — very little energy transferred to plate
-			var energy_loss := 0.1
+			var k_nose := get_k_nose(params)
+			var obliquity := calculate_obliquity_multiplier(impact_angle, armor_mm, params.caliber, k_nose)
+			deflection_mult = obliquity["deflection"]
+			var physics_armor := e_armor * deflection_mult
+			var energy_loss := clampf(shell.pen * cos(impact_angle) / maxf(physics_armor, 0.1), 0.0, 0.8)
 			shell.velocity = calculate_ricochet_velocity(
 				shell.velocity, hit_normal, impact_angle, energy_loss)
 			offset += hit_normal * EPSILON
@@ -708,6 +765,22 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 			rad_to_deg(impact_angle), deflection_mult, _log_normal.x, _log_normal.y, _log_normal.z,
 			hit_node.ship.name, hit_node.is_citadel])
 
+		# Collect structured data for binary armor sim log.
+		# pos = world-space entry point into this plate; vel = world-space exit velocity.
+		struct_steps.append({
+			"result":       int(result),
+			"is_citadel":   hit_node.is_citadel,
+			"armor_mm":     armor_mm,
+			"effective_mm": e_armor,
+			"impact_angle": impact_angle,
+			"pen":          shell.pen,
+			"integrity":    shell.integrity,
+			"pos":          ship_xform * hit_position,
+			"vel":          ship_basis * shell.velocity,
+			"impact_vel":   _log_vel,
+			"armor_path":   hit_node.armor_path,
+		})
+
 		# Check termination
 		if result == ArmorResult.SHATTER or result == ArmorResult.PARTIAL_PEN or shell.get_speed() < MIN_VELOCITY:
 			shell.calc_end_position()
@@ -761,10 +834,28 @@ func _process_hit(hit_node: ArmorPart, hit_position: Vector3, hit_normal: Vector
 
 	events.append("Final Hit Result: %s" % [HitResult.keys()[HitResult.values().find(damage_result)]])
 
-	if (damage_result == HitResult.CITADEL or damage_result == HitResult.CITADEL_OVERPEN) and (ship.ship_name == "Yamato" or ship.ship_name == "Wotan"):
-	# if true:
-		for e in events:
-			print(e)
+	# Write AP armor interaction data to the binary log (replaces per-ship debug print).
+	# Only logged when at least one armor plate interaction occurred (AP shells that
+	# actually reached the hull — HE shells and water hits return early, leaving
+	# struct_steps empty, and are therefore never logged here).
+	if not struct_steps.is_empty():
+		var _final_log_pos: Vector3 = ship_xform * shell.end_position
+		if is_instance_valid(ArmorSimLogger) and ArmorSimLogger._file != null:
+			ArmorSimLogger.record_hit(
+				projectile.get_shell_uid() if projectile != null else 0,
+				int(damage_result),
+				projectile.get_owner() if projectile != null else null,
+				ship,
+				ship.global_position,
+				ship.rotation.y,
+				int(params.type),
+				params.caliber,
+				struct_steps,
+				_final_log_pos,
+				params
+			)
+		if struct_out != null:
+			struct_out.append({"steps": struct_steps, "final_pos": _final_log_pos, "final_hit_type": int(damage_result)})
 
 	# Transform shell velocity back to world space for the result
 	var final_world_vel := ship_basis * shell.velocity

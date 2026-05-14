@@ -429,9 +429,15 @@ func get_ship_containing_point(world_point: Vector3, excluded_ships: Array = [])
 	return null
 
 
-## Perform a narrowphase precision raycast for a ship and return the hit info
-## as world-space data, or an empty dict on miss.
-## Returns { "armor": ArmorPart, "world_pos": Vector3, "world_normal": Vector3, "face_index": int }
+## Perform a narrowphase precision raycast for a ship and return the hit info.
+## Includes BOTH local-space and world-space hit data. Local-space values are
+## computed directly in the precision (origin-centered) world and have full
+## floating-point precision; world-space values are derived for display/logging
+## but should NOT be round-tripped back to local for further computation when
+## the ship is far from the world origin (precision will be lost).
+## Returns { "armor": ArmorPart, "local_pos": Vector3, "local_normal": Vector3,
+##           "world_pos": Vector3, "world_normal": Vector3, "face_index": int,
+##           "local_from": Vector3, "local_to": Vector3 }
 func narrowphase_hit(ship: Ship, world_from: Vector3, world_to: Vector3) -> Dictionary:
 	_sync_precision_bodies(ship)
 	var local_ray := world_ray_to_local(ship, world_from, world_to)
@@ -446,10 +452,14 @@ func narrowphase_hit(ship: Ship, world_from: Vector3, world_to: Vector3) -> Dict
 	if armor_part == null:
 		return {}
 
+	var local_pos: Vector3 = result.get('position')
+	var local_normal: Vector3 = (result.get('normal') as Vector3).normalized()
 	return {
 		"armor": armor_part,
-		"world_pos": local_to_world(ship, result.get('position')),
-		"world_normal": local_dir_to_world(ship, result.get('normal')).normalized(),
+		"local_pos": local_pos,
+		"local_normal": local_normal,
+		"world_pos": local_to_world(ship, local_pos),
+		"world_normal": local_dir_to_world(ship, local_normal).normalized(),
 		"face_index": result.get('face_index'),
 		"local_from": local_from,
 		"local_to": local_to,

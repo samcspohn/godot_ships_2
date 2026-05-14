@@ -31,10 +31,38 @@ struct Cluster {
 	int   cx, cz;        // cluster grid coordinates
 	int   x0, z0;        // inclusive cell range start
 	int   x1, z1;        // inclusive cell range end
+	int   sub_x0, sub_z0; // inclusive sub-cluster grid range start (level 1.5)
+	int   sub_x1, sub_z1; // inclusive sub-cluster grid range end
 	float max_sdf;       // max SDF in cluster  (most open water cell)
 	float min_sdf;       // min SDF in cluster  (closest to land)
 	float wx_center;     // world X of cluster centre
 	float wz_center;     // world Z of cluster centre
+	bool  navigable;     // max_sdf >= build clearance
+};
+
+// ---------------------------------------------------------------------------
+// SubCluster — finer-granularity routing primitive (Level 1.5).
+//
+// Sized to roughly match the agent's clearance scale: with 50 m cells and a
+// typical capital-ship clearance of ~200 m, a 4×4 sub is exactly one
+// ship-clearance wide.  Every macro Cluster contains an integer number of
+// sub-clusters (cluster_size_ must be divisible by sub_size_).
+//
+// Sub-cluster A* fills the gap between coarse cluster A* and per-cell A*,
+// drastically reducing the cell-grid work for ships whose physical scale
+// makes 50 m positioning decisions meaningless.
+// ---------------------------------------------------------------------------
+
+struct SubCluster {
+	int   id;
+	int   parent_cid;    // owning macro cluster id
+	int   scx, scz;      // sub-cluster grid coordinates (global)
+	int   x0, z0;        // inclusive cell range start (clamped to grid bounds)
+	int   x1, z1;        // inclusive cell range end
+	float max_sdf;       // max SDF in sub  (most open cell)
+	float min_sdf;       // min SDF in sub  (closest to land)
+	float wx_center;     // world X of sub centre
+	float wz_center;     // world Z of sub centre
 	bool  navigable;     // max_sdf >= build clearance
 };
 
@@ -77,6 +105,7 @@ class HpaGraph : public RefCounted {
 
 public:
 	static constexpr int DEFAULT_CLUSTER_SIZE = 16;
+	static constexpr int DEFAULT_SUB_SIZE     = 4;
 
 	// ------------------------------------------------------------------
 	// Lifecycle
@@ -129,10 +158,12 @@ public:
 	// No portal nodes in the new design; returns 0 for backward compat.
 	int get_node_count()    const { return 0; }
 	int get_cluster_count() const { return static_cast<int>(clusters_.size()); }
+	int get_sub_cluster_count() const { return static_cast<int>(sub_clusters_.size()); }
 
 	TypedArray<Dictionary> get_debug_nodes()    const;
 	TypedArray<Dictionary> get_debug_edges()    const;
 	TypedArray<Dictionary> get_debug_clusters() const;
+	TypedArray<Dictionary> get_debug_sub_clusters() const;
 	// Reads the currently-stamped global blocked state (reflects last stamp_threats call).
 	TypedArray<Dictionary> get_debug_threat_clusters() const;
 	// Pure query: computes blocked clusters for the given threat set without touching
@@ -158,17 +189,22 @@ private:
 	Ref<NavigationMap>          nav_map_;
 	float                       clearance_    = 0.0f;
 	int                         cluster_size_ = DEFAULT_CLUSTER_SIZE;
+	int                         sub_size_     = DEFAULT_SUB_SIZE;
+	int                         subs_per_macro_side_ = DEFAULT_CLUSTER_SIZE / DEFAULT_SUB_SIZE;
 
 	// Cached grid / cluster layout (populated by build())
 	int   grid_w_  = 0;
 	int   grid_h_  = 0;
 	int   ncx_     = 0;  // number of clusters along X
 	int   ncz_     = 0;  // number of clusters along Z
+	int   nsubx_   = 0;  // number of sub-clusters along X (= ncx_ * subs_per_macro_side_)
+	int   nsubz_   = 0;  // number of sub-clusters along Z
 	float cell_size_ = 1.0f;
 	float min_x_   = 0.0f;
 	float min_z_   = 0.0f;
 
 	std::vector<Cluster>             clusters_;
+	std::vector<SubCluster>          sub_clusters_;
 
 	// Per-cluster obstacle block counts (parallel to clusters_)
 	std::vector<int>                 cluster_block_count_;
@@ -178,6 +214,19 @@ private:
 	// Separate from cluster_block_count_ so obstacle blocking and threat
 	// blocking can be cleared independently.
 	std::vector<uint8_t>             cluster_threat_blocked_;
+
+	// Compact list of currently threat-blocked cluster ids.  Rebuilt by
+	// stamp_threats()/clear_threats() in lock-step with cluster_threat_blocked_,
+	// so threat_clear() iterates only the small subset instead of every cluster.
+	std::vector<int>                 threat_blocked_cids_;
+
+	// O(1) cached count of currently threat-blocked clusters; replaces the
+	// per-query linear scan that used to compute threat_layer_active.
+	int                              threat_blocked_count_ = 0;
+
+	// Precomputed cluster A* step costs (cardinal / diagonal).  Set in build().
+	float                            cardinal_step_cost_ = 0.0f;
+	float                            diagonal_step_cost_ = 0.0f;
 
 	// Registered obstacles (keyed by id) for removal
 	std::unordered_map<int, HpaObstacle> obstacles_;
@@ -239,6 +288,7 @@ private:
 	// ------------------------------------------------------------------
 
 	void build_clusters();
+	void build_sub_clusters();
 
 	// Threat rasterization onto the Level-1 cluster grid.
 	// stamp_threats() tests every navigable cluster: clusters within a
@@ -259,6 +309,16 @@ private:
 	std::vector<int> cluster_astar(
 			int from_cid, int to_cid, float q_cl) const;
 
+	/// A* over the sub-cluster grid.  Returns ordered sub-cluster IDs from
+	/// from_sid to to_sid (inclusive), or empty if no path exists.
+	/// Sub-clusters with max_sdf < q_cl are treated as impassable.
+	/// If allowed_macros is non-null, only sub-clusters whose parent_cid bit
+	/// is set in the supplied per-macro mask are considered passable.  This
+	/// constrains the search to a corridor of macros along an abstract path.
+	std::vector<int> sub_cluster_astar(
+			int from_sid, int to_sid, float q_cl,
+			const std::vector<uint8_t>* allowed_macros = nullptr) const;
+
 	// ------------------------------------------------------------------
 	// Inline coordinate / SDF helpers
 	// ------------------------------------------------------------------
@@ -273,6 +333,20 @@ private:
 
 	inline int cell_cz(int gz) const {
 		return std::min(gz / cluster_size_, ncz_ - 1);
+	}
+
+	// --- Sub-cluster indexing ---
+
+	inline int sub_id(int scx, int scz) const {
+		return scz * nsubx_ + scx;
+	}
+
+	inline int cell_scx(int gx) const {
+		return std::min(gx / sub_size_, nsubx_ - 1);
+	}
+
+	inline int cell_scz(int gz) const {
+		return std::min(gz / sub_size_, nsubz_ - 1);
 	}
 
 	inline void grid_to_world(int gx, int gz, float &wx, float &wz) const {

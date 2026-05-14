@@ -9,7 +9,7 @@ var last_min_angle: float = 0.0
 var last_max_angle: float = 0.0
 
 # UI Elements
-@onready var rotation_limits_enabled = $VBoxContainer/RotationLimits/EnabledContainer/EnabledCheckBox
+@onready var slew_limits_enabled = $VBoxContainer/RotationLimits/EnabledContainer/EnabledCheckBox
 @onready var min_angle_spinner = $VBoxContainer/RotationLimits/MinAngleContainer/MinAngleSpinBox
 @onready var max_angle_spinner = $VBoxContainer/RotationLimits/MaxAngleContainer/MaxAngleSpinBox
 @onready var apply_button = $VBoxContainer/ApplyButton
@@ -26,7 +26,7 @@ func _ready():
 	max_angle_spinner.max_value = 360
 
 	# Initialize UI
-	rotation_limits_enabled.toggled.connect(_on_rotation_limits_toggled)
+	slew_limits_enabled.toggled.connect(_on_rotation_limits_toggled)
 	min_angle_spinner.value_changed.connect(_on_min_angle_changed)
 	max_angle_spinner.value_changed.connect(_on_max_angle_changed)
 	apply_button.pressed.connect(_on_apply_pressed)
@@ -34,8 +34,8 @@ func _ready():
 func _process(delta):
 	# Check if turret angles have changed (e.g., from gizmo manipulation)
 	if is_instance_valid(turret):
-		var current_min_angle = rad_to_deg_0_360(turret.min_rotation_angle)
-		var current_max_angle = rad_to_deg_0_360(turret.max_rotation_angle)
+		var current_min_angle = rad_to_deg_0_360(turret.slew_min_angle)
+		var current_max_angle = rad_to_deg_0_360(turret.slew_max_angle)
 
 		# Only update if values are different to avoid infinite loops
 		if abs(current_min_angle - last_min_angle) > 0.01:
@@ -80,11 +80,11 @@ func update_editor():
 		return
 
 	# Update UI based on turret properties
-	rotation_limits_enabled.button_pressed = turret.rotation_limits_enabled
+	slew_limits_enabled.button_pressed = turret.slew_limits_enabled
 
 	# Update angles and store their values (convert to 0-360 range)
-	var min_angle_deg = rad_to_deg_0_360(turret.min_rotation_angle)
-	var max_angle_deg = rad_to_deg_0_360(turret.max_rotation_angle)
+	var min_angle_deg = rad_to_deg_0_360(turret.slew_min_angle)
+	var max_angle_deg = rad_to_deg_0_360(turret.slew_max_angle)
 
 	min_angle_spinner.value = min_angle_deg
 	max_angle_spinner.value = max_angle_deg
@@ -93,8 +93,8 @@ func update_editor():
 	last_max_angle = max_angle_deg
 
 	# Update enabled states
-	min_angle_spinner.editable = rotation_limits_enabled.button_pressed
-	max_angle_spinner.editable = rotation_limits_enabled.button_pressed
+	min_angle_spinner.editable = slew_limits_enabled.button_pressed
+	max_angle_spinner.editable = slew_limits_enabled.button_pressed
 
 
 func update_debug_info(text: String):
@@ -111,8 +111,8 @@ func _on_rotation_limits_toggled(enabled):
 		return
 
 	undo_redo.create_action("Toggle Rotation Limits")
-	undo_redo.add_do_property(turret, "rotation_limits_enabled", enabled)
-	undo_redo.add_undo_property(turret, "rotation_limits_enabled", turret.rotation_limits_enabled)
+	undo_redo.add_do_property(turret, "slew_limits_enabled", enabled)
+	undo_redo.add_undo_property(turret, "slew_limits_enabled", turret.slew_limits_enabled)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
 	undo_redo.commit_action()
@@ -127,8 +127,8 @@ func _on_min_angle_changed(value):
 	var rad_value = deg_0_360_to_rad(value)
 
 	undo_redo.create_action("Change Min Angle")
-	undo_redo.add_do_property(turret, "min_rotation_angle", rad_value)
-	undo_redo.add_undo_property(turret, "min_rotation_angle", turret.min_rotation_angle)
+	undo_redo.add_do_property(turret, "slew_min_angle", rad_value)
+	undo_redo.add_undo_property(turret, "slew_min_angle", turret.slew_min_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
 	undo_redo.commit_action()
@@ -143,8 +143,8 @@ func _on_max_angle_changed(value):
 	var rad_value = deg_0_360_to_rad(value)
 
 	undo_redo.create_action("Change Max Angle")
-	undo_redo.add_do_property(turret, "max_rotation_angle", rad_value)
-	undo_redo.add_undo_property(turret, "max_rotation_angle", turret.max_rotation_angle)
+	undo_redo.add_do_property(turret, "slew_max_angle", rad_value)
+	undo_redo.add_undo_property(turret, "slew_max_angle", turret.slew_max_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
 	undo_redo.commit_action()

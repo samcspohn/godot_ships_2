@@ -76,6 +76,16 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 	# Track total damage
 	total_damage += damage
 
+	# --- Replay recording (v3) -----------------------------------------------
+	# Emit a SHELL_DAMAGE event so a replay can rebuild stats counters as the
+	# playhead advances. Recorder lives at /root/ReplayRecorder when active.
+	if _ship and _ship.is_inside_tree():
+		var tree := _ship.get_tree()
+		if tree:
+			var recorder := tree.root.get_node_or_null("ReplayRecorder")
+			if recorder:
+				recorder.record_shell_damage(_ship, damaged_ship, hit_type, damage, is_secondary, position)
+
 	# Track damage by weapon type
 	if is_secondary:
 		sec_damage += damage

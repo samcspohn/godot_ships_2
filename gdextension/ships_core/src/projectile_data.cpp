@@ -33,6 +33,8 @@ void ProjectileData::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_frame_count", "frame_count"), &ProjectileData::set_frame_count);
 	ClassDB::bind_method(D_METHOD("set_exclude", "exclude"), &ProjectileData::set_exclude);
 	ClassDB::bind_method(D_METHOD("set_emitter_id", "emitter_id"), &ProjectileData::set_emitter_id);
+	ClassDB::bind_method(D_METHOD("get_shell_uid"), &ProjectileData::get_shell_uid);
+	ClassDB::bind_method(D_METHOD("set_shell_uid", "shell_uid"), &ProjectileData::set_shell_uid);
 
 	// Bind utility methods
 	ClassDB::bind_method(D_METHOD("increment_frame_count"), &ProjectileData::increment_frame_count);
@@ -48,6 +50,7 @@ void ProjectileData::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "frame_count"), "set_frame_count", "get_frame_count");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "exclude"), "set_exclude", "get_exclude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "emitter_id"), "set_emitter_id", "get_emitter_id");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shell_uid"), "set_shell_uid", "get_shell_uid");
 }
 
 ProjectileData::ProjectileData() {
@@ -59,6 +62,7 @@ ProjectileData::ProjectileData() {
 	owner = nullptr;
 	frame_count = 0;
 	emitter_id = -1;
+	shell_uid = 0;
 }
 
 ProjectileData::~ProjectileData() {
@@ -77,6 +81,7 @@ void ProjectileData::initialize(const Vector3 &pos, const Vector3 &vel, double t
 	frame_count = 0;
 	exclude = _exclude;
 	emitter_id = -1;
+	shell_uid = 0;
 }
 
 // Getters
@@ -163,4 +168,12 @@ void ProjectileData::set_emitter_id(int p_emitter_id) {
 
 void ProjectileData::increment_frame_count() {
 	frame_count++;
+}
+
+uint32_t ProjectileData::get_shell_uid() const {
+	return shell_uid;
+}
+
+void ProjectileData::set_shell_uid(uint32_t p_shell_uid) {
+	shell_uid = p_shell_uid;
 }

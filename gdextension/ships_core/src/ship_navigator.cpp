@@ -40,8 +40,8 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bot_id"), &ShipNavigator::get_bot_id);
 
 	// Navigation commands
-	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance", "heading_weight"),
-		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f), DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("navigate_to", "target", "heading", "hold_radius", "heading_tolerance", "heading_weight", "prefer_reverse"),
+		&ShipNavigator::navigate_to, DEFVAL(0.0f), DEFVAL(0.2618f), DEFVAL(0.0f), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("stop"), &ShipNavigator::stop);
 
 	ClassDB::bind_method(D_METHOD("set_grounded", "grounded"), &ShipNavigator::set_grounded);
@@ -260,13 +260,14 @@ void ShipNavigator::set_state(
 // Navigation commands
 // ============================================================================
 
-void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance, float p_heading_weight) {
+void ShipNavigator::navigate_to(Vector3 p_target, float p_heading, float p_hold_radius, float p_heading_tolerance, float p_heading_weight, bool p_prefer_reverse) {
 	Vector2 new_pos(p_target.x, p_target.z);
 	target.position = new_pos;
 	target.heading = p_heading;
 	target.hold_radius = p_hold_radius;
 	target.heading_tolerance = p_heading_tolerance;
 	target.heading_weight = clamp_f(p_heading_weight, 0.0f, 1.0f);
+	target.prefer_reverse = p_prefer_reverse;
 
 	// navigate_to() is the synchronous planning trigger.
 	run_plan_sync();
@@ -980,6 +981,13 @@ void ShipNavigator::update_normal(float delta) {
 		direction = DesiredDirection::BACKWARD;
 	}
 
+	// Honor the behavior's explicit reverse request.  Force BACKWARD for the
+	// en-route and approach phases.  The maneuver and arrived zones govern
+	// their own direction internally (heading alignment overrides there).
+	if (target.prefer_reverse) {
+		direction = DesiredDirection::BACKWARD;
+	}
+
 	// Heading error to desired heading at destination
 	float heading_error = std::abs(angle_difference(state.heading, target.heading));
 	bool heading_aligned = heading_error < target.heading_tolerance;
@@ -1082,9 +1090,10 @@ void ShipNavigator::update_normal(float delta) {
 			// Steer toward the destination position (not just the arrival heading)
 			// so the ship doesn't sail past a destination that is perpendicular
 			// to its current heading.
-			desired_rudder = compute_rudder_to_position(target.position);
+			const bool reversing_approach = target.prefer_reverse;
+			desired_rudder = compute_rudder_to_position(target.position, reversing_approach);
 			desired_magnitude = compute_magnitude_for_approach(dist_to_dest);
-			direction = DesiredDirection::FORWARD;
+			direction = reversing_approach ? DesiredDirection::BACKWARD : DesiredDirection::FORWARD;
 		}
 	} else if (!path_exhausted) {
 		if (direction == DesiredDirection::BACKWARD) {
@@ -2011,8 +2020,10 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 
 		} else {
 			// ---- Normal: predict_arc_to_heading + arrival/alignment scoring ----
+			// For prefer_reverse arcs: align bow AWAY from waypoint (stern toward it).
+			const bool rev_align = target.prefer_reverse && (cand_throttle < 0);
 			auto arc = predict_arc_to_heading(cand_rudder, cand_throttle, wp_target,
-			                                   sim_lookahead, sim_max_time);
+			                                   sim_lookahead, sim_max_time, rev_align);
 			if (arc.size() < 2) { steering_short_arc_rejects++; continue; }
 			steering_candidates_simulated++;
 			steering_arc_points_simulated += static_cast<int>(arc.size());
@@ -2047,11 +2058,13 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 					float d = pt.position.distance_to(wp_target);
 					if (d < endpoint_dist) endpoint_dist = d;
 				}
-				// Reverse candidates: score remaining travel at forward speed
-				// (ship will switch to forward after bow-alignment).
-				const float endpoint_speed = (cand_throttle < 0)
-					? throttle_to_speed(3)
-					: std::abs(arc.back().speed);
+				// prefer_reverse arcs stay in reverse all the way to the waypoint;
+				// non-prefer_reverse reverse fallbacks do a U-turn then go forward.
+				const float endpoint_speed = (target.prefer_reverse && cand_throttle < 0)
+					? std::abs(throttle_to_speed(-1))
+					: (cand_throttle < 0)
+						? throttle_to_speed(3)
+						: std::abs(arc.back().speed);
 				nav_score = alignment_time + endpoint_dist / std::max(endpoint_speed, 1.0f);
 			}
 
@@ -2551,7 +2564,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 
 std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudder, int commanded_throttle,
 															Vector2 target_pos, float lookahead_distance,
-															float max_time) const {
+															float max_time, bool reverse_alignment) const {
 	std::vector<ArcPoint> arc;
 	arc.reserve(64);
 
@@ -2668,6 +2681,10 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 				Vector2 to_target = target_pos - sim_pos;
 				if (to_target.length() > 1.0f) {
 					float desired_heading = std::atan2(to_target.x, to_target.y);
+					// For reverse arcs, check that the bow faces AWAY from the
+					// target (i.e. stern faces the target) rather than bow-toward.
+					if (reverse_alignment)
+						desired_heading = normalize_angle(desired_heading + static_cast<float>(Math_PI));
 					float heading_error = std::abs(angle_difference(sim_heading, desired_heading));
 					if (heading_error < alignment_threshold) {
 						break;

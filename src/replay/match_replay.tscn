@@ -1,0 +1,170 @@
+[gd_scene format=3 uid="uid://dqgbqnxyg437"]
+
+[ext_resource type="Script" uid="uid://ct2h1vj1n4k2o" path="res://src/replay/match_replay.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://6nw8wymt8ume" path="res://src/replay/shell_replayer.gd" id="2_shell"]
+[ext_resource type="Script" uid="uid://blebawk5hed72" path="res://src/replay/torpedo_replayer.gd" id="3_torpedo"]
+
+[sub_resource type="Environment" id="Environment_replay"]
+background_mode = 1
+background_color = Color(0.48170042, 0.7273144, 0.83541787, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.72783875, 0.8694468, 0.93703485, 1)
+ambient_light_energy = 0.4
+ssr_max_steps = 512
+ssr_fade_in = 0.43922582
+ssr_fade_out = 42.224144
+ssr_depth_tolerance = 128.0
+ssao_enabled = true
+ssao_intensity = 0.14
+ssao_power = 28.47406
+ssao_detail = 5.0
+ssao_horizon = 0.0
+ssao_sharpness = 0.0
+ssao_ao_channel_affect = 1.0
+ssil_intensity = 0.81
+glow_enabled = true
+glow_intensity = 0.25
+glow_hdr_threshold = 1.2
+glow_hdr_luminance_cap = 256.0
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.45490196, 0.7058824, 0.8156863, 1)
+fog_light_energy = 1.3
+fog_sun_scatter = 0.11
+fog_density = 0.5175
+fog_depth_curve = 0.9330345
+fog_depth_begin = 0.0
+fog_depth_end = 50000.0
+volumetric_fog_density = 0.0
+volumetric_fog_length = 50000.0
+volumetric_fog_detail_spread = 0.5
+
+[node name="MatchReplay" type="Node" unique_id=913428629]
+script = ExtResource("1_script")
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="." unique_id=58047283]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="SubViewportContainer" unique_id=531711481]
+handle_input_locally = false
+audio_listener_enable_3d = true
+size = Vector2i(1920, 1080)
+render_target_update_mode = 4
+
+[node name="World3D" type="Node3D" parent="SubViewportContainer/SubViewport" unique_id=1016003626]
+
+[node name="GhostShipsRoot" type="Node3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=1135993624]
+
+[node name="ShellReplayer" type="Node3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=1939040480]
+script = ExtResource("2_shell")
+
+[node name="TorpedoReplayer" type="Node3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=742100497]
+script = ExtResource("3_torpedo")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="SubViewportContainer/SubViewport/World3D" unique_id=1234567890]
+environment = SubResource("Environment_replay")
+
+[node name="ReplayCamera" type="Camera3D" parent="SubViewportContainer/SubViewport/World3D" unique_id=694739479]
+transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 3000, -3000)
+fov = 40.0
+near = 5.0
+far = 60000.0
+
+[node name="AudioListener3D" type="AudioListener3D" parent="SubViewportContainer/SubViewport/World3D/ReplayCamera" unique_id=844736211]
+current = true
+
+[node name="UI" type="CanvasLayer" parent="." unique_id=1513835804]
+
+[node name="UIRoot" type="Control" parent="UI" unique_id=1396224112]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TopBar" type="PanelContainer" parent="UI/UIRoot" unique_id=1170732924]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 50.0
+grow_horizontal = 2
+
+[node name="HBox" type="HBoxContainer" parent="UI/UIRoot/TopBar" unique_id=1662682231]
+layout_mode = 2
+
+[node name="BackButton" type="Button" parent="UI/UIRoot/TopBar/HBox" unique_id=143203013]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2
+text = "< Back"
+
+[node name="MatchInfoLabel" type="Label" parent="UI/UIRoot/TopBar/HBox" unique_id=1398539389]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Match Replay"
+vertical_alignment = 1
+
+[node name="ShipFollowOption" type="OptionButton" parent="UI/UIRoot/TopBar/HBox" unique_id=1499639325]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+
+[node name="SidePanel" type="PanelContainer" parent="UI/UIRoot" unique_id=1387446034]
+layout_mode = 1
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_top = 55.0
+offset_right = 260.0
+offset_bottom = -75.0
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UI/UIRoot/SidePanel" unique_id=843946942]
+layout_mode = 2
+
+[node name="KillFeedTitle" type="Label" parent="UI/UIRoot/SidePanel/VBox" unique_id=1707700670]
+layout_mode = 2
+text = "Kill Feed"
+
+[node name="KillFeed" type="VBoxContainer" parent="UI/UIRoot/SidePanel/VBox" unique_id=1791303636]
+layout_mode = 2
+
+[node name="BottomBar" type="PanelContainer" parent="UI/UIRoot" unique_id=1328398174]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -75.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="VBox" type="VBoxContainer" parent="UI/UIRoot/BottomBar" unique_id=2079702696]
+layout_mode = 2
+
+[node name="Controls" type="HBoxContainer" parent="UI/UIRoot/BottomBar/VBox" unique_id=784306263]
+layout_mode = 2
+
+[node name="PlayPauseButton" type="Button" parent="UI/UIRoot/BottomBar/VBox/Controls" unique_id=1470860374]
+custom_minimum_size = Vector2(50, 0)
+layout_mode = 2
+text = "⏸"
+
+[node name="SpeedContainer" type="HBoxContainer" parent="UI/UIRoot/BottomBar/VBox/Controls" unique_id=344076354]
+layout_mode = 2
+
+[node name="TimeLabel" type="Label" parent="UI/UIRoot/BottomBar/VBox/Controls" unique_id=1255686355]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "0:00 / 0:00"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="Scrubber" type="HSlider" parent="UI/UIRoot/BottomBar/VBox" unique_id=364516365]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.001
