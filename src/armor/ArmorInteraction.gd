@@ -699,10 +699,14 @@ func _process_hit(hit_node: ArmorPart, world_hit_position: Vector3, world_hit_no
 		# Above ~80° no realistic naval shell can maintain nose-first penetration.
 		# The energy model already makes this near-impossible, but the hard cap
 		# prevents numerical edge cases at extreme grazing angles.
-		elif impact_angle > params.auto_bounce:
+		elif impact_angle >= params.auto_bounce:
 			result = ArmorResult.RICOCHET
 			# Grazing hit — very little energy transferred to plate
-			var energy_loss := 0.1
+			var k_nose := get_k_nose(params)
+			var obliquity := calculate_obliquity_multiplier(impact_angle, armor_mm, params.caliber, k_nose)
+			deflection_mult = obliquity["deflection"]
+			var physics_armor := e_armor * deflection_mult
+			var energy_loss := clampf(shell.pen * cos(impact_angle) / maxf(physics_armor, 0.1), 0.0, 0.8)
 			shell.velocity = calculate_ricochet_velocity(
 				shell.velocity, hit_normal, impact_angle, energy_loss)
 			offset += hit_normal * EPSILON

@@ -85,6 +85,10 @@ func damage(delta):
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
+		# --- replay hook (v4): record the actual damage applied this tick so
+		# the replay HUD can rebuild fire_damage / total_damage bidirectionally.
+		if _Utils.authority() and dmg_sunk[0] > 0.0:
+			ReplayRecorder.record_fire_damage(_owner, _ship, dmg_sunk[0])
 
 @rpc("authority", "unreliable_ordered")
 func _sync(l):

@@ -22,6 +22,8 @@ const FIRE_STARTED      = 0x30
 const FIRE_ENDED        = 0x31
 const FLOOD_STARTED     = 0x32
 const FLOOD_ENDED       = 0x33
+const FIRE_DAMAGE       = 0x34
+const FLOOD_DAMAGE      = 0x35
 const CONSUMABLE_USED   = 0x40
 const CONSUMABLE_ENDED  = 0x41
 const DETECTION_CHANGED = 0x50
@@ -31,7 +33,7 @@ const SHIP_SUNK         = 0x60
 # File format magic / version
 # ---------------------------------------------------------------------------
 const MAGIC: int   = 0x52455050  # "REPP"
-const VERSION: int = 3
+const VERSION: int = 4
 
 # ---------------------------------------------------------------------------
 # Ship manifest entry (populated from the header when reading a replay)

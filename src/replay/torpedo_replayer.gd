@@ -150,15 +150,18 @@ func update_torpedos(current_time: float) -> void:
 		# Allocate at the torpedo's current position, not at start_pos.  This
 		# ensures seek-restored torpedoes start their trail where they actually
 		# are rather than dragging a line from the original fire point.
+		# Wake stays on the water surface (y ≈ 0.2) regardless of the torpedo
+		# itself diving to y = -2.0, mirroring torpedo_manager._process().
+		var wake_pos: Vector3 = Vector3(pos.x, 0.2, pos.z)
 		if not is_seeking and entry.emitter_id < 0:
 			if is_instance_valid(HitEffects) and HitEffects.wake_template != null:
 				entry.emitter_id = HitEffects.wake_template.allocate_emitter(
-					pos, 1.0, 0.2, 1.0, 0.0)
+					wake_pos, 1.0, 0.2, 1.0, 0.0)
 				_active_torpedos[torp_id] = entry
 
 		# Update existing wake emitter position.
 		if entry.emitter_id >= 0:
-			ParticleTemplate.update_emitter_position(entry.emitter_id, pos)
+			ParticleTemplate.update_emitter_position(entry.emitter_id, wake_pos)
 
 	# Deferred removal to avoid mutating the dict while iterating.
 	for dead_id in to_remove:

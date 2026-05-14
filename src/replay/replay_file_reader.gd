@@ -17,6 +17,8 @@ const EVT_FIRE_STARTED     := 0x30
 const EVT_FIRE_ENDED       := 0x31
 const EVT_FLOOD_STARTED    := 0x32
 const EVT_FLOOD_ENDED      := 0x33
+const EVT_FIRE_DAMAGE      := 0x34
+const EVT_FLOOD_DAMAGE     := 0x35
 const EVT_CONSUMABLE_USED  := 0x40
 const EVT_CONSUMABLE_ENDED := 0x41
 const EVT_DETECTION_CHANGED := 0x50
@@ -33,6 +35,11 @@ var snapshot_index: Array = []       # [{timestamp: float, offset: int}, ...]
 var total_duration: float = 0.0
 var winning_team: int = -1
 var end_stats: Dictionary = {}       # ship_id -> stats dict
+
+## Cached parsed event stream, populated once at load_file() time.
+## Excludes EVT_SNAPSHOT (those are accessed via snapshot_index instead).
+## Sorted by timestamp ascending, which matches the on-disk write order.
+var all_events: Array = []           # Array[Dictionary]
 
 # ---------------------------------------------------------------------------
 # Private state
@@ -81,8 +88,8 @@ func load_file(path: String) -> Error:
 	}
 	_ship_count = ship_count
 	_version = version
-	if version != 2 and version != 3:
-		push_warning("ReplayFileReader: version %d loaded (expected 2 or 3); some fields may be missing or wrong" % version)
+	if version != 2 and version != 3 and version != 4:
+		push_warning("ReplayFileReader: version %d loaded (expected 2-4); some fields may be missing or wrong" % version)
 
 	# ---- Ship manifest ----
 	ships.clear()
@@ -111,8 +118,10 @@ func load_file(path: String) -> Error:
 			var offset: int = _reader.get_64()
 			snapshot_index.append({"timestamp": ts, "offset": offset})
 
-	# ---- Scan for MATCH_END ----
-	_scan_for_match_end()
+	# ---- Single-pass walk: cache every event AND find MATCH_END ----
+	# Replaces the old _scan_for_match_end() which threw away parsed events.
+	# Snapshots are skipped because they're huge and accessed via snapshot_index.
+	_build_event_cache()
 
 	return OK
 
@@ -151,47 +160,74 @@ func get_snapshot_after(t: float) -> Dictionary:
 	return _read_snapshot_at_index(next)
 
 
-## Returns all parsed events whose timestamps fall in [t_start, t_end].
-## Each event is a Dictionary with at minimum {timestamp, type, ...payload fields}.
+## Returns all cached events whose timestamps fall in [t_start, t_end].
+## Backed by `all_events` (parsed once at load_file time): this is a
+## binary-search slice, no file I/O or Dictionary allocation.
 func read_events_in_range(t_start: float, t_end: float) -> Array:
 	var result: Array = []
-	if snapshot_index.is_empty():
+	if all_events.is_empty():
 		return result
+	var lo: int = _events_lower_bound(t_start)
+	var n: int  = all_events.size()
+	var i: int  = lo
+	while i < n:
+		var ev: Dictionary = all_events[i]
+		var ts: float = ev.get("timestamp", 0.0)
+		if ts > t_end:
+			break
+		result.append(ev)
+		i += 1
+	return result
 
-	# Find file offset to start reading from
-	var snap_idx := _binary_search_snapshot(t_start)
-	var start_offset: int
-	if snap_idx < 0:
-		# Before any snapshot — start after the manifest (end of header block)
-		# Seek back to just after the manifest: cheapest is to re-read from there.
-		# We'll start at offset 0 and skip to events after manifest.
-		start_offset = _find_events_start()
-	else:
-		start_offset = snapshot_index[snap_idx].offset
 
-	_reader.seek(start_offset)
+## Find the first index in all_events whose timestamp is >= t.
+## Returns all_events.size() if every event is earlier than t.
+func _events_lower_bound(t: float) -> int:
+	var lo: int = 0
+	var hi: int = all_events.size()
+	while lo < hi:
+		var mid: int = (lo + hi) >> 1
+		if all_events[mid].get("timestamp", 0.0) < t:
+			lo = mid + 1
+		else:
+			hi = mid
+	return lo
 
-	# Read events sequentially
-	var safe_limit: int = _data.size() - 5   # need at least 5 bytes for a preamble
+
+## Walk the entire event stream once, populating `all_events` and capturing
+## MATCH_END metadata.  Called once from load_file().
+func _build_event_cache() -> void:
+	all_events.clear()
+	var start: int = _find_events_start()
+	if start <= 0:
+		return
+
+	_reader.seek(start)
+	var safe_limit: int = _data.size() - 5
 	while _reader.get_position() < safe_limit:
 		var event_offset: int = _reader.get_position()
 		var ts: float   = _reader.get_float()
 		var etype: int  = _reader.get_u8()
-
-		if ts > t_end:
-			# Past the end — stop
-			break
-
 		var evt := _parse_event(_reader, ts, etype)
-		if ts >= t_start:
-			result.append(evt)
 
-		# Safety: if parse consumed nothing (unknown type), break to avoid infinite loop
-		if _reader.get_position() == event_offset:
+		# MATCH_END: capture summary, do NOT cache the heavy ship_stats payload.
+		if etype == EVT_MATCH_END:
+			total_duration = ts
+			winning_team   = evt.get("winning_team", -1)
+			end_stats.clear()
+			for s in evt.get("ship_stats", []):
+				end_stats[s["ship_id"]] = s
+			# MATCH_END terminates the stream.
+			return
+
+		# Skip SNAPSHOT events — redundant with snapshot_index, big payload.
+		if etype != EVT_SNAPSHOT:
+			all_events.append(evt)
+
+		# Safety: bail on a non-progressing parser.
+		if _reader.get_position() == event_offset and etype != EVT_MATCH_START:
 			push_warning("ReplayFileReader: parser made no progress at offset %d (type 0x%X)" % [event_offset, etype])
 			break
-
-	return result
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +457,14 @@ func _parse_event(reader: StreamPeerBuffer, timestamp: float, event_type: int) -
 			d["zone_index"]       = reader.get_u8()
 			d["caused_by_ship_id"] = reader.get_u8()
 
+		EVT_FIRE_DAMAGE, EVT_FLOOD_DAMAGE:
+			# Per-tick (1 Hz) DOT damage applied by an active fire/flood.
+			# attacker = ship credited with starting the burn/flood.
+			# victim   = ship taking the damage.
+			d["attacker_ship_id"] = reader.get_u8()
+			d["victim_ship_id"]   = reader.get_u8()
+			d["damage"]           = reader.get_float()
+
 		EVT_CONSUMABLE_USED, EVT_CONSUMABLE_ENDED:
 			d["ship_id"] = reader.get_u8()
 			d["slot_id"] = reader.get_u8()
@@ -476,36 +520,10 @@ func _read_snapshot_at_index(idx: int) -> Dictionary:
 
 ## Scan the event stream for a MATCH_END event and cache its data.
 func _scan_for_match_end() -> void:
-	# Start scanning from just after the manifest (after the snapshot index offset field).
-	# The simplest approach: start from just after the header block.
-	# We'll walk every event linearly from the first event after the manifest.
-	var start: int = _find_events_start()
-	if start <= 0:
-		return
-
-	_reader.seek(start)
-	var safe_limit: int = _data.size() - 5
-
-	while _reader.get_position() < safe_limit:
-		var _event_start: int = _reader.get_position()
-		var ts: float   = _reader.get_float()
-		var etype: int  = _reader.get_u8()
-
-		if etype == EVT_MATCH_END:
-			var evt := _parse_event(_reader, ts, etype)
-			total_duration = ts
-			winning_team   = evt.get("winning_team", -1)
-			end_stats.clear()
-			for s in evt.get("ship_stats", []):
-				end_stats[s["ship_id"]] = s
-			return
-
-		# Skip this event by parsing it (we need to advance the reader past its payload)
-		var before: int = _reader.get_position()
-		_parse_event(_reader, ts, etype)
-		# If parse didn't advance, break to prevent infinite loop
-		if _reader.get_position() == before and etype != EVT_MATCH_START:
-			break
+	# Deprecated: MATCH_END capture is now folded into _build_event_cache(),
+	# which makes a single pass and caches non-snapshot events along the way.
+	# Kept as a no-op stub so any external caller (none in-tree) still links.
+	pass
 
 
 ## Returns the byte offset of the first event after the ship manifest.

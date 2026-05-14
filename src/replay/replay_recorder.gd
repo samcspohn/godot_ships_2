@@ -471,6 +471,28 @@ func record_flood_ended(ship: Ship, zone_index: int) -> void:
 	_file.store_8(0xFF)
 
 # ---------------------------------------------------------------------------
+# Fire / flood per-tick damage events (v4)
+# ---------------------------------------------------------------------------
+## Recorded once per second from Fire.damage() / Flood.damage() with the
+## actual damage applied that tick.  Lets the replay accumulate fire_damage
+## and flood_damage totals (and total_damage) bidirectionally.
+func record_fire_damage(attacker: Ship, victim: Ship, damage: float) -> void:
+	if not _match_active or _file == null:
+		return
+	_write_preamble(ReplayEvent.FIRE_DAMAGE)
+	_file.store_8(_ship_to_id.get(attacker, 255))
+	_file.store_8(_ship_to_id.get(victim,   255))
+	_file.store_float(damage)
+
+func record_flood_damage(attacker: Ship, victim: Ship, damage: float) -> void:
+	if not _match_active or _file == null:
+		return
+	_write_preamble(ReplayEvent.FLOOD_DAMAGE)
+	_file.store_8(_ship_to_id.get(attacker, 255))
+	_file.store_8(_ship_to_id.get(victim,   255))
+	_file.store_float(damage)
+
+# ---------------------------------------------------------------------------
 # Consumable events  (connected via bind() in begin_match)
 # ---------------------------------------------------------------------------
 func _on_consumable_used(item: ConsumableItem, ship: Ship) -> void:

@@ -170,6 +170,18 @@ func _find_gun_nodes() -> void:
 			else:
 				_fire_particles.append(null)
 
+	# Flood emitters — same pattern as fires.  Each Flood owns a `flood_emitter`
+	# ParticleEmitter (suppressed by _collect_and_disable_particle_emitters) that
+	# is driven externally from the snapshot's flood_mask.
+	_flood_particles.clear()
+	var flood_manager: FloodManager = _model.find_child("FloodManager", true, false) as FloodManager
+	if flood_manager != null:
+		for fl: Flood in flood_manager.floods:
+			if is_instance_valid(fl):
+				_flood_particles.append(fl.flood_emitter)
+			else:
+				_flood_particles.append(null)
+
 
 # ---------------------------------------------------------------------------
 # Processing control
@@ -416,11 +428,22 @@ func set_active_fires(mask: int) -> void:
 				emitter.stop_emitting()
 
 
+## Drive each flood-zone ParticleEmitter from the snapshot's flood mask.
+## Mirrors set_active_fires(): uses the unified ParticleEmitter API and only
+## toggles when the desired state differs from the current state.
 func set_active_floods(mask: int) -> void:
 	for i in _flood_particles.size():
-		var p = _flood_particles[i]
-		if p != null and is_instance_valid(p) and p.has_method("set"):
-			p.emitting = ((mask >> i) & 1) == 1
+		var pe = _flood_particles[i]
+		if pe == null or not is_instance_valid(pe):
+			continue
+		var should_emit: bool = ((mask >> i) & 1) == 1
+		var emitter := pe as ParticleEmitter
+		if should_emit:
+			if not emitter.is_emitting():
+				emitter.start_emitting()
+		else:
+			if emitter.is_emitting():
+				emitter.stop_emitting()
 
 
 # ---------------------------------------------------------------------------

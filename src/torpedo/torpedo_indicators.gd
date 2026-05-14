@@ -62,6 +62,7 @@ func _draw() -> void:
 			continue
 
 		var world_pos: Vector3 = torp.position
+		world_pos.y = 0.0
 
 		# Check if position is in front of camera
 		var to_pos := (world_pos - cam.global_position).normalized()

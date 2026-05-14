@@ -117,6 +117,9 @@ func from_bytes(b: PackedByteArray, full: bool) -> void:
 func get_params() -> GunParams:
 	return controller.get_params()
 
+func get_base_params() -> GunParams:
+	return controller.get_base_params()
+
 func get_shell() -> ShellParams:
 	return controller.get_shell_params()
 

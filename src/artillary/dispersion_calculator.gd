@@ -224,7 +224,7 @@ func calculate_dispersed_launch(
 	# 		MAX_DISPERSION_ANGLE_RAD)
 	var rate = (1.0 - (dist_to_target / max_range))
 	rate = pow(rate, 2.0)
-	var _base_spread: float = rate * base_spread * 1.0 + base_spread
+	var _base_spread: float = rate * base_spread * 2.0 + base_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo()

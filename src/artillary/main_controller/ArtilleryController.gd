@@ -231,3 +231,6 @@ func get_shell_params() -> ShellParams:
 
 func get_params() -> GunParams:
 	return params.dynamic_mod as GunParams
+
+func get_base_params() -> GunParams:
+	return params.base as GunParams

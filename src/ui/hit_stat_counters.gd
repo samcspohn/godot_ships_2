@@ -399,14 +399,17 @@ func set_stats(new_stats) -> void:
 	update_counters()
 
 
-func update_counters() -> void:
-	"""Update all counter displays with current stats"""
+func update_counters(immediate: bool = false) -> void:
+	"""Update all counter displays with current stats.
+	immediate=true bypasses the per-call 30% lerp on damage labels and snaps
+	to the target value.  Use it after a replay seek so the displayed number
+	matches the accumulator state in one frame instead of taking many."""
 	if not stats:
 		return
 
 	# Update total damage
-	_update_label(damage_value_label, stats.total_damage)
-	_update_label(potential_damage_label, stats.potential_damage)
+	_update_label(damage_value_label, stats.total_damage, immediate)
+	_update_label(potential_damage_label, stats.potential_damage, immediate)
 
 	# Update summary counters
 	for summary_type in summary_types:
@@ -423,7 +426,7 @@ func update_counters() -> void:
 		if summary_type in hover_damage_labels:
 			var damage_stat = config.get("stat_damage", "")
 			if damage_stat != "" and stats.get(damage_stat) != null:
-				_update_label(hover_damage_labels[summary_type], stats.get(damage_stat))
+				_update_label(hover_damage_labels[summary_type], stats.get(damage_stat), immediate)
 
 		# Update sub-counters
 		if summary_type in hover_sub_counters:
@@ -449,12 +452,13 @@ func update_counters() -> void:
 						sub_counter.visible = value > 0
 
 
-func _update_label(label: Label, value) -> void:
-	"""Update a single label with formatted value"""
+func _update_label(label: Label, value, immediate: bool = false) -> void:
+	"""Update a single label with formatted value.
+	immediate=true skips the lerp and snaps directly to `value`."""
 	if label:
 		var curr = float(label.text)
 		var target = float(value)
-		if abs(target - curr) < 4.0:
+		if immediate or abs(target - curr) < 4.0:
 			label.text = str(int(round(target)))
 		else:
 			label.text = str(int(round(lerp(curr, target, 0.3))))

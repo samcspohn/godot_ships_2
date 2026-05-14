@@ -44,6 +44,7 @@ const CAM_MAX_DIST: float = 30000.0
 var _follow_ship_id: int = -1   # -1 = free orbit
 var _armor_log_reader: ArmorLogReader = null
 var _armor_trail_visualizer: ArmorTrailVisualizer = null
+var _torpedo_indicators: Node = null  # ReplayTorpedoIndicators (preloaded below to avoid class-name resolution order)
 var _scrubber_dragging: bool = false
 var _speed_buttons: Array = []
 
@@ -137,6 +138,21 @@ func _ready() -> void:
 	playback.shell_replayer = shell_replayer
 	playback.torpedo_replayer = torpedo_replayer
 	shell_replayer.ghost_ships = ghost_ships
+
+	# Torpedo indicators (chevrons + proximity ring) — lives inside the
+	# SubViewport so its Control coordinates match camera.unproject_position()
+	# 1:1, regardless of how the SubViewportContainer is scaled to the screen.
+	var torp_ind_layer := CanvasLayer.new()
+	torp_ind_layer.name = "TorpedoIndicatorLayer"
+	torp_ind_layer.layer = 50
+	sub_viewport.add_child(torp_ind_layer)
+	_torpedo_indicators = preload("res://src/replay/replay_torpedo_indicators.gd").new()
+	_torpedo_indicators.name = "ReplayTorpedoIndicators"
+	_torpedo_indicators.torpedo_replayer = torpedo_replayer
+	_torpedo_indicators.camera = replay_camera
+	_torpedo_indicators.ghost_ships = ghost_ships
+	_torpedo_indicators.set_followed_ship_id(_follow_ship_id)
+	torp_ind_layer.add_child(_torpedo_indicators)
 
 	# Create the armor trail visualizer and load the companion .armorlog if present.
 	_armor_trail_visualizer = ArmorTrailVisualizer.new()
@@ -293,6 +309,8 @@ func _on_ship_follow_selected(index: int) -> void:
 	_follow_ship_id = ship_id
 	if replay_hud:
 		replay_hud.set_followed_ship_id(ship_id)
+	if _torpedo_indicators:
+		_torpedo_indicators.set_followed_ship_id(ship_id)
 
 func _on_back_pressed() -> void:
 	playback.pause()

@@ -49,3 +49,6 @@ func get_shell_params() -> ShellParams:
 	if controller.shell_index == 0:
 		return params.dynamic_mod.shell1
 	return params.dynamic_mod.shell2
+
+func get_base_params() -> GunParams:
+	return params.base as GunParams

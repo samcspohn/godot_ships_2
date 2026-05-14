@@ -1,8 +1,7 @@
 extends Node3D
 class_name Flood
 
-@onready var water: GPUParticles3D = $GPUParticles3D
-@onready var bubbles: GPUParticles3D = $GPUParticles3D2
+@onready var flood_emitter: ParticleEmitter = $FloodEmitter
 var _ship: Ship
 var hp: HPManager
 
@@ -23,8 +22,7 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "flood"})
 			_owner.stats.flood_count += 1
-			water.emitting = true
-			bubbles.emitting = true
+			flood_emitter.start_emitting()
 			_sync_activate.rpc()
 			lifetime = 1
 			# --- replay hook ---
@@ -40,13 +38,7 @@ func _ready():
 	await _ship.ready
 	hp = _ship.health_controller
 	var s = _ship.get_node("Hull").get_aabb().size.length() / 10.0
-	water.scale = Vector3(s, s, s)
-	bubbles.scale = Vector3(s, s, s)
-	(water.process_material as ParticleProcessMaterial).scale_min = s
-	(bubbles.process_material as ParticleProcessMaterial).scale_min = s * 0.5
-	(bubbles.process_material as ParticleProcessMaterial).scale_max = s * 1.5
-	water.emitting = false
-	bubbles.emitting = false
+	flood_emitter.set_size(s)
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -61,8 +53,7 @@ func _physics_process(delta: float) -> void:
 				var d = _params.dur
 				lifetime -= 1.0 / d
 				if lifetime <= 0:
-					water.emitting = false
-					bubbles.emitting = false
+					flood_emitter.stop_emitting()
 					# --- replay hook ---
 					var zone_index := manager.floods.find(self)
 					ReplayRecorder.record_flood_ended(_ship, zone_index)
@@ -87,6 +78,10 @@ func damage(delta):
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1
+		# --- replay hook (v4): record the actual damage applied this tick so
+		# the replay HUD can rebuild flood_damage / total_damage bidirectionally.
+		if _Utils.authority() and dmg_sunk[0] > 0.0:
+			ReplayRecorder.record_flood_damage(_owner, _ship, dmg_sunk[0])
 
 @rpc("any_peer")
 func _sync(l):
@@ -94,10 +89,8 @@ func _sync(l):
 
 @rpc("any_peer", "reliable")
 func _sync_activate():
-	water.emitting = true
-	bubbles.emitting = true
+	flood_emitter.start_emitting()
 
 @rpc("any_peer", "reliable")
 func _sync_deactivate():
-	water.emitting = false
-	bubbles.emitting = false
+	flood_emitter.stop_emitting()

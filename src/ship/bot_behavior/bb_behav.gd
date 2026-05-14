@@ -129,7 +129,12 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				else:
 					# Thick bow/stern — AP will bounce, use HE on superstructure
 					ammo = ShellParams.ShellType.HE
-					offset.y = _target.movement_controller.ship_height / 2.0
+					var super_idx = _target.armor_parts.find_custom(func(part):
+						return part.type == ArmorPart.Type.SUPERSTRUCTURE)
+					if super_idx != -1:
+						offset.y = (_target.armor_parts[super_idx] as ArmorPart).position.y
+					else:
+						offset.y = _target.movement_controller.ship_height * 0.55
 			elif angle < deg_to_rad(30) or angle > deg_to_rad(150):
 				# Moderately angled
 				if can_overmatch:

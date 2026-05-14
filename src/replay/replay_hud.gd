@@ -102,7 +102,6 @@ func bind(playback: ReplayPlayback, ghost_ships: Array) -> void:
 
 	if _stats == null:
 		_stats = ReplayStatsAccumulator.new()
-	_stats.clear_attribution()
 
 	# Wire signals
 	playback.event_fired.connect(_on_event_fired)
@@ -116,26 +115,25 @@ func bind(playback: ReplayPlayback, ghost_ships: Array) -> void:
 	_build_team_tracker()
 
 ## Switch the HUD to track a different ship (-1 = none / free camera).
-## Rebuilds all event-derived state from t=0 to current_time.
+## Rebuilds all event-derived state from t=0 to current_time using the
+## cached event stream — no file I/O.
 func set_followed_ship_id(ship_id: int) -> void:
 	_followed_ship_id = ship_id
 	_local_team_id = _team_id_for_ship(ship_id)
 
-	if _stats:
-		_stats.set_followed_ship(ship_id, _playback.reader.ships if _playback and _playback.reader else [])
+	if _stats and _playback and _playback.reader:
+		_stats.set_followed_ship(ship_id, _playback.reader.ships)
 		_stats.reset()
-		# Re-replay events from t=0 to now so stats reflect the new perspective
-		if _playback and _playback.reader:
-			# Make sure torpedo attribution is rebuilt too
-			_stats.clear_attribution()
-			var events: Array = _playback.reader.read_events_in_range(0.0, _playback.current_time)
-			for ev in events:
-				_stats.observe_for_attribution(ev)
-			_stats.replay_events(events)
+		# Single forward pass over the cached event array, no file I/O,
+		# no Dictionary allocations — just walks the in-memory array.
+		_stats.seek_to(_playback.current_time, _playback.reader.all_events)
 		# HitStatCounters only refreshes its labels when damage_events fire; the
-		# replay above is silent, so push an explicit refresh now.
+		# silent walk above doesn't push any, so force a refresh now.  Use
+		# immediate=true so the damage label snaps to the new value instead of
+		# lerping toward it (the change can be large — e.g. switching from a
+		# top-damage ship to one with no damage).
 		if _stat_counters:
-			_stat_counters.update_counters()
+			_stat_counters.update_counters(true)
 
 	# Rebuild reload bars to match the new ship's gun count
 	_build_reload_bars()
@@ -159,6 +157,12 @@ func _process(_dt: float) -> void:
 		return
 	_update_followed_ship_widgets()
 	_update_team_tracker()
+	# Drive the HitStatCounters labels every frame so totals updated by
+	# silent state changes (FIRE_DAMAGE / FLOOD_DAMAGE ticks, which don't
+	# push to damage_events) get refreshed.  HitStatCounters' own
+	# _physics_process only refreshes when damage_events is non-empty.
+	if _stat_counters:
+		_stat_counters.update_counters()
 
 # ---------------------------------------------------------------------------
 # Layout
@@ -628,10 +632,13 @@ func _build_team_indicator(entry: Dictionary, is_friendly: bool) -> Dictionary:
 	bar.max_value = 100
 	bar.value = 100
 	bar.custom_minimum_size = Vector2(60, 6)
-	bar.modulate = Color(0.4, 1.0, 0.4) if is_friendly else Color(1.0, 0.4, 0.4)
+	var alive_color: Color = Color(0.4, 1.0, 0.4) if is_friendly else Color(1.0, 0.4, 0.4)
+	bar.modulate = alive_color
 	vbox.add_child(bar)
 
-	return {"root": vbox, "label": label, "bar": bar}
+	# alive_color is stashed so _update_team_tracker can restore the bar tint
+	# when a ship transitions back from sunk → alive on a backward seek.
+	return {"root": vbox, "label": label, "bar": bar, "alive_color": alive_color}
 
 func _update_team_tracker() -> void:
 	if _playback == null:
@@ -645,6 +652,10 @@ func _update_team_tracker() -> void:
 			bar.value = 0.0
 			bar.modulate = Color(0.3, 0.3, 0.3)
 			continue
+		# Not sunk: restore the team-coloured tint (in case a previous frame
+		# had dimmed it during a sunk state, and we've since seeked backward
+		# to before the ship's death).
+		bar.modulate = widget.get("alive_color", bar.modulate)
 		if gs.max_hp > 0.0:
 			bar.value = clampf((gs.current_hp / gs.max_hp) * 100.0, 0.0, 100.0)
 
@@ -652,10 +663,11 @@ func _update_team_tracker() -> void:
 # Event handling
 # ---------------------------------------------------------------------------
 func _on_event_fired(ev: Dictionary) -> void:
-	# Always observe for torpedo attribution, regardless of followed ship.
-	if _stats:
-		_stats.observe_for_attribution(ev)
-		_stats.handle_event(ev, false)
+	# Advance the cursor to the just-fired event's timestamp; this also
+	# updates torpedo attribution maps because TORPEDO_FIRED applies them.
+	if _stats and _playback and _playback.reader:
+		_stats.seek_to(ev.get("timestamp", 0.0), _playback.reader.all_events)
+		_stats.push_flash(ev)
 
 	if ev.get("type", -1) == ReplayEvent.SHIP_SUNK:
 		_add_kill_feed_entry(ev)
@@ -663,17 +675,16 @@ func _on_event_fired(ev: Dictionary) -> void:
 func _on_seek_jumped(t: float) -> void:
 	if _stats == null or _playback == null or _playback.reader == null:
 		return
-	# Rebuild stats from t=0 so totals are exact at the new playhead.
-	_stats.reset()
-	_stats.clear_attribution()
-	var events: Array = _playback.reader.read_events_in_range(0.0, t)
-	for ev in events:
-		_stats.observe_for_attribution(ev)
-	_stats.replay_events(events)
-	# Silent replay doesn't push damage_events, so HitStatCounters won't
-	# auto-refresh its labels. Force a refresh now.
+	# Bidirectional cursor: walks events in (cursor, t] forward (apply) or
+	# (t, cursor] backward (unapply).  No reset, no rebuild from t=0.
+	_stats.seek_to(t, _playback.reader.all_events)
+	# Silent walks don't push damage_events, so HitStatCounters won't
+	# auto-refresh its labels. Force a refresh now — immediate=true so
+	# the damage label snaps to the new value, since seeking can change it
+	# by tens of thousands and the per-call 30% lerp would otherwise take
+	# many seeks to converge.
 	if _stat_counters:
-		_stat_counters.update_counters()
+		_stat_counters.update_counters(true)
 
 func _add_kill_feed_entry(ev: Dictionary) -> void:
 	if _kill_feed == null or _playback == null or _playback.reader == null:

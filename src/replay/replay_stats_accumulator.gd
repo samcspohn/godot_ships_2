@@ -6,16 +6,26 @@ class_name ReplayStatsAccumulator
 ## Exposes the same field names that `HitStatCounters` reads from the live
 ## `Stats` object so the same UI scene can be driven by replay events.
 ##
+## Bidirectional cursor model:
+##   The accumulator tracks the current playhead via `_cursor_index` (next
+##   event in `all_events` to apply forward) and `_cursor_time`.  Seeking
+##   forward applies events one-by-one; seeking backward UNAPPLIES events
+##   in reverse order using the inverse of each per-event handler.  This
+##   means scrubbing one second back is exactly as cheap as one second of
+##   forward playback \u2014 no rebuild from t=0 is ever required.
+##
 ## Usage:
 ##   var acc := ReplayStatsAccumulator.new()
-##   acc.set_followed_ship(ship_id, ship_name_lookup_dict)
-##   playback.event_fired.connect(acc.handle_event)
+##   acc.set_followed_ship(ship_id, reader.ships)
+##   acc.seek_to(playback.current_time, reader.all_events)
+##   playback.event_fired.connect(func(ev):
+##       acc.seek_to(ev.timestamp, reader.all_events)
+##       acc.push_flash(ev))
 ##   playback.seek_jumped.connect(func(t):
-##       acc.reset()
-##       acc.replay_events(reader.read_events_in_range(0.0, t)))
+##       acc.seek_to(t, reader.all_events))
 ##
-## When the followed ship changes, call set_followed_ship() and feed it
-## events from t=0 to current_time again.
+## When the followed ship changes, call set_followed_ship() then reset()
+## then seek_to(current_time, all_events).
 
 # ---------------------------------------------------------------------------
 # Stats fields (names mirror src/stats/stats.gd exactly)
@@ -62,6 +72,8 @@ var ships_damaged: Dictionary = {}
 
 # Damage events for HitStatCounters' temp flash counters.
 # HitStatCounters._physics_process clears this each frame after processing.
+# Populated only by push_flash() (i.e. live events); silent forward/backward
+# walks via seek_to() never push to this list.
 var damage_events: Array = []
 
 # ---------------------------------------------------------------------------
@@ -78,13 +90,31 @@ const HIT_TYPE_COUNTERS := {
 }
 
 # ---------------------------------------------------------------------------
-# Followed-ship filtering
+# Followed-ship filtering and cursor state
 # ---------------------------------------------------------------------------
 var _followed_ship_id: int = -1
 
 ## ship_id (int) -> "player_name (ship_name)" string used as the key in
-## ships_damaged. Pass in the ships array from ReplayFileReader.
+## ships_damaged.  Built once in set_followed_ship().
 var _ship_display_name_by_id: Dictionary = {}
+
+## Bidirectional playhead state.
+## _cursor_index is the index of the *next* event in all_events to be applied
+## forward.  All events with index < _cursor_index have been applied; all
+## with index >= _cursor_index have not.
+var _cursor_index: int = 0
+var _cursor_time:  float = 0.0
+
+## Torpedo attribution maps.  Mutated by TORPEDO_FIRED apply/unapply, so they
+## stay perfectly in sync with the cursor.  No need to clear or rebuild on
+## ship switch \u2014 reset() takes care of it.
+var _torpedo_attackers: Dictionary = {}   # torpedo_id -> attacker ship_id
+var _torpedo_damages:   Dictionary = {}   # torpedo_id -> damage value
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 func set_followed_ship(ship_id: int, ships_manifest: Array) -> void:
 	_followed_ship_id = ship_id
@@ -97,11 +127,9 @@ func set_followed_ship(ship_id: int, ships_manifest: Array) -> void:
 		var pname: String = entry.get("player_name", "")
 		_ship_display_name_by_id[sid] = "%s: %s" % [pname, sname] if pname != "" else sname
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
-## Wipe every counter back to zero. Call before replay_events() on seek.
+## Wipe every counter back to zero AND rewind the cursor to t=0.
+## Use before re-seeking to a new followed ship perspective.
 func reset() -> void:
 	total_damage = 0.0
 	potential_damage = 0.0
@@ -134,83 +162,182 @@ func reset() -> void:
 	frags = 0
 	ships_damaged.clear()
 	damage_events.clear()
+	_torpedo_attackers.clear()
+	_torpedo_damages.clear()
+	_cursor_index = 0
+	_cursor_time  = 0.0
 
-## Process a single replay event. `silent=true` suppresses damage_events
-## (used during seek-rebuild so the temp flash counters don't go off for
-## historical hits).
-func handle_event(ev: Dictionary, silent: bool = false) -> void:
+
+## Walk the cursor forward (apply) or backward (unapply) until the playhead
+## is at time `t`.  All forward and backward steps are silent (no flash).
+##
+## Forward and backward seeks are symmetric and incremental: seeking from
+## t=120 to t=121 only walks events in (120, 121]; seeking from t=121 back
+## to t=120 walks the same events in reverse and un-applies them.
+func seek_to(t: float, all_events: Array) -> void:
+	if t > _cursor_time:
+		_advance_to(t, all_events)
+	elif t < _cursor_time:
+		_rewind_to(t, all_events)
+	_cursor_time = t
+
+
+## Push a flash entry for a single live event.  Call this AFTER seek_to() so
+## the cursor is past the event.  HitStatCounters._physics_process consumes
+## damage_events to drive its temp counters.
+func push_flash(ev: Dictionary) -> void:
 	if _followed_ship_id < 0:
 		return
 	var et: int = ev.get("type", -1)
 	match et:
 		ReplayEvent.SHELL_DAMAGE:
-			_handle_shell_damage(ev, silent)
+			if ev.get("attacker_ship_id", -1) != _followed_ship_id:
+				return
+			damage_events.append({
+				"type":     "hit",
+				"hit_type": ev.get("hit_type", -1),
+				"sec":      ev.get("is_secondary", false),
+				"damage":   ev.get("damage", 0.0),
+				"position": ev.get("hit_pos", Vector3.ZERO),
+			})
 		ReplayEvent.TORPEDO_DESTROYED:
-			_handle_torpedo_destroyed(ev, silent)
+			var torp_id: int = ev.get("torpedo_id", -1)
+			if _torpedo_attackers.get(torp_id, -1) != _followed_ship_id:
+				return
+			damage_events.append({
+				"type":     "torp",
+				"damage":   _torpedo_damages.get(torp_id, 0.0),
+				"position": ev.get("pos", Vector3.ZERO),
+			})
 		ReplayEvent.FIRE_STARTED:
-			_handle_fire_started(ev, silent)
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				damage_events.append({"type": "fire"})
 		ReplayEvent.FLOOD_STARTED:
-			_handle_flood_started(ev, silent)
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				damage_events.append({"type": "flood"})
 		ReplayEvent.SHIP_SUNK:
-			_handle_ship_sunk(ev, silent)
+			if ev.get("sinker_ship_id", 255) == _followed_ship_id:
+				damage_events.append({"type": "sunk"})
 
-## Replay a batch of historical events, suppressing flash effects.
-## Used after a seek to reconstruct stats up to the new current_time.
-func replay_events(events: Array) -> void:
-	for ev in events:
-		handle_event(ev, true)
-	# Clear any inadvertent pushes (handle_event respects silent, but be defensive)
-	damage_events.clear()
 
 # ---------------------------------------------------------------------------
-# Per-event handlers
+# Cursor walking (private)
 # ---------------------------------------------------------------------------
 
-func _handle_shell_damage(ev: Dictionary, silent: bool) -> void:
+func _advance_to(t: float, all_events: Array) -> void:
+	var n: int = all_events.size()
+	while _cursor_index < n:
+		var ev: Dictionary = all_events[_cursor_index]
+		if ev.get("timestamp", 0.0) > t:
+			break
+		_apply_event(ev)
+		_cursor_index += 1
+
+
+func _rewind_to(t: float, all_events: Array) -> void:
+	while _cursor_index > 0:
+		var prev: Dictionary = all_events[_cursor_index - 1]
+		if prev.get("timestamp", 0.0) <= t:
+			break
+		_cursor_index -= 1
+		_unapply_event(prev)
+
+
+# ---------------------------------------------------------------------------
+# Per-event handlers \u2014 every apply has a matching unapply that exactly
+# reverses its mutations.  TORPEDO_FIRED mutates the attribution maps so
+# those stay in sync with the cursor too.
+# ---------------------------------------------------------------------------
+
+func _apply_event(ev: Dictionary) -> void:
+	var et: int = ev.get("type", -1)
+	match et:
+		ReplayEvent.TORPEDO_FIRED:
+			# Attribution must be tracked regardless of followed ship so that
+			# a later TORPEDO_DESTROYED can credit the correct attacker.
+			var tid: int = ev.get("torpedo_id", -1)
+			if tid >= 0:
+				_torpedo_attackers[tid] = ev.get("ship_id", 255)
+				_torpedo_damages[tid]   = ev.get("damage", 0.0)
+		ReplayEvent.SHELL_DAMAGE:
+			_apply_shell_damage(ev, +1)
+		ReplayEvent.TORPEDO_DESTROYED:
+			_apply_torpedo_destroyed(ev, +1)
+		ReplayEvent.FIRE_DAMAGE:
+			_apply_dot_damage(ev, +1, true)
+		ReplayEvent.FLOOD_DAMAGE:
+			_apply_dot_damage(ev, +1, false)
+		ReplayEvent.FIRE_STARTED:
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				fire_count += 1
+		ReplayEvent.FLOOD_STARTED:
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				flood_count += 1
+		ReplayEvent.SHIP_SUNK:
+			if ev.get("sinker_ship_id", 255) == _followed_ship_id:
+				frags += 1
+
+
+func _unapply_event(ev: Dictionary) -> void:
+	var et: int = ev.get("type", -1)
+	match et:
+		ReplayEvent.TORPEDO_FIRED:
+			var tid: int = ev.get("torpedo_id", -1)
+			if tid >= 0:
+				_torpedo_attackers.erase(tid)
+				_torpedo_damages.erase(tid)
+		ReplayEvent.SHELL_DAMAGE:
+			_apply_shell_damage(ev, -1)
+		ReplayEvent.TORPEDO_DESTROYED:
+			_apply_torpedo_destroyed(ev, -1)
+		ReplayEvent.FIRE_DAMAGE:
+			_apply_dot_damage(ev, -1, true)
+		ReplayEvent.FLOOD_DAMAGE:
+			_apply_dot_damage(ev, -1, false)
+		ReplayEvent.FIRE_STARTED:
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				fire_count -= 1
+		ReplayEvent.FLOOD_STARTED:
+			if ev.get("caused_by_ship_id", 255) == _followed_ship_id:
+				flood_count -= 1
+		ReplayEvent.SHIP_SUNK:
+			if ev.get("sinker_ship_id", 255) == _followed_ship_id:
+				frags -= 1
+
+
+## Sign = +1 for apply (forward), -1 for unapply (backward).
+func _apply_shell_damage(ev: Dictionary, dir: int) -> void:
 	if ev.get("attacker_ship_id", -1) != _followed_ship_id:
 		return
-	var hit_type: int   = ev.get("hit_type", -1)
-	var damage: float   = ev.get("damage", 0.0)
+	var hit_type: int    = ev.get("hit_type", -1)
+	var damage: float    = ev.get("damage", 0.0)
 	var is_secondary: bool = ev.get("is_secondary", false)
-	var victim_id: int  = ev.get("victim_ship_id", 255)
-	var position: Vector3 = ev.get("hit_pos", Vector3.ZERO)
+	var victim_id: int   = ev.get("victim_ship_id", 255)
 
-	total_damage += damage
+	total_damage += damage * dir
 
 	if is_secondary:
-		sec_damage += damage
-		secondary_count += 1
+		sec_damage += damage * dir
+		secondary_count += dir
 	else:
-		main_damage += damage
-		main_hits += 1
+		main_damage += damage * dir
+		main_hits += dir
 
-	# Hit-result counter
 	var counter_name: String = HIT_TYPE_COUNTERS.get(hit_type, "")
 	if counter_name != "":
 		var full_name: String = ("sec_" + counter_name) if is_secondary else counter_name
-		set(full_name, get(full_name) + 1)
+		set(full_name, get(full_name) + dir)
 
-	# Damage-by-victim
 	if victim_id >= 0 and victim_id != 255:
 		var key: String = _ship_display_name_by_id.get(victim_id, "Ship %d" % victim_id)
-		ships_damaged[key] = ships_damaged.get(key, 0.0) + damage
+		var new_total: float = ships_damaged.get(key, 0.0) + damage * dir
+		if absf(new_total) < 0.0001:
+			ships_damaged.erase(key)
+		else:
+			ships_damaged[key] = new_total
 
-	if not silent:
-		damage_events.append({
-			"type": "hit",
-			"hit_type": hit_type,
-			"sec": is_secondary,
-			"damage": damage,
-			"position": position,
-		})
 
-func _handle_torpedo_destroyed(ev: Dictionary, silent: bool) -> void:
-	# We don't currently know which ship fired the torpedo from this event.
-	# torpedo_id ties back to EVT_TORPEDO_FIRED if we ever want attribution.
-	# For now, count any torpedo hit *attributed to the followed ship*: we'd
-	# need a torpedo_id -> attacker map. Skipping per-followed filtering means
-	# all torp hits would be counted; that's wrong. So: build the map.
-	# Done in _torpedo_attackers (populated by replay_events / handle_event).
+func _apply_torpedo_destroyed(ev: Dictionary, dir: int) -> void:
 	var hit_ship_id: int = ev.get("hit_ship_id", 255)
 	if hit_ship_id == 255 or hit_ship_id < 0:
 		return
@@ -219,62 +346,37 @@ func _handle_torpedo_destroyed(ev: Dictionary, silent: bool) -> void:
 	if attacker_id != _followed_ship_id:
 		return
 	var damage: float = _torpedo_damages.get(torp_id, 0.0)
-	torpedo_count += 1
-	torpedo_damage += damage
-	total_damage += damage
-	if hit_ship_id != 255:
-		var key: String = _ship_display_name_by_id.get(hit_ship_id, "Ship %d" % hit_ship_id)
-		ships_damaged[key] = ships_damaged.get(key, 0.0) + damage
-	if not silent:
-		damage_events.append({
-			"type": "torp",
-			"damage": damage,
-			"position": ev.get("pos", Vector3.ZERO),
-		})
+	torpedo_count  += dir
+	torpedo_damage += damage * dir
+	total_damage   += damage * dir
+	var key: String = _ship_display_name_by_id.get(hit_ship_id, "Ship %d" % hit_ship_id)
+	var new_total: float = ships_damaged.get(key, 0.0) + damage * dir
+	if absf(new_total) < 0.0001:
+		ships_damaged.erase(key)
+	else:
+		ships_damaged[key] = new_total
 
-func _handle_fire_started(ev: Dictionary, silent: bool) -> void:
-	if ev.get("caused_by_ship_id", 255) != _followed_ship_id:
+
+## Per-tick fire/flood damage.  is_fire selects which weapon-damage bucket
+## (fire_damage vs flood_damage) the delta is added to.  The fire_count /
+## flood_count *instance* counters are NOT touched here — those are owned
+## by FIRE_STARTED / FLOOD_STARTED.
+func _apply_dot_damage(ev: Dictionary, dir: int, is_fire: bool) -> void:
+	if ev.get("attacker_ship_id", -1) != _followed_ship_id:
 		return
-	fire_count += 1
-	if not silent:
-		damage_events.append({"type": "fire"})
+	var damage: float = ev.get("damage", 0.0)
+	var victim_id: int = ev.get("victim_ship_id", 255)
 
-func _handle_flood_started(ev: Dictionary, silent: bool) -> void:
-	if ev.get("caused_by_ship_id", 255) != _followed_ship_id:
-		return
-	flood_count += 1
-	if not silent:
-		damage_events.append({"type": "flood"})
+	total_damage += damage * dir
+	if is_fire:
+		fire_damage += damage * dir
+	else:
+		flood_damage += damage * dir
 
-func _handle_ship_sunk(ev: Dictionary, silent: bool) -> void:
-	if ev.get("sinker_ship_id", 255) != _followed_ship_id:
-		return
-	frags += 1
-	if not silent:
-		damage_events.append({"type": "sunk"})
-
-# ---------------------------------------------------------------------------
-# Torpedo attribution (built up as TORPEDO_FIRED events arrive)
-# ---------------------------------------------------------------------------
-## torpedo_id -> attacker ship_id. Populated by handle_event() when it sees
-## TORPEDO_FIRED. Persists across followed-ship changes; reset() does NOT
-## clear it because it is keyed by globally-unique torpedo_id and we want
-## to retain attribution when re-binding to a different followed ship after
-## the same replay-load.
-var _torpedo_attackers: Dictionary = {}
-var _torpedo_damages: Dictionary = {}
-
-## Call this from the playback's event_fired BEFORE handle_event so that
-## TORPEDO_FIRED attribution is recorded for every torpedo. (The HUD wires
-## this for us by always invoking observe_for_attribution() first.)
-func observe_for_attribution(ev: Dictionary) -> void:
-	if ev.get("type", -1) == ReplayEvent.TORPEDO_FIRED:
-		var tid: int = ev.get("torpedo_id", -1)
-		if tid >= 0:
-			_torpedo_attackers[tid] = ev.get("ship_id", 255)
-			_torpedo_damages[tid]   = ev.get("damage", 0.0)
-
-## Wipe torpedo attribution. Use only when loading a fresh replay.
-func clear_attribution() -> void:
-	_torpedo_attackers.clear()
-	_torpedo_damages.clear()
+	if victim_id >= 0 and victim_id != 255:
+		var key: String = _ship_display_name_by_id.get(victim_id, "Ship %d" % victim_id)
+		var new_total: float = ships_damaged.get(key, 0.0) + damage * dir
+		if absf(new_total) < 0.0001:
+			ships_damaged.erase(key)
+		else:
+			ships_damaged[key] = new_total
