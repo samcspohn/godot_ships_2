@@ -530,7 +530,7 @@ func _calculate_target_info():
 				else:
 					var horiz_speed: float = Vector2(impact_vel.x, impact_vel.z).length()
 					var impact_angle_rad: float = atan2(-impact_vel.y, maxf(horiz_speed, 0.0001))
-					impact_angle_cap = pow(sin(maxf(impact_angle_rad, 0.0)), 2.0)
+					impact_angle_cap = pow(sin(maxf(impact_angle_rad, 0.0)), 1.3)
 
 		# Final water lerp weight: linear from 0 → impact_angle_cap as the
 		# ship rotates from broadside to bow/stern-on.

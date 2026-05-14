@@ -156,6 +156,20 @@ func _find_gun_nodes() -> void:
 				var sec_barrel: Node3D = gun.barrel if is_instance_valid(gun.barrel) else null
 				_secondary_barrel_pivots.append(sec_barrel)
 
+	# Fire emitters — each Ship has a FireManager whose `fires` array (set in the
+	# editor as @export) holds Fire nodes.  Each Fire owns a `fire_emitter`
+	# ParticleEmitter that was suppressed by _collect_and_disable_particle_emitters
+	# (auto_start = false, not added to _particle_emitters).  Cache the emitters
+	# here so set_active_fires() can drive them directly from the snapshot mask.
+	_fire_particles.clear()
+	var fire_manager: FireManager = _model.find_child("FireManager", true, false) as FireManager
+	if fire_manager != null:
+		for f: Fire in fire_manager.fires:
+			if is_instance_valid(f):
+				_fire_particles.append(f.fire_emitter)
+			else:
+				_fire_particles.append(null)
+
 
 # ---------------------------------------------------------------------------
 # Processing control
@@ -379,11 +393,27 @@ func thaw_particles() -> void:
 # Fire / flood visual masks
 # ---------------------------------------------------------------------------
 
+## Drive each fire-zone ParticleEmitter from the snapshot's fire mask.
+## Fires use the unified ParticleEmitter API (start_emitting / stop_emitting),
+## NOT the GPUParticles3D `emitting` property.  Idempotent: only toggles when
+## the desired state differs from the current state, which keeps the emitter
+## from restarting its lifecycle every snapshot.
+##
+## No special handling is needed for seek/scrub: the snapshot at the new time
+## carries the correct fire_mask and apply_snapshot() calls this directly.
 func set_active_fires(mask: int) -> void:
 	for i in _fire_particles.size():
-		var p = _fire_particles[i]
-		if p != null and is_instance_valid(p) and p.has_method("set"):
-			p.emitting = ((mask >> i) & 1) == 1
+		var pe = _fire_particles[i]
+		if pe == null or not is_instance_valid(pe):
+			continue
+		var should_emit: bool = ((mask >> i) & 1) == 1
+		var emitter := pe as ParticleEmitter
+		if should_emit:
+			if not emitter.is_emitting():
+				emitter.start_emitting()
+		else:
+			if emitter.is_emitting():
+				emitter.stop_emitting()
 
 
 func set_active_floods(mask: int) -> void:

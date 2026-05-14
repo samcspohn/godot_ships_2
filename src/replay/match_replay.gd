@@ -165,6 +165,15 @@ func _ready() -> void:
 	if map_scene:
 		world_3d.add_child(map_scene.instantiate())
 
+	# Hand the replay camera to the unified particle system so its back-to-front
+	# sort uses the right viewpoint. The system lives in the main viewport, so
+	# its default get_viewport()->get_camera_3d() can't see the SubViewport's
+	# camera. We restore on _exit_tree.
+	var ups: Node = get_node_or_null("/root/UnifiedParticleSystem")
+	if ups:
+		ups.set_sort_camera(replay_camera)
+		ups.set_time_scale(1.0)  # initial speed; updated by _set_speed / play / pause
+
 	# Update match info label
 	_refresh_match_info()
 
@@ -183,6 +192,18 @@ func _set_speed(s: float, active_btn: Button) -> void:
 		btn.modulate = Color.WHITE
 	if active_btn:
 		active_btn.modulate = Color.YELLOW
+	# Mirror playback speed to the particle system so trails / explosions / wakes
+	# obey 0.25x..8x just like ghost ship motion does.
+	_sync_particle_time_scale()
+
+func _sync_particle_time_scale() -> void:
+	var ups: Node = get_node_or_null("/root/UnifiedParticleSystem")
+	if ups == null:
+		return
+	if playback and playback.is_playing:
+		ups.set_time_scale(playback.playback_speed)
+	else:
+		ups.set_time_scale(0.0)
 
 # ---------------------------------------------------------------------------
 # Playback signal callbacks
@@ -197,6 +218,9 @@ func _on_replay_loaded() -> void:
 
 func _on_playback_ended() -> void:
 	play_pause_button.text = "▶"
+	# Freeze particles too — the replay is stopped, no new events will fire,
+	# so leaving particles aging looks wrong (drift without source).
+	_sync_particle_time_scale()
 
 # ---------------------------------------------------------------------------
 # Scrubber
@@ -262,6 +286,7 @@ func _on_play_pause_pressed() -> void:
 	else:
 		playback.play()
 		play_pause_button.text = "⏸"
+	_sync_particle_time_scale()
 
 func _on_ship_follow_selected(index: int) -> void:
 	var ship_id = ship_follow_option.get_item_id(index)
@@ -271,6 +296,13 @@ func _on_ship_follow_selected(index: int) -> void:
 
 func _on_back_pressed() -> void:
 	playback.pause()
+	# Detach our overrides from the autoloaded particle system before unloading
+	# this scene, otherwise the system will hold a stale instance id and run
+	# at time_scale=0 forever in the menu.
+	var ups: Node = get_node_or_null("/root/UnifiedParticleSystem")
+	if ups:
+		ups.set_sort_camera(null)
+		ups.set_time_scale(1.0)
 	get_tree().change_scene_to_file("res://src/port/main_menu/main_menu.tscn")
 
 # ---------------------------------------------------------------------------

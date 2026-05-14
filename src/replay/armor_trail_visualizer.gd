@@ -28,21 +28,23 @@ const POOL_SIZE_PER_TYPE: int = 16
 
 ## Internal result color indices — used to index STEP_COLORS, STEP_SCALES,
 ## and _step_materials.  Distinct from both ArmorResult and HitResult enums.
-const RES_RICOCHET:    int = 0
-const RES_OVERPEN:     int = 1
-const RES_PEN:         int = 2
-const RES_PARTIAL_PEN: int = 3
-const RES_SHATTER:     int = 4
-const RES_CITADEL:     int = 5   ## is_citadel flag was set on this plate
+const RES_RICOCHET:        int = 0
+const RES_OVERPEN:         int = 1
+const RES_PEN:             int = 2
+const RES_PARTIAL_PEN:     int = 3
+const RES_SHATTER:         int = 4
+const RES_CITADEL:         int = 5   ## actual citadel penetration — large, glowing magenta
+const RES_CITADEL_NONPEN:  int = 6   ## hit a citadel plate without penetrating — small, non-glowing magenta
 
 ## Color per result index.
 const STEP_COLORS: Array = [
-	Color(1.00, 0.82, 0.00, 1.0),  # 0 RICOCHET     — amber
-	Color(0.00, 0.85, 1.00, 1.0),  # 1 OVERPEN      — cyan
-	Color(0.25, 1.00, 0.30, 1.0),  # 2 PEN          — green
-	Color(1.00, 0.45, 0.00, 1.0),  # 3 PARTIAL_PEN  — orange
-	Color(1.00, 0.12, 0.05, 1.0),  # 4 SHATTER      — red
-	Color(1.00, 0.00, 0.95, 1.0),  # 5 CITADEL      — magenta (glows)
+	Color(1.00, 0.82, 0.00, 1.0),  # 0 RICOCHET         — amber
+	Color(0.00, 0.85, 1.00, 1.0),  # 1 OVERPEN          — cyan
+	Color(0.25, 1.00, 0.30, 1.0),  # 2 PEN              — green
+	Color(1.00, 0.45, 0.00, 1.0),  # 3 PARTIAL_PEN      — orange
+	Color(1.00, 0.12, 0.05, 1.0),  # 4 SHATTER          — red
+	Color(1.00, 0.00, 0.95, 1.0),  # 5 CITADEL          — magenta (glows)
+	Color(1.00, 0.00, 0.95, 1.0),  # 6 CITADEL_NONPEN   — magenta (no glow)
 ]
 
 ## Sphere radius scale per result index (applied to the MeshInstance3D scale).
@@ -54,6 +56,7 @@ const STEP_SCALES: Array = [
 	1.5,   # 3 PARTIAL_PEN
 	1.5,   # 4 SHATTER
 	2.5,   # 5 CITADEL
+	1.0,   # 6 CITADEL_NONPEN
 ]
 
 ## Maps HitResult enum values (used in final_hit_type) to our RES_* indices.
@@ -182,27 +185,35 @@ func _process(delta: float) -> void:
 		for i in range(waypoints.size()):
 			var wp: Vector3  = waypoints[i]
 			var is_final: bool = (i == waypoints.size() - 1)
-			var ci: int
+
+			# Path color and sphere pool are decoupled: the line takes the
+			# underlying ArmorResult color (e.g. yellow ricochet), while the
+			# sphere may be promoted to a magenta CITADEL marker when the
+			# plate is part of the citadel.
+			var line_ci:   int
+			var sphere_ci: int
 			if is_final:
-				ci = final_ci
+				line_ci   = final_ci
+				sphere_ci = final_ci
 			else:
-				ci = _step_res_index(steps[i])
+				line_ci   = _step_line_index(steps[i])
+				sphere_ci = _step_sphere_index(steps[i])
 
 			# Accumulate a line segment to the next waypoint (colored by the plate just hit).
 			if i + 1 < waypoints.size():
 				_line_verts.append(wp)
 				_line_verts.append(waypoints[i + 1])
-				_line_colors.append(STEP_COLORS[ci])
-				_line_colors.append(STEP_COLORS[ci])
+				_line_colors.append(STEP_COLORS[line_ci])
+				_line_colors.append(STEP_COLORS[line_ci])
 
 			# Place a sphere and its info label from the per-type pool.
-			var si: int = _sphere_active[ci]
+			var si: int = _sphere_active[sphere_ci]
 			if si < POOL_SIZE_PER_TYPE:
-				var sph: MeshInstance3D = _sphere_pools[ci][si]
-				var lbl: Label3D        = _label_pools[ci][si]
+				var sph: MeshInstance3D = _sphere_pools[sphere_ci][si]
+				var lbl: Label3D        = _label_pools[sphere_ci][si]
 				sph.global_position = wp
 				# Final stop renders at 2× the per-result scale so it's clearly distinct.
-				var s: float = STEP_SCALES[ci] * (2.0 if is_final else 1.0)
+				var s: float = STEP_SCALES[sphere_ci] * (2.0 if is_final else 1.0)
 				sph.scale   = Vector3(s, s, s)
 				sph.visible = true
 				# Show step info popup for armor plate hits; hide for the final stop marker.
@@ -217,7 +228,7 @@ func _process(delta: float) -> void:
 					lbl.visible         = true
 				else:
 					lbl.visible = false
-				_sphere_active[ci] = si + 1
+				_sphere_active[sphere_ci] = si + 1
 
 	# Build line mesh only if there are vertices to draw — ImmediateMesh
 	# panics on surface_end() with an empty vertex list.
@@ -298,12 +309,26 @@ func _setup_step_materials() -> void:
 			mat.emission_energy_multiplier = 2.0
 		_step_materials.append(mat)
 
-## Return the RES_* color index for a single armor interaction step.
-## Checks is_citadel before falling back to the ArmorResult value.
-func _step_res_index(step: Dictionary) -> int:
-	if step.get("is_citadel", false):
-		return RES_CITADEL
+## Return the RES_* color index for the path/line segment of a step.
+## Always reflects the underlying ArmorResult — citadel plates do NOT
+## recolor the trajectory (a ricochet off citadel armor stays yellow).
+func _step_line_index(step: Dictionary) -> int:
 	return clampi(step.get("result", RES_PEN), 0, RES_SHATTER)
+
+## Return the RES_* color index for the sphere marker of a step.
+## A penetrating hit (PEN/PARTIAL_PEN) on a citadel plate is promoted to
+## RES_CITADEL (large, glowing magenta).  Any other interaction (ricochet,
+## overpen, shatter) on a citadel plate uses RES_CITADEL_NONPEN — a small,
+## non-glowing magenta marker that still flags the plate as citadel armor
+## without overstating the outcome.  Non-citadel plates use the underlying
+## ArmorResult.
+func _step_sphere_index(step: Dictionary) -> int:
+	var res: int = clampi(step.get("result", RES_PEN), 0, RES_SHATTER)
+	if step.get("is_citadel", false):
+		if res == RES_PEN or res == RES_PARTIAL_PEN:
+			return RES_CITADEL
+		return RES_CITADEL_NONPEN
+	return res
 
 func _setup_line_mesh() -> void:
 	_line_mesh     = ImmediateMesh.new()
