@@ -34,7 +34,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# if can_reverse:
 	# 	dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 2.0
 	# else:
-	dest = ship.global_position + fwd * max(3000.0, ship.movement_controller.turning_circle_radius * 8.0)
+	dest = ship.global_position + fwd * max(3000.0, ship.movement_controller._p().turning_circle_radius * 8.0)
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
 

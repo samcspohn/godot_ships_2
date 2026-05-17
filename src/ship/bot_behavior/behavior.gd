@@ -332,7 +332,7 @@ func _get_valid_nav_point(target: Vector3) -> Vector3:
 			var turning_radius = 300.0
 			if _ship and _ship.movement_controller:
 				clearance = _ship.movement_controller.ship_beam * 0.5 + 50.0
-				turning_radius = _ship.movement_controller.turning_circle_radius
+				turning_radius = _ship.movement_controller._p().turning_circle_radius
 
 			var ship_pos = _ship.global_position if _ship else target
 			# Use the C++ safe_nav_point which handles:

@@ -143,12 +143,14 @@ func _new_salvo(h_grouping: float, v_grouping: float) -> void:
 		_shuffled_radii[i * 2]     = sorted_r[i]
 		_shuffled_radii[i * 2 + 1] = sorted_r[SHELL_COUNT - 1 - i]
 
-	# ── Angles: strictly alternate upper (sin > 0) and lower (sin < 0) ──
+	# ── Angles: 2 upper + 2 lower per group of 4 ──
 	# Generate `half` angles stratified across [0, PI]   (upper half-circle)
 	# and   `half` angles stratified across [PI, 2*PI]   (lower half-circle).
 	# Shuffle each group independently so left-right position stays random.
-	# Weave them: even shell indices get upper, odd get lower.
-	# This guarantees every consecutive pair has one shell going up and one going down.
+	# Then build two groups of 4 (one per gun pair), each containing exactly
+	# 2 upper + 2 lower angles, and shuffle within each group so the up/down
+	# order varies each salvo. A single gun firing 2 shells can get 2 lows or
+	# 2 highs, but across any 4 shells the split is always guaranteed 2 and 2.
 	var upper_angles := PackedFloat64Array()
 	var lower_angles := PackedFloat64Array()
 	upper_angles.resize(half)
@@ -172,9 +174,24 @@ func _new_salvo(h_grouping: float, v_grouping: float) -> void:
 		lower_angles[lj] = ltmp
 
 	_angles.resize(SHELL_COUNT)
-	for i in half:
-		_angles[i * 2]     = upper_angles[i]
-		_angles[i * 2 + 1] = lower_angles[i]
+	# Fill two groups of 4, each containing exactly 2 upper + 2 lower angles,
+	# then shuffle within each group so the order varies each salvo.
+	# A single gun firing its 2-shell salvo can get 2 lows or 2 highs,
+	# but across any 4 consecutive shells the split is always 2 and 2.
+	var group_buf := PackedFloat64Array()
+	group_buf.resize(4)
+	for gi in 2:
+		group_buf[0] = upper_angles[gi * 2]
+		group_buf[1] = upper_angles[gi * 2 + 1]
+		group_buf[2] = lower_angles[gi * 2]
+		group_buf[3] = lower_angles[gi * 2 + 1]
+		for ki in range(3, 0, -1):
+			var mi := randi_range(0, ki)
+			var bt := group_buf[ki]
+			group_buf[ki] = group_buf[mi]
+			group_buf[mi] = bt
+		for ki in 4:
+			_angles[gi * 4 + ki] = group_buf[ki]
 
 	_apply_citadel_guarantee(h_grouping, v_grouping)
 

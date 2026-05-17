@@ -20,7 +20,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
 	var gun_range = ship.artillery_controller.get_params()._range
 	var range_ratio = params.get("desired_range_ratio", 0.65)
-	var jitter = params.get("jitter_radius", ship.movement_controller.turning_circle_radius * 2.0)
+	var jitter = params.get("jitter_radius", ship.movement_controller._p().turning_circle_radius * 2.0)
 	var here = params.get("here", true)
 
 	var danger_center = ctx.behavior._get_spotted_danger_center()

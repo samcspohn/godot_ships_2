@@ -5,30 +5,12 @@ const SHIP_SPEED_MODIFIER: float = 2.0 # Adjust to calibrate ship speed display
 
 var debug_log: bool = false
 
-# Direct movement properties
-@export var max_speed_knots: float
-var max_speed: float = 15.0  # Maximum speed in m/s
-@export var acceleration_time: float = 8.0  # Time to reach full speed from stop
-@export var deceleration_time: float = 4.0  # Time to stop from full speed
-@export var reverse_speed_ratio: float = 0.5  # Reverse speed as ratio of max speed
+# All per-ship tunables live in MovementParams (Moddable). Assign a
+# MovementParams subresource to `params` in the ship's .tscn.
+@export var params: MovementParams
 
-# Turning properties
+var max_speed: float = 15.0  # Maximum speed in m/s (derived at runtime from params)
 const TURN_FORCE_CORRECTION: float = 1.27  # Empirical correction for force-at-offset vs pure torque
-@export var turning_circle_radius: float = 200.0  # Turning circle radius in meters at full rudder and full speed
-@export var slow_speed_turn_tightening: float = 0.8  # At low speed, radius shrinks to this ratio (0.7 = 70% of full radius)
-# @export var min_turn_speed: float = 2.0  # Minimum speed needed for effective turning
-@export var turn_speed_loss: float = 0.2  # Percentage of speed lost per second while turning
-@export var rudder_response_time: float = 1.5  # Time for rudder to move from center to full
-
-# Hydrodynamic drag properties
-@export var lateral_drag_multiplier: float = 1.7  # How much more drag sideways vs forward (hull shape factor)
-
-# Roll and stability properties
-@export var max_turn_roll_angle: float = 5.0  # Maximum roll angle in degrees when turning at full speed/rudder
-@export var roll_response_time: float = 2.0  # How quickly the ship rolls into a turn
-@export var righting_strength: float = 5.0  # How strongly the ship rights itself (metacentric height factor)
-@export var righting_damping: float = 3.0  # Damping to prevent oscillation
-@export var pitch_righting_strength: float = 8.0  # Pitch stability (higher to counteract thrust offset)
 
 # Ship control variables
 var throttle_level: int = 0  # -1 = reverse, 0 = stop, 1-4 = forward speeds
@@ -73,15 +55,6 @@ enum __NavMode {
 	NAV_MODE_TARGET
 }
 
-enum NavSize {
-	NAV_LIGHT,
-	NAV_MEDIUM,
-	NAV_HEAVY,
-	NAV_SUPERHEAVY,
-	NAV_ULTRAHEAVY
-}
-
-@export var nav_size: NavSize = NavSize.NAV_MEDIUM
 
 func _ready() -> void:
 	ship = $"../.." as RigidBody3D
@@ -89,6 +62,11 @@ func _ready() -> void:
 	if ship == null:
 		push_error("ShipMovementV4: Could not find RigidBody3D parent")
 		return
+
+	if params == null:
+		push_error("ShipMovementV4: 'params' (MovementParams) is not set — assign a MovementParams subresource in the ship scene.")
+		return
+	params = params.instantiate(ship as Ship) as MovementParams
 
 	_detect_ship_dimensions()
 
@@ -101,12 +79,22 @@ func _ready() -> void:
 	# ship.axis_lock_angular_y = true
 	# ship.axis_lock_angular_x = true
 
-	# Convert max speed from knots to m/s
-	max_speed = max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
+	# Convert max speed from knots to m/s (live, reflects current dynamic_mod)
+	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
 
 	# Enable contact monitoring to use get_colliding_bodies()
 	ship.contact_monitor = true
 	ship.max_contacts_reported = 4
+
+## Returns the effective (modded) movement parameters.
+func _p() -> MovementParams:
+	return params.dynamic_mod as MovementParams
+
+func get_params() -> MovementParams:
+	return params.dynamic_mod as MovementParams
+
+func get_base_params() -> MovementParams:
+	return params.base as MovementParams
 
 func _detect_ship_dimensions() -> void:
 	var hull_aabb: AABB = AABB()
@@ -238,6 +226,8 @@ func _physics_process(delta: float) -> void:
 
 	# # Apply anisotropic hull drag (lateral drag much higher than forward drag)
 	# _apply_hull_drag(delta)
+	# Convert max speed from knots to m/s (live, reflects current dynamic_mod)
+	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
 
 	# Buoyancy (vertical)
 	if ship.global_position.y < ship_draft:
@@ -250,8 +240,11 @@ func _physics_process(delta: float) -> void:
 	# Thrust
 	var target_power = throttle_settings[throttle_level + 1]
 
+	# Refresh derived top speed each tick so mods take effect.
+	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
+
 	# Rudder
-	rudder_input = move_toward(rudder_input, target_rudder, delta / rudder_response_time)
+	rudder_input = move_toward(rudder_input, target_rudder, delta / _p().rudder_response_time)
 
 
 	var forward = -ship.global_transform.basis.z.normalized()
@@ -279,10 +272,10 @@ func _physics_process(delta: float) -> void:
 
 		# Shrink turning circle at lower speeds — at low speed the rudder deflects
 		# flow longer per unit distance, giving a tighter circle
-		var max_speed_ratio: float = max_speed * (1 - abs(rudder_input) * turn_speed_loss)
+		var max_speed_ratio: float = max_speed * (1 - abs(rudder_input) * _p().turn_speed_loss)
 		var speed_ratio: float = clampf(abs(current_speed) / max_speed_ratio, 0.0, 1.0)
-		var radius_scale: float = lerpf(slow_speed_turn_tightening, 1.0, speed_ratio)
-		var effective_radius: float = turning_circle_radius * radius_scale
+		var radius_scale: float = lerpf(_p().slow_speed_turn_tightening, 1.0, speed_ratio)
+		var effective_radius: float = _p().turning_circle_radius * radius_scale
 
 		# Desired steady-state turn rate from current speed and effective turning circle
 		# omega = speed / radius, scaled by rudder input
@@ -297,10 +290,10 @@ func _physics_process(delta: float) -> void:
 		# TURN_FORCE_CORRECTION accounts for force-at-offset not mapping 1:1 to pure torque
 		ship.apply_force(-flat_right * F * TURN_FORCE_CORRECTION, stern_offset)
 
-		turning_drag_multiplier = 1.0 + turn_speed_loss * abs(rudder_input) * 1.5
+		turning_drag_multiplier = 1.0 + _p().turn_speed_loss * abs(rudder_input) * 1.5
 	else:
 		turning_drag_multiplier = 1.0
-	engine_power = move_toward(engine_power, target_power, delta / acceleration_time)
+	engine_power = move_toward(engine_power, target_power, delta / _p().acceleration_time)
 	ship.linear_damp = BASE_DRAG * grounded_drag_multiplier * turning_drag_multiplier
 
 	# Apply forward thrust
@@ -309,7 +302,7 @@ func _physics_process(delta: float) -> void:
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
 
-	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(max_turn_roll_angle + 2.0), deg_to_rad(max_turn_roll_angle + 2.0))
+	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(_p().max_turn_roll_angle + 2.0), deg_to_rad(_p().max_turn_roll_angle + 2.0))
 	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(5), deg_to_rad(5))
 
 	if debug_log and ship.name == "1" and Engine.get_physics_frames() % 16 == 0:
@@ -355,7 +348,7 @@ func _apply_hull_drag(_delta: float) -> void:
 	# Apply extra drag force only to the lateral (sideways) component
 	# The base linear_damp already handles uniform drag, so we add the difference
 	# F_drag = -lateral_drag_multiplier * linear_damp * lateral_velocity
-	var extra_lateral_drag = lateral_drag_multiplier * ship.linear_damp
+	var extra_lateral_drag = _p().lateral_drag_multiplier * ship.linear_damp
 	var lateral_drag_force = -flat_right * lateral_speed * extra_lateral_drag * ship.mass
 	ship.apply_central_force(lateral_drag_force)
 
@@ -377,12 +370,12 @@ func _apply_righting_moment(_delta: float) -> void:
 
 	# Righting torque for roll (around local Z axis, which is forward)
 	# This simulates the metacentric righting moment: GZ * displacement * g
-	var roll_righting_torque = -roll_angle * righting_strength * ship.mass * abs(ship.get_gravity().y)
-	roll_righting_torque -= local_angular_vel.z * righting_damping * ship.mass
+	var roll_righting_torque = -roll_angle * _p().righting_strength * ship.mass * abs(ship.get_gravity().y)
+	roll_righting_torque -= local_angular_vel.z * _p().righting_damping * ship.mass
 
 	# Righting torque for pitch (around local X axis)
-	var pitch_righting_torque = pitch_angle * pitch_righting_strength * ship.mass * abs(ship.get_gravity().y) * ship_length / 2.0
-	pitch_righting_torque -= local_angular_vel.x * righting_damping * ship.mass
+	var pitch_righting_torque = pitch_angle * _p().pitch_righting_strength * ship.mass * abs(ship.get_gravity().y) * ship_length / 2.0
+	pitch_righting_torque -= local_angular_vel.x * _p().righting_damping * ship.mass
 
 	# Apply torques in world space
 	var world_roll_torque = current_forward * roll_righting_torque
@@ -397,10 +390,10 @@ func _apply_turn_roll(delta: float, current_speed: float, right: Vector3) -> voi
 	# Ships lean OUTWARD (away from turn) due to centrifugal force on the superstructure
 	# The faster and tighter the turn, the more roll
 	var speed_factor = clampf(current_speed / max_speed, 0.0, 1.0)
-	var target_roll_deg = -rudder_input * max_turn_roll_angle * speed_factor
+	var target_roll_deg = -rudder_input * _p().max_turn_roll_angle * speed_factor
 
 	# Smooth transition to target roll
-	current_turn_roll = move_toward(current_turn_roll, target_roll_deg, delta * max_turn_roll_angle / roll_response_time)
+	current_turn_roll = move_toward(current_turn_roll, target_roll_deg, delta * _p().max_turn_roll_angle / _p().roll_response_time)
 
 	# Apply as a torque that fights against the righting moment
 	# This creates a dynamic equilibrium where the ship settles at an angle during turns
@@ -408,5 +401,5 @@ func _apply_turn_roll(delta: float, current_speed: float, right: Vector3) -> voi
 	var forward = -ship.global_transform.basis.z
 
 	# Apply torque around the forward axis to induce roll
-	var turn_roll_torque = forward * roll_rad * righting_strength * ship.mass * abs(ship.get_gravity().y) * 0.5
+	var turn_roll_torque = forward * roll_rad * _p().righting_strength * ship.mass * abs(ship.get_gravity().y) * 0.5
 	ship.apply_torque(turn_roll_torque)

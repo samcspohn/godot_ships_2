@@ -206,16 +206,17 @@ func _ready() -> void:
 
 	# Set ship kinematic parameters from the movement controller
 	# These match ShipMovementV4's exported properties
+	var params = movement._p()
 	navigator.set_ship_params(
-		movement.turning_circle_radius,
-		movement.rudder_response_time,
-		movement.acceleration_time,
-		movement.deceleration_time,
+		params.turning_circle_radius,
+		params.rudder_response_time,
+		params.acceleration_time,
+		params.deceleration_time,
 		movement.max_speed,
-		movement.reverse_speed_ratio,
+		params.reverse_speed_ratio,
 		movement.ship_length,
 		movement.ship_beam,
-		movement.turn_speed_loss,
+		params.turn_speed_loss,
 		movement.BASE_DRAG
 	)
 
@@ -432,7 +433,7 @@ func _update_nav_intent() -> void:
 	if _last_intent != null and NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
-		var turning_radius: float = movement.turning_circle_radius
+		var turning_radius: float = movement._p().turning_circle_radius
 		var ship_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
 		var dest_2d := Vector2(_last_intent.target_position.x, _last_intent.target_position.z)
 		if not nav_map.is_navigable(dest_2d.x, dest_2d.y, clearance):
@@ -702,7 +703,7 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 	if NavigationMapManager.is_map_ready():
 		var nav_map = NavigationMapManager.get_map()
 		var clearance: float = navigator.get_clearance_radius()
-		var turning_radius: float = movement.turning_circle_radius
+		var turning_radius: float = movement._p().turning_circle_radius
 		if not nav_map.is_navigable(dest.x, dest.y, clearance):
 			var safe := nav_map.safe_nav_point(ship_pos, dest, clearance, turning_radius)
 			dest = safe["position"]
@@ -747,7 +748,7 @@ func _compute_threat_effective_radius() -> float:
 		return 0.0
 	var turn: float = 0.0
 	if _ship.movement_controller != null:
-		turn = _ship.movement_controller.turning_circle_radius
+		turn = _ship.movement_controller._p().turning_circle_radius
 	return conceal + turn * 2.0
 
 

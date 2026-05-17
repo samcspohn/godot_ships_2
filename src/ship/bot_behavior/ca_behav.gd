@@ -435,7 +435,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		intent.heading_weight = 0.5
 
 		# TODO: improve by checking if desired heading is toward terrain to avoid navigating around and showing broadside
-		if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller.turning_circle_radius * 4.0:
+		if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller._p().turning_circle_radius * 4.0:
 			# if _active_skill_name == &"Push":
 			# 	forced_skill = _skill_kite
 			# 	_active_skill_name = &"ForcedKite"

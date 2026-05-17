@@ -75,7 +75,7 @@ func _ready() -> void:
 	# navigation_agent.velocity_computed.connect(_on_velocity_computed)
 	# path = navigation_agent.get_current_navigation_path()
 	# server_node.get_node("GameWorld/Env").get_child(0).add_child(navigation_proxy)
-	assign_nav_agent(server_node.get_node("GameWorld/Env").get_child(0))
+	#assign_nav_agent(server_node.get_node("GameWorld/Env").get_child(0))
 	navigation_proxy.global_position = _ship.global_position
 	navigation_proxy.add_child(navigation_agent)
 	# navigation_agent.set_target_position(target)
@@ -251,7 +251,7 @@ func get_threat_vector() -> Dictionary:
 	_debug_turn_sim_points_undesired.clear()
 	for i in range(samples):
 		var angle := adjusted_heading + (float(i) / samples) * TAU
-		var point := Vector3(sin(angle), 0, cos(angle)) * movement.turning_circle_radius * 8.0 * maxf(movement.get_current_speed_ms() / movement.max_speed, 0.5)
+		var point := Vector3(sin(angle), 0, cos(angle)) * movement._p().turning_circle_radius * 8.0 * maxf(movement.get_current_speed_ms() / movement.max_speed, 0.5)
 		ray_query.to = _ship.global_position + point
 		ray_query.exclude = [_ship]
 
@@ -380,19 +380,6 @@ func engage_target():
 	else:
 		target_lead = null
 		_ship.artillery_controller.set_aim_input(destination)
-
-func assign_nav_agent(map: Node):
-	match movement.nav_size:
-		ShipMovementV4.NavSize.NAV_LIGHT:
-			map.get_node("light_nav").add_child(navigation_proxy)
-		ShipMovementV4.NavSize.NAV_MEDIUM:
-			map.get_node("medium_nav").add_child(navigation_proxy)
-		ShipMovementV4.NavSize.NAV_HEAVY:
-			map.get_node("heavy_nav").add_child(navigation_proxy)
-		ShipMovementV4.NavSize.NAV_SUPERHEAVY:
-			map.get_node("superheavy_nav").add_child(navigation_proxy)
-		ShipMovementV4.NavSize.NAV_ULTRAHEAVY:
-			map.get_node("ultraheavy_nav").add_child(navigation_proxy)
 
 func defer_target():
 	navigation_proxy.global_position = _ship.global_position

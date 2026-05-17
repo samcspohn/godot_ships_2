@@ -3,4 +3,5 @@
 [ext_resource type="Script" uid="uid://ch1735t481g83" path="res://src/server/server.gd" id="1_a8eh6"]
 
 [node name="Server" type="Node" unique_id=1500321704]
+process_priority = 3
 script = ExtResource("1_a8eh6")

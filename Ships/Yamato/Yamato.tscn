@@ -31,6 +31,7 @@
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="28_wake"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="30_ssrv5"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://src/particles/templates/funnel_exhaust_smoke_template.tres" id="31_0yy7r"]
+[ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="32_movp"]
 
 [sub_resource type="Resource" id="Resource_y3atb"]
 script = ExtResource("4_073m0")
@@ -181,6 +182,14 @@ traverse_speed = 50.0
 _range = 4000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
+[sub_resource type="Resource" id="Resource_mvym"]
+script = ExtResource("32_movp")
+max_speed_knots = 27.0
+acceleration_time = 40.0
+deceleration_time = 40.0
+turning_circle_radius = 320.0
+rudder_response_time = 15.0
+
 [sub_resource type="Resource" id="Resource_26rxh"]
 resource_local_to_scene = true
 script = ExtResource("15_g7l6b")
@@ -264,12 +273,7 @@ guns = [NodePath("../../../TurretMount_IJN_127mm_2b_type89/IJN_127mm_2b_type89")
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
-max_speed_knots = 27.0
-acceleration_time = 40.0
-deceleration_time = 40.0
-reverse_speed_ratio = 0.5
-turning_circle_radius = 320.0
-rudder_response_time = 15.0
+params = SubResource("Resource_mvym")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_26rxh"), SubResource("Resource_ssrv5")])

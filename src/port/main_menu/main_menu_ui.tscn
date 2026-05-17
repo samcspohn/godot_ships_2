@@ -1,9 +1,11 @@
-[gd_scene load_steps=6 format=3 uid="uid://davxh8pj063uw"]
+[gd_scene load_steps=10 format=3 uid="uid://davxh8pj063uw"]
 
 [ext_resource type="Script" uid="uid://budq4bhs6x0g1" path="res://src/port/main_menu/main_menu_ui.gd" id="1_ui_script"]
 [ext_resource type="PackedScene" uid="uid://bu6esupokhxqv" path="res://src/port/main_menu/ship_tab.tscn" id="2_ship_tab"]
 [ext_resource type="PackedScene" uid="uid://cxgx5p7j582qa" path="res://src/port/main_menu/upgrade_tab.tscn" id="3_upgrade_tab"]
 [ext_resource type="PackedScene" uid="uid://dtynepuhssiks" path="res://src/port/main_menu/commander_skills_tab.tscn" id="4_commander_tab"]
+[ext_resource type="Script" path="res://src/port/main_menu/ship_stats_panel.gd" id="5_stats_script"]
+[ext_resource type="Script" path="res://src/ui/accordion_panel.gd" id="6_accordion_script"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_7nxx5"]
 
@@ -107,55 +109,59 @@ layout_mode = 2
 metadata/_tab_index = 2
 
 [node name="StatsPanel" type="Panel" parent="HBoxContainer"]
-custom_minimum_size = Vector2(300, 0)
+custom_minimum_size = Vector2(320, 0)
 layout_mode = 2
 
-[node name="VBoxContainer" type="VBoxContainer" parent="HBoxContainer/StatsPanel"]
+[node name="ScrollContainer" type="ScrollContainer" parent="HBoxContainer/StatsPanel"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = -10.0
-offset_bottom = -10.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
 grow_horizontal = 2
 grow_vertical = 2
+horizontal_scroll_mode = 0
 
-[node name="Label" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="HBoxContainer/StatsPanel/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("5_stats_script")
+
+[node name="Title" type="Label" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 text = "Ship Stats"
 horizontal_alignment = 1
 
-[node name="HSeparator" type="HSeparator" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="HSeparator" type="HSeparator" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 
-[node name="SpeedLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="Maneuverability" type="VBoxContainer" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
-text = "Speed:"
+size_flags_horizontal = 3
+script = ExtResource("6_accordion_script")
+title = "Maneuverability"
+expanded = true
 
-[node name="SpeedBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="Artillery" type="VBoxContainer" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
-max_value = 1.0
-value = 0.4
-show_percentage = false
+size_flags_horizontal = 3
+script = ExtResource("6_accordion_script")
+title = "Artillery"
+expanded = true
 
-[node name="ArmorLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="Survivability" type="VBoxContainer" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
-text = "Armor:"
+size_flags_horizontal = 3
+script = ExtResource("6_accordion_script")
+title = "Survivability"
+expanded = true
 
-[node name="ArmorBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
+[node name="Torpedo" type="VBoxContainer" parent="HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer"]
 layout_mode = 2
-max_value = 1.0
-value = 0.6
-show_percentage = false
-
-[node name="FirepowerLabel" type="Label" parent="HBoxContainer/StatsPanel/VBoxContainer"]
-layout_mode = 2
-text = "Firepower:"
-
-[node name="FirepowerBar" type="ProgressBar" parent="HBoxContainer/StatsPanel/VBoxContainer"]
-layout_mode = 2
-max_value = 1.0
-value = 0.7
-show_percentage = false
+size_flags_horizontal = 3
+script = ExtResource("6_accordion_script")
+title = "Torpedo"
+expanded = false

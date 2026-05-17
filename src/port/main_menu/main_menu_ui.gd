@@ -11,6 +11,7 @@ extends Control
 @onready var ship_tab = $HBoxContainer/TabContainer/Ship
 @onready var upgrade_tab = $HBoxContainer/TabContainer/Upgrades
 @onready var commander_skills_tab = $"HBoxContainer/TabContainer/Commander Skills"
+@onready var stats_panel: ShipStatsPanel = $HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer
 
 var dock_node  # Will be set by the main scene
 var udp: PacketPeerUDP = null
@@ -78,6 +79,7 @@ func _on_ship_selected(ship_node):
 	# Pass the selected ship to the upgrade and commander tabs
 	upgrade_tab.set_ship(selected_ship)
 	commander_skills_tab.set_ship(selected_ship)
+	stats_panel.set_ship(selected_ship)
 
 func submit_to_matchmaker():
 	if not udp:
@@ -185,6 +187,7 @@ func _on_upgrade_selected(slot_index: int, upgrade_id: String):
 	GameSettings.save_settings()
 
 	print("Upgrade selected: ", upgrade_id, " for slot ", slot_index)
+	stats_panel.refresh()
 
 func _on_upgrade_removed(slot_index: int):
 	# Check if this ship has any upgrades saved
@@ -196,6 +199,7 @@ func _on_upgrade_removed(slot_index: int):
 			# Remove the upgrade from this slot
 			GameSettings.ship_config[GameSettings.selected_ship].erase(str(slot_index))
 			GameSettings.save_settings()
+			stats_panel.refresh()
 
 func _apply_upgrade_to_ship(ship: Ship, slot_index: int, upgrade_id: String):
 	if upgrade_id.is_empty():
@@ -230,6 +234,7 @@ func _on_skill_toggled(skill_id: String, enabled: bool):
 				skills_array.erase(skill_id)
 
 	GameSettings.save_settings()
+	stats_panel.refresh()
 
 func _on_replay_pressed():
 	get_tree().change_scene_to_file("res://src/port/shell_replay.tscn")

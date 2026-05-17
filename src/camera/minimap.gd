@@ -335,6 +335,12 @@ func _on_canvas_draw() -> void:
 
 	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0)
 
+	# Draw Hydroacoustic Search torpedo detection range as a translucent filled circle
+	var hydro_torp_range := _get_active_hydro_torpedo_detection_range(ship)
+	if hydro_torp_range > 0.0:
+		var torp_fill_color := Color(HYDRO_RANGE_COLOR.r, HYDRO_RANGE_COLOR.g, HYDRO_RANGE_COLOR.b, 0.2)
+		ship_markers_canvas.draw_circle(world_to_minimap_position(ship.global_position), hydro_torp_range * scale_factor.x, torp_fill_color)
+
 	# Draw Hydroacoustic Search spotting radius when the consumable is active
 	var hydro_range := _get_active_hydro_spotting_range(ship)
 	if hydro_range > 0.0:
@@ -386,6 +392,15 @@ func _get_active_hydro_spotting_range(ship: Ship) -> float:
 	for item in ship.consumable_manager.equipped_consumables:
 		if item is HydroacousticSearch:
 			return item.spotting_range
+	return -1.0
+
+## Returns the active HydroacousticSearch torpedo_detection_range for [ship], or -1 if not active.
+func _get_active_hydro_torpedo_detection_range(ship: Ship) -> float:
+	if not ship.consumable_manager:
+		return -1.0
+	for item in ship.consumable_manager.equipped_consumables:
+		if item is HydroacousticSearch:
+			return item.torpedo_detection_range
 	return -1.0
 
 ## Returns the active Radar spotting_range for [ship], or -1 if not active.

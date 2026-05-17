@@ -7,7 +7,7 @@ extends BotSkill
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var nearest = ctx.behavior._get_nearest_enemy().ship
 	var away_from = atan2(ctx.ship.global_position.x - nearest.global_position.x, ctx.ship.global_position.z - nearest.global_position.z)
-	var dest = ctx.ship.global_position + Vector3(sin(away_from), 0.0, cos(away_from)) * max(3000.0, ctx.ship.movement_controller.turning_circle_radius * 8.0)
+	var dest = ctx.ship.global_position + Vector3(sin(away_from), 0.0, cos(away_from)) * max(3000.0, ctx.ship.movement_controller._p().turning_circle_radius * 8.0)
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
 	var intent := NavIntent.create(dest, away_from)
