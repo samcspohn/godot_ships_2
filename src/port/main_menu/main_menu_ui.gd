@@ -11,7 +11,7 @@ extends Control
 @onready var ship_tab = $HBoxContainer/TabContainer/Ship
 @onready var upgrade_tab = $HBoxContainer/TabContainer/Upgrades
 @onready var commander_skills_tab = $"HBoxContainer/TabContainer/Commander Skills"
-@onready var stats_panel: ShipStatsPanel = $HBoxContainer/StatsPanel/ScrollContainer/VBoxContainer
+@onready var stats_panel: ShipStatsPanel = $"HBoxContainer/StatsPanel/ScrollContainer/MarginContainer/VBoxContainer"
 
 var dock_node  # Will be set by the main scene
 var udp: PacketPeerUDP = null

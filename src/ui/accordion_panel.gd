@@ -23,6 +23,9 @@ signal toggled(expanded: bool)
 
 var _header: Button
 var _content: VBoxContainer
+var _rating_row: HBoxContainer
+var _rating_bar: ProgressBar
+var _rating_label: Label
 
 func _ready() -> void:
 	add_theme_constant_override("separation", 0)
@@ -35,6 +38,33 @@ func _ready() -> void:
 	_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_header.toggled.connect(_on_header_toggled)
 	add_child(_header)
+
+	# Always-visible rating row (hidden until set_rating() is called).
+	_rating_row = HBoxContainer.new()
+	_rating_row.add_theme_constant_override("separation", 6)
+	_rating_row.visible = false
+	_rating_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var rating_margin := MarginContainer.new()
+	rating_margin.add_theme_constant_override("margin_left", 8)
+	rating_margin.add_theme_constant_override("margin_right", 8)
+	rating_margin.add_theme_constant_override("margin_top", 1)
+	rating_margin.add_theme_constant_override("margin_bottom", 1)
+	rating_margin.add_child(_rating_row)
+	add_child(rating_margin)
+
+	_rating_bar = ProgressBar.new()
+	_rating_bar.min_value = 0.0
+	_rating_bar.max_value = 100.0
+	_rating_bar.show_percentage = false
+	_rating_bar.custom_minimum_size = Vector2(0, 8)
+	_rating_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rating_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_rating_row.add_child(_rating_bar)
+
+	_rating_label = Label.new()
+	_rating_label.custom_minimum_size = Vector2(56, 0)
+	_rating_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_rating_row.add_child(_rating_label)
 
 	_content = VBoxContainer.new()
 	_content.add_theme_constant_override("separation", 2)
@@ -56,6 +86,32 @@ func _on_header_toggled(pressed: bool) -> void:
 func _build_header_text() -> String:
 	var arrow := "▾" if expanded else "▸"
 	return "%s  %s" % [arrow, title]
+
+## Show an always-visible "effectiveness" rating below the header. The
+## progress bar is clamped to 100, but the numeric label shows the raw value
+## so exceptional ships can be flagged. Call clear_rating() to hide it.
+func set_rating(value: float, max_display: float = 100.0) -> void:
+	if _rating_bar == null:
+		return
+	_rating_row.visible = true
+	_rating_bar.max_value = max_display
+	_rating_bar.value = clampf(value, 0.0, max_display)
+	_rating_label.text = "%d / %d" % [int(round(value)), int(max_display)]
+	# Color the bar from red (low) → yellow → green based on the raw value.
+	var ratio := clampf(value / max_display, 0.0, 1.0)
+	var c := Color(1.0 - ratio, ratio, 0.2).lerp(Color(0.4, 1.0, 0.4), max(ratio - 0.5, 0.0))
+	_rating_bar.modulate = Color(1, 1, 1)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c
+	sb.corner_radius_top_left = 2
+	sb.corner_radius_top_right = 2
+	sb.corner_radius_bottom_left = 2
+	sb.corner_radius_bottom_right = 2
+	_rating_bar.add_theme_stylebox_override("fill", sb)
+
+func clear_rating() -> void:
+	if _rating_row:
+		_rating_row.visible = false
 
 ## Removes all child rows from the content area.
 func clear_stats() -> void:
