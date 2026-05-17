@@ -41,3 +41,10 @@ func remove_effect(ship: Ship) -> void:
 func can_use(_ship: Ship) -> bool:
 	# Can always use damage control (it will reduce existing fire damage/duration)
 	return true
+
+func _get_stat_lines() -> Array[String]:
+	return [
+		"Fire/flood duration: -%.0f%%" % (duration_reduction * 100.0),
+		"Fire/flood damage: -%.0f%%" % (damage_reduction * 100.0),
+		"Buildup reduction: 10x",
+	]

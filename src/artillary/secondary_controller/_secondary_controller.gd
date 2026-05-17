@@ -42,6 +42,7 @@ func get_weapon_ui() -> Array[Button]:
 
 	var shell1 = Button.new()
 	shell1.text = "sAP"
+	shell1.tooltip_text = _build_tooltip_text(0)
 	shell1.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		# shell_index = 0
@@ -50,6 +51,7 @@ func get_weapon_ui() -> Array[Button]:
 
 	var shell2 = Button.new()
 	shell2.text = "sHE"
+	shell2.tooltip_text = _build_tooltip_text(1)
 	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		# shell_index = 1
@@ -57,6 +59,27 @@ func get_weapon_ui() -> Array[Button]:
 	)
 
 	return [shell1, shell2]
+
+func _build_tooltip_text(_shell_index: int) -> String:
+	var shell_label := "AP" if _shell_index == 0 else "HE"
+	var lines := [
+		"Secondary Battery (%s)" % shell_label,
+		"----------------------------------",
+	]
+	for sc in sub_controllers:
+		var gp := sc.get_params() as GunParams
+		var sp: ShellParams = gp.shell1 if _shell_index == 0 else gp.shell2
+		var num_guns := sc.guns.size()
+		lines.append("%d x %.0f mm" % [num_guns, sp.caliber])
+		lines.append("  Reload: %.1f s" % gp.reload_time)
+		lines.append("  Range: %.1f km" % (gp._range / 1000.0))
+		lines.append("  Damage: %d  Velocity: %.0f m/s" % [int(sp.damage), sp.speed])
+		if sp.type == ShellParams.ShellType.HE:
+			lines.append("  Fire buildup: %.0f  Overmatch: %d mm" % [sp.fire_buildup, sp.overmatch])
+		else:
+			lines.append("  Arming: %d mm  Fuze: %.3f s" % [sp.arming_threshold, sp.fuze_delay])
+		lines.append("")
+	return "\n".join(PackedStringArray(lines))
 
 
 func get_aim_ui() -> Dictionary:

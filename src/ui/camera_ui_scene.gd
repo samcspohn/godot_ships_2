@@ -7,6 +7,7 @@ const FloatingDamageScene = preload("res://scenes/floating_damage.tscn")
 const GunIndicatorScene = preload("res://src/ui/gun_indicator.tscn")
 const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
 const KillFeedScene = preload("res://src/ui/kill_feed.tscn")
+const HoverTooltipScript = preload("res://src/ui/hover_tooltip.gd")
 
 
 # Camera controller reference
@@ -108,6 +109,11 @@ var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consu
 
 @onready var secondaries_disabled = $MainContainer/BottomCenterPanel/StatusIndicators/SecondariesDisabled
 
+# Custom hover-tooltip overlay. Created in _ready(). Used in place of the
+# engine's built-in Control.tooltip_text for any HUD element that needs to be
+# inspected while the player is holding Ctrl (which suppresses native tooltips).
+var hover_tooltip
+
 var current_hp: float = 0.0
 
 # Healable HP bar pulse animation
@@ -198,6 +204,13 @@ func _configure_weapon_button(button: Button, index: int) -> void:
 	button.custom_minimum_size = Vector2(56, 56)
 	button.toggle_mode = true
 	button.button_group = weapon_button_group
+	# Migrate the controller's tooltip text onto our custom hover popup. Godot's
+	# built-in tooltip system is suppressed while Ctrl is held (the very key the
+	# player uses to release the cursor and interact with the HUD), so we route
+	# weapon-button hints through HoverTooltip instead.
+	if button.tooltip_text != "":
+		hover_tooltip.attach(button, button.tooltip_text)
+		button.tooltip_text = ""
 
 func _get_all_weapon_buttons() -> Array[Button]:
 	var buttons: Array[Button] = []
@@ -260,6 +273,12 @@ func _update_skill_indicators():
 func _ready():
 	# Add to camera_ui group for easy access
 	add_to_group("camera_ui")
+
+	# Custom hover-tooltip overlay (replaces native tooltips, which Godot
+	# suppresses while Ctrl is held). Must exist before any setup_* call that
+	# attaches hints to widgets.
+	hover_tooltip = HoverTooltipScript.new()
+	add_child(hover_tooltip)
 
 	# # Connect weapon button signals
 	# for i in range(weapon_buttons.size()):
@@ -491,6 +510,10 @@ func _on_match_ended(winning_team: int):
 func _setup_hit_stat_counters():
 	"""Setup the hit/stat counters component"""
 	hit_stat_counters = HitStatCountersScene.instantiate()
+	# Inject the shared HoverTooltip overlay BEFORE adding to the tree so the
+	# counters' _ready() can wire its drill-down panels through it. Skips the
+	# old per-physics-tick hover polling that broke while Ctrl was held.
+	hit_stat_counters.hover_tooltip = hover_tooltip
 	$MainContainer.add_child(hit_stat_counters)
 	hit_stat_counters.floating_damage_requested.connect(_on_floating_damage_requested)
 
@@ -1536,6 +1559,9 @@ func setup_consumable_ui():
 		var item = consumable_manager.equipped_consumables[i]
 		button.texture_normal = item.icon
 		button.texture_disabled = item.disabled_icon
+		# Route the consumable's stat hint through HoverTooltip so it shows up
+		# while the player is holding Ctrl (Godot's native tooltips don't).
+		hover_tooltip.attach(button, item.get_tooltip_text())
 
 
 		# Set keyboard shortcut text

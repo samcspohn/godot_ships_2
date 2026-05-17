@@ -36,6 +36,31 @@ func can_use(ship: Ship) -> bool:
 func _proc(_delta: float, ship :Ship):
 	pass
 
+# Tooltip / popup-hint text shown when hovering this consumable's UI button.
+# Subclasses can override _get_stat_lines() to append type-specific stats
+# without rewriting the common header (name/description/cooldown/...).
+func get_tooltip_text() -> String:
+	var lines := [name]
+	if description != "":
+		lines.append("")
+		lines.append(description)
+	lines.append("")
+	lines.append("Cooldown: %.0f s" % cooldown_time)
+	if duration > 0.0:
+		lines.append("Duration: %.0f s" % duration)
+	else:
+		lines.append("Duration: instant")
+	lines.append("Charges: %d" % max_stack)
+	var stat_lines := _get_stat_lines()
+	if stat_lines.size() > 0:
+		lines.append("")
+		lines.append_array(stat_lines)
+	return "\n".join(PackedStringArray(lines))
+
+# Override in subclasses to add type-specific stat lines (without header).
+func _get_stat_lines() -> Array[String]:
+	return []
+
 
 func to_dict() -> Dictionary:
 	return {

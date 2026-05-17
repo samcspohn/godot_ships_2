@@ -89,10 +89,9 @@ var period = 0.0
 
 
 const SHELL_COUNT := 8
-const MAX_R := 2.4477  # sqrt(-2 * log(0.05)) — 95th percentile, maps to 1.0
+const MAX_R := 2.4477  # sqrt(-2 * log(0.05)) — Rayleigh 95th percentile
 
 var _shell_index := 0
-var _salvo_rotation := 0.0
 var _shuffled_radii := PackedFloat64Array()
 var _angles := PackedFloat64Array()
 var _sigma := 1.0
@@ -104,7 +103,7 @@ var _citadel_v_frac := 0.05  # citadel semi-height as fraction of base_spread
 
 func _init(sigma: float = 1.0) -> void:
 	_sigma = maxf(sigma, 1.0)
-	_new_salvo()
+	_new_salvo(1.0, 1.0)
 
 
 func set_sigma(sigma: float) -> void:
@@ -119,55 +118,89 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 	_citadel_v_frac = maxf(v_frac, 0.01)
 
 
-func _new_salvo() -> void:
+func _new_salvo(h_grouping: float, v_grouping: float) -> void:
 	_shell_index = 0
-	_salvo_rotation = randf() * TAU
+	var half: int = SHELL_COUNT >> 1  # SHELL_COUNT / 2
 
-	# ── Radial stratification via Rayleigh CDF, normalized to [0, 1] ──
-	_shuffled_radii.resize(SHELL_COUNT)
+	# ── Rayleigh-stratified radii, sorted inner (small) to outer (large) ──
+	var sorted_r := PackedFloat64Array()
+	sorted_r.resize(SHELL_COUNT)
 	for i in SHELL_COUNT:
 		var u_low := float(i) / SHELL_COUNT
 		var u_high := float(i + 1) / SHELL_COUNT
 		var u := u_low + randf() * (u_high - u_low)
-		# Rayleigh CDF inversion, scaled so 95th percentile = 1.0
-		_shuffled_radii[i] = minf(sqrt(-2.0 * log(1.0 - u + 1e-12)) / MAX_R, 1.0)
+		sorted_r[i] = minf(sqrt(-2.0 * log(1.0 - u + 1e-12)) / MAX_R, 1.0)
+	sorted_r.sort()
 
-	# Fisher-Yates shuffle radii
-	for i in range(SHELL_COUNT - 1, 0, -1):
+	# ── Assign radii: interleave inner and outer within each consecutive pair ──
+	# Shell 2i   : sorted_r[i]         — inner, accurate, lands close to aim
+	# Shell 2i+1 : sorted_r[N-1-i]     — outer, spread, lands far from aim
+	# Every 2 shells = one tight + one wide shot.
+	# Every 4 shells = innermost + outermost pair AND second inner + second outer pair,
+	# covering the full quality range.
+	_shuffled_radii.resize(SHELL_COUNT)
+	for i in half:
+		_shuffled_radii[i * 2]     = sorted_r[i]
+		_shuffled_radii[i * 2 + 1] = sorted_r[SHELL_COUNT - 1 - i]
+
+	# ── Angles: strictly alternate upper (sin > 0) and lower (sin < 0) ──
+	# Generate `half` angles stratified across [0, PI]   (upper half-circle)
+	# and   `half` angles stratified across [PI, 2*PI]   (lower half-circle).
+	# Shuffle each group independently so left-right position stays random.
+	# Weave them: even shell indices get upper, odd get lower.
+	# This guarantees every consecutive pair has one shell going up and one going down.
+	var upper_angles := PackedFloat64Array()
+	var lower_angles := PackedFloat64Array()
+	upper_angles.resize(half)
+	lower_angles.resize(half)
+	var sector := PI / half
+	for i in half:
+		var jitter := (randf() - 0.5) * sector * 0.7
+		upper_angles[i] = (float(i) + 0.5) * sector + jitter
+		lower_angles[i] = PI + (float(i) + 0.5) * sector + jitter
+
+	for i in range(half - 1, 0, -1):
 		var j := randi_range(0, i)
-		var tmp := _shuffled_radii[i]
-		_shuffled_radii[i] = _shuffled_radii[j]
-		_shuffled_radii[j] = tmp
+		var tmp := upper_angles[i]
+		upper_angles[i] = upper_angles[j]
+		upper_angles[j] = tmp
 
-	# ── Angular stratification with jitter ──
+	for li in range(half - 1, 0, -1):
+		var lj := randi_range(0, li)
+		var ltmp := lower_angles[li]
+		lower_angles[li] = lower_angles[lj]
+		lower_angles[lj] = ltmp
+
 	_angles.resize(SHELL_COUNT)
-	var sector := TAU / SHELL_COUNT
-	for i in SHELL_COUNT:
-		_angles[i] = float(i) * sector + _salvo_rotation \
-			+ (randf() - 0.5) * sector * 0.7
+	for i in half:
+		_angles[i * 2]     = upper_angles[i]
+		_angles[i * 2 + 1] = lower_angles[i]
 
-	# ── Post-processing: citadel guarantee ──
-	_apply_citadel_guarantee()
+	_apply_citadel_guarantee(h_grouping, v_grouping)
 
 
-func _apply_citadel_guarantee() -> void:
-	var ea := _citadel_h_frac  # semi-axis in normalized space
+# Tests whether any shell in the current salvo will land inside the citadel
+# ellipse AFTER grouping is applied, and only nudges a shell inward if none do.
+# The grouping exponents must match what `calculate_dispersed_launch()` uses,
+# otherwise an inner shell that grouping would have squeezed into the citadel
+# can be falsely rejected, causing us to pull yet another shell inward and
+# tighten the overall pattern beyond what the curve specifies.
+func _apply_citadel_guarantee(h_grouping: float, v_grouping: float) -> void:
+	var ea := _citadel_h_frac
 	var eb := _citadel_v_frac
 	if ea <= 0.0 or eb <= 0.0:
 		return
 
-	# Decompose each shell into h/v offsets and check ellipse
 	var any_inside := false
 	var closest_idx := 0
 	var closest_d := INF
 
 	for i in SHELL_COUNT:
-		var r := _shuffled_radii[i]
-		var a := _angles[i]
-		var hx := r * cos(a)  # lateral offset [-1, 1]
-		var vy := r * sin(a)  # vertical offset [-1, 1]
-
-		# Normalized ellipse distance: < 1 = inside
+		var h_raw := _shuffled_radii[i] * cos(_angles[i])
+		var v_raw := _shuffled_radii[i] * sin(_angles[i])
+		# Mirror the grouping transform from calculate_dispersed_launch()
+		var hx: float = sign(h_raw) * pow(absf(h_raw), h_grouping)
+		var vy: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
 		var d := (hx * hx) / (ea * ea) + (vy * vy) / (eb * eb)
 		if d <= 1.0:
 			any_inside = true
@@ -177,8 +210,13 @@ func _apply_citadel_guarantee() -> void:
 			closest_idx = i
 
 	if not any_inside:
-		# Pull nearest shell to 50–90% inside the ellipse along its current angle
-		var scale_factor := (0.5 + randf() * 0.4) / sqrt(closest_d)
+		# Solve for the raw-radius scale that lands the post-grouping shell
+		# inside the ellipse. Grouping is a power law on |r|, so scaling raw
+		# radius by `s` scales the post-grouping radius by s^grouping. We pick
+		# an average exponent for the axis weighting (cheap + close enough).
+		var avg_grouping: float = (h_grouping + v_grouping) * 0.5
+		var target_d := 0.25 + randf() * 0.56  # final d in [0.25, 0.81]
+		var scale_factor: float = pow(target_d / closest_d, 0.5 / maxf(avg_grouping, 0.01))
 		_shuffled_radii[closest_idx] *= scale_factor
 
 # Dispersion curve. The maximum physical dispersion (meters at max range) is
@@ -227,13 +265,12 @@ func calculate_dispersed_launch(
 	var _base_spread: float = rate * base_spread * 2.0 + base_spread
 
 	if _shell_index >= SHELL_COUNT:
-		_new_salvo()
+		_new_salvo(h_grouping, v_grouping)
 
 	var r := _shuffled_radii[_shell_index]
 	var angle := _angles[_shell_index]
 	_shell_index += 1
 
-	# Decompose into lateral / vertical components (each in [-1, 1])
 	var h_raw := r * cos(angle)
 	var v_raw := r * sin(angle)
 

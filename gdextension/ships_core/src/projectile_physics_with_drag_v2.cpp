@@ -819,6 +819,21 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		Vector3 curr_pos = calculate_position_at_time(start_pos, launch_vector, t, shell_params);
 
 		// ----------------------------------------------------------------
+		// OBB broadphase check --- one segment ray per step
+		// ----------------------------------------------------------------
+		if (space_state != nullptr && obb_ray.is_valid()) {
+			obb_ray->set_from(prev_pos);
+			obb_ray->set_to(curr_pos);
+			Dictionary hit = space_state->intersect_ray(obb_ray);
+			if (!hit.is_empty()) {
+				result["obb_hit"] = true;
+				result["obb_collider"] = hit["collider"];
+				result["obb_position"] = hit["position"];
+				return result;
+			}
+		}
+
+		// ----------------------------------------------------------------
 		// Terrain check --- zero physics queries, pure height grid lookup
 		// ----------------------------------------------------------------
 		if (nav_map.is_valid() && nav_map->is_built()) {
@@ -832,21 +847,6 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 					result["terrain_blocked"] = true;
 					return result;
 				}
-			}
-		}
-
-		// ----------------------------------------------------------------
-		// OBB broadphase check --- one segment ray per step
-		// ----------------------------------------------------------------
-		if (space_state != nullptr && obb_ray.is_valid()) {
-			obb_ray->set_from(prev_pos);
-			obb_ray->set_to(curr_pos);
-			Dictionary hit = space_state->intersect_ray(obb_ray);
-			if (!hit.is_empty()) {
-				result["obb_hit"] = true;
-				result["obb_collider"] = hit["collider"];
-				result["obb_position"] = hit["position"];
-				return result;
 			}
 		}
 

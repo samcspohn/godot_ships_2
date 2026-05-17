@@ -18,11 +18,33 @@ var weapons: Array[Turret]:
 func get_weapon_ui() -> Array[Button]:
 	var button = Button.new()
 	button.text = "TP"
+	button.tooltip_text = _build_tooltip_text()
 	button.pressed.connect(func():
 		print("Pressed TorpedoController")
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 	)
 	return [button]
+
+func _build_tooltip_text() -> String:
+	var tp := get_torp_params()
+	var lp := get_params()
+	var num_launchers := launchers.size()
+	var lines := [
+		"Torpedoes",
+		"",
+		"Launchers: %d" % num_launchers,
+		"Reload: %.1f s" % lp.reload_time,
+		"Range: %.1f km" % (lp._range / 1000.0),
+		"Traverse: %.1f deg/s" % rad_to_deg(lp.traverse_speed),
+		"",
+		"Torpedo:",
+		"  Damage: %d" % int(tp.damage),
+		"  Speed: %.0f kt (%.1f m/s)" % [tp.speed_knts, tp.speed],
+		"  Flood buildup: %.0f" % tp.flood_buildup,
+		"  Detection range: %.0f m" % tp.detection_range,
+		"  Arming distance: %.0f m" % tp.arming_distance,
+	]
+	return "\n".join(PackedStringArray(lines))
 
 func get_aim_ui() -> Dictionary:
 	var time_to_target = -1

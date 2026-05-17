@@ -30,3 +30,9 @@ func remove_effect(ship: Ship) -> void:
 	# static_mod from base and reapplies all remaining mods, so the override
 	# is automatically cleared without manually zeroing it.
 	ship.remove_static_mod(_effect)
+
+func _get_stat_lines() -> Array[String]:
+	return [
+		"Torpedo detection: %.1f km" % (torpedo_detection_range / 1000.0),
+		"Ship force-spot: %.1f km" % (spotting_range / 1000.0),
+	]

@@ -14,6 +14,7 @@ var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
 	shell1.text = "AP"
+	shell1.tooltip_text = _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell1)
 	shell1.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		select_shell.rpc_id(1, 0)
@@ -21,12 +22,40 @@ func get_weapon_ui() -> Array[Button]:
 
 	var shell2 = Button.new()
 	shell2.text = "HE"
+	shell2.tooltip_text = _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2)
 	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		select_shell.rpc_id(1, 1)
 	)
 
 	return [shell1, shell2]
+
+func _build_tooltip_text(gp: GunParams, sp: ShellParams) -> String:
+	var shell_label := "AP" if sp.type == ShellParams.ShellType.AP else "HE"
+	# var num_guns := guns.size()
+	var lines := [
+		"Main Battery (%s)" % shell_label,
+		"----------------------------------",
+		"Caliber: %.0f mm" % sp.caliber,
+		"Reload: %.1f s" % gp.reload_time,
+		"Range: %.1f km" % (gp._range / 1000.0),
+		"Traverse: %.1f s" % (180.0 / gp.traverse_speed),
+		"----------------------------------",
+		"Shell: %s" % shell_label,
+		"  Damage: %d" % int(sp.damage),
+		"  Muzzle velocity: %.0f m/s" % sp.speed,
+		"  Mass: %.1f kg" % sp.mass,
+	]
+	if sp.type == ShellParams.ShellType.HE:
+		lines.append("  Fire chance buildup: %.0f" % sp.fire_buildup)
+		lines.append("  Overmatch: %d mm" % sp.overmatch)
+	else:
+		lines.append("  Arming threshold: %d mm" % sp.arming_threshold)
+		lines.append("  Fuze delay: %.3f s" % sp.fuze_delay)
+		lines.append("  Ricochet angle: %.0f°" % rad_to_deg(sp.ricochet_angle))
+		lines.append("  Auto-bounce angle: %.0f°" % rad_to_deg(sp.auto_bounce))
+	# lines.append("  Pen modifier: %.2fx" % sp.penetration_modifier)
+	return "\n".join(PackedStringArray(lines))
 
 func get_aim_ui() -> Dictionary:
 	var ship_position = _ship.global_position + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)

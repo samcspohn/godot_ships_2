@@ -11,6 +11,20 @@ var current_count: int = 0
 var config: Dictionary = {}
 
 
+func _ready() -> void:
+	# The Background Panel and Container Control both cover the full rect with
+	# the default MOUSE_FILTER_STOP, which makes one of them the picked control
+	# under the cursor. Godot only fires mouse_entered on the picked control,
+	# so without this the StatCounter root would never receive hover signals
+	# (HoverTooltip.attach_content() relies on those). Flip the children to
+	# IGNORE so the StatCounter itself becomes the picked control.
+	if background:
+		background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var container := get_node_or_null("Container") as Control
+	if container:
+		container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
 func setup(counter_config: Dictionary) -> void:
 	"""Configure this counter with the given settings"""
 	config = counter_config

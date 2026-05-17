@@ -205,17 +205,20 @@ var temp_counters: Dictionary = {}          # Temporary flash counters
 
 # Ships damaged hover panel
 var ships_damaged_panel: VBoxContainer = null
-var damage_label_hovering: bool = false
-
-# Active temporary counter tracking
-var active_temp_counters: Dictionary = {}   # Tracks active temp counters
-var temp_timers: Dictionary = {}            # Timers for temp containers
 
 # Reverse lookup: HitResult enum -> hit_type string
 var hit_result_to_type: Dictionary = {}
 
-# Hover state tracking
-var hover_states: Dictionary = {}
+# Externally-owned HoverTooltip overlay. Must be assigned by the parent HUD
+# (camera_ui_scene / replay_hud) BEFORE this node enters the tree so _ready()
+# can wire up its mouse_entered/mouse_exited driven popups. We deliberately do
+# NOT fall back to per-frame rect/mouse polling — that was the long-standing UI
+# bug we're eliminating (Godot's polled mouse position drifts when Ctrl-held).
+var hover_tooltip: HoverTooltip = null
+
+# Active temporary counter tracking
+var active_temp_counters: Dictionary = {}   # Tracks active temp counters
+var temp_timers: Dictionary = {}            # Timers for temp containers
 
 # UI references
 @onready var summary_container: HBoxContainer = $HBoxContainer
@@ -224,17 +227,17 @@ var hover_states: Dictionary = {}
 
 
 func _ready():
+	assert(hover_tooltip != null, "HitStatCounters requires hover_tooltip to be assigned before entering the tree")
 	_build_hit_result_lookup()
 	_create_summary_counters()
 	_create_hover_panels()
 	_create_temp_containers()
 	_create_ships_damaged_panel()
+	_wire_hover_popups()
 	update_counters()
 
 
 func _physics_process(delta):
-	check_hover_detection()
-	check_damage_label_hover()
 	update_temp_timers(delta)
 
 	if stats and stats.damage_events.size() > 0:
@@ -243,6 +246,26 @@ func _physics_process(delta):
 
 	#_update_label(potential_damage_label, stats.potential_damage)
 	# _update_label(damage_value_label, stats.total_damage)
+
+
+# Connect every summary counter / damage label to the shared HoverTooltip so its
+# drill-down panel is shown/hidden by mouse_entered/mouse_exited signals. This
+# replaces the prior per-physics-tick rect polling, which broke whenever Ctrl
+# was held (Godot's tracked mouse position lags / suppresses motion routing).
+func _wire_hover_popups() -> void:
+	for summary_type in summary_types:
+		if summary_type not in summary_counters:
+			continue
+		if summary_type not in hover_panels:
+			continue
+		hover_tooltip.attach_content(summary_counters[summary_type], hover_panels[summary_type])
+
+	if damage_value_label:
+		var damage_counter: Control = damage_value_label.get_parent() as Control
+		if damage_counter and ships_damaged_panel:
+			# Refresh the per-ship breakdown right when the panel becomes visible.
+			damage_counter.mouse_entered.connect(update_ships_damaged_panel)
+			hover_tooltip.attach_content(damage_counter, ships_damaged_panel)
 
 
 func _build_hit_result_lookup():
@@ -276,9 +299,8 @@ func _create_summary_counters():
 		# Prevent vertical stretching - keep at minimum size
 		counter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-		# Setup hover detection
+		# Counter must accept mouse events so HoverTooltip can hear mouse_entered.
 		counter.mouse_filter = Control.MOUSE_FILTER_PASS
-		hover_states[summary_type] = false
 
 
 func _create_hover_panels():
@@ -607,34 +629,6 @@ func update_temp_timers(delta: float):
 			active_temp_counters.erase(key)
 
 
-func check_hover_detection():
-	"""Manual hover detection for summary counter controls"""
-	var mouse_pos = get_viewport().get_mouse_position()
-
-	for summary_type in summary_types:
-		if summary_type not in summary_counters:
-			continue
-		if summary_type not in hover_panels:
-			continue
-
-		var counter = summary_counters[summary_type]
-
-		# Skip hover detection for hidden counters (0 count)
-		if not counter.visible:
-			# Ensure hover panel is hidden if counter is not visible
-			if hover_states[summary_type]:
-				hover_states[summary_type] = false
-				hover_panels[summary_type].visible = false
-			continue
-
-		var rect = Rect2(counter.global_position, counter.size)
-		var is_hovering = rect.has_point(mouse_pos)
-
-		if is_hovering != hover_states[summary_type]:
-			hover_states[summary_type] = is_hovering
-			hover_panels[summary_type].visible = is_hovering
-
-
 func update_frag_count(frags: int) -> void:
 	"""Update the sunk counter independently"""
 	if "sunk" in summary_counters:
@@ -681,28 +675,6 @@ func _create_ships_damaged_panel():
 
 	ships_damaged_panel.add_child(bg_panel)
 	add_child(ships_damaged_panel)
-
-
-func check_damage_label_hover():
-	"""Check if mouse is hovering over the damage label and show/hide ships damaged panel"""
-	if not damage_value_label:
-		return
-
-	var mouse_pos = get_viewport().get_mouse_position()
-	var damage_counter = damage_value_label.get_parent()  # The DamageCounter HBoxContainer
-
-	if not damage_counter:
-		return
-
-	var rect = Rect2(damage_counter.global_position, damage_counter.size)
-	var is_hovering = rect.has_point(mouse_pos)
-
-	if is_hovering != damage_label_hovering:
-		damage_label_hovering = is_hovering
-		ships_damaged_panel.visible = is_hovering
-
-		if is_hovering:
-			update_ships_damaged_panel()
 
 
 func update_ships_damaged_panel():

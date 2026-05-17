@@ -154,9 +154,18 @@ func _input(event: InputEvent) -> void:
 		 # Control key to toggle mouse capture
 		if event.keycode == KEY_CTRL and not event.is_echo():
 			if event.pressed:
-				# When pressing control, release mouse and center it
-				_center_mouse()
+				# When pressing control, release the mouse so the player can
+				# interact with the HUD. ORDER MATTERS:
+				#   1) Switch to VISIBLE first so the GUI subsystem treats the
+				#      mouse as a normal pointer again.
+				#   2) Warp afterwards so the synthetic InputEventMouseMotion the
+				#      warp generates propagates through Viewport._gui_input(),
+				#      refreshing hover state and firing mouse_entered on the
+				#      Control under the cursor. This is what makes built-in
+				#      tooltips and manual hover checks (e.g. hit_stat_counters)
+				#      work immediately after releasing the cursor.
 				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+				_center_mouse()
 				mouse_captured = false
 			else:
 				# When releasing control, capture the mouse again

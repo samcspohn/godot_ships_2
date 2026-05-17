@@ -32,3 +32,12 @@ func _proc(_delta, ship):
 
 func can_use(ship: Ship) -> bool:
 	return ship.health_controller.current_hp < ship.health_controller.max_hp
+
+func _get_stat_lines() -> Array[String]:
+	var pct := heal_percent * 100.0
+	var lines: Array[String] = [
+		"Heals %.0f%% max HP over duration" % pct,
+	]
+	if duration > 0.0:
+		lines.append("Heal rate: %.1f%% / s" % (pct / duration))
+	return lines

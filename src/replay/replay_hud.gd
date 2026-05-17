@@ -18,6 +18,7 @@ class_name ReplayHUD
 
 const KillFeedScene = preload("res://src/ui/kill_feed.tscn")
 const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
+const HoverTooltipScript = preload("res://src/ui/hover_tooltip.gd")
 
 # ---------------------------------------------------------------------------
 # Bindings (set via bind())
@@ -50,6 +51,10 @@ var _kill_feed: KillFeed = null
 
 # Hit/stat counters (top right, above kill feed)
 var _stat_counters: HitStatCounters = null
+
+# Custom hover-tooltip overlay (signal-driven; works while Ctrl is held).
+# Built in _ready(); injected into HitStatCounters before it's added to the tree.
+var _hover_tooltip = null
 
 # Top-left: FPS
 var _fps_label: Label = null
@@ -147,6 +152,8 @@ func set_followed_ship_id(ship_id: int) -> void:
 # Lifecycle
 # ---------------------------------------------------------------------------
 func _ready() -> void:
+	_hover_tooltip = HoverTooltipScript.new()
+	add_child(_hover_tooltip)
 	_build_layout()
 
 func _process(_dt: float) -> void:
@@ -248,6 +255,9 @@ func _build_top_right() -> void:
 
 	# Hit/stat counters (right-aligned within the column)
 	_stat_counters = HitStatCountersScene.instantiate()
+	# Inject the shared HoverTooltip BEFORE entering the tree so the counters'
+	# _ready() can wire its drill-down panels through it (no polling).
+	_stat_counters.hover_tooltip = _hover_tooltip
 	_stat_counters.size_flags_horizontal = Control.SIZE_SHRINK_END
 	vbox.add_child(_stat_counters)
 
