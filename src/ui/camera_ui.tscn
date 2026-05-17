@@ -510,9 +510,11 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 value = 50.0
 rounded = true
 fill_mode = 3
+show_percentage = false
 
 [node name="KeyboardShortcutLabel" type="Label" parent="MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate" unique_id=1134332194]
 layout_mode = 1

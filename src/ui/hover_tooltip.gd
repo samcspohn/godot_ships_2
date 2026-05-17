@@ -56,6 +56,7 @@ func _init() -> void:
 
 func _ready() -> void:
 	set_process(true)
+	set_physics_process(true)
 
 # Register a Control so hovering it shows `text_or_callable` as a tooltip.
 # `text_or_callable` may be either a String (static) or a Callable returning
@@ -90,6 +91,17 @@ func _on_target_exited(target: Control) -> void:
 	_pending_show = false
 	_show_timer = 0.0
 	visible = false
+
+# Re-evaluate the callable every physics frame so the label reflects live
+# game state (consumable cooldowns, reload times, etc.) without any extra
+# wiring from callers. Only updates the label when the text actually changes
+# so we don't thrash the layout system on every tick.
+func _physics_process(_delta: float) -> void:
+	if visible and _current_text_provider.is_valid():
+		var new_text: String = _current_text_provider.call()
+		if new_text != _label.text:
+			_label.text = new_text
+			reset_size()
 
 func _process(delta: float) -> void:
 	if _pending_show and _current_target != null:

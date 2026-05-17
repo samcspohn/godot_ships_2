@@ -18,7 +18,7 @@ var weapons: Array[Turret]:
 func get_weapon_ui() -> Array[Button]:
 	var button = Button.new()
 	button.text = "TP"
-	button.tooltip_text = _build_tooltip_text()
+	button.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text())
 	button.pressed.connect(func():
 		print("Pressed TorpedoController")
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self

@@ -42,7 +42,7 @@ func can_use(_ship: Ship) -> bool:
 	# Can always use damage control (it will reduce existing fire damage/duration)
 	return true
 
-func _get_stat_lines() -> Array[String]:
+func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	return [
 		"Fire/flood duration: -%.0f%%" % (duration_reduction * 100.0),
 		"Fire/flood damage: -%.0f%%" % (damage_reduction * 100.0),

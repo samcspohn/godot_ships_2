@@ -33,11 +33,20 @@ func _proc(_delta, ship):
 func can_use(ship: Ship) -> bool:
 	return ship.health_controller.current_hp < ship.health_controller.max_hp
 
-func _get_stat_lines() -> Array[String]:
+func _get_stat_lines(ship: Ship = null) -> Array[String]:
+	if ship != null:
+		var total_heal_hp: float = ship.health_controller.max_hp * heal_percent
+		var hp_lines: Array[String] = [
+			"Heals %.0f HP over duration" % total_heal_hp,
+		]
+		if duration > 0.0:
+			hp_lines.append("Heal rate: %.0f HP/s" % (total_heal_hp / duration))
+		return hp_lines
+	# Fallback when ship is not available (e.g. tooltip called without a manager).
 	var pct := heal_percent * 100.0
-	var lines: Array[String] = [
+	var pct_lines: Array[String] = [
 		"Heals %.0f%% max HP over duration" % pct,
 	]
 	if duration > 0.0:
-		lines.append("Heal rate: %.1f%% / s" % (pct / duration))
-	return lines
+		pct_lines.append("Heal rate: %.1f%% / s" % (pct / duration))
+	return pct_lines

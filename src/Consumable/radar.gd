@@ -23,7 +23,7 @@ func apply_effect(ship: Ship) -> void:
 func remove_effect(ship: Ship) -> void:
 	ship.remove_static_mod(_effect)
 
-func _get_stat_lines() -> Array[String]:
+func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	return [
 		"Force-spots ships within: %.1f km" % (spotting_range / 1000.0),
 	]

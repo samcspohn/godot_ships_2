@@ -39,7 +39,9 @@ func _proc(_delta: float, ship :Ship):
 # Tooltip / popup-hint text shown when hovering this consumable's UI button.
 # Subclasses can override _get_stat_lines() to append type-specific stats
 # without rewriting the common header (name/description/cooldown/...).
-func get_tooltip_text() -> String:
+# Pass a ConsumableManager to include live status (active/cooldown remaining
+# and current charges) — used when the tooltip is rebuilt every physics frame.
+func get_tooltip_text(manager: ConsumableManager = null) -> String:
 	var lines := [name]
 	if description != "":
 		lines.append("")
@@ -50,15 +52,29 @@ func get_tooltip_text() -> String:
 		lines.append("Duration: %.0f s" % duration)
 	else:
 		lines.append("Duration: instant")
-	lines.append("Charges: %d" % max_stack)
-	var stat_lines := _get_stat_lines()
+	if max_stack == -1:
+		lines.append("Charges: ∞")
+	else:
+		lines.append("Charges: %d / %d" % [current_stack, max_stack])
+	var stat_lines := _get_stat_lines(manager.ship if manager != null else null)
 	if stat_lines.size() > 0:
 		lines.append("")
 		lines.append_array(stat_lines)
+	if manager != null:
+		var remaining_cooldown: float = manager.cooldowns.get(id, 0.0)
+		var active_remaining: float = manager.active_effects.get(id, 0.0)
+		if active_remaining > 0.0:
+			lines.append("")
+			lines.append("Active: %.0f s remaining" % active_remaining)
+		elif remaining_cooldown > 0.0:
+			lines.append("")
+			lines.append("Reloading: %.0f s remaining" % remaining_cooldown)
 	return "\n".join(PackedStringArray(lines))
 
 # Override in subclasses to add type-specific stat lines (without header).
-func _get_stat_lines() -> Array[String]:
+# `ship` is provided when the tooltip is rebuilt live (every physics frame),
+# allowing subclasses to show values that depend on the ship's current stats.
+func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	return []
 
 
