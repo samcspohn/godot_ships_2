@@ -37,6 +37,12 @@ func get_tooltip_bbcode() -> String:
 			lines.append("• %s:  [color=%s]%s[/color]" % [entry["stat"], color, entry["value"]])
 	return "\n".join(lines)
 
+## Override to build a preview/simulator UI inside `container`.
+## `on_change` should be called each time a control value changes so the
+## stats panel can refresh. Default no-op — skill has no variable state.
+func build_preview_modal(_container: Control, _on_change: Callable) -> void:
+	pass
+
 ## Formats a multiplier as a signed percentage-change string.
 ## e.g. 0.9 -> "-10%",  1.15 -> "+15%"
 static func fmt_mult_pct(mod: float) -> String:

@@ -26,6 +26,13 @@ func _ready():
 	mouse_rotating = not require_rmb
 	# Position camera initially along -Z at the chosen distance
 	_update_camera_transform()
+	# When a popup (or any other Window) steals focus from the main window the
+	# RMB-release event never reaches this node, leaving mouse_rotating stuck.
+	# Resetting it on focus-loss fixes the stale-grab bug.
+	get_window().focus_exited.connect(func() -> void:
+		if require_rmb:
+			mouse_rotating = false
+	)
 
 func _update_camera_transform():
 	# Ensure the camera stays above min_height by limiting pitch based on distance

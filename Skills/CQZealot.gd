@@ -86,3 +86,39 @@ func _proc(_delta: float) -> void:
 	# 	for sec in _ship.secondaries:
 	# 		var sec_params = sec.params.params() as GunParams
 	# 		sec_params.reload_time *= 0.95
+
+## Directly sets the enemy count for port preview, bypassing the server query.
+func preview_with_enemies(n: int) -> void:
+	if n == 0:
+		reload_modifier = base_reload_modifier
+		spread_modifier = base_spread_modifier
+	else:
+		reload_modifier = pow(1.0 - reload_per_additional_enemy, n - 1) * reload_for_one_enemy
+		spread_modifier = 1.0
+	if _ship != null:
+		_ship.remove_dynamic_mod(_a)
+		_ship.add_dynamic_mod(_a)
+
+var _preview_enemy_count: int = 0
+
+func build_preview_modal(container: Control, on_change: Callable) -> void:
+	var label := Label.new()
+	label.text = "Enemies in secondary range"
+	container.add_child(label)
+
+	var hbox := HBoxContainer.new()
+	container.add_child(hbox)
+
+	var spin := SpinBox.new()
+	spin.min_value = 0
+	spin.max_value = 8
+	spin.step = 1
+	spin.value = _preview_enemy_count
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(spin)
+
+	spin.value_changed.connect(func(v: float) -> void:
+		_preview_enemy_count = int(v)
+		preview_with_enemies(_preview_enemy_count)
+		on_change.call()
+	)
