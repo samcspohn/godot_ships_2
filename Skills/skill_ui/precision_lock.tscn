@@ -1,0 +1,31 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://circle.png" id="1_circle"]
+
+[node name="PrecisionLock" type="Control"]
+offset_right = 256.0
+offset_bottom = 256.0
+
+[node name="DelayBar" type="TextureProgressBar" parent="."]
+offset_right = 256.0
+offset_bottom = 256.0
+max_value = 1.0
+step = 0.01
+value = 0.0
+fill_mode = 3
+texture_under = ExtResource("1_circle")
+texture_progress = ExtResource("1_circle")
+tint_under = Color(0.15, 0.15, 0.15, 0.3)
+tint_progress = Color(0.55, 0.55, 0.55, 0.55)
+
+[node name="BuildupBar" type="TextureProgressBar" parent="."]
+offset_right = 256.0
+offset_bottom = 256.0
+max_value = 1.0
+step = 0.01
+value = 0.0
+fill_mode = 4
+texture_under = ExtResource("1_circle")
+texture_progress = ExtResource("1_circle")
+tint_under = Color(0.0, 0.0, 0.0, 0.0)
+tint_progress = Color(0.36, 0.78, 0.96, 0.9)

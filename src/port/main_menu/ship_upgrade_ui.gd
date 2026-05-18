@@ -5,7 +5,13 @@ class_name ShipUpgradeUI
 signal upgrade_selected(slot_index: int, upgrade_id: String)
 signal upgrade_removed(slot_index: int)
 
-@export var max_slots: int = 3
+## One tier per slot. Each slot accepts only upgrades whose `tier` matches its
+## slot tier, so the player picks ONE upgrade from each rank's pool — stealth
+## vs tank vs accuracy vs fast-firing, etc. Edit per ship to customise.
+@export var slot_tiers: Array[int] = [1, 2, 3, 4]
+
+var max_slots: int:
+	get: return slot_tiers.size()
 var ship_ref: Ship = null
 var available_upgrades: Array[Dictionary] = []
 
@@ -28,11 +34,32 @@ func _load_available_upgrades():
 
 	for id in UpgradeRegistry.get_all_ids():
 		var info = UpgradeRegistry.get_upgrade_info(id)
-		if not info.is_empty():
-			available_upgrades.append(info)
+		if info.is_empty():
+			continue
+		# Filter by ship class once a ship has been set. Per-slot tier
+		# filtering happens in _on_slot_button_pressed.
+		if ship_ref != null:
+			var probe: Upgrade = UpgradeRegistry.create_upgrade(id)
+			if probe != null and not probe.is_allowed_for_ship(ship_ref):
+				continue
+		available_upgrades.append(info)
 
 func _create_upgrade_slots():
+	# Clear any pre-existing children (rebuild is idempotent).
+	for child in upgrade_slots_container.get_children():
+		child.queue_free()
+
 	for i in range(max_slots):
+		var slot_box := VBoxContainer.new()
+		slot_box.name = "SlotBox_" + str(i)
+		slot_box.alignment = BoxContainer.ALIGNMENT_CENTER
+
+		var rank_label := Label.new()
+		rank_label.text = "Rank %d" % slot_tiers[i]
+		rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		rank_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+		slot_box.add_child(rank_label)
+
 		var slot_button = Button.new()
 		slot_button.text = ""
 		slot_button.custom_minimum_size = Vector2(64, 64)
@@ -47,20 +74,20 @@ func _create_upgrade_slots():
 		icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		icon_rect.custom_minimum_size = Vector2(48, 48)
-
 		slot_button.add_child(icon_rect)
+		slot_button.tooltip_text = "Click to add a Rank %d upgrade" % slot_tiers[i]
+		slot_box.add_child(slot_button)
 
-		var tooltip = "Click to add an upgrade"
-		slot_button.tooltip_text = tooltip
-
-		upgrade_slots_container.add_child(slot_button)
+		upgrade_slots_container.add_child(slot_box)
 
 func set_ship(ship: Ship):
 	ship_ref = ship
+	_load_available_upgrades()
 	_update_slot_buttons()
 
 func _on_slot_button_pressed(slot_index: int):
 	current_slot_selected = slot_index
+	var slot_tier: int = slot_tiers[slot_index]
 
 	# Clear previous list
 	for child in upgrade_list.get_children():
@@ -70,11 +97,13 @@ func _on_slot_button_pressed(slot_index: int):
 
 	var title_label = upgrade_selection_panel.get_node("TitleLabel")
 	if title_label:
-		title_label.text = "Select Upgrade for Slot " + str(slot_index + 1)
+		title_label.text = "Slot %d  —  Rank %d" % [slot_index + 1, slot_tier]
 
-	# Populate with available upgrades
+	# Populate only with upgrades whose tier matches this slot's rank.
 	for i in range(available_upgrades.size()):
 		var upgrade_info = available_upgrades[i]
+		if int(upgrade_info.get("tier", 1)) != slot_tier:
+			continue
 
 		var item = Button.new()
 		item.text = ""
@@ -151,6 +180,11 @@ func _on_upgrade_item_pressed(upgrade_index: int):
 
 	if ship_ref and not upgrade_id.is_empty():
 		var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
+		# Sanity: refuse to slot if tier doesn't match (shouldn't happen given
+		# the filter above, but catches programmer error).
+		if upgrade_instance != null and upgrade_instance.tier != slot_tiers[current_slot_selected]:
+			push_error("Upgrade '%s' tier mismatch for slot %d" % [upgrade_id, current_slot_selected])
+			return
 		if upgrade_instance:
 			ship_ref.upgrades.add_upgrade(current_slot_selected, upgrade_instance)
 
@@ -171,8 +205,9 @@ func _update_slot_buttons():
 		return
 
 	for i in range(max_slots):
-		var slot_button = upgrade_slots_container.get_child(i)
-		var icon_rect = slot_button.get_node_or_null("IconRect")
+		var slot_box: Node = upgrade_slots_container.get_child(i)
+		var slot_button: Button = slot_box.get_node("UpgradeSlot_" + str(i))
+		var icon_rect: TextureRect = slot_button.get_node_or_null("IconRect")
 
 		if not icon_rect:
 			icon_rect = TextureRect.new()
@@ -197,11 +232,15 @@ func _update_slot_buttons():
 				icon_rect.texture = upgrade.icon
 			else:
 				slot_button.text = upgrade.name.substr(0, 1)
-			slot_button.tooltip_text = upgrade.name + "\n\n" + upgrade.description
+			slot_button.tooltip_text = "%s\n[Rank %d]\n\n%s" % [
+				upgrade.name,
+				upgrade.tier,
+				upgrade.description,
+			]
 		else:
 			slot_button.text = ""
 			icon_rect.texture = null
-			slot_button.tooltip_text = "Click to add an upgrade"
+			slot_button.tooltip_text = "Click to add a Rank %d upgrade" % slot_tiers[i]
 
 func _on_close_button_pressed():
 	upgrade_selection_panel.visible = false

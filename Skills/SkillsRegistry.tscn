@@ -5,6 +5,10 @@
 [ext_resource type="Script" uid="uid://cmdrm26vbwqxu" path="res://Skills/advanced_sec_training.gd" id="3_2m8dp"]
 [ext_resource type="Script" uid="uid://dx547111lg2t7" path="res://Skills/CQZealot.gd" id="4_eum7x"]
 [ext_resource type="Script" uid="uid://dhggoud4wmje1" path="res://Skills/cq_expertise.gd" id="5_eum7x"]
+[ext_resource type="Script" path="res://Skills/dead_eye.gd" id="6_de"]
+[ext_resource type="Script" path="res://Skills/swift_fish.gd" id="7_sw"]
+[ext_resource type="Script" path="res://Skills/slow_fish.gd" id="8_sl"]
+[ext_resource type="Script" path="res://Skills/precision_lock.gd" id="9_pl"]
 
 [node name="SkillsRegistry" type="Node" unique_id=647299865]
 script = ExtResource("1_df5pm")
@@ -12,5 +16,9 @@ _skill_scripts = Dictionary[String, Resource]({
 "ar": ExtResource("2_mr5kx"),
 "ast": ExtResource("3_2m8dp"),
 "cqe": ExtResource("5_eum7x"),
-"cqz": ExtResource("4_eum7x")
+"cqz": ExtResource("4_eum7x"),
+"de": ExtResource("6_de"),
+"swift": ExtResource("7_sw"),
+"slow": ExtResource("8_sl"),
+"precision_lock": ExtResource("9_pl")
 })

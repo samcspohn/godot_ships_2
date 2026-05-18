@@ -10,6 +10,8 @@ var spread_multiplier: float = 1.0
 
 func _init():
 	name = "Advanced Secondary Training"
+	tier = 4
+	cost = 4
 	flavor_text = "Gradually improves secondary accuracy while secondaries shoot at a target."
 	tooltip_stats = [
 		{"stat": "Secondary Grouping (max)", "value": "+%.0f%%" % (max_grouping_bonus * 100), "positive": true},

@@ -5,12 +5,37 @@ var _ship: Ship = null
 var skill_id: String = ""
 var description: String = ""
 var name: String = ""
+## Optional icon shown on the skill button in the commander skills tab.
+var icon: Texture2D = null
 ## Optional one-sentence description shown above the stat list.
 var flavor_text: String = ""
 ## Structured stat entries for the rich tooltip.
 ## Each entry: {"stat": String, "value": String, "positive": bool}
 ## Omit the "positive" key for neutral/informational lines (shown in white).
 var tooltip_stats: Array = []
+
+## Ship classes this skill is available to. Empty = all classes.
+## Use Ship.ShipClass values, e.g. [Ship.ShipClass.BB].
+var allowed_classes: Array = []
+
+## Skills sharing the same non-empty group are mutually exclusive: equipping
+## one removes any other in the same group.
+var exclusive_group: String = ""
+
+## Tier (1..4). Used for grouping in the skills UI. Higher tiers are
+## generally more impactful / build-defining.
+var tier: int = 1
+
+## Skill-point cost. A ship has a fixed budget (Ship.max_skill_points) and
+## the sum of equipped skills' costs may not exceed it.
+var cost: int = 1
+
+const _CLASS_LABELS := {
+	Ship.ShipClass.BB: "BB",
+	Ship.ShipClass.CA: "CA",
+	Ship.ShipClass.DD: "DD",
+	Ship.ShipClass.CV: "CV",
+}
 
 func _init() -> void:
 	setup_local_to_scene()
@@ -21,6 +46,14 @@ func _init() -> void:
 func get_tooltip_bbcode() -> String:
 	var lines: PackedStringArray = []
 	lines.append("[b]%s[/b]" % name)
+	lines.append("[color=#ffcc66]Tier %d  •  Cost %d pt%s[/color]" % [tier, cost, "s" if cost != 1 else ""])
+	if allowed_classes.size() > 0:
+		var labels: PackedStringArray = []
+		for c in allowed_classes:
+			labels.append(_CLASS_LABELS.get(c, str(c)))
+		lines.append("[color=#88aaff]Class: %s[/color]" % ", ".join(labels))
+	if exclusive_group != "":
+		lines.append("[color=#aa88ff]Group: %s (exclusive)[/color]" % exclusive_group)
 	if flavor_text != "":
 		lines.append("")
 		lines.append("[color=#aaaaaa]%s[/color]" % flavor_text)
@@ -36,6 +69,14 @@ func get_tooltip_bbcode() -> String:
 				color = "#ff6666"
 			lines.append("• %s:  [color=%s]%s[/color]" % [entry["stat"], color, entry["value"]])
 	return "\n".join(lines)
+
+## Returns true if this skill can be equipped on the given ship.
+func is_allowed_for_ship(ship: Ship) -> bool:
+	if ship == null:
+		return true
+	if allowed_classes.is_empty():
+		return true
+	return ship.ship_class in allowed_classes
 
 ## Override to build a preview/simulator UI inside `container`.
 ## `on_change` should be called each time a control value changes so the

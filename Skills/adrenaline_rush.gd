@@ -2,6 +2,8 @@ extends Skill
 
 func _init():
 	name = "Adrenaline Rush"
+	tier = 3
+	cost = 3
 	flavor_text = "For every 1% HP lost:"
 	tooltip_stats = [
 		{"stat": "Main Gun Reload", "value": "-%.1f%%" % modifier, "positive": true},

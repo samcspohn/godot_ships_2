@@ -7,6 +7,8 @@ const main_gun_in_range_mod = 0.9
 
 func _init():
 	name = "Close Quarters Expertise"
+	tier = 2
+	cost = 2
 	tooltip_stats = [
 		{"stat": "Secondary Reload", "value": fmt_mult_pct(sec_reload_mod), "positive": true},
 		{"stat": "Secondary Spread", "value": fmt_mult_pct(sec_spread_mod), "positive": true},

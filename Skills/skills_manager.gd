@@ -29,6 +29,15 @@ func has_skill(skill: Skill) -> bool:
 func has_skill_id(id: String) -> bool:
 	return id in skills
 
+## Returns the sum of equipped skills' point costs.
+func get_used_points() -> int:
+	var total := 0
+	for id in skills:
+		var s: Skill = skills[id]
+		if s != null:
+			total += s.cost
+	return total
+
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	writer.put_8(skills.size())

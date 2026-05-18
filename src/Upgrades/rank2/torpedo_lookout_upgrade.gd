@@ -5,7 +5,8 @@ extends Upgrade
 func _init() -> void:
 	upgrade_id = "torpedo_lookout"
 	name = "Torpedo Lookout System"
-	description = "Increases the detection range of enemy torpedoes by 50%."
+	description = "Increases the detection range of enemy torpedoes by 25%."
+	tier = 2
 
 func _a(_ship: Ship) -> void:
-	(_ship.concealment.params.static_mod as ConcealmentParams).torpedo_detection_multiplier *= 1.5
+	(_ship.concealment.params.static_mod as ConcealmentParams).torpedo_detection_multiplier *= 1.25
