@@ -3,13 +3,22 @@ extends Skill
 
 const max_grouping_bonus = 0.4
 const max_spread_bonus = 0.6
+const target_switch_penalty = 0.15
 
 var grouping_multiplier: float = 0.0
 var spread_multiplier: float = 1.0
 
 func _init():
 	name = "Advanced Secondary Training"
-	description = "Increases secondary artillery accuracy the longer they fire on a target, up to 60% grouping and 30% spread improvement. Accuracy resets after not firing for a short time."
+	flavor_text = "Gradually improves secondary accuracy while secondaries shoot at a target."
+	tooltip_stats = [
+		{"stat": "Secondary Grouping (max)", "value": "+%.0f%%" % (max_grouping_bonus * 100), "positive": true},
+		{"stat": "Secondary Spread (max)", "value": "-%.0f%%" % (max_spread_bonus * 100), "positive": true},
+		{"stat": "Buildup Time", "value": "%.0f s" % accuracy_buildup_time},
+		{"stat": "Time Before Decay", "value": "%.0f s" % accuracy_decay_time},
+		{"stat": "Decay Time", "value": "%.0f s" % accuracy_falloff_time},
+		{"stat": "Target Switch Penalty", "value": "-%.0f%% buildup" % (target_switch_penalty * 100), "positive": false},
+	]
 
 func _a(ship: Ship):
 	# print("grouping_multiplier: ", grouping_multiplier, " spread_multiplier: ", spread_multiplier)
@@ -54,7 +63,7 @@ func _proc(_delta: float) -> void:
 	# 			break
 	var curr_accuracy_buildup = accuracy_buildup
 	if priority_target_changed:
-		accuracy_buildup = max(0.0, accuracy_buildup - 0.15) # small accuracy penalty for switching targets
+		accuracy_buildup = max(0.0, accuracy_buildup - target_switch_penalty) # small accuracy penalty for switching targets
 
 	if secs_shooting:
 		accuracy_buildup = min(1.0, accuracy_buildup + _delta / accuracy_buildup_time)

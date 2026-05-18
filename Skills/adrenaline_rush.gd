@@ -2,7 +2,12 @@ extends Skill
 
 func _init():
 	name = "Adrenaline Rush"
-	description = "As HP decreases, reload time for all armaments is reduced by up to 20%."
+	flavor_text = "For every 1% HP lost:"
+	tooltip_stats = [
+		{"stat": "Main Gun Reload", "value": "-%.1f%%" % modifier, "positive": true},
+		{"stat": "Secondary Gun Reload", "value": "-%.1f%%" % modifier, "positive": true},
+		{"stat": "Torpedo Reload", "value": "-%.1f%%" % modifier, "positive": true},
+	]
 
 var bonus = 1.0
 func _a(ship: Ship):

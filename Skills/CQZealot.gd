@@ -3,14 +3,17 @@ extends Skill
 
 func _init():
 	name = "CQ Zealot"
-	description = "Reduce reload time of secondary and main guns by 10% when at least one enemy is within max secondary range \n
-	and reduce reload by 2.5% for every additional enemy. with no enemies within range, main gun reload and spread are increased by 15% and 10% respectively. \n
-	main gun range is reduced by 5%."
-	# Set icon if you have one
-	# icon = preload("res://icons/auto-repair.png")
+	flavor_text = "Bonuses scale with enemies within secondary range."
+	tooltip_stats = [
+		{"stat": "Reload (1 enemy in range)", "value": fmt_mult_pct(reload_for_one_enemy), "positive": true},
+		{"stat": "Reload (each additional enemy)", "value": "-%.0f%% (mult.)" % (reload_per_additional_enemy * 100), "positive": true},
+		{"stat": "Main Gun Range", "value": fmt_mult_pct(base_range_modifier), "positive": false},
+		{"stat": "Reload Penalty (no enemies)", "value": fmt_mult_pct(base_reload_modifier), "positive": false},
+		{"stat": "Spread Penalty (no enemies)", "value": fmt_mult_pct(base_spread_modifier), "positive": false},
+	]
 
 # buffs
-const reload_per_additional_enemy = 0.05
+const reload_per_additional_enemy = 0.03
 const reload_for_one_enemy = 0.9
 
 # nerfs
