@@ -6,14 +6,14 @@ func _init():
 	flavor_text = "Bonuses scale with enemies within secondary range."
 	tooltip_stats = [
 		{"stat": "Reload (1 enemy in range)", "value": fmt_mult_pct(reload_for_one_enemy), "positive": true},
-		{"stat": "Reload (each additional enemy)", "value": "-%.0f%% (mult.)" % (reload_per_additional_enemy * 100), "positive": true},
+		{"stat": "Reload (each additional enemy)", "value": "-%.1f%% (mult.)" % (reload_per_additional_enemy * 100), "positive": true},
 		{"stat": "Main Gun Range", "value": fmt_mult_pct(base_range_modifier), "positive": false},
 		{"stat": "Reload Penalty (no enemies)", "value": fmt_mult_pct(base_reload_modifier), "positive": false},
 		{"stat": "Spread Penalty (no enemies)", "value": fmt_mult_pct(base_spread_modifier), "positive": false},
 	]
 
 # buffs
-const reload_per_additional_enemy = 0.03
+const reload_per_additional_enemy = 0.025
 const reload_for_one_enemy = 0.9
 
 # nerfs

@@ -2,18 +2,19 @@
 extends Control
 
 var selected_ship = null
-@onready var skill_grid = $VBoxContainer/ScrollContainer/GridContainer
+@onready var skill_grid: GridContainer = $VBoxContainer/HBoxContainer/ScrollContainer/GridContainer
+@onready var tooltip_label: RichTextLabel = $VBoxContainer/HBoxContainer/InfoPanel/MarginContainer/InfoContent/TooltipLabel
+@onready var variable_section: VBoxContainer = $VBoxContainer/HBoxContainer/InfoPanel/MarginContainer/InfoContent/VariableSection
 
 signal skill_toggled(skill_id: String, enabled: bool)
-## Emitted whenever a preview slider/spinner changes value.
+## Emitted when a variable-skill control changes value.
 ## main_menu_ui.gd connects this to stats_panel.refresh().
 signal preview_state_changed
-
-var _preview_popup: PopupPanel = null
 
 func set_ship(ship: Ship):
 	selected_ship = ship
 	_update_skill_buttons()
+	_rebuild_variable_section()
 
 func _update_skill_buttons():
 	for button in skill_grid.get_children():
@@ -24,84 +25,75 @@ func _update_skill_buttons():
 			if selected_ship.skills.has_skill_id(button.skill_id):
 				button.set_pressed_no_signal(true)
 
-
 func _ready():
 	for button in skill_grid.get_children():
 		if button is SkillButton:
 			button.toggled.connect(_on_skill_toggled.bind(button))
-			button.gui_input.connect(_on_skill_button_gui_input.bind(button))
+			button.mouse_entered.connect(_on_skill_button_hovered.bind(button))
+			button.mouse_exited.connect(_on_skill_button_unhovered.bind(button))
 
-func _on_skill_toggled(toggled: bool, button: SkillButton):
+func _on_skill_toggled(toggled: bool, button: SkillButton) -> void:
 	if selected_ship == null or button.skill_id == "":
 		return
-
 	if not SkillsRegistry.has_skill(button.skill_id):
 		print("Unknown skill id: ", button.skill_id)
 		return
-
 	if toggled:
 		var skill_instance = SkillsRegistry.create_skill(button.skill_id)
 		if skill_instance is Skill:
 			selected_ship.skills.add_skill(skill_instance)
 	else:
 		selected_ship.skills.remove_skill_by_id(button.skill_id)
-
 	skill_toggled.emit(button.skill_id, toggled)
+	_rebuild_variable_section()
 
-func _on_skill_button_gui_input(event: InputEvent, button: SkillButton) -> void:
-	if not (event is InputEventMouseButton):
+# ── Hover tooltip ─────────────────────────────────────────────────────────────
+
+func _on_skill_button_hovered(button: SkillButton) -> void:
+	if button.skill_id == "":
+		tooltip_label.text = ""
 		return
-	var mbe := event as InputEventMouseButton
-	if mbe.button_index != MOUSE_BUTTON_RIGHT or not mbe.pressed:
+	var applied: Skill = null
+	if selected_ship != null:
+		applied = selected_ship.skills.skills.get(button.skill_id)
+	var skill: Skill = applied if applied != null else SkillsRegistry.create_skill(button.skill_id)
+	tooltip_label.text = skill.get_tooltip_bbcode() if skill != null else ""
+
+func _on_skill_button_unhovered(_button: SkillButton) -> void:
+	tooltip_label.text = ""
+
+# ── Persistent variable controls ─────────────────────────────────────────────
+
+## Rebuilds the always-visible variable-controls section from the ship's
+## currently equipped skills. Called on ship change and skill toggle.
+func _rebuild_variable_section() -> void:
+	for child in variable_section.get_children():
+		child.queue_free()
+
+	if selected_ship == null:
 		return
-	if not button.button_pressed:
-		return  # Only show preview for active skills
-	if selected_ship == null or button.skill_id == "":
-		return
-	var skill: Skill = selected_ship.skills.skills.get(button.skill_id)
-	if skill == null:
-		return
-	_show_preview_popup(button, skill)
 
-func _show_preview_popup(anchor: Control, skill: Skill) -> void:
-	# Close any existing popup first
-	if _preview_popup != null and is_instance_valid(_preview_popup):
-		_preview_popup.queue_free()
-		_preview_popup = null
+	for skill_id in selected_ship.skills.skills:
+		var skill: Skill = selected_ship.skills.skills[skill_id]
 
-	var popup := PopupPanel.new()
-	_preview_popup = popup
+		# Probe whether this skill produces any variable controls.
+		var probe := VBoxContainer.new()
+		skill.build_preview_modal(probe, func() -> void:
+			preview_state_changed.emit()
+		)
+		if probe.get_child_count() == 0:
+			probe.queue_free()
+			continue
 
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_right", 10)
-	margin.add_theme_constant_override("margin_top", 8)
-	margin.add_theme_constant_override("margin_bottom", 10)
-	popup.add_child(margin)
+		# Header label with the skill's name.
+		var header := Label.new()
+		header.text = skill.name
+		variable_section.add_child(header)
 
-	var vbox := VBoxContainer.new()
-	vbox.custom_minimum_size = Vector2(240, 0)
-	vbox.add_theme_constant_override("separation", 6)
-	margin.add_child(vbox)
+		# Move the controls out of the probe into the section.
+		for child in probe.get_children():
+			probe.remove_child(child)
+			variable_section.add_child(child)
+		probe.queue_free()
 
-	var title := Label.new()
-	title.text = skill.name
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(title)
-	vbox.add_child(HSeparator.new())
-
-	skill.build_preview_modal(vbox, func() -> void:
-		preview_state_changed.emit()
-	)
-
-	popup.popup_hide.connect(func() -> void:
-		_preview_popup = null
-	)
-
-	get_tree().root.add_child(popup)
-	popup.reset_size()
-
-	var btn_screen := anchor.get_screen_position()
-	var btn_size := anchor.size
-	popup.position = Vector2i(int(btn_screen.x + btn_size.x + 4), int(btn_screen.y))
-	popup.popup()
+		variable_section.add_child(HSeparator.new())

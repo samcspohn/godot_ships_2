@@ -28,24 +28,30 @@ horizontal_alignment = 1
 [node name="HSeparator" type="HSeparator" parent="VBoxContainer" unique_id=1555424299]
 layout_mode = 2
 
-[node name="ScrollContainer" type="ScrollContainer" parent="VBoxContainer" unique_id=2004115515]
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=1234567890]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="GridContainer" type="GridContainer" parent="VBoxContainer/ScrollContainer" unique_id=1073873854]
+[node name="ScrollContainer" type="ScrollContainer" parent="VBoxContainer/HBoxContainer" unique_id=2004115515]
+custom_minimum_size = Vector2(620, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GridContainer" type="GridContainer" parent="VBoxContainer/HBoxContainer/ScrollContainer" unique_id=1073873854]
 layout_mode = 2
 size_flags_horizontal = 6
 size_flags_vertical = 6
 columns = 4
 
-[node name="Skill1" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=2088229921]
+[node name="Skill1" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=2088229921]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 skill_id = "ar"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill1" unique_id=800756204]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill1" unique_id=800756204]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -60,14 +66,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Adrenaline Rush"
 
-[node name="Skill2" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1798133851]
+[node name="Skill2" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1798133851]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 skill_id = "cqz"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill2" unique_id=1712134163]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill2" unique_id=1712134163]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -82,14 +88,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "CQZealot"
 
-[node name="Skill3" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1534298132]
+[node name="Skill3" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1534298132]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 skill_id = "cqe"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill3" unique_id=1727587133]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill3" unique_id=1727587133]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -104,14 +110,14 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "CQ Expertise"
 
-[node name="Skill4" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1847203862]
+[node name="Skill4" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1847203862]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 skill_id = "ast"
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill4" unique_id=1165111379]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill4" unique_id=1165111379]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -128,13 +134,13 @@ text = "Secendary
  Priority
 Target Training"
 
-[node name="Skill5" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1548190788]
+[node name="Skill5" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1548190788]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill5" unique_id=589848103]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill5" unique_id=589848103]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -149,13 +155,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 5"
 
-[node name="Skill6" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1544371426]
+[node name="Skill6" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1544371426]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill6" unique_id=1106437000]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill6" unique_id=1106437000]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -170,13 +176,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 6"
 
-[node name="Skill7" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=415248189]
+[node name="Skill7" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=415248189]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill7" unique_id=943017131]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill7" unique_id=943017131]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -191,13 +197,13 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 7"
 
-[node name="Skill8" type="Button" parent="VBoxContainer/ScrollContainer/GridContainer" unique_id=1008623422]
+[node name="Skill8" type="Button" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer" unique_id=1008623422]
 custom_minimum_size = Vector2(150, 150)
 layout_mode = 2
 toggle_mode = true
 script = ExtResource("2_lpce8")
 
-[node name="Label" type="Label" parent="VBoxContainer/ScrollContainer/GridContainer/Skill8" unique_id=2047628692]
+[node name="Label" type="Label" parent="VBoxContainer/HBoxContainer/ScrollContainer/GridContainer/Skill8" unique_id=2047628692]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -211,3 +217,40 @@ offset_bottom = 13.0
 grow_horizontal = 2
 grow_vertical = 2
 text = "Skill Slot 8"
+
+[node name="InfoPanel" type="Panel" parent="VBoxContainer/HBoxContainer" unique_id=987654321]
+custom_minimum_size = Vector2(350, 350)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="VBoxContainer/HBoxContainer/InfoPanel" unique_id=111222333]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="InfoContent" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/InfoPanel/MarginContainer" unique_id=444555666]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="TooltipLabel" type="RichTextLabel" parent="VBoxContainer/HBoxContainer/InfoPanel/MarginContainer/InfoContent" unique_id=555666777]
+custom_minimum_size = Vector2(0, 350)
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+
+[node name="ControlSep" type="HSeparator" parent="VBoxContainer/HBoxContainer/InfoPanel/MarginContainer/InfoContent" unique_id=888999000]
+layout_mode = 2
+
+[node name="VariableSection" type="VBoxContainer" parent="VBoxContainer/HBoxContainer/InfoPanel/MarginContainer/InfoContent" unique_id=111333555]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8

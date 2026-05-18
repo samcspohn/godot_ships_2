@@ -55,8 +55,8 @@ static func fmt_mult_pct(mod: float) -> String:
 ## e.g. 0.1 -> "+0.1",  -0.5 -> "-0.5"
 static func fmt_add(val: float) -> String:
 	if val >= 0.0:
-		return "+%g" % val
-	return "%g" % val
+		return "+%.1f" % val
+	return "%.1f" % val
 
 func _a(_ship: Ship):
 	pass
