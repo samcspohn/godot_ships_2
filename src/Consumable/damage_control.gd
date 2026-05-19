@@ -12,16 +12,16 @@ func _ready() -> void:
 	pass
 
 func effect(ship: Ship) -> void:
-	# This function can be used to apply immediate effects if needed
-	var fire_params = ship.fire_manager.fparams.static_mod as FireParams
-	var resist_params = ship.fire_manager.rparams.static_mod as ResistanceParams
-	fire_params.dur *= (1.0 - duration_reduction)
-	fire_params.dmg_rate *= (1.0 - damage_reduction)
+	var p := self.p() as DamageControl
+	var fire_params := ship.fire_manager.fparams.static_mod as FireParams
+	var resist_params := ship.fire_manager.rparams.static_mod as ResistanceParams
+	fire_params.dur *= (1.0 - p.duration_reduction)
+	fire_params.dmg_rate *= (1.0 - p.damage_reduction)
 	resist_params.buildup_reduction_rate *= 10.0
 
-	var flood_params = ship.flood_manager.params.static_mod as FloodParams
-	flood_params.dur *= (1.0 - duration_reduction)
-	flood_params.dmg_rate *= (1.0 - damage_reduction)
+	var flood_params := ship.flood_manager.params.static_mod as FloodParams
+	flood_params.dur *= (1.0 - p.duration_reduction)
+	flood_params.dmg_rate *= (1.0 - p.damage_reduction)
 	flood_params.buildup_reduction_rate *= 10.0
 
 func apply_effect(ship: Ship) -> void:
@@ -43,8 +43,9 @@ func can_use(_ship: Ship) -> bool:
 	return true
 
 func _get_stat_lines(_ship: Ship = null) -> Array[String]:
+	var p := self.p() as DamageControl
 	return [
-		"Fire/flood duration: -%.0f%%" % (duration_reduction * 100.0),
-		"Fire/flood damage: -%.0f%%" % (damage_reduction * 100.0),
+		"Fire/flood duration: -%.0f%%" % (p.duration_reduction * 100.0),
+		"Fire/flood damage: -%.0f%%" % (p.damage_reduction * 100.0),
 		"Buildup reduction: 10x",
 	]

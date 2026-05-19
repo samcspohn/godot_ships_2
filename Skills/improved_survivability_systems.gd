@@ -2,7 +2,8 @@ extends Skill
 
 ## Improved Survivability Systems — all classes, Tier 4.
 ## Advanced systems extend DC/RP effectiveness and add an extra charge.
-## Applied directly to consumable instances; reversed on remove.
+## Stats (heal_per_sec, duration) are applied via the dynamic mod layer.
+## Max stack is game state — applied directly, reversed on remove.
 
 func _init() -> void:
 	skill_id = "iss"
@@ -18,43 +19,35 @@ func _init() -> void:
 		{"stat": "DC/RP Charges",       "value": "+1",    "positive": true},
 	]
 
-func apply(ship: Ship) -> void:
-	_ship = ship
+func _a(ship: Ship) -> void:
 	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
 		if consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			var rp := consumable as RepairParty
-			rp.heal_per_sec *= 1.10
-			if consumable.duration > 0.0:
-				consumable.duration *= 1.10
-			if rp.max_stack != -1:
-				rp.max_stack += 1
-				rp.current_stack = mini(rp.current_stack + 1, rp.max_stack)
+			var rp_dyn := consumable.dynamic_mod as RepairParty
+			rp_dyn.heal_per_sec *= 1.10
+			if rp_dyn.duration > 0.0:
+				rp_dyn.duration *= 1.10
+				rp_dyn.max_stack += 1
 		elif consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
-			var dc := consumable as DamageControl
-			dc.duration_reduction *= 1.10
-			dc.damage_reduction   *= 1.10
-			if consumable.duration > 0.0:
-				consumable.duration *= 1.10
-			if dc.max_stack != -1:
-				dc.max_stack += 1
-				dc.current_stack = mini(dc.current_stack + 1, dc.max_stack)
+			var dc_dyn := consumable.dynamic_mod as ConsumableItem
+			if dc_dyn.duration > 0.0:
+				dc_dyn.duration *= 1.10
+				dc_dyn.max_stack += 1
+
+func apply(ship: Ship) -> void:
+	_ship = ship
+	ship.add_dynamic_mod(_a)
+	# for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
+	# 	if consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY or \
+	# 			consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
+	# 		if consumable.max_stack != -1:
+	# 			consumable.max_stack += 1
+	# 			consumable.current_stack = mini(consumable.current_stack + 1, consumable.max_stack)
 
 func remove(_s: Ship) -> void:
-	for consumable: ConsumableItem in _ship.consumable_manager.equipped_consumables:
-		if consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			var rp := consumable as RepairParty
-			rp.heal_percent /= 1.10
-			if consumable.duration > 0.0:
-				consumable.duration /= 1.10
-			if rp.max_stack != -1:
-				rp.max_stack -= 1
-				rp.current_stack = mini(rp.current_stack, rp.max_stack)
-		elif consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
-			var dc := consumable as DamageControl
-			dc.duration_reduction -= 0.10
-			dc.damage_reduction   -= 0.10
-			if consumable.duration > 0.0:
-				consumable.duration /= 1.10
-			if dc.max_stack != -1:
-				dc.max_stack -= 1
-				dc.current_stack = mini(dc.current_stack, dc.max_stack)
+	_ship.remove_dynamic_mod(_a)
+	# for consumable: ConsumableItem in _ship.consumable_manager.equipped_consumables:
+	# 	if consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY or \
+	# 			consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
+	# 		if consumable.max_stack != -1:
+	# 			consumable.max_stack -= 1
+	# 			consumable.current_stack = mini(consumable.current_stack, consumable.max_stack)

@@ -1,9 +1,7 @@
 extends Skill
 
 ## Jack of All Trades — all classes.
-## Cuts 10 % off every consumable's cooldown. Applied directly to
-## cooldown_time on the ConsumableItem instances; removed by the inverse.
-## This skill does not use dynamic_mods; apply/remove are fully custom.
+## Cuts 10% off every consumable's cooldown via the dynamic mod layer.
 
 const COOLDOWN_MOD: float = 0.90
 
@@ -16,11 +14,6 @@ func _init() -> void:
 		{"stat": "Consumable Cooldown", "value": fmt_mult_pct(COOLDOWN_MOD), "positive": true},
 	]
 
-func apply(ship: Ship) -> void:
-	_ship = ship
+func _a(ship: Ship) -> void:
 	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
-		consumable.cooldown_time *= COOLDOWN_MOD
-
-func remove(ship: Ship) -> void:
-	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
-		consumable.cooldown_time /= COOLDOWN_MOD
+		(consumable.dynamic_mod as ConsumableItem).cooldown_time *= COOLDOWN_MOD

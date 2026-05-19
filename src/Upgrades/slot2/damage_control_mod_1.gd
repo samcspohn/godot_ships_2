@@ -18,22 +18,11 @@ func _init() -> void:
 		{"stat": "DC DOT Duration", "value": "-5%", "positive": true},
 	]
 
-func apply(_ship: Ship) -> void:
+func _a(_ship: Ship) -> void:
 	for consumable in _ship.consumable_manager.equipped_consumables:
 		if consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
-			consumable.cooldown_time *= COOLDOWN_MOD
-			var dc := consumable as DamageControl
-			dc.damage_reduction += DOT_DMG_DELTA
-			dc.duration_reduction += DOT_DUR_DELTA
+			(consumable.static_mod as ConsumableItem).cooldown_time *= COOLDOWN_MOD
+			(consumable.static_mod as DamageControl).damage_reduction += DOT_DMG_DELTA
+			(consumable.static_mod as DamageControl).duration_reduction += DOT_DUR_DELTA
 		elif consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			consumable.cooldown_time *= COOLDOWN_MOD
-
-func remove(_ship: Ship) -> void:
-	for consumable in _ship.consumable_manager.equipped_consumables:
-		if consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
-			consumable.cooldown_time /= COOLDOWN_MOD
-			var dc := consumable as DamageControl
-			dc.damage_reduction -= DOT_DMG_DELTA
-			dc.duration_reduction -= DOT_DUR_DELTA
-		elif consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			consumable.cooldown_time /= COOLDOWN_MOD
+			(consumable.static_mod as ConsumableItem).cooldown_time *= COOLDOWN_MOD

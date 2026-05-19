@@ -47,9 +47,10 @@ func get_tooltip_text(manager: ConsumableManager = null) -> String:
 		lines.append("")
 		lines.append(description)
 	lines.append("")
-	lines.append("Cooldown: %.0f s" % cooldown_time)
-	if duration > 0.0:
-		lines.append("Duration: %.0f s" % duration)
+	var _p := self.p() as ConsumableItem
+	lines.append("Cooldown: %.0f s" % _p.cooldown_time)
+	if _p.duration > 0.0:
+		lines.append("Duration: %.0f s" % _p.duration)
 	else:
 		lines.append("Duration: instant")
 	if max_stack == -1:

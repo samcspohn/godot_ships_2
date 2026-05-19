@@ -125,8 +125,8 @@ func use_consumable(slot: int) -> bool:
 		item.current_stack -= 1
 
 	# Track duration if applicable
-	if item.duration > 0:
-		active_effects[item.id] = item.duration
+	if (item.p() as ConsumableItem).duration > 0:
+		active_effects[item.id] = (item.p() as ConsumableItem).duration
 
 	consumable_used.emit(item)
 	return true
@@ -153,7 +153,7 @@ func update_active_effects(delta: float):
 			equipped_consumables[item_id].remove_effect(ship)
 			if equipped_consumables[item_id].current_stack > 0 or equipped_consumables[item_id].max_stack == -1:
 				# Only reset cooldown if there are remaining uses
-				cooldowns[item_id] = equipped_consumables[item_id].cooldown_time
+				cooldowns[item_id] = (equipped_consumables[item_id].p() as ConsumableItem).cooldown_time
 			# Remove effect (implement in specific consumables)
 
 @rpc("any_peer", "call_local", "reliable")

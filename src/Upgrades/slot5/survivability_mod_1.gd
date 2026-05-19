@@ -16,18 +16,10 @@ func _init() -> void:
 		{"stat": "RP/DC Duration", "value": fmt_mult_pct(1.10), "positive": true},
 	]
 
-func apply(_ship: Ship) -> void:
+func _a(_ship: Ship) -> void:
 	for consumable in _ship.consumable_manager.equipped_consumables:
 		if consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL or \
 				consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			consumable.cooldown_time *= COOLDOWN_MOD
-			if consumable.duration > 0.0:
-				consumable.duration *= DURATION_MOD
-
-func remove(_ship: Ship) -> void:
-	for consumable in _ship.consumable_manager.equipped_consumables:
-		if consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL or \
-				consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
-			consumable.cooldown_time /= COOLDOWN_MOD
-			if consumable.duration > 0.0:
-				consumable.duration /= DURATION_MOD
+			(consumable.static_mod as ConsumableItem).cooldown_time *= COOLDOWN_MOD
+			if (consumable.static_mod as ConsumableItem).duration > 0.0:
+				(consumable.static_mod as ConsumableItem).duration *= DURATION_MOD

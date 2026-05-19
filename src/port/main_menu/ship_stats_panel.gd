@@ -206,9 +206,10 @@ func _populate_survivability() -> void:
 			var rp := item as RepairParty
 			if rp == null:
 				continue
+			rp = rp.p()
 			var charges_for_score: float = (10.0 if rp.max_stack == -1 else float(rp.max_stack))
-			repair_total_pct += rp.heal_percent * 100.0 * charges_for_score
-			repair_per_charge_pct = max(repair_per_charge_pct, rp.heal_percent * 100.0)
+			repair_total_pct += rp.heal_per_sec * rp.duration * 100.0 * charges_for_score
+			repair_per_charge_pct = max(repair_per_charge_pct, rp.heal_per_sec * rp.duration * 100.0)
 			repair_charges += (-1 if rp.max_stack == -1 else rp.max_stack)
 			repair_charges_str = "∞" if rp.max_stack == -1 else ("%d" % rp.max_stack)
 

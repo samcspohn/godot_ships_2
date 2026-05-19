@@ -808,7 +808,7 @@ func _get_repair_party_heal_amount() -> float:
 	for item in consumable_manager.equipped_consumables:
 		if item is RepairParty:
 			var max_hp = camera_controller._ship.health_controller.max_hp
-			return max_hp * item.heal_percent
+			return max_hp * item.p().heal_per_sec * item.p().duration
 
 	return 0.0
 

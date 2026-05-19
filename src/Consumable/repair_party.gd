@@ -24,7 +24,7 @@ func _init():
 func _proc(_delta, ship):
 	@warning_ignore("integer_division")
 	if (Engine.get_physics_frames() + Engine.physics_ticks_per_second / 2) % Engine.physics_ticks_per_second == 0: # tick every second
-		var heal = ship.health_controller.max_hp * heal_per_sec
+		var heal = ship.health_controller.max_hp * (self.p() as RepairParty).heal_per_sec
 		ship.health_controller.heal(heal)
 
 # func remove_effect(ship: Ship) -> void:
@@ -34,19 +34,20 @@ func can_use(ship: Ship) -> bool:
 	return ship.health_controller.current_hp < ship.health_controller.max_hp
 
 func _get_stat_lines(ship: Ship = null) -> Array[String]:
+	var p_rp := self.p() as RepairParty
+	var p_ci := self.p() as ConsumableItem
 	if ship != null:
-		var total_heal_hp: float = ship.health_controller.max_hp * heal_per_sec * duration
+		var total_heal_hp: float = ship.health_controller.max_hp * p_rp.heal_per_sec * p_ci.duration
 		var hp_lines: Array[String] = [
 			"Heals %.0f HP over duration" % total_heal_hp,
 		]
-		if duration > 0.0:
-			hp_lines.append("Heal rate: %.0f HP/s" % (total_heal_hp / duration))
+		if p_ci.duration > 0.0:
+			hp_lines.append("Heal rate: %.0f HP/s" % (total_heal_hp / p_ci.duration))
 		return hp_lines
-	# Fallback when ship is not available (e.g. tooltip called without a manager).
-	var pct := heal_per_sec * duration * 100.0
+	var pct := p_rp.heal_per_sec * p_ci.duration * 100.0
 	var pct_lines: Array[String] = [
 		"Heals %.0f%% max HP over duration" % pct,
 	]
-	if duration > 0.0:
-		pct_lines.append("Heal rate: %.1f%% / s" % (pct / duration))
+	if p_ci.duration > 0.0:
+		pct_lines.append("Heal rate: %.1f%% / s" % (pct / p_ci.duration))
 	return pct_lines
