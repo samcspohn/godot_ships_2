@@ -4,7 +4,8 @@ extends Control
 const SKILL_BUTTON_SCRIPT: Script = preload("res://src/port/main_menu/skill_button.gd")
 
 const SKILL_BTN_SIZE := Vector2(150, 110)
-const MAX_TIERS := 4
+const MAX_TIERS := 5
+const ULTIMATE_TIER := 5
 
 var selected_ship: Ship = null
 
@@ -57,8 +58,12 @@ func _build_skill_grid() -> void:
 		skills_in_tier.sort_custom(func(a: Skill, b: Skill) -> bool: return a.name < b.name)
 
 		var tier_label := Label.new()
-		tier_label.text = "Tier %d" % tier
-		tier_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.4))
+		if tier == ULTIMATE_TIER:
+			tier_label.text = "Ultimate  (pick 1)"
+			tier_label.add_theme_color_override("font_color", Color(1.0, 0.65, 0.0))
+		else:
+			tier_label.text = "Tier %d" % tier
+			tier_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.4))
 		skill_rows.add_child(tier_label)
 
 		var row := HBoxContainer.new()
@@ -78,7 +83,7 @@ func _make_skill_button(skill: Skill) -> Button:
 	btn.custom_minimum_size = SKILL_BTN_SIZE
 	btn.clip_text = true
 	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	btn.text = "%s\n(%d pt%s)" % [skill.name, skill.cost, "s" if skill.cost != 1 else ""]
+	btn.text = "%s%s" % [skill.name, "" if skill.cost == 0 else "\n(%d pt%s)" % [skill.cost, "s" if skill.cost != 1 else ""]]
 	btn.toggled.connect(_on_skill_toggled.bind(btn))
 	btn.mouse_entered.connect(_on_skill_button_hovered.bind(btn))
 	btn.mouse_exited.connect(_on_skill_button_unhovered.bind(btn))

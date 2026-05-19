@@ -4,6 +4,7 @@ const sec_reload_mod = 0.9
 const sec_spread_mod = 0.9
 const sec_grouping_bonus = 0.1
 const main_gun_in_range_mod = 0.9
+const sec_range = 1.1
 
 func _init():
 	name = "Close Quarters Expertise"
@@ -13,6 +14,7 @@ func _init():
 		{"stat": "Secondary Reload", "value": fmt_mult_pct(sec_reload_mod), "positive": true},
 		{"stat": "Secondary Spread", "value": fmt_mult_pct(sec_spread_mod), "positive": true},
 		{"stat": "Secondary Grouping", "value": fmt_add(sec_grouping_bonus), "positive": true},
+		{"stat": "Secondary Range", "value": fmt_mult_pct(sec_range), "positive": true},
 		{"stat": "Main Gun Dispersion (within secondary range)", "value": fmt_mult_pct(main_gun_in_range_mod), "positive": true},
 	]
 
@@ -27,6 +29,7 @@ func _a(ship: Ship):
 		sec_params.base_spread *= sec_spread_mod
 		sec_params.h_grouping += sec_grouping_bonus
 		sec_params.v_grouping += sec_grouping_bonus
+		sec_params._range *= sec_range
 
 var enabled = false
 func _proc(_delta: float) -> void:

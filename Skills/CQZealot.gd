@@ -3,8 +3,9 @@ extends Skill
 
 func _init():
 	name = "CQ Zealot"
-	tier = 4
-	cost = 4
+	tier = 5
+	cost = 0
+	exclusive_group = "ultimate"
 	flavor_text = "Bonuses scale with enemies within secondary range."
 	tooltip_stats = [
 		{"stat": "Reload (1 enemy in range)", "value": fmt_mult_pct(reload_for_one_enemy), "positive": true},

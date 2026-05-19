@@ -1,9 +1,13 @@
-[gd_scene load_steps=5 format=3 uid="uid://cxgx5p7j582qa"]
+[gd_scene format=3 uid="uid://cxgx5p7j582qa"]
 
 [ext_resource type="Script" uid="uid://c6m73b405nhgu" path="res://src/port/main_menu/upgrade_tab.gd" id="1_2p4h6"]
 [ext_resource type="Script" uid="uid://7wqmwairseuh" path="res://src/port/main_menu/ship_upgrade_ui.gd" id="2_upgrade_ui"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_upgrd"]
+content_margin_left = 12.0
+content_margin_top = 10.0
+content_margin_right = 12.0
+content_margin_bottom = 10.0
 bg_color = Color(0.2, 0.2, 0.2, 0.9)
 border_width_left = 2
 border_width_top = 2
@@ -18,9 +22,13 @@ shadow_color = Color(0, 0, 0, 0.3)
 shadow_size = 4
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cs6ob"]
+content_margin_left = 10.0
+content_margin_top = 8.0
+content_margin_right = 10.0
+content_margin_bottom = 10.0
 bg_color = Color(0.162066, 0.162066, 0.162065, 1)
 
-[node name="UpgradeTab" type="Control"]
+[node name="UpgradeTab" type="Control" unique_id=1843794768]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -29,7 +37,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_2p4h6")
 
-[node name="ShipUpgradeUI" type="Control" parent="."]
+[node name="ShipUpgradeUI" type="Control" parent="." unique_id=2019671555]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -38,49 +46,46 @@ grow_horizontal = 2
 grow_vertical = 0
 script = ExtResource("2_upgrade_ui")
 
-[node name="UpgradeSlotsPanel" type="Panel" parent="ShipUpgradeUI"]
+[node name="UpgradeSlotsPanel" type="PanelContainer" parent="ShipUpgradeUI" unique_id=173500420]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -300.0
-offset_top = -100.0
-offset_right = 300.0
-offset_bottom = 100.0
+offset_left = -350.0
+offset_top = -75.0
+offset_right = 350.0
 grow_horizontal = 2
-grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_upgrd")
 
-[node name="TitleLabel" type="Label" parent="ShipUpgradeUI/UpgradeSlotsPanel"]
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -75.0
-offset_top = 10.0
-offset_right = 75.0
-offset_bottom = 36.0
-grow_horizontal = 2
+[node name="VBoxContainer" type="VBoxContainer" parent="ShipUpgradeUI/UpgradeSlotsPanel" unique_id=1681045863]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TitleLabel" type="Label" parent="ShipUpgradeUI/UpgradeSlotsPanel/VBoxContainer" unique_id=233172369]
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Ship Upgrades"
 horizontal_alignment = 1
 
-[node name="UpgradeSlotsContainer" type="HBoxContainer" parent="ShipUpgradeUI/UpgradeSlotsPanel"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 20.0
-offset_top = 40.0
-offset_right = -20.0
-offset_bottom = -20.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="UpgradeSlotsContainer" type="HBoxContainer" parent="ShipUpgradeUI/UpgradeSlotsPanel/VBoxContainer" unique_id=1140919190]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
 theme_override_constants/separation = 20
 alignment = 1
 
-[node name="UpgradeSelectionPanel" type="Panel" parent="ShipUpgradeUI"]
+[node name="HSeparator" type="HSeparator" parent="ShipUpgradeUI/UpgradeSlotsPanel/VBoxContainer" unique_id=1091196355]
+layout_mode = 2
+
+[node name="SlotInfoPanel" type="RichTextLabel" parent="ShipUpgradeUI/UpgradeSlotsPanel/VBoxContainer" unique_id=2031921225]
+layout_mode = 2
+bbcode_enabled = true
+text = "[color=#888888]Hover a slot to see upgrade details[/color]"
+fit_content = true
+scroll_active = false
+
+[node name="UpgradeSelectionPanel" type="PanelContainer" parent="ShipUpgradeUI" unique_id=222167209]
 visible = false
 z_index = 1
 layout_mode = 1
@@ -90,66 +95,44 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -200.0
-offset_top = -250.0
+offset_top = -140.0
 offset_right = 200.0
-offset_bottom = 100.0
 grow_horizontal = 2
-grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_cs6ob")
 
-[node name="TitleLabel" type="Label" parent="ShipUpgradeUI/UpgradeSelectionPanel"]
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -75.0
-offset_top = 10.0
-offset_right = 75.0
-offset_bottom = 36.0
-grow_horizontal = 2
+[node name="VBoxContainer" type="VBoxContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel" unique_id=1962439720]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TitleRow" type="HBoxContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer" unique_id=1609022783]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer/TitleRow" unique_id=1587326878]
+layout_mode = 2
+size_flags_horizontal = 3
 text = "Select Upgrade"
 horizontal_alignment = 1
 
-[node name="ScrollContainer" type="ScrollContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = 40.0
-offset_right = -10.0
-offset_bottom = -60.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="CloseButton" type="Button" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer/TitleRow" unique_id=1674262464]
+custom_minimum_size = Vector2(26, 26)
+layout_mode = 2
+text = "X"
 
-[node name="UpgradeList" type="VBoxContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel/ScrollContainer"]
+[node name="ScrollContainer" type="ScrollContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer" unique_id=1584503221]
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+
+[node name="UpgradeList" type="VBoxContainer" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer/ScrollContainer" unique_id=807113410]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="UpgradeDetails" type="Label" parent="ShipUpgradeUI/UpgradeSelectionPanel"]
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 10.0
-offset_top = -50.0
-offset_right = -10.0
-offset_bottom = -30.0
-grow_horizontal = 2
-grow_vertical = 0
-text = "Select an upgrade to see details"
-autowrap_mode = 3
+[node name="HSeparator" type="HSeparator" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer" unique_id=1231368784]
+layout_mode = 2
 
-[node name="CloseButton" type="Button" parent="ShipUpgradeUI/UpgradeSelectionPanel"]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -30.0
-offset_top = 5.0
-offset_right = -5.0
-offset_bottom = 30.0
-grow_horizontal = 0
-text = "X"
+[node name="UpgradeDetails" type="RichTextLabel" parent="ShipUpgradeUI/UpgradeSelectionPanel/VBoxContainer" unique_id=1751922300]
+layout_mode = 2
+bbcode_enabled = true
+text = "[color=#888888]Hover an upgrade to see details[/color]"
+fit_content = true
+scroll_active = false

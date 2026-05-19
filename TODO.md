@@ -1,6 +1,20 @@
 # Ship Combat Game - TODO
 
 
+# Commander Skills — Not Yet Implementable
+The following skills from the design list require engine/system work before they can be implemented:
+
+- [ ] **Preventive Maintenance** — No module incapacitation system exists (`incapacitation_chance` not in GunParams/TurretParams). Needs a module HP / incap system first.
+- [ ] **Grease the Gears — First-Strike Bonus** — The implemented skill has the base +10% traverse. The extra +5% "first-strike" bonus (guns haven't fired in 10 s) needs per-gun last-fire-time tracking (hook into Gun fire event). Currently `Grease the Gears` only grants the base traverse.
+- [ ] **Pyrotechnician** — Requires per-shell-type reload differentiation in the firing system. Currently `reload_time` is a single value on GunParams; there is no way to distinguish HE-reload vs AP-reload or apply a per-salvo penalty.
+- [ ] **Radio Location** — Needs a persistent HUD compass indicator showing the bearing to the nearest enemy. Server-side logic (get_valid_targets + direction) is feasible but requires a custom battle HUD widget.
+- [ ] **Torpedo Reload Booster** — Better implemented as a consumable (activated burst). The consumable system already supports instant-effect items (duration = 0). Should be added as a `ConsumableItem` subclass, not a skill.
+- [ ] **Adrenal Spotter** — While unspotted: -25% main gun reload buildup. The "unspotted" state is `ship.visible_to_enemy` (server-side), but "main gun reload buildup" doesn't exist as a concept — the main gun has a single `reload_time` param, not a buildup timer.
+- [ ] **Manual Secondaries** — Lock secondaries to a single focus target with +35% accuracy / -15% reload. Requires a targeting-lock mode in `SecondaryController_` that bypasses the current auto-targeting logic.
+- [ ] **Priority Target** — Live counter of how many enemy guns are aimed at you (with a small buff). Requires iterating all enemy `ArtilleryController.aim_point` positions and comparing them to this ship's position each frame — complex and performance-sensitive.
+- [ ] **Dead Eye (range-gated variant)** — A version that only activates dispersion reduction at ranges >75% of max range. The existing `Dead Eye` is always-on. Implementing a conditional version needs a `_proc` that checks `aim_point.distance_to(ship.global_position)` vs range each frame.
+
+
 # QOL
 - [ ] save settings (screen resolution, minimap size, volume levels, keybindings)
 - [ ] crtl+x lock guns

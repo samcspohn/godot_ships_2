@@ -46,7 +46,12 @@ func _init() -> void:
 func get_tooltip_bbcode() -> String:
 	var lines: PackedStringArray = []
 	lines.append("[b]%s[/b]" % name)
-	lines.append("[color=#ffcc66]Tier %d  •  Cost %d pt%s[/color]" % [tier, cost, "s" if cost != 1 else ""])
+	if tier == 5:
+		lines.append("[color=#ffaa00]Ultimate  •  1 slot (exclusive)[/color]")
+	elif cost > 0:
+		lines.append("[color=#ffcc66]Tier %d  •  Cost %d pt%s[/color]" % [tier, cost, "s" if cost != 1 else ""])
+	else:
+		lines.append("[color=#ffcc66]Tier %d[/color]" % tier)
 	if allowed_classes.size() > 0:
 		var labels: PackedStringArray = []
 		for c in allowed_classes:

@@ -5,23 +5,23 @@ class_name ShipUpgradeUI
 signal upgrade_selected(slot_index: int, upgrade_id: String)
 signal upgrade_removed(slot_index: int)
 
-## One tier per slot. Each slot accepts only upgrades whose `tier` matches its
-## slot tier, so the player picks ONE upgrade from each rank's pool — stealth
-## vs tank vs accuracy vs fast-firing, etc. Edit per ship to customise.
-@export var slot_tiers: Array[int] = [1, 2, 3, 4]
-
 var max_slots: int:
-	get: return slot_tiers.size()
+	get:
+		if ship_ref == null:
+			return 0
+		return ship_ref.upgrades.upgrades.size()
+
 var ship_ref: Ship = null
 var available_upgrades: Array[Dictionary] = []
 
 var current_slot_selected = -1
 
-@onready var upgrade_slots_container = $UpgradeSlotsPanel/UpgradeSlotsContainer
+@onready var upgrade_slots_container = $UpgradeSlotsPanel/VBoxContainer/UpgradeSlotsContainer
+@onready var slot_info_panel: RichTextLabel = $UpgradeSlotsPanel/VBoxContainer/SlotInfoPanel
 @onready var upgrade_selection_panel = $UpgradeSelectionPanel
-@onready var upgrade_list = $UpgradeSelectionPanel/ScrollContainer/UpgradeList
-@onready var upgrade_details = $UpgradeSelectionPanel/UpgradeDetails
-@onready var close_button = $UpgradeSelectionPanel/CloseButton
+@onready var upgrade_list = $UpgradeSelectionPanel/VBoxContainer/ScrollContainer/UpgradeList
+@onready var upgrade_details: RichTextLabel = $UpgradeSelectionPanel/VBoxContainer/UpgradeDetails
+@onready var close_button = $UpgradeSelectionPanel/VBoxContainer/TitleRow/CloseButton
 
 func _ready():
 	_load_available_upgrades()
@@ -45,8 +45,9 @@ func _load_available_upgrades():
 		available_upgrades.append(info)
 
 func _create_upgrade_slots():
-	# Clear any pre-existing children (rebuild is idempotent).
+	# Remove children immediately so get_child() is correct in the same frame.
 	for child in upgrade_slots_container.get_children():
+		upgrade_slots_container.remove_child(child)
 		child.queue_free()
 
 	for i in range(max_slots):
@@ -54,11 +55,11 @@ func _create_upgrade_slots():
 		slot_box.name = "SlotBox_" + str(i)
 		slot_box.alignment = BoxContainer.ALIGNMENT_CENTER
 
-		var rank_label := Label.new()
-		rank_label.text = "Rank %d" % slot_tiers[i]
-		rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		rank_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
-		slot_box.add_child(rank_label)
+		var slot_label := Label.new()
+		slot_label.text = "Slot %d" % (i + 1)
+		slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		slot_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+		slot_box.add_child(slot_label)
 
 		var slot_button = Button.new()
 		slot_button.text = ""
@@ -75,7 +76,18 @@ func _create_upgrade_slots():
 		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		icon_rect.custom_minimum_size = Vector2(48, 48)
 		slot_button.add_child(icon_rect)
-		slot_button.tooltip_text = "Click to add a Rank %d upgrade" % slot_tiers[i]
+		slot_button.tooltip_text = ""
+		var slot_idx := i  # capture for lambda
+		slot_button.mouse_entered.connect(func() -> void:
+			var up = ship_ref.upgrades.upgrades[slot_idx] if ship_ref else null
+			if up != null:
+				slot_info_panel.text = up.get_tooltip_bbcode()
+			else:
+				slot_info_panel.text = "[color=#888888]Slot %d — empty[/color]" % (slot_idx + 1)
+		)
+		slot_button.mouse_exited.connect(func() -> void:
+			slot_info_panel.text = "[color=#888888]Hover a slot to see upgrade details[/color]"
+		)
 		slot_box.add_child(slot_button)
 
 		upgrade_slots_container.add_child(slot_box)
@@ -83,23 +95,25 @@ func _create_upgrade_slots():
 func set_ship(ship: Ship):
 	ship_ref = ship
 	_load_available_upgrades()
+	_create_upgrade_slots()
 	_update_slot_buttons()
 
 func _on_slot_button_pressed(slot_index: int):
 	current_slot_selected = slot_index
-	var slot_tier: int = slot_tiers[slot_index]
+	var slot_tier: int = slot_index + 1
 
 	# Clear previous list
 	for child in upgrade_list.get_children():
 		child.queue_free()
+	upgrade_details.text = "[color=#888888]Hover an upgrade to see details[/color]"
 
 	upgrade_selection_panel.visible = true
 
-	var title_label = upgrade_selection_panel.get_node("TitleLabel")
+	var title_label = upgrade_selection_panel.get_node("VBoxContainer/TitleRow/TitleLabel")
 	if title_label:
-		title_label.text = "Slot %d  —  Rank %d" % [slot_index + 1, slot_tier]
+		title_label.text = "Slot %d" % (slot_index + 1)
 
-	# Populate only with upgrades whose tier matches this slot's rank.
+	# Populate only with upgrades whose tier matches this slot.
 	for i in range(available_upgrades.size()):
 		var upgrade_info = available_upgrades[i]
 		if int(upgrade_info.get("tier", 1)) != slot_tier:
@@ -139,7 +153,8 @@ func _on_slot_button_pressed(slot_index: int):
 		name_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		vbox.add_child(name_label)
 
-		item.tooltip_text = upgrade_info.get("description", "")
+		var bbcode: String = upgrade_info.get("tooltip_bbcode", "[b]%s[/b]" % upgrade_info.get("name", ""))
+		item.mouse_entered.connect(func(): upgrade_details.text = bbcode)
 
 		hbox.add_child(vbox)
 		item.add_child(hbox)
@@ -147,7 +162,7 @@ func _on_slot_button_pressed(slot_index: int):
 		upgrade_list.add_child(item)
 
 	# Add "Remove Upgrade" button if slot has an upgrade
-	if current_slot_selected < ship_ref.upgrades.upgrades.size() and ship_ref.upgrades.upgrades[current_slot_selected] != null:
+	if ship_ref.upgrades.upgrades[current_slot_selected] != null:
 		var remove_button = Button.new()
 		remove_button.custom_minimum_size = Vector2(280, 36)
 		remove_button.pressed.connect(_on_remove_upgrade_pressed)
@@ -180,9 +195,8 @@ func _on_upgrade_item_pressed(upgrade_index: int):
 
 	if ship_ref and not upgrade_id.is_empty():
 		var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
-		# Sanity: refuse to slot if tier doesn't match (shouldn't happen given
-		# the filter above, but catches programmer error).
-		if upgrade_instance != null and upgrade_instance.tier != slot_tiers[current_slot_selected]:
+		# Sanity: refuse to slot if tier doesn't match this slot.
+		if upgrade_instance != null and upgrade_instance.tier != current_slot_selected + 1:
 			push_error("Upgrade '%s' tier mismatch for slot %d" % [upgrade_id, current_slot_selected])
 			return
 		if upgrade_instance:
@@ -193,9 +207,7 @@ func _on_upgrade_item_pressed(upgrade_index: int):
 	upgrade_selected.emit(current_slot_selected, upgrade_id)
 
 func _on_remove_upgrade_pressed():
-	if ship_ref and current_slot_selected < ship_ref.upgrades.upgrades.size():
-		ship_ref.upgrades.remove_upgrade(current_slot_selected)
-
+	ship_ref.upgrades.remove_upgrade(current_slot_selected)
 	_update_slot_buttons()
 	upgrade_selection_panel.visible = false
 	upgrade_removed.emit(current_slot_selected)
@@ -219,28 +231,18 @@ func _update_slot_buttons():
 			icon_rect.custom_minimum_size = Vector2(48, 48)
 			slot_button.add_child(icon_rect)
 
-		# Ensure the upgrades array is large enough
-		while i >= ship_ref.upgrades.upgrades.size():
-			ship_ref.upgrades.upgrades.append(null)
-
 		var upgrade = ship_ref.upgrades.upgrades[i]
-		var has_upgrade = upgrade != null
 
-		if has_upgrade:
+		if upgrade != null:
 			slot_button.text = ""
-			if upgrade.icon:
-				icon_rect.texture = upgrade.icon
-			else:
+			icon_rect.texture = upgrade.icon if upgrade.icon else null
+			if not upgrade.icon:
 				slot_button.text = upgrade.name.substr(0, 1)
-			slot_button.tooltip_text = "%s\n[Rank %d]\n\n%s" % [
-				upgrade.name,
-				upgrade.tier,
-				upgrade.description,
-			]
+			slot_button.tooltip_text = ""
 		else:
 			slot_button.text = ""
 			icon_rect.texture = null
-			slot_button.tooltip_text = "Click to add a Rank %d upgrade" % slot_tiers[i]
+			slot_button.tooltip_text = ""
 
 func _on_close_button_pressed():
 	upgrade_selection_panel.visible = false

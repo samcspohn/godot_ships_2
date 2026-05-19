@@ -1,0 +1,134 @@
+REMOVED SKILLS — Skills Rework
+===============================
+All skills listed below were removed as part of the skills system rework.
+Kept for historical reference.
+
+--------------------------------------------------------------------------------
+ID:          dex
+Name:        Demolition Expert
+Tier:        3
+Cost:        3
+Classes:     BB, CA
+Description: Each visible enemy ship reduces main-gun reload time by 1%,
+             stacking up to 6 enemies for a maximum of -6% reload. The bonus
+             is re-baked only when the spotted enemy count changes.
+
+--------------------------------------------------------------------------------
+ID:          es
+Name:        Engine Specialist
+Tier:        2
+Cost:        2
+Classes:     DD, CA
+Description: Acceleration time -20% and deceleration time -20%, allowing
+             faster speed changes in all situations.
+
+--------------------------------------------------------------------------------
+ID:          hse
+Name:        Heavy Shell Expert
+Tier:        3
+Cost:        3
+Classes:     BB, CA
+Description: +5% AP penetration modifier on all AP shells in the main battery's
+             two shell slots. Also reduces the auto-bounce angle by 2 degrees,
+             widening the cone in which shells can penetrate instead of bouncing.
+
+--------------------------------------------------------------------------------
+ID:          inf
+Name:        Inferno Secondaries
+Tier:        3
+Cost:        3
+Classes:     BB
+Description: Secondary guns switch to incendiary ammunition: fire buildup
+             increased by +50% but raw damage per hit reduced by -10%.
+             Applied to both shell slots (shell1 and shell2) across all
+             secondary sub-controllers.
+
+--------------------------------------------------------------------------------
+ID:          jat
+Name:        Jack of All Trades
+Tier:        2
+Cost:        2
+Classes:     All
+Description: Reduces every equipped consumable's cooldown_time by -10%
+             (applied directly to consumable instances). Reversed on remove.
+
+--------------------------------------------------------------------------------
+ID:          lgt
+Name:        Last Gasp Tubes
+Tier:        3
+Cost:        3
+Classes:     DD, CA
+Description: Below 25% HP the torpedo reload time is reduced by -30%.
+             Activated and deactivated via the hp_changed signal; has no
+             effect if the ship has no torpedo_controller.
+
+--------------------------------------------------------------------------------
+ID:          ls
+Name:        Last Stand
+Tier:        3
+Cost:        3
+Classes:     BB, CA
+Description: Below 30% HP: torpedo protection increased by +25% (additive),
+             fire DPS reduced by -20%, flood DPS reduced by -20%.
+             Activated and deactivated via the hp_changed signal.
+
+--------------------------------------------------------------------------------
+ID:          obe
+Name:        Outboard Engines
+Tier:        2
+Cost:        2
+Classes:     DD, CA
+Description: While above 75% HP maximum speed is increased by +5%.
+             The bonus drops immediately when HP falls below the threshold,
+             tracked via the hp_changed signal.
+
+--------------------------------------------------------------------------------
+ID:          sf
+Name:        Stealthy Fish
+Tier:        1
+Cost:        1
+Classes:     DD, CA
+Description: Torpedo detection range reduced by -20% (enemies spot incoming
+             torpedoes later). Applied to torpedo_params.detection_range.
+             Silently skipped if no torpedo controller or torpedo params exist.
+
+--------------------------------------------------------------------------------
+ID:          slow
+Name:        Slow Fish
+Tier:        2
+Cost:        2
+Classes:     DD, CA
+Exclusive:   torpedo_tuning (mutually exclusive with Swift Fish)
+Description: Heavier, slower torpedoes: -10% speed, +15% damage, +20% flood
+             buildup, +15% detection range (enemies see them sooner). A raw
+             damage-and-flooding trade-off against speed and stealth.
+
+--------------------------------------------------------------------------------
+ID:          ss
+Name:        Sight Stabilization
+Tier:        2
+Cost:        2
+Classes:     All
+Description: Rudder response time -30% and speed loss in turns -10%.
+             Improved handling for tighter maneuvering and keeping guns on target.
+
+--------------------------------------------------------------------------------
+ID:          sup
+Name:        Superintendent
+Tier:        3
+Cost:        3
+Classes:     All
+Description: Adds +1 charge to every finite consumable (max_stack != -1).
+             Consumables with infinite charges (max_stack == -1) are unaffected.
+             Reversed on remove by decrementing max_stack and clamping
+             current_stack.
+
+--------------------------------------------------------------------------------
+ID:          swift
+Name:        Swift Fish
+Tier:        2
+Cost:        2
+Classes:     DD, CA
+Exclusive:   torpedo_tuning (mutually exclusive with Slow Fish)
+Description: Lighter torpedoes: +10% speed, -10% damage. Faster fish that
+             close the gap before targets can react, at the cost of per-hit punch.

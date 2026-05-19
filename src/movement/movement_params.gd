@@ -13,6 +13,7 @@ class_name MovementParams
 @export var turn_speed_loss: float = 0.2
 @export var rudder_response_time: float = 1.5
 
+
 # Hull / hydrodynamics
 @export var lateral_drag_multiplier: float = 1.7
 
