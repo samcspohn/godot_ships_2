@@ -265,14 +265,18 @@ func _physics_process(delta: float) -> void:
 		# Pivot the ship around its bow tip by setting the COM lateral velocity directly.
 		# Derivation: v_COM = ω_vec × (COM − bow) = (0,ω,0) × (0,0,+L/2) = ω·(L/2)·flat_right
 		# Result: bow translates only forward (zero lateral at tip), stern sweeps 2× COM lateral.
+		# Drift scales with (speed/max_speed) so it is near-zero at low speed and full at max speed,
+		# matching the hydrodynamic reality that hull side-resistance overpowers drift at slow speed.
+		var drift_scale: float = clampf(abs(current_speed) / max_speed, 0.0, 1.0)
 		var fwd_vel: Vector3 = forward * ship.linear_velocity.dot(forward)
 		var vert_vel: Vector3 = Vector3.UP * ship.linear_velocity.y
-		ship.linear_velocity = fwd_vel + flat_right * desired_omega * (ship_length * 0.5) + vert_vel
+		ship.linear_velocity = fwd_vel + flat_right * desired_omega * (ship_length * 0.5) * drift_scale + vert_vel
 
 		turning_drag_multiplier = 1.0 + _p().turn_speed_loss * abs(rudder_input) * 1.5
 	else:
 		turning_drag_multiplier = 1.0
-	engine_power = move_toward(engine_power, target_power, delta / _p().acceleration_time)
+	var rudder_loss := (1.0 - absf(rudder_input) * _p().turn_speed_loss if target_power > engine_power else 1.0 + absf(rudder_input) * _p().turn_speed_loss)
+	engine_power = move_toward(engine_power, target_power, delta / _p().acceleration_time * rudder_loss)
 	ship.linear_damp = BASE_DRAG * grounded_drag_multiplier * turning_drag_multiplier
 
 	# Apply forward thrust

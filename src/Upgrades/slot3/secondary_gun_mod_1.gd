@@ -2,7 +2,7 @@ extends Upgrade
 class_name SecondaryGunMod1
 
 const RANGE_MOD: float = 1.25
-const SPREAD_MOD: float = 0.80
+const SPREAD_MOD: float = 0.90
 
 func _init() -> void:
 	upgrade_id = "sec_gun_1"
@@ -12,8 +12,8 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Extended barrels and improved sighting give secondaries real reach."
 	tooltip_stats = [
-		{"stat": "Secondary Range", "value": fmt_mult_pct(1.25), "positive": true},
-		{"stat": "Secondary Dispersion", "value": fmt_mult_pct(0.80), "positive": true},
+		{"stat": "Secondary Range", "value": fmt_mult_pct(RANGE_MOD), "positive": true},
+		{"stat": "Secondary Dispersion", "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

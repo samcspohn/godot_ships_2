@@ -559,7 +559,9 @@ func _calculate_target_info():
 				aim_position = water_point
 			elif primary_point != null:
 				if water_point != null:
+					var y := aim_position.y
 					aim_position = (primary_point as Vector3).lerp(water_point, water_blend)
+					aim_position.y = y
 				else:
 					aim_position = primary_point
 			elif water_point != null:

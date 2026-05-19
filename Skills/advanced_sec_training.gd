@@ -15,7 +15,7 @@ func _init():
 	cost = 4
 	flavor_text = "Gradually improves secondary accuracy while secondaries shoot at a target."
 	tooltip_stats = [
-		{"stat": "Secondary Spread (static)",   "value": "-10%",                                      "positive": true},
+		# {"stat": "Secondary Spread (static)",   "value": "-10%",                                      "positive": true},
 		{"stat": "Secondary Range (static)",    "value": "+5%",                                      "positive": true},
 		{"stat": "Secondary Reload (static)",   "value": "-10%",                                      "positive": true},
 		{"stat": "Secondary Grouping (max)",    "value": "+%.0f%%" % (max_grouping_bonus * 100),       "positive": true},
@@ -30,12 +30,11 @@ func _a(ship: Ship):
 	ship.secondary_controller.target_mod.dynamic_mod.h_grouping += grouping_multiplier
 	ship.secondary_controller.target_mod.dynamic_mod.v_grouping += grouping_multiplier
 	ship.secondary_controller.target_mod.dynamic_mod.base_spread *= spread_multiplier
-	ship.secondary_controller.priority_target_dispersion.period = 5.2
+	# ship.secondary_controller.priority_target_dispersion.period = 5.2
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= 0.9
-		params.base_spread *= 0.90
-		params._range      *= 1.05
+		# params.base_spread *= 0.90
 
 var num_enemies = 0
 var priority_target: Ship = null

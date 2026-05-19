@@ -3,11 +3,11 @@ extends Skill
 ## Grease the Gears — all classes, Tier 1.
 ## +2 deg/s turret traverse speed (additive).
 
-const TRAVERSE_BONUS: float = 2.0
+const TRAVERSE_BONUS: float = 1.5
 
 func _init() -> void:
 	skill_id = "gtg"
-	name = "Grease the Gears"
+	name = "Greased Gears"
 	tier = 1
 	cost = 1
 	flavor_text = "Well-maintained traverse mechanisms respond faster."

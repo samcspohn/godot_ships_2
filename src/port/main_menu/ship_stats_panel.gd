@@ -130,7 +130,7 @@ func _populate_artillery() -> void:
 			_artillery.add_stat_row("  %s DPM" % label,    "%s" % _fmt_int(dpm))
 			if sp.type == ShellParams.ShellType.HE:
 				_artillery.add_stat_row("  HE fire chance", "%.0f" % sp.fire_buildup)
-				_artillery.add_stat_row("  HE penetration",   "%d mm" % sp.overmatch)
+				_artillery.add_stat_row("  HE penetration",   "%d mm" % (sp.overmatch * sp.penetration_modifier))
 			else:
 				_artillery.add_stat_row("  AP velocity",    "%.0f m/s" % sp.speed)
 

@@ -267,6 +267,7 @@ func _update_skill_indicators():
 			skills_status[skill] = _slot
 			status_indicators_container.add_child(_slot)
 			skill.init_ui(_slot)
+			skill.init_hover(_slot, hover_tooltip)
 		var slot = skills_status[skill]
 		skill.update_ui(slot)
 
@@ -1621,24 +1622,25 @@ func update_consumable_ui():
 			if item:
 				# Only update dynamic properties
 				# button.disabled = not consumable_manager.can_use_item(item)
-				if item.max_stack != -1:
-					consumable_count_labels[i].text = str(item.current_stack)
+				var _eff_max := (item.p() as ConsumableItem).max_stack
+				if _eff_max != -1:
+					consumable_count_labels[i].text = str(_eff_max - item.used)
 
 				var cooldown_remaining = consumable_manager.cooldowns.get(item.id, 0.0)
 				var effect_remaining = consumable_manager.active_effects.get(item.id, 0.0)
 				# Disable button if no stacks left and no active effect
-				button.disabled = item.current_stack <= 0 and effect_remaining <= 0
+				button.disabled = (_eff_max != -1 and _eff_max - item.used <= 0) and effect_remaining <= 0
 				# Update cooldown display.
 				# Active:   bar starts full (100%) and drains to 0 over the duration.
 				# Cooldown: bar starts empty (0%) and fills to 100 as it approaches ready.
 				if cooldown_remaining > 0:
-					cooldown_bar.value = 100.0 - (cooldown_remaining / item.cooldown_time) * 100.0
+					cooldown_bar.value = 100.0 - (cooldown_remaining / (item.p() as ConsumableItem).cooldown_time) * 100.0
 					cooldown_bar.modulate = Color(1.0, 1.0, 0.0) # Yellow tint during cooldown
 					cooldown_bar.visible = true
 					overlay_label.text = "%d" % ceili(cooldown_remaining)
 					overlay_label.visible = true
 				elif effect_remaining > 0:
-					cooldown_bar.value = (effect_remaining / item.duration) * 100.0
+					cooldown_bar.value = (effect_remaining / (item.p() as ConsumableItem).duration) * 100.0
 					cooldown_bar.modulate = Color(0.2, 0.8, 1.0) # Blue tint during effect
 					cooldown_bar.visible = true
 					overlay_label.text = "%d" % ceili(effect_remaining)
@@ -1711,15 +1713,17 @@ func _update_alt_consumable_widget_refs(
 	var count_lbl: Label       = refs["count"]
 	var timer_lbl: Label       = refs["timer"]
 
-	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	var _refs_eff_max := (item.p() as ConsumableItem).max_stack
+	var exhausted := _refs_eff_max != -1 and _refs_eff_max - item.used <= 0
 	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
 
-	if item.max_stack == -1:
+	if _refs_eff_max == -1:
 		count_lbl.text = "∞"
 		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
 	else:
-		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
-		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		var _refs_remaining := _refs_eff_max - item.used
+		count_lbl.text = "%d/%d" % [_refs_remaining, _refs_eff_max]
+		var frac: float = float(_refs_remaining) / max(_refs_eff_max, 1)
 		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
 
 	var cooldown_left: float = manager.cooldowns.get(item.id, 0.0)
@@ -1741,16 +1745,18 @@ func _update_alt_consumable_widget(
 	var icon_rect  := widget.get_node("Box/Icon")        as TextureRect
 
 	# Dim the icon when the consumable is exhausted
-	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	var _widget_eff_max := (item.p() as ConsumableItem).max_stack
+	var exhausted := _widget_eff_max != -1 and _widget_eff_max - item.used <= 0
 	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
 
 	# Count
-	if item.max_stack == -1:
+	if _widget_eff_max == -1:
 		count_lbl.text = "∞"
 		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
 	else:
-		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
-		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		var _widget_remaining := _widget_eff_max - item.used
+		count_lbl.text = "%d/%d" % [_widget_remaining, _widget_eff_max]
+		var frac: float = float(_widget_remaining) / max(_widget_eff_max, 1)
 		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
 
 	# Timer

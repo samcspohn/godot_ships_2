@@ -82,6 +82,7 @@ func damage(delta):
 		var dmg_sunk = hp.apply_damage(dmg * delta, dmg * delta, null, false, HPManager.DAMAGE_TYPE.FIRE,HPManager.DAMAGE_LEVEL.LIGHT, _owner)
 		_owner.stats.fire_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
+		_ship.stats.potential_damage += dmg_sunk[0] # potential damage only increases if the damage actually affected HP (i.e. not fully resisted)
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		if dmg_sunk[1]:
 			_owner.stats.frags += 1

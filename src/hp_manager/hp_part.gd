@@ -53,28 +53,41 @@ func apply_damage(dmg: float, rate: float = 0.5) -> float:
 	return dmg1 + dmg2
 
 func heal(amount: float) -> float:
-	var heal1 = amount / 3.0
-	var heal2 = amount / 3.0 * 2.0
+	# var heal1 = amount / 3.0
+	# var heal2 = amount / 3.0 * 2.0
+	# var healable1 = healable_damage / 3.0
+	# var healable2 = healable1 * 2.0
+	# if healable1 > 0:
+	# 	if healable1 >= heal1:
+	# 		healable1 -= heal1
+	# 	else:
+	# 		heal1 = healable1
+	# 		healable1 = 0.0
+	# else:
+	# 	heal1 = 0.0
+	# if healable2 > 0:
+	# 	if healable2 >= heal2:
+	# 		healable2 -= heal2
+	# 	else:
+	# 		heal2 = healable2
+	# 		healable2 = 0.0
+	# else:
+	# 	heal2 = 0.0
+
+	# current_pool1 += heal1
+	# current_pool2 += heal2
+	# healable_damage = healable1 + healable2
+	# return heal1 + heal2
+
 	var healable1 = healable_damage / 3.0
 	var healable2 = healable1 * 2.0
-	if healable1 > 0:
-		if healable1 >= heal1:
-			healable1 -= heal1
-		else:
-			heal1 = healable1
-			healable1 = 0.0
-	else:
-		heal1 = 0.0
-	if healable2 > 0:
-		if healable2 >= heal2:
-			healable2 -= heal2
-		else:
-			heal2 = healable2
-			healable2 = 0.0
-	else:
-		heal2 = 0.0
+
+	var heal2 = min(amount / 3.0 * 2.0, healable2) # 2/3 goes to the larger pool
+	var heal1 = amount - heal2 # 1/3/ left over goes to smaller pool
 
 	current_pool1 += heal1
 	current_pool2 += heal2
-	healable_damage = healable1 + healable2
+
+	healable_damage = clamp(healable_damage - heal1 - heal2, 0.0, pool1 + pool2)
+
 	return heal1 + heal2

@@ -1,9 +1,7 @@
 extends Skill
 
 ## Superintendent — all classes.
-## Adds one extra charge to every finite consumable. Consumables whose
-## max_stack == -1 (infinite use) are left untouched.
-## This skill does not use dynamic_mods; apply/remove are fully custom.
+## Adds one extra charge to every finite consumable via the dynamic mod layer.
 
 func _init() -> void:
 	name = "Superintendent"
@@ -14,21 +12,8 @@ func _init() -> void:
 		{"stat": "Consumable Charges", "value": "+1 (infinite-use excluded)", "positive": true},
 	]
 
-func apply(ship: Ship) -> void:
-	_ship = ship
-	if ship.consumable_manager.equipped_consumables.is_empty():
-		return
+func _a(ship: Ship) -> void:
 	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
-		if consumable.max_stack == -1:
-			continue
-		consumable.max_stack += 1
-		consumable.current_stack = mini(consumable.current_stack + 1, consumable.max_stack)
-
-func remove(ship: Ship) -> void:
-	if ship.consumable_manager.equipped_consumables.is_empty():
-		return
-	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
-		if consumable.max_stack == -1:
-			continue
-		consumable.max_stack -= 1
-		consumable.current_stack = mini(consumable.current_stack, consumable.max_stack)
+		var dm := consumable.dynamic_mod as ConsumableItem
+		if dm.max_stack != -1:
+			dm.max_stack += 1

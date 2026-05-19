@@ -123,6 +123,12 @@ func init_ui(container: Control):
 func update_ui(container: Control):
 	pass
 
+## Called once after init_ui so skills that need hover tooltips can register
+## with the shared HoverTooltip overlay (which fires while Ctrl is held).
+## `ht` is a HoverTooltip instance. Default no-op — skill has no hover UI.
+func init_hover(_container: Control, _ht) -> void:
+	pass
+
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	# writer.put_var(skill_id)

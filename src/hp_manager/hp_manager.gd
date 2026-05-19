@@ -160,19 +160,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 
 	# # TODO: how to handle overpenetration/citadel overpen damage?
 	var _dmg: float = 0
-	# match armor_part.type:
-	# 	ArmorPart.Type.MODULE:
-	# 		_dmg = min(dmg, base_dmg * 0.1)
-	# 	ArmorPart.Type.CITADEL:
-	# 		_dmg = citadel.apply_damage(dmg, 0.333)
-	# 	ArmorPart.Type.CASEMATE:
-	# 		_dmg = casemate.apply_damage(dmg)
-	# 	ArmorPart.Type.BOW:
-	# 		_dmg = bow.apply_damage(dmg)
-	# 	ArmorPart.Type.STERN:
-	# 		_dmg = stern.apply_damage(dmg)
-	# 	ArmorPart.Type.SUPERSTRUCTURE:
-	# 		_dmg = superstructure.apply_damage(dmg)
+	# var _healable: float = 0
 	if armor_part.type == ArmorPart.Type.MODULE:
 		_dmg = min(dmg, base_dmg * 0.1)
 	elif armor_part.type == ArmorPart.Type.CITADEL:
@@ -188,7 +176,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	var light_repair = params.p().light_repair
 	# var hp_part = null
 	var repair_rate = 0.0
-	if damage_level == DAMAGE_LEVEL.LIGHT:
+	if damage_level == DAMAGE_LEVEL.LIGHT or armor_part.type == ArmorPart.Type.MODULE:
 		repair_rate = light_repair
 	elif damage_level == DAMAGE_LEVEL.MEDIUM:
 		repair_rate = pen_repair
@@ -198,26 +186,6 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	if armor_part.hp_part != null:
 		armor_part.hp_part.healable_damage += dmg * repair_rate
 	healable_damage += dmg * repair_rate
-
-	# match armor_part.type:
-	# 	ArmorPart.Type.MODULE:
-	# 		light_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.CITADEL:
-	# 		citadel.healable_damage += dmg * citadel_repair
-	# 		healable_damage += dmg * citadel_repair
-	# 	ArmorPart.Type.CASEMATE:
-	# 		casemate.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.BOW:
-	# 		bow.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.STERN:
-	# 		stern.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.SUPERSTRUCTURE:
-	# 		superstructure.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
 
 
 	_current_hp -= dmg
@@ -231,23 +199,6 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	hp_changed.emit(_current_hp)
 	return [dmg * params.p().mult, false]
 
-# func apply_light_damage(dmg: float) -> Array:
-# 	if sunk:
-# 		return [0, false]
-# 	# ship.update_static_mods = true
-# 	dmg /= params.p().mult
-# 	_current_hp -= dmg
-# 	light_damage += dmg * params.p().light_repair
-# 	healable_damage += dmg * params.p().light_repair
-# 	if _current_hp <= 0 && !sunk:
-# 		dmg += _current_hp
-# 		_current_hp = 0
-# 		sink()
-# 		ship_sunk.emit()
-# 		hp_changed.emit(_current_hp)
-# 		return [dmg * params.p().mult, true]
-# 	hp_changed.emit(_current_hp)
-# 	return [dmg * params.p().mult, false]
 
 func heal(amount: float) -> float:
 	if is_dead():
@@ -274,13 +225,6 @@ func heal(amount: float) -> float:
 		_current_hp += ret
 		return ret * params.p().mult
 	return 0.0
-
-	# 	return 0.0
-	# if _current_hp + amount > _max_hp:
-	# 	amount = _max_hp - _current_hp
-	# _current_hp += amount
-	# hp_changed.emit(_current_hp)
-	# return amount
 
 # @rpc("any_peer", "reliable", "call_remote")
 func sink(damage_type: DAMAGE_TYPE, sinker: Ship):

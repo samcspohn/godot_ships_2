@@ -71,3 +71,40 @@ func build_preview_modal(container: Control, on_change: Callable) -> void:
 		preview_at_hp(v / 100.0)
 		on_change.call()
 	)
+
+func init_ui(container: Control) -> void:
+	var tex: Texture2D = load("res://circle.png")
+	var bar := TextureProgressBar.new()
+	bar.max_value = 1.0
+	bar.value = 1.0
+	bar.fill_mode = 4  # clockwise
+	bar.texture_under = tex
+	bar.texture_progress = tex
+	bar.tint_under    = Color(0.30, 0.12, 0.02, 0.30)
+	bar.tint_progress = Color(1.00, 0.50, 0.10, 0.85)
+	var desired_size := 30.0
+	var texture_size := 256.0
+	var s := desired_size / texture_size
+	bar.scale = Vector2(s, s)
+	container.custom_minimum_size = Vector2(desired_size, desired_size)
+	container.size = Vector2(desired_size, desired_size)
+	container.add_child(bar)
+
+func update_ui(container: Control) -> void:
+	container.visible = bonus < 1.0
+
+func init_hover(container: Control, ht) -> void:
+	ht.attach(container, func() -> String:
+		var pct: float = (1.0 - bonus) * 100.0
+		return "Adrenaline Rush\nReload Bonus: -%.1f%%" % pct
+	)
+
+func to_bytes() -> PackedByteArray:
+	var writer := StreamPeerBuffer.new()
+	writer.put_float(bonus)
+	return writer.get_data_array()
+
+func from_bytes(data: PackedByteArray) -> void:
+	var reader := StreamPeerBuffer.new()
+	reader.data_array = data
+	bonus = reader.get_float()

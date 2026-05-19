@@ -4,7 +4,7 @@ const sec_reload_mod = 0.9
 const sec_spread_mod = 0.9
 const sec_grouping_bonus = 0.1
 const main_gun_in_range_mod = 0.9
-const sec_range = 1.1
+const sec_range = 1.15
 
 func _init():
 	name = "Close Quarters Expertise"

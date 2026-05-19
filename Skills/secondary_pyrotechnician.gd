@@ -3,7 +3,7 @@ extends Skill
 ## Secondary Pyrotechnician — all classes, Tier 1.
 ## Incendiary shell preparation improves secondary fire-starting ability.
 
-const FIRE_BUILDUP_BONUS: float = 2.0
+const FIRE_BUILDUP_BONUS: float = 1.0
 
 func _init() -> void:
 	skill_id = "spyro"
