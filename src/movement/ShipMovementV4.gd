@@ -235,6 +235,8 @@ func _physics_process(delta: float) -> void:
 	var up = ship.global_transform.basis.y
 	var flat_right = forward.cross(Vector3.UP)
 
+
+
 	# Don't apply thrust if grounded
 	if is_grounded:
 		print("Grounded")
@@ -246,10 +248,11 @@ func _physics_process(delta: float) -> void:
 		# return
 
 	var turn_thrust_ratio = 1.0
+	var speed_ratio: float = clampf(abs(current_speed) / max_speed, 0.0, 1.0)
 	if abs(rudder_input) > 0.01 and abs(current_speed) > 1.0:
 		# Tighten radius at low speed — rudder has more leverage relative to forward momentum
 		var max_speed_ratio: float = max_speed * (1.0 - abs(rudder_input) * _p().turn_speed_loss)
-		var speed_ratio: float = clampf(abs(current_speed) / max_speed_ratio, 0.0, 1.0)
+		speed_ratio = clampf(abs(current_speed) / max_speed_ratio, 0.0, 1.0)
 		var radius_scale: float = lerpf(_p().slow_speed_turn_tightening, 1.0, speed_ratio)
 		var effective_radius: float = _p().turning_circle_radius * radius_scale
 
@@ -275,7 +278,7 @@ func _physics_process(delta: float) -> void:
 		turning_drag_multiplier = 1.0 + _p().turn_speed_loss * abs(rudder_input) * 1.5
 	else:
 		turning_drag_multiplier = 1.0
-	var rudder_loss := (1.0 - absf(rudder_input) * _p().turn_speed_loss if target_power > engine_power else 1.0 + absf(rudder_input) * _p().turn_speed_loss)
+	var rudder_loss := (1.0 - absf(rudder_input) * _p().turn_speed_loss if target_power > engine_power else 1.0 + absf(rudder_input) * _p().turn_speed_loss * speed_ratio)
 	engine_power = move_toward(engine_power, target_power, delta / _p().acceleration_time * rudder_loss)
 	ship.linear_damp = BASE_DRAG * grounded_drag_multiplier * turning_drag_multiplier
 

@@ -7,6 +7,7 @@
 [resource]
 script = ExtResource("3_a7c5u")
 torpedo_detection_range = 3500.0
+spotting_range = 4500.0
 name = "Long Range Hydroacoustic Search"
 icon = ExtResource("2_124l1")
 disabled_icon = ExtResource("1_cgw8s")
