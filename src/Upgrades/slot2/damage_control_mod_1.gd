@@ -13,9 +13,9 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal.png")
 	flavor_text = "Improved DC hardware cuts both the wait between uses and the damage fires deal."
 	tooltip_stats = [
-		{"stat": "DC/RP Cooldown", "value": fmt_mult_pct(0.95), "positive": true},
-		{"stat": "DC DOT Damage", "value": "-5%", "positive": true},
-		{"stat": "DC DOT Duration", "value": "-5%", "positive": true},
+		{"stat": "DC/RP Cooldown", "value": fmt_mult_pct(COOLDOWN_MOD), "positive": true},
+		{"stat": "DC DOT Damage", "value": "-%.0f%%" % (DOT_DMG_DELTA * 100), "positive": true},
+		{"stat": "DC DOT Duration", "value": "-%.0f%%" % (DOT_DUR_DELTA * 100), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

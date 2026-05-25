@@ -18,7 +18,7 @@ func _init() -> void:
 	flavor_text = "Battle experience improves damage control readiness."
 	tooltip_stats = [
 		{"stat": "Per 100% max HP Potential Damage",  "value": ""},
-		{"stat": "  DC/RP Cooldown",          "value": "-1.0% (stacking)", "positive": true},
+		{"stat": "  DC/RP Cooldown",          "value": "-%.1f%% (stacking)" % (COOLDOWN_PER_TIER * 100), "positive": true},
 		# {"stat": "  DC/RP Duration",          "value": "+0.5% (stacking)", "positive": true},
 		# {"stat": "Max Tiers",                 "value": "20 (-10% cooldown, +10% duration)"},
 	]

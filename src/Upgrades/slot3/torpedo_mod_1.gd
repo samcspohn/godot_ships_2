@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal (1).png")
 	flavor_text = "Streamlined loading gear cycles torpedoes back into the tubes faster."
 	tooltip_stats = [
-		{"stat": "Torpedo Reload", "value": fmt_mult_pct(0.85), "positive": true},
+		{"stat": "Torpedo Reload", "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

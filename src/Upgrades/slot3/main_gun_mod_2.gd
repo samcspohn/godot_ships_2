@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair.png")
 	flavor_text = "Upgraded traverse motors let turrets track fast-moving targets with ease."
 	tooltip_stats = [
-		{"stat": "Turret Traverse Speed", "value": "+5 deg/s", "positive": true},
+		{"stat": "Turret Traverse Speed", "value": fmt_add(TRAVERSE_BONUS) + " deg/s", "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal (1).png")
 	flavor_text = "Advanced passive sonar and optical systems spot threats much earlier."
 	tooltip_stats = [
-		{"stat": "Torpedo Acquisition Range", "value": fmt_mult_pct(1.50), "positive": true},
+		{"stat": "Torpedo Acquisition Range", "value": fmt_mult_pct(TORP_DETECT_MOD), "positive": true},
 		{"stat": "Guaranteed Ship Acquisition", "value": "+50% (placeholder)"},
 	]
 

@@ -12,8 +12,8 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal (1).png")
 	flavor_text = "Overhauled damage control systems run longer and reload faster."
 	tooltip_stats = [
-		{"stat": "RP/DC Cooldown", "value": fmt_mult_pct(0.90), "positive": true},
-		{"stat": "RP/DC Duration", "value": fmt_mult_pct(1.10), "positive": true},
+		{"stat": "RP/DC Cooldown", "value": fmt_mult_pct(COOLDOWN_MOD), "positive": true},
+		{"stat": "RP/DC Duration", "value": fmt_mult_pct(DURATION_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

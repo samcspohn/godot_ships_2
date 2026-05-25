@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Hydraulic assist and tightened linkage make the rudder respond instantly."
 	tooltip_stats = [
-		{"stat": "Rudder Shift Time", "value": fmt_mult_pct(0.80), "positive": true},
+		{"stat": "Rudder Shift Time", "value": fmt_mult_pct(RUDDER_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

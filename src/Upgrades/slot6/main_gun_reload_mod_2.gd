@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair.png")
 	flavor_text = "Automated ramming gear and polished chamber linings cut reload time dramatically."
 	tooltip_stats = [
-		{"stat": "Main Gun Reload", "value": fmt_mult_pct(0.90), "positive": true},
+		{"stat": "Main Gun Reload", "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

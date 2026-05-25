@@ -4,6 +4,7 @@ extends Skill
 const max_grouping_bonus = 0.4
 const max_spread_bonus = 0.5
 const target_switch_penalty = 0.15
+const RELOAD_MOD: float = 0.9
 
 var grouping_multiplier: float = 0.0
 var spread_multiplier: float = 1.0
@@ -17,7 +18,7 @@ func _init():
 	tooltip_stats = [
 		# {"stat": "Secondary Spread (static)",   "value": "-10%",                                      "positive": true},
 		# {"stat": "Secondary Range (static)",    "value": "+5%",                                      "positive": true},
-		{"stat": "Secondary Reload (static)",   "value": "-10%",                                      "positive": true},
+		{"stat": "Secondary Reload (static)",   "value": fmt_mult_pct(RELOAD_MOD),                   "positive": true},
 		{"stat": "Secondary Grouping (max)",    "value": "+%.0f%%" % (max_grouping_bonus * 100),       "positive": true},
 		{"stat": "Secondary Spread (max buildup)", "value": "-%.0f%%" % (max_spread_bonus * 100),     "positive": true},
 		{"stat": "Buildup Time",                "value": "%.0f s" % accuracy_buildup_time},
@@ -33,7 +34,7 @@ func _a(ship: Ship):
 	# ship.secondary_controller.priority_target_dispersion.period = 5.2
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
-		params.reload_time *= 0.9
+		params.reload_time *= RELOAD_MOD
 		# params.base_spread *= 0.90
 
 var num_enemies = 0

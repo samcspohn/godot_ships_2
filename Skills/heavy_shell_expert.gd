@@ -14,8 +14,8 @@ func _init() -> void:
 	allowed_classes = [Ship.ShipClass.BB, Ship.ShipClass.CA]
 	flavor_text = "Heavier charges, tighter fuses — AP shells hit harder and bite deeper."
 	tooltip_stats = [
-		{"stat": "AP Penetration",       "value": "+5%",  "positive": true},
-		{"stat": "Auto-Bounce Angle",    "value": "-2°",  "positive": true},
+		{"stat": "AP Penetration",       "value": fmt_mult_pct(PEN_MOD),                   "positive": true},
+		{"stat": "Auto-Bounce Angle",    "value": "-%.0f°" % rad_to_deg(BOUNCE_DELTA),      "positive": true},
 	]
 
 func _a(ship: Ship) -> void:

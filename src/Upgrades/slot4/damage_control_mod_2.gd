@@ -11,8 +11,8 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal.png")
 	flavor_text = "High-pressure suppression systems extinguish fires and seal floods faster."
 	tooltip_stats = [
-		{"stat": "Fire Duration", "value": fmt_mult_pct(0.85), "positive": true},
-		{"stat": "Flood Duration", "value": fmt_mult_pct(0.85), "positive": true},
+		{"stat": "Fire Duration", "value": fmt_mult_pct(DUR_MOD), "positive": true},
+		{"stat": "Flood Duration", "value": fmt_mult_pct(DUR_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

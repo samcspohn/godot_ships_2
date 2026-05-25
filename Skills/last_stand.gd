@@ -18,7 +18,7 @@ func _init() -> void:
 	allowed_classes = [Ship.ShipClass.BB, Ship.ShipClass.CA]
 	flavor_text = "When the hull is failing, every second counts."
 	tooltip_stats = [
-		{"stat": "HP Threshold",       "value": "< 30%"},
+		{"stat": "HP Threshold",       "value": "< %.0f%%" % (HP_THRESHOLD * 100)},
 		{"stat": "Torpedo Protection", "value": "+%.0f%%" % (TORP_PROT_BONUS * 100.0), "positive": true},
 		{"stat": "Fire DPS",           "value": fmt_mult_pct(FIRE_MOD),  "positive": true},
 		{"stat": "Flood DPS",          "value": fmt_mult_pct(FLOOD_MOD), "positive": true},

@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair.png")
 	flavor_text = "Precision-machined barrels and stabilised gun directors tighten every salvo."
 	tooltip_stats = [
-		{"stat": "Main Gun Spread", "value": fmt_mult_pct(0.90), "positive": true},
+		{"stat": "Main Gun Spread", "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

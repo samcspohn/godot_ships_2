@@ -10,8 +10,11 @@ extends Skill
 var _reload_active: bool = false
 var _spread_active: bool = false
 
-var _reload_mod: float = 1.0   # 0.9 when active, 1.0 when not
-var _spread_mod: float = 1.0   # 0.9 when active, 1.0 when not
+var _reload_mod: float = 1.0
+var _spread_mod: float = 1.0
+
+const RELOAD_MOD: float = 0.9
+const SPREAD_MOD: float = 0.9
 
 func _init() -> void:
 	skill_id = "lwb"
@@ -21,8 +24,8 @@ func _init() -> void:
 	allowed_classes = [Ship.ShipClass.DD, Ship.ShipClass.CA]
 	flavor_text = "Light hulls fight best up close — brawling rewards boldness."
 	tooltip_stats = [
-		{"stat": "Main/Secondary Reload (while detected)", "value": "-10%", "positive": true},
-		{"stat": "Main Gun Spread (within half range)",    "value": "-10%", "positive": true},
+		{"stat": "Main/Secondary Reload (while detected)", "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
+		{"stat": "Main Gun Spread (within half range)",    "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
 	]
 
 func _a(ship: Ship) -> void:
@@ -43,8 +46,8 @@ func _proc(_delta: float) -> void:
 	var state_changed := (new_reload_active != _reload_active) or (new_spread_active != _spread_active)
 	_reload_active = new_reload_active
 	_spread_active = new_spread_active
-	_reload_mod = 0.9 if _reload_active else 1.0
-	_spread_mod = 0.9 if _spread_active else 1.0
+	_reload_mod = RELOAD_MOD if _reload_active else 1.0
+	_spread_mod = SPREAD_MOD if _spread_active else 1.0
 	if state_changed:
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)

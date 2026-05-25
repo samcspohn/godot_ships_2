@@ -12,8 +12,8 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair.png")
 	flavor_text = "Extended barrels and improved powder charges push shells to the horizon."
 	tooltip_stats = [
-		{"stat": "Main Gun Range", "value": fmt_mult_pct(1.15), "positive": true},
-		{"stat": "Main Gun Reload", "value": fmt_mult_pct(0.96), "positive": true},
+		{"stat": "Main Gun Range", "value": fmt_mult_pct(RANGE_MOD), "positive": true},
+		{"stat": "Main Gun Reload", "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

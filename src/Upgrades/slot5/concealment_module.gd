@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/health-normal.png")
 	flavor_text = "Low-profile radar absorbing materials and exhaust baffles reduce the ship's signature."
 	tooltip_stats = [
-		{"stat": "Concealment Radius", "value": fmt_mult_pct(0.93), "positive": true},
+		{"stat": "Concealment Radius", "value": fmt_mult_pct(RADIUS_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

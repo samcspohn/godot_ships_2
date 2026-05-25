@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Pre-loaded magazines and optimised shell handling keep the secondary batteries blazing."
 	tooltip_stats = [
-		{"stat": "Secondary Reload", "value": fmt_mult_pct(0.80), "positive": true},
+		{"stat": "Secondary Reload", "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

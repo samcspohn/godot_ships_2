@@ -9,52 +9,60 @@ extends Skill
 ## the mod layer is refreshed. _proc heals every physics tick and re-bakes
 ## the mod layer only when the HP-lost percentage drifts by ≥ 0.5 %.
 
+const REGEN_COEFF: float = 0.0015
+const FIRE_MOD: float = 0.9
+const FLOOD_MOD: float = 0.9
+const REGEN_TIMEOUT: float = 30.0
+const REBAKE_THRESHOLD: float = 0.005
+
+var _cached_hp_lost_pct: float = 0.0
+var hp_regen_per_sec: float = 0.0
+var last_potential_dmg: float = 0.0
+var last_potential_dmg_time: float = 0.0
+
 func _init() -> void:
 	name = "Juggernaut"
 	tier = 5
 	cost = 0
 	exclusive_group = "ultimate"
-	flavor_text = "The more they break it, the harder it fights back."
+	flavor_text = "The more they break it, the harder it fights back. Regen pauses after %.0fs without taking potential damage." % REGEN_TIMEOUT
 	tooltip_stats = [
-		{"stat": "HP Regen (per 1% HP lost)",   "value": "+0.015% max HP/s", "positive": true},
-		{"stat": "Fire DPS",   "value": "-10%", "positive": true},
-		{"stat": "Flood DPS",  "value": "-10%", "positive": true},
+		{"stat": "HP Regen (per 1% HP lost)", "value": "+%.4f%% max HP/s" % REGEN_COEFF, "positive": true},
+		{"stat": "Fire DPS",                  "value": fmt_mult_pct(FIRE_MOD),            "positive": true},
+		{"stat": "Flood DPS",                 "value": fmt_mult_pct(FLOOD_MOD),           "positive": true},
 	]
 
-var _cached_hp_lost_pct: float = 0.0
-var hp_regen_per_sec: float = 0.0
-
 func _a(ship: Ship) -> void:
-	var max_hp:     float = ship.health_controller.max_hp
-	var current_hp: float = ship.health_controller.current_hp
-	var hp_lost_pct: float = clamp((1.0 - current_hp / max_hp) * 100.0, 0.0, 100.0)
-
-	# var resist_mod: float = max(0.90, 1.0 - 0.001 * hp_lost_pct)
-	(ship.fire_manager.fparams.dynamic_mod as FireParams).dmg_rate   *= 0.9
-	(ship.flood_manager.params.dynamic_mod as FloodParams).dmg_rate  *= 0.9
+	(ship.fire_manager.fparams.dynamic_mod as FireParams).dmg_rate  *= FIRE_MOD
+	(ship.flood_manager.params.dynamic_mod as FloodParams).dmg_rate *= FLOOD_MOD
 
 func apply(ship: Ship) -> void:
 	_ship = ship
-	var max_hp:     float = ship.health_controller.max_hp
-	var current_hp: float = ship.health_controller.current_hp
-	_cached_hp_lost_pct = clamp((1.0 - current_hp / max_hp) * 100.0, 0.0, 100.0)
+	var hp := ship.health_controller
+	_cached_hp_lost_pct = clamp(1.0 - hp.current_hp / hp.max_hp, 0.0, 1.0)
 	ship.add_dynamic_mod(_a)
 
-func _proc(delta: float) -> void:
+func _proc(_delta: float) -> void:
 	var sec_tic: bool = Engine.get_physics_frames() % Engine.physics_ticks_per_second == int(Engine.physics_ticks_per_second / 2.0)
-	if !sec_tic:
+	if not sec_tic:
 		return
-	var max_hp:     float = _ship.health_controller.max_hp
-	var current_hp: float = _ship.health_controller.current_hp
-	var hp_lost_pct: float = clamp((1.0 - current_hp / max_hp), 0.0, 1.0)
 
-	# Passive regen maxing out at .15% per second at 0 hp
-	# regen per hp lost: 0.0015% max HP/s, so at 100% hp lost you get .15% max HP/s regen.
-	hp_regen_per_sec = max_hp * 0.0015 * hp_lost_pct
+	var curr_potential_dmg: float = _ship.stats.potential_damage
+	if curr_potential_dmg != last_potential_dmg:
+		last_potential_dmg = curr_potential_dmg
+		last_potential_dmg_time = Time.get_ticks_msec() / 1000.0
+
+	if Time.get_ticks_msec() / 1000.0 - last_potential_dmg_time > REGEN_TIMEOUT:
+		hp_regen_per_sec = 0.0
+		return
+
+	var hp := _ship.health_controller
+	var hp_lost_pct: float = clamp(1.0 - hp.current_hp / hp.max_hp, 0.0, 1.0)
+
+	hp_regen_per_sec = hp.max_hp * REGEN_COEFF * hp_lost_pct
 	_ship.health_controller.heal(hp_regen_per_sec)
 
-	# Re-bake the resistance mod only when HP loss has shifted enough.
-	if abs(hp_lost_pct - _cached_hp_lost_pct) >= 0.5:
+	if abs(hp_lost_pct - _cached_hp_lost_pct) >= REBAKE_THRESHOLD:
 		_cached_hp_lost_pct = hp_lost_pct
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)
@@ -70,8 +78,7 @@ func init_ui(container: Control) -> void:
 	bar.tint_under    = Color(0.05, 0.25, 0.05, 0.30)
 	bar.tint_progress = Color(0.20, 0.85, 0.35, 0.85)
 	var desired_size := 30.0
-	var texture_size := 256.0
-	var s := desired_size / texture_size
+	var s := desired_size / 256.0
 	bar.scale = Vector2(s, s)
 	container.custom_minimum_size = Vector2(desired_size, desired_size)
 	container.size = Vector2(desired_size, desired_size)

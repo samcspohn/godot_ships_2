@@ -15,7 +15,7 @@ func _init() -> void:
 	tooltip_stats = [
 		{"stat": "Secondary Range", "value": fmt_mult_pct(RANGE_MOD), "positive": true},
 		{"stat": "Secondary Dispersion", "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
-		{"stat": "Secondary Grouping", "value": fmt_mult_pct(GROUPING_MOD), "positive": true},
+		{"stat": "Secondary Grouping", "value": fmt_add(GROUPING_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:
