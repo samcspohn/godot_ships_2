@@ -50,12 +50,22 @@ func _make_visible(visible):
 		else:
 			editor_panel.hide()
 
-func update_gizmos():
-	# Force gizmo update when something changes
-	if current_turret:
-		# Request the editor to redraw
-		update_overlays()
+func _process(_delta: float) -> void:
+	# Force every Gun's gizmo to redraw each frame so the indicator, slew arc,
+	# and fire arcs track viewport drags, inspector edits, and panel-driven
+	# property changes (including mirror propagation and convert+expand)
+	# without requiring a re-selection.
+	var edited_scene = EditorInterface.get_edited_scene_root()
+	if edited_scene:
+		_refresh_gun_gizmos(edited_scene)
 
-		# Make the gizmo plugin redraw all gizmos
-		remove_node_3d_gizmo_plugin(turret_gizmo_plugin)
-		add_node_3d_gizmo_plugin(turret_gizmo_plugin)
+func _refresh_gun_gizmos(node: Node) -> void:
+	if node is Gun:
+		(node as Node3D).update_gizmos()
+	for child in node.get_children():
+		_refresh_gun_gizmos(child)
+
+func update_gizmos():
+	# Force gizmo update when something changes (e.g., undo/redo callbacks).
+	if current_turret and is_instance_valid(current_turret):
+		(current_turret as Node3D).update_gizmos()
