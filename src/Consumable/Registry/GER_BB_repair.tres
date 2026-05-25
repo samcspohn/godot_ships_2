@@ -11,6 +11,6 @@ name = "Heavy Repair Team"
 icon = ExtResource("2_xbjdm")
 disabled_icon = ExtResource("1_lvxwm")
 cooldown_time = 90.0
-duration = 40.0
+duration = 30.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"

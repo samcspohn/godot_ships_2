@@ -41,7 +41,7 @@ func apply(ship: Ship) -> void:
 	ship.add_dynamic_mod(_a)
 
 func _proc(delta: float) -> void:
-	var sec_tic: bool = Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0
+	var sec_tic: bool = Engine.get_physics_frames() % Engine.physics_ticks_per_second == int(Engine.physics_ticks_per_second / 2.0)
 	if !sec_tic:
 		return
 	var max_hp:     float = _ship.health_controller.max_hp

@@ -45,6 +45,19 @@ var _pending_target_selection: Variant = null
 
 var current_weapon_controller: Node = null
 
+# Debug-fire-log toggle (F11). Forwards to server-side Gun.debug_fire_log
+# filtered to this player's ship so we only see denials for the local ship.
+var _debug_fire_log_enabled: bool = false
+var _f11_held: bool = false
+
+@rpc("any_peer", "call_remote", "reliable")
+func set_debug_fire_log(enabled: bool, ship_name: String) -> void:
+	if not _Utils.authority():
+		return
+	Gun.debug_fire_log = enabled
+	Gun.debug_fire_log_ship = ship_name if enabled else ""
+	print("[server] Gun.debug_fire_log = ", enabled, " ship_filter=", Gun.debug_fire_log_ship)
+
 func _ready() -> void:
 	# Get reference to the ship components
 	#ship = get_node("../..") as Ship
@@ -506,6 +519,17 @@ func process_player_input() -> void:
 
 	if Input.is_key_pressed(KEY_K):
 		kill.rpc_id(1)
+	if Input.is_key_pressed(KEY_F11) and not _f11_held:
+		_f11_held = true
+		_debug_fire_log_enabled = not _debug_fire_log_enabled
+		print("[client] Gun.debug_fire_log = ", _debug_fire_log_enabled, " (ship=", ship.name, ")")
+		if _Utils.is_multiplayer_active():
+			set_debug_fire_log.rpc_id(1, _debug_fire_log_enabled, ship.name)
+		else:
+			Gun.debug_fire_log = _debug_fire_log_enabled
+			Gun.debug_fire_log_ship = ship.name if _debug_fire_log_enabled else ""
+	elif not Input.is_key_pressed(KEY_F11):
+		_f11_held = false
 	# Create movement input array
 	var input_data = InputData.new()
 	input_data.throttle_level = throttle_level

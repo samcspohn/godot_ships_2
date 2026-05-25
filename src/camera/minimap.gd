@@ -375,7 +375,7 @@ func _on_canvas_draw() -> void:
 	# Draw torpedo indicators
 	draw_torpedoes_on_minimap()
 
-	var player_controller: PlayerController = ship.get_node("Modules/Player")
+	var player_controller: PlayerController = ship.get_node("Modules/PlayerControl")
 
 	var _aim_point
 	var ship_pos = ship.global_position

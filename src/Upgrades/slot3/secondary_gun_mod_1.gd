@@ -1,8 +1,9 @@
 extends Upgrade
 class_name SecondaryGunMod1
 
-const RANGE_MOD: float = 1.25
+const RANGE_MOD: float = 1.30
 const SPREAD_MOD: float = 0.90
+const GROUPING_MOD: float = 0.1
 
 func _init() -> void:
 	upgrade_id = "sec_gun_1"
@@ -14,6 +15,7 @@ func _init() -> void:
 	tooltip_stats = [
 		{"stat": "Secondary Range", "value": fmt_mult_pct(RANGE_MOD), "positive": true},
 		{"stat": "Secondary Dispersion", "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
+		{"stat": "Secondary Grouping", "value": fmt_mult_pct(GROUPING_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:
@@ -21,3 +23,5 @@ func _a(_ship: Ship) -> void:
 		var params := sec.params.static_mod as GunParams
 		params._range *= RANGE_MOD
 		params.base_spread *= SPREAD_MOD
+		params.h_grouping += GROUPING_MOD
+		params.v_grouping += GROUPING_MOD

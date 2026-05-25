@@ -3,7 +3,7 @@ extends Skill
 ## Long Range Secondary Training — all classes, Tier 3.
 ## Extends secondary effectiveness at distance with range, accuracy, and grouping bonuses.
 
-const RANGE_MOD:   float = 1.25   # +25% secondary range
+const RANGE_MOD:   float = 1.30   # +25% secondary range
 # const SPREAD_MOD:  float = 0.95   # -5% secondary spread
 # const GROUPING_BONUS: float = 0.1  # +0.1 h/v grouping
 

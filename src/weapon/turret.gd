@@ -144,6 +144,8 @@ func _ready() -> void:
 	initialize_armor_system.call_deferred()
 	cleanup.call_deferred()
 
+	process_physics_priority = 2
+
 
 
 
@@ -192,45 +194,73 @@ func _offset_from_slew_min(angle: float) -> float:
 	var b = wrapf(a, 0.0, TAU)
 	return b
 
-## Returns [adjusted_delta, blocked].
+## Tolerance band around slew boundaries (radians). Larger than typical
+## frame-to-frame Euler/quaternion round-trip drift (~1e-7 rad) but
+## visually negligible (~0.006°). Used to:
+##   1. Bias clamp_to_rotation_limits()'s snap inward so drift can't push the
+##      stored rotation back into the dead zone.
+##   2. Treat near-boundary `off` values as if they were exactly at the
+##      boundary in apply_rotation_limits(), preventing the Case A saturating
+##      correction from overshooting in response to sub-µrad drift.
+const SLEW_BOUNDARY_EPS: float = 1.0e-4
+
+## Returns [adjusted_delta, blocked, case_label].
 ##   blocked == true  => requested target lies in the dead zone; delta points
 ##                       to the nearest reachable boundary along the originally
 ##                       requested direction.
 ##   blocked == false => target reachable; delta may differ from input (long
 ##                       way around) to avoid crossing the dead zone.
+## In Case A (current angle inside dead zone — should be unreachable but can
+## occur via floating-point drift past a boundary), the returned delta is
+## saturated (±TAU) in the chosen exit direction so the caller's per-frame
+## clamp to ±max_delta always produces a full-speed self-correcting step
+## rather than a sub-epsilon nudge that rounds to zero. Drift within
+## SLEW_BOUNDARY_EPS of either boundary is *not* treated as Case A; it
+## falls through to the normal B/C/D logic to avoid overshoot oscillation.
 func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 	# If rotation limits are not enabled, return the desired delta as is
 	if not slew_limits_enabled or desired_delta == 0.0:
-		return [desired_delta, false]
+		return [desired_delta, false, "OFF"]
 
 	var arc: float = _arc_width()
 	var off: float = _offset_from_slew_min(current_angle)
 
-	# Case A: current angle is inside the dead zone.
+	# Case A: current angle is genuinely inside the dead zone (beyond tolerance).
+	# Near-boundary drift is absorbed into the valid arc so D_min / D_max can
+	# handle the "at boundary, target in dead zone" case without oscillation.
 	if off > arc:
-		# Sub-case A1: target lies in the valid arc — slew toward it via
-		# whichever boundary entry produces the shorter total path
-		# (dead-zone exit + traversal through the arc to the target).
-		var target_off_w: float = wrapf(off + desired_delta, 0.0, TAU)
-		if target_off_w <= arc:
-			var path_via_min: float = (TAU - off) + target_off_w           # CCW: -> slew_min -> target
-			var path_via_max: float = (off - arc) + (arc - target_off_w)   # CW : -> slew_max -> target
-			return [path_via_min, false] if path_via_min <= path_via_max else [-path_via_max, false]
-		# Sub-case A2: target also in the dead zone — slew to nearest boundary.
-		var to_min: float = TAU - off       # CCW distance back to slew_min
-		var to_max: float = off - arc       # CW  distance back to slew_max
-		return [to_min, true] if to_min <= to_max else [-to_max, true]
+		if (off - arc) < SLEW_BOUNDARY_EPS:
+			off = arc  # treat as at slew_max boundary
+		elif (TAU - off) < SLEW_BOUNDARY_EPS:
+			off = 0.0  # treat as at slew_min boundary
+		else:
+			# Sub-case A1: target lies in the valid arc — slew toward whichever
+			# boundary produces the shorter total path (exit + traversal). Return
+			# saturated ±TAU in that direction so drift-induced sub-epsilon paths
+			# still produce a full-rate corrective step.
+			var target_off_w: float = wrapf(off + desired_delta, 0.0, TAU)
+			if target_off_w <= arc:
+				var path_via_min: float = (TAU - off) + target_off_w           # CCW: -> slew_min -> target
+				var path_via_max: float = (off - arc) + (arc - target_off_w)   # CW : -> slew_max -> target
+				var dir_a1: float = 1.0 if path_via_min <= path_via_max else -1.0
+				return [dir_a1 * TAU, false, "A1"]
+			# Sub-case A2: target also in the dead zone — exit via nearest boundary
+			# at full rate (caller clamps to max_delta).
+			var to_min: float = TAU - off       # CCW distance back to slew_min
+			var to_max: float = off - arc       # CW  distance back to slew_max
+			var dir_a2: float = 1.0 if to_min <= to_max else -1.0
+			return [dir_a2 * TAU, true, "A2"]
 
 	# Case B: current is valid. Try the desired delta as-is.
 	var target_off: float = off + desired_delta
 	if target_off >= 0.0 and target_off <= arc:
-		return [desired_delta, false]
+		return [desired_delta, false, "B"]
 
 	# Case C: shortest path leaves the arc — try the long way around.
 	var alt_delta: float = desired_delta + (TAU if desired_delta < 0.0 else -TAU)
 	var alt_target: float = off + alt_delta
 	if alt_target >= 0.0 and alt_target <= arc:
-		return [alt_delta, false]
+		return [alt_delta, false, "C"]
 
 	# Case D: target is genuinely in the dead zone. Slew toward whichever
 	# boundary (slew_min or slew_max) is angularly closer to the target.
@@ -238,12 +268,15 @@ func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
 	var target_to_min: float = TAU - target_off_wrapped          # CCW: target -> 0
 	var target_to_max: float = target_off_wrapped - arc           # CW : target -> arc
 	if target_to_min <= target_to_max:
-		return [-off, true]                                      # hit slew_min
+		return [-off, true, "D_min"]                              # hit slew_min
 	else:
-		return [arc - off, true]                                 # hit slew_max
+		return [arc - off, true, "D_max"]                         # hit slew_max
 
 
 ## Snap rotation.y to the nearest valid boundary if currently in the dead zone.
+## Snaps with an inward bias of SLEW_BOUNDARY_EPS so frame-to-frame
+## Euler/quaternion round-trip drift can't push the stored value back into
+## the dead zone.
 func clamp_to_rotation_limits() -> void:
 	if not slew_limits_enabled:
 		return
@@ -253,7 +286,10 @@ func clamp_to_rotation_limits() -> void:
 		return
 	var to_min: float = TAU - off
 	var to_max: float = off - arc
-	rotation.y = slew_min_angle if to_min <= to_max else slew_max_angle
+	if to_min <= to_max:
+		rotation.y = slew_min_angle + SLEW_BOUNDARY_EPS
+	else:
+		rotation.y = slew_max_angle - SLEW_BOUNDARY_EPS
 
 
 ## Returns true if the given world-space yaw lies in any defined fire arc.

@@ -18,8 +18,8 @@ func _init() -> void:
 	flavor_text = "Battle experience improves damage control readiness."
 	tooltip_stats = [
 		{"stat": "Per 100% max HP Potential Damage",  "value": ""},
-		{"stat": "  DC/RP Cooldown",          "value": "-0.5% (stacking)", "positive": true},
-		{"stat": "  DC/RP Duration",          "value": "+0.5% (stacking)", "positive": true},
+		{"stat": "  DC/RP Cooldown",          "value": "-1.0% (stacking)", "positive": true},
+		# {"stat": "  DC/RP Duration",          "value": "+0.5% (stacking)", "positive": true},
 		# {"stat": "Max Tiers",                 "value": "20 (-10% cooldown, +10% duration)"},
 	]
 
@@ -33,8 +33,8 @@ func _a(ship: Ship) -> void:
 				consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
 			var dm := consumable.dynamic_mod as ConsumableItem
 			dm.cooldown_time *= pow(1 - COOLDOWN_PER_TIER, _applied_tiers)
-			if dm.duration > 0.0:
-				dm.duration *= pow(1 + DURATION_PER_TIER, _applied_tiers)
+			# if dm.duration > 0.0:
+			# 	dm.duration *= pow(1 + DURATION_PER_TIER, _applied_tiers)
 
 func apply(ship: Ship) -> void:
 	_applied_tiers = 0

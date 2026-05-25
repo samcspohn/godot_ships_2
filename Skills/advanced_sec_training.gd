@@ -16,7 +16,7 @@ func _init():
 	flavor_text = "Gradually improves secondary accuracy while secondaries shoot at a target."
 	tooltip_stats = [
 		# {"stat": "Secondary Spread (static)",   "value": "-10%",                                      "positive": true},
-		{"stat": "Secondary Range (static)",    "value": "+5%",                                      "positive": true},
+		# {"stat": "Secondary Range (static)",    "value": "+5%",                                      "positive": true},
 		{"stat": "Secondary Reload (static)",   "value": "-10%",                                      "positive": true},
 		{"stat": "Secondary Grouping (max)",    "value": "+%.0f%%" % (max_grouping_bonus * 100),       "positive": true},
 		{"stat": "Secondary Spread (max buildup)", "value": "-%.0f%%" % (max_spread_bonus * 100),     "positive": true},

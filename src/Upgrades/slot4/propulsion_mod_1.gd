@@ -1,7 +1,7 @@
 extends Upgrade
 class_name PropulsionMod1
 
-const ACCEL_MOD: float = 0.50
+const ACCEL_MOD: float = 0.30
 
 func _init() -> void:
 	upgrade_id = "prop_mod_1"
@@ -11,7 +11,7 @@ func _init() -> void:
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Direct-drive turbines deliver peak thrust almost instantly."
 	tooltip_stats = [
-		{"stat": "Acceleration Time", "value": fmt_mult_pct(0.50), "positive": true},
+		{"stat": "Acceleration Time", "value": fmt_mult_pct(ACCEL_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:

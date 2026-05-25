@@ -6,8 +6,9 @@ extends Skill
 
 const RELOAD_MOD:  float = 0.95   # -5% reload time
 const SPREAD_MOD:  float = 0.95   # -5% base spread
-const RANGE_MOD:   float = 1.12   # +15% range
-# const PT_PERIOD:   float = 5.4    # priority-target dispersion period (default 6.0)
+const RANGE_MOD:   float = 1.10   # +10% range
+const PRIORITY_TARGET_SPREAD_MOD: float = 0.95  # -5% spread when aiming at priority target
+
 
 func _init() -> void:
 	skill_id = "bst"
@@ -16,10 +17,10 @@ func _init() -> void:
 	cost = 1
 	flavor_text = "Drilled crews keep the secondaries barking faster, farther, and on-target."
 	tooltip_stats = [
-		{"stat": "Secondary Reload",            "value": fmt_mult_pct(RELOAD_MOD), "positive": true},
-		{"stat": "Secondary Spread",            "value": fmt_mult_pct(SPREAD_MOD), "positive": true},
-		{"stat": "Secondary Range",             "value": fmt_mult_pct(RANGE_MOD),  "positive": true},
-		{"stat": "Priority Target Spread", "value": "-10%",                   "positive": true},
+		{"stat": "Secondary Reload",            "value": fmt_mult_pct(RELOAD_MOD),                 "positive": true},
+		{"stat": "Secondary Spread",            "value": fmt_mult_pct(SPREAD_MOD),                 "positive": true},
+		{"stat": "Secondary Range",             "value": fmt_mult_pct(RANGE_MOD),                  "positive": true},
+		{"stat": "Priority Target Spread",      "value": fmt_mult_pct(PRIORITY_TARGET_SPREAD_MOD), "positive": true},
 	]
 
 func _a(ship: Ship) -> void:
