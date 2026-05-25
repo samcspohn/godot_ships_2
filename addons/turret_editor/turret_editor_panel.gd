@@ -36,7 +36,9 @@ const MIRROR_ANGLE_EPS: float = 1.0e-3           # radians (~0.06°)
 @onready var mirror_partner_label = $VBoxContainer/MirrorSection/MirrorRow/MirrorPartnerLabel
 
 func _ready():
-	undo_redo = EditorInterface.get_editor_undo_redo()
+	undo_redo = plugin.get_undo_redo()
+	if undo_redo == null:
+		push_error("TurretEditorPanel: plugin.get_undo_redo() returned null")
 
 	min_angle_spinner.min_value = 0
 	min_angle_spinner.max_value = 360
@@ -126,6 +128,16 @@ func update_gizmos():
 	if plugin:
 		plugin.update_gizmos()
 
+# Commit the current undo action and mark the edited scene as unsaved. Godot's
+# EditorUndoRedoManager.commit_action does not reliably dirty the scene when
+# add_do_property targets a script-defined @export — call this helper instead
+# of commit_action directly anywhere a turret/fire-arc property is mutated.
+func _commit_dirty() -> void:
+	# Plugin-scoped EditorUndoRedoManager.commit_action both applies the do
+	# operations and (because create_action's mark_unsaved defaults to true)
+	# marks the scene unsaved automatically.
+	undo_redo.commit_action()
+
 # --- Slew limit handlers (existing behavior, unchanged) ---
 
 func _on_rotation_limits_toggled(enabled):
@@ -139,7 +151,7 @@ func _on_rotation_limits_toggled(enabled):
 		undo_redo.add_undo_property(partner, "slew_limits_enabled", partner.slew_limits_enabled)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 	min_angle_spinner.editable = enabled
 	max_angle_spinner.editable = enabled
 
@@ -147,6 +159,8 @@ func _on_min_angle_changed(value):
 	if not is_instance_valid(turret):
 		return
 	var rad_value = deg_0_360_to_rad(value)
+	if is_equal_approx(rad_value, turret.slew_min_angle):
+		return
 	undo_redo.create_action("Change Min Angle", UndoRedo.MERGE_DISABLE, turret)
 	undo_redo.add_do_property(turret, "slew_min_angle", rad_value)
 	undo_redo.add_undo_property(turret, "slew_min_angle", turret.slew_min_angle)
@@ -157,13 +171,15 @@ func _on_min_angle_changed(value):
 		undo_redo.add_undo_property(partner, "slew_max_angle", partner.slew_max_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 	last_min_angle = value
 
 func _on_max_angle_changed(value):
 	if not is_instance_valid(turret):
 		return
 	var rad_value = deg_0_360_to_rad(value)
+	if is_equal_approx(rad_value, turret.slew_max_angle):
+		return
 	undo_redo.create_action("Change Max Angle", UndoRedo.MERGE_DISABLE, turret)
 	undo_redo.add_do_property(turret, "slew_max_angle", rad_value)
 	undo_redo.add_undo_property(turret, "slew_max_angle", turret.slew_max_angle)
@@ -174,7 +190,7 @@ func _on_max_angle_changed(value):
 		undo_redo.add_undo_property(partner, "slew_min_angle", partner.slew_min_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 	last_max_angle = value
 
 func _on_apply_pressed():
@@ -279,7 +295,7 @@ func _on_fire_arc_min_changed(value: float, index: int) -> void:
 		undo_redo.add_undo_property(partner_arc, "max_angle", partner_arc.max_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 
 func _on_fire_arc_max_changed(value: float, index: int) -> void:
 	if _suppress_arc_signals or not is_instance_valid(turret):
@@ -299,7 +315,7 @@ func _on_fire_arc_max_changed(value: float, index: int) -> void:
 		undo_redo.add_undo_property(partner_arc, "min_angle", partner_arc.min_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 
 func _on_add_fire_arc_pressed() -> void:
 	if not is_instance_valid(turret):
@@ -328,7 +344,7 @@ func _on_add_fire_arc_pressed() -> void:
 		undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 
 func _on_fire_arc_delete_pressed(index: int) -> void:
 	if not is_instance_valid(turret):
@@ -350,7 +366,7 @@ func _on_fire_arc_delete_pressed(index: int) -> void:
 			undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 
 func _on_clear_fire_arcs_pressed() -> void:
 	if not is_instance_valid(turret) or turret.fire_arcs.is_empty():
@@ -365,7 +381,7 @@ func _on_clear_fire_arcs_pressed() -> void:
 		undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 
 # --- Convert + Expand button ---
 
@@ -457,7 +473,7 @@ func _on_convert_expand_pressed() -> void:
 		undo_redo.add_undo_property(partner, "slew_max_angle", partner.slew_max_angle)
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()
 	update_debug_info("Saved old slew arc as Fire Arc %d, expanded slew.%s" % [
 		new_arcs.size() - 1,
 		" Mirrored to %s." % partner.name if _mirror_active() else ""
@@ -656,4 +672,4 @@ func _on_mirror_toggled(enabled: bool) -> void:
 	undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
-	undo_redo.commit_action()
+	_commit_dirty()

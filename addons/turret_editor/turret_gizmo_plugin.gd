@@ -5,6 +5,10 @@ extends EditorNode3DGizmoPlugin
 
 const LINE_WIDTH := 0.05
 
+# Set by turret_editor_plugin.gd during registration so we can route undo
+# actions through the scene-aware EditorUndoRedoManager.
+var editor_plugin: EditorPlugin = null
+
 # Handle ID scheme:
 #   0          -> slew_min_angle
 #   1          -> slew_max_angle
@@ -225,6 +229,19 @@ func _get_handle_name(_gizmo, handle_id, _secondary):
 	var info = _resolve_handle(turret, handle_id)
 	return info.get("label", "Handle")
 
+func _get_handle_value(gizmo, handle_id, _secondary):
+	# Returns the current value Godot stashes as `restore` for _commit_handle
+	# and shows in the gizmo overlay. Must match the units _set_handle returns
+	# (display radians, 0..TAU).
+	var turret = gizmo.get_node_3d() as Gun
+	if not turret:
+		return 0.0
+	var info = _resolve_handle(turret, handle_id)
+	if info.is_empty():
+		return 0.0
+	var stored = info["target"].get(info["prop"]) as float
+	return _storage_to_display(stored)
+
 func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
 	var turret = gizmo.get_node_3d() as Gun
 	if not is_instance_valid(turret):
@@ -232,14 +249,19 @@ func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
 	var info = _resolve_handle(turret, handle_id)
 	if info.is_empty():
 		return
-	var restore_storage = _display_to_storage(restore)
 	var target = info["target"]
 	var prop = info["prop"]
+	# `restore` is whatever _set_handle returned during the drag. When the user
+	# clicks a handle without actually dragging, Godot passes null here; in
+	# that case there's nothing to undo and no committed change.
+	if restore == null:
+		return
+	var restore_storage = _display_to_storage(float(restore))
 	if cancel:
 		target.set(prop, restore_storage)
 		return
-	var undo_redo = EditorInterface.get_editor_undo_redo()
-	undo_redo.create_action("Change " + info["label"])
+	var undo_redo = editor_plugin.get_undo_redo() if editor_plugin else EditorInterface.get_editor_undo_redo()
+	undo_redo.create_action("Change " + info["label"], UndoRedo.MERGE_DISABLE, turret)
 	undo_redo.add_do_property(target, prop, target.get(prop))
 	undo_redo.add_undo_property(target, prop, restore_storage)
 	undo_redo.commit_action()

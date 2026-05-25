@@ -9,6 +9,7 @@ var current_turret
 func _enter_tree():
 	# Register our gizmo plugin
 	turret_gizmo_plugin = TurretGizmoPlugin.new()
+	turret_gizmo_plugin.editor_plugin = self
 	add_node_3d_gizmo_plugin(turret_gizmo_plugin)
 
 	# Create editor panel
