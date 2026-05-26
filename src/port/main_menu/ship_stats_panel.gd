@@ -96,6 +96,8 @@ func _populate_artillery() -> void:
 	var total_main_dpm := 0.0
 	var main_range_km := 0.0
 	var main_caliber := 0.0
+	var base_spread := 0.0
+	var base_grouping := 0.0
 
 	# ── Main battery ──
 	var ac: ArtilleryController = _ship.artillery_controller
@@ -111,6 +113,8 @@ func _populate_artillery() -> void:
 		var s1: ShellParams = gp.shell1
 		main_caliber = s1.caliber
 		main_range_km = gp._range / 1000.0
+		base_spread = gp.base_spread
+		base_grouping = (gp.h_grouping + gp.v_grouping) / 2.0
 		_artillery.add_stat_row("Guns",     "%d × %d × %.0f mm" % [num_guns, (barrels_total / num_guns) if num_guns > 0 else 0, s1.caliber])
 		_artillery.add_stat_row("Range",    "%.1f km" % (gp._range / 1000.0),   not _eq(gp._range, gb._range))
 		_artillery.add_stat_row("Reload",   "%.1f s"  % gp.reload_time,         not _eq(gp.reload_time, gb.reload_time))
@@ -168,10 +172,11 @@ func _populate_artillery() -> void:
 	# secondaries contribution. Tuned so an average BB lands near 50.
 	var main_dpm_score := total_main_dpm / 1500.0       # 75k DPM → 50, 150k → 100
 	var caliber_score  := main_caliber / 5.0            # 380 mm → 76, 460 mm → 92
-	var range_score    := main_range_km * 4.0           # 20 km → 80, 25 km → 100
-	var sec_score      := sec_total_dpm / 2000.0        # 100k sec DPM → 50
-	var rating := main_dpm_score * 0.45 + range_score * 0.25 + caliber_score * 0.20 + sec_score * 0.10
-	rating *= 0.5
+	var range_score    := main_range_km * 5.0           # 20 km → 80, 25 km → 100
+	var sec_score      := sec_total_dpm / 6000.0        # 100k sec DPM → 50
+	var spread_score   := 1 - (base_spread / 0.017 * 0.6 + base_grouping / 1.8 * 0.4)
+	var rating := main_dpm_score *  0.25 + range_score * 0.25 + caliber_score * 0.20 + sec_score * 0.10 + spread_score * 0.1
+	rating *= 0.9
 	if total_main_dpm > 0.0 or sec_total_dpm > 0.0:
 		_artillery.set_rating(rating)
 	else:

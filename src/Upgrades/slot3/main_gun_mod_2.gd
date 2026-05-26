@@ -1,7 +1,7 @@
 extends Upgrade
 class_name MainGunMod2
 
-const TRAVERSE_BONUS: float = 5.0  # deg/s additive
+const TRAVERSE_BONUS: float = 1.0  # deg/s additive
 
 func _init() -> void:
 	upgrade_id = "mg_mod_2"

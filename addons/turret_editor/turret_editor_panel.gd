@@ -268,6 +268,12 @@ func _build_fire_arc_row(index: int, arc: FireArc) -> HBoxContainer:
 	max_sb.value_changed.connect(_on_fire_arc_max_changed.bind(index))
 	row.add_child(max_sb)
 
+	var mirror_btn := Button.new()
+	mirror_btn.text = "⇋"
+	mirror_btn.tooltip_text = "Duplicate this arc, mirrored across the ship centerline"
+	mirror_btn.pressed.connect(_on_fire_arc_mirror_pressed.bind(index))
+	row.add_child(mirror_btn)
+
 	var del_btn := Button.new()
 	del_btn.text = "X"
 	del_btn.tooltip_text = "Remove this fire arc"
@@ -364,6 +370,39 @@ func _on_fire_arc_delete_pressed(index: int) -> void:
 			partner_new.remove_at(index)
 			undo_redo.add_do_property(partner, "fire_arcs", partner_new)
 			undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
+	undo_redo.add_do_method(self, "update_gizmos")
+	undo_redo.add_undo_method(self, "update_gizmos")
+	_commit_dirty()
+
+func _on_fire_arc_mirror_pressed(index: int) -> void:
+	if not is_instance_valid(turret):
+		return
+	if index < 0 or index >= turret.fire_arcs.size():
+		return
+	var src: FireArc = turret.fire_arcs[index]
+	var new_arcs: Array[FireArc] = turret.fire_arcs.duplicate()
+	var sibling := FireArc.new()
+	# Same mirror formula as cross-turret mirror: swap-negate min<->max.
+	sibling.min_angle = _mirror_angle(src.max_angle)
+	sibling.max_angle = _mirror_angle(src.min_angle)
+	new_arcs.append(sibling)
+	undo_redo.create_action("Mirror Fire Arc %d" % index, UndoRedo.MERGE_DISABLE, turret)
+	undo_redo.add_do_property(turret, "fire_arcs", new_arcs)
+	undo_redo.add_undo_property(turret, "fire_arcs", turret.fire_arcs.duplicate())
+	if _mirror_active():
+		# Keep indices aligned with partner: partner gains an arc that mirrors
+		# our new sibling. Mirroring the mirror returns the partner's original.
+		if index < partner.fire_arcs.size():
+			var partner_src: FireArc = partner.fire_arcs[index]
+			var partner_new: Array[FireArc] = partner.fire_arcs.duplicate()
+			var partner_sibling := FireArc.new()
+			partner_sibling.min_angle = _mirror_angle(partner_src.max_angle)
+			partner_sibling.max_angle = _mirror_angle(partner_src.min_angle)
+			partner_new.append(partner_sibling)
+			undo_redo.add_do_property(partner, "fire_arcs", partner_new)
+			undo_redo.add_undo_property(partner, "fire_arcs", partner.fire_arcs.duplicate())
+		else:
+			push_error("Mirror: partner fire_arcs size mismatch during arc-mirror (idx=%d, partner_size=%d)" % [index, partner.fire_arcs.size()])
 	undo_redo.add_do_method(self, "update_gizmos")
 	undo_redo.add_undo_method(self, "update_gizmos")
 	_commit_dirty()

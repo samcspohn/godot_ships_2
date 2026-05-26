@@ -61,7 +61,7 @@ func _process(_delta: float) -> void:
 		_refresh_gun_gizmos(edited_scene)
 
 func _refresh_gun_gizmos(node: Node) -> void:
-	if node is Gun:
+	if node is Turret:
 		(node as Node3D).update_gizmos()
 	for child in node.get_children():
 		_refresh_gun_gizmos(child)

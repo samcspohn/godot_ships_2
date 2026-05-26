@@ -25,7 +25,7 @@ func _init():
 	create_handle_material("fire_arc_handles")
 
 func _has_gizmo(node):
-	return node is Gun
+	return node is Turret
 
 func _get_gizmo_name():
 	return "TurretGizmo"
@@ -55,7 +55,7 @@ func _display_to_storage(rad_value: float) -> float:
 	return v
 
 func _redraw(gizmo):
-	var turret = gizmo.get_node_3d() as Gun
+	var turret = gizmo.get_node_3d() as Turret
 	if not turret:
 		return
 	gizmo.clear()
@@ -76,7 +76,7 @@ func _redraw(gizmo):
 
 # --- Drawing helpers ---
 
-func _draw_base_circle(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) -> void:
+func _draw_base_circle(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
 	var base_lines := PackedVector3Array()
 	var base_radius := scale_factor
 	var segments := 32
@@ -89,7 +89,7 @@ func _draw_base_circle(gizmo, turret: Gun, camera: Camera3D, scale_factor: float
 		base_lines.append(turret.global_transform.affine_inverse() * p1_w)
 	gizmo.add_mesh(_create_quad_mesh_from_lines(base_lines, camera, scale_factor * LINE_WIDTH), get_material("main", gizmo))
 
-func _draw_slew_arc(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) -> void:
+func _draw_slew_arc(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
 	var min_disp = _storage_to_display(turret.slew_min_angle)
 	var max_disp = _storage_to_display(turret.slew_max_angle)
 	var radius = scale_factor * 4.0
@@ -122,7 +122,7 @@ func _draw_slew_arc(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) -
 	handles.append(max_point)
 	gizmo.add_handles(handles, get_material("handles", gizmo), PackedInt32Array([0, 1]), false, false)
 
-func _draw_fire_arcs(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) -> void:
+func _draw_fire_arcs(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
 	if turret.fire_arcs.is_empty():
 		return
 	var inv = turret.global_transform.affine_inverse()
@@ -168,7 +168,7 @@ func _draw_fire_arcs(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) 
 			var ids := PackedInt32Array([FIRE_ARC_HANDLE_BASE + 2 * i, FIRE_ARC_HANDLE_BASE + 2 * i + 1])
 			gizmo.add_handles(handles, get_material("fire_arc_handles", gizmo), ids, false, false)
 
-func _draw_current_rotation(gizmo, turret: Gun, camera: Camera3D, scale_factor: float) -> void:
+func _draw_current_rotation(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
 	# Draw a line from the turret center along its actual pointing direction
 	# (-global_basis.z projected onto the horizontal plane). Length matches
 	# the slew arc so the indicator is easy to relate to the arc.
@@ -203,7 +203,7 @@ func get_editor_camera():
 		return viewport.get_camera_3d()
 	return null
 
-func _resolve_handle(turret: Gun, handle_id: int) -> Dictionary:
+func _resolve_handle(turret: Turret, handle_id: int) -> Dictionary:
 	# Returns {target, prop, label}, or {} if invalid.
 	if handle_id == 0:
 		return {"target": turret, "prop": "slew_min_angle", "label": "Slew Min"}
@@ -223,7 +223,7 @@ func _resolve_handle(turret: Gun, handle_id: int) -> Dictionary:
 	}
 
 func _get_handle_name(_gizmo, handle_id, _secondary):
-	var turret = _gizmo.get_node_3d() as Gun
+	var turret = _gizmo.get_node_3d() as Turret
 	if not turret:
 		return "Handle"
 	var info = _resolve_handle(turret, handle_id)
@@ -233,7 +233,7 @@ func _get_handle_value(gizmo, handle_id, _secondary):
 	# Returns the current value Godot stashes as `restore` for _commit_handle
 	# and shows in the gizmo overlay. Must match the units _set_handle returns
 	# (display radians, 0..TAU).
-	var turret = gizmo.get_node_3d() as Gun
+	var turret = gizmo.get_node_3d() as Turret
 	if not turret:
 		return 0.0
 	var info = _resolve_handle(turret, handle_id)
@@ -243,7 +243,7 @@ func _get_handle_value(gizmo, handle_id, _secondary):
 	return _storage_to_display(stored)
 
 func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
-	var turret = gizmo.get_node_3d() as Gun
+	var turret = gizmo.get_node_3d() as Turret
 	if not is_instance_valid(turret):
 		return
 	var info = _resolve_handle(turret, handle_id)
@@ -267,7 +267,7 @@ func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
 	undo_redo.commit_action()
 
 func _set_handle(gizmo, handle_id, _secondary, camera, screen_pos):
-	var turret = gizmo.get_node_3d() as Gun
+	var turret = gizmo.get_node_3d() as Turret
 	if not is_instance_valid(turret):
 		return 0.0
 	var info = _resolve_handle(turret, handle_id)
@@ -297,7 +297,7 @@ func _set_handle(gizmo, handle_id, _secondary, camera, screen_pos):
 # --- Geometry helpers ---
 
 func _add_arc_segment_world_relative(lines: PackedVector3Array, start_angle: float, end_angle: float,
-	radius: float, height: float, segments: int, turret: Gun):
+	radius: float, height: float, segments: int, turret: Turret):
 	var angle_step = (end_angle - start_angle) / segments
 	var inv = turret.global_transform.affine_inverse()
 	for i in range(segments):
