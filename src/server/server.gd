@@ -266,6 +266,7 @@ func spawn_player(id, player_name):
 		# Only add player control for human players
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
 		# controller.name = str(id)
+		controller.name = "PlayerControl"
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
@@ -396,6 +397,7 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 		NetworkManager.player_controller_connected = true
 
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
+		controller.name = "PlayerControl"
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player

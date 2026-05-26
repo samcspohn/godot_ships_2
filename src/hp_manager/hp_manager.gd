@@ -44,6 +44,19 @@ var healable_damage: float = 0.0
 var light_damage: float = 0.0
 # const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
 
+func _recalculate_healable_damage() -> void:
+	healable_damage = light_damage
+	if casemate:
+		healable_damage += casemate.healable_damage
+	if bow:
+		healable_damage += bow.healable_damage
+	if stern:
+		healable_damage += stern.healable_damage
+	if superstructure:
+		healable_damage += superstructure.healable_damage
+	if citadel:
+		healable_damage += citadel.healable_damage
+
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	if ship.name == "1":
@@ -131,6 +144,7 @@ func _ready() -> void:
 	if superstructure:
 		superstructure = superstructure.instantiate(ship) as HpPartMod
 		superstructure.hp = self
+	_recalculate_healable_damage()
 
 func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: bool, damage_type: DAMAGE_TYPE, damage_level: DAMAGE_LEVEL, owner: Ship) -> Array:
 	if sunk:
@@ -147,7 +161,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	if armor_part == null:
 		_current_hp -= dmg
 		light_damage += dmg * params.p().light_repair
-		healable_damage += dmg * params.p().light_repair
+		_recalculate_healable_damage()
 		if _current_hp <= 0 && !sunk:
 			dmg += _current_hp
 			_current_hp = 0
@@ -158,66 +172,33 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 		hp_changed.emit(_current_hp)
 		return [dmg * params.p().mult, false]
 
-	# # TODO: how to handle overpenetration/citadel overpen damage?
-	var _dmg: float = 0
-	# match armor_part.type:
-	# 	ArmorPart.Type.MODULE:
-	# 		_dmg = min(dmg, base_dmg * 0.1)
-	# 	ArmorPart.Type.CITADEL:
-	# 		_dmg = citadel.apply_damage(dmg, 0.333)
-	# 	ArmorPart.Type.CASEMATE:
-	# 		_dmg = casemate.apply_damage(dmg)
-	# 	ArmorPart.Type.BOW:
-	# 		_dmg = bow.apply_damage(dmg)
-	# 	ArmorPart.Type.STERN:
-	# 		_dmg = stern.apply_damage(dmg)
-	# 	ArmorPart.Type.SUPERSTRUCTURE:
-	# 		_dmg = superstructure.apply_damage(dmg)
-	if armor_part.type == ArmorPart.Type.MODULE:
-		_dmg = min(dmg, base_dmg * 0.1)
-	elif armor_part.type == ArmorPart.Type.CITADEL:
-		_dmg = citadel.apply_damage(dmg, 0.333)
-	elif armor_part.hp_part != null: # handled by module
-		_dmg = armor_part.hp_part.apply_damage(dmg)
-
-	if is_pen:
-		dmg = max(_dmg, base_dmg * 0.1)
-
 	var pen_repair = params.p().pen_repair
 	var citadel_repair = params.p().citadel_repair # heavy
 	var light_repair = params.p().light_repair
-	# var hp_part = null
 	var repair_rate = 0.0
-	if damage_level == DAMAGE_LEVEL.LIGHT:
+	if damage_level == DAMAGE_LEVEL.LIGHT or armor_part.type == ArmorPart.Type.MODULE:
 		repair_rate = light_repair
 	elif damage_level == DAMAGE_LEVEL.MEDIUM:
 		repair_rate = pen_repair
 	elif damage_level == DAMAGE_LEVEL.HEAVY:
 		repair_rate = citadel_repair
 
-	if armor_part.hp_part != null:
-		armor_part.hp_part.healable_damage += dmg * repair_rate
-	healable_damage += dmg * repair_rate
+	# # TODO: how to handle overpenetration/citadel overpen damage?
+	var _dmg: float = 0
+	if armor_part.type == ArmorPart.Type.MODULE:
+		_dmg = min(dmg, base_dmg * 0.1)
+	elif armor_part.type == ArmorPart.Type.CITADEL:
+		_dmg = citadel.apply_damage(dmg, 0.333, repair_rate)
+	elif armor_part.hp_part != null: # handled by module
+		_dmg = armor_part.hp_part.apply_damage(dmg, 0.5, repair_rate)
 
-	# match armor_part.type:
-	# 	ArmorPart.Type.MODULE:
-	# 		light_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.CITADEL:
-	# 		citadel.healable_damage += dmg * citadel_repair
-	# 		healable_damage += dmg * citadel_repair
-	# 	ArmorPart.Type.CASEMATE:
-	# 		casemate.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.BOW:
-	# 		bow.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.STERN:
-	# 		stern.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
-	# 	ArmorPart.Type.SUPERSTRUCTURE:
-	# 		superstructure.healable_damage += dmg * pen_repair
-	# 		healable_damage += dmg * pen_repair
+	if is_pen:
+		dmg = max(_dmg, base_dmg * 0.1)
+
+	var spill_healable_damage = max(dmg - _dmg, 0.0) * repair_rate
+	if spill_healable_damage > 0.0:
+		light_damage += spill_healable_damage
+	_recalculate_healable_damage()
 
 
 	_current_hp -= dmg
@@ -231,23 +212,6 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	hp_changed.emit(_current_hp)
 	return [dmg * params.p().mult, false]
 
-# func apply_light_damage(dmg: float) -> Array:
-# 	if sunk:
-# 		return [0, false]
-# 	# ship.update_static_mods = true
-# 	dmg /= params.p().mult
-# 	_current_hp -= dmg
-# 	light_damage += dmg * params.p().light_repair
-# 	healable_damage += dmg * params.p().light_repair
-# 	if _current_hp <= 0 && !sunk:
-# 		dmg += _current_hp
-# 		_current_hp = 0
-# 		sink()
-# 		ship_sunk.emit()
-# 		hp_changed.emit(_current_hp)
-# 		return [dmg * params.p().mult, true]
-# 	hp_changed.emit(_current_hp)
-# 	return [dmg * params.p().mult, false]
 
 func heal(amount: float) -> float:
 	if is_dead():
@@ -268,19 +232,13 @@ func heal(amount: float) -> float:
 		ret += stern.heal(amount * (stern_dmg / total))
 		ret += superstructure.heal(amount * (superstructure_dmg / total))
 		ret += citadel.heal(amount * (citadel_dmg / total))
-		ret += amount * (light_damage / total)
-		light_damage -= amount * (light_damage / total)
-		healable_damage -= ret
+		var light_heal = min(amount * (light_damage / total), light_damage)
+		ret += light_heal
+		light_damage -= light_heal
+		_recalculate_healable_damage()
 		_current_hp += ret
 		return ret * params.p().mult
 	return 0.0
-
-	# 	return 0.0
-	# if _current_hp + amount > _max_hp:
-	# 	amount = _max_hp - _current_hp
-	# _current_hp += amount
-	# hp_changed.emit(_current_hp)
-	# return amount
 
 # @rpc("any_peer", "reliable", "call_remote")
 func sink(damage_type: DAMAGE_TYPE, sinker: Ship):

@@ -39,6 +39,9 @@ func get_upgrade_info(id: String) -> Dictionary:
 		"name": upgrade.name,
 		"description": upgrade.description,
 		"icon": upgrade.icon,
+		"tier": upgrade.tier,
+		"allowed_classes": upgrade.allowed_classes,
+		"tooltip_bbcode": upgrade.get_tooltip_bbcode(),
 	}
 
 ## Returns metadata for all registered upgrades. Useful for populating UI lists.

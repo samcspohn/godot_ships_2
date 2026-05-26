@@ -102,6 +102,7 @@ var weapon_button_group: ButtonGroup
 @onready var friendly_consumable_status_texturerect: TextureRect = $MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyStatus/FriendlyConsumable
 var consumable_buttons: Array[TextureButton] = []
 var consumable_cooldown_bars: Array[ProgressBar] = []
+var consumable_overlay_labels: Array[Label] = []
 var consumable_shortcut_labels: Array[Label] = []
 var consumable_count_labels: Array[Label] = []
 # Consumable action names for getting shortcuts from InputMap
@@ -204,13 +205,12 @@ func _configure_weapon_button(button: Button, index: int) -> void:
 	button.custom_minimum_size = Vector2(56, 56)
 	button.toggle_mode = true
 	button.button_group = weapon_button_group
-	# Migrate the controller's tooltip text onto our custom hover popup. Godot's
-	# built-in tooltip system is suppressed while Ctrl is held (the very key the
-	# player uses to release the cursor and interact with the HUD), so we route
-	# weapon-button hints through HoverTooltip instead.
-	if button.tooltip_text != "":
-		hover_tooltip.attach(button, button.tooltip_text)
-		button.tooltip_text = ""
+	# Weapon controllers now store a "tooltip_provider" Callable as meta so the
+	# tooltip text is re-evaluated every physics frame (dynamic mod values, etc.).
+	# Assert here so a missing meta is an obvious crash instead of a silent gap.
+	assert(button.has_meta("tooltip_provider"), \
+		"weapon button '%s' is missing tooltip_provider meta — set_meta must be called in get_weapon_ui()" % button.text)
+	hover_tooltip.attach(button, button.get_meta("tooltip_provider") as Callable)
 
 func _get_all_weapon_buttons() -> Array[Button]:
 	var buttons: Array[Button] = []
@@ -267,6 +267,7 @@ func _update_skill_indicators():
 			skills_status[skill] = _slot
 			status_indicators_container.add_child(_slot)
 			skill.init_ui(_slot)
+			skill.init_hover(_slot, hover_tooltip)
 		var slot = skills_status[skill]
 		skill.update_ui(slot)
 
@@ -808,7 +809,7 @@ func _get_repair_party_heal_amount() -> float:
 	for item in consumable_manager.equipped_consumables:
 		if item is RepairParty:
 			var max_hp = camera_controller._ship.health_controller.max_hp
-			return max_hp * item.heal_percent
+			return max_hp * item.p().heal_per_sec * item.p().duration
 
 	return 0.0
 
@@ -1561,7 +1562,9 @@ func setup_consumable_ui():
 		button.texture_disabled = item.disabled_icon
 		# Route the consumable's stat hint through HoverTooltip so it shows up
 		# while the player is holding Ctrl (Godot's native tooltips don't).
-		hover_tooltip.attach(button, item.get_tooltip_text())
+		# The Callable is re-evaluated every physics frame so live values
+		# (current charges, remaining cooldown, active duration) stay current.
+		hover_tooltip.attach(button, func() -> String: return item.get_tooltip_text(consumable_manager))
 
 
 		# Set keyboard shortcut text
@@ -1575,6 +1578,25 @@ func setup_consumable_ui():
 
 		consumable_buttons.append(button)
 		consumable_cooldown_bars.append(button.get_node("ProgressBar") as ProgressBar)
+
+		# Seconds-remaining label — sibling of the ProgressBar so it is not
+		# colour-tinted by the bar's modulate (yellow/blue). Anchored to the
+		# full button rect so it sits centred over the overlay.
+		var overlay_label := Label.new()
+		overlay_label.name = "OverlaySecondsLabel"
+		overlay_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+		overlay_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		overlay_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		overlay_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		overlay_label.add_theme_color_override("font_color", Color.WHITE)
+		overlay_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+		overlay_label.add_theme_constant_override("shadow_offset_x", 1)
+		overlay_label.add_theme_constant_override("shadow_offset_y", 1)
+		overlay_label.add_theme_font_size_override("font_size", 12)
+		overlay_label.visible = false
+		button.add_child(overlay_label)
+		consumable_overlay_labels.append(overlay_label)
+
 		consumable_shortcut_labels.append(shortcut_label)
 		var count_label: Label = button.get_node("CountLabel") as Label
 		count_label.text = ""
@@ -1593,30 +1615,39 @@ func update_consumable_ui():
 	for i in range(consumable_buttons.size()):
 		var button = consumable_buttons[i]
 		var cooldown_bar = consumable_cooldown_bars[i]
+		var overlay_label: Label = consumable_overlay_labels[i]
 
 		if i < consumable_manager.equipped_consumables.size():
 			var item: ConsumableItem = consumable_manager.equipped_consumables[i]
 			if item:
 				# Only update dynamic properties
 				# button.disabled = not consumable_manager.can_use_item(item)
-				if item.max_stack != -1:
-					consumable_count_labels[i].text = str(item.current_stack)
+				var _eff_max := (item.p() as ConsumableItem).max_stack
+				if _eff_max != -1:
+					consumable_count_labels[i].text = str(_eff_max - item.used)
 
 				var cooldown_remaining = consumable_manager.cooldowns.get(item.id, 0.0)
 				var effect_remaining = consumable_manager.active_effects.get(item.id, 0.0)
 				# Disable button if no stacks left and no active effect
-				button.disabled = item.current_stack <= 0 and effect_remaining <= 0
-				# Update cooldown display
+				button.disabled = (_eff_max != -1 and _eff_max - item.used <= 0) and effect_remaining <= 0
+				# Update cooldown display.
+				# Active:   bar starts full (100%) and drains to 0 over the duration.
+				# Cooldown: bar starts empty (0%) and fills to 100 as it approaches ready.
 				if cooldown_remaining > 0:
-					cooldown_bar.value = (cooldown_remaining / item.cooldown_time) * 100
+					cooldown_bar.value = 100.0 - (cooldown_remaining / (item.p() as ConsumableItem).cooldown_time) * 100.0
 					cooldown_bar.modulate = Color(1.0, 1.0, 0.0) # Yellow tint during cooldown
 					cooldown_bar.visible = true
+					overlay_label.text = "%d" % ceili(cooldown_remaining)
+					overlay_label.visible = true
 				elif effect_remaining > 0:
-					cooldown_bar.value = 100 - (effect_remaining / item.duration) * 100
+					cooldown_bar.value = (effect_remaining / (item.p() as ConsumableItem).duration) * 100.0
 					cooldown_bar.modulate = Color(0.2, 0.8, 1.0) # Blue tint during effect
 					cooldown_bar.visible = true
+					overlay_label.text = "%d" % ceili(effect_remaining)
+					overlay_label.visible = true
 				else:
 					cooldown_bar.visible = false
+					overlay_label.visible = false
 			else:
 				button.disabled = true
 
@@ -1682,15 +1713,17 @@ func _update_alt_consumable_widget_refs(
 	var count_lbl: Label       = refs["count"]
 	var timer_lbl: Label       = refs["timer"]
 
-	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	var _refs_eff_max := (item.p() as ConsumableItem).max_stack
+	var exhausted := _refs_eff_max != -1 and _refs_eff_max - item.used <= 0
 	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
 
-	if item.max_stack == -1:
+	if _refs_eff_max == -1:
 		count_lbl.text = "∞"
 		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
 	else:
-		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
-		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		var _refs_remaining := _refs_eff_max - item.used
+		count_lbl.text = "%d/%d" % [_refs_remaining, _refs_eff_max]
+		var frac: float = float(_refs_remaining) / max(_refs_eff_max, 1)
 		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
 
 	var cooldown_left: float = manager.cooldowns.get(item.id, 0.0)
@@ -1712,16 +1745,18 @@ func _update_alt_consumable_widget(
 	var icon_rect  := widget.get_node("Box/Icon")        as TextureRect
 
 	# Dim the icon when the consumable is exhausted
-	var exhausted := item.max_stack != -1 and item.current_stack <= 0
+	var _widget_eff_max := (item.p() as ConsumableItem).max_stack
+	var exhausted := _widget_eff_max != -1 and _widget_eff_max - item.used <= 0
 	icon_rect.modulate = Color(0.4, 0.4, 0.4, 0.8) if exhausted else Color.WHITE
 
 	# Count
-	if item.max_stack == -1:
+	if _widget_eff_max == -1:
 		count_lbl.text = "∞"
 		count_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6, 0.9))
 	else:
-		count_lbl.text = "%d/%d" % [item.current_stack, item.max_stack]
-		var frac: float = float(item.current_stack) / max(item.max_stack, 1)
+		var _widget_remaining := _widget_eff_max - item.used
+		count_lbl.text = "%d/%d" % [_widget_remaining, _widget_eff_max]
+		var frac: float = float(_widget_remaining) / max(_widget_eff_max, 1)
 		count_lbl.add_theme_color_override("font_color", Color(1.0, frac, frac * 0.4, 0.9))
 
 	# Timer

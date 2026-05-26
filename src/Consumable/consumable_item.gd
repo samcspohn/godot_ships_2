@@ -10,7 +10,7 @@ class_name ConsumableItem
 @export var cooldown_time: float = 30.0
 @export var duration: float = 0.0  # 0 for instant effects
 @export var max_stack: int = 3
-var current_stack: int = 1
+var used: int = 0
 
 enum ConsumableType {
 	HEAL,
@@ -39,26 +39,44 @@ func _proc(_delta: float, ship :Ship):
 # Tooltip / popup-hint text shown when hovering this consumable's UI button.
 # Subclasses can override _get_stat_lines() to append type-specific stats
 # without rewriting the common header (name/description/cooldown/...).
-func get_tooltip_text() -> String:
+# Pass a ConsumableManager to include live status (active/cooldown remaining
+# and current charges) — used when the tooltip is rebuilt every physics frame.
+func get_tooltip_text(manager: ConsumableManager = null) -> String:
 	var lines := [name]
 	if description != "":
 		lines.append("")
 		lines.append(description)
 	lines.append("")
-	lines.append("Cooldown: %.0f s" % cooldown_time)
-	if duration > 0.0:
-		lines.append("Duration: %.0f s" % duration)
+	var _p := self.p() as ConsumableItem
+	lines.append("Cooldown: %.0f s" % _p.cooldown_time)
+	if _p.duration > 0.0:
+		lines.append("Duration: %.0f s" % _p.duration)
 	else:
 		lines.append("Duration: instant")
-	lines.append("Charges: %d" % max_stack)
-	var stat_lines := _get_stat_lines()
+	var _p_ci := self.p() as ConsumableItem
+	if _p_ci.max_stack == -1:
+		lines.append("Charges: ∞")
+	else:
+		lines.append("Charges: %d / %d" % [_p_ci.max_stack - used, _p_ci.max_stack])
+	var stat_lines := _get_stat_lines(manager.ship if manager != null else null)
 	if stat_lines.size() > 0:
 		lines.append("")
 		lines.append_array(stat_lines)
+	if manager != null:
+		var remaining_cooldown: float = manager.cooldowns.get(id, 0.0)
+		var active_remaining: float = manager.active_effects.get(id, 0.0)
+		if active_remaining > 0.0:
+			lines.append("")
+			lines.append("Active: %.0f s remaining" % active_remaining)
+		elif remaining_cooldown > 0.0:
+			lines.append("")
+			lines.append("Reloading: %.0f s remaining" % remaining_cooldown)
 	return "\n".join(PackedStringArray(lines))
 
 # Override in subclasses to add type-specific stat lines (without header).
-func _get_stat_lines() -> Array[String]:
+# `ship` is provided when the tooltip is rebuilt live (every physics frame),
+# allowing subclasses to show values that depend on the ship's current stats.
+func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	return []
 
 
@@ -68,18 +86,19 @@ func to_dict() -> Dictionary:
 		"cooldown_time": cooldown_time,
 		"duration": duration,
 		"max_stack": max_stack,
-		"current_stack": current_stack,
+		"used": used,
 		"type": type
 	}
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 
+	var dyn = p()
 	writer.put_32(id)
-	writer.put_double(cooldown_time)
-	writer.put_double(duration)
-	writer.put_32(max_stack)
-	writer.put_32(current_stack)
+	writer.put_double(dyn.cooldown_time)
+	writer.put_double(dyn.duration)
+	writer.put_32(dyn.max_stack)
+	writer.put_32(used)
 	writer.put_32(type)
 
 	return writer.data_array
@@ -89,14 +108,14 @@ func from_dict(data: Dictionary) -> void:
 	cooldown_time = data.get("cooldown_time", cooldown_time)
 	duration = data.get("duration", duration)
 	max_stack = data.get("max_stack", max_stack)
-	current_stack = data.get("current_stack", current_stack)
+	used = data.get("used", used)
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 	id = reader.get_32()
-	cooldown_time = reader.get_double()
-	duration = reader.get_double()
-	max_stack = reader.get_32()
-	current_stack = reader.get_32()
+	dynamic_mod.cooldown_time = reader.get_double()
+	dynamic_mod.duration = reader.get_double()
+	dynamic_mod.max_stack = reader.get_32()
+	used = reader.get_32()
 	type = reader.get_32() as ConsumableType

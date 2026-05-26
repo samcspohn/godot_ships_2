@@ -3,449 +3,355 @@
 class_name TurretGizmoPlugin
 extends EditorNode3DGizmoPlugin
 
-const LINE_WIDTH = 0.05  # Width of the quad lines
+const LINE_WIDTH := 0.05
+
+# Set by turret_editor_plugin.gd during registration so we can route undo
+# actions through the scene-aware EditorUndoRedoManager.
+var editor_plugin: EditorPlugin = null
+
+# Handle ID scheme:
+#   0          -> slew_min_angle
+#   1          -> slew_max_angle
+#   2 + 2*i    -> fire_arcs[i].min_angle
+#   3 + 2*i    -> fire_arcs[i].max_angle
+const FIRE_ARC_HANDLE_BASE := 2
 
 func _init():
 	create_material("main", Color(1, 0.5, 0, 0.8))
-	# create_material("restricted", Color(1, 0, 0, 0.4))
-	create_material("allowed", Color(1, 0, 0, 0.8))
+	create_material("allowed", Color(1, 0, 0, 0.8))            # slew arc
+	create_material("fire_arc", Color(0.1, 0.9, 0.3, 0.8))     # fire arcs (green)
+	create_material("rotation_indicator", Color(0.2, 0.6, 1.0, 1.0))  # current rotation (cyan)
 	create_handle_material("handles")
+	create_handle_material("fire_arc_handles")
 
 func _has_gizmo(node):
-	return node is Gun
+	return node is Turret
 
 func _get_gizmo_name():
 	return "TurretGizmo"
 
-# Get scale factor based on camera distance (similar to transform gizmo)
 func _get_scale_factor(camera, global_position):
 	var view_position = camera.global_transform.origin
 	var distance = view_position.distance_to(global_position)
-	
-	# Base size that looks good at average distance
-	var base_size = 10.0
-	
-	# Scale based on distance with a minimum size to prevent disappearing when far away
+	var base_size := 10.0
 	return max(distance * 0.08, base_size)
 
-# Convert radians to degrees in 0-360 range
-func rad_to_deg_0_360(rad_value: float) -> float:
-	var deg_value = rad_to_deg(rad_value)
-	
-	# Normalize to 0-360 range
-	while deg_value < 0:
-		deg_value += 360
-	
-	while deg_value >= 360:
-		deg_value -= 360
-	
-	return deg_value
+func _storage_to_display(rad_value: float) -> float:
+	# Storage angles (rotation.y space) map to world-bearing display angles
+	# via a 180° offset (Godot's local -Z forward convention).
+	var v = rad_value - PI
+	while v < 0:
+		v += TAU
+	while v >= TAU:
+		v -= TAU
+	return v
 
-# Convert degrees in 0-360 range to radians
-func deg_0_360_to_rad(deg_value: float) -> float:
-	# Normalize input to 0-360 range
-	while deg_value < 0:
-		deg_value += 360
-	
-	while deg_value >= 360:
-		deg_value -= 360
-	
-	# Convert to radians
-	return deg_to_rad(deg_value)
+func _display_to_storage(rad_value: float) -> float:
+	var v = rad_value + PI
+	while v < 0:
+		v += TAU
+	while v >= TAU:
+		v -= TAU
+	return v
 
 func _redraw(gizmo):
-	var turret = gizmo.get_node_3d() as Gun
-	
+	var turret = gizmo.get_node_3d() as Turret
 	if not turret:
 		return
-	
 	gizmo.clear()
-	
-	# Get the current camera
+
 	var camera = get_editor_camera()
 	if not camera:
 		return
-	
-	# Calculate appropriate scale based on distance
-	var scale_factor = _get_scale_factor(camera, turret.global_position) / turret.scale.length()
-	
-	# Draw base circle with dynamic scaling
-	var base_lines = PackedVector3Array()
-	var base_radius = scale_factor
-	var segments = 32
-	
-	# Use identity basis for the base circle - we want it to show the world orientation
-	var identity_basis = Basis()
-	
-	for i in range(segments):
-		var angle_current = i * TAU / segments
-		var angle_next = ((i + 1) % segments) * TAU / segments
-		
-		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
-		var display_angle_current = angle_current
-		var display_angle_next = angle_next
-		
-		# Use world coordinates, not turret's local coordinates
-		var current_point = Vector3(sin(display_angle_current) * base_radius, 0, cos(display_angle_current) * base_radius)
-		var next_point = Vector3(sin(display_angle_next) * base_radius, 0, cos(display_angle_next) * base_radius)
-		
-		# Transform to world position but keep world orientation
-		current_point = turret.global_position + current_point
-		next_point = turret.global_position + next_point
-		
-		# Convert back to local space for gizmo
-		current_point = turret.global_transform.affine_inverse() * current_point
-		next_point = turret.global_transform.affine_inverse() * next_point
-		
-		base_lines.append(current_point)
-		base_lines.append(next_point)
-	
-	# Draw base circle with quads
-	var base_mesh = _create_quad_mesh_from_lines(base_lines, camera, scale_factor * LINE_WIDTH)
-	gizmo.add_mesh(base_mesh, get_material("main", gizmo))
-	
-	# Draw rotation limits if enabled
-	if turret.slew_limits_enabled:
-		# Convert stored angles to display angles by subtracting 180 degrees (π radians)
-		var min_angle_rad = turret.slew_min_angle - PI
-		var max_angle_rad = turret.slew_max_angle - PI
-		
-		# Normalize display angles to [0, 2π] range
-		while min_angle_rad < 0:
-			min_angle_rad += TAU
-		while min_angle_rad >= TAU:
-			min_angle_rad -= TAU
-		while max_angle_rad < 0:
-			max_angle_rad += TAU
-		while max_angle_rad >= TAU:
-			max_angle_rad -= TAU
-		
-		var arc_radius = scale_factor * 4.0
-		var height = scale_factor * 0.1
-		
-		# Draw the arc - use identity basis since we want world-relative angles
-		var arc_lines = PackedVector3Array()
-		
-		# Handle wrap-around case
-		if min_angle_rad <= max_angle_rad:
-			# Standard case: min to max
-			_add_arc_segment_world_relative(arc_lines, min_angle_rad, max_angle_rad, arc_radius, height, 32, turret)
-		else:
-			# Wrap-around case: min to 2π then 0 to max
-			_add_arc_segment_world_relative(arc_lines, min_angle_rad, TAU, arc_radius, height, 16, turret)
-			_add_arc_segment_world_relative(arc_lines, 0, max_angle_rad, arc_radius, height, 16, turret)
-		
-		# Add lines to arc ends - use gun's coordinate system
-		var min_display_angle = min_angle_rad
-		var max_display_angle = max_angle_rad
-		
-		# Create points in world space then convert to local
-		var center_world = turret.global_position + Vector3(0, height, 0)
-		var min_point_world = turret.global_position + Vector3(sin(min_display_angle) * arc_radius, height, cos(min_display_angle) * arc_radius)
-		var max_point_world = turret.global_position + Vector3(sin(max_display_angle) * arc_radius, height, cos(max_display_angle) * arc_radius)
-		
-		# Convert to local space
-		var center = turret.global_transform.affine_inverse() * center_world
-		var min_point = turret.global_transform.affine_inverse() * min_point_world
-		var max_point = turret.global_transform.affine_inverse() * max_point_world
-		
-		arc_lines.append(center)
-		arc_lines.append(min_point)
-		
-		arc_lines.append(center)
-		arc_lines.append(max_point)
-		
-		# Check for any vertex issues
-		if arc_lines.size() % 2 != 0:
-			push_warning("Arc lines has odd count: " + str(arc_lines.size()))
-			return
-		
-		# Draw arc with quads
-		var arc_mesh = _create_quad_mesh_from_lines(arc_lines, camera, scale_factor * LINE_WIDTH)
-		gizmo.add_mesh(arc_mesh, get_material("allowed", gizmo))
-		
-		# Add handles
-		var handles = PackedVector3Array()
-		handles.append(min_point)
-		handles.append(max_point)
-		
-		var ids = PackedInt32Array([0, 1])
-		gizmo.add_handles(handles, get_material("handles", gizmo), ids, false, false)
 
-# Get the current editor camera
+	var scale_factor = _get_scale_factor(camera, turret.global_position) / turret.scale.length()
+
+	_draw_base_circle(gizmo, turret, camera, scale_factor)
+
+	if turret.slew_limits_enabled:
+		_draw_slew_arc(gizmo, turret, camera, scale_factor)
+
+	_draw_fire_arcs(gizmo, turret, camera, scale_factor)
+	_draw_current_rotation(gizmo, turret, camera, scale_factor)
+
+# --- Drawing helpers ---
+
+func _draw_base_circle(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
+	var base_lines := PackedVector3Array()
+	var base_radius := scale_factor
+	var segments := 32
+	for i in range(segments):
+		var a0 = i * TAU / segments
+		var a1 = ((i + 1) % segments) * TAU / segments
+		var p0_w = turret.global_position + Vector3(sin(a0) * base_radius, 0, cos(a0) * base_radius)
+		var p1_w = turret.global_position + Vector3(sin(a1) * base_radius, 0, cos(a1) * base_radius)
+		base_lines.append(turret.global_transform.affine_inverse() * p0_w)
+		base_lines.append(turret.global_transform.affine_inverse() * p1_w)
+	gizmo.add_mesh(_create_quad_mesh_from_lines(base_lines, camera, scale_factor * LINE_WIDTH), get_material("main", gizmo))
+
+func _draw_slew_arc(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
+	var min_disp = _storage_to_display(turret.slew_min_angle)
+	var max_disp = _storage_to_display(turret.slew_max_angle)
+	var radius = scale_factor * 4.0
+	var height = scale_factor * 0.1
+
+	var lines := PackedVector3Array()
+	if min_disp <= max_disp:
+		_add_arc_segment_world_relative(lines, min_disp, max_disp, radius, height, 32, turret)
+	else:
+		_add_arc_segment_world_relative(lines, min_disp, TAU, radius, height, 16, turret)
+		_add_arc_segment_world_relative(lines, 0, max_disp, radius, height, 16, turret)
+
+	var center_world = turret.global_position + Vector3(0, height, 0)
+	var min_point_world = turret.global_position + Vector3(sin(min_disp) * radius, height, cos(min_disp) * radius)
+	var max_point_world = turret.global_position + Vector3(sin(max_disp) * radius, height, cos(max_disp) * radius)
+	var inv = turret.global_transform.affine_inverse()
+	var center = inv * center_world
+	var min_point = inv * min_point_world
+	var max_point = inv * max_point_world
+	lines.append(center); lines.append(min_point)
+	lines.append(center); lines.append(max_point)
+
+	if lines.size() % 2 != 0:
+		push_warning("Slew arc lines odd count: " + str(lines.size()))
+		return
+	gizmo.add_mesh(_create_quad_mesh_from_lines(lines, camera, scale_factor * LINE_WIDTH), get_material("allowed", gizmo))
+
+	var handles := PackedVector3Array()
+	handles.append(min_point)
+	handles.append(max_point)
+	gizmo.add_handles(handles, get_material("handles", gizmo), PackedInt32Array([0, 1]), false, false)
+
+func _draw_fire_arcs(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
+	if turret.fire_arcs.is_empty():
+		return
+	var inv = turret.global_transform.affine_inverse()
+	for i in turret.fire_arcs.size():
+		var fa: FireArc = turret.fire_arcs[i]
+		if fa == null:
+			continue
+		var min_disp = _storage_to_display(fa.min_angle)
+		var max_disp = _storage_to_display(fa.max_angle)
+		# Stack fire arcs at increasing height so multiple arcs are visible.
+		var radius = scale_factor * (3.0 + 0.4 * i)
+		var height = scale_factor * (0.25 + 0.05 * i)
+
+		var lines := PackedVector3Array()
+		if fa.min_angle == fa.max_angle:
+			# Convention: min == max -> full circle.
+			_add_arc_segment_world_relative(lines, 0.0, TAU, radius, height, 32, turret)
+		elif min_disp <= max_disp:
+			_add_arc_segment_world_relative(lines, min_disp, max_disp, radius, height, 32, turret)
+		else:
+			_add_arc_segment_world_relative(lines, min_disp, TAU, radius, height, 16, turret)
+			_add_arc_segment_world_relative(lines, 0, max_disp, radius, height, 16, turret)
+
+		var center_w = turret.global_position + Vector3(0, height, 0)
+		var min_w = turret.global_position + Vector3(sin(min_disp) * radius, height, cos(min_disp) * radius)
+		var max_w = turret.global_position + Vector3(sin(max_disp) * radius, height, cos(max_disp) * radius)
+		var center = inv * center_w
+		var min_p = inv * min_w
+		var max_p = inv * max_w
+		if fa.min_angle != fa.max_angle:
+			lines.append(center); lines.append(min_p)
+			lines.append(center); lines.append(max_p)
+
+		if lines.size() % 2 != 0:
+			push_warning("Fire arc %d lines odd count" % i)
+			continue
+		gizmo.add_mesh(_create_quad_mesh_from_lines(lines, camera, scale_factor * LINE_WIDTH), get_material("fire_arc", gizmo))
+
+		if fa.min_angle != fa.max_angle:
+			var handles := PackedVector3Array()
+			handles.append(min_p)
+			handles.append(max_p)
+			var ids := PackedInt32Array([FIRE_ARC_HANDLE_BASE + 2 * i, FIRE_ARC_HANDLE_BASE + 2 * i + 1])
+			gizmo.add_handles(handles, get_material("fire_arc_handles", gizmo), ids, false, false)
+
+func _draw_current_rotation(gizmo, turret: Turret, camera: Camera3D, scale_factor: float) -> void:
+	# Draw a line from the turret center along its actual pointing direction
+	# (-global_basis.z projected onto the horizontal plane). Length matches
+	# the slew arc so the indicator is easy to relate to the arc.
+	var forward = -turret.global_basis.z
+	forward.y = 0.0
+	if forward.length_squared() < 1e-6:
+		return
+	forward = forward.normalized()
+	var radius = scale_factor * 4.5
+	var height = scale_factor * 0.05
+	var center_w = turret.global_position + Vector3(0, height, 0)
+	var tip_w = turret.global_position + forward * radius + Vector3(0, height, 0)
+	var inv = turret.global_transform.affine_inverse()
+	var lines := PackedVector3Array()
+	lines.append(inv * center_w)
+	lines.append(inv * tip_w)
+	# Arrowhead: two short segments back from tip, ±20° each.
+	var head_len = scale_factor * 0.4
+	var head_angle = deg_to_rad(20.0)
+	var back = -forward
+	var left = back.rotated(Vector3.UP, head_angle) * head_len
+	var right = back.rotated(Vector3.UP, -head_angle) * head_len
+	lines.append(inv * tip_w); lines.append(inv * (tip_w + left))
+	lines.append(inv * tip_w); lines.append(inv * (tip_w + right))
+	gizmo.add_mesh(_create_quad_mesh_from_lines(lines, camera, scale_factor * LINE_WIDTH * 1.4), get_material("rotation_indicator", gizmo))
+
+# --- Handle dispatch ---
+
 func get_editor_camera():
 	var viewport = EditorInterface.get_editor_viewport_3d()
 	if viewport:
 		return viewport.get_camera_3d()
 	return null
 
-# Add arc segment vertices in pairs
-func _add_arc_segment(lines: PackedVector3Array, start_angle: float, end_angle: float, radius: float, height: float, segments: int):
-	# This function will be replaced by _add_arc_segment_transformed, but we'll keep it for backward compatibility
-	_add_arc_segment_transformed(lines, start_angle, end_angle, radius, height, segments)
-
-# Add a new function to add transformed arc segments
-func _add_arc_segment_transformed(lines: PackedVector3Array, start_angle: float, end_angle: float, 
-	radius: float, height: float, segments: int):
-	var angle_step = (end_angle - start_angle) / segments
-	
-	for i in range(segments):
-		var angle = start_angle + i * angle_step
-		var next_angle = start_angle + (i + 1) * angle_step
-		
-		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
-		var display_angle = angle
-		var display_next_angle = next_angle
-		
-		# Use gun's coordinate system
-		var point = Vector3(sin(display_angle) * radius, height, cos(display_angle) * radius)
-		var next_point = Vector3(sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
-		
-		# Add points as a pair
-		lines.append(point)
-		lines.append(next_point)
-		
-		# Add radial lines (fewer to avoid crowding)
-		if i % 8 == 0:
-			var center = Vector3(0, height, 0)
-			lines.append(center)
-			lines.append(point)
-
-# New function to add arc segments in world-relative coordinates
-func _add_arc_segment_world_relative(lines: PackedVector3Array, start_angle: float, end_angle: float, 
-	radius: float, height: float, segments: int, turret: Gun):
-	var angle_step = (end_angle - start_angle) / segments
-	
-	for i in range(segments):
-		var angle = start_angle + i * angle_step
-		var next_angle = start_angle + (i + 1) * angle_step
-		
-		# Use the gun's coordinate system: atan2(x, z) where 0 = +Z, π/2 = +X
-		var display_angle = angle
-		var display_next_angle = next_angle
-		
-		# Create points in world space
-		var point_world = turret.global_position + Vector3(sin(display_angle) * radius, height, cos(display_angle) * radius)
-		var next_point_world = turret.global_position + Vector3(sin(display_next_angle) * radius, height, cos(display_next_angle) * radius)
-		
-		# Convert to local space for gizmo
-		var point = turret.global_transform.affine_inverse() * point_world
-		var next_point = turret.global_transform.affine_inverse() * next_point_world
-		
-		# Add points as a pair
-		lines.append(point)
-		lines.append(next_point)
-		
-		# Add radial lines (fewer to avoid crowding)
-		if i % 8 == 0:
-			var center_world = turret.global_position + Vector3(0, height, 0)
-			var center = turret.global_transform.affine_inverse() * center_world
-			lines.append(center)
-			lines.append(point)
-
-func _get_handle_name(gizmo, handle_id, secondary):
+func _resolve_handle(turret: Turret, handle_id: int) -> Dictionary:
+	# Returns {target, prop, label}, or {} if invalid.
 	if handle_id == 0:
-		return "Min Angle"
-	else:
-		return "Max Angle"
+		return {"target": turret, "prop": "slew_min_angle", "label": "Slew Min"}
+	if handle_id == 1:
+		return {"target": turret, "prop": "slew_max_angle", "label": "Slew Max"}
+	var idx = (handle_id - FIRE_ARC_HANDLE_BASE) / 2
+	var is_max = (handle_id - FIRE_ARC_HANDLE_BASE) % 2 == 1
+	if idx < 0 or idx >= turret.fire_arcs.size():
+		return {}
+	var fa: FireArc = turret.fire_arcs[idx]
+	if fa == null:
+		return {}
+	return {
+		"target": fa,
+		"prop": "max_angle" if is_max else "min_angle",
+		"label": "Fire Arc %d %s" % [idx, "Max" if is_max else "Min"],
+	}
 
-func _commit_handle(gizmo, handle_id, secondary, restore, cancel):
-	var turret = gizmo.get_node_3d() as Gun
-	
-	if cancel:
-		# restore is a display angle, convert it to storage angle
-		var storage_angle = restore + PI
-		while storage_angle < 0:
-			storage_angle += TAU
-		while storage_angle >= TAU:
-			storage_angle -= TAU
-		
-		if handle_id == 0:
-			turret.slew_min_angle = storage_angle
-		else:
-			turret.slew_max_angle = storage_angle
+func _get_handle_name(_gizmo, handle_id, _secondary):
+	var turret = _gizmo.get_node_3d() as Turret
+	if not turret:
+		return "Handle"
+	var info = _resolve_handle(turret, handle_id)
+	return info.get("label", "Handle")
+
+func _get_handle_value(gizmo, handle_id, _secondary):
+	# Returns the current value Godot stashes as `restore` for _commit_handle
+	# and shows in the gizmo overlay. Must match the units _set_handle returns
+	# (display radians, 0..TAU).
+	var turret = gizmo.get_node_3d() as Turret
+	if not turret:
+		return 0.0
+	var info = _resolve_handle(turret, handle_id)
+	if info.is_empty():
+		return 0.0
+	var stored = info["target"].get(info["prop"]) as float
+	return _storage_to_display(stored)
+
+func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
+	var turret = gizmo.get_node_3d() as Turret
+	if not is_instance_valid(turret):
 		return
-	
-	var undo_redo = EditorInterface.get_editor_undo_redo()
-	
-	# Convert restore (display angle) to storage angle for undo
-	var restore_storage_angle = restore + PI
-	while restore_storage_angle < 0:
-		restore_storage_angle += TAU
-	while restore_storage_angle >= TAU:
-		restore_storage_angle -= TAU
-	
-	if handle_id == 0:
-		undo_redo.create_action("Change Min Angle")
-		undo_redo.add_do_property(turret, "slew_min_angle", turret.slew_min_angle)
-		undo_redo.add_undo_property(turret, "slew_min_angle", restore_storage_angle)
-	else:
-		undo_redo.create_action("Change Max Angle")
-		undo_redo.add_do_property(turret, "slew_max_angle", turret.slew_max_angle)
-		undo_redo.add_undo_property(turret, "slew_max_angle", restore_storage_angle)
-	
+	var info = _resolve_handle(turret, handle_id)
+	if info.is_empty():
+		return
+	var target = info["target"]
+	var prop = info["prop"]
+	# `restore` is whatever _set_handle returned during the drag. When the user
+	# clicks a handle without actually dragging, Godot passes null here; in
+	# that case there's nothing to undo and no committed change.
+	if restore == null:
+		return
+	var restore_storage = _display_to_storage(float(restore))
+	if cancel:
+		target.set(prop, restore_storage)
+		return
+	var undo_redo = editor_plugin.get_undo_redo() if editor_plugin else EditorInterface.get_editor_undo_redo()
+	undo_redo.create_action("Change " + info["label"], UndoRedo.MERGE_DISABLE, turret)
+	undo_redo.add_do_property(target, prop, target.get(prop))
+	undo_redo.add_undo_property(target, prop, restore_storage)
 	undo_redo.commit_action()
 
-func _set_handle(gizmo, handle_id, secondary, camera, screen_pos):
-	var turret = gizmo.get_node_3d() as Gun
-	
+func _set_handle(gizmo, handle_id, _secondary, camera, screen_pos):
+	var turret = gizmo.get_node_3d() as Turret
 	if not is_instance_valid(turret):
 		return 0.0
-	
+	var info = _resolve_handle(turret, handle_id)
+	if info.is_empty():
+		return 0.0
+
 	var ray_origin = camera.project_ray_origin(screen_pos)
 	var ray_direction = camera.project_ray_normal(screen_pos)
-	
-	# Create a plane at the turret's position but with world Y-up orientation
 	var plane_normal = Vector3.UP
 	var plane_origin = turret.global_position + plane_normal * (_get_scale_factor(camera, turret.global_position) * 0.1)
 	var plane = Plane(plane_normal, plane_origin.dot(plane_normal))
-	
-	# Intersect ray with plane
 	var intersection = plane.intersects_ray(ray_origin, ray_direction)
 	if intersection == null:
-		# Return display angle (stored angle minus 180 degrees)
-		var stored_angle = turret.slew_min_angle if (handle_id == 0) else turret.slew_max_angle
-		var display_angle = stored_angle - PI
-		while display_angle < 0:
-			display_angle += TAU
-		while display_angle >= TAU:
-			display_angle -= TAU
-		return display_angle
-	
-	# Calculate vector from turret origin to intersection point in world space
+		var stored = info["target"].get(info["prop"]) as float
+		return _storage_to_display(stored)
+
 	var world_dir = intersection - turret.global_position
-	
-	# Calculate the angle using gun's coordinate system: atan2(x, z) where 0 = +Z
 	var display_angle = atan2(world_dir.x, world_dir.z)
-	
-	# Normalize display angle to [0, 2π] range
 	while display_angle < 0:
 		display_angle += TAU
 	while display_angle >= TAU:
 		display_angle -= TAU
-	
-	# Convert display angle to storage angle by adding 180 degrees (π radians)
-	var storage_angle = display_angle + PI
-	
-	# Normalize storage angle to [0, 2π] range
-	while storage_angle < 0:
-		storage_angle += TAU
-	while storage_angle >= TAU:
-		storage_angle -= TAU
-	
-	if handle_id == 0:
-		turret.slew_min_angle = storage_angle
-	else:
-		turret.slew_max_angle = storage_angle
-	
+	var storage_angle = _display_to_storage(display_angle)
+	info["target"].set(info["prop"], storage_angle)
 	return display_angle
 
-# Create a mesh consisting of quads for each line segment
+# --- Geometry helpers ---
+
+func _add_arc_segment_world_relative(lines: PackedVector3Array, start_angle: float, end_angle: float,
+	radius: float, height: float, segments: int, turret: Turret):
+	var angle_step = (end_angle - start_angle) / segments
+	var inv = turret.global_transform.affine_inverse()
+	for i in range(segments):
+		var a0 = start_angle + i * angle_step
+		var a1 = start_angle + (i + 1) * angle_step
+		var p0_w = turret.global_position + Vector3(sin(a0) * radius, height, cos(a0) * radius)
+		var p1_w = turret.global_position + Vector3(sin(a1) * radius, height, cos(a1) * radius)
+		lines.append(inv * p0_w)
+		lines.append(inv * p1_w)
+		if i % 8 == 0:
+			var center_w = turret.global_position + Vector3(0, height, 0)
+			lines.append(inv * center_w)
+			lines.append(inv * p0_w)
+
 func _create_quad_mesh_from_lines(lines: PackedVector3Array, camera: Camera3D, width: float) -> ArrayMesh:
 	var mesh = ArrayMesh.new()
 	if lines.size() < 2 or lines.size() % 2 != 0:
 		return mesh
-	
-	var vertices = PackedVector3Array()
-	var normals = PackedVector3Array()
-	var uvs = PackedVector2Array()
-	var indices = PackedInt32Array()
-	
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
 	var camera_pos = camera.global_transform.origin
-	
-	# Process each line segment (pairs of points)
 	for i in range(0, lines.size(), 2):
 		var start = lines[i]
-		var end = lines[i+1]
-		
-		# Direction vector of the line
+		var end = lines[i + 1]
 		var line_dir = (end - start).normalized()
-		
-		# Vector from camera to the midpoint of the line
 		var to_camera = (camera_pos - (start + end) * 0.5).normalized()
-		
-		# Calculate the right vector (perpendicular to line_dir and to_camera)
 		var right = line_dir.cross(to_camera).normalized()
-		
-		# If the cross product is too small (line points toward/away from camera)
-		# use the camera's up vector to create a stable perpendicular
 		if right.length() < 0.1:
 			right = camera.global_transform.basis.y.cross(line_dir).normalized()
 			if right.length() < 0.1:
 				right = camera.global_transform.basis.x.normalized()
-		
-		# Calculate half width
-		var half_width = width * 0.5
-		
-		# Create the quad vertices
-		var v0 = start + right * half_width
-		var v1 = start - right * half_width
-		var v2 = end - right * half_width
-		var v3 = end + right * half_width
-		
-		# Add vertices for this quad
+		var hw = width * 0.5
+		var v0 = start + right * hw
+		var v1 = start - right * hw
+		var v2 = end - right * hw
+		var v3 = end + right * hw
 		var base_idx = vertices.size()
-		vertices.append(v0)
-		vertices.append(v1)
-		vertices.append(v2)
-		vertices.append(v3)
-		
-		# Add face normal (for lighting)
-		var face_normal = to_camera
-		for j in range(4):
-			normals.append(face_normal)
-		
-		# Add UVs
-		uvs.append(Vector2(0, 0))
-		uvs.append(Vector2(0, 1))
-		uvs.append(Vector2(1, 1))
-		uvs.append(Vector2(1, 0))
-		
-		# Add indices for two triangles making the quad
-		indices.append(base_idx)
-		indices.append(base_idx + 1)
-		indices.append(base_idx + 2)
-		
-		indices.append(base_idx)
-		indices.append(base_idx + 2)
-		indices.append(base_idx + 3)
-	
-	# Create surface with all the geometry data
+		vertices.append(v0); vertices.append(v1); vertices.append(v2); vertices.append(v3)
+		for _j in range(4):
+			normals.append(to_camera)
+		uvs.append(Vector2(0, 0)); uvs.append(Vector2(0, 1)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(1, 0))
+		indices.append(base_idx);     indices.append(base_idx + 1); indices.append(base_idx + 2)
+		indices.append(base_idx);     indices.append(base_idx + 2); indices.append(base_idx + 3)
 	var arrays = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
-	
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
 
-# Override to force redraw of gizmos on every frame
-func _process(_delta):
-	# Force redraw every frame regardless of camera movement
-	_redraw_all_gizmos()
-	
-	# Still update the camera position for other functionality that might need it
-	var camera = get_editor_camera()
-	if camera and is_instance_valid(camera):
-		_last_camera_pos = camera.global_position
-
-# Helper to redraw all Gun nodes' gizmos
-func _redraw_all_gizmos():
-	var edited_scene = EditorInterface.get_edited_scene_root()
-	if edited_scene:
-		_find_and_redraw_guns(edited_scene)
-
-# Recursively find all Gun nodes and request gizmo redraw
-func _find_and_redraw_guns(node: Node):
-	if node is Gun:
-		# Just mark the node as needing a gizmo redraw
-		# The editor will handle the rest
-		node.notify_property_list_changed()
-	
-	for child in node.get_children():
-		_find_and_redraw_guns(child)
-
-# Store last camera position to detect movement
-var _last_camera_pos = Vector3()
+# Note: this script extends Resource (via EditorNode3DGizmoPlugin), so it does
+# NOT receive _process. The per-frame redraw of Gun gizmos lives in
+# turret_editor_plugin.gd, which is an EditorPlugin (Node).

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- Outer ring -->
+  <circle cx="32" cy="32" r="28" stroke="#5BC8F5" stroke-width="2.5"/>
+
+  <!-- Tick marks at cardinal points (gap in centre) -->
+  <line x1="32" y1="4"  x2="32" y2="16" stroke="#5BC8F5" stroke-width="2"/>
+  <line x1="32" y1="48" x2="32" y2="60" stroke="#5BC8F5" stroke-width="2"/>
+  <line x1="4"  y1="32" x2="16" y2="32" stroke="#5BC8F5" stroke-width="2"/>
+  <line x1="48" y1="32" x2="60" y2="32" stroke="#5BC8F5" stroke-width="2"/>
+
+  <!-- Inner ring -->
+  <circle cx="32" cy="32" r="12" stroke="#5BC8F5" stroke-width="2" opacity="0.7"/>
+
+  <!-- Diamond lock indicator -->
+  <polygon points="32,20 38,32 32,44 26,32"
+           stroke="#5BC8F5" stroke-width="1.5" fill="none" opacity="0.6"/>
+
+  <!-- Centre dot -->
+  <circle cx="32" cy="32" r="3" fill="#5BC8F5"/>
+</svg>

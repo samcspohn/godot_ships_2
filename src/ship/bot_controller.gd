@@ -806,8 +806,10 @@ func evaluate_consumable_usage() -> void:
 				var can_use = consumable_manager.can_use_item(item)
 				var cooldown = consumable_manager.cooldowns.get(item.id, 0.0)
 				var active = consumable_manager.active_effects.get(item.id, 0.0)
-				print("[BOT %s] Slot %d: %s (type=%d), stacks=%d, cooldown=%.1f, active=%.1f, can_use=%s" % [
-					ship.name, i, item.name, item.type, item.current_stack, cooldown, active, can_use
+				var _bot_eff_max := (item.p() as ConsumableItem).max_stack
+				var _bot_remaining := -1 if _bot_eff_max == -1 else _bot_eff_max - item.used
+				print("[BOT %s] Slot %d: %s (type=%d), remaining=%d, cooldown=%.1f, active=%.1f, can_use=%s" % [
+					ship.name, i, item.name, item.type, _bot_remaining, cooldown, active, can_use
 				])
 			match item.type:
 				ConsumableItem.ConsumableType.REPAIR_PARTY:
@@ -873,9 +875,12 @@ func evaluate_consumable_usage() -> void:
 					use_reason = "low HP (%.0f%%), missing %.0f%% - good heal value" % [hp_ratio * 100, missing_hp_ratio * 100]
 			# Higher HP - be conservative, save for emergencies
 			# Only use if we have plenty of charges and are missing decent HP
-			elif repair_party_item.current_stack >= 3 and missing_hp_ratio >= 0.25:
-				should_use_repair_party = true
-				use_reason = "HP at %.0f%%, have %d charges remaining - using surplus" % [hp_ratio * 100, repair_party_item.current_stack]
+			else:
+				var _rp_eff_max := (repair_party_item.p() as ConsumableItem).max_stack
+				var _rp_remaining := _rp_eff_max - repair_party_item.used
+				if _rp_remaining >= 3 and missing_hp_ratio >= 0.25:
+					should_use_repair_party = true
+					use_reason = "HP at %.0f%%, have %d charges remaining - using surplus" % [hp_ratio * 100, _rp_remaining]
 
 			if should_use_repair_party:
 				if debug_consumables:

@@ -63,7 +63,7 @@ func _aim(aim_point: Vector3, delta: float, return_to_base: bool = false) -> flo
 
 	var desired_local_angle = super._aim(aim_point, delta, return_to_base)
 
-	if abs(desired_local_angle) < 0.01:
+	if abs(desired_local_angle) < 0.01 and _valid_target:
 		can_fire = true
 	else:
 		can_fire = false

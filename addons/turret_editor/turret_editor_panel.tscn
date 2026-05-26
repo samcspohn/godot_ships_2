@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://kmno5yulh1pl" path="res://addons/turret_editor/turret_editor_panel.gd" id="1_script"]
 
 [node name="TurretEditorPanel" type="Control"]
+custom_minimum_size = Vector2(350, 0)
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -80,6 +81,58 @@ value = 90.0
 suffix = "°"
 
 [node name="HSeparator3" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="MirrorSection" type="VBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="MirrorRow" type="HBoxContainer" parent="VBoxContainer/MirrorSection"]
+layout_mode = 2
+
+[node name="MirrorCheckBox" type="CheckBox" parent="VBoxContainer/MirrorSection/MirrorRow"]
+layout_mode = 2
+text = "Mirror"
+tooltip_text = "When on, edits to slew limits and fire arcs on this turret are automatically mirrored to the partner turret on the opposite side of the ship. Toggling on immediately copies this turret's arcs (mirrored) to the partner."
+
+[node name="MirrorPartnerLabel" type="Label" parent="VBoxContainer/MirrorSection/MirrorRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "(no partner)"
+
+[node name="HSeparator6" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ConvertExpandButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Convert Slew to Fire Arc + Expand"
+tooltip_text = "If the turret's current rotation is outside the slew arc, save the current slew arc as a Fire Arc and expand the slew arc to include the current rotation."
+
+[node name="HSeparator4" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="FireArcsSection" type="VBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="HeaderRow" type="HBoxContainer" parent="VBoxContainer/FireArcsSection"]
+layout_mode = 2
+
+[node name="SectionLabel" type="Label" parent="VBoxContainer/FireArcsSection/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Fire Arcs"
+
+[node name="AddButton" type="Button" parent="VBoxContainer/FireArcsSection/HeaderRow"]
+layout_mode = 2
+text = "+ Add"
+
+[node name="ClearButton" type="Button" parent="VBoxContainer/FireArcsSection/HeaderRow"]
+layout_mode = 2
+text = "Clear"
+
+[node name="ArcsList" type="VBoxContainer" parent="VBoxContainer/FireArcsSection"]
+layout_mode = 2
+
+[node name="HSeparator5" type="HSeparator" parent="VBoxContainer"]
 layout_mode = 2
 
 [node name="ApplyButton" type="Button" parent="VBoxContainer"]

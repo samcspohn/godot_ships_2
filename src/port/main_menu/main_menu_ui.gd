@@ -44,6 +44,7 @@ func _ready():
 	upgrade_tab.upgrade_removed.connect(_on_upgrade_removed)
 
 	commander_skills_tab.skill_toggled.connect(_on_skill_toggled)
+	commander_skills_tab.preview_state_changed.connect(func() -> void: stats_panel.refresh())
 
 	# Load saved player name
 	name_value_label.text = GameSettings.player_name

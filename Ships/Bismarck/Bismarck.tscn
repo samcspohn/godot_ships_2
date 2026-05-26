@@ -1,8 +1,8 @@
-[gd_scene load_steps=120 format=4 uid="uid://b1udmin5coa0a"]
+[gd_scene format=4 uid="uid://b1udmin5coa0a"]
 
 [ext_resource type="Script" uid="uid://36hn6giyyldc" path="res://src/ship/Ship.gd" id="1_y5iv2"]
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_bnwro"]
-[ext_resource type="Resource" uid="uid://f4vy1bfecssd" path="res://src/artillary/Guns/BB_gun1.tres" id="3_c267j"]
+[ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="3_kho5a"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="4_qpdxu"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_c267j"]
@@ -1300,424 +1300,422 @@ _surfaces = [{
 blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_wv382")
 
-[node name="Ship" type="RigidBody3D"]
+[node name="Ship" type="RigidBody3D" unique_id=1692570398]
 script = ExtResource("1_y5iv2")
 
-[node name="Modules" parent="." instance=ExtResource("4_qpdxu")]
+[node name="Modules" parent="." unique_id=1767663077 instance=ExtResource("4_qpdxu")]
 
-[node name="ArtilleryController" parent="Modules" index="2" node_paths=PackedStringArray("guns")]
+[node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
 guns = [NodePath("../../Hull/380mmTurret_001"), NodePath("../../Hull/380mmTurret"), NodePath("../../Hull/380mmTurret_002"), NodePath("../../Hull/380mmTurret_003")]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
+params = null
+
+[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+upgrades = Array[ExtResource("3_kho5a")]([null, null, null, null, null, null])
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1532299710]
 shape = SubResource("BoxShape3D_c267j")
 
-[node name="Hull" type="MeshInstance3D" parent="."]
+[node name="Hull" type="MeshInstance3D" parent="." unique_id=753647832]
 mesh = SubResource("ArrayMesh_qqn42")
 skeleton = NodePath("")
 
-[node name="105mmTurret" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret" type="MeshInstance3D" parent="Hull" unique_id=2075379992]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.9162, 3.9251, -20.9139)
 mesh = SubResource("ArrayMesh_12n74")
 skeleton = NodePath("")
 
-[node name="Barrels" type="MeshInstance3D" parent="Hull/105mmTurret"]
+[node name="Barrels" type="MeshInstance3D" parent="Hull/105mmTurret" unique_id=1924357505]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel" type="Node3D" parent="Hull/105mmTurret/Barrels"]
+[node name="muzzel" type="Node3D" parent="Hull/105mmTurret/Barrels" unique_id=2027695578]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_001" type="Node3D" parent="Hull/105mmTurret/Barrels"]
+[node name="muzzle_001" type="Node3D" parent="Hull/105mmTurret/Barrels" unique_id=224643105]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332338, 0, -5.49413)
 
-[node name="105mmTurret_001" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_001" type="MeshInstance3D" parent="Hull" unique_id=197149504]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10.9162, 3.9251, -20.9139)
 mesh = SubResource("ArrayMesh_iusuk")
 skeleton = NodePath("")
 
-[node name="Barrels_001" type="MeshInstance3D" parent="Hull/105mmTurret_001"]
+[node name="Barrels_001" type="MeshInstance3D" parent="Hull/105mmTurret_001" unique_id=698029702]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_001" type="Node3D" parent="Hull/105mmTurret_001/Barrels_001"]
+[node name="muzzel_001" type="Node3D" parent="Hull/105mmTurret_001/Barrels_001" unique_id=830696099]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_002" type="Node3D" parent="Hull/105mmTurret_001/Barrels_001"]
+[node name="muzzle_002" type="Node3D" parent="Hull/105mmTurret_001/Barrels_001" unique_id=585934416]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332338, 0, -5.49413)
 
-[node name="105mmTurret_002" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_002" type="MeshInstance3D" parent="Hull" unique_id=1765767277]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11.8492, 3.9251, -3.86544)
 mesh = SubResource("ArrayMesh_nw7cc")
 skeleton = NodePath("")
 
-[node name="Barrels_002" type="MeshInstance3D" parent="Hull/105mmTurret_002"]
+[node name="Barrels_002" type="MeshInstance3D" parent="Hull/105mmTurret_002" unique_id=74658146]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_002" type="Node3D" parent="Hull/105mmTurret_002/Barrels_002"]
+[node name="muzzel_002" type="Node3D" parent="Hull/105mmTurret_002/Barrels_002" unique_id=1955363616]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_003" type="Node3D" parent="Hull/105mmTurret_002/Barrels_002"]
+[node name="muzzle_003" type="Node3D" parent="Hull/105mmTurret_002/Barrels_002" unique_id=595774468]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332338, 0, -5.49413)
 
-[node name="105mmTurret_003" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_003" type="MeshInstance3D" parent="Hull" unique_id=825771152]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11.8492, 3.9251, -3.86544)
 mesh = SubResource("ArrayMesh_2s1xb")
 skeleton = NodePath("")
 
-[node name="Barrels_003" type="MeshInstance3D" parent="Hull/105mmTurret_003"]
+[node name="Barrels_003" type="MeshInstance3D" parent="Hull/105mmTurret_003" unique_id=1965136174]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_003" type="Node3D" parent="Hull/105mmTurret_003/Barrels_003"]
+[node name="muzzel_003" type="Node3D" parent="Hull/105mmTurret_003/Barrels_003" unique_id=925106919]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_004" type="Node3D" parent="Hull/105mmTurret_003/Barrels_003"]
+[node name="muzzle_004" type="Node3D" parent="Hull/105mmTurret_003/Barrels_003" unique_id=1705654654]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332338, 0, -5.49413)
 
-[node name="105mmTurret_004" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_004" type="MeshInstance3D" parent="Hull" unique_id=1185889762]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, 11.5019, 3.9251, 14.2451)
 mesh = SubResource("ArrayMesh_2vpqv")
 skeleton = NodePath("")
 
-[node name="Barrels_004" type="MeshInstance3D" parent="Hull/105mmTurret_004"]
+[node name="Barrels_004" type="MeshInstance3D" parent="Hull/105mmTurret_004" unique_id=840547594]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_004" type="Node3D" parent="Hull/105mmTurret_004/Barrels_004"]
+[node name="muzzel_004" type="Node3D" parent="Hull/105mmTurret_004/Barrels_004" unique_id=1434604556]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_005" type="Node3D" parent="Hull/105mmTurret_004/Barrels_004"]
+[node name="muzzle_005" type="Node3D" parent="Hull/105mmTurret_004/Barrels_004" unique_id=13256445]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332339, 0, -5.49413)
 
-[node name="105mmTurret_005" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_005" type="MeshInstance3D" parent="Hull" unique_id=739007041]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -11.5019, 3.9251, 14.2451)
 mesh = SubResource("ArrayMesh_t1neg")
 skeleton = NodePath("")
 
-[node name="Barrels_005" type="MeshInstance3D" parent="Hull/105mmTurret_005"]
+[node name="Barrels_005" type="MeshInstance3D" parent="Hull/105mmTurret_005" unique_id=385597928]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_005" type="Node3D" parent="Hull/105mmTurret_005/Barrels_005"]
+[node name="muzzel_005" type="Node3D" parent="Hull/105mmTurret_005/Barrels_005" unique_id=1652717676]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50413)
 
-[node name="muzzle_006" type="Node3D" parent="Hull/105mmTurret_005/Barrels_005"]
+[node name="muzzle_006" type="Node3D" parent="Hull/105mmTurret_005/Barrels_005" unique_id=1969483581]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332339, 0, -5.49413)
 
-[node name="105mmTurret_006" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_006" type="MeshInstance3D" parent="Hull" unique_id=1521714445]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, 10.1126, 3.9251, 29.18)
 mesh = SubResource("ArrayMesh_ddecm")
 skeleton = NodePath("")
 
-[node name="Barrels_006" type="MeshInstance3D" parent="Hull/105mmTurret_006"]
+[node name="Barrels_006" type="MeshInstance3D" parent="Hull/105mmTurret_006" unique_id=689205676]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639284)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_006" type="Node3D" parent="Hull/105mmTurret_006/Barrels_006"]
+[node name="muzzel_006" type="Node3D" parent="Hull/105mmTurret_006/Barrels_006" unique_id=779381482]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50412)
 
-[node name="muzzle_007" type="Node3D" parent="Hull/105mmTurret_006/Barrels_006"]
+[node name="muzzle_007" type="Node3D" parent="Hull/105mmTurret_006/Barrels_006" unique_id=2125868965]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332339, 0, -5.49413)
 
-[node name="105mmTurret_007" type="MeshInstance3D" parent="Hull"]
+[node name="105mmTurret_007" type="MeshInstance3D" parent="Hull" unique_id=732036346]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -10.1126, 3.9251, 29.18)
 mesh = SubResource("ArrayMesh_vstmh")
 skeleton = NodePath("")
 
-[node name="Barrels_007" type="MeshInstance3D" parent="Hull/105mmTurret_007"]
+[node name="Barrels_007" type="MeshInstance3D" parent="Hull/105mmTurret_007" unique_id=493433594]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.57428, 0.639285)
 mesh = SubResource("ArrayMesh_hsr6c")
 skeleton = NodePath("")
 
-[node name="muzzel_007" type="Node3D" parent="Hull/105mmTurret_007/Barrels_007"]
+[node name="muzzel_007" type="Node3D" parent="Hull/105mmTurret_007/Barrels_007" unique_id=2119893738]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.332337, 0, -5.50412)
 
-[node name="muzzle_008" type="Node3D" parent="Hull/105mmTurret_007/Barrels_007"]
+[node name="muzzle_008" type="Node3D" parent="Hull/105mmTurret_007/Barrels_007" unique_id=433276213]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.332339, 0, -5.49412)
 
-[node name="150mmBarbette" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette" type="MeshInstance3D" parent="Hull" unique_id=1297286166]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.3592, 1.50506, -11.8728)
 mesh = SubResource("ArrayMesh_80cd6")
 skeleton = NodePath("")
 
-[node name="150mmBarbette_001" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette_001" type="MeshInstance3D" parent="Hull" unique_id=1092588412]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.46629, 1.50506, -30.5829)
 mesh = SubResource("ArrayMesh_700mu")
 skeleton = NodePath("")
 
-[node name="150mmBarbette_002" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette_002" type="MeshInstance3D" parent="Hull" unique_id=1413563188]
 transform = Transform3D(-1, 0, -3.25841e-07, 0, 1, 0, 3.25841e-07, 0, -1, 13.9074, 1.50506, 21.8612)
 mesh = SubResource("ArrayMesh_lk26t")
 skeleton = NodePath("")
 
-[node name="150mmBarbette_003" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette_003" type="MeshInstance3D" parent="Hull" unique_id=83935925]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.46629, 1.50506, -30.5829)
 mesh = SubResource("ArrayMesh_700mu")
 skeleton = NodePath("")
 
-[node name="150mmBarbette_004" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette_004" type="MeshInstance3D" parent="Hull" unique_id=1280480041]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14.3592, 1.50506, -11.8728)
 mesh = SubResource("ArrayMesh_80cd6")
 skeleton = NodePath("")
 
-[node name="150mmBarbette_005" type="MeshInstance3D" parent="Hull"]
+[node name="150mmBarbette_005" type="MeshInstance3D" parent="Hull" unique_id=1231090699]
 transform = Transform3D(-1, 0, -3.25841e-07, 0, 1, 0, 3.25841e-07, 0, -1, -13.9074, 1.50506, 21.8612)
 mesh = SubResource("ArrayMesh_lk26t")
 skeleton = NodePath("")
 
-[node name="150mmTurret" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret" type="MeshInstance3D" parent="Hull" unique_id=1845459737]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.3592, 2.42038, -11.8728)
 mesh = SubResource("ArrayMesh_e58uq")
 skeleton = NodePath("")
 
-[node name="Cylinder" type="MeshInstance3D" parent="Hull/150mmTurret"]
+[node name="Cylinder" type="MeshInstance3D" parent="Hull/150mmTurret" unique_id=1490567298]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_6hakg")
 skeleton = NodePath("")
 
-[node name="Empty" type="Node3D" parent="Hull/150mmTurret/Cylinder"]
+[node name="Empty" type="Node3D" parent="Hull/150mmTurret/Cylinder" unique_id=359024965]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_006" type="Node3D" parent="Hull/150mmTurret/Cylinder"]
+[node name="Empty_006" type="Node3D" parent="Hull/150mmTurret/Cylinder" unique_id=604278638]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="150mmTurret_001" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret_001" type="MeshInstance3D" parent="Hull" unique_id=742030323]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.46629, 2.42038, -30.5829)
 mesh = SubResource("ArrayMesh_ctl2n")
 skeleton = NodePath("")
 
-[node name="Cylinder_001" type="MeshInstance3D" parent="Hull/150mmTurret_001"]
+[node name="Cylinder_001" type="MeshInstance3D" parent="Hull/150mmTurret_001" unique_id=1796863816]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_nx0yv")
 skeleton = NodePath("")
 
-[node name="Empty_007" type="Node3D" parent="Hull/150mmTurret_001/Cylinder_001"]
+[node name="Empty_007" type="Node3D" parent="Hull/150mmTurret_001/Cylinder_001" unique_id=1202304771]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_008" type="Node3D" parent="Hull/150mmTurret_001/Cylinder_001"]
+[node name="Empty_008" type="Node3D" parent="Hull/150mmTurret_001/Cylinder_001" unique_id=693026111]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="150mmTurret_002" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret_002" type="MeshInstance3D" parent="Hull" unique_id=72560819]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, 13.839, 2.42038, 21.804)
 mesh = SubResource("ArrayMesh_rsqrq")
 skeleton = NodePath("")
 
-[node name="Cylinder_008" type="MeshInstance3D" parent="Hull/150mmTurret_002"]
+[node name="Cylinder_008" type="MeshInstance3D" parent="Hull/150mmTurret_002" unique_id=1843424031]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_nx0yv")
 skeleton = NodePath("")
 
-[node name="Empty_021" type="Node3D" parent="Hull/150mmTurret_002/Cylinder_008"]
+[node name="Empty_021" type="Node3D" parent="Hull/150mmTurret_002/Cylinder_008" unique_id=1560542141]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.87028, 0, -5.87163)
 
-[node name="Empty_022" type="Node3D" parent="Hull/150mmTurret_002/Cylinder_008"]
+[node name="Empty_022" type="Node3D" parent="Hull/150mmTurret_002/Cylinder_008" unique_id=616354615]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="150mmTurret_003" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret_003" type="MeshInstance3D" parent="Hull" unique_id=96389653]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9.46629, 2.42038, -30.5829)
 mesh = SubResource("ArrayMesh_nbbfi")
 skeleton = NodePath("")
 
-[node name="Cylinder_006" type="MeshInstance3D" parent="Hull/150mmTurret_003"]
+[node name="Cylinder_006" type="MeshInstance3D" parent="Hull/150mmTurret_003" unique_id=1336856963]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_nx0yv")
 skeleton = NodePath("")
 
-[node name="Empty_017" type="Node3D" parent="Hull/150mmTurret_003/Cylinder_006"]
+[node name="Empty_017" type="Node3D" parent="Hull/150mmTurret_003/Cylinder_006" unique_id=342412952]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_018" type="Node3D" parent="Hull/150mmTurret_003/Cylinder_006"]
+[node name="Empty_018" type="Node3D" parent="Hull/150mmTurret_003/Cylinder_006" unique_id=1163060445]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="150mmTurret_004" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret_004" type="MeshInstance3D" parent="Hull" unique_id=235094073]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14.3592, 2.42038, -11.8728)
 mesh = SubResource("ArrayMesh_1u260")
 skeleton = NodePath("")
 
-[node name="Cylinder_007" type="MeshInstance3D" parent="Hull/150mmTurret_004"]
+[node name="Cylinder_007" type="MeshInstance3D" parent="Hull/150mmTurret_004" unique_id=477858344]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_6hakg")
 skeleton = NodePath("")
 
-[node name="Empty_019" type="Node3D" parent="Hull/150mmTurret_004/Cylinder_007"]
+[node name="Empty_019" type="Node3D" parent="Hull/150mmTurret_004/Cylinder_007" unique_id=1160526491]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_020" type="Node3D" parent="Hull/150mmTurret_004/Cylinder_007"]
+[node name="Empty_020" type="Node3D" parent="Hull/150mmTurret_004/Cylinder_007" unique_id=290207887]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="150mmTurret_005" type="MeshInstance3D" parent="Hull"]
+[node name="150mmTurret_005" type="MeshInstance3D" parent="Hull" unique_id=681581201]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -13.839, 2.42038, 21.804)
 mesh = SubResource("ArrayMesh_gfw03")
 skeleton = NodePath("")
 
-[node name="Cylinder_009" type="MeshInstance3D" parent="Hull/150mmTurret_005"]
+[node name="Cylinder_009" type="MeshInstance3D" parent="Hull/150mmTurret_005" unique_id=1387250362]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821183)
 mesh = SubResource("ArrayMesh_nx0yv")
 skeleton = NodePath("")
 
-[node name="Empty_023" type="Node3D" parent="Hull/150mmTurret_005/Cylinder_009"]
+[node name="Empty_023" type="Node3D" parent="Hull/150mmTurret_005/Cylinder_009" unique_id=22636532]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.87028, 0, -5.87163)
 
-[node name="Empty_024" type="Node3D" parent="Hull/150mmTurret_005/Cylinder_009"]
+[node name="Empty_024" type="Node3D" parent="Hull/150mmTurret_005/Cylinder_009" unique_id=321406930]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="380mmTurret" type="MeshInstance3D" parent="Hull" node_paths=PackedStringArray("dispersion_calculator")]
+[node name="380mmTurret" type="MeshInstance3D" parent="Hull" unique_id=1963473437]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.00826359, 6.5129, -55.0917)
 mesh = SubResource("ArrayMesh_381u2")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
 slew_min_angle = 3.7001
 slew_max_angle = 2.51327
-dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("3_c267j")
 
-[node name="Guns" type="MeshInstance3D" parent="Hull/380mmTurret"]
+[node name="Guns" type="MeshInstance3D" parent="Hull/380mmTurret" unique_id=626229830]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00826359, 1.20173, -3.00857)
 mesh = SubResource("ArrayMesh_pnd3c")
 skeleton = NodePath("")
 
-[node name="Muzzle_001" type="Node3D" parent="Hull/380mmTurret/Guns"]
+[node name="Muzzle_001" type="Node3D" parent="Hull/380mmTurret/Guns" unique_id=472226577]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 1.81494, 0, -14.8373)
 
-[node name="Muzzle_002" type="Node3D" parent="Hull/380mmTurret/Guns"]
+[node name="Muzzle_002" type="Node3D" parent="Hull/380mmTurret/Guns" unique_id=1865183942]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -1.81494, 0, -14.8373)
 
-[node name="380mmTurret_001" type="MeshInstance3D" parent="Hull" node_paths=PackedStringArray("dispersion_calculator")]
+[node name="380mmTurret_001" type="MeshInstance3D" parent="Hull" unique_id=1162481715]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.00826359, 3.2548, -73.2684)
 mesh = SubResource("ArrayMesh_11qox")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
 slew_min_angle = 3.61283
 slew_max_angle = 2.72271
-dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("3_c267j")
 
-[node name="Guns_001" type="MeshInstance3D" parent="Hull/380mmTurret_001"]
+[node name="Guns_001" type="MeshInstance3D" parent="Hull/380mmTurret_001" unique_id=348355336]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00826359, 1.20173, -3.00857)
 mesh = SubResource("ArrayMesh_qsqca")
 skeleton = NodePath("")
 
-[node name="Muzzle_003" type="Node3D" parent="Hull/380mmTurret_001/Guns_001"]
+[node name="Muzzle_003" type="Node3D" parent="Hull/380mmTurret_001/Guns_001" unique_id=1548932323]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 1.81494, 0, -14.8373)
 
-[node name="Muzzle_004" type="Node3D" parent="Hull/380mmTurret_001/Guns_001"]
+[node name="Muzzle_004" type="Node3D" parent="Hull/380mmTurret_001/Guns_001" unique_id=1628089281]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -1.81494, 0, -14.8373)
 
-[node name="380mmTurret_002" type="MeshInstance3D" parent="Hull" node_paths=PackedStringArray("dispersion_calculator")]
+[node name="380mmTurret_002" type="MeshInstance3D" parent="Hull" unique_id=401535144]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.00826359, 6.31443, 55.6809)
 mesh = SubResource("ArrayMesh_rtpuf")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
 slew_min_angle = 0.457666
 slew_max_angle = 5.69938
-dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("3_c267j")
 
-[node name="Guns_004" type="MeshInstance3D" parent="Hull/380mmTurret_002"]
+[node name="Guns_004" type="MeshInstance3D" parent="Hull/380mmTurret_002" unique_id=2089359591]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00826359, 1.20173, -3.00857)
 mesh = SubResource("ArrayMesh_x5ea8")
 skeleton = NodePath("")
 
-[node name="Muzzle_009" type="Node3D" parent="Hull/380mmTurret_002/Guns_004"]
+[node name="Muzzle_009" type="Node3D" parent="Hull/380mmTurret_002/Guns_004" unique_id=1547015496]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 1.81494, 0, -14.8373)
 
-[node name="Muzzle_010" type="Node3D" parent="Hull/380mmTurret_002/Guns_004"]
+[node name="Muzzle_010" type="Node3D" parent="Hull/380mmTurret_002/Guns_004" unique_id=1212770231]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -1.81494, 0, -14.8373)
 
-[node name="380mmTurret_003" type="MeshInstance3D" parent="Hull" node_paths=PackedStringArray("dispersion_calculator")]
+[node name="380mmTurret_003" type="MeshInstance3D" parent="Hull" unique_id=1081187027]
 transform = Transform3D(-1, 0, 3.25841e-07, 0, 1, 0, -3.25841e-07, 0, -1, -0.00826359, 2.74195, 73.9899)
 mesh = SubResource("ArrayMesh_d2mwy")
 skeleton = NodePath("")
 script = ExtResource("2_bnwro")
 slew_min_angle = 0.522182
 slew_max_angle = 5.70627
-dispersion_calculator = NodePath("../../Modules/DispersionCalculator")
-params = ExtResource("3_c267j")
 
-[node name="Guns_005" type="MeshInstance3D" parent="Hull/380mmTurret_003"]
+[node name="Guns_005" type="MeshInstance3D" parent="Hull/380mmTurret_003" unique_id=1531112426]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00826359, 1.20173, -3.00857)
 mesh = SubResource("ArrayMesh_lghkf")
 skeleton = NodePath("")
 
-[node name="Muzzle_011" type="Node3D" parent="Hull/380mmTurret_003/Guns_005"]
+[node name="Muzzle_011" type="Node3D" parent="Hull/380mmTurret_003/Guns_005" unique_id=2102848709]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 1.81494, 0, -14.8373)
 
-[node name="Muzzle_012" type="Node3D" parent="Hull/380mmTurret_003/Guns_005"]
+[node name="Muzzle_012" type="Node3D" parent="Hull/380mmTurret_003/Guns_005" unique_id=44820846]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -1.81494, 0, -14.8373)
 
-[node name="Aft-Barbette" type="MeshInstance3D" parent="Hull"]
+[node name="Aft-Barbette" type="MeshInstance3D" parent="Hull" unique_id=89263596]
 transform = Transform3D(5.37991, 0, 0, 0, 5.37991, 0, 0, 0, 5.37991, 0, 0.884874, 55.7364)
 mesh = SubResource("ArrayMesh_ho0vj")
 skeleton = NodePath("")
 
-[node name="Aft-Barbette_001" type="MeshInstance3D" parent="Hull"]
+[node name="Aft-Barbette_001" type="MeshInstance3D" parent="Hull" unique_id=1157582546]
 transform = Transform3D(5.37991, 0, 0, 0, 5.37991, 0, 0, 0, 5.37991, 0, -2.74585, 73.7234)
 mesh = SubResource("ArrayMesh_5qpej")
 skeleton = NodePath("")
 
-[node name="Cylinder_002" type="MeshInstance3D" parent="Hull"]
+[node name="Cylinder_002" type="MeshInstance3D" parent="Hull" unique_id=465076496]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_gscyy")
 skeleton = NodePath("")
 
-[node name="Empty_009" type="Node3D" parent="Hull/Cylinder_002"]
+[node name="Empty_009" type="Node3D" parent="Hull/Cylinder_002" unique_id=683295423]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_010" type="Node3D" parent="Hull/Cylinder_002"]
+[node name="Empty_010" type="Node3D" parent="Hull/Cylinder_002" unique_id=2105016061]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="Cylinder_003" type="MeshInstance3D" parent="Hull"]
+[node name="Cylinder_003" type="MeshInstance3D" parent="Hull" unique_id=2129340525]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_46ton")
 skeleton = NodePath("")
 
-[node name="Empty_011" type="Node3D" parent="Hull/Cylinder_003"]
+[node name="Empty_011" type="Node3D" parent="Hull/Cylinder_003" unique_id=844862250]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_012" type="Node3D" parent="Hull/Cylinder_003"]
+[node name="Empty_012" type="Node3D" parent="Hull/Cylinder_003" unique_id=457753383]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="Cylinder_004" type="MeshInstance3D" parent="Hull"]
+[node name="Cylinder_004" type="MeshInstance3D" parent="Hull" unique_id=267995883]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_ow6sg")
 skeleton = NodePath("")
 
-[node name="Empty_013" type="Node3D" parent="Hull/Cylinder_004"]
+[node name="Empty_013" type="Node3D" parent="Hull/Cylinder_004" unique_id=1633354674]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_014" type="Node3D" parent="Hull/Cylinder_004"]
+[node name="Empty_014" type="Node3D" parent="Hull/Cylinder_004" unique_id=878539383]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="Cylinder_005" type="MeshInstance3D" parent="Hull"]
+[node name="Cylinder_005" type="MeshInstance3D" parent="Hull" unique_id=946317947]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.39285, -0.821182)
 mesh = SubResource("ArrayMesh_i6eew")
 skeleton = NodePath("")
 
-[node name="Empty_015" type="Node3D" parent="Hull/Cylinder_005"]
+[node name="Empty_015" type="Node3D" parent="Hull/Cylinder_005" unique_id=1249115077]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0.870279, 0, -5.87163)
 
-[node name="Empty_016" type="Node3D" parent="Hull/Cylinder_005"]
+[node name="Empty_016" type="Node3D" parent="Hull/Cylinder_005" unique_id=1065307228]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -0.870278, 0, -5.87163)
 
-[node name="For-Barbette" type="MeshInstance3D" parent="Hull"]
+[node name="For-Barbette" type="MeshInstance3D" parent="Hull" unique_id=63381980]
 transform = Transform3D(5.37991, 0, 0, 0, 5.37991, 0, 0, 0, 5.37991, 0.0693035, 1.13296, -54.9622)
 mesh = SubResource("ArrayMesh_uie5d")
 skeleton = NodePath("")
 
-[node name="For-Barbette_001" type="MeshInstance3D" parent="Hull"]
+[node name="For-Barbette_001" type="MeshInstance3D" parent="Hull" unique_id=1155509059]
 transform = Transform3D(5.37991, 0, 0, 0, 5.37991, 0, 0, 0, 5.37991, 0.0693035, -2.2373, -73.1616)
 mesh = SubResource("ArrayMesh_pigmj")
 skeleton = NodePath("")
 
-[node name="Superstructrure" type="MeshInstance3D" parent="Hull"]
+[node name="Superstructrure" type="MeshInstance3D" parent="Hull" unique_id=1860699895]
 mesh = SubResource("ArrayMesh_j2t0s")
 skeleton = NodePath("")
 

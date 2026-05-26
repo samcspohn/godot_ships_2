@@ -375,7 +375,20 @@ func _on_canvas_draw() -> void:
 	# Draw torpedo indicators
 	draw_torpedoes_on_minimap()
 
-	var minimap_pos = world_to_minimap_position(aim_point)
+	var player_controller: PlayerController = ship.get_node("Modules/PlayerControl")
+
+	var _aim_point
+	var ship_pos = ship.global_position
+	var super_idx = ship.armor_parts.find_custom(func(part):
+		return part.type == ArmorPart.Type.SUPERSTRUCTURE)
+	ship_pos.y += ship.armor_parts[super_idx].position.y
+	var launch_vector = ProjectilePhysicsWithDragV2.calculate_launch_vector(ship.global_position, aim_point, player_controller.current_weapon_controller.get_params())
+	if launch_vector[0] != null:
+		_aim_point = ProjectilePhysicsWithDragV2.calculate_impact_position(ship.global_position, launch_vector[0], player_controller.current_weapon_controller.get_params())
+	else:
+		_aim_point = aim_point
+
+	var minimap_pos = world_to_minimap_position(_aim_point)
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
 		return
 	_draw_aim_point(minimap_pos)

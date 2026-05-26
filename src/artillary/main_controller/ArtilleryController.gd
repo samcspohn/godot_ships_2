@@ -14,7 +14,7 @@ var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
 	shell1.text = "AP"
-	shell1.tooltip_text = _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell1)
+	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell1))
 	shell1.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		select_shell.rpc_id(1, 0)
@@ -22,7 +22,7 @@ func get_weapon_ui() -> Array[Button]:
 
 	var shell2 = Button.new()
 	shell2.text = "HE"
-	shell2.tooltip_text = _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2)
+	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2))
 	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		select_shell.rpc_id(1, 1)
@@ -91,7 +91,7 @@ func get_aim_ui() -> Dictionary:
 		terrain_hit = not can_shoot.can_shoot_over_terrain
 		var shell = get_shell_params()
 		if shell.type == ShellParams.ShellType.HE:
-			penetration_power = shell.overmatch
+			penetration_power = shell.overmatch * (shell as ShellParams).penetration_modifier
 		else:
 			var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
 				launch_vector,

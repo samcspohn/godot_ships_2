@@ -203,12 +203,11 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_ssrv5"]
 script = ExtResource("16_4avny")
-heal_percent = 0.15
 icon = ExtResource("15_uql7x")
 disabled_icon = ExtResource("14_g7l6b")
 cooldown_time = 80.0
 duration = 20.0
-max_stack = 5
+max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
 [sub_resource type="Resource" id="Resource_g21k6"]
@@ -279,7 +278,7 @@ params = SubResource("Resource_mvym")
 equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_26rxh"), SubResource("Resource_ssrv5")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
-upgrades = Array[ExtResource("17_svlgc")]([null, null, null])
+upgrades = Array[ExtResource("17_svlgc")]([null, null, null, null, null, null])
 
 [node name="FireManager" parent="Modules" index="8" unique_id=384504544 node_paths=PackedStringArray("fires")]
 fparams = ExtResource("9_rniut")

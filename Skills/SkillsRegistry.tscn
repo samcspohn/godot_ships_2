@@ -1,16 +1,66 @@
 [gd_scene format=3 uid="uid://ct7quelbueauf"]
 
 [ext_resource type="Script" uid="uid://cke84oknn71qw" path="res://Skills/skills_registry.gd" id="1_df5pm"]
+[ext_resource type="Script" uid="uid://dx547111lg2t7" path="res://Skills/CQZealot.gd" id="4_eum7x"]
+[ext_resource type="Script" path="res://Skills/juggernaut.gd" id="44_jug"]
 [ext_resource type="Script" uid="uid://b0x3taachp6li" path="res://Skills/adrenaline_rush.gd" id="2_mr5kx"]
 [ext_resource type="Script" uid="uid://cmdrm26vbwqxu" path="res://Skills/advanced_sec_training.gd" id="3_2m8dp"]
-[ext_resource type="Script" uid="uid://dx547111lg2t7" path="res://Skills/CQZealot.gd" id="4_eum7x"]
 [ext_resource type="Script" uid="uid://dhggoud4wmje1" path="res://Skills/cq_expertise.gd" id="5_eum7x"]
+[ext_resource type="Script" path="res://Skills/dead_eye.gd" id="6_de"]
+[ext_resource type="Script" path="res://Skills/precision_lock.gd" id="9_pl"]
+[ext_resource type="Script" path="res://Skills/fire_prevention.gd" id="11_fp"]
+[ext_resource type="Script" path="res://Skills/vigilance.gd" id="12_vig"]
+[ext_resource type="Script" path="res://Skills/grease_the_gears.gd" id="13_gtg"]
+[ext_resource type="Script" path="res://Skills/concealment_expert.gd" id="14_ce"]
+[ext_resource type="Script" path="res://Skills/basic_sec_training.gd" id="26_bst"]
+[ext_resource type="Script" path="res://Skills/basic_damage_control_training.gd" id="27_bdct"]
+[ext_resource type="Script" path="res://Skills/incoming_fire_alert.gd" id="28_ifa"]
+[ext_resource type="Script" path="res://Skills/reinforced_systems.gd" id="29_rs"]
+[ext_resource type="Script" path="res://Skills/secondary_pyrotechnician.gd" id="30_spyro"]
+[ext_resource type="Script" path="res://Skills/basic_aa_training.gd" id="31_baat"]
+[ext_resource type="Script" path="res://Skills/speed_trials.gd" id="32_st"]
+[ext_resource type="Script" path="res://Skills/IFHE.gd" id="33_ifhe"]
+[ext_resource type="Script" path="res://Skills/improved_fighter_spotter.gd" id="34_ifs"]
+[ext_resource type="Script" path="res://Skills/improved_consumable_usage.gd" id="35_icu"]
+[ext_resource type="Script" path="res://Skills/torpedo_specialist.gd" id="36_ts"]
+[ext_resource type="Script" path="res://Skills/advanced_aa_training.gd" id="37_aat"]
+[ext_resource type="Script" path="res://Skills/advanced_survivability_training.gd" id="38_advst"]
+[ext_resource type="Script" path="res://Skills/long_range_secondary_training.gd" id="39_lrst"]
+[ext_resource type="Script" path="res://Skills/heavy_ap.gd" id="40_hap"]
+[ext_resource type="Script" path="res://Skills/improved_survivability_systems.gd" id="41_iss"]
+[ext_resource type="Script" path="res://Skills/advanced_firing_training.gd" id="42_aft"]
+[ext_resource type="Script" path="res://Skills/light_weight_brawler.gd" id="43_lwb"]
 
 [node name="SkillsRegistry" type="Node" unique_id=647299865]
 script = ExtResource("1_df5pm")
 _skill_scripts = Dictionary[String, Resource]({
 "ar": ExtResource("2_mr5kx"),
 "ast": ExtResource("3_2m8dp"),
+"bst": ExtResource("26_bst"),
+"ce": ExtResource("14_ce"),
 "cqe": ExtResource("5_eum7x"),
-"cqz": ExtResource("4_eum7x")
+"de": ExtResource("6_de"),
+"fp": ExtResource("11_fp"),
+"gtg": ExtResource("13_gtg"),
+"precision_lock": ExtResource("9_pl"),
+"vig": ExtResource("12_vig"),
+"bdct": ExtResource("27_bdct"),
+"ifa": ExtResource("28_ifa"),
+"rs": ExtResource("29_rs"),
+"spyro": ExtResource("30_spyro"),
+"baat": ExtResource("31_baat"),
+"st": ExtResource("32_st"),
+"ifhe": ExtResource("33_ifhe"),
+"ifs": ExtResource("34_ifs"),
+"icu": ExtResource("35_icu"),
+"ts": ExtResource("36_ts"),
+"aat": ExtResource("37_aat"),
+"advst": ExtResource("38_advst"),
+"lrst": ExtResource("39_lrst"),
+"hap": ExtResource("40_hap"),
+"iss": ExtResource("41_iss"),
+"aft": ExtResource("42_aft"),
+"lwb": ExtResource("43_lwb"),
+"cqz": ExtResource("4_eum7x"),
+"jug": ExtResource("44_jug")
 })

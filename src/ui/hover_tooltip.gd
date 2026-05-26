@@ -56,6 +56,7 @@ func _init() -> void:
 
 func _ready() -> void:
 	set_process(true)
+	set_physics_process(true)
 
 # Register a Control so hovering it shows `text_or_callable` as a tooltip.
 # `text_or_callable` may be either a String (static) or a Callable returning

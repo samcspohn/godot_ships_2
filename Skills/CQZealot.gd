@@ -3,14 +3,20 @@ extends Skill
 
 func _init():
 	name = "CQ Zealot"
-	description = "Reduce reload time of secondary and main guns by 10% when at least one enemy is within max secondary range \n
-	and reduce reload by 2.5% for every additional enemy. with no enemies within range, main gun reload and spread are increased by 15% and 10% respectively. \n
-	main gun range is reduced by 5%."
-	# Set icon if you have one
-	# icon = preload("res://icons/auto-repair.png")
+	tier = 5
+	cost = 0
+	exclusive_group = "ultimate"
+	flavor_text = "Bonuses scale with enemies within secondary range."
+	tooltip_stats = [
+		{"stat": "Reload (1 enemy in range)", "value": fmt_mult_pct(reload_for_one_enemy), "positive": true},
+		{"stat": "Reload (each additional enemy)", "value": "-%.1f%% (mult.)" % (reload_per_additional_enemy * 100), "positive": true},
+		{"stat": "Main Gun Range", "value": fmt_mult_pct(base_range_modifier), "positive": false},
+		{"stat": "Reload Penalty (no enemies)", "value": fmt_mult_pct(base_reload_modifier), "positive": false},
+		{"stat": "Spread Penalty (no enemies)", "value": fmt_mult_pct(base_spread_modifier), "positive": false},
+	]
 
 # buffs
-const reload_per_additional_enemy = 0.05
+const reload_per_additional_enemy = 0.025
 const reload_for_one_enemy = 0.9
 
 # nerfs
@@ -83,3 +89,39 @@ func _proc(_delta: float) -> void:
 	# 	for sec in _ship.secondaries:
 	# 		var sec_params = sec.params.params() as GunParams
 	# 		sec_params.reload_time *= 0.95
+
+## Directly sets the enemy count for port preview, bypassing the server query.
+func preview_with_enemies(n: int) -> void:
+	if n == 0:
+		reload_modifier = base_reload_modifier
+		spread_modifier = base_spread_modifier
+	else:
+		reload_modifier = pow(1.0 - reload_per_additional_enemy, n - 1) * reload_for_one_enemy
+		spread_modifier = 1.0
+	if _ship != null:
+		_ship.remove_dynamic_mod(_a)
+		_ship.add_dynamic_mod(_a)
+
+var _preview_enemy_count: int = 0
+
+func build_preview_modal(container: Control, on_change: Callable) -> void:
+	var label := Label.new()
+	label.text = "Enemies in secondary range"
+	container.add_child(label)
+
+	var hbox := HBoxContainer.new()
+	container.add_child(hbox)
+
+	var spin := SpinBox.new()
+	spin.min_value = 0
+	spin.max_value = 8
+	spin.step = 1
+	spin.value = _preview_enemy_count
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(spin)
+
+	spin.value_changed.connect(func(v: float) -> void:
+		_preview_enemy_count = int(v)
+		preview_with_enemies(_preview_enemy_count)
+		on_change.call()
+	)

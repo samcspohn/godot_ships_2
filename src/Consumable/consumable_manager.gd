@@ -17,10 +17,6 @@ func _ready():
 		equipped_consumables[i] = equipped_consumables[i].instantiate(ship) as ConsumableItem
 		var item = equipped_consumables[i]
 		item.id = i
-		if (item.base as ConsumableItem).max_stack == -1:
-			item.current_stack = 1  # Infinite uses, but show as 1
-		else:
-			item.current_stack = item.max_stack
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -121,18 +117,19 @@ func use_consumable(slot: int) -> bool:
 
 	# Apply effect
 	item.apply_effect(ship)
-	if item.max_stack != -1:
-		item.current_stack -= 1
+	if (item.p() as ConsumableItem).max_stack != -1:
+		item.used += 1
 
 	# Track duration if applicable
-	if item.duration > 0:
-		active_effects[item.id] = item.duration
+	if (item.p() as ConsumableItem).duration > 0:
+		active_effects[item.id] = (item.p() as ConsumableItem).duration
 
 	consumable_used.emit(item)
 	return true
 
 func can_use_item(item: ConsumableItem) -> bool:
-	return (item.current_stack > 0 or item.max_stack == -1) and cooldowns.get(item.id, 0.0) <= 0.0 and active_effects.get(item.id, 0.0) <= 0.0 and item.can_use(ship)
+	var eff_max := (item.p() as ConsumableItem).max_stack
+	return (eff_max == -1 or eff_max - item.used > 0) and cooldowns.get(item.id, 0.0) <= 0.0 and active_effects.get(item.id, 0.0) <= 0.0 and item.can_use(ship)
 
 func update_cooldowns(delta: float):
 	for item_id in cooldowns:
@@ -151,9 +148,11 @@ func update_active_effects(delta: float):
 		if active_effects[item_id] <= 0:
 			active_effects.erase(item_id)
 			equipped_consumables[item_id].remove_effect(ship)
-			if equipped_consumables[item_id].current_stack > 0 or equipped_consumables[item_id].max_stack == -1:
+			var _ci := equipped_consumables[item_id]
+			var _eff_max := (_ci.p() as ConsumableItem).max_stack
+			if _eff_max == -1 or _eff_max - _ci.used > 0:
 				# Only reset cooldown if there are remaining uses
-				cooldowns[item_id] = equipped_consumables[item_id].cooldown_time
+				cooldowns[item_id] = (_ci.p() as ConsumableItem).cooldown_time
 			# Remove effect (implement in specific consumables)
 
 @rpc("any_peer", "call_local", "reliable")

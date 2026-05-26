@@ -61,6 +61,10 @@ var beam: float = 0.0
 @export var ship_class: ShipClass = ShipClass.CA
 @export_range(1, 11) var tier: int = 1
 
+## Total skill points available to spend on commander skills. Until XP
+## progression exists, every ship just gets a flat budget.
+@export var max_skill_points: int = 25
+
 # var server_position: Vector3
 # var server_rotation: Basis
 # @export var fires: Array[Fire] = []

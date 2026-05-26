@@ -31,7 +31,7 @@ func remove_effect(ship: Ship) -> void:
 	# is automatically cleared without manually zeroing it.
 	ship.remove_static_mod(_effect)
 
-func _get_stat_lines() -> Array[String]:
+func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	return [
 		"Torpedo detection: %.1f km" % (torpedo_detection_range / 1000.0),
 		"Ship force-spot: %.1f km" % (spotting_range / 1000.0),
