@@ -18,40 +18,74 @@ func _on_apply_turrets() -> void:
 	if selection.is_empty():
 		printerr("Select a ship scene root node")
 		return
-	
+
 	var root := selection[0]
 	var count := process_turret_mounts(root)
 	print("Applied %d turrets" % count)
 
 func process_turret_mounts(node: Node) -> int:
 	var count := 0
-	
+
 	for child in node.get_children():
 		count += process_turret_mounts(child)
-	
+
 	if not node.name.begins_with("TurretMount_"):
 		return count
-	
+
+	var turret_name := node.name.trim_prefix("TurretMount_")
 	var turret_path := get_turret_path(node)
-	if turret_path.is_empty():
-		printerr("No turret_scene for: ", node.name)
-		return count
-	
-	if not ResourceLoader.exists(turret_path):
-		printerr("Turret scene not found: ", turret_path)
-		return count
-	
+
+	if turret_path.is_empty() or not ResourceLoader.exists(turret_path):
+		turret_path = create_scene_from_glb(turret_name)
+		if turret_path.is_empty():
+			printerr("No turret scene or GLB found for: ", node.name)
+			return count
+
 	for child in node.get_children():
 		if child.scene_file_path == turret_path:
 			return count
-	
+
 	var turret_scene: PackedScene = load(turret_path)
 	var turret := turret_scene.instantiate()
-	turret.name = node.name.replace("TurretMount_", "")
+	turret.name = turret_name
 	node.add_child(turret)
 	turret.owner = get_scene_root(node)
-	
+
 	return count + 1
+
+## Creates res://turrets/<turret_name>.tscn by instancing the GLB at
+## res://turrets/glb/<turret_name>.glb and attaching Gun.gd.
+## Returns the saved .tscn path, or "" if no GLB was found.
+func create_scene_from_glb(turret_name: String) -> String:
+	var glb_path := "res://turrets/glb/%s.glb" % turret_name
+	if not ResourceLoader.exists(glb_path):
+		return ""
+
+	var glb_scene: PackedScene = load(glb_path)
+	if glb_scene == null:
+		printerr("Failed to load GLB: ", glb_path)
+		return ""
+
+	var root := glb_scene.instantiate()
+	root.name = turret_name
+
+	var gun_script: Script = load("res://src/artillary/Guns/Gun.gd")
+	root.set_script(gun_script)
+	root.set("glb_path", glb_path)
+
+	var new_scene := PackedScene.new()
+	new_scene.pack(root)
+	root.queue_free()
+
+	var tscn_path := "res://turrets/%s.tscn" % turret_name
+	var err := ResourceSaver.save(new_scene, tscn_path)
+	if err != OK:
+		printerr("Failed to save turret scene: ", tscn_path, " (error %d)" % err)
+		return ""
+
+	get_editor_interface().get_resource_filesystem().scan()
+	print("Created turret scene from GLB: ", tscn_path)
+	return tscn_path
 
 func get_turret_path(node: Node) -> String:
 	if node.has_meta("extras"):

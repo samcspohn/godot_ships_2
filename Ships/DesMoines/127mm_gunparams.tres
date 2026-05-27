@@ -1,0 +1,48 @@
+[gd_resource type="Resource" script_class="GunParams" format=3 uid="uid://bqvwywgnyh75g"]
+
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_f17ee"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_7sdcc"]
+
+[sub_resource type="Resource" id="Resource_krgon"]
+resource_local_to_scene = true
+script = ExtResource("2_7sdcc")
+speed = 762.0
+drag = 6.999999999999997e-05
+damage = 1650.0
+size = 2.0
+caliber = 127.0
+mass = 25.0
+overmatch = 9
+arming_threshold = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[sub_resource type="Resource" id="Resource_4m2vt"]
+resource_local_to_scene = true
+script = ExtResource("2_7sdcc")
+speed = 762.0
+drag = 6.999999999999997e-05
+damage = 660.0
+size = 2.0
+caliber = 127.0
+mass = 25.0
+fire_buildup = 5.0
+fuze_delay = 0.001
+type = 0
+auto_bounce = 1.5708
+ricochet_angle = 1.5708
+overmatch = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[resource]
+resource_local_to_scene = true
+script = ExtResource("1_f17ee")
+elevation_speed = 15.0
+shell1 = SubResource("Resource_krgon")
+shell2 = SubResource("Resource_4m2vt")
+h_grouping = 1.0
+v_grouping = 1.0
+base_spread = 0.06
+reload_time = 4.0
+traverse_speed = 25.0
+_range = 4000.0
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="RepairParty" load_steps=4 format=3 uid="uid://cmt02tuklbcpb"]
+[gd_resource type="Resource" script_class="RepairParty" format=3 uid="uid://cmt02tuklbcpb"]
 
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="1_bm5ij"]
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="1_x8x1x"]
@@ -7,10 +7,10 @@
 [resource]
 resource_local_to_scene = true
 script = ExtResource("1_bm5ij")
-heal_percent = 0.3
+heal_per_sec = 0.009
 icon = ExtResource("1_ym5my")
 disabled_icon = ExtResource("1_x8x1x")
-cooldown_time = 10.0
-duration = 10.0
+cooldown_time = 80.0
+duration = 20.0
 max_stack = 4
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"

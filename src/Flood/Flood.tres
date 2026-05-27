@@ -1,11 +1,10 @@
-[gd_resource type="Resource" script_class="FloodParams" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="FloodParams" format=3 uid="uid://dsu2fpbkwwhet"]
 
-[ext_resource type="Script" path="res://src/Flood/flood_params.gd" id="1_flood"]
+[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="1_flood"]
 
 [resource]
 resource_local_to_scene = true
 script = ExtResource("1_flood")
-dmg_rate = 0.00375
-dur = 40.0
-max_buildup = 100.0
-buildup_reduction_rate = 0.003
+dmg_rate = 0.004
+dur = 80.0
+max_buildup = 200.0
