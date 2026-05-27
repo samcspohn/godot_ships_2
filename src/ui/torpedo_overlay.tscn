@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://bfmtu0bjwekju"]
+
+[ext_resource type="Script" uid="uid://b2c5ku38ft0a7" path="res://src/ui/torpedo_overlay.gd" id="1_ipjpd"]
+
+[node name="TorpedoOverlay" type="Node3D" unique_id=1208215674]
+script = ExtResource("1_ipjpd")
+
+[node name="AllowedArcs" type="MeshInstance3D" parent="." unique_id=1917869165]
+
+[node name="AimingArc" type="MeshInstance3D" parent="." unique_id=396249457]
+
+[node name="LeadArc" type="MeshInstance3D" parent="." unique_id=665006109]

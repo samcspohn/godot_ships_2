@@ -8,7 +8,7 @@ const GunIndicatorScene = preload("res://src/ui/gun_indicator.tscn")
 const HitStatCountersScene = preload("res://src/ui/hit_stat_counters.tscn")
 const KillFeedScene = preload("res://src/ui/kill_feed.tscn")
 const HoverTooltipScript = preload("res://src/ui/hover_tooltip.gd")
-
+const TorpedoOverlayScene = preload("res://src/ui/torpedo_overlay.tscn")
 
 # Camera controller reference
 var camera_controller: BattleCamera
@@ -40,6 +40,7 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 @onready var penetration_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo2/PenetrationLabel
 
 @onready var gun_indicator: Control = $MainContainer/CrosshairContainer/GunIndicator
+var torpedo_overlay: TorpedoOverlay = null
 
 # Sniper reticle control (created programmatically)
 var sniper_reticle: Control = null
@@ -1349,6 +1350,13 @@ func setup_weapons():
 	if camera_controller._ship.torpedo_controller:
 		setup_weapon_controller(camera_controller._ship.torpedo_controller)
 
+	if camera_controller._ship.torpedo_controller != null:
+		# Setup torpedo overlay
+		torpedo_overlay = TorpedoOverlayScene.instantiate()
+		torpedo_overlay.torpedo_controller = camera_controller._ship.torpedo_controller
+		torpedo_overlay.player_controller = player_controller
+		add_child(torpedo_overlay)
+
 func update_gun_reload_bars():
 	# Update reload progress for each weapon
 	var already_drawn_indicators = []
@@ -1488,6 +1496,12 @@ func set_ship_speed(value: float):
 
 func set_locked_target(value):
 	locked_target = value
+	# Pass locked target to torpedo overlay for lead calculation
+	if torpedo_overlay:
+		if value is Ship:
+			torpedo_overlay.target = value
+		else:
+			torpedo_overlay.target = null
 	# Trigger redraw of crosshair for target indicators
 	if crosshair_container:
 		crosshair_container.queue_redraw()

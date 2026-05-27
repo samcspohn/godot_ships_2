@@ -153,6 +153,8 @@ func update_active_effects(delta: float):
 			if _eff_max == -1 or _eff_max - _ci.used > 0:
 				# Only reset cooldown if there are remaining uses
 				cooldowns[item_id] = (_ci.p() as ConsumableItem).cooldown_time
+			# Notify listeners the slot is ready again (used by server sync tracking)
+			consumable_ready.emit(_ci)
 			# Remove effect (implement in specific consumables)
 
 @rpc("any_peer", "call_local", "reliable")

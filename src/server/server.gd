@@ -274,6 +274,10 @@ func spawn_player(id, player_name):
 	# Add to world - note game_world is a child of this node
 	players[player_name] = [player, ship, id]
 
+	# Track consumable state changes so off-screen friendlies get full syncs
+	# Deferred because consumable_manager is @onready (null until _ready())
+	call_deferred("_connect_consumable_signals", player)
+
 	var spawn_map = get_node("GameWorld/Env").get_child(0)
 	var team_spawn_point: Vector3 = (spawn_map.get_node("Spawn").get_child(team_id) as Node3D).global_position
 
@@ -428,6 +432,9 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 	# Add to world - note game_world is a child of this node
 	players[_player_name] = [player, ship, id]
 	spawn_point.add_child(player)
+
+	# Deferred so @onready vars (like consumable_manager) are ready
+	# call_deferred("_connect_consumable_signals", player)
 	player.rotation.y = rot_y
 	#player.global_position = pos
 
@@ -906,8 +913,28 @@ func is_point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 			return false
 	return true
 
+var consumable_toggled: Dictionary[Ship, bool] = {}
 var visible_toggled: Dictionary[Ship, bool] = {}
+var sunk_toggled: Dictionary[Ship, bool] = {}
 var closest_enemies_that_can_see = {}
+
+# Called when a ship's consumable state changes (used or cooldown ended).
+# Flags the ship so the next server sync sends a full update even if off-screen.
+func _on_consumable_changed(_item: ConsumableItem, ship: Ship) -> void:
+	consumable_toggled[ship] = true
+
+# Called when a ship sinks. Flags the ship so the next server sync sends
+# a full update (sinking animation, kill feed, etc.) even if off-screen.
+func _on_ship_sunk(ship: Ship) -> void:
+	sunk_toggled[ship] = true
+
+# Connect after @onready vars are initialized (called via call_deferred)
+func _connect_consumable_signals(player: Ship) -> void:
+	if player.consumable_manager:
+		player.consumable_manager.consumable_used.connect(_on_consumable_changed.bind(player))
+		player.consumable_manager.consumable_ready.connect(_on_consumable_changed.bind(player))
+	if player.health_controller:
+		player.health_controller.ship_sunk.connect(_on_ship_sunk.bind(player))
 
 var current_time = 0.0
 const UNSPOTTED_TIME = 100.0
@@ -1345,17 +1372,20 @@ func _physics_process(_delta: float) -> void:
 				var b0: Ship = b[0]
 				if p == b0:
 					pass
-				elif visible_toggled.has(b0) or is_point_in_frustum(b0.global_position, p.frustum_planes): #or is_aabb_in_frustum(b0.get_aabb(), p.frustum_planes):
+				elif visible_toggled.has(b0) or consumable_toggled.has(b0) or sunk_toggled.has(b0) or is_point_in_frustum(b0.global_position, p.frustum_planes):
 					writer1.data_array += b[1]
 				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
 					writer1.data_array += partial_bytes_list[i][1]
 				i += 1
 			var team_0_bytes = writer1.data_array
 			if not team_0_bytes.is_empty():
-				if visible_toggled.size() > 0:
+				if visible_toggled.size() > 0 or consumable_toggled.size() > 0 or sunk_toggled.size() > 0:
 					sync_game_state_reliable.rpc_id(_p_id, team_0_bytes)
 				else:
 					sync_game_state.rpc_id(_p_id, team_0_bytes)
+
+			consumable_toggled.clear()
+			sunk_toggled.clear()
 
 	# Sync individual player data
 	for p_name in players:
