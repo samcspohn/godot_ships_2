@@ -128,6 +128,7 @@ func _load_ship_buttons():
 		{"name": "Yamato", "path": "res://Ships/Yamato/Yamato.tscn"},
 		{"name": "Shimakaze", "path": "res://Ships/Shimakaze/Shimakaze.tscn"},
 		{"name": "Des Moines", "path": "res://Ships/DesMoines/DesMoines.tscn"},
+		{"name" : "Montana", "path": "res://Ships/Montana/Montana.tscn"},
 	]
 
 	for ship_data in available_ships:

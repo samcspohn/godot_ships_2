@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="1_2f3fr"]
 [ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="2_pxw7i"]
+[ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="3_v73i4"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_b0xqc"]
 resource_name = "Material"
@@ -148,7 +149,7 @@ data = PackedVector3Array(0, 0.4639889, -6.085156, 5.140105, 2.7848747, -3.70321
 [node name="AMER_406mm_50cal_mk7_3b" type="Node3D" unique_id=2092918940]
 script = ExtResource("1_2f3fr")
 _sound = ExtResource("2_pxw7i")
-pitch = 0.8
+pitch = 0.65
 variance = 0.04
 glb_path = "res://turrets/glb/AMER_406mm_50cal_mk7_3b.glb"
 
@@ -171,6 +172,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.27, 0, -14.196703)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.54, 0, -14.196703)
 
 [node name="Turret_col" type="MeshInstance3D" parent="." unique_id=1305466445]
+layers = 0
+material_override = ExtResource("3_v73i4")
 mesh = SubResource("ArrayMesh_r3rfi")
 skeleton = NodePath("")
 

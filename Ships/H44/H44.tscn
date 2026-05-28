@@ -171,6 +171,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_7xy2y"]
 script = ExtResource("9_1kp4b")
+max_speed_knots = 29.0
 acceleration_time = 40.0
 deceleration_time = 40.0
 turning_circle_radius = 600.0

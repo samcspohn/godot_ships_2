@@ -8,7 +8,9 @@ class_name HpPartMod
 var current_pool1: float
 var current_pool2: float
 
-var healable_damage: float = 0.0
+var healable_damage: float:
+		get:
+			return healable_pool1 + healable_pool2
 var healable_pool1: float = 0.0
 var healable_pool2: float = 0.0
 
@@ -27,14 +29,14 @@ func instantiate(ship: Ship) -> Moddable:
 func init(_ship: Ship) -> void:
 	current_pool1 = pool1
 	current_pool2 = pool2
-	healable_damage = 0.0
+	# healable_damage = 0.0
 	healable_pool1 = 0.0
 	healable_pool2 = 0.0
 	super.init(_ship)
 
 
-func _sync_healable_damage() -> void:
-	healable_damage = healable_pool1 + healable_pool2
+# func _sync_healable_damage() -> void:
+# 	healable_damage = healable_pool1 + healable_pool2
 
 
 func apply_damage(dmg: float, rate: float = 0.5, repair_rate: float = 0.0) -> float:
@@ -49,7 +51,7 @@ func apply_damage(dmg: float, rate: float = 0.5, repair_rate: float = 0.0) -> fl
 	if repair_rate > 0.0:
 		healable_pool1 = clamp(healable_pool1 + damage_to_pool1 * repair_rate, 0.0, pool1 - current_pool1)
 		healable_pool2 = clamp(healable_pool2 + damage_to_pool2 * repair_rate, 0.0, pool2 - current_pool2)
-		_sync_healable_damage()
+		# _sync_healable_damage()
 
 	return damage_to_pool1 + damage_to_pool2
 
@@ -73,6 +75,6 @@ func heal(amount: float) -> float:
 	current_pool2 = min(current_pool2 + heal2, pool2)
 	healable_pool1 = max(healable_pool1 - heal1, 0.0)
 	healable_pool2 = max(healable_pool2 - heal2, 0.0)
-	_sync_healable_damage()
+	# _sync_healable_damage()
 
 	return heal1 + heal2

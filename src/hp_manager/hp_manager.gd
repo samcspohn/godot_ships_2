@@ -187,14 +187,20 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 	var _dmg: float = 0
 	if armor_part.type == ArmorPart.Type.MODULE:
 		_dmg = min(dmg, base_dmg * 0.1)
+		# Module hits have no hp_part to track healable; route applied damage to the
+		# ship-wide light_damage pool, same as the armor_part==null branch above.
+		light_damage += _dmg * repair_rate
 	elif armor_part.type == ArmorPart.Type.CITADEL:
-		_dmg = citadel.apply_damage(dmg, 0.333, repair_rate)
+		_dmg = citadel.apply_damage(dmg, 0.5, repair_rate)
 	elif armor_part.hp_part != null: # handled by module
 		_dmg = armor_part.hp_part.apply_damage(dmg, 0.5, repair_rate)
 
 	if is_pen:
 		dmg = max(_dmg, base_dmg * 0.1)
 
+	# Spill = HP loss not absorbed by the armor part's pools (overpen floor, pool capped,
+	# or split overflow). It must follow the same repair_rate the hit used; otherwise a
+	# repair_rate of 1.0 would still produce unhealable damage when spill > 0.
 	var spill_healable_damage = max(dmg - _dmg, 0.0) * repair_rate
 	if spill_healable_damage > 0.0:
 		light_damage += spill_healable_damage

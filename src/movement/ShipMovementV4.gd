@@ -222,15 +222,16 @@ func _physics_process(delta: float) -> void:
 	# Thrust
 	var target_power = throttle_settings[throttle_level + 1]
 
-	# Refresh derived top speed each tick so mods take effect.
-	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
+	# # Refresh derived top speed each tick so mods take effect.
+	# max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
 
 	# Rudder
 	rudder_input = move_toward(rudder_input, target_rudder, delta / _p().rudder_response_time)
 
 
 	var forward = -ship.global_transform.basis.z.normalized()
-	var current_speed: float = ship.linear_velocity.dot(forward)
+	var current_speed: float = clamp(ship.linear_velocity.dot(forward), -max_speed, max_speed)
+
 	var right = ship.global_transform.basis.x
 	var up = ship.global_transform.basis.y
 	var flat_right = forward.cross(Vector3.UP)

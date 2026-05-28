@@ -260,6 +260,82 @@ func convert_vertex_armor_to_face_armor(vertex_armor: Array[int], indices: Array
 	print("  Successfully converted ", face_count, " faces with armor values")
 	return face_armor
 
+func build_sibling_names_map(gltf_json: Dictionary) -> Dictionary:
+	"""Build a map of node_index -> array of raw sibling names (nodes sharing the same parent)"""
+	var siblings: Dictionary = {}
+
+	if not gltf_json.has("nodes"):
+		return siblings
+
+	var nodes = gltf_json["nodes"]
+
+	# Root-level nodes are siblings of each other
+	if gltf_json.has("scenes") and gltf_json["scenes"].size() > 0:
+		var scene = gltf_json["scenes"][0]
+		if scene.has("nodes"):
+			var root_names: Array[String] = []
+			for root_idx in scene["nodes"]:
+				var root_idx_int: int = int(root_idx)
+				if root_idx_int < nodes.size():
+					root_names.append(nodes[root_idx_int].get("name", ""))
+			for root_idx in scene["nodes"]:
+				siblings[int(root_idx)] = root_names
+
+	# Non-root nodes: each parent's children are siblings of each other
+	for node_index in range(nodes.size()):
+		var node = nodes[node_index]
+		if node.has("children"):
+			var child_names: Array[String] = []
+			for child_idx in node["children"]:
+				var child_idx_int: int = int(child_idx)
+				if child_idx_int < nodes.size():
+					child_names.append(nodes[child_idx_int].get("name", ""))
+			for child_idx in node["children"]:
+				siblings[int(child_idx)] = child_names
+
+	return siblings
+
+func get_godot_node_name(raw_name: String, sibling_raw_names: Array) -> String:
+	"""
+	Apply Godot's GLB import renaming: if a node ends with _col (with optional number
+	suffix) and no sibling exists with the base name, Godot strips the _col suffix.
+	  barbette_col       -> barbette       (no sibling named barbette)
+	  barbette_col.001   -> barbette_001   (no sibling named barbette.001)
+	  barbette_col_001   -> barbette_001   (no sibling named barbette_001)
+	If a matching sibling does exist, the name is kept (dots normalized to underscores).
+	"""
+	var col_regex = RegEx.new()
+	col_regex.compile("^(.+)_col(?:\\.(\\d+)|_(\\d+))?$")
+	var m = col_regex.search(raw_name)
+
+	if m == null:
+		# No _col pattern: just normalize dots to underscores (Godot import behavior)
+		return raw_name.replace(".", "_")
+
+	var base: String = m.get_string(1)       # e.g. "barbette"
+	var dot_num: String = m.get_string(2)    # e.g. "001" when suffix was .001, else ""
+	var under_num: String = m.get_string(3)  # e.g. "001" when suffix was _001, else ""
+
+	var candidate_raw: String  # The sibling name that would conflict (raw GLB name)
+	var stripped_name: String  # The Godot name if _col is stripped
+
+	if dot_num != "":
+		candidate_raw = base + "." + dot_num   # "barbette.001"
+		stripped_name = base + "_" + dot_num   # "barbette_001"
+	elif under_num != "":
+		candidate_raw = base + "_" + under_num  # "barbette_001"
+		stripped_name = base + "_" + under_num  # "barbette_001"
+	else:
+		candidate_raw = base   # "barbette"
+		stripped_name = base   # "barbette"
+
+	if candidate_raw in sibling_raw_names:
+		# A sibling with the base name exists; Godot keeps _col (normalize dots only)
+		return raw_name.replace(".", "_")
+	else:
+		# No conflicting sibling; Godot strips _col
+		return stripped_name
+
 func build_node_to_armor_mapping(gltf_state: GLTFState):
 	"""Build node hierarchy mapping using GLTF structure"""
 	var gltf_json = gltf_state.get_json()
@@ -274,6 +350,9 @@ func build_node_to_armor_mapping(gltf_state: GLTFState):
 		print("No scenes found in GLTF")
 		return
 
+	# Build sibling map so each node can check for name conflicts
+	var node_sibling_names: Dictionary = build_sibling_names_map(gltf_json)
+
 	# Process the first scene (usually the main scene)
 	if gltf_json["scenes"].size() > 0:
 		var scene = gltf_json["scenes"][0]
@@ -281,9 +360,9 @@ func build_node_to_armor_mapping(gltf_state: GLTFState):
 
 		if scene.has("nodes"):
 			for root_node_index in scene["nodes"]:
-				traverse_node_hierarchy(gltf_json, root_node_index, "")
+				traverse_node_hierarchy(gltf_json, int(root_node_index), "", node_sibling_names)
 
-func traverse_node_hierarchy(gltf_json: Dictionary, node_index: int, parent_path: String):
+func traverse_node_hierarchy(gltf_json: Dictionary, node_index: int, parent_path: String, node_sibling_names: Dictionary):
 	"""Recursively traverse GLTF node hierarchy and map to armor data"""
 	if not gltf_json.has("nodes"):
 		return
@@ -293,16 +372,20 @@ func traverse_node_hierarchy(gltf_json: Dictionary, node_index: int, parent_path
 		return
 
 	var node = nodes[node_index]
-	var node_name = node.get("name", "Node_" + str(node_index))
+	var raw_name: String = node.get("name", "Node_" + str(node_index))
 
-	# Build the hierarchical path
+	# Apply Godot's import-time renaming (strips _col when no sibling conflicts)
+	var siblings: Array = node_sibling_names.get(node_index, [])
+	var godot_name: String = get_godot_node_name(raw_name, siblings)
+
+	# Build the hierarchical path using the Godot-resolved name
 	var current_path: String
 	if parent_path == "":
-		current_path = node_name
+		current_path = godot_name
 	else:
-		current_path = parent_path + "/" + node_name
+		current_path = parent_path + "/" + godot_name
 
-	print("Processing GLTF node: ", current_path, " (index: ", node_index, ")")
+	print("Processing GLTF node: ", raw_name, " -> ", godot_name, " (path: ", current_path, ")")
 
 	# Check if this node has a mesh
 	if node.has("mesh"):
@@ -312,7 +395,7 @@ func traverse_node_hierarchy(gltf_json: Dictionary, node_index: int, parent_path
 		# Find armor data for this mesh
 		if armor_map.has(mesh_index):
 			var mesh_armor_data = armor_map[mesh_index]
-			node_armor_mapping[current_path.replace(".", "_")] = mesh_armor_data
+			node_armor_mapping[current_path] = mesh_armor_data
 			print("  Mapped armor data: ", mesh_armor_data.size(), " values to node: ", current_path)
 		else:
 			print("  No armor data found for mesh index: ", mesh_index)
@@ -320,7 +403,7 @@ func traverse_node_hierarchy(gltf_json: Dictionary, node_index: int, parent_path
 	# Recursively process children
 	if node.has("children"):
 		for child_index in node["children"]:
-			traverse_node_hierarchy(gltf_json, child_index, current_path)
+			traverse_node_hierarchy(gltf_json, int(child_index), current_path, node_sibling_names)
 
 func get_armor_for_face(node_path: String, face_index: int) -> int:
 	"""Get armor value for a specific face on a specific node"""

@@ -129,7 +129,7 @@ func get_base_params() -> GunParams:
 	return controller.get_base_params()
 
 func get_shell() -> ShellParams:
-	return controller.get_shell_params()
+	return controller.get_shell_params() # did you setup the secondary subcontroller(s)?
 
 func _ready() -> void:
 	if Engine.is_editor_hint():

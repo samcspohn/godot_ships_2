@@ -44,5 +44,5 @@ v_grouping = 1.0
 base_spread = 0.06
 reload_time = 4.0
 traverse_speed = 25.0
-_range = 4000.0
+_range = 4600.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
