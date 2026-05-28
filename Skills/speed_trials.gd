@@ -4,7 +4,7 @@ extends Skill
 ## High-performance engine tuning for faster top speed and quicker acceleration.
 
 const SPEED_MOD:  float = 1.05   # +5% max speed
-const ACCEL_MOD:  float = 0.80   # -20% acceleration time
+const ACCEL_MOD:  float = 0.95   # -5% acceleration time
 
 func _init() -> void:
 	skill_id = "st"

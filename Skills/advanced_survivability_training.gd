@@ -4,8 +4,8 @@ extends Skill
 ## For every 100% of max HP accumulated in potential damage received, gain 1
 ## tier of DC/RP improvements. Caps at 20 tiers.
 
-const COOLDOWN_PER_TIER: float = 0.005   # -0.5% cooldown per tier
-const DURATION_PER_TIER: float = 0.005   # +0.5% duration per tier
+const COOLDOWN_PER_TIER: float = 0.01   # -1% cooldown per tier
+# const DURATION_PER_TIER: float = 0.005   # +0.5% duration per tier
 # const MAX_TIERS: int = 20
 
 var _applied_tiers: int = 0
@@ -95,9 +95,9 @@ func update_ui(container: Control) -> void:
 func init_hover(container: Control, ht) -> void:
 	ht.attach(container, func() -> String:
 		var cool_pct := (1.0 - pow(1.0 - COOLDOWN_PER_TIER, _applied_tiers)) * 100.0
-		var dur_pct  := (pow(1.0 + DURATION_PER_TIER, _applied_tiers) - 1.0) * 100.0
-		return "Advanced Survivability Training\nStacks: %d\nDC/RP Cooldown: -%.1f%%\nDC/RP Duration: +%.1f%%" \
-			% [_applied_tiers, cool_pct, dur_pct]
+		# var dur_pct  := (pow(1.0 + DURATION_PER_TIER, _applied_tiers) - 1.0) * 100.0
+		return "Advanced Survivability Training\nStacks: %d\nDC/RP Cooldown: -%.1f%%" \
+			% [_applied_tiers, cool_pct]
 	)
 
 func to_bytes() -> PackedByteArray:

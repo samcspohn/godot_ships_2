@@ -4,8 +4,8 @@ extends Skill
 ## Harder to ignite, less fire damage, shorter burn duration.
 
 const BUILDUP_MOD: float = 1.10   # +10% fire resistance (harder to ignite)
-const DMG_MOD:     float = 0.70   # -30% fire damage rate
-const DUR_MOD:     float = 0.90   # -10% fire duration
+const DMG_MOD:     float = 0.90   # -10% fire damage rate
+const DUR_MOD:     float = 0.70   # -30% fire duration
 
 func _init() -> void:
 	skill_id = "fp"
