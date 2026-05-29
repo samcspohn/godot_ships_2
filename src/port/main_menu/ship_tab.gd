@@ -168,7 +168,7 @@ func _on_ship_button_pressed(ship_path):
 	# Hide armor meshes in the main viewport (they start with layers=0 in the scene)
 	# and populate the armor overlay viewport if armor view is enabled
 	if armor_view_enabled:
-		_apply_armor_visibility()
+		_apply_armor_visibility.call_deferred()
 
 	# Emit signal that ship was selected
 	ship_selected.emit(selected_ship)
@@ -320,7 +320,7 @@ func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
 	# Secondary guns have no armor; skip their subtrees.
 	if node is Gun and node.controller is SecSubController:
 		return
-	if node is MeshInstance3D and String(node.name).contains("_col"):
+	if node is MeshInstance3D and node.get_children().any(func(c): return c is ArmorPart):
 		node.layers = 1 if enabled else 0
 	for child in node.get_children():
 		_set_armor_visibility_main(child, enabled)

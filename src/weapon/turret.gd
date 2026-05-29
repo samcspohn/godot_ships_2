@@ -487,7 +487,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.armor_system = armor_system
 		armor_part.armor_path = path
 		armor_part.ship = self._ship
-		self.add_child(armor_part)
+		node.add_child(armor_part)
 		self._ship.armor_parts.append(armor_part)
 		# self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
 		# static_body.collision_layer = 1 << 1

@@ -160,10 +160,7 @@ func _collect_mesh_aabb_recursive(node: Node, result: Dictionary) -> void:
 		node_name_lower.contains("citadel")
 	)
 
-	# Skip collision meshes
-	var is_armor_col = node_name_lower.ends_with("_col")
-
-	if node is MeshInstance3D and is_hull_mesh and not is_armor_col:
+	if node is MeshInstance3D and is_hull_mesh and not node.get_children().any(func(c): return c is ArmorPart):
 		var mesh_instance = node as MeshInstance3D
 		var mesh_aabb = mesh_instance.get_aabb()
 

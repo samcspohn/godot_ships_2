@@ -677,7 +677,7 @@ func _disable_armor_overlay(ship_node: Node) -> void:
 		_set_armor_visibility_main(ship_node, false)
 
 func _set_armor_visibility_main(node: Node, enabled: bool) -> void:
-	if node is MeshInstance3D and String(node.name).contains("_col"):
+	if node is MeshInstance3D and node.get_children().any(func(c): return c is ArmorPart):
 		node.layers = 1 if enabled else 0
 	for child in node.get_children():
 		_set_armor_visibility_main(child, enabled)

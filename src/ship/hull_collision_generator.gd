@@ -282,10 +282,7 @@ static func _collect_hull_vertices(node: Node, points: PackedVector3Array, inclu
 	if include_superstructure:
 		is_hull_mesh = is_hull_mesh or node_name_lower.contains("superstructure")
 
-	# Skip armor collision meshes (they're handled separately for raycasting)
-	var is_armor_col = node_name_lower.ends_with("_col")
-
-	if node is MeshInstance3D and is_hull_mesh and not is_armor_col:
+	if node is MeshInstance3D and is_hull_mesh and not node.get_children().any(func(c): return c is ArmorPart):
 		var mesh_instance = node as MeshInstance3D
 		_extract_mesh_vertices(mesh_instance, points)
 

@@ -29,8 +29,9 @@ var armor_camera: Camera3D
 # Reference to the main camera we're mirroring
 var main_camera: Camera3D
 
-# The opaque material used for armor meshes inside the armor viewport
-var opaque_armor_material: StandardMaterial3D
+# The shared ShaderMaterial applied to every armor duplicate in the armor viewport.
+# Color data lives in the mesh vertex colors (written by ArmorMeshBuilder), not here.
+var armor_thickness_material: ShaderMaterial
 
 # Track which MeshInstance3D nodes we've duplicated into the armor viewport
 # Key: original MeshInstance3D instance_id, Value: { "duplicate": ..., "original": ... }
@@ -55,7 +56,9 @@ var source_viewport: SubViewport
 var _setup_done: bool = false
 
 func _ready():
-	opaque_armor_material = load("res://Ships/Armor_viewer_opaque.tres") as StandardMaterial3D
+	var shader := load("res://src/armor/armor_thickness_viewer.gdshader") as Shader
+	armor_thickness_material = ShaderMaterial.new()
+	armor_thickness_material.shader = shader
 
 	# Defer standalone auto-setup to next frame so callers have a chance to
 	# call setup_embedded() right after add_child() in the same frame.
@@ -235,34 +238,44 @@ func _collect_armor_meshes(node: Node, ship_root: Node, part_visibility: Diction
 	if node is Gun and node.controller is SecSubController:
 		return
 
-	if node is MeshInstance3D and String(node.name).contains("_col"):
-		var part_type = _get_part_type_for_mesh_name(String(node.name))
-		var is_visible = part_visibility.get(part_type, true)
-		if is_visible:
-			_add_armor_duplicate(node, ship_root)
+	if node is MeshInstance3D:
+		var armor_part: ArmorPart = null
+		for child in node.get_children():
+			if child is ArmorPart:
+				armor_part = child as ArmorPart
+				break
+		if armor_part != null:
+			var part_type := _get_part_type_for_mesh_name(String(node.name))
+			var is_visible: bool = part_visibility.get(part_type, true)
+			if is_visible:
+				var face_values = armor_part.armor_system.armor_data.get(armor_part.armor_path, null)
+				assert(face_values != null,
+					"ArmorViewportOverlay: no registry data for node '%s' (armor_path='%s')" \
+						% [node.name, armor_part.armor_path])
+				_add_armor_duplicate(node, armor_part, face_values)
 
 	for child in node.get_children():
 		_collect_armor_meshes(child, ship_root, part_visibility)
 
-func _add_armor_duplicate(original: MeshInstance3D, _ship_root: Node):
-	var dup = MeshInstance3D.new()
-	dup.mesh = original.mesh
-	dup.material_override = opaque_armor_material
+func _add_armor_duplicate(original: MeshInstance3D, armor_part: ArmorPart, face_armor_values: Array):
+	var dup := MeshInstance3D.new()
+	dup.mesh = ArmorMeshBuilder.build_from_collision(armor_part, face_armor_values)
+	dup.material_override = armor_thickness_material
 	dup.layers = 1
-	dup.global_transform = original.global_transform
+	dup.global_transform = armor_part.global_transform
 
 	armor_root.add_child(dup)
 	armor_duplicates[original.get_instance_id()] = {
 		"duplicate": dup,
-		"original": original
+		"armor_part": armor_part
 	}
 
 func _sync_armor_transforms():
 	for entry in armor_duplicates.values():
-		var original: MeshInstance3D = entry["original"] as MeshInstance3D
+		var armor_part: ArmorPart = entry["armor_part"] as ArmorPart
 		var dup: MeshInstance3D = entry["duplicate"] as MeshInstance3D
-		if is_instance_valid(original) and is_instance_valid(dup):
-			dup.global_transform = original.global_transform
+		if is_instance_valid(armor_part) and is_instance_valid(dup):
+			dup.global_transform = armor_part.global_transform
 		elif is_instance_valid(dup):
 			dup.queue_free()
 

@@ -175,9 +175,7 @@ func _collect_mesh_aabb_recursive(node: Node, result: Dictionary) -> void:
 		node_name_lower.contains("casemate") or
 		node_name_lower.contains("citadel")
 	)
-	var is_armor_col = node_name_lower.ends_with("_col")
-
-	if node is MeshInstance3D and is_hull_mesh and not is_armor_col:
+	if node is MeshInstance3D and is_hull_mesh and not node.get_children().any(func(c): return c is ArmorPart):
 		var mesh_instance = node as MeshInstance3D
 		var mesh_aabb = mesh_instance.get_aabb()
 		var transformed_aabb = mesh_instance.transform * mesh_aabb
@@ -213,7 +211,7 @@ func _physics_process(delta: float) -> void:
 
 	# Buoyancy (vertical)
 	if ship.global_position.y < ship_draft:
-		var submerged_ratio = (ship_draft - ship.global_position.y) / ship_draft
+		var submerged_ratio = clamp(ship_draft - ship.global_position.y, 0.0, ship_draft * 2.0) / ship_draft
 		ship.apply_central_force(Vector3.UP * ship.mass * -ship.get_gravity() * submerged_ratio)
 
 	# Self-righting buoyancy (roll and pitch stability)
