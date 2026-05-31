@@ -28,8 +28,8 @@ func _a(ship: Ship) -> void:
 	if not _active:
 		return
 	(ship.health_controller.params.dynamic_mod as HPParams).torpedo_protection        += TORP_PROT_BONUS
-	(ship.fire_manager.fparams.dynamic_mod   as FireParams).dmg_rate                  *= FIRE_MOD
-	(ship.flood_manager.params.dynamic_mod   as FloodParams).dmg_rate                 *= FLOOD_MOD
+	(ship.fire_manager.fparams.dynamic_mod   as DOTParams).dmg_rate                  *= FIRE_MOD
+	(ship.flood_manager.dot_params.dynamic_mod   as DOTParams).dmg_rate                 *= FLOOD_MOD
 
 func apply(ship: Ship) -> void:
 	_ship = ship

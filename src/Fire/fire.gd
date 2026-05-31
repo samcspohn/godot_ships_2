@@ -9,9 +9,9 @@ var lifetime: float = 0
 var manager: FireManager = null
 var last_hit_time: float = 0
 # const TIME_TO_DECAY: float = 30.0
-var _params: FireParams:
+var _params: DOTParams:
 	get:
-		return manager.fparams.p() as FireParams
+		return manager.fparams.p() as DOTParams
 	set(value):
 		pass
 var _rparams: ResistanceParams:

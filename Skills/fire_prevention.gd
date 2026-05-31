@@ -21,5 +21,5 @@ func _init() -> void:
 
 func _a(ship: Ship) -> void:
 	(ship.fire_manager.rparams.dynamic_mod as ResistanceParams).max_buildup *= BUILDUP_MOD
-	(ship.fire_manager.fparams.dynamic_mod as FireParams).dmg_rate          *= DMG_MOD
-	(ship.fire_manager.fparams.dynamic_mod as FireParams).dur               *= DUR_MOD
+	(ship.fire_manager.fparams.dynamic_mod as DOTParams).dmg_rate          *= DMG_MOD
+	(ship.fire_manager.fparams.dynamic_mod as DOTParams).dur               *= DUR_MOD

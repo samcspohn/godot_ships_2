@@ -9,7 +9,6 @@
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="5_i4u0w"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_047bu"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="9_1kp4b"]
-[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="9_fadtt"]
 [ext_resource type="PackedScene" uid="uid://31jgnxcyvi22" path="res://turrets/GER_500mm_2b_rf.tscn" id="9_gdlp2"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="9_i4gay"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="10_54qku"]
@@ -22,6 +21,7 @@
 [ext_resource type="PackedScene" uid="uid://cyw7ae75lhjui" path="res://turrets/GER_150mm_2b_gerat60.tscn" id="14_nfp68"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="15_fadtt"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="15_pnxfl"]
+[ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="19_itqm6"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="21_pm07r"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="22_wake"]
 [ext_resource type="Script" uid="uid://dkqfpprasyxmh" path="res://src/weapon/fire_arc.gd" id="24_3wv4u"]
@@ -189,17 +189,14 @@ metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_vudfj"]
 script = ExtResource("10_54qku")
-max_buildup = 220.0
+max_buildup = 210.0
 buildup_reduction_rate = 0.02
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_5nopw"]
-resource_local_to_scene = true
-script = ExtResource("9_fadtt")
-dmg_rate = 0.002
-dur = 100.0
-max_buildup = 200.0
-metadata/_custom_type_script = "uid://dc42cijwbxhfc"
+[sub_resource type="Resource" id="Resource_gpbbn"]
+script = ExtResource("10_54qku")
+max_buildup = 210.0
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_hp7wl"]
 script = ExtResource("24_3wv4u")
@@ -320,7 +317,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.299852, 43.448494)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.399746, 133.23595)
 
 [node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
-params = SubResource("Resource_5nopw")
+dot_params = ExtResource("19_itqm6")
+rparams = SubResource("Resource_gpbbn")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -127.7196)

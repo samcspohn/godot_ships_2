@@ -24,7 +24,7 @@
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="16_2n0p4"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="16_u4el4"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="17_3t06y"]
-[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="22_jnmmu"]
+[ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="21_slgwc"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="26_gho4i"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="27_slgwc"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://src/particles/templates/funnel_exhaust_smoke_template.tres" id="28_slgwc"]
@@ -34,23 +34,17 @@ script = ExtResource("3_461ox")
 torpedo_protection = 0.38
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_slgwc"]
+[sub_resource type="Resource" id="Resource_2n723"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 298800.0
 pool2 = 298800.0
 
-[sub_resource type="Resource" id="Resource_2n723"]
+[sub_resource type="Resource" id="Resource_2vr8n"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 19920.0
 pool2 = 39840.0
-
-[sub_resource type="Resource" id="Resource_2vr8n"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_ifinn"]
 resource_local_to_scene = true
@@ -59,6 +53,12 @@ pool1 = 6640.0
 pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_3mkxm"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 6640.0
+pool2 = 13280.0
+
+[sub_resource type="Resource" id="Resource_2vgdv"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 16600.0
@@ -116,7 +116,7 @@ turning_circle_radius = 350.0
 rudder_response_time = 16.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
-[sub_resource type="Resource" id="Resource_2vgdv"]
+[sub_resource type="Resource" id="Resource_u4el4"]
 resource_local_to_scene = true
 script = ExtResource("14_3mkxm")
 icon = ExtResource("13_ifinn")
@@ -127,7 +127,7 @@ max_stack = -1
 type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_u4el4"]
+[sub_resource type="Resource" id="Resource_3t06y"]
 resource_local_to_scene = true
 script = ExtResource("17_3t06y")
 icon = ExtResource("16_u4el4")
@@ -142,12 +142,10 @@ script = ExtResource("16_2n0p4")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_3t06y"]
-resource_local_to_scene = true
-script = ExtResource("22_jnmmu")
-dmg_rate = 0.004
-dur = 80.0
+[sub_resource type="Resource" id="Resource_jnmmu"]
+script = ExtResource("16_2n0p4")
 max_buildup = 200.0
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_2kpxh"]
 script = ExtResource("7_17org")
@@ -182,11 +180,11 @@ _max_hp = 99600.0
 bow_percent = 0.2
 stern_percent = 0.2
 casemate_percent = 0.6
-citadel = SubResource("Resource_slgwc")
-casemate = SubResource("Resource_2n723")
-bow = SubResource("Resource_2vr8n")
-stern = SubResource("Resource_ifinn")
-superstructure = SubResource("Resource_3mkxm")
+citadel = SubResource("Resource_2n723")
+casemate = SubResource("Resource_2vr8n")
+bow = SubResource("Resource_ifinn")
+stern = SubResource("Resource_3mkxm")
+superstructure = SubResource("Resource_2vgdv")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_5uoyc")
@@ -208,7 +206,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_ckxh7")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_2vgdv"), SubResource("Resource_u4el4")])
+equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_u4el4"), SubResource("Resource_3t06y")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("14_wi2om")]([null, null, null, null, null, null])
@@ -230,7 +228,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3211813, 26.880922)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.8212657, 100.19989)
 
 [node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
-params = SubResource("Resource_3t06y")
+dot_params = ExtResource("21_slgwc")
+rparams = SubResource("Resource_jnmmu")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.17707)

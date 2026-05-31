@@ -8,9 +8,14 @@ var hp: HPManager
 var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FloodManager = null
-var _params: FloodParams:
+var _params: DOTParams:
 	get:
-		return manager.params.p() as FloodParams
+		return manager.dot_params.p() as DOTParams
+	set(value):
+		pass
+var _rparams: ResistanceParams:
+	get:
+		return manager.rparams.p() as ResistanceParams
 	set(value):
 		pass
 var _owner: Ship = null
@@ -18,7 +23,7 @@ var _owner: Ship = null
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a
-		if curr_buildup >= _params.max_buildup:
+		if curr_buildup >= _rparams.max_buildup:
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "flood"})
 			_owner.stats.flood_count += 1
@@ -58,8 +63,8 @@ func _physics_process(delta: float) -> void:
 					var zone_index := manager.floods.find(self)
 					ReplayRecorder.record_flood_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
-		elif curr_buildup < _params.max_buildup:
-			curr_buildup -= delta * _params.max_buildup * _params.buildup_reduction_rate
+		elif curr_buildup < _rparams.max_buildup:
+			curr_buildup -= delta * _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
 
 func damage(delta):

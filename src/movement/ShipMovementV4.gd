@@ -171,7 +171,7 @@ func _check_land_collision() -> void:
 			touching_land = true
 			var impulse = (ship.position - dict["point"])
 			impulse.y = 0
-			impulse = ship.mass * 30.0 * impulse.normalized()
+			impulse = ship.mass * 10.0 * impulse.normalized()
 			ship.apply_central_impulse(impulse)
 			grounded_position = dict["point"]
 			grounded_island = dict["collider"]

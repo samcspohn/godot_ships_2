@@ -136,7 +136,7 @@ func record_potential_damage(damage: float, position: Vector3, caliber: float):
 	assert(server != null, "server not found")
 	var enemy_ships = server._get_team((_ship.team.team_id + 1) % 2)
 	for ship in enemy_ships:
-		if ship.global_position.distance_to(position) < 400:
+		if ship.global_position.distance_to(position) < 500:
 			# var radius_mod = caliber / HPManager.SHELL_DAMAGE_RADIUS_MOD
 			# var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
 			# damage *= dmg_mod

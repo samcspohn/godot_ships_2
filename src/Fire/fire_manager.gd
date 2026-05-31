@@ -1,7 +1,7 @@
 extends Node3D
 class_name FireManager
 
-@export var fparams: FireParams
+@export var fparams: DOTParams
 @export var rparams: ResistanceParams
 #var _params: FireParams
 @export var fires: Array[Fire] = []
@@ -30,7 +30,7 @@ func get_active_fires() -> int:
 
 func _ready() -> void:
 	await get_parent().get_parent().ready
-	fparams = fparams.instantiate(_ship) as FireParams
+	fparams = fparams.instantiate(_ship) as DOTParams
 	rparams = rparams.instantiate(_ship) as ResistanceParams
 
 	# _params = params.duplicate(true)

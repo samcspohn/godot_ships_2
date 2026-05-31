@@ -1,8 +1,8 @@
 # src/consumables/damage_control_party.gd
 extends ConsumableItem
 class_name DamageControl
-@export var duration_reduction = 0.65
-@export var damage_reduction = 0.65
+@export var duration_reduction = 1.0 - 0.65
+@export var damage_reduction = 1.0 - 0.65
 
 func _init():
 	type = ConsumableType.DAMAGE_CONTROL
@@ -13,16 +13,19 @@ func _ready() -> void:
 
 func effect(ship: Ship) -> void:
 	var p := self.p() as DamageControl
-	var fire_params := ship.fire_manager.fparams.static_mod as FireParams
+	var fire_params := ship.fire_manager.fparams.static_mod as DOTParams
 	var resist_params := ship.fire_manager.rparams.static_mod as ResistanceParams
-	fire_params.dur *= (1.0 - p.duration_reduction)
-	fire_params.dmg_rate *= (1.0 - p.damage_reduction)
+	fire_params.dur *= p.duration_reduction
+	fire_params.dmg_rate *= p.damage_reduction
 	resist_params.buildup_reduction_rate *= 10.0
+	resist_params.reduction_block_rate *= 0.1
 
-	var flood_params := ship.flood_manager.params.static_mod as FloodParams
-	flood_params.dur *= (1.0 - p.duration_reduction)
-	flood_params.dmg_rate *= (1.0 - p.damage_reduction)
-	flood_params.buildup_reduction_rate *= 10.0
+	var flood_params := ship.flood_manager.dot_params.static_mod as DOTParams
+	var flood_rparams := ship.flood_manager.rparams.static_mod as ResistanceParams
+	flood_params.dur *= p.duration_reduction
+	flood_params.dmg_rate *= p.damage_reduction
+	flood_rparams.buildup_reduction_rate *= 10.0
+	flood_rparams.reduction_block_rate *= 0.1
 
 func apply_effect(ship: Ship) -> void:
 	# Create damage control effect that reduces fire duration and damage by 65%

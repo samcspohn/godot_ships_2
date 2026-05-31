@@ -16,7 +16,6 @@
 [ext_resource type="PackedScene" uid="uid://d0y6pel4m754v" path="res://turrets/IJN_155mm_3b_3rd_yr.tscn" id="10_rniut"]
 [ext_resource type="Resource" uid="uid://cfsrifmgvvm6k" path="res://turrets/Shells/IJN_127mm_type89_HE.tres" id="10_uql7x"]
 [ext_resource type="PackedScene" uid="uid://bvn0hxpwoxai0" path="res://turrets/IJN_127mm_2b_type89.tscn" id="11_566e5"]
-[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="11_pue0t"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="12_g21k6"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="12_ssrv5"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="13_0yy7r"]
@@ -25,6 +24,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="15_uql7x"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="16_4avny"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="17_svlgc"]
+[ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="22_svlgc"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="27_g7l6b"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="28_wake"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="30_ssrv5"]
@@ -36,17 +36,23 @@ script = ExtResource("4_073m0")
 torpedo_protection = 0.51
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_svlgc"]
+[sub_resource type="Resource" id="Resource_4avny"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 297300.0
 pool2 = 297300.0
 
-[sub_resource type="Resource" id="Resource_0yy7r"]
+[sub_resource type="Resource" id="Resource_svlgc"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 26426.666666666668
 pool2 = 52853.333333333336
+
+[sub_resource type="Resource" id="Resource_0yy7r"]
+resource_local_to_scene = true
+script = ExtResource("5_p50sc")
+pool1 = 11561.666666666666
+pool2 = 23123.333333333332
 
 [sub_resource type="Resource" id="Resource_gpmcf"]
 resource_local_to_scene = true
@@ -55,12 +61,6 @@ pool1 = 11561.666666666666
 pool2 = 23123.333333333332
 
 [sub_resource type="Resource" id="Resource_mhmk2"]
-resource_local_to_scene = true
-script = ExtResource("5_p50sc")
-pool1 = 11561.666666666666
-pool2 = 23123.333333333332
-
-[sub_resource type="Resource" id="Resource_qql7a"]
 resource_local_to_scene = true
 script = ExtResource("5_p50sc")
 pool1 = 16516.666666666668
@@ -188,7 +188,7 @@ deceleration_time = 40.0
 turning_circle_radius = 320.0
 rudder_response_time = 15.0
 
-[sub_resource type="Resource" id="Resource_yhqtv"]
+[sub_resource type="Resource" id="Resource_qql7a"]
 resource_local_to_scene = true
 script = ExtResource("15_g7l6b")
 icon = ExtResource("13_0yy7r")
@@ -214,12 +214,10 @@ max_buildup = 200.0
 buildup_reduction_rate = 0.02
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_26rxh"]
-resource_local_to_scene = true
-script = ExtResource("11_pue0t")
-dmg_rate = 0.00375
-dur = 80.0
+[sub_resource type="Resource" id="Resource_yhqtv"]
+script = ExtResource("10_566e5")
 max_buildup = 200.0
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_k4jny"]
 points = PackedVector3Array(0, 10.036279, -142.3654, 0, -0.030846596, 119.70154, 0, -0.3561989, -134.04483, 0, -0.3561989, -135.64566, 0, -0.3561989, -136.39003, 0, 2.7895372, -136.43744, 0, 2.7895372, -135.47307, 0, 6.0912733, 120.56979, 0, 6.7945137, -139.09293, 0, 2.9543326, 119.79201, 0, 6.075759, 116.17437, 0, 3.5527487, -136.71466, 0, 3.5527487, -135.80765, 0, 4.17487, 119.850655, 0, 9.786555, -138.06526, 0, 9.90973, -140.18628, 0, -10.811557, -102.17538, 0, -3.2522745, 116.948364, 0, -2.3414288, 119.53168, 0, -0.64726543, 119.654144, 0, -10.811557, -135.88095, 0, -10.811557, -136.90005, 0, -11.152718, 69.87196, 0, -2.500455, -136.07845, 0, -6.0234976, -138.41292, 0, -10.811557, -122.40346, 0, -10.811557, -64.819984, 0, -2.500455, -136.66306, 0, -10.811557, 19.197083, 0, -10.811557, 59.657196, 0, -10.811557, -137.53601, 0, -8.6329565, -139.16342, 0, -10.811557, -134.27724, 0, -10.811557, -81.947296, 0, -10.811557, -61.719208, 0, -10.811557, -41.487175, 0, -10.811557, -21.259094, 0, -10.811557, -1.0310059, 0, -10.811557, 39.429108, 0, -10.811557, 46.898605, 0, -10.811557, 54.372055, 0, -10.939086, 79.924774, 0, 8.555299, -122.40311, 0, 8.555299, -122.40311, 0, 7.429342, -102.17398, 0, 7.0540233, -81.944855, 0, 7.429342, -102.17398, 0, 7.1076407, -61.71573, 0, 7.1076407, -64.81922, 0, 7.6438107, -41.486603, 0, 7.1076407, -61.71573, 0, 8.340832, -21.257479, 0, 7.6438107, -41.486603, 0, 8.340832, -1.0283546, 0, 8.340832, -21.257479, 0, 8.340832, 19.20077, 0, 8.340832, 39.429893, 0, 8.340832, 46.901356, 0, 8.340832, 54.372818, 0, 8.340832, 59.65902, 0, 8.340832, 69.77358, 0, 8.340832, 69.77358, 0, 8.340832, 79.888145, 0, 8.340832, 90.0027, 0, 8.340832, 100.11726, 0, 6.0252104, 104.199554, 0, 8.268831, 104.14703, 0, 8.340832, 100.11726, 0, 6.0252104, 104.199554, 0, 8.268831, 104.14703, 0, 7.1076407, -64.81922, 0, 7.0540233, -81.944855, 0, 8.555299, -122.40311, 0, -5.0037823, 104.924484, 0, -5.0037823, 104.924484, 0, -8.440551, 90.028946, 0, -5.7083564, 100.13707, 19.343334, 8.340832, 69.77358, -19.343334, 8.340832, 69.77358, 6.571472, 8.555299, -122.40311, -6.571472, 8.555299, -122.40311, 10.260752, 6.0252104, 104.199554, -10.260752, 6.0252104, 104.199554, 18.007719, 2.7895372, 54.372818, -18.007719, 2.7895372, 54.372818, 14.269212, -0.16769058, 79.90322, -14.269212, -0.16769058, 79.90322, 12.55344, -0.08927569, 89.98325, -12.55344, -0.08927569, 89.98325, 1.7331924, -5.296499, 100.11336, -1.7331924, -5.296499, 100.11336, 1.8094959, -4.4988027, 104.90079, -1.8094959, -4.4988027, 104.90079, 15.809226, -0.3561989, 69.77358, -15.809226, -0.3561989, 69.77358, 16.633106, -0.3561989, 59.659016, -16.633106, -0.3561989, 59.659016, 17.01652, -0.3561989, 54.37281, -17.01652, -0.3561989, 54.37281, 18.100342, -0.3561989, 39.42989, -18.100342, -0.3561989, 39.42989, 18.509735, -0.3561989, 19.200766, -18.509735, -0.3561989, 19.200766, 19.527708, -2.500455, -1.0310059, -19.527708, -2.500455, -1.0310059, 1.8750668, -0.6065254, 118.879944, -1.8750668, -0.6065254, 118.879944, 2.478714, 6.0912733, 119.89958, -2.478714, 6.0912733, 119.89958, 0.9165211, -10.811557, -133.51883, -0.9165211, -10.811557, -133.51883, 2.4079914, -0.35626125, -122.40346, -2.4079914, -0.35626125, -122.40346, 15.778746, 2.7895372, -64.81922, -15.778746, 2.7895372, -64.81922, 7.1691303, -0.35626125, -102.17538, -7.1691303, -0.35626125, -102.17538, 12.21402, -0.35626125, -81.947296, -12.21402, -0.35626125, -81.947296, 14.831541, -0.35626125, -64.819984, -14.831541, -0.35626125, -64.819984, 18.607908, -0.35626125, -21.259094, -18.607908, -0.35626125, -21.259094, 17.408533, -0.35626125, -41.487175, -17.408533, -0.35626125, -41.487175, 2.7737713, 10.036279, -141.26636, -2.7737713, 10.036279, -141.26636, 15.02408, 3.2665277, 79.970955, -15.02408, 3.2665277, 79.970955, 19.097982, 3.5527487, 39.429893, -19.097982, 3.5527487, 39.429893, 19.698565, 2.7895372, -21.25748, -19.698565, 2.7895372, -21.25748, 2.4830656, 6.669652, -133.80138, -2.4830656, 6.669652, -133.80138, 7.5931854, 2.7895372, -102.17398, -7.5931854, 2.7895372, -102.17398, 12.425151, 2.7895372, -81.944855, -12.425151, 2.7895372, -81.944855, 19.688093, 2.7895372, -1.0283569, -19.688093, 2.7895372, -1.0283569, 19.690016, 2.7895372, 19.200768, -19.690016, 2.7895372, 19.200768, 19.343334, 8.340832, 59.65902, -19.343334, 8.340832, 59.65902, 11.512588, 3.4762812, 100.13939, -11.512588, 3.4762812, 100.13939, 18.29053, 7.6438107, -41.486603, -18.29053, 7.6438107, -41.486603, 1.4720974, -8.6329565, -138.47612, -1.4720974, -8.6329565, -138.47612, 8.604565, -10.811557, -81.947296, -8.604565, -10.811557, -81.947296, 10.655785, -10.811557, 54.372055, -10.655785, -10.811557, 54.372055, 1.2163639, -10.603745, 79.90898, -1.2163639, -10.603745, 79.90898, 8.997999, -10.811557, 59.657196, -8.997999, -10.811557, 59.657196, 4.712557, -10.811557, 69.77321, -4.712557, -10.811557, 69.77321)
@@ -241,11 +239,11 @@ ship_model_glb_path = "uid://cuxnkbgacr6mr"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_y3atb")
 _max_hp = 99100.0
-citadel = SubResource("Resource_svlgc")
-casemate = SubResource("Resource_0yy7r")
-bow = SubResource("Resource_gpmcf")
-stern = SubResource("Resource_mhmk2")
-superstructure = SubResource("Resource_qql7a")
+citadel = SubResource("Resource_4avny")
+casemate = SubResource("Resource_svlgc")
+bow = SubResource("Resource_0yy7r")
+stern = SubResource("Resource_gpmcf")
+superstructure = SubResource("Resource_mhmk2")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_eppy3")
@@ -273,7 +271,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_mvym")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_yhqtv"), SubResource("Resource_ssrv5")])
+equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_qql7a"), SubResource("Resource_ssrv5")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("17_svlgc")]([null, null, null, null, null, null])
@@ -296,7 +294,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.515571, 20.203222)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.8252096, 93.506035)
 
 [node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
-params = SubResource("Resource_26rxh")
+dot_params = ExtResource("22_svlgc")
+rparams = SubResource("Resource_yhqtv")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -111.61649)

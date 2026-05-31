@@ -8,7 +8,6 @@
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_o13ib"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_o13ib"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_nguxy"]
-[ext_resource type="Script" uid="uid://dc42cijwbxhfc" path="res://src/Flood/flood_params.gd" id="8_17h8w"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_q7yd3"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="8_x5bwd"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="9_cvobt"]
@@ -23,6 +22,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="13_fjgfy"]
 [ext_resource type="PackedScene" uid="uid://b1v7uh5a6feq1" path="res://turrets/IJN_610mm_5t.tscn" id="13_q7yd3"]
 [ext_resource type="Script" uid="uid://ckumdqdogqvlk" path="res://src/torpedo/torpedo_params.gd" id="14_56jcx"]
+[ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="22_2by4h"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="22_jewkh"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="23_wake"]
 [ext_resource type="Material" uid="uid://dp22xlndafmvq" path="res://Ships/Armor_viewer_material.tres" id="24_3jgu3"]
@@ -178,12 +178,9 @@ buildup_reduction_rate = 0.02
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_y7d2n"]
-resource_local_to_scene = true
-script = ExtResource("8_17h8w")
-dmg_rate = 0.002
-dur = 100.0
+script = ExtResource("9_cvobt")
 max_buildup = 200.0
-metadata/_custom_type_script = "uid://dc42cijwbxhfc"
+metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
 [sub_resource type="Resource" id="Resource_7j2mj"]
 script = ExtResource("27_nwevl")
@@ -266,7 +263,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.9876962, 18.795391)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.739234, 43.647743)
 
 [node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
-params = SubResource("Resource_y7d2n")
+dot_params = ExtResource("22_2by4h")
+rparams = SubResource("Resource_y7d2n")
 
 [node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -47.97576)

@@ -16,5 +16,5 @@ func _init() -> void:
 	]
 
 func _a(_ship: Ship) -> void:
-	(_ship.fire_manager.fparams.static_mod as FireParams).dur *= DUR_MOD
-	(_ship.flood_manager.params.static_mod as FloodParams).dur *= DUR_MOD
+	(_ship.fire_manager.fparams.static_mod as DOTParams).dur *= DUR_MOD
+	(_ship.flood_manager.dot_params.static_mod as DOTParams).dur *= DUR_MOD
