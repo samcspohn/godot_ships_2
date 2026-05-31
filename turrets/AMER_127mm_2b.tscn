@@ -1,6 +1,7 @@
 [gd_scene format=4 uid="uid://brjx836dkpsi3"]
 
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="1_boxmn"]
+[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://audio/explosion1_clean.wav" id="2_ptlfi"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_24onu"]
 resource_name = "Material"
@@ -78,6 +79,8 @@ shadow_mesh = SubResource("ArrayMesh_itp1q")
 
 [node name="AMER_127mm_2b" type="Node3D" unique_id=1653408828]
 script = ExtResource("1_boxmn")
+_sound = ExtResource("2_ptlfi")
+pitch = 1.3
 glb_path = "res://turrets/glb/AMER_127mm_2b.glb"
 
 [node name="AMER_127mm_2b" type="MeshInstance3D" parent="." unique_id=1547854730]

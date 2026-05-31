@@ -13,19 +13,19 @@ var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
-	shell1.text = "AP"
+	shell1.text = "HE"
 	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell1))
 	shell1.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-		select_shell.rpc_id(1, 0)
+		select_shell.rpc_id(1, 1)
 	)
 
 	var shell2 = Button.new()
-	shell2.text = "HE"
+	shell2.text = "AP"
 	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2))
 	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-		select_shell.rpc_id(1, 1)
+		select_shell.rpc_id(1, 0)
 	)
 
 	return [shell1, shell2]
@@ -122,6 +122,8 @@ func get_aim_ui() -> Dictionary:
 func get_max_range() -> float:
 	return get_params()._range
 
+# guns is sorted front-to-back (ascending local z) in _ready(), so this
+# getter returns turrets in front-to-back order for UI consumption.
 var weapons: Array[Turret]:
 	get:
 		var arr: Array[Turret] = []
@@ -149,6 +151,10 @@ func _ready() -> void:
 	# params = params.duplicate(true)
 	params = params.instantiate(_ship) as GunParams
 	target_mod = target_mod.instantiate(_ship) as TargetMod
+
+	guns.sort_custom(func(a: Gun, b: Gun) -> bool:
+		return a.get_parent().position.z < b.get_parent().position.z
+	)
 
 	for g in guns:
 		g.gun_id = i

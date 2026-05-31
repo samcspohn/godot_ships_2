@@ -71,6 +71,14 @@ func from_bytes(b: PackedByteArray) -> void:
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 	params = params.instantiate(_ship) as TorpedoLauncherParams
+
+	# Sort launchers front-to-back in ship-local space (Godot forward is -Z,
+	# smallest z = bow). Same scene on server and client, so gun_id assignments
+	# stay consistent for fire RPCs and sync indices.
+	launchers.sort_custom(func(a: TorpedoLauncher, b: TorpedoLauncher) -> bool:
+		return a.get_parent().position.z < b.get_parent().position.z
+	)
+
 	var i = 0
 	for l in launchers:
 		l.gun_id = i

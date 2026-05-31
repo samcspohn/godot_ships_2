@@ -46,7 +46,18 @@ var grounded_island: Node3D = null
 
 var turning_drag_multiplier: float = 1.0
 var grounded_drag_multiplier: float = 1.0
-const BASE_DRAG: float = 0.3
+const BASE_DRAG: float = 0.1
+# Location of the rotational pivot point, expressed as a fraction of (ship_length/2)
+# forward of the COM. The pivot is the body-frame point with zero lateral velocity.
+#   k < 1 : pivot sits inside the hull, between COM and bow tip. The bow itself is
+#           forward of the pivot, so it sweeps INWARD into the turn (carving prow).
+#   k = 1 : pivot exactly at the bow tip; bow is laterally stationary.
+#   k > 1 : pivot detaches AHEAD of the bow. The whole hull is now "behind" the
+#           pivot, so the bow swings OUTWARD with the rest of the ship — the
+#           classic drift/slide feel, with more lateral motion the larger k gets.
+# Lerps from LOW at standstill (tight carving turn) to HIGH at top speed (outward drift).
+const BOW_PIVOT_FRACTION_LOW: float = 0.9
+const BOW_PIVOT_FRACTION_HIGH: float = 1.1
 enum __NavMode {
 	NAV_MODE_IDLE,
 	NAV_MODE_AVOID,
@@ -73,11 +84,18 @@ func _ready() -> void:
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
 	ship.linear_damp = BASE_DRAG
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
-	ship.angular_damp = 0.4
+	ship.angular_damp = 0.0
 
+	var mat = PhysicsMaterial.new()
+	mat.friction = 0.2
+	mat.bounce = -0.1
+	ship.physics_material_override = mat
+	# ship.gravity_scale = 8.0
+	ship.axis_lock_linear_y = true  # Lock vertical movement; buoyancy is handled manually
 	# ship.axis_lock_angular_z = true
 	# ship.axis_lock_angular_y = true
 	# ship.axis_lock_angular_x = true
+	ship.angular_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
 
 	# Convert max speed from knots to m/s (live, reflects current dynamic_mod)
 	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
@@ -209,10 +227,10 @@ func _physics_process(delta: float) -> void:
 	# Convert max speed from knots to m/s (live, reflects current dynamic_mod)
 	max_speed = _p().max_speed_knots * 0.514444 * SHIP_SPEED_MODIFIER
 
-	# Buoyancy (vertical)
-	if ship.global_position.y < ship_draft:
-		var submerged_ratio = clamp(ship_draft - ship.global_position.y, 0.0, ship_draft * 2.0) / ship_draft
-		ship.apply_central_force(Vector3.UP * ship.mass * -ship.get_gravity() * submerged_ratio)
+	# # Buoyancy (vertical)
+	# if ship.global_position.y < ship_draft:
+	# 	var submerged_ratio = clamp(ship_draft - ship.global_position.y, 0.0, ship_draft * 2.0) / ship_draft
+	# 	ship.apply_central_force(Vector3.UP * ship.mass * -ship.get_gravity() * submerged_ratio)
 
 	# Self-righting buoyancy (roll and pitch stability)
 	_apply_righting_moment(delta)
@@ -264,15 +282,32 @@ func _physics_process(delta: float) -> void:
 		av.y = desired_omega
 		ship.angular_velocity = av
 
-		# Pivot the ship around its bow tip by setting the COM lateral velocity directly.
-		# Derivation: v_COM = ω_vec × (COM − bow) = (0,ω,0) × (0,0,+L/2) = ω·(L/2)·flat_right
-		# Result: bow translates only forward (zero lateral at tip), stern sweeps 2× COM lateral.
-		# Drift scales with (speed/max_speed) so it is near-zero at low speed and full at max speed,
-		# matching the hydrodynamic reality that hull side-resistance overpowers drift at slow speed.
+		# Pivot the ship around its bow tip *without* overwriting linear_velocity
+		# (which would clobber the physics solver's contact response).
+		#
+		# Kinematic identity for a rigid body where the bow tip has zero lateral
+		# velocity in body space:
+		#   v_bow_lat = v_COM_lat + (ω × r_bow)·flat_right = 0
+		#   r_bow = forward · (L/2)
+		#   ω × r_bow = (0,ω,0) × forward·(L/2) = ω·(L/2)·flat_right
+		# ⇒ target v_COM_lat = ω · (L/2)  (along flat_right)
+		#
+		# We then drive the actual COM lateral velocity toward that target via a
+		# central force F = m · Δv / τ. Because the force is mass-normalised, the
+		# pivot behaviour is the same for every ship regardless of mass, drag, or
+		# size — drag now only has to be tuned for forward-speed feel.
+		#
+		# drift_scale ramps the effect with forward speed so low-speed turning is
+		# almost pure rotation about the COM (hull side-resistance dominates),
+		# while at cruise the kinematic pivot fully engages.
 		var drift_scale: float = clampf(abs(current_speed) / max_speed, 0.0, 1.0)
-		var fwd_vel: Vector3 = forward * ship.linear_velocity.dot(forward)
-		var vert_vel: Vector3 = Vector3.UP * ship.linear_velocity.y
-		ship.linear_velocity = fwd_vel + flat_right * desired_omega * (ship_length * 0.5) * drift_scale + vert_vel
+		var bow_pivot_fraction: float = lerpf(BOW_PIVOT_FRACTION_LOW, BOW_PIVOT_FRACTION_HIGH, drift_scale)
+		var target_lat_vel: float = desired_omega * (ship_length * 0.5) * bow_pivot_fraction * drift_scale
+		var current_lat_vel: float = ship.linear_velocity.dot(flat_right)
+		var lat_vel_error: float = target_lat_vel - current_lat_vel
+		# Close the gap roughly within one rudder_response_time for a coherent feel.
+		var pivot_force: Vector3 = flat_right * (lat_vel_error * ship.mass / _p().rudder_response_time)
+		ship.apply_central_force(pivot_force)
 
 		turning_drag_multiplier = 1.0 + _p().turn_speed_loss * abs(rudder_input) * 1.5
 	else:
@@ -282,7 +317,7 @@ func _physics_process(delta: float) -> void:
 	ship.linear_damp = BASE_DRAG * grounded_drag_multiplier * turning_drag_multiplier
 
 	# Apply forward thrust
-	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.4, -forward.normalized() * ship_length * 0.4)
+	ship.apply_force(forward * engine_power * max_speed * ship.mass * turn_thrust_ratio * 0.2, -forward.normalized() * ship_length * 0.4)
 
 	# Apply turn-induced roll
 	_apply_turn_roll(delta, current_speed, right)
@@ -290,7 +325,7 @@ func _physics_process(delta: float) -> void:
 	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(_p().max_turn_roll_angle + 2.0), deg_to_rad(_p().max_turn_roll_angle + 2.0))
 	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(5), deg_to_rad(5))
 
-	if debug_log and ship.name == "1" and Engine.get_physics_frames() % 16 == 0:
+	if debug_log and ship.name == "player" and Engine.get_physics_frames() % 16 == 0:
 		print("Ship 1 Debug Info:")
 		print("Current Speed:", get_current_speed_kmh(), "km/h")
 		print("Current Speed (Knots):", get_current_speed_knots(), "knots")
