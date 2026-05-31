@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="DOTParams" format=3 uid="uid://c38psq1gkcxld"]
+
+[ext_resource type="Script" uid="uid://byu8jc1u74qlu" path="res://src/DOT/dot_params.gd" id="1_chdlv"]
+
+[resource]
+script = ExtResource("1_chdlv")
+dmg_rate = 0.004
+dur = 80.0
+metadata/_custom_type_script = "uid://byu8jc1u74qlu"
