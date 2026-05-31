@@ -2931,11 +2931,27 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading, bool rever
 		rudder *= lead_factor;
 	}
 
-	// In reverse, the physics inverts rudder effect:
+	// Rudder authority comes from water flowing over the rudder, i.e. the
+	// ACTUAL direction of travel — not the commanded/desired direction.
+	// When moving backward the physics inverts the rudder effect:
 	//   omega = (speed / R) * (-rudder), and speed is negative,
 	//   so the same rudder value produces the opposite turn direction.
-	// Negate the rudder to compensate.
-	if (reverse) rudder = -rudder;
+	// Negate to compensate.
+	//
+	// Critically, this must key off the real speed sign rather than the
+	// `reverse` request: during a forward->reverse transition (e.g. a bow-in
+	// ship commanded to kite away in reverse) the hull is still coasting
+	// forward even though reverse throttle was ordered.  Using the commanded
+	// direction there would invert the rudder while the ship still has
+	// forward way on, swinging the bow out broadside instead of holding the
+	// desired heading.  Only near zero speed (standstill setup, where the
+	// rudder has no authority yet) do we fall back to the commanded
+	// direction so the rudder is pre-positioned for the impending reverse.
+	constexpr float RUDDER_TRAVEL_SPEED_EPSILON = 0.5f;  // m/s
+	bool physically_reversing = (std::abs(state.current_speed) > RUDDER_TRAVEL_SPEED_EPSILON)
+		? (state.current_speed < 0.0f)
+		: reverse;
+	if (physically_reversing) rudder = -rudder;
 
 	return clamp_f(rudder, -1.0f, 1.0f);
 }
