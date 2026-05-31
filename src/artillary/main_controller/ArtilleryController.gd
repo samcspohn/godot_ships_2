@@ -5,7 +5,7 @@ class_name ArtilleryController
 @export var params: GunParams
 # var _gun_params: GunParams
 @export var guns: Array[Gun] = []
-var shell_index: int = 0
+var shell_index: int = 1
 var aim_point: Vector3
 var _ship: Ship
 var target_mod: TargetMod = TargetMod.new()

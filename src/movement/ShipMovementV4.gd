@@ -58,6 +58,14 @@ const BASE_DRAG: float = 0.1
 # Lerps from LOW at standstill (tight carving turn) to HIGH at top speed (outward drift).
 const BOW_PIVOT_FRACTION_LOW: float = 0.9
 const BOW_PIVOT_FRACTION_HIGH: float = 1.1
+
+# Vertical waterline spring — keeps the hull bound to y = 0 while allowing
+# ~1m of vertical play (heave/bob). Critically-damped-ish so the ship
+# settles without sustained oscillation but still feels alive.
+#   y_natural_freq:  rad/s; ω² = k/m. ω≈3 → period ≈ 2.1s.
+#   y_damping_ratio: ζ; 1.0 = critical. 0.6 leaves a little bounce.
+const WATERLINE_SPRING_OMEGA: float = 3.0
+const WATERLINE_SPRING_DAMPING: float = 0.6
 enum __NavMode {
 	NAV_MODE_IDLE,
 	NAV_MODE_AVOID,
@@ -84,14 +92,17 @@ func _ready() -> void:
 	# Set moderate damping to minimize unwanted physics effects without preventing top speed
 	ship.linear_damp = BASE_DRAG
 	# ship.angular_damp = 100 / (ship.mass * 1e-6) # convert to 1000 tons
-	ship.angular_damp = 0.0
+	ship.angular_damp = 0.3
 
 	var mat = PhysicsMaterial.new()
 	mat.friction = 0.2
 	mat.bounce = -0.1
 	ship.physics_material_override = mat
-	# ship.gravity_scale = 8.0
-	ship.axis_lock_linear_y = true  # Lock vertical movement; buoyancy is handled manually
+	# Vertical motion is controlled by a soft spring around y=0 (see
+	# _apply_waterline_spring). Gravity stays on — the righting moment
+	# code reads ship.get_gravity() to size its torques — and the spring
+	# explicitly cancels gravity at y=0 so equilibrium sits on the waterline.
+	ship.axis_lock_linear_y = false
 	# ship.axis_lock_angular_z = true
 	# ship.axis_lock_angular_y = true
 	# ship.axis_lock_angular_x = true
@@ -218,6 +229,7 @@ func set_movement_input(input_array: Array) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
+	# ship.angular_damp = 0.3
 
 	# Check for land collision
 	_check_land_collision()
@@ -234,6 +246,9 @@ func _physics_process(delta: float) -> void:
 
 	# Self-righting buoyancy (roll and pitch stability)
 	_apply_righting_moment(delta)
+
+	# Vertical waterline spring (heave)
+	_apply_waterline_spring(delta)
 
 	# Thrust
 	var target_power = throttle_settings[throttle_level + 1]
@@ -323,7 +338,7 @@ func _physics_process(delta: float) -> void:
 	_apply_turn_roll(delta, current_speed, right)
 
 	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(_p().max_turn_roll_angle + 2.0), deg_to_rad(_p().max_turn_roll_angle + 2.0))
-	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(5), deg_to_rad(5))
+	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(2), deg_to_rad(2))
 
 	if debug_log and ship.name == "player" and Engine.get_physics_frames() % 16 == 0:
 		print("Ship 1 Debug Info:")
@@ -423,3 +438,18 @@ func _apply_turn_roll(delta: float, current_speed: float, right: Vector3) -> voi
 	# Apply torque around the forward axis to induce roll
 	var turn_roll_torque = forward * roll_rad * _p().righting_strength * ship.mass * abs(ship.get_gravity().y) * 0.5
 	ship.apply_torque(turn_roll_torque)
+
+
+## Damped vertical spring binding the hull's COM to y = 0.
+## Allows ~1m of heave while preventing drift away from the waterline.
+## F = m * (-ω² * y - 2ζω * vy)
+func _apply_waterline_spring(_delta: float) -> void:
+	var y: float = ship.global_position.y
+	var vy: float = ship.linear_velocity.y
+	var k_per_mass: float = WATERLINE_SPRING_OMEGA * WATERLINE_SPRING_OMEGA
+	var c_per_mass: float = 2.0 * WATERLINE_SPRING_DAMPING * WATERLINE_SPRING_OMEGA
+	# Spring + damper, plus an explicit gravity cancellation so the
+	# equilibrium point of the spring is exactly y = 0 (not g/ω² below it).
+	var fy: float = ship.mass * (-k_per_mass * y - c_per_mass * vy)
+	var gravity_cancel: Vector3 = -ship.get_gravity() * ship.mass
+	ship.apply_central_force(Vector3.UP * fy + gravity_cancel)
