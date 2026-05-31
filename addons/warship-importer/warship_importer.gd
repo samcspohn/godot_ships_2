@@ -53,8 +53,8 @@ func process_turret_mounts(node: Node) -> int:
 
 	return count + 1
 
-## Creates res://turrets/<turret_name>.tscn by instancing the GLB at
-## res://turrets/glb/<turret_name>.glb and attaching Gun.gd.
+## Creates res://turrets/<turret_name>.tscn as an inherited scene of the GLB
+## at res://turrets/glb/<turret_name>.glb with Gun.gd attached to the root.
 ## Returns the saved .tscn path, or "" if no GLB was found.
 func create_scene_from_glb(turret_name: String) -> String:
 	var glb_path := "res://turrets/glb/%s.glb" % turret_name
@@ -66,7 +66,9 @@ func create_scene_from_glb(turret_name: String) -> String:
 		printerr("Failed to load GLB: ", glb_path)
 		return ""
 
-	var root := glb_scene.instantiate()
+	# GEN_EDIT_STATE_MAIN_INHERITED preserves the inheritance link so pack()
+	# emits `instance=ExtResource(...)` instead of embedding the GLB node tree.
+	var root := glb_scene.instantiate(PackedScene.GEN_EDIT_STATE_MAIN_INHERITED)
 	root.name = turret_name
 
 	var gun_script: Script = load("res://src/artillary/Guns/Gun.gd")

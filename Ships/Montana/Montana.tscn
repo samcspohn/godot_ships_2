@@ -21,8 +21,6 @@
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="14_wi2om"]
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="15_2vgdv"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="15_ckxh7"]
-[ext_resource type="PackedScene" uid="uid://be3y5hstfsrig" path="res://src/Fire/Fire.tscn" id="15_m2cnc"]
-[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="16_1a04s"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="16_2n0p4"]
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="16_u4el4"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="17_3t06y"]
@@ -36,35 +34,35 @@ script = ExtResource("3_461ox")
 torpedo_protection = 0.38
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
+[sub_resource type="Resource" id="Resource_slgwc"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 298800.0
+pool2 = 298800.0
+
+[sub_resource type="Resource" id="Resource_2n723"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 19920.0
+pool2 = 39840.0
+
 [sub_resource type="Resource" id="Resource_2vr8n"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
-pool1 = 276000.0
-pool2 = 276000.0
+pool1 = 6640.0
+pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_ifinn"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
-pool1 = 18400.0
-pool2 = 36800.0
+pool1 = 6640.0
+pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_3mkxm"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
-pool1 = 6133.333333333333
-pool2 = 12266.666666666666
-
-[sub_resource type="Resource" id="Resource_2vgdv"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 6133.333333333333
-pool2 = 12266.666666666666
-
-[sub_resource type="Resource" id="Resource_u4el4"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 15333.333333333334
-pool2 = 30666.666666666668
+pool1 = 16600.0
+pool2 = 33200.0
 
 [sub_resource type="Resource" id="Resource_5uoyc"]
 script = ExtResource("5_043f6")
@@ -118,7 +116,7 @@ turning_circle_radius = 350.0
 rudder_response_time = 16.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
-[sub_resource type="Resource" id="Resource_3t06y"]
+[sub_resource type="Resource" id="Resource_2vgdv"]
 resource_local_to_scene = true
 script = ExtResource("14_3mkxm")
 icon = ExtResource("13_ifinn")
@@ -129,7 +127,7 @@ max_stack = -1
 type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_jnmmu"]
+[sub_resource type="Resource" id="Resource_u4el4"]
 resource_local_to_scene = true
 script = ExtResource("17_3t06y")
 icon = ExtResource("16_u4el4")
@@ -144,7 +142,7 @@ script = ExtResource("16_2n0p4")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
-[sub_resource type="Resource" id="Resource_kwh0x"]
+[sub_resource type="Resource" id="Resource_3t06y"]
 resource_local_to_scene = true
 script = ExtResource("22_jnmmu")
 dmg_rate = 0.004
@@ -167,7 +165,7 @@ points = PackedVector3Array(0, -0.04190086, 138.13158, 0, -0.108764954, -134.249
 [node name="ship" unique_id=2132203806 instance=ExtResource("1_lm0so")]
 collision_layer = 4
 collision_mask = 5
-mass = 65000000.0
+mass = 72104000.0
 contact_monitor = true
 max_contacts_reported = 4
 ship_name = "Montana"
@@ -180,15 +178,15 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_1a04s")
-_max_hp = 92000.0
+_max_hp = 99600.0
 bow_percent = 0.2
 stern_percent = 0.2
 casemate_percent = 0.6
-citadel = SubResource("Resource_2vr8n")
-casemate = SubResource("Resource_ifinn")
-bow = SubResource("Resource_3mkxm")
-stern = SubResource("Resource_2vgdv")
-superstructure = SubResource("Resource_u4el4")
+citadel = SubResource("Resource_slgwc")
+casemate = SubResource("Resource_2n723")
+bow = SubResource("Resource_2vr8n")
+stern = SubResource("Resource_ifinn")
+superstructure = SubResource("Resource_3mkxm")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_5uoyc")
@@ -210,7 +208,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_ckxh7")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_3t06y"), SubResource("Resource_jnmmu")])
+equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_2vgdv"), SubResource("Resource_u4el4")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("14_wi2om")]([null, null, null, null, null, null])
@@ -219,32 +217,32 @@ upgrades = Array[ExtResource("14_wi2om")]([null, null, null, null, null, null])
 fparams = ExtResource("15_ckxh7")
 rparams = SubResource("Resource_65ma3")
 
-[node name="Fire" parent="Modules/FireManager" index="0" unique_id=1244247199 instance=ExtResource("15_m2cnc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.5198183, -101.178185)
+[node name="Fire" parent="Modules/FireManager" index="0" unique_id=1244247199]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.964051, -97.5435)
 
-[node name="Fire2" parent="Modules/FireManager" index="1" unique_id=1215902970 instance=ExtResource("15_m2cnc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.670447, -21.665337)
+[node name="Fire2" parent="Modules/FireManager" index="1" unique_id=85705832]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.392574, -22.923704)
 
-[node name="Fire3" parent="Modules/FireManager" index="2" unique_id=1414619064 instance=ExtResource("15_m2cnc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.7046995, 19.217781)
+[node name="Fire3" parent="Modules/FireManager" index="2" unique_id=1592598222]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.3211813, 26.880922)
 
-[node name="Fire4" parent="Modules/FireManager" index="3" unique_id=810880483 instance=ExtResource("15_m2cnc")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.393111, 100.66211)
+[node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.8212657, 100.19989)
 
 [node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
-params = SubResource("Resource_kwh0x")
+params = SubResource("Resource_3t06y")
 
-[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068 instance=ExtResource("16_1a04s")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.20894194, -87.140335)
+[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -102.17707)
 
-[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=436992295 instance=ExtResource("16_1a04s")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.20894194, -34.668297)
+[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=1916672481]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -42.07224)
 
-[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=1442147257 instance=ExtResource("16_1a04s")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.20894194, 31.324135)
+[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=362759222]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 46.814842)
 
-[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=990516746 instance=ExtResource("16_1a04s")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.20894194, 89.59064)
+[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 102.283875)
 
 [node name="Barbette" parent="armor" parent_id_path=PackedInt32Array(1561657852) index="0" unique_id=2132086016]
 layers = 0

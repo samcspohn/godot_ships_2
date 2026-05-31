@@ -58,18 +58,18 @@ bg_color = Color(0.2, 0.9, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_options_panel"]
 bg_color = Color(0.05, 0.05, 0.12, 0.95)
-corner_radius_top_left = 8
-corner_radius_top_right = 8
-corner_radius_bottom_right = 8
-corner_radius_bottom_left = 8
 border_width_left = 1
 border_width_top = 1
 border_width_right = 1
 border_width_bottom = 1
 border_color = Color(0.3, 0.3, 0.5, 0.8)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_options_quit_btn"]
-bg_color = Color(0.45, 0.08, 0.08, 1.0)
+bg_color = Color(0.45, 0.08, 0.08, 1)
 corner_radius_top_left = 5
 corner_radius_top_right = 5
 corner_radius_bottom_right = 5
@@ -105,7 +105,7 @@ offset_right = -30.0
 offset_bottom = 20.0
 color = Color(0.08, 0.08, 0.08, 0.9)
 
-[node name="IndicatorColor" type="ColorRect" parent="MainContainer/VisibilityIndicator"]
+[node name="IndicatorColor" type="ColorRect" parent="MainContainer/VisibilityIndicator" unique_id=365982788]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -260,14 +260,14 @@ theme_override_font_sizes/font_size = 14
 text = "Angle: --"
 
 [node name="TopCenterPanel" type="Control" parent="MainContainer" unique_id=1678383542]
-custom_minimum_size = Vector2(400, 28)
+custom_minimum_size = Vector2(400, 48)
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
 offset_left = -200.0
 offset_right = 200.0
-offset_bottom = 28.0
+offset_bottom = 48.0
 grow_horizontal = 2
 
 [node name="TeamTrackerBackground" type="Panel" parent="MainContainer/TopCenterPanel" unique_id=1792646131]
@@ -306,6 +306,22 @@ theme_override_constants/separation = 20
 [node name="EnemyShipsContainer" type="HBoxContainer" parent="MainContainer/TopCenterPanel/TeamTrackerContainer" unique_id=116800121]
 layout_mode = 2
 theme_override_constants/separation = 5
+
+[node name="MatchTimerLabel" type="Label" parent="MainContainer/TopCenterPanel" unique_id=553817623]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -50.0
+offset_right = 50.0
+offset_bottom = 18.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_font_sizes/font_size = 13
+text = "20:00"
+horizontal_alignment = 1
 
 [node name="BottomLeftPanel" type="VBoxContainer" parent="MainContainer" unique_id=1288718153]
 layout_mode = 1
@@ -735,17 +751,16 @@ text = "text"
 horizontal_alignment = 1
 uppercase = true
 
-[node name="OptionsMenu" type="Control" parent="." unique_name_in_owner=true]
+[node name="OptionsMenu" type="Control" parent="." unique_id=239611358]
 visible = false
-layout_mode = 2
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-mouse_filter = 0
 
-[node name="Dim" type="ColorRect" parent="OptionsMenu"]
+[node name="Dim" type="ColorRect" parent="OptionsMenu" unique_id=221490242]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -753,9 +768,8 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 color = Color(0, 0, 0, 0.55)
-mouse_filter = 0
 
-[node name="Panel" type="PanelContainer" parent="OptionsMenu"]
+[node name="Panel" type="PanelContainer" parent="OptionsMenu" unique_id=161379899]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -770,30 +784,30 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_options_panel")
 
-[node name="VBox" type="VBoxContainer" parent="OptionsMenu/Panel"]
-layout_mode = 2
+[node name="VBox" type="VBoxContainer" parent="OptionsMenu/Panel" unique_id=729069277]
 custom_minimum_size = Vector2(260, 0)
+layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="Title" type="Label" parent="OptionsMenu/Panel/VBox"]
+[node name="Title" type="Label" parent="OptionsMenu/Panel/VBox" unique_id=1132383915]
 layout_mode = 2
-theme_override_font_sizes/font_size = 20
 theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 20
 text = "Options"
 horizontal_alignment = 1
 
-[node name="ResumeButton" type="Button" parent="OptionsMenu/Panel/VBox"]
-layout_mode = 2
+[node name="ResumeButton" type="Button" parent="OptionsMenu/Panel/VBox" unique_id=1107157107]
 custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
 text = "Resume"
 
-[node name="BorderlessWindowCheck" type="CheckBox" parent="OptionsMenu/Panel/VBox"]
+[node name="BorderlessWindowCheck" type="CheckBox" parent="OptionsMenu/Panel/VBox" unique_id=284233605]
 layout_mode = 2
 text = "Fullscreen (Borderless)"
 
-[node name="QuitMatchButton" type="Button" parent="OptionsMenu/Panel/VBox"]
-layout_mode = 2
+[node name="QuitMatchButton" type="Button" parent="OptionsMenu/Panel/VBox" unique_id=1547474945]
 custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.5, 0.5, 1)
 theme_override_styles/normal = SubResource("StyleBoxFlat_options_quit_btn")
-theme_override_colors/font_color = Color(1.0, 0.5, 0.5, 1.0)
 text = "Quit Match"

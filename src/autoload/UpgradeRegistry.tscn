@@ -1,48 +1,44 @@
 [gd_scene format=3 uid="uid://n51nwr1bcg04"]
 
 [ext_resource type="Script" uid="uid://84qw0k53xyig" path="res://src/autoload/upgrade_manager.gd" id="1_registry"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot1/main_gun_reload_mod_1.gd" id="2_s1a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot1/armaments_mod_1.gd" id="3_s1b"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot2/damage_control_mod_1.gd" id="4_s2a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot2/engine_room.gd" id="5_s2b"]
-[ext_resource type="Script" path="res://src/Upgrades/slot2/enhanced_lookout_system.gd" id="6_s2c"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot3/main_gun_mod_2.gd" id="7_s3a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot3/secondary_gun_mod_1.gd" id="8_s3b"]
-[ext_resource type="Script" path="res://src/Upgrades/slot3/torpedo_mod_1.gd" id="9_s3c"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot4/damage_control_mod_2.gd" id="10_s4a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot4/propulsion_mod_1.gd" id="11_s4b"]
-[ext_resource type="Script" path="res://src/Upgrades/slot4/steering_mod_1.gd" id="12_s4c"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot5/concealment_module.gd" id="13_s5a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot5/survivability_mod_1.gd" id="14_s5b"]
-[ext_resource type="Script" path="res://src/Upgrades/slot5/secondary_gun_mod_2.gd" id="15_s5c"]
-
-[ext_resource type="Script" path="res://src/Upgrades/slot6/main_gun_reload_mod_2.gd" id="16_s6a"]
-[ext_resource type="Script" path="res://src/Upgrades/slot6/range_mod.gd" id="17_s6b"]
-[ext_resource type="Script" path="res://src/Upgrades/slot6/main_gun_dispersion_mod.gd" id="18_s6c"]
+[ext_resource type="Script" uid="uid://c2jf4ifc34lcs" path="res://src/Upgrades/slot1/main_gun_reload_mod_1.gd" id="2_s1a"]
+[ext_resource type="Script" uid="uid://dr4s12s4e2gj7" path="res://src/Upgrades/slot1/armaments_mod_1.gd" id="3_s1b"]
+[ext_resource type="Script" uid="uid://df57sx0prfbgc" path="res://src/Upgrades/slot2/damage_control_mod_1.gd" id="4_s2a"]
+[ext_resource type="Script" uid="uid://bjnjjrnhgkeba" path="res://src/Upgrades/slot2/engine_room.gd" id="5_s2b"]
+[ext_resource type="Script" uid="uid://cqs4eke5tqog7" path="res://src/Upgrades/slot2/enhanced_lookout_system.gd" id="6_s2c"]
+[ext_resource type="Script" uid="uid://cbvv0dqxbx2vp" path="res://src/Upgrades/slot3/main_gun_mod_2.gd" id="7_s3a"]
+[ext_resource type="Script" uid="uid://bu8t8p2o0edgo" path="res://src/Upgrades/slot3/secondary_gun_mod_2.gd" id="8_s3b"]
+[ext_resource type="Script" uid="uid://bdkyxplecoypu" path="res://src/Upgrades/slot3/torpedo_mod_1.gd" id="9_s3c"]
+[ext_resource type="Script" uid="uid://08hg1xxdw6jv" path="res://src/Upgrades/slot4/damage_control_mod_2.gd" id="10_s4a"]
+[ext_resource type="Script" uid="uid://uux0i0waes83" path="res://src/Upgrades/slot4/propulsion_mod_1.gd" id="11_s4b"]
+[ext_resource type="Script" uid="uid://kus5xdss3lro" path="res://src/Upgrades/slot4/steering_mod_1.gd" id="12_s4c"]
+[ext_resource type="Script" uid="uid://ykmec23iwn6s" path="res://src/Upgrades/slot5/concealment_module.gd" id="13_s5a"]
+[ext_resource type="Script" uid="uid://ctka3b77oyryy" path="res://src/Upgrades/slot5/survivability_mod_1.gd" id="14_s5b"]
+[ext_resource type="Script" uid="uid://m36s561mli7w" path="res://src/Upgrades/slot5/secondary_gun_mod_3.gd" id="15_s5c"]
+[ext_resource type="Script" uid="uid://d26xqljvxcjit" path="res://src/Upgrades/slot6/main_gun_reload_mod_2.gd" id="16_s6a"]
+[ext_resource type="Script" uid="uid://c8qrjvx1v1egg" path="res://src/Upgrades/slot6/range_mod.gd" id="17_s6b"]
+[ext_resource type="Script" uid="uid://ctqabwni7y5op" path="res://src/Upgrades/slot6/main_gun_dispersion_mod.gd" id="18_s6c"]
+[ext_resource type="Script" uid="uid://dhu8xmc21uxlh" path="res://src/Upgrades/slot1/secondary_mod_1.gd" id="19_3hlmq"]
 
 [node name="UpgradeRegistry" type="Node" unique_id=540846883]
 script = ExtResource("1_registry")
 _upgrade_scripts = Dictionary[String, Resource]({
-"mg_reload_1": ExtResource("2_s1a"),
 "arm_mod_1": ExtResource("3_s1b"),
+"conceal_mod": ExtResource("13_s5a"),
 "dc_mod_1": ExtResource("4_s2a"),
+"dc_mod_2": ExtResource("10_s4a"),
 "engine_room": ExtResource("5_s2b"),
 "lookout_sys": ExtResource("6_s2c"),
+"mg_disp_mod": ExtResource("18_s6c"),
 "mg_mod_2": ExtResource("7_s3a"),
-"sec_gun_1": ExtResource("8_s3b"),
-"torp_mod_1": ExtResource("9_s3c"),
-"dc_mod_2": ExtResource("10_s4a"),
-"prop_mod_1": ExtResource("11_s4b"),
-"steer_mod_1": ExtResource("12_s4c"),
-"conceal_mod": ExtResource("13_s5a"),
-"surv_mod_1": ExtResource("14_s5b"),
-"sec_gun_2": ExtResource("15_s5c"),
+"mg_reload_1": ExtResource("2_s1a"),
 "mg_reload_2": ExtResource("16_s6a"),
+"prop_mod_1": ExtResource("11_s4b"),
 "range_mod": ExtResource("17_s6b"),
-"mg_disp_mod": ExtResource("18_s6c")
+"sec_gun_2": ExtResource("8_s3b"),
+"sec_gun_3": ExtResource("15_s5c"),
+"sec_mod_1": ExtResource("19_3hlmq"),
+"steer_mod_1": ExtResource("12_s4c"),
+"surv_mod_1": ExtResource("14_s5b"),
+"torp_mod_1": ExtResource("9_s3c")
 })

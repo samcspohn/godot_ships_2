@@ -1635,7 +1635,16 @@ func get_threat_score(ctx: SkillContext) -> float:
 	# # Normalize: 5 threat-weight units ≈ maximum threat
 	# return clampf(raw_threat / 5.0, 0.0, 1.0)
 	# raw_threat *= hp_ratio
-	_threat_score_cache = clampf(1 - raw_threat, 0.0, 1.0)
+	var base_threat = clampf(1 - raw_threat, 0.0, 1.0)
+
+	# As the match timer runs out, reduce threat so bots play more aggressively.
+	# Uses 1 - t^4: stays near 1.0 for most of the match, drops sharply near the end.
+	# e.g. t=50% (10min) -> 0.94, t=75% (15min) -> 0.68, t=90% (18min) -> 0.34, t=100% -> 0.0
+	var time_remaining: float = server.get_match_time_remaining()
+	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
+	var threat_scale: float = 1.0 - pow(t_norm, 4)
+
+	_threat_score_cache = base_threat * threat_scale
 	_threat_score_frame = frame
 	return _threat_score_cache
 

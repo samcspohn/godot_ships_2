@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cldosdv18ohuq"
-path="res://.godot/imported/AMER_406mm_50cal_mk7_3b.glb-a5809353485ffa2e132fc513fef1f062.scn"
+uid="uid://c0oyjkpm10q3d"
+path="res://.godot/imported/GER_450mm_2b_rf.glb-ca4668fdfc2f1947506a48aeecb545f1.scn"
 
 [deps]
 
-source_file="res://turrets/glb/AMER_406mm_50cal_mk7_3b.glb"
-dest_files=["res://.godot/imported/AMER_406mm_50cal_mk7_3b.glb-a5809353485ffa2e132fc513fef1f062.scn"]
+source_file="res://turrets/glb/GER_450mm_2b_rf.glb"
+dest_files=["res://.godot/imported/GER_450mm_2b_rf.glb-ca4668fdfc2f1947506a48aeecb545f1.scn"]
 
 [params]
 

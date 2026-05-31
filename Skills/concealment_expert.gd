@@ -3,7 +3,7 @@ extends Skill
 ## Concealment Expert — all classes, Tier 3.
 ## -5% detection radius.
 
-const RADIUS_MOD: float = 0.95
+const RADIUS_MOD: float = 0.93   # -7% detection radius (cumulative with Concealment Expert)
 
 func _init() -> void:
 	skill_id = "ce"

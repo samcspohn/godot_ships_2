@@ -243,6 +243,7 @@ func heal(amount: float) -> float:
 		light_damage -= light_heal
 		_recalculate_healable_damage()
 		_current_hp += ret
+		hp_changed.emit(_current_hp)
 		return ret * params.p().mult
 	return 0.0
 

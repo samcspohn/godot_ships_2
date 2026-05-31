@@ -65,6 +65,7 @@ var kill_feed: KillFeed = null
 # Team tracker references
 @onready var top_center_panel: Control = $MainContainer/TopCenterPanel
 @onready var team_tracker_container: Control = $MainContainer/TopCenterPanel/TeamTrackerContainer
+@onready var match_timer_label: Label = $MainContainer/TopCenterPanel/MatchTimerLabel
 @onready var friendly_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/FriendlyShipsContainer
 @onready var enemy_ships_container: HBoxContainer = $MainContainer/TopCenterPanel/TeamTrackerContainer/EnemyShipsContainer
 
@@ -176,6 +177,11 @@ var friendly_team_id: int = -1  # Will be set when camera_controller is availabl
 # Battle end screen
 var match_ended: bool = false
 var _options_menu: Control = null
+
+# Match timer (local countdown, corrected by server sync)
+var _local_time_remaining: float = -1.0  # -1 = not yet initialized
+var _last_seen_match_elapsed: float = -1.0  # last server elapsed we acted on
+const MATCH_TIMER_SYNC_THRESHOLD: float = 1.5  # seconds of drift before snapping
 
 # Floating damage accumulator (damage dealt, anchored to hit world position)
 const DAMAGE_ACCUM_WINDOW: float = 0.25
@@ -346,11 +352,46 @@ func _unhandled_input(event: InputEvent) -> void:
 				_show_options_menu()
 			get_viewport().set_input_as_handled()
 
+func _update_match_timer(delta: float) -> void:
+	if not server:
+		return
+
+	var server_remaining: float = server.get_match_time_remaining()
+
+	# Initialize local timer from server on first valid read
+	if _local_time_remaining < 0.0:
+		_local_time_remaining = server_remaining
+		_last_seen_match_elapsed = server.match_elapsed
+		return
+
+	# Tick the local timer down smoothly each frame
+	_local_time_remaining = maxf(_local_time_remaining - delta, 0.0)
+
+	# Only correct drift when a new server sync RPC has arrived (match_elapsed changed).
+	# Comparing every frame against a frozen server value would cause constant snapping.
+	if server.match_elapsed != _last_seen_match_elapsed:
+		_last_seen_match_elapsed = server.match_elapsed
+		if absf(server_remaining - _local_time_remaining) > MATCH_TIMER_SYNC_THRESHOLD:
+			_local_time_remaining = server_remaining
+
+	var total_secs: int = int(_local_time_remaining)
+	var mins: int = total_secs / 60
+	var secs: int = total_secs % 60
+	match_timer_label.text = "%02d:%02d" % [mins, secs]
+
+	# Flash red when under 2 minutes
+	if _local_time_remaining <= 120.0:
+		var blink := fmod(Time.get_ticks_msec() / 500.0, 2.0) < 1.0
+		match_timer_label.modulate = Color(1.0, 0.3, 0.3, 1.0) if blink else Color(1.0, 1.0, 1.0, 1.0)
+	else:
+		match_timer_label.modulate = Color(1.0, 1.0, 1.0, 1.0)
+
 func _process(delta: float) -> void:
 	if match_ended:
 		return
 	if not is_instance_valid(camera_controller):
 		return
+	_update_match_timer(delta)
 	update_ship_ui(delta)
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()

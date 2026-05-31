@@ -6,7 +6,6 @@
 
 [resource]
 script = ExtResource("3_b3dui")
-heal_per_sec = 0.0075
 name = "Heavy Repair Team"
 icon = ExtResource("2_xbjdm")
 disabled_icon = ExtResource("1_lvxwm")

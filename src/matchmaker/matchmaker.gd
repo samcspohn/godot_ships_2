@@ -16,7 +16,8 @@ const NUM_SHIPS_PER_TEAM = 12
 # Ship data: path -> {class, tier}
 const SHIP_DATA = {
 	"res://Ships/Bismarck/Bismarck3.tscn": {"class": SHIP_CLASS_BB, "tier": 8},
-	"res://Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
+	# "res://Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
+	"res://Ships/H42/H42.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
@@ -27,7 +28,8 @@ const SHIP_DATA = {
 const SHIPS_BY_CLASS = {
 	SHIP_CLASS_BB: [
 		# "res://Ships/Bismarck/Bismarck3.tscn",
-		"res://Ships/H44/H44.tscn",
+		# "res://Ships/H44/H44.tscn",
+		"res://Ships/H42/H42.tscn",
 		"res://Ships/Yamato/Yamato.tscn",
 		"res://Ships/Montana/Montana.tscn"
 	],

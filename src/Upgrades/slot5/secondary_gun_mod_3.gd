@@ -1,11 +1,11 @@
 extends Upgrade
-class_name SecondaryGunMod2
+class_name SecondaryGunMod3
 
 const RELOAD_MOD: float = 0.80
 
 func _init() -> void:
-	upgrade_id = "sec_gun_2"
-	name = "Secondary Battery Mod 2"
+	upgrade_id = "sec_gun_3"
+	name = "Secondary Battery Mod 3"
 	description = "Reduces secondary battery reload time by 20%."
 	tier = 5
 	icon = preload("res://icons/auto-repair (1).png")

@@ -3,19 +3,19 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cldosdv18ohuq"
-path="res://.godot/imported/AMER_406mm_50cal_mk7_3b.glb-a5809353485ffa2e132fc513fef1f062.scn"
+uid="uid://bgtdmgrgjflx3"
+path="res://.godot/imported/H42.glb-426e7457813e22fcdc369e1af68af769.scn"
 
 [deps]
 
-source_file="res://turrets/glb/AMER_406mm_50cal_mk7_3b.glb"
-dest_files=["res://.godot/imported/AMER_406mm_50cal_mk7_3b.glb-a5809353485ffa2e132fc513fef1f062.scn"]
+source_file="res://Ships/H42/H42.glb"
+dest_files=["res://.godot/imported/H42.glb-426e7457813e22fcdc369e1af68af769.scn"]
 
 [params]
 
-nodes/root_type="res://src/artillary/Guns/Gun.gd"
+nodes/root_type="res://src/ship/Ship.gd"
 nodes/root_name=""
-nodes/root_script=Resource("uid://xc16x5l6kqxq", "res://src/artillary/Guns/Gun.gd")
+nodes/root_script=Resource("uid://36hn6giyyldc", "res://src/ship/Ship.gd")
 nodes/apply_root_scale=true
 nodes/root_scale=1.0
 nodes/import_as_skeleton_bones=false

@@ -1,6 +1,19 @@
 [gd_scene format=3 uid="uid://brasgycy2b0h8"]
 
 [ext_resource type="Script" uid="uid://db6cc7i67c8or" path="res://src/Flood/flood_manager.gd" id="1_flood"]
+[ext_resource type="PackedScene" uid="uid://p5jaomsktna2" path="res://src/Flood/Flood.tscn" id="2_1qiip"]
 
 [node name="FloodManager" type="Node3D" unique_id=306465581]
 script = ExtResource("1_flood")
+
+[node name="Flood" parent="." unique_id=196010068 instance=ExtResource("2_1qiip")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+
+[node name="Flood2" parent="." unique_id=1916672481 instance=ExtResource("2_1qiip")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1)
+
+[node name="Flood3" parent="." unique_id=362759222 instance=ExtResource("2_1qiip")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1)
+
+[node name="Flood4" parent="." unique_id=437283516 instance=ExtResource("2_1qiip")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2)

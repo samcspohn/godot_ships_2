@@ -129,7 +129,7 @@ func get_base_params() -> GunParams:
 	return controller.get_base_params()
 
 func get_shell() -> ShellParams:
-	return controller.get_shell_params() # did you setup the secondary subcontroller(s)?
+	return controller.get_shell_params() # did you setup the secondary subcontroller(s)/ artillery controller?
 
 func _ready() -> void:
 	if Engine.is_editor_hint():
@@ -198,9 +198,17 @@ func valid_target(target: Vector3) -> bool:
 		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
-func get_leading_position(target: Vector3, target_velocity: Vector3):
+func get_leading_position(target: Vector3, target_velocity: Vector3, range_check_target_pos: bool = false):
 	var sol = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(global_position, target, target_velocity, get_shell())
-	if sol[0] != null and get_dist(sol[2]) < get_params()._range:
+	if sol[0] == null:
+		return null
+	# When range_check_target_pos is true, the gun's _range is checked against the
+	# target's current position instead of the computed lead position. This lets
+	# callers (e.g. secondary battery) engage targets that are in range even when
+	# their lead position falls just outside the gun's max range. Defaults to false
+	# so main-gun / bot logic keeps its stricter behavior.
+	var dist_check_pos: Vector3 = target if range_check_target_pos else sol[2]
+	if get_dist(dist_check_pos) < get_params()._range:
 		return sol[2]
 	return null
 

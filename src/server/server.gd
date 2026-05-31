@@ -76,6 +76,10 @@ var match_active: bool = false
 var match_ended: bool = false
 var match_end_timer: float = 0.0
 const MATCH_END_DELAY: float = 5.0  # Seconds to wait after last kill before showing end screen
+const MATCH_DURATION: float = 20.0 * 60.0  # 20 minutes
+var match_elapsed: float = 0.0
+var _match_timer_sync_timer: float = 0.0
+const MATCH_TIMER_SYNC_INTERVAL: float = 5.0
 
 var all_players_spawned: bool = false
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
@@ -367,6 +371,9 @@ func spawn_player(id, player_name):
 					spawn_player(bot_id, team_player_id)
 			players_spawned_bots = true
 	match_active = true
+	match_elapsed = 0.0
+	_match_timer_sync_timer = 0.0
+	_sync_match_timer.rpc(0.0)
 	# --- Replay: begin recording once ALL ships (human + bots) are in the world.
 	# Guard with players_spawned_bots so the hook only fires in the human
 	# player's spawn_player call AFTER the bot-spawning loop completes,
@@ -965,7 +972,22 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 
 func _broadcast_match_end():
 	"""Send match end notification with leaderboard data to all clients."""
-	var winning_team = 1 if _get_team(0).size() == 0 else 0
+	var t0 = _get_team(0)
+	var t1 = _get_team(1)
+	var winning_team: int
+	if t0.size() == 0 and t1.size() > 0:
+		winning_team = 1
+	elif t1.size() == 0 and t0.size() > 0:
+		winning_team = 0
+	else:
+		# Time limit — determine winner by total HP remaining
+		var hp0: float = 0.0
+		var hp1: float = 0.0
+		for ship in t0:
+			hp0 += ship.health_controller.current_hp
+		for ship in t1:
+			hp1 += ship.health_controller.current_hp
+		winning_team = 0 if hp0 >= hp1 else 1
 
 	# Gather leaderboard data from all players (including bots)
 	var leaderboard: Array[Dictionary] = []
@@ -1047,6 +1069,14 @@ func notify_match_end(winning_team: int, leaderboard: Array):
 	_Utils.match_result["leaderboard"] = leaderboard
 	_Utils.match_ended.emit(winning_team)
 
+@rpc("authority", "call_local", "unreliable_ordered")
+func _sync_match_timer(elapsed: float) -> void:
+	"""Called on all clients (and locally) to sync the match elapsed time."""
+	match_elapsed = elapsed
+
+func get_match_time_remaining() -> float:
+	return maxf(MATCH_DURATION - match_elapsed, 0.0)
+
 @rpc("any_peer", "call_remote", "reliable")
 func player_quit_match() -> void:
 	"""Called by a client when the player deliberately quits the match."""
@@ -1105,6 +1135,18 @@ func _physics_process(_delta: float) -> void:
 
 	# Update clusters and average positions
 	_update_team_clusters()
+
+	# Tick match timer (server advances elapsed time and broadcasts it)
+	if _Utils.authority() and match_active and not match_ended:
+		match_elapsed += _delta
+		_match_timer_sync_timer -= _delta
+		if _match_timer_sync_timer <= 0.0:
+			_match_timer_sync_timer = MATCH_TIMER_SYNC_INTERVAL
+			_sync_match_timer.rpc(match_elapsed)
+		if match_elapsed >= MATCH_DURATION:
+			match_ended = true
+			match_end_timer = MATCH_END_DELAY
+			print("Match ended! Time limit reached — draw!")
 
 	# Match end detection (server-side)
 	if _Utils.authority() and match_active and not match_ended:

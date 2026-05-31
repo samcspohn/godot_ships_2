@@ -317,7 +317,7 @@ func _physics_process(delta: float) -> void:
 				var pos = e.global_position
 				if e == target:
 					pos = e.to_global(target_offset)
-				var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.shell_time_multiplier)
+				var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.shell_time_multiplier, true)
 				if lead_target and g.is_aimpoint_valid(pos) and g.sim_can_shoot_over_terrain(lead_target):
 					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
 					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
