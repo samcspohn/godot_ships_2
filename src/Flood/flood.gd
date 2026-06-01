@@ -8,6 +8,9 @@ var hp: HPManager
 var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FloodManager = null
+var last_hit_time: float = 0
+
+
 var _params: DOTParams:
 	get:
 		return manager.dot_params.p() as DOTParams
@@ -22,8 +25,13 @@ var _owner: Ship = null
 
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
-		curr_buildup += a
-		if curr_buildup >= _rparams.max_buildup:
+		# curr_buildup += a
+		curr_buildup += a + 0.2 * (randf() - 0.5) # add some randomness to buildup
+		last_hit_time = Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate
+		var random_threshold = _rparams.max_buildup * 0.67
+		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
+
+		if curr_buildup >= _rparams.max_buildup or (rand_value > 0 and randf() < rand_value):
 			_owner = __owner
 			_owner.stats.damage_events.append({"type": "flood"})
 			_owner.stats.flood_count += 1

@@ -89,7 +89,6 @@ var period = 0.0
 
 
 const SHELL_COUNT := 8
-const MAX_R := 2.4477  # sqrt(-2 * log(0.05)) — Rayleigh 95th percentile
 
 var _shell_index := 0
 var _shuffled_radii := PackedFloat64Array()
@@ -103,7 +102,9 @@ var _citadel_v_frac := 0.05  # citadel semi-height as fraction of base_spread
 
 func _init(sigma: float = 1.0) -> void:
 	_sigma = maxf(sigma, 1.0)
-	_new_salvo(1.0, 1.0)
+	# Force a fresh salvo on the first shot so it uses the gun's real sigma
+	# (passed into calculate_dispersed_launch) instead of a placeholder.
+	_shell_index = SHELL_COUNT
 
 
 func set_sigma(sigma: float) -> void:
@@ -118,18 +119,28 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 	_citadel_v_frac = maxf(v_frac, 0.01)
 
 
-func _new_salvo(h_grouping: float, v_grouping: float) -> void:
+func _new_salvo(sigma: float) -> void:
 	_shell_index = 0
 	var half: int = SHELL_COUNT >> 1  # SHELL_COUNT / 2
 
-	# ── Rayleigh-stratified radii, sorted inner (small) to outer (large) ──
+	# ── Stratified truncated-Gaussian radii in [0, 1], sorted ──
+	# Each shell's 2D offset is an isotropic Gaussian truncated at the dispersion
+	# ellipse, so the radius never exceeds 1.0 (base_spread is a hard maximum,
+	# no clamping). WoWs sigma is how many standard deviations the ellipse edge
+	# represents: the per-axis std in normalized units is 1/sigma, and we sample
+	# only the CDF mass that falls inside the edge (F_max), then invert:
+	#     r = sqrt(-2 * ln(1 - u * F_max)) / sigma,  with F_max = 1 - exp(-sigma^2/2)
+	# Stratifying u across [0, 1) gives an even spread of inner (accurate) to
+	# outer (wide) shells. Higher sigma -> radii shrink toward 0 (tighter).
+	var s := maxf(sigma, 0.01)
+	var f_max := 1.0 - exp(-0.5 * s * s)
 	var sorted_r := PackedFloat64Array()
 	sorted_r.resize(SHELL_COUNT)
 	for i in SHELL_COUNT:
 		var u_low := float(i) / SHELL_COUNT
 		var u_high := float(i + 1) / SHELL_COUNT
 		var u := u_low + randf() * (u_high - u_low)
-		sorted_r[i] = minf(sqrt(-2.0 * log(1.0 - u + 1e-12)) / MAX_R, 1.0)
+		sorted_r[i] = minf(sqrt(-2.0 * log(1.0 - u * f_max + 1e-12)) / s, 1.0)
 	sorted_r.sort()
 
 	# ── Assign radii: interleave inner and outer within each consecutive pair ──
@@ -193,16 +204,14 @@ func _new_salvo(h_grouping: float, v_grouping: float) -> void:
 		for ki in 4:
 			_angles[gi * 4 + ki] = group_buf[ki]
 
-	_apply_citadel_guarantee(h_grouping, v_grouping)
+	_apply_citadel_guarantee()
 
 
 # Tests whether any shell in the current salvo will land inside the citadel
-# ellipse AFTER grouping is applied, and only nudges a shell inward if none do.
-# The grouping exponents must match what `calculate_dispersed_launch()` uses,
-# otherwise an inner shell that grouping would have squeezed into the citadel
-# can be falsely rejected, causing us to pull yet another shell inward and
-# tighten the overall pattern beyond what the curve specifies.
-func _apply_citadel_guarantee(h_grouping: float, v_grouping: float) -> void:
+# ellipse, and only nudges a shell inward if none do. The radii are already
+# normalized to the dispersion ellipse ([0, 1]), so the position math here
+# matches what `calculate_dispersed_launch()` does directly.
+func _apply_citadel_guarantee() -> void:
 	var ea := _citadel_h_frac
 	var eb := _citadel_v_frac
 	if ea <= 0.0 or eb <= 0.0:
@@ -213,12 +222,9 @@ func _apply_citadel_guarantee(h_grouping: float, v_grouping: float) -> void:
 	var closest_d := INF
 
 	for i in SHELL_COUNT:
-		var h_raw := _shuffled_radii[i] * cos(_angles[i])
-		var v_raw := _shuffled_radii[i] * sin(_angles[i])
-		# Mirror the grouping transform from calculate_dispersed_launch()
-		var hx: float = sign(h_raw) * pow(absf(h_raw), h_grouping)
-		var vy: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
-		var d := (hx * hx) / (ea * ea) + (vy * vy) / (eb * eb)
+		var h_frac := _shuffled_radii[i] * cos(_angles[i])
+		var v_frac := _shuffled_radii[i] * sin(_angles[i])
+		var d := (h_frac * h_frac) / (ea * ea) + (v_frac * v_frac) / (eb * eb)
 		if d <= 1.0:
 			any_inside = true
 			break
@@ -227,13 +233,11 @@ func _apply_citadel_guarantee(h_grouping: float, v_grouping: float) -> void:
 			closest_idx = i
 
 	if not any_inside:
-		# Solve for the raw-radius scale that lands the post-grouping shell
-		# inside the ellipse. Grouping is a power law on |r|, so scaling raw
-		# radius by `s` scales the post-grouping radius by s^grouping. We pick
-		# an average exponent for the axis weighting (cheap + close enough).
-		var avg_grouping: float = (h_grouping + v_grouping) * 0.5
+		# Scaling the std-dev radius by `s` scales the ellipse-space position
+		# linearly, so the ellipse metric `d` scales by s^2. Solve for the
+		# scale that lands the closest shell at the target distance.
 		var target_d := 0.25 + randf() * 0.56  # final d in [0.25, 0.81]
-		var scale_factor: float = pow(target_d / closest_d, 0.5 / maxf(avg_grouping, 0.01))
+		var scale_factor: float = sqrt(target_d / closest_d)
 		_shuffled_radii[closest_idx] *= scale_factor
 
 # Dispersion curve. The maximum physical dispersion (meters at max range) is
@@ -248,13 +252,20 @@ const MAX_DISPERSION_ANGLE_RAD: float = 0.5      # safety cap at point-blank
 ## Perturbs a launch vector by applying dispersion as angular offsets.
 ## h = lateral (perpendicular to aim in horizontal plane)
 ## v = vertical (elevation angle adjustment)
-## base_spread = max dispersion angle in radians at sigma=1
+## base_spread = max dispersion angle in radians (the ellipse half-axis) and a
+##   hard ceiling: no shell ever disperses beyond it.
+## sigma_h = WoWs-style sigma (single concentration value): the number of
+##   standard deviations the ellipse edge represents. Higher sigma -> shells
+##   cluster tighter toward the aim point; lower sigma spreads them out.
+##   Typical naval values are ~1.5 - 2.1.
+## _sigma_v = reserved for a future vertical/horizontal asymmetry pass
+##   (alongside splitting base_spread into h_spread / v_spread); unused for now.
 func calculate_dispersed_launch(
 		aim_point: Vector3,
 		gun_position: Vector3,
 		shell_params: ShellParams,
-		h_grouping: float,
-		v_grouping: float,
+		sigma_h: float,
+		_sigma_v: float,
 		base_spread: float,
 		max_range: float) -> Vector3:
 
@@ -282,18 +293,16 @@ func calculate_dispersed_launch(
 	var _base_spread: float = rate * base_spread * 2.0 + base_spread
 
 	if _shell_index >= SHELL_COUNT:
-		_new_salvo(h_grouping, v_grouping)
+		_new_salvo(sigma_h)
 
+	# Radius is already truncated-Gaussian normalized to the ellipse ([0, 1]),
+	# so the offsets land inside [-1, 1] by construction — no clamping needed.
 	var r := _shuffled_radii[_shell_index]
 	var angle := _angles[_shell_index]
 	_shell_index += 1
 
-	var h_raw := r * cos(angle)
-	var v_raw := r * sin(angle)
-
-	# Apply per-axis grouping: higher = tighter toward center
-	var h_offset: float = sign(h_raw) * pow(absf(h_raw), h_grouping)
-	var v_offset: float = sign(v_raw) * pow(absf(v_raw), v_grouping)
+	var h_offset := r * cos(angle)
+	var v_offset := r * sin(angle)
 
 	# Scale to actual angular dispersion
 	const VERTICAL_SPREAD: float = 0.7
