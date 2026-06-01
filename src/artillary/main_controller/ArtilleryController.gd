@@ -13,22 +13,22 @@ var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
-	shell1.text = "HE"
+	shell1.text = "AP"
 	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell1))
 	shell1.pressed.connect(func():
-		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-		select_shell.rpc_id(1, 1)
-	)
-
-	var shell2 = Button.new()
-	shell2.text = "AP"
-	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2))
-	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		select_shell.rpc_id(1, 0)
 	)
 
-	return [shell1, shell2]
+	var shell2 = Button.new()
+	shell2.text = "HE"
+	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(params.dynamic_mod as GunParams, (params.dynamic_mod as GunParams).shell2))
+	shell2.pressed.connect(func():
+		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+		select_shell.rpc_id(1, 1)
+	)
+
+	return [shell2, shell1]
 
 func _build_tooltip_text(gp: GunParams, sp: ShellParams) -> String:
 	var shell_label := "AP" if sp.type == ShellParams.ShellType.AP else "HE"
@@ -163,9 +163,13 @@ func _ready() -> void:
 		g.dispersion_calculator = self.dispersion_calculator
 		i += 1
 
+
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
+		if _ship.ship_class == Ship.ShipClass.BB:
+			select_shell.rpc_id(1, 0)
+
 		set_physics_process(false)
 
 ## Returns the 3D velocity vector at impact for a ballistic trajectory to target_pos.

@@ -3,7 +3,7 @@ extends Control
 class_name Minimap
 
 # Constants
-const SHIP_MARKER_SIZE = 30
+const SHIP_MARKER_SIZE = 35
 const CONSUMABLE_ICON_SIZE = 28 # Base size for consumable icons on minimap
 const SHIP_NAME_FONT_SIZE = 10 # Base font size for ship names on minimap
 const PLAYER_COLOR = Color(1, 1, 1, 1) # White
@@ -321,7 +321,17 @@ func _on_canvas_draw() -> void:
 			if is_friendly and tracked_ship.consumable_manager:
 				consumable_icons = tracked_ship.consumable_manager.get_active_icons()
 
-			ships_to_draw.append({"pos": tracked_pos, "rot": -tracked_rot, "color": color, "consumables": consumable_icons, "name": tracked_ship.ship_name})
+			ships_to_draw.append({
+				"pos": tracked_pos,
+				"rot": -tracked_rot,
+				"color": color,
+				"consumables": consumable_icons,
+				"name": tracked_ship.ship_name,
+				"velocity": tracked_ship.linear_velocity if is_instance_valid(tracked_ship) else Vector3.ZERO,
+				"locked": battle_camera != null and battle_camera.target_lock_enabled \
+						and is_instance_valid(battle_camera.locked_target) \
+						and battle_camera.locked_target == tracked_ship,
+			})
 			# draw_ship_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, color)
 
 	# draw gun ranges
@@ -358,6 +368,10 @@ func _on_canvas_draw() -> void:
 
 	# Draw ships
 	for ship_info in ships_to_draw:
+		var mm_pos = world_to_minimap_position(ship_info.pos)
+		if ship_info.locked:
+			_draw_lock_circle(mm_pos)
+			_draw_heading_line(mm_pos, ship_info.rot, ship_info.color)
 		draw_ship_on_minimap(ship_info.pos, ship_info.rot, ship_info.color, 1.0, ship_info.name)
 		# Draw consumable icons for this ship
 		if ship_info.consumables.size() > 0:
@@ -365,6 +379,7 @@ func _on_canvas_draw() -> void:
 
 	# Draw player ship on top if it exists
 	if is_instance_valid(player_ship):
+		var _player_mm_pos = world_to_minimap_position(player_ship.global_position)
 		draw_ship_on_minimap(player_ship.global_position, -player_ship.rotation.y, PLAYER_COLOR, 1.0, player_ship.ship_name)
 		# Draw player consumable icons
 		if player_ship.consumable_manager:
@@ -509,6 +524,23 @@ func _draw_ship_name(marker_position: Vector2, ship_name: String, color: Color) 
 	var text_color = color.lerp(Color.WHITE, 0.7)
 	text_color.a = 0.9
 	ship_markers_canvas.draw_string(font, text_pos, ship_name, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
+
+func _draw_heading_line(minimap_pos: Vector2, ship_rotation: float, color: Color) -> void:
+	# Forward direction in minimap space matches the marker tip: Vector2(0,-1).rotated(ship_rotation)
+	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	var forward = Vector2(0, -1).rotated(ship_rotation)
+	var col = Color.WHITE
+	col.a = 0.5
+	ship_markers_canvas.draw_line(minimap_pos, minimap_pos + forward * marker_size * 5.0, col, 1.0)
+
+
+func _draw_lock_circle(minimap_pos: Vector2) -> void:
+	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	var radius = marker_size * 0.9
+	var col = Color.WHITE
+	col.a = 0.5
+	ship_markers_canvas.draw_arc(minimap_pos, radius, 0.0, TAU, 32, col, 1.0, true)
+
 
 # Draw consumable icons near a ship on the minimap
 func draw_consumables_on_minimap(world_position: Vector3, consumable_icons: Array) -> void:

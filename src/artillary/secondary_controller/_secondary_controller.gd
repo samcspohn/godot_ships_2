@@ -41,24 +41,24 @@ func get_weapon_ui() -> Array[Button]:
 		return []
 
 	var shell1 = Button.new()
-	shell1.text = "HEs"
+	shell1.text = "APs"
 	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(0))
 	shell1.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		# shell_index = 0
-		select_shell.rpc_id(1, 1)
+		select_shell.rpc_id(1, 0)
 	)
 
 	var shell2 = Button.new()
-	shell2.text = "APs"
+	shell2.text = "HEs"
 	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(1))
 	shell2.pressed.connect(func():
 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 		# shell_index = 1
-		select_shell.rpc_id(1, 0)
+		select_shell.rpc_id(1, 1)
 	)
 
-	return [shell1, shell2]
+	return [shell2, shell1]
 
 func _build_tooltip_text(_shell_index: int) -> String:
 	var shell_label := "AP" if _shell_index == 0 else "HE"

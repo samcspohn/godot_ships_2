@@ -884,16 +884,7 @@ func _update_camera_angle_display():
 
 
 func _on_crosshair_container_draw():
-	# Draw locked target indicator
-	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		var target_screen_pos = camera_controller.unproject_position(locked_target.global_position)
-		var crosshair_pos = crosshair_container.global_position + crosshair_container.size / 2.0
-
-		# Draw line to locked target if it's visible
-		if is_position_visible_on_screen(locked_target.global_position):
-			var relative_target_pos = target_screen_pos - crosshair_pos
-			crosshair_container.draw_line(Vector2.ZERO, relative_target_pos, Color(1, 0, 0, 0.8), 2.0)
-			crosshair_container.draw_circle(relative_target_pos, 10, Color(1, 0, 0, 0.6), false, 2.0)
+	pass  # lock-on indicator is now shown as a world-space icon above the ship UI
 
 func setup_ship_ui(ship):
 	if ship == camera_controller._ship or ship in ship_ui_elements:
@@ -995,6 +986,15 @@ func setup_ship_ui(ship):
 	name_label.text = ship.name
 	ship_hp_label.text = "%d/%d" % [ship.health_controller.current_hp, ship.health_controller.max_hp]
 
+	# Lock-on icon — shown above the ship container when this ship is the locked target
+	var lock_icon := Label.new()
+	lock_icon.text = "◎"
+	lock_icon.add_theme_color_override("font_color", Color.WHITE)
+	lock_icon.add_theme_font_size_override("font_size", 42)
+	lock_icon.position = Vector2(22, -50)  # centered above the 90px-wide container
+	lock_icon.visible = false
+	ship_container.add_child(lock_icon)
+
 	# Store the UI elements for this ship
 	ship_ui_elements[ship] = {
 		"container": ship_container,
@@ -1006,6 +1006,7 @@ func setup_ship_ui(ship):
 		"normal_icons": normal_icons,
 		"alt_widgets": alt_widgets,
 		"alt_refs": alt_refs,
+		"lock_icon": lock_icon,
 	}
 
 func update_ship_ui(delta: float = 0.0):
@@ -1105,11 +1106,15 @@ func update_ship_ui(delta: float = 0.0):
 			# Check if ship is visible on screen
 			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
 			ui.container.visible = ship_visible && (ship as Ship).health_controller.is_alive()
+			if not ship_visible:
+				ui.lock_icon.visible = false
 
 			if ship_visible:
 				# Position the container above the ship, centered
 				var container_size = Vector2(90, 40) # Use template size
 				ui.container.position = screen_pos - Vector2(container_size.x / 2, container_size.y)
+				# Show lock-on icon when this ship is the active locked target
+				ui.lock_icon.visible = target_lock_enabled and locked_target == ship
 		else:
 			# Ship no longer valid, remove it
 			if ship in ship_ui_elements:

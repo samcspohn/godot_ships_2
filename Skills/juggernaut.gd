@@ -14,6 +14,7 @@ const FIRE_MOD: float = 0.9
 const FLOOD_MOD: float = 0.9
 const REGEN_TIMEOUT: float = 30.0
 const REBAKE_THRESHOLD: float = 0.005
+const DC_RP_DUR_MOD: float = 0.8
 
 var _cached_hp_lost_pct: float = 0.0
 var hp_regen_per_sec: float = 0.0
@@ -30,11 +31,18 @@ func _init() -> void:
 		{"stat": "HP Regen (per 1% HP lost)", "value": "+%.4f%% max HP/s" % REGEN_COEFF, "positive": true},
 		{"stat": "Fire DPS",                  "value": fmt_mult_pct(FIRE_MOD),            "positive": true},
 		{"stat": "Flood DPS",                 "value": fmt_mult_pct(FLOOD_MOD),           "positive": true},
+		{"stat": "DC/RP Duration",            "value": fmt_mult_pct(DC_RP_DUR_MOD),      "positive": false},
 	]
 
 func _a(ship: Ship) -> void:
 	(ship.fire_manager.fparams.dynamic_mod as DOTParams).dmg_rate  *= FIRE_MOD
 	(ship.flood_manager.dot_params.dynamic_mod as DOTParams).dmg_rate *= FLOOD_MOD
+	for consumable: ConsumableItem in ship.consumable_manager.equipped_consumables:
+		if consumable.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL or \
+				consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
+			var dm := consumable.dynamic_mod as ConsumableItem
+			if dm.duration > 0.0:
+				dm.duration *= DC_RP_DUR_MOD
 
 func apply(ship: Ship) -> void:
 	_ship = ship
