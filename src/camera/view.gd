@@ -27,6 +27,13 @@ func set_vh(_aim_pos: Vector3):
 func set_locked_rot(_locked_aim_pos: Vector3):
 	pass
 
+# Preserves the current combined view direction as a locked_rot offset after
+# set_vh has changed the base rot_h/v to track a target. Pass the rot_h/v
+# values captured BEFORE calling set_vh.
+func set_locked_rot_preserve(prev_rot_h: float, prev_rot_v: float):
+	locked_rot_h = CameraView.normalize_angle(prev_rot_h - rot_h)
+	locked_rot_v = prev_rot_v - rot_v
+
 
 # Calculate the rotation (rot_h, rot_v) needed to look at target_pos from a given camera position.
 # Returns Vector2(rot_h, rot_v)

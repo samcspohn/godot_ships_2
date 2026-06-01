@@ -14,9 +14,20 @@ const RAY_HEIGHT: float = 10000.0  # Height to cast rays from
 const WATER_LEVEL: float = 0.0  # Y level of water
 
 var init = false
-#func _ready():
-	#call_deferred("preprocess_islands")
-	#preprocess_islands()
+
+func _ready() -> void:
+	# Orient the secondary directional light 90 degrees off the primary light.
+	# Rotate light 1's basis around its own "right" (local X) axis, choosing the
+	# rotation direction that keeps light 2's source above the horizon (+Z.y > 0).
+	var light_1: DirectionalLight3D = $DirectionalLight3D
+	var light_2: DirectionalLight3D = $DirectionalLight3D2
+	var right_axis: Vector3 = light_1.transform.basis.x.normalized()
+	var rotated_basis: Basis = light_1.transform.basis.rotated(right_axis, PI / 2.0)
+	if rotated_basis.z.y < 0.0:
+		rotated_basis = light_1.transform.basis.rotated(right_axis, -PI / 2.0)
+	var t: Transform3D = light_2.transform
+	t.basis = rotated_basis.orthonormalized()
+	light_2.transform = t
 
 func _physics_process(delta: float) -> void:
 	if !init:

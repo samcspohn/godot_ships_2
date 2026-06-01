@@ -96,44 +96,37 @@ func update_transform():
 			rotation.x = rot_v + locked_rot_v
 			rotation.y = rot_h + locked_rot_h
 
-func set_vh(aim_pos: Vector3):
-	# Step 1: Find the height at (ship.x, h, ship.z) where a line at 0.015 radians
-	# passes through aim_pos
-	# var angle = 0.015
+# Returns Vector2(rot_h, rot_v) to aim at aim_pos, or null if geometry degenerate.
+func _calculate_rotation_for_aim(aim_pos: Vector3) -> Variant:
 	var ship_pos = follow_ship.global_position
-
-# Calculate horizontal distance from ship to aim_pos in XZ plane
 	var dist_xz = Vector2(aim_pos.x - ship_pos.x, aim_pos.z - ship_pos.z).length()
-
-	# Height where line at angle 0.015 from horizontal passes through aim_pos
-	# tan(angle) = (h - aim_pos.y) / dist_xz
-	# h = aim_pos.y + dist_xz * tan(angle)
 	var elevated_height = aim_pos.y + dist_xz * tan(angle)
 	var elevated_point = Vector3(ship_pos.x, elevated_height, ship_pos.z)
-
-	# Step 2: Find ground intersection (y=0) for line from elevated_point through aim_pos
-	# Line: P = elevated_point + t * (aim_pos - elevated_point)
-	# For y = 0: elevated_height + t * (aim_pos.y - elevated_height) = 0
-	# t = -elevated_height / (aim_pos.y - elevated_height)
 	var direction = aim_pos - elevated_point
 	if abs(direction.y) < 0.0001:
-		return  # Line is parallel to ground, no intersection
-
+		return null
 	var t = -elevated_height / direction.y
 	if t < 0:
-		return  # Intersection is behind
-
+		return null
 	var intersection = elevated_point + direction * t
-
-	# Step 3: Calculate rot_v as angle from (ship.x, height, ship.z) to intersection
 	var camera_pos = Vector3(ship_pos.x, height, ship_pos.z)
 	var dist_to_intersection = Vector2(intersection.x - camera_pos.x, intersection.z - camera_pos.z).length()
-
-	# rot_v is negative (looking down) - angle from horizontal to intersection
-	rot_v = -atan(height / dist_to_intersection)
-
-	# Step 4: Calculate rot_h to align view horizontally with aim_pos
-	# atan2 gives the angle from the positive Z axis towards the positive X axis
+	var result_rot_v = -atan(height / dist_to_intersection)
 	var dx = aim_pos.x - ship_pos.x
 	var dz = aim_pos.z - ship_pos.z
-	rot_h = atan2(dx, dz) + PI
+	var result_rot_h = atan2(dx, dz) + PI
+	return Vector2(result_rot_h, result_rot_v)
+
+func set_vh(aim_pos: Vector3):
+	var result = _calculate_rotation_for_aim(aim_pos)
+	if result == null:
+		return
+	rot_h = result.x
+	rot_v = result.y
+
+func set_locked_rot(locked_aim_pos: Vector3):
+	var result = _calculate_rotation_for_aim(locked_aim_pos)
+	if result == null:
+		return
+	locked_rot_h = CameraView.normalize_angle(result.x - rot_h)
+	locked_rot_v = result.y - rot_v

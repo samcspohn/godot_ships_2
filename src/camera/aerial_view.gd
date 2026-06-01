@@ -13,6 +13,9 @@ var min_fov = 1.0
 var max_fov = 10.0
 var height = 60.0
 var zoom_mod = 1.0
+
+# var angle = 0.022
+
 # var player_controller: PlayerController
 #
 func _ready():
@@ -68,30 +71,61 @@ func _process(_delta):
 
 const ANGLE = deg_to_rad(6)
 func handle_mouse_event(event):
+	var angle = get_angle()
 	if event is InputEventMouseMotion:
 		var curr_range = player_controller.current_weapon_controller.get_max_range()
 		var theta = -asin(clamp(height / curr_range, 0.0, 1.0))
 		if locked_ship == null:
 			rot_h -= event.relative.x * 0.0002 * current_zoom * zoom_mod/ max_fov
-			rot_v -= event.relative.y * 0.0005 * current_zoom * zoom_mod / max_fov * -(rot_v)
+			rot_v -= event.relative.y * (0.0001 / max(sin(angle), 0.1)) * current_zoom * zoom_mod / max_fov * -(rot_v)
 			rot_v = clamp(rot_v, -PI / 2, theta)
 		else:
 			locked_rot_h -= event.relative.x * 0.0002 * current_zoom * zoom_mod / max_fov
-			locked_rot_v -= event.relative.y * 0.0005 * current_zoom * zoom_mod / max_fov * -(rot_v + locked_rot_v)
+			locked_rot_v -= event.relative.y * (0.0001 / max(sin(angle), 0.1)) * current_zoom * zoom_mod / max_fov * -(rot_v + locked_rot_v)
 			var min_offset = rot_v - PI / 2
 			var max_offset = theta - rot_v
 			locked_rot_v = clamp(locked_rot_v, min_offset, max_offset)
+
+
+func get_angle():
+	var pos = follow_ship.global_position
+	pos.y = height
+
+	var ship_position = ship.global_position + Vector3(0.0, ship.movement_controller.ship_draft * 0.5, 0.0)
+	var aim_point = calculate_0_intersection(pos, rot_h + locked_rot_h + PI, -(rot_v + locked_rot_v))
+
+	var shell_params: ShellParams = ship.artillery_controller.get_shell_params()
+	var launch_result = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+		ship_position,
+		aim_point,
+		shell_params
+	)
+	var launch_vector = launch_result[0]
+	if not launch_vector:
+		return ANGLE
+	var velocity_at_impact_vec = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(
+		launch_vector,
+		launch_result[1],
+		shell_params
+	)
+
+	var angle = atan2(-velocity_at_impact_vec.y, Vector2(velocity_at_impact_vec.x, velocity_at_impact_vec.z).length())
+	return angle
 
 func update_transform():
 	if follow_ship != null:
 		var pos = follow_ship.global_position
 		pos.y = height
 		var intersection = calculate_0_intersection(pos, rot_h + locked_rot_h + PI, -(rot_v + locked_rot_v))
+		var angle = get_angle()
+
 		if intersection != Vector3.INF:
 			var ship_pos = follow_ship.global_position
 			ship_pos.y = 0.0
 			var dist = intersection.distance_to(ship_pos)
-			var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40)
+			# var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40)
+			var h = max(dist * angle, 40)
+
 			# zoom_mod = max(0.3,  1.0 / h / 5000.0)
 			zoom_mod = 1.0
 			current_fov = min(max(current_zoom * zoom_mod, 1.0), max_fov)
@@ -133,11 +167,13 @@ func _calculate_rotation_for_aim(target_pos: Vector3) -> Variant:
 
 	const MAX_ITERATIONS = 10
 	const TOLERANCE = 0.1
+	var angle = get_angle()
 
 	for i in range(MAX_ITERATIONS):
 		# Calculate dynamic height for current intersection guess
 		var dist = intersection.distance_to(ship_pos_y0)
-		var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40.0)
+		# var h = max(dist * pow(dist / 10000.0, 1.5) * ANGLE, 40.0)
+		var h = max(dist * angle, 40.0)
 
 		# Camera position at this height
 		var cam_pos = Vector3(ship_pos.x, h, ship_pos.z)

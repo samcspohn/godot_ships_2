@@ -96,7 +96,7 @@ func _ready() -> void:
 
 	var mat = PhysicsMaterial.new()
 	mat.friction = 0.2
-	mat.bounce = -0.1
+	# mat.bounce = -0.1
 	ship.physics_material_override = mat
 	# Vertical motion is controlled by a soft spring around y=0 (see
 	# _apply_waterline_spring). Gravity stays on — the righting moment
@@ -171,7 +171,7 @@ func _check_land_collision() -> void:
 			touching_land = true
 			var impulse = (ship.position - dict["point"])
 			impulse.y = 0
-			impulse = ship.mass * 10.0 * impulse.normalized()
+			impulse = ship.mass * 3.0 * impulse.normalized()
 			ship.apply_central_impulse(impulse)
 			grounded_position = dict["point"]
 			grounded_island = dict["collider"]

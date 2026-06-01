@@ -119,7 +119,8 @@ func _process(_delta: float) -> void:
 						"1001": {
 							"team": "1",
 							"player_id": "1001",
-							"ship": "res://Ships/H44/H44.tscn",
+							"ship": "res://Ships/H44/H44.2.tscn",
+							# "ship": "res://Ships/DesMoines/DesMoines.tscn",
 							"is_bot": true,
 							"spawn_position": 0
 						}

@@ -4,7 +4,7 @@ class_name FireManager
 @export var fparams: DOTParams
 @export var rparams: ResistanceParams
 #var _params: FireParams
-@export var fires: Array[Fire] = []
+var fires: Array[Fire] = []
 var _ship: Ship
 
 # func reset_dynamic_mod(): # copy static to dynamic

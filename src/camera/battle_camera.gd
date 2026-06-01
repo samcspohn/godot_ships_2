@@ -28,6 +28,15 @@ var camera_offset: Vector3 = Vector3(0, 50, 0) # Height offset above ship
 # Target locking
 var locked_target: Ship = null
 var target_lock_enabled: bool = false
+# Auto lock-on
+@export var auto_lock_enabled: bool = true
+@export var auto_lock_base_fraction: float = 0.02  # Zone half-extent at default_fov
+@export var auto_lock_hysteresis_mult: float = 5.0  # Lock-off zone = lock-on zone * this
+@export var auto_lock_delay: float = 0.25           # Seconds a candidate must stay in zone before locking
+@export var auto_lock_ref_distance: float = 20000.0  # World distance at which zone is at base size
+# @export var auto_lock_max_dist_scale: float = 5.0   # Maximum zone scale for very close targets
+var _auto_lock_candidate: Ship = null
+var _auto_lock_timer: float = 0.0
 
 # Zoom properties - Scaled for a 250m ship
 @export var min_zoom_distance: float = 7.0 # Close to the ship
@@ -226,6 +235,7 @@ func _process(delta):
 		zoom_accumulator -= zoom_delta
 	# Update camera position and rotation
 	_update_target_lock()
+	_auto_update_target_lock(delta)
 
 	# Update Debug autoload with current follow ship
 	if has_node("/root/Debug"):
@@ -248,18 +258,17 @@ func _process(delta):
 		if not free_look:
 			if last_non_free_look_mode == CameraMode.THIRD_PERSON:
 				last_view = third_person_view
-				free_look_view.rot_h = third_person_view.rot_h
-				free_look_view.rot_v = third_person_view.rot_v
-				#free_look_view.rotation_degrees_vertical = third_person_view.rotation_degrees_vertical
+				free_look_view.rot_h = third_person_view.rot_h + third_person_view.locked_rot_h
+				free_look_view.rot_v = third_person_view.rot_v + third_person_view.locked_rot_v
 			elif last_non_free_look_mode == CameraMode.SNIPER:
 				if current_aim_mode == AimMode.AERIAL:
 					last_view = aerial_view
-					free_look_view.rot_h = aerial_view.rot_h
+					free_look_view.rot_h = aerial_view.rot_h + aerial_view.locked_rot_h
+					free_look_view.rot_v = aerial_view.rot_v + aerial_view.locked_rot_v
 				else:
 					last_view = sniper_view
-					free_look_view.rot_h = sniper_view.rot_h
-
-				#free_look_view.rotation_degrees_vertical = sniper_view.rotation_degrees_vertical
+					free_look_view.rot_h = sniper_view.rot_h + sniper_view.locked_rot_h
+					free_look_view.rot_v = sniper_view.rot_v + sniper_view.locked_rot_v
 			transition_time = TRANSITION_DURATION
 			current_view = free_look_view
 		free_look = true
@@ -349,11 +358,10 @@ func _get_angles_to_target(cam_pos, target_pos):
 func _update_target_lock():
 	if locked_target:
 		if locked_target.global_position.distance_to(_ship.global_position) > player_controller.current_weapon_controller.get_max_range():
-			# target_lock_enabled = false
-			toggle_target_lock()
+			_unlock_target()
 
 	if target_lock_enabled and (!locked_target.visible_to_enemy or locked_target.health_controller.is_dead()):
-		toggle_target_lock()
+		_unlock_target()
 
 	if target_lock_enabled:
 		third_person_view.set_vh(locked_target.global_position)
@@ -409,30 +417,18 @@ func set_camera_mode(mode):
 
 	_Debug.sphere(aim_position, 5)
 	if mode == CameraMode.SNIPER:
+		current_aim_mode = AimMode.SNIPER  # always enter sniper in aim view
 		last_non_free_look_mode = CameraMode.SNIPER
 		if target_lock_enabled:
-			# sniper_view.set_vh(locked_target.global_position)
-			# sniper_view.set_locked_rot(aim_position)
-			if current_aim_mode == AimMode.SNIPER:
-				sniper_view.set_vh(locked_target.global_position)
-				sniper_view.set_locked_rot(aim_position)
-				current_view = sniper_view
-			else:
-				aerial_view.set_vh(locked_target.global_position)
-				aerial_view.set_locked_rot(aim_position)
-				current_view = aerial_view
-
+			sniper_view.set_vh(locked_target.global_position)
+			sniper_view.set_locked_rot(aim_position)
 		else:
-			# sniper_view.rot_h = third_person_view.rot_h
-			# sniper_view.rot_v = third_person_view.rot_v
 			sniper_view.set_vh(aim_position)
-			aerial_view.set_vh(aim_position)
-			if current_aim_mode == AimMode.SNIPER:
-				current_view = sniper_view
-			else:
-				current_view = aerial_view
+			aerial_view.set_vh(aim_position)  # pre-align aerial in case player toggles to it
+		current_view = sniper_view
 
 	elif mode == CameraMode.THIRD_PERSON:
+		current_aim_mode = AimMode.SNIPER  # reset so next sniper entry starts in aim view
 		last_non_free_look_mode = CameraMode.THIRD_PERSON
 		if target_lock_enabled:
 			third_person_view.set_vh(locked_target.global_position)
@@ -648,51 +644,140 @@ func is_position_visible_on_screen(world_position):
 	return viewport_rect.has_point(screen_position)
 
 
-func toggle_target_lock():
-	# pass
-	# If already locked, disable the lock
-	if target_lock_enabled:
-		target_lock_enabled = false
-		locked_target = null
-		# Reset camera offsets
-		sniper_view.rot_h += sniper_view.locked_rot_h
-		sniper_view.rot_v += sniper_view.locked_rot_v
-		aerial_view.rot_h += aerial_view.locked_rot_h
-		aerial_view.rot_v += aerial_view.locked_rot_v
-		sniper_view.locked_rot_h = 0.0
-		sniper_view.locked_rot_v = 0.0
-		aerial_view.locked_rot_h = 0.0
-		aerial_view.locked_rot_v = 0.0
-		sniper_view.locked_ship = null
-		aerial_view.locked_ship = null
+func _unlock_target():
+	target_lock_enabled = false
+	locked_target = null
+	sniper_view.rot_h += sniper_view.locked_rot_h
+	sniper_view.rot_v += sniper_view.locked_rot_v
+	aerial_view.rot_h += aerial_view.locked_rot_h
+	aerial_view.rot_v += aerial_view.locked_rot_v
+	sniper_view.locked_rot_h = 0.0
+	sniper_view.locked_rot_v = 0.0
+	aerial_view.locked_rot_h = 0.0
+	aerial_view.locked_rot_v = 0.0
+	sniper_view.locked_ship = null
+	aerial_view.locked_ship = null
+	third_person_view.rot_h += third_person_view.locked_rot_h
+	third_person_view.rot_v += third_person_view.locked_rot_v
+	third_person_view.locked_rot_h = 0.0
+	third_person_view.locked_rot_v = 0.0
+	third_person_view.locked_ship = null
 
-		third_person_view.rot_h += third_person_view.locked_rot_h
-		third_person_view.rot_v += third_person_view.locked_rot_v
-		third_person_view.locked_rot_h = 0.0
-		third_person_view.locked_rot_v = 0.0
-		third_person_view.locked_ship = null
+
+func _lock_on_target(target: Ship):
+	locked_target = target
+	target_lock_enabled = true
+	# Snapshot each view's rotation before set_vh overwrites it, then use the
+	# exact inverse (old - new_base) to preserve the current view with no solver drift.
+	var sv_h = sniper_view.rot_h; var sv_v = sniper_view.rot_v
+	sniper_view.locked_ship = target
+	sniper_view.set_vh(target.global_position)
+	sniper_view.set_locked_rot_preserve(sv_h, sv_v)
+
+	var av_h = aerial_view.rot_h; var av_v = aerial_view.rot_v
+	aerial_view.locked_ship = target
+	aerial_view.set_vh(target.global_position)
+	aerial_view.set_locked_rot_preserve(av_h, av_v)
+
+	var tp_h = third_person_view.rot_h; var tp_v = third_person_view.rot_v
+	third_person_view.locked_ship = target
+	third_person_view.set_vh(target.global_position)
+	third_person_view.set_locked_rot_preserve(tp_h, tp_v)
+
+
+func toggle_target_lock():
+	if target_lock_enabled:
+		_unlock_target()
 		return
 
-	# Try to find a suitable target
 	var closest_target = find_lockable_target()
 	if closest_target:
-		locked_target = closest_target
-		target_lock_enabled = true
-		# Reset camera offsets when locking a new target
-		sniper_view.locked_rot_h = 0.0
-		sniper_view.locked_rot_v = 0.0
-		sniper_view.locked_ship = closest_target
-		sniper_view.set_vh(closest_target.global_position)
+		_lock_on_target(closest_target)
 
-		aerial_view.locked_rot_h = 0.0
-		aerial_view.locked_rot_v = 0.0
-		aerial_view.locked_ship = closest_target
-		aerial_view.set_vh(closest_target.global_position)
 
-		third_person_view.locked_rot_h = 0.0
-		third_person_view.locked_rot_v = 0.0
-		third_person_view.locked_ship = closest_target
-		third_person_view.set_vh(closest_target.global_position)
+func _auto_update_target_lock(delta: float):
+	if not auto_lock_enabled or current_mode == CameraMode.FREE_LOOK:
+		return
+
+	var viewport_size = get_viewport().get_visible_rect().size
+	var screen_center = viewport_size * 0.5
+
+	# Scale lock-on zone inversely with FOV: smaller FOV = larger screen fraction.
+	var fov_scale = default_fov / max(fov, 1.0)
+	var lock_on_frac = clamp(auto_lock_base_fraction * fov_scale, auto_lock_base_fraction, 0.85)
+	var lock_on_half = viewport_size * lock_on_frac * 0.5
+	# lock-off uses per-target distance scaling with auto_lock_hysteresis_mult applied (see below).
+
+	# Auto-unlock any lock whose target has left the hysteresis zone.
+	# Use the same distance scaling as lock-on so the lock-off zone matches
+	# the zone in which the lock was acquired.
+	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
+		var cam = get_viewport().get_camera_3d()
+		var to_target = locked_target.global_position - global_position
+		if to_target.dot(-global_basis.z) <= 0.0:
+			_unlock_target()
+		else:
+			var world_dist = locked_target.global_position.distance_to(_ship.global_position)
+			var dist_scale = auto_lock_ref_distance / max(world_dist, 1.0)
+			var effective_lock_off_half = lock_on_half * dist_scale * auto_lock_hysteresis_mult
+			var sp = cam.unproject_position(locked_target.global_position)
+			var screen_delta = (sp - screen_center).abs()
+			if screen_delta.x > effective_lock_off_half.x or screen_delta.y > effective_lock_off_half.y:
+				_unlock_target()
+
+	# Auto-lock: find the closest-to-center eligible target inside the lock-on zone.
+	if not target_lock_enabled:
+		var best_target: Ship = null
+		var best_dist: float = INF
+		var cam = get_viewport().get_camera_3d()
+
+		var my_team_id = -1
+		if _ship.team and _ship.team.has_method("get_team_info"):
+			my_team_id = _ship.team.get_team_info()["team_id"]
+
+		for ship in get_node("/root/Server/GameWorld/Players").get_children():
+			if ship == _ship or not (ship is Ship):
+				continue
+			if not ship.health_controller.is_alive() or not ship.visible_to_enemy:
+				continue
+			if ship.global_position.distance_to(_ship.global_position) > player_controller.current_weapon_controller.get_max_range():
+				continue
+			var ship_team_id = -2
+			if ship.team and ship.team.has_method("get_team_info"):
+				ship_team_id = ship.team.get_team_info()["team_id"]
+			if my_team_id == ship_team_id:
+				continue
+			# Scale zone inversely with world distance: closer ships occupy more screen space.
+			var world_dist = ship.global_position.distance_to(_ship.global_position)
+			var dist_scale = auto_lock_ref_distance / max(world_dist, 1.0)
+			var effective_half = lock_on_half * dist_scale
+			# At close range effective_half can exceed the viewport — allow off-screen targets.
+			# Always reject targets behind the camera since unproject_position is undefined there.
+			var to_ship = ship.global_position - global_position
+			if to_ship.dot(-global_basis.z) <= 0.0:
+				continue
+			var covers_screen = effective_half.x >= viewport_size.x * 0.5 \
+								and effective_half.y >= viewport_size.y * 0.5
+			if not covers_screen and not is_position_visible_on_screen(ship.global_position):
+				continue
+			var sp = cam.unproject_position(ship.global_position)
+			var screen_delta = (sp - screen_center).abs()
+			if screen_delta.x > effective_half.x or screen_delta.y > effective_half.y:
+				continue
+			var dist = sp.distance_to(screen_center)
+			if dist < best_dist:
+				best_dist = dist
+				best_target = ship
+
+		if best_target != null and best_target == _auto_lock_candidate:
+			_auto_lock_timer += delta
+			if _auto_lock_timer >= auto_lock_delay:
+				_lock_on_target(best_target)
+				_auto_lock_candidate = null
+				_auto_lock_timer = 0.0
+		else:
+			_auto_lock_candidate = best_target
+			_auto_lock_timer = 0.0
 
 func find_ship_closest_to_screen_center():
 	# Find the ship closest to the center of the screen

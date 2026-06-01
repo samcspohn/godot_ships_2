@@ -78,7 +78,7 @@ func update_transform():
 
 func calculate_position() -> Vector3:
 	var ship_dir = follow_ship.global_basis.z.normalized()
-	var angle_diff = follow_ship.global_rotation.y - rot_h
+	var angle_diff = follow_ship.global_rotation.y - (rot_h + locked_rot_h)
 	var cos_val = cos(angle_diff)
 
 	# Smooth factor for camera offset based on angle difference
@@ -103,14 +103,23 @@ func calculate_position() -> Vector3:
 # Helper that wraps calculate_position for use with the iterative solver.
 # The solver needs a callable that takes (rot_h, rot_v) and returns camera position.
 func _calculate_position_for_rotation(h: float, v: float) -> Vector3:
-	# Temporarily set rotation values to calculate position
+	# Temporarily set rotation values to calculate position.
+	# locked_rot must also be zeroed so the solver works purely in base-rotation
+	# space — otherwise the angle_diff fix folds locked_rot into the position
+	# sample, making set_vh converge to the wrong base rotation and causing drift.
 	var old_rot_h = rot_h
 	var old_rot_v = rot_v
+	var old_locked_h = locked_rot_h
+	var old_locked_v = locked_rot_v
 	rot_h = h
 	rot_v = v
+	locked_rot_h = 0.0
+	locked_rot_v = 0.0
 	var pos = calculate_position()
 	rot_h = old_rot_h
 	rot_v = old_rot_v
+	locked_rot_h = old_locked_h
+	locked_rot_v = old_locked_v
 	return pos
 
 
