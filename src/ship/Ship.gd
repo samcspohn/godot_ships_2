@@ -58,6 +58,7 @@ var last_contacts: Array[Dictionary] = []
 var frustum_planes: Array[Plane] = []
 var beam: float = 0.0
 @export var ship_name: String = ""
+@export var short_name: String = ""
 @export var ship_class: ShipClass = ShipClass.CA
 @export_range(1, 11) var tier: int = 1
 

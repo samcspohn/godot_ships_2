@@ -28,14 +28,15 @@ func _init():
 	]
 
 func _a(ship: Ship):
-	ship.secondary_controller.target_mod.dynamic_mod.h_grouping += grouping_multiplier
-	ship.secondary_controller.target_mod.dynamic_mod.v_grouping += grouping_multiplier
-	ship.secondary_controller.target_mod.dynamic_mod.base_spread *= spread_multiplier
+	ship.secondary_controller.target_mod.dynamic_mod.grouping += grouping_multiplier
+	ship.secondary_controller.target_mod.dynamic_mod.h_spread *= spread_multiplier
+	ship.secondary_controller.target_mod.dynamic_mod.v_spread *= spread_multiplier
 	# ship.secondary_controller.priority_target_dispersion.period = 5.2
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
-		# params.base_spread *= 0.90
+		# params.h_spread *= 0.90
+		# params.v_spread *= 0.90
 
 var num_enemies = 0
 var priority_target: Ship = null

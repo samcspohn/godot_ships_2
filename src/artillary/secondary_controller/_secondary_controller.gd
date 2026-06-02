@@ -192,9 +192,9 @@ func _ready() -> void:
 	target_mod = TargetMod.new()
 	target_mod = target_mod.instantiate(_ship) as TargetMod
 
-	manual_target_mod.h_grouping = 1.3
-	manual_target_mod.v_grouping = 1.3
-	manual_target_mod.base_spread = 0.6
+	manual_target_mod.grouping = 1.3
+	manual_target_mod.h_spread = 0.6
+	manual_target_mod.v_spread = 0.6
 	manual_target_mod = manual_target_mod.instantiate(_ship) as TargetMod
 
 	for sc in sub_controllers:

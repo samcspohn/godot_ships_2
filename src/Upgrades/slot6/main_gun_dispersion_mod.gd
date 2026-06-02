@@ -15,4 +15,6 @@ func _init() -> void:
 	]
 
 func _a(_ship: Ship) -> void:
-	(_ship.artillery_controller.params.static_mod as GunParams).base_spread *= SPREAD_MOD
+	var p := _ship.artillery_controller.params.static_mod as GunParams
+	p.h_spread *= SPREAD_MOD
+	p.v_spread *= SPREAD_MOD

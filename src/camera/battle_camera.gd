@@ -447,12 +447,6 @@ func toggle_camera_mode():
 	else:
 		set_camera_mode(CameraMode.THIRD_PERSON)
 
-# Maximum hull speeds in world units (m/s). Used to extend the aim box
-# forward/backward by the distance a target could travel during shell flight.
-# Wire these in from your ship roster.
-const MAX_FORWARD_SPEED: float = 60.0
-const MAX_REVERSE_SPEED: float = 30.0
-
 func _calculate_target_info():
 	var aim = current_view if last_view == null else last_view
 	var aim_direction: Vector3 = -aim.basis.z.normalized()
@@ -463,30 +457,57 @@ func _calculate_target_info():
 		if current_aim_mode == AimMode.AERIAL:
 			aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
 		else:
-			# Use last frame's flight time to size the lead extension. One frame
-			# stale, but very stable — the box size won't jitter with reticle motion.
-			var t_flight: float = time_to_target
+			# Compute the ballistically correct lead position for the locked target.
+			var shell_params: ShellParams = player_controller.current_weapon_controller.get_shell_params()
+			var gun_pos: Vector3 = _ship.global_position
+			gun_pos.y += _ship.movement_controller.ship_draft * 0.5
 
-			var box: Dictionary = _compute_target_box(locked_target, t_flight)
-			var box_hit: Variant = _ray_obb(
-				ray_origin, aim_direction,
-				box.center, box.basis, box.half_extents
+			# Divide target velocity by shell_time_multiplier so the lead matches the
+			# accelerated projectile simulation used by ProjectileManager.
+			var lead_result: Array = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+				gun_pos,
+				locked_target.global_position,
+				locked_target.linear_velocity / ProjectileManager.shell_time_multiplier,
+				shell_params
 			)
 
-			# Closer of box surface and water plane wins. Handles aiming "past"
-			# or "in front of" the ship naturally — whichever the ray reaches first.
+			# [launch_vector, flight_time, predicted_target_position] or [null, -1, null]
+			var lead_pos: Vector3
+			if lead_result[0] != null:
+				lead_pos = lead_result[2] as Vector3
+			else:
+				lead_pos = locked_target.global_position
+
+			# Billboard plane at the lead point, normal facing the camera.
+			# Aiming at any part of this plane gives a physically motivated aim position.
+			var plane_hit: Variant = _ray_billboard_plane(ray_origin, aim_direction, lead_pos)
+
+			# Physical intersection with the locked ship's hull.
+			var ship_hit: Variant = _ray_locked_ship(ray_origin, aim_direction, ray_length)
+
+			# Water surface intersection.
 			var water_hit: Variant = _ray_water_plane(ray_origin, aim_direction)
-			var box_dist: float = INF
+
+			var plane_dist: float = INF
+			var ship_dist: float = INF
 			var water_dist: float = INF
-			if box_hit != null:
-				box_dist = ((box_hit as Vector3) - ray_origin).length()
+			if plane_hit != null:
+				plane_dist = ((plane_hit as Vector3) - ray_origin).length()
+			if ship_hit != null:
+				ship_dist = ((ship_hit as Vector3) - ray_origin).length()
 			if water_hit != null:
 				water_dist = ((water_hit as Vector3) - ray_origin).length()
 
-			if box_hit != null and box_dist <= water_dist:
-				aim_position = box_hit
-			elif water_hit != null:
+			# Water wins when closest (aiming past the ship hits the sea).
+			# Ship hull wins over the plane (direct line-of-sight to the hull).
+			# Billboard plane is the normal aim-assist surface.
+			# Far point is the last-resort fallback.
+			if water_hit != null and water_dist < minf(plane_dist, ship_dist):
 				aim_position = water_hit
+			elif ship_hit != null and ship_dist <= plane_dist:
+				aim_position = ship_hit
+			elif plane_hit != null:
+				aim_position = plane_hit
 			else:
 				aim_position = ray_origin + aim_direction * ray_length
 	else:
@@ -520,95 +541,46 @@ func _calculate_target_info():
 	time_to_target = aim_data.time_to_target
 
 
-# Builds an oriented box anchored to the locked target. Lateral and vertical
-# extents wrap the hull/superstructure; along-heading extent stretches from
-# stern - max_reverse * t_flight to bow + max_forward * t_flight so the player
-# can pick any lead amount inside the achievable envelope by aiming at the box.
-func _compute_target_box(target: Ship, t_flight: float) -> Dictionary:
-	var fwd: Vector3 = -target.global_transform.basis.z
-	fwd.y = 0.0
-	if fwd.length_squared() < 0.0001:
-		fwd = Vector3.FORWARD
-	fwd = fwd.normalized()
-	var right: Vector3 = fwd.cross(Vector3.UP).normalized()
-
-	# TODO: wire these to your ship/target class. ship_height should include
-	# masts/superstructure — it caps how high the player can aim and still be
-	# "on the ship" rather than spilling to the water plane behind.
-	# var ship_length: float = 200.0
-	# var ship_beam: float = 25.0
-	# var ship_height: float = 40.0
-	var ship_length: float = target.aabb.size.z
-	# var ship_beam: float = target.aabb.size.x
-	var ship_beam: float = 1.0
-	var ship_height: float = target.aabb.size.y
-
-	var lead_forward: float = MAX_FORWARD_SPEED * t_flight
-	var lead_backward: float = MAX_REVERSE_SPEED * t_flight
-
-	var along_min: float = -ship_length * 0.5 - lead_backward
-	var along_max: float = ship_length * 0.5 + lead_forward
-	var along_center: float = (along_min + along_max) * 0.5
-	var along_half: float = (along_max - along_min) * 0.5
-
-	# Anchor laterally to target, vertically to water level (stable; doesn't
-	# bob with the ship). Assumes water surface at y = 0.
-	var center: Vector3 = target.global_position + fwd * along_center
-	center.y = ship_height * 0.5
-
-	return {
-		"center": center,
-		"basis": Basis(fwd, Vector3.UP, right),
-		"half_extents": Vector3(along_half, ship_height * 0.5, ship_beam * 0.5)
-	}
-
-
-# Slab method in box-local space. Returns world-space entry point, or the far
-# face if the ray origin is inside the box, or null if no intersection.
-func _ray_obb(
-	ray_origin: Vector3,
-	ray_dir: Vector3,
-	box_center: Vector3,
-	box_basis: Basis,
-	half_extents: Vector3
-) -> Variant:
-	var inv: Basis = box_basis.transposed()  # orthonormal → transpose == inverse
-	var lo: Vector3 = inv * (ray_origin - box_center)
-	var ld: Vector3 = inv * ray_dir
-
-	var t_min: float = -INF
-	var t_max: float = INF
-
-	for i in range(3):
-		var o: float = lo[i]
-		var d: float = ld[i]
-		var h: float = half_extents[i]
-
-		if absf(d) > 0.000001:
-			var t1: float = (-h - o) / d
-			var t2: float = (h - o) / d
-			if t1 > t2:
-				var tmp: float = t1
-				t1 = t2
-				t2 = tmp
-			if t1 > t_min: t_min = t1
-			if t2 < t_max: t_max = t2
-			if t_min > t_max:
-				return null
-		else:
-			# Ray parallel to this slab; must originate between the planes.
-			if o < -h or o > h:
-				return null
-
-	var t_hit: float
-	if t_min >= 0.0:
-		t_hit = t_min
-	elif t_max >= 0.0:
-		t_hit = t_max
-	else:
+# Intersects the ray with a billboard plane: perpendicular to ray_dir and
+# passing through 'center'. Normal faces the camera (-ray_dir).
+# Returns world-space hit, or null if the plane is parallel or behind the origin.
+func _ray_billboard_plane(ray_origin: Vector3, ray_dir: Vector3, center: Vector3) -> Variant:
+	var normal: Vector3 = -ray_dir
+	var plane := Plane(normal, normal.dot(center))
+	var p: Variant = plane.intersects_ray(ray_origin, ray_dir)
+	if p == null:
 		return null
+	if ((p as Vector3) - ray_origin).dot(ray_dir) <= 0.0:
+		return null
+	return p
 
-	return ray_origin + ray_dir * t_hit
+
+# Physics raycast that only accepts hits on the locked_target's collision bodies
+# (armor layer, 1 << 1). Excludes the player's own ship. Returns world-space hit
+# position, or null if the ray misses or hits a different ship first.
+func _ray_locked_ship(ray_origin: Vector3, ray_dir: Vector3, ray_length: float) -> Variant:
+	if locked_target == null or not is_instance_valid(locked_target):
+		return null
+	var space_state := get_world_3d().direct_space_state
+	var ray_params := PhysicsRayQueryParameters3D.new()
+	ray_params.from = ray_origin
+	ray_params.to = ray_origin + ray_dir * ray_length
+	ray_params.collision_mask = 1 << 1  # armor layer
+	ray_params.collide_with_bodies = true
+	ray_params.collide_with_areas = true
+	if ray_exclude.size() == 0:
+		ray_exclude = recurs_collision_bodies(_ship)
+	ray_params.exclude = ray_exclude
+	var result: Dictionary = space_state.intersect_ray(ray_params)
+	if not result:
+		return null
+	# Walk the scene tree to confirm the hit belongs to locked_target.
+	var node: Node = result.collider
+	while node != null:
+		if node == locked_target:
+			return result.position
+		node = node.get_parent()
+	return null
 
 
 func _ray_water_plane(ray_origin: Vector3, ray_dir: Vector3) -> Variant:

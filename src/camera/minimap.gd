@@ -321,12 +321,17 @@ func _on_canvas_draw() -> void:
 			if is_friendly and tracked_ship.consumable_manager:
 				consumable_icons = tracked_ship.consumable_manager.get_active_icons()
 
+			var name = ""
+			if tracked_ship.short_name != "":
+				name = tracked_ship.short_name
+			else:
+				name = tracked_ship.ship_name
 			ships_to_draw.append({
 				"pos": tracked_pos,
 				"rot": -tracked_rot,
 				"color": color,
 				"consumables": consumable_icons,
-				"name": tracked_ship.ship_name,
+				"name": name,
 				"velocity": tracked_ship.linear_velocity if is_instance_valid(tracked_ship) else Vector3.ZERO,
 				"locked": battle_camera != null and battle_camera.target_lock_enabled \
 						and is_instance_valid(battle_camera.locked_target) \

@@ -113,8 +113,8 @@ func _populate_artillery() -> void:
 		var s1: ShellParams = gp.shell1
 		main_caliber = s1.caliber
 		main_range_km = gp._range / 1000.0
-		base_spread = gp.base_spread
-		base_grouping = (gp.h_grouping + gp.v_grouping) / 2.0
+		base_spread = gp.h_spread
+		base_grouping = gp.grouping
 		_artillery.add_stat_row("Guns",     "%d × %d × %.0f mm" % [num_guns, (barrels_total / num_guns) if num_guns > 0 else 0, s1.caliber])
 		_artillery.add_stat_row("Range",    "%.1f km" % (gp._range / 1000.0),   not _eq(gp._range, gb._range))
 		_artillery.add_stat_row("Reload",   "%.1f s"  % gp.reload_time,         not _eq(gp.reload_time, gb.reload_time))

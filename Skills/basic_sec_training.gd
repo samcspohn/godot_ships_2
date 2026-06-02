@@ -26,9 +26,11 @@ func _init() -> void:
 func _a(ship: Ship) -> void:
 	# ship.secondary_controller.priority_target_dispersion.period = PT_PERIOD
 	var sec_ctrl: SecondaryController_ = ship.secondary_controller
-	(sec_ctrl.target_mod.dynamic_mod as TargetMod).base_spread *= 0.95
+	(sec_ctrl.target_mod.dynamic_mod as TargetMod).h_spread *= 0.95
+	(sec_ctrl.target_mod.dynamic_mod as TargetMod).v_spread *= 0.95
 	for sec: SecSubController in sec_ctrl.sub_controllers:
 		var params := sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
-		params.base_spread *= SPREAD_MOD
+		params.h_spread *= SPREAD_MOD
+		params.v_spread *= SPREAD_MOD
 		params._range      *= RANGE_MOD

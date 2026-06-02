@@ -29,7 +29,8 @@ func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
 	main.reload_time *= reload_modifier
 	main._range *= base_range_modifier
-	main.base_spread *= spread_modifier
+	main.h_spread *= spread_modifier
+	main.v_spread *= spread_modifier
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.params.dynamic_mod as GunParams
 		sec_params.reload_time *= reload_modifier

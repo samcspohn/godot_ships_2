@@ -22,6 +22,6 @@ func _a(_ship: Ship) -> void:
 	for sec: SecSubController in _ship.secondary_controller.sub_controllers:
 		var params := sec.params.static_mod as GunParams
 		params._range *= RANGE_MOD
-		params.base_spread *= SPREAD_MOD
-		params.h_grouping += GROUPING_MOD
-		params.v_grouping += GROUPING_MOD
+		params.h_spread *= SPREAD_MOD
+		params.v_spread *= SPREAD_MOD
+		params.grouping += GROUPING_MOD

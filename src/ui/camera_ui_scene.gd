@@ -1274,7 +1274,10 @@ func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, up
 	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
 	var ship_name: Label = indicator.get_node("ShipName")
 
-	ship_name.text = ship.ship_name
+	if ship.short_name != "":
+		ship_name.text = ship.short_name
+	else:
+		ship_name.text = ship.ship_name
 	# Check if ship is alive
 	var is_alive = ship.health_controller and ship.health_controller.is_alive()
 	var health_percent = 1.0

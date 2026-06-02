@@ -34,17 +34,23 @@ script = ExtResource("3_461ox")
 torpedo_protection = 0.38
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_2n723"]
+[sub_resource type="Resource" id="Resource_slgwc"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 298800.0
 pool2 = 298800.0
 
-[sub_resource type="Resource" id="Resource_2vr8n"]
+[sub_resource type="Resource" id="Resource_2n723"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 19920.0
 pool2 = 39840.0
+
+[sub_resource type="Resource" id="Resource_2vr8n"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 6640.0
+pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_ifinn"]
 resource_local_to_scene = true
@@ -53,12 +59,6 @@ pool1 = 6640.0
 pool2 = 13280.0
 
 [sub_resource type="Resource" id="Resource_3mkxm"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
-
-[sub_resource type="Resource" id="Resource_2vgdv"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 16600.0
@@ -102,7 +102,6 @@ script = ExtResource("3_hkxgu")
 elevation_speed = 4.0
 shell1 = SubResource("Resource_3rbb0")
 shell2 = SubResource("Resource_461ox")
-base_spread = 0.012
 reload_time = 30.0
 traverse_speed = 4.0
 _range = 19500.0
@@ -116,7 +115,7 @@ turning_circle_radius = 350.0
 rudder_response_time = 16.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
-[sub_resource type="Resource" id="Resource_u4el4"]
+[sub_resource type="Resource" id="Resource_2vgdv"]
 resource_local_to_scene = true
 script = ExtResource("14_3mkxm")
 icon = ExtResource("13_ifinn")
@@ -127,7 +126,7 @@ max_stack = -1
 type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_3t06y"]
+[sub_resource type="Resource" id="Resource_u4el4"]
 resource_local_to_scene = true
 script = ExtResource("17_3t06y")
 icon = ExtResource("16_u4el4")
@@ -180,11 +179,11 @@ _max_hp = 99600.0
 bow_percent = 0.2
 stern_percent = 0.2
 casemate_percent = 0.6
-citadel = SubResource("Resource_2n723")
-casemate = SubResource("Resource_2vr8n")
-bow = SubResource("Resource_ifinn")
-stern = SubResource("Resource_3mkxm")
-superstructure = SubResource("Resource_2vgdv")
+citadel = SubResource("Resource_slgwc")
+casemate = SubResource("Resource_2n723")
+bow = SubResource("Resource_2vr8n")
+stern = SubResource("Resource_ifinn")
+superstructure = SubResource("Resource_3mkxm")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_5uoyc")
@@ -206,7 +205,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_ckxh7")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_u4el4"), SubResource("Resource_3t06y")])
+equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_2vgdv"), SubResource("Resource_u4el4")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("14_wi2om")]([null, null, null, null, null, null])

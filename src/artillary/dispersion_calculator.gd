@@ -88,7 +88,7 @@ var period = 0.0
 # 	return dispersed * speed
 
 
-const SHELL_COUNT := 8
+const SHELL_COUNT := 4
 
 var _shell_index := 0
 var _shuffled_radii := PackedFloat64Array()
@@ -190,8 +190,8 @@ func _new_salvo(sigma: float) -> void:
 	# A single gun firing its 2-shell salvo can get 2 lows or 2 highs,
 	# but across any 4 consecutive shells the split is always 2 and 2.
 	var group_buf := PackedFloat64Array()
-	group_buf.resize(4)
-	for gi in 2:
+	group_buf.resize(min(4, SHELL_COUNT))
+	for gi in floor(SHELL_COUNT / 4):
 		group_buf[0] = upper_angles[gi * 2]
 		group_buf[1] = upper_angles[gi * 2 + 1]
 		group_buf[2] = lower_angles[gi * 2]
@@ -252,21 +252,20 @@ const MAX_DISPERSION_ANGLE_RAD: float = 0.5      # safety cap at point-blank
 ## Perturbs a launch vector by applying dispersion as angular offsets.
 ## h = lateral (perpendicular to aim in horizontal plane)
 ## v = vertical (elevation angle adjustment)
-## base_spread = max dispersion angle in radians (the ellipse half-axis) and a
-##   hard ceiling: no shell ever disperses beyond it.
-## sigma_h = WoWs-style sigma (single concentration value): the number of
-##   standard deviations the ellipse edge represents. Higher sigma -> shells
-##   cluster tighter toward the aim point; lower sigma spreads them out.
-##   Typical naval values are ~1.5 - 2.1.
-## _sigma_v = reserved for a future vertical/horizontal asymmetry pass
-##   (alongside splitting base_spread into h_spread / v_spread); unused for now.
+## sigma_h = WoWs-style sigma: the number of standard deviations the ellipse
+##   edge represents. Higher sigma -> shells cluster tighter toward the aim
+##   point; lower sigma spreads them out. Typical naval values are ~1.5 - 2.1.
+## _sigma_v = reserved for future per-axis sigma asymmetry; unused for now.
+## h_spread = max horizontal dispersion half-angle in radians (hard ceiling).
+## v_spread = max vertical dispersion half-angle in radians (hard ceiling).
 func calculate_dispersed_launch(
 		aim_point: Vector3,
 		gun_position: Vector3,
 		shell_params: ShellParams,
 		sigma_h: float,
 		_sigma_v: float,
-		base_spread: float,
+		h_spread: float,
+		v_spread: float,
 		max_range: float) -> Vector3:
 
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
@@ -290,7 +289,7 @@ func calculate_dispersed_launch(
 	# 		MAX_DISPERSION_ANGLE_RAD)
 	var rate = (1.0 - (dist_to_target / max_range))
 	rate = clamp(pow(rate, 2.0), 0.0, 1.0)
-	var _base_spread: float = rate * base_spread * 2.0 + base_spread
+	var _h_spread: float = rate * h_spread * 2.0 + h_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)
@@ -305,9 +304,8 @@ func calculate_dispersed_launch(
 	var v_offset := r * sin(angle)
 
 	# Scale to actual angular dispersion
-	const VERTICAL_SPREAD: float = 0.7
-	var h_angle := h_offset * _base_spread * 0.5
-	var v_angle := v_offset * base_spread * 0.5 * VERTICAL_SPREAD  # vertical spread is often tighter than horizontal in real guns, and looks better visually
+	var h_angle := h_offset * _h_spread * 0.5
+	var v_angle := v_offset * v_spread * 0.5
 
 	# Build local frame around launch direction
 	var forward := launch_velocity.normalized()

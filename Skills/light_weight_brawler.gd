@@ -31,7 +31,8 @@ func _init() -> void:
 func _a(ship: Ship) -> void:
 	var main := ship.artillery_controller.params.dynamic_mod as GunParams
 	main.reload_time  *= _reload_mod
-	main.base_spread  *= _spread_mod
+	main.h_spread     *= _spread_mod
+	main.v_spread     *= _spread_mod
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		(sec.params.dynamic_mod as GunParams).reload_time *= _reload_mod
 

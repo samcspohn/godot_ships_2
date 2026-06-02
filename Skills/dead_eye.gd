@@ -27,7 +27,8 @@ func _init():
 
 func _a(ship: Ship) -> void:
 	var main := ship.artillery_controller.params.dynamic_mod as GunParams
-	main.base_spread     *= spread_mod
+	main.h_spread        *= spread_mod
+	main.v_spread        *= spread_mod
 	main.reload_time     *= reload_mod
 	main.traverse_speed  *= traverse_mod
 	# if main.shell1:

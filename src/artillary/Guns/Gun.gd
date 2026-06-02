@@ -411,10 +411,10 @@ func fire(mod: TargetMod = null) -> void:
 			var first_shell := true
 			for m in muzzles:
 				# var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
-				var h_grouping = get_params().h_grouping * (mod.h_grouping if mod else 1.0)
-				var v_grouping = get_params().v_grouping * (mod.v_grouping if mod else 1.0)
-				var base_spread = get_params().base_spread * (mod.base_spread if mod else 1.0)
-				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), h_grouping, v_grouping, base_spread, get_params()._range)
+				var grouping = get_params().grouping * (mod.grouping if mod else 1.0)
+				var h_spread = get_params().h_spread * (mod.h_spread if mod else 1.0)
+				var v_spread = get_params().v_spread * (mod.v_spread if mod else 1.0)
+				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, h_spread, v_spread, get_params()._range)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					var t = ProjectileManager.get_current_time()

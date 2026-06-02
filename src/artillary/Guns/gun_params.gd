@@ -9,13 +9,9 @@ class_name GunParams
 @export var shell1: ShellParams
 @export var shell2: ShellParams
 
-@export var h_grouping: float = 1.8
-@export var v_grouping: float = 1.8
-@export var base_spread: float = 0.01
-
-# @export var h_grouping_mod: float = 1.0
-# @export var v_grouping_mod: float = 1.0
-# @export var base_spread_mod: float = 1.0
+@export var grouping: float = 1.8
+@export var h_spread: float = 0.01
+@export var v_spread: float = 0.005
 
 
 func from_params(gun_params: GunParams) -> void:
@@ -25,9 +21,9 @@ func from_params(gun_params: GunParams) -> void:
 	_range = gun_params._range
 	shell1 = gun_params.shell1
 	shell2 = gun_params.shell2
-	h_grouping = gun_params.h_grouping
-	v_grouping = gun_params.v_grouping
-	base_spread = gun_params.base_spread
+	grouping = gun_params.grouping
+	h_spread = gun_params.h_spread
+	v_spread = gun_params.v_spread
 
 func to_dict() -> Dictionary:
 	return {
@@ -45,9 +41,9 @@ func to_dict() -> Dictionary:
 			"drag": shell2.drag,
 			"damage": shell2.damage
 		},
-		"h_grouping": h_grouping,
-		"v_grouping": v_grouping,
-		"base_spread": base_spread
+		"grouping": grouping,
+		"h_spread": h_spread,
+		"v_spread": v_spread
 	}
 
 func to_bytes() -> PackedByteArray:
@@ -68,9 +64,9 @@ func to_bytes() -> PackedByteArray:
 	writer.put_float(shell2.damage)
 	writer.put_float(shell2.penetration_modifier)
 
-	writer.put_float(h_grouping)
-	writer.put_float(v_grouping)
-	writer.put_float(base_spread)
+	writer.put_float(grouping)
+	writer.put_float(h_spread)
+	writer.put_float(v_spread)
 
 	return writer.get_data_array()
 
@@ -90,9 +86,9 @@ func from_dict(d: Dictionary) -> void:
 	shell2.speed = s2.get("speed", 820)
 	shell2.drag = s2.get("drag", 0.00895)
 	shell2.damage = s2.get("damage", 10000)
-	h_grouping = d.get("h_grouping", 1.8)
-	v_grouping = d.get("v_grouping", 1.8)
-	base_spread = d.get("base_spread", 0.01)
+	grouping = d.get("grouping", 1.8)
+	h_spread = d.get("h_spread", 0.01)
+	v_spread = d.get("v_spread", 0.007)
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
@@ -109,9 +105,9 @@ func from_bytes(b: PackedByteArray) -> void:
 	shell2.drag = reader.get_float()
 	shell2.damage = reader.get_float()
 	shell2.penetration_modifier = reader.get_float()
-	h_grouping = reader.get_float()
-	v_grouping = reader.get_float()
-	base_spread = reader.get_float()
+	grouping = reader.get_float()
+	h_spread = reader.get_float()
+	v_spread = reader.get_float()
 
 
 #func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell: ShellParams, target_mod: TargetMod) -> Vector3:
@@ -120,7 +116,7 @@ func from_bytes(b: PackedByteArray) -> void:
 		#aim_point,
 		#gun_position,
 		#shell,
-		#h_grouping * (target_mod.h_grouping if target_mod else 1.0),
-		#v_grouping * (target_mod.v_grouping if target_mod else 1.0),
-		#base_spread * (target_mod.base_spread if target_mod else 1.0)
+		#grouping * (target_mod.grouping if target_mod else 1.0),
+		#h_spread * (target_mod.h_spread if target_mod else 1.0),
+		#v_spread * (target_mod.v_spread if target_mod else 1.0)
 	#)

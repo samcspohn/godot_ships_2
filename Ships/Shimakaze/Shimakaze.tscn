@@ -115,9 +115,9 @@ script = ExtResource("5_o13ib")
 elevation_speed = 5.0
 shell1 = SubResource("Resource_yp38t")
 shell2 = SubResource("Resource_mmfhs")
-h_grouping = 2.1
-v_grouping = 2.1
-base_spread = 0.008
+grouping = 2.1
+h_spread = 0.008
+v_spread = 0.004
 reload_time = 7.0
 traverse_speed = 10.0
 _range = 10000.0
@@ -245,10 +245,9 @@ equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_4im3
 [node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("11_56jcx")]([null, null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="9" unique_id=384504544 node_paths=PackedStringArray("fires")]
+[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
 fparams = ExtResource("8_x5bwd")
 rparams = SubResource("Resource_s4v2q")
-fires = [NodePath("Fire"), NodePath("Fire2"), NodePath("Fire3"), NodePath("Fire4")]
 
 [node name="Fire" parent="Modules/FireManager" index="0" unique_id=1244247199]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.9753902, -47.396755)
