@@ -75,14 +75,14 @@ var kill_feed: KillFeed = null
 @onready var rudder_slider: HSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ShipStatusContainer/RudderSlider
 @onready var throttle_slider: VSlider = $MainContainer/BottomLeftPanel/HBoxContainer/ThrottleSlider
 
-@onready var hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar
-@onready var healable_hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HealableHPBar
-@onready var hp_label: Label = $MainContainer/BottomCenterPanel/HPContainer/HPBarContainer/HPBar/HPLabel
+@onready var hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/Content/HPContainer/HPBarContainer/HPBar
+@onready var healable_hp_bar: ProgressBar = $MainContainer/BottomCenterPanel/Content/HPContainer/HPBarContainer/HealableHPBar
+@onready var hp_label: Label = $MainContainer/BottomCenterPanel/Content/HPContainer/HPBarContainer/HPLabel
 
-@onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer
-@onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/WeaponsContainer/ReloadContainer/ReloadBarTemplate
+@onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/WeaponsContainer/ReloadContainer
+@onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/Content/WeaponsContainer/ReloadContainer/ReloadBarTemplate
 
-@onready var status_indicators_container: HBoxContainer = $MainContainer/BottomCenterPanel/StatusIndicators
+@onready var status_indicators_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/StatusIndicators
 
 @onready var bottom_right_panel: Control = $MainContainer/BottomRightPanel
 
@@ -92,15 +92,15 @@ var kill_feed: KillFeed = null
 @onready var team_tracker_template: Control = $MainContainer/ShipUITemplates/TeamTrackerTemplate
 
 # @onready var weapon_buttons: Array[Button] = [
-# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell1Button,
-# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/Shell2Button,
-# 	$MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel/TorpedoButton
+# 	$MainContainer/BottomCenterPanel/Content/UsableContainer/WeaponPanel/Shell1Button,
+# 	$MainContainer/BottomCenterPanel/Content/UsableContainer/WeaponPanel/Shell2Button,
+# 	$MainContainer/BottomCenterPanel/Content/UsableContainer/WeaponPanel/TorpedoButton
 # ]
 var weapon_buttons: Array[Button] # todo: TextureButton
 var weapon_button_group: ButtonGroup
 
-@onready var consumable_container: HBoxContainer = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer
-@onready var consumable_template: TextureButton = $MainContainer/BottomCenterPanel/UsableContainer/ConsumableContainer/ConsumableTemplate
+@onready var consumable_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/UsableContainer/ConsumableContainer
+@onready var consumable_template: TextureButton = $MainContainer/BottomCenterPanel/Content/UsableContainer/ConsumableContainer/ConsumableTemplate
 @onready var friendly_consumable_status_texturerect: TextureRect = $MainContainer/ShipUITemplates/FriendlyShipTemplate/FriendlyStatus/FriendlyConsumable
 var consumable_buttons: Array[TextureButton] = []
 var consumable_cooldown_bars: Array[ProgressBar] = []
@@ -110,7 +110,7 @@ var consumable_count_labels: Array[Label] = []
 # Consumable action names for getting shortcuts from InputMap
 var consumable_actions = ["consumable_1", "consumable_2", "consumable_3", "consumable_4", "consumable_5"]
 
-@onready var secondaries_disabled = $MainContainer/BottomCenterPanel/StatusIndicators/SecondariesDisabled
+@onready var secondaries_disabled = $MainContainer/BottomCenterPanel/Content/StatusIndicators/SecondariesDisabled
 
 # Custom hover-tooltip overlay. Created in _ready(). Used in place of the
 # engine's built-in Control.tooltip_text for any HUD element that needs to be
@@ -166,6 +166,14 @@ var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 var _status_refresh_timer: float = 0.0
 const STATUS_REFRESH_INTERVAL: float = 0.1  # Refresh consumable status widgets at 10 hz
+
+# Floating ship HP bars: "recently lost HP" damage bar. The damage bar holds the
+# pre-damage HP level and only collapses to the current HP after this many
+# seconds without further damage.
+const DAMAGE_BAR_CLEAR_DELAY: float = 1.0
+# How fast the damage bar drains down to its target when stepping to the next
+# (lower) segment: 10% of max HP every 0.05 s, in ProgressBar value units (0-100).
+const DAMAGE_BAR_DROP_RATE: float = 10.0 / 0.05  # = 200 value-units / second
 
 # Target tracking for secondaries
 var current_secondary_target: Ship = null
@@ -234,7 +242,7 @@ func _get_all_weapon_buttons() -> Array[Button]:
 	return buttons
 
 func setup_weapon_buttons():
-	var weapon_panel = $MainContainer/BottomCenterPanel/UsableContainer/WeaponPanel
+	var weapon_panel = $MainContainer/BottomCenterPanel/Content/UsableContainer/WeaponPanel
 	for i in range(3):
 		var button = weapon_panel.get_child(i)
 		button.queue_free()
@@ -796,7 +804,7 @@ func _update_ui():
 		var hp_percent = (float(current_hp) / max_hp) * 100.0
 
 		hp_bar.value = hp_percent
-		hp_label.text = "%d/%d" % [current_hp, max_hp]
+		hp_label.text = "%d / %d" % [current_hp, max_hp]
 
 		# Update healable HP bar (shows current HP + healable damage as white region)
 		var healable_damage = camera_controller._ship.health_controller.healable_damage
@@ -919,6 +927,7 @@ func setup_ship_ui(ship):
 	# Get references to the duplicated UI elements
 	var name_label: Label
 	var ship_hp_bar: ProgressBar
+	var ship_damage_bar: ProgressBar
 	var ship_hp_label: Label
 	var target_indicator: ColorRect
 	var status_indicator: HBoxContainer
@@ -926,12 +935,14 @@ func setup_ship_ui(ship):
 	if is_enemy:
 		name_label = ship_container.get_node("EnemyNameLabel")
 		ship_hp_bar = ship_container.get_node("EnemyHPBar")
+		ship_damage_bar = ship_container.get_node("EnemyDamageBar")
 		ship_hp_label = ship_hp_bar.get_node("EnemyHPLabel")
 		target_indicator = ship_container.get_node("EnemyTargetIndicator")
 
 	else:
 		name_label = ship_container.get_node("FriendlyNameLabel")
 		ship_hp_bar = ship_container.get_node("FriendlyHPBar")
+		ship_damage_bar = ship_container.get_node("FriendlyDamageBar")
 		ship_hp_label = ship_hp_bar.get_node("FriendlyHPLabel")
 		target_indicator = ship_container.get_node("FriendlyTargetIndicator")
 		status_indicator = ship_container.get_node("FriendlyStatus")
@@ -996,10 +1007,12 @@ func setup_ship_ui(ship):
 	ship_container.add_child(lock_icon)
 
 	# Store the UI elements for this ship
+	var start_hp: float = ship.health_controller.current_hp
 	ship_ui_elements[ship] = {
 		"container": ship_container,
 		"name_label": name_label,
 		"hp_bar": ship_hp_bar,
+		"damage_bar": ship_damage_bar,
 		"hp_label": ship_hp_label,
 		"target_indicator": target_indicator,
 		"status": status_indicator,
@@ -1007,6 +1020,15 @@ func setup_ship_ui(ship):
 		"alt_widgets": alt_widgets,
 		"alt_refs": alt_refs,
 		"lock_icon": lock_icon,
+		# Damage-bar tracking. dmg_prev_hp = HP seen last frame. dmg_segments is a
+		# queue of {hp, expire} entries keyed on the pre-damage HP. The first hit
+		# opens a segment with a fixed 1s window; further damage inside that window
+		# folds in (keeping the original, highest pre-damage HP). When the window
+		# ends the segment is popped and the bar lerps down to the next segment
+		# (or current HP). Sustained DOT therefore becomes a staircase of 1s
+		# segments rather than one segment that never expires.
+		"dmg_prev_hp": start_hp,
+		"dmg_segments": [],
 	}
 
 func update_ship_ui(delta: float = 0.0):
@@ -1044,6 +1066,45 @@ func update_ship_ui(delta: float = 0.0):
 				# Update progress bar and label (colors are already set by template)
 				ui.hp_bar.value = hp_percent
 				ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
+
+				# --- "recently lost HP" damage bar -----------------------------------
+				# Sits behind the HP fill, showing the gap between the current HP and
+				# the HP from up to DAMAGE_BAR_CLEAR_DELAY ago. Each damage tick is its
+				# own expiring segment, so the strip trails down as old damage ages out.
+				var now: float = Time.get_ticks_msec() / 1000.0
+				var prev_hp: float = ui["dmg_prev_hp"]
+				var segments: Array = ui["dmg_segments"]
+
+				# On HP loss, fold into the active segment while it is still inside its
+				# fixed 1s window (keeping its original, highest pre-damage HP and its
+				# expiry); once that window has closed, open a new segment. Because the
+				# window is anchored to the first hit (not extended per hit), continuous
+				# DOT no longer keeps a single segment alive forever.
+				if ship_current_hp < prev_hp:
+					if segments.is_empty() or now >= segments[-1]["expire"]:
+						segments.append({"hp": prev_hp, "expire": now + DAMAGE_BAR_CLEAR_DELAY})
+					# else: within the active window — fold (no new segment)
+				ui["dmg_prev_hp"] = ship_current_hp
+
+				# Drop expired segments from the front; the bar steps down to the next.
+				while not segments.is_empty() and segments[0]["expire"] <= now:
+					segments.pop_front()
+
+				# Healed at/above the displayed damage level: the recent-damage region
+				# no longer applies, so clear everything.
+				if not segments.is_empty() and ship_current_hp >= segments[0]["hp"]:
+					segments.clear()
+
+				if ui.has("damage_bar") and is_instance_valid(ui["damage_bar"]):
+					var bar: ProgressBar = ui["damage_bar"]
+					var dmg_level: float = segments[0]["hp"] if not segments.is_empty() else ship_current_hp
+					var target: float = (dmg_level / max_hp) * 100.0
+					if target >= bar.value:
+						# Damage region grew (or first hit): snap up instantly.
+						bar.value = target
+					else:
+						# Stepping down to the next level: drain smoothly in _process.
+						bar.value = max(target, bar.value - DAMAGE_BAR_DROP_RATE * delta)
 
 			if ship.team.team_id == camera_controller._ship.team.team_id: # friendly
 				var alt_held: bool = Input.is_key_pressed(KEY_ALT)
@@ -1269,8 +1330,8 @@ func update_team_container2(container: HBoxContainer, ships: Array, is_friendly:
 
 
 func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, update_color: bool=false):
-	"""Update the appearance of a team indicator based on ship status"""
-	var ship_indicator: ColorRect = indicator.get_node("ShipIndicator")
+	"""Update the appearance of a team indicator based on ship status (replay HUD style:
+	colour-coded name label above a thin HP bar tinted via modulate)."""
 	var hp_indicator: ProgressBar = indicator.get_node("HPIndicator")
 	var ship_name: Label = indicator.get_node("ShipName")
 
@@ -1288,26 +1349,16 @@ func update_team_indicator(indicator: Control, ship: Ship, is_friendly: bool, up
 
 	if update_color:
 		if is_alive:
-			# Ship is alive - use team colors
 			if is_friendly:
-				ship_indicator.color = Color(0.2, 0.9, 0.4, 0.8)
-				# Create friendly HP bar style
-				var friendly_style = StyleBoxFlat.new()
-				friendly_style.bg_color = Color(0.2, 0.9, 0.4, 1)
-				hp_indicator.add_theme_stylebox_override("fill", friendly_style)
+				ship_name.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+				hp_indicator.modulate = Color(0.4, 1.0, 0.4)
 			else:
-				ship_indicator.color = Color(0.9, 0.2, 0.2, 0.8)
-				# Create enemy HP bar style
-				var enemy_style = StyleBoxFlat.new()
-				enemy_style.bg_color = Color(0.9, 0.2, 0.2, 1)
-				hp_indicator.add_theme_stylebox_override("fill", enemy_style)
+				ship_name.add_theme_color_override("font_color", Color(1.0, 0.5, 0.5))
+				hp_indicator.modulate = Color(1.0, 0.4, 0.4)
 		else:
-			# Ship is dead - use dark gray
-			ship_indicator.color = Color(0.3, 0.3, 0.3, 0.8)
-			# Create dead HP bar style
-			var dead_style = StyleBoxFlat.new()
-			dead_style.bg_color = Color(0.3, 0.3, 0.3, 1)
-			hp_indicator.add_theme_stylebox_override("fill", dead_style)
+			# Ship is dead - dim everything to gray
+			ship_name.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+			hp_indicator.modulate = Color(0.3, 0.3, 0.3)
 			hp_indicator.value = 0.0
 
 func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
@@ -1316,16 +1367,16 @@ func resize_team_tracker_panel(friendly_count: int, enemy_count: int):
 		return
 
 	# Calculate required width:
-	# - Each ship indicator: 50px wide
+	# - Each ship indicator: 60px wide (matches the TeamTrackerTemplate / HP bar)
 	# - Spacing between indicators: 5px (handled by HBoxContainer)
 	# - VSeparator: ~20px
-	# - Padding: 20px (10px on each side)
+	# - Padding: 20px container insets + 12px panel content margins
 	# - Minimum width: 200px
 
-	var friendly_width = friendly_count * (55 + 5)  # 50px + 5px spacing per ship
-	var enemy_width = enemy_count * (55 + 5)
+	var friendly_width = friendly_count * (60 + 5)  # 60px + 5px spacing per ship
+	var enemy_width = enemy_count * (60 + 5)
 	var separator_width = 20
-	var padding = 20
+	var padding = 32
 	var min_width = 200
 
 	var total_width = max(min_width, friendly_width + enemy_width + separator_width + padding)

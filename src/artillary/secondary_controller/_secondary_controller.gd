@@ -187,6 +187,13 @@ func get_params() -> GunParams:
 			selected_params = p
 	return selected_params
 
+func get_shell_params() -> ShellParams:
+	var params = get_params()
+	if shell_index == 0:
+		return params.shell1
+	else:
+		return params.shell2
+
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
 	target_mod = TargetMod.new()

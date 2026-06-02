@@ -251,7 +251,7 @@ params = SubResource("Resource_jalvm")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
 params = SubResource("Resource_33i0r")
-guns = [null, null, null, null]
+guns = [NodePath("../../TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
 sub_controllers = [NodePath("SecSubController")]
