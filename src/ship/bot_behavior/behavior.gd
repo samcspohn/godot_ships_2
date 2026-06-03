@@ -1728,22 +1728,35 @@ func engage_target(target: Ship):
 
 # Heading error (radians) within which the hull is considered aligned with the
 # bidirectional desired-heading line, allowing the ship to engage reverse.
-const REVERSE_ALIGN_TOL: float = deg_to_rad(5.0)
+const REVERSE_ALIGN_TOL: float = deg_to_rad(20.0)
 
 func _get_ship_heading() -> float:
 	"""Get ship's current heading. 0 = +Z, PI/2 = +X, etc."""
 	var forward = -_ship.global_transform.basis.z
 	return atan2(forward.x, forward.z)
 
-## Align hull with the bidirectional desired-heading line before engaging reverse,
-## preventing broadside exposure during a turn-around.  Call after a skill sets
-## intent.target_heading.  nearest_threat_dist gates activation against threshold.
+## When a concealing island is reachable and lies along the engagement path to
+## `nearest`, returns a FindCover intent (nearest hide island, shootability
+## ignored) and sets _active_skill_name.  Returns null otherwise so the caller
+## can fall back to kite/push.
+func _try_cover_on_the_way(ctx: SkillContext, nearest: Ship, cover_skill: SkillFindCover, cover_params: Dictionary) -> NavIntent:
+	if nearest == null:
+		return null
+	var cover_intent := cover_skill.execute(ctx, cover_params, true)
+	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx, nearest):
+		_active_skill_name = &"FindCover"
+		return cover_intent
+	return null
+
 func _has_active_bb_shooter() -> bool:
 	for shooter in active_shooters_at_me:
 		if is_instance_valid(shooter) and shooter.ship_class == Ship.ShipClass.BB:
 			return true
 	return false
 
+## Align hull with the bidirectional desired-heading line before engaging reverse,
+## preventing broadside exposure during a turn-around.  Call after a skill sets
+## intent.target_heading.  nearest_threat_dist gates activation against threshold.
 func _apply_reverse_alignment(intent: NavIntent, nearest_threat_dist: float, threshold: float) -> NavIntent:
 	if nearest_threat_dist >= threshold:
 		return intent

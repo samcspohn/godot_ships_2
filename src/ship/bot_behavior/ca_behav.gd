@@ -320,6 +320,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_suppress_guns = false
 	var previous_intent = _active_skill_name
 
+	var _ra_threshold := 8000.0
+	if _has_active_bb_shooter():
+		_ra_threshold = 10000.0
+		if ship.health_controller.current_hp / ship.health_controller.max_hp < 0.5:
+			_ra_threshold = 11000.0
+
 	# ── No enemies at all ───────────────────────────────────────────────────
 	if not has_enemies:
 		# intent = _skill_hunt.execute(ctx, {})
@@ -329,7 +335,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# 	intent = _intent_sail_forward(ship)
 		# 	_active_skill_name = &"SailForward"
 		# return intent
-		intent = _skill_cover.execute(ctx, cover_params, true)
+		intent = _skill_cover.execute(ctx, cover_params, false)
 		if intent != null:
 			_active_skill_name = &"FindCover"
 			return intent
@@ -395,7 +401,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-	elif (nearest_threat_dist < 8000.0) and ship.visible_to_enemy:
+	elif (nearest_threat_dist < _ra_threshold) and ship.visible_to_enemy:
 		# # High threat and enemy is close — find the optimal presentation angle
 		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		# forced = true
@@ -411,38 +417,33 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if intent != null:
 				_active_skill_name = &"Push"
 		else:
-			# # Detected but enemy is far — check if cover destination is on the way
-			# var cover_intent = _skill_cover.execute(ctx, cover_params, true)
-			# if cover_intent != null and nearest != null and threat > 0.85:
-			# 	if not _skill_cover.is_cover_on_the_way(ctx, nearest) and active_shooters_at_me.size() > 0:
-			# Optimal heading is stern-in — kite away while keeping guns on target
-			intent = _skill_kite.execute(ctx, {})
-			if intent != null:
-				_active_skill_name = &"Kite"
+			# High threat (kite path): if concealing cover is on the way, hide;
+			# otherwise kite away while keeping guns on target.
+			intent = _try_cover_on_the_way(ctx, nearest, _skill_cover, cover_params)
+			if intent == null:
+				intent = _skill_kite.execute(ctx, {})
+				if intent != null:
+					_active_skill_name = &"Kite"
 			forced = true
-		intent.heading_weight = 0.5
+		# Cover navigates to a hide position — leave its heading to the navigator.
+		if _active_skill_name != &"FindCover":
+			intent.heading_weight = 0.5
 
-		# TODO: improve by checking if desired heading is toward terrain to avoid navigating around and showing broadside
-		if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller._p().turning_circle_radius * 4.0:
-			# if _active_skill_name == &"Push":
-			# 	forced_skill = _skill_kite
-			# 	_active_skill_name = &"ForcedKite"
-			# elif _active_skill_name == &"Kite":
-			# 	forced_skill = _skill_push
-			# 	_active_skill_name = &"ForcedPush"
-			intent.heading_weight = 1.0
+			# TODO: improve by checking if desired heading is toward terrain to avoid navigating around and showing broadside
+			if NavigationMapManager.get_distance(ship.global_position) < ship.movement_controller._p().turning_circle_radius * 4.0:
+				intent.heading_weight = 1.0
 
-		var _ra_threshold := 8000.0
-		if _has_active_bb_shooter():
-			_ra_threshold = 10000.0
-			if ship.health_controller.current_hp / ship.health_controller.max_hp < 0.5:
-				_ra_threshold = 11000.0
+		# var _ra_threshold := 8000.0
+		# if _has_active_bb_shooter():
+		# 	_ra_threshold = 10000.0
+		# 	if ship.health_controller.current_hp / ship.health_controller.max_hp < 0.5:
+		# 		_ra_threshold = 11000.0
 		_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
 
 	else:
 		if not ship.visible_to_enemy:
 			# Undetected — seek cover as normal, fall back to angle
-			intent = _skill_cover.execute(ctx, cover_params, true)
+			intent = _skill_cover.execute(ctx, cover_params, false)
 			if intent != null:
 				# if _ship.global_position.distance_to(_skill_cover._nav_destination) > 750.0:
 				# 	_suppress_guns = true
@@ -472,7 +473,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 					_active_skill_name = &"Push"
 		else:
 			# Detected but enemy is far — check if cover destination is on the way
-			var cover_intent = _skill_cover.execute(ctx, cover_params, true)
+			var cover_intent = _skill_cover.execute(ctx, cover_params, false)
 			if cover_intent != null and nearest != null and threat > 0.85:
 				if not _skill_cover.is_cover_on_the_way(ctx, nearest) and active_shooters_at_me.size() > 0:
 				# Cover is too far off the optimal angle and there are active shooters — kite instead

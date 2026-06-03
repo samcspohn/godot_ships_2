@@ -82,6 +82,9 @@ var _match_timer_sync_timer: float = 0.0
 const MATCH_TIMER_SYNC_INTERVAL: float = 5.0
 
 var all_players_spawned: bool = false
+# When running the server from the editor, don't end/reset the match on disconnect
+# so a single debugged client leaving doesn't tear everything down.
+var _debug_keep_alive: bool = OS.has_feature("editor")
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
 var matchmaker_heartbeat_timer: float = 0.0
 
@@ -128,6 +131,9 @@ func _on_peer_connected(id):
 
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
+	if _debug_keep_alive:
+		print("Editor/debug build: keeping match alive despite disconnect")
+		return
 	if not match_complete:
 		# Mid-match: mark disconnected human player as having left, then check if all are gone.
 		for p_name in players:
@@ -1050,6 +1056,9 @@ func _notify_matchmaker_available():
 func _reset_server():
 	"""Reset the server by reloading the scene. The new instance's _ready()
 	re-creates the game world and re-registers with the matchmaker."""
+	if _debug_keep_alive:
+		print("Editor/debug build: skipping scene reload, keeping ships alive")
+		return
 	print("=== Server resetting for new match ===")
 
 	_players_quit.clear()

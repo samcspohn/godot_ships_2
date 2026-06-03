@@ -28,8 +28,8 @@ var _claimed_team_id: int = -1
 var _claimed_ship_id: int = -1
 
 
-func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = true) -> NavIntent:
-	if _last_valid_intent != null and _is_last_intent_still_valid(ctx, params):
+func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
+	if _last_valid_intent != null and _is_last_intent_still_valid(ctx, params, prioritize_cover):
 		if _target_island_id >= 0:
 			_reserve_cover_claim(ctx, {
 				"id": _target_island_id,
@@ -82,7 +82,7 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = tru
 	# var exit_radius = clearance * 3.5
 	# _arrived = dist < exit_radius if _arrived else dist < arrival_radius
 
-	var d = _get_cover_position(ctx, params)
+	var d = _get_cover_position(ctx, params, prioritize_cover)
 	if d.is_empty():
 		_release_cover_claim()
 		_last_valid_intent = null
@@ -341,7 +341,7 @@ var curr_heading: float = 0.0
 # In both modes islands are always evaluated nearest-first so ties naturally
 # resolve toward the ship's current position.
 # ---------------------------------------------------------------------------
-func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
+func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> Dictionary:
 	if not NavigationMapManager.is_map_ready():
 		return {}
 
@@ -455,8 +455,11 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 			other_claim_positions,
 			min_cover_separation
 		)
-		# Only consider islands where we can actually shoot from cover
-		if cover_result.is_empty() or not cover_result["can_shoot"]:
+		# Normally only consider islands we can shoot from; when prioritizing
+		# cover, accept the nearest concealing island regardless of shootability.
+		if cover_result.is_empty():
+			continue
+		if not prioritize_cover and not cover_result["can_shoot"]:
 			continue
 
 		var dest: Vector3 = cover_result["pos"]
@@ -498,7 +501,7 @@ func _set_island(island: Dictionary) -> void:
 # Returns true if any valid target can be hit with a ballistic arc from
 # from_pos.  Mirrors the shootability check in execute().
 # ---------------------------------------------------------------------------
-func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary) -> bool:
+func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> bool:
 	if _last_valid_intent == null or not _nav_destination_valid:
 		return false
 	if ctx.ship == null or ctx.server == null:
@@ -517,7 +520,7 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary) -> bool:
 
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
 	var can_shoot_here := targets.is_empty() or _can_shoot_from(ctx, pos, targets)
-	if not can_shoot_here:
+	if not prioritize_cover and not can_shoot_here:
 		return false
 
 	var min_cover_separation = _resolve_min_cover_separation(ctx, params)
