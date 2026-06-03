@@ -31,7 +31,7 @@ var target_lock_enabled: bool = false
 # Auto lock-on
 @export var auto_lock_enabled: bool = true
 @export var auto_lock_base_fraction: float = 0.02  # Zone half-extent at default_fov
-@export var auto_lock_hysteresis_mult: float = 5.0  # Lock-off zone = lock-on zone * this
+@export var auto_lock_hysteresis_mult: float = 3.5  # Lock-off zone = lock-on zone * this
 @export var auto_lock_delay: float = 0.25           # Seconds a candidate must stay in zone before locking
 @export var auto_lock_ref_distance: float = 20000.0  # World distance at which zone is at base size
 # @export var auto_lock_max_dist_scale: float = 5.0   # Maximum zone scale for very close targets
@@ -176,15 +176,7 @@ func _input(event):
 			zoom_accumulator -= zoom_speed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			zoom_accumulator += zoom_speed
-		# activate free look while holding right mouse button
-
-
-	# Toggle camera mode with Shift key
-	elif event is InputEventKey:
-		if event.pressed and event.keycode == KEY_SHIFT:
-			toggle_camera_mode()
-
-		if event.pressed and event.keycode == KEY_C and current_mode == CameraMode.SNIPER:
+		elif event.pressed and event.button_index == MOUSE_BUTTON_MIDDLE and current_mode == CameraMode.SNIPER:
 			if current_aim_mode == AimMode.SNIPER:
 				current_aim_mode = AimMode.AERIAL
 				aerial_view.current_zoom = sniper_view.current_zoom * aerial_view.zoom_mod
@@ -206,6 +198,10 @@ func _input(event):
 					sniper_view.set_locked_rot(aim_position)
 				current_view = sniper_view
 
+	# Toggle camera mode with Shift key
+	elif event is InputEventKey:
+		if event.pressed and event.keycode == KEY_SHIFT:
+			toggle_camera_mode()
 		# Toggle target lock with X key
 		if event.pressed and event.keycode == KEY_X:
 			toggle_target_lock()
@@ -218,7 +214,7 @@ func _input(event):
 	# if not free_look:
 	# 	third_person_view.input(event)
 
-var transition_time = 0.0
+var transition_time := 0.0
 const TRANSITION_DURATION = 0.1
 func _process(delta):
 
@@ -670,6 +666,10 @@ func toggle_target_lock():
 func _auto_update_target_lock(delta: float):
 	if not auto_lock_enabled or current_mode == CameraMode.FREE_LOOK:
 		return
+	# During view transitions the camera is mid-lerp and the locked target may
+	# temporarily project far from screen centre. Skip the unlock check only;
+	# auto-lock acquisition is still fine to run.
+	var in_transition := transition_time > 0.0
 
 	var viewport_size = get_viewport().get_visible_rect().size
 	var screen_center = viewport_size * 0.5
@@ -683,7 +683,7 @@ func _auto_update_target_lock(delta: float):
 	# Auto-unlock any lock whose target has left the hysteresis zone.
 	# Use the same distance scaling as lock-on so the lock-off zone matches
 	# the zone in which the lock was acquired.
-	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
+	if not in_transition and target_lock_enabled and locked_target and is_instance_valid(locked_target):
 		var cam = get_viewport().get_camera_3d()
 		var to_target = locked_target.global_position - global_position
 		if to_target.dot(-global_basis.z) <= 0.0:

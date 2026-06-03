@@ -62,19 +62,7 @@ static var debug_fire_log: bool = false
 static var debug_fire_log_ship: String = ""
 
 const MIN_ELEVATION_ANGLE: float = deg_to_rad(-5)
-var _max_elevation_angle: float = NAN  # lazily cached; NAN = not yet computed
 
-func _get_max_elevation_angle() -> float:
-	if is_nan(_max_elevation_angle):
-		var max_range: float = get_params()._range
-		var muzzles_pos: Vector3 = get_muzzles_position()
-		# Shoot at max range on a flat plane to find the required elevation angle.
-		var max_range_target: Vector3 = muzzles_pos + Vector3(max_range, 0, 0)
-		var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, max_range_target, get_shell())
-		assert(sol[0] != null, "Gun._get_max_elevation_angle: no valid launch solution for max range — check shell params and _range")
-		var dir: Vector3 = sol[0]
-		_max_elevation_angle = atan2(dir.y, Vector2(dir.x, dir.z).length())
-	return _max_elevation_angle
 
 func to_dict() -> Dictionary:
 	return {
@@ -297,8 +285,12 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 	if !is_nan(elevation_delta):
 		barrel.rotate(Vector3.RIGHT, elevation_delta)
 
-	# Clamp elevation: never depress below -5°; never elevate beyond max-range angle.
-	barrel.rotation.x = clamp(barrel.rotation.x, MIN_ELEVATION_ANGLE, _get_max_elevation_angle())
+	# Clamp depression at the physical hard-stop only. Elevation is intentionally
+	# NOT capped: in-range targets always resolve to an elevation at or below the
+	# max-range angle (aim_point is clamped to within range above), so a separate
+	# max-elevation clamp is redundant. What matters at max range is whether the
+	# target is in range — not the visual barrel angle.
+	barrel.rotation.x = max(barrel.rotation.x, MIN_ELEVATION_ANGLE)
 
 	# Recompute elevation error against the barrel's post-rotation state so the
 	# grace window is checked against the remaining error after this frame's movement.
@@ -306,12 +298,12 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 		var curr_elevation_after = atan2(-barrel.global_basis.z.y, Vector2(-barrel.global_basis.z.x, -barrel.global_basis.z.z).length())
 		desired_elevation_delta = desired_elevation - curr_elevation_after
 
-	# Elevation is "satisfied" when aimed closely enough, OR when the barrel is pinned
-	# at a physical hard-stop (min depression or max elevation) and ship roll is
-	# creating world-frame error in that same direction — fire anyway since the
-	# shell uses aim_point, not barrel orientation.
+	# Elevation is "satisfied" when aimed closely enough, OR when the barrel is
+	# pinned at the min-depression hard-stop and still wants to depress further
+	# (a too-close target). The shell is launched from _aim_point and the launch
+	# vector is clamped to the depression limit in fire(), so fire anyway — the
+	# shot will simply go higher rather than be blocked.
 	var at_min_depression: bool = barrel.rotation.x <= MIN_ELEVATION_ANGLE + 0.001 and desired_elevation_delta < 0
-	var at_max_elevation: bool = barrel.rotation.x >= _get_max_elevation_angle() - 0.001 and desired_elevation_delta > 0
 
 	# Ship roll/pitch during a turn rotates the barrel's world-frame elevation
 	# (curr_elevation is read from barrel.global_basis), but the barrel's local
@@ -333,7 +325,6 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 	var elevation_satisfied: bool = desired_elevation_delta != INF and (
 		abs(desired_elevation_delta) < 0.015
 		or at_min_depression
-		or at_max_elevation
 		or chasing_at_rate
 	)
 
@@ -379,7 +370,6 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 			"desired_elev_delta": desired_elevation_delta,
 			"max_elev_angle": max_elev_angle,
 			"at_min_depression": at_min_depression,
-			"at_max_elevation": at_max_elevation,
 			"barrel_x": barrel.rotation.x,
 			# Range / ballistic
 			"in_range": _dbg_in_range,
@@ -417,6 +407,16 @@ func fire(mod: TargetMod = null) -> void:
 				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, h_spread, v_spread, get_params()._range)
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
+					# Guns can't depress below MIN_ELEVATION_ANGLE. If the solution wants a
+					# steeper downward angle (too-close target), pitch the launch vector up
+					# to the limit — keeping speed and azimuth — so the shot goes higher.
+					var horizontal_speed: float = Vector2(dispersed_velocity.x, dispersed_velocity.z).length()
+					var elevation: float = atan2(dispersed_velocity.y, horizontal_speed)
+					if elevation < MIN_ELEVATION_ANGLE:
+						var speed: float = dispersed_velocity.length()
+						var horizontal_dir: Vector3 = Vector3(dispersed_velocity.x, 0.0, dispersed_velocity.z).normalized()
+						dispersed_velocity = (horizontal_dir * cos(MIN_ELEVATION_ANGLE) + Vector3.UP * sin(MIN_ELEVATION_ANGLE)) * speed
+						var after: float = atan2(dispersed_velocity.y, Vector2(dispersed_velocity.x, dispersed_velocity.z).length())
 					var t = ProjectileManager.get_current_time()
 					var _id = ProjectileManager.fireBullet(dispersed_velocity, m.global_position, get_shell(), t, _ship)
 					# --- replay hook ---

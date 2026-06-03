@@ -6,3 +6,5 @@ don't commit this message
 
 avoid fallbacks
 if X doesn't work dont create code Y to silently fail. this appears as a bug to me but correct to you. a crash is easier to debug and identify. only implement fallbacks if instructed
+
+avoid excessive and overly verbose comments

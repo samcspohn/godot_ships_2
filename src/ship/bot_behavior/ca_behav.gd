@@ -405,20 +405,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		# 	# forced_skill = null
 		# 	# return intent
 		# else:
-		var angle_to_enemy = SkillAngle.calc_heading(ctx, {})
-		# # if absf(angle_difference(optimal_heading, enemy_bearing)) > PI * 0.5:
-		# # 	optimal_heading = wrapf(optimal_heading + PI, -PI, PI)
-		var bow_diff = absf(angle_difference(angle_to_enemy, _get_ship_heading()))
 		if threat < 0.5:
 			# Optimal heading is bow-in — push toward enemy
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-				# threat behind — reverse to close the gap stern-first
-				if bow_diff > PI * 0.5:
-					intent.force_reverse = true
-					intent.target_heading = wrapf(intent.target_heading + PI, -PI, PI)
-
 		else:
 			# # Detected but enemy is far — check if cover destination is on the way
 			# var cover_intent = _skill_cover.execute(ctx, cover_params, true)
@@ -428,10 +419,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_kite.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Kite"
-				# threat is ahead — reverse away from enemy
-				if bow_diff < PI * 0.5:
-					intent.force_reverse = true
-					intent.target_heading = wrapf(intent.target_heading + PI, -PI, PI)
+			forced = true
 		intent.heading_weight = 0.5
 
 		# TODO: improve by checking if desired heading is toward terrain to avoid navigating around and showing broadside
@@ -443,6 +431,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# 	forced_skill = _skill_push
 			# 	_active_skill_name = &"ForcedPush"
 			intent.heading_weight = 1.0
+
+		var _ra_threshold := 8000.0
+		if _has_active_bb_shooter():
+			_ra_threshold = 10000.0
+			if ship.health_controller.current_hp / ship.health_controller.max_hp < 0.5:
+				_ra_threshold = 11000.0
+		_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
 
 	else:
 		if not ship.visible_to_enemy:
@@ -525,10 +520,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	if previous_intent == &"FindCover" and _active_skill_name != &"FindCover":
 		_skill_cover.reset()
 	# ── Post-process: spread ─────────────────────────────────────────────────
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
+	# if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
+	# 	intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
+	if not forced and _active_skill_name  not in [&"FindCover", &"Push", &"Kite"]:
 		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
-	if _active_skill_name in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
-		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 250.0, "spread_multiplier": 1.0})
 
 	# ── Post-process: broadside ──────────────────────────────────────────────
 	# if _active_skill_name not in [&"Chase"]:

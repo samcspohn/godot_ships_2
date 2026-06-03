@@ -1726,10 +1726,36 @@ func engage_target(target: Ship):
 # UTILITIES
 # ============================================================================
 
+# Heading error (radians) within which the hull is considered aligned with the
+# bidirectional desired-heading line, allowing the ship to engage reverse.
+const REVERSE_ALIGN_TOL: float = deg_to_rad(5.0)
+
 func _get_ship_heading() -> float:
 	"""Get ship's current heading. 0 = +Z, PI/2 = +X, etc."""
 	var forward = -_ship.global_transform.basis.z
 	return atan2(forward.x, forward.z)
+
+## Align hull with the bidirectional desired-heading line before engaging reverse,
+## preventing broadside exposure during a turn-around.  Call after a skill sets
+## intent.target_heading.  nearest_threat_dist gates activation against threshold.
+func _has_active_bb_shooter() -> bool:
+	for shooter in active_shooters_at_me:
+		if is_instance_valid(shooter) and shooter.ship_class == Ship.ShipClass.BB:
+			return true
+	return false
+
+func _apply_reverse_alignment(intent: NavIntent, nearest_threat_dist: float, threshold: float) -> NavIntent:
+	if nearest_threat_dist >= threshold:
+		return intent
+	var ship_heading := _get_ship_heading()
+	if absf(angle_difference(intent.target_heading, ship_heading)) > PI * 0.5:
+		var rev_heading := wrapf(intent.target_heading + PI, -PI, PI)
+		intent.target_heading = rev_heading
+		if absf(angle_difference(rev_heading, ship_heading)) < REVERSE_ALIGN_TOL:
+			intent.force_reverse = true
+		else:
+			intent.heading_weight = 1.0
+	return intent
 
 func _normalize_angle(angle: float) -> float:
 	while angle > PI:

@@ -204,7 +204,7 @@ func _new_salvo(sigma: float) -> void:
 		for ki in 4:
 			_angles[gi * 4 + ki] = group_buf[ki]
 
-	_apply_citadel_guarantee()
+	# _apply_citadel_guarantee()
 
 
 # Tests whether any shell in the current salvo will land inside the citadel

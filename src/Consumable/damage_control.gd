@@ -48,7 +48,7 @@ func can_use(_ship: Ship) -> bool:
 func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 	var p := self.p() as DamageControl
 	return [
-		"Fire/flood duration: -%.0f%%" % (p.duration_reduction * 100.0),
-		"Fire/flood damage: -%.0f%%" % (p.damage_reduction * 100.0),
+		"Fire/flood duration: -%.0f%%" % ((1 - p.duration_reduction) * 100.0),
+		"Fire/flood damage: -%.0f%%" % ((1 - p.damage_reduction) * 100.0),
 		"Buildup reduction: 10x",
 	]

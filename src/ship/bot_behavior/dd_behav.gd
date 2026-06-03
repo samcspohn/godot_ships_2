@@ -267,6 +267,11 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var pos_params        = get_positioning_params()
 	var threat 			  = get_threat_score(ctx)
 
+	var nearest_threat_dist := INF
+	for s in spotted:
+		var d := ship.global_position.distance_to(s.global_position)
+		if d < nearest_threat_dist:
+			nearest_threat_dist = d
 
 	var _spot_chase_hunt = func():
 		var _intent
@@ -303,6 +308,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"Push"
+				intent = _apply_reverse_alignment(intent, nearest_threat_dist, 8000.0)
 			wants_stealth = false
 			wants_to_be_concealed = false
 		else:

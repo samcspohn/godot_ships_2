@@ -4,7 +4,7 @@
 [ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="2_56ou0"]
 [ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://audio/500mm_muzzle.wav" id="3_mt5ug"]
 
-[node name="GER_150mm_2b_gerat60" unique_id=687386333 instance=ExtResource("1_kqkyl")]
+[node name="GER_150mm_2b_gerat60" unique_id=2145169824 instance=ExtResource("1_kqkyl")]
 script = ExtResource("2_56ou0")
 _sound = ExtResource("3_mt5ug")
 pitch = 3.5
@@ -13,5 +13,5 @@ variance = 0.25
 slew_max_angle = 0.0
 glb_path = "uid://c7kxmqf5odbws"
 
-[node name="Barrels" parent="Turret" parent_id_path=PackedInt32Array(2137007754) index="0" unique_id=1833203564]
+[node name="Barrels" parent="Turret" parent_id_path=PackedInt32Array(416867547) index="0" unique_id=764462049]
 lod_bias = 100.0
