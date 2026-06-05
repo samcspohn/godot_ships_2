@@ -290,6 +290,18 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.399746, 133.23595)
 dot_params = ExtResource("19_i0qg4")
 rparams = SubResource("Resource_d3r4j")
 
+[node name="Flood" parent="Modules/FloodManager" index="0" unique_id=196010068]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -101.47281)
+
+[node name="Flood2" parent="Modules/FloodManager" index="1" unique_id=1916672481]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -42.832077)
+
+[node name="Flood3" parent="Modules/FloodManager" index="2" unique_id=362759222]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 50.371582)
+
+[node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 114.84939)
+
 [node name="500mmBarbette" parent="armor" parent_id_path=PackedInt32Array(1411121736) index="0" unique_id=602852852]
 layers = 0
 
@@ -426,3 +438,4 @@ auto_start = true
 
 [editable path="Modules"]
 [editable path="Modules/FireManager"]
+[editable path="Modules/FloodManager"]

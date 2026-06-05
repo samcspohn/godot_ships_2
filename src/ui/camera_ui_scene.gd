@@ -20,6 +20,10 @@ var player_controller: PlayerController
 @export var valid_can_fire_color_mod: float = 1.0
 @export var valid_cannot_fire_color_mod: float = 0.7
 @export var invalid_cannot_fire_color_mod: float = 0.4
+@export var fire_buildup_color: Color = Color(0.65, 0.32, 0.08)
+@export var fire_burning_color: Color = Color(1.0, 0.55, 0.05)
+@export var flood_buildup_color: Color = Color(0.08, 0.22, 0.5)
+@export var flood_active_color: Color = Color(0.1, 0.55, 1.0)
 
 # Properties that BattleCamera sets directly - these need to match the interface
 var time_to_target: float = 0.0 : set = set_time_to_target
@@ -81,6 +85,14 @@ var kill_feed: KillFeed = null
 
 @onready var gun_reload_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/WeaponsContainer/ReloadContainer
 @onready var reload_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/Content/WeaponsContainer/ReloadContainer/ReloadBarTemplate
+
+@onready var fire_bar_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/FireContainer
+@onready var fire_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/Content/FireContainer/FireBarTemplate
+var fire_bars: Array[ProgressBar] = []
+
+@onready var flood_bar_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/FloodContainer
+@onready var flood_bar_template: ProgressBar = $MainContainer/BottomCenterPanel/Content/FloodContainer/FloodBarTemplate
+var flood_bars: Array[ProgressBar] = []
 
 @onready var status_indicators_container: HBoxContainer = $MainContainer/BottomCenterPanel/Content/StatusIndicators
 
@@ -639,6 +651,8 @@ func _physics_process(_delta):
 	update_team_tracker()  # Update team tracker
 	# cleanup_team_indicators()  # Clean up invalid indicators
 	update_gun_reload_bars()
+	update_fire_bars()
+	update_flood_bars()
 	update_visibility_indicator()  # Update visibility indicator
 	update_secondaries_disabled_indicator()  # Update secondaries disabled indicator
 	update_consumable_ui()
@@ -1456,6 +1470,117 @@ func setup_weapons():
 		torpedo_overlay.torpedo_controller = camera_controller._ship.torpedo_controller
 		torpedo_overlay.player_controller = player_controller
 		add_child(torpedo_overlay)
+
+	setup_fire_bars()
+	setup_flood_bars()
+
+func _make_fire_spacer() -> Control:
+	var spacer = Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return spacer
+
+func setup_fire_bars():
+	await get_tree().process_frame
+	fire_bar_template.visible = false
+	for c in fire_bar_container.get_children():
+		if c != fire_bar_template:
+			c.queue_free()
+	fire_bars.clear()
+
+	var fires = camera_controller._ship.fire_manager.fires
+	# Even spread with gaps on both ends: spacer, bar, spacer, bar, ..., spacer
+	fire_bar_container.add_child(_make_fire_spacer())
+	for i in fires.size():
+		var bar: ProgressBar = fire_bar_template.duplicate()
+		bar.visible = true
+		bar.modulate.a = 0.0
+		bar.value = 0.0
+		bar.add_theme_stylebox_override("fill", fire_bar_template.get_theme_stylebox("fill").duplicate())
+		fire_bar_container.add_child(bar)
+		fire_bars.append(bar)
+		fire_bar_container.add_child(_make_fire_spacer())
+
+func update_fire_bars():
+	if fire_bars.is_empty():
+		return
+	var fires = camera_controller._ship.fire_manager.fires
+	for i in fire_bars.size():
+		if i >= fires.size():
+			break
+		var fire: Fire = fires[i]
+		var bar: ProgressBar = fire_bars[i]
+		var label: Label = bar.get_child(0) as Label
+		var fill := bar.get_theme_stylebox("fill") as StyleBoxFlat
+		if fire.lifetime > 0.0:
+			bar.modulate.a = 1.0
+			bar.value = fire.lifetime
+			fill.bg_color = fire_burning_color
+			label.text = "%.0f" % (fire.lifetime * fire._params.dur)
+			label.visible = true
+		elif fire.curr_buildup > 0.0:
+			bar.modulate.a = 1.0
+			var max_buildup: float = fire._rparams.max_buildup
+			var buildup_frac: float = clamp(fire.curr_buildup / max_buildup, 0.0, 1.0)
+			bar.value = buildup_frac
+			fill.bg_color = fire_buildup_color
+			if Input.is_key_pressed(KEY_ALT):
+				label.text = "%.0f%%" % (buildup_frac * 100.0)
+				label.visible = true
+			else:
+				label.visible = false
+		else:
+			bar.modulate.a = 0.0
+
+func setup_flood_bars():
+	await get_tree().process_frame
+	flood_bar_template.visible = false
+	for c in flood_bar_container.get_children():
+		if c != flood_bar_template:
+			c.queue_free()
+	flood_bars.clear()
+
+	var floods = camera_controller._ship.flood_manager.floods
+	flood_bar_container.add_child(_make_fire_spacer())
+	for i in floods.size():
+		var bar: ProgressBar = flood_bar_template.duplicate()
+		bar.visible = true
+		bar.modulate.a = 0.0
+		bar.value = 0.0
+		bar.add_theme_stylebox_override("fill", flood_bar_template.get_theme_stylebox("fill").duplicate())
+		flood_bar_container.add_child(bar)
+		flood_bars.append(bar)
+		flood_bar_container.add_child(_make_fire_spacer())
+
+func update_flood_bars():
+	if flood_bars.is_empty():
+		return
+	var floods = camera_controller._ship.flood_manager.floods
+	for i in flood_bars.size():
+		if i >= floods.size():
+			break
+		var flood: Flood = floods[i]
+		var bar: ProgressBar = flood_bars[i]
+		var label: Label = bar.get_child(0) as Label
+		var fill := bar.get_theme_stylebox("fill") as StyleBoxFlat
+		if flood.lifetime > 0.0:
+			bar.modulate.a = 1.0
+			bar.value = flood.lifetime
+			fill.bg_color = flood_active_color
+			label.text = "%.0f" % (flood.lifetime * flood._params.dur)
+			label.visible = true
+		elif flood.curr_buildup > 0.0:
+			bar.modulate.a = 1.0
+			var max_buildup: float = flood._rparams.max_buildup
+			var buildup_frac: float = clamp(flood.curr_buildup / max_buildup, 0.0, 1.0)
+			bar.value = buildup_frac
+			fill.bg_color = flood_buildup_color
+			if Input.is_key_pressed(KEY_ALT):
+				label.text = "%.0f%%" % (buildup_frac * 100.0)
+				label.visible = true
+			else:
+				label.visible = false
+		else:
+			bar.modulate.a = 0.0
 
 func update_gun_reload_bars():
 	# Update reload progress for each weapon

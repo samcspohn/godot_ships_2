@@ -55,8 +55,8 @@ func _ready():
 		set_physics_process(false)
 
 func _physics_process(_delta: float) -> void:
-	var sec_tic = Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0
 	if _Utils.authority():
+		var sec_tic = Engine.get_physics_frames() % Engine.physics_ticks_per_second == 0
 		if lifetime > 0:
 			if sec_tic: # tick every second
 				_sync.rpc(lifetime)
@@ -69,7 +69,7 @@ func _physics_process(_delta: float) -> void:
 					var zone_index := manager.fires.find(self)
 					ReplayRecorder.record_fire_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
-		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time > Time.get_ticks_msec() / 1000.0: # last hit is decay time
+		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time < Time.get_ticks_msec() / 1000.0: # last hit is decay time
 			curr_buildup -= _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
 

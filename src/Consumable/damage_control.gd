@@ -1,8 +1,8 @@
 # src/consumables/damage_control_party.gd
 extends ConsumableItem
 class_name DamageControl
-@export var duration_reduction = 1.0 - 0.65
-@export var damage_reduction = 1.0 - 0.65
+@export var duration_reduction = 0.35
+@export var damage_reduction = 0.35
 
 func _init():
 	type = ConsumableType.DAMAGE_CONTROL
@@ -52,3 +52,15 @@ func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 		"Fire/flood damage: -%.0f%%" % ((1 - p.damage_reduction) * 100.0),
 		"Buildup reduction: 10x",
 	]
+
+func to_bytes() -> PackedByteArray:
+	var writer := StreamPeerBuffer.new()
+	writer.put_float(dynamic_mod.duration_reduction)
+	writer.put_float(dynamic_mod.damage_reduction)
+	return writer.get_data_array()
+
+func from_bytes(data: PackedByteArray) -> void:
+	var reader := StreamPeerBuffer.new()
+	reader.data_array = data
+	dynamic_mod.duration_reduction = reader.get_float()
+	dynamic_mod.damage_reduction = reader.get_float()

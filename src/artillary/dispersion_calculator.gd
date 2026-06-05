@@ -204,7 +204,7 @@ func _new_salvo(sigma: float) -> void:
 		for ki in 4:
 			_angles[gi * 4 + ki] = group_buf[ki]
 
-	# _apply_citadel_guarantee()
+	_apply_citadel_guarantee()
 
 
 # Tests whether any shell in the current salvo will land inside the citadel
@@ -233,12 +233,23 @@ func _apply_citadel_guarantee() -> void:
 			closest_idx = i
 
 	if not any_inside:
-		# Scaling the std-dev radius by `s` scales the ellipse-space position
-		# linearly, so the ellipse metric `d` scales by s^2. Solve for the
-		# scale that lands the closest shell at the target distance.
-		var target_d := 0.25 + randf() * 0.56  # final d in [0.25, 0.81]
-		var scale_factor: float = sqrt(target_d / closest_d)
-		_shuffled_radii[closest_idx] *= scale_factor
+		var h_frac := _shuffled_radii[closest_idx] * cos(_angles[closest_idx])
+		var v_frac := _shuffled_radii[closest_idx] * sin(_angles[closest_idx])
+		var new_h: float
+		var new_v: float
+		if absf(h_frac) > ea:
+			# x is also outside the citadel width; snap to the nearest horizontal
+			# apex of the ellipse (solving for v at |h| == ea gives v == 0).
+			new_h = signf(h_frac) * ea
+			new_v = 0.0
+		else:
+			# x is within the citadel width; keep it and move y onto the ellipse
+			# boundary: v = ±eb * sqrt(1 - (h/ea)^2)
+			var v_max := eb * sqrt(1.0 - (h_frac / ea) * (h_frac / ea))
+			new_h = h_frac
+			new_v = (signf(v_frac) if not is_zero_approx(v_frac) else 1.0) * v_max
+		_shuffled_radii[closest_idx] = sqrt(new_h * new_h + new_v * new_v)
+		_angles[closest_idx] = atan2(new_v, new_h)
 
 # Dispersion curve. The maximum physical dispersion (meters at max range) is
 # derived from the per-gun `base_spread` (radians) so per-gun tuning works again:

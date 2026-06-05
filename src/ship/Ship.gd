@@ -497,6 +497,23 @@ func sync_player_data() -> PackedByteArray:
 	# Consumables data
 	writer.put_var(consumable_manager.to_bytes())
 
+	# Fire buildup / lifetime for the owning player's HUD
+	writer.put_32(fire_manager.fires.size())
+	writer.put_var(fire_manager.fparams.to_bytes())
+	writer.put_var(fire_manager.rparams.to_bytes())
+
+	for f: Fire in fire_manager.fires:
+		writer.put_float(f.curr_buildup)
+		writer.put_float(f.lifetime)
+
+	# Flood buildup / lifetime for the owning player's HUD
+	writer.put_32(flood_manager.floods.size())
+	writer.put_var(flood_manager.dot_params.to_bytes())
+	writer.put_var(flood_manager.rparams.to_bytes())
+	for f: Flood in flood_manager.floods:
+		writer.put_float(f.curr_buildup)
+		writer.put_float(f.lifetime)
+
 	# Artillery data
 	writer.put_var(artillery_controller.to_bytes())
 	# Guns data
@@ -560,6 +577,29 @@ func sync_player(b: PackedByteArray):
 	# Consumables data
 	var cons_bytes: PackedByteArray = reader.get_var()
 	consumable_manager.from_bytes(cons_bytes) # bytes is broken
+
+	# Fire buildup / lifetime for the owning player's HUD
+	var fire_count: int = reader.get_32()
+	fire_manager.fparams.from_bytes(reader.get_var())
+	fire_manager.rparams.from_bytes(reader.get_var())
+
+	for i in fire_count:
+		var bu: float = reader.get_float()
+		var lt: float = reader.get_float()
+		if i < fire_manager.fires.size():
+			fire_manager.fires[i].curr_buildup = bu
+			fire_manager.fires[i].lifetime = lt
+
+	# Flood buildup / lifetime for the owning player's HUD
+	var flood_count: int = reader.get_32()
+	flood_manager.dot_params.from_bytes(reader.get_var())
+	flood_manager.rparams.from_bytes(reader.get_var())
+	for i in flood_count:
+		var bu: float = reader.get_float()
+		var lt: float = reader.get_float()
+		if i < flood_manager.floods.size():
+			flood_manager.floods[i].curr_buildup = bu
+			flood_manager.floods[i].lifetime = lt
 
 	# Artillery data
 	var art_bytes: PackedByteArray = reader.get_var()

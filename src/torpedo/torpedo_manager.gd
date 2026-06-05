@@ -284,7 +284,7 @@ func _physics_process(_delta: float) -> void:
 			id += 1
 			continue
 		var t = (current_time - p.t) * TORPEDO_SPEED_MULTIPLIER
-		ray_query.from = p.position
+		ray_query.from = p.position - p.direction.normalized() * 2.0
 		#p.position = ProjectilePhysicsWithDrag.calculate_position_at_time(p.start_position, p.launch_velocity, t, p.params.drag)
 		p.position = p.direction * p.params.speed * t + p.start_position
 		p.position.y = max(p.position.y - t * 10, -2.0)
