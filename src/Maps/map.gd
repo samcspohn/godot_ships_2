@@ -16,6 +16,8 @@ const WATER_LEVEL: float = 0.0  # Y level of water
 var init = false
 
 func _ready() -> void:
+	_collect_islands()
+
 	# Orient the secondary directional light 90 degrees off the primary light.
 	# Rotate light 1's basis around its own "right" (local X) axis, choosing the
 	# rotation direction that keeps light 2's source above the horizon (+Z.y > 0).
@@ -28,6 +30,28 @@ func _ready() -> void:
 	var t: Transform3D = light_2.transform
 	t.basis = rotated_basis.orthonormalized()
 	light_2.transform = t
+
+func _collect_islands() -> void:
+	# Gather island bodies from the "island" group rather than a serialized
+	# NodePath array. The exported array breaks every time map.glb is re-imported
+	# (node paths get reshuffled), whereas the group overrides survive re-import.
+	islands.clear()
+	for child in get_children():
+		if not child.is_in_group("island"):
+			continue
+		var body := _find_static_body(child)
+		if body:
+			islands.append(body)
+
+
+func _find_static_body(node: Node) -> StaticBody3D:
+	if node is StaticBody3D:
+		return node
+	for child in node.get_children():
+		if child is StaticBody3D:
+			return child
+	return null
+
 
 func _physics_process(delta: float) -> void:
 	if !init:

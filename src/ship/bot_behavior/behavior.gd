@@ -65,6 +65,7 @@ var _spotted_danger_center_cache: Vector3 = Vector3.ZERO
 var _spotted_danger_center_frame: int = -1
 var _threat_score_cache: float = 0.0
 var _threat_score_frame: int = -1
+var threat_mod: float = 1.0
 
 ## Set to true by each ship class in get_nav_intent when the ship wants the
 ## bot controller to route around enemy detection zones during transit.
@@ -1592,7 +1593,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var unspotted = server.get_unspotted_enemies(_ship.team.team_id)
 	var enemies = spotted + unspotted.keys()
 	if enemies.is_empty():
-		_threat_score_cache = hp_pressure * 0.3
+		_threat_score_cache = hp_pressure * 0.3 * threat_mod
 		_threat_score_frame = frame
 		return _threat_score_cache
 
@@ -1644,7 +1645,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
 	var threat_scale: float = 1.0 - pow(t_norm, 4)
 
-	_threat_score_cache = base_threat * threat_scale
+	_threat_score_cache = base_threat * threat_scale * threat_mod
 	_threat_score_frame = frame
 	return _threat_score_cache
 
@@ -1654,6 +1655,37 @@ func get_threat_score(ctx: SkillContext) -> float:
 # ============================================================================
 # COMBAT
 # ============================================================================
+
+func _secondary_target_offset(target: Ship) -> Vector3:
+	var super_idx = target.armor_parts.find_custom(func(part):
+		return part.type == ArmorPart.Type.SUPERSTRUCTURE)
+	assert(super_idx != -1, "Secondary target offset requires a superstructure armor part")
+	var superstructure := target.armor_parts[super_idx] as ArmorPart
+	return target.to_local(superstructure.global_position)
+
+func update_secondary_priority_target(primary_target: Ship, server: GameServer) -> void:
+	var sec := _ship.secondary_controller
+	if sec == null or sec.sub_controllers.is_empty():
+		return
+
+	var max_range := sec.get_max_range()
+	var selected: Ship = null
+	if primary_target != null and is_instance_valid(primary_target) and primary_target.is_alive() and primary_target.visible_to_enemy:
+		if primary_target.global_position.distance_to(_ship.global_position) <= max_range:
+			selected = primary_target
+
+	if selected == null:
+		var best_dist := INF
+		for enemy: Ship in server.get_valid_targets(_ship.team.team_id):
+			if not enemy.is_alive():
+				continue
+			var dist := enemy.global_position.distance_to(_ship.global_position)
+			if dist <= max_range and dist < best_dist:
+				best_dist = dist
+				selected = enemy
+
+	sec.target = selected
+	sec.target_offset = _secondary_target_offset(selected) if selected != null else Vector3.ZERO
 
 func engage_target(target: Ship):
 	"""Fire at target. Override for class-specific behavior."""
@@ -1735,14 +1767,13 @@ func _get_ship_heading() -> float:
 	var forward = -_ship.global_transform.basis.z
 	return atan2(forward.x, forward.z)
 
-## When a concealing island is reachable and lies along the engagement path to
-## `nearest`, returns a FindCover intent (nearest hide island, shootability
-## ignored) and sets _active_skill_name.  Returns null otherwise so the caller
-## can fall back to kite/push.
+## When shootable cover is reachable and lies along the engagement path to
+## `nearest`, returns a FindCover intent and sets _active_skill_name.  Returns
+## null otherwise so the caller can fall back to kite/push.
 func _try_cover_on_the_way(ctx: SkillContext, nearest: Ship, cover_skill: SkillFindCover, cover_params: Dictionary) -> NavIntent:
 	if nearest == null:
 		return null
-	var cover_intent := cover_skill.execute(ctx, cover_params, true)
+	var cover_intent := cover_skill.execute(ctx, cover_params, false)
 	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx, nearest):
 		_active_skill_name = &"FindCover"
 		return cover_intent

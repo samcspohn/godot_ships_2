@@ -790,6 +790,8 @@ func _tick_behavior(delta: float) -> void:
 		if target != old_target and _event_cooldown <= 0.0:
 			_force_intent_next_frame = true
 
+	behavior.update_secondary_priority_target(target, server_node)
+
 	# Engage current target (fire weapons)
 	_engage_target()
 

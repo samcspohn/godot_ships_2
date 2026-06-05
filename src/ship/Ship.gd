@@ -13,6 +13,13 @@ enum ShipClass {
 	CV
 }
 var initialized: bool = false
+
+## Translucent teal silhouette shown in 3-D for enemy ships detected only by
+## radar/hydro (not surface-spotted).  Built client-side as a sibling node so
+## it is unaffected by the ship root's `visible = false` while unspotted.
+const RADAR_GHOST_MATERIAL: StandardMaterial3D = preload("res://src/ship/radar_ghost_material.tres")
+var radar_ghost: Node3D = null
+
 # Child components
 @onready var movement_controller: ShipMovementV4 = $Modules/MovementController
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
@@ -228,6 +235,7 @@ func _ready() -> void:
 	if !(_Utils.authority()):
 		set_physics_process(false)
 		self.freeze = true
+		_build_radar_ghost()
 		if _Utils.is_multiplayer_active():
 			initialized_client.rpc_id(1)
 
@@ -238,21 +246,73 @@ func _ready() -> void:
 	self.collision_layer = 1 << 2
 	self.collision_mask = 1 | 1 << 2
 
-	# Clean up precision world registration when the ship leaves the tree
-	if _precision_registered:
+	# Clean up precision world registration and the radar ghost when the ship
+	# leaves the tree.
+	if _precision_registered or radar_ghost != null:
 		tree_exiting.connect(_on_tree_exiting)
 
 func _on_tree_exiting() -> void:
+	if is_instance_valid(radar_ghost):
+		radar_ghost.queue_free()
+		radar_ghost = null
 	if _precision_registered and PrecisionPhysicsWorld != null:
 		PrecisionPhysicsWorld.unregister_ship(self)
 		_precision_registered = false
 
+## Build a translucent silhouette from the ship's visual meshes.  Added as a
+## sibling (not a child) so the ship root's `visible = false` while unspotted
+## does not also hide the ghost.  Meshes are shared; only new MeshInstance3D
+## nodes and a single shared material override are allocated.
+func _build_radar_ghost() -> void:
+	var parent := get_parent()
+	if parent == null:
+		return
+	radar_ghost = Node3D.new()
+	radar_ghost.name = name + "_RadarGhost"
+	radar_ghost.visible = false
+	var meshes: Array[MeshInstance3D] = []
+	_collect_mesh_instances(self, meshes)
+	for mi in meshes:
+		var ghost_mi := MeshInstance3D.new()
+		ghost_mi.mesh = mi.mesh
+		ghost_mi.transform = _node_to_ship_transform(mi)
+		ghost_mi.material_override = RADAR_GHOST_MATERIAL
+		ghost_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		radar_ghost.add_child(ghost_mi)
+	parent.add_child(radar_ghost)
+
+func _collect_mesh_instances(node: Node, out: Array[MeshInstance3D]) -> void:
+	for child in node.get_children():
+		if child is MeshInstance3D and (child as MeshInstance3D).mesh != null \
+		and not _is_armor_mesh(child):
+			out.append(child)
+		_collect_mesh_instances(child, out)
+
+## A mesh belongs to the armor system if it carries an ArmorPart child (added by
+## enable_backface_collision_recursive).  These are internal armor/collision
+## meshes and must be kept out of the visible ghost silhouette.
+func _is_armor_mesh(node: MeshInstance3D) -> bool:
+	for child in node.get_children():
+		if child is ArmorPart:
+			return true
+	return false
+
+## Keep the ghost aligned to this ship and show it only for enemy contacts that
+## are radar/hydro-detected but not surface-spotted.
+func _update_radar_ghost() -> void:
+	if radar_ghost == null:
+		return
+	var show_ghost := (hydro_detected or radar_detected) and not visible_to_enemy and is_alive()
+	radar_ghost.visible = show_ghost
+	if show_ghost:
+		radar_ghost.global_transform = global_transform
+
 func set_input(input_array: Array, aim_point: Vector3) -> void:
-	# Split the input between movement and artillery controllers
 	movement_controller.set_movement_input([input_array[0], input_array[1]])
 	artillery_controller.set_aim_input(aim_point)
 
 func _process(delta: float) -> void:
+	_update_radar_ghost()
 	if !visible:
 		return
 	var cam = get_viewport().get_camera_3d()
@@ -669,7 +729,7 @@ func sync_unspotted(b: PackedByteArray) -> void:
 		return
 	var reader := StreamPeerBuffer.new()
 	reader.data_array = b
-	rotation.y = reader.get_float()
+	var lkp_rot: float = reader.get_float()
 	var lkp_x: float = reader.get_float()
 	var lkp_z: float = reader.get_float()
 	var _active: bool = reader.get_u8() == 1
@@ -681,8 +741,16 @@ func sync_unspotted(b: PackedByteArray) -> void:
 	# When visible_to_enemy is true the normal sync path keeps global_position
 	# accurate; writing a stale frozen LKP on top of that causes flickering.
 	if not visible_to_enemy:
+		# The packet streams the ship's *live* heading every frame while the
+		# position is only refreshed every HYDRO_LKP_INTERVAL.  Adopt the heading
+		# only when the frozen position actually moves (a real LKP refresh);
+		# otherwise the contact would spin in place tracking the moving ship.
+		if lkp_x != global_position.x or lkp_z != global_position.z:
+			rotation.y = lkp_rot
 		global_position.x = lkp_x
 		global_position.z = lkp_z
+	else:
+		rotation.y = lkp_rot
 
 @rpc("any_peer", "reliable")
 func _hide():

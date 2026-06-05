@@ -328,18 +328,11 @@ var curr_dest_island_pos: Vector3 = Vector3.ZERO
 var curr_heading: float = 0.0
 
 # ---------------------------------------------------------------------------
-# Search all islands for the best cover position.
+# Search all islands (nearest-first) for a cover position.
 #
-# When prioritize_cover is true (default): islands are sorted by proximity and
-# the first island that offers a shootable cover position is returned — i.e.
-# "nearest island that works".
-#
-# When prioritize_cover is false: all viable islands are scored by how close
-# the engagement distance to the nearest enemy cluster is to desired_range,
-# and the best-scoring island is returned.
-#
-# In both modes islands are always evaluated nearest-first so ties naturally
-# resolve toward the ship's current position.
+# Normally only islands offering a shootable cover position are accepted.
+# When prioritize_cover is true the shootability requirement is dropped and
+# the nearest concealing island is returned instead.
 # ---------------------------------------------------------------------------
 func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> Dictionary:
 	if not NavigationMapManager.is_map_ready():

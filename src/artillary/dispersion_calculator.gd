@@ -234,20 +234,19 @@ func _apply_citadel_guarantee() -> void:
 
 	if not any_inside:
 		var h_frac := _shuffled_radii[closest_idx] * cos(_angles[closest_idx])
-		var v_frac := _shuffled_radii[closest_idx] * sin(_angles[closest_idx])
 		var new_h: float
-		var new_v: float
 		if absf(h_frac) > ea:
-			# x is also outside the citadel width; snap to the nearest horizontal
-			# apex of the ellipse (solving for v at |h| == ea gives v == 0).
-			new_h = signf(h_frac) * ea
-			new_v = 0.0
+			# x is outside the citadel width: pick a random x biased toward the
+			# horizontal edge (sqrt gives PDF proportional to x, peaking at ea),
+			# preserving the original left/right side.
+			new_h = signf(h_frac) * ea * sqrt(randf())
 		else:
-			# x is within the citadel width; keep it and move y onto the ellipse
-			# boundary: v = ±eb * sqrt(1 - (h/ea)^2)
-			var v_max := eb * sqrt(1.0 - (h_frac / ea) * (h_frac / ea))
 			new_h = h_frac
-			new_v = (signf(v_frac) if not is_zero_approx(v_frac) else 1.0) * v_max
+		# y: random in [-v_max, v_max], pow^2 distribution concentrates strongly
+		# near 0 (median at 25% of v_max).
+		var v_max := eb * sqrt(1.0 - (new_h / ea) * (new_h / ea))
+		var v_sign := 1.0 if randf() < 0.5 else -1.0
+		var new_v := v_sign * pow(randf(), 2.0) * v_max
 		_shuffled_radii[closest_idx] = sqrt(new_h * new_h + new_v * new_v)
 		_angles[closest_idx] = atan2(new_v, new_h)
 
@@ -299,8 +298,9 @@ func calculate_dispersed_launch(
 	# 		dispersion_m / maxf(dist_to_target, 1.0),
 	# 		MAX_DISPERSION_ANGLE_RAD)
 	var rate = (1.0 - (dist_to_target / max_range))
-	rate = clamp(pow(rate, 2.0), 0.0, 1.0)
+	rate = clamp(pow(rate, 1.5), 0.0, 1.0)
 	var _h_spread: float = rate * h_spread * 2.0 + h_spread
+	var _v_spread: float = rate * v_spread * 1.5 + v_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)
@@ -316,7 +316,7 @@ func calculate_dispersed_launch(
 
 	# Scale to actual angular dispersion
 	var h_angle := h_offset * _h_spread * 0.5
-	var v_angle := v_offset * v_spread * 0.5
+	var v_angle := v_offset * _v_spread * 0.5
 
 	# Build local frame around launch direction
 	var forward := launch_velocity.normalized()

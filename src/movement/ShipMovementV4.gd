@@ -338,7 +338,7 @@ func _physics_process(delta: float) -> void:
 	_apply_turn_roll(delta, current_speed, right)
 
 	ship.rotation.z = clamp(ship.rotation.z, -deg_to_rad(_p().max_turn_roll_angle + 2.0), deg_to_rad(_p().max_turn_roll_angle + 2.0))
-	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(2), deg_to_rad(2))
+	ship.rotation.x = clamp(ship.rotation.x, -deg_to_rad(1), deg_to_rad(1))
 
 	if debug_log and ship.name == "player" and Engine.get_physics_frames() % 16 == 0:
 		print("Ship 1 Debug Info:")

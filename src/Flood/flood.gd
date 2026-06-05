@@ -27,7 +27,7 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		# curr_buildup += a
 		curr_buildup += a + 0.2 * (randf() - 0.5) # add some randomness to buildup
-		last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate, last_hit_time)
+		last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.2 * _rparams.reduction_block_rate, last_hit_time)
 		var random_threshold = _rparams.max_buildup * 0.67
 		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
 

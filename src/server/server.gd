@@ -59,6 +59,7 @@ const CLUSTER_DISTANCE: float = 4000.0  # Ships within this distance are in same
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
 var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
+const BOT_SHIP_CONFIG_PATH := "res://bot_ship_config.cfg"
 
 
 var map: Map = null
@@ -237,9 +238,12 @@ func spawn_player(id, player_name):
 	player.name = player_name
 	player._enable_weapons()
 
-	# Load and apply player upgrades (skip for bots)
+	# Seed bot ship config from the human player's settings when no bot config exists.
 	if not is_bot:
-		call_deferred("_load_and_apply_player_config", player, player_name)
+		_ensure_bot_ship_config_file(player_name)
+
+	# Load and apply saved upgrades/skills for humans and bots.
+	call_deferred("_load_and_apply_player_config", player, player_name, ship, is_bot)
 
 
 	if !team.has(team_data["team"]):
@@ -267,6 +271,7 @@ func spawn_player(id, player_name):
 				bot_controller.behavior = BBBehavior.new()
 			Ship.ShipClass.CA:
 				bot_controller.behavior = CABehavior.new()
+		bot_controller.behavior.threat_mod = _get_bot_threat_mod(ship)
 		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
@@ -452,31 +457,83 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 	#player.global_position = pos
 
 
-# Function to load and apply player config
-func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
-	# Skip for bots or empty player names
+func _ensure_bot_ship_config_file(player_name: String) -> void:
+	if FileAccess.file_exists(BOT_SHIP_CONFIG_PATH):
+		print("Using existing bot ship config: ", BOT_SHIP_CONFIG_PATH)
+		return
+
+	var player_config_path := "user://%s.cfg" % player_name
+	var config := ConfigFile.new()
+	var err := config.load(player_config_path)
+	if err != OK:
+		push_error("Failed to load player config for bot ship config copy: " + player_config_path + " error=" + str(err))
+		return
+
+	err = config.save(BOT_SHIP_CONFIG_PATH)
+	if err != OK:
+		push_error("Failed to save bot ship config to: " + BOT_SHIP_CONFIG_PATH + " error=" + str(err))
+		return
+
+	print("Copied player ship config to bot ship config: ", BOT_SHIP_CONFIG_PATH)
+
+
+func _load_ship_config_from_file(config_path: String) -> Dictionary:
+	var config := ConfigFile.new()
+	var err := config.load(config_path)
+	if err != OK:
+		push_error("Failed to load ship config: " + config_path + " error=" + str(err))
+		return {}
+
+	var ship_config := {}
+	if config.has_section("ships"):
+		for ship_key in config.get_section_keys("ships"):
+			ship_config[ship_key] = config.get_value("ships", ship_key, {})
+
+	return {
+		"selected_ship": config.get_value("game", "selected_ship", ""),
+		"ship_config": ship_config,
+	}
+
+
+func _get_bot_threat_mod(ship_path: String) -> float:
+	var settings := _load_ship_config_from_file(BOT_SHIP_CONFIG_PATH)
+	assert(not settings.is_empty(), "Missing bot ship config: " + BOT_SHIP_CONFIG_PATH)
+
+	var ship_config: Dictionary = settings["ship_config"]
+	assert(ship_config.has(ship_path), "Missing bot ship entry in config: " + ship_path)
+
+	var upgrades: Dictionary = ship_config[ship_path]
+	assert(upgrades.has("threat-mod"), "Missing threat-mod for bot ship: " + ship_path)
+	return float(upgrades["threat-mod"])
+
+
+# Function to load and apply player or bot config
+func _load_and_apply_player_config(ship: Ship, player_name: String, ship_path: String = "", is_bot: bool = false) -> void:
 	if player_name.is_empty() or not ship:
 		return
 
-	print("Loading config for player: ", player_name)
+	var config_path := BOT_SHIP_CONFIG_PATH if is_bot else "user://%s.cfg" % player_name
+	print("Loading config for player: ", player_name, " from ", config_path)
 
-	var player_settings = _GameSettings.new()
-	player_settings.player_name = player_name
-	player_settings.load_settings()
-	# Get the ship path
-	var ship_path = player_settings.selected_ship
-
-	if not player_settings.ship_config.has(ship_path):
-		print("No upgrades configured for ship: ", ship_path, " for player: ", player_name)
+	var settings := _load_ship_config_from_file(config_path)
+	if settings.is_empty():
 		return
+
+	var config_ship_path: String = ship_path if not ship_path.is_empty() else settings["selected_ship"]
+	var ship_config: Dictionary = settings["ship_config"]
+
+	if not ship_config.has(config_ship_path):
+		print("No upgrades configured for ship: ", config_ship_path, " for player: ", player_name)
+		return
+
 	# Apply each upgrade to the ship
-	var upgrades = player_settings.ship_config[ship_path]
-	print("Applying ", upgrades.size(), " upgrades to ship for player: ", player_name)
+	var upgrades: Dictionary = ship_config[config_ship_path]
+	print("Applying ", upgrades.size(), " upgrades/skills entries to ship for player: ", player_name)
 
 	for slot_str in upgrades:
-		if slot_str == "skills":  # Skip skills section
+		if slot_str == "skills" or slot_str == "threat-mod":
 			continue
-		var upgrade_id = upgrades[slot_str]
+		var upgrade_id: String = upgrades[slot_str]
 		if upgrade_id and not upgrade_id.is_empty():
 			var upgrade_instance = UpgradeRegistry.create_upgrade(upgrade_id)
 			if upgrade_instance:
@@ -486,14 +543,11 @@ func _load_and_apply_player_config(ship: Ship, player_name: String) -> void:
 				push_error("Failed to create upgrade from registry with id: " + upgrade_id)
 
 	# Apply each skill to the ship
-	if not player_settings.ship_config[ship_path].has("skills"):
+	if not upgrades.has("skills"):
 		return
-	var skills = player_settings.ship_config[ship_path]["skills"]
-	# print("Applying ", skills.size(), " skills to ship for player: ", player_name)
-	# print("Raw skills array: ", skills, " type: ", typeof(skills))
+	var skills = upgrades["skills"]
 
 	for skill_id in skills:
-		# print("  skill_id=", skill_id, " type=", typeof(skill_id))
 		if skill_id and not skill_id.is_empty():
 			var skill_instance = SkillsRegistry.create_skill(skill_id)
 			if skill_instance == null:
@@ -1056,9 +1110,6 @@ func _notify_matchmaker_available():
 func _reset_server():
 	"""Reset the server by reloading the scene. The new instance's _ready()
 	re-creates the game world and re-registers with the matchmaker."""
-	if _debug_keep_alive:
-		print("Editor/debug build: skipping scene reload, keeping ships alive")
-		return
 	print("=== Server resetting for new match ===")
 
 	_players_quit.clear()
@@ -1102,6 +1153,8 @@ func player_quit_match() -> void:
 
 func _check_all_players_quit() -> void:
 	"""End the match if every non-bot player has quit or disconnected."""
+	if _debug_keep_alive:
+		return  # Don't abandon the match on disconnect/quit while debugging
 	if match_complete or match_ended:
 		return
 	if players.is_empty():
@@ -1169,8 +1222,8 @@ func _physics_process(_delta: float) -> void:
 				match_end_timer = MATCH_END_DELAY
 				print("Match ended! Team ", winning_team, " wins!")
 
-	# Match end delay timer
-	if match_ended and match_end_timer > 0:
+	# Match end delay timer (authority only — clients transition via the end screen)
+	if _Utils.authority() and match_ended and match_end_timer > 0:
 		match_end_timer -= _delta
 		if match_end_timer <= 0:
 			_broadcast_match_end()

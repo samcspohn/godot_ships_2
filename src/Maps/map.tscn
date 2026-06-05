@@ -4,51 +4,46 @@
 [ext_resource type="Script" uid="uid://bpanntf8muod" path="res://src/Maps/map.gd" id="2_1vrru"]
 [ext_resource type="Material" uid="uid://ddgdh5xl1p0ml" path="res://src/Maps/water_material.tres" id="2_7hjns"]
 
-[node name="map" unique_id=247599372 node_paths=PackedStringArray("islands") instance=ExtResource("1_e0an3")]
+[node name="map" unique_id=64721563 instance=ExtResource("1_e0an3")]
 script = ExtResource("2_1vrru")
-islands = [NodePath("Plane_001/StaticBody3D"), NodePath("Plane_002/StaticBody3D"), NodePath("Plane_003/StaticBody3D"), NodePath("Plane_004/StaticBody3D"), NodePath("Plane_005/StaticBody3D"), NodePath("Plane_006/StaticBody3D"), NodePath("Plane_007/StaticBody3D"), NodePath("Plane_008/StaticBody3D"), NodePath("Plane_009/StaticBody3D"), NodePath("Plane_010/StaticBody3D"), NodePath("Plane_011/StaticBody3D"), NodePath("Plane_012/StaticBody3D"), NodePath("Plane_013/StaticBody3D"), NodePath("Plane_013/StaticBody3D"), NodePath("Plane_014/StaticBody3D"), NodePath("Plane_015/StaticBody3D"), NodePath("Plane_016/StaticBody3D"), NodePath("Plane_017/StaticBody3D"), NodePath("Plane_018/StaticBody3D"), NodePath("Plane_019/StaticBody3D")]
 
-[node name="Plane_001" parent="." index="0" unique_id=383389140 groups=["island"]]
+[node name="Plane_001" parent="." index="1" unique_id=183512571 groups=["island"]]
 
-[node name="Plane_002" parent="." index="1" unique_id=171961026 groups=["island"]]
+[node name="Plane_002" parent="." index="2" unique_id=196525193 groups=["island"]]
 
-[node name="Plane_003" parent="." index="2" unique_id=355260875 groups=["island"]]
+[node name="Plane_003" parent="." index="3" unique_id=1414571263 groups=["island"]]
 
-[node name="Plane_004" parent="." index="3" unique_id=292215301 groups=["island"]]
+[node name="Plane_004" parent="." index="4" unique_id=603616684 groups=["island"]]
 
-[node name="Plane_005" parent="." index="4" unique_id=1764851760 groups=["island"]]
+[node name="Plane_005" parent="." index="5" unique_id=523376403 groups=["island"]]
 
-[node name="Plane_006" parent="." index="5" unique_id=1502792884 groups=["island"]]
+[node name="Plane_006" parent="." index="6" unique_id=354144662 groups=["island"]]
 
-[node name="Plane_007" parent="." index="6" unique_id=543645523 groups=["island"]]
+[node name="Plane_007" parent="." index="7" unique_id=2125150509 groups=["island"]]
 
-[node name="Plane_008" parent="." index="7" unique_id=1125683698 groups=["island"]]
+[node name="Plane_008" parent="." index="8" unique_id=1395396534 groups=["island"]]
 
-[node name="Plane_009" parent="." index="8" unique_id=695628066 groups=["island"]]
+[node name="Plane_009" parent="." index="9" unique_id=836800451 groups=["island"]]
 
-[node name="Plane_010" parent="." index="9" unique_id=1289018311 groups=["island"]]
+[node name="Plane_010" parent="." index="10" unique_id=1942548611 groups=["island"]]
 
-[node name="Plane_011" parent="." index="10" unique_id=1241926640 groups=["island"]]
+[node name="Plane_011" parent="." index="11" unique_id=1984923760 groups=["island"]]
 
-[node name="Plane_012" parent="." index="11" unique_id=306638006 groups=["island"]]
+[node name="Plane_012" parent="." index="12" unique_id=1987343261 groups=["island"]]
 
-[node name="Plane_013" parent="." index="12" unique_id=136646646 groups=["island"]]
+[node name="Plane_013" parent="." index="13" unique_id=2138411067 groups=["island"]]
 
-[node name="Plane_014" parent="." index="13" unique_id=1710533858 groups=["island"]]
+[node name="Plane_014" parent="." index="14" unique_id=466272016 groups=["island"]]
 
-[node name="Plane_015" parent="." index="14" unique_id=182678912 groups=["island"]]
+[node name="Plane_015" parent="." index="15" unique_id=378484990 groups=["island"]]
 
-[node name="Plane_016" parent="." index="15" unique_id=229286569 groups=["island"]]
+[node name="Plane_016" parent="." index="16" unique_id=1378737322 groups=["island"]]
 
-[node name="Plane_017" parent="." index="16" unique_id=999902016 groups=["island"]]
+[node name="Plane_017" parent="." index="17" unique_id=873987791 groups=["island"]]
 
-[node name="Plane_018" parent="." index="17" unique_id=81722310 groups=["island"]]
+[node name="Plane_018" parent="." index="18" unique_id=1466501441 groups=["island"]]
 
-[node name="Plane_019" parent="." index="18" unique_id=2143698759 groups=["island"]]
-
-[node name="water" parent="." index="20" unique_id=274032051 groups=["map"]]
-visible = false
-material_override = ExtResource("2_7hjns")
+[node name="Plane_019" parent="." index="19" unique_id=2030503888 groups=["island"]]
 
 [node name="Spawn" type="Node3D" parent="." index="21" unique_id=2118512378]
 
@@ -97,3 +92,10 @@ directional_shadow_blend_splits = true
 directional_shadow_fade_start = 1.0
 directional_shadow_max_distance = 796.9
 directional_shadow_pancake_size = 0.4
+
+[node name="water" parent="." index="25" unique_id=1498896448 groups=["map"]]
+visible = false
+material_override = ExtResource("2_7hjns")
+
+[node name="Plane_020" parent="." index="26" unique_id=1348909282 groups=["map"]]
+visible = false
