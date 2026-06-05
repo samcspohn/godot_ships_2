@@ -104,9 +104,9 @@ func _process(_delta: float) -> void:
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				if true:
+				if false:
 					team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
-				else:
+				elif false:
 					# --- TEMPORARY: player ship on team 0, H44 bot on team 1 ---
 					team = {
 						client_data["player_name"]: {
@@ -125,6 +125,34 @@ func _process(_delta: float) -> void:
 							"spawn_position": 0
 						}
 					}
+				elif true:
+					# --- TEMPORARY: all bots H42 ---
+					team = {
+						client_data["player_name"]: {
+							"team": "0",
+							"player_id": client_data["player_name"],
+							"ship": client_data["ship"],
+							"is_bot": false,
+							"spawn_position": 0
+						}}
+					for i in range(11):
+						var bot_id = str(1001 + i)
+						team[bot_id] = {
+							"team": "0",
+							"player_id": bot_id,
+							"ship": "res://Ships/H42/H42.tscn",
+							"is_bot": true,
+							"spawn_position": i + 1
+						}
+					for i in range(12):
+						var bot_id = str(1012 + i)
+						team[bot_id] = {
+							"team": "1",
+							"player_id": bot_id,
+							"ship": "res://Ships/H42/H42.tscn",
+							"is_bot": true,
+							"spawn_position": i
+						}
 
 				var team_info = {
 					"team": team

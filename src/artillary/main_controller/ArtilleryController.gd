@@ -79,7 +79,7 @@ func get_aim_ui() -> Dictionary:
 	var launch_vector = launch_result[0]
 
 	if launch_vector:
-		time_to_target = launch_result[1] / ProjectileManager.shell_time_multiplier
+		time_to_target = launch_result[1] / ProjectileManager.get_shell_time_multiplier()
 		var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
 			ship_position,
 			launch_vector,

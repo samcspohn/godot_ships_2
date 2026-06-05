@@ -368,6 +368,12 @@ private:
 		return cluster_block_count_[cid] > 0 || cluster_threat_blocked_[cid] != 0;
 	}
 
+	/// Corridor-constrained cell A* used by HPA refinement when LOS/sub-cluster
+	/// connectors cannot directly bridge a guide segment.
+	PathResult constrained_cell_astar(
+			Vector2 from, Vector2 to, float q_cl,
+			const std::vector<uint8_t> &allowed_macros) const;
+
 	/// Return all cluster ids whose AABB overlaps the circle (pos, radius).
 	std::vector<int> clusters_in_radius(Vector2 pos, float radius) const;
 };

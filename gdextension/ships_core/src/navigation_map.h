@@ -187,18 +187,13 @@ private:
 		return std::max(max_jump, 1);
 	}
 
-	// Compute SDF-based proximity cost multiplier.
-	// Cells at or beyond soft_clearance have cost 1.0 (no penalty).
-	// Cells between hard_clearance and soft_clearance get a smooth ramp up to
-	// (1 + penalty_weight), biasing paths toward open water.
-	// Cells at or below hard_clearance are impassable (returns -1).
+	// Clearance-only cost helper retained for compatibility with older callers.
+	// Safe cells have neutral cost; cells at/below hard clearance are impassable.
 	static inline float sdf_proximity_cost(float sdf, float hard_clearance,
 										   float soft_clearance) {
-		if (sdf <= hard_clearance) return -1.0f;  // impassable
-		if (sdf >= soft_clearance) return 1.0f;   // open water, no penalty
-		// Quadratic ramp: 1.0 at soft boundary, peaks at 1+weight at hard boundary
-		float t = (soft_clearance - sdf) / (soft_clearance - hard_clearance);
-		return 1.0f + 4.0f * t * t;  // up to 5x cost at the hard boundary
+		(void)soft_clearance;
+		if (sdf <= hard_clearance) return -1.0f;
+		return 1.0f;
 	}
 
 	// --- Pathfinding internals ---

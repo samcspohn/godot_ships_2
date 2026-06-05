@@ -1618,12 +1618,8 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
 	int budget = max_iterations;
 
-	// Soft clearance zone: paths within this range of land receive a cost
-	// penalty that ramps up as sdf approaches hard clearance.  Paths beyond
-	// soft_clearance are at base cost (1.0).
+	// Cell A* only enforces hard clearance; route choice is geometric distance.
 	const float hard_clearance = search.clearance_world;
-	const float soft_clearance = hard_clearance * 3.0f;
-	const float proximity_weight = 4.0f; // peak penalty multiplier at hard boundary
 
 	while (!search.open_set.empty() && search.iterations < search.max_iterations && budget > 0) {
 		budget--;
@@ -1715,16 +1711,7 @@ bool NavigationMap::continue_path_search(PathSearch &search, int max_iterations)
 				// Base step distance in grid-cell units
 				float step_dist = is_diag ? (jump * 1.414f) : static_cast<float>(jump);
 
-				// SDF proximity penalty: cost ramps up as landing cell
-				// approaches the hard clearance boundary.
-				float penalty = 1.0f;
-				if (landing_sdf < soft_clearance) {
-					float t = (soft_clearance - landing_sdf)
-							/ (soft_clearance - hard_clearance);
-					penalty = 1.0f + proximity_weight * t * t;
-				}
-
-				float new_g = cg + step_dist * penalty;
+				float new_g = cg + step_dist;
 
 				bool is_better = (search.open_gen[nidx] != search.current_gen)
 								 || (new_g < search.g_cost[nidx]);

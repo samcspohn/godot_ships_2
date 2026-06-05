@@ -8,6 +8,9 @@ var target: Ship
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 var gun_targets: Dictionary[Gun, Ship] = {}
+var target_leads: Dictionary[SecSubController, Dictionary] = {}
+
+var gun_can_shoot_over_terrain: Dictionary[Gun, bool] = {}
 
 var target_mod: TargetMod
 var manual_target_mod: TargetMod = TargetMod.new()
@@ -69,8 +72,8 @@ func _build_tooltip_text(_shell_index: int) -> String:
 	for sc in sub_controllers:
 		var gp := sc.get_params() as GunParams
 		var sp: ShellParams = gp.shell1 if _shell_index == 0 else gp.shell2
-		var num_guns := sc.guns.size()
-		lines.append("%d x %.0f mm" % [num_guns, sp.caliber])
+		var sub_controller_gun_count := sc.guns.size()
+		lines.append("%d x %.0f mm" % [sub_controller_gun_count, sp.caliber])
 		lines.append("  Reload: %.1f s" % gp.reload_time)
 		lines.append("  Range: %.1f km" % (gp._range / 1000.0))
 		lines.append("  Damage: %d  Velocity: %.0f m/s" % [int(sp.damage), sp.speed])
@@ -124,7 +127,7 @@ func get_aim_ui() -> Dictionary:
 			var launch_vector = launch_result[0]
 
 			if launch_vector:
-				tt = launch_result[1] / ProjectileManager.shell_time_multiplier
+				tt = launch_result[1] / ProjectileManager.get_shell_time_multiplier()
 				var can_shoot: Gun.ShootOver = Gun.sim_can_shoot_over_terrain_static(
 					ship_position,
 					launch_vector,
@@ -207,8 +210,10 @@ func _ready() -> void:
 	for sc in sub_controllers:
 		sc.init(_ship)
 		sc.controller = self
+		target_leads[sc] = {}
 		for g in sc.guns:
 			gun_targets[g] = null
+			gun_can_shoot_over_terrain[g] = false
 	if _Utils.authority():
 		set_physics_process(true)
 	else:
@@ -250,6 +255,7 @@ func fire_next_ready():
 				g.fire(manual_target_mod)
 				return
 
+var num_guns = 0
 func _physics_process(delta: float) -> void:
 	# return
 	priority_target_dispersion.period = 6
@@ -260,6 +266,7 @@ func _physics_process(delta: float) -> void:
 		for sc in sub_controllers:
 			for g in sc.guns:
 				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
 				g.return_to_base(delta)
 		return
 	# _my_gun_params.shell = _my_gun_params.shell1
@@ -271,81 +278,23 @@ func _physics_process(delta: float) -> void:
 
 	var max_range = 0.0
 	for sc in sub_controllers:
+		target_leads[sc].clear()
 		var r = sc.params.p()._range
 		if r > max_range:
 			max_range = r
 
-	active = false
-	guns_shooting_at_aim_point.clear()
-	if aim_point != null:
-		var ship_pos = _ship.global_position
-		ship_pos.y = 0
-		var aim_offset = (aim_point - ship_pos)
-		aim_point = aim_offset.normalized() * min(aim_offset.length(), max_range) + ship_pos
-		for sc in sub_controllers:
-			for g in sc.guns:
-				if g.is_aimpoint_valid(aim_point):
-					active = true
-					guns_shooting_at_aim_point[g] = true
-					g.dispersion_calculator = man_dispersion_calculator
-					g._aim(aim_point, delta)
+	active = _update_manual_targeting(delta, max_range)
 	if just_switched_mode:
 		just_switched_mode = false
 		active = true
 
+	if Engine.get_physics_frames() % 5 == _ship.id % 5:
+		_update_auto_target_cache(server, max_range, active)
 
-
-	var enemies_in_range : Array[Ship] = server.get_valid_targets(_ship.team.team_id).filter(func(p):
-		return p.global_position.distance_to(_ship.global_position) <= max_range
-	)
-	enemies_in_range.sort_custom(func(a, b):
-		if a == target and b != target:
-			return true
-		elif b == target and a != target:
-			return false
-		else:
-			return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
-	)
-	if enemies_in_range.size() == 0 and !active:
+	var auto_active = _update_cached_auto_aim(delta)
+	if not auto_active and !active:
 		return
-
-	targets_guns.clear()
-	var num_guns = 0
-	# var gi = 0
-	for sc in sub_controllers:
-		var _range = sc.params.p()._range
-		# var _gi = gi
-		for g in sc.guns:
-			if guns_shooting_at_aim_point.has(g):
-				# gi += 1
-				continue
-			var found_target = false
-			for e: Ship in enemies_in_range:
-				var pos = e.global_position
-				if e == target:
-					pos = e.to_global(target_offset)
-				var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.shell_time_multiplier, true)
-				if lead_target and g.is_aimpoint_valid(pos) and g.sim_can_shoot_over_terrain(lead_target):
-					# g._aim_leading(e.global_position, e.linear_velocity / ProjectileManager.shell_time_multiplier, delta)
-					g._aim(lead_target, delta) # TODO: aim_with_solution + launch vector
-					gun_targets[g] = e
-					num_guns += 1
-					targets_guns[e] = targets_guns.get(e, []) + [g]
-					if e == target:
-						g.dispersion_calculator = priority_target_dispersion
-					else:
-						if !dispersion_calculator.has(e):
-							dispersion_calculator[e] = DispersionCalculator.new()
-							dispersion_calculator[e].period = 0
-						g.dispersion_calculator = dispersion_calculator[e]
-
-					found_target = true
-					active = true
-					break
-			if not found_target:
-				gun_targets[g] = null
-				active = g.return_to_base(delta) || active
-
+	active = auto_active || active
 
 	# get min reload time
 	var min_reload_time = INF
@@ -372,6 +321,8 @@ func _physics_process(delta: float) -> void:
 				var guns: Array = targets_guns[e].duplicate()
 				guns.shuffle()
 				for g in guns:
+					if guns_shooting_at_aim_point.has(g) or gun_targets.get(g) != e or not gun_can_shoot_over_terrain.get(g, false):
+						continue
 					if g.reload >= 1 and g.can_fire:
 						if gun_targets[g] == target:
 							g.fire(target_mod.dynamic_mod)
@@ -384,11 +335,126 @@ func _physics_process(delta: float) -> void:
 			if not fired:
 				break
 
+func _update_manual_targeting(delta: float, max_range: float) -> bool:
+	var manual_active = false
+	guns_shooting_at_aim_point.clear()
+	if aim_point == null:
+		return manual_active
 
+	var ship_pos = _ship.global_position
+	ship_pos.y = 0
+	var aim_offset = (aim_point - ship_pos)
+	aim_point = aim_offset.normalized() * min(aim_offset.length(), max_range) + ship_pos
+	for sc in sub_controllers:
+		for g in sc.guns:
+			if g.is_aimpoint_valid(aim_point):
+				manual_active = true
+				guns_shooting_at_aim_point[g] = true
+				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
+				g.dispersion_calculator = man_dispersion_calculator
+				g._aim(aim_point, delta)
+	return manual_active
 
+func _update_auto_target_cache(server: GameServer, max_range: float, manual_active: bool) -> void:
+	var enemies_in_range : Array[Ship] = server.get_valid_targets(_ship.team.team_id).filter(func(p):
+		return p.global_position.distance_to(_ship.global_position) <= max_range
+	)
+	enemies_in_range.sort_custom(func(a, b):
+		if a == target and b != target:
+			return true
+		elif b == target and a != target:
+			return false
+		else:
+			return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
+	)
+	if enemies_in_range.size() == 0:
+		_clear_auto_target_cache(manual_active)
+		return
 
-	# for g in guns:
-	# 	g._aim(aim_point, delta)
+	targets_guns.clear()
+	num_guns = 0
+	# var gi = 0
+	for sc in sub_controllers:
+		var _range = sc.params.p()._range
+		# var _gi = gi
+		if not target_leads.has(sc):
+			target_leads[sc] = {}
+		target_leads[sc].clear()
+		for g in sc.guns:
+			if guns_shooting_at_aim_point.has(g):
+				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
+				# gi += 1
+				continue
+			var found_target = false
+			for e: Ship in enemies_in_range:
+				var pos = e.global_position
+				if e == target:
+					pos = e.to_global(target_offset)
+				var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+				if lead_target:
+					target_leads[sc][e] = lead_target
+				if not lead_target or not g.is_aimpoint_valid(pos):
+					continue
+				var can_shoot_over_terrain = g.sim_can_shoot_over_terrain(lead_target)
+				if can_shoot_over_terrain:
+					gun_targets[g] = e
+					gun_can_shoot_over_terrain[g] = true
+					num_guns += 1
+					if not targets_guns.has(e):
+						targets_guns[e] = []
+					targets_guns[e].append(g)
+					if e == target:
+						g.dispersion_calculator = priority_target_dispersion
+					else:
+						if !dispersion_calculator.has(e):
+							dispersion_calculator[e] = DispersionCalculator.new()
+							dispersion_calculator[e].period = 0
+						g.dispersion_calculator = dispersion_calculator[e]
+
+					found_target = true
+					break
+			if not found_target:
+				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
+
+func _update_cached_auto_aim(delta: float) -> bool:
+	var auto_active = false
+	for sc in sub_controllers:
+		for g in sc.guns:
+			if guns_shooting_at_aim_point.has(g):
+				continue
+			var e: Ship = gun_targets.get(g)
+			if e == null or not gun_can_shoot_over_terrain.get(g, false):
+				auto_active = g.return_to_base(delta) || auto_active
+				continue
+			if not is_instance_valid(e):
+				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
+				auto_active = g.return_to_base(delta) || auto_active
+				continue
+			var pos = e.global_position
+			if e == target:
+				pos = e.to_global(target_offset)
+			# var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
+			var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+			if lead_target and g.is_aimpoint_valid(pos):
+				g._aim(lead_target, delta)
+				auto_active = true
+			else:
+				gun_can_shoot_over_terrain[g] = false
+				auto_active = g.return_to_base(delta) || auto_active
+	return auto_active
+
+func _clear_auto_target_cache(clear_manual_state: bool) -> void:
+	targets_guns.clear()
+	num_guns = 0
+	for sc in sub_controllers:
+		for g in sc.guns:
+			if clear_manual_state or not guns_shooting_at_aim_point.has(g):
+				gun_targets[g] = null
+				gun_can_shoot_over_terrain[g] = false
 
 @rpc("authority", "reliable", "call_remote")
 func select_shell_c(new_type: int):

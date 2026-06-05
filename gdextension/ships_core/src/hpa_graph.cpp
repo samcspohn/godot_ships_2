@@ -540,6 +540,191 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 }
 
 // ============================================================================
+// constrained_cell_astar
+// ============================================================================
+
+PathResult HpaGraph::constrained_cell_astar(
+		Vector2 from, Vector2 to, float q_cl,
+		const std::vector<uint8_t> &allowed_macros) const {
+	PathResult result;
+	result.valid = false;
+	result.total_distance = 0.0f;
+
+	if (!built_ || !nav_map_.is_valid()) return result;
+
+	auto world_to_gx = [&](float wx) -> int {
+		return std::max(0, std::min(static_cast<int>((wx - min_x_) / cell_size_), grid_w_ - 1));
+	};
+	auto world_to_gz = [&](float wz) -> int {
+		return std::max(0, std::min(static_cast<int>((wz - min_z_) / cell_size_), grid_h_ - 1));
+	};
+	auto idx = [&](int gx, int gz) -> int { return gz * grid_w_ + gx; };
+
+	int sx = world_to_gx(from.x), sz = world_to_gz(from.y);
+	int ex = world_to_gx(to.x),   ez = world_to_gz(to.y);
+	const int start_idx = idx(sx, sz);
+	const int end_idx = idx(ex, ez);
+
+	auto macro_allowed = [&](int cid) -> bool {
+		return cid >= 0 && cid < static_cast<int>(allowed_macros.size()) && allowed_macros[cid] != 0;
+	};
+	auto cell_allowed = [&](int gx, int gz) -> bool {
+		if (gx < 0 || gx >= grid_w_ || gz < 0 || gz >= grid_h_) return false;
+		int cidx = idx(gx, gz);
+		int cid = cluster_id(cell_cx(gx), cell_cz(gz));
+		if (cidx != start_idx && cidx != end_idx) {
+			if (!macro_allowed(cid)) return false;
+			if (cluster_blocked(cid)) return false;
+		}
+		return nav_map_->get_distance(
+			min_x_ + (static_cast<float>(gx) + 0.5f) * cell_size_,
+			min_z_ + (static_cast<float>(gz) + 0.5f) * cell_size_) >= q_cl;
+	};
+	auto line_allowed = [&](int x0, int z0, int x1, int z1) -> bool {
+		int dx = std::abs(x1 - x0);
+		int dz = std::abs(z1 - z0);
+		int step_x_dir = (x0 < x1) ? 1 : -1;
+		int step_z_dir = (z0 < z1) ? 1 : -1;
+		int cx = x0;
+		int cz = z0;
+		if (!cell_allowed(cx, cz)) return false;
+		if (dx == 0 && dz == 0) return true;
+		int err = dx - dz;
+		while (!(cx == x1 && cz == z1)) {
+			int e2 = 2 * err;
+			bool step_x = (e2 > -dz) || (e2 == -dz && dx > 0);
+			bool step_z = (e2 < dx)  || (e2 == dx  && dz > 0);
+			if (step_x && step_z) {
+				if (!cell_allowed(cx + step_x_dir, cz)) return false;
+				if (!cell_allowed(cx, cz + step_z_dir)) return false;
+				err -= dz;
+				err += dx;
+				cx += step_x_dir;
+				cz += step_z_dir;
+			} else if (step_x) {
+				err -= dz;
+				cx += step_x_dir;
+			} else {
+				err += dx;
+				cz += step_z_dir;
+			}
+			if (!cell_allowed(cx, cz)) return false;
+		}
+		return true;
+	};
+
+	if (!cell_allowed(sx, sz) || !cell_allowed(ex, ez)) return result;
+
+	if (sx == ex && sz == ez) {
+		result.waypoints = { from, to };
+		result.flags = { WP_NONE, WP_NONE };
+		result.total_distance = from.distance_to(to);
+		result.valid = true;
+		return result;
+	}
+
+	if (line_allowed(sx, sz, ex, ez)) {
+		result.waypoints = { from, to };
+		result.flags = { WP_NONE, WP_NONE };
+		result.total_distance = from.distance_to(to);
+		result.valid = true;
+		return result;
+	}
+
+	const int total = grid_w_ * grid_h_;
+	const float INF = std::numeric_limits<float>::infinity();
+	std::vector<float> g(total, INF);
+	std::vector<int> parent(total, -1);
+	std::vector<uint8_t> closed(total, 0);
+
+	auto heur = [&](int gx, int gz) -> float {
+		float dx = static_cast<float>(gx - ex);
+		float dz = static_cast<float>(gz - ez);
+		return std::sqrt(dx * dx + dz * dz);
+	};
+
+	using PQ = std::pair<float, int>;
+	std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
+	g[start_idx] = 0.0f;
+	parent[start_idx] = start_idx;
+	open.push({ heur(sx, sz), start_idx });
+
+	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
+	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+
+	while (!open.empty()) {
+		auto [f, cur] = open.top(); open.pop();
+		if (closed[cur]) continue;
+		closed[cur] = 1;
+		if (cur == end_idx) break;
+
+		int cx = cur % grid_w_;
+		int cz = cur / grid_w_;
+
+		for (int d = 0; d < 8; ++d) {
+			int nx = cx + dx8[d];
+			int nz = cz + dz8[d];
+			if (!cell_allowed(nx, nz)) continue;
+			int nidx = idx(nx, nz);
+			if (closed[nidx]) continue;
+
+			bool is_diag = (dx8[d] != 0 && dz8[d] != 0);
+			if (is_diag) {
+				if (!cell_allowed(cx + dx8[d], cz)) continue;
+				if (!cell_allowed(cx, cz + dz8[d])) continue;
+			}
+
+			float step_cost = is_diag ? 1.41421356237f : 1.0f;
+			float ng = g[cur] + step_cost;
+			if (ng < g[nidx]) {
+				g[nidx] = ng;
+				parent[nidx] = cur;
+				open.push({ ng + heur(nx, nz), nidx });
+			}
+		}
+	}
+
+	if (parent[end_idx] < 0) return result;
+
+	std::vector<Vector2> raw;
+	for (int cur = end_idx; cur != start_idx; cur = parent[cur]) {
+		int gx = cur % grid_w_;
+		int gz = cur / grid_w_;
+		float wx, wz;
+		grid_to_world(gx, gz, wx, wz);
+		raw.emplace_back(wx, wz);
+		if (parent[cur] < 0 || parent[cur] == cur) return result;
+	}
+	raw.push_back(from);
+	std::reverse(raw.begin(), raw.end());
+	if (raw.size() >= 2) raw.back() = to;
+
+	std::vector<Vector2> simplified;
+	simplified.push_back(raw.front());
+	size_t anchor = 0;
+	while (anchor < raw.size() - 1) {
+		size_t farthest = anchor + 1;
+		for (size_t test = raw.size() - 1; test > anchor + 1; --test) {
+			int ax = world_to_gx(raw[anchor].x), az = world_to_gz(raw[anchor].y);
+			int bx = world_to_gx(raw[test].x),   bz = world_to_gz(raw[test].y);
+			if (line_allowed(ax, az, bx, bz)) {
+				farthest = test;
+				break;
+			}
+		}
+		simplified.push_back(raw[farthest]);
+		anchor = farthest;
+	}
+
+	result.waypoints = simplified;
+	result.flags.assign(simplified.size(), WP_NONE);
+	for (size_t i = 0; i + 1 < simplified.size(); ++i)
+		result.total_distance += simplified[i].distance_to(simplified[i + 1]);
+	result.valid = (simplified.size() >= 2);
+	return result;
+}
+
+// ============================================================================
 // find_path
 // ============================================================================
 
@@ -761,11 +946,8 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 			abstract_us += std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
 
 			if (sub_path.empty()) {
-				// Sub A* failed inside a single macro that the LOS shortcut
-				// already rejected.  Fall straight to cell A* — this is the
-				// near-terrain start/end case the user described.
 				auto t0 = Clock::now();
-				PathResult local = nav_map_->find_path_internal(from, to, q_cl);
+				PathResult local = constrained_cell_astar(from, to, q_cl, allowed_macros);
 				auto t1 = Clock::now();
 				refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
 				connector_local_search_runs++;
@@ -928,16 +1110,16 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 
 		if (sub_helped) continue;
 
-		// Sub A* couldn't help — fall back to cell A* on this segment.
+		// Sub A* couldn't help — run cell A* constrained to the HPA corridor.
 		connector_local_search_runs++;
-		PathResult local = nav_map_->find_path_internal(A, B, q_cl);
+		PathResult local = constrained_cell_astar(A, B, q_cl, allowed_macros);
 		if (local.valid && local.waypoints.size() >= 2) {
 			for (int j = 1; j < static_cast<int>(local.waypoints.size()); ++j) {
 				if (waypoints.back().distance_to(local.waypoints[j]) > merge_eps)
 					waypoints.push_back(local.waypoints[j]);
 			}
 		} else {
-			waypoints.push_back(B);
+			return finalize_query(no_path);
 		}
 	}
 

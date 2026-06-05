@@ -19,6 +19,7 @@
 
 #include "projectile_data.h"
 #include "shell_data.h"
+#include "native_armor_interaction.h"
 
 namespace godot {
 
@@ -64,6 +65,9 @@ private:
 
 	// Cached autoload references
 	Node *armor_interaction;
+	Node *precision_physics_world;
+	Node *navigation_map_manager;
+	Ref<NavigationMap> navigation_map;
 	Node *tcp_thread_pool;
 	Node *sound_effect_manager;
 
@@ -118,6 +122,8 @@ public:
 	Object *find_ship(Node *node);
 
 	// Process methods
+	void profiled_process(double delta);
+	void profiled_physics_process(double delta);
 	void _process_trails_only(double current_time);
 
 	// sync time method for client-side projectile updates

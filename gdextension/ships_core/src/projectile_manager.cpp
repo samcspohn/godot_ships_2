@@ -47,6 +47,10 @@ void _ProjectileManager::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_ship", "node"), &_ProjectileManager::find_ship);
 
 	// Bind process methods
+	ClassDB::bind_method(D_METHOD("profiled_process", "delta"),
+						 &_ProjectileManager::profiled_process);
+	ClassDB::bind_method(D_METHOD("profiled_physics_process", "delta"),
+						 &_ProjectileManager::profiled_physics_process);
 	ClassDB::bind_method(D_METHOD("_process_trails_only", "current_time"),
 						 &_ProjectileManager::_process_trails_only);
 
@@ -162,6 +166,9 @@ _ProjectileManager::_ProjectileManager() {
 	trail_template = Ref<Resource>();
 	camera = nullptr;
 	armor_interaction = nullptr;
+	precision_physics_world = nullptr;
+	navigation_map_manager = nullptr;
+	navigation_map = Ref<NavigationMap>();
 	tcp_thread_pool = nullptr;
 	sound_effect_manager = nullptr;
 
@@ -247,12 +254,27 @@ void _ProjectileManager::_ready() {
 		mesh_ray_query->set_collision_mask(1 << 1); // Second physics layer for detailed mesh collision
 		mesh_ray_query->set_hit_back_faces(true);
 
-		// Cache ArmorInteraction autoload reference
+		// Cache armor-related autoload references. Projectile simulation uses the native
+		// armor path directly; ArmorInteraction is kept cached for legacy/debug callers.
 		if (has_node("/root/ArmorInteraction")) {
 			armor_interaction = get_node<Node>("/root/ArmorInteraction");
 			UtilityFunctions::print("Cached ArmorInteraction autoload");
 		} else {
 			UtilityFunctions::push_warning("ArmorInteraction autoload not found!");
+		}
+		if (has_node("/root/PrecisionPhysicsWorld")) {
+			precision_physics_world = get_node<Node>("/root/PrecisionPhysicsWorld");
+			UtilityFunctions::print("Cached PrecisionPhysicsWorld autoload");
+		} else {
+			UtilityFunctions::push_warning("PrecisionPhysicsWorld autoload not found!");
+		}
+		if (has_node("/root/NavigationMapManager")) {
+			navigation_map_manager = get_node<Node>("/root/NavigationMapManager");
+			Variant map_var = navigation_map_manager->call("get_map");
+			navigation_map = map_var;
+			UtilityFunctions::print("Cached NavigationMapManager autoload");
+		} else {
+			UtilityFunctions::push_warning("NavigationMapManager autoload not found!");
 		}
 
 		// Cache TcpThreadPool autoload reference
@@ -263,10 +285,8 @@ void _ProjectileManager::_ready() {
 			UtilityFunctions::push_warning("TcpThreadPool autoload not found!");
 		}
 
-		set_process(false);
 	} else {
 		UtilityFunctions::print("running client");
-		set_physics_process(false);
 
 		// Cache SoundEffectManager autoload reference
 		if (has_node("/root/SoundEffectManager")) {
@@ -306,6 +326,16 @@ void _ProjectileManager::_ready() {
 	rpc_config("sync_time", sync_time_rpc);
 
 	projectiles.resize(1);
+	set_process(false);
+	set_physics_process(false);
+}
+
+void _ProjectileManager::profiled_process(double delta) {
+	_process(delta);
+}
+
+void _ProjectileManager::profiled_physics_process(double delta) {
+	_physics_process(delta);
 }
 
 void _ProjectileManager::_init_compute_trails() {
@@ -559,6 +589,11 @@ void _ProjectileManager::_physics_process(double delta) {
 	rpc("sync_time", current_time);
 	current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites
 
+	if (!navigation_map.is_valid() && navigation_map_manager != nullptr) {
+		Variant map_var = navigation_map_manager->call("get_map");
+		navigation_map = map_var;
+	}
+
 	Window *root = get_tree()->get_root();
 	Ref<World3D> world = root->get_world_3d();
 	if (!world.is_valid()) {
@@ -605,15 +640,12 @@ void _ProjectileManager::_physics_process(double delta) {
 		p->increment_frame_count();
 
 
-		// Process travel through ArmorInteraction - using cached autoload reference
-		Variant hit_result;
-		if (armor_interaction != nullptr) {
-			hit_result = armor_interaction->call("process_travel", p, ray_query->get_from(), t, space_state);
-		} else {
-			UtilityFunctions::push_warning("ProjectileManager: ArmorInteraction autoload not cached");
-		}
+		// Process travel through the native armor interaction path. This avoids the
+		// ProjectileManager -> GDScript ArmorInteraction call boundary in the hot loop.
+		ArmorHitResult hit_result = NativeArmorInteraction::process_travel(
+			p, ray_query->get_from(), t, space_state, precision_physics_world, navigation_map);
 
-		if (hit_result.get_type() == Variant::NIL) {
+		if (!hit_result.hit) {
 			// If the shell is underwater and process_travel returned null,
 			// destroy it — it should not survive to the next frame.
 			if (p->get_position().y < 0.0) {
@@ -624,28 +656,19 @@ void _ProjectileManager::_physics_process(double delta) {
 			continue;
 		}
 
-		// Process the hit result - hit_result is an ArmorResultData object, not a Dictionary
-		// ArmorInteraction.HitResult enum values:
+		// NativeArmorInteraction::HitResult enum values:
 		// PENETRATION=0, PARTIAL_PEN=1, RICOCHET=2, OVERPENETRATION=3, SHATTER=4,
 		// CITADEL=5, CITADEL_OVERPEN=6, WATER=7, TERRAIN=8
 		// _ProjectileManager::HitResult enum values (for RPC):
 		// PENETRATION=0, RICOCHET=1, OVERPENETRATION=2, SHATTER=3, NOHIT=4, CITADEL=5, WATER=6
 
-		Object *hit_obj = Object::cast_to<Object>(hit_result);
-		if (hit_obj == nullptr) {
-			// Non-null result that isn't a valid Object — destroy the shell
-			// so it doesn't leak into the next frame.
-			destroy_bullet_rpc(id, p->get_position(), WATER, Vector3(0, 1, 0));
-			id++;
-			continue;
-		}
-
-		int armor_result_type = hit_obj->get("result_type");
-		Vector3 explosion_position = hit_obj->get("explosion_position");
-		Vector3 collision_normal = hit_obj->get("collision_normal");
-		Variant ship_var = hit_obj->get("ship");
-		Variant armor_part_var = hit_obj->get("armor_part");
-		Vector3 ricochet_velocity = hit_obj->get("velocity");
+		int armor_result_type = hit_result.result_type;
+		Vector3 explosion_position = hit_result.explosion_position;
+		Vector3 collision_normal = hit_result.collision_normal;
+		Object *ship_obj = hit_result.ship;
+		Variant ship_var = ship_obj;
+		Variant armor_part_var = hit_result.armor_part;
+		Vector3 ricochet_velocity = hit_result.velocity;
 		Object *owner = p->get_owner();
 
 		if (owner != nullptr) {

@@ -12,7 +12,7 @@ class_name ReplayBallistics
 ##   var alive  := ReplayBallistics.is_shell_alive(muzzle, vel, params, fire_ts, current_ts)
 
 ## Projectiles run at this multiple of real (wall-clock) time.
-## Matches ProjectileManager.shell_time_multiplier in the live game.
+## Matches ProjectileManager.get_shell_time_multiplier() in the live game.
 const TIME_MULTIPLIER: float = 2.0
 
 ## Any shell whose Y position is below this is considered to have hit the water.

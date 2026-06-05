@@ -1167,7 +1167,7 @@ func fire_at_target():
 		var target_position = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 			ship.global_position,
 			adjusted_target_pos,
-			target_ship.linear_velocity / ProjectileManager.shell_time_multiplier,
+			target_ship.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
 			artillery.get_shell_params()
 		)[2]
 

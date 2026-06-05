@@ -369,7 +369,7 @@ func engage_target():
 		# target_lead = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		# 	_ship.global_position,
 		# 	adjusted_target_pos,
-		# 	target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		# 	target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
 		# 	_ship.artillery_controller.get_shell_params()
 		# )[2]
 

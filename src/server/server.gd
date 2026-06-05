@@ -179,7 +179,8 @@ func validate_connection():
 	# Implement validation logic if needed
 	NetworkManager.player_controller_connected = true
 
-var bot_id: int = 0
+# var bot_id: int = 0
+var ship_id: int = 0
 
 func spawn_player(id, player_name):
 	print("spawn_player called with ID: ", id, ", player_name: ", player_name)
@@ -275,8 +276,7 @@ func spawn_player(id, player_name):
 		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
-		bot_controller.bot_id = bot_id
-		bot_id += 1
+		bot_controller.bot_id = ship_id
 	else:
 		# Only add player control for human players
 		var controller = preload("res://scenes/player_control.tscn").instantiate()
@@ -285,6 +285,9 @@ func spawn_player(id, player_name):
 		player.get_node("Modules").add_child(controller)
 		player.control = controller
 		controller.ship = player
+
+	ship_id += 1
+	player.id = ship_id
 
 	# Add to world - note game_world is a child of this node
 	players[player_name] = [player, ship, id]
@@ -379,7 +382,7 @@ func spawn_player(id, player_name):
 				if player_data.get("is_bot", false):
 					# Spawn bot with unique ID
 					print("Spawning bot: ID=", team_player_id, ", player_name=", team_player_id, ", ship=", player_data["ship"])
-					spawn_player(bot_id, team_player_id)
+					spawn_player(ship_id, team_player_id)
 			players_spawned_bots = true
 	match_active = true
 	match_elapsed = 0.0

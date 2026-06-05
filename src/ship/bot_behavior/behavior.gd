@@ -1007,7 +1007,7 @@ func can_hit_target(target: Ship) -> bool:
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
-		target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
 		shell_params
 	)
 	var lead_pos = lead_result[2]
@@ -1661,7 +1661,7 @@ func _secondary_target_offset(target: Ship) -> Vector3:
 		return part.type == ArmorPart.Type.SUPERSTRUCTURE)
 	assert(super_idx != -1, "Secondary target offset requires a superstructure armor part")
 	var superstructure := target.armor_parts[super_idx] as ArmorPart
-	return target.to_local(superstructure.global_position)
+	return target.to_local(superstructure.global_position) + Vector3(0, 0.5, 0)
 
 func update_secondary_priority_target(primary_target: Ship, server: GameServer) -> void:
 	var sec := _ship.secondary_controller
@@ -1705,7 +1705,7 @@ func engage_target(target: Ship):
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
-		target.linear_velocity / ProjectileManager.shell_time_multiplier,
+		target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
 		_ship.artillery_controller.get_shell_params()
 	)
 	var target_lead = lead_result[2]

@@ -153,7 +153,7 @@ func _ready():
 	get_parent().add_child(aerial_view)
 	#get_tree().root.add_child(aim)
 	current_view = third_person_view
-	ProjectileManager.camera = self
+	ProjectileManager.set_camera(self)
 	TorpedoManager.camera = self
 	# processed.connect(ProjectileManager.__process)
 	# processed.connect(TorpedoManager.__process)
@@ -463,7 +463,7 @@ func _calculate_target_info():
 			var lead_result: Array = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 				gun_pos,
 				locked_target.global_position,
-				locked_target.linear_velocity / ProjectileManager.shell_time_multiplier,
+				locked_target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
 				shell_params
 			)
 

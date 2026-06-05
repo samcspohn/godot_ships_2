@@ -95,6 +95,8 @@ var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 var _precision_registered: bool = false
 
+var id: int = -1
+
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	last_contacts.clear()
 	for i in range(state.get_contact_count()):

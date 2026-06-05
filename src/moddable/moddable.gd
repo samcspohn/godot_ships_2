@@ -15,6 +15,15 @@ var dynamic_mod: Moddable ## copy that dynamic mods (skills, consumables) write 
 var _is_instance: bool = false   ## true on copies returned by instantiate()
 var _is_mod_copy: bool = false   ## true on base / static_mod / dynamic_mod copies
 
+const _RUNTIME_PROP_NAMES := {
+	&"base": true,
+	&"static_mod": true,
+	&"dynamic_mod": true,
+	&"_is_instance": true,
+	&"_is_mod_copy": true,
+}
+static var _copy_property_cache: Dictionary = {}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Deep-ish copy that catches EVERY script-defined variable, not just @export.
@@ -24,16 +33,7 @@ var _is_mod_copy: bool = false   ## true on base / static_mod / dynamic_mod copi
 func create_copy() -> Moddable:
 	var copy: Moddable = duplicate(true)
 
-	for prop in get_property_list():
-		if not (prop.usage & PROPERTY_USAGE_SCRIPT_VARIABLE):
-			continue
-
-		var prop_name: String = prop.name
-		# Never copy runtime mod-system internals
-		if prop_name in ["base", "static_mod", "dynamic_mod",
-						  "_is_instance", "_is_mod_copy"]:
-			continue
-
+	for prop_name in _copy_property_names():
 		var val = get(prop_name)
 
 		# Skip Resource values — duplicate(true) already deep-copied the
@@ -41,17 +41,46 @@ func create_copy() -> Moddable:
 		if val is Resource:
 			continue
 
-		# For Arrays / Dictionaries, make a shallow copy so the two instances
-		# don't share the same container object.
-		if val is Array:
-			copy.set(prop_name, val.duplicate())
-		elif val is Dictionary:
-			copy.set(prop_name, val.duplicate())
-		else:
-			copy.set(prop_name, val)
+		_set_copied_value(copy, prop_name, val)
 
 	copy._is_mod_copy = true
 	return copy
+
+func copy_values_from(source: Moddable) -> void:
+	for prop_name in source._copy_property_names():
+		_set_copied_value(self, prop_name as StringName, source.get(prop_name))
+
+func _copy_property_names() -> Array:
+	var script: Script = get_script()
+	var cache_key: String = script.resource_path
+	if _copy_property_cache.has(cache_key):
+		return _copy_property_cache[cache_key]
+
+	var names: Array = []
+	for prop in get_property_list():
+		if not (prop.usage & PROPERTY_USAGE_SCRIPT_VARIABLE):
+			continue
+
+		var prop_name: StringName = prop.name
+		if _RUNTIME_PROP_NAMES.has(prop_name):
+			continue
+		names.append(prop_name)
+
+	_copy_property_cache[cache_key] = names
+	return names
+
+func _set_copied_value(target: Moddable, prop_name: StringName, val) -> void:
+	if val is Resource:
+		if val.get_script() != null or val.resource_path == "" or val.resource_path.contains("::"):
+			target.set(prop_name, val.duplicate(true))
+		else:
+			target.set(prop_name, val)
+	elif val is Array:
+		target.set(prop_name, val.duplicate())
+	elif val is Dictionary:
+		target.set(prop_name, val.duplicate())
+	else:
+		target.set(prop_name, val)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,12 +116,12 @@ func instantiate(ship: Ship) -> Moddable:
 
 ## Called when static mods are reapplied (Ship.reset_mods signal).
 func reset() -> void:
-	static_mod  = base.create_copy()
-	dynamic_mod = base.create_copy()
+	static_mod.copy_values_from(base)
+	dynamic_mod.copy_values_from(base)
 
 ## Called when only dynamic mods need refreshing (Ship.reset_dynamic_mods signal).
 func reset_dynamic_mod() -> void:
-	dynamic_mod = static_mod.create_copy()
+	dynamic_mod.copy_values_from(static_mod)
 
 ## Returns the "effective" parameters — the dynamic_mod layer with all mods baked in.
 func p() -> Moddable:
