@@ -1315,7 +1315,7 @@ func _emit_debug_draws() -> void:
 				var threat_bar := ""
 				if threat >= 0.0:
 					var filled := int(round(threat * 10.0))
-					threat_bar = " [" + "█".repeat(filled) + "░".repeat(10 - filled) + "] %.2f" % threat
+					threat_bar = " [" + "█".repeat(filled) + "░".repeat(clamp(10 - filled, 0, 10)) + "] %.2f" % threat
 				lines.append("Skill: %s%s" % [skill, threat_bar])
 
 			# Line 2 — target class, name, distance
