@@ -793,18 +793,65 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 	result["obb_position"] = Vector3();
 
 	double clamped_time = std::min(flight_time, 100.0);
+	double end_time = clamped_time + 0.5;
+	if (end_time <= 0.0) {
+		return result;
+	}
 
-	// Build the OBB ray query once (reused across steps)
+	double vx = launch_vector.x;
+	double vz = launch_vector.z;
+	double vy0 = launch_vector.y;
+	double v_horiz = std::sqrt(vx * vx + vz * vz);
+	double speed = std::sqrt(vx * vx + vy0 * vy0 + vz * vz);
+	if (v_horiz < 1e-10 || speed < 1e-10) {
+		return result;
+	}
+
+	double shell_v0, beta, vt, tau;
+	if (!_extract_params(shell_params, shell_v0, beta, vt, tau)) {
+		return result;
+	}
+
+	double cos_theta = v_horiz / speed;
+	double sin_theta = vy0 / speed;
+	double theta = std::atan2(vy0, v_horiz);
+	double dir_x = vx / v_horiz;
+	double dir_z = vz / v_horiz;
+	double end_dist = _horizontal_position(cos_theta, end_time, speed, beta);
+	if (end_dist <= 0.0 || std::isnan(end_dist)) {
+		return result;
+	}
+
+	const bool has_nav_map = nav_map.is_valid() && nav_map->is_built();
+	const float cell_size = has_nav_map ? nav_map->get_cell_size_value() : 50.0f;
+	const double terrain_step = std::max(5.0, (double)cell_size * 0.5);
+	const double sdf_margin = std::max(2.0, (double)cell_size * 0.5);
+	const double max_low_altitude_time_step = 0.5;
+	const double ship_clear_height = 200.0;
+
+	auto position_at_distance = [&](double horizontal_dist, double *out_t = nullptr) -> Vector3 {
+		double sample_t = _time_from_x(horizontal_dist, theta, speed, beta);
+		if (out_t != nullptr) {
+			*out_t = sample_t;
+		}
+		double y_offset = _vertical_position(sin_theta, sample_t, speed, vt, tau);
+		return Vector3(
+			start_pos.x + dir_x * horizontal_dist,
+			start_pos.y + y_offset,
+			start_pos.z + dir_z * horizontal_dist
+		);
+	};
+
+	// Build the OBB ray query once (reused across low-altitude segments).
 	Ref<PhysicsRayQueryParameters3D> obb_ray;
 	if (space_state != nullptr) {
 		obb_ray.instantiate();
 		obb_ray->set_collide_with_bodies(true);
 		obb_ray->set_collide_with_areas(false);
 		obb_ray->set_hit_back_faces(true);
-		obb_ray->set_hit_from_inside(true);   // shells may start inside large OBBs
+		obb_ray->set_hit_from_inside(true);
 		obb_ray->set_collision_mask(1 << 4);  // OBB_COLLISION_LAYER
 
-		// Convert the generic Array of RIDs to TypedArray<RID>
 		TypedArray<RID> exclude_typed;
 		for (int i = 0; i < exclude_rids.size(); i++) {
 			exclude_typed.append(exclude_rids[i]);
@@ -813,15 +860,38 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 	}
 
 	Vector3 prev_pos = start_pos;
-	double t = 0.5;
+	double prev_dist = 0.0;
+	double prev_t = 0.0;
 
-	while (t <= clamped_time + 0.5) {
-		Vector3 curr_pos = calculate_position_at_time(start_pos, launch_vector, t, shell_params);
+	while (prev_dist < end_dist) {
+		double default_next_t = std::min(end_time, prev_t + max_low_altitude_time_step);
+		double default_next_dist = _horizontal_position(cos_theta, default_next_t, speed, beta);
+		double step_dist = std::max(terrain_step, default_next_dist - prev_dist);
+		bool can_skip_obb = false;
 
-		// ----------------------------------------------------------------
-		// OBB broadphase check --- one segment ray per step
-		// ----------------------------------------------------------------
-		if (space_state != nullptr && obb_ray.is_valid()) {
+		if (has_nav_map) {
+			float sdf_dist = nav_map->get_distance((float)prev_pos.x, (float)prev_pos.z);
+			if (sdf_dist > sdf_margin) {
+				step_dist = std::max(terrain_step, (double)sdf_dist - sdf_margin);
+			}
+		}
+
+		double next_dist = std::min(end_dist, prev_dist + step_dist);
+		double next_t = 0.0;
+		Vector3 curr_pos = position_at_distance(next_dist, &next_t);
+
+		if (std::min((double)prev_pos.y, (double)curr_pos.y) > ship_clear_height) {
+			can_skip_obb = true;
+		} else {
+			double capped_t = std::min(end_time, prev_t + max_low_altitude_time_step);
+			double capped_dist = _horizontal_position(cos_theta, capped_t, speed, beta);
+			if (capped_dist > prev_dist && capped_dist < next_dist) {
+				next_dist = capped_dist;
+				curr_pos = position_at_distance(next_dist, &next_t);
+			}
+		}
+
+		if (!can_skip_obb && space_state != nullptr && obb_ray.is_valid()) {
 			obb_ray->set_from(prev_pos);
 			obb_ray->set_to(curr_pos);
 			Dictionary hit = space_state->intersect_ray(obb_ray);
@@ -833,15 +903,9 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 			}
 		}
 
-		// ----------------------------------------------------------------
-		// Terrain check --- zero physics queries, pure height grid lookup
-		// ----------------------------------------------------------------
-		if (nav_map.is_valid() && nav_map->is_built()) {
+		if (has_nav_map) {
 			float sdf_dist = nav_map->get_distance((float)curr_pos.x, (float)curr_pos.z);
-			// Only sample the height grid when near land (SDF < 200 m).
-			// Water cells have height 0, so the y <= terrain_h check would
-			// never trigger there anyway -- this is just an early-out for perf.
-			if (sdf_dist < 200.0f) {
+			if (sdf_dist <= (float)sdf_margin) {
 				float terrain_h = nav_map->get_terrain_height((float)curr_pos.x, (float)curr_pos.z);
 				if (terrain_h > 0.001f && (float)curr_pos.y <= terrain_h) {
 					result["terrain_blocked"] = true;
@@ -850,8 +914,12 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 			}
 		}
 
+		if (next_dist <= prev_dist + 1e-6) {
+			break;
+		}
 		prev_pos = curr_pos;
-		t += 0.5;
+		prev_dist = next_dist;
+		prev_t = next_t;
 	}
 
 	return result;
