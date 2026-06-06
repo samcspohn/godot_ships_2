@@ -392,7 +392,11 @@ func _update_auto_target_cache(server: GameServer, max_range: float, manual_acti
 				var pos = e.global_position
 				if e == target:
 					pos = e.to_global(target_offset)
-				var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+				# var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+				var lead_target = target_leads[sc].get(e)
+				if not lead_target:
+					lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
+					target_leads[sc][e] = lead_target
 				if lead_target:
 					target_leads[sc][e] = lead_target
 				if not lead_target or not g.is_aimpoint_valid(pos):
@@ -438,7 +442,11 @@ func _update_cached_auto_aim(delta: float) -> bool:
 			if e == target:
 				pos = e.to_global(target_offset)
 			# var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
-			var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+			# var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
+			var lead_target = target_leads[sc].get(e)
+			if not lead_target:
+				lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
+				target_leads[sc][e] = lead_target
 			if lead_target and g.is_aimpoint_valid(pos):
 				g._aim(lead_target, delta)
 				auto_active = true

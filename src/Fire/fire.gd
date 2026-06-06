@@ -8,6 +8,7 @@ var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FireManager = null
 var last_hit_time: float = 0
+var block_time: float = 0
 # const TIME_TO_DECAY: float = 30.0
 var _params: DOTParams:
 	get:
@@ -24,7 +25,11 @@ var _owner: Ship = null
 func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a + 0.33 * (randf() - 0.5) # add some randomness to buildup
-		last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate, last_hit_time)
+		# last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate, last_hit_time)
+		var block_duration = a * 0.5
+		var this_hit_time = Time.get_ticks_msec() / 1000.0
+		if last_hit_time < this_hit_time + block_duration:
+			last_hit_time = this_hit_time + block_duration
 		var random_threshold = _rparams.max_buildup * 0.67
 		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
 

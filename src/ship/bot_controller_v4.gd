@@ -86,7 +86,7 @@ const TORPEDO_ID_OFFSET: int = -100000
 var tracked_torpedo_count: int = 0
 
 ## Maximum distance to query for incoming shells
-const SHELL_QUERY_RANGE: float = 1000.0
+const SHELL_QUERY_RANGE: float = 500.0
 ## How often to force a path replan (frames). Between replans the navigator
 ## continues arc-based threat avoidance with the last known destination.
 ## At 20 fps, 10 frames = 0.5 s — adequate for the speed and scale of ships.
@@ -571,6 +571,7 @@ func _register_torpedo_obstacles() -> void:
 
 func _update_shell_threats() -> void:
 	navigator.clear_incoming_shells()
+	return
 	var my_team_id: int = _ship.team.team_id if _ship.team else -1
 	var my_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
 

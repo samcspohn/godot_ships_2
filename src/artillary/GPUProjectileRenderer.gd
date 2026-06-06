@@ -3,7 +3,7 @@ class_name GPUProjectileRenderer
 ## GPU-based projectile renderer that reads shell positions from a texture
 ## The projectile_manager updates positions every frame via update_shell_position()
 
-const MAX_SHELLS: int = 1024  # Maximum concurrent shells
+const MAX_SHELLS: int = 16384  # Maximum concurrent shells; must not exceed max texture dimension
 const DATA_WIDTH: int = 2     # 2 pixels per shell for visual data (color, size)
 
 var multi_mesh_instance: MultiMeshInstance3D

@@ -300,7 +300,7 @@ func calculate_dispersed_launch(
 	var rate = (1.0 - (dist_to_target / max_range))
 	rate = clamp(pow(rate, 1.5), 0.0, 1.0)
 	var _h_spread: float = rate * h_spread * 2.0 + h_spread
-	var _v_spread: float = rate * v_spread * 1.5 + v_spread
+	var _v_spread: float = rate * v_spread * 0.5 + v_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)

@@ -104,15 +104,21 @@ private:
 		double integrity = 1.0);
 
 	static Array build_obb_excludes(const Ref<ProjectileData> &projectile, Node *precision_physics_world);
+	static bool same_object(Object *a, Object *b);
 	static bool object_array_contains(const Array &array, Object *object);
+	static bool is_owner_or_excluded(Object *ship, Object *owner, const Array &exclude);
 	static Ref<Resource> duplicate_shell_params_with_drag(const Ref<Resource> &params, double drag_multiplier);
 	static Vector3 handle_water_entry(const Vector3 &water_hit, const Vector3 &entry_vel, const Ref<Resource> &params);
 	static bool try_get_water_plane_hit(const Vector3 &prev_pos, const Vector3 &curr_pos, Vector3 &water_hit);
-	static bool try_get_terrain_map_hit(const Ref<NavigationMap> &nav_map,
+	static bool should_raycast_terrain(const Ref<NavigationMap> &nav_map,
 		const Vector3 &from,
-		const Vector3 &to,
-		Vector3 &terrain_hit,
-		Vector3 &terrain_normal);
+		const Vector3 &to);
+	static Dictionary find_valid_obb_hit(PhysicsDirectSpaceState3D *space_state,
+		const Ref<PhysicsRayQueryParameters3D> &obb_ray,
+		Node *precision_physics_world,
+		Object *owner,
+		const Array &exclude,
+		Object **out_ship);
 
 	static ArmorHitResult process_hit(Object *hit_node,
 		const Vector3 &world_hit_position,
