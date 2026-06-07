@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dmegald42yrhl" path="res://src/Flood/flood.gd" id="1_flood"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="2_emitter"]
-[ext_resource type="Resource" uid="uid://c3o2ilnqku58d" path="res://src/particles/templates/flood_template.tres" id="3_flood"]
+[ext_resource type="Resource" uid="uid://c3o2ilnqku58d" path="res://assets/particles/templates/flood_template.tres" id="3_flood"]
 
 [node name="Flood" type="Node3D" unique_id=196010068]
 script = ExtResource("1_flood")

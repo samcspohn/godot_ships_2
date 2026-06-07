@@ -1,11 +1,11 @@
 [gd_scene format=3 uid="uid://b2h05q4ej4xeb"]
 
 [ext_resource type="Script" uid="uid://bbibtirfdewu4" path="res://src/artillary/HitEffects/hit_effects.gd" id="1_ovioq"]
-[ext_resource type="Resource" uid="uid://bjsiopaukrjwx" path="res://src/particles/templates/splash_template.tres" id="2_splash"]
-[ext_resource type="Resource" uid="uid://b46yoxgx34o72" path="res://src/particles/templates/explosion_template.tres" id="3_explosion"]
-[ext_resource type="Resource" uid="uid://debsjyu8b8beq" path="res://src/particles/templates/sparks_template.tres" id="4_sparks"]
-[ext_resource type="Resource" uid="uid://l1hirsugnu58" path="res://src/particles/templates/muzzle_blast_template.tres" id="5_muzzle"]
-[ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://src/particles/templates/torpedo_wake_template.tres" id="6_gswik"]
+[ext_resource type="Resource" uid="uid://bjsiopaukrjwx" path="res://assets/particles/templates/splash_template.tres" id="2_splash"]
+[ext_resource type="Resource" uid="uid://b46yoxgx34o72" path="res://assets/particles/templates/explosion_template.tres" id="3_explosion"]
+[ext_resource type="Resource" uid="uid://debsjyu8b8beq" path="res://assets/particles/templates/sparks_template.tres" id="4_sparks"]
+[ext_resource type="Resource" uid="uid://l1hirsugnu58" path="res://assets/particles/templates/muzzle_blast_template.tres" id="5_muzzle"]
+[ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://assets/particles/templates/torpedo_wake_template.tres" id="6_gswik"]
 
 [node name="HitEffects" type="Node" unique_id=1226904460]
 script = ExtResource("1_ovioq")

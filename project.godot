@@ -47,7 +47,7 @@ HitEffects="*res://src/artillary/HitEffects/hit_effects.tscn"
 TcpThreadPool="*res://src/server/tcp_thread_pool.tscn"
 UnifiedParticleSystem="*res://addons/Godot-Unified-Particle-System/particles/UnifiedParticleSystem.tscn"
 LaunchModes_="*res://LaunchModes.tscn"
-SoundEffectManager="*res://audio/SoundEffectManager.tscn"
+SoundEffectManager="*res://assets/audio/SoundEffectManager.tscn"
 SkillsRegistry="*res://Skills/SkillsRegistry.tscn"
 UpgradeRegistry="*res://src/autoload/UpgradeRegistry.tscn"
 NavigationMapManager="*res://src/autoload/navigation_map_manager.gd"
@@ -159,7 +159,7 @@ toggle_secondaries={
 [physics]
 
 3d/run_on_separate_thread=true
-common/physics_ticks_per_second=12
+common/physics_ticks_per_second=16
 common/max_physics_steps_per_frame=1
 jolt_physics_3d/queries/enable_ray_cast_face_index=true
 

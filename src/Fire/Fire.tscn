@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cb1wugmybyocw" path="res://src/Fire/fire.gd" id="1_kikl1"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="2_emitter"]
-[ext_resource type="Resource" uid="uid://dt5rc67ok3xke" path="res://src/particles/templates/fire_template.tres" id="3_fire"]
+[ext_resource type="Resource" uid="uid://dt5rc67ok3xke" path="res://assets/particles/templates/fire_template.tres" id="3_fire"]
 
 [node name="Fire" type="Node3D" unique_id=1244247199]
 script = ExtResource("1_kikl1")

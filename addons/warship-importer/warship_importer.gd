@@ -57,7 +57,7 @@ func process_turret_mounts(node: Node) -> int:
 ## at res://turrets/glb/<turret_name>.glb with Gun.gd attached to the root.
 ## Returns the saved .tscn path, or "" if no GLB was found.
 func create_scene_from_glb(turret_name: String) -> String:
-	var glb_path := "res://turrets/glb/%s.glb" % turret_name
+	var glb_path := "res://assets/turrets/glb/%s.glb" % turret_name
 	if not ResourceLoader.exists(glb_path):
 		return ""
 
@@ -79,7 +79,7 @@ func create_scene_from_glb(turret_name: String) -> String:
 	new_scene.pack(root)
 	root.queue_free()
 
-	var tscn_path := "res://turrets/%s.tscn" % turret_name
+	var tscn_path := "res://assets/turrets/%s.tscn" % turret_name
 	var err := ResourceSaver.save(new_scene, tscn_path)
 	if err != OK:
 		printerr("Failed to save turret scene: ", tscn_path, " (error %d)" % err)

@@ -75,7 +75,7 @@ Written once at match start with `ReplayRecorder.begin_match()`.
   [1 byte]  is_bot        u8    bool
   [pascal string] player_name   String  (u8 length prefix + UTF-8 bytes)
   [pascal string] ship_name     String  (e.g. "Yamato")
-  [pascal string] scene_path    String  (e.g. "res://Ships/Yamato/Yamato.tscn")
+  [pascal string] scene_path    String  (e.g. "res://assets/Ships/Yamato/Yamato.tscn")
   [1 byte]  gun_count     u8    number of Gun nodes on this ship
   [1 byte]  fire_count    u8    number of Fire zones on this ship
   [1 byte]  flood_count   u8    number of Flood zones on this ship

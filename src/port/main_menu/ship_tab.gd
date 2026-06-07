@@ -123,13 +123,13 @@ func _create_armor_filter_panel():
 func _load_ship_buttons():
 	# Only allow selection of Bismarck3 and H44
 	var available_ships = [
-		{"name": "Bismarck3", "path": "res://Ships/Bismarck/Bismarck3.tscn"},
-		{"name": "Kaiser Wilhelm", "path": "res://Ships/H42/H42.tscn"},
-		{"name": "Wotan", "path": "res://Ships/H44/H44.2.tscn"},
-		{"name": "Yamato", "path": "res://Ships/Yamato/Yamato.tscn"},
-		{"name": "Shimakaze", "path": "res://Ships/Shimakaze/Shimakaze.tscn"},
-		{"name": "Des Moines", "path": "res://Ships/DesMoines/DesMoines.tscn"},
-		{"name" : "Montana", "path": "res://Ships/Montana/Montana.tscn"},
+		{"name": "Bismarck3", "path": "res://assets/Ships/Bismarck/Bismarck3.tscn"},
+		{"name": "Kaiser Wilhelm", "path": "res://assets/Ships/H42/H42.tscn"},
+		{"name": "Wotan", "path": "res://assets/Ships/H44/H44.2.tscn"},
+		{"name": "Yamato", "path": "res://assets/Ships/Yamato/Yamato.tscn"},
+		{"name": "Shimakaze", "path": "res://assets/Ships/Shimakaze/Shimakaze.tscn"},
+		{"name": "Des Moines", "path": "res://assets/Ships/DesMoines/DesMoines.tscn"},
+		{"name" : "Montana", "path": "res://assets/Ships/Montana/Montana.tscn"},
 	]
 
 	for ship_data in available_ships:

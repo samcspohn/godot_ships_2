@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://djd18qc6buf36"]
+
+[ext_resource type="PackedScene" uid="uid://dly6850nwu1an" path="res://assets/turrets/glb/GER_128mm_2b_L_54.glb" id="1_ln1at"]
+[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://assets/audio/explosion1_clean.wav" id="2_syt8t"]
+
+[node name="GER_128mm_2b_L_54" unique_id=1786948062 instance=ExtResource("1_ln1at")]
+_sound = ExtResource("2_syt8t")
+pitch = 1.3
+volume = 0.7

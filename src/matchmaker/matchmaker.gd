@@ -15,29 +15,29 @@ const NUM_SHIPS_PER_TEAM = 12
 
 # Ship data: path -> {class, tier}
 const SHIP_DATA = {
-	"res://Ships/Bismarck/Bismarck3.tscn": {"class": SHIP_CLASS_BB, "tier": 8},
-	# "res://Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
-	"res://Ships/H42/H42.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
-	"res://Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
-	"res://Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
-	"res://Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
-	"res://Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10}
+	"res://assets/Ships/Bismarck/Bismarck3.tscn": {"class": SHIP_CLASS_BB, "tier": 8},
+	# "res://assets/Ships/H44/H44.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
+	"res://assets/Ships/H42/H42.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
+	"res://assets/Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
+	"res://assets/Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
+	"res://assets/Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
+	"res://assets/Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10}
 }
 
 # Available ships by class for bot team generation
 const SHIPS_BY_CLASS = {
 	SHIP_CLASS_BB: [
-		# "res://Ships/Bismarck/Bismarck3.tscn",
-		# "res://Ships/H44/H44.tscn",
-		"res://Ships/H42/H42.tscn",
-		"res://Ships/Yamato/Yamato.tscn",
-		"res://Ships/Montana/Montana.tscn"
+		# "res://assets/Ships/Bismarck/Bismarck3.tscn",
+		# "res://assets/Ships/H44/H44.tscn",
+		"res://assets/Ships/H42/H42.tscn",
+		"res://assets/Ships/Yamato/Yamato.tscn",
+		"res://assets/Ships/Montana/Montana.tscn"
 	],
 	SHIP_CLASS_CA: [
-		"res://Ships/DesMoines/DesMoines.tscn"
+		"res://assets/Ships/DesMoines/DesMoines.tscn"
 	],
 	SHIP_CLASS_DD: [
-		"res://Ships/Shimakaze/Shimakaze.tscn"
+		"res://assets/Ships/Shimakaze/Shimakaze.tscn"
 	]
 }
 var udp
@@ -119,8 +119,8 @@ func _process(_delta: float) -> void:
 						"1001": {
 							"team": "1",
 							"player_id": "1001",
-							"ship": "res://Ships/H44/H44.2.tscn",
-							# "ship": "res://Ships/DesMoines/DesMoines.tscn",
+							"ship": "res://assets/Ships/H44/H44.2.tscn",
+							# "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
 							"is_bot": true,
 							"spawn_position": 0
 						}
@@ -140,7 +140,7 @@ func _process(_delta: float) -> void:
 						team[bot_id] = {
 							"team": "0",
 							"player_id": bot_id,
-							"ship": "res://Ships/H42/H42.tscn",
+							"ship": "res://assets/Ships/H42/H42.tscn",
 							"is_bot": true,
 							"spawn_position": i + 1
 						}
@@ -149,7 +149,7 @@ func _process(_delta: float) -> void:
 						team[bot_id] = {
 							"team": "1",
 							"player_id": bot_id,
-							"ship": "res://Ships/H42/H42.tscn",
+							"ship": "res://assets/Ships/H42/H42.tscn",
 							"is_bot": true,
 							"spawn_position": i
 						}

@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://uhuhxmhvyxup"]
+
+[ext_resource type="PackedScene" uid="uid://cldosdv18ohuq" path="res://assets/turrets/glb/AMER_406mm_50cal_mk7_3b.glb" id="1_2f3fr"]
+[ext_resource type="AudioStream" uid="uid://c2b5b1iuq2t0q" path="res://assets/audio/500mm_muzzle.wav" id="2_pxw7i"]
+
+[node name="AMER_406mm_50cal_mk7_3b" unique_id=1012021902 instance=ExtResource("1_2f3fr")]
+_sound = ExtResource("2_pxw7i")
+pitch = 0.7
+variance = 0.04
+glb_path = "uid://cldosdv18ohuq"
+
+[node name="Turret_col" parent="." index="1" unique_id=517512159]
+layers = 0

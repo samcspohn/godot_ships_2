@@ -1598,6 +1598,10 @@ func get_threat_score(ctx: SkillContext) -> float:
 		return _threat_score_cache
 
 	var raw_threat: float = 1.0
+	var time_remaining: float = server.get_match_time_remaining()
+	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
+	var threat_scale: float = 1.0 - pow(t_norm, 4)
+
 	for enemy in enemies:
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
@@ -1617,6 +1621,8 @@ func get_threat_score(ctx: SkillContext) -> float:
 		var raw_val = enemy_hp / my_hp * range_pressure * class_w
 		if !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
+		raw_val *= threat_scale
+		raw_val *= threat_mod
 		var this_threat = 1.0 - exp(-raw_val)
 		if not enemy.visible_to_enemy:
 			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
@@ -1641,11 +1647,9 @@ func get_threat_score(ctx: SkillContext) -> float:
 	# As the match timer runs out, reduce threat so bots play more aggressively.
 	# Uses 1 - t^4: stays near 1.0 for most of the match, drops sharply near the end.
 	# e.g. t=50% (10min) -> 0.94, t=75% (15min) -> 0.68, t=90% (18min) -> 0.34, t=100% -> 0.0
-	var time_remaining: float = server.get_match_time_remaining()
-	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
-	var threat_scale: float = 1.0 - pow(t_norm, 4)
 
-	_threat_score_cache = base_threat * threat_scale * threat_mod
+
+	_threat_score_cache = base_threat
 	_threat_score_frame = frame
 	return _threat_score_cache
 

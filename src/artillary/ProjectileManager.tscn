@@ -1,7 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://cj32a1kjmd61g"]
+[gd_scene format=3 uid="uid://cj32a1kjmd61g"]
 
-[ext_resource type="Script" path="res://src/artillary/profiled_projectile_manager.gd" id="1_wrapper"]
-[ext_resource type="Resource" uid="uid://dtrail8shell1" path="res://src/particles/templates/shell_trail_template.tres" id="2_trail"]
+[ext_resource type="Script" uid="uid://dfui43epc2bdt" path="res://src/artillary/profiled_projectile_manager.gd" id="1_wrapper"]
+[ext_resource type="Resource" uid="uid://dtrail8shell1" path="res://assets/particles/templates/shell_trail_template.tres" id="2_trail"]
 
 [node name="ProjectileManager" type="Node"]
 script = ExtResource("1_wrapper")

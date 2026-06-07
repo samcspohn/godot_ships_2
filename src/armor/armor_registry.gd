@@ -5,7 +5,7 @@ extends Node
 ## turrets sharing the same GLB file never load or store duplicate data.
 ##
 ## Usage:
-##   var data: Dictionary = ArmorRegistry.get_or_load("res://ships/yamato.glb")
+##   var data: Dictionary = ArmorRegistry.get_or_load("res://assets/Ships/yamato.glb")
 ##   # data is the shared { "node_path": [armor_values…] } dictionary.
 ##   # Subsequent calls with the same path return the same Dictionary object
 ##   # (reference equality) at zero cost.

@@ -18,8 +18,8 @@ var receive_thread: Thread
 signal destroy_shell(data: PackedByteArray) # shell_id: int, pos: Vector3, hit_result: int
 signal ricochet(data: PackedByteArray) # original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float
 
-var _wake_template: ParticleTemplate = preload("res://src/particles/templates/torpedo_wake_template.tres")
-var _fallback_sound: AudioStream = preload("res://audio/explosion1.wav")
+var _wake_template: ParticleTemplate = preload("res://assets/particles/templates/torpedo_wake_template.tres")
+var _fallback_sound: AudioStream = preload("res://assets/audio/explosion1.wav")
 
 # --- Server-side gun type registry ---
 # Maps gun.scene_file_path -> assigned u8 type ID.

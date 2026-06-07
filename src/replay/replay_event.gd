@@ -44,7 +44,7 @@ class ShipManifestEntry:
 	var is_bot: bool
 	var player_name: String     ## ship.name  (node / peer identifier)
 	var ship_name: String       ## ship.ship_name  e.g. "Yamato"
-	var scene_path: String      ## e.g. "res://Ships/Yamato/Yamato.tscn"
+	var scene_path: String      ## e.g. "res://assets/Ships/Yamato/Yamato.tscn"
 	var gun_count: int
 	var fire_count: int
 	var flood_count: int

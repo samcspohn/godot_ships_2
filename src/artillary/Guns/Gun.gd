@@ -18,7 +18,7 @@ var sound: AudioStreamPlayer3D
 @export_tool_button("Preview Sound") var _preview_sound_button = _preview_sound
 @export_tool_button("Stop Preview") var _stop_preview_sound_button = _stop_preview_sound
 var preview_player: AudioStreamPlayer3D
-var wake_template: ParticleTemplate = preload("res://src/particles/templates/torpedo_wake_template.tres")
+var wake_template: ParticleTemplate = preload("res://assets/particles/templates/torpedo_wake_template.tres")
 
 func _preview_sound() -> void:
 	if _sound == null:
@@ -134,7 +134,7 @@ func setup_audio():
 		if sound == null:
 			sound = AudioStreamPlayer3D.new()
 			if _sound == null:
-				sound.stream = preload("res://audio/explosion1.wav")
+				sound.stream = preload("res://assets/audio/explosion1.wav")
 			else:
 				sound.stream = _sound
 			sound.max_polyphony = 4
