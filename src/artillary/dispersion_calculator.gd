@@ -91,13 +91,13 @@ var period = 0.0
 const SHELL_COUNT := 4
 
 var _shell_index := 0
-var _shuffled_radii := PackedFloat64Array()
-var _angles := PackedFloat64Array()
+var _h_offsets := PackedFloat64Array()
+var _v_offsets := PackedFloat64Array()
 var _sigma := 1.0
 
-# Citadel ellipse for post-processing (in angular fraction space, set externally)
-var _citadel_h_frac := 0.5   # citadel semi-width as fraction of base_spread
-var _citadel_v_frac := 0.1  # citadel semi-height as fraction of base_spread
+# Citadel ellipse for post-processing (in normalised fraction space, set externally)
+var _citadel_h_frac := 0.5
+var _citadel_v_frac := 0.1
 
 
 func _init(sigma: float = 1.0) -> void:
@@ -119,109 +119,69 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 	_citadel_v_frac = maxf(v_frac, 0.01)
 
 
+## erf approximation, max |error| < 1.5e-7  (Abramowitz & Stegun 7.1.26).
+static func _erf(x: float) -> float:
+	const P  := 0.3275911
+	const A1 := 0.254829592
+	const A2 := -0.284496736
+	const A3 := 1.421413741
+	const A4 := -1.453152027
+	const A5 := 1.061405429
+	var t := 1.0 / (1.0 + P * absf(x))
+	var poly := t * (A1 + t * (A2 + t * (A3 + t * (A4 + t * A5))))
+	return signf(x) * (1.0 - poly * exp(-x * x))
+
+
+## erfinv approximation, max |error| < 1.2e-4  (Winitzki 2008, eq. 4).
+static func _erfinv(x: float) -> float:
+	const A := 0.147
+	const TWO_OVER_PI_A := 2.0 / (PI * A)
+	var w := log(maxf(1.0 - x * x, 1e-30))
+	var inner := TWO_OVER_PI_A + w * 0.5
+	return signf(x) * sqrt(sqrt(inner * inner - w / A) - inner)
+
+
+## Generate SHELL_COUNT independent samples from N(0, 1/s²) truncated to [-1, 1].
+## Stratified across SHELL_COUNT equal CDF bins then Fisher-Yates shuffled.
+## With SHELL_COUNT = 4, bins [0,.25) [.25,.5) [.5,.75) [.75,1) map to
+## large-negative, small-negative, small-positive, large-positive — guaranteeing
+## exactly 2 negative + 2 positive and 2 inner + 2 outer values per call.
+## erf_bound = erf(s / sqrt(2)), precomputed by the caller.
+func _generate_axis(s: float, erf_bound: float) -> PackedFloat64Array:
+	var arr := PackedFloat64Array()
+	arr.resize(SHELL_COUNT)
+	var inv_s_sqrt2 := sqrt(2.0) / s
+	for i in SHELL_COUNT:
+		var u_low  := float(i)     / SHELL_COUNT
+		var u_high := float(i + 1) / SHELL_COUNT
+		var u := u_low + randf() * (u_high - u_low)
+		# Invert the CDF of the truncated Gaussian on [-1, 1]:
+		#   F(x) = 0.5 + 0.5 * erf(x * s / sqrt(2)) / erf_bound
+		#   x    = sqrt(2)/s * erfinv(erf_bound * (2u - 1))
+		arr[i] = inv_s_sqrt2 * _erfinv(erf_bound * (2.0 * u - 1.0))
+	for i in range(SHELL_COUNT - 1, 0, -1):
+		var j := randi_range(0, i)
+		var tmp := arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+	return arr
+
+
 func _new_salvo(sigma: float) -> void:
 	_shell_index = 0
 	var s := maxf(sigma, 0.01)
-	var f_max := 1.0 - exp(-0.5 * s * s)
+	# erf(s / sqrt(2)) = fraction of the full Gaussian within ±1 std-dev of the
+	# truncation boundary; used as the CDF normalisation constant for each axis.
+	var erf_bound := _erf(s / sqrt(2.0))
+	_h_offsets = _generate_axis(s, erf_bound)
+	_v_offsets = _generate_axis(s, erf_bound)
 
-	#full random
-	# _shuffled_radii.resize(SHELL_COUNT)
-	# _angles.resize(SHELL_COUNT)
-
-	# for i in SHELL_COUNT:
-	# 	_shuffled_radii[i] = minf(sqrt(-2.0 * log(1.0 - randf() * f_max + 1e-12)) / s, 1.0)
-	# 	_angles[i] = randf() * TAU
-	# return
-
-	var half: int = SHELL_COUNT >> 1  # SHELL_COUNT / 2
-
-	# ── Stratified truncated-Gaussian radii in [0, 1], sorted ──
-	# Each shell's 2D offset is an isotropic Gaussian truncated at the dispersion
-	# ellipse, so the radius never exceeds 1.0 (base_spread is a hard maximum,
-	# no clamping). WoWs sigma is how many standard deviations the ellipse edge
-	# represents: the per-axis std in normalized units is 1/sigma, and we sample
-	# only the CDF mass that falls inside the edge (F_max), then invert:
-	#     r = sqrt(-2 * ln(1 - u * F_max)) / sigma,  with F_max = 1 - exp(-sigma^2/2)
-	# Stratifying u across [0, 1) gives an even spread of inner (accurate) to
-	# outer (wide) shells. Higher sigma -> radii shrink toward 0 (tighter).
-
-	var sorted_r := PackedFloat64Array()
-	sorted_r.resize(SHELL_COUNT)
-	for i in SHELL_COUNT:
-		var u_low := float(i) / SHELL_COUNT
-		var u_high := float(i + 1) / SHELL_COUNT
-		var u := u_low + randf() * (u_high - u_low)
-		sorted_r[i] = minf(sqrt(-2.0 * log(1.0 - u * f_max + 1e-12)) / s, 1.0)
-	sorted_r.sort()
-
-	# ── Assign radii: interleave inner and outer within each consecutive pair ──
-	# Shell 2i   : sorted_r[i]         — inner, accurate, lands close to aim
-	# Shell 2i+1 : sorted_r[N-1-i]     — outer, spread, lands far from aim
-	# Every 2 shells = one tight + one wide shot.
-	# Every 4 shells = innermost + outermost pair AND second inner + second outer pair,
-	# covering the full quality range.
-	_shuffled_radii.resize(SHELL_COUNT)
-	for i in half:
-		_shuffled_radii[i * 2]     = sorted_r[i]
-		_shuffled_radii[i * 2 + 1] = sorted_r[SHELL_COUNT - 1 - i]
-
-	# ── Angles: 2 upper + 2 lower per group of 4 ──
-	# Generate `half` angles stratified across [0, PI]   (upper half-circle)
-	# and   `half` angles stratified across [PI, 2*PI]   (lower half-circle).
-	# Shuffle each group independently so left-right position stays random.
-	# Then build two groups of 4 (one per gun pair), each containing exactly
-	# 2 upper + 2 lower angles, and shuffle within each group so the up/down
-	# order varies each salvo. A single gun firing 2 shells can get 2 lows or
-	# 2 highs, but across any 4 shells the split is always guaranteed 2 and 2.
-	var upper_angles := PackedFloat64Array()
-	var lower_angles := PackedFloat64Array()
-	upper_angles.resize(half)
-	lower_angles.resize(half)
-	var sector := PI / half
-	for i in half:
-		var jitter := (randf() - 0.5) * sector * 0.7
-		upper_angles[i] = (float(i) + 0.5) * sector + jitter
-		lower_angles[i] = PI + (float(i) + 0.5) * sector + jitter
-
-	for i in range(half - 1, 0, -1):
-		var j := randi_range(0, i)
-		var tmp := upper_angles[i]
-		upper_angles[i] = upper_angles[j]
-		upper_angles[j] = tmp
-
-	for li in range(half - 1, 0, -1):
-		var lj := randi_range(0, li)
-		var ltmp := lower_angles[li]
-		lower_angles[li] = lower_angles[lj]
-		lower_angles[lj] = ltmp
-
-	_angles.resize(SHELL_COUNT)
-	# Fill two groups of 4, each containing exactly 2 upper + 2 lower angles,
-	# then shuffle within each group so the order varies each salvo.
-	# A single gun firing its 2-shell salvo can get 2 lows or 2 highs,
-	# but across any 4 consecutive shells the split is always 2 and 2.
-	var group_buf := PackedFloat64Array()
-	group_buf.resize(min(4, SHELL_COUNT))
-	for gi in floor(SHELL_COUNT / 4):
-		group_buf[0] = upper_angles[gi * 2]
-		group_buf[1] = upper_angles[gi * 2 + 1]
-		group_buf[2] = lower_angles[gi * 2]
-		group_buf[3] = lower_angles[gi * 2 + 1]
-		for ki in range(3, 0, -1):
-			var mi := randi_range(0, ki)
-			var bt := group_buf[ki]
-			group_buf[ki] = group_buf[mi]
-			group_buf[mi] = bt
-		for ki in 4:
-			_angles[gi * 4 + ki] = group_buf[ki]
-
-	# _apply_citadel_guarantee()
+	_apply_citadel_guarantee()
 
 
 # Tests whether any shell in the current salvo will land inside the citadel
-# ellipse, and only nudges a shell inward if none do. The radii are already
-# normalized to the dispersion ellipse ([0, 1]), so the position math here
-# matches what `calculate_dispersed_launch()` does directly.
+# ellipse, and only nudges a shell inward if none do. Offsets are already in
+# normalised [-1, 1] space, matching what calculate_dispersed_launch() uses.
 func _apply_citadel_guarantee() -> void:
 	var ea := _citadel_h_frac
 	var eb := _citadel_v_frac
@@ -233,8 +193,8 @@ func _apply_citadel_guarantee() -> void:
 	var closest_d := INF
 
 	for i in SHELL_COUNT:
-		var h_frac := _shuffled_radii[i] * cos(_angles[i])
-		var v_frac := _shuffled_radii[i] * sin(_angles[i])
+		var h_frac := _h_offsets[i]
+		var v_frac := _v_offsets[i]
 		var d := (h_frac * h_frac) / (ea * ea) + (v_frac * v_frac) / (eb * eb)
 		if d <= 1.0:
 			any_inside = true
@@ -244,33 +204,19 @@ func _apply_citadel_guarantee() -> void:
 			closest_idx = i
 
 	if not any_inside:
-		var h_frac := _shuffled_radii[closest_idx] * cos(_angles[closest_idx])
+		var h_frac := _h_offsets[closest_idx]
 		var new_h: float
 		if absf(h_frac) > ea:
-			# x is outside the citadel width: pick a random x biased toward the
-			# horizontal edge (sqrt gives PDF proportional to x, peaking at ea),
-			# preserving the original left/right side.
 			new_h = signf(h_frac) * ea * sqrt(randf())
 		else:
 			new_h = h_frac
-		# y: random in [-v_max, v_max], pow^2 distribution concentrates strongly
-		# near 0 (median at 25% of v_max).
 		var v_max := eb * sqrt(1.0 - (new_h / ea) * (new_h / ea))
 		var v_sign := 1.0 if randf() < 0.5 else -1.0
 		var new_v := v_sign * pow(randf(), 1.6) * v_max
-		_shuffled_radii[closest_idx] = sqrt(new_h * new_h + new_v * new_v)
-		_angles[closest_idx] = atan2(new_v, new_h)
+		_h_offsets[closest_idx] = new_h
+		_v_offsets[closest_idx] = new_v
 
-# Dispersion curve. The maximum physical dispersion (meters at max range) is
-# derived from the per-gun `base_spread` (radians) so per-gun tuning works again:
-#     MAX_DISPERSION_METERS = base_spread * max_range
-# The close-range anchor is expressed as a fraction of that maximum.
-# A power curve is fit through (0, 0), (CLOSE_RANGE, fraction*MAX), and (max_range, MAX).
-const CLOSE_DISPERSION_FRACTION: float = 0.33  # close-range dispersion as % of max
-const CLOSE_RANGE_METERS: float = 3000.0          # the anchor for close-range tuning
-const MAX_DISPERSION_ANGLE_RAD: float = 0.5      # safety cap at point-blank
-
-## Perturbs a launch vector by applying dispersion as angular offsets.
+## Perturbs a launch vector by applying dispersion as world-space offsets to the aim point.
 ## h = lateral (perpendicular to aim in horizontal plane)
 ## v = vertical (elevation angle adjustment)
 ## sigma_h = WoWs-style sigma: the number of standard deviations the ellipse
@@ -287,63 +233,37 @@ func calculate_dispersed_launch(
 		_sigma_v: float,
 		h_spread: float,
 		v_spread: float,
-		max_range: float) -> Vector3:
+		max_range: float,
+		dispersion_curve: Curve,
+		max_dispersion: float) -> Vector3:
 
-	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, aim_point, shell_params)
 	var dist_to_target := (aim_point - gun_position).length()
-	var launch_velocity: Vector3 = a[0]
-
-	# # Power-curve dispersion in meters: meters(d) = MAX * (d/max_range)^p
-	# # MAX is set by the gun's base_spread (radians) projected to max_range,
-	# # and p is chosen so meters(CLOSE_RANGE_METERS) == CLOSE_DISPERSION_FRACTION * MAX.
-	# # Passes through (0,0) automatically and reaches MAX at max_range.
-	# var max_dispersion_m := base_spread * max_range
-	# var p := log(CLOSE_DISPERSION_FRACTION) / log(CLOSE_RANGE_METERS / max_range)
-	# var dispersion_m := max_dispersion_m \
-	# 		* pow(clampf(dist_to_target / max_range, 0.0, 1.0), p)
-
-	# # Convert physical dispersion to the angular spread the rotation code expects.
-	# # Clamp distance away from zero and clamp angle to avoid pathological rotations
-	# # at extreme close range (where meters/d blows up because p < 1).
-	# var _base_spread: float = minf(
-	# 		dispersion_m / maxf(dist_to_target, 1.0),
-	# 		MAX_DISPERSION_ANGLE_RAD)
-	var rate = clamp((1.0 - (dist_to_target / max_range)), -0.5, 1.0)
-	rate = pow(rate, 3.0)
-	var _h_spread: float = rate * h_spread * 2.0 + h_spread
-	var _v_spread: float = rate * v_spread * 1.0 + v_spread
+	var t := maxf(dist_to_target / max_range, 0.0)
+	var dispersion_m: float
+	if t <= 1.0:
+		dispersion_m = dispersion_curve.sample(t) * max_dispersion
+	else:
+		var slope := dispersion_curve.get_point_left_tangent(dispersion_curve.point_count - 1)
+		dispersion_m = (dispersion_curve.sample(1.0) + slope * (t - 1.0)) * max_dispersion
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)
 
-	# Radius is already truncated-Gaussian normalized to the ellipse ([0, 1]),
-	# so the offsets land inside [-1, 1] by construction — no clamping needed.
-	var r := _shuffled_radii[_shell_index]
-	var angle := _angles[_shell_index]
+	var h_offset := _h_offsets[_shell_index]
+	var v_offset := _v_offsets[_shell_index]
 	_shell_index += 1
 
-	var h_offset := r * cos(angle)
-	var v_offset := r * sin(angle)
+	var h_world := h_offset * dispersion_m * 0.5
+	var v_world := v_offset * dispersion_m * (v_spread / h_spread) * 0.5
 
-	# Scale to actual angular dispersion
-	var h_angle := h_offset * _h_spread * 0.5
-	var v_angle := v_offset * _v_spread * 0.5
+	var aim_dir_flat := Vector3(aim_point.x - gun_position.x, 0.0, aim_point.z - gun_position.z).normalized()
+	var right := aim_dir_flat.cross(Vector3.UP).normalized()
 
-	# Build local frame around launch direction
-	var forward := launch_velocity.normalized()
-	var world_up := Vector3.UP
-	var right := forward.cross(world_up).normalized()
-	if right.length_squared() < 0.001:
-		right = Vector3.RIGHT
+	var forward := (aim_point - gun_position).normalized()
 	var up := right.cross(forward).normalized()
-
-	# Rotate launch vector
-	var speed := launch_velocity.length()
-	var dispersed := forward
-	dispersed = dispersed.rotated(up, h_angle)
-	dispersed = dispersed.rotated(right, v_angle)
-
-	return dispersed * speed
+	var dispersed_aim := aim_point + right * h_world + up * v_world
+	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, dispersed_aim, shell_params)
+	return a[0]
 
 
 func get_inner_shell_count() -> int:

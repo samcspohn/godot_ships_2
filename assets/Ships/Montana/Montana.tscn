@@ -11,6 +11,7 @@
 [ext_resource type="Resource" uid="uid://bqvwywgnyh75g" path="res://assets/Ships/DesMoines/127mm_gunparams.tres" id="4_xe3bn"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="4_xwt2m"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_043f6"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_kp3v2"]
 [ext_resource type="Script" uid="uid://dkqfpprasyxmh" path="res://src/weapon/fire_arc.gd" id="7_17org"]
 [ext_resource type="PackedScene" uid="uid://uhuhxmhvyxup" path="res://assets/turrets/AMER_406mm_50cal_mk7_3b.tscn" id="7_xe3bn"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="10_043f6"]
@@ -34,31 +35,31 @@ script = ExtResource("3_461ox")
 torpedo_protection = 0.38
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_a106a"]
+[sub_resource type="Resource" id="Resource_clwxc"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 298800.0
 pool2 = 298800.0
 
-[sub_resource type="Resource" id="Resource_kp3v2"]
+[sub_resource type="Resource" id="Resource_b66t4"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 19920.0
 pool2 = 39840.0
 
-[sub_resource type="Resource" id="Resource_clwxc"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
-
-[sub_resource type="Resource" id="Resource_b66t4"]
-resource_local_to_scene = true
-script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
-
 [sub_resource type="Resource" id="Resource_4k3dg"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 6640.0
+pool2 = 13280.0
+
+[sub_resource type="Resource" id="Resource_dyvjp"]
+resource_local_to_scene = true
+script = ExtResource("3_xwt2m")
+pool1 = 6640.0
+pool2 = 13280.0
+
+[sub_resource type="Resource" id="Resource_im8nd"]
 resource_local_to_scene = true
 script = ExtResource("3_xwt2m")
 pool1 = 16600.0
@@ -116,7 +117,7 @@ turning_circle_radius = 350.0
 rudder_response_time = 16.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
-[sub_resource type="Resource" id="Resource_dyvjp"]
+[sub_resource type="Resource" id="Resource_wwgwa"]
 resource_local_to_scene = true
 script = ExtResource("14_3mkxm")
 icon = ExtResource("13_ifinn")
@@ -127,7 +128,7 @@ max_stack = -1
 type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_im8nd"]
+[sub_resource type="Resource" id="Resource_h2mde"]
 resource_local_to_scene = true
 script = ExtResource("17_3t06y")
 icon = ExtResource("16_u4el4")
@@ -180,11 +181,11 @@ _max_hp = 99600.0
 bow_percent = 0.2
 stern_percent = 0.2
 casemate_percent = 0.6
-citadel = SubResource("Resource_a106a")
-casemate = SubResource("Resource_kp3v2")
-bow = SubResource("Resource_clwxc")
-stern = SubResource("Resource_b66t4")
-superstructure = SubResource("Resource_4k3dg")
+citadel = SubResource("Resource_clwxc")
+casemate = SubResource("Resource_b66t4")
+bow = SubResource("Resource_4k3dg")
+stern = SubResource("Resource_dyvjp")
+superstructure = SubResource("Resource_im8nd")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_5uoyc")
@@ -206,7 +207,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_ckxh7")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_dyvjp"), SubResource("Resource_im8nd")])
+equipped_consumables = Array[ExtResource("11_3wbco")]([SubResource("Resource_wwgwa"), SubResource("Resource_h2mde")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("14_wi2om")]([null, null, null, null, null, null])

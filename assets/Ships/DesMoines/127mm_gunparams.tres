@@ -1,5 +1,6 @@
 [gd_resource type="Resource" script_class="GunParams" format=3 uid="uid://bqvwywgnyh75g"]
 
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="1_bdc48"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_f17ee"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_7sdcc"]
 
@@ -42,6 +43,7 @@ shell2 = SubResource("Resource_4m2vt")
 grouping = 1.0
 h_spread = 0.05
 v_spread = 0.035
+max_dispersion = 110.0
 reload_time = 4.0
 traverse_speed = 25.0
 _range = 4600.0

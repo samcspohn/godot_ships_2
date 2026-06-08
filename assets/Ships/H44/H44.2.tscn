@@ -7,11 +7,13 @@
 [ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_ve12q"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_fi4fd"]
 [ext_resource type="PackedScene" uid="uid://cyw7ae75lhjui" path="res://assets/turrets/GER_150mm_2b_gerat60.tscn" id="5_wrhyv"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_3wgo0"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="6_6thso"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="7_f0niw"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="8_bnwmv"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="9_uwp4f"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="10_1phaq"]
+[ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="10_ytg8s"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="11_wdoen"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="12_86xt5"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="13_4ql0v"]
@@ -157,7 +159,9 @@ shell1 = SubResource("Resource_2lqir")
 shell2 = SubResource("Resource_leu1t")
 grouping = 1.0
 h_spread = 0.06
-v_spread = 0.03
+v_spread = 0.04
+dispersion_ = ExtResource("10_ytg8s")
+max_dispersion = 150.0
 reload_time = 6.0
 traverse_speed = 50.0
 _range = 5900.0

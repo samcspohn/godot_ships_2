@@ -9,10 +9,12 @@
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/artillary/Guns/sec_gun1.tres" id="5_cg3gh"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_dxypq"]
 [ext_resource type="PackedScene" uid="uid://bjbwq876urf86" path="res://assets/turrets/GER_450mm_2b_rf.tscn" id="5_qmp4j"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_tnqux"]
 [ext_resource type="PackedScene" uid="uid://ruv6mhxhqe6v" path="res://assets/turrets/GER_150mm_2b_rf.tscn" id="7_cg3gh"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="7_dxypq"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="10_dxypq"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="11_fdfuf"]
+[ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="11_jk17q"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="12_fr2ey"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="13_5avbj"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="13_w7npo"]
@@ -35,31 +37,31 @@ pen_repair = 0.6
 torpedo_protection = 0.35
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_t1o80"]
+[sub_resource type="Resource" id="Resource_jk17q"]
 resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 366000.0
 pool2 = 366000.0
 
-[sub_resource type="Resource" id="Resource_tnqux"]
+[sub_resource type="Resource" id="Resource_cwbsn"]
 resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 32533.333333333332
 pool2 = 65066.666666666664
 
-[sub_resource type="Resource" id="Resource_jk17q"]
-resource_local_to_scene = true
-script = ExtResource("4_2oa6y")
-pool1 = 14233.333333333334
-pool2 = 28466.666666666668
-
-[sub_resource type="Resource" id="Resource_cwbsn"]
-resource_local_to_scene = true
-script = ExtResource("4_2oa6y")
-pool1 = 14233.333333333334
-pool2 = 28466.666666666668
-
 [sub_resource type="Resource" id="Resource_sj828"]
+resource_local_to_scene = true
+script = ExtResource("4_2oa6y")
+pool1 = 14233.333333333334
+pool2 = 28466.666666666668
+
+[sub_resource type="Resource" id="Resource_wrph0"]
+resource_local_to_scene = true
+script = ExtResource("4_2oa6y")
+pool1 = 14233.333333333334
+pool2 = 28466.666666666668
+
+[sub_resource type="Resource" id="Resource_yn4vk"]
 resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 20333.333333333332
@@ -143,6 +145,8 @@ shell2 = SubResource("Resource_wrvf5")
 grouping = 1.0
 h_spread = 0.055
 v_spread = 0.03
+dispersion_ = ExtResource("11_jk17q")
+max_dispersion = 150.0
 reload_time = 4.5
 traverse_speed = 50.0
 _range = 4800.0
@@ -156,7 +160,7 @@ turning_circle_radius = 450.0
 rudder_response_time = 15.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
-[sub_resource type="Resource" id="Resource_wrph0"]
+[sub_resource type="Resource" id="Resource_etgj4"]
 resource_local_to_scene = true
 script = ExtResource("14_ghpuu")
 icon = ExtResource("13_5avbj")
@@ -227,11 +231,11 @@ ship_model_glb_path = "uid://bgtdmgrgjflx3"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_b6c11")
 _max_hp = 122000.0
-citadel = SubResource("Resource_t1o80")
-casemate = SubResource("Resource_tnqux")
-bow = SubResource("Resource_jk17q")
-stern = SubResource("Resource_cwbsn")
-superstructure = SubResource("Resource_sj828")
+citadel = SubResource("Resource_jk17q")
+casemate = SubResource("Resource_cwbsn")
+bow = SubResource("Resource_sj828")
+stern = SubResource("Resource_wrph0")
+superstructure = SubResource("Resource_yn4vk")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
 params = SubResource("Resource_fr2ey")
@@ -259,7 +263,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_8ntne")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("11_fdfuf")]([SubResource("Resource_wrph0"), ExtResource("13_w7npo"), ExtResource("14_fr2ey")])
+equipped_consumables = Array[ExtResource("11_fdfuf")]([SubResource("Resource_etgj4"), ExtResource("13_w7npo"), ExtResource("14_fr2ey")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("15_p63jr")]([null, null, null, null, null, null])

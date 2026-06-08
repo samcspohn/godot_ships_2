@@ -12,7 +12,8 @@ class_name GunParams
 @export var grouping: float = 1.8
 @export var h_spread: float = 0.01
 @export var v_spread: float = 0.005
-
+@export var dispersion_: Curve = preload("res://src/artillary/default_dispersion.tres")
+@export var max_dispersion: float = 270.0
 
 func from_params(gun_params: GunParams) -> void:
 	reload_time = gun_params.reload_time

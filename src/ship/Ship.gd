@@ -95,6 +95,8 @@ var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 var _precision_registered: bool = false
 
+var super_structure: Node3D = null
+
 var id: int = -1
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
@@ -814,6 +816,7 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		elif node.name.to_lower().contains("superstructure"):
 			armor_part.type = ArmorPart.Type.SUPERSTRUCTURE
 			armor_part.hp_part = hp.superstructure
+			super_structure = node
 		elif node.name.to_lower().contains("citadel"):
 			armor_part.type = ArmorPart.Type.CITADEL
 			armor_part.hp_part = hp.citadel

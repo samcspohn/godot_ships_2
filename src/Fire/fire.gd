@@ -28,10 +28,11 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		curr_buildup += a + 0.33 * (randf() - 0.5) # add some randomness to buildup
 		# last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate, last_hit_time)
-		var block_duration = a * 0.5
-		var this_hit_time = Time.get_ticks_msec() / 1000.0
-		if last_hit_time < this_hit_time + block_duration:
-			last_hit_time = this_hit_time + block_duration
+		# var block_duration = a * 0.5
+		# var this_hit_time = Time.get_ticks_msec() / 1000.0
+		# if last_hit_time < this_hit_time + block_duration:
+		# 	last_hit_time = this_hit_time + block_duration
+		block_time = max(block_time, a * 0.5)
 		var random_threshold = _rparams.max_buildup * 0.67
 		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
 
@@ -76,9 +77,11 @@ func _physics_process(_delta: float) -> void:
 					var zone_index := manager.fires.find(self)
 					ReplayRecorder.record_fire_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
-		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time < Time.get_ticks_msec() / 1000.0: # last hit is decay time
+		elif sec_tic and curr_buildup < _rparams.max_buildup and block_time <= 0: # last hit is decay time
 			curr_buildup -= _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
+		else:
+			block_time = max(block_time - _delta / _rparams.reduction_block_rate, 0.0)
 
 func damage(delta):
 	if hp.is_alive():

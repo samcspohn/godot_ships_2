@@ -9,6 +9,7 @@ var curr_buildup: float = 0
 var lifetime: float = 0
 var manager: FloodManager = null
 var last_hit_time: float = 0
+var block_time: float = 0
 
 
 var _params: DOTParams:
@@ -27,7 +28,8 @@ func _apply_build_up(a, __owner: Ship) -> bool:
 	if lifetime <= 0:
 		# curr_buildup += a
 		curr_buildup += a + 0.2 * (randf() - 0.5) # add some randomness to buildup
-		last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.2 * _rparams.reduction_block_rate, last_hit_time)
+		# last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.2 * _rparams.reduction_block_rate, last_hit_time)
+		block_time = max(block_time, a * 0.2)
 		var random_threshold = _rparams.max_buildup * 0.67
 		var rand_value = clamp((curr_buildup - random_threshold) / (_rparams.max_buildup * 0.33),0.0,1.0)
 
@@ -72,9 +74,11 @@ func _physics_process(delta: float) -> void:
 					var zone_index := manager.floods.find(self)
 					ReplayRecorder.record_flood_ended(_ship, zone_index)
 					_sync_deactivate.rpc()
-		elif sec_tic and curr_buildup < _rparams.max_buildup and last_hit_time < Time.get_ticks_msec() / 1000.0: # last hit is decay time
+		elif sec_tic and curr_buildup < _rparams.max_buildup and block_time <= 0: # last hit is decay time
 			curr_buildup -= delta * _rparams.max_buildup * _rparams.buildup_reduction_rate
 			curr_buildup = max(curr_buildup, 0.0)
+		else:
+			block_time = max(block_time - delta / _rparams.reduction_block_rate, 0.0)
 
 func damage(delta):
 	if hp.is_alive():

@@ -389,7 +389,7 @@ func _update_auto_target_cache(server: GameServer, max_range: float, manual_acti
 				continue
 			var found_target = false
 			for e: Ship in enemies_in_range:
-				var pos = e.global_position
+				var pos = e.super_structure.global_position
 				if e == target:
 					pos = e.to_global(target_offset)
 				# var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
@@ -438,7 +438,7 @@ func _update_cached_auto_aim(delta: float) -> bool:
 				gun_can_shoot_over_terrain[g] = false
 				auto_active = g.return_to_base(delta) || auto_active
 				continue
-			var pos = e.global_position
+			var pos = e.super_structure.global_position
 			if e == target:
 				pos = e.to_global(target_offset)
 			# var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
