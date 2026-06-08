@@ -13,6 +13,7 @@
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/color.hpp>
 
+#include <cstdint>
 #include <vector>
 #include <unordered_map>
 #include <godot_cpp/variant/vector2.hpp>
@@ -92,6 +93,15 @@ private:
 
 	std::vector<std::vector<int>> shell_grid;
 	std::unordered_map<int, ShellLandingEntry> shell_landings;
+
+	struct ArmorRayCacheEntry {
+		NativeArmorInteraction::RaycastCache rays;
+		uint64_t last_used_frame = 0;
+	};
+	std::unordered_map<uint64_t, ArmorRayCacheEntry> armor_ray_cache;
+
+	uint64_t armor_ray_cache_key(const Ref<ProjectileData> &projectile) const;
+	NativeArmorInteraction::RaycastCache &get_armor_ray_cache(const Ref<ProjectileData> &projectile);
 
 	int  shell_grid_index(float wx, float wz) const;
 	void shell_grid_insert(int shell_id, float wx, float wz);

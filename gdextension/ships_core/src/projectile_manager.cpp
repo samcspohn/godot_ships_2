@@ -219,6 +219,7 @@ void _ProjectileManager::clear_all() {
 
 	// Clear shell landing grid
 	shell_landings.clear();
+	armor_ray_cache.clear();
 	for (size_t i = 0; i < shell_grid.size(); i++) {
 		shell_grid[i].clear();
 	}
@@ -370,6 +371,21 @@ void _ProjectileManager::_init_compute_trails() {
 	int final_id = trail_template.is_valid() ? (int)trail_template->get("template_id") : -1;
 	UtilityFunctions::print(String("ProjectileManager: Using compute shader trails (template_id=%d)").replace("%d",
 		String::num_int64(final_id)));
+}
+
+uint64_t _ProjectileManager::armor_ray_cache_key(const Ref<ProjectileData> &projectile) const {
+	Object *owner = projectile.is_valid() ? projectile->get_owner() : nullptr;
+	return owner != nullptr ? (uint64_t)owner->get_instance_id() : 0ULL;
+}
+
+NativeArmorInteraction::RaycastCache &_ProjectileManager::get_armor_ray_cache(const Ref<ProjectileData> &projectile) {
+	uint64_t key = armor_ray_cache_key(projectile);
+	ArmorRayCacheEntry &entry = armor_ray_cache[key];
+	if (!entry.rays.terrain_ray.is_valid() || !entry.rays.obb_ray.is_valid() || !entry.rays.water_ray.is_valid()) {
+		NativeArmorInteraction::configure_raycast_cache(projectile, precision_physics_world, entry.rays);
+	}
+	entry.last_used_frame = Engine::get_singleton()->get_physics_frames();
+	return entry.rays;
 }
 
 Node *_ProjectileManager::_find_particle_system() {
@@ -640,10 +656,11 @@ void _ProjectileManager::_physics_process(double delta) {
 		p->increment_frame_count();
 
 
-		// Process travel through the native armor interaction path. This avoids the
-		// ProjectileManager -> GDScript ArmorInteraction call boundary in the hot loop.
+		// Process travel through the native armor interaction path. Ray query objects
+		// are cached per owner/exclude set; only from/to is updated per projectile.
+		NativeArmorInteraction::RaycastCache &armor_rays = get_armor_ray_cache(p);
 		ArmorHitResult hit_result = NativeArmorInteraction::process_travel(
-			p, ray_query->get_from(), t, space_state, precision_physics_world, navigation_map);
+			p, ray_query->get_from(), t, space_state, precision_physics_world, navigation_map, armor_rays);
 
 		if (!hit_result.hit) {
 			// If the shell is underwater and process_travel returned null,

@@ -23,7 +23,7 @@ const MUZZLE_EFFECT_THRESHOLD: float = 0.5
 const TRAIL_START_DIST_SQ: float = 15.0 * 15.0
 
 ## Shell trail particle template — same resource the live game uses.
-var _trail_template: ParticleTemplate = preload("res://src/particles/templates/shell_trail_template.tres")
+var _trail_template: ParticleTemplate = preload("res://assets/particles/templates/shell_trail_template.tres")
 
 # _ProjectileManager C++ RPC enum — written by destroy_bullet_rpc into every
 # SHELL_HIT event.  Must stay in sync with the enum in projectile_manager.h.
@@ -336,7 +336,7 @@ func _play_gun_sound(event: Dictionary) -> void:
 
 	var player := AudioStreamPlayer3D.new()
 	player.stream = gun._sound if gun._sound != null \
-			else preload("res://audio/explosion1.wav")
+			else preload("res://assets/audio/explosion1.wav")
 	player.max_polyphony = 4
 	player.unit_size  = 100.0 * sqrt(caliber / 100.0) + 100.0
 	player.max_db     = linear_to_db(gun.volume * (1.0 + gun.variance))

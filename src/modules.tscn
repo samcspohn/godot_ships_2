@@ -9,7 +9,7 @@
 [ext_resource type="PackedScene" uid="uid://blvke4gmq0asw" path="res://src/Fire/fireManager.tscn" id="7_j72gg"]
 [ext_resource type="PackedScene" uid="uid://brasgycy2b0h8" path="res://src/Flood/floodManager.tscn" id="8_flood"]
 [ext_resource type="Script" uid="uid://bigegwv2dexue" path="res://src/concealment/concealment.gd" id="9_exjcu"]
-[ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://Skills/skills_manager.gd" id="9_hnrpx"]
+[ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://src/Skills/skills_manager.gd" id="9_hnrpx"]
 [ext_resource type="Script" uid="uid://kfbekstmxsvi" path="res://src/Upgrades/upgrades.gd" id="9_s01fk"]
 
 [node name="Modules" type="Node3D" unique_id=2063116617]

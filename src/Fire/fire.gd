@@ -23,6 +23,8 @@ var _rparams: ResistanceParams:
 var _owner: Ship = null
 
 func _apply_build_up(a, __owner: Ship) -> bool:
+	if a <= 0:
+		return false
 	if lifetime <= 0:
 		curr_buildup += a + 0.33 * (randf() - 0.5) # add some randomness to buildup
 		# last_hit_time = max(Time.get_ticks_msec() / 1000.0 + a * 0.5 * _rparams.reduction_block_rate, last_hit_time)

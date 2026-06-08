@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
+#include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
 #include <godot_cpp/classes/resource.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/basis.hpp>
@@ -47,13 +48,24 @@ public:
 		ARMOR_SHATTER = 4,
 	};
 
+	struct RaycastCache {
+		Ref<PhysicsRayQueryParameters3D> terrain_ray;
+		Ref<PhysicsRayQueryParameters3D> obb_ray;
+		Ref<PhysicsRayQueryParameters3D> water_ray;
+		Array obb_excludes;
+	};
+
 	static double calculate_de_marre_penetration(double mass_kg, double velocity_ms, double caliber_mm);
+	static void configure_raycast_cache(const Ref<ProjectileData> &projectile,
+		Node *precision_physics_world,
+		RaycastCache &cache);
 	static ArmorHitResult process_travel(const Ref<ProjectileData> &projectile,
 		const Vector3 &prev_pos,
 		double t,
 		PhysicsDirectSpaceState3D *space_state,
 		Node *precision_physics_world,
-		const Ref<NavigationMap> &nav_map);
+		const Ref<NavigationMap> &nav_map,
+		RaycastCache &raycast_cache);
 
 private:
 	struct ShellState {
@@ -93,7 +105,6 @@ private:
 	static constexpr double WATER_DRAG = 2500.0;
 	static constexpr double EPSILON = 0.0002;
 	static constexpr uint32_t OBB_COLLISION_LAYER = 1u << 4;
-	static constexpr double SHIP_CLEAR_HEIGHT = 200.0;
 
 	static ArmorHitResult make_result(HitResult type,
 		const Vector3 &position,
@@ -109,7 +120,6 @@ private:
 	static bool is_owner_or_excluded(Object *ship, Object *owner, const Array &exclude);
 	static Ref<Resource> duplicate_shell_params_with_drag(const Ref<Resource> &params, double drag_multiplier);
 	static Vector3 handle_water_entry(const Vector3 &water_hit, const Vector3 &entry_vel, const Ref<Resource> &params);
-	static bool try_get_water_plane_hit(const Vector3 &prev_pos, const Vector3 &curr_pos, Vector3 &water_hit);
 	static bool should_raycast_terrain(const Ref<NavigationMap> &nav_map,
 		const Vector3 &from,
 		const Vector3 &to);

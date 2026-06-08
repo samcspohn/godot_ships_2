@@ -97,7 +97,7 @@ var _sigma := 1.0
 
 # Citadel ellipse for post-processing (in angular fraction space, set externally)
 var _citadel_h_frac := 0.5   # citadel semi-width as fraction of base_spread
-var _citadel_v_frac := 0.05  # citadel semi-height as fraction of base_spread
+var _citadel_v_frac := 0.1  # citadel semi-height as fraction of base_spread
 
 
 func _init(sigma: float = 1.0) -> void:
@@ -121,6 +121,18 @@ func set_citadel_fractions(h_frac: float, v_frac: float) -> void:
 
 func _new_salvo(sigma: float) -> void:
 	_shell_index = 0
+	var s := maxf(sigma, 0.01)
+	var f_max := 1.0 - exp(-0.5 * s * s)
+
+	#full random
+	# _shuffled_radii.resize(SHELL_COUNT)
+	# _angles.resize(SHELL_COUNT)
+
+	# for i in SHELL_COUNT:
+	# 	_shuffled_radii[i] = minf(sqrt(-2.0 * log(1.0 - randf() * f_max + 1e-12)) / s, 1.0)
+	# 	_angles[i] = randf() * TAU
+	# return
+
 	var half: int = SHELL_COUNT >> 1  # SHELL_COUNT / 2
 
 	# ── Stratified truncated-Gaussian radii in [0, 1], sorted ──
@@ -132,8 +144,7 @@ func _new_salvo(sigma: float) -> void:
 	#     r = sqrt(-2 * ln(1 - u * F_max)) / sigma,  with F_max = 1 - exp(-sigma^2/2)
 	# Stratifying u across [0, 1) gives an even spread of inner (accurate) to
 	# outer (wide) shells. Higher sigma -> radii shrink toward 0 (tighter).
-	var s := maxf(sigma, 0.01)
-	var f_max := 1.0 - exp(-0.5 * s * s)
+
 	var sorted_r := PackedFloat64Array()
 	sorted_r.resize(SHELL_COUNT)
 	for i in SHELL_COUNT:
@@ -246,7 +257,7 @@ func _apply_citadel_guarantee() -> void:
 		# near 0 (median at 25% of v_max).
 		var v_max := eb * sqrt(1.0 - (new_h / ea) * (new_h / ea))
 		var v_sign := 1.0 if randf() < 0.5 else -1.0
-		var new_v := v_sign * pow(randf(), 2.0) * v_max
+		var new_v := v_sign * pow(randf(), 1.6) * v_max
 		_shuffled_radii[closest_idx] = sqrt(new_h * new_h + new_v * new_v)
 		_angles[closest_idx] = atan2(new_v, new_h)
 
@@ -297,10 +308,10 @@ func calculate_dispersed_launch(
 	# var _base_spread: float = minf(
 	# 		dispersion_m / maxf(dist_to_target, 1.0),
 	# 		MAX_DISPERSION_ANGLE_RAD)
-	var rate = (1.0 - (dist_to_target / max_range))
-	rate = clamp(pow(rate, 1.5), 0.0, 1.0)
+	var rate = clamp((1.0 - (dist_to_target / max_range)), -0.5, 1.0)
+	rate = pow(rate, 3.0)
 	var _h_spread: float = rate * h_spread * 2.0 + h_spread
-	var _v_spread: float = rate * v_spread * 0.5 + v_spread
+	var _v_spread: float = rate * v_spread * 1.0 + v_spread
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)

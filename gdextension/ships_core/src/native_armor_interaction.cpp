@@ -207,6 +207,32 @@ Array NativeArmorInteraction::build_obb_excludes(const Ref<ProjectileData> &proj
 	return obb_rids;
 }
 
+void NativeArmorInteraction::configure_raycast_cache(const Ref<ProjectileData> &projectile,
+		Node *precision_physics_world,
+		RaycastCache &cache) {
+	if (!cache.terrain_ray.is_valid()) {
+		cache.terrain_ray.instantiate();
+		cache.terrain_ray->set_hit_back_faces(true);
+		cache.terrain_ray->set_hit_from_inside(false);
+		cache.terrain_ray->set_collision_mask(1);
+	}
+	if (!cache.obb_ray.is_valid()) {
+		cache.obb_ray.instantiate();
+		cache.obb_ray->set_hit_back_faces(true);
+		cache.obb_ray->set_hit_from_inside(true);
+		cache.obb_ray->set_collision_mask(OBB_COLLISION_LAYER);
+	}
+	if (!cache.water_ray.is_valid()) {
+		cache.water_ray.instantiate();
+		cache.water_ray->set_hit_back_faces(true);
+		cache.water_ray->set_hit_from_inside(false);
+		cache.water_ray->set_collision_mask(1 << 3);
+	}
+
+	cache.obb_excludes = build_obb_excludes(projectile, precision_physics_world);
+	cache.obb_ray->set_exclude(cache.obb_excludes);
+}
+
 Ref<Resource> NativeArmorInteraction::duplicate_shell_params_with_drag(const Ref<Resource> &params, double drag_multiplier) {
 	if (!params.is_valid()) {
 		return Ref<Resource>();
@@ -226,23 +252,6 @@ Vector3 NativeArmorInteraction::handle_water_entry(const Vector3 &water_hit, con
 	}
 	double fuze_delay = water_params->get("fuze_delay");
 	return ProjectilePhysicsWithDragV2::calculate_position_at_time(water_hit, entry_vel, fuze_delay, water_params);
-}
-
-bool NativeArmorInteraction::try_get_water_plane_hit(const Vector3 &prev_pos, const Vector3 &curr_pos, Vector3 &water_hit) {
-	if (prev_pos.y < 0.0 || curr_pos.y >= 0.0) {
-		return false;
-	}
-	double dy = (double)curr_pos.y - (double)prev_pos.y;
-	if (std::abs(dy) <= 0.000001) {
-		return false;
-	}
-	double alpha = -(double)prev_pos.y / dy;
-	if (alpha < 0.0 || alpha > 1.0) {
-		return false;
-	}
-	water_hit = prev_pos + (curr_pos - prev_pos) * alpha;
-	water_hit.y = 0.0;
-	return true;
 }
 
 Dictionary NativeArmorInteraction::find_valid_obb_hit(PhysicsDirectSpaceState3D *space_state,
@@ -365,7 +374,8 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 		double t,
 		PhysicsDirectSpaceState3D *space_state,
 		Node *precision_physics_world,
-		const Ref<NavigationMap> &nav_map) {
+		const Ref<NavigationMap> &nav_map,
+		RaycastCache &raycast_cache) {
 	if (!projectile.is_valid()) {
 		return ArmorHitResult();
 	}
@@ -385,33 +395,22 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 		return ArmorHitResult();
 	}
 
-	Vector3 water_hit_pos;
-	bool water_hit = try_get_water_plane_hit(prev_pos, curr_pos, water_hit_pos);
-	bool skip_obb_for_height = std::min((double)prev_pos.y, (double)curr_pos.y) > SHIP_CLEAR_HEIGHT;
-
 	bool use_terrain_physics = should_raycast_terrain(nav_map, extended_from, curr_pos);
 
-	Ref<PhysicsRayQueryParameters3D> terrain_ray;
+	Ref<PhysicsRayQueryParameters3D> terrain_ray = raycast_cache.terrain_ray;
 	if (use_terrain_physics) {
-		terrain_ray.instantiate();
 		terrain_ray->set_from(extended_from);
 		terrain_ray->set_to(curr_pos);
-		terrain_ray->set_hit_back_faces(true);
-		terrain_ray->set_hit_from_inside(false);
-		terrain_ray->set_collision_mask(1);
 	}
 
-	Ref<PhysicsRayQueryParameters3D> obb_ray;
-	if (!skip_obb_for_height) {
-		Array obb_excludes = build_obb_excludes(projectile, precision_physics_world);
-		obb_ray.instantiate();
-		obb_ray->set_from(extended_from);
-		obb_ray->set_to(curr_pos);
-		obb_ray->set_hit_back_faces(true);
-		obb_ray->set_hit_from_inside(true);
-		obb_ray->set_collision_mask(OBB_COLLISION_LAYER);
-		obb_ray->set_exclude(obb_excludes);
-	}
+	Ref<PhysicsRayQueryParameters3D> obb_ray = raycast_cache.obb_ray;
+	obb_ray->set_from(extended_from);
+	obb_ray->set_to(curr_pos);
+	obb_ray->set_exclude(raycast_cache.obb_excludes);
+
+	Ref<PhysicsRayQueryParameters3D> water_ray = raycast_cache.water_ray;
+	water_ray->set_from(extended_from);
+	water_ray->set_to(curr_pos);
 
 	Array projectile_exclude = projectile->get_exclude();
 	Object *projectile_owner = projectile->get_owner();
@@ -422,28 +421,27 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 	}
 	Dictionary obb_result;
 	Object *precision_ship = nullptr;
-	if (!skip_obb_for_height) {
-		if (projectile_owner == nullptr) {
-			obb_result = space_state->intersect_ray(obb_ray);
-		} else {
-			obb_result = find_valid_obb_hit(space_state, obb_ray, precision_physics_world,
-				projectile_owner, projectile_exclude, &precision_ship);
-		}
+	if (projectile_owner == nullptr) {
+		obb_result = space_state->intersect_ray(obb_ray);
+	} else {
+		obb_result = find_valid_obb_hit(space_state, obb_ray, precision_physics_world,
+			projectile_owner, projectile_exclude, &precision_ship);
 	}
+	Dictionary water_result = space_state->intersect_ray(water_ray);
 
 	if (projectile_owner == nullptr) {
 		double terrain_dist = INF_DIST;
 		double water_dist = INF_DIST;
 		double obb_dist = INF_DIST;
 		if (!terrain_result.is_empty()) terrain_dist = prev_pos.distance_squared_to((Vector3)terrain_result["position"]);
-		if (water_hit) water_dist = prev_pos.distance_squared_to(water_hit_pos);
+		if (!water_result.is_empty()) water_dist = prev_pos.distance_squared_to((Vector3)water_result["position"]);
 		if (!obb_result.is_empty()) obb_dist = prev_pos.distance_squared_to((Vector3)obb_result["position"]);
 
 		if (terrain_dist <= water_dist && terrain_dist <= obb_dist && terrain_dist < INF_DIST) {
 			return make_result(TERRAIN, terrain_result["position"], nullptr, Vector3(), nullptr, terrain_result["normal"]);
 		}
 		if (water_dist <= obb_dist && water_dist < INF_DIST) {
-			return make_result(WATER, water_hit_pos, nullptr, Vector3(), nullptr, Vector3());
+			return make_result(WATER, water_result["position"], nullptr, Vector3(), nullptr, Vector3());
 		}
 		return ArmorHitResult();
 	}
@@ -463,8 +461,8 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 	if (!precision_hit.is_empty()) {
 		precision_dist = prev_pos.distance_squared_to((Vector3)precision_hit["world_pos"]);
 	}
-	if (water_hit) {
-		water_dist = prev_pos.distance_squared_to(water_hit_pos);
+	if (!water_result.is_empty()) {
+		water_dist = prev_pos.distance_squared_to((Vector3)water_result["position"]);
 	}
 
 	if (terrain_dist <= precision_dist && terrain_dist <= water_dist && terrain_dist < INF_DIST) {
@@ -482,10 +480,11 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 	bool hit_water = false;
 	if (water_dist <= precision_dist && water_dist < INF_DIST) {
 		hit_water = true;
-		Vector3 water_pos = water_hit_pos;
+		Vector3 water_pos = water_result["position"];
 		Vector3 fuzed_position = handle_water_entry(water_pos, precision_vel, projectile->get_params());
 		obb_ray->set_from(water_pos);
 		obb_ray->set_to(fuzed_position);
+		obb_ray->set_exclude(raycast_cache.obb_excludes);
 		Dictionary obb_result_underwater = find_valid_obb_hit(space_state, obb_ray, precision_physics_world,
 			projectile_owner, projectile_exclude, &precision_ship);
 		if (!obb_result_underwater.is_empty() && precision_physics_world != nullptr && precision_ship != nullptr) {
