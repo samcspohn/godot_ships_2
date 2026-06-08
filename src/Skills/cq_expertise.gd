@@ -64,7 +64,7 @@ func from_bytes(data: PackedByteArray):
 	enabled = reader.get_u8()
 
 func init_ui(container: Control):
-	var _ui = load("res://Skills/skill_ui/cq_expert.tscn")
+	var _ui = load("res://src/Skills/skill_ui/cq_expert.tscn")
 	var ui = _ui.instantiate()
 	container.add_child(ui)
 

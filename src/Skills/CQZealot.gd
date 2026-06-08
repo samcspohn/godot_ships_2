@@ -12,28 +12,30 @@ func _init():
 		{"stat": "Reload (each additional enemy)", "value": "-%.1f%% (mult.)" % (reload_per_additional_enemy * 100), "positive": true},
 		{"stat": "Main Gun Range", "value": fmt_mult_pct(base_range_modifier), "positive": false},
 		{"stat": "Reload Penalty (no enemies)", "value": fmt_mult_pct(base_reload_modifier), "positive": false},
-		{"stat": "Spread Penalty (no enemies)", "value": fmt_mult_pct(base_spread_modifier), "positive": false},
+		{"stat": "Spread Penalty", "value": fmt_mult_pct(base_spread_modifier), "positive": false},
 	]
 
 # buffs
-const reload_per_additional_enemy = 0.025
+const reload_per_additional_enemy = 0.05
 const reload_for_one_enemy = 0.9
 
 # nerfs
 const base_range_modifier = 0.95
-const base_reload_modifier = 1.15
-const base_spread_modifier = 1.1
+const base_reload_modifier = 1.1
+const base_spread_modifier = 1.05
 var reload_modifier = base_reload_modifier
-var spread_modifier = base_spread_modifier
+# var spread_modifier = base_spread_modifier
 func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
 	main.reload_time *= reload_modifier
 	main._range *= base_range_modifier
-	main.h_spread *= spread_modifier
-	main.v_spread *= spread_modifier
+	main.h_spread *= base_spread_modifier
+	main.v_spread *= base_spread_modifier
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.params.dynamic_mod as GunParams
 		sec_params.reload_time *= reload_modifier
+		sec_params.h_spread *= base_spread_modifier
+		sec_params.v_spread *= base_spread_modifier
 
 
 var num_enemies = 0
@@ -55,12 +57,12 @@ func _proc(_delta: float) -> void:
 		num_enemies = enemies.size()
 		if num_enemies == 0:
 			reload_modifier = base_reload_modifier
-			spread_modifier = base_spread_modifier
+			# spread_modifier = base_spread_modifier
 		# elif num_enemies == 1:
 		# 	reload_modifier = 0.9
 		else:
 			reload_modifier = pow(1.0 - reload_per_additional_enemy, num_enemies - 1) * reload_for_one_enemy
-			spread_modifier = 1.0
+			# spread_modifier = 1.0
 
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)
@@ -95,10 +97,10 @@ func _proc(_delta: float) -> void:
 func preview_with_enemies(n: int) -> void:
 	if n == 0:
 		reload_modifier = base_reload_modifier
-		spread_modifier = base_spread_modifier
+		# spread_modifier = base_spread_modifier
 	else:
 		reload_modifier = pow(1.0 - reload_per_additional_enemy, n - 1) * reload_for_one_enemy
-		spread_modifier = 1.0
+		# spread_modifier = 1.0
 	if _ship != null:
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)

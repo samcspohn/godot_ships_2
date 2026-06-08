@@ -182,7 +182,7 @@ func from_bytes(data: PackedByteArray) -> void:
 # ── Battle HUD indicator ──────────────────────────────────────────────────────
 
 func init_ui(control: Control) -> void:
-	var ui: PackedScene = load("res://Skills/skill_ui/precision_lock.tscn")
+	var ui: PackedScene = load("res://src/Skills/skill_ui/precision_lock.tscn")
 	var root := ui.instantiate()
 	var desired_size := 30.0
 	var texture_size := 256.0

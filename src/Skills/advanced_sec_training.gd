@@ -1,10 +1,12 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.4
+const max_grouping_bonus = 0.6
 const max_spread_bonus = 0.5
 const target_switch_penalty = 0.15
 const RELOAD_MOD: float = 0.9
+const SPREAD_MOD: float = 0.90
+const GROUPING_MOD: float = 0.2
 
 var grouping_multiplier: float = 0.0
 var spread_multiplier: float = 1.0
@@ -20,7 +22,7 @@ func _init():
 		# {"stat": "Secondary Range (static)",    "value": "+5%",                                      "positive": true},
 		{"stat": "Secondary Reload (static)",   "value": fmt_mult_pct(RELOAD_MOD),                   "positive": true},
 		{"stat": "Secondary Grouping (max)",    "value": "+%.0f%%" % (max_grouping_bonus * 100),       "positive": true},
-		{"stat": "Secondary Spread (max buildup)", "value": "-%.0f%%" % (max_spread_bonus * 100),     "positive": true},
+		{"stat": "Secondary Spread (max buildup)", "value": "-%.1f" % (max_spread_bonus),     "positive": true},
 		{"stat": "Buildup Time",                "value": "%.0f s" % accuracy_buildup_time},
 		{"stat": "Time Before Decay",           "value": "%.0f s" % accuracy_decay_time},
 		{"stat": "Decay Time",                  "value": "%.0f s" % accuracy_falloff_time},
@@ -35,6 +37,9 @@ func _a(ship: Ship):
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
+		params.grouping += GROUPING_MOD
+		params.h_spread *= SPREAD_MOD
+		params.v_spread *= SPREAD_MOD
 		# params.h_spread *= 0.90
 		# params.v_spread *= 0.90
 
@@ -79,7 +84,7 @@ func _proc(_delta: float) -> void:
 		_ship.add_dynamic_mod(_a)
 
 func init_ui(control):
-	var ui: PackedScene = load("res://Skills/skill_ui/adv_sec_training.tscn")
+	var ui: PackedScene = load("res://src/Skills/skill_ui/adv_sec_training.tscn")
 	var progress = ui.instantiate()
 	var desired_size := 30.0
 	var texture_size := 256.0

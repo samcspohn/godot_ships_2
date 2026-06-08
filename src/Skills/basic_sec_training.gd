@@ -5,9 +5,9 @@ extends Skill
 ## tighter spread, faster reload, longer reach, and sharper priority-target focus.
 
 const RELOAD_MOD:  float = 0.95   # -5% reload time
-const SPREAD_MOD:  float = 0.95   # -5% base spread
+const SPREAD_MOD:  float = 0.9   # -10% base spread
 const RANGE_MOD:   float = 1.10   # +10% range
-const PRIORITY_TARGET_SPREAD_MOD: float = 0.95  # -5% spread when aiming at priority target
+const PRIORITY_TARGET_SPREAD_MOD: float = 0.9  # -10% spread when aiming at priority target
 
 
 func _init() -> void:
@@ -26,8 +26,8 @@ func _init() -> void:
 func _a(ship: Ship) -> void:
 	# ship.secondary_controller.priority_target_dispersion.period = PT_PERIOD
 	var sec_ctrl: SecondaryController_ = ship.secondary_controller
-	(sec_ctrl.target_mod.dynamic_mod as TargetMod).h_spread *= 0.95
-	(sec_ctrl.target_mod.dynamic_mod as TargetMod).v_spread *= 0.95
+	(sec_ctrl.target_mod.dynamic_mod as TargetMod).h_spread *= PRIORITY_TARGET_SPREAD_MOD
+	(sec_ctrl.target_mod.dynamic_mod as TargetMod).v_spread *= PRIORITY_TARGET_SPREAD_MOD
 	for sec: SecSubController in sec_ctrl.sub_controllers:
 		var params := sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
