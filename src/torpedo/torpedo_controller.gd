@@ -25,6 +25,8 @@ func get_weapon_ui() -> Array[Button]:
 	)
 	return [button]
 
+func get_shell_params() -> TorpedoParams:
+	return null
 func _build_tooltip_text() -> String:
 	var tp := get_torp_params()
 	var lp := get_params()

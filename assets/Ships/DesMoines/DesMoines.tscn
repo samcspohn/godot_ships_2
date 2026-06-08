@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" uid="uid://brjx836dkpsi3" path="res://assets/turrets/AMER_127mm_2b.tscn" id="4_4rujh"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="4_seiyl"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="5_jjc8t"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_40mw7"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_in36t"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="6_t5p80"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="9_08c6r"]
@@ -31,7 +32,7 @@
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="28_e3uhd"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="29_movp"]
 
-[sub_resource type="Resource" id="Resource_8wi57"]
+[sub_resource type="Resource" id="Resource_f6wpl"]
 resource_local_to_scene = true
 script = ExtResource("3_s7tx1")
 citadel_repair = 0.5
@@ -39,42 +40,42 @@ pen_repair = 0.7
 torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_1hsc6"]
+[sub_resource type="Resource" id="Resource_6pn0f"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 14430.0
 pool2 = 144300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_vp8fe"]
+[sub_resource type="Resource" id="Resource_qcn8p"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 8016.666666666667
 pool2 = 16033.333333333334
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_3dafd"]
+[sub_resource type="Resource" id="Resource_slang"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 3206.6666666666665
 pool2 = 6413.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_d6neb"]
+[sub_resource type="Resource" id="Resource_jbscf"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 3206.6666666666665
 pool2 = 6413.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_bsnob"]
+[sub_resource type="Resource" id="Resource_kqusw"]
 resource_local_to_scene = true
 script = ExtResource("3_seiyl")
 pool1 = 4810.0
 pool2 = 9620.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_m8khc"]
+[sub_resource type="Resource" id="Resource_vpkcl"]
 resource_local_to_scene = true
 script = ExtResource("4_seiyl")
 radius = 9000.0
@@ -82,7 +83,7 @@ bloom_duration = 16.0
 unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
-[sub_resource type="Resource" id="Resource_51b1e"]
+[sub_resource type="Resource" id="Resource_4y4a3"]
 resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 762.0
@@ -97,7 +98,7 @@ overmatch = 14
 arming_threshold = 33
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_oonm6"]
+[sub_resource type="Resource" id="Resource_yupck"]
 resource_local_to_scene = true
 script = ExtResource("6_in36t")
 speed = 823.0
@@ -114,13 +115,14 @@ ricochet_angle = 1.5708
 overmatch = 34
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_2m68x"]
+[sub_resource type="Resource" id="Resource_61716"]
 resource_local_to_scene = true
 script = ExtResource("5_jjc8t")
 elevation_speed = 8.2
-shell1 = SubResource("Resource_51b1e")
-shell2 = SubResource("Resource_oonm6")
+shell1 = SubResource("Resource_4y4a3")
+shell2 = SubResource("Resource_yupck")
 grouping = 2.1
+max_dispersion = 150.0
 reload_time = 6.0
 traverse_speed = 6.0
 _range = 13500.0
@@ -135,7 +137,7 @@ turning_circle_radius = 300.0
 turn_speed_loss = 0.1
 rudder_response_time = 5.0
 
-[sub_resource type="Resource" id="Resource_67mgq"]
+[sub_resource type="Resource" id="Resource_wrnye"]
 resource_local_to_scene = true
 script = ExtResource("12_vfelm")
 duration_reduction = 0.2
@@ -147,7 +149,7 @@ duration = 15.0
 max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
-[sub_resource type="Resource" id="Resource_ev4mb"]
+[sub_resource type="Resource" id="Resource_2pjxp"]
 resource_local_to_scene = true
 script = ExtResource("15_xosf1")
 heal_per_sec = 0.015
@@ -186,23 +188,23 @@ use_hull_collision = true
 [node name="Modules" parent="." index="0" unique_id=585287545 instance=ExtResource("2_q1kic")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-params = SubResource("Resource_8wi57")
+params = SubResource("Resource_f6wpl")
 _max_hp = 48100.0
 bow_percent = 0.2
 stern_percent = 0.2
 superstructure_percent = 0.3
 casemate_percent = 0.5
-citadel = SubResource("Resource_1hsc6")
-casemate = SubResource("Resource_vp8fe")
-bow = SubResource("Resource_3dafd")
-stern = SubResource("Resource_d6neb")
-superstructure = SubResource("Resource_bsnob")
+citadel = SubResource("Resource_6pn0f")
+casemate = SubResource("Resource_qcn8p")
+bow = SubResource("Resource_slang")
+stern = SubResource("Resource_jbscf")
+superstructure = SubResource("Resource_kqusw")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
-params = SubResource("Resource_m8khc")
+params = SubResource("Resource_vpkcl")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_2m68x")
+params = SubResource("Resource_61716")
 guns = [NodePath("../../TurretMount_AMER_203mm_3b_auto_001/AMER_203mm_3b_auto_001"), NodePath("../../TurretMount_AMER_203mm_3b_auto/AMER_203mm_3b_auto"), NodePath("../../TurretMount_AMER_203mm_3b_auto_002/AMER_203mm_3b_auto_002")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
@@ -218,7 +220,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_mvdm")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_67mgq"), SubResource("Resource_ev4mb"), ExtResource("16_e3uhd"), ExtResource("17_8wi57")])
+equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_wrnye"), SubResource("Resource_2pjxp"), ExtResource("16_e3uhd"), ExtResource("17_8wi57")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("12_krgon")]([null, null, null, null, null, null])
@@ -255,70 +257,70 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 47.42891)
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 83.50735)
 
-[node name="Superstructure_col" parent="." index="6" unique_id=369668265]
+[node name="Superstructure_col" parent="." index="6" unique_id=208673036]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col" parent="." index="8" unique_id=1424183451]
+[node name="Barbette_col" parent="." index="8" unique_id=1900332618]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_001" parent="." index="9" unique_id=926605091]
+[node name="Barbette_col_001" parent="." index="9" unique_id=1875906410]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Barbette_col_002" parent="." index="10" unique_id=413908146]
+[node name="Barbette_col_002" parent="." index="10" unique_id=886112933]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="AMER_203mm_3b_auto" parent="TurretMount_AMER_203mm_3b_auto" parent_id_path=PackedInt32Array(1111012653) index="0" unique_id=1956302209 instance=ExtResource("3_6vusf")]
+[node name="AMER_203mm_3b_auto" parent="TurretMount_AMER_203mm_3b_auto" parent_id_path=PackedInt32Array(687881809) index="0" unique_id=1956302209 instance=ExtResource("3_6vusf")]
 slew_min_angle = 3.735004599267865
 slew_max_angle = 2.583087292951608
 
-[node name="AMER_203mm_3b_auto_001" parent="TurretMount_AMER_203mm_3b_auto_001" parent_id_path=PackedInt32Array(1304027666) index="0" unique_id=251681090 instance=ExtResource("3_6vusf")]
+[node name="AMER_203mm_3b_auto_001" parent="TurretMount_AMER_203mm_3b_auto_001" parent_id_path=PackedInt32Array(1996056544) index="0" unique_id=251681090 instance=ExtResource("3_6vusf")]
 slew_min_angle = 3.717551306747922
 slew_max_angle = 2.565634000431664
 
-[node name="AMER_203mm_3b_auto_002" parent="TurretMount_AMER_203mm_3b_auto_002" parent_id_path=PackedInt32Array(293639752) index="0" unique_id=1416805328 instance=ExtResource("3_6vusf")]
+[node name="AMER_203mm_3b_auto_002" parent="TurretMount_AMER_203mm_3b_auto_002" parent_id_path=PackedInt32Array(247450184) index="0" unique_id=1416805328 instance=ExtResource("3_6vusf")]
 slew_min_angle = 0.5235987755982988
 slew_max_angle = 5.759586531581287
 
-[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(1140333132) index="0" unique_id=1615687452 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(658281897) index="0" unique_id=1615687452 instance=ExtResource("4_4rujh")]
 slew_min_angle = 3.8048177693476384
 slew_max_angle = 2.4609142453120048
 
-[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" parent_id_path=PackedInt32Array(1130327006) index="0" unique_id=682537352 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" parent_id_path=PackedInt32Array(1159950247) index="0" unique_id=682537352 instance=ExtResource("4_4rujh")]
 slew_min_angle = 3.7000980142279785
 slew_max_angle = 0.01745329251994329
 
-[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" parent_id_path=PackedInt32Array(1545097879) index="0" unique_id=1985526730 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" parent_id_path=PackedInt32Array(1476811678) index="0" unique_id=1985526730 instance=ExtResource("4_4rujh")]
 slew_min_angle = 3.1590459461097367
 slew_max_angle = 5.777039824101231
 
-[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" parent_id_path=PackedInt32Array(1745884512) index="0" unique_id=948304072 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" parent_id_path=PackedInt32Array(748193101) index="0" unique_id=948304072 instance=ExtResource("4_4rujh")]
 slew_min_angle = 0.6130340650300443
 slew_max_angle = 5.670813783287063
 
-[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" parent_id_path=PackedInt32Array(831652110) index="0" unique_id=2100547642 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" parent_id_path=PackedInt32Array(295834203) index="0" unique_id=2100547642 instance=ExtResource("4_4rujh")]
 slew_max_angle = 2.670353755551324
 
-[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" parent_id_path=PackedInt32Array(539325956) index="0" unique_id=972041099 instance=ExtResource("4_4rujh")]
+[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" parent_id_path=PackedInt32Array(1793032232) index="0" unique_id=972041099 instance=ExtResource("4_4rujh")]
 slew_min_angle = 0.6108652381980153
 slew_max_angle = 3.138127185371957
 
-[node name="Hull_Bow_col" parent="." index="20" unique_id=1757293166]
+[node name="Hull_Bow_col" parent="." index="20" unique_id=705064418]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Casemate_col" parent="." index="22" unique_id=1968771667]
+[node name="Hull_Casemate_col" parent="." index="22" unique_id=338684398]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Stern_col" parent="." index="24" unique_id=1673476344]
+[node name="Hull_Stern_col" parent="." index="24" unique_id=1836682327]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 
-[node name="Hull_Citadel_col" parent="." index="26" unique_id=686967247]
+[node name="Hull_Citadel_col" parent="." index="26" unique_id=1736309786]
 layers = 0
 material_override = ExtResource("2_iwiyp")
 

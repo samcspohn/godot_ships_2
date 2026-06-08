@@ -104,7 +104,7 @@ func _process(_delta: float) -> void:
 				var team = {}
 				var client_data = connecting_clients[single_player_client]
 
-				if false:
+				if true:
 					team = create_balanced_single_player_teams(client_data["player_name"], client_data["ship"])
 				elif false:
 					# --- TEMPORARY: player ship on team 0, H44 bot on team 1 ---

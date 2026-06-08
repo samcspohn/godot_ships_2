@@ -9,7 +9,7 @@ extends Skill
 ## the mod layer is refreshed. _proc heals every physics tick and re-bakes
 ## the mod layer only when the HP-lost percentage drifts by ≥ 0.5 %.
 
-const REGEN_COEFF: float = 0.0015
+const REGEN_COEFF: float = 0.002
 const FIRE_MOD: float = 0.9
 const FLOOD_MOD: float = 0.9
 const REGEN_TIMEOUT: float = 30.0
@@ -28,7 +28,7 @@ func _init() -> void:
 	exclusive_group = "ultimate"
 	flavor_text = "The more they break it, the harder it fights back. Regen pauses after %.0fs without taking potential damage." % REGEN_TIMEOUT
 	tooltip_stats = [
-		{"stat": "HP Regen (per 1% HP lost)", "value": "+%.4f%% max HP/s" % REGEN_COEFF, "positive": true},
+		{"stat": "HP Regen (per 1% HP lost)", "value": "+%.1f%% max HP/s" % (REGEN_COEFF * 100), "positive": true},
 		{"stat": "Fire DPS",                  "value": fmt_mult_pct(FIRE_MOD),            "positive": true},
 		{"stat": "Flood DPS",                 "value": fmt_mult_pct(FLOOD_MOD),           "positive": true},
 		{"stat": "DC/RP Duration",            "value": fmt_mult_pct(DC_RP_DUR_MOD),      "positive": false},

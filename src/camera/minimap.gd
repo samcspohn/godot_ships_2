@@ -403,9 +403,12 @@ func _on_canvas_draw() -> void:
 		return part.type == ArmorPart.Type.SUPERSTRUCTURE)
 	ship_pos.y += ship.armor_parts[super_idx].position.y
 	var params = player_controller.current_weapon_controller.get_shell_params()
-	var launch_vector = ProjectilePhysicsWithDragV2.calculate_launch_vector(ship.global_position, aim_point, params)
-	if launch_vector[0] != null:
-		_aim_point = ProjectilePhysicsWithDragV2.calculate_impact_position(ship.global_position, launch_vector[0], params)
+	if params != null:
+		var launch_vector = ProjectilePhysicsWithDragV2.calculate_launch_vector(ship.global_position, aim_point, params)
+		if launch_vector[0] != null:
+			_aim_point = ProjectilePhysicsWithDragV2.calculate_impact_position(ship.global_position, launch_vector[0], params)
+		else:
+			_aim_point = aim_point
 	else:
 		_aim_point = aim_point
 
