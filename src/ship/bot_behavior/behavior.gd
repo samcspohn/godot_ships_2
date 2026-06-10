@@ -506,69 +506,57 @@ func _get_overextension_score(enemy: Ship) -> float:
 
 # 	return best_target
 
+var potential_target_weight_cache: Dictionary = {}  # Ship -> float
 func get_potential_target_weight(target: Ship) -> float:
-	var weight = 0.0
+	if potential_target_weight_cache.has(target):
+		return potential_target_weight_cache[target]
 	var my_range = _ship.artillery_controller.get_params()._range
+	var hp_ratio = target.health_controller.current_hp / target.health_controller.max_hp
 
-	# var weights = get_target_weights()
-	# var gun_range = _ship.artillery_controller.get_params()._range
-	# var disp = target.global_position - _ship.global_position
-	# var dist = disp.length()
-	# var angle = (-target.basis.z).angle_to(disp)
-	# var hp_ratio = target.health_controller.current_hp / target.health_controller.max_hp
+	# Prefer close targets; falls off exponentially beyond gun range
+	var weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
 
-	# if weights.prefer_broadside:
-	# 	weight = target.movement_controller.ship_length / dist * abs(sin(angle)) + target.movement_controller.ship_beam / dist * abs(cos(angle))
-	# else:
-	# 	weight = target.movement_controller.ship_length / dist
+	# Prefer targets presenting a large side profile (easier to hit)
+	var target_heading = target.global_transform.basis.z.normalized()
+	var to_target = (target.global_position - _ship.global_position).normalized()
+	var angle = target_heading.angle_to(to_target)
+	var side_profile = target.movement_controller.ship_length * abs(sin(angle)) + target.movement_controller.ship_beam * abs(cos(angle))
+	weight *= side_profile * 0.01
 
-	# # Apply class modifier
-	# var class_mods: Dictionary = weights.class_modifiers
-	# if class_mods.has(target.ship_class):
-	# 	weight *= class_mods[target.ship_class]
+	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
+	weight *= maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
 
-	# # Combine with range and HP weights
-	# var size_contrib = weight * weights.size_weight
-	# var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
-	# var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
-	# weight = size_contrib + range_contrib + hp_contrib
+	# Prefer high-threat targets
+	weight += target.stats.total_damage * (1.0 / 100_000.0)
 
-	# # Boost targets within range
-	# if dist <= gun_range:
-	# 	weight *= weights.in_range_multiplier
-	var hp = target.health_controller.current_hp
-	var hp_ratio = hp / target.health_controller.max_hp
-	weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
-	# if can_hit_target(target):
-	# 	weight *= 10.0
-	# if target.visible_to_enemy:
-	# 	weight *= 10.0
-
+	potential_target_weight_cache[target] = weight
 	return weight
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
-	var new_target = null
-	var target_weight = 0.0
-	var last_target_weight = INF
-	if last_target != null and last_target.is_alive() and last_target.visible_to_enemy and can_hit_target(last_target):
-		last_target_weight = get_potential_target_weight(last_target)
-		new_target = last_target
-		target_weight = last_target_weight
+	potential_target_weight_cache.clear()
 	targets.sort_custom(func(a: Ship, b: Ship) -> bool:
-		return a.global_position.distance_to(_ship.global_position) < b.global_position.distance_to(_ship.global_position)
+		return get_potential_target_weight(a) > get_potential_target_weight(b)
 	)
-	if new_target != null:
-		new_target = targets[0] if targets.size() > 0 else null
 
+	# Find the highest-weight target that is visible and can be shot at
+	var best: Ship = null
 	for potential in targets:
-		# if potential.visible_to_enemy and not can_hit_target(potential):
-		# 	continue
-		var weight = get_potential_target_weight(potential)
-		if abs(weight - last_target_weight) > 0.1 and weight > target_weight and potential.visible_to_enemy and can_hit_target(potential):
-			new_target = potential
-			target_weight = weight
-			break;
-	return new_target
+		if potential.visible_to_enemy and can_hit_target(potential):
+			best = potential
+			break
+
+	if best == null:
+		return null
+
+	# Keep the current target unless a significantly better one exists (25% threshold)
+	if last_target != null and last_target.is_alive() \
+			and last_target.visible_to_enemy and can_hit_target(last_target):
+		var last_weight = get_potential_target_weight(last_target)
+		var best_weight = get_potential_target_weight(best)
+		if best_weight <= last_weight * 1.25:
+			return last_target
+
+	return best
 
 
 func pick_ammo(target: Ship) -> int:

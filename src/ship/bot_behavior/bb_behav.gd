@@ -260,7 +260,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 				_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
 		else:
-			if threat < 0.4 or _nearest_dist > gun_range:
+			if threat < 0.5 or _nearest_dist > gun_range:
 				intent = _skill_flank.execute(ctx, {})
 				if intent:
 					_active_skill_name = &"Flank"
@@ -268,16 +268,17 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			# 	intent = _skill_push.execute(ctx, {})
 			# 	if intent:
 			# 		_active_skill_name = &"Push"
-			elif threat < 0.5:
-				intent = _skill_camp.execute(ctx, {"here": true})
+			elif threat < 0.7:
+				# intent = _skill_camp.execute(ctx, {"here": true})
+				_skill_cover.execute(ctx, {})
 				if intent:
-					_active_skill_name = &"Camp"
+					_active_skill_name = &"FindCover"
 			else:
 				# if _nearest_dist > gun_range:
 				# 	intent
 
 				var cover_intent = _skill_cover.execute(ctx, {})
-				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty() or nearest_threat_dist > 8000.0):
+				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty()) and nearest_threat_dist > 8000.0:
 					intent = cover_intent
 					_active_skill_name = &"FindCover"
 				else:

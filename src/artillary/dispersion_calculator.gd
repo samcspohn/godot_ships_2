@@ -206,7 +206,7 @@ func _apply_citadel_guarantee() -> void:
 		var h_frac := _h_offsets[closest_idx]
 		var new_h: float
 		if absf(h_frac) > ea:
-			new_h = signf(h_frac) * ea * sqrt(randf())
+			new_h = signf(h_frac) * ea * pow(randf(), 1.0)
 		else:
 			new_h = h_frac
 		var v_max := eb * sqrt(1.0 - (new_h / ea) * (new_h / ea))

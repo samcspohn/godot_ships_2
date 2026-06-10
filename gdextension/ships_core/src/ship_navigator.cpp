@@ -725,11 +725,10 @@ float ShipNavigator::throttle_to_speed(int throttle) const {
 }
 
 float ShipNavigator::get_reach_radius() const {
-	// float base = params.ship_length;
-	// float speed_factor = std::abs(state.current_speed) * 2.0f;
-	// float turn_factor = params.turning_circle_radius * 0.3f;
-	// return std::max(base, std::min(turn_factor, speed_factor));
-	return params.turning_circle_radius;
+	// A waypoint is consumed once the ship is within one hull-length of it.
+	// Using turning_circle_radius caused corner waypoints to be consumed a
+	// full TCR before the ship reached the corner, starting turns too early.
+	return params.ship_length;
 }
 
 void ShipNavigator::set_steering_output(float rudder, int throttle, bool collision) {
@@ -1444,7 +1443,9 @@ void ShipNavigator::update_emergency(float delta) {
 // ============================================================================
 
 void ShipNavigator::run_plan_sync() {
-	const float plan_min_clearance = get_ship_clearance();
+	// Add 100 m buffer on top of the hard hull clearance so waypoints are
+	// placed well away from terrain, giving the arc planner room to manoeuvre.
+	const float plan_min_clearance = get_ship_clearance() + 100.0f;
 
 	// -----------------------------------------------------------------------
 	// HPA* path (primary): threat-aware hierarchical A*.
@@ -2471,8 +2472,6 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 	// Project actual velocity onto forward and lateral axes
 	// lateral > 0 means drifting to starboard
 	float sim_lateral_speed = state.velocity.x * lat_x0 + state.velocity.y * lat_z0;
-	// Drag decay rate — matches Godot's linear_damp applied uniformly
-	float lateral_drag = std::max(params.linear_drag, 0.01f);
 
 	float target_speed_val = throttle_to_speed(commanded_throttle);
 
@@ -2490,6 +2489,10 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 	float min_expected_speed = std::max(std::abs(state.current_speed), params.max_speed * 0.25f);
 	float time_for_lookahead = lookahead_distance / std::max(min_expected_speed, 1.0f);
 	float effective_max_time = std::max(30.0f, time_for_lookahead * 1.2f);
+
+	// Bow-pivot fractions mirror ShipMovementV4 constants.
+	constexpr float BOW_PIVOT_FRACTION_LOW  = 0.9f;
+	constexpr float BOW_PIVOT_FRACTION_HIGH = 1.1f;
 
 	while (total_distance < lookahead_distance && sim_time < effective_max_time) {
 		float dt = integration_dt;
@@ -2512,8 +2515,6 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 
 		float effective_speed = sim_speed * (1.0f - params.turn_speed_loss * std::abs(sim_rudder));
 
-		float prev_heading = sim_heading;
-
 		float omega = 0.0f;
 		if (params.turning_circle_radius > 0.001f) {
 			omega = (effective_speed / params.turning_circle_radius) * (-sim_rudder);
@@ -2522,18 +2523,16 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_internal(float commanded_rudder
 		sim_heading += omega * dt;
 		sim_heading = normalize_angle(sim_heading);
 
-		// --- Drift model integration ---
-		// When the heading rotates, velocity that was "forward" partially becomes
-		// "lateral" from the new heading's perspective.  This models the inertia
-		// mismatch: the hull rotates but the velocity vector lags behind.
-		float heading_delta = sim_heading - prev_heading;
-		// Rotate lateral speed by the heading change:
-		//   new_lateral ≈ old_lateral * cos(dh) + forward_speed * sin(dh)
-		// For small dh this is: old_lateral + forward_speed * dh
-		sim_lateral_speed = sim_lateral_speed * std::cos(heading_delta)
-						  + effective_speed * std::sin(heading_delta);
-		// Decay lateral speed via drag (exponential decay matching Godot linear_damp)
-		sim_lateral_speed *= std::exp(-lateral_drag * dt);
+		// --- Bow-pivot lateral velocity model (matches ShipMovementV4) ---
+		// The kinematic pivot sits (ship_length/2 * bow_pivot_fraction) ahead of the COM.
+		// drift_scale ramps 0→1 with speed, gating the pivot effect at low speed.
+		// target_lat_vel = omega * pivot_dist, matching GDScript's target_lat_vel exactly.
+		// Lateral speed converges to target with time constant = rudder_response_time,
+		// matching GDScript: pivot_force = lat_vel_error * mass / rudder_response_time.
+		float drift_scale = std::min(1.0f, std::max(0.0f, std::abs(sim_speed) / std::max(params.max_speed, 0.1f)));
+		float bow_pivot_fraction = BOW_PIVOT_FRACTION_LOW + (BOW_PIVOT_FRACTION_HIGH - BOW_PIVOT_FRACTION_LOW) * drift_scale;
+		float target_lat_vel = omega * (params.ship_length * 0.5f) * bow_pivot_fraction * drift_scale;
+		sim_lateral_speed += (target_lat_vel - sim_lateral_speed) * (1.0f - std::exp(-dt / std::max(params.rudder_response_time, 0.01f)));
 
 		// Forward movement along heading + lateral drift perpendicular to heading
 		float cur_fwd_x = std::sin(sim_heading);
@@ -2581,7 +2580,6 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	float lat_x0 = fwd_z0;
 	float lat_z0 = -fwd_x0;
 	float sim_lateral_speed = state.velocity.x * lat_x0 + state.velocity.y * lat_z0;
-	float lateral_drag = std::max(params.linear_drag, 0.01f);
 
 	float target_speed_val = throttle_to_speed(commanded_throttle);
 
@@ -2601,10 +2599,9 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 	const float alignment_threshold = 0.087f;
 	bool rudder_settled = false;
 
-	// Precompute loop-invariant lateral drag decay factor.
-	// dt is integration_dt for every step except possibly the very last
-	// (clamped to max_time), so the tiny error on that one step is negligible.
-	const float exp_decay = std::exp(-lateral_drag * integration_dt);
+	// Bow-pivot fractions mirror ShipMovementV4 constants.
+	constexpr float BOW_PIVOT_FRACTION_LOW  = 0.9f;
+	constexpr float BOW_PIVOT_FRACTION_HIGH = 1.1f;
 
 	// Simulate at the commanded rudder until the bow aligns with the direction
 	// to target_pos, then stop.  Remaining travel is estimated analytically in
@@ -2638,8 +2635,6 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 		float effective_speed = sim_speed * (1.0f - params.turn_speed_loss * std::abs(sim_rudder));
 
-		float prev_heading = sim_heading;
-
 		float omega = 0.0f;
 		if (params.turning_circle_radius > 0.001f) {
 			omega = (effective_speed / params.turning_circle_radius) * (-sim_rudder);
@@ -2648,11 +2643,11 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 		sim_heading += omega * dt;
 		sim_heading = normalize_angle(sim_heading);
 
-		// --- Drift model integration ---
-		float heading_delta = sim_heading - prev_heading;
-		sim_lateral_speed = sim_lateral_speed * std::cos(heading_delta)
-						  + effective_speed * std::sin(heading_delta);
-		sim_lateral_speed *= exp_decay;
+		// --- Bow-pivot lateral velocity model (matches ShipMovementV4) ---
+		float drift_scale = std::min(1.0f, std::max(0.0f, std::abs(sim_speed) / std::max(params.max_speed, 0.1f)));
+		float bow_pivot_fraction = BOW_PIVOT_FRACTION_LOW + (BOW_PIVOT_FRACTION_HIGH - BOW_PIVOT_FRACTION_LOW) * drift_scale;
+		float target_lat_vel = omega * (params.ship_length * 0.5f) * bow_pivot_fraction * drift_scale;
+		sim_lateral_speed += (target_lat_vel - sim_lateral_speed) * (1.0f - std::exp(-dt / std::max(params.rudder_response_time, 0.01f)));
 
 		float cur_fwd_x = std::sin(sim_heading);
 		float cur_fwd_z = std::cos(sim_heading);
