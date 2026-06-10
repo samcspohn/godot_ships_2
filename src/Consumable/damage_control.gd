@@ -55,6 +55,7 @@ func _get_stat_lines(_ship: Ship = null) -> Array[String]:
 
 func to_bytes() -> PackedByteArray:
 	var writer := StreamPeerBuffer.new()
+	writer.put_var(super.to_bytes())
 	writer.put_float(dynamic_mod.duration_reduction)
 	writer.put_float(dynamic_mod.damage_reduction)
 	return writer.get_data_array()
@@ -62,5 +63,6 @@ func to_bytes() -> PackedByteArray:
 func from_bytes(data: PackedByteArray) -> void:
 	var reader := StreamPeerBuffer.new()
 	reader.data_array = data
+	super.from_bytes(reader.get_var())
 	dynamic_mod.duration_reduction = reader.get_float()
 	dynamic_mod.damage_reduction = reader.get_float()

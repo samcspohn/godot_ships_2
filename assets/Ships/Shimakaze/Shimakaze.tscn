@@ -23,6 +23,7 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="13_fjgfy"]
 [ext_resource type="PackedScene" uid="uid://b1v7uh5a6feq1" path="res://assets/turrets/IJN_610mm_5t.tscn" id="13_q7yd3"]
 [ext_resource type="Script" uid="uid://ckumdqdogqvlk" path="res://src/torpedo/torpedo_params.gd" id="14_56jcx"]
+[ext_resource type="Resource" uid="uid://rly4o8ba4wru" path="res://src/Consumable/Registry/DEFAULT_SMOKE.tres" id="20_v7rh5"]
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="22_2by4h"]
 [ext_resource type="Script" uid="uid://c85tkqlgxtug4" path="res://src/ship/wake.gd" id="22_jewkh"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://assets/particles/templates/torpedo_wake_template.tres" id="23_wake"]
@@ -116,7 +117,7 @@ script = ExtResource("5_o13ib")
 elevation_speed = 5.0
 shell1 = SubResource("Resource_wm6vg")
 shell2 = SubResource("Resource_7xkp8")
-grouping = 2.1
+grouping = 2.25
 h_spread = 0.008
 v_spread = 0.004
 max_dispersion = 100.0
@@ -242,7 +243,7 @@ metadata/_custom_type_script = "uid://c8pq6m1rejha6"
 params = SubResource("Resource_mvsh")
 
 [node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_spx66"), SubResource("Resource_pipf2")])
+equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_spx66"), SubResource("Resource_pipf2"), ExtResource("20_v7rh5")])
 
 [node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("11_56jcx")]([null, null, null, null, null, null])

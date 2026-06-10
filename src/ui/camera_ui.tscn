@@ -293,6 +293,8 @@ vertical_alignment = 1
 
 [node name="TopRightPanel" type="VBoxContainer" parent="MainContainer" unique_id=625341443]
 layout_mode = 0
+offset_top = 64.0
+offset_bottom = 64.0
 
 [node name="TopLeftPanel" type="VBoxContainer" parent="MainContainer" unique_id=14744026]
 layout_mode = 1

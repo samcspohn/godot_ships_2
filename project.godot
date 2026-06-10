@@ -53,6 +53,7 @@ UpgradeRegistry="*res://src/autoload/UpgradeRegistry.tscn"
 NavigationMapManager="*res://src/autoload/navigation_map_manager.gd"
 ReplayRecorder="*res://src/replay/replay_recorder.gd"
 ArmorSimLogger="*res://src/armor/armor_sim_logger.gd"
+SmokeManager="*uid://d2bn8tqj0sbyb"
 
 [display]
 

@@ -277,7 +277,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				# 	intent
 
 				var cover_intent = _skill_cover.execute(ctx, {})
-				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty()):
+				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty() or nearest_threat_dist > 8000.0):
 					intent = cover_intent
 					_active_skill_name = &"FindCover"
 				else:

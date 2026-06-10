@@ -943,14 +943,14 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 	var unspotted_enemies = server_node.get_unspotted_enemies(_ship.team.team_id)
 
 	if unspotted_enemies.is_empty():
-		var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
-		if avg_enemy != Vector3.ZERO:
-			# Move toward the enemy average, stopping one gun range short
-			var to_enemy = (avg_enemy - _ship.global_position).normalized()
-			var standoff = gun_range * params.approach_multiplier
-			var hunt_pos = avg_enemy - to_enemy * standoff
-			hunt_pos.y = 0.0
-			return _get_valid_nav_point(hunt_pos)
+		#var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
+		#if avg_enemy != Vector3.ZERO:
+			## Move toward the enemy average, stopping one gun range short
+			#var to_enemy = (avg_enemy - _ship.global_position).normalized()
+			#var standoff = gun_range * params.approach_multiplier
+			#var hunt_pos = avg_enemy - to_enemy * standoff
+			#hunt_pos.y = 0.0
+			#return _get_valid_nav_point(hunt_pos)
 		return current_destination
 
 	# Find closest unspotted enemy
@@ -1842,6 +1842,7 @@ var repair = -1
 var damage_control = -1
 var hydroacoustic_search: int = -1
 var radar: int = -1
+var smoke_screen: int = -1
 
 func try_use_consumable():
 	var hp = _ship.health_controller.current_hp / _ship.health_controller.max_hp
@@ -1904,6 +1905,21 @@ func try_use_consumable():
 		if _should_use_radar():
 			_ship.consumable_manager.use_consumable(radar)
 
+	# --- Smoke Screen ---
+	if smoke_screen == -1:
+		for c in _ship.consumable_manager.equipped_consumables:
+			if c.type == ConsumableItem.ConsumableType.SMOKE_SCREEN:
+				smoke_screen = c.id
+				break
+	if smoke_screen != -1:
+		if _should_use_smoke():
+			_ship.consumable_manager.use_consumable(smoke_screen)
+
+func _should_use_smoke() -> bool:
+	# Simple heuristic: use smoke if we're low HP and have an active BB shooter targeting us.
+	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 and active_shooters_at_me.size() > 0 and _ship.visible_to_enemy:
+		return true
+	return false
 
 func _should_use_hydro() -> bool:
 	# Decides whether to activate Hydroacoustic Search without omniscient

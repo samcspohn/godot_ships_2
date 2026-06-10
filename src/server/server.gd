@@ -45,17 +45,10 @@ var team_1_radar_in_range: Dictionary = {}
 var team_0_first_spot_lkp_seeded: bool = false
 var team_1_first_spot_lkp_seeded: bool = false
 
-# Clustering data for bot AI
-var team_0_clusters: Array[Dictionary] = []  # Array of {center: Vector3, ships: Array[Ship]}
-var team_1_clusters: Array[Dictionary] = []
-var team_0_avg_position: Vector3 = Vector3.ZERO
-var team_1_avg_position: Vector3 = Vector3.ZERO
-# Known enemy data (only includes spotted enemies + last known positions of unspotted)
-var team_0_known_enemy_avg: Vector3 = Vector3.ZERO  # What team 0 knows about team 1
-var team_1_known_enemy_avg: Vector3 = Vector3.ZERO  # What team 1 knows about team 0
-var team_0_known_enemy_clusters: Array[Dictionary] = []  # Enemy clusters team 0 knows about
-var team_1_known_enemy_clusters: Array[Dictionary] = []  # Enemy clusters team 1 knows about
-const CLUSTER_DISTANCE: float = 4000.0  # Ships within this distance are in same cluster
+# Known enemy clusters (spotted + last known positions of unspotted)
+var team_0_known_enemy_clusters: Array[Dictionary] = []
+var team_1_known_enemy_clusters: Array[Dictionary] = []
+const CLUSTER_DISTANCE: float = 4000.0
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
 var team_spawn_slots = {}  # Pre-shuffled spawn slot indices per team
@@ -664,40 +657,11 @@ func _seed_first_spot_unspotted_lkps(team_id: int) -> void:
 
 
 func _update_team_clusters():
-	"""Compute clusters and average positions for both teams."""
-	team_0_clusters = _compute_clusters(team_0_ships)
-	team_1_clusters = _compute_clusters(team_1_ships)
-	team_0_avg_position = _compute_average_position(team_0_ships)
-	team_1_avg_position = _compute_average_position(team_1_ships)
-	# Compute known enemy data (spotted + last known positions)
-	team_0_known_enemy_avg = _compute_known_enemy_avg(0)
-	team_1_known_enemy_avg = _compute_known_enemy_avg(1)
 	team_0_known_enemy_clusters = _compute_known_enemy_clusters(0)
 	team_1_known_enemy_clusters = _compute_known_enemy_clusters(1)
 
 
-func _compute_known_enemy_avg(team_id: int) -> Vector3:
-	"""Compute average position of known enemies (spotted + last known unspotted positions)."""
-	var positions: Array[Vector3] = []
 
-	# Add currently spotted enemies (valid targets)
-	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
-	for ship in valid_targets:
-		positions.append(ship.global_position)
-
-	# Add last known positions of unspotted enemies
-	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	for ship in unspotted.keys():
-		var last_pos: Vector3 = unspotted[ship]
-		positions.append(last_pos)
-
-	if positions.size() == 0:
-		return Vector3.ZERO
-
-	var avg = Vector3.ZERO
-	for pos in positions:
-		avg += pos
-	return avg / positions.size()
 
 
 func _compute_known_enemy_clusters(team_id: int) -> Array[Dictionary]:
@@ -754,75 +718,7 @@ func _compute_known_enemy_clusters(team_id: int) -> Array[Dictionary]:
 	return clusters
 
 
-func _compute_average_position(ships: Array[Ship]) -> Vector3:
-	"""Compute average position of a list of ships."""
-	if ships.size() == 0:
-		return Vector3.ZERO
-	var avg = Vector3.ZERO
-	for ship in ships:
-		avg += ship.global_position
-	return avg / ships.size()
 
-
-func _compute_clusters(ships: Array[Ship]) -> Array[Dictionary]:
-	"""
-	Cluster ships using simple distance-based clustering.
-	Returns array of {center: Vector3, ships: Array[Ship]}
-	"""
-	if ships.size() == 0:
-		return []
-
-	var clusters: Array[Dictionary] = []
-	var assigned: Dictionary = {}  # Ship -> cluster index
-
-	for ship in ships:
-		if assigned.has(ship):
-			continue
-
-		# Start a new cluster with this ship
-		var cluster_ships: Array[Ship] = [ship]
-		assigned[ship] = clusters.size()
-
-		# Find all ships close to any ship in this cluster
-		var i = 0
-		while i < cluster_ships.size():
-			var current = cluster_ships[i]
-			for other in ships:
-				if assigned.has(other):
-					continue
-				if current.global_position.distance_to(other.global_position) <= CLUSTER_DISTANCE:
-					cluster_ships.append(other)
-					assigned[other] = clusters.size()
-			i += 1
-
-		# Compute cluster center
-		var center = Vector3.ZERO
-		for s in cluster_ships:
-			center += s.global_position
-		center /= cluster_ships.size()
-
-		clusters.append({
-			"center": center,
-			"ships": cluster_ships
-		})
-
-	return clusters
-
-
-func get_team_clusters(team_id: int) -> Array[Dictionary]:
-	"""Get cached clusters for a team."""
-	if team_id == 0:
-		return team_0_clusters
-	else:
-		return team_1_clusters
-
-
-func get_team_avg_position(team_id: int) -> Vector3:
-	"""Get cached average position for a team."""
-	if team_id == 0:
-		return team_0_avg_position
-	else:
-		return team_1_avg_position
 
 
 func get_team_spawn_position(team_id: int) -> Vector3:
@@ -840,45 +736,8 @@ func get_team_spawn_position(team_id: int) -> Vector3:
 	return (spawn_node.get_child(team_id) as Node3D).global_position
 
 
-func get_enemy_clusters(team_id: int) -> Array[Dictionary]:
-	"""Get cached clusters of KNOWN enemies (spotted + last known positions).
-	This only includes information the team should legitimately have."""
-	if team_id == 0:
-		return team_0_known_enemy_clusters
-	else:
-		return team_1_known_enemy_clusters
-
-
-func get_enemy_clusters_omniscient(team_id: int) -> Array[Dictionary]:
-	"""Get cached clusters for the enemy team (all enemies, omniscient).
-	Use sparingly - this includes information the team shouldn't know."""
-	if team_id == 0:
-		return team_1_clusters
-	else:
-		return team_0_clusters
-
-
-func get_enemy_avg_position(team_id: int) -> Vector3:
-	"""Get cached average position of KNOWN enemies (spotted + last known positions).
-	This only includes information the team should legitimately have."""
-	if team_id == 0:
-		return team_0_known_enemy_avg
-	else:
-		return team_1_known_enemy_avg
-
-
-func get_enemy_avg_position_omniscient(team_id: int) -> Vector3:
-	"""Get cached average position for the enemy team (all enemies, omniscient).
-	Use sparingly - this includes information the team shouldn't know."""
-	if team_id == 0:
-		return team_1_avg_position
-	else:
-		return team_0_avg_position
-
-
 func get_nearest_enemy_cluster(position: Vector3, team_id: int) -> Dictionary:
-	"""Get the nearest enemy cluster to a position."""
-	var enemy_clusters = get_enemy_clusters(team_id)
+	var enemy_clusters = team_0_known_enemy_clusters if team_id == 0 else team_1_known_enemy_clusters
 	if enemy_clusters.size() == 0:
 		return {}
 
@@ -894,22 +753,7 @@ func get_nearest_enemy_cluster(position: Vector3, team_id: int) -> Dictionary:
 	return nearest
 
 
-func get_nearest_friendly_cluster(position: Vector3, team_id: int) -> Dictionary:
-	"""Get the nearest friendly cluster to a position (excluding self)."""
-	var friendly_clusters = get_team_clusters(team_id)
-	if friendly_clusters.size() == 0:
-		return {}
 
-	var nearest = friendly_clusters[0]
-	var nearest_dist = position.distance_to(nearest.center)
-
-	for cluster in friendly_clusters:
-		var dist = position.distance_to(cluster.center)
-		if dist < nearest_dist:
-			nearest = cluster
-			nearest_dist = dist
-
-	return nearest
 
 # func sync_players(player_data: Array[Dictionary]) -> void:
 # 	for data in player_data:
@@ -1009,6 +853,7 @@ func _connect_consumable_signals(player: Ship) -> void:
 var current_time = 0.0
 const UNSPOTTED_TIME = 100.0
 
+var spotter_candidates = {}
 func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	# var dist = spotter.global_position.distance_to(spotted.global_position)
 	# Hydroacoustic Search (or any future consumable) can set a spotting_range_override
@@ -1020,18 +865,36 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
 		spotted.visible_to_enemy = true
 		spotted.detection_type = max(spotted.detection_type, Ship.DetectionType.LOS)
-		if !visible_toggled[spotted]:
-			if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
-				spotted.concealment.spotted_by = spotter
-				spotter.stats.spotting_count += 1
-				spotter.stats.damage_events.append({"type": "spot"})
+		# if !visible_toggled[spotted]:
+		# 	if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
+		# 		spotted.concealment.spotted_by = spotter
+		# 		spotter.stats.spotting_count += 1
+		# 		spotter.stats.damage_events.append({"type": "spot"})
+		# else:
+		if closest_enemies_that_can_see.has(spotted):
+			closest_enemies_that_can_see[spotted].append([spotter,dist])
 		else:
-			if closest_enemies_that_can_see.has(spotted):
-				closest_enemies_that_can_see[spotted].append([spotter,dist])
-			else:
-				closest_enemies_that_can_see[spotted] = [[spotter,dist]]
+			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
 			# var closest_enemies: Array = closest_enemies_that_can_see[spotted]
 			# closest_enemies.append(spotter)
+
+func handle_spot_attribution():
+	for spotted in closest_enemies_that_can_see.keys():
+		var closest_spotter: Ship = null
+		var closest_dist: float = INF
+		for spotter_info in closest_enemies_that_can_see[spotted]:
+			var spotter: Ship = spotter_info[0]
+			var dist: float = spotter_info[1]
+			if dist < closest_dist:
+				closest_dist = dist
+				closest_spotter = spotter
+		if closest_spotter != null:
+			spotted.concealment.spotted_by = closest_spotter
+			if !visible_toggled[spotted] and spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
+				closest_spotter.stats.spotting_count += 1
+				closest_spotter.stats.damage_events.append({"type": "spot"})
+	closest_enemies_that_can_see.clear()
+
 
 func _broadcast_match_end():
 	"""Send match end notification with leaderboard data to all clients."""
@@ -1240,7 +1103,7 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collide_with_areas = true
 	ray_query.collide_with_bodies = true
 	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 | (1 << 3) # only terrain
+	ray_query.collision_mask = 1 | (1 << 3) | (1 << 5) # terrain + smoke
 
 	if players_size != players.size():
 		players_size = players.size()
@@ -1277,6 +1140,7 @@ func _physics_process(_delta: float) -> void:
 				ray_query.to.y = 1.0
 				var collision: Dictionary = space_state.intersect_ray(ray_query)
 				var has_los: bool = collision.is_empty()
+				var smoke_blocked: bool = not collision.is_empty() and (collision["collider"] as CollisionObject3D).collision_layer & (1 << 5) != 0
 				var dist: float = p.global_position.distance_to(p2.global_position)
 				if has_los:
 					handle_spot(p, p2, dist)
@@ -1286,58 +1150,67 @@ func _physics_process(_delta: float) -> void:
 				# LKP position is frozen and only refreshed every HYDRO_LKP_INTERVAL s;
 				# a per-frame ping keeps hydro_detected true on the client while in range;
 				# a clear-packet sets it false the moment the ship leaves range.
+				# Exception: if only smoke blocks LOS (not terrain), render the detected ship
+				# normally instead of using LKP — smoke does not defeat hydro/radar tracking.
 				var p_hydro := (p.concealment.params.p() as ConcealmentParams).spotting_range_override
 				if p_hydro > 0.0 and dist < p_hydro:
-					p2.detection_type = Ship.DetectionType.HYDRO  # p detects p2 — always HYDRO
-					# Counter-spot: p's own pings are audible to p2.  Only mark p as HYDRO-detected
-					# if p is not already spotted by LOS — LOS takes priority for the pinger.
 					if p.detection_type != Ship.DetectionType.LOS:
 						p.detection_type = Ship.DetectionType.HYDRO
-					if not p2.visible_to_enemy:
-						_refresh_hydro_lkp(p.team.team_id, p2)
-						_refresh_hydro_lkp(p2.team.team_id, p)  # counter-spot LKP
+					if smoke_blocked:
+						handle_spot(p, p2, dist)  # smoke doesn't defeat hydro — render p2 normally
+					else:
+						p2.detection_type = Ship.DetectionType.HYDRO
+						if not p2.visible_to_enemy:
+							_refresh_hydro_lkp(p.team.team_id, p2)
+							_refresh_hydro_lkp(p2.team.team_id, p)  # counter-spot LKP
 				var p2_hydro := (p2.concealment.params.p() as ConcealmentParams).spotting_range_override
 				if p2_hydro > 0.0 and dist < p2_hydro:
-					p.detection_type = Ship.DetectionType.HYDRO  # p2 detects p — always HYDRO
-					# Counter-spot: same rule for p2.
 					if p2.detection_type != Ship.DetectionType.LOS:
 						p2.detection_type = Ship.DetectionType.HYDRO
-					if not p.visible_to_enemy:
-						_refresh_hydro_lkp(p2.team.team_id, p)
-						_refresh_hydro_lkp(p.team.team_id, p2)  # counter-spot LKP
+					if smoke_blocked:
+						handle_spot(p2, p, dist)  # smoke doesn't defeat hydro — render p normally
+					else:
+						p.detection_type = Ship.DetectionType.HYDRO
+						if not p.visible_to_enemy:
+							_refresh_hydro_lkp(p2.team.team_id, p)
+							_refresh_hydro_lkp(p.team.team_id, p2)  # counter-spot LKP
 				# Radar detection — same no-LOS logic as hydro but uses radar_spotting_range_override.
 				# RADAR has higher enum priority than HYDRO so it overrides if both are active.
 				var p_radar := (p.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
 				if p_radar > 0.0 and dist < p_radar:
-					p2.detection_type = Ship.DetectionType.RADAR  # p detects p2 — always RADAR
-					# Counter-spot: p's own pings are audible to p2.  Only mark p as RADAR-detected
-					# if p is not already spotted by LOS — LOS takes priority for the pinger.
 					if p.detection_type != Ship.DetectionType.LOS:
 						p.detection_type = Ship.DetectionType.RADAR
-					if not p2.visible_to_enemy:
-						_refresh_radar_lkp(p.team.team_id, p2)
-						_refresh_radar_lkp(p2.team.team_id, p)  # counter-spot LKP
+					if smoke_blocked:
+						handle_spot(p, p2, dist)  # smoke doesn't defeat radar — render p2 normally
+					else:
+						p2.detection_type = Ship.DetectionType.RADAR
+						if not p2.visible_to_enemy:
+							_refresh_radar_lkp(p.team.team_id, p2)
+							_refresh_radar_lkp(p2.team.team_id, p)  # counter-spot LKP
 				var p2_radar := (p2.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
 				if p2_radar > 0.0 and dist < p2_radar:
-					p.detection_type = Ship.DetectionType.RADAR  # p2 detects p — always RADAR
-					# Counter-spot: same rule for p2.
 					if p2.detection_type != Ship.DetectionType.LOS:
 						p2.detection_type = Ship.DetectionType.RADAR
-					if not p.visible_to_enemy:
-						_refresh_radar_lkp(p2.team.team_id, p)
-						_refresh_radar_lkp(p.team.team_id, p2)  # counter-spot LKP
+					if smoke_blocked:
+						handle_spot(p2, p, dist)  # smoke doesn't defeat radar — render p normally
+					else:
+						p.detection_type = Ship.DetectionType.RADAR
+						if not p.visible_to_enemy:
+							_refresh_radar_lkp(p2.team.team_id, p)
+							_refresh_radar_lkp(p.team.team_id, p2)  # counter-spot LKP
 
-	for spotted in closest_enemies_that_can_see.keys():
-		var closest_enemy: Ship = null
-		var closest_dist: float = INF
-		for spotter_dist in closest_enemies_that_can_see[spotted]:
-			var spotter: Ship = spotter_dist[0]
-			var dist = spotter_dist[1]
-			if dist < closest_dist:
-				closest_enemy = spotter
-				closest_dist = dist
-		if closest_enemy != null:
-			spotted.concealment.spotted_by = closest_enemy
+	# for spotted in closest_enemies_that_can_see.keys():
+	# 	var closest_enemy: Ship = null
+	# 	var closest_dist: float = INF
+	# 	for spotter_dist in closest_enemies_that_can_see[spotted]:
+	# 		var spotter: Ship = spotter_dist[0]
+	# 		var dist = spotter_dist[1]
+	# 		if dist < closest_dist:
+	# 			closest_enemy = spotter
+	# 			closest_dist = dist
+	# 	if closest_enemy != null:
+	# 		spotted.concealment.spotted_by = closest_enemy
+	handle_spot_attribution()
 
 	# One-time per team: once they spot any enemy at all, snapshot current
 	# positions of every still-hidden enemy as LKPs.

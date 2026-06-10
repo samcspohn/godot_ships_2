@@ -1,0 +1,37 @@
+[gd_resource type="Resource" script_class="ParticleTemplate" format=3 uid="uid://dakybfvcp7vhy"]
+
+[ext_resource type="Script" uid="uid://bfx3lwfhk4rtq" path="res://addons/Godot-Unified-Particle-System/particles/particle_template.gd" id="1_6ns8u"]
+[ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2_vp0at"]
+
+[sub_resource type="Gradient" id="Gradient_py4yq"]
+offsets = PackedFloat32Array(0, 0.083636366, 0.7854546, 1)
+colors = PackedColorArray(1, 1, 1, 0, 1, 1, 1, 0.29411766, 1, 1, 1, 0.3019608, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_4fjbh"]
+gradient = SubResource("Gradient_py4yq")
+
+[sub_resource type="Curve" id="Curve_vp0at"]
+_data = [Vector2(0, 0.38679254), 0.0, 5.0173793, 0, 0, Vector2(0.11960134, 0.8072777), 0.7910378, 0.7910378, 0, 0, Vector2(1, 1), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_py4yq"]
+curve = SubResource("Curve_vp0at")
+
+[resource]
+script = ExtResource("1_6ns8u")
+texture = ExtResource("2_vp0at")
+color = Color(0.7204674, 0.7204675, 0.7204674, 1)
+color_over_life = SubResource("GradientTexture1D_4fjbh")
+scale_over_life = SubResource("CurveTexture_py4yq")
+initial_velocity_min = 0.03
+initial_velocity_max = 0.06
+direction = Vector3(0, 1, 0)
+spread = 180.0
+gravity = Vector3(0, 0, 0)
+damping_min = 0.3
+damping_max = 0.3
+lifetime_min = 15.0
+lifetime_max = 15.0
+emission_shape = 1
+emission_sphere_radius = 150.0
+metadata/_custom_type_script = "uid://bfx3lwfhk4rtq"

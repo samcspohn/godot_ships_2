@@ -208,14 +208,17 @@ static func process_enemy(ctx: SkillContext, e: Ship, e_pos: Vector3, danger_hea
 		var reload = gun_params.reload_time
 		var caliber = gun_params.shell1.caliber
 		var auto_bounce = PI / 2.0 - gun_params.shell1.auto_bounce
-		var w = 10_000 / pow(dist, 1.05) # superlinear dropoff with distance
+		var w = 1.0
+		if ctx.behavior.active_shooters_at_me.has(e):
+			w *= 10_000 / pow(dist, 1.05) # superlinear dropoff with distance
+			# w *= 10.0  # Double weight for confirmed shooters
+		else:
+			w *= 1.0 / (pow(dist,2.0) / 100_000_000.0 + 1.0) # quadratic dropoff with distance for unconfirmed threats
 		w *= damage / 1000.0 # scale by damage (relative to a baseline of 1000)
 		w *= pow(caliber / 100.0, 2.0) # scale by caliber (relative to a baseline of 100mm, squared for citadel damage)
 		w *= 30 / reload # scale by rate of fire (relative to a baseline of 2 rounds per second)
-		w *= ctx.behavior.get_threat_class_weight(e.ship_class)
+		# w *= ctx.behavior.get_threat_class_weight(e.ship_class)
 		# Enemies confirmed to be actively shooting at us are higher priority to angle against.
-		if ctx.behavior.active_shooters_at_me.has(e):
-			w *= 10.0  # Double weight for confirmed shooters
 		# var w = 1.0 / (dist * dist / 100_000_000.0 + 1.0) # quadratic dropoff with distance
 		var left = atan2(e_pos.x - ctx.ship.global_position.x, e_pos.z - ctx.ship.global_position.z) - auto_bounce
 		var right = left + auto_bounce * 2.0

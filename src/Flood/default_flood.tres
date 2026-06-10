@@ -5,5 +5,5 @@
 [resource]
 script = ExtResource("1_chdlv")
 dmg_rate = 0.004
-dur = 80.0
+dur = 65.0
 metadata/_custom_type_script = "uid://byu8jc1u74qlu"

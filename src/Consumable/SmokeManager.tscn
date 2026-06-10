@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://d2bn8tqj0sbyb"]
+
+[ext_resource type="Script" uid="uid://ckqy4leq11biy" path="res://src/Consumable/smoke_manager.gd" id="1_ffm0j"]
+
+[node name="SmokeManager" type="Node3D" unique_id=1227639785]
+script = ExtResource("1_ffm0j")

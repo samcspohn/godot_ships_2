@@ -258,8 +258,8 @@ func fire_next_ready():
 var num_guns = 0
 func _physics_process(delta: float) -> void:
 	# return
-	priority_target_dispersion.period = 6
-	man_dispersion_calculator.period = 6
+	priority_target_dispersion._citadel_guarantee_enabled = false
+	man_dispersion_calculator._citadel_guarantee_enabled = false
 	if !(_Utils.authority()):
 		return
 	if not enabled:
@@ -414,7 +414,7 @@ func _update_auto_target_cache(server: GameServer, max_range: float, manual_acti
 					else:
 						if !dispersion_calculator.has(e):
 							dispersion_calculator[e] = DispersionCalculator.new()
-							dispersion_calculator[e].period = 0
+							dispersion_calculator[e]._citadel_guarantee_enabled = true
 						g.dispersion_calculator = dispersion_calculator[e]
 
 					found_target = true

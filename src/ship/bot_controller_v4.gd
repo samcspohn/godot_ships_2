@@ -571,7 +571,6 @@ func _register_torpedo_obstacles() -> void:
 
 func _update_shell_threats() -> void:
 	navigator.clear_incoming_shells()
-	return
 	var my_team_id: int = _ship.team.team_id if _ship.team else -1
 	var my_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
 
@@ -880,15 +879,15 @@ func _check_intent_events() -> void:
 		_force_intent_next_frame = true
 	_last_friendly_alive_count = alive_count
 
-	# --- 3. Enemy centroid shift ---
-	var enemy_avg = server_node.get_enemy_avg_position(_ship.team.team_id)
-	if enemy_avg != Vector3.ZERO:
-		if _cached_enemy_avg != Vector3.ZERO:
-			if enemy_avg.distance_to(_cached_enemy_avg) > 500.0:
-				if _dbg:
-					print("[Event %s] ENEMY_CENTROID_SHIFT %.0f frame=%d" % [_ship.name, enemy_avg.distance_to(_cached_enemy_avg), Engine.get_physics_frames()])
-				_force_intent_next_frame = true
-		_cached_enemy_avg = enemy_avg
+	## --- 3. Enemy centroid shift ---
+	#var enemy_avg = server_node.get_enemy_avg_position(_ship.team.team_id)
+	#if enemy_avg != Vector3.ZERO:
+		#if _cached_enemy_avg != Vector3.ZERO:
+			#if enemy_avg.distance_to(_cached_enemy_avg) > 500.0:
+				#if _dbg:
+					#print("[Event %s] ENEMY_CENTROID_SHIFT %.0f frame=%d" % [_ship.name, enemy_avg.distance_to(_cached_enemy_avg), Engine.get_physics_frames()])
+				#_force_intent_next_frame = true
+		#_cached_enemy_avg = enemy_avg
 
 	# --- 4. HP threshold crossing ---
 	var hp_ratio = _ship.health_controller.current_hp / _ship.health_controller.max_hp

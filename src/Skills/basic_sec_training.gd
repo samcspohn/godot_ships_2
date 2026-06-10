@@ -4,7 +4,7 @@ extends Skill
 ## A foundational investment in secondary-gun crews:
 ## tighter spread, faster reload, longer reach, and sharper priority-target focus.
 
-const RELOAD_MOD:  float = 0.95   # -5% reload time
+# const RELOAD_MOD:  float = 0.95   # -5% reload time
 const SPREAD_MOD:  float = 0.9   # -10% base spread
 const RANGE_MOD:   float = 1.10   # +10% range
 const PRIORITY_TARGET_SPREAD_MOD: float = 0.9  # -10% spread when aiming at priority target
@@ -17,7 +17,7 @@ func _init() -> void:
 	cost = 1
 	flavor_text = "Drilled crews keep the secondaries barking faster, farther, and on-target."
 	tooltip_stats = [
-		{"stat": "Secondary Reload",            "value": fmt_mult_pct(RELOAD_MOD),                 "positive": true},
+		# {"stat": "Secondary Reload",            "value": fmt_mult_pct(RELOAD_MOD),                 "positive": true},
 		{"stat": "Secondary Spread",            "value": fmt_mult_pct(SPREAD_MOD),                 "positive": true},
 		{"stat": "Secondary Range",             "value": fmt_mult_pct(RANGE_MOD),                  "positive": true},
 		{"stat": "Priority Target Spread",      "value": fmt_mult_pct(PRIORITY_TARGET_SPREAD_MOD), "positive": true},
@@ -30,7 +30,7 @@ func _a(ship: Ship) -> void:
 	(sec_ctrl.target_mod.dynamic_mod as TargetMod).v_spread *= PRIORITY_TARGET_SPREAD_MOD
 	for sec: SecSubController in sec_ctrl.sub_controllers:
 		var params := sec.params.dynamic_mod as GunParams
-		params.reload_time *= RELOAD_MOD
+		# params.reload_time *= RELOAD_MOD
 		params.h_spread *= SPREAD_MOD
 		params.v_spread *= SPREAD_MOD
 		params._range      *= RANGE_MOD

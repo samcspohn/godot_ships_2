@@ -4,8 +4,8 @@
 [ext_resource type="Texture2D" uid="uid://yh5t2uomea3d" path="res://particle.png" id="2"]
 
 [sub_resource type="Gradient" id="Gradient_smoke"]
-offsets = PackedFloat32Array(0, 0.03131991, 1)
-colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.37791878, 0.37791893, 0.37791854, 0.83137256, 0.37413937, 0.37413928, 0.37413898, 0)
+offsets = PackedFloat32Array(0, 0.022653721, 0.40453073, 1)
+colors = PackedColorArray(0.08, 0.08, 0.08, 0, 0.3764706, 0.3764706, 0.3764706, 0.9647059, 0.37512743, 0.37512738, 0.37512723, 0.40888196, 0.37413937, 0.37413928, 0.37413898, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_smoke"]
 gradient = SubResource("Gradient_smoke")

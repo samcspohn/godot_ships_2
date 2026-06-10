@@ -1,8 +1,8 @@
 extends Skill
 
-const sec_reload_mod = 0.9
+# const sec_reload_mod = 0.9
 const sec_spread_mod = 0.9
-const sec_grouping_bonus = 0.1
+const sec_grouping_bonus = 0.2
 const main_gun_in_range_mod = 0.9
 # const sec_range = 1.15
 
@@ -11,7 +11,7 @@ func _init():
 	tier = 3
 	cost = 3
 	tooltip_stats = [
-		{"stat": "Secondary Reload", "value": fmt_mult_pct(sec_reload_mod), "positive": true},
+		# {"stat": "Secondary Reload", "value": fmt_mult_pct(sec_reload_mod), "positive": true},
 		{"stat": "Secondary Spread", "value": fmt_mult_pct(sec_spread_mod), "positive": true},
 		{"stat": "Secondary Grouping", "value": fmt_add(sec_grouping_bonus), "positive": true},
 		# {"stat": "Secondary Range", "value": fmt_mult_pct(sec_range), "positive": true},
@@ -26,7 +26,7 @@ func _a(ship: Ship):
 
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.params.dynamic_mod as GunParams
-		sec_params.reload_time *= sec_reload_mod
+		# sec_params.reload_time *= sec_reload_mod
 		sec_params.h_spread *= sec_spread_mod
 		sec_params.v_spread *= sec_spread_mod
 		sec_params.grouping += sec_grouping_bonus

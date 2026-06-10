@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SmokeScreen" format=3 uid="uid://rly4o8ba4wru"]
+
+[ext_resource type="Script" uid="uid://c37xmjlq3hkvr" path="res://src/Consumable/smoke_screen.gd" id="1_x7c4m"]
+
+[resource]
+script = ExtResource("1_x7c4m")
+name = "Smoke Screen"
+cooldown_time = 0.0
+duration = 50.0
+max_stack = -1
+type = 4
+metadata/_custom_type_script = "uid://c37xmjlq3hkvr"

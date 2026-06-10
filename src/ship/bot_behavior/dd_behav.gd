@@ -308,13 +308,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent:
 				_active_skill_name = &"Push"
-				intent = _apply_reverse_alignment(intent, nearest_threat_dist, 8000.0)
+				# intent = _apply_reverse_alignment(intent, nearest_threat_dist, 8000.0)
 			wants_stealth = false
 			wants_to_be_concealed = false
 		else:
-			intent = _skill_retreat.execute(ctx, {})
+			intent = _skill_kite.execute(ctx, {})
 			if intent:
-				_active_skill_name = &"Retreat"
+				_active_skill_name = &"Kite"
 
 	# ── 3. Target is a DD → kite + broadside post-process, fallback hunt ──────
 	elif target != null:

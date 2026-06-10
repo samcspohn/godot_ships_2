@@ -1,7 +1,5 @@
 # Naval Artillery Dispersion Calculator for GODOT 4.X
 class_name DispersionCalculator
-var period = 0.0
-
 
 # const SHELL_COUNT := 8
 
@@ -97,8 +95,8 @@ var _sigma := 1.0
 
 # Citadel ellipse for post-processing (in normalised fraction space, set externally)
 var _citadel_h_frac := 0.5
-var _citadel_v_frac := 0.1
-
+var _citadel_v_frac := 0.2
+var _citadel_guarantee_enabled := true
 
 func _init(sigma: float = 1.0) -> void:
 	_sigma = maxf(sigma, 1.0)
@@ -176,7 +174,8 @@ func _new_salvo(sigma: float) -> void:
 	_h_offsets = _generate_axis(s, erf_bound)
 	_v_offsets = _generate_axis(s, erf_bound)
 
-	_apply_citadel_guarantee()
+	if _citadel_guarantee_enabled:
+		_apply_citadel_guarantee()
 
 
 # Tests whether any shell in the current salvo will land inside the citadel
