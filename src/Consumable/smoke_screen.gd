@@ -1,7 +1,7 @@
 extends ConsumableItem
 class_name SmokeScreen
 
-@export var emit_ticks := int(Engine.physics_ticks_per_second * 1.0)
+@export var emit_time = 1.0
 var tick_start := -1
 @export var size := 100.0
 @export var smoke_duration := 100.0
@@ -11,8 +11,10 @@ func _init():
 	#pass # Replace with function body.
 	tick_start = Engine.get_physics_frames()
 
-func _proc(_delta: float, ship :Ship):
-	if _Utils.authority() and (Engine.get_physics_frames() - tick_start) % emit_ticks == 0:
+var time_elapsed := 0.0
+func _proc(delta: float, ship :Ship):
+	time_elapsed += delta
+	# if _Utils.authority() and (Engine.get_physics_frames() - tick_start) % emit_ticks == 0:
 		# var server: GameServer = ship.get_tree().root.get_node_or_null("/root/Server")
 		# if server:
 		# 	server.spawn_smoke_screen(ship.global_position, ship.team.team_id)
@@ -22,6 +24,8 @@ func _proc(_delta: float, ship :Ship):
 		# smoke_puff.team_id = ship.team.team_id
 		# ship.get_tree().root.add_child(smoke_puff)
 		# spawn_smoke_c.rpc(ship.global_position, ship.team.team_id)
+	if time_elapsed >= emit_time:
+		time_elapsed = 0.0
 		SmokeManager.spawn_smoke(ship, size, smoke_duration)
 
 # # @rpc("call_remote")

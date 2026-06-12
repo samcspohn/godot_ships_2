@@ -29,49 +29,49 @@
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="25_f0niw"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="26_bnwmv"]
 
-[sub_resource type="Resource" id="Resource_1yuxv"]
+[sub_resource type="Resource" id="Resource_ytg8s"]
 resource_local_to_scene = true
 script = ExtResource("3_cg1e5")
 pen_repair = 0.6
 torpedo_protection = 0.41
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
-[sub_resource type="Resource" id="Resource_3wgo0"]
+[sub_resource type="Resource" id="Resource_r7nol"]
 resource_local_to_scene = true
 script = ExtResource("4_ve12q")
 pool1 = 465300.0
 pool2 = 465300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_ytg8s"]
+[sub_resource type="Resource" id="Resource_5ma28"]
 resource_local_to_scene = true
 script = ExtResource("4_ve12q")
 pool1 = 41360.0
 pool2 = 82720.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_r7nol"]
-resource_local_to_scene = true
-script = ExtResource("4_ve12q")
-pool1 = 18095.0
-pool2 = 36190.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
-[sub_resource type="Resource" id="Resource_5ma28"]
-resource_local_to_scene = true
-script = ExtResource("4_ve12q")
-pool1 = 18095.0
-pool2 = 36190.0
-metadata/_custom_type_script = "uid://8hn5uv3uclbk"
-
 [sub_resource type="Resource" id="Resource_n0aqy"]
+resource_local_to_scene = true
+script = ExtResource("4_ve12q")
+pool1 = 18095.0
+pool2 = 36190.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_nx45m"]
+resource_local_to_scene = true
+script = ExtResource("4_ve12q")
+pool1 = 18095.0
+pool2 = 36190.0
+metadata/_custom_type_script = "uid://8hn5uv3uclbk"
+
+[sub_resource type="Resource" id="Resource_n6hqb"]
 resource_local_to_scene = true
 script = ExtResource("4_ve12q")
 pool1 = 25850.0
 pool2 = 51700.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
-[sub_resource type="Resource" id="Resource_nx45m"]
+[sub_resource type="Resource" id="Resource_gaqpb"]
 resource_local_to_scene = true
 script = ExtResource("5_fi4fd")
 radius = 15000.0
@@ -79,7 +79,7 @@ bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
-[sub_resource type="Resource" id="Resource_n6hqb"]
+[sub_resource type="Resource" id="Resource_5dhfr"]
 resource_local_to_scene = true
 script = ExtResource("7_f0niw")
 speed = 820.0
@@ -92,7 +92,7 @@ overmatch = 34
 arming_threshold = 83
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_gaqpb"]
+[sub_resource type="Resource" id="Resource_pqw46"]
 resource_local_to_scene = true
 script = ExtResource("7_f0niw")
 speed = 820.0
@@ -107,12 +107,12 @@ type = 0
 overmatch = 125
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_5dhfr"]
+[sub_resource type="Resource" id="Resource_i6mfk"]
 resource_local_to_scene = true
 script = ExtResource("6_6thso")
 elevation_speed = 3.5
-shell1 = SubResource("Resource_n6hqb")
-shell2 = SubResource("Resource_gaqpb")
+shell1 = SubResource("Resource_5dhfr")
+shell2 = SubResource("Resource_pqw46")
 h_spread = 0.014
 reload_time = 31.0
 traverse_speed = 3.5
@@ -176,7 +176,7 @@ turn_speed_loss = 0.15
 rudder_response_time = 14.0
 max_turn_roll_angle = 5.5
 
-[sub_resource type="Resource" id="Resource_pqw46"]
+[sub_resource type="Resource" id="Resource_t5hex"]
 resource_local_to_scene = true
 script = ExtResource("13_4ql0v")
 icon = ExtResource("12_86xt5")
@@ -241,19 +241,19 @@ ship_model_glb_path = "uid://dpjum8f8ngme6"
 [node name="Modules" parent="." index="0" unique_id=2063116617 instance=ExtResource("2_apgcf")]
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
-params = SubResource("Resource_1yuxv")
+params = SubResource("Resource_ytg8s")
 _max_hp = 155100.0
-citadel = SubResource("Resource_3wgo0")
-casemate = SubResource("Resource_ytg8s")
-bow = SubResource("Resource_r7nol")
-stern = SubResource("Resource_5ma28")
-superstructure = SubResource("Resource_n0aqy")
+citadel = SubResource("Resource_r7nol")
+casemate = SubResource("Resource_5ma28")
+bow = SubResource("Resource_n0aqy")
+stern = SubResource("Resource_nx45m")
+superstructure = SubResource("Resource_n6hqb")
 
 [node name="Concealment" parent="Modules" index="1" unique_id=799010002]
-params = SubResource("Resource_nx45m")
+params = SubResource("Resource_gaqpb")
 
 [node name="ArtilleryController" parent="Modules" index="2" unique_id=1614620833 node_paths=PackedStringArray("guns")]
-params = SubResource("Resource_5dhfr")
+params = SubResource("Resource_i6mfk")
 guns = [NodePath("../../TurretMount_GER_500mm_2b_rf_002/GER_500mm_2b_rf_002"), NodePath("../../TurretMount_GER_500mm_2b_rf_003/GER_500mm_2b_rf_003"), NodePath("../../TurretMount_GER_500mm_2b_rf/GER_500mm_2b_rf"), NodePath("../../TurretMount_GER_500mm_2b_rf_001/GER_500mm_2b_rf_001")]
 
 [node name="SecondaryController" parent="Modules" index="3" unique_id=1908453476 node_paths=PackedStringArray("sub_controllers")]
@@ -269,7 +269,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 params = SubResource("Resource_ku67v")
 
 [node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
-equipped_consumables = Array[ExtResource("10_1phaq")]([SubResource("Resource_pqw46"), ExtResource("14_iv11n"), ExtResource("15_eq5gm")])
+equipped_consumables = Array[ExtResource("10_1phaq")]([SubResource("Resource_t5hex"), ExtResource("14_iv11n"), ExtResource("15_eq5gm")])
 
 [node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
 upgrades = Array[ExtResource("16_qnn6a")]([null, null, null, null, null, null])

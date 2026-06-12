@@ -4,8 +4,10 @@
 
 [resource]
 script = ExtResource("1_x7c4m")
+size = 200.0
+smoke_duration = 120.0
 name = "Smoke Screen"
-cooldown_time = 0.0
+cooldown_time = 120.0
 duration = 50.0
 max_stack = -1
 type = 4

@@ -604,7 +604,7 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 			shell.velocity *= (1.0 - pen_ratio);
 			shell.integrity = calculate_shell_integrity(pen_ratio, shell.integrity);
 			if (shell.velocity.length_squared() > 0.0) offset += shell.velocity.normalized() * EPSILON;
-			if (shell.fuze < 0.0 && e_armor > (double)params->get("arming_threshold")) shell.fuze = 0.0;
+			if (shell.fuze < 0.0 && e_armor >= (double)params->get("arming_threshold")) shell.fuze = 0.0;
 		} else if (impact_angle >= (double)params->get("auto_bounce")) {
 			result = ARMOR_RICOCHET;
 			double k_nose = get_k_nose(params);
@@ -647,7 +647,7 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 					shell.velocity = exit_dir * exit_speed;
 					shell.integrity = calculate_shell_integrity(interaction.pen_ratio, shell.integrity);
 					if (shell.velocity.length_squared() > 0.0) offset += shell.velocity.normalized() * EPSILON;
-					if (shell.fuze < 0.0 && e_armor > (double)params->get("arming_threshold")) shell.fuze = 0.0;
+					if (shell.fuze < 0.0 && e_armor >= (double)params->get("arming_threshold")) shell.fuze = 0.0;
 					break;
 				}
 			}

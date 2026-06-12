@@ -819,37 +819,47 @@ func _update_ui():
 
 		hp_bar.value = hp_percent
 		hp_label.text = "%d / %d" % [current_hp, max_hp]
+		var heal_in_progress = camera_controller._ship.consumable_manager.is_using(ConsumableItem.ConsumableType.REPAIR_PARTY)
 
-		# Update healable HP bar (shows current HP + healable damage as white region)
-		var healable_damage = camera_controller._ship.health_controller.healable_damage
-		if healable_damage == null:
-			healable_damage = 0.0
-
-		# Get repair party heal amount to cap the healable bar
-		var repair_party_heal_amount = _get_repair_party_heal_amount()
-		var capped_healable = min(healable_damage, repair_party_heal_amount) if repair_party_heal_amount > 0 else healable_damage
-
-		if capped_healable > 0:
-			var healable_percent = (float(current_hp + capped_healable) / max_hp) * 100.0
-			healable_hp_bar.value = min(healable_percent, 100.0)
-
-			# Check if healable damage meets or exceeds repair party amount - activate pulse
-			if repair_party_heal_amount > 0 and healable_damage >= repair_party_heal_amount:
-				healable_pulse_active = true
-			else:
-				healable_pulse_active = false
-		else:
+		if not heal_in_progress and camera_controller._ship.consumable_manager.get_item_count(ConsumableItem.ConsumableType.REPAIR_PARTY) == 0 or camera_controller._ship.health_controller.is_dead():
+			# No repair parties available - show healable damage as white extension of current HP bar
 			healable_hp_bar.value = hp_percent
 			healable_pulse_active = false
-
-		# Apply pulse animation to healable bar
-		if healable_pulse_active:
-			var pulse_value = (sin(Time.get_ticks_msec() / 1000.0 * 8.0) + 1.0) / 2.0  # 0 to 1
-			# Pulse between white and light green
-			var pulse_color = Color(0.9, 0.9, 0.9, 0.8).lerp(Color(0.6, 1.0, 0.6, 0.9), pulse_value)
-			healable_hp_bar.modulate = pulse_color
 		else:
-			healable_hp_bar.modulate = Color(1.0, 1.0, 1.0, 1.0)
+			# Update healable HP bar (shows current HP + healable damage as white region)
+			var healable_damage = camera_controller._ship.health_controller.healable_damage
+			if healable_damage == null:
+				healable_damage = 0.0
+
+			# Get repair party heal amount to cap the healable bar
+			var repair_party_heal_amount = _get_repair_party_heal_amount()
+			var capped_healable = min(healable_damage, repair_party_heal_amount) if repair_party_heal_amount > 0 else healable_damage
+			if heal_in_progress:
+				capped_healable = min(capped_healable, (1.0 - camera_controller._ship.consumable_manager.get_active_consumable_progress(ConsumableItem.ConsumableType.REPAIR_PARTY)) * repair_party_heal_amount)
+			if capped_healable > 0:
+				var healable_percent = (float(current_hp + capped_healable) / max_hp) * 100.0
+				healable_hp_bar.value = min(healable_percent, 100.0)
+
+				# Check if healable damage meets or exceeds repair party amount - activate pulse
+				if repair_party_heal_amount > 0 and healable_damage >= repair_party_heal_amount and not heal_in_progress:
+					healable_pulse_active = true
+				else:
+					healable_pulse_active = false
+			else:
+				healable_hp_bar.value = hp_percent
+				healable_pulse_active = false
+
+			# Apply pulse animation to healable bar
+			if healable_pulse_active:
+				var pulse_value = (sin(Time.get_ticks_msec() / 1000.0 * 8.0) + 1.0) / 2.0  # 0 to 1
+				# Pulse between white and light green
+				var pulse_color = Color(0.9, 0.9, 0.9, 0.8).lerp(Color(0.6, 1.0, 0.6, 0.9), pulse_value)
+				healable_hp_bar.modulate = pulse_color
+			else:
+				if heal_in_progress:
+					healable_hp_bar.modulate = Color(0.5, 1.0, 0.5, 0.9)  # Light green while healing
+				else:
+					healable_hp_bar.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
 		# Change HP bar color based on health level
 		if hp_percent > 75:
@@ -1873,16 +1883,16 @@ func update_consumable_ui():
 				# Active:   bar starts full (100%) and drains to 0 over the duration.
 				# Cooldown: bar starts empty (0%) and fills to 100 as it approaches ready.
 				if cooldown_remaining > 0:
-					cooldown_bar.value = 100.0 - (cooldown_remaining / (item.p() as ConsumableItem).cooldown_time) * 100.0
+					cooldown_bar.value = (cooldown_remaining) * 100.0
 					cooldown_bar.modulate = Color(1.0, 1.0, 0.0) # Yellow tint during cooldown
 					cooldown_bar.visible = true
-					overlay_label.text = "%d" % ceili(cooldown_remaining)
+					overlay_label.text = "%d" % ceili(cooldown_remaining * (item.p() as ConsumableItem).cooldown_time)
 					overlay_label.visible = true
 				elif effect_remaining > 0:
-					cooldown_bar.value = (effect_remaining / (item.p() as ConsumableItem).duration) * 100.0
+					cooldown_bar.value = (effect_remaining) * 100.0
 					cooldown_bar.modulate = Color(0.2, 0.8, 1.0) # Blue tint during effect
 					cooldown_bar.visible = true
-					overlay_label.text = "%d" % ceili(effect_remaining)
+					overlay_label.text = "%d" % ceili(effect_remaining * (item.p() as ConsumableItem).duration)
 					overlay_label.visible = true
 				else:
 					cooldown_bar.visible = false
@@ -1968,10 +1978,10 @@ func _update_alt_consumable_widget_refs(
 	var cooldown_left: float = manager.cooldowns.get(item.id, 0.0)
 	var active_left:   float = manager.active_effects.get(item.id, 0.0)
 	if active_left > 0.0:
-		timer_lbl.text = "→%.0fs" % active_left
+		timer_lbl.text = "→%.0fs" % (active_left * (item.p() as ConsumableItem).duration)
 		timer_lbl.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0, 0.95))
 	elif cooldown_left > 0.0:
-		timer_lbl.text = "%.0fs" % cooldown_left
+		timer_lbl.text = "%.0fs" % (cooldown_left * (item.p() as ConsumableItem).cooldown_time)
 		timer_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2, 0.9))
 	else:
 		timer_lbl.text = ""
@@ -2003,11 +2013,11 @@ func _update_alt_consumable_widget(
 	var active_left:   float = manager.active_effects.get(item.id, 0.0)
 	if active_left > 0.0:
 		# Consumable is actively running - show remaining duration in cyan
-		timer_lbl.text = "→%.0fs" % active_left
+		timer_lbl.text = "→%.0fs" % (active_left * (item.p() as ConsumableItem).duration)
 		timer_lbl.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0, 0.95))
 	elif cooldown_left > 0.0:
 		# On cooldown - show remaining cooldown in yellow
-		timer_lbl.text = "%.0fs" % cooldown_left
+		timer_lbl.text = "%.0fs" % (cooldown_left * (item.p() as ConsumableItem).cooldown_time)
 		timer_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2, 0.9))
 	else:
 		timer_lbl.text = ""

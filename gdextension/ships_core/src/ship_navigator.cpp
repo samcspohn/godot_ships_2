@@ -1445,7 +1445,7 @@ void ShipNavigator::update_emergency(float delta) {
 void ShipNavigator::run_plan_sync() {
 	// Add 100 m buffer on top of the hard hull clearance so waypoints are
 	// placed well away from terrain, giving the arc planner room to manoeuvre.
-	const float plan_min_clearance = get_ship_clearance() + 100.0f;
+	const float plan_min_clearance = get_ship_clearance() + 200.0f;
 
 	// -----------------------------------------------------------------------
 	// HPA* path (primary): threat-aware hierarchical A*.

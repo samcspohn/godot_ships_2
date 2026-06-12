@@ -5,7 +5,6 @@
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="2_0hijo"]
 
 [resource]
-resource_local_to_scene = true
 script = ExtResource("1_tj6jp")
 icon = ExtResource("2_0hijo")
 disabled_icon = ExtResource("1_321va")

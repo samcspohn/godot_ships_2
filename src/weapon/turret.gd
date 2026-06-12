@@ -363,7 +363,7 @@ func is_aimpoint_valid(aim_point: Vector3) -> bool:
 	var dist = get_dist(aim_point)
 	if dist < get_params()._range:
 		var desired_local_angle_delta: float = get_angle_to_target(aim_point)
-		return is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
+		return !slew_limits_enabled or is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
 	return false
 
 func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool: # virtual

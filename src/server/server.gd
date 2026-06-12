@@ -86,6 +86,7 @@ func _ready():
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 
+	process_physics_priority = 100 # Run after other scripts
 	# Create the game world as a separate entity
 	game_world = preload("res://src/Maps/game_world.tscn").instantiate()
 	add_child(game_world)

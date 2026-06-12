@@ -11,7 +11,7 @@ radius = 1.0
 [node name="ParticleEmitter" type="Node3D" parent="." unique_id=532699152]
 script = ExtResource("1_taus2")
 template = ExtResource("2_2wsvi")
-emit_rate = 2.0
+emit_rate = 1.0
 size_multiplier = 200.0
 auto_start = true
 metadata/_custom_type_script = "uid://cqvqu5qahwwrs"

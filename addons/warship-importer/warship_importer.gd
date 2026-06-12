@@ -33,10 +33,10 @@ func process_turret_mounts(node: Node) -> int:
 		return count
 
 	var turret_name := node.name.trim_prefix("TurretMount_")
-	var turret_path := get_turret_path(node)
+	var turret_path := resolve_turret_path(node, turret_name)
 
-	if turret_path.is_empty() or not ResourceLoader.exists(turret_path):
-		turret_path = create_scene_from_glb(turret_name)
+	if turret_path.is_empty():
+		turret_path = create_scene_from_glb(strip_mount_suffix(turret_name))
 		if turret_path.is_empty():
 			printerr("No turret scene or GLB found for: ", node.name)
 			return count
@@ -66,9 +66,10 @@ func create_scene_from_glb(turret_name: String) -> String:
 		printerr("Failed to load GLB: ", glb_path)
 		return ""
 
-	# GEN_EDIT_STATE_MAIN_INHERITED preserves the inheritance link so pack()
-	# emits `instance=ExtResource(...)` instead of embedding the GLB node tree.
-	var root := glb_scene.instantiate(PackedScene.GEN_EDIT_STATE_MAIN_INHERITED)
+	# GEN_EDIT_STATE_INSTANCE sets the root's scene_file_path to the GLB so pack()
+	# emits `instance=ExtResource(...)` and keeps the link live. MAIN_INHERITED
+	# leaves scene_file_path empty, causing pack() to embed the GLB node tree.
+	var root := glb_scene.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
 	root.name = turret_name
 
 	var gun_script: Script = load("res://src/artillary/Guns/Gun.gd")
@@ -89,7 +90,35 @@ func create_scene_from_glb(turret_name: String) -> String:
 	print("Created turret scene from GLB: ", tscn_path)
 	return tscn_path
 
-func get_turret_path(node: Node) -> String:
+## Resolves the turret .tscn to instance for a mount.
+## Order: explicit metadata override, exact-name scene, then the same name
+## with a trailing mount index (e.g. `_001`) stripped. Returns "" if none
+## of these exist, signalling the caller to build one from a GLB.
+func resolve_turret_path(node: Node, turret_name: String) -> String:
+	var meta_path := get_turret_meta_path(node)
+	if not meta_path.is_empty() and ResourceLoader.exists(meta_path):
+		return meta_path
+
+	var exact_path := "res://assets/turrets/%s.tscn" % turret_name
+	if ResourceLoader.exists(exact_path):
+		return exact_path
+
+	var base_name := strip_mount_suffix(turret_name)
+	if base_name != turret_name:
+		var base_path := "res://assets/turrets/%s.tscn" % base_name
+		if ResourceLoader.exists(base_path):
+			return base_path
+
+	return ""
+
+## Removes a trailing duplicate-index suffix such as `_001` that Godot appends
+## to repeated node names, leaving the underlying turret name intact.
+func strip_mount_suffix(turret_name: String) -> String:
+	var regex := RegEx.new()
+	regex.compile("_\\d+$")
+	return regex.sub(turret_name, "")
+
+func get_turret_meta_path(node: Node) -> String:
 	if node.has_meta("extras"):
 		var extras = node.get_meta("extras")
 		if extras is Dictionary and extras.has("turret_scene"):

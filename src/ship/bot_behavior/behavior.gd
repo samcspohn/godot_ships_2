@@ -521,10 +521,19 @@ func get_potential_target_weight(target: Ship) -> float:
 	var to_target = (target.global_position - _ship.global_position).normalized()
 	var angle = target_heading.angle_to(to_target)
 	var side_profile = target.movement_controller.ship_length * abs(sin(angle)) + target.movement_controller.ship_beam * abs(cos(angle))
-	weight *= side_profile * 0.01
+	side_profile *= 0.01
+	match target.ship_class:
+		Ship.ShipClass.BB:
+			side_profile *= 1.0
+		Ship.ShipClass.CA:
+			side_profile *= 2.0
+		Ship.ShipClass.DD:
+			side_profile *= 2.0
+	# weight *= side_profile * 0.01
 
 	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
-	weight *= maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
+	weight += maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
+
 
 	# Prefer high-threat targets
 	weight += target.stats.total_damage * (1.0 / 100_000.0)
@@ -553,7 +562,7 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 			and last_target.visible_to_enemy and can_hit_target(last_target):
 		var last_weight = get_potential_target_weight(last_target)
 		var best_weight = get_potential_target_weight(best)
-		if best_weight <= last_weight * 1.25:
+		if best_weight <= last_weight * 1.1:
 			return last_target
 
 	return best
@@ -985,6 +994,14 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 func can_hit_target(target: Ship) -> bool:
 	"""Check if we can actually hit the target (not blocked by terrain/islands).
 	Uses sim_can_shoot_over_terrain_static from ship center at deck height."""
+
+	var gun_params = _ship.artillery_controller.get_params()
+	if gun_params == null:
+		return false
+	if target.global_position.distance_to(_ship.global_position) > gun_params._range * 1.5:
+		# Quick early-out for very distant targets to avoid expensive sim checks
+		return false
+
 	var shell_params = _ship.artillery_controller.get_shell_params()
 	if shell_params == null:
 		return false
@@ -1684,14 +1701,16 @@ func engage_target(target: Ship):
 	if target.global_position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
 		return
 
-	if not can_fire_guns():
-		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
-		return
+	#if not can_fire_guns():
+		#_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
+		#return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
 	if wants_to_be_concealed:
 		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
+		_ship.secondary_controller.enabled = false
 		return
+	_ship.secondary_controller.enabled = false
 
 	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
@@ -1905,7 +1924,7 @@ func try_use_consumable():
 
 func _should_use_smoke() -> bool:
 	# Simple heuristic: use smoke if we're low HP and have an active BB shooter targeting us.
-	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 and active_shooters_at_me.size() > 0 and _ship.visible_to_enemy:
+	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 and active_shooters_at_me.size() > 0 and _ship.visible_to_enemy and not (_ship.radar_detected or _ship.hydro_detected):
 		return true
 	return false
 

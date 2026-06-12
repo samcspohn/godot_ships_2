@@ -101,14 +101,14 @@ func instantiate(ship: Ship) -> Moddable:
 	inst._is_instance = true
 	inst._is_mod_copy = false
 
-	inst.base       = create_copy()
-	inst.static_mod = create_copy()
+	inst.base        = self  # template is never mutated, so a direct ref is safe
+	inst.static_mod  = create_copy()
 	inst.dynamic_mod = create_copy()
 
 	ship.reset_mods.connect(inst.reset)
 	ship.reset_dynamic_mods.connect(inst.reset_dynamic_mod)
-	return inst
 
+	return inst
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Mod-layer helpers  (same public API as before)
@@ -126,7 +126,6 @@ func reset_dynamic_mod() -> void:
 ## Returns the "effective" parameters — the dynamic_mod layer with all mods baked in.
 func p() -> Moddable:
 	return dynamic_mod
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Backward-compat shim — prints a one-time warning so you can migrate callers

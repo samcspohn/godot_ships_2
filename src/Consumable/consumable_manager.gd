@@ -10,6 +10,11 @@ var active_effects: Dictionary = {}  # item_id -> remaining_duration
 signal consumable_used(item: ConsumableItem)
 signal consumable_ready(item: ConsumableItem)
 
+func is_using(type: ConsumableItem.ConsumableType) -> bool:
+	for item_id in active_effects.keys():
+		if item_id < equipped_consumables.size() and equipped_consumables[item_id] and equipped_consumables[item_id].type == type:
+			return true
+	return false
 func _ready():
 	ship = get_parent().get_parent()
 
@@ -122,7 +127,7 @@ func use_consumable(slot: int) -> bool:
 
 	# Track duration if applicable
 	if (item.p() as ConsumableItem).duration > 0:
-		active_effects[item.id] = (item.p() as ConsumableItem).duration
+		active_effects[item.id] = 1.0
 
 	consumable_used.emit(item)
 	return true
@@ -133,7 +138,7 @@ func can_use_item(item: ConsumableItem) -> bool:
 
 func update_cooldowns(delta: float):
 	for item_id in cooldowns:
-		cooldowns[item_id] -= delta
+		cooldowns[item_id] -= delta / equipped_consumables[item_id].p().cooldown_time
 		if cooldowns[item_id] <= 0:
 			cooldowns.erase(item_id)
 			# Find item and emit ready signal
@@ -142,9 +147,13 @@ func update_cooldowns(delta: float):
 					consumable_ready.emit(item)
 
 func update_active_effects(delta: float):
+	# t += delta
+	if Engine.get_physics_frames() % Engine.physics_ticks_per_second != 0:
+		return
+
 	for item_id in active_effects:
-		active_effects[item_id] -= delta
-		equipped_consumables[item_id]._proc(delta, ship)
+		active_effects[item_id] -= 1.0 / equipped_consumables[item_id].p().duration
+		equipped_consumables[item_id]._proc(1.0, ship)
 		if active_effects[item_id] <= 0:
 			active_effects.erase(item_id)
 			equipped_consumables[item_id].remove_effect(ship)
@@ -152,10 +161,27 @@ func update_active_effects(delta: float):
 			var _eff_max := (_ci.p() as ConsumableItem).max_stack
 			if _eff_max == -1 or _eff_max - _ci.used > 0:
 				# Only reset cooldown if there are remaining uses
-				cooldowns[item_id] = (_ci.p() as ConsumableItem).cooldown_time
+				cooldowns[item_id] = 1.0
 			# Notify listeners the slot is ready again (used by server sync tracking)
 			consumable_ready.emit(_ci)
 			# Remove effect (implement in specific consumables)
+
+func get_active_consumable_progress(type: ConsumableItem.ConsumableType) -> float:
+	for item_id in active_effects.keys():
+		if item_id < equipped_consumables.size() and equipped_consumables[item_id] and equipped_consumables[item_id].type == type:
+			return 1.0 - active_effects[item_id]
+	return 0.0
+
+func get_item_count(type: ConsumableItem.ConsumableType) -> int:
+	var count = 0
+	for item in equipped_consumables:
+		if item and item.type == type:
+			var eff_max := (item.p() as ConsumableItem).max_stack
+			if eff_max == -1:
+				count += 1
+			else:
+				count += eff_max - item.used
+	return count
 
 @rpc("any_peer", "call_local", "reliable")
 func use_consumable_rpc(slot: int):

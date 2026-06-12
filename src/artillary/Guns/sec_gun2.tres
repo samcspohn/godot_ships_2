@@ -1,5 +1,6 @@
 [gd_resource type="Resource" script_class="GunParams" format=3 uid="uid://ppinkghgx71y"]
 
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="1_i2m4d"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_kndud"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_kndud"]
 

@@ -44,36 +44,36 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 [sub_resource type="Resource" id="Resource_4n5yk"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 45000.0
-pool2 = 45000.0
+pool1 = 48000.0
+pool2 = 48000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_mrsjx"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 4500.0
-pool2 = 9000.0
+pool1 = 4800.0
+pool2 = 9600.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ldxem"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1250.0
-pool2 = 2500.0
+pool1 = 1333.3333333333333
+pool2 = 2666.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_xci8g"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 1250.0
-pool2 = 2500.0
+pool1 = 1333.3333333333333
+pool2 = 2666.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vwm28"]
 resource_local_to_scene = true
 script = ExtResource("3_pxp4h")
-pool1 = 2000.0
-pool2 = 4000.0
+pool1 = 2133.3333333333335
+pool2 = 4266.666666666667
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e6iqp"]
@@ -162,6 +162,7 @@ icon = ExtResource("13_3jgu3")
 disabled_icon = ExtResource("12_2by4h")
 duration = 10.0
 max_stack = -1
+type = 1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_pipf2"]
@@ -215,7 +216,7 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_v7rh5")
-_max_hp = 15000.0
+_max_hp = 16000.0
 bow_percent = 0.25
 stern_percent = 0.25
 superstructure_percent = 0.4

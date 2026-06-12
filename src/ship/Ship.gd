@@ -95,6 +95,8 @@ var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 var _precision_registered: bool = false
 
+var _debug_recalc_timer: float = 0.0
+
 var super_structure: Node3D = null
 
 var id: int = -1
@@ -151,6 +153,8 @@ func _disable_weapons():
 	if torpedo_controller:
 		for tl in torpedo_controller.launchers:
 			tl.disabled = true
+
+
 
 func _update_static_mods(): # called when changed
 	reset_mods.emit()
@@ -330,6 +334,11 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
+	if OS.is_debug_build():
+		_debug_recalc_timer += delta
+		if _debug_recalc_timer >= 1.0:
+			_debug_recalc_timer = 0.0
+			_update_static_mods()
 	# if torpedo_launcher != null:
 	# 	torpedo_launcher._aim(artillery_controller.aim_point, delta)
 

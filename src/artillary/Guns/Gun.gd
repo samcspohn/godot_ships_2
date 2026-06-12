@@ -73,6 +73,13 @@ func to_dict() -> Dictionary:
 		"rl": reload
 	}
 
+func return_to_base(delta: float) -> bool:
+	super.return_to_base(delta)
+	if abs(barrel.rotation.x) < 0.001:
+		barrel.rotation.x = lerp(barrel.rotation.x, 0.0, delta * 5.0)
+		return false
+	return true
+
 func to_bytes(full: bool) -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 

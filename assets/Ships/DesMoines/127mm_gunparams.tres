@@ -35,7 +35,6 @@ overmatch = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
-resource_local_to_scene = true
 script = ExtResource("1_f17ee")
 elevation_speed = 15.0
 shell1 = SubResource("Resource_krgon")

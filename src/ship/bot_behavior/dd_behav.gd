@@ -407,7 +407,9 @@ func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done)
 	if _ship.visible_to_enemy or not _suppress_guns and can_fire_guns():
 		super.engage_target(target)
+		_ship.secondary_controller.enabled = true
 	else:
+		_ship.secondary_controller.enabled = false
 		# Aim turrets but don't fire
 		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
 
