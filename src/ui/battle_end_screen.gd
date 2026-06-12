@@ -206,8 +206,8 @@ func sort_leaderboard(a, b):
 	var b_spotting = b.get("spotting_damage", 0)
 	var a_kills = a.get("frags", 0)
 	var b_kills = b.get("frags", 0)
-	var a_score = a_dmg + a_spotting * 0.8 + a_kills * 10000
-	var b_score = b_dmg + b_spotting * 0.8 + b_kills * 10000
+	var a_score = a_dmg + a_spotting * 0.7 + a_kills * 10000
+	var b_score = b_dmg + b_spotting * 0.7 + b_kills * 10000
 	return a_score > b_score # Sort descending by score
 
 # ===========================================================================
@@ -292,9 +292,9 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 		var is_alive: bool = entry.get("alive", false)
 
 		# Display name: ship name, with player name if not a bot
-		var display_name := entry_ship_name
-		if not entry.get("is_bot", true):
-			display_name = entry_ship_name + " (" + player_name + ")"
+		# var display_name := entry_ship_name
+		# if not entry.get("is_bot", true):
+		var display_name := entry_ship_name + " (" + player_name + ")"
 
 		var name_color: Color
 		if not is_alive:

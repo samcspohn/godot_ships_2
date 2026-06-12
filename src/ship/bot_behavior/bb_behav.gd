@@ -257,7 +257,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 					if intent != null:
 						_active_skill_name = &"Kite"
 			if intent != null:
-
 				_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
 		else:
 			if threat < 0.5 or _nearest_dist > gun_range:

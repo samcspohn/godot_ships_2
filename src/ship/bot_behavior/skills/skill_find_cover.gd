@@ -585,7 +585,7 @@ func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
 		return true
 
 	var t = clampf((dist_to_cover - 750.0) / 4000.0, 0.0, 1.0)
-	var angle_tol = lerpf(deg_to_rad(75.0), deg_to_rad(15.0), t)
+	var angle_tol = lerpf(deg_to_rad(60.0), deg_to_rad(15.0), t)
 
 	var to_nearest = nearest.global_position - ship.global_position
 	to_nearest.y = 0.0
