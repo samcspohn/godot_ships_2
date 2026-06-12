@@ -1771,7 +1771,7 @@ func engage_target(target: Ship):
 
 # Heading error (radians) within which the hull is considered aligned with the
 # bidirectional desired-heading line, allowing the ship to engage reverse.
-const REVERSE_ALIGN_TOL: float = deg_to_rad(30.0)
+const REVERSE_ALIGN_TOL: float = deg_to_rad(40.0)
 
 func _get_ship_heading() -> float:
 	"""Get ship's current heading. 0 = +Z, PI/2 = +X, etc."""

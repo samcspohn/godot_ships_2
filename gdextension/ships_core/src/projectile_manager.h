@@ -43,6 +43,7 @@ private:
 	// Time multiplier for shell speed display
 	double shell_time_multiplier;
 	double current_time;
+	double client_time;
 
 	// Projectile tracking
 	int next_id;

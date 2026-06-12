@@ -506,13 +506,24 @@ void _ProjectileManager::_process(double delta) {
 	if (camera == nullptr) {
 		return;
 	}
+	int physics_fps = ProjectSettings::get_singleton()->get_setting("physics/common/physics_ticks_per_second");
+
 
 	// Update shell positions in GPU renderer and trail particles
-	_process_trails_only(current_time);
-	current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites
+	_process_trails_only(client_time);
+
+	// if (abs(client_time - current_time) < 1.0 / physics_fps) {
+	//     client_time += delta;
+	// } else
+	if (client_time > current_time) {
+        client_time += delta / pow(1.0 + client_time - current_time, 2.0);
+	} else if (client_time < current_time) {
+        client_time += delta * pow(1.0 + current_time - client_time, 2.0); // increment client_time faster as difference increases to catch up to current_time, avoiding long delays
+	}
+	// current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites
 }
 
-void _ProjectileManager::_process_trails_only(double current_time) {
+void _ProjectileManager::_process_trails_only(double time) {
 	int physics_fps = ProjectSettings::get_singleton()->get_setting("physics/common/physics_ticks_per_second");
 	double step_size = 1.0 / physics_fps;
 	for (int i = 0; i < projectiles.size(); i++) {
@@ -530,12 +541,12 @@ void _ProjectileManager::_process_trails_only(double current_time) {
 		if (!shell_params.is_valid()) {
 			continue;
 		}
-		double t = (current_time - p->get_start_time()) * shell_time_multiplier;
-		if (t < 2.0) {
-			t += step_size * (1.0 - (2.0 - t) / 2.0); // Smoothly interpolate time for the first 2 seconds to avoid trail popping
-		} else {
-			t += step_size; // Regular time progression after 2 seconds
-		}
+		double t = (time - p->get_start_time()) * shell_time_multiplier;
+		// if (t < 2.0) {
+		// 	t += step_size * (1.0 - (2.0 - t) / 2.0); // Smoothly interpolate time for the first 2 seconds to avoid trail popping
+		// } else {
+		// 	t += step_size; // Regular time progression after 2 seconds
+		// }
 		// t = _ProjectileManager::time_warp(t,shell_params) * shell_time_multiplier;
 
 		// Calculate position for rendering and trail emission

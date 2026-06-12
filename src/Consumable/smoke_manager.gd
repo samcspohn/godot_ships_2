@@ -19,6 +19,17 @@ func spawn_smoke(ship: Ship, size: float, duration: float) -> void:
 	get_tree().create_timer(duration).timeout.connect(smoke_puff.queue_free)
 	smoke_puff.global_position = ship.global_position
 	smoke_puff.scale = Vector3(size, size, size)
+	var shap_cast = PhysicsShapeQueryParameters3D.new()
+	shap_cast.shape = SphereShape3D.new()
+	shap_cast.shape.radius = size * 0.5
+	shap_cast.transform.origin = ship.global_position
+	shap_cast.collision_mask = 1 << 6 # smoke layer
+	var space_state = get_world_3d().direct_space_state
+	var results = space_state.intersect_shape(shap_cast, 1)
+	if results.size() > 0:
+		smoke_puff.get_child(0).queue_free() # free the visual effect if it spawned inside another smoke cloud to prevent stacking
+	# for result in results:
+	# 	var body = result.collider
 	spawn_smoke_c.rpc(ship.global_position, ship.team.team_id, size, duration)
 
 @rpc("call_remote", "reliable")

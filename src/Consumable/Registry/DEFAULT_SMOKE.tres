@@ -9,6 +9,5 @@ smoke_duration = 120.0
 name = "Smoke Screen"
 cooldown_time = 120.0
 duration = 50.0
-max_stack = -1
 type = 4
 metadata/_custom_type_script = "uid://c37xmjlq3hkvr"
