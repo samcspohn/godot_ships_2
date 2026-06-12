@@ -528,7 +528,7 @@ func get_potential_target_weight(target: Ship) -> float:
 		Ship.ShipClass.CA:
 			side_profile *= 2.0
 		Ship.ShipClass.DD:
-			side_profile *= 2.0
+			side_profile *= 3.0
 	# weight *= side_profile * 0.01
 
 	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
