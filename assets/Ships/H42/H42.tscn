@@ -38,31 +38,26 @@ torpedo_protection = 0.35
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_jk17q"]
-resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 366000.0
 pool2 = 366000.0
 
 [sub_resource type="Resource" id="Resource_cwbsn"]
-resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 32533.333333333332
 pool2 = 65066.666666666664
 
 [sub_resource type="Resource" id="Resource_sj828"]
-resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 14233.333333333334
 pool2 = 28466.666666666668
 
 [sub_resource type="Resource" id="Resource_wrph0"]
-resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 14233.333333333334
 pool2 = 28466.666666666668
 
 [sub_resource type="Resource" id="Resource_yn4vk"]
-resource_local_to_scene = true
 script = ExtResource("4_2oa6y")
 pool1 = 20333.333333333332
 pool2 = 40666.666666666664
@@ -146,7 +141,7 @@ grouping = 1.0
 h_spread = 0.055
 v_spread = 0.03
 dispersion_ = ExtResource("11_jk17q")
-max_dispersion = 150.0
+max_dispersion = 180.0
 reload_time = 4.5
 traverse_speed = 50.0
 _range = 4800.0
@@ -161,7 +156,6 @@ rudder_response_time = 15.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 
 [sub_resource type="Resource" id="Resource_etgj4"]
-resource_local_to_scene = true
 script = ExtResource("14_ghpuu")
 icon = ExtResource("13_5avbj")
 disabled_icon = ExtResource("12_fr2ey")

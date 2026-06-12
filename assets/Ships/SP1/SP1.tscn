@@ -39,31 +39,26 @@ torpedo_protection = 0.08
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_uxi1d"]
-resource_local_to_scene = true
 script = ExtResource("4_klw4b")
 pool1 = 7500.0
 pool2 = 75000.0
 
 [sub_resource type="Resource" id="Resource_vafbj"]
-resource_local_to_scene = true
 script = ExtResource("4_klw4b")
 pool1 = 7500.0
 pool2 = 15000.0
 
 [sub_resource type="Resource" id="Resource_yrvno"]
-resource_local_to_scene = true
 script = ExtResource("4_klw4b")
 pool1 = 2083.3333333333335
 pool2 = 4166.666666666667
 
 [sub_resource type="Resource" id="Resource_js85v"]
-resource_local_to_scene = true
 script = ExtResource("4_klw4b")
 pool1 = 2083.3333333333335
 pool2 = 4166.666666666667
 
 [sub_resource type="Resource" id="Resource_a02lg"]
-resource_local_to_scene = true
 script = ExtResource("4_klw4b")
 pool1 = 3333.3333333333335
 pool2 = 6666.666666666667
@@ -76,7 +71,6 @@ unspotted_bloom_duration = 1.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_e8hl0"]
-resource_local_to_scene = true
 script = ExtResource("5_rk6eg")
 speed = 875.0
 drag = 4e-05
@@ -90,7 +84,6 @@ overmatch = 10
 arming_threshold = 25
 
 [sub_resource type="Resource" id="Resource_lyw5o"]
-resource_local_to_scene = true
 script = ExtResource("5_rk6eg")
 speed = 875.0
 drag = 4e-05
@@ -117,7 +110,7 @@ v_spread = 0.25
 max_dispersion = 80.0
 reload_time = 6.0
 traverse_speed = 8.0
-_range = 11900.0
+_range = 10900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_8hv6v"]
@@ -152,7 +145,7 @@ elevation_speed = 50.0
 shell1 = SubResource("Resource_8hv6v")
 shell2 = SubResource("Resource_xqdg0")
 grouping = 1.0
-max_dispersion = 80.0
+max_dispersion = 60.0
 reload_time = 3.0
 traverse_speed = 50.0
 _range = 4200.0

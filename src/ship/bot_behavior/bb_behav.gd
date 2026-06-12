@@ -178,9 +178,9 @@ func target_aim_offset(_target: Ship) -> Vector3:
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # BBs push or camp — never route around detection zones
+	wants_to_be_concealed = false
 	var ctx = SkillContext.create(ship, target, server, self)
 	_init_flank_identity(ship, server)
-
 	var spotted = server.get_valid_targets(ship.team.team_id)
 	var has_spotted = spotted.size() > 0
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)

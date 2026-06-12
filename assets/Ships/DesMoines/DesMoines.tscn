@@ -33,7 +33,7 @@
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="29_movp"]
 
 [sub_resource type="Resource" id="Resource_f6wpl"]
-resource_local_to_scene = true
+
 script = ExtResource("3_s7tx1")
 citadel_repair = 0.5
 pen_repair = 0.7
@@ -41,42 +41,42 @@ torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_6pn0f"]
-resource_local_to_scene = true
+
 script = ExtResource("3_seiyl")
 pool1 = 14430.0
 pool2 = 144300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_qcn8p"]
-resource_local_to_scene = true
+
 script = ExtResource("3_seiyl")
 pool1 = 8016.666666666667
 pool2 = 16033.333333333334
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_slang"]
-resource_local_to_scene = true
+
 script = ExtResource("3_seiyl")
 pool1 = 3206.6666666666665
 pool2 = 6413.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_jbscf"]
-resource_local_to_scene = true
+
 script = ExtResource("3_seiyl")
 pool1 = 3206.6666666666665
 pool2 = 6413.333333333333
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kqusw"]
-resource_local_to_scene = true
+
 script = ExtResource("3_seiyl")
 pool1 = 4810.0
 pool2 = 9620.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vpkcl"]
-resource_local_to_scene = true
+
 script = ExtResource("4_seiyl")
 radius = 9000.0
 bloom_duration = 16.0
@@ -84,7 +84,7 @@ unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_4y4a3"]
-resource_local_to_scene = true
+
 script = ExtResource("6_in36t")
 speed = 762.0
 drag = 3.299999999999999e-05
@@ -99,7 +99,7 @@ arming_threshold = 33
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_yupck"]
-resource_local_to_scene = true
+
 script = ExtResource("6_in36t")
 speed = 823.0
 drag = 4.199999999999999e-05
@@ -116,7 +116,7 @@ overmatch = 34
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_61716"]
-resource_local_to_scene = true
+
 script = ExtResource("5_jjc8t")
 elevation_speed = 8.2
 shell1 = SubResource("Resource_4y4a3")
@@ -138,7 +138,7 @@ turn_speed_loss = 0.1
 rudder_response_time = 5.0
 
 [sub_resource type="Resource" id="Resource_wrnye"]
-resource_local_to_scene = true
+
 script = ExtResource("12_vfelm")
 duration_reduction = 0.2
 damage_reduction = 0.45
@@ -150,7 +150,7 @@ max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_2pjxp"]
-resource_local_to_scene = true
+
 script = ExtResource("15_xosf1")
 heal_per_sec = 0.012
 icon = ExtResource("14_s7tx1")

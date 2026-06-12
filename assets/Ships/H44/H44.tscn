@@ -29,49 +29,49 @@
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="26_itqm6"]
 
 [sub_resource type="Resource" id="Resource_itqm6"]
-resource_local_to_scene = true
+
 script = ExtResource("3_54qku")
 pen_repair = 0.6
 torpedo_protection = 0.41
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_1kp4b"]
-resource_local_to_scene = true
+
 script = ExtResource("3_c07vg")
 pool1 = 465300.0
 pool2 = 465300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_3wv4u"]
-resource_local_to_scene = true
+
 script = ExtResource("3_c07vg")
 pool1 = 41360.0
 pool2 = 82720.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_43stl"]
-resource_local_to_scene = true
+
 script = ExtResource("3_c07vg")
 pool1 = 18095.0
 pool2 = 36190.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_r6w0e"]
-resource_local_to_scene = true
+
 script = ExtResource("3_c07vg")
 pool1 = 18095.0
 pool2 = 36190.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_6lpig"]
-resource_local_to_scene = true
+
 script = ExtResource("3_c07vg")
 pool1 = 25850.0
 pool2 = 51700.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_qro5i"]
-resource_local_to_scene = true
+
 script = ExtResource("12_n2r5a")
 radius = 15000.0
 bloom_duration = 20.0
@@ -79,7 +79,7 @@ unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_g3sxk"]
-resource_local_to_scene = true
+
 script = ExtResource("4_ai21t")
 speed = 820.0
 drag = 1.5999999999999955e-05
@@ -92,7 +92,7 @@ arming_threshold = 83
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_almt2"]
-resource_local_to_scene = true
+
 script = ExtResource("4_ai21t")
 speed = 820.0
 drag = 1.5999999999999955e-05
@@ -107,7 +107,7 @@ overmatch = 125
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_sdl3k"]
-resource_local_to_scene = true
+
 script = ExtResource("3_osjim")
 elevation_speed = 3.5
 shell1 = SubResource("Resource_g3sxk")
@@ -121,7 +121,7 @@ _range = 15800.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_5talp"]
-resource_local_to_scene = true
+
 script = ExtResource("4_ai21t")
 speed = 1200.0
 drag = 6.599999999999998e-05
@@ -136,7 +136,7 @@ overmatch = 10
 arming_threshold = 25
 
 [sub_resource type="Resource" id="Resource_mddhe"]
-resource_local_to_scene = true
+
 script = ExtResource("4_ai21t")
 speed = 1200.0
 drag = 6.599999999999998e-05
@@ -153,7 +153,7 @@ overmatch = 38
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_mntgu"]
-resource_local_to_scene = true
+
 script = ExtResource("3_osjim")
 elevation_speed = 50.0
 shell1 = SubResource("Resource_5talp")
@@ -177,7 +177,7 @@ rudder_response_time = 14.0
 max_turn_roll_angle = 5.5
 
 [sub_resource type="Resource" id="Resource_ss0d1"]
-resource_local_to_scene = true
+
 script = ExtResource("12_fadtt")
 icon = ExtResource("11_1kp4b")
 disabled_icon = ExtResource("10_itqm6")

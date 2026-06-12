@@ -91,7 +91,6 @@ func _generate_armor_parts():
 
 	if !citadel:
 		citadel = HpPartMod.new()
-		citadel.resource_local_to_scene = true
 	var _ship: Ship = $"../.."
 	if _ship.ship_class == Ship.ShipClass.CA:
 		citadel.pool1 = _max_hp * 0.3
@@ -100,22 +99,18 @@ func _generate_armor_parts():
 	citadel.pool2 = _max_hp * 3.0
 	if !casemate:
 		casemate = HpPartMod.new()
-		casemate.resource_local_to_scene = true
 	casemate.pool1 = _max_hp * casemate_percent / 3.0
 	casemate.pool2 = 2.0 * _max_hp * casemate_percent / 3.0
 	if !bow:
 		bow = HpPartMod.new()
-		bow.resource_local_to_scene = true
 	bow.pool1 = _max_hp * bow_percent / 3.0
 	bow.pool2 = 2.0 * _max_hp * bow_percent / 3.0
 	if !stern:
 		stern = HpPartMod.new()
-		stern.resource_local_to_scene = true
 	stern.pool1 = _max_hp * stern_percent / 3.0
 	stern.pool2 = 2.0 * _max_hp * stern_percent / 3.0
 	if !superstructure:
 		superstructure = HpPartMod.new()
-		superstructure.resource_local_to_scene = true
 	superstructure.pool1 = _max_hp * superstructure_percent / 3.0
 	superstructure.pool2 = 2.0 * _max_hp * superstructure_percent / 3.0
 

@@ -38,31 +38,31 @@ torpedo_protection = 0.51
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_wckrl"]
-resource_local_to_scene = true
+
 script = ExtResource("5_p50sc")
 pool1 = 297300.0
 pool2 = 297300.0
 
 [sub_resource type="Resource" id="Resource_u3en7"]
-resource_local_to_scene = true
+
 script = ExtResource("5_p50sc")
 pool1 = 26426.666666666668
 pool2 = 52853.333333333336
 
 [sub_resource type="Resource" id="Resource_kv3r5"]
-resource_local_to_scene = true
+
 script = ExtResource("5_p50sc")
 pool1 = 11561.666666666666
 pool2 = 23123.333333333332
 
 [sub_resource type="Resource" id="Resource_euctv"]
-resource_local_to_scene = true
+
 script = ExtResource("5_p50sc")
 pool1 = 11561.666666666666
 pool2 = 23123.333333333332
 
 [sub_resource type="Resource" id="Resource_hcnip"]
-resource_local_to_scene = true
+
 script = ExtResource("5_p50sc")
 pool1 = 16516.666666666668
 pool2 = 33033.333333333336
@@ -192,7 +192,7 @@ turning_circle_radius = 320.0
 rudder_response_time = 15.0
 
 [sub_resource type="Resource" id="Resource_edgkl"]
-resource_local_to_scene = true
+
 script = ExtResource("15_g7l6b")
 icon = ExtResource("13_0yy7r")
 disabled_icon = ExtResource("12_ssrv5")

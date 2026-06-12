@@ -37,48 +37,48 @@
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
 [sub_resource type="Resource" id="Resource_afiln"]
-resource_local_to_scene = true
+
 script = ExtResource("4_kxwob")
 torpedo_protection = 0.24
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_kp8pn"]
-resource_local_to_scene = true
+
 script = ExtResource("4_onxit")
 pool1 = 237000.0
 pool2 = 237000.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_iohum"]
-resource_local_to_scene = true
+
 script = ExtResource("4_onxit")
 pool1 = 21066.666666666668
 pool2 = 42133.333333333336
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_4564o"]
-resource_local_to_scene = true
+
 script = ExtResource("4_onxit")
 pool1 = 9216.666666666666
 pool2 = 18433.333333333332
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_u0hyh"]
-resource_local_to_scene = true
+
 script = ExtResource("4_onxit")
 pool1 = 9216.666666666666
 pool2 = 18433.333333333332
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ks2dr"]
-resource_local_to_scene = true
+
 script = ExtResource("4_onxit")
 pool1 = 13166.666666666666
 pool2 = 26333.333333333332
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ktcsn"]
-resource_local_to_scene = true
+
 script = ExtResource("14_w4pwy")
 radius = 13000.0
 bloom_duration = 20.0
@@ -86,7 +86,7 @@ unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_060o5"]
-resource_local_to_scene = true
+
 script = ExtResource("8_8qd2y")
 speed = 820.0
 drag = 2.4999999999999957e-05
@@ -99,7 +99,7 @@ overmatch = 26
 arming_threshold = 63
 
 [sub_resource type="Resource" id="Resource_gitck"]
-resource_local_to_scene = true
+
 script = ExtResource("8_8qd2y")
 speed = 820.0
 drag = 2.4999999999999957e-05
@@ -116,7 +116,7 @@ overmatch = 95
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_duhvu"]
-resource_local_to_scene = true
+
 script = ExtResource("6_lcoqi")
 elevation_speed = 6.0
 shell1 = SubResource("Resource_060o5")
@@ -138,7 +138,7 @@ turn_speed_loss = 0.15
 rudder_response_time = 10.0
 
 [sub_resource type="Resource" id="Resource_chqw8"]
-resource_local_to_scene = true
+
 script = ExtResource("16_kxwob")
 icon = ExtResource("15_kaouq")
 disabled_icon = ExtResource("14_usy8k")

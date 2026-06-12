@@ -1710,7 +1710,7 @@ func engage_target(target: Ship):
 		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
 		_ship.secondary_controller.enabled = false
 		return
-	_ship.secondary_controller.enabled = false
+	_ship.secondary_controller.enabled = true
 
 	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
