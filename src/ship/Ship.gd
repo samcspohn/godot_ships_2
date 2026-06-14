@@ -37,15 +37,12 @@ var stats: Stats
 var control
 var team: TeamEntity
 var visible_to_enemy: bool = false
+var det_los: bool = false
+var det_hydro: bool = false
+var det_radar: bool = false
 ## Set true on the client when the server sends a hydro LKP update for this
 ## ship, false when the server sends a clear packet (ship left hydro range).
 var hydro_detected: bool = false
-## How this ship is currently being detected.  Reset to NONE every frame on
-## the server; set to LOS, HYDRO, or RADAR during the spotting pass; synced
-## back to the ship's own client and to all friendly clients for the minimap aura.
-## Priority order (highest wins via max()): RADAR > HYDRO > LOS > NONE.
-enum DetectionType { NONE = 0, LOS = 1, HYDRO = 2, RADAR = 3 }
-var detection_type: int = DetectionType.NONE
 ## Set true on the client when the server sends a radar LKP update for this
 ## ship, false when the server sends a clear packet (ship left radar range).
 var radar_detected: bool = false
@@ -471,7 +468,7 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	# writer.put_var(stats_bytes)
 	writer.put_u8(1 if vs else 0)
 	if friendly:
-		writer.put_u8(detection_type)  # For minimap detection aura on friendly clients
+		writer.put_u8(_det_flags())  # For minimap detection aura on friendly clients
 
 	pb = writer.get_data_array()
 	return pb
@@ -547,7 +544,7 @@ func sync2(b: PackedByteArray, friendly: bool):
 	self.visible_to_enemy = reader.get_u8() == 1
 	self.visible = true
 	if friendly:
-		detection_type = reader.get_u8()  # For minimap detection aura
+		_set_det_flags(reader.get_u8())  # For minimap detection aura
 
 
 func sync_player_data() -> PackedByteArray:
@@ -620,7 +617,7 @@ func sync_player_data() -> PackedByteArray:
 	writer.put_var(stats_bytes)
 
 	writer.put_u8(1 if visible_to_enemy else 0)
-	writer.put_u8(detection_type)  # For own detection indicator color
+	writer.put_u8(_det_flags())  # For own detection indicator color
 
 	pb = writer.get_data_array()
 	return pb
@@ -716,9 +713,17 @@ func sync_player(b: PackedByteArray):
 	var stats_bytes: PackedByteArray = reader.get_var()
 	stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
-	detection_type = reader.get_u8()  # For own detection indicator color
+	_set_det_flags(reader.get_u8())  # For own detection indicator color
 	self.visible = true
 
+
+func _det_flags() -> int:
+	return (1 if det_los else 0) | (2 if det_hydro else 0) | (4 if det_radar else 0)
+
+func _set_det_flags(f: int) -> void:
+	det_los   = (f & 1) != 0
+	det_hydro = (f & 2) != 0
+	det_radar = (f & 4) != 0
 
 
 ## Serialise a passive-detection LKP update.  Uses current rotation.y (cosmetic)

@@ -2024,7 +2024,7 @@ func _should_use_radar() -> bool:
 	#   2. An unspotted enemy has a recent LKP (< 30 s) within radar range —
 	#      the LKP is already in the shared unspotted-enemies table so this is
 	#      not omniscient; it capitalises on information the team already has.
-	#   3. This ship's detection_type is HYDRO or RADAR — an enemy with active
+	#   3. This ship's det_hydro or det_radar flag is set — an enemy with active
 	#      detection is within ~4–8 km.  If no enemy is currently visible,
 	#      firing radar may flush out that concealed spotter.
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
@@ -2063,11 +2063,10 @@ func _should_use_radar() -> bool:
 			return true
 
 	# --- Trigger 3: being detected by active sonar/radar with no visible enemies ---
-	# detection_type is server-authoritative state the bot legitimately reads.
+	# det_hydro/det_radar are server-authoritative flags the bot legitimately reads.
 	# HYDRO means an enemy pinger is within ~4 km; RADAR within ~8 km.
 	# If no enemy is currently visible, the concealed pinger may be within radar range.
-	if (_ship.detection_type == Ship.DetectionType.HYDRO or \
-			_ship.detection_type == Ship.DetectionType.RADAR) and spotted.is_empty():
+	if (_ship.det_hydro or _ship.det_radar) and spotted.is_empty():
 		return true
 
 	return false

@@ -59,9 +59,10 @@ var hit_stat_counters: HitStatCounters = null
 # Kill feed component
 var kill_feed: KillFeed = null
 
-# Visibility indicator
-@onready var visibility_indicator: ColorRect = $MainContainer/VisibilityIndicator
-@onready var visibility_indicator_color: ColorRect = $MainContainer/VisibilityIndicator/IndicatorColor
+# Visibility indicators (one per detection type)
+@onready var det_los_indicator: ColorRect = $MainContainer/VisibilityContainer/LOSIndicator
+@onready var det_hydro_indicator: ColorRect = $MainContainer/VisibilityContainer/HydroIndicator
+@onready var det_radar_indicator: ColorRect = $MainContainer/VisibilityContainer/RadarIndicator
 
 # Terrain hit indicator
 @onready var terrain_hit_indicator: ColorRect = $MainContainer/CrosshairContainer/TerrainIndicator
@@ -714,24 +715,16 @@ func initialize_for_ship():
 			hit_stat_counters.set_stats(camera_controller._ship.stats)
 
 func update_visibility_indicator():
-	"""Update the visibility indicator color based on the ship's detection type."""
 	if not camera_controller or not camera_controller._ship:
-		visibility_indicator.visible = false
+		det_los_indicator.visible = false
+		det_hydro_indicator.visible = false
+		det_radar_indicator.visible = false
 		return
 
 	var ship := camera_controller._ship
-	match ship.detection_type:
-		Ship.DetectionType.RADAR:
-			visibility_indicator.visible = true
-			visibility_indicator_color.color = Color(0.0, 0.706, 0.627, 1.0)  # Red
-		Ship.DetectionType.HYDRO:
-			visibility_indicator.visible = true
-			visibility_indicator_color.color = Color(0.4, 0.85, 1.0, 0.9)  # Cyan
-		Ship.DetectionType.LOS:
-			visibility_indicator.visible = true
-			visibility_indicator_color.color = Color(1, 1, 0, 0.9)  # Yellow
-		_:  # DetectionType.NONE
-			visibility_indicator.visible = false
+	det_los_indicator.visible   = ship.det_los
+	det_hydro_indicator.visible = ship.det_hydro
+	det_radar_indicator.visible = ship.det_radar
 
 func update_terrain_hit_indicator(is_hitting_terrain: bool):
 	"""Show or hide the terrain hit indicator"""

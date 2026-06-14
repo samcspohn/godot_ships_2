@@ -252,8 +252,8 @@ func apply_snapshot(ship_data: Dictionary) -> void:
 
 	var flags: int = ship_data.get("flags", 0)
 	visible_to_enemy = (flags & 0x01) != 0
-	detection_type   = (flags >> 1) & 0x03
-	is_sunk          = (flags & 0x08) != 0
+	detection_type   = (flags >> 1) & 0x07
+	is_sunk          = (flags & 0x10) != 0
 
 	# Reconcile sinking visual state so seeks in either direction work correctly.
 	# This must happen regardless of whether start_sinking() was ever called,

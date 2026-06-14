@@ -12,3 +12,15 @@ func _init() -> void:
 	tooltip_stats = [
 		{"stat": "Incoming Fire Indicator", "value": "shell flight time > 5s (placeholder)"},
 	]
+
+func _a(_ship: Ship) -> void:
+	pass
+
+func to_bytes() -> Dictionary:
+	# var data := super().to_bytes()
+	# No additional state to serialize for this skill
+	return data
+
+func from_bytes(data: Dictionary) -> void:
+	# super().from_bytes(data)
+	# No additional state to deserialize for this skill

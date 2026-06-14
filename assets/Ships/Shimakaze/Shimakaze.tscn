@@ -159,6 +159,7 @@ icon = ExtResource("13_fjgfy")
 disabled_icon = ExtResource("12_17h8w")
 cooldown_time = 40.0
 duration = 10.0
+max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 
 [sub_resource type="Resource" id="Resource_s4v2q"]

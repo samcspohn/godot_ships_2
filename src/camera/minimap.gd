@@ -304,12 +304,12 @@ func _on_canvas_draw() -> void:
 				_: color = Color(1, 1, 1, 1) # Default to white
 
 			# if (ship as Ship).visible_to_enemy:
-			if is_friendly and tracked_ship.detection_type != Ship.DetectionType.NONE:
+			if is_friendly and (tracked_ship.det_los or tracked_ship.det_hydro or tracked_ship.det_radar):
 				var det_col: Color
-				if tracked_ship.detection_type == Ship.DetectionType.RADAR:
+				if tracked_ship.det_radar:
 					det_col = RADAR_RANGE_COLOR
 					det_col.a = 0.7
-				elif tracked_ship.detection_type == Ship.DetectionType.HYDRO:
+				elif tracked_ship.det_hydro:
 					det_col = HYDRO_RANGE_COLOR
 					det_col.a = 0.7
 				else:

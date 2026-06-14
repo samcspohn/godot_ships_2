@@ -2,7 +2,7 @@ extends Upgrade
 class_name EnhancedLookoutSystem
 
 const TORP_DETECT_MOD: float = 1.50
-
+const SHIP_ACQ_MOD: float = 1.50
 func _init() -> void:
 	upgrade_id = "lookout_sys"
 	name = "Enhanced Lookout System"
@@ -12,9 +12,10 @@ func _init() -> void:
 	flavor_text = "Advanced passive sonar and optical systems spot threats much earlier."
 	tooltip_stats = [
 		{"stat": "Torpedo Acquisition Range", "value": fmt_mult_pct(TORP_DETECT_MOD), "positive": true},
-		{"stat": "Guaranteed Ship Acquisition", "value": "+50% (placeholder)"},
+		{"stat": "Guaranteed Ship Acquisition", "value": fmt_mult_pct(SHIP_ACQ_MOD), "positive": true},
 	]
 
 func _a(_ship: Ship) -> void:
 	(_ship.concealment.params.static_mod as ConcealmentParams).torpedo_detection_multiplier *= TORP_DETECT_MOD
+	(_ship.concealment.params.static_mod as ConcealmentParams).assured_acquisition_range *= SHIP_ACQ_MOD
 	# Guaranteed ship acquisition range +50% is placeholder — no implementation yet

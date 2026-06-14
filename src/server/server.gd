@@ -865,7 +865,7 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	var spotting_override: float = max(hydro_override, radar_override)
 	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
 		spotted.visible_to_enemy = true
-		spotted.detection_type = max(spotted.detection_type, Ship.DetectionType.LOS)
+		spotted.det_los = true
 		# if !visible_toggled[spotted]:
 		# 	if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
 		# 		spotted.concealment.spotted_by = spotter
@@ -1106,11 +1106,6 @@ func _physics_process(_delta: float) -> void:
 	ray_query.hit_from_inside = false
 	ray_query.collision_mask = 1 | (1 << 3) | (1 << 5) # terrain + smoke
 
-	if players_size != players.size():
-		players_size = players.size()
-		print("Players size changed, now: ", players_size)
-
-
 
 	closest_enemies_that_can_see.clear()
 	visible_toggled.clear()
@@ -1119,6 +1114,7 @@ func _physics_process(_delta: float) -> void:
 	team_0_radar_in_range.clear()
 	team_1_radar_in_range.clear()
 
+	var alive_players: Array[Ship] = []
 	for p in players.values():
 		var ship: Ship = p[0]
 		visible_toggled[ship] = ship.visible_to_enemy
@@ -1126,91 +1122,20 @@ func _physics_process(_delta: float) -> void:
 			ship.visible_to_enemy = true
 		else:
 			ship.visible_to_enemy = false
-		ship.detection_type = Ship.DetectionType.NONE
+		ship.det_los = false
+		ship.det_hydro = false
+		ship.det_radar = false
+		if ship.health_controller.is_alive():
+			alive_players.append(ship)
 
-	for p_idx in players.size() - 1:
-		var p_name = players.keys()[p_idx]
-		var p: Ship = players[p_name][0]
-		ray_query.from = p.global_position
-		ray_query.from.y = 1.0
-		for p2_idx in range(p_idx + 1,players.size()):
-			var p2_name = players.keys()[p2_idx]
-			var p2: Ship = players[p2_name][0]
-			if p.team.team_id != p2.team.team_id and p.health_controller.is_alive() and p2.health_controller.is_alive(): # other team
-				ray_query.to = p2.global_position
-				ray_query.to.y = 1.0
-				var collision: Dictionary = space_state.intersect_ray(ray_query)
-				var has_los: bool = collision.is_empty()
-				var smoke_blocked: bool = not collision.is_empty() and (collision["collider"] as CollisionObject3D).collision_layer & (1 << 5) != 0
-				var dist: float = p.global_position.distance_to(p2.global_position)
-				if has_los:
-					handle_spot(p, p2, dist)
-					handle_spot(p2, p, dist)
-				# Hydro detection — no LOS required.
-				# Sets HYDRO detection type (overrides LOS via higher enum value).
-				# LKP position is frozen and only refreshed every HYDRO_LKP_INTERVAL s;
-				# a per-frame ping keeps hydro_detected true on the client while in range;
-				# a clear-packet sets it false the moment the ship leaves range.
-				# Exception: if only smoke blocks LOS (not terrain), render the detected ship
-				# normally instead of using LKP — smoke does not defeat hydro/radar tracking.
-				var p_hydro := (p.concealment.params.p() as ConcealmentParams).spotting_range_override
-				if p_hydro > 0.0 and dist < p_hydro:
-					if p.detection_type != Ship.DetectionType.LOS:
-						p.detection_type = Ship.DetectionType.HYDRO
-					if smoke_blocked:
-						handle_spot(p, p2, dist)  # smoke doesn't defeat hydro — render p2 normally
-					else:
-						p2.detection_type = Ship.DetectionType.HYDRO
-						if not p2.visible_to_enemy:
-							_refresh_hydro_lkp(p.team.team_id, p2)
-							_refresh_hydro_lkp(p2.team.team_id, p)  # counter-spot LKP
-				var p2_hydro := (p2.concealment.params.p() as ConcealmentParams).spotting_range_override
-				if p2_hydro > 0.0 and dist < p2_hydro:
-					if p2.detection_type != Ship.DetectionType.LOS:
-						p2.detection_type = Ship.DetectionType.HYDRO
-					if smoke_blocked:
-						handle_spot(p2, p, dist)  # smoke doesn't defeat hydro — render p normally
-					else:
-						p.detection_type = Ship.DetectionType.HYDRO
-						if not p.visible_to_enemy:
-							_refresh_hydro_lkp(p2.team.team_id, p)
-							_refresh_hydro_lkp(p.team.team_id, p2)  # counter-spot LKP
-				# Radar detection — same no-LOS logic as hydro but uses radar_spotting_range_override.
-				# RADAR has higher enum priority than HYDRO so it overrides if both are active.
-				var p_radar := (p.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
-				if p_radar > 0.0 and dist < p_radar:
-					if p.detection_type != Ship.DetectionType.LOS:
-						p.detection_type = Ship.DetectionType.RADAR
-					if smoke_blocked:
-						handle_spot(p, p2, dist)  # smoke doesn't defeat radar — render p2 normally
-					else:
-						p2.detection_type = Ship.DetectionType.RADAR
-						if not p2.visible_to_enemy:
-							_refresh_radar_lkp(p.team.team_id, p2)
-							_refresh_radar_lkp(p2.team.team_id, p)  # counter-spot LKP
-				var p2_radar := (p2.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
-				if p2_radar > 0.0 and dist < p2_radar:
-					if p2.detection_type != Ship.DetectionType.LOS:
-						p2.detection_type = Ship.DetectionType.RADAR
-					if smoke_blocked:
-						handle_spot(p2, p, dist)  # smoke doesn't defeat radar — render p normally
-					else:
-						p.detection_type = Ship.DetectionType.RADAR
-						if not p.visible_to_enemy:
-							_refresh_radar_lkp(p2.team.team_id, p)
-							_refresh_radar_lkp(p.team.team_id, p2)  # counter-spot LKP
+	for i in alive_players.size():
+		var a: Ship = alive_players[i]
+		for j in range(i + 1, alive_players.size()):
+			var b: Ship = alive_players[j]
+			if a.team.team_id == b.team.team_id:
+				continue
+			_check_pair_detection(a, b, ray_query, space_state)
 
-	# for spotted in closest_enemies_that_can_see.keys():
-	# 	var closest_enemy: Ship = null
-	# 	var closest_dist: float = INF
-	# 	for spotter_dist in closest_enemies_that_can_see[spotted]:
-	# 		var spotter: Ship = spotter_dist[0]
-	# 		var dist = spotter_dist[1]
-	# 		if dist < closest_dist:
-	# 			closest_enemy = spotter
-	# 			closest_dist = dist
-	# 	if closest_enemy != null:
-	# 		spotted.concealment.spotted_by = closest_enemy
 	handle_spot_attribution()
 
 	# One-time per team: once they spot any enemy at all, snapshot current
@@ -1502,6 +1427,67 @@ func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
 		u_times[ship]   = current_time
 
 
+func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:
+	var params_a := a.concealment.params.p() as ConcealmentParams
+	var params_b := b.concealment.params.p() as ConcealmentParams
+
+	# Assured acquisition — unconditional spot within range, bypasses terrain and smoke.
+	var assured_acq := maxf(params_a.assured_acquisition_range, params_b.assured_acquisition_range)
+	var dist: float = a.global_position.distance_to(b.global_position)
+	if assured_acq > 0.0 and dist < assured_acq:
+		handle_spot(a, b, dist)
+		handle_spot(b, a, dist)
+
+	# LOS raycast — only if not already spotted by assured acquisition.
+	if !a.visible_to_enemy or !b.visible_to_enemy:
+		ray_query.from = a.global_position
+		ray_query.to = b.global_position
+		ray_query.from.y = 1.0
+		ray_query.to.y = 1.0
+		var collision: Dictionary = space_state.intersect_ray(ray_query)
+		var has_los := collision.is_empty()
+		var smoke_blocked := !collision.is_empty() and (collision["collider"] as CollisionObject3D).collision_layer & (1 << 5) != 0
+
+		if has_los:
+			handle_spot(a, b, dist)
+			handle_spot(b, a, dist)
+
+		_check_sensor_range(a, b, params_a.spotting_range_override, true, smoke_blocked)
+		_check_sensor_range(b, a, params_b.spotting_range_override, true, smoke_blocked)
+		_check_sensor_range(a, b, params_a.radar_spotting_range_override, false, smoke_blocked)
+		_check_sensor_range(b, a, params_b.radar_spotting_range_override, false, smoke_blocked)
+
+
+func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:
+	if range <= 0.0:
+		return
+	var dist := detector.global_position.distance_to(target.global_position)
+	if dist >= range:
+		return
+
+	if is_hydro:
+		detector.det_hydro = true
+	else:
+		detector.det_radar = true
+
+	if smoke_blocked:
+		handle_spot(detector, target, dist)
+		return
+
+	if is_hydro:
+		target.det_hydro = true
+	else:
+		target.det_radar = true
+
+	if not target.visible_to_enemy:
+		if is_hydro:
+			_refresh_hydro_lkp(detector.team.team_id, target)
+			_refresh_hydro_lkp(target.team.team_id, detector)
+		else:
+			_refresh_radar_lkp(detector.team.team_id, target)
+			_refresh_radar_lkp(target.team.team_id, detector)
+
+
 func _send_radar_syncs() -> void:
 	"""Mirror of _send_hydro_syncs but uses source = 2 (Radar)."""
 	for team_id in [0, 1]:
@@ -1512,7 +1498,6 @@ func _send_radar_syncs() -> void:
 		for ship in active.keys():
 			if not is_instance_valid(ship):
 				continue
-			# Same LOS-priority fix as hydro: use real position when LOS is active.
 			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
 			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 2)
 			for p_name in players:

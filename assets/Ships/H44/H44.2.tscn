@@ -88,7 +88,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 script = ExtResource("7_f0niw")
 speed = 820.0
 drag = 1.5999999999999955e-05
-damage = 6400.0
+damage = 6100.0
 size = 5.0
 caliber = 500.0
 mass = 1850.0
@@ -112,7 +112,7 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_2lqir"]
 script = ExtResource("7_f0niw")
 speed = 1200.0
-drag = 4.999999999999997e-05
+drag = 5.499999999999998e-05
 damage = 4050.0
 size = 2.25
 caliber = 150.0
@@ -126,7 +126,7 @@ arming_threshold = 25
 [sub_resource type="Resource" id="Resource_leu1t"]
 script = ExtResource("7_f0niw")
 speed = 1200.0
-drag = 4.999999999999997e-05
+drag = 5.499999999999998e-05
 damage = 1700.0
 size = 2.25
 caliber = 150.0

@@ -195,7 +195,7 @@ func _physics_process(delta: float) -> void:
 	for ship in _ships:
 		if not is_instance_valid(ship):
 			continue
-		var dt: int  = ship.detection_type
+		var dt: int = ship._det_flags()
 		var ve: bool = ship.visible_to_enemy
 		if _prev_detection.get(ship, -1) != dt or _prev_visible.get(ship, false) != ve:
 			_prev_detection[ship] = dt
@@ -260,13 +260,13 @@ func _write_snapshot() -> void:
 		var hp: float = ship.health_controller.current_hp if ship.health_controller else 0.0
 		_file.store_float(hp)
 
-		# --- flags byte: bit0=visible_to_enemy, bits1-2=detection_type, bit3=sunk ---
+		# --- flags byte: bit0=visible_to_enemy, bit1=det_los, bit2=det_hydro, bit3=det_radar, bit4=sunk ---
 		var flags: int = 0
 		if ship.visible_to_enemy:
 			flags |= 1
-		flags |= (ship.detection_type & 0x3) << 1
+		flags |= (ship._det_flags() & 0x7) << 1
 		if hp <= 0.0:
-			flags |= 8
+			flags |= 16
 		_file.store_8(flags)
 
 		# --- movement controller ----------------------------------------------

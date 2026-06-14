@@ -515,7 +515,7 @@ func _update_followed_ship_widgets() -> void:
 
 	# Visibility indicator (matches in-game UI mapping)
 	var flags: int = snap.get("flags", 0)
-	var detection_type: int = (flags >> 1) & 0x03
+	var detection_type: int = (flags >> 1) & 0x07
 	_apply_visibility(detection_type)
 
 	# Reload bars
@@ -558,16 +558,15 @@ func _update_followed_ship_widgets() -> void:
 			lbl.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
 
 func _apply_visibility(detection_type: int) -> void:
-	# 0 = NONE, 1 = LOS, 2 = HYDRO, 3 = RADAR (matches Ship.DetectionType)
-	match detection_type:
-		1:
-			_visibility_color.color = Color(1, 1, 0, 0.9)   # yellow LOS
-		2:
-			_visibility_color.color = Color(0.4, 0.85, 1.0, 0.9)  # cyan hydro
-		3:
-			_visibility_color.color = Color(0.0, 0.706, 0.627, 1.0)  # teal radar
-		_:
-			_visibility_color.color = Color(0, 0, 0, 0)
+	# bit0=LOS, bit1=HYDRO, bit2=RADAR
+	if detection_type & 4:
+		_visibility_color.color = Color(0.0, 0.706, 0.627, 1.0)  # teal radar
+	elif detection_type & 2:
+		_visibility_color.color = Color(0.4, 0.85, 1.0, 0.9)   # cyan hydro
+	elif detection_type & 1:
+		_visibility_color.color = Color(1, 1, 0, 0.9)   # yellow LOS
+	else:
+		_visibility_color.color = Color(0, 0, 0, 0)
 
 func _apply_hp_bar_color(percent: float) -> void:
 	if percent > 75:

@@ -20,6 +20,9 @@ class_name ConcealmentParams
 ## (8 000 m default).  Checked alongside spotting_range_override in
 ## handle_spot and the no-LOS radar detection pass.
 @export var radar_spotting_range_override: float = -1.0
+## When > 0, ships within this distance spot each other unconditionally
+## regardless of terrain or smoke.  Uses the max of both ships' values.
+@export var assured_acquisition_range: float = 1000.0
 
 ## Returns the effective torpedo detection range for this ship given the
 ## torpedo's base detection_range.
@@ -41,6 +44,7 @@ func from_bytes(data: PackedByteArray) -> void:
 	torpedo_detection_range_override = reader.get_float()
 	spotting_range_override = reader.get_float()
 	radar_spotting_range_override = reader.get_float()
+	assured_acquisition_range = reader.get_float()
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
@@ -51,4 +55,5 @@ func to_bytes() -> PackedByteArray:
 	writer.put_float(torpedo_detection_range_override)
 	writer.put_float(spotting_range_override)
 	writer.put_float(radar_spotting_range_override)
+	writer.put_float(assured_acquisition_range)
 	return writer.data_array
