@@ -167,7 +167,7 @@ func target_aim_offset(_target: Ship) -> Vector3:
 				offset.y = 0.0
 		Ship.ShipClass.DD:
 			# AP at destroyers — overpens citadel for good damage
-			ammo = ShellParams.ShellType.AP
+			ammo = ShellParams.ShellType.HE
 			offset.y = 2.0
 			offset.z -= _target.movement_controller.ship_length * 0.2
 	return offset
@@ -215,6 +215,8 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			if d < nearest_threat_dist:
 				nearest_threat_dist = d
 
+	var forced = false
+
 	# if close and visible_to_enemy
 	# 	if threat < 0.5
 	# 		push
@@ -258,6 +260,10 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 						_active_skill_name = &"Kite"
 			if intent != null:
 				_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
+
+			if threat < 0.25 or threat > 0.75:
+				forced = true  # Don't deviate from push/kite if very low or high threat
+				# (allows more aggressive pushes and safer kiting)
 		else:
 			if threat < 0.4 or _nearest_dist > gun_range:
 				intent = _skill_flank.execute(ctx, {})
@@ -299,7 +305,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_skill_cover.reset()
 
 	 # Post-process broadside when skill is not Hunt or SailForward
-	if _active_skill_name not in  [&"Hunt", &"SailForward"]:
+	if _active_skill_name not in  [&"Hunt", &"SailForward"] and not forced:
 		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
 	var _a = _probe_concealment(server)

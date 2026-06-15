@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://cpgfkfvip0xch"]
+
+[ext_resource type="Material" uid="uid://bpwviehj87nm4" path="res://src/Maps/ocean.tres" id="1_1ffgk"]
+[ext_resource type="Script" uid="uid://18n1n55bp8wg" path="res://src/Maps/ocean.gd" id="1_k3nad"]
+
+[sub_resource type="QuadMesh" id="QuadMesh_exxn1"]
+material = ExtResource("1_1ffgk")
+
+[node name="Ocean" type="MeshInstance3D" unique_id=689554270]
+mesh = SubResource("QuadMesh_exxn1")
+script = ExtResource("1_k3nad")

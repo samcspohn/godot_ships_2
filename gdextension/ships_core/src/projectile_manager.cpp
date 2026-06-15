@@ -515,9 +515,10 @@ void _ProjectileManager::_process(double delta) {
 	// if (abs(client_time - current_time) < 1.0 / physics_fps) {
 	//     client_time += delta;
 	// } else
-	if (client_time > current_time) {
+	double _current_time = current_time + 1.0 / physics_fps; // Predict current_time for the next physics step to reduce perceived latency
+	if (client_time > _current_time) {
         client_time += delta / pow(1.0 + client_time - current_time, 2.0);
-	} else if (client_time < current_time) {
+	} else if (client_time < _current_time) {
         client_time += delta * pow(1.0 + current_time - client_time, 2.0); // increment client_time faster as difference increases to catch up to current_time, avoiding long delays
 	}
 	// current_time += delta;  // raw wall-clock seconds; scaling applied at physics call sites

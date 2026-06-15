@@ -529,7 +529,7 @@ func get_potential_target_weight(target: Ship) -> float:
 			side_profile *= 2.0
 		Ship.ShipClass.DD:
 			side_profile *= 3.0
-	# weight *= side_profile * 0.01
+	weight *= side_profile * 0.01
 
 	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
 	weight += maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
@@ -557,13 +557,13 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	if best == null:
 		return null
 
-	# Keep the current target unless a significantly better one exists (25% threshold)
-	if last_target != null and last_target.is_alive() \
-			and last_target.visible_to_enemy and can_hit_target(last_target):
-		var last_weight = get_potential_target_weight(last_target)
-		var best_weight = get_potential_target_weight(best)
-		if best_weight <= last_weight * 1.1:
-			return last_target
+	# # Keep the current target unless a significantly better one exists (25% threshold)
+	# if last_target != null and last_target.is_alive() \
+	# 		and last_target.visible_to_enemy and can_hit_target(last_target):
+	# 	var last_weight = get_potential_target_weight(last_target)
+	# 	var best_weight = get_potential_target_weight(best)
+	# 	if best_weight <= last_weight * 1.1:
+	# 		return last_target
 
 	return best
 
@@ -711,7 +711,7 @@ func _get_spotted_danger_center() -> Vector3:
 				threat *= 0.1
 			var weight = base_weight * threat
 			if active_shooters_at_me.has(ship):
-				weight *= 10.0  # Boost weight for enemies actively shooting at us
+				weight *= 100.0  # Boost weight for enemies actively shooting at us
 				# Optionally, could also factor in how recently they shot at us based on expiry time
 			weighted_pos += ship.global_position * weight
 			total_weight += weight
@@ -728,7 +728,7 @@ func _get_spotted_danger_center() -> Vector3:
 				threat *= 0.1
 			var weight = base_weight * threat * 0.5
 			if active_shooters_at_me.has(ship):
-				weight *= 10.0  # Boost weight for enemies actively shooting at us
+				weight *= 100.0  # Boost weight for enemies actively shooting at us
 			weighted_pos += last_pos * weight
 			total_weight += weight
 		if total_weight >= 0.00001:
@@ -1803,7 +1803,7 @@ func _apply_reverse_alignment(intent: NavIntent, nearest_threat_dist: float, thr
 	if nearest_threat_dist >= threshold:
 		return intent
 	var ship_heading := _get_ship_heading()
-	if absf(angle_difference(intent.target_heading, ship_heading)) > PI * 0.5:
+	if absf(angle_difference(intent.target_heading, ship_heading)) > PI * 0.65:
 		var rev_heading := wrapf(intent.target_heading + PI, -PI, PI)
 		intent.target_heading = rev_heading
 		if absf(angle_difference(rev_heading, ship_heading)) < REVERSE_ALIGN_TOL:

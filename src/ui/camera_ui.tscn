@@ -157,7 +157,6 @@ theme_override_constants/separation = 4
 [node name="LOSIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=576907400]
 custom_minimum_size = Vector2(30, 30)
 layout_mode = 2
-visible = false
 color = Color(0.08, 0.08, 0.08, 0.9)
 
 [node name="LOSColor" type="ColorRect" parent="MainContainer/VisibilityContainer/LOSIndicator" unique_id=576907403]
@@ -173,10 +172,21 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(1, 1, 0, 0.9)
 
+[node name="Counter" type="Label" parent="MainContainer/VisibilityContainer/LOSIndicator" unique_id=1750232853]
+visible = false
+layout_mode = 0
+offset_left = 29.0
+offset_top = -21.0
+offset_right = 39.0
+offset_bottom = 2.0
+theme_override_colors/font_color = Color(1, 1, 0, 0.9019608)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+text = "1"
+
 [node name="HydroIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=576907401]
+visible = false
 custom_minimum_size = Vector2(30, 30)
 layout_mode = 2
-visible = false
 color = Color(0.08, 0.08, 0.08, 0.9)
 
 [node name="HydroColor" type="ColorRect" parent="MainContainer/VisibilityContainer/HydroIndicator" unique_id=576907404]
@@ -190,12 +200,12 @@ offset_right = -4.0
 offset_bottom = -4.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.4, 0.85, 1.0, 0.9)
+color = Color(0.4, 0.85, 1, 0.9)
 
 [node name="RadarIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=576907402]
+visible = false
 custom_minimum_size = Vector2(30, 30)
 layout_mode = 2
-visible = false
 color = Color(0.08, 0.08, 0.08, 0.9)
 
 [node name="RadarColor" type="ColorRect" parent="MainContainer/VisibilityContainer/RadarIndicator" unique_id=576907405]
@@ -209,7 +219,26 @@ offset_right = -4.0
 offset_bottom = -4.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.0, 0.706, 0.627, 1.0)
+color = Color(0, 0.706, 0.627, 1)
+
+[node name="IncomingFireIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=576907406]
+visible = false
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 2
+color = Color(0.08, 0.08, 0.08, 0.9)
+
+[node name="IncomingFireColor" type="ColorRect" parent="MainContainer/VisibilityContainer/IncomingFireIndicator" unique_id=576907407]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 0.1, 0.1, 0.9)
 
 [node name="CrosshairContainer" type="Control" parent="MainContainer" unique_id=1888053963]
 z_index = 2

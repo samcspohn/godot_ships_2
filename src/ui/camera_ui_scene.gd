@@ -61,8 +61,10 @@ var kill_feed: KillFeed = null
 
 # Visibility indicators (one per detection type)
 @onready var det_los_indicator: ColorRect = $MainContainer/VisibilityContainer/LOSIndicator
+@onready var det_los_counter: Label = $MainContainer/VisibilityContainer/LOSIndicator/Counter
 @onready var det_hydro_indicator: ColorRect = $MainContainer/VisibilityContainer/HydroIndicator
 @onready var det_radar_indicator: ColorRect = $MainContainer/VisibilityContainer/RadarIndicator
+@onready var det_incoming_fire_indicator: ColorRect = $MainContainer/VisibilityContainer/IncomingFireIndicator
 
 # Terrain hit indicator
 @onready var terrain_hit_indicator: ColorRect = $MainContainer/CrosshairContainer/TerrainIndicator
@@ -290,10 +292,16 @@ func _update_skill_indicators():
 	for skill_id in ship.skills.skills:
 		var skill = ship.skills.skills[skill_id]
 		if skill not in skills_status:
-			var _slot = Control.new()
-			_slot.custom_minimum_size = Vector2(30, 30)
+			var _slot: Control
+			if skill.skill_id == "ifa":
+				_slot = det_incoming_fire_indicator
+			elif skill.skill_id == "6_s":
+				_slot = det_los_counter
+			else:
+				_slot = Control.new()
+				_slot.custom_minimum_size = Vector2(30, 30)
+				status_indicators_container.add_child(_slot)
 			skills_status[skill] = _slot
-			status_indicators_container.add_child(_slot)
 			skill.init_ui(_slot)
 			skill.init_hover(_slot, hover_tooltip)
 		var slot = skills_status[skill]

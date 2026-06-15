@@ -1,0 +1,13 @@
+[gd_resource type="ShaderMaterial" format=4 uid="uid://bpwviehj87nm4"]
+
+[ext_resource type="Shader" uid="uid://cwd4qc5si06ya" path="res://src/Maps/ocean.gdshader" id="1_633io"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_633io")
+shader_parameter/waves = PackedVector4Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+shader_parameter/wave_time = 0.0
+shader_parameter/shallow = Color(0.1, 0.4, 0.5, 1)
+shader_parameter/deep = Color(0.02, 0.08, 0.15, 1)
+shader_parameter/depth_fade = 8.0
+shader_parameter/foam_band = 0.5
