@@ -333,6 +333,7 @@ shape = SubResource("ConvexPolygonShape3D_cdljw")
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="16" unique_id=1535173687]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -68.33377)
+visible = false
 script = ExtResource("28_ogfke")
 template = ExtResource("29_uxi1d")
 size_multiplier = 6.0
@@ -341,6 +342,7 @@ auto_start = true
 
 [node name="TrailEmitter3" type="Node3D" parent="." index="17" unique_id=1442747394]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 68.59323)
+visible = false
 script = ExtResource("28_ogfke")
 template = ExtResource("29_uxi1d")
 size_multiplier = 6.0

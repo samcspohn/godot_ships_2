@@ -311,6 +311,7 @@ material_override = ExtResource("24_3jgu3")
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="16" unique_id=1908557749]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -64.96127)
+visible = false
 script = ExtResource("22_jewkh")
 template = ExtResource("23_wake")
 size_multiplier = 6.0
@@ -319,6 +320,7 @@ auto_start = true
 
 [node name="TrailEmitter3" type="Node3D" parent="." index="17" unique_id=1747028258]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 41.7666)
+visible = false
 script = ExtResource("22_jewkh")
 template = ExtResource("23_wake")
 size_multiplier = 6.0

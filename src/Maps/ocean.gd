@@ -39,8 +39,15 @@ func _normalize_waves() -> Array:
 	for w: Vector4 in waves:
 		out.append(Vector4(w.x, w.y, w.z * s, w.w))   # scale steepness -> scales amplitude
 	return out
-	
+
+func _validate_property(property: Dictionary) -> void:
+	if property.name in ["mesh", "material_override", "custom_aabb"]:
+		property.usage &= ~PROPERTY_USAGE_STORAGE
+
 func _ready() -> void:
+	var _rd = RenderingServer.get_rendering_device()
+	if _rd == null:
+		queue_free(); return
 	generate()
 func generate() -> void:
 	var n := ring_quads
@@ -77,9 +84,10 @@ func generate() -> void:
 	mesh = am
 
 	if _material == null:
-		_material = ShaderMaterial.new()
-		_material.shader = OCEAN_SHADER
-		_material.render_priority = -1
+		_material = WaveManager.get_ocean_material()   # shared material with wave manager; updates when waves change
+		# _material = ShaderMaterial.new()
+		# _material.shader = OCEAN_SHADER
+		# _material.render_priority = -1
 	_swaves = _normalize_waves()
 	material_override = _material
 	_material.set_shader_parameter("waves", _swaves)   # was `waves`

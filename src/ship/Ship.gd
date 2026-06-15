@@ -200,6 +200,8 @@ func _ready() -> void:
 	stats._ship = self
 	$Modules.add_child(stats)
 
+	if WaveManager != null:
+		WaveManager.register_ship(self)
 
 
 	# for f in fires:
