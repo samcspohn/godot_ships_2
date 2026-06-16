@@ -18,7 +18,7 @@ class_name MovementParams
 @export var lateral_drag_multiplier: float = 1.7
 
 # Roll and stability
-@export var max_turn_roll_angle: float = 5.0
+@export var max_turn_roll_angle: float = 8.0
 @export var roll_response_time: float = 2.0
 @export var righting_strength: float = 5.0
 @export var righting_damping: float = 3.0

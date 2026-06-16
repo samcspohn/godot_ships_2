@@ -161,7 +161,6 @@ deceleration_time = 40.0
 turning_circle_radius = 600.0
 turn_speed_loss = 0.15
 rudder_response_time = 14.0
-max_turn_roll_angle = 5.5
 
 [sub_resource type="Resource" id="Resource_t5hex"]
 script = ExtResource("13_4ql0v")
@@ -394,6 +393,7 @@ shape = SubResource("ConvexPolygonShape3D_q0aru")
 
 [node name="TrailEmitter" type="Node3D" parent="." index="31" unique_id=261653083]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 117.61395)
+visible = false
 script = ExtResource("23_fi4fd")
 template = ExtResource("24_6thso")
 emit_rate = 0.032
@@ -403,6 +403,7 @@ auto_start = true
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="32" unique_id=2099616778]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -174.37076)
+visible = false
 script = ExtResource("23_fi4fd")
 template = ExtResource("24_6thso")
 emit_rate = 0.025

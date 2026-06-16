@@ -200,9 +200,7 @@ func _ready() -> void:
 	stats._ship = self
 	$Modules.add_child(stats)
 
-	if WaveManager != null:
-		WaveManager.register_ship(self)
-
+	register_for_wake.call_deferred()
 
 	# for f in fires:
 	# 	f._ship = self
@@ -257,6 +255,10 @@ func _ready() -> void:
 	# leaves the tree.
 	if _precision_registered or radar_ghost != null:
 		tree_exiting.connect(_on_tree_exiting)
+
+func register_for_wake():
+		if WaveManager != null:
+			WaveManager.register_ship(self, movement_controller.ship_length * 0.45, movement_controller.ship_beam * 0.45, movement_controller.ship_draft)
 
 func _on_tree_exiting() -> void:
 	if is_instance_valid(radar_ghost):

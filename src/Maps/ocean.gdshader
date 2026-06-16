@@ -14,14 +14,15 @@ uniform vec3 deep    : source_color = vec3(0.15, 0.2, 0.35);
 uniform float depth_fade = 8.0;
 uniform float foam_band  = 0.5;
 
-uniform sampler2DArray wave_array : repeat_disable, filter_linear;
+uniform sampler2DArray wave_array : repeat_disable;
 uniform sampler2D index_tex : repeat_disable, filter_nearest;
 uniform bool tiles_on = false;
 uniform float tile_world = 1000.0;
 uniform int grid_origin = 32;
-uniform float wave_height_scale = 3.0;
+uniform float wave_height_scale = 0.5;
 
 varying vec2 v_world_xz;
+varying float v_wave_height;
 
 vec2 sample_tile(vec2 wxz) {
 	if (!tiles_on) return vec2(0.0);
@@ -67,9 +68,19 @@ void vertex() {
 	for (int i = 0; i < 3; i++)
 		disp += gerstner(waves[i], sample_pos, tangent, binormal);
 
-	// vec2 tile = sample_tile(s_xz);
-	// disp.y += tile.x * wave_height_scale;
+	vec2 tile = sample_tile(s_xz);
+	float h0 = tile.x * wave_height_scale;
+	disp.y += h0;
+	v_wave_height = disp.y;
 	v_world_xz = s_xz;
+
+	// Incorporate the simulation-tile height gradient into the normal so it
+	// tracks the actual displaced surface rather than only the Gerstner waves.
+	// Without this, normals ignore the tile displacement and produce shading
+	// discontinuities (spikes) wherever the tile height changes steeply.
+	const float ne = 4.0;  // finite-difference offset in world units (~2 sim cells)
+	tangent.y  += (sample_tile(s_xz + vec2(ne, 0.0)).x * wave_height_scale - h0) / ne;
+	binormal.y += (sample_tile(s_xz + vec2(0.0, ne)).x * wave_height_scale - h0) / ne;
 
 	vec3 final_world = vec3(s_xz.x, VERTEX.y, s_xz.y) + disp;
 	VERTEX = final_world - m_origin;   // back to local (mesh only translates)
@@ -86,7 +97,8 @@ void fragment() {
     float foam  = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
 
     ALBEDO = mix(mix(shallow, deep, blend), vec3(1.0), foam);
-   	vec2 t = sample_tile(v_world_xz);
+      // ALBEDO = mix(ALBEDO, vec3(1.0), clamp(abs(v_wave_height), 0.0, 1.0));
+    vec2 t = sample_tile(v_world_xz);
 	ALBEDO = mix(ALBEDO, vec3(1.0), clamp(t.y, 0.0, 1.0));
     METALLIC = 0.0;
     ROUGHNESS = 0.02;

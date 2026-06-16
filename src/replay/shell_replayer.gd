@@ -293,15 +293,8 @@ func _emit_muzzle_effects(event: Dictionary) -> void:
 		var fire_basis: Basis = Basis.looking_at(dir, up_ref)
 		HitEffects.muzzle_blast_effect(muzzle_pos, fire_basis, shell_size * shell_size)
 
-	# Wake disc on the water surface at the muzzle position.
-	if HitEffects.wake_template != null:
-		var wake_size: float  = shell_size ** 2 * 2.0
-		var dir_flat: Vector3 = Vector3(vel.x, 0.0, vel.z)
-		var wake_pos: Vector3 = Vector3(muzzle_pos.x, 0.01, muzzle_pos.z)
-		if dir_flat.length_squared() > 0.001:
-			wake_pos += dir_flat.normalized() * wake_size * 0.5
-		var time_mod: float = lerpf(3.0, 1.2, wake_size / 50.0)
-		HitEffects.wake_template.emit(wake_pos, dir_flat, wake_size, 1, time_mod)
+	var wake_size: float = shell_size ** 2 * 2.0
+	WaveManager.add_muzzle_blast(Vector3(muzzle_pos.x, 0.0, muzzle_pos.z), wake_size * 0.5)
 
 
 ## Create an ephemeral AudioStreamPlayer3D at the muzzle position.
