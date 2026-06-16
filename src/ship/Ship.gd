@@ -258,7 +258,7 @@ func _ready() -> void:
 
 func register_for_wake():
 		if WaveManager != null:
-			WaveManager.register_ship(self, movement_controller.ship_length * 0.45, movement_controller.ship_beam * 0.45, movement_controller.ship_draft)
+			WaveManager.register_ship(self, movement_controller.ship_length * 0.4, movement_controller.ship_beam * 0.5, movement_controller.ship_draft)
 
 func _on_tree_exiting() -> void:
 	if is_instance_valid(radar_ghost):

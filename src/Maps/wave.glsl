@@ -130,8 +130,19 @@ void main() {
         float lx_prev = dot(d_prev, ship.forward) / ship.half_len;
         float ly_prev = dot(d_prev, perp) / ship.radius;
 
-        float hn = hull_profile(lx, ly);
-        float hp = hull_profile(lx_prev, ly_prev);
+        // 5-tap box blur of the hull profile in hull-space coordinates,
+        // spanning one sim cell in each axis. This converts the staircase
+        // ellipse boundary (hard per-cell step) into a smooth gradient so
+        // that dc = hn - hp changes continuously rather than firing as a
+        // single-cell impulse each time the bow enters a new grid cell.
+        float s_fwd = P.tile_world / float(P.res) / ship.half_len;
+        float s_lat = P.tile_world / float(P.res) / ship.radius;
+        float hn = (hull_profile(lx, ly) * 2.0
+                + hull_profile(lx + s_fwd, ly) + hull_profile(lx - s_fwd, ly)
+                + hull_profile(lx, ly + s_lat) + hull_profile(lx, ly - s_lat)) / 6.0;
+        float hp = (hull_profile(lx_prev, ly_prev) * 2.0
+                + hull_profile(lx_prev + s_fwd, ly_prev) + hull_profile(lx_prev - s_fwd, ly_prev)
+                + hull_profile(lx_prev, ly_prev + s_lat) + hull_profile(lx_prev, ly_prev - s_lat)) / 6.0;
 
         // Only the bow (positive) component of dc is injected as a wave source.
         // Stern recovery is handled naturally: the wave equation's Laplacian at

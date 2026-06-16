@@ -15,7 +15,7 @@ shader_parameter/foam_band = 0.5
 shader_parameter/tiles_on = false
 shader_parameter/tile_world = 1000.0
 shader_parameter/grid_origin = 32
-shader_parameter/wave_height_scale = 0.05
+shader_parameter/wave_height_scale = 0.4
 
 [node name="WaveManager" type="Node3D" unique_id=1369776624]
 script = ExtResource("1_k688f")

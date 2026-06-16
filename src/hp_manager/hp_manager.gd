@@ -299,7 +299,7 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 		#get_parent().queue_free()
 		ship.artillery_controller.set_physics_process(false)
 		ship.movement_controller.set_physics_process(false)
-		#ship.get_node("Secondaries").set_physics_process(false)
+		#ship.get_node("Secondaries").set_physics_process(false)s
 		var pc = ship.get_node_or_null("PlayerController")
 		if pc == null:
 			pc = ship.get_node_or_null("Modules/BotController")
@@ -310,6 +310,8 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 		if mv != null:
 			mv.set_physics_process(false)
 		ship._disable_weapons()
+		WaveManager.unregister_ship(ship)
+		WaveManager.add_muzzle_blast(ship.global_position,ship.movement_controller.ship_length * 0.2)
 		_Utils.kill_feed_event.emit(sinker_ship_name, sinker, team, damage_type, sunk_ship_name, sunk_player_name, sunk_team)
 
 func _physics_process(delta: float) -> void:

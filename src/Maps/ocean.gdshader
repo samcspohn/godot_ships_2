@@ -36,6 +36,19 @@ vec2 sample_tile(vec2 wxz) {
 	return vec2(w.r, w.b);   // height, foam
 }
 
+// 4-corner box filter at +-half a sim cell (~tile_world/128/2).
+// Averaging overlapping regions between adjacent vertices removes the
+// sub-texel discontinuities that appear as spikes at high mesh density.
+vec2 sample_tile_smooth(vec2 wxz) {
+	float s = tile_world / 128.0 * 0.5;
+	vec2 r = vec2(0.0);
+	r += sample_tile(wxz + vec2(-s, -s));
+	r += sample_tile(wxz + vec2( s, -s));
+	r += sample_tile(wxz + vec2(-s,  s));
+	r += sample_tile(wxz + vec2( s,  s));
+	return r * 0.25;
+}
+
 vec3 gerstner(vec4 wave, vec3 p, inout vec3 tangent, inout vec3 binormal) {
 	float k = TAU / wave.w;
 	float c = sqrt(9.8 / k);
@@ -68,7 +81,7 @@ void vertex() {
 	for (int i = 0; i < 3; i++)
 		disp += gerstner(waves[i], sample_pos, tangent, binormal);
 
-	vec2 tile = sample_tile(s_xz);
+	vec2 tile = sample_tile_smooth(s_xz);
 	float h0 = tile.x * wave_height_scale;
 	disp.y += h0;
 	v_wave_height = disp.y;
@@ -79,8 +92,8 @@ void vertex() {
 	// Without this, normals ignore the tile displacement and produce shading
 	// discontinuities (spikes) wherever the tile height changes steeply.
 	const float ne = 4.0;  // finite-difference offset in world units (~2 sim cells)
-	tangent.y  += (sample_tile(s_xz + vec2(ne, 0.0)).x * wave_height_scale - h0) / ne;
-	binormal.y += (sample_tile(s_xz + vec2(0.0, ne)).x * wave_height_scale - h0) / ne;
+	tangent.y  += (sample_tile_smooth(s_xz + vec2(ne, 0.0)).x * wave_height_scale - h0) / ne;
+	binormal.y += (sample_tile_smooth(s_xz + vec2(0.0, ne)).x * wave_height_scale - h0) / ne;
 
 	vec3 final_world = vec3(s_xz.x, VERTEX.y, s_xz.y) + disp;
 	VERTEX = final_world - m_origin;   // back to local (mesh only translates)
@@ -98,8 +111,16 @@ void fragment() {
 
     ALBEDO = mix(mix(shallow, deep, blend), vec3(1.0), foam);
       // ALBEDO = mix(ALBEDO, vec3(1.0), clamp(abs(v_wave_height), 0.0, 1.0));
-    vec2 t = sample_tile(v_world_xz);
-	ALBEDO = mix(ALBEDO, vec3(1.0), clamp(t.y, 0.0, 1.0));
+    // 5-tap weighted cross at one full sim-cell radius.
+    // Blends across texel boundaries even under nearest-neighbour sampling,
+    // replacing the hard grid-square appearance with a smooth foam gradient.
+    float _fs = tile_world / 128.0 * 1.5;
+    float foam_val = (sample_tile(v_world_xz).y * 2.0
+        + sample_tile(v_world_xz + vec2( _fs, 0.0)).y
+        + sample_tile(v_world_xz + vec2(-_fs, 0.0)).y
+        + sample_tile(v_world_xz + vec2(0.0,  _fs)).y
+        + sample_tile(v_world_xz + vec2(0.0, -_fs)).y) / 6.0;
+	ALBEDO = mix(ALBEDO, vec3(1.0), smoothstep(0.0, 0.8, foam_val));
     METALLIC = 0.0;
     ROUGHNESS = 0.02;
     SPECULAR = 0.6;
