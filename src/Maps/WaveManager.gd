@@ -60,7 +60,7 @@ func add_shell_splash(pos: Vector3, radius: float) -> void:
 	_add_impulse(pos, radius, strength, 0.4, 2)
 
 func add_muzzle_blast(pos: Vector3, radius: float) -> void:
-	_add_impulse(pos, radius * 3.0, -0.01, 0.4, 1)
+	_add_impulse(pos, radius * 3.5, -0.01, 0.4, 1)
 
 func _add_impulse(pos: Vector3, radius: float, strength: float, foam: float, frames: int) -> void:
 	if _impulses.size() >= MAX_IMPULSES:
@@ -261,7 +261,7 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	pc.encode_s32(0, TILE_RES)
 	pc.encode_float(4, 0.001)    # c2: wave speed ~3.7 m/s → 22° wake at 10 m/s (≈Kelvin)
 	pc.encode_float(8, 0.999)   # damp: low enough that waves reach 100m with ~78% amplitude
-	pc.encode_float(12, 0.9975)   # foam_decay
+	pc.encode_float(12, 0.998)   # foam_decay
 	pc.encode_s32(16, ship_count)
 	pc.encode_float(20, TILE_WORLD)
 	pc.encode_float(24, FOAM_DIFFUSE)

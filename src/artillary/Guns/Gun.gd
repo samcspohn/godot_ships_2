@@ -466,7 +466,7 @@ func fire_client(vel, pos, t, _id):
 		sound.play()
 
 	var size := (get_shell().caliber / 100.0) ** 2 * 2.0
-	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
+	# WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 

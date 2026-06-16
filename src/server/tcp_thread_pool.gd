@@ -439,7 +439,7 @@ func display_shell_client(shell_id: int, pos: Vector3, vel: Vector3, t: float,
 
 	if play_sound:
 		_play_shell_sound(pos, caliber, gun, is_secondary)
-	_emit_shell_wake(pos, caliber)
+	# _emit_shell_wake(pos, caliber)
 
 # Play a positioned gun-fire sound using the audio settings exported on the
 # representative gun's scene (stream, pitch, volume, variance, bus).
@@ -471,9 +471,9 @@ func _play_shell_sound(pos: Vector3, caliber: float, gun: Gun, is_secondary: boo
 	player.play()
 	player.finished.connect(player.queue_free)
 
-func _emit_shell_wake(pos: Vector3, caliber: float) -> void:
-	var size := (caliber / 100.0) ** 2 * 2.0
-	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
+# func _emit_shell_wake(pos: Vector3, caliber: float) -> void:
+# 	var size := (caliber / 100.0) ** 2 * 2.0
+	# WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
 
 func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	if shell_id == -1:

@@ -163,7 +163,7 @@ void main() {
         // when the stern clears and rushes in immediately rather than waiting
         // for the Laplacian to build up from the boundary.
         float inside = smoothstep(0.0, 0.6, hn);
-        h = mix(h, -ship.draft * hn, inside);
+        h = mix(h, 0.0, inside);
         v = mix(v, ship.draft * hn * 0.02, inside);
 
         float speed_t = clamp(ship.speed * 6.0, 0.0, 1.0);
