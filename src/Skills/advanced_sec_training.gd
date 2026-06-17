@@ -2,7 +2,7 @@ extends Skill
 
 
 const max_grouping_bonus = 0.6
-const max_spread_bonus = 0.5
+const max_spread_bonus = 0.6
 const target_switch_penalty = 0.15
 const RELOAD_MOD: float = 0.9
 const SPREAD_MOD: float = 0.90

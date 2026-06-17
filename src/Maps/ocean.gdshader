@@ -1,19 +1,48 @@
 shader_type spatial;
 render_mode blend_mix, depth_draw_always, specular_schlick_ggx;
 
-// xy = direction, z = steepness (0..1), w = wavelength
-//uniform vec4 wave_a = vec4(1.0, 0.0, 0.25, 60.0);
-//uniform vec4 wave_b = vec4(0.7, 0.7, 0.25, 31.0);
-//uniform vec4 wave_c = vec4(-0.8, 0.3, 0.20, 18.0);
-uniform vec4 waves[3];   // replaces wave_a / wave_b / wave_c
-uniform float wave_time = 0.0;   // set from CPU; see buoyancy note
+// =====================================================================
+// FFT CASCADE CONTRACT
+// ---------------------------------------------------------------------
+// The compute pipeline fills these two texture arrays, one slice per
+// cascade. The spatial shader only SAMPLES them; all time evolution
+// (h(k,t)) happens compute-side, so there is no wave_time here anymore.
+//
+//   fft_displacement[i].rgb = (Dx, Dy, Dz)
+//       Dy  = height,  Dx/Dz = horizontal (choppiness) displacement.
+//   fft_derivatives[i].rg   = (dDy/dx, dDy/dz)   -> height slope, normals
+//   fft_derivatives[i].ba   = (dDx/dx, dDz/dz)   -> folding terms, reserved
+//                                                   for open-water foam (see
+//                                                   FOAM HOOK in fragment()).
+//
+// Cascades are band-limited per the spectrum and use NON-COMMENSURATE
+// patch sizes (cascade_scales) so the combined surface only repeats at
+// their LCM -> tiling effectively disappears. repeat_enable + mipmaps
+// let distant samples mip down, which is what actually kills the
+// far-field shimmer/tiling without per-cascade distance code.
+// =====================================================================
 
+uniform sampler2DArray fft_displacement : repeat_enable, filter_linear_mipmap;
+uniform sampler2DArray fft_derivatives  : repeat_enable, filter_linear_mipmap;
+uniform sampler2DArray fft_foam         : repeat_enable, filter_linear;
+
+uniform int   cascade_count = 3;
+uniform float cascade_scales[4]; //   = { 1024.0, 128.0, 24.0, 6.0 };  // patch L (m), large->fine
+uniform float cascade_strength[4]; // = { 1.0, 1.0, 1.0, 1.0 };        // per-cascade weight
+
+uniform float choppiness = 1.0;        // horizontal displacement scale (lambda)
+uniform float chop_fade_near = 150.0;  // horizontal disp looks bad far away; fade it
+uniform float chop_fade_far  = 1200.0; // out between these distances from camera
+uniform float foam_roughness = 0.9;    // roughness on whitecapped pixels
+
+// --- depth shading / shoreline foam (unchanged) ---
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 uniform vec3 shallow : source_color = vec3(0.10, 0.30, 0.50);
 uniform vec3 deep    : source_color = vec3(0.15, 0.2, 0.35);
 uniform float depth_fade = 8.0;
 uniform float foam_band  = 0.5;
 
+// --- wake/splash tile system (unchanged) ---
 uniform sampler2DArray wave_array : repeat_disable;
 uniform sampler2D index_tex : repeat_disable, filter_nearest;
 uniform bool tiles_on = false;
@@ -36,9 +65,7 @@ vec2 sample_tile(vec2 wxz) {
 	return vec2(w.r, w.b);   // height, foam
 }
 
-// 4-corner box filter at +-half a sim cell (~tile_world/128/2).
-// Averaging overlapping regions between adjacent vertices removes the
-// sub-texel discontinuities that appear as spikes at high mesh density.
+// 4-corner box filter at +-half a sim cell, removes sub-texel spikes.
 vec2 sample_tile_smooth(vec2 wxz) {
 	float s = tile_world / 128.0 * 0.5;
 	vec2 r = vec2(0.0);
@@ -49,16 +76,36 @@ vec2 sample_tile_smooth(vec2 wxz) {
 	return r * 0.25;
 }
 
-vec3 gerstner(vec4 wave, vec3 p, inout vec3 tangent, inout vec3 binormal) {
-	float k = TAU / wave.w;
-	float c = sqrt(9.8 / k);
-	vec2 d = normalize(wave.xy);
-	float f = k * (dot(d, p.xz) - c * wave_time);
-	float a = wave.z / k;
+// Per-cascade UV offsets: shifts each cascade's sampling origin so tiles from
+// different cascades never align, eliminating visible repetition even when
+// cascade_count is low. Values are in texture space (0..1); tune freely.
+const vec2 CASCADE_OFFSETS[4] = vec2[4](
+	vec2(0.0,    0.0   ),
+	vec2(0.4337, 0.7753),
+	vec2(0.1863, 0.5124),
+	vec2(0.7271, 0.2491)
+);
 
-	tangent  += vec3(-d.x*d.x*(wave.z*sin(f)),  d.x*(wave.z*cos(f)), -d.x*d.y*(wave.z*sin(f)));
-	binormal += vec3(-d.x*d.y*(wave.z*sin(f)),  d.y*(wave.z*cos(f)), -d.y*d.y*(wave.z*sin(f)));
-	return vec3(d.x*(a*cos(f)), a*sin(f), d.y*(a*cos(f)));
+// Sum FFT displacement across all cascades at a world-XZ position.
+// chop = current (possibly distance-faded) horizontal displacement scale.
+vec3 sample_ocean_disp(vec2 wxz, float chop) {
+	vec3 disp = vec3(0.0);
+	for (int i = 0; i < cascade_count; i++) {
+		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		vec3 d  = texture(fft_displacement, vec3(uv, float(i))).xyz;
+		disp += vec3(-d.x * chop, d.y, -d.z * chop) * cascade_strength[i];
+	}
+	return disp;
+}
+
+// Sum FFT height-slope across all cascades (for per-pixel normals).
+vec2 sample_ocean_slope(vec2 wxz) {
+	vec2 slope = vec2(0.0);
+	for (int i = 0; i < cascade_count; i++) {
+		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		slope += texture(fft_derivatives, vec3(uv, float(i))).rg * cascade_strength[i];
+	}
+	return slope;
 }
 
 void vertex() {
@@ -74,56 +121,74 @@ void vertex() {
 	vec2 coarse_xz = round(world.xz / coarse) * coarse;
 	vec2 s_xz = mix(fine_xz, coarse_xz, morph_w);   // collapse onto coarse at the seam
 
-	vec3 sample_pos = vec3(s_xz.x, 0.0, s_xz.y);
-	vec3 tangent = vec3(1.0, 0.0, 0.0);
-	vec3 binormal = vec3(0.0, 0.0, 1.0);
-	vec3 disp = vec3(0.0);
-	for (int i = 0; i < 3; i++)
-		disp += gerstner(waves[i], sample_pos, tangent, binormal);
+	// Distance-fade the horizontal choppiness only; height stays full strength.
+	float dist = length(CAMERA_POSITION_WORLD - world);
+	float chop = choppiness * (1.0 - smoothstep(chop_fade_near, chop_fade_far, dist));
 
+	// FFT ambient ocean (replaces the old Gerstner sum, which now lives only
+	// in the server-side CPU buoyancy sim).
+	vec3 disp = sample_ocean_disp(s_xz, chop);
+
+	// Wake/splash tiles composite additively on top of the FFT surface.
 	vec2 tile = sample_tile_smooth(s_xz);
-	float h0 = tile.x * wave_height_scale;
-	disp.y += h0;
+	disp.y += tile.x * wave_height_scale;
+
 	v_wave_height = disp.y;
 	v_world_xz = s_xz;
 
-	// Incorporate the simulation-tile height gradient into the normal so it
-	// tracks the actual displaced surface rather than only the Gerstner waves.
-	// Without this, normals ignore the tile displacement and produce shading
-	// discontinuities (spikes) wherever the tile height changes steeply.
-	const float ne = 4.0;  // finite-difference offset in world units (~2 sim cells)
-	tangent.y  += (sample_tile_smooth(s_xz + vec2(ne, 0.0)).x * wave_height_scale - h0) / ne;
-	binormal.y += (sample_tile_smooth(s_xz + vec2(0.0, ne)).x * wave_height_scale - h0) / ne;
-
 	vec3 final_world = vec3(s_xz.x, VERTEX.y, s_xz.y) + disp;
 	VERTEX = final_world - m_origin;   // back to local (mesh only translates)
-	NORMAL = normalize(cross(binormal, tangent));
+
+	// Provisional normal; the real per-pixel normal is built in fragment()
+	// from the cascade slope textures (much finer than vertex density allows).
+	NORMAL = vec3(0.0, 1.0, 0.0);
 }
 
 void fragment() {
-    float d = texture(depth_tex, SCREEN_UV).r;
-    vec4 v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, d, 1.0);
-    float scene_z = -(v.z / v.w);
-    float water_depth = scene_z - (-VERTEX.z);  // VERTEX is view-space here
+	// ---- Per-pixel normal from FFT slopes (+ wake tile gradient) ----
+	vec2 slope = sample_ocean_slope(v_world_xz);
 
-    float blend = clamp(water_depth / depth_fade, 0.0, 1.0);
-    float foam  = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
+	// Fold the wake-tile height gradient into the slope so wakes shade
+	// correctly instead of only displacing geometry. Central difference.
+	const float ne = 4.0;  // ~2 sim cells, world units
+	float hx = (sample_tile_smooth(v_world_xz + vec2(ne, 0.0)).x
+	          - sample_tile_smooth(v_world_xz - vec2(ne, 0.0)).x) * wave_height_scale / (2.0 * ne);
+	float hz = (sample_tile_smooth(v_world_xz + vec2(0.0, ne)).x
+	          - sample_tile_smooth(v_world_xz - vec2(0.0, ne)).x) * wave_height_scale / (2.0 * ne);
+	slope += vec2(hx, hz);
 
-    ALBEDO = mix(mix(shallow, deep, blend), vec3(1.0), foam);
-      // ALBEDO = mix(ALBEDO, vec3(1.0), clamp(abs(v_wave_height), 0.0, 1.0));
-    // 5-tap weighted cross at one full sim-cell radius.
-    // Blends across texel boundaries even under nearest-neighbour sampling,
-    // replacing the hard grid-square appearance with a smooth foam gradient.
-    float _fs = tile_world / 128.0 * 1.5;
-    float foam_val = (sample_tile(v_world_xz).y * 2.0
-        + sample_tile(v_world_xz + vec2( _fs, 0.0)).y
-        + sample_tile(v_world_xz + vec2(-_fs, 0.0)).y
-        + sample_tile(v_world_xz + vec2(0.0,  _fs)).y
-        + sample_tile(v_world_xz + vec2(0.0, -_fs)).y) / 6.0;
+	vec3 world_n = normalize(vec3(-slope.x, 1.0, -slope.y));
+	NORMAL = normalize((VIEW_MATRIX * vec4(world_n, 0.0)).xyz);  // world -> view
+
+	// ---- Depth-based color + shoreline foam (unchanged) ----
+	float d = texture(depth_tex, SCREEN_UV).r;
+	vec4 v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, d, 1.0);
+	float scene_z = -(v.z / v.w);
+	float water_depth = scene_z - (-VERTEX.z);  // VERTEX is view-space here
+
+	float blend = clamp(water_depth / depth_fade, 0.0, 1.0);
+	float foam  = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
+	ALBEDO = mix(mix(shallow, deep, blend), vec3(1.0), foam);
+
+	// ---- Wake-tile foam (unchanged 5-tap blend) ----
+	float _fs = tile_world / 128.0 * 1.5;
+	float foam_val = (sample_tile(v_world_xz).y * 2.0
+		+ sample_tile(v_world_xz + vec2( _fs, 0.0)).y
+		+ sample_tile(v_world_xz + vec2(-_fs, 0.0)).y
+		+ sample_tile(v_world_xz + vec2(0.0,  _fs)).y
+		+ sample_tile(v_world_xz + vec2(0.0, -_fs)).y) / 6.0;
 	ALBEDO = mix(ALBEDO, vec3(1.0), smoothstep(0.0, 0.8, foam_val));
-    METALLIC = 0.0;
-    ROUGHNESS = 0.02;
-    SPECULAR = 0.6;
-    //ALPHA = 1.0;   // stays visually opaque; just moves it to the transparent pass
 
+	// ---- Whitecap foam accumulated by the compose compute pass ----
+	float wc = 0.0;
+	for (int i = 0; i < cascade_count; i++) {
+		vec2 uv = v_world_xz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		wc += texture(fft_foam, vec3(uv, float(i))).r * cascade_strength[i];
+	}
+	wc = clamp(wc, 0.0, 1.0);
+	ALBEDO = mix(ALBEDO, vec3(1.0), wc);
+
+	METALLIC  = 0.0;
+	ROUGHNESS = mix(0.02, foam_roughness, wc);
+	SPECULAR  = 0.6;
 }

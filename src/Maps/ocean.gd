@@ -2,11 +2,18 @@
 extends MeshInstance3D
 class_name Ocean
 
-@export var ring_quads := 256        # quads per side per level (keep divisible by 4)
-@export var base_cell := 2.0        # world units / quad at the densest level
+@export var ring_quads := 512        # quads per side per level (keep divisible by 4)
+@export var base_cell := 0.5        # world units / quad at the densest level
 @export var levels := 12            # LOD rings; reach = ring_quads/2 * base_cell * 2^(levels-1)
 @export var skirt_depth := 12.0     # how far seam curtains hang below the surface
 @export var max_wave_height := 1.0  # for the cull AABB
+
+## FFT uniforms set by the spatial shader — owned by OceanFFT, not here.
+## choppiness is the only rendering param ocean.gd sets that OceanFFT doesn't touch.
+@export var choppiness: float = 1.3
+@export var chop_fade_near: float = 150.0
+@export var chop_fade_far: float = 1200.0
+
 @export var regenerate := false:
 	set(v):
 		if v: generate()
@@ -90,7 +97,9 @@ func generate() -> void:
 		# _material.render_priority = -1
 	_swaves = _normalize_waves()
 	material_override = _material
-	_material.set_shader_parameter("waves", _swaves)   # was `waves`
+	_material.set_shader_parameter("choppiness", choppiness)
+	_material.set_shader_parameter("chop_fade_near", chop_fade_near)
+	_material.set_shader_parameter("chop_fade_far", chop_fade_far)
 
 	_snap = base_cell
 	var reach := (n / 2.0) * base_cell * pow(2.0, levels - 1)
@@ -161,8 +170,6 @@ func _process(delta: float) -> void:
 	var c := camera.global_position
 	global_position = Vector3(snappedf(c.x, _snap), WATER_Y, snappedf(c.z, _snap))
 	wave_time += delta
-	if _material:
-		_material.set_shader_parameter("wave_time", wave_time)
 
 func sample(world_xz: Vector2) -> Vector3:
 	var r := Vector3.ZERO

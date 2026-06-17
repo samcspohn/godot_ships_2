@@ -1,13 +1,19 @@
-[gd_scene format=4 uid="uid://cx5y5eqnhy0xw"]
+[gd_scene format=3 uid="uid://cx5y5eqnhy0xw"]
 
 [ext_resource type="Script" uid="uid://rp50s3dymrgx" path="res://src/Maps/WaveManager.gd" id="1_k688f"]
 [ext_resource type="Shader" uid="uid://cwd4qc5si06ya" path="res://src/Maps/ocean.gdshader" id="2_b66nd"]
+[ext_resource type="Script" uid="uid://c2annbqth63wg" path="res://src/Maps/OceanFFT.gd" id="3_uhea1"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_uhea1"]
 render_priority = 0
 shader = ExtResource("2_b66nd")
-shader_parameter/waves = PackedVector4Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-shader_parameter/wave_time = 0.0
+shader_parameter/cascade_count = 3
+shader_parameter/cascade_scales = PackedFloat32Array(0, 0, 0, 0)
+shader_parameter/cascade_strength = PackedFloat32Array(0, 0, 0, 0)
+shader_parameter/choppiness = 1.0
+shader_parameter/chop_fade_near = 150.0
+shader_parameter/chop_fade_far = 1200.0
+shader_parameter/foam_roughness = 0.9
 shader_parameter/shallow = Color(0.1, 0.3, 0.5, 1)
 shader_parameter/deep = Color(0.15, 0.2, 0.35, 1)
 shader_parameter/depth_fade = 8.0
@@ -20,3 +26,10 @@ shader_parameter/wave_height_scale = 0.4
 [node name="WaveManager" type="Node3D" unique_id=1369776624]
 script = ExtResource("1_k688f")
 ocean_material = SubResource("ShaderMaterial_uhea1")
+
+[node name="OceanFFT" type="Node" parent="." unique_id=1754264585]
+script = ExtResource("3_uhea1")
+disp_scale = 2.0
+foam_bias = 0.75
+foam_decay = 0.97
+metadata/_custom_type_script = "uid://c2annbqth63wg"

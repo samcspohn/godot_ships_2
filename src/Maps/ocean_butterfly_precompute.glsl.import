@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b3o244wh4vima"
+path="res://.godot/imported/ocean_butterfly_precompute.glsl-3c89880977a04948d22a8ba9d0a85eea.res"
+
+[deps]
+
+source_file="res://src/Maps/ocean_butterfly_precompute.glsl"
+dest_files=["res://.godot/imported/ocean_butterfly_precompute.glsl-3c89880977a04948d22a8ba9d0a85eea.res"]
+
+[params]
+

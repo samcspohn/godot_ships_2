@@ -93,6 +93,11 @@ func _ready() -> void:
 		ocean_material.set_shader_parameter("tiles_on", false)
 		ocean_material.render_priority = -1
 
+	# var fft := OceanFFT.new()
+	# fft.ocean_material = ocean_material
+	# add_child(fft)
+	get_child(0).ocean_material = ocean_material
+
 func get_ocean_material() -> ShaderMaterial:
 	return ocean_material
 
@@ -261,7 +266,7 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	pc.encode_s32(0, TILE_RES)
 	pc.encode_float(4, 0.001)    # c2: wave speed ~3.7 m/s → 22° wake at 10 m/s (≈Kelvin)
 	pc.encode_float(8, 0.999)   # damp: low enough that waves reach 100m with ~78% amplitude
-	pc.encode_float(12, 0.998)   # foam_decay
+	pc.encode_float(12, 0.999)   # foam_decay
 	pc.encode_s32(16, ship_count)
 	pc.encode_float(20, TILE_WORLD)
 	pc.encode_float(24, FOAM_DIFFUSE)
