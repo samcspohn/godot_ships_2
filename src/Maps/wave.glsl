@@ -25,8 +25,8 @@ struct Ship {
     float half_len;
     float radius;
     float strength;
-    float speed;
-    float draft; // keel depth below waterline in simulation units
+    float prev_fwd_x; // previous frame forward.x (was: speed)
+    float prev_fwd_y; // previous frame forward.y (was: draft)
     float _pad;
 };
 
@@ -121,14 +121,28 @@ void main() {
     for (int i = 0; i < P.ship_count; i++) {
         Ship ship = ships[i];
         vec2 perp = vec2(-ship.forward.y, ship.forward.x);
+        vec2 prev_forward = vec2(ship.prev_fwd_x, ship.prev_fwd_y);
+        vec2 prev_perp = vec2(-prev_forward.y, prev_forward.x);
 
         vec2 d = world_pos - ship.world_xz;
         vec2 d_prev = world_pos - ship.prev_world_xz;
 
         float lx = dot(d, ship.forward) / ship.half_len;
         float ly = dot(d, perp) / ship.radius;
-        float lx_prev = dot(d_prev, ship.forward) / ship.half_len;
-        float ly_prev = dot(d_prev, perp) / ship.radius;
+        float lx_prev = dot(d_prev, prev_forward) / ship.half_len;
+        float ly_prev = dot(d_prev, prev_perp) / ship.radius;
+
+        // Scale dc injection by forward vs lateral velocity fraction.
+        // Lateral drift sweeps the full hull side, inflating |dc| across many cells.
+        // Reduce lateral contribution to ~25% of forward contribution.
+        vec2 vel = ship.world_xz - ship.prev_world_xz;
+        float vel_len = length(vel);
+        float dir_scale = 1.0;
+        if (vel_len > 0.0001) {
+            float fwd_frac = abs(dot(vel, ship.forward)) / vel_len;
+            float lat_frac = abs(dot(vel, perp)) / vel_len;
+            dir_scale = fwd_frac + lat_frac * 0.2;
+        }
 
         // 5-tap box blur of the hull profile in hull-space coordinates,
         // spanning one sim cell in each axis. This converts the staircase
@@ -153,43 +167,55 @@ void main() {
         // wake region physically should.
         float crossing = 1.0 - smoothstep(0.0, 0.1, min(hn, hp));
         float dc = hn - hp;
-        v += max(0.0, dc) * ship.strength * crossing;
+        if (dc < 0.0) {
+            dc *= 0.1; // weaker stern effect to avoid long-lasting troughs
+        }
+        v += abs(dc) * ship.strength * crossing * dir_scale;
+        if (dc < 0.0) {
+            dc *= 20.0;
+        }
+        foam = max(foam, abs(v) * 2.0 + abs(dc) * 80.0 * dir_scale);
 
-        // Drive the water surface to the ship's displacement depth inside the
-        // hull.  The target is -draft at the keel, tapering to 0 at the
-        // waterline edge via the hull profile.
-        // The stored velocity mirrors the displacement depth: positive (upward)
-        // and proportional to the local draft, so the water is spring-loaded
-        // when the stern clears and rushes in immediately rather than waiting
-        // for the Laplacian to build up from the boundary.
-        float inside = smoothstep(0.0, 0.6, hn);
+        // // // Drive the water surface to the ship's displacement depth inside the
+        // // // hull.  The target is -draft at the keel, tapering to 0 at the
+        // // // waterline edge via the hull profile.
+        // // // The stored velocity mirrors the displacement depth: positive (upward)
+        // // // and proportional to the local draft, so the water is spring-loaded
+        // // // when the stern clears and rushes in immediately rather than waiting
+        // // // for the Laplacian to build up from the boundary.
+        float inside = smoothstep(0.0, 0.9, hn);
         h = mix(h, 0.0, inside);
-        v = mix(v, ship.draft * hn * 0.02, inside);
+        v = mix(v, 0.0, inside);
 
-        float speed_t = clamp(ship.speed * 6.0, 0.0, 1.0);
+        // float speed_t = clamp(ship.speed * 6.0, 0.0, 1.0);
 
-        // Bow cutwater: Gaussian at the bow tip.
-        vec2 bow_world = ship.world_xz + ship.forward * ship.half_len;
-        float bow_g = exp(-dot(world_pos - bow_world, world_pos - bow_world)
-                    / (ship.radius * ship.radius));
+        // // Bow cutwater: Gaussian at the bow tip.
+        // vec2 bow_world = ship.world_xz + ship.forward * ship.half_len;
+        // float bow_g = exp(-dot(world_pos - bow_world, world_pos - bow_world)
+        //             / (ship.radius * ship.radius));
 
-        // Hull waterline: narrow foam strip along the hull boundary ellipse.
-        // Uses normalised-coordinate radius so the strip follows the actual
-        // waterline perimeter rather than filling the interior (which produced
-        // the aura / false bow extension).  side_bias fades the strip to zero
-        // at the bow and stern tips to avoid a closed foam ring.
-        float r = length(vec2(lx, ly));
-        float edge = exp(-(r - 1.0) * (r - 1.0) / 0.01);
-        float side_bias = smoothstep(0.0, 0.3, abs(ly));
+        // // Hull waterline: narrow foam strip along the hull boundary ellipse.
+        // // Uses normalised-coordinate radius so the strip follows the actual
+        // // waterline perimeter rather than filling the interior (which produced
+        // // the aura / false bow extension).  side_bias fades the strip to zero
+        // // at the bow and stern tips to avoid a closed foam ring.
+        // float r = length(vec2(lx, ly));
+        // float edge = exp(-(r - 1.0) * (r - 1.0) / 0.01);
+        // float side_bias = smoothstep(0.0, 0.3, abs(ly));
 
-        foam = max(foam, clamp(bow_g * speed_t + edge * side_bias * speed_t * 0.7, 0.0, 1.0));
+        // // foam = max(foam, clamp(edge * side_bias * speed_t * 0.7, 0.0, 1.0));
+        // foam = max(foam, hn > 0.0 ? 1.0 : 0.0);
     }
 
     for (int i = 0; i < P.impulse_count; i++) {
         PointImpulse imp = impulses[i];
         vec2 d = world_pos - imp.world_xz;
         float g = exp(-dot(d, d) / (imp.radius * imp.radius));
-        v += imp.strength * g;
+        float g2 = exp(-dot(d, d) / max(pow(imp.radius * 0.05, 2.0), 1.0)); // foam radius is always 1 sim unit, independent of impulse radius
+        float impulse = imp.strength * g2;
+        if (impulse > 0.001) {
+            v = imp.strength;
+        }
         foam = max(foam, imp.foam * g);
     }
 

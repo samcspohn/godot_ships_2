@@ -31,6 +31,7 @@ func _a(ship: Ship) -> void:
 	for sec: SecSubController in sec_ctrl.sub_controllers:
 		var params := sec.params.dynamic_mod as GunParams
 		# params.reload_time *= RELOAD_MOD
-		params.h_spread *= SPREAD_MOD
-		params.v_spread *= SPREAD_MOD
+		# params.h_spread *= SPREAD_MOD
+		# params.v_spread *= SPREAD_MOD
+		params.max_dispersion *= SPREAD_MOD
 		params._range      *= RANGE_MOD

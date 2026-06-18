@@ -28,14 +28,14 @@ const UBO_SIZE := 96   # OceanParams std140 layout, see README
 @export var ocean_material: ShaderMaterial
 
 ## Grid resolution — must be a power of 2.
-@export var grid_size: int = 256
+@export var grid_size: int = 512
 
 ## Number of active FFT cascades (≤ 4). Must match ocean.gd cascade_count.
 @export var cascade_count: int = 4
 
 ## Patch size (m) per cascade, large → fine. patch_sizes[i] feeds cascade_scales[i]
 ## in the spatial shader. Must have at least cascade_count elements.
-@export var patch_sizes: Array[float] = [17341.0, 5361.0, 1509.0, 312.0]
+@export var patch_sizes: Array[float] = [2501.0, 1953.0, 737.0, 277.0]
 
 ## Per-cascade blend weight forwarded to the spatial shader's cascade_strength.
 @export var cascade_strength: Array[float] = [0.8, 1.0, 1.2, 1.2]

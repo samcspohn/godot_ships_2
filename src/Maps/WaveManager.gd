@@ -7,8 +7,8 @@ const POOL := 256
 const GRID := 64
 const GRID_ORIGIN := 32
 const TILE_LIFETIME := 40.0
-const HULL_STRENGTH := 13.0
-const FOAM_DIFFUSE := 0.01   # 0 = no spread, 0.1 = original (too fast)
+const HULL_STRENGTH := 10
+const FOAM_DIFFUSE := 0.03    # diffusion spreads foam forward; keep at 0 and rely on shader box-filter for smoothing
 
 const MAX_SHIPS := 32
 const MAX_IMPULSES := 64
@@ -39,6 +39,7 @@ var _clear_queue: Array = []
 
 var _ships: Array[Node3D] = []
 var _prev_pos: Dictionary = {}
+var _prev_fwd: Dictionary = {}     # Node3D -> Vector2 previous forward direction
 var _ship_hulls: Dictionary = {}   # Node3D -> Vector3(half_length, half_beam, draft) world units
 var _tiles_bytes := PackedByteArray()
 var _ships_bytes := PackedByteArray()
@@ -53,14 +54,15 @@ func register_ship(s: Node3D, half_length: float, half_beam: float, draft: float
 func unregister_ship(s: Node3D) -> void:
 	_ships.erase(s)
 	_prev_pos.erase(s)
+	_prev_fwd.erase(s)
 	_ship_hulls.erase(s)
 
 func add_shell_splash(pos: Vector3, radius: float) -> void:
-	var strength := clampf(radius * 0.002, 0.000, 2.5)
-	_add_impulse(pos, radius, strength, 0.4, 2)
+	var strength := radius * 0.06
+	_add_impulse(pos, pow(radius, 1.2), strength, 0.4, 2)
 
 func add_muzzle_blast(pos: Vector3, radius: float) -> void:
-	_add_impulse(pos, radius * 3.5, -0.01, 0.4, 1)
+	_add_impulse(pos, radius * 5, -0.02, 0.5, 1)
 
 func _add_impulse(pos: Vector3, radius: float, strength: float, foam: float, frames: int) -> void:
 	if _impulses.size() >= MAX_IMPULSES:
@@ -177,13 +179,13 @@ func _process(delta: float) -> void:
 		if not is_instance_valid(s) or ship_count >= MAX_SHIPS: continue
 		var prev: Vector3 = _prev_pos.get(s, s.global_position)
 		_prev_pos[s] = s.global_position
-		var speed := (s.global_position - prev).length()
 		# Use the ship's actual transform for heading so the hull stamp always
 		# tracks the visual bow regardless of turn rate.
 		# Godot's forward convention is -Z, so negate basis.z.
 		# If your ship model has its bow on +Z, remove the negation.
 		var b := s.global_transform.basis.z
 		var fwd_xz := Vector2(-b.x, -b.z)
+		var prev_fwd_xz: Vector2 = _prev_fwd.get(s, fwd_xz)
 		var hull = _ship_hulls[s]
 		var sbase := ship_count * 48
 		_ships_bytes.encode_float(sbase + 0,  s.global_position.x)
@@ -195,9 +197,10 @@ func _process(delta: float) -> void:
 		_ships_bytes.encode_float(sbase + 24, hull.x)
 		_ships_bytes.encode_float(sbase + 28, hull.y)
 		_ships_bytes.encode_float(sbase + 32, HULL_STRENGTH)
-		_ships_bytes.encode_float(sbase + 36, speed)
-		_ships_bytes.encode_float(sbase + 40, hull.z)
+		_ships_bytes.encode_float(sbase + 36, prev_fwd_xz.x)
+		_ships_bytes.encode_float(sbase + 40, prev_fwd_xz.y)
 		_ships_bytes.encode_float(sbase + 44, 0.0)
+		_prev_fwd[s] = fwd_xz
 		ship_count += 1
 	var impulse_count := 0
 	var next_impulses: Array = []
@@ -266,7 +269,7 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	pc.encode_s32(0, TILE_RES)
 	pc.encode_float(4, 0.001)    # c2: wave speed ~3.7 m/s → 22° wake at 10 m/s (≈Kelvin)
 	pc.encode_float(8, 0.999)   # damp: low enough that waves reach 100m with ~78% amplitude
-	pc.encode_float(12, 0.999)   # foam_decay
+	pc.encode_float(12, 0.9995)   # foam_decay
 	pc.encode_s32(16, ship_count)
 	pc.encode_float(20, TILE_WORLD)
 	pc.encode_float(24, FOAM_DIFFUSE)

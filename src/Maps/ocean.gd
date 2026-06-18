@@ -3,7 +3,7 @@ extends MeshInstance3D
 class_name Ocean
 
 @export var ring_quads := 512        # quads per side per level (keep divisible by 4)
-@export var base_cell := 0.5        # world units / quad at the densest level
+@export var base_cell := 0.2       # world units / quad at the densest level
 @export var levels := 12            # LOD rings; reach = ring_quads/2 * base_cell * 2^(levels-1)
 @export var skirt_depth := 12.0     # how far seam curtains hang below the surface
 @export var max_wave_height := 1.0  # for the cull AABB

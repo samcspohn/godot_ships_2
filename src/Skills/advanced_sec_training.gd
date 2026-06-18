@@ -1,8 +1,8 @@
 extends Skill
 
 
-const max_grouping_bonus = 0.6
-const max_spread_bonus = 0.6
+const max_grouping_bonus = 0.2
+const max_spread_bonus = 0.5
 const target_switch_penalty = 0.15
 const RELOAD_MOD: float = 0.9
 const SPREAD_MOD: float = 0.90
@@ -38,8 +38,9 @@ func _a(ship: Ship):
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
 		params.grouping += GROUPING_MOD
-		params.h_spread *= SPREAD_MOD
-		params.v_spread *= SPREAD_MOD
+		# params.h_spread *= SPREAD_MOD
+		# params.v_spread *= SPREAD_MOD
+		params.max_dispersion *= SPREAD_MOD
 		# params.h_spread *= 0.90
 		# params.v_spread *= 0.90
 
