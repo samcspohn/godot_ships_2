@@ -19,6 +19,7 @@ const SHADER_SPEC_INITIAL      := preload("res://src/Maps/ocean_spectrum_initial
 const SHADER_SPEC_UPDATE       := preload("res://src/Maps/ocean_spectrum_update.glsl")
 const SHADER_FFT_BUTTERFLY     := preload("res://src/Maps/ocean_fft_butterfly.glsl")
 const SHADER_COMPOSE           := preload("res://src/Maps/ocean_compose.glsl")
+const SHADER_FOAM_BLUR         := preload("res://src/Maps/ocean_foam_blur.glsl")
 
 const GRAVITY  := 9.81
 const UBO_SIZE := 96   # OceanParams std140 layout, see README
@@ -28,14 +29,14 @@ const UBO_SIZE := 96   # OceanParams std140 layout, see README
 @export var ocean_material: ShaderMaterial
 
 ## Grid resolution — must be a power of 2.
-@export var grid_size: int = 512
+@export var grid_size: int = 256
 
 ## Number of active FFT cascades (≤ 4). Must match ocean.gd cascade_count.
 @export var cascade_count: int = 4
 
 ## Patch size (m) per cascade, large → fine. patch_sizes[i] feeds cascade_scales[i]
 ## in the spatial shader. Must have at least cascade_count elements.
-@export var patch_sizes: Array[float] = [2501.0, 1953.0, 737.0, 277.0]
+@export var patch_sizes: Array[float] = [2501.0, 1953.0, 737.0 / 2.0, 277.0 / 2.0]
 
 ## Per-cascade blend weight forwarded to the spatial shader's cascade_strength.
 @export var cascade_strength: Array[float] = [0.8, 1.0, 1.2, 1.2]
@@ -83,6 +84,7 @@ var _pip_spec_initial:      RID
 var _pip_spec_update:       RID
 var _pip_fft:               RID
 var _pip_compose:           RID
+var _pip_foam_blur:         RID
 
 # ---- textures -------------------------------------------------------
 var _h0:           RID                            # h0(k) + conj(h0(-k))
@@ -91,9 +93,11 @@ var _b: Array[RID] = [RID(), RID(), RID()]        # pong buffers b0..b2
 var _a3:           RID                            # ping buffer for Jacobian (Jxx+i·Jzz)
 var _b3:           RID                            # pong buffer for Jacobian
 var _butterfly:    RID                            # twiddle table (2D, log2N × N)
-var _displacement: RID                            # output — sampled by spatial shader
-var _derivatives:  RID                            # output — sampled by spatial shader
-var _foam:         RID                            # whitecap foam accumulation (r32f)
+var _displacement:   RID                          # output — sampled by spatial shader
+var _derivatives:    RID                          # output — sampled by spatial shader
+var _foam:           RID                          # whitecap foam accumulation (r32f)
+var _foam_temp:      RID                          # intermediate after horizontal blur pass
+var _foam_scratch:   RID                          # final blurred foam; sampled by spatial shader
 
 # ---- UBO ------------------------------------------------------------
 var _ubo: RID
@@ -103,6 +107,8 @@ var _uset_spec_initial: RID
 var _uset_spec_update:  RID
 var _uset_fft:          RID
 var _uset_compose:      RID
+var _uset_foam_blur_h:  RID   # horizontal pass: _foam -> _foam_temp
+var _uset_foam_blur_v:  RID   # vertical   pass: _foam_temp -> _foam_scratch
 
 # ---- material wrappers (set once after init) ------------------------
 var _disp_wrap:  Texture2DArrayRD
@@ -117,6 +123,12 @@ var _foam_wrap:  Texture2DArrayRD
 func _ready() -> void:
 	if RenderingServer.get_rendering_device() == null:
 		queue_free()
+		return
+	# Queue RD initialisation on the render thread immediately so shader
+	# compilation overlaps with the rest of scene setup rather than stalling
+	# the first rendered frame.  spectrum_initial still runs on the first
+	# _render_update() because _spectrum_dirty starts true.
+	RenderingServer.call_on_render_thread(_init_rd.bind(_build_ubo_bytes()))
 
 
 func _process(delta: float) -> void:
@@ -254,11 +266,13 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	var sh_su := _rd.shader_create_from_spirv(SHADER_SPEC_UPDATE.get_spirv())
 	var sh_fb := _rd.shader_create_from_spirv(SHADER_FFT_BUTTERFLY.get_spirv())
 	var sh_co := _rd.shader_create_from_spirv(SHADER_COMPOSE.get_spirv())
+	var sh_fbl := _rd.shader_create_from_spirv(SHADER_FOAM_BLUR.get_spirv())
 	_pip_butterfly_precomp = _rd.compute_pipeline_create(sh_bp)
 	_pip_spec_initial      = _rd.compute_pipeline_create(sh_si)
 	_pip_spec_update       = _rd.compute_pipeline_create(sh_su)
 	_pip_fft               = _rd.compute_pipeline_create(sh_fb)
 	_pip_compose           = _rd.compute_pipeline_create(sh_co)
+	_pip_foam_blur         = _rd.compute_pipeline_create(sh_fbl)
 
 	# --- Textures ---
 	var RGBA32F := RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
@@ -274,18 +288,40 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_displacement = _tex_array(RGBA32F, _c, _n, true)
 	_derivatives  = _tex_array(RGBA32F, _c, _n, true)
 
-	# Foam accumulation texture (r32f, cleared to 0 at startup)
+	# _foam: raw per-frame accumulated whitecaps (r32f, read+write in compose)
 	var foam_fmt := RDTextureFormat.new()
 	foam_fmt.format       = RenderingDevice.DATA_FORMAT_R32_SFLOAT
 	foam_fmt.width        = _n; foam_fmt.height = _n
 	foam_fmt.array_layers = _c
 	foam_fmt.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
 	foam_fmt.usage_bits   = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT \
-						| RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
-						| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT \
 						| RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
 	_foam = _rd.texture_create(foam_fmt, RDTextureView.new(), [])
 	_rd.texture_clear(_foam, Color(0, 0, 0, 0), 0, 1, 0, _c)
+
+	# _foam_temp: intermediate texture after the horizontal blur pass (compute-only)
+	var temp_fmt := RDTextureFormat.new()
+	temp_fmt.format       = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+	temp_fmt.width        = _n; temp_fmt.height = _n
+	temp_fmt.array_layers = _c
+	temp_fmt.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+	temp_fmt.usage_bits   = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT \
+						 | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	_foam_temp = _rd.texture_create(temp_fmt, RDTextureView.new(), [])
+	_rd.texture_clear(_foam_temp, Color(0, 0, 0, 0), 0, 1, 0, _c)
+
+	# _foam_scratch: final blurred foam; sampled by the spatial shader
+	var scratch_fmt := RDTextureFormat.new()
+	scratch_fmt.format       = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+	scratch_fmt.width        = _n; scratch_fmt.height = _n
+	scratch_fmt.array_layers = _c
+	scratch_fmt.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+	scratch_fmt.usage_bits   = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT \
+							 | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+							 | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT \
+							 | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	_foam_scratch = _rd.texture_create(scratch_fmt, RDTextureView.new(), [])
+	_rd.texture_clear(_foam_scratch, Color(0, 0, 0, 0), 0, 1, 0, _c)
 
 	# --- UBO ---
 	_ubo = _rd.uniform_buffer_create(UBO_SIZE, ubo_bytes)
@@ -330,6 +366,15 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 		_make_uni(IM, 6, _foam),
 	], sh_co, 0)
 
+	_uset_foam_blur_h = _rd.uniform_set_create([
+		_make_uni(IM, 0, _foam),      # src
+		_make_uni(IM, 1, _foam_temp), # dst
+	], sh_fbl, 0)
+	_uset_foam_blur_v = _rd.uniform_set_create([
+		_make_uni(IM, 0, _foam_temp),    # src
+		_make_uni(IM, 1, _foam_scratch), # dst
+	], sh_fbl, 0)
+
 	# --- Butterfly precompute (one-time, its own compute list) ---
 	var uset_bp := _rd.uniform_set_create([
 		_make_uni(IM, 0, _butterfly),
@@ -348,8 +393,9 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_disp_wrap.texture_rd_rid = _displacement
 	_deriv_wrap = Texture2DArrayRD.new()
 	_deriv_wrap.texture_rd_rid = _derivatives
+	# Expose the blurred copy; the raw _foam is internal to the compute pipeline.
 	_foam_wrap = Texture2DArrayRD.new()
-	_foam_wrap.texture_rd_rid = _foam
+	_foam_wrap.texture_rd_rid = _foam_scratch
 
 	_initialized = true
 
@@ -410,6 +456,24 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 	_rd.compute_list_bind_compute_pipeline(cl, _pip_compose)
 	_rd.compute_list_bind_uniform_set(cl, _uset_compose, 0)
 	_rd.compute_list_set_push_constant(cl, pc_co, 16)
+	_rd.compute_list_dispatch(cl, g, g, _c)
+	_rd.compute_list_add_barrier(cl)
+
+	# 4a. foam blur H — horizontal tent pass: _foam -> _foam_temp
+	var pc_blur_h := PackedByteArray(); pc_blur_h.resize(16)
+	pc_blur_h.encode_s32(0, _n); pc_blur_h.encode_s32(4, 0) # dir=0 horizontal
+	_rd.compute_list_bind_compute_pipeline(cl, _pip_foam_blur)
+	_rd.compute_list_bind_uniform_set(cl, _uset_foam_blur_h, 0)
+	_rd.compute_list_set_push_constant(cl, pc_blur_h, 16)
+	_rd.compute_list_dispatch(cl, g, g, _c)
+	_rd.compute_list_add_barrier(cl)
+
+	# 4b. foam blur V — vertical tent pass: _foam_temp -> _foam_scratch
+	var pc_blur_v := PackedByteArray(); pc_blur_v.resize(16)
+	pc_blur_v.encode_s32(0, _n); pc_blur_v.encode_s32(4, 1) # dir=1 vertical
+	_rd.compute_list_bind_compute_pipeline(cl, _pip_foam_blur)
+	_rd.compute_list_bind_uniform_set(cl, _uset_foam_blur_v, 0)
+	_rd.compute_list_set_push_constant(cl, pc_blur_v, 16)
 	_rd.compute_list_dispatch(cl, g, g, _c)
 
 	_rd.compute_list_end()

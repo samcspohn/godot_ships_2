@@ -20,7 +20,17 @@ uniform float cascade_strength[4];
 uniform float choppiness     = 1.0;
 uniform float chop_fade_near = 150.0;
 uniform float chop_fade_far  = 1200.0;
-uniform float foam_roughness = 0.9;
+uniform float foam_roughness    = 0.9;
+uniform float water_roughness   = 0.06;  // floor roughness; raise to soften specular lobe
+uniform float water_specular    = 0.4;   // fresnel F0 (reflectivity at normal incidence)
+uniform float specular_max      = 0.8;   // hard per-light specular cap — keeps ocean below bloom threshold
+
+// --- windless calm patches (Perlin noise wave flattening) ---
+uniform float calm_scale      = 4000.0;  // world metres per calm patch cycle
+uniform float calm_coverage   = 0.45;    // fraction of ocean that is calm [0..1]
+uniform float calm_sharpness  = 0.12;    // edge transition softness
+uniform float calm_drift      = 0.0003;  // patch drift speed (world m/s)
+uniform float calm_roughness  = 0.03;    // roughness in glassy calm zones
 
 // --- domain warp (breaks macro-scale tiling at distance) ---
 // A smooth, large-scale noise offset is added to every cascade UV before
@@ -28,6 +38,15 @@ uniform float foam_roughness = 0.9;
 // normals stay consistent.
 uniform float warp_scale    = 1500.0; // world metres per warp cycle (larger = smoother)
 uniform float warp_strength = 1.5;   // UV-space magnitude (0.35 = shifts ±35% of one tile)
+
+// --- foam texture (animated Texture2DArray) ---
+// RGB = foam colour, A = coverage mask.  Adjacent frames are cross-faded
+// using TIME so the foam streamers visibly morph in a seamless loop.
+uniform sampler2DArray foam_tex          : repeat_enable, filter_linear_mipmap;
+uniform float          foam_tex_scale    = 8.0;  // world metres per foam tile
+uniform float          foam_tex_strength = 0.8;  // 0 = ignore mask, 1 = full carve-out
+uniform float          foam_fps          = 8.0;  // animation playback speed
+uniform int            foam_frame_count  = 16;
 
 // --- depth shading / shoreline foam ---
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
@@ -46,7 +65,8 @@ uniform float wave_height_scale = 0.5;
 
 varying vec2  v_world_xz;
 varying float v_wave_height;
-varying vec2 v_wave_velocity;
+varying vec2  v_wave_velocity;
+varying float v_calm_factor;  // 0 = flat/windless, 1 = full waves
 
 // =====================================================================
 // Gradient noise (IQ quintic) — must be defined before the sample
@@ -82,6 +102,17 @@ vec2 domain_warp(vec2 wxz) {
 	float wx = gnoise(p).x;
 	float wz = gnoise(p + vec2(3.17, 1.59)).x;
 	return vec2(wx, wz) * warp_strength;
+}
+
+// Returns 0 in calm (windless/flat) zones, 1 in full-wave zones.
+// Three-octave FBM gives organic, irregular patch shapes.
+float calm_mask(vec2 wxz) {
+	vec2 p = wxz / calm_scale + vec2(TIME * calm_drift, TIME * calm_drift * 0.61);
+	float n = gnoise(p).x                          * 0.60
+	        + gnoise(p * 2.3 + vec2(1.7, 0.30)).x  * 0.30
+	        + gnoise(p * 5.1 + vec2(3.2,  1.8)).x  * 0.10;
+	n = n * 0.5 + 0.5;
+	return smoothstep(calm_coverage - calm_sharpness, calm_coverage + calm_sharpness, n);
 }
 
 // =====================================================================
@@ -166,7 +197,8 @@ void vertex() {
 	float dist = length(CAMERA_POSITION_WORLD - world);
 	float chop = choppiness * (1.0 - smoothstep(chop_fade_near, chop_fade_far, dist));
 
-	vec3 disp = sample_ocean_disp(s_xz, chop);
+	v_calm_factor = calm_mask(s_xz);
+	vec3 disp = sample_ocean_disp(s_xz, chop) * v_calm_factor;
 	// Box-filter tile height over the current cell footprint.
 	// Spread scales with cell size so wide wakes are preserved at distance
 	// while sub-cell spikes average toward zero instead of mounding.
@@ -192,7 +224,7 @@ void vertex() {
 
 void fragment() {
 	// ---- Per-pixel normal from FFT slopes + wake tile gradient ----
-	vec2 slope = sample_ocean_slope(v_world_xz);
+	vec2 slope = sample_ocean_slope(v_world_xz) * v_calm_factor;
 
 	const float ne = 4.0;
 	float hx = (sample_tile_smooth(v_world_xz + vec2(ne, 0.0)).x
@@ -204,6 +236,19 @@ void fragment() {
 	vec3 world_n = normalize(vec3(-slope.x, 1.0, -slope.y));
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_n, 0.0)).xyz);
 
+	// ---- Animated foam texture: cross-fade adjacent frames with TIME ----
+	float foam_t    = mod(TIME * foam_fps, float(foam_frame_count));
+	int   frame_a   = int(foam_t);
+	int   frame_b   = (frame_a + 1) % foam_frame_count;
+	vec2  foam_uv   = v_world_xz / foam_tex_scale;
+	vec4  foam_samp = mix(
+		texture(foam_tex, vec3(foam_uv, float(frame_a))),
+		texture(foam_tex, vec3(foam_uv, float(frame_b))),
+		fract(foam_t)
+	);
+	vec3  foam_color = foam_samp.rgb;
+	float foam_mask  = mix(1.0, foam_samp.a, foam_tex_strength);
+
 	// ---- Depth-based color + shoreline foam ----
 	float d = texture(depth_tex, SCREEN_UV).r;
 	vec4  v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, d, 1.0);
@@ -211,8 +256,8 @@ void fragment() {
 	float water_depth = scene_z - (-VERTEX.z);
 
 	float blend = clamp(water_depth / depth_fade, 0.0, 1.0);
-	float foam  = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
-	ALBEDO = mix(mix(shallow, deep, blend), vec3(1.0), foam);
+	float foam  = (1.0 - clamp(water_depth / foam_band, 0.0, 1.0)) * foam_mask;
+	ALBEDO = mix(mix(shallow, deep, blend), foam_color, foam);
 
 	// // ---- Wake-tile foam ----
 	float _fs = tile_world / 128.0 * 1.5;
@@ -222,9 +267,9 @@ void fragment() {
         + sample_tile(v_world_xz + vec2(-_fs, 0.0)).z
         + sample_tile(v_world_xz + vec2(0.0,  _fs)).z
         + sample_tile(v_world_xz + vec2(0.0, -_fs)).z) / 6.0;
-
-	float tile_foam = smoothstep(0.15, 0.75, foam_val);
-	ALBEDO = mix(ALBEDO, vec3(1.0), tile_foam);
+    foam_val = min(foam_val, 0.5);
+	float tile_foam = smoothstep(0.15, 0.75, foam_val) * foam_mask;
+	ALBEDO = mix(ALBEDO, foam_color, tile_foam);
 	ROUGHNESS = mix(ROUGHNESS, foam_roughness, tile_foam);
 	// vec2 vel = sample_tile(v_world_xz).rg;
 	// vec2 veln = sample_tile(v_world_xz + vec2(_fs, 0.0)).rg;
@@ -249,10 +294,36 @@ void fragment() {
 		vec2 uv = v_world_xz / cascade_scales[i] + CASCADE_OFFSETS[i] + warp;
 		wc += texture(fft_foam, vec3(uv, float(i))).r * cascade_strength[i];
 	}
-	wc = clamp(wc, 0.0, 1.0);
-	ALBEDO = mix(ALBEDO, vec3(1.0), wc);
+	wc = clamp(wc, 0.0, 1.0) * foam_mask * v_calm_factor;
+	ALBEDO = mix(ALBEDO, foam_color, wc);
 
 	METALLIC  = 0.0;
-	ROUGHNESS = mix(0.02, foam_roughness, wc);
-	SPECULAR  = 0.6;
+	ROUGHNESS = mix(calm_roughness, mix(water_roughness, foam_roughness, wc), v_calm_factor);
+}
+
+void light() {
+	float NdotL = max(dot(NORMAL, LIGHT), 0.0);
+	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * ATTENUATION * NdotL;
+
+	if (NdotL > 0.0) {
+		vec3  H     = normalize(VIEW + LIGHT);
+		float NdotH = max(dot(NORMAL, H), 0.0);
+		float NdotV = max(dot(NORMAL, VIEW), 1e-4);
+		float VdotH = max(dot(VIEW,   H), 0.0);
+
+		float alpha  = max(ROUGHNESS * ROUGHNESS, 1e-4);
+		float alpha2 = alpha * alpha;
+		float denom  = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+		float D      = alpha2 / (PI * denom * denom);
+
+		float F0 = water_specular;
+		float F  = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+
+		float k  = alpha * 0.5;
+		float Gv = NdotV / (NdotV * (1.0 - k) + k);
+		float Gl = NdotL / (NdotL * (1.0 - k) + k);
+
+		float spec = D * F * Gv * Gl / (4.0 * NdotV);
+		SPECULAR_LIGHT += clamp(LIGHT_COLOR * ATTENUATION * spec, vec3(0.0), vec3(specular_max));
+	}
 }

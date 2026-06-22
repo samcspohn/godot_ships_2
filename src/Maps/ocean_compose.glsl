@@ -57,8 +57,16 @@ void main() {
     // Whitecap foam: generate where J = (1+Jxx)(1+Jzz) < foam_bias.
     // Accumulates over time and decays; in-place update (one texel per invocation).
     float J = (1.0 + Jxx) * (1.0 + Jzz);
-    float foam_gen = clamp(pc.foam_bias - J, 0.0, 1.0);
+    // Smooth gradient: full foam at J<=0, zero at J>=foam_bias.
+    float foam_gen = 1.0 - smoothstep(0.0, pc.foam_bias, J);
     float old_foam = imageLoad(fft_foam, id).r;
-    float new_foam = max(old_foam * pc.foam_decay, foam_gen);
+    // Blended rise: foam always decays; wave crests add to it rather than
+    // holding it at a fixed level.  max(…, 0) prevents pulling foam down
+    // when foam_gen is weaker than the current decayed value.  Blend rate
+    // 0.5 reaches 90% of the target in ~3 frames — fast enough to look
+    // immediate while eliminating the hard 'held vs decaying' boundary
+    // that caused periodic stripes during dissipation.
+    float a = old_foam * pc.foam_decay;
+    float new_foam = a + max(foam_gen - a, 0.0) * 0.5;
     imageStore(fft_foam, id, vec4(new_foam, 0.0, 0.0, 0.0));
 }

@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://rp50s3dymrgx" path="res://src/Maps/WaveManager.gd" id="1_k688f"]
 [ext_resource type="Shader" uid="uid://cwd4qc5si06ya" path="res://src/Maps/ocean.gdshader" id="2_b66nd"]
+[ext_resource type="Texture2DArray" uid="uid://csne556as7fbw" path="res://src/Maps/ocean_foam.tres" id="3_fq0hd"]
 [ext_resource type="Script" uid="uid://c2annbqth63wg" path="res://src/Maps/OceanFFT.gd" id="3_uhea1"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_uhea1"]
@@ -14,10 +15,23 @@ shader_parameter/choppiness = 1.0
 shader_parameter/chop_fade_near = 150.0
 shader_parameter/chop_fade_far = 1200.0
 shader_parameter/foam_roughness = 0.9
+shader_parameter/water_roughness = 0.06
+shader_parameter/water_specular = 0.4
+shader_parameter/specular_max = 0.8
+shader_parameter/calm_scale = 2000.0
+shader_parameter/calm_coverage = 0.45
+shader_parameter/calm_sharpness = 0.12
+shader_parameter/calm_drift = 0.0003
+shader_parameter/calm_roughness = 0.03
 shader_parameter/warp_scale = 1500.0
 shader_parameter/warp_strength = 1.5
-shader_parameter/shallow = Color(0.1, 0.3, 0.5, 1)
-shader_parameter/deep = Color(0.05, 0.08, 0.15, 1)
+shader_parameter/foam_tex = ExtResource("3_fq0hd")
+shader_parameter/foam_tex_scale = 12.0
+shader_parameter/foam_tex_strength = 1.0
+shader_parameter/foam_fps = 4.0
+shader_parameter/foam_frame_count = 16
+shader_parameter/shallow = Color(0.2570178, 0.5170661, 0.5780608, 1)
+shader_parameter/deep = Color(0.1761092, 0.2347649, 0.3850439, 1)
 shader_parameter/depth_fade = 8.0
 shader_parameter/foam_band = 0.5
 shader_parameter/tiles_on = false
@@ -31,8 +45,9 @@ ocean_material = SubResource("ShaderMaterial_uhea1")
 
 [node name="OceanFFT" type="Node" parent="." unique_id=1754264585]
 script = ExtResource("3_uhea1")
-wind = Vector2(5, 2)
-disp_scale = 1.5
-foam_bias = 0.75
-foam_decay = 0.97
+wind = Vector2(4, 4)
+disp_scale = 1.7
+slope_scale = 1.5
+foam_bias = 0.9
+foam_decay = 0.95
 metadata/_custom_type_script = "uid://c2annbqth63wg"

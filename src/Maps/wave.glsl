@@ -168,13 +168,13 @@ void main() {
         float crossing = 1.0 - smoothstep(0.0, 0.1, min(hn, hp));
         float dc = hn - hp;
         if (dc < 0.0) {
-            dc *= 0.1; // weaker stern effect to avoid long-lasting troughs
+            dc *= 0.15; // weaker stern effect to avoid long-lasting troughs
         }
-        v += abs(dc) * ship.strength * crossing * dir_scale;
+        v += dc * ship.strength * crossing * dir_scale;
         if (dc < 0.0) {
-            dc *= 20.0;
+            dc *= 10.0;
         }
-        foam = max(foam, abs(v) * 2.0 + abs(dc) * 80.0 * dir_scale);
+        foam = max(foam, h * 0.03 + abs(dc) * 20.0 * dir_scale);
 
         // // // Drive the water surface to the ship's displacement depth inside the
         // // // hull.  The target is -draft at the keel, tapering to 0 at the

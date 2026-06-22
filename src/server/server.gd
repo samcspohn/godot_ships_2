@@ -1016,12 +1016,14 @@ func player_quit_match() -> void:
 				_players_quit.append(p_name)
 				print("Player ", p_name, " quit the match")
 			break
-	_check_all_players_quit()
+	_check_all_players_quit(true)
 
-func _check_all_players_quit() -> void:
-	"""End the match if every non-bot player has quit or disconnected."""
-	if _debug_keep_alive:
-		return  # Don't abandon the match on disconnect/quit while debugging
+func _check_all_players_quit(deliberate: bool = false) -> void:
+	"""End the match if every non-bot player has quit or disconnected.
+	deliberate=true means all remaining players used the in-game quit menu;
+	the debug guard is bypassed so the match ends and cleanup runs normally."""
+	if _debug_keep_alive and not deliberate:
+		return  # Suppress abandon on transient disconnect while debugging
 	if match_complete or match_ended:
 		return
 	if players.is_empty():

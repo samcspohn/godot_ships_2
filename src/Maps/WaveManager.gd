@@ -7,7 +7,7 @@ const POOL := 256
 const GRID := 64
 const GRID_ORIGIN := 32
 const TILE_LIFETIME := 40.0
-const HULL_STRENGTH := 10
+const HULL_STRENGTH := 7
 const FOAM_DIFFUSE := 0.03    # diffusion spreads foam forward; keep at 0 and rely on shader box-filter for smoothing
 
 const MAX_SHIPS := 32
@@ -99,6 +99,9 @@ func _ready() -> void:
 	# fft.ocean_material = ocean_material
 	# add_child(fft)
 	get_child(0).ocean_material = ocean_material
+	# Queue RD init on the render thread now so shader compilation and texture
+	# allocation start during scene load rather than on the first process frame.
+	RenderingServer.call_on_render_thread(_init_rd)
 
 func get_ocean_material() -> ShaderMaterial:
 	return ocean_material
