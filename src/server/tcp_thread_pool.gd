@@ -18,7 +18,7 @@ var receive_thread: Thread
 signal destroy_shell(data: PackedByteArray) # shell_id: int, pos: Vector3, hit_result: int
 signal ricochet(data: PackedByteArray) # original_id: int, ricochet_id: int, position: Vector3, velocity: Vector3, time: float
 
-var _wake_template: ParticleTemplate = preload("res://assets/particles/templates/torpedo_wake_template.tres")
+
 var _fallback_sound: AudioStream = preload("res://assets/audio/explosion1.wav")
 
 # --- Server-side gun type registry ---
@@ -439,7 +439,7 @@ func display_shell_client(shell_id: int, pos: Vector3, vel: Vector3, t: float,
 
 	if play_sound:
 		_play_shell_sound(pos, caliber, gun, is_secondary)
-	_emit_shell_wake(pos, vel, caliber)
+	# _emit_shell_wake(pos, caliber)
 
 # Play a positioned gun-fire sound using the audio settings exported on the
 # representative gun's scene (stream, pitch, volume, variance, bus).
@@ -471,18 +471,9 @@ func _play_shell_sound(pos: Vector3, caliber: float, gun: Gun, is_secondary: boo
 	player.play()
 	player.finished.connect(player.queue_free)
 
-func _emit_shell_wake(pos: Vector3, vel: Vector3, caliber: float) -> void:
-	if _wake_template == null:
-		return
-	var size := (caliber / 100.0) ** 2 * 2.0
-	var dir := vel
-	dir.y = 0.0
-	var wake_pos := pos
-	wake_pos.y = 0.01
-	if dir.length_squared() > 0.001:
-		wake_pos += dir.normalized() * size * 0.5
-	var time_mod: float = lerp(3.0, 1.2, size / 50.0)
-	_wake_template.emit(wake_pos, dir, size, 1, time_mod)
+# func _emit_shell_wake(pos: Vector3, caliber: float) -> void:
+# 	var size := (caliber / 100.0) ** 2 * 2.0
+	# WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
 
 func destroy_shell_client(shell_id: int, pos: Vector3, hit_result: int, normal: Vector3):
 	if shell_id == -1:

@@ -332,6 +332,7 @@ shape = SubResource("ConvexPolygonShape3D_p5v3p")
 
 [node name="Wake" type="Node3D" parent="." index="27" unique_id=971959505]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -133.6432)
+visible = false
 script = ExtResource("26_gho4i")
 template = ExtResource("27_slgwc")
 emit_rate = 0.03
@@ -342,6 +343,7 @@ metadata/_custom_type_script = "uid://cqvqu5qahwwrs"
 
 [node name="Wake2" type="Node3D" parent="." index="28" unique_id=189659520]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 119.49855)
+visible = false
 script = ExtResource("26_gho4i")
 template = ExtResource("27_slgwc")
 emit_rate = 0.03

@@ -141,7 +141,7 @@ grouping = 1.0
 h_spread = 0.055
 v_spread = 0.03
 dispersion_ = ExtResource("11_jk17q")
-max_dispersion = 180.0
+max_dispersion = 350.0
 reload_time = 4.5
 traverse_speed = 50.0
 _range = 4800.0
@@ -296,6 +296,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 117.69686)
 
 [node name="TrailEmitter" type="Node3D" parent="." index="1" unique_id=588808176]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 113.73091)
+visible = false
 script = ExtResource("25_4j3yv")
 template = ExtResource("26_sj1sh")
 emit_rate = 0.032
@@ -305,6 +306,7 @@ auto_start = true
 
 [node name="TrailEmitter2" type="Node3D" parent="." index="2" unique_id=1775731546]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -151.0903)
+visible = false
 script = ExtResource("25_4j3yv")
 template = ExtResource("26_sj1sh")
 emit_rate = 0.025

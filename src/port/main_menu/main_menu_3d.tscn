@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://mrcj2wrwni75" path="res://src/camera/orbit_camera.tscn" id="1_orbit_cam"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
-[ext_resource type="Material" uid="uid://ddgdh5xl1p0ml" path="res://src/Maps/water_material.tres" id="3_71ui5"]
+[ext_resource type="PackedScene" uid="uid://cpgfkfvip0xch" path="res://src/Maps/Ocean.tscn" id="3_14x8f"]
 
 [node name="MainMenu3D" type="Node3D" unique_id=1782029762]
 
@@ -70,14 +70,10 @@ transform = Transform3D(1.04861, -0.52457, 1.31308, 1.04618, 1.46927, -0.678284,
 size = Vector3(100, 100, 100)
 material = ExtResource("2_bqqt6")
 
-[node name="CSGBox3D" type="CSGBox3D" parent="Port" unique_id=1539683925]
-material_override = ExtResource("3_71ui5")
-use_collision = true
-collision_layer = 8
-collision_mask = 0
-size = Vector3(3000, 1, 3000)
-
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="Port" unique_id=912985917]
 transform = Transform3D(0.0106649, 0.202565, 0.979211, 0.00220607, -0.979269, 0.202553, 0.999941, 0, -0.0108907, 47.8757, 163.892, 0)
+
+[node name="Ocean" parent="Port" unique_id=689554270 node_paths=PackedStringArray("camera") instance=ExtResource("3_14x8f")]
+camera = NodePath("../../OrbitCam/Pitch/Camera3D")
 
 [node name="Dock" type="Node3D" parent="." unique_id=461315214]

@@ -27,7 +27,7 @@ func splash_effect(pos: Vector3, size: float) -> void:
 	if splash_template == null:
 		return
 	splash_template.emit(pos, Vector3.UP, size, SPLASH_PARTICLES, 4.0 / size)
-	wake_template.emit(pos + Vector3(0.0, 0.2, 0.0), Vector3.ZERO, size * 8, 1, 4.0 / size)
+	WaveManager.add_shell_splash(pos, size * 5.0)
 
 func he_explosion_effect(pos: Vector3, size: float, dir: Vector3) -> void:
 	if explosion_template == null:
@@ -44,6 +44,9 @@ func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 		return
 	var direction = (-basis.z).normalized()
 	muzzle_blast_template.emit(pos, direction, size, MUZZLE_BLAST_PARTICLES, 2.0 / sqrt(size))
+	var offset = direction.normalized() * size * 2.0
+	offset.y = 0
+	WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z) + offset , size)
 
 func return_to_pool(effect: Node) -> void:
 	pass

@@ -8,7 +8,7 @@ func _init() -> void:
 	upgrade_id = "range_mod"
 	name = "Range Mod"
 	description = "Increases main battery range by 15% and reduces reload time by 4%."
-	tier = 6
+	tier = 5
 	icon = preload("res://icons/auto-repair.png")
 	flavor_text = "Extended barrels and improved powder charges push shells to the horizon."
 	tooltip_stats = [

@@ -18,7 +18,7 @@ var sound: AudioStreamPlayer3D
 @export_tool_button("Preview Sound") var _preview_sound_button = _preview_sound
 @export_tool_button("Stop Preview") var _stop_preview_sound_button = _stop_preview_sound
 var preview_player: AudioStreamPlayer3D
-var wake_template: ParticleTemplate = preload("res://assets/particles/templates/torpedo_wake_template.tres")
+
 
 func _preview_sound() -> void:
 	if _sound == null:
@@ -412,7 +412,7 @@ func fire(mod: TargetMod = null) -> void:
 				var h_spread = get_params().h_spread * (mod.h_spread if mod else 1.0)
 				var v_spread = get_params().v_spread * (mod.v_spread if mod else 1.0)
 				var base_range = get_base_params()._range
-				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, h_spread, v_spread, base_range, get_params().dispersion_, get_params().max_dispersion)
+				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, h_spread, v_spread, base_range, get_params().dispersion_, get_params().max_dispersion * (mod.h_spread if mod else 1.0))
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					# Guns can't depress below MIN_ELEVATION_ANGLE. If the solution wants a
@@ -465,16 +465,8 @@ func fire_client(vel, pos, t, _id):
 		# 	sound.unit_size = 0
 		sound.play()
 
-	if wake_template != null:
-		var wake_pos = pos
-		wake_pos.y = 0.01
-		var size = get_shell().caliber / 100.0
-		size = size ** 2 * 2.0
-		var dir = vel
-		dir.y = 0.0
-		wake_pos = wake_pos + dir.normalized() * size / 2.0
-		var time_mod = lerp(3.0, 1.2, size / 50)
-		wake_template.emit(wake_pos, dir, size, 1, time_mod)
+	var size := (get_shell().caliber / 100.0) ** 2 * 2.0
+	# WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 

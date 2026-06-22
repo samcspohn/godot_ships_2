@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bp8cpwdn0oekr"
+path="res://.godot/imported/ocean_foam_blur.glsl-13493f135e305fbf795dfc2b7b3a930f.res"
+
+[deps]
+
+source_file="res://src/Maps/ocean_foam_blur.glsl"
+dest_files=["res://.godot/imported/ocean_foam_blur.glsl-13493f135e305fbf795dfc2b7b3a930f.res"]
+
+[params]
+

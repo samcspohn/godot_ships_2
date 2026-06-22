@@ -200,7 +200,7 @@ func _ready() -> void:
 	stats._ship = self
 	$Modules.add_child(stats)
 
-
+	register_for_wake.call_deferred()
 
 	# for f in fires:
 	# 	f._ship = self
@@ -255,6 +255,10 @@ func _ready() -> void:
 	# leaves the tree.
 	if _precision_registered or radar_ghost != null:
 		tree_exiting.connect(_on_tree_exiting)
+
+func register_for_wake():
+		if WaveManager != null:
+			WaveManager.register_ship(self, movement_controller.ship_length * 0.45, movement_controller.ship_beam * 0.5, movement_controller.ship_draft)
 
 func _on_tree_exiting() -> void:
 	if is_instance_valid(radar_ghost):
@@ -316,10 +320,17 @@ func set_input(input_array: Array, aim_point: Vector3) -> void:
 	movement_controller.set_movement_input([input_array[0], input_array[1]])
 	artillery_controller.set_aim_input(aim_point)
 
+var registered = false
 func _process(delta: float) -> void:
 	_update_radar_ghost()
 	if !visible:
+		if registered:
+			WaveManager.unregister_ship(self)
+			registered = false
 		return
+	if !registered:
+		WaveManager.register_ship(self, movement_controller.ship_length * 0.45, movement_controller.ship_beam * 0.5, movement_controller.ship_draft)
+		registered = true
 	var cam = get_viewport().get_camera_3d()
 	if cam != null:
 		if cam.is_position_in_frustum((global_position)) and \
