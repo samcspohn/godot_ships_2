@@ -139,23 +139,9 @@ func _input(event: InputEvent) -> void:
 					var current_time = Time.get_ticks_msec() / 1000.0
 					if current_time - last_click_time < double_click_timer:
 						click_count = 2
-						# if selected_weapon == 0 or selected_weapon == 1:
-						# 	# Use your existing firing logic for guns
-						# 	ship.artillery_controller.fire_all.rpc_id(1)
-						# elif selected_weapon == 2:
-						# 	# Use your existing firing logic for torpedos
-						# 	if ship.torpedo_controller:
-						# 		ship.torpedo_controller.fire_all.rpc_id(1)
 						current_weapon_controller.fire_all.rpc_id(1)
 					else:
 						click_count = 1
-						# if selected_weapon == 0 or selected_weapon == 1:
-						# 	# Use your existing firing logic for guns
-						# 	ship.artillery_controller.fire_next_ready.rpc_id(1)
-						# elif selected_weapon == 2:
-						# 	# Use your existing firing logic for torpedos
-						# 	if ship.torpedo_controller:
-						# 		ship.torpedo_controller.fire_next_ready.rpc_id(1)
 						current_weapon_controller.fire_next_ready.rpc_id(1)
 
 					last_click_time = current_time
@@ -184,20 +170,6 @@ func _input(event: InputEvent) -> void:
 				# When releasing control, capture the mouse again
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 				mouse_captured = true
-		# if event.keycode == KEY_X:
-		# 	# Clear secondary target
-		# 	clear_secondary_target()
-		#if event.keycode == KEY_1:
-			#select_weapon(0)
-		#elif event.keycode == KEY_2:
-			#select_weapon(1)
-		#elif event.keycode == KEY_3:
-			#select_weapon(2)
-		#elif event.keycode == KEY_4:
-			#select_weapon(3)
-		#elif event.keycode == KEY_5:
-			#select_weapon(4)
-
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 0)
@@ -429,15 +401,18 @@ func _process(dt: float) -> void:
 			# Reset click count if double click timer expired
 			click_count = 0
 
-	# Handle sequential firing when holding
-	if is_holding:
-		sequential_fire_timer += dt
-		var reload = current_weapon_controller.get_params().reload_time
-		var min_reload = reload / guns.size() - 0.01
-		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
-		while sequential_fire_timer >= adjusted_sequential_fire_delay:
-			sequential_fire_timer -= adjusted_sequential_fire_delay
-			current_weapon_controller.fire_next_ready.rpc_id(1)
+	# # Handle sequential firing when holding
+	# if is_holding:
+	# 	sequential_fire_timer += dt
+	# 	var reload = current_weapon_controller.get_params().reload_time
+	# 	var min_reload = reload / guns.size() - 0.01
+	# 	var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+	# 	while sequential_fire_timer >= adjusted_sequential_fire_delay:
+	# 		sequential_fire_timer -= adjusted_sequential_fire_delay
+	# 		current_weapon_controller.fire_next_ready.rpc_id(1)
+
+	# Send fire held state to server for continuous firing to avoid input lag issues with holding to fire. Server will handle firing logic based on this state.
+	current_weapon_controller.set_fire_held.rpc_id(1, is_holding)
 
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
@@ -572,6 +547,8 @@ func set_aim(aim_position: Vector3, manual_sec: bool):
 			ship.secondary_controller.set_aim_input(aim_position)
 		else :
 			ship.secondary_controller.set_aim_input(null) # Disable manual aiming for secondaries
+	if ship.aviation_controller:
+		ship.aviation_controller.set_aim_input(aim_position)
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
 func send_input(_throttle_level: int, rudder_value: float, aim_position: Vector3, frustum_planes: Array[Plane], manual_sec: bool) -> void:

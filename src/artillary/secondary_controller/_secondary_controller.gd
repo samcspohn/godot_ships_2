@@ -18,6 +18,8 @@ var target_mods: Dictionary[Ship, TargetMod] = {}
 var enabled: bool = true
 
 var aim_point: Variant = null # for manual control
+var fire_held: bool = false
+
 var target_offset: Vector3 = Vector3.ZERO
 var guns_shooting_at_aim_point: Dictionary[Gun, bool] = {}
 var just_switched_mode: bool = false
@@ -255,6 +257,11 @@ func fire_next_ready():
 				g.fire(manual_target_mod)
 				return
 
+@rpc("any_peer", "call_remote")
+func set_fire_held(held: bool) -> void:
+					fire_held = held
+
+
 var num_guns = 0
 func _physics_process(delta: float) -> void:
 	# return
@@ -354,6 +361,20 @@ func _update_manual_targeting(delta: float, max_range: float) -> bool:
 				gun_can_shoot_over_terrain[g] = false
 				g.dispersion_calculator = man_dispersion_calculator
 				g._aim(aim_point, delta)
+
+	if fire_held:
+		sequential_fire_timer += delta
+		# get min reload time
+		var min_reload = INF
+		# var num_secs = 0
+		for sec in sub_controllers:
+			min_reload = min(min_reload, sec.get_params().reload_time)
+			# num_secs += sec.guns.size()
+
+		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		while sequential_fire_timer >= adjusted_sequential_fire_delay:
+			sequential_fire_timer -= adjusted_sequential_fire_delay
+			fire_next_ready()
 	return manual_active
 
 func _update_auto_target_cache(server: GameServer, max_range: float, manual_active: bool) -> void:

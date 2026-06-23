@@ -25,6 +25,7 @@ var radar_ghost: Node3D = null
 @onready var artillery_controller: ArtilleryController = $Modules/ArtilleryController
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
 @onready var torpedo_controller: TorpedoController
+@onready var aviation_controller: AviationController
 @onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
@@ -188,6 +189,7 @@ func _ready() -> void:
 	# artillery_controller = $Modules/ArtilleryController
 	# health_controller = $Modules/HPManager
 	torpedo_controller = get_node_or_null("Modules/TorpedoController")
+	aviation_controller = get_node_or_null("Modules/AviationController")
 	# consumable_manager = $Modules/ConsumableManager
 	consumable_manager.ship = self
 	# fire_manager = $Modules/FireManager
@@ -410,6 +412,9 @@ func sync_ship_transform() -> PackedByteArray:
 	# writer.put_float(health_controller.current_hp)
 	# writer.put_float(health_controller.max_hp)
 	writer.put_var(health_controller.to_bytes())
+
+	if aviation_controller != null:
+		writer.put_var(aviation_controller.to_bytes())
 	writer.put_u8(1 if visible_to_enemy else 0)
 	pb = writer.get_data_array()
 	return pb
@@ -425,6 +430,9 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	# health_controller.current_hp = reader.get_float()
 	# health_controller.max_hp = reader.get_float()
 	health_controller.from_bytes(reader.get_var())
+
+	if aviation_controller != null:
+		aviation_controller.from_bytes(reader.get_var())
 	visible_to_enemy = reader.get_u8() == 1
 	visible = true
 
@@ -471,6 +479,10 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 		writer.put_32(torpedo_controller.launchers.size())
 		for tl in torpedo_controller.launchers:
 			writer.put_var(tl.to_bytes(false))
+
+	# aviation data
+	if aviation_controller != null:
+		writer.put_var(aviation_controller.to_bytes())
 
 	writer.put_32(multiplayer.get_unique_id())
 
@@ -549,6 +561,11 @@ func sync2(b: PackedByteArray, friendly: bool):
 			if i < torpedo_controller.launchers.size():
 				torpedo_controller.launchers[i].from_bytes(tl_bytes, false)
 
+	# aviation data
+	if aviation_controller != null:
+		var av_bytes: PackedByteArray = reader.get_var()
+		aviation_controller.from_bytes(av_bytes)
+
 	var p_id: int = reader.get_32()
 	# var stats_bytes: PackedByteArray = reader.get_var()
 	# stats.from_bytes(stats_bytes)
@@ -616,6 +633,10 @@ func sync_player_data() -> PackedByteArray:
 		writer.put_32(torpedo_controller.launchers.size())
 		for tl in torpedo_controller.launchers:
 			writer.put_var(tl.to_bytes(true))
+
+	# Aviation Data
+	if aviation_controller != null:
+		writer.put_var(aviation_controller.to_bytes())
 
 	writer.put_var(concealment.to_bytes())
 
@@ -715,7 +736,12 @@ func sync_player(b: PackedByteArray):
 			var tl_bytes: PackedByteArray = reader.get_var()
 			if i < torpedo_controller.launchers.size():
 				torpedo_controller.launchers[i].from_bytes(tl_bytes, true)
+	# Aviation data
+	if aviation_controller != null:
+		var av_bytes: PackedByteArray = reader.get_var()
+		aviation_controller.from_bytes(av_bytes)
 
+	# Concealment and skills data
 	concealment.from_bytes(reader.get_var())
 
 	skills.from_bytes(reader.get_var())

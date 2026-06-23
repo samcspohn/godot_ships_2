@@ -10,6 +10,10 @@ var aim_point: Vector3
 var _ship: Ship
 var target_mod: TargetMod = TargetMod.new()
 var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
+var fire_held: bool = false
+var sequential_fire_timer: float = 0.0
+var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
+
 
 func get_weapon_ui() -> Array[Button]:
 	var shell1 = Button.new()
@@ -236,6 +240,17 @@ func _physics_process(delta: float) -> void:
 	for g in guns:
 		g._aim(aim_point, delta)
 
+	if fire_held:
+		sequential_fire_timer += delta
+		var reload = get_params().reload_time
+		var min_reload = reload / guns.size() - 0.01
+		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		while sequential_fire_timer >= adjusted_sequential_fire_delay:
+			sequential_fire_timer -= adjusted_sequential_fire_delay
+			fire_next_ready()
+
+
+
 
 @rpc("any_peer", "call_remote")
 func fire_all() -> void:
@@ -256,6 +271,10 @@ func select_shell(_shell_index: int) -> void:
 		return
 	shell_index = clamp(_shell_index, 0, 1)
 	select_shell_client.rpc(shell_index)
+
+@rpc("any_peer", "call_remote")
+func set_fire_held(held: bool) -> void:
+	fire_held = held
 
 # todo: only broadcast if shooting or detected
 @rpc("authority", "call_remote")

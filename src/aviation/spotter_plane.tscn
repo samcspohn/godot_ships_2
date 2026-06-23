@@ -1,0 +1,20 @@
+[gd_scene format=3 uid="uid://duqydpqkhoko4"]
+
+[ext_resource type="Script" uid="uid://cog3rqdages6j" path="res://src/aviation/spotter_plane.gd" id="1_0dff1"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0dff1"]
+albedo_color = Color(0.31431594, 0.31431618, 0.31431603, 1)
+
+[node name="SpotterPlane" type="Node3D" unique_id=1779883305]
+script = ExtResource("1_0dff1")
+
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="." unique_id=108552328]
+transform = Transform3D(1, 0, 0, 0, 0.036556516, 0.9993316, 0, -0.9993316, 0.036556516, 0, 0, 0)
+material_override = SubResource("StandardMaterial3D_0dff1")
+radius = 1.06
+height = 11.0
+
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=1604057274]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.031402588, -0.080322266, -1.4411216)
+size = Vector3(12, 0.183, 1.7606201)
+material = SubResource("StandardMaterial3D_0dff1")

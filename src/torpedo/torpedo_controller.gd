@@ -6,6 +6,9 @@ class_name TorpedoController
 var aim_point: Vector3 = Vector3.ZERO
 var _ship: Ship
 var spread: float = 0.0
+var fire_held: bool = false
+var sequential_fire_timer: float = 0.0
+var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 
 var weapons: Array[Turret]:
 	get:
@@ -101,6 +104,15 @@ func _physics_process(delta: float) -> void:
 	for l in launchers:
 		l._aim(aim_point, delta)
 
+	if fire_held:
+		sequential_fire_timer += delta
+		var reload = get_params().reload_time
+		var min_reload = reload / launchers.size() - 0.01
+		var adjusted_sequential_fire_delay = min(sequential_fire_delay, min_reload)
+		while sequential_fire_timer >= adjusted_sequential_fire_delay:
+			sequential_fire_timer -= adjusted_sequential_fire_delay
+			fire_next_ready()
+
 @rpc("any_peer", "call_remote")
 func fire_all() -> void:
 	for launcher in launchers:
@@ -113,6 +125,11 @@ func fire_next_ready() -> void:
 		if launcher.reload >= 1.0 and launcher.can_fire:
 			launcher.fire()
 			return
+
+@rpc("any_peer", "call_remote")
+func set_fire_held(held: bool) -> void:
+	fire_held = held
+
 
 func get_params() -> TorpedoLauncherParams:
 	return params.dynamic_mod as TorpedoLauncherParams

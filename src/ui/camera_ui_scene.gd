@@ -254,6 +254,8 @@ func _get_all_weapon_buttons() -> Array[Button]:
 	if ship.secondary_controller:
 		buttons.append_array(ship.secondary_controller.get_weapon_ui())
 
+	if ship.aviation_controller:
+		buttons.append_array(ship.aviation_controller.get_weapon_ui())
 	return buttons
 
 func setup_weapon_buttons():

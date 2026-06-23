@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://e1skh7d26jgi"]
+
+[ext_resource type="Script" uid="uid://dh28dceq3bgga" path="res://src/aviation/aviation_controller.gd" id="1_4oadg"]
+
+[node name="AviationController" type="Node" unique_id=643396560]
+script = ExtResource("1_4oadg")

@@ -1,5 +1,6 @@
-[gd_resource type="Resource" script_class="GunParams" load_steps=5 format=3 uid="uid://f4vy1bfecssd"]
+[gd_resource type="Resource" script_class="GunParams" format=3 uid="uid://f4vy1bfecssd"]
 
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="1_qy3q1"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_twqco"]
 [ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://src/artillary/Shells/BB_shell.tres" id="2_twqco"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="3_n61w7"]
@@ -22,10 +23,10 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [resource]
 script = ExtResource("1_twqco")
-reload_time = 25.0
-traverse_speed = 6.0
 elevation_speed = 6.0
-_range = 15000.0
 shell1 = ExtResource("2_twqco")
 shell2 = SubResource("Resource_2muxd")
+reload_time = 25.0
+traverse_speed = 6.0
+_range = 15000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

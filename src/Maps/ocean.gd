@@ -94,30 +94,10 @@ func _setup_material() -> void:
 func generate() -> void:
 	var n := ring_quads
 
-	# Pre-compute exact vertex/index counts to allow a single up-front allocation,
-	# replacing the incremental append() calls that triggered repeated PackedArray
-	# reallocations across ~5.5M inner-loop iterations.
-	var total_verts := 0
-	var total_idx   := 0
-	for L in range(levels):
-		if L == 0:
-			total_verts += (n + 1) * (n + 1)
-			total_idx   += n * n * 6
-		else:
-			# 4 C-ring sections: 2× (n × n/4) + 2× (n/4 × n/2)
-			total_verts += 2 * (n + 1) * (n / 4 + 1) + 2 * (n / 4 + 1) * (n / 2 + 1)
-			total_idx   += (2 * n * (n / 4) + 2 * (n / 4) * (n / 2)) * 6
-		if L == levels - 1:
-			# Skirt at last level: steps = n (H = n/2*cell, steps = 2H/cell = n)
-			total_verts += n * 4 * 4
-			total_idx   += n * 4 * 12
-
-	var verts   := PackedVector3Array(); verts.resize(total_verts)
-	var normals := PackedVector3Array(); normals.resize(total_verts)
-	var uvs     := PackedVector2Array(); uvs.resize(total_verts)
-	var indices := PackedInt32Array();   indices.resize(total_idx)
+	# Build one task descriptor per grid/skirt section with its global vi_base offset.
+	# Tasks are independent and run in parallel; each returns its own packed arrays.
+	var task_list: Array = []
 	var vi := 0
-	var ii := 0
 
 	for L in range(levels):
 		var cell  := base_cell * pow(2.0, L)
@@ -125,18 +105,40 @@ func generate() -> void:
 		var mband := 2.0 * cell
 		var morph := L < levels - 1
 		if L == 0:
-			var r := _fill_grid(verts, normals, uvs, indices, vi, ii, -n/2, n/2, -n/2, n/2, cell, H, mband, morph)
-			vi = r[0]; ii = r[1]
+			task_list.append({k="grid", vi=vi, gx0=-n/2, gx1=n/2, gz0=-n/2, gz1=n/2,
+					cell=cell, H=H, mband=mband, morph=morph})
+			vi += (n + 1) * (n + 1)
 		else:
 			var h := n / 4
-			var r: Array
-			r = _fill_grid(verts, normals, uvs, indices, vi, ii, -n/2, n/2, -n/2, -h, cell, H, mband, morph); vi = r[0]; ii = r[1]
-			r = _fill_grid(verts, normals, uvs, indices, vi, ii, -n/2, n/2,  h,  n/2, cell, H, mband, morph); vi = r[0]; ii = r[1]
-			r = _fill_grid(verts, normals, uvs, indices, vi, ii, -n/2, -h,  -h,  h,   cell, H, mband, morph); vi = r[0]; ii = r[1]
-			r = _fill_grid(verts, normals, uvs, indices, vi, ii,  h,  n/2,  -h,  h,   cell, H, mband, morph); vi = r[0]; ii = r[1]
+			for sec: Array[float] in [[-n/2, n/2, -n/2, -h], [-n/2, n/2, h, n/2],
+					[-n/2, -h, -h, h], [h, n/2, -h, h]]:
+				var nx := sec[1] - sec[0]
+				var nz := sec[3] - sec[2]
+				task_list.append({k="grid", vi=vi, gx0=sec[0], gx1=sec[1], gz0=sec[2], gz1=sec[3],
+						cell=cell, H=H, mband=mband, morph=morph})
+				vi += (nx + 1) * (nz + 1)
 		if L == levels - 1:
-			var r2 := _fill_skirt(verts, normals, uvs, indices, vi, ii, H, cell, skirt_depth)
-			vi = r2[0]; ii = r2[1]
+			task_list.append({k="skirt", vi=vi, H=H, cell=cell, depth=skirt_depth})
+			vi += n * 4 * 4
+
+	var results: Array = []
+	results.resize(task_list.size())
+
+	var group_id := WorkerThreadPool.add_group_task(
+		func(i: int): results[i] = _run_mesh_task(task_list[i]),
+		task_list.size(), -1, true, "OceanGenerate")
+	WorkerThreadPool.wait_for_group_task_completion(group_id)
+
+	var verts   := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs     := PackedVector2Array()
+	var indices := PackedInt32Array()
+
+	for r: Array in results:
+		verts.append_array(r[0])
+		normals.append_array(r[1])
+		uvs.append_array(r[2])
+		indices.append_array(r[3])
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -159,49 +161,59 @@ func generate() -> void:
 	_setup_material()
 
 
-func _fill_grid(verts: PackedVector3Array, normals: PackedVector3Array,
-		uvs: PackedVector2Array, indices: PackedInt32Array,
-		vi: int, ii: int,
+func _run_mesh_task(t: Dictionary) -> Array:
+	if t.k == "grid":
+		return _fill_grid(t.vi, t.gx0, t.gx1, t.gz0, t.gz1, t.cell, t.H, t.mband, t.morph)
+	return _fill_skirt(t.vi, t.H, t.cell, t.depth)
+
+
+# Returns [verts, normals, uvs, indices] for one grid patch.
+# vi_base is this task's starting index in the globally-merged vertex array;
+# it is baked into the returned index values so the merge step is a plain append.
+func _fill_grid(vi_base: int,
 		gx0: int, gx1: int, gz0: int, gz1: int,
 		cell: float, outer_h: float, mband: float, morph: bool) -> Array:
 	var nx := gx1 - gx0
 	var nz := gz1 - gz0
 	if nx <= 0 or nz <= 0:
-		return [vi, ii]
-	var base := vi
+		return [PackedVector3Array(), PackedVector3Array(), PackedVector2Array(), PackedInt32Array()]
+	var verts   := PackedVector3Array(); verts.resize((nx + 1) * (nz + 1))
+	var normals := PackedVector3Array(); normals.resize((nx + 1) * (nz + 1))
+	var uvs     := PackedVector2Array(); uvs.resize((nx + 1) * (nz + 1))
+	var indices := PackedInt32Array();   indices.resize(nx * nz * 6)
+	var lvi := 0
+	var lii := 0
 	var vrow := nx + 1
 	var coarse_cell := cell * 2.0
 	for iz in range(nz + 1):
 		for ix in range(nx + 1):
 			var px := (gx0 + ix) * cell
 			var pz := (gz0 + iz) * cell
-			verts[vi]   = Vector3(px, 0.0, pz)
-			normals[vi] = Vector3.UP
+			verts[lvi]   = Vector3(px, 0.0, pz)
+			normals[lvi] = Vector3.UP
 			var w := 0.0
 			if morph:
 				var cheb := maxf(absf(px), absf(pz))
 				w = clampf((cheb - (outer_h - mband)) / mband, 0.0, 1.0)
-			uvs[vi] = Vector2(w, coarse_cell)
-			vi += 1
+			uvs[lvi] = Vector2(w, coarse_cell)
+			lvi += 1
 	for iz in range(nz):
 		for ix in range(nx):
-			var i := base + iz * vrow + ix
-			indices[ii] = i;            ii += 1
-			indices[ii] = i + 1;        ii += 1
-			indices[ii] = i + vrow;     ii += 1
-			indices[ii] = i + 1;        ii += 1
-			indices[ii] = i + vrow + 1; ii += 1
-			indices[ii] = i + vrow;     ii += 1
-	return [vi, ii]
+			var i := vi_base + iz * vrow + ix
+			indices[lii] = i;            lii += 1
+			indices[lii] = i + 1;        lii += 1
+			indices[lii] = i + vrow;     lii += 1
+			indices[lii] = i + 1;        lii += 1
+			indices[lii] = i + vrow + 1; lii += 1
+			indices[lii] = i + vrow;     lii += 1
+	return [verts, normals, uvs, indices]
 
 
-func _fill_skirt(verts: PackedVector3Array, normals: PackedVector3Array,
-		uvs: PackedVector2Array, indices: PackedInt32Array,
-		vi: int, ii: int,
+func _fill_skirt(vi_base: int,
 		half_extent: float, cell: float, depth: float) -> Array:
 	var steps := int(round(2.0 * half_extent / cell))
 	if steps <= 0:
-		return [vi, ii]
+		return [PackedVector3Array(), PackedVector3Array(), PackedVector2Array(), PackedInt32Array()]
 	var H := half_extent
 	var pts := PackedVector2Array()
 	for s in range(steps): pts.append(Vector2(-H + s * cell, -H))
@@ -209,33 +221,38 @@ func _fill_skirt(verts: PackedVector3Array, normals: PackedVector3Array,
 	for s in range(steps): pts.append(Vector2(H - s * cell, H))
 	for s in range(steps): pts.append(Vector2(-H, H - s * cell))
 	var count := pts.size()
+	var verts   := PackedVector3Array(); verts.resize(count * 4)
+	var normals := PackedVector3Array(); normals.resize(count * 4)
+	var uvs     := PackedVector2Array(); uvs.resize(count * 4)
+	var indices := PackedInt32Array();   indices.resize(count * 12)
 	var uv_val := Vector2(0.0, cell * 2.0)
+	var lii := 0
 	for s in range(count):
 		var p0 := pts[s]
 		var p1 := pts[(s + 1) % count]
-		var b := vi
-		verts[b]   = Vector3(p0.x, 0.0,    p0.y)
-		verts[b+1] = Vector3(p1.x, 0.0,    p1.y)
-		verts[b+2] = Vector3(p0.x, -depth, p0.y)
-		verts[b+3] = Vector3(p1.x, -depth, p1.y)
-		normals[b] = Vector3.UP; normals[b+1] = Vector3.UP
-		normals[b+2] = Vector3.UP; normals[b+3] = Vector3.UP
-		uvs[b] = uv_val; uvs[b+1] = uv_val
-		uvs[b+2] = uv_val; uvs[b+3] = uv_val
-		vi += 4
-		indices[ii] = b;     ii += 1
-		indices[ii] = b + 2; ii += 1
-		indices[ii] = b + 1; ii += 1
-		indices[ii] = b + 1; ii += 1
-		indices[ii] = b + 2; ii += 1
-		indices[ii] = b + 3; ii += 1
-		indices[ii] = b;     ii += 1
-		indices[ii] = b + 1; ii += 1
-		indices[ii] = b + 2; ii += 1
-		indices[ii] = b + 1; ii += 1
-		indices[ii] = b + 3; ii += 1
-		indices[ii] = b + 2; ii += 1
-	return [vi, ii]
+		var bl := s * 4
+		var b  := vi_base + bl
+		verts[bl]   = Vector3(p0.x, 0.0,    p0.y)
+		verts[bl+1] = Vector3(p1.x, 0.0,    p1.y)
+		verts[bl+2] = Vector3(p0.x, -depth, p0.y)
+		verts[bl+3] = Vector3(p1.x, -depth, p1.y)
+		normals[bl] = Vector3.UP; normals[bl+1] = Vector3.UP
+		normals[bl+2] = Vector3.UP; normals[bl+3] = Vector3.UP
+		uvs[bl] = uv_val; uvs[bl+1] = uv_val
+		uvs[bl+2] = uv_val; uvs[bl+3] = uv_val
+		indices[lii] = b;     lii += 1
+		indices[lii] = b + 2; lii += 1
+		indices[lii] = b + 1; lii += 1
+		indices[lii] = b + 1; lii += 1
+		indices[lii] = b + 2; lii += 1
+		indices[lii] = b + 3; lii += 1
+		indices[lii] = b;     lii += 1
+		indices[lii] = b + 1; lii += 1
+		indices[lii] = b + 2; lii += 1
+		indices[lii] = b + 1; lii += 1
+		indices[lii] = b + 3; lii += 1
+		indices[lii] = b + 2; lii += 1
+	return [verts, normals, uvs, indices]
 
 
 func _process(delta: float) -> void:

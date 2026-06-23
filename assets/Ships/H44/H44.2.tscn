@@ -14,9 +14,12 @@
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="9_uwp4f"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="10_1phaq"]
 [ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="10_ytg8s"]
+[ext_resource type="PackedScene" uid="uid://e1skh7d26jgi" path="res://src/aviation/AviationController.tscn" id="11_r7nol"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="11_wdoen"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="12_86xt5"]
+[ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="12_n0aqy"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="13_4ql0v"]
+[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="13_nx45m"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="14_iv11n"]
 [ext_resource type="Resource" uid="uid://cv6jnnhx7qnla" path="res://src/Consumable/Registry/GER_T11_HYDRO.tres" id="15_eq5gm"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="16_qnn6a"]
@@ -154,6 +157,12 @@ traverse_speed = 50.0
 _range = 5900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
+[sub_resource type="Resource" id="Resource_518sv"]
+script = ExtResource("12_n0aqy")
+speed = 200.0
+plane_scene = ExtResource("13_nx45m")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
 [sub_resource type="Resource" id="Resource_ku67v"]
 script = ExtResource("9_uwp4f")
 acceleration_time = 40.0
@@ -250,16 +259,20 @@ params = SubResource("Resource_4vatr")
 guns = [NodePath("../../../TurretMount_GER_150mm_2b_gerrat60/GER_150mm_2b_gerrat60"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_010/GER_150mm_2b_gerat60_010"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_002/GER_150mm_2b_gerat60_002"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_003/GER_150mm_2b_gerat60_003"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_004/GER_150mm_2b_gerat60_004"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_005/GER_150mm_2b_gerat60_005"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_011/GER_150mm_2b_gerat60_011"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_001/GER_150mm_2b_gerat60_001"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_006/GER_150mm_2b_gerat60_006"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_012/GER_150mm_2b_gerat60_012"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_007/GER_150mm_2b_gerat60_007"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_008/GER_150mm_2b_gerat60_008"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_013/GER_150mm_2b_gerat60_013"), NodePath("../../../TurretMount_GER_150mm_2b_gerat60_009/GER_150mm_2b_gerat60_009")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
+[node name="AviationController" parent="Modules" index="4" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("11_r7nol")]
+params = Array[ExtResource("12_n0aqy")]([SubResource("Resource_518sv")])
+launcher = NodePath("../../CSGBox3D")
+
+[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
 params = SubResource("Resource_ku67v")
 
-[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("10_1phaq")]([SubResource("Resource_t5hex"), ExtResource("14_iv11n"), ExtResource("15_eq5gm")])
 
-[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("16_qnn6a")]([null, null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="8" unique_id=384504544]
+[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
 fparams = ExtResource("17_jalvm")
 rparams = SubResource("Resource_4hwu1")
 
@@ -275,7 +288,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.299852, 43.448494)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.399746, 133.23595)
 
-[node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
+[node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
 dot_params = ExtResource("19_i0qg4")
 rparams = SubResource("Resource_d3r4j")
 
@@ -426,6 +439,9 @@ template = ExtResource("26_bnwmv")
 size_multiplier = 20.0
 speed_scale = 0.2
 auto_start = true
+
+[node name="CSGBox3D" type="CSGBox3D" parent="." index="35" unique_id=888142676]
+transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 0, 9.297777, 120.15589)
 
 [editable path="Modules"]
 [editable path="Modules/FireManager"]
