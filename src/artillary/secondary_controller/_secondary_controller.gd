@@ -1,12 +1,22 @@
-extends Node
+extends WeaponController
 class_name SecondaryController_
 
 @export var sub_controllers: Array[SecSubController] = []
-var shell_index: int = 1 # default HE
-var _ship: Ship
+# var shell_index: int = 1 # default HE
+# var _ship: Ship
 var target: Ship
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
+
+# ui elements
+# var select_held: bool = false
+# var button: Button
+# var switch_progress: ProgressBar
+
+# var held_duration: float = 0.0
+# var switched_shell: bool = false
+# var button_key: int = -1
+
 var gun_targets: Dictionary[Gun, Ship] = {}
 var target_leads: Dictionary[SecSubController, Dictionary] = {}
 
@@ -40,30 +50,145 @@ var weapons: Array[Turret]:
 
 var active: bool
 
-func get_weapon_ui() -> Array[Button]:
+func _init() -> void:
+	# if sub_controllers.size() > 0:
+	button_names = ["APs", "HEs"]
+	tool_tips = [
+	 	Callable(_build_tooltip_text).bind(0),
+		Callable(_build_tooltip_text).bind(1)
+	]
 
-	if sub_controllers.size() == 0:
-		return []
+# # var pressed_time: float = 0.0
+# func get_weapon_ui(offset: int) -> Array[Button]:
+# 	var shell1 = Button.new()
+# 	shell1.text = "HE"
+# 	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(1))
+# 	shell1.button_down.connect(func():
+# 		held[0] = true
+# 		pressed_time = Time.get_ticks_msec() / 1000.0
+# 	)
+# 	shell1.pressed.connect(func():
+# 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 		select_shell.rpc_id(1, 1)
+# 	)
+# 	shell1.button_up.connect(func():
+# 		if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.5:
+# 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 			pressed_time = 0.0
+# 		held[0] = false
+# 		switched_shell = false
+# 	)
+# 	var switch_progress = ProgressBar.new()
+# 	switch_progress.min_value = 0.0
+# 	switch_progress.max_value = 1.0
+# 	switch_progress.value = 0.0
+# 	switch_progress.show_percentage = false
+# 	switch_progress.set_anchors_preset(Control.PRESET_FULL_RECT)
+# 	switch_progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
+# 	switch_progress.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
 
-	var shell1 = Button.new()
-	shell1.text = "APs"
-	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(0))
-	shell1.pressed.connect(func():
-		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-		# shell_index = 0
-		select_shell.rpc_id(1, 0)
-	)
+# 	shell1.add_child(switch_progress)
+# 	buttons.append(shell1)
+# 	button_keys.append(offset)
+# 	switch_progresss.append(switch_progress)
+# 	held.append(false)
+# 	held_dur.append(0.0)
 
-	var shell2 = Button.new()
-	shell2.text = "HEs"
-	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(1))
-	shell2.pressed.connect(func():
-		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-		# shell_index = 1
-		select_shell.rpc_id(1, 1)
-	)
+# 	var shell2 = Button.new()
+# 	shell2.text = "AP"
+# 	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(0))
+# 	shell2.button_down.connect(func():
+# 		held[1] = true
+# 		pressed_time = Time.get_ticks_msec() / 1000.0
+# 	)
+# 	shell2.pressed.connect(func():
+# 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 		select_shell.rpc_id(1, 0)
+# 	)
+# 	shell2.button_up.connect(func():
+# 		if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.5:
+# 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 			pressed_time = 0.0
+# 		held[1] = false
+# 		switched_shell = false
+# 	)
+# 	# button_key = offset + 1
+# 	var switch_progress2 = ProgressBar.new()
+# 	switch_progress2.min_value = 0.0
+# 	switch_progress2.max_value = 1.0
+# 	switch_progress2.value = 0.0
+# 	switch_progress2.show_percentage = false
+# 	switch_progress2.set_anchors_preset(Control.PRESET_FULL_RECT)
+# 	switch_progress2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+# 	switch_progress2.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
 
-	return [shell2, shell1]
+# 	shell2.add_child(switch_progress2)
+# 	buttons.append(shell2)
+# 	# button_keys.append(button_key)
+# 	button_keys.append(offset + 1)
+# 	switch_progresss.append(switch_progress2)
+# 	held.append(false)
+# 	held_dur.append(0.0)
+# 	# button = shell1
+# 	return [shell1, shell2]
+
+# func update_weapon_ui(delta: float) -> void:
+# 	for i in range(buttons.size()):
+# 		var button = buttons[i]
+# 		var switch_progress = switch_progresss[i]
+# 		if held[i]:
+# 			held_dur[i] += delta
+# 			button.button_pressed = true
+# 		else:
+# 			if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
+# 				_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 				select_shell.rpc_id(1, 1 - i)
+# 				# switched_shell = true
+# 			held_dur[i] = 0.0
+# 			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and shell_index != i:
+# 				button.button_pressed = true
+# 			else:
+# 				button.button_pressed = false
+# 			# if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
+# 			# 	if shell_index == i:
+# 			# 		button.button_pressed = true
+# 			# 	else:
+# 			# 		button.button_pressed = false
+# 		if switch_progress and not switched_shell:
+# 			switch_progress.value = min(held_dur[i], 1.0)
+# 		if held_dur[i] > 1.0 and not switched_shell:
+# 			select_shell.rpc_id(1, 1 - i)
+# 			switched_shell = true
+# 		# if button:
+# 		# 	if select_held:
+# 		# 		held_duration += delta
+# 		# 		button.button_pressed = true
+# 		# 	else:
+# 		# 		held_duration = 0.0
+# 		# 		if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
+# 		# 			button.button_pressed = false
+# 		# 	if switch_progress and not switched_shell:
+# 		# 		switch_progress.value = min(held_duration, 1.0)
+# 		# 	if held_duration > 1.0 and not switched_shell:
+# 		# 		select_shell.rpc_id(1, 1 - shell_index)
+# 		# 		switched_shell = true
+# 		# 		# held_duration = 0.0
+
+# func _process(delta: float) -> void:
+# 	update_weapon_ui(delta)
+
+# func _input(event: InputEvent) -> void:
+# 	if event is InputEventKey:
+# 		if event.pressed and not event.echo:
+# 			if event.keycode == Key.KEY_1 + button_key:
+# 				select_held = true
+# 				pressed_time = Time.get_ticks_msec() / 1000.0
+# 		elif !event.pressed and not event.echo:
+# 			if event.keycode == Key.KEY_1 + button_key:
+# 				if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.2:
+# 					_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 				select_held = false
+# 				switched_shell = false
 
 func _build_tooltip_text(_shell_index: int) -> String:
 	var shell_label := "AP" if _shell_index == 0 else "HE"
@@ -218,8 +343,10 @@ func _ready() -> void:
 			gun_can_shoot_over_terrain[g] = false
 	if _Utils.authority():
 		set_physics_process(true)
+		set_process(false)
 	else:
 		set_physics_process(false)
+		set_process(true)
 
 func to_dict() -> Dictionary:
 	var sub_list = []
@@ -260,7 +387,6 @@ func fire_next_ready():
 @rpc("any_peer", "call_remote")
 func set_fire_held(held: bool) -> void:
 					fire_held = held
-
 
 var num_guns = 0
 func _physics_process(delta: float) -> void:
@@ -485,20 +611,20 @@ func _clear_auto_target_cache(clear_manual_state: bool) -> void:
 				gun_targets[g] = null
 				gun_can_shoot_over_terrain[g] = false
 
-@rpc("authority", "reliable", "call_remote")
-func select_shell_c(new_type: int):
-	if shell_index == new_type:
-		return
-	shell_index = new_type
+# @rpc("authority", "reliable", "call_remote")
+# func select_shell_c(new_type: int):
+# 	if shell_index == new_type:
+# 		return
+# 	shell_index = new_type
 
-@rpc("any_peer", "reliable", "call_remote")
-func select_shell(new_type: int) -> void:
+# @rpc("any_peer", "reliable", "call_remote")
+# func select_shell(new_type: int) -> void:
 
-	if shell_index == new_type:
-		return
-	shell_index = new_type
-	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), new_type)
-	# for sc in sub_controllers:
-	# 	#sc.shell_index = shell_index
-	# 	for g in sc.guns:
-	# 		g.reload = 0.0
+# 	if shell_index == new_type:
+# 		return
+# 	shell_index = new_type
+# 	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), new_type)
+# 	# for sc in sub_controllers:
+# 	# 	#sc.shell_index = shell_index
+# 	# 	for g in sc.guns:
+# 	# 		g.reload = 0.0

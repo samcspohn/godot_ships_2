@@ -86,7 +86,9 @@ class_name DispersionCalculator
 # 	return dispersed * speed
 
 
-const SHELL_COUNT := 4
+const SHELL_COUNT := 3
+const CITADEL_GUARANTEE_NUM := 4
+var citadel_guarantee_counter = 0
 
 var _shell_index := 0
 var _h_offsets := PackedFloat64Array()
@@ -173,9 +175,11 @@ func _new_salvo(sigma: float) -> void:
 	var erf_bound := _erf(s / sqrt(2.0))
 	_h_offsets = _generate_axis(s, erf_bound)
 	_v_offsets = _generate_axis(s, erf_bound)
+	citadel_guarantee_counter += SHELL_COUNT
 
-	if _citadel_guarantee_enabled:
+	if _citadel_guarantee_enabled and citadel_guarantee_counter >= CITADEL_GUARANTEE_NUM:
 		_apply_citadel_guarantee()
+		citadel_guarantee_counter -= CITADEL_GUARANTEE_NUM
 
 
 # Tests whether any shell in the current salvo will land inside the citadel

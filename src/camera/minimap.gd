@@ -15,6 +15,8 @@ const RADAR_RANGE_COLOR = Color(0.0, 0.706, 0.627, 1.0) # blue green for active 
 const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
 const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
+const AIRCRAFT_MARKER_SIZE = 25 # Base size for aircraft diamond markers
+
 
 # Static minimap texture shared across all instances
 static var map_texture: ViewportTexture = null
@@ -33,6 +35,7 @@ var background: TextureRect
 var ship_markers_canvas: Control
 var player_ship: Node3D = null
 var tracked_ships: Array[Dictionary] = []
+var tracked_aircraft: Array = []  # {pos, rot, color} — rebuilt each physics frame
 
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
@@ -209,6 +212,46 @@ func _physics_process(_delta: float) -> void:
 		if (ship["ship"] as Ship).health_controller.is_alive():
 			ship["pos"] = ship["ship"].global_position
 			ship["rot"] = ship["ship"].rotation.y
+
+	# Rebuild aircraft list from all known ships
+	tracked_aircraft.clear()
+	var all_ships: Array = tracked_ships.map(func(d): return d["ship"])
+	if is_instance_valid(player_ship):
+		all_ships.append(player_ship)
+	for s in all_ships:
+		if not (s is Ship) or not s.aviation_controller:
+			continue
+		var av: AviationController = s.aviation_controller
+		var is_friendly: bool = is_instance_valid(player_ship) \
+				and is_instance_valid(s.team) and is_instance_valid(player_ship.team) \
+				and s.team.team_id == player_ship.team.team_id
+		var color: Color
+		if s == player_ship:
+			color = PLAYER_COLOR
+		elif is_friendly:
+			color = FRIENDLY_COLOR
+		else:
+			color = ENEMY_COLOR
+		for plane_idx in av.active_planes.keys():
+			if plane_idx >= av.aircraft.size():
+				continue
+			var plane: Node3D = av.aircraft[plane_idx]
+			if not is_instance_valid(plane) or not plane.visible:
+				continue
+			var orbit_center = null
+			var orbit_radius: float = 0.0
+			var raw_aim = plane.get("aim_point")
+			var raw_range = plane.get("circle_range")
+			if raw_aim != null and raw_range != null:
+				orbit_center = raw_aim
+				orbit_radius = raw_range
+			tracked_aircraft.append({
+				"pos": plane.global_position,
+				"rot": plane.rotation.y,
+				"color": color,
+				"orbit_center": orbit_center,
+				"orbit_radius": orbit_radius,
+			})
 
 	if not ship_markers_canvas.is_connected("draw", _on_canvas_draw):
 		ship_markers_canvas.connect("draw", _on_canvas_draw)
@@ -392,6 +435,15 @@ func _on_canvas_draw() -> void:
 			if player_consumables.size() > 0:
 				draw_consumables_on_minimap(player_ship.global_position, player_consumables)
 
+	# Draw aircraft indicators
+	for ac in tracked_aircraft:
+		if ac.orbit_center != null and ac.orbit_radius > 0.0:
+			var center_mm := world_to_minimap_position(ac.orbit_center)
+			var radius_mm: float = float(ac.orbit_radius) * scale_factor.x
+			ship_markers_canvas.draw_circle(center_mm, radius_mm, Color(1.0, 1.0, 1.0, 0.08))
+			ship_markers_canvas.draw_arc(center_mm, radius_mm, 0.0, TAU, 48, Color(1.0, 1.0, 1.0, 0.45), 1.0)
+		_draw_aircraft_marker(world_to_minimap_position(ac.pos), ac.rot, ac.color)
+
 	# Draw torpedo indicators
 	draw_torpedoes_on_minimap()
 
@@ -511,6 +563,24 @@ func _draw_ship_marker(marker_position: Vector2, ship_rotation: float, color: Co
 
 	# Draw the triangle
 	ship_markers_canvas.draw_colored_polygon(points, color)
+
+func _draw_aircraft_marker(mm_pos: Vector2, plane_rotation: float, color: Color) -> void:
+	var s: float = AIRCRAFT_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
+	# Diamond oriented to flight heading
+	var points := PackedVector2Array([
+		Vector2(0.0, -s),
+		Vector2(s * 0.55, 0.0),
+		Vector2(0.0, s * 0.6),
+		Vector2(-s * 0.55, 0.0),
+	])
+	for i in range(points.size()):
+		points[i] = points[i].rotated(-plane_rotation) + mm_pos
+	ship_markers_canvas.draw_colored_polygon(points, color)
+	# Small outline so it reads against the map
+	var outline := color.darkened(0.45)
+	outline.a = 0.8
+	ship_markers_canvas.draw_polyline(PackedVector2Array([points[0], points[1], points[2], points[3], points[0]]), outline, 1.0)
+
 
 func _draw_aim_point(aim_position: Vector2):
 	ship_markers_canvas.draw_circle(aim_position, 2, Color.WHITE, false)

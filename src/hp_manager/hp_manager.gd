@@ -28,8 +28,8 @@ var current_hp:
 	# set(value):
 	# 	_current_hp = value / params.p().mult
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
-@export var bow_percent: float = 0.35
-@export var stern_percent: float = 0.35
+@export var bow_percent: float = 0.15
+@export var stern_percent: float = 0.15
 @export var superstructure_percent: float = 0.5
 @export var casemate_percent: float = 0.8
 

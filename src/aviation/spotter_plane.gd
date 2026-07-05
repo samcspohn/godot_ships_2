@@ -1,9 +1,10 @@
 extends Node3D
+class_name SpottingAircraft
 
 var aim_point: Vector3
 var _ship: Ship
 var params: AircraftParams
-@export var circle_range: float = 500.0
+@export var circle_range: float = 2000.0
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
@@ -16,7 +17,11 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var prev_pos = global_position
-	var center = _ship.global_position + aim_point
+	var disp = aim_point - _ship.global_position
+	var center = aim_point
+	if disp.length_squared() > params.p()._range * params.p()._range:
+		disp = disp.normalized() * params.p()._range
+		aim_point = _ship.global_position + disp
 	center.y = 200.0
 
 	# Plane's offset from the orbit center, flattened to the horizontal plane.
@@ -47,7 +52,8 @@ func drop_ordnance(drop_point: Vector3, aim_direction: Vector2, plane_params: Ai
 	var disp = drop_point - _ship.global_position
 	if disp.length_squared() > params.p()._range * params.p()._range:
 		disp = disp.normalized() * params.p()._range
-	aim_point = disp
+		drop_point = _ship.global_position + disp
+	aim_point = drop_point
 
 	# # spawn ordnance at drop point
 	# var ordnance_scene = plane_params.ordnance_scene.instantiate() as PackedScene

@@ -177,6 +177,9 @@ var minimap: Minimap
 # Ship tracking
 var tracked_ships = {}
 var ship_ui_elements = {}
+
+# Aircraft world-space markers
+var aircraft_ui_elements: Dictionary = {}  # plane Node3D -> {container, label, owner_label}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 var _status_refresh_timer: float = 0.0
@@ -231,10 +234,10 @@ func _configure_weapon_button(button: Button, index: int) -> void:
 	var key_event = InputEventKey.new()
 	key_event.keycode = KEY_1 + index
 	shortcut.events = [key_event]
-	button.shortcut = shortcut
+	# button.shortcut = shortcut
 	button.custom_minimum_size = Vector2(56, 56)
 	button.toggle_mode = true
-	button.button_group = weapon_button_group
+	# button.button_group = weapon_button_group
 	# Weapon controllers now store a "tooltip_provider" Callable as meta so the
 	# tooltip text is re-evaluated every physics frame (dynamic mod values, etc.).
 	# Assert here so a missing meta is an obvious crash instead of a silent gap.
@@ -245,17 +248,21 @@ func _configure_weapon_button(button: Button, index: int) -> void:
 func _get_all_weapon_buttons() -> Array[Button]:
 	var buttons: Array[Button] = []
 	var ship = camera_controller._ship
-
-	buttons.append_array(ship.artillery_controller.get_weapon_ui())
+	# var offset = 0
+	buttons.append_array(ship.artillery_controller.get_weapon_ui(buttons.size()))
+	# offset = buttons.size()
 
 	if ship.torpedo_controller:
-		buttons.append_array(ship.torpedo_controller.get_weapon_ui())
+		buttons.append_array(ship.torpedo_controller.get_weapon_ui(buttons.size()))
+		# offset = buttons.size()
 
 	if ship.secondary_controller:
-		buttons.append_array(ship.secondary_controller.get_weapon_ui())
+		buttons.append_array(ship.secondary_controller.get_weapon_ui(buttons.size()))
+		# offset = buttons.size()
 
 	if ship.aviation_controller:
-		buttons.append_array(ship.aviation_controller.get_weapon_ui())
+		buttons.append_array(ship.aviation_controller.get_weapon_ui(buttons.size()))
+		# offset = buttons.size()
 	return buttons
 
 func setup_weapon_buttons():
@@ -424,6 +431,7 @@ func _process(delta: float) -> void:
 		return
 	_update_match_timer(delta)
 	update_ship_ui(delta)
+	update_aircraft_ui(delta)
 	# _update_reticle_visibility()
 	sniper_reticle.queue_redraw()
 
@@ -1211,6 +1219,93 @@ func update_ship_ui(delta: float = 0.0):
 						element.queue_free()
 				ship_ui_elements.erase(ship)
 			tracked_ships.erase(ship)
+
+func setup_aircraft_ui(plane: Node3D, owner_ship: Ship, params: AircraftParams) -> void:
+	var color: Color
+	if owner_ship == camera_controller._ship:
+		color = Color(1.0, 1.0, 1.0)
+	elif camera_controller._ship.team and owner_ship.team \
+			and camera_controller._ship.team.team_id == owner_ship.team.team_id:
+		color = Color(0.0, 1.0, 0.0)
+	else:
+		color = Color(1.0, 0.0, 0.0)
+
+	var container := VBoxContainer.new()
+	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.visible = false
+
+	var icon_label := Label.new()
+	icon_label.text = "\u2708 %s" % params.type
+	icon_label.add_theme_font_size_override("font_size", 12)
+	icon_label.add_theme_color_override("font_color", color)
+	icon_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+	icon_label.add_theme_constant_override("shadow_offset_x", 1)
+	icon_label.add_theme_constant_override("shadow_offset_y", 1)
+	container.add_child(icon_label)
+
+	var owner_label := Label.new()
+	owner_label.text = owner_ship.name
+	owner_label.add_theme_font_size_override("font_size", 10)
+	owner_label.add_theme_color_override("font_color", Color(color.r, color.g, color.b, 0.7))
+	owner_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+	owner_label.add_theme_constant_override("shadow_offset_x", 1)
+	owner_label.add_theme_constant_override("shadow_offset_y", 1)
+	container.add_child(owner_label)
+
+	add_child(container)
+
+	aircraft_ui_elements[plane] = {
+		"container": container,
+		"icon_label": icon_label,
+		"owner_label": owner_label,
+	}
+
+
+func update_aircraft_ui(_delta: float) -> void:
+	if not camera_controller or not camera_controller._ship:
+		return
+	if not players_node:
+		return
+
+	# Collect all currently active planes across every ship
+	var active_planes: Dictionary = {}  # plane Node3D -> {owner_ship, params}
+	for ship in players_node.get_children():
+		if not (ship is Ship) or not ship.aviation_controller:
+			continue
+		var av: AviationController = ship.aviation_controller
+		for plane_idx in av.active_planes.keys():
+			if plane_idx < av.aircraft.size() and plane_idx < av.params.size():
+				var plane: Node3D = av.aircraft[plane_idx]
+				if is_instance_valid(plane) and plane.visible:
+					active_planes[plane] = {"owner_ship": ship, "params": av.params[plane_idx]}
+
+	# Remove markers for planes that are no longer active
+	var to_remove: Array = []
+	for plane in aircraft_ui_elements.keys():
+		if not active_planes.has(plane):
+			to_remove.append(plane)
+	for plane in to_remove:
+		aircraft_ui_elements[plane]["container"].queue_free()
+		aircraft_ui_elements.erase(plane)
+
+	# Create markers for new planes; position all active markers
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+	for plane in active_planes.keys():
+		if not aircraft_ui_elements.has(plane):
+			var info = active_planes[plane]
+			setup_aircraft_ui(plane, info["owner_ship"], info["params"])
+
+		var ui = aircraft_ui_elements[plane]
+		var world_pos: Vector3 = plane.global_position + Vector3(0, 8, 0)
+		var on_screen: bool = is_position_visible_on_screen(world_pos)
+		var container: Control = ui["container"]
+		container.visible = on_screen
+		if on_screen:
+			var screen_pos: Vector2 = camera.unproject_position(world_pos)
+			container.position = screen_pos - Vector2(container.size.x * 0.5, container.size.y)
+
 
 func is_position_visible_on_screen(world_position):
 	var camera = get_viewport().get_camera_3d()

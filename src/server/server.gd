@@ -405,6 +405,7 @@ func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
 	var player: Ship = load(ship).instantiate()
 	player.name = _player_name
 	player.visible = false
+	player.peer_id = int(id)
 
 	player._enable_weapons()
 
@@ -866,18 +867,10 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
 		spotted.visible_to_enemy = true
 		spotted.det_los = true
-		# if !visible_toggled[spotted]:
-		# 	if spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
-		# 		spotted.concealment.spotted_by = spotter
-		# 		spotter.stats.spotting_count += 1
-		# 		spotter.stats.damage_events.append({"type": "spot"})
-		# else:
 		if closest_enemies_that_can_see.has(spotted):
 			closest_enemies_that_can_see[spotted].append([spotter,dist])
 		else:
 			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
-			# var closest_enemies: Array = closest_enemies_that_can_see[spotted]
-			# closest_enemies.append(spotter)
 
 func handle_spot_attribution():
 	for spotted in closest_enemies_that_can_see.keys():
@@ -1127,6 +1120,7 @@ func _physics_process(_delta: float) -> void:
 		ship.det_los = false
 		ship.det_hydro = false
 		ship.det_radar = false
+		ship.det_air = false
 		if ship.health_controller.is_alive():
 			alive_players.append(ship)
 
@@ -1458,6 +1452,29 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 		_check_sensor_range(b, a, params_b.spotting_range_override, true, smoke_blocked)
 		_check_sensor_range(a, b, params_a.radar_spotting_range_override, false, smoke_blocked)
 		_check_sensor_range(b, a, params_b.radar_spotting_range_override, false, smoke_blocked)
+
+		if a.aviation_controller != null:
+			for plane_id in a.aviation_controller.active_planes.keys():
+				var plane = a.aviation_controller.aircraft[plane_id]
+				ray_query.from = plane.global_position
+				ray_query.to = b.global_position
+				ray_query.to.y = 1.0
+				dist = ray_query.from.distance_to(ray_query.to)
+				collision = space_state.intersect_ray(ray_query)
+				has_los = collision.is_empty()
+				if has_los:
+					handle_spot(a, b, dist)
+		if b.aviation_controller != null:
+			for plane_id in b.aviation_controller.active_planes.keys():
+				var plane = b.aviation_controller.aircraft[plane_id]
+				ray_query.from = plane.global_position
+				ray_query.to = a.global_position
+				ray_query.to.y = 1.0
+				dist = ray_query.from.distance_to(ray_query.to)
+				collision = space_state.intersect_ray(ray_query)
+				has_los = collision.is_empty()
+				if has_los:
+					handle_spot(b, a, dist)
 
 
 func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:

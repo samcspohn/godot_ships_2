@@ -41,6 +41,7 @@ var visible_to_enemy: bool = false
 var det_los: bool = false
 var det_hydro: bool = false
 var det_radar: bool = false
+var det_air: bool = false
 ## Set true on the client when the server sends a hydro LKP update for this
 ## ship, false when the server sends a clear packet (ship left hydro range).
 var hydro_detected: bool = false

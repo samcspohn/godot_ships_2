@@ -47,13 +47,13 @@ pool2 = 39840.0
 
 [sub_resource type="Resource" id="Resource_4k3dg"]
 script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
+pool1 = 4980.0
+pool2 = 9960.0
 
 [sub_resource type="Resource" id="Resource_dyvjp"]
 script = ExtResource("3_xwt2m")
-pool1 = 6640.0
-pool2 = 13280.0
+pool1 = 4980.0
+pool2 = 9960.0
 
 [sub_resource type="Resource" id="Resource_im8nd"]
 script = ExtResource("3_xwt2m")
@@ -171,8 +171,6 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_1a04s")
 _max_hp = 99600.0
-bow_percent = 0.2
-stern_percent = 0.2
 casemate_percent = 0.6
 citadel = SubResource("Resource_clwxc")
 casemate = SubResource("Resource_b66t4")

@@ -1,10 +1,10 @@
-extends Node
+extends WeaponController
 class_name TorpedoController
 
 @export var params: TorpedoLauncherParams
 @export var launchers: Array[TorpedoLauncher] = []
 var aim_point: Vector3 = Vector3.ZERO
-var _ship: Ship
+# var _ship: Ship
 var spread: float = 0.0
 var fire_held: bool = false
 var sequential_fire_timer: float = 0.0
@@ -17,16 +17,63 @@ var weapons: Array[Turret]:
 			arr.append(l)
 		return arr
 
+func _init() -> void:
+	button_names = ["TP"]
+	tool_tips = [Callable(_build_tooltip_text)]
 
-func get_weapon_ui() -> Array[Button]:
-	var button = Button.new()
-	button.text = "TP"
-	button.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text())
-	button.pressed.connect(func():
-		print("Pressed TorpedoController")
-		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-	)
-	return [button]
+# func update_weapon_ui(delta: float) -> void:
+# 	for i in range(buttons.size()):
+# 		var button = buttons[i]
+# 		var switch_progress = switch_progresss[i]
+# 		if held[i]:
+# 			held_dur[i] += delta
+# 			button.button_pressed = true
+# 		else:
+# 			if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
+# 				_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 				select_shell.rpc_id(1, 1 - i)
+# 				# switched_shell = true
+# 			held_dur[i] = 0.0
+# 			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and shell_index != i:
+# 				button.button_pressed = true
+# 			else:
+# 				button.button_pressed = false
+# 			# if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
+# 			# 	if shell_index == i:
+# 			# 		button.button_pressed = true
+# 			# 	else:
+# 			# 		button.button_pressed = false
+# 		if switch_progress and not switched_shell:
+# 			switch_progress.value = min(held_dur[i], 1.0)
+# 		if held_dur[i] > 1.0 and not switched_shell:
+# 			select_shell.rpc_id(1, 1 - i)
+# 			switched_shell = true
+# 		# if button:
+# 		# 	if select_held:
+# 		# 		held_duration += delta
+# 		# 		button.button_pressed = true
+# 		# 	else:
+# 		# 		held_duration = 0.0
+# 		# 		if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
+# 		# 			button.button_pressed = false
+# 		# 	if switch_progress and not switched_shell:
+# 		# 		switch_progress.value = min(held_duration, 1.0)
+# 		# 	if held_duration > 1.0 and not switched_shell:
+# 		# 		select_shell.rpc_id(1, 1 - shell_index)
+# 		# 		switched_shell = true
+# 		# 		# held_duration = 0.0
+
+# func _process(delta: float) -> void:
+# 	update_weapon_ui(delta)
+# func get_weapon_ui(offset: int) -> Array[Button]:
+# 	var button = Button.new()
+# 	button.text = "TP"
+# 	button.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text())
+# 	button.pressed.connect(func():
+# 		print("Pressed TorpedoController")
+# 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+# 	)
+# 	return [button]
 
 func get_shell_params() -> TorpedoParams:
 	return null
