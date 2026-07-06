@@ -6,13 +6,13 @@ class_name AviationController
 @export var launcher: Node3D
 # @export var planes: Array[Node3D] = []
 
-var aircraft: Array[SpottingAircraft] = []
+var aircraft: Array[Aircraft] = []
 var active_planes: Dictionary[int, bool] = {}
 # var shell_index: int = 0
 # var _ship: Ship
 var aim_point: Vector3
 var fire_held: bool = false
-var ordanance_drop_point = null
+var attack_point = null
 var aim_direction: Vector2 = Vector2.ZERO
 
 var game_world: Node3D
@@ -34,6 +34,7 @@ func _ready() -> void:
 		if plane_scene:
 			#var plane_instance = plane_scene.instantiate() as Node3D
 			plane_scene.visible = false
+			plane_scene.set_physics_process(false)
 			plane_scene.params = params[i]
 			plane_scene._ship = _ship
 			launcher.add_child(plane_scene)
@@ -55,8 +56,8 @@ func _physics_process(delta: float) -> void:
 
 	if shell_index >= params.size():
 		shell_index = 0
-	if ordanance_drop_point != null and not fire_held and active_planes.has(shell_index): # release ordnance at drop point
-		var offset = aim_point - ordanance_drop_point
+	if attack_point != null and not fire_held and active_planes.has(shell_index): # release ordnance at drop point
+		var offset = aim_point - attack_point
 		offset = Vector2(offset.x, offset.z)
 		if offset.length() > 1:
 			aim_direction = offset.normalized()
@@ -64,10 +65,9 @@ func _physics_process(delta: float) -> void:
 			aim_direction = Vector2.ZERO
 
 		var plane = aircraft[shell_index]
-		var plane_params = plane.params.p() as AircraftParams
-		if plane.has_method("drop_ordnance"):
-			plane.call("drop_ordnance", ordanance_drop_point, aim_direction, plane_params)
-		ordanance_drop_point = null
+		# var plane_params = plane.params.p() as AircraftParams
+		plane.set_attack_point(Vector2(attack_point.x, attack_point.z), aim_direction)
+		attack_point = null
 		aim_direction = Vector2.ZERO
 
 
@@ -77,6 +77,7 @@ func launch_plane(index: int):
 	var plane = launcher.get_child(index) as Node3D
 	if plane:
 		plane.visible = true
+		plane.set_physics_process(true)
 		active_planes[index] = true
 		# place in game world
 		plane.reparent(game_world)
@@ -87,6 +88,8 @@ func recall_plane(index: int):
 		var plane = aircraft[index]
 		plane.reparent(launcher)
 		plane.position = Vector3.ZERO
+		plane.visible = false
+		plane.set_physics_process(false)
 		active_planes.erase(index)
 
 func ensure_launched(index: int):
@@ -156,8 +159,8 @@ func fire_next_ready() -> void:
 	if not active_planes.has(shell_index):
 		launch_plane(shell_index)
 
-	if ordanance_drop_point == null:
-		ordanance_drop_point = aim_point
+	if attack_point == null:
+		attack_point = aim_point
 
 # @rpc("any_peer", "call_remote")
 # func select_shell(_shell_index: int) -> void:
@@ -176,7 +179,7 @@ func to_bytes() -> PackedByteArray:
 		writer.put_u8(shell_index)
 		writer.put_var(aircraft[shell_index].global_position)
 		writer.put_var(aircraft[shell_index].global_rotation)
-		writer.put_var(aircraft[shell_index].aim_point)
+		writer.put_var(aircraft[shell_index].attack_point)
 		writer.put_var(params[shell_index].to_bytes())
 	return writer.data_array
 
@@ -198,6 +201,6 @@ func from_bytes(b: PackedByteArray) -> void:
 			ensure_launched(shell_index)
 			plane.global_position = plane_pos
 			plane.global_rotation = plane_rot
-			plane.aim_point = plane_aim
+			plane.attack_point = plane_aim
 			plane.visible = true
 			params[shell_index].from_bytes(plane_params_bytes)

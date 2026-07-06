@@ -240,10 +240,10 @@ func _physics_process(_delta: float) -> void:
 				continue
 			var orbit_center = null
 			var orbit_radius: float = 0.0
-			var raw_aim = plane.get("aim_point")
+			var raw_aim = plane.get("attack_point")
 			var raw_range = plane.get("circle_range")
 			if raw_aim != null and raw_range != null:
-				orbit_center = raw_aim
+				orbit_center = Vector3(raw_aim.x, 0.0, raw_aim.y)
 				orbit_radius = raw_range
 			tracked_aircraft.append({
 				"pos": plane.global_position,
