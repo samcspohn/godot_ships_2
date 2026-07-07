@@ -17,12 +17,12 @@ var aim_direction: Vector2 = Vector2.ZERO
 
 var game_world: Node3D
 
-func _init() -> void:
-	button_names = ["Spotter"]
-	tool_tips = [func () -> String:
-		var p = params[shell_index]
-		return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
-	]
+# func _init() -> void:
+# 	button_names = ["Spotter"]
+# 	tool_tips = [func () -> String:
+# 		var p = params[shell_index]
+# 		return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
+# 	]
 
 func _ready() -> void:
 	# pass # Replace with function body.
@@ -31,6 +31,11 @@ func _ready() -> void:
 	for i in range(params.size()):
 		params[i] = params[i].instantiate(_ship) as AircraftParams
 		var plane_scene = params[i].plane_scene.instantiate()
+		button_names.append(params[i].type)
+		tool_tips.append(func () -> String:
+			var p = params[i]
+			return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
+		)
 		if plane_scene:
 			#var plane_instance = plane_scene.instantiate() as Node3D
 			plane_scene.visible = false
@@ -59,7 +64,7 @@ func _physics_process(delta: float) -> void:
 	if attack_point != null and not fire_held and active_planes.has(shell_index): # release ordnance at drop point
 		var offset = aim_point - attack_point
 		offset = Vector2(offset.x, offset.z)
-		if offset.length() > 1:
+		if offset.length() > 0.001:
 			aim_direction = offset.normalized()
 		else:
 			aim_direction = Vector2.ZERO
@@ -74,7 +79,7 @@ func _physics_process(delta: float) -> void:
 func launch_plane(index: int):
 	if index >= params.size():
 		return
-	var plane = launcher.get_child(index) as Node3D
+	var plane = aircraft[index]
 	if plane:
 		plane.visible = true
 		plane.set_physics_process(true)
@@ -121,7 +126,7 @@ func get_aim_ui() -> Dictionary:
 			"penetration_power": 0.0,
 			"time_to_target": 0.0
 		}
-	if shell_index >= active_planes.size():
+	if shell_index >= params.size():
 		shell_index = 0
 	var plane := aircraft[shell_index]
 	# var ship_position = _ship.global_position
@@ -171,6 +176,8 @@ func fire_next_ready() -> void:
 @rpc("any_peer", "call_remote")
 func set_fire_held(held: bool) -> void:
 	fire_held = held
+	# if attack_point == null:
+	# 	attack_point = aim_point
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()

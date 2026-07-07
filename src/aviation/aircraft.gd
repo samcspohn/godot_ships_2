@@ -7,6 +7,7 @@ var waypoints: Array[Vector2] = []
 var idle_pos: Vector2
 var _ship: Ship
 var params: AircraftParams
+var should_recall: bool = false
 # @export var circle_range: float = 2000.0
 
 # Called when the node enters the scene tree for the first time.
@@ -31,7 +32,8 @@ func _physics_process(delta: float) -> void:
 
 	if disp.length_squared() < ATTACK_RADIUS * ATTACK_RADIUS or attacking:
 		attacking = true
-		attack_behavior()
+		if attack_behavior():
+			should_recall = true
 		return
 	# # current forward direction projected onto the xz plane (Godot forward is -Z)
 	# var forward: Vector3 = -global_transform.basis.z
@@ -60,24 +62,25 @@ func _physics_process(delta: float) -> void:
 
 func fly_toward(pos: Vector3, delta: float) -> void:
 	var p = params.p() as AircraftParams
-	var disp = Vector2(pos.x - global_position.x, pos.z - global_position.z)
-	# current forward direction projected onto the xz plane (Godot forward is -Z)
+	var disp: Vector3 = pos - global_position
 	var forward: Vector3 = -global_transform.basis.z
-	var current_dir := Vector2(forward.x, forward.z)
+	var current_dir := forward
 	if current_dir.length_squared() < 0.0001:
-		current_dir = Vector2(0.0, 1.0)
+		current_dir = Vector3.FORWARD
 	current_dir = current_dir.normalized()
 
 	if disp.length_squared() > 0.0001:
 		var desired_dir := disp.normalized()
 		# constant-speed turn: angular rate = speed / turning_radius
 		var max_turn_angle: float = (p.speed / p.turning_radius) * delta
-		var turn_angle: float = clampf(current_dir.angle_to(desired_dir), -max_turn_angle, max_turn_angle)
-		current_dir = current_dir.rotated(turn_angle)
+		var turn_angle: float = clampf(current_dir.angle_to(desired_dir), 0.0, max_turn_angle)
+		var axis := current_dir.cross(desired_dir)
+		if axis.length_squared() > 0.0001:
+			current_dir = current_dir.rotated(axis.normalized(), turn_angle)
 
-	var movement: Vector2 = current_dir * p.speed * delta
-	global_position += Vector3(movement.x, 0.0, movement.y)
-	look_at(global_position + Vector3(current_dir.x, 0.0, current_dir.y))
+	var movement: Vector3 = current_dir * p.speed * delta
+	global_position += movement
+	look_at(global_position + current_dir)
 
 # point on a circle around idle_pos, advanced this frame's step; used to keep
 # the aircraft circling its last commanded position when it has no waypoint
@@ -128,6 +131,6 @@ func set_attack_point(attack_point: Vector2, aim_direction: Vector2) -> void:
 	self.attack_direction = aim_direction
 	self.attacking = false
 
-func attack_behavior() -> Vector2:
+func attack_behavior() -> bool:
 	# Implement attack behavior here
-	return Vector2.ZERO
+	return true

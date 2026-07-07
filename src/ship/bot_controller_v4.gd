@@ -808,7 +808,7 @@ func _engage_target() -> void:
 		behavior.engage_target(target)
 	else:
 		# No valid target — aim at destination as fallback
-		_ship.artillery_controller.set_aim_input(destination)
+		_ship.artillery_controller.set_aim_input(behavior._get_spotted_danger_center())
 
 
 # ===========================================================================

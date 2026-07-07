@@ -303,7 +303,7 @@ func _physics_process(_delta: float) -> void:
 						p.visible_to_enemy = true
 						for player in server._get_team_ships(0 if p.owner.team.team_id == 1 else 1):
 							if not player.team.is_bot:
-								p.launcher.fire_client.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.armed)
+								fireTorpedoClient.rpc_id(player.peer_id, p.position, p.direction, current_time, id, p.params.speed, p.params.damage, p.owner.get_path(), p.armed)
 						notify_detected(id)
 						if p.armed:
 							notify_armed(id) # Update indicators for enemy teams
@@ -447,19 +447,26 @@ func update_transform(idx, trans):
 	transforms[offset + 10] = trans.basis.z.z
 	transforms[offset + 11] = trans.origin.z
 
-@rpc("any_peer", "reliable")
-func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship, launcher: TorpedoLauncher, armed: bool) -> void:
-	#var bullet: Shell = load("res://Shells/shell.tscn").instantiate()
+# Launcher-agnostic: any launch source (turret launcher, aircraft, etc.) can
+# invoke this directly via rpc_id() to spawn the client-side display torpedo,
+# without needing its own RPC plumbing.
+#
+# NOTE: RPC arguments must be network-safe Variant types. `TorpedoParams` is
+# frequently a runtime-duplicated (mod-instanced) Resource with no valid
+# resource_path, and `Ship` is a Node — neither can be encoded over the wire
+# (Godot RPCs refuse Object arguments unless allow_object_decoding is enabled,
+# which this project does not do). So we send only the primitive fields the
+# client actually needs (speed/damage) plus the owner ship's NodePath, and
+# resolve/reconstruct everything locally — the same pattern used elsewhere
+# (see PlayerController.set_target_ship) for referencing a Ship across peers.
+@rpc("call_remote", "reliable", "authority")
+func fireTorpedoClient(pos: Vector3, vel: Vector3, t: float, id: int, speed: float, damage: float, owner_path: NodePath, armed: bool) -> void:
 	var torp = TorpedoData.new()
-	#bullet.params = shell_param_ids[shells]
-	#bullet.id = id
-	#bullet.radius = bullet.params.size
 	if id >= transforms.size() / 12:
 		var np2 = next_pow_of_2(id + 1)
 		transforms.resize(np2 * 12)
 		self.torpedos.resize(np2)
 
-	#var s = shell.size # sqrt(shell.damage / 100)
 	var vel_norm = vel.normalized()
 	# Create basis with Y axis aligned to velocity
 	# Use a fallback "up" vector when direction is nearly parallel to Vector3.RIGHT
@@ -471,12 +478,16 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship, lau
 		cross_result = basis.y.cross(Vector3.UP)
 	basis.z = cross_result.normalized()
 	basis.x = basis.y.cross(basis.z).normalized()
-	#basis.y = vel_norm
 
 	var trans = Transform3D(basis, pos)
 	update_transform(id, trans)
 
-	torp.initialize(pos, vel, params, t, _owner, 0.0, launcher, armed)
+	var params := TorpedoParams.new()
+	params.speed = speed
+	params.damage = damage
+	var _owner := get_node_or_null(owner_path) as Ship
+
+	torp.initialize(pos, vel, params, t, _owner, 0.0, null, armed)
 
 	# Allocate wake particle emitter
 	if wake_template != null:
@@ -487,7 +498,7 @@ func fireTorpedoClient(pos, vel, t, id, params: TorpedoParams, _owner: Ship, lau
 	self.torpedos.set(id, torp)
 
 #@rpc("authority","reliable")
-func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float, launcher: TorpedoLauncher) -> int:
+func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float, launcher: TorpedoLauncher = null) -> int:
 	var id = self.ids_reuse.pop_back()
 	if id == null:
 		id = self.nextId
@@ -516,6 +527,15 @@ func fireTorpedo(vel,pos, params: TorpedoParams, t, _owner: Ship, _range: float,
 	return id
 	#for p in multiplayer.get_peers():
 		#self.fireBulletClient.rpc_id(p, pos, vel, t, id, shell, end_pos, total_time)
+
+# Launcher-agnostic: notifies the firing ship's team so they can spawn the
+# client-side display torpedo. Called once per torpedo after fireTorpedo().
+# Any launch source (turret launcher, aircraft, etc.) can use this directly
+# instead of implementing its own per-node client RPC.
+func notify_fired(id: int, pos: Vector3, vel: Vector3, t: float, params: TorpedoParams, _owner: Ship, armed: bool = false) -> void:
+	for ship in server._get_team_ships(_owner.team.team_id):
+		if not ship.team.is_bot:
+			fireTorpedoClient.rpc_id(ship.peer_id, pos, vel, t, id, params.speed, params.damage, _owner.get_path(), armed)
 
 
 func _clear_torpedo_transform(idx: int) -> void:

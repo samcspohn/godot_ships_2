@@ -1,10 +1,10 @@
 extends Aircraft
-class_name SpottingAircraft
+class_name TorpedoAircraft
 
 # var aim_point: Vector3
 # var _ship: Ship
 # var params: AircraftParams
-@export var circle_range: float = 2000.0
+@export var torpedo_params: TorpedoParams
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
@@ -14,11 +14,21 @@ func attack_behavior() -> bool:
 	if attack_point == null:
 		return false
 	var prev_pos = global_position
-	var ret = _orbit_target(attack_point, circle_range, params.p().speed, get_physics_process_delta_time())
-	fly_toward(Vector3(ret.x, global_position.y, ret.y), get_physics_process_delta_time())
+	# var ret = _orbit_target(attack_point, circle_range, params.p().speed, get_physics_process_delta_time())
+	var pos2d = Vector2(global_position.x, global_position.z)
+	var disp = attack_point - pos2d
+	var attack_3d = Vector3(attack_point.x, 30.0, attack_point.y) # drop torpedos at 30m altitude
+	if disp.length_squared() < 100.0: # drop ordnance when within 300m of target
+		# drop ordnance
+		drop_ordnance()
+		attack_point = null
+		return true
+
+
+	fly_toward(attack_3d, get_physics_process_delta_time())
 	look_at(global_position + (global_position - prev_pos))
 	return false
-	# return ret
+	# return
 
 # # Called every frame. 'delta' is the elapsed time since the previous frame.
 # func _physics_process(delta: float) -> void:
@@ -56,19 +66,17 @@ func attack_behavior() -> bool:
 # 	if velocity.length_squared() > 0.0:
 # 		look_at(global_position + velocity)
 
-# func drop_ordnance(drop_point: Vector3, aim_direction: Vector2, plane_params: AircraftParams):
-# 	# spotter has no ordnance. just set spotting position
-# 	var disp = drop_point - _ship.global_position
-# 	if disp.length_squared() > params.p()._range * params.p()._range:
-# 		disp = disp.normalized() * params.p()._range
-# 		drop_point = _ship.global_position + disp
-# 	aim_point = drop_point
-
-# 	# # spawn ordnance at drop point
-# 	# var ordnance_scene = plane_params.ordnance_scene.instantiate() as PackedScene
-# 	# if ordnance_scene:
-# 	# 	var ordnance_instance = ordnance_scene.instantiate() as Node3D
-# 	# 	get_tree().current_scene.add_child(ordnance_instance)
-# 	# 	ordnance_instance.global_position = drop_point
-# 	# 	if ordnance_instance.has_method("set_aim_direction"):
-# 	# 		ordnance_instance.call("set_aim_direction", aim_direction)
+func drop_ordnance():
+	if attack_point == null:
+		return
+	var p = params.p() as AircraftParams
+	var torp_vel = Vector3(attack_direction.x, 0.0, attack_direction.y).normalized()
+	var t = ProjectileManager.get_current_time()
+	var t_id = TorpedoManager.fireTorpedo(torp_vel, global_position, torpedo_params, t, _ship, 1000.0)
+	TorpedoManager.notify_fired(t_id, global_position, torp_vel, t, torpedo_params, _ship, false)
+	# var ordnance = p.ordnance_scene.instantiate()
+	# ordnance.global_position = global_position
+	# ordnance.global_rotation = global_rotation
+	# ordnance.velocity = -global_transform.basis.z * p.speed
+	# ordnance.owner = owner
+	# get_tree().current_scene.add_child(ordnance)

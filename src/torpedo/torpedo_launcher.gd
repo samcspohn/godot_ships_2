@@ -82,18 +82,8 @@ func fire() -> void:
 				#var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, dispersion_point, my_params.shell.speed, my_params.shell.drag)
 				#if aim[0] != null:
 				var t = ProjectileManager.get_current_time()
-				var _id = (TorpedoManager as _TorpedoManager).fireTorpedo(-m.global_basis.z + offset,m.global_position, get_torp(), t, _ship, get_params()._range ,self)
-				var server: GameServer = get_tree().root.get_node_or_null("/root/Server")
-				# notify team of torpedo launch
-				for ship in server._get_team_ships(_ship.team.team_id):
-					if !ship.team.is_bot:
-						fire_client.rpc_id(ship.peer_id, m.global_position, -m.global_basis.z + offset, t, _id, false)
-				# for p in multiplayer.get_peers():
-				# 	self.fire_client.rpc_id(p, m.global_position, -m.global_basis.z + offset, t, _id)
+				var velocity = -m.global_basis.z + offset
+				var _id = (TorpedoManager as _TorpedoManager).fireTorpedo(velocity, m.global_position, get_torp(), t, _ship, get_params()._range, self)
+				(TorpedoManager as _TorpedoManager).notify_fired(_id, m.global_position, velocity, t, get_torp(), _ship, false)
 				offset += muzzles[0].global_basis.x * 0.012
-					#self.fire_client.rpc_id(p, aim[0],m.global_position, t, aim[1], dispersion_point, id)
 			reload = 0
-
-@rpc("any_peer","reliable")
-func fire_client(pos, vel, t, _id, armed):
-	(TorpedoManager as _TorpedoManager).fireTorpedoClient(pos, vel, t, _id, get_torp(), _ship, self, armed)

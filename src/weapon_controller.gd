@@ -27,9 +27,11 @@ var shell_index: int = 1
 @export var button_names: Array[String] = []
 var tool_tips: Array[Callable] = []
 
+var frame_count: int = 0
 func _input(event: InputEvent) -> void:
-	if _ship.control is not PlayerController or _ship.peer_id != multiplayer.get_unique_id():
+	if _ship.control is not PlayerController or _ship.peer_id != multiplayer.get_unique_id() and frame_count < 1:
 		set_process_input(false)
+		frame_count	+= 1
 		return
 	if event is InputEventKey:
 		if event.pressed and not event.echo:
@@ -93,9 +95,9 @@ func update_weapon_ui(delta: float) -> void:
 			held_dur[i] += delta
 			button.button_pressed = true
 		else:
-			if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
-				_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-				select_shell.rpc_id(1, i)
+			# if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
+			# 	_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
+			# 	select_shell.rpc_id(1, i)
 			held_dur[i] = 0.0
 			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and shell_index == i:
 				button.button_pressed = true
