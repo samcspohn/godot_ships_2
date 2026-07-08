@@ -45,8 +45,13 @@ uniform float warp_strength = 1.5;   // UV-space magnitude (0.35 = shifts ±35% 
 uniform sampler2DArray foam_tex          : repeat_enable, filter_linear_mipmap;
 uniform float          foam_tex_scale    = 8.0;  // world metres per foam tile
 uniform float          foam_tex_strength = 0.8;  // 0 = ignore mask, 1 = full carve-out
+uniform float          foam_amount       = 0.5;  // scales simulated foam intensity before the cutoff test; lower = less foam
+uniform bool           foam_animate      = true; // disable to freeze on a single static frame
 uniform float          foam_fps          = 8.0;  // animation playback speed
 uniform int            foam_frame_count  = 16;
+uniform float          foam_reveal_low   = 0.00; // sim values at/below this show no foam (suppresses noise floor)
+uniform float          foam_reveal_high  = 0.10; // sim values at/above this fully reveal the foam texture
+uniform bool           debug_foam_alpha  = true; // visualize foam_samp.a as hue (red = 0, purple = 1)
 
 // --- depth shading / shoreline foam ---
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
@@ -178,6 +183,34 @@ vec2 sample_ocean_slope(vec2 wxz) {
 	return slope;
 }
 
+// The foam texture's alpha is used as a cutoff rather than a plain opacity
+// multiply: a foam layer only shows where the texture alpha reaches the
+// simulation's foam value, then snaps to fully opaque. This lets the
+// simulation intensity "reveal" progressively more of the texture's
+// streamers instead of just dimming a uniform coat of foam.
+vec3 hsv2rgb(vec3 c) {
+	vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+	vec3 p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+	return c.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), c.y);
+}
+
+float foam_alpha_cutoff(float sim_value, float tex_alpha) {
+	// Invert: higher sim_value lowers the required alpha, so zero simulated
+	// foam requires (near-)impossible full-opacity texture (renders nothing),
+	// while full-intensity foam requires none (renders everywhere).
+	// Dead-zone + ramp instead of a plain linear or power-law map: a pure
+	// power curve can't both suppress the near-zero simulation noise floor
+	// (which is rarely ever exactly 0) and still meaningfully ramp up by
+	// mid-range values, since it rises steeply from zero either way. This
+	// clamps everything below foam_reveal_low to "no foam" and only starts
+	// revealing texture once the simulation value is genuinely elevated.
+	float revealed  = smoothstep(foam_reveal_low, foam_reveal_high, clamp(sim_value, 0.0, 1.0));
+	float threshold = 1.0 - revealed;
+	float aa = max(fwidth(tex_alpha), 0.001);
+	return smoothstep(threshold - aa, threshold + aa, tex_alpha);
+
+}
+
 // =====================================================================
 // Vertex shader
 // =====================================================================
@@ -237,9 +270,9 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_n, 0.0)).xyz);
 
 	// ---- Animated foam texture: cross-fade adjacent frames with TIME ----
-	float foam_t    = mod(TIME * foam_fps, float(foam_frame_count));
+	float foam_t    = foam_animate ? mod(TIME * foam_fps, float(foam_frame_count)) : 0.0;
 	int   frame_a   = int(foam_t);
-	int   frame_b   = (frame_a + 1) % foam_frame_count;
+	int   frame_b   = foam_animate ? (frame_a + 1) % foam_frame_count : frame_a;
 	vec2  foam_uv   = v_world_xz / foam_tex_scale;
 	vec4  foam_samp = mix(
 		texture(foam_tex, vec3(foam_uv, float(frame_a))),
@@ -247,7 +280,6 @@ void fragment() {
 		fract(foam_t)
 	);
 	vec3  foam_color = foam_samp.rgb;
-	float foam_mask  = mix(1.0, foam_samp.a, foam_tex_strength);
 
 	// ---- Depth-based color + shoreline foam ----
 	float d = texture(depth_tex, SCREEN_UV).r;
@@ -255,8 +287,9 @@ void fragment() {
 	float scene_z     = -(v.z / v.w);
 	float water_depth = scene_z - (-VERTEX.z);
 
-	float blend = clamp(water_depth / depth_fade, 0.0, 1.0);
-	float foam  = (1.0 - clamp(water_depth / foam_band, 0.0, 1.0)) * foam_mask;
+	float blend    = clamp(water_depth / depth_fade, 0.0, 1.0);
+	float foam_raw = (1.0 - clamp(water_depth / foam_band, 0.0, 1.0)) * foam_amount;
+	float foam     = mix(foam_raw, foam_alpha_cutoff(foam_raw, foam_samp.a), foam_tex_strength);
 	ALBEDO = mix(mix(shallow, deep, blend), foam_color, foam);
 
 	// // ---- Wake-tile foam ----
@@ -267,8 +300,11 @@ void fragment() {
         + sample_tile(v_world_xz + vec2(-_fs, 0.0)).z
         + sample_tile(v_world_xz + vec2(0.0,  _fs)).z
         + sample_tile(v_world_xz + vec2(0.0, -_fs)).z) / 6.0;
-    foam_val = min(foam_val, 0.5);
-	float tile_foam = smoothstep(0.15, 0.75, foam_val) * foam_mask;
+    foam_val = pow(foam_val, 0.5);
+    // foam_val = min(foam_val, 0.35);
+    foam_val *= 0.7;
+	float tile_foam_raw = smoothstep(0.15, 0.75, foam_val) * foam_amount;
+	float tile_foam     = mix(tile_foam_raw, foam_alpha_cutoff(tile_foam_raw, foam_samp.a), foam_tex_strength);
 	ALBEDO = mix(ALBEDO, foam_color, tile_foam);
 	ROUGHNESS = mix(ROUGHNESS, foam_roughness, tile_foam);
 	// vec2 vel = sample_tile(v_world_xz).rg;
@@ -294,11 +330,18 @@ void fragment() {
 		vec2 uv = v_world_xz / cascade_scales[i] + CASCADE_OFFSETS[i] + warp;
 		wc += texture(fft_foam, vec3(uv, float(i))).r * cascade_strength[i];
 	}
-	wc = clamp(wc, 0.0, 1.0) * foam_mask * v_calm_factor;
+	wc = clamp(wc, 0.0, 1.0) * v_calm_factor * foam_amount;
+	float _wc = wc;
+	wc = mix(wc, foam_alpha_cutoff(wc, foam_samp.a), foam_tex_strength);
 	ALBEDO = mix(ALBEDO, foam_color, wc);
 
 	METALLIC  = 0.0;
 	ROUGHNESS = mix(calm_roughness, mix(water_roughness, foam_roughness, wc), v_calm_factor);
+
+	if (debug_foam_alpha) {
+		// Red (hue 0°) -> purple (hue 300°) across the cutoff alpha's 0..1 range.
+		ALBEDO = hsv2rgb(vec3(foam_samp.a * (300.0 / 360.0), 1.0, 1.0));
+	}
 }
 
 void light() {

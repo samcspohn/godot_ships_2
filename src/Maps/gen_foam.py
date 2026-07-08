@@ -23,6 +23,11 @@ N_FRAMES = 16
 # Circular drift radius in [0,1) normalised coords.  Controls how much the
 # foam pattern changes across one loop.
 DRIFT = 0.15
+# Final blur pass (pixels, at RES resolution): widens the transition zones
+# between streamers/background and between different intensity levels,
+# amplifying the graded (non-binary) alpha established by the intensity field.
+BLUR_RADIUS = 3
+BLUR_PASSES = 2
 # ---------------------------------------------------------------------------
 
 
@@ -73,6 +78,22 @@ def smoothstep(a, b, x):
     return t * t * (3 - 2 * t)
 
 
+def tileable_blur(img, radius, passes=2):
+    """Periodic (wrap-around) box blur via FFT convolution, repeated a few
+    times to approximate a Gaussian. Stays exactly tileable since the FFT
+    treats the image as one period."""
+    res = img.shape[0]
+    k = 2 * radius + 1
+    kernel = np.zeros((res, res))
+    kernel[:k, :k] = 1.0 / (k * k)
+    kernel = np.roll(kernel, (-radius, -radius), axis=(0, 1))
+    kernel_f = np.fft.fft2(kernel)
+    out = img
+    for _ in range(passes):
+        out = np.real(np.fft.ifft2(np.fft.fft2(out) * kernel_f))
+    return out
+
+
 def warped_ridge(X, Y, periods, warp_amt, warp_periods, seed, tx=0.0, ty=0.0):
     """Domain-warped ridged noise.  tx/ty are the per-frame circular offset."""
     wx = fbm_at(X + 0.13 + tx, Y + ty, warp_periods, seed + 11) - 0.5
@@ -112,6 +133,15 @@ for fi in range(N_FRAMES):
         X, Y, [16, 32, 64], warp_amt=0.20, warp_periods=[4, 8], seed=600, tx=tx, ty=ty
     )
 
+    # Wide smoothstep bands (not a near-binary threshold): this keeps the
+    # ridged noise's natural, continuous falloff away from each ridge crest,
+    # so alpha grades smoothly across a streamer's whole width instead of
+    # plateauing at a flat value with only a thin transition at its edge.
+    # fbm values cluster near the middle of their range (CLT), so a ridged
+    # transform's "ridge" (near 1) covers much more area than its "valley"
+    # (near 0) — widening this threshold explodes coverage to ~everything
+    # rather than gently broadening it. Keep it narrow (for a sparse network
+    # with real gaps) and add along-length variation separately below.
     veins = np.maximum.reduce(
         [
             smoothstep(0.84, 1.0, r_coarse),
@@ -144,9 +174,36 @@ for fi in range(N_FRAMES):
     )
     rgb = np.clip(rgb + (speck * 0.10)[..., None], 0.0, 1.0)
 
-    # --- Alpha: opaque where foam exists, hard edge with thin feather ---
-    alpha = coverage * (0.72 + 0.28 * speck)
-    alpha = np.clip(alpha / 0.15, 0.0, 1.0)
+    # --- Broad intensity variation so different streamers/patches land at
+    # genuinely different alpha levels instead of all clustering near the same
+    # high value. Without this, the shader's alpha-cutoff has almost nothing
+    # to work with (any reasonable threshold reveals either ~all or ~none of
+    # the coverage), since the vein construction above makes every streamer's
+    # *edge* crisp but gives them all roughly the same *peak* alpha. ---
+    tx, ty = off(np.pi * 1.9)
+    intensity = fbm_at(X + 5.3 + tx, Y + 8.1 + ty, [3, 5], seed=2200)
+    intensity = (
+        0.15 + 0.85 * intensity
+    )  # keep a floor so weak streamers aren't fully killed
+
+    # --- Mid-frequency variation *along* each streamer's own length (period
+    # comparable to the vein scales themselves), so a single streamer rises
+    # and falls through many alpha levels along its length instead of being a
+    # flat plateau bounded only by a thin edge. ---
+    tx, ty = off(np.pi * 2.3)
+    midvar = fbm_at(X + 9.7 + tx, Y + 3.3 + ty, [10, 20], seed=2600)
+    midvar = 0.25 + 0.75 * midvar
+
+    # --- Alpha: smooth coverage gradient (used as an alpha-cutoff mask by the
+    # shader, not a straight opacity multiply, so keep it continuous). ---
+    alpha = np.clip(coverage * (0.72 + 0.28 * speck) * intensity * midvar, 0.0, 1.0)
+
+    # --- Blur pass: widens transition zones and blends adjacent intensity
+    # levels together, amplifying the graded alpha effect. ---
+    alpha = np.clip(tileable_blur(alpha, BLUR_RADIUS, BLUR_PASSES), 0.0, 1.0)
+    for c in range(3):
+        rgb[..., c] = tileable_blur(rgb[..., c], BLUR_RADIUS, BLUR_PASSES)
+    rgb = np.clip(rgb, 0.0, 1.0)
 
     rgba = np.zeros((RES, RES, 4), dtype=np.uint8)
     rgba[..., :3] = (rgb * 255).astype(np.uint8)
