@@ -35,7 +35,8 @@ var background: TextureRect
 var ship_markers_canvas: Control
 var player_ship: Node3D = null
 var tracked_ships: Array[Dictionary] = []
-var tracked_aircraft: Array = []  # {pos, rot, color} — rebuilt each physics frame
+var tracked_aircraft: Array = []  # {pos, rot, color} - rebuilt each physics frame
+var tracked_squadron_paths: Array = []  # {base, waypoints, attack_point} - rebuilt each physics frame
 
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
@@ -215,6 +216,7 @@ func _physics_process(_delta: float) -> void:
 
 	# Rebuild aircraft list from all known ships
 	tracked_aircraft.clear()
+	tracked_squadron_paths.clear()
 	var all_ships: Array = tracked_ships.map(func(d): return d["ship"])
 	if is_instance_valid(player_ship):
 		all_ships.append(player_ship)
@@ -232,26 +234,42 @@ func _physics_process(_delta: float) -> void:
 			color = FRIENDLY_COLOR
 		else:
 			color = ENEMY_COLOR
-		for plane_idx in av.active_planes.keys():
-			if plane_idx >= av.aircraft.size():
+		for squadron_idx in av.active_squadrons.keys():
+			if squadron_idx >= av.squadrons.size():
 				continue
-			var plane: Node3D = av.aircraft[plane_idx]
-			if not is_instance_valid(plane) or not plane.visible:
-				continue
+			var squadron: Squadron = av.squadrons[squadron_idx]
+			# Squadrons that hold station when attacking (e.g. spotters) show their
+			# orbit circle at the attack point as soon as it's commanded, not just
+			# once they arrive. Otherwise the squadron orbits idle_pos: either
+			# patrolling near the carrier, or (post-arrival) holding over the
+			# target.
 			var orbit_center = null
 			var orbit_radius: float = 0.0
-			var raw_aim = plane.get("attack_point")
-			var raw_range = plane.get("circle_range")
-			if raw_aim != null and raw_range != null:
-				orbit_center = Vector3(raw_aim.x, 0.0, raw_aim.y)
-				orbit_radius = raw_range
-			tracked_aircraft.append({
-				"pos": plane.global_position,
-				"rot": plane.rotation.y,
-				"color": color,
-				"orbit_center": orbit_center,
-				"orbit_radius": orbit_radius,
+			if squadron_idx < av.params.size():
+				var squadron_params = av.params[squadron_idx].p()
+				var holds_station: bool = squadron.aircraft.size() > 0 and squadron.aircraft[0] is SpottingAircraft
+				if squadron.attack_point != null:
+					if holds_station:
+						orbit_center = Vector3(squadron.attack_point.x, 0.0, squadron.attack_point.y)
+						orbit_radius = squadron_params.circle_range
+				elif not squadron.returning:
+					orbit_center = Vector3(squadron.idle_pos.x, 0.0, squadron.idle_pos.y)
+					orbit_radius = squadron_params.circle_range if squadron.holding_attack else squadron_params.idle_radius
+			tracked_squadron_paths.append({
+				"base": Vector2(squadron.node.global_position.x, squadron.node.global_position.z),
+				"waypoints": squadron.waypoints.duplicate(),
+				"attack_point": squadron.attack_point,
 			})
+			for plane in squadron.aircraft:
+				if not is_instance_valid(plane) or not plane.visible:
+					continue
+				tracked_aircraft.append({
+					"pos": plane.global_position,
+					"rot": plane.rotation.y,
+					"color": color,
+					"orbit_center": orbit_center,
+					"orbit_radius": orbit_radius,
+				})
 
 	if not ship_markers_canvas.is_connected("draw", _on_canvas_draw):
 		ship_markers_canvas.connect("draw", _on_canvas_draw)
@@ -444,6 +462,11 @@ func _on_canvas_draw() -> void:
 			ship_markers_canvas.draw_arc(center_mm, radius_mm, 0.0, TAU, 48, Color(1.0, 1.0, 1.0, 0.45), 1.0)
 		_draw_aircraft_marker(world_to_minimap_position(ac.pos), ac.rot, ac.color)
 
+	# Draw squadron waypoint routes (green) and the line to the next
+	# waypoint/attack point (green/orange) - mirrors the 3d world markers.
+	for path in tracked_squadron_paths:
+		_draw_squadron_path(path)
+
 	# Draw torpedo indicators
 	draw_torpedoes_on_minimap()
 
@@ -580,6 +603,29 @@ func _draw_aircraft_marker(mm_pos: Vector2, plane_rotation: float, color: Color)
 	var outline := color.darkened(0.45)
 	outline.a = 0.8
 	ship_markers_canvas.draw_polyline(PackedVector2Array([points[0], points[1], points[2], points[3], points[0]]), outline, 1.0)
+
+# Draws a squadron's commanded route on the minimap: a green marker at each
+# waypoint, green lines connecting consecutive waypoints, and a single line
+# from the squadron's current position to whatever it's heading toward next
+# - green for a waypoint, orange for the attack point. Mirrors the 3d world
+# markers in squadron.gd.
+const SQUADRON_WAYPOINT_MARKER_RADIUS: float = 4.0
+const SQUADRON_PATH_LINE_WIDTH: float = 2.0
+func _draw_squadron_path(path: Dictionary) -> void:
+	var waypoints: Array = path["waypoints"]
+	var base_mm := world_to_minimap_position(Vector3(path["base"].x, 0.0, path["base"].y))
+
+	var prev_mm := base_mm
+	for wp in waypoints:
+		var wp_mm := world_to_minimap_position(Vector3(wp.x, 0.0, wp.y))
+		ship_markers_canvas.draw_line(prev_mm, wp_mm, Squadron.WAYPOINT_COLOR, SQUADRON_PATH_LINE_WIDTH)
+		ship_markers_canvas.draw_circle(wp_mm, SQUADRON_WAYPOINT_MARKER_RADIUS, Squadron.WAYPOINT_COLOR)
+		prev_mm = wp_mm
+
+	if waypoints.size() == 0 and path["attack_point"] != null:
+		var ap: Vector2 = path["attack_point"]
+		var ap_mm := world_to_minimap_position(Vector3(ap.x, 0.0, ap.y))
+		ship_markers_canvas.draw_line(base_mm, ap_mm, Squadron.ATTACK_LINE_COLOR, SQUADRON_PATH_LINE_WIDTH)
 
 
 func _draw_aim_point(aim_position: Vector2):

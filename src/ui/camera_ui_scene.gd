@@ -1273,11 +1273,11 @@ func update_aircraft_ui(_delta: float) -> void:
 		if not (ship is Ship) or not ship.aviation_controller:
 			continue
 		var av: AviationController = ship.aviation_controller
-		for plane_idx in av.active_planes.keys():
-			if plane_idx < av.aircraft.size() and plane_idx < av.params.size():
-				var plane: Node3D = av.aircraft[plane_idx]
-				if is_instance_valid(plane) and plane.visible:
-					active_planes[plane] = {"owner_ship": ship, "params": av.params[plane_idx]}
+		for squadron_idx in av.active_squadrons.keys():
+			if squadron_idx < av.squadrons.size() and squadron_idx < av.params.size():
+				for plane in av.squadrons[squadron_idx].aircraft:
+					if is_instance_valid(plane) and plane.visible:
+						active_planes[plane] = {"owner_ship": ship, "params": av.params[squadron_idx]}
 
 	# Remove markers for planes that are no longer active
 	var to_remove: Array = []

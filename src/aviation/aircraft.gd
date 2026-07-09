@@ -1,136 +1,102 @@
 extends Node3D
 class_name Aircraft
-var attack_point = null
-var attack_direction: Vector2
-var attacking: bool = false
-var waypoints: Array[Vector2] = []
-var idle_pos: Vector2
+
+# Aircraft never navigate independently - they only ever try to reach and
+# match this formation slot (owned by the Squadron; moves/rotates as the
+# squadron flies). The squadron controls all flight and attack timing, and
+# calls fire_ordnance() directly once it reaches the attack point.
+var target: Node3D
 var _ship: Ship
 var params: AircraftParams
 var should_recall: bool = false
-# @export var circle_range: float = 2000.0
+# set by the squadron each tick: true while it's on its attack run, so
+# aircraft snap into the tighter attack formation faster (see fly_toward()).
+var attacking: bool = false
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	pass # Replace with function body.
 
-const ATTACK_RADIUS: float = 1000.0
-
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _physics_process(delta: float) -> void:
 	if not _Utils.authority():
 		return
-	var p = params.p() as AircraftParams
-	var wp = process_waypoints()
-	var pos: Vector2 = Vector2(global_position.x, global_position.z)
-	if wp == null:
-		if attack_point != null:
-			wp = attack_point
-		else:
-			wp = _orbit_target(idle_pos, p.idle_radius, p.speed, delta)
-	var disp: Vector2 = wp - pos
 
-	if disp.length_squared() < ATTACK_RADIUS * ATTACK_RADIUS or attacking:
-		attacking = true
-		if attack_behavior():
-			should_recall = true
+	if target == null:
 		return
-	# # current forward direction projected onto the xz plane (Godot forward is -Z)
-	# var forward: Vector3 = -global_transform.basis.z
-	# var current_dir := Vector2(forward.x, forward.z)
-	# if current_dir.length_squared() < 0.0001:
-	# 	current_dir = Vector2(0.0, 1.0)
-	# current_dir = current_dir.normalized()
 
-	# if disp.length_squared() > 0.0001:
-	# 	var desired_dir := disp.normalized()
-	# 	# constant-speed turn: angular rate = speed / turning_radius
-	# 	var max_turn_angle: float = (p.speed / p.turning_radius) * delta
-	# 	var turn_angle: float = clampf(current_dir.angle_to(desired_dir), -max_turn_angle, max_turn_angle)
-	# 	current_dir = current_dir.rotated(turn_angle)
+	fly_toward(target.global_position, delta)
 
-	# var movement: Vector2 = current_dir * p.speed * delta
-	# global_position += Vector3(movement.x, 0.0, movement.y)
-	# look_at(global_position + Vector3(current_dir.x, 0.0, current_dir.y))
-	var prev_pos = global_position
-	fly_toward(Vector3(wp.x, global_position.y, wp.y), delta)
-	global_position.y = move_toward(global_position.y, p.altitude, p.speed * delta * 0.1)
-	look_at(global_position + (global_position - prev_pos))
-
-	# if attack_point != null:
-	# 	attack_behavior()
+# distance over which the catch-up speed boost ramps from none (at the
+# target) to max (at or beyond this range). There's no dead zone: any nonzero
+# lag gets a proportional speed boost, so a lagging aircraft always has some
+# excess speed over its target and its distance error converges to zero
+# instead of settling into a permanent pursuit-curve offset.
+const CATCHUP_RANGE: float = 300.0
 
 func fly_toward(pos: Vector3, delta: float) -> void:
 	var p = params.p() as AircraftParams
-	var disp: Vector3 = pos - global_position
-	var forward: Vector3 = -global_transform.basis.z
-	var current_dir := forward
-	if current_dir.length_squared() < 0.0001:
-		current_dir = Vector3.FORWARD
-	current_dir = current_dir.normalized()
+	var dist := global_position.distance_to(pos)
+	var t: float = clampf(dist / CATCHUP_RANGE, 0.0, 1.0)
+	var mult: float = p.attack_catch_up_speed_mult if attacking else p.catch_up_speed_mult
+	var speed: float = lerpf(p.speed, p.speed * mult, t)
+	attract(self, pos, speed, delta)
 
-	if disp.length_squared() > 0.0001:
-		var desired_dir := disp.normalized()
+# Aircraft are magnetically attracted to their target position: move straight
+# toward it at the given speed (never overshooting) and face the direction of
+# travel. No turn-rate simulation, so there's nothing to oscillate or
+# overshoot around.
+static func attract(node: Node3D, target_pos: Vector3, speed: float, delta: float) -> void:
+	var disp: Vector3 = target_pos - node.global_position
+	var dist := disp.length()
+	if dist < 0.0001:
+		return
+	var dir := disp / dist
+	var move_dist: float = minf(speed * delta, dist)
+	node.global_position += dir * move_dist
+	node.look_at(node.global_position + dir)
+
+# Turn-rate-limited flight simulation used by the squadron leader node: turns
+# toward the target heading at a constant angular rate (speed / turning_radius)
+# and advances at constant speed, so the formation flies (and turns) like a
+# real aircraft rather than snapping straight at its next waypoint.
+#
+# Altitude is deliberately handled separately from the horizontal turn: the
+# node climbs/descends toward target_altitude at a constant climb_rate,
+# independent of how far away target_xz is. Coupling the two (steering
+# straight at a 3D point including altitude) would only reach the target
+# altitude by the time the horizontal distance also reaches zero - fine for a
+# short final approach, but a squadron cruising for kilometers home would
+# barely climb until the very end.
+static func steer(node: Node3D, target_xz: Vector2, target_altitude: float, speed: float, turning_radius: float, climb_rate: float, delta: float) -> void:
+	var current_pos: Vector3 = node.global_position
+	var forward_xz := Vector2(-node.global_transform.basis.z.x, -node.global_transform.basis.z.z)
+	if forward_xz.length_squared() < 0.0001:
+		forward_xz = Vector2(0.0, 1.0)
+	forward_xz = forward_xz.normalized()
+
+	var disp_xz: Vector2 = target_xz - Vector2(current_pos.x, current_pos.z)
+	if disp_xz.length_squared() > 0.0001:
+		var desired_dir := disp_xz.normalized()
 		# constant-speed turn: angular rate = speed / turning_radius
-		var max_turn_angle: float = (p.speed / p.turning_radius) * delta
-		var turn_angle: float = clampf(current_dir.angle_to(desired_dir), 0.0, max_turn_angle)
-		var axis := current_dir.cross(desired_dir)
-		if axis.length_squared() > 0.0001:
-			current_dir = current_dir.rotated(axis.normalized(), turn_angle)
+		var max_turn_angle: float = (speed / turning_radius) * delta
+		var turn_angle: float = clampf(forward_xz.angle_to(desired_dir), -max_turn_angle, max_turn_angle)
+		forward_xz = forward_xz.rotated(turn_angle)
 
-	var movement: Vector3 = current_dir * p.speed * delta
-	global_position += movement
-	look_at(global_position + current_dir)
+	var horizontal_move: Vector2 = forward_xz * speed * delta
+	var new_y: float = move_toward(current_pos.y, target_altitude, climb_rate * delta)
+	var new_pos := Vector3(current_pos.x + horizontal_move.x, new_y, current_pos.z + horizontal_move.y)
+	node.global_position = new_pos
 
-# point on a circle around idle_pos, advanced this frame's step; used to keep
-# the aircraft circling its last commanded position when it has no waypoint
-func _orbit_target(orbit_pos: Vector2, radius: float, speed: float, delta: float) -> Vector2:
-	# var center = idle_pos
-	var pos: Vector2 = Vector2(global_position.x, global_position.z)
-	var from_center = pos - orbit_pos
-	if from_center.length_squared() < 0.0001:
-		from_center = Vector2(radius, 0.0)
+	var look_dir := Vector3(horizontal_move.x, new_y - current_pos.y, horizontal_move.y)
+	if look_dir.length_squared() > 0.0001:
+		node.look_at(new_pos + look_dir.normalized())
 
-	var angle = atan2(from_center.y, from_center.x)
-	angle += (speed * delta) / radius
-	return orbit_pos + Vector2(cos(angle), sin(angle)) * radius
-
-# clamp waypoints to within range of ship and return current waypoint
-# remove waypoints when the aircraft reaches them
-func process_waypoints():
-	if waypoints.size() == 0:
-		return null
-	for i in range(waypoints.size()):
-		var wp = waypoints[i]
-		var disp = wp - Vector2(_ship.global_position.x, _ship.global_position.z)
-		if disp.length_squared() > params.p()._range * params.p()._range:
-			disp = disp.normalized() * params.p()._range
-			wp = Vector2(_ship.global_position.x, _ship.global_position.z) + disp
-			waypoints[i] = wp
-
-	var wp = waypoints[0]
-	var disp = wp - Vector2(_ship.global_position.x, _ship.global_position.z)
-	if disp.length_squared() < 100.0 : # reached waypoint
-		waypoints.remove_at(0)
-	if waypoints.size() == 0:
-		return null
-	return waypoints[0]
-
-func set_waypoint(waypoint: Vector2, append: bool) -> void:
-	if append:
-		waypoints.append(waypoint)
-	else:
-		waypoints.clear()
-		waypoints.append(waypoint)
-	idle_pos = waypoint
-
-# todo: attack point needs to be settable outside a radius from the plane.
-# this radius should be dependant on the distance from the aim point to the ship to mimic artillery lead time
-func set_attack_point(attack_point: Vector2, aim_direction: Vector2) -> void:
-	self.attack_point = attack_point
-	self.attack_direction = aim_direction
-	self.attacking = false
-
-func attack_behavior() -> bool:
-	# Implement attack behavior here
+# Called once by the squadron when it reaches the attack point. Subclasses
+# implement their actual ordnance drop / spotting behavior here, firing from
+# wherever they currently are (their formation slot, which the squadron has
+# already spread out for the attack run).
+# Returns true if this aircraft should be recalled after firing (one-shot
+# ordnance runs), or false to keep it on station (e.g. spotting).
+func fire_ordnance(_direction: Vector2) -> bool:
 	return true

@@ -185,6 +185,11 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_secondaries"):
 		c_toggle_secondaries_enabled.rpc_id(1)
 
+	if event.is_action_pressed("set_waypoint"):
+		if current_weapon_controller is AviationController:
+			var append_waypoint: bool = Input.is_key_pressed(KEY_SPACE)
+			current_weapon_controller.set_waypoint_at_aim.rpc_id(1, append_waypoint)
+
 # Center the mouse cursor on the screen
 func _center_mouse():
 	var viewport_size = get_viewport().get_visible_rect().size

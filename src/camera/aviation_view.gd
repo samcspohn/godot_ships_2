@@ -10,6 +10,7 @@ var default_fov: float = 40.0
 
 var min_ground_distance: float = 500.0
 var camera_offset_vertical: float = 1000.0 # Linear ground distance from ship to aim point
+var locked_offset_vertical: float = 0.0 # Linear ground distance from ship to aim point when locked on a target
 
 const aviation_angle_x: float = deg_to_rad(-10.0)
 
@@ -28,12 +29,12 @@ func handle_mouse_event(event):
 			rot_h -= event.relative.x * 0.0001 / (camera_offset_vertical / curr_range)  # Scale horizontal rotation by distance to aim point
 			# Vertical mouse motion moves the aim point closer to/farther from the
 			# ship, treated as a linear ground distance rather than an angle.
-			camera_offset_vertical -= event.relative.y * 0.5 * camera_offset_vertical * 0.001
+			camera_offset_vertical -= event.relative.y * 5.0  #* camera_offset_vertical * 0.001
 			camera_offset_vertical = clamp(camera_offset_vertical, min_ground_distance, curr_range)
 		else:
-			locked_rot_h -= event.relative.x * 0.0001 / (camera_offset_vertical / curr_range)
-			camera_offset_vertical -= event.relative.y * 0.5 * camera_offset_vertical * 0.001
-			camera_offset_vertical = clamp(camera_offset_vertical, min_ground_distance, curr_range)
+			locked_rot_h -= event.relative.x * 0.0001 / ((camera_offset_vertical + locked_offset_vertical) / curr_range)
+			locked_offset_vertical -= event.relative.y * 5.0 #* camera_offset_vertical * 0.001
+			locked_offset_vertical = clamp(locked_offset_vertical, min_ground_distance, curr_range)
 
 func update_transform():
 	if follow_ship == null:
@@ -42,7 +43,7 @@ func update_transform():
 	var ship_position = follow_ship.global_position
 	var heading = rot_h + locked_rot_h
 
-	var aim_point = ship_position + Vector3(sin(heading), 0.0, cos(heading)) * camera_offset_vertical
+	var aim_point = ship_position + Vector3(sin(heading), 0.0, cos(heading)) * (camera_offset_vertical + locked_offset_vertical)
 	aim_point.y = 0.0
 
 	# Camera sits current_zoom meters away from the aim point, along the fixed

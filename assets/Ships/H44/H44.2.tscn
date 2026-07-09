@@ -161,15 +161,19 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_518sv"]
 script = ExtResource("12_n0aqy")
 speed = 200.0
+altitude = 500.0
 plane_scene = ExtResource("13_nx45m")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 
 [sub_resource type="Resource" id="Resource_b53td"]
 script = ExtResource("12_n0aqy")
 type = "Torpedo"
+squadron_size = 5
 _range = 20000.0
 speed = 250.0
 radio_range = 1000.0
+altitude = 500.0
+attack_altitude = 30.0
 plane_scene = ExtResource("14_nx45m")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 

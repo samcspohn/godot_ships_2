@@ -4,12 +4,9 @@ class_name AviationController
 
 @export var params: Array[AircraftParams] = [] # plane params
 @export var launcher: Node3D
-# @export var planes: Array[Node3D] = []
 
-var aircraft: Array[Aircraft] = []
-var active_planes: Dictionary[int, bool] = {}
-# var shell_index: int = 0
-# var _ship: Ship
+var squadrons: Array[Squadron] = []
+var active_squadrons: Dictionary[int, bool] = {}
 var aim_point: Vector3
 var fire_held: bool = false
 var attack_point = null
@@ -17,110 +14,90 @@ var aim_direction: Vector2 = Vector2.ZERO
 
 var game_world: Node3D
 
-# func _init() -> void:
-# 	button_names = ["Spotter"]
-# 	tool_tips = [func () -> String:
-# 		var p = params[shell_index]
-# 		return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
-# 	]
-
 func _ready() -> void:
-	# pass # Replace with function body.
 	_ship = get_parent().get_parent() as Ship
-	# instantiate planes
+	# instantiate squadrons
 	for i in range(params.size()):
 		params[i] = params[i].instantiate(_ship) as AircraftParams
-		var plane_scene = params[i].plane_scene.instantiate()
-		button_names.append(params[i].type)
 		tool_tips.append(func () -> String:
-			var p = params[i]
+			var p = params[i].p()
 			return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
 		)
-		if plane_scene:
-			#var plane_instance = plane_scene.instantiate() as Node3D
-			plane_scene.visible = false
-			plane_scene.set_physics_process(false)
-			plane_scene.params = params[i]
-			plane_scene._ship = _ship
-			launcher.add_child(plane_scene)
-			plane_scene.position = Vector3.ZERO
-			aircraft.append(plane_scene)
+		button_names.append(params[i].type)
+
+		var squadron := Squadron.new()
+		squadron.setup(params[i], launcher, _ship)
+		squadrons.append(squadron)
 
 	shell_index = 0
 	game_world = _ship.get_parent() as Node3D
-	if _Utils.authority():
-		set_physics_process(true)
-	else:
-		set_physics_process(false)
+	set_physics_process(true)
 
 
-# Called every frame. 'delta' is the elapsed time since the previous frame.
+# Called every physics tick. Runs on every peer (not gated to authority) so
+# the ground/waypoint marker raycasts - which must happen on the physics
+# thread, since PhysicsDirectSpaceState3D is unavailable during _process() -
+# stay up to date everywhere; flight/attack logic below remains
+# authority-only.
 func _physics_process(delta: float) -> void:
+	for squadron in squadrons:
+		squadron._update_ground_indicator()
+		squadron._update_waypoint_indicators()
+
 	if not _Utils.authority():
 		return
 
 	if shell_index >= params.size():
 		shell_index = 0
-	if attack_point != null and not fire_held and active_planes.has(shell_index): # release ordnance at drop point
+
+	for i in range(squadrons.size()):
+		var squadron = squadrons[i]
+		if not squadron.active:
+			continue
+		squadron.update_flight(delta, _ship)
+		if squadron.all_finished_attack():
+			recall_squadron(i)
+
+	if attack_point != null and not fire_held and active_squadrons.has(shell_index): # release ordnance at drop point
+		var squadron := squadrons[shell_index]
 		var offset = aim_point - attack_point
 		offset = Vector2(offset.x, offset.z)
-		if offset.length() > 0.001:
+		if offset.length() > 10.0:
 			aim_direction = offset.normalized()
 		else:
-			aim_direction = Vector2.ZERO
+			# no meaningful aim offset (e.g. tapped fire without dragging); fall
+			# back to the direction from the squadron to the attack point so the
+			# spread doesn't collapse
+			var to_target := Vector2(attack_point.x, attack_point.z) - Vector2(_ship.global_position.x, _ship.global_position.z)
+			if to_target.length_squared() < 0.0001:
+				aim_direction = Vector2(0.0, 1.0)
+			else:
+				aim_direction = to_target.normalized()
 
-		var plane = aircraft[shell_index]
-		# var plane_params = plane.params.p() as AircraftParams
-		plane.set_attack_point(Vector2(attack_point.x, attack_point.z), aim_direction)
+		squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
 		attack_point = null
 		aim_direction = Vector2.ZERO
 
 
-func launch_plane(index: int):
-	if index >= params.size():
+func launch_squadron(index: int) -> void:
+	if index >= squadrons.size():
 		return
-	var plane = aircraft[index]
-	if plane:
-		plane.visible = true
-		plane.set_physics_process(true)
-		active_planes[index] = true
-		# place in game world
-		plane.reparent(game_world)
-		plane.global_position = launcher.global_position
+	squadrons[index].launch(game_world, launcher.global_position, launcher.global_rotation)
+	active_squadrons[index] = true
 
-func recall_plane(index: int):
-	if active_planes.has(index):
-		var plane = aircraft[index]
-		plane.reparent(launcher)
-		plane.position = Vector3.ZERO
-		plane.visible = false
-		plane.set_physics_process(false)
-		active_planes.erase(index)
+func recall_squadron(index: int) -> void:
+	if active_squadrons.has(index):
+		squadrons[index].recall(launcher)
+		active_squadrons.erase(index)
 
-func ensure_launched(index: int):
-	if index >= params.size():
+func ensure_launched(index: int) -> void:
+	if index >= squadrons.size():
 		return
-	if game_world != aircraft[index].get_parent():
-		launch_plane(index)
-
-# func get_weapon_ui(offset: int) -> Array:
-# 	var buttons := []
-# 	for i in range(params.size()):
-# 		var btn = Button.new()
-# 		btn.text = params[i].type
-# 		btn.set_meta("tooltip_provider", func() -> String:
-# 			var p = params[i]
-# 			return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
-# 		)
-# 		btn.pressed.connect(func(idx=i):
-# 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 			select_shell(idx)
-# 		)
-# 		buttons.append(btn)
-# 	return buttons
+	if not squadrons[index].active:
+		launch_squadron(index)
 
 func get_aim_ui() -> Dictionary:
-	if active_planes.size() == 0:
+	if active_squadrons.size() == 0:
 		return {
 			"terrain_hit": false,
 			"penetration_power": 0.0,
@@ -128,11 +105,10 @@ func get_aim_ui() -> Dictionary:
 		}
 	if shell_index >= params.size():
 		shell_index = 0
-	var plane := aircraft[shell_index]
-	# var ship_position = _ship.global_position
+	var squadron := squadrons[shell_index]
 	var plane_params := params[shell_index]
-	var dist = plane.global_position.distance_to(aim_point)
-	var speed := plane_params.speed
+	var dist = squadron.node.global_position.distance_to(aim_point)
+	var speed: float = plane_params.p().speed
 	var ui := {
 		"terrain_hit": false,
 		"penetration_power": 0.0,
@@ -160,54 +136,100 @@ func fire_all() -> void:
 
 @rpc("any_peer", "call_remote")
 func fire_next_ready() -> void:
-	# print("setting ordanance drop point to ", aim_point)
-	if not active_planes.has(shell_index):
-		launch_plane(shell_index)
+	if not active_squadrons.has(shell_index):
+		launch_squadron(shell_index)
 
-	if attack_point == null:
-		attack_point = aim_point
+# Sends the selected squadron to the current aim point without attacking;
+# launches it first if it isn't airborne yet (mirrors fire_next_ready()).
+# append lets the player queue up a multi-leg route (spacebar modifier)
+# instead of replacing the current waypoint.
+@rpc("any_peer", "call_remote")
+func set_waypoint_at_aim(append: bool) -> void:
+	if not active_squadrons.has(shell_index):
+		launch_squadron(shell_index)
 
-# @rpc("any_peer", "call_remote")
-# func select_shell(_shell_index: int) -> void:
-# 	if !(_Utils.authority()):
-# 		return
-# 	shell_index = _shell_index
+	squadrons[shell_index].set_waypoint(Vector2(aim_point.x, aim_point.z), append)
 
 @rpc("any_peer", "call_remote")
 func set_fire_held(held: bool) -> void:
+
+
+	if !fire_held and held and attack_point == null:
+		attack_point = aim_point
 	fire_held = held
-	# if attack_point == null:
-	# 	attack_point = aim_point
+
+
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
-	writer.put_u8(active_planes.size())
-	for shell_index in active_planes.keys():
-		writer.put_u8(shell_index)
-		writer.put_var(aircraft[shell_index].global_position)
-		writer.put_var(aircraft[shell_index].global_rotation)
-		writer.put_var(aircraft[shell_index].attack_point)
-		writer.put_var(params[shell_index].to_bytes())
+	writer.put_u8(active_squadrons.size())
+	for index in active_squadrons.keys():
+		var squadron = squadrons[index]
+		writer.put_u8(index)
+		writer.put_u8(squadron.aircraft.size())
+		writer.put_var(squadron.node.global_position)
+		writer.put_var(squadron.node.global_rotation)
+		writer.put_var(squadron.idle_pos)
+		writer.put_var(squadron.attack_point)
+		writer.put_var(squadron.attack_direction)
+		writer.put_u8(1 if squadron.holding_attack else 0)
+		writer.put_u8(1 if squadron.in_attack_run else 0)
+		writer.put_u8(1 if squadron.returning else 0)
+		writer.put_u8(1 if squadron.in_landing_approach else 0)
+		writer.put_u8(squadron.waypoints.size())
+		for wp in squadron.waypoints:
+			writer.put_var(wp)
+		for plane in squadron.aircraft:
+			writer.put_var(plane.global_position)
+			writer.put_var(plane.global_rotation)
+		writer.put_var(params[index].to_bytes())
 	return writer.data_array
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	var active_count = reader.get_u8()
-	for plane in aircraft:
-		plane.visible = false
+	for squadron in squadrons:
+		for plane in squadron.aircraft:
+			plane.visible = false
 
+	var active_count = reader.get_u8()
 	for i in range(active_count):
-		var shell_index = reader.get_u8()
-		var plane_pos = reader.get_var()
-		var plane_rot = reader.get_var()
-		var plane_aim = reader.get_var()
-		var plane_params_bytes = reader.get_var()
-		if shell_index < aircraft.size():
-			var plane = aircraft[shell_index]
-			ensure_launched(shell_index)
-			plane.global_position = plane_pos
-			plane.global_rotation = plane_rot
-			plane.attack_point = plane_aim
-			plane.visible = true
-			params[shell_index].from_bytes(plane_params_bytes)
+		var index = reader.get_u8()
+		var plane_count = reader.get_u8()
+		var squadron_pos = reader.get_var()
+		var squadron_rot = reader.get_var()
+		var squadron_idle_pos = reader.get_var()
+		var squadron_attack_point = reader.get_var()
+		var squadron_attack_direction = reader.get_var()
+		var squadron_holding_attack = reader.get_u8()
+		var squadron_in_attack_run = reader.get_u8()
+		var squadron_returning = reader.get_u8()
+		var squadron_in_landing_approach = reader.get_u8()
+		var squadron_waypoint_count = reader.get_u8()
+		var squadron_waypoints: Array[Vector2] = []
+		for w in range(squadron_waypoint_count):
+			squadron_waypoints.append(reader.get_var())
+		ensure_launched(index)
+		var squadron = squadrons[index] if index < squadrons.size() else null
+		if squadron != null:
+			squadron.node.global_position = squadron_pos
+			squadron.node.global_rotation = squadron_rot
+			squadron.idle_pos = squadron_idle_pos
+			squadron.holding_attack = squadron_holding_attack != 0
+			squadron.attack_direction = squadron_attack_direction
+			squadron.attack_point = squadron_attack_point
+			squadron.in_attack_run = squadron_in_attack_run != 0
+			squadron.returning = squadron_returning != 0
+			squadron.in_landing_approach = squadron_in_landing_approach != 0
+			squadron.waypoints = squadron_waypoints
+		for j in range(plane_count):
+			var plane_pos = reader.get_var()
+			var plane_rot = reader.get_var()
+			if squadron != null and j < squadron.aircraft.size():
+				var plane = squadron.aircraft[j]
+				plane.global_position = plane_pos
+				plane.global_rotation = plane_rot
+				plane.visible = true
+		if index < params.size():
+			var params_bytes = reader.get_var()
+			params[index].from_bytes(params_bytes)

@@ -1454,27 +1454,27 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 		_check_sensor_range(b, a, params_b.radar_spotting_range_override, false, smoke_blocked)
 
 		if a.aviation_controller != null:
-			for plane_id in a.aviation_controller.active_planes.keys():
-				var plane = a.aviation_controller.aircraft[plane_id]
-				ray_query.from = plane.global_position
-				ray_query.to = b.global_position
-				ray_query.to.y = 1.0
-				dist = ray_query.from.distance_to(ray_query.to)
-				collision = space_state.intersect_ray(ray_query)
-				has_los = collision.is_empty()
-				if has_los:
-					handle_spot(a, b, dist)
+			for squadron_id in a.aviation_controller.active_squadrons.keys():
+				for plane in a.aviation_controller.squadrons[squadron_id].aircraft:
+					ray_query.from = plane.global_position
+					ray_query.to = b.global_position
+					ray_query.to.y = 1.0
+					dist = ray_query.from.distance_to(ray_query.to)
+					collision = space_state.intersect_ray(ray_query)
+					has_los = collision.is_empty()
+					if has_los:
+						handle_spot(a, b, dist)
 		if b.aviation_controller != null:
-			for plane_id in b.aviation_controller.active_planes.keys():
-				var plane = b.aviation_controller.aircraft[plane_id]
-				ray_query.from = plane.global_position
-				ray_query.to = a.global_position
-				ray_query.to.y = 1.0
-				dist = ray_query.from.distance_to(ray_query.to)
-				collision = space_state.intersect_ray(ray_query)
-				has_los = collision.is_empty()
-				if has_los:
-					handle_spot(b, a, dist)
+			for squadron_id in b.aviation_controller.active_squadrons.keys():
+				for plane in b.aviation_controller.squadrons[squadron_id].aircraft:
+					ray_query.from = plane.global_position
+					ray_query.to = a.global_position
+					ray_query.to.y = 1.0
+					dist = ray_query.from.distance_to(ray_query.to)
+					collision = space_state.intersect_ray(ray_query)
+					has_los = collision.is_empty()
+					if has_los:
+						handle_spot(b, a, dist)
 
 
 func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:
