@@ -23,6 +23,7 @@
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="14_iv11n"]
 [ext_resource type="PackedScene" uid="uid://dgvhh8a6kaxbp" path="res://src/aviation/torpedo_plane.tscn" id="14_nx45m"]
 [ext_resource type="Resource" uid="uid://cv6jnnhx7qnla" path="res://src/Consumable/Registry/GER_T11_HYDRO.tres" id="15_eq5gm"]
+[ext_resource type="PackedScene" uid="uid://c0chw5qnmt7o0" path="res://src/aviation/dive_bomber.tscn" id="15_n6hqb"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="16_qnn6a"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="17_jalvm"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="18_0ahhb"]
@@ -177,6 +178,18 @@ attack_altitude = 30.0
 plane_scene = ExtResource("14_nx45m")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 
+[sub_resource type="Resource" id="Resource_6drby"]
+script = ExtResource("12_n0aqy")
+type = "Bomber"
+squadron_size = 5
+formation_spacing = 45.0
+_range = 20000.0
+altitude = 500.0
+attack_altitude = 200.0
+attack_descent_radius = 500.0
+plane_scene = ExtResource("15_n6hqb")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
 [sub_resource type="Resource" id="Resource_ku67v"]
 script = ExtResource("9_uwp4f")
 acceleration_time = 40.0
@@ -274,7 +287,7 @@ guns = [NodePath("../../../TurretMount_GER_150mm_2b_gerrat60/GER_150mm_2b_gerrat
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="AviationController" parent="Modules" index="4" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("11_r7nol")]
-params = Array[ExtResource("12_n0aqy")]([SubResource("Resource_518sv"), SubResource("Resource_b53td")])
+params = Array[ExtResource("12_n0aqy")]([SubResource("Resource_518sv"), SubResource("Resource_b53td"), SubResource("Resource_6drby")])
 launcher = NodePath("../../CSGBox3D")
 
 [node name="MovementController" parent="Modules" index="5" unique_id=1088594109]

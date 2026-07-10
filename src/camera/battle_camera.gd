@@ -284,7 +284,6 @@ func _process(delta):
 		var velocity = _ship.linear_velocity
 		ship_speed = velocity.length() * 1.94384 / ShipMovementV2.SHIP_SPEED_MODIFIER # Convert m/s to knots
 
-
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		current_mode = CameraMode.FREE_LOOK
 		if not free_look:
@@ -299,8 +298,16 @@ func _process(delta):
 					free_look_view.rot_v = aerial_view.rot_v + aerial_view.locked_rot_v
 				else:
 					last_view = _get_sniper_type_view()
-					free_look_view.rot_h = last_view.rot_h + last_view.locked_rot_h
-					free_look_view.rot_v = last_view.rot_v + last_view.locked_rot_v
+					if last_view == aviation_view:
+						# aviation_view's camera sits out at the aim point, not near the
+						# ship, so its rot_h/rot_v don't correspond to free_look_view's
+						# ship-relative pitch/yaw. Derive free_look_view's rotation from
+						# the same real-world aim point instead, same as every other
+						# set_vh() call.
+						free_look_view.set_vh(aviation_view.get_aim_point())
+					else:
+						free_look_view.rot_h = last_view.rot_h + last_view.locked_rot_h
+						free_look_view.rot_v = last_view.rot_v + last_view.locked_rot_v
 			transition_time = TRANSITION_DURATION
 			current_view = free_look_view
 		free_look = true
@@ -490,7 +497,7 @@ func _calculate_target_info():
 	var ray_length: float = 200000.0
 
 	if target_lock_enabled and locked_target and is_instance_valid(locked_target):
-		if current_aim_mode == AimMode.AERIAL:
+		if current_aim_mode == AimMode.AERIAL or _get_sniper_type_view() == aviation_view:
 			aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
 		else:
 			# Compute the ballistically correct lead position for the locked target.
@@ -725,7 +732,16 @@ func _auto_update_target_lock(delta: float):
 	var screen_center = viewport_size * 0.5
 
 	# Scale lock-on zone inversely with FOV: smaller FOV = larger screen fraction.
-	var fov_scale = default_fov / max(fov, 1.0)
+	# aviation_view zooms by dollying the camera toward/away from the aim
+	# point at a constant FOV instead of narrowing the FOV like every other
+	# sniper view, so the FOV-based scale below is always 1.0 for it -
+	# derive an equivalent scale from that dolly distance instead, so it
+	# gets the same zoomed-in zone boost the other views do.
+	var fov_scale: float
+	if current_view == aviation_view:
+		fov_scale = aviation_view.max_zoom_distance / max(aviation_view.current_zoom, aviation_view.min_zoom_distance)
+	else:
+		fov_scale = default_fov / max(fov, 1.0)
 	var lock_on_frac = clamp(auto_lock_base_fraction * fov_scale, auto_lock_base_fraction, 0.85)
 	var lock_on_half = viewport_size * lock_on_frac * 0.5
 	# lock-off uses per-target distance scaling with auto_lock_hysteresis_mult applied (see below).

@@ -141,9 +141,10 @@ func enqueue_broadcast(data: PackedByteArray):
 
 # --- Server-side: gun type registration ---
 
-# Returns the u8 type ID for the given gun's scene type, registering it on
+# Returns the u8 type ID for the given emitter's scene type (a Gun or any
+# other ordnance-firing node, e.g. DiveBomberAircraft), registering it on
 # first use and broadcasting a type-3 packet to all current clients.
-func _get_or_register_gun_type(gun: Gun) -> int:
+func _get_or_register_gun_type(gun: Node) -> int:
 	var path := gun.scene_file_path
 	if _gun_type_id_map.has(path):
 		return _gun_type_id_map[path]
@@ -174,15 +175,15 @@ func request_gun_type(gun_type_id: int) -> void:
 # instantiate the gun off-tree and cache its exported audio properties.
 @rpc("authority", "reliable", "call_remote")
 func receive_gun_type(gun_type_id: int, scene_path: String) -> void:
-	var gun: Gun = null
+	var gun: Node = null
 	if not _gun_type_cache.has(gun_type_id) and ResourceLoader.exists(scene_path):
 		var packed := ResourceLoader.load(scene_path) as PackedScene
 		if packed != null:
-			gun = packed.instantiate() as Gun
+			gun = packed.instantiate()
 			if gun != null:
 				_gun_type_cache[gun_type_id] = gun
 	else:
-		gun = _gun_type_cache.get(gun_type_id, null) as Gun
+		gun = _gun_type_cache.get(gun_type_id, null)
 	_pending_gun_type_requests.erase(gun_type_id)
 	# Drain any sounds that were queued while we were waiting for this type.
 	if gun != null and _pending_sounds.has(gun_type_id):
@@ -206,7 +207,7 @@ func receive_gun_type(gun_type_id: int, scene_path: String) -> void:
 #   u8  gun_type_id                                ( 1 byte )
 #                                            total  51 bytes payload
 func send_display_shell(shell_id: int, position: Vector3, velocity: Vector3,
-		time: float, shell_params: ShellParams, gun: Gun, play_sound: bool = true) -> void:
+		time: float, shell_params: ShellParams, gun: Node, play_sound: bool = true) -> void:
 	var gun_type_id := _get_or_register_gun_type(gun)
 	var stream := StreamPeerBuffer.new()
 	stream.put_u8(0)  # type 0: display_shell
@@ -352,7 +353,7 @@ func _process_client_messages():
 			if not _gun_type_cache.has(gun_type_id) and ResourceLoader.exists(scene_path):
 				var packed := ResourceLoader.load(scene_path) as PackedScene
 				if packed != null:
-					var gun := packed.instantiate() as Gun
+					var gun := packed.instantiate()
 					if gun != null:
 						_gun_type_cache[gun_type_id] = gun
 						_pending_gun_type_requests.erase(gun_type_id)
@@ -398,10 +399,10 @@ func _request_gun_type(gun_type_id: int) -> void:
 
 # --- Client-side helpers ---
 
-# Return the off-tree Gun instance for the given type ID, or null if the
-# type-3 registration packet has not yet been received.
-func _get_representative(gun_type_id: int) -> Gun:
-	return _gun_type_cache.get(gun_type_id, null) as Gun
+# Return the off-tree representative instance for the given type ID, or null
+# if the type-3 registration packet has not yet been received.
+func _get_representative(gun_type_id: int) -> Node:
+	return _gun_type_cache.get(gun_type_id, null)
 
 # --- Client-side handlers ---
 
@@ -445,26 +446,27 @@ func display_shell_client(shell_id: int, pos: Vector3, vel: Vector3, t: float,
 # representative gun's scene (stream, pitch, volume, variance, bus).
 # Creates a short-lived AudioStreamPlayer3D at the muzzle position so that
 # every shell has accurate 3D audio regardless of which instance fired it.
-func _play_shell_sound(pos: Vector3, caliber: float, gun: Gun, is_secondary: bool) -> void:
-	if gun == null:
+func _play_shell_sound(pos: Vector3, caliber: float, gun: Node, is_secondary: bool) -> void:
+	if gun == null or not (gun is Gun):
 		return
 	if get_viewport() == null:
 		return
 	var listener := get_viewport().get_audio_listener_3d()
 	if listener == null:
 		return
-	if listener.global_position.distance_to(pos) > gun.volume * 2000.0:
+	var g := gun as Gun
+	if listener.global_position.distance_to(pos) > g.volume * 2000.0:
 		return
 
-	var stream: AudioStream = gun._sound if gun._sound != null else _fallback_sound
+	var stream: AudioStream = g._sound if g._sound != null else _fallback_sound
 
 	var player := AudioStreamPlayer3D.new()
 	player.stream = stream
 	player.max_polyphony = 4
 	player.unit_size = 100.0 * sqrt(caliber / 100.0) + 100.0
-	player.max_db = linear_to_db(gun.volume * (1.0 + gun.variance))
-	player.pitch_scale = gun.pitch * randf_range(1.0 - gun.variance, 1.0 + gun.variance)
-	player.volume_db = linear_to_db(gun.volume * randf_range(1.0 - gun.variance, 1.0 + gun.variance))
+	player.max_db = linear_to_db(g.volume * (1.0 + g.variance))
+	player.pitch_scale = g.pitch * randf_range(1.0 - g.variance, 1.0 + g.variance)
+	player.volume_db = linear_to_db(g.volume * randf_range(1.0 - g.variance, 1.0 + g.variance))
 	player.bus = "Sec" if is_secondary else "Main"
 	add_child(player)
 	player.global_position = pos

@@ -259,10 +259,15 @@ func calculate_dispersed_launch(
 	var h_world := h_offset * dispersion_m * 0.5
 	var v_world := v_offset * dispersion_m * (v_spread / h_spread) * 0.5
 
-	var aim_dir_flat := Vector3(aim_point.x - gun_position.x, 0.0, aim_point.z - gun_position.z).normalized()
-	var right := aim_dir_flat.cross(Vector3.UP).normalized()
-
 	var forward := (aim_point - gun_position).normalized()
+	# Fires straight up/down have no horizontal aim direction to build a
+	# lateral axis from - fall back to an arbitrary axis perpendicular to
+	# forward instead of normalizing a zero vector (which left right/up as
+	# zero and silently collapsed all shells onto the same point).
+	var right := forward.cross(Vector3.UP)
+	if right.length_squared() < 0.0001:
+		right = forward.cross(Vector3.RIGHT)
+	right = right.normalized()
 	var up := right.cross(forward).normalized()
 	var dispersed_aim := aim_point + right * h_world + up * v_world
 	var a = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_position, dispersed_aim, shell_params)

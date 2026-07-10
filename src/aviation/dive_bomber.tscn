@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://c0chw5qnmt7o0"]
+
+[ext_resource type="Script" uid="uid://bakgvhum7yu68" path="res://src/aviation/dive_bomber.gd" id="1_dbomb"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_shell"]
+
+[sub_resource type="Resource" id="Resource_dbshell"]
+script = ExtResource("2_shell")
+speed = 100.0
+drag = 5.9999999999999995e-05
+damage = 5000.0
+size = 3.0
+caliber = 250.0
+mass = 250.0
+fire_buildup = 40.0
+fuze_delay = 0.001
+type = 0
+overmatch = 40
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0dff1"]
+albedo_color = Color(0.31431594, 0.31431618, 0.31431603, 1)
+
+[node name="DiveBomber" type="Node3D" unique_id=1779883306]
+script = ExtResource("1_dbomb")
+shell_params = SubResource("Resource_dbshell")
+h_spread = 1.0
+v_spread = 2.5
+max_dispersion = 60.0
+max_range = 200.0
+
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="." unique_id=108552329]
+transform = Transform3D(1, 0, 0, 0, 0.036556516, 0.9993316, 0, -0.9993316, 0.036556516, 0, 0, 0)
+material_override = SubResource("StandardMaterial3D_0dff1")
+radius = 1.06
+height = 11.0
+
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=1604057275]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.031402588, -0.080322266, -1.4411216)
+size = Vector3(12, 0.183, 1.7606201)
+material = SubResource("StandardMaterial3D_0dff1")

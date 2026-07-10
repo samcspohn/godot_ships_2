@@ -83,7 +83,7 @@ var in_landing_approach: bool = false:
 			_set_cruise_formation()
 
 # distance from the attack point at which the squadron fires its planes
-const ARRIVAL_RADIUS: float = 50.0
+const ARRIVAL_RADIUS: float = 1.0
 # distance from the attack point within which turn-rate-limited steering is
 # abandoned in favor of magnetizing (attracting) straight onto the point, the
 # same way aircraft snap onto their formation slots - this guarantees an
@@ -91,7 +91,7 @@ const ARRIVAL_RADIUS: float = 50.0
 const MAGNETIZE_RADIUS: float = 500.0
 # distance from the launcher a returning squadron must actually reach before
 # it despawns/reparents back into the launcher (not just get close)
-const LANDING_RADIUS: float = 5.0
+const LANDING_RADIUS: float = 50.0
 
 func setup(_params: AircraftParams, launcher: Node3D, ship: Ship) -> void:
 	params = _params
@@ -527,7 +527,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 
 			if not passed_entry_point:
 				wp = entry_point
-				if squadron_pos.distance_to(entry_point) < ARRIVAL_RADIUS:
+				if squadron_pos.distance_to(entry_point) < 100.0:
 					passed_entry_point = true
 
 			# only once the entry point has actually been flown through is the
@@ -569,7 +569,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 
 	if checking_arrival:
 		var dist_after := Vector2(node.global_position.x, node.global_position.z).distance_to(attack_point)
-		if dist_after < ARRIVAL_RADIUS:
+		if dist_after < 0.001:
 			_fire()
 
 # Fires every aircraft's ordnance once the squadron arrives at the attack
