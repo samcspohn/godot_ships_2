@@ -11,11 +11,19 @@ var aim_point: Vector3
 var fire_held: bool = false
 var attack_point = null
 var aim_direction: Vector2 = Vector2.ZERO
+# Client-local only (never touched by set_fire_held's RPC path) - tracks the
+# drag anchor for the live drop-pattern preview independently of the
+# server-authoritative attack_point above, since that one is only ever reset
+# to null inside the authority-gated block below and would otherwise go stale
+# on every peer but the server. See update_local_drag_state().
+var _preview_anchor: Vector3 = Vector3.ZERO
+var _preview_holding: bool = false
 
 var game_world: Node3D
 
 func _ready() -> void:
 	_ship = get_parent().get_parent() as Ship
+	game_world = _ship.get_parent() as Node3D
 	# instantiate squadrons
 	for i in range(params.size()):
 		params[i] = params[i].instantiate(_ship) as AircraftParams
@@ -26,21 +34,25 @@ func _ready() -> void:
 		button_names.append(params[i].type)
 
 		var squadron := Squadron.new()
-		squadron.setup(params[i], launcher, _ship)
+		squadron.setup(params[i], launcher, _ship, game_world)
 		squadrons.append(squadron)
 
 	shell_index = 0
-	game_world = _ship.get_parent() as Node3D
 	set_physics_process(true)
+	set_process(true)
 
 
-# Called every physics tick. Runs on every peer (not gated to authority) so
-# the ground/waypoint marker raycasts - which must happen on the physics
-# thread, since PhysicsDirectSpaceState3D is unavailable during _process() -
-# stay up to date everywhere; flight/attack logic below remains
-# authority-only.
+# Runs every physics tick (fixed rate). Ground/waypoint marker raycasts need
+# the physics thread (PhysicsDirectSpaceState3D is unavailable during
+# _process()), and flight simulation/attack commits need to stay in lockstep
+# with update_flight delta - both remain here. The reticle/committed
+# drop-pattern preview used to also live here, but it has no raycast
+# dependency anymore (see Aircraft.make_flat_marker) and was visibly
+# lagging behind the mouse since physics ticks and render frames are not
+# 1:1 - it now runs in _process below instead.
 func _physics_process(delta: float) -> void:
-	for squadron in squadrons:
+	for i in range(squadrons.size()):
+		var squadron = squadrons[i]
 		squadron._update_ground_indicator()
 		squadron._update_waypoint_indicators()
 
@@ -60,23 +72,78 @@ func _physics_process(delta: float) -> void:
 
 	if attack_point != null and not fire_held and active_squadrons.has(shell_index): # release ordnance at drop point
 		var squadron := squadrons[shell_index]
-		var offset = aim_point - attack_point
-		offset = Vector2(offset.x, offset.z)
-		if offset.length() > 10.0:
-			aim_direction = offset.normalized()
-		else:
-			# no meaningful aim offset (e.g. tapped fire without dragging); fall
-			# back to the direction from the squadron to the attack point so the
-			# spread doesn't collapse
-			var to_target := Vector2(attack_point.x, attack_point.z) - Vector2(_ship.global_position.x, _ship.global_position.z)
-			if to_target.length_squared() < 0.0001:
-				aim_direction = Vector2(0.0, 1.0)
-			else:
-				aim_direction = to_target.normalized()
-
+		aim_direction = _drag_direction(attack_point, aim_point, _direction_to(_ship.global_position, attack_point))
 		squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
 		attack_point = null
 		aim_direction = Vector2.ZERO
+
+# Runs every rendered frame (not gated to authority) so the drop-pattern
+# preview tracks the mouse/aim_point smoothly instead of lagging behind at
+# the physics tick rate. Purely visual - see Squadron.update_reticle_preview
+# and Squadron.update_committed_attack_preview.
+func _process(delta: float) -> void:
+	super._process(delta)
+	var is_local_selection: bool = _ship.control is PlayerController and _ship.control.current_weapon_controller == self
+	for i in range(squadrons.size()):
+		var squadron = squadrons[i]
+		if squadron.attack_point != null:
+			# committed attack in progress - show the real, frozen drop
+			# point instead, and make sure the reticle (which would
+			# otherwise be left frozen at wherever the drag last put it)
+			# stays hidden until this squadron is free to aim again.
+			squadron.update_committed_attack_preview()
+			squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
+		# else:
+		_update_drop_preview(squadron, is_local_selection and i == shell_index)
+
+# Live aiming preview: while held (dragging out an attack), the pattern
+# freezes at the point the drag started and rotates to track the drag
+# direction, matching what will be committed on release (see
+# update_local_drag_state() for how the anchor itself is tracked). Otherwise
+# it just follows the cursor, facing away from the ship.
+func _update_drop_preview(squadron: Squadron, show: bool) -> void:
+	if not show:
+		squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
+		return
+
+	var center: Vector3
+	var direction: Vector2
+	if _preview_holding:
+		center = _preview_anchor
+		direction = _drag_direction(_preview_anchor, aim_point, _direction_to(_ship.global_position, _preview_anchor))
+	else:
+		center = aim_point
+		direction = _direction_to(_ship.global_position, aim_point)
+	squadron.update_reticle_preview(true, Vector2(center.x, center.z), direction)
+
+# Called directly (not via rpc) by the local player's PlayerController every
+# frame so the preview anchor updates instantly instead of waiting on a
+# server round-trip. Purely client-side visual state - the actual attack
+# commit still goes through set_fire_held()/attack_point below. On release
+# the reticle immediately resumes following the cursor (see
+# _update_drop_preview() above) rather than waiting on the server to
+# confirm the attack - once it does (squadron.attack_point becomes
+# non-null), the committed drop-pattern preview takes over instead (see
+# _process() and Squadron.update_committed_attack_preview()).
+func update_local_drag_state(holding: bool) -> void:
+	if holding and not _preview_holding:
+		_preview_anchor = aim_point
+	_preview_holding = holding
+
+# Direction of the current mouse drag away from `anchor`, or `fallback` if the
+# drag hasn't moved far enough to be meaningful (e.g. a tap instead of a
+# drag).
+static func _drag_direction(anchor: Vector3, current: Vector3, fallback: Vector2) -> Vector2:
+	var offset := Vector2(current.x - anchor.x, current.z - anchor.z)
+	if offset.length() > 10.0:
+		return offset.normalized()
+	return fallback
+
+static func _direction_to(from: Vector3, to: Vector3) -> Vector2:
+	var offset := Vector2(to.x - from.x, to.z - from.z)
+	if offset.length_squared() < 0.0001:
+		return Vector2(0.0, 1.0)
+	return offset.normalized()
 
 
 func launch_squadron(index: int) -> void:
@@ -128,7 +195,13 @@ func get_max_range() -> float:
 	return get_params()._range
 
 func set_aim_input(point: Vector3) -> void:
-	aim_point = point
+	var ship_pos := _ship.global_position
+	ship_pos.y = 0.0
+	var offset := Vector3(point.x - ship_pos.x, 0.0, point.z - ship_pos.z)
+	var max_range := get_max_range()
+	if offset.length() > max_range:
+		offset = offset.normalized() * max_range
+	aim_point = ship_pos + offset
 
 @rpc("any_peer", "call_remote")
 func fire_all() -> void:
@@ -152,8 +225,6 @@ func set_waypoint_at_aim(append: bool) -> void:
 
 @rpc("any_peer", "call_remote")
 func set_fire_held(held: bool) -> void:
-
-
 	if !fire_held and held and attack_point == null:
 		attack_point = aim_point
 	fire_held = held

@@ -11,9 +11,19 @@ var aircraft: Array[Aircraft] = []
 var params: AircraftParams
 var active: bool = false
 var launcher_node: Node3D
-var attack_marker: Node3D
 var ground_marker: MeshInstance3D
 var ground_line: MeshInstance3D
+# Two fully independent sets of drop-pattern preview meshes (see
+# update_reticle_preview and update_committed_attack_preview) so the local,
+# pre-commit reticle preview and the synced, post-commit committed
+# preview never fight over the same mesh instances. Built by
+# aircraft[0].make_preview_meshes and driven every frame through
+# aircraft[0].update_preview - Squadron itself has no idea what these
+# meshes represent (squares, rectangles, or nothing at all). Both parented
+# directly under the game world at setup and never reparented, since the
+# reticle in particular has to be visible before the squadron even launches.
+var _reticle_meshes: Array[MeshInstance3D] = []
+var _committed_meshes: Array[MeshInstance3D] = []
 # Node the waypoint/next-target visuals reparent into while active (the same
 # game_world passed to launch()) - null while parked at the launcher, since
 # waypoints are always cleared on recall() anyway.
@@ -37,9 +47,7 @@ var attack_point = null:
 		if attack_point == null:
 			in_attack_run = false
 			_set_cruise_formation()
-			_hide_attack_marker()
-		else:
-			_update_attack_marker()
+			_apply_squadron_preview(_committed_meshes, false, Vector2.ZERO, Vector2.ZERO)
 var attack_direction: Vector2 = Vector2.ZERO
 var attack_fired: bool = false
 # true once the squadron has flown through the virtual entry point set up
@@ -93,16 +101,13 @@ const MAGNETIZE_RADIUS: float = 500.0
 # it despawns/reparents back into the launcher (not just get close)
 const LANDING_RADIUS: float = 50.0
 
-func setup(_params: AircraftParams, launcher: Node3D, ship: Ship) -> void:
+func setup(_params: AircraftParams, launcher: Node3D, ship: Ship, game_world: Node3D) -> void:
 	params = _params
 	launcher_node = launcher
 	node = Node3D.new()
 	node.name = params.type
 	launcher.add_child(node)
-	node.add_child(_make_debug_sphere())
-
-	attack_marker = _make_attack_marker()
-	launcher.add_child(attack_marker)
+	# node.add_child(_make_debug_sphere())
 
 	ground_marker = _make_sphere_marker(GROUND_MARKER_COLOR, GROUND_MARKER_RADIUS)
 	launcher.add_child(ground_marker)
@@ -117,9 +122,9 @@ func setup(_params: AircraftParams, launcher: Node3D, ship: Ship) -> void:
 		slot.name = "Slot%d" % i
 		slot.position = _formation_offset(i, p.formation_spacing)
 		node.add_child(slot)
-		var debug_sphere := _make_debug_sphere()
-		slot.add_child(debug_sphere)
-		debug_sphere.position = Vector3.ZERO
+		# var debug_sphere := _make_debug_sphere()
+		# slot.add_child(debug_sphere)
+		# debug_sphere.position = Vector3.ZERO
 		targets.append(slot)
 
 		var plane := params.plane_scene.instantiate() as Aircraft
@@ -131,6 +136,10 @@ func setup(_params: AircraftParams, launcher: Node3D, ship: Ship) -> void:
 		launcher.add_child(plane)
 		plane.position = Vector3.ZERO
 		aircraft.append(plane)
+
+	if aircraft.size() > 0:
+		_reticle_meshes = aircraft[0].make_preview_meshes(game_world, aircraft.size())
+		_committed_meshes = aircraft[0].make_preview_meshes(game_world, aircraft.size())
 
 # small red marker sphere for visualizing the squadron leader node and its
 # formation slots
@@ -146,74 +155,12 @@ static func _make_debug_sphere() -> MeshInstance3D:
 	mesh_instance.mesh = sphere
 	return mesh_instance
 
-# Marker showing the commanded attack point and heading in the 3d world: a
-# pole at the exact point plus a flat arrow pointing along the attack
-# direction (forward is local -Z, matching the look_at() convention used
-# everywhere else in aviation). Hidden until an attack is actually commanded.
-static func _make_attack_marker() -> Node3D:
-	var marker := Node3D.new()
-	marker.name = "AttackMarker"
-	marker.visible = false
-
-	var attack_material := StandardMaterial3D.new()
-	attack_material.albedo_color = Color(1.0, 0.35, 0.0)
-	attack_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var pole := MeshInstance3D.new()
-	var pole_mesh := CylinderMesh.new()
-	pole_mesh.top_radius = 1.5
-	pole_mesh.bottom_radius = 1.5
-	pole_mesh.height = 60.0
-	pole_mesh.material = attack_material
-	pole.mesh = pole_mesh
-	pole.position = Vector3(0.0, 30.0, 0.0)
-	marker.add_child(pole)
-
-	const SHAFT_LENGTH: float = 60.0
-	const HEAD_LENGTH: float = 25.0
-	var shaft := MeshInstance3D.new()
-	var shaft_mesh := BoxMesh.new()
-	shaft_mesh.size = Vector3(6.0, 2.0, SHAFT_LENGTH)
-	shaft_mesh.material = attack_material
-	shaft.mesh = shaft_mesh
-	shaft.position = Vector3(0.0, 2.0, -SHAFT_LENGTH * 0.5)
-	marker.add_child(shaft)
-
-	var head := MeshInstance3D.new()
-	var head_mesh := CylinderMesh.new()
-	head_mesh.top_radius = 0.0
-	head_mesh.bottom_radius = 14.0
-	head_mesh.height = HEAD_LENGTH
-	head_mesh.material = attack_material
-	head.mesh = head_mesh
-	head.rotation.x = deg_to_rad(-90.0) # cylinder's axis is local Y; point it along -Z
-	head.position = Vector3(0.0, 2.0, -SHAFT_LENGTH - HEAD_LENGTH * 0.5)
-	marker.add_child(head)
-
-	return marker
-
-# Positions/orients the attack marker at the current attack_point, facing
-# attack_direction, and makes it visible.
-func _update_attack_marker() -> void:
-	if attack_marker == null or attack_point == null:
-		return
-	attack_marker.visible = true
-	attack_marker.global_position = Vector3(attack_point.x, 0.0, attack_point.y)
-	var dir := attack_direction
-	if dir.length_squared() < 0.0001:
-		dir = Vector2(0.0, 1.0)
-	attack_marker.look_at(attack_marker.global_position + Vector3(dir.x, 0.0, dir.y))
-
-func _hide_attack_marker() -> void:
-	if attack_marker != null:
-		attack_marker.visible = false
-
 # Client-side UI only (not synced over the network - purely visual, derived
-# every frame from state that is already synced, so it's the same on every
-# peer). Colors: white for the squadron's own ground indicator, green for
+# every frame from state that is already synced, so it is the same on every
+# peer). Colors: white for the squadron own ground indicator, green for
 # waypoints, orange for the attack point (matching the attack marker).
 const GROUND_MARKER_COLOR := Color(1.0, 1.0, 1.0)
-const WAYPOINT_COLOR := Color(0.0, 1.0, 0.0)
+const WAYPOINT_COLOR := Color(1.0, 1.0, 1.0)
 const ATTACK_LINE_COLOR := Color(1.0, 0.35, 0.0)
 const GROUND_MARKER_RADIUS: float = 6.0
 
@@ -347,6 +294,43 @@ func _update_waypoint_indicators() -> void:
 	else:
 		next_target_line.visible = false
 
+# Positions/hides one set of drop-pattern preview meshes (either the
+# reticle or committed set) by delegating to aircraft[0], which alone knows
+# what these meshes represent (see Aircraft.update_preview()). Squadron only
+# supplies what it alone knows: the formation spacing. No raycast/ground
+# height lookup - the preview meshes render with depth testing disabled
+# (see Aircraft.make_flat_marker()) so they always draw over world geometry,
+# which lets this run every frame from _process() instead of requiring the
+# physics thread.
+func _apply_squadron_preview(meshes: Array[MeshInstance3D], show: bool, drop_center: Vector2, direction: Vector2) -> void:
+	if aircraft.size() == 0:
+		return
+	if not show:
+		aircraft[0].update_preview(meshes, false, Vector2.ZERO, Vector2.ZERO, 0.0)
+		return
+	var p = params.p() as AircraftParams
+	aircraft[0].update_preview(meshes, true, drop_center, direction, p.formation_spacing)
+
+# Local, pre-commit reticle preview - only ever driven by AviationController
+# for whichever squadron is selected by the local player (hidden for every
+# other squadron/peer). Uses its own dedicated meshes so it never fights with
+# update_committed_attack_preview() below over the same instances.
+func update_reticle_preview(show: bool, drop_center: Vector2, direction: Vector2) -> void:
+	_apply_squadron_preview(_reticle_meshes, show, drop_center, direction)
+
+# Continuously shows the frozen drop pattern at the commanded attack_point,
+# facing attack_direction, once an attack has actually been commanded -
+# replaces the old pole and arrow attack marker. Purely derived from
+# already-synced state (attack_point/attack_direction), so it is safe to call
+# on every peer every tick, same as _update_ground_indicator(). Visible to
+# everyone, unlike update_reticle_preview() above which only the controlling
+# player sees.
+func update_committed_attack_preview() -> void:
+	if attack_point == null:
+		_apply_squadron_preview(_committed_meshes, false, Vector2.ZERO, Vector2.ZERO)
+		return
+	_apply_squadron_preview(_committed_meshes, true, attack_point, attack_direction)
+
 # Wedge/V formation trailing behind the leader node (local +Z is behind, since
 # forward is -Z).
 static func _formation_offset(i: int, spacing: float) -> Vector3:
@@ -356,18 +340,6 @@ static func _formation_offset(i: int, spacing: float) -> Vector3:
 	var side := -1.0 if i % 2 == 1 else 1.0
 	return Vector3(side * spacing * row, 0.0, row * spacing)
 
-# Abreast line, centered on the leader, perpendicular to travel - used while
-# making an attack run so slots track the squadron's turn toward the target
-# instead of aircraft beelining individually to a fixed spread point.
-static func _attack_offset(i: int, count: int, spacing: float) -> Vector3:
-	# var lateral: float = (i - (count - 1) / 2.0) * spacing
-	# return Vector3(lateral, 0.0, 0.0)
-	if i == 0:
-		return Vector3.ZERO
-	var row := (i + 1) / 2
-	var side := -1.0 if i % 2 == 1 else 1.0
-	return Vector3(side * spacing * row, 0.0, 0.0)
-
 func _set_cruise_formation() -> void:
 	var p = params.p() as AircraftParams
 	for i in range(targets.size()):
@@ -376,7 +348,7 @@ func _set_cruise_formation() -> void:
 func _set_attack_formation() -> void:
 	var p = params.p() as AircraftParams
 	for i in range(targets.size()):
-		targets[i].position = _attack_offset(i, targets.size(), p.formation_spacing)
+		targets[i].position = Aircraft.attack_offset(i, targets.size(), p.formation_spacing)
 
 # Landing formation: every slot collapses onto the leader node so the
 # formation stacks up tight for the final approach to the launcher.
@@ -388,7 +360,6 @@ func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -
 	node.reparent(game_world)
 	node.global_position = launch_pos
 	node.global_rotation = launch_rotation
-	attack_marker.reparent(game_world)
 	ground_marker.reparent(game_world)
 	ground_line.reparent(game_world)
 	next_target_line.reparent(game_world)
@@ -422,8 +393,6 @@ func recall(launcher: Node3D) -> void:
 		plane.position = Vector3.ZERO
 	node.reparent(launcher)
 	node.position = Vector3.ZERO
-	attack_marker.reparent(launcher)
-	attack_marker.position = Vector3.ZERO
 	ground_marker.reparent(launcher)
 	ground_marker.position = Vector3.ZERO
 	ground_marker.visible = false

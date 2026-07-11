@@ -14,6 +14,10 @@ class_name DiveBomberAircraft
 
 var _dispersion_calculator: DispersionCalculator
 
+# Color of this aircraft preview square (see make_preview_meshes and
+# update_preview below).
+const BOMB_PREVIEW_COLOR := Color(1.0, 0.65, 0.0, 0.35)
+
 func _ready() -> void:
 	_dispersion_calculator = DispersionCalculator.new()
 
@@ -35,3 +39,32 @@ func fire_ordnance(_direction: Vector2) -> bool:
 		var id = ProjectileManager.fireBullet(dispersed_velocity, global_position, shell_params, t, _ship)
 		TcpThreadPool.send_display_shell(id, global_position, dispersed_velocity, t, shell_params, self, true)
 	return true
+
+# One preview square per aircraft, sized to the actual dispersion ellipse
+# (see update_preview below).
+static func make_preview_meshes(parent: Node3D, count: int) -> Array[MeshInstance3D]:
+	var meshes: Array[MeshInstance3D] = []
+	for i in range(count):
+		var m := Aircraft.make_flat_marker(BOMB_PREVIEW_COLOR)
+		parent.add_child(m)
+		meshes.append(m)
+	return meshes
+
+# Lays out one square per aircraft abreast of drop_center, facing direction,
+# sized to twice max_dispersion (matching the actual bomb spread).
+func update_preview(meshes: Array[MeshInstance3D], do_show: bool, drop_center: Vector2, direction: Vector2, formation_spacing: float) -> void:
+	if not do_show:
+		for m in meshes:
+			m.visible = false
+		return
+	var dir := direction
+	if dir.length_squared() < 0.0001:
+		dir = Vector2(0.0, 1.0)
+	else:
+		dir = dir.normalized()
+	var side: float = max_dispersion * 2.0
+	for i in range(meshes.size()):
+		var lateral := Aircraft.attack_lateral_offset(i, meshes.size(), formation_spacing, dir)
+		var pos_xz := drop_center + lateral
+		var pos := Vector3(pos_xz.x, Aircraft.PREVIEW_HEIGHT, pos_xz.y)
+		Aircraft.position_flat_rect(meshes[i], pos, dir, side, side)

@@ -43,7 +43,7 @@ var needs_initialization: bool = true
 # Pending target selection for physics thread
 var _pending_target_selection: Variant = null
 
-var current_weapon_controller: Node = null
+var current_weapon_controller: WeaponController = null
 
 # Debug-fire-log toggle (F11). Forwards to server-side Gun.debug_fire_log
 # filtered to this player's ship so we only see denials for the local ship.
@@ -418,6 +418,12 @@ func _process(dt: float) -> void:
 
 	# Send fire held state to server for continuous firing to avoid input lag issues with holding to fire. Server will handle firing logic based on this state.
 	current_weapon_controller.set_fire_held.rpc_id(1, is_holding)
+	current_weapon_controller.fire_held = is_holding
+	# Also update the aviation drop-pattern preview's drag anchor locally (no
+	# rpc) so it reacts instantly instead of waiting on the round-trip to the
+	# server.
+	if current_weapon_controller is AviationController:
+		current_weapon_controller.update_local_drag_state(is_holding)
 
 	# Update UI layout if viewport size changes
 	if get_viewport().size != view_port_size:
