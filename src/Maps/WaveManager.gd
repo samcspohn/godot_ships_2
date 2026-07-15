@@ -142,7 +142,7 @@ func _free(slot: int) -> void:
 func _process(delta: float) -> void:
 	_time += delta
 	for s in _ships:
-		if not is_instance_valid(s): continue
+		if not is_instance_valid(s) or !s.is_inside_tree(): continue
 		var sc := _world_cell(s.global_position)
 		var slot := _alloc(sc)
 		if slot >= 0: _slot_active[slot] = _time
@@ -179,7 +179,7 @@ func _process(delta: float) -> void:
 		_tiles_bytes.encode_s32(base + 28, _cell_slot.get(Vector2i(cell.x, cell.y + 1), -1))
 	var ship_count := 0
 	for s in _ships:
-		if not is_instance_valid(s) or ship_count >= MAX_SHIPS: continue
+		if not is_instance_valid(s) or ship_count >= MAX_SHIPS or !s.is_inside_tree(): continue
 		var prev: Vector3 = _prev_pos.get(s, s.global_position)
 		_prev_pos[s] = s.global_position
 		# Use the ship's actual transform for heading so the hull stamp always

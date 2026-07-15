@@ -872,6 +872,15 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 		else:
 			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
 
+func handle_air_spot(spotter: Ship, spotted: Ship, dist: float):
+	if spotted.concealment.get_concealment() > dist:
+		spotted.visible_to_enemy = true
+		spotted.det_los = true
+		if closest_enemies_that_can_see.has(spotted):
+			closest_enemies_that_can_see[spotted].append([spotter,dist])
+		else:
+			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
+
 func handle_spot_attribution():
 	for spotted in closest_enemies_that_can_see.keys():
 		var closest_spotter: Ship = null
@@ -1463,7 +1472,7 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 					collision = space_state.intersect_ray(ray_query)
 					has_los = collision.is_empty()
 					if has_los:
-						handle_spot(a, b, dist)
+						handle_air_spot(a, b, dist)
 		if b.aviation_controller != null:
 			for squadron_id in b.aviation_controller.active_squadrons.keys():
 				for plane in b.aviation_controller.squadrons[squadron_id].aircraft:
@@ -1474,7 +1483,7 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 					collision = space_state.intersect_ray(ray_query)
 					has_los = collision.is_empty()
 					if has_los:
-						handle_spot(b, a, dist)
+						handle_air_spot(b, a, dist)
 
 
 func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:

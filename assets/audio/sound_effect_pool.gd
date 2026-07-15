@@ -34,7 +34,7 @@ func _get_free_player() -> AudioStreamPlayer3D:
 	if free_players.size() > 0:
 		return free_players.pop_back()
 
-	if get_children().size() >= 128:
+	if get_children().size() >= 64:
 		var oldest_player_id: int = player_started_at.keys()[0]
 		var oldest_started_at: int = player_started_at[oldest_player_id]
 		for player_id: int in player_started_at:

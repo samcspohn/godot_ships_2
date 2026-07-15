@@ -86,15 +86,12 @@ func _process(delta: float) -> void:
 	var is_local_selection: bool = _ship.control is PlayerController and _ship.control.current_weapon_controller == self
 	for i in range(squadrons.size()):
 		var squadron = squadrons[i]
+		# always show drop-pattern preview allowing for drop point updates
+		_update_drop_preview(squadron, is_local_selection and i == shell_index)
+		# show committed drop-pattern
 		if squadron.attack_point != null:
-			# committed attack in progress - show the real, frozen drop
-			# point instead, and make sure the reticle (which would
-			# otherwise be left frozen at wherever the drag last put it)
-			# stays hidden until this squadron is free to aim again.
 			squadron.update_committed_attack_preview()
 			squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
-		# else:
-		_update_drop_preview(squadron, is_local_selection and i == shell_index)
 
 # Live aiming preview: while held (dragging out an attack), the pattern
 # freezes at the point the drag started and rotates to track the drag
@@ -263,9 +260,11 @@ func from_bytes(b: PackedByteArray) -> void:
 		for plane in squadron.aircraft:
 			plane.visible = false
 
+	var seen_indices: Dictionary[int, bool] = {}
 	var active_count = reader.get_u8()
 	for i in range(active_count):
 		var index = reader.get_u8()
+		seen_indices[index] = true
 		var plane_count = reader.get_u8()
 		var squadron_pos = reader.get_var()
 		var squadron_rot = reader.get_var()
@@ -304,3 +303,12 @@ func from_bytes(b: PackedByteArray) -> void:
 		if index < params.size():
 			var params_bytes = reader.get_var()
 			params[index].from_bytes(params_bytes)
+
+	# A squadron missing from this snapshot but still marked active locally
+	# means the server recalled it since the last update - replicate that
+	# cleanup here since active_squadrons/active_count only ever tells us
+	# what's currently active, never what just stopped being active.
+	for index in range(squadrons.size()):
+		if not seen_indices.has(index) and squadrons[index].active:
+			squadrons[index].recall(launcher)
+			active_squadrons.erase(index)

@@ -979,13 +979,13 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 	var pos_params = get_positioning_params()
 	desired_pos += _calculate_spread_offset(friendly, pos_params.spread_distance, pos_params.spread_multiplier)
 
-	# Bias toward friendlies when low HP
-	if hp_ratio < params.cautious_hp_threshold:
-		var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
-		if not nearest_cluster.is_empty():
-			var cluster_center: Vector3 = nearest_cluster.center
-			var to_cluster = (cluster_center - _ship.global_position).normalized()
-			desired_pos = closest_pos - (to_target * 0.6 + to_cluster * 0.4).normalized() * standoff
+	## Bias toward friendlies when low HP
+	#if hp_ratio < params.cautious_hp_threshold:
+		##var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
+		#if not nearest_cluster.is_empty():
+			#var cluster_center: Vector3 = nearest_cluster.center
+			#var to_cluster = (cluster_center - _ship.global_position).normalized()
+			#desired_pos = closest_pos - (to_target * 0.6 + to_cluster * 0.4).normalized() * standoff
 
 	return _get_valid_nav_point(desired_pos)
 

@@ -444,6 +444,8 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	in_attack_run = false
 	passed_entry_point = false
 	attack_point = point
+	# add append flag
+	waypoints.clear()
 
 func update_flight(delta: float, ship: Ship) -> void:
 	var p = params.p() as AircraftParams
@@ -540,6 +542,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 		var dist_after := Vector2(node.global_position.x, node.global_position.z).distance_to(attack_point)
 		if dist_after < 0.001:
 			_fire()
+			waypoints.clear()
 
 # Fires every aircraft's ordnance once the squadron arrives at the attack
 # point. If every aircraft reports a one-shot run, the whole squadron is

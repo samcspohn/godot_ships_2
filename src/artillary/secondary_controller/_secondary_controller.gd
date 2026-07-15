@@ -58,138 +58,6 @@ func _init() -> void:
 		Callable(_build_tooltip_text).bind(1)
 	]
 
-# # var pressed_time: float = 0.0
-# func get_weapon_ui(offset: int) -> Array[Button]:
-# 	var shell1 = Button.new()
-# 	shell1.text = "HE"
-# 	shell1.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(1))
-# 	shell1.button_down.connect(func():
-# 		held[0] = true
-# 		pressed_time = Time.get_ticks_msec() / 1000.0
-# 	)
-# 	shell1.pressed.connect(func():
-# 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 		select_shell.rpc_id(1, 1)
-# 	)
-# 	shell1.button_up.connect(func():
-# 		if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.5:
-# 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 			pressed_time = 0.0
-# 		held[0] = false
-# 		switched_shell = false
-# 	)
-# 	var switch_progress = ProgressBar.new()
-# 	switch_progress.min_value = 0.0
-# 	switch_progress.max_value = 1.0
-# 	switch_progress.value = 0.0
-# 	switch_progress.show_percentage = false
-# 	switch_progress.set_anchors_preset(Control.PRESET_FULL_RECT)
-# 	switch_progress.mouse_filter = Control.MOUSE_FILTER_IGNORE
-# 	switch_progress.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
-
-# 	shell1.add_child(switch_progress)
-# 	buttons.append(shell1)
-# 	button_keys.append(offset)
-# 	switch_progresss.append(switch_progress)
-# 	held.append(false)
-# 	held_dur.append(0.0)
-
-# 	var shell2 = Button.new()
-# 	shell2.text = "AP"
-# 	shell2.set_meta("tooltip_provider", func() -> String: return _build_tooltip_text(0))
-# 	shell2.button_down.connect(func():
-# 		held[1] = true
-# 		pressed_time = Time.get_ticks_msec() / 1000.0
-# 	)
-# 	shell2.pressed.connect(func():
-# 		_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 		select_shell.rpc_id(1, 0)
-# 	)
-# 	shell2.button_up.connect(func():
-# 		if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.5:
-# 			_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 			pressed_time = 0.0
-# 		held[1] = false
-# 		switched_shell = false
-# 	)
-# 	# button_key = offset + 1
-# 	var switch_progress2 = ProgressBar.new()
-# 	switch_progress2.min_value = 0.0
-# 	switch_progress2.max_value = 1.0
-# 	switch_progress2.value = 0.0
-# 	switch_progress2.show_percentage = false
-# 	switch_progress2.set_anchors_preset(Control.PRESET_FULL_RECT)
-# 	switch_progress2.mouse_filter = Control.MOUSE_FILTER_IGNORE
-# 	switch_progress2.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
-
-# 	shell2.add_child(switch_progress2)
-# 	buttons.append(shell2)
-# 	# button_keys.append(button_key)
-# 	button_keys.append(offset + 1)
-# 	switch_progresss.append(switch_progress2)
-# 	held.append(false)
-# 	held_dur.append(0.0)
-# 	# button = shell1
-# 	return [shell1, shell2]
-
-# func update_weapon_ui(delta: float) -> void:
-# 	for i in range(buttons.size()):
-# 		var button = buttons[i]
-# 		var switch_progress = switch_progresss[i]
-# 		if held[i]:
-# 			held_dur[i] += delta
-# 			button.button_pressed = true
-# 		else:
-# 			if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
-# 				_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 				select_shell.rpc_id(1, 1 - i)
-# 				# switched_shell = true
-# 			held_dur[i] = 0.0
-# 			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and shell_index != i:
-# 				button.button_pressed = true
-# 			else:
-# 				button.button_pressed = false
-# 			# if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
-# 			# 	if shell_index == i:
-# 			# 		button.button_pressed = true
-# 			# 	else:
-# 			# 		button.button_pressed = false
-# 		if switch_progress and not switched_shell:
-# 			switch_progress.value = min(held_dur[i], 1.0)
-# 		if held_dur[i] > 1.0 and not switched_shell:
-# 			select_shell.rpc_id(1, 1 - i)
-# 			switched_shell = true
-# 		# if button:
-# 		# 	if select_held:
-# 		# 		held_duration += delta
-# 		# 		button.button_pressed = true
-# 		# 	else:
-# 		# 		held_duration = 0.0
-# 		# 		if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
-# 		# 			button.button_pressed = false
-# 		# 	if switch_progress and not switched_shell:
-# 		# 		switch_progress.value = min(held_duration, 1.0)
-# 		# 	if held_duration > 1.0 and not switched_shell:
-# 		# 		select_shell.rpc_id(1, 1 - shell_index)
-# 		# 		switched_shell = true
-# 		# 		# held_duration = 0.0
-
-# func _process(delta: float) -> void:
-# 	update_weapon_ui(delta)
-
-# func _input(event: InputEvent) -> void:
-# 	if event is InputEventKey:
-# 		if event.pressed and not event.echo:
-# 			if event.keycode == Key.KEY_1 + button_key:
-# 				select_held = true
-# 				pressed_time = Time.get_ticks_msec() / 1000.0
-# 		elif !event.pressed and not event.echo:
-# 			if event.keycode == Key.KEY_1 + button_key:
-# 				if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.2:
-# 					_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
-# 				select_held = false
-# 				switched_shell = false
-
 func _build_tooltip_text(_shell_index: int) -> String:
 	var shell_label := "AP" if _shell_index == 0 else "HE"
 	var lines := [
@@ -434,7 +302,12 @@ func _physics_process(delta: float) -> void:
 	var num_secs = 0
 	for sec in sub_controllers:
 		min_reload_time = min(min_reload_time, sec.get_params().reload_time)
-		num_secs += sec.guns.size()
+		# num_secs += sec.guns.size()
+
+	# num_secs = gun_targets.size()
+	for g in gun_targets.keys():
+		if gun_targets[g] != null:
+			num_secs += 1
 
 	for t in target_seq_timers.keys():
 		if not targets_guns.has(t) or targets_guns[t].size() == 0:
@@ -595,7 +468,7 @@ func _update_cached_auto_aim(delta: float) -> bool:
 				lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
 				target_leads[sc][e] = lead_target
 			if lead_target and g.is_aimpoint_valid(pos):
-				g._aim(lead_target, delta)
+				g._aim(lead_target, delta, false)
 				auto_active = true
 			else:
 				gun_can_shoot_over_terrain[g] = false

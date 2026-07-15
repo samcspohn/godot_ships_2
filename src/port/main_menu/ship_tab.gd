@@ -127,6 +127,7 @@ func _load_ship_buttons():
 		{"name": "Kaiser Wilhelm", "path": "res://assets/Ships/H42/H42.tscn"},
 		{"name": "SP1", "path": "res://assets/Ships/SP1/SP1.tscn"},
 		{"name": "Wotan", "path": "res://assets/Ships/H44/H44.2.tscn"},
+		{"name": "Götterdämmarung", "path": "res://assets/Ships/H45/H45.tscn"},
 		{"name": "Yamato", "path": "res://assets/Ships/Yamato/Yamato.tscn"},
 		{"name": "Shimakaze", "path": "res://assets/Ships/Shimakaze/Shimakaze.tscn"},
 		{"name": "Des Moines", "path": "res://assets/Ships/DesMoines/DesMoines.tscn"},

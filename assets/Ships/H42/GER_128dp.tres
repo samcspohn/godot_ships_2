@@ -1,0 +1,46 @@
+[gd_resource type="Resource" script_class="GunParams" format=3 uid="uid://dnhj8jhxnv4wa"]
+
+[ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="1_45qpm"]
+[ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="2_qcafr"]
+[ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="3_baugt"]
+
+[sub_resource type="Resource" id="Resource_fu2p2"]
+script = ExtResource("3_baugt")
+speed = 900.0
+drag = 6.499999999999995e-05
+damage = 3050.0
+size = 2.0
+caliber = 128.0
+mass = 30.0
+overmatch = 9
+arming_threshold = 21
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[sub_resource type="Resource" id="Resource_wrvf5"]
+script = ExtResource("3_baugt")
+speed = 900.0
+drag = 6.499999999999995e-05
+damage = 1500.0
+size = 2.0
+caliber = 128.0
+mass = 30.0
+fire_buildup = 6.0
+fuze_delay = 0.001
+type = 0
+overmatch = 32
+metadata/_custom_type_script = "uid://d0r4vucnli08f"
+
+[resource]
+script = ExtResource("2_qcafr")
+elevation_speed = 50.0
+shell1 = SubResource("Resource_fu2p2")
+shell2 = SubResource("Resource_wrvf5")
+grouping = 1.0
+h_spread = 0.055
+v_spread = 0.03
+dispersion_ = ExtResource("1_45qpm")
+max_dispersion = 350.0
+reload_time = 4.5
+traverse_speed = 50.0
+_range = 4800.0
+metadata/_custom_type_script = "uid://f5a1lbtgbbk7"

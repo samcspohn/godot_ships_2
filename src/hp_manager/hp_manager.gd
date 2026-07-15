@@ -294,8 +294,9 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 		ship.freeze = true
 		ship.linear_velocity = Vector3.ZERO
 		sinking = true
-		HitEffects.he_explosion_effect(ship.global_transform.origin, 30.0, Vector3.UP)
-		HitEffects.sparks_effect(ship.global_transform.origin, 20.0, Vector3.UP)
+		var size = ship.movement_controller.ship_length * (100.0 / 575.0)
+		HitEffects.he_explosion_effect(ship.global_transform.origin, size, Vector3.UP)
+		HitEffects.sparks_effect(ship.global_transform.origin, size * 0.67, Vector3.UP)
 		#get_parent().queue_free()
 		ship.artillery_controller.set_physics_process(false)
 		ship.movement_controller.set_physics_process(false)

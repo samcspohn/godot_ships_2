@@ -222,7 +222,7 @@ func get_muzzles_position() -> Vector3:
 	return muzzles_pos
 
 # Implement on server
-func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> float:
+func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false, clamp_aim: bool = false) -> float:
 	if disabled:
 		return INF
 	# Capture pre-rotation diagnostics so we can detect long-way-around slewing
@@ -257,7 +257,7 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false) -> fl
 
 	# Existing aiming logic for elevation
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, aim_point, get_shell())
-	if sol[0] != null and (aim_point - _ship.global_position).length() < get_params()._range:
+	if sol[0] != null and ((aim_point - _ship.global_position).length() < get_params()._range or !clamp_aim):
 		self._aim_point = aim_point
 	else:
 		var g = Vector3(global_position.x, 0, global_position.z)

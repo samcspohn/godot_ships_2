@@ -4,8 +4,8 @@ extends Skill
 ## For every 100% of max HP accumulated in potential damage received, gain 1
 ## tier of DC/RP improvements. Caps at 20 tiers.
 
-const COOLDOWN_PER_TIER: float = 0.01   # -1% cooldown per tier
-# const DURATION_PER_TIER: float = 0.005   # +0.5% duration per tier
+const COOLDOWN_PER_TIER: float = 0.008   # -0.8% cooldown per tier
+const DURATION_PER_TIER: float = 0.012   # +1.2% duration per tier
 # const MAX_TIERS: int = 20
 
 var _applied_tiers: int = 0
@@ -19,7 +19,7 @@ func _init() -> void:
 	tooltip_stats = [
 		{"stat": "Per 100% max HP Potential Damage",  "value": ""},
 		{"stat": "  DC/RP Cooldown",          "value": "-%.1f%% (stacking)" % (COOLDOWN_PER_TIER * 100), "positive": true},
-		# {"stat": "  DC/RP Duration",          "value": "+0.5% (stacking)", "positive": true},
+		{"stat": "  DC/RP Duration",          "value": "+%.1f%% (stacking)" % (DURATION_PER_TIER * 100), "positive": true},
 		# {"stat": "Max Tiers",                 "value": "20 (-10% cooldown, +10% duration)"},
 	]
 
@@ -33,8 +33,8 @@ func _a(ship: Ship) -> void:
 				consumable.type == ConsumableItem.ConsumableType.REPAIR_PARTY:
 			var dm := consumable.dynamic_mod as ConsumableItem
 			dm.cooldown_time *= pow(1 - COOLDOWN_PER_TIER, _applied_tiers)
-			# if dm.duration > 0.0:
-			# 	dm.duration *= pow(1 + DURATION_PER_TIER, _applied_tiers)
+			if dm.duration > 0.0:
+				dm.duration *= pow(1 + DURATION_PER_TIER, _applied_tiers)
 
 func apply(ship: Ship) -> void:
 	_applied_tiers = 0
