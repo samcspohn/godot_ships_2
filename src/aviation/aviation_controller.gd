@@ -67,7 +67,7 @@ func _physics_process(delta: float) -> void:
 		if not squadron.active:
 			continue
 		squadron.update_flight(delta, _ship)
-		if squadron.all_finished_attack():
+		if squadron.all_finished_attack() or squadron.all_dead():
 			recall_squadron(i)
 
 	if attack_point != null and not fire_held and active_squadrons.has(shell_index): # release ordnance at drop point
@@ -91,7 +91,7 @@ func _process(delta: float) -> void:
 		# show committed drop-pattern
 		if squadron.attack_point != null:
 			squadron.update_committed_attack_preview()
-			squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
+			# squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
 
 # Live aiming preview: while held (dragging out an attack), the pattern
 # freezes at the point the drag started and rotates to track the drag
@@ -250,6 +250,7 @@ func to_bytes() -> PackedByteArray:
 		for plane in squadron.aircraft:
 			writer.put_var(plane.global_position)
 			writer.put_var(plane.global_rotation)
+			writer.put_u8(1 if plane.dead else 0)
 		writer.put_var(params[index].to_bytes())
 	return writer.data_array
 
@@ -295,11 +296,13 @@ func from_bytes(b: PackedByteArray) -> void:
 		for j in range(plane_count):
 			var plane_pos = reader.get_var()
 			var plane_rot = reader.get_var()
+			var plane_dead = reader.get_u8()
 			if squadron != null and j < squadron.aircraft.size():
 				var plane = squadron.aircraft[j]
 				plane.global_position = plane_pos
 				plane.global_rotation = plane_rot
-				plane.visible = true
+				plane.dead = plane_dead != 0
+				plane.visible = not plane.dead
 		if index < params.size():
 			var params_bytes = reader.get_var()
 			params[index].from_bytes(params_bytes)

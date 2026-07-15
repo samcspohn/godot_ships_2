@@ -133,6 +133,7 @@ func setup(_params: AircraftParams, launcher: Node3D, ship: Ship, game_world: No
 		plane.params = params
 		plane._ship = ship
 		plane.target = slot
+		plane._setup_hitbox()
 		launcher.add_child(plane)
 		plane.position = Vector3.ZERO
 		aircraft.append(plane)
@@ -357,6 +358,7 @@ func _set_landing_formation() -> void:
 		slot.position = Vector3.ZERO
 
 func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -> void:
+	var p = params.p() as AircraftParams
 	node.reparent(game_world)
 	node.global_position = launch_pos
 	node.global_rotation = launch_rotation
@@ -374,6 +376,9 @@ func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -
 		plane.visible = true
 		plane.set_physics_process(true)
 		plane.should_recall = false
+		plane.dead = false
+		plane.hp = p.hp
+		plane.set_hitbox_enabled(true)
 		plane.reparent(game_world)
 		plane.global_position = launch_pos
 
@@ -389,6 +394,7 @@ func recall(launcher: Node3D) -> void:
 		plane.visible = false
 		plane.set_physics_process(false)
 		plane.should_recall = false
+		plane.set_hitbox_enabled(false)
 		plane.reparent(launcher)
 		plane.position = Vector3.ZERO
 	node.reparent(launcher)
@@ -415,6 +421,17 @@ func all_finished_attack() -> bool:
 		return false
 	for plane in aircraft:
 		if not plane.should_recall:
+			return false
+	return true
+
+# true once every aircraft in the squadron has been shot down by AA - the
+# squadron has nothing left to fly home, so it's recalled immediately instead
+# of going through the normal return-to-base flight.
+func all_dead() -> bool:
+	if aircraft.size() == 0:
+		return false
+	for plane in aircraft:
+		if not plane.dead:
 			return false
 	return true
 
@@ -552,6 +569,8 @@ func _fire() -> void:
 	attack_fired = true
 	var recall_after := true
 	for plane in aircraft:
+		if plane.dead: # shot down - can't fire
+			continue
 		recall_after = plane.fire_ordnance(attack_direction) and recall_after
 	if recall_after:
 		returning = true

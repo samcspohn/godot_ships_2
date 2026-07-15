@@ -11,6 +11,7 @@
 [ext_resource type="Script" uid="uid://bigegwv2dexue" path="res://src/concealment/concealment.gd" id="9_exjcu"]
 [ext_resource type="Script" uid="uid://bjh4lti6x5hp" path="res://src/Skills/skills_manager.gd" id="9_hnrpx"]
 [ext_resource type="Script" uid="uid://kfbekstmxsvi" path="res://src/Upgrades/upgrades.gd" id="9_s01fk"]
+[ext_resource type="Script" uid="uid://j23dyyfvqe8a" path="res://src/anti_aircraft/AAA_controller.gd" id="12_0h1em"]
 
 [node name="Modules" type="Node3D" unique_id=2063116617]
 
@@ -33,15 +34,7 @@ metadata/_custom_type_script = "uid://b112omat8o001"
 
 [node name="MovementController" parent="." unique_id=1088594109 instance=ExtResource("4_1t3ll")]
 script = ExtResource("6_s01fk")
-slow_speed_turn_tightening = 0.8
-turn_speed_loss = 0.2
-lateral_drag_multiplier = 1.7
-max_turn_roll_angle = 5.0
-roll_response_time = 2.0
-righting_strength = 5.0
-righting_damping = 3.0
-pitch_righting_strength = 8.0
-nav_size = 1
+params = null
 
 [node name="ConsumableManager" type="Node" parent="." unique_id=1189768979]
 script = ExtResource("6_exjcu")
@@ -58,3 +51,9 @@ metadata/_custom_type_script = "uid://bjh4lti6x5hp"
 [node name="FireManager" parent="." unique_id=384504544 instance=ExtResource("7_j72gg")]
 
 [node name="FloodManager" parent="." unique_id=485605645 instance=ExtResource("8_flood")]
+
+[node name="AAAController" type="Node" parent="." unique_id=291271017]
+script = ExtResource("12_0h1em")
+dps = 300.0
+_range = 4000.0
+metadata/_custom_type_script = "uid://j23dyyfvqe8a"

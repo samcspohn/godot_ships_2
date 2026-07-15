@@ -13,6 +13,60 @@ var should_recall: bool = false
 # aircraft snap into the tighter attack formation faster (see fly_toward()).
 var attacking: bool = false
 
+# Hit points, reset to params.hp each time the squadron launches (see
+# Squadron.launch()). Depleted by AA fire (see AAAController) - once it hits
+# zero the aircraft is dead: hidden, unable to fire, and excluded from the AA
+# hitbox query.
+var hp: float = 0.0
+var dead: bool = false
+
+# Physics hitbox used by AAAController's cylinder cast to find aircraft within
+# AA range. A child Area3D so it tracks this node's transform for free as it
+# flies/reparents. NOTE: any shape QUERYING against this layer must use a
+# pre-allocated Shape3D - with physics/3d/run_on_separate_thread=true, a shape
+# created the same tick it is queried has no geometry on the physics thread
+# yet and silently degenerates to a point query (see AAAController._ready).
+const AIRCRAFT_COLLISION_LAYER: int = 1 << 7
+const HITBOX_RADIUS: float = 15.0
+var _hitbox_shape: CollisionShape3D
+
+# Called once by the squadron right after instancing this aircraft (see
+# Squadron.setup()) - not in _ready(), since subclasses override _ready()
+# without chaining to super().
+func _setup_hitbox() -> void:
+	var hitbox := Area3D.new()
+	hitbox.collision_layer = AIRCRAFT_COLLISION_LAYER
+	hitbox.collision_mask = 0
+	hitbox.monitoring = false
+	hitbox.monitorable = true
+	hitbox.set_meta("aircraft", self)
+	_hitbox_shape = CollisionShape3D.new()
+	var sphere := SphereShape3D.new()
+	sphere.radius = HITBOX_RADIUS
+	_hitbox_shape.shape = sphere
+	_hitbox_shape.disabled = true
+	hitbox.add_child(_hitbox_shape)
+	add_child(hitbox)
+
+# Enabled while airborne (Squadron.launch()) and disabled once parked
+# (Squadron.recall()) or dead, so the AA cylinder cast only ever finds live,
+# active aircraft.
+func set_hitbox_enabled(enabled: bool) -> void:
+	if _hitbox_shape:
+		_hitbox_shape.disabled = not enabled
+
+# Applies AA damage; once hp reaches zero the aircraft is destroyed - hidden
+# and dropped out of the hitbox query. Squadron._fire() separately checks
+# `dead` to skip firing ordnance from it.
+func apply_aa_damage(amount: float) -> void:
+	if dead:
+		return
+	hp = maxf(hp - amount, 0.0)
+	if hp <= 0.0:
+		dead = true
+		visible = false
+		set_hitbox_enabled(false)
+
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
 	pass # Replace with function body.

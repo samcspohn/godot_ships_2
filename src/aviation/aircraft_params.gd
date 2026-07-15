@@ -3,6 +3,7 @@ class_name AircraftParams
 
 @export var type: String = "Spotter"
 @export var squadron_size: int = 1
+@export var hp: float = 1000.0 # per-aircraft hit points; depleted by AA fire
 @export var formation_spacing: float = 60.0
 @export var _range: float = 6000.0
 @export var speed: float = 300.0
