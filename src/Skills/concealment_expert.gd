@@ -17,3 +17,4 @@ func _init() -> void:
 
 func _a(ship: Ship) -> void:
 	(ship.concealment.params.dynamic_mod as ConcealmentParams).radius *= RADIUS_MOD
+	(ship.concealment.params.dynamic_mod as ConcealmentParams).air_radius *= RADIUS_MOD

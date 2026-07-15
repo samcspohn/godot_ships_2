@@ -66,8 +66,8 @@ pool2 = 6666.666666666667
 [sub_resource type="Resource" id="Resource_3xcad"]
 script = ExtResource("3_rk6eg")
 radius = 6000.0
+air_radius = 3000.0
 bloom_duration = 12.0
-unspotted_bloom_duration = 1.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_e8hl0"]

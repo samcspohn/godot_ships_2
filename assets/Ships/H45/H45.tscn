@@ -63,7 +63,9 @@ pool2 = 178333.33333333334
 [sub_resource type="Resource" id="Resource_qxtxi"]
 script = ExtResource("5_qs287")
 radius = 18000.0
+air_radius = 9000.0
 bloom_duration = 30.0
+unspotted_bloom_duration = 10.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_lj70x"]
