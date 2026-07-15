@@ -312,8 +312,8 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 			mv.set_physics_process(false)
 		ship._disable_weapons()
 		WaveManager.unregister_ship(ship)
-		WaveManager.add_muzzle_blast(ship.global_position,ship.movement_controller.ship_length * 0.2)
-		WaveManager.add_shell_splash(ship.global_position, ship.movement_controller.ship_length * 0.1)
+		WaveManager.add_muzzle_blast(ship.global_position,ship.movement_controller.ship_length * 0.6)
+		WaveManager.add_shell_splash(ship.global_position, ship.movement_controller.ship_length * 0.15)
 		_Utils.kill_feed_event.emit(sinker_ship_name, sinker, team, damage_type, sunk_ship_name, sunk_player_name, sunk_team)
 
 func _physics_process(delta: float) -> void:

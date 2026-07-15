@@ -32,7 +32,7 @@ var current_torpedo_range: float = 0.0
 var _torp_avg_target: Ship = null
 var _torp_vel_ema: Vector3 = Vector3.ZERO
 const TORP_VEL_EMA_SECONDS: float = 100.0   # long-average time constant
-const TORP_BLEND_REFERENCE_TIME: float = 15.0 # flight time (s) at which the long average reaches full weight
+const TORP_BLEND_REFERENCE_TIME: float = 50.0 # flight time (s) at which the long average reaches full weight
 
 # Torpedo spread parameters
 const SPREAD_ANGLE_BASE: float = 0.05
@@ -514,7 +514,7 @@ func get_potential_target_weight(target: Ship) -> float:
 	var hp_ratio = target.health_controller.current_hp / target.health_controller.max_hp
 
 	# Prefer close targets; falls off exponentially beyond gun range
-	var weight = exp(-target.global_position.distance_to(_ship.global_position) / my_range)
+	var weight = exp(-target.global_position.distance_to(_ship.global_position) / (my_range / 3))
 
 	# Prefer targets presenting a large side profile (easier to hit)
 	var target_heading = target.global_transform.basis.z.normalized()
@@ -529,14 +529,14 @@ func get_potential_target_weight(target: Ship) -> float:
 			side_profile *= 2.0
 		Ship.ShipClass.DD:
 			side_profile *= 3.0
-	weight *= side_profile * 0.01
+	weight += side_profile * 0.01
 
 	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
 	weight += maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
 
 
-	# Prefer high-threat targets
-	weight += target.stats.total_damage * (1.0 / 100_000.0)
+	# # Prefer high-threat targets
+	# weight += target.stats.total_damage * (1.0 / 150_000.0)
 
 	potential_target_weight_cache[target] = weight
 	return weight

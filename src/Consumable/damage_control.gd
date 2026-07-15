@@ -18,14 +18,14 @@ func effect(ship: Ship) -> void:
 	fire_params.dur *= p.duration_reduction
 	fire_params.dmg_rate *= p.damage_reduction
 	resist_params.buildup_reduction_rate *= 10.0
-	resist_params.reduction_block_rate *= 0.1
+	resist_params.reduction_block_rate *= 0.0
 
 	var flood_params := ship.flood_manager.dot_params.static_mod as DOTParams
 	var flood_rparams := ship.flood_manager.rparams.static_mod as ResistanceParams
 	flood_params.dur *= p.duration_reduction
 	flood_params.dmg_rate *= p.damage_reduction
 	flood_rparams.buildup_reduction_rate *= 10.0
-	flood_rparams.reduction_block_rate *= 0.1
+	flood_rparams.reduction_block_rate *= 0.0
 
 func apply_effect(ship: Ship) -> void:
 	# Create damage control effect that reduces fire duration and damage by 65%

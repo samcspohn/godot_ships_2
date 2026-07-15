@@ -103,7 +103,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var ring_radius: float
 	if outer_edge > inner_edge:
-		ring_radius = (outer_edge + inner_edge) * 0.5
+		ring_radius = (outer_edge + inner_edge) * 0.1
 	else:
 		# No clean stealth corridor — accept exposure, stay just inside detection.
 		ring_radius = outer_edge

@@ -1,28 +1,29 @@
 extends Moddable
 class_name ConcealmentParams
 
-@export var radius: float
-@export var bloom_duration: float
-@export var unspotted_bloom_duration: float
+@export var radius: float = 5000.0
+@export var air_radius: float = 2500.0
+@export var bloom_duration: float = 15.0
+@export var unspotted_bloom_duration: float = 1.0
 ## Multiplicative modifier applied to a torpedo's base detection_range when
 ## this ship checks whether it can spot an incoming torpedo.
 ## 1.0 = no change; 1.5 = Torpedo Lookout System (+50%).
-@export var torpedo_detection_multiplier: float = 1.0
+var torpedo_detection_multiplier: float = 1.0
 ## When > 0, acts as a minimum detection range floor (metres).
 ## Used by Hydroacoustic Search (3 000 m) to guarantee detection regardless
 ## of the torpedo's base range or the multiplier.
-@export var torpedo_detection_range_override: float = -1.0
+var torpedo_detection_range_override: float = -1.0
 ## When > 0, this ship can force-spot any enemy ship within this distance
 ## (metres) even if that ship's concealment radius would normally hide it.
 ## Used by Hydroacoustic Search (4 000 m).
-@export var spotting_range_override: float = -1.0
+var spotting_range_override: float = -1.0
 ## When > 0, same as spotting_range_override but sourced from Radar
 ## (8 000 m default).  Checked alongside spotting_range_override in
 ## handle_spot and the no-LOS radar detection pass.
-@export var radar_spotting_range_override: float = -1.0
+var radar_spotting_range_override: float = -1.0
 ## When > 0, ships within this distance spot each other unconditionally
 ## regardless of terrain or smoke.  Uses the max of both ships' values.
-@export var assured_acquisition_range: float = 1000.0
+var assured_acquisition_range: float = 1000.0
 
 ## Returns the effective torpedo detection range for this ship given the
 ## torpedo's base detection_range.
