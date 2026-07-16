@@ -221,6 +221,25 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0, 0.706, 0.627, 1)
 
+[node name="AirIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=2200000001]
+visible = false
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 2
+color = Color(0.08, 0.08, 0.08, 0.9)
+
+[node name="AirColor" type="ColorRect" parent="MainContainer/VisibilityContainer/AirIndicator" unique_id=2200000002]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(1, 0.85, 0.2, 0.9)
+
 [node name="IncomingFireIndicator" type="ColorRect" parent="MainContainer/VisibilityContainer" unique_id=576907406]
 visible = false
 custom_minimum_size = Vector2(30, 30)

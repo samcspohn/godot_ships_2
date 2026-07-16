@@ -12,6 +12,7 @@ const ENEMY_COLOR = Color(1, 0, 0, 1) # Red
 const FOV_ARC_COLOR = Color(0.5, 0.8, 1.0, 0.25) # Translucent light blue
 const HYDRO_RANGE_COLOR = Color(0.4, 0.85, 1.0, 0.85) # Light cyan for active hydroacoustic range
 const RADAR_RANGE_COLOR = Color(0.0, 0.706, 0.627, 1.0) # blue green for active radar range
+const AIR_RANGE_COLOR = Color(1.0, 0.85, 0.2, 0.85) # amber for aircraft-spotted contacts
 const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
 const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
@@ -312,6 +313,7 @@ enum ShipState {
 	DEAD,
 	HYDRO_CONTACT,  # Hydro acoustic ping — known position, not visible
 	RADAR_CONTACT,  # Radar ping — known position, not visible
+	AIR_CONTACT,    # Aircraft LOS spot — known position, not visible
 }
 
 # Draw signal handler
@@ -331,7 +333,7 @@ func _on_canvas_draw() -> void:
 		var tracked_pos = dict["pos"]
 		var tracked_rot = dict["rot"]
 		if is_instance_valid(tracked_ship):
-			if (tracked_ship.visible_to_enemy or tracked_ship.hydro_detected or tracked_ship.radar_detected) and tracked_ship.team.team_id != player_ship.team.team_id:
+			if (tracked_ship.visible_to_enemy or tracked_ship.hydro_detected or tracked_ship.radar_detected or tracked_ship.air_detected) and tracked_ship.team.team_id != player_ship.team.team_id:
 				dict.init = true
 			if !dict.init and tracked_ship.team.team_id != player_ship.team.team_id:
 				continue
@@ -349,6 +351,8 @@ func _on_canvas_draw() -> void:
 				ship_state = ShipState.RADAR_CONTACT
 			elif !is_friendly and !tracked_ship.visible_to_enemy and tracked_ship.hydro_detected:
 				ship_state = ShipState.HYDRO_CONTACT
+			elif !is_friendly and !tracked_ship.visible_to_enemy and tracked_ship.air_detected:
+				ship_state = ShipState.AIR_CONTACT
 			elif !is_friendly and !tracked_ship.visible_to_enemy:
 				ship_state = ShipState.UNDETECTED
 
@@ -360,18 +364,22 @@ func _on_canvas_draw() -> void:
 				ShipState.UNDETECTED: color = Color(0.4, 0.4, 0.4, 1) # Gray for undetected
 				ShipState.HYDRO_CONTACT: color = HYDRO_RANGE_COLOR  # Cyan for hydro ping
 				ShipState.RADAR_CONTACT: color = RADAR_RANGE_COLOR  # Red for radar ping
+				ShipState.AIR_CONTACT: color = AIR_RANGE_COLOR  # Amber for air spot ping
 				ShipState.DETECTED: color = FRIENDLY_COLOR # Orange for detected
 				ShipState.DEAD: color = Color(0.2, 0.2, 0.2, 1) # Dark gray for dead
 				_: color = Color(1, 1, 1, 1) # Default to white
 
 			# if (ship as Ship).visible_to_enemy:
-			if is_friendly and (tracked_ship.det_los or tracked_ship.det_hydro or tracked_ship.det_radar):
+			if is_friendly and (tracked_ship.det_los or tracked_ship.det_hydro or tracked_ship.det_radar or tracked_ship.det_air):
 				var det_col: Color
 				if tracked_ship.det_radar:
 					det_col = RADAR_RANGE_COLOR
 					det_col.a = 0.7
 				elif tracked_ship.det_hydro:
 					det_col = HYDRO_RANGE_COLOR
+					det_col.a = 0.7
+				elif tracked_ship.det_air:
+					det_col = AIR_RANGE_COLOR
 					det_col.a = 0.7
 				else:
 					det_col = Color.GOLD

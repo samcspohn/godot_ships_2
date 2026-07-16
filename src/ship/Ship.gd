@@ -26,6 +26,7 @@ var radar_ghost: Node3D = null
 @onready var secondary_controller: SecondaryController_ = $Modules/SecondaryController
 @onready var torpedo_controller: TorpedoController
 @onready var aviation_controller: AviationController
+@onready var aaa_controller: AAAController = $Modules/AAAController
 @onready var health_controller: HPManager = $Modules/HPManager
 @onready var consumable_manager: ConsumableManager = $Modules/ConsumableManager
 @onready var fire_manager: FireManager = $Modules/FireManager
@@ -48,6 +49,10 @@ var hydro_detected: bool = false
 ## Set true on the client when the server sends a radar LKP update for this
 ## ship, false when the server sends a clear packet (ship left radar range).
 var radar_detected: bool = false
+## Set true on the client when the server sends an air-spot LKP update for
+## this ship, false when the server sends a clear packet (LOS from every
+## spotting plane broke, or it left air_radius).
+var air_detected: bool = false
 var armor_system: ArmorSystemV2
 @export var citadel: ArmorPart
 @export var hull: StaticBody3D
@@ -314,7 +319,7 @@ func _is_armor_mesh(node: MeshInstance3D) -> bool:
 func _update_radar_ghost() -> void:
 	if radar_ghost == null:
 		return
-	var show_ghost := (hydro_detected or radar_detected) and not visible_to_enemy and is_alive()
+	var show_ghost := (hydro_detected or radar_detected or air_detected) and not visible_to_enemy and is_alive()
 	radar_ghost.visible = show_ghost
 	if show_ghost:
 		radar_ghost.global_transform = global_transform
@@ -756,17 +761,18 @@ func sync_player(b: PackedByteArray):
 
 
 func _det_flags() -> int:
-	return (1 if det_los else 0) | (2 if det_hydro else 0) | (4 if det_radar else 0)
+	return (1 if det_los else 0) | (2 if det_hydro else 0) | (4 if det_radar else 0) | (8 if det_air else 0)
 
 func _set_det_flags(f: int) -> void:
 	det_los   = (f & 1) != 0
 	det_hydro = (f & 2) != 0
 	det_radar = (f & 4) != 0
+	det_air   = (f & 8) != 0
 
 
 ## Serialise a passive-detection LKP update.  Uses current rotation.y (cosmetic)
 ## but the caller-supplied frozen position, an active flag, and a source byte
-## (1 = Hydroacoustic Search, 2 = Radar) so the client can set the right flag.
+## (1 = Hydroacoustic Search, 2 = Radar, 3 = Air) so the client can set the right flag.
 func sync_ship_lkp(pos: Vector3, active: bool, source: int = 1) -> PackedByteArray:
 	var writer := StreamPeerBuffer.new()
 	writer.put_float(rotation.y)
@@ -789,10 +795,11 @@ func sync_unspotted(b: PackedByteArray) -> void:
 	var lkp_x: float = reader.get_float()
 	var lkp_z: float = reader.get_float()
 	var _active: bool = reader.get_u8() == 1
-	var _source: int = reader.get_u8()  # 1 = hydro, 2 = radar
+	var _source: int = reader.get_u8()  # 1 = hydro, 2 = radar, 3 = air
 	match _source:
 		1: hydro_detected = _active
 		2: radar_detected = _active
+		3: air_detected = _active
 	# Only apply the LKP position when the ship is NOT already LOS-visible.
 	# When visible_to_enemy is true the normal sync path keeps global_position
 	# accurate; writing a stale frozen LKP on top of that causes flickering.

@@ -40,6 +40,19 @@ var team_0_radar_lkp_times: Dictionary = {}  # Ship -> float
 var team_1_radar_lkp_times: Dictionary = {}
 var team_0_radar_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
 var team_1_radar_in_range: Dictionary = {}
+# Air LKP system — mirrors the hydro/radar system but is fed by handle_air_spot
+# (a plane with clear LOS to a ship within air_radius). Unlike hydro/radar,
+# refreshing is one-directional only (spotter's team -> spotted ship): there's
+# no physical reason a ship being watched by a distant carrier's aircraft
+# would learn that carrier's position the way active sonar/radar reveal the
+# pinger. Ship-to-ship LOS spotting (handle_spot) still takes priority - see
+# handle_air_spot's `not spotted.visible_to_enemy` guard.
+var team_0_air_lkp: Dictionary = {}          # Ship -> Vector3
+var team_1_air_lkp: Dictionary = {}
+var team_0_air_lkp_times: Dictionary = {}    # Ship -> float
+var team_1_air_lkp_times: Dictionary = {}
+var team_0_air_in_range: Dictionary = {}     # Ship -> bool  (cleared each frame)
+var team_1_air_in_range: Dictionary = {}
 # One-time bootstrap per team: after the first visual spot, seed LKPs for
 # still-hidden enemies so bots can begin coordinated hunting immediately.
 var team_0_first_spot_lkp_seeded: bool = false
@@ -874,12 +887,13 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 
 func handle_air_spot(spotter: Ship, spotted: Ship, dist: float):
 	if (spotted.concealment.params.p() as ConcealmentParams).air_radius > dist:
-		spotted.visible_to_enemy = true
-		spotted.det_los = true
-		if closest_enemies_that_can_see.has(spotted):
-			closest_enemies_that_can_see[spotted].append([spotter,dist])
-		else:
-			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
+		spotted.det_air = true
+		# A clear-LOS air spot is LKP-style (frozen position, refreshed every
+		# HYDRO_LKP_INTERVAL) rather than a live reveal - mirrors hydro/radar.
+		# A ship already visible via ship-to-ship LOS/assured acquisition
+		# keeps its live position; air spotting never downgrades that.
+		if not spotted.visible_to_enemy:
+			_refresh_air_lkp(spotter.team.team_id, spotted)
 
 func handle_spot_attribution():
 	for spotted in closest_enemies_that_can_see.keys():
@@ -1117,6 +1131,8 @@ func _physics_process(_delta: float) -> void:
 	team_1_hydro_in_range.clear()
 	team_0_radar_in_range.clear()
 	team_1_radar_in_range.clear()
+	team_0_air_in_range.clear()
+	team_1_air_in_range.clear()
 
 	var alive_players: Array[Ship] = []
 	for p in players.values():
@@ -1202,9 +1218,19 @@ func _physics_process(_delta: float) -> void:
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			team_1_radar_lkp.erase(ship)
 			team_1_radar_lkp_times.erase(ship)
+	# Clean up dead ships from air LKP tables
+	for ship in team_0_air_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_0_air_lkp.erase(ship)
+			team_0_air_lkp_times.erase(ship)
+	for ship in team_1_air_lkp.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			team_1_air_lkp.erase(ship)
+			team_1_air_lkp_times.erase(ship)
 
 	_send_hydro_syncs()
 	_send_radar_syncs()
+	_send_air_syncs()
 
 	# if c > 2:
 	# 	c = 0
@@ -1432,6 +1458,26 @@ func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
 		u_times[ship]   = current_time
 
 
+func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
+	"""Mark ship as air-spotted this frame and refresh its frozen LKP position
+	if first contact or HYDRO_LKP_INTERVAL seconds have elapsed. One-directional
+	only (see handle_air_spot) - team_id here is always the spotting plane's
+	owning team, never mirrored back onto the spotted ship's team."""
+	var active   := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
+	var lkp      := team_0_air_lkp        if team_id == 0 else team_1_air_lkp
+	var lkp_t    := team_0_air_lkp_times  if team_id == 0 else team_1_air_lkp_times
+
+	active[ship] = true
+
+	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
+		lkp[ship]  = ship.global_position
+		lkp_t[ship] = current_time
+		var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+		var u_times   := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+		unspotted[ship] = ship.global_position
+		u_times[ship]   = current_time
+
+
 func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:
 	var params_a := a.concealment.params.p() as ConcealmentParams
 	var params_b := b.concealment.params.p() as ConcealmentParams
@@ -1543,6 +1589,42 @@ func _send_radar_syncs() -> void:
 				continue
 			var pos: Vector3 = lkp[ship]
 			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 2)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
+			lkp.erase(ship)
+			lkp_t.erase(ship)
+
+
+func _send_air_syncs() -> void:
+	"""Mirror of _send_hydro_syncs but uses source = 3 (Air)."""
+	for team_id in [0, 1]:
+		var active := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
+		var lkp    := team_0_air_lkp        if team_id == 0 else team_1_air_lkp
+		var lkp_t  := team_0_air_lkp_times  if team_id == 0 else team_1_air_lkp_times
+
+		for ship in active.keys():
+			if not is_instance_valid(ship):
+				continue
+			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 3)
+			for p_name in players:
+				var p_entry = players[p_name]
+				var p_ship: Ship = p_entry[0]
+				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
+
+		for ship in lkp.keys():
+			if active.has(ship):
+				continue
+			if not is_instance_valid(ship) or ship.health_controller.is_dead():
+				lkp.erase(ship)
+				lkp_t.erase(ship)
+				continue
+			var pos: Vector3 = lkp[ship]
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 3)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]

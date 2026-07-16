@@ -64,6 +64,7 @@ var kill_feed: KillFeed = null
 @onready var det_los_counter: Label = $MainContainer/VisibilityContainer/LOSIndicator/Counter
 @onready var det_hydro_indicator: ColorRect = $MainContainer/VisibilityContainer/HydroIndicator
 @onready var det_radar_indicator: ColorRect = $MainContainer/VisibilityContainer/RadarIndicator
+@onready var det_air_indicator: ColorRect = $MainContainer/VisibilityContainer/AirIndicator
 @onready var det_incoming_fire_indicator: ColorRect = $MainContainer/VisibilityContainer/IncomingFireIndicator
 
 # Terrain hit indicator
@@ -737,12 +738,14 @@ func update_visibility_indicator():
 		det_los_indicator.visible = false
 		det_hydro_indicator.visible = false
 		det_radar_indicator.visible = false
+		det_air_indicator.visible = false
 		return
 
 	var ship := camera_controller._ship
 	det_los_indicator.visible   = ship.det_los
 	det_hydro_indicator.visible = ship.det_hydro
 	det_radar_indicator.visible = ship.det_radar
+	det_air_indicator.visible   = ship.det_air
 
 func update_terrain_hit_indicator(is_hitting_terrain: bool):
 	"""Show or hide the terrain hit indicator"""
