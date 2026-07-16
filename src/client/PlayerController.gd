@@ -16,6 +16,14 @@ var selected_weapon: int = 0 # 0 = shell1, 1 = shell2, 2 = torpedo
 var mouse_captured: bool = true # True when mouse is controlling camera
 var targeting_enabled: bool = false # True when mouse can select targets
 
+# Box-select (aviation squadron drag-select) state - only meaningful while
+# the cursor is released (Ctrl held) and the left mouse button is down. A
+# release that moved less than BOX_SELECT_DRAG_THRESHOLD px is treated as a
+# plain click (ship target selection) instead of a box-select.
+const BOX_SELECT_DRAG_THRESHOLD: float = 6.0
+var _box_select_start: Vector2 = Vector2.ZERO
+var _box_select_dragging: bool = false
+
 # Timing variables
 var double_click_timer: float = 0.3 # Maximum time between clicks to register as double click
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
@@ -121,12 +129,25 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if mouse_captured:
 			_cameraInput = event.relative
+		elif _box_select_dragging:
+			if cam and cam.ui:
+				cam.ui.update_box_select(_rect_from_points(_box_select_start, get_viewport().get_mouse_position()))
 	elif event is InputEventMouseButton:
 		if not mouse_captured: # Only handle mouse clicks when cursor is released
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					# Mouse target selection with left click - queue for physics thread
-					_pending_target_selection = get_viewport().get_mouse_position()
+					_box_select_start = get_viewport().get_mouse_position()
+					_box_select_dragging = true
+				else:
+					var release_pos := get_viewport().get_mouse_position()
+					if _box_select_dragging and release_pos.distance_to(_box_select_start) > BOX_SELECT_DRAG_THRESHOLD:
+						_box_select_squadrons(_rect_from_points(_box_select_start, release_pos))
+					else:
+						# Plain click (no meaningful drag) - queue target selection for physics thread
+						_pending_target_selection = release_pos
+					_box_select_dragging = false
+					if cam and cam.ui:
+						cam.ui.hide_box_select()
 
 		elif mouse_captured: # Handle normal camera-based shooting
 			if event.button_index == MOUSE_BUTTON_LEFT:
@@ -170,6 +191,10 @@ func _input(event: InputEvent) -> void:
 				# When releasing control, capture the mouse again
 				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 				mouse_captured = true
+				if _box_select_dragging:
+					_box_select_dragging = false
+					if cam and cam.ui:
+						cam.ui.hide_box_select()
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 0)
@@ -195,6 +220,38 @@ func _center_mouse():
 	var viewport_size = get_viewport().get_visible_rect().size
 	var center = viewport_size / 2
 	Input.warp_mouse(center)
+
+func _rect_from_points(a: Vector2, b: Vector2) -> Rect2:
+	return Rect2(Vector2(min(a.x, b.x), min(a.y, b.y)), Vector2(abs(a.x - b.x), abs(a.y - b.y)))
+
+# Screen-space box-select over airborne squadrons of this ship's aviation
+# controller, overwriting shell_indices wholesale rather than toggling one
+# index at a time like the tap/button selection (WeaponController.select_shell).
+func _box_select_squadrons(rect: Rect2) -> void:
+	if not ship.aviation_controller:
+		return
+	var aviation: AviationController = ship.aviation_controller
+	var selected: Array[int] = []
+	for i in range(aviation.squadrons.size()):
+		var squadron: Squadron = aviation.squadrons[i]
+		if not squadron.active or squadron.ground_marker == null:
+			continue
+		if _world_point_in_screen_rect(squadron.ground_marker.global_position, rect):
+			selected.append(i)
+	if selected.size() > 0:
+		current_weapon_controller = aviation
+	aviation.set_shell_indices.rpc_id(1, selected)
+
+func _world_point_in_screen_rect(world_pos: Vector3, rect: Rect2) -> bool:
+	if not cam:
+		return false
+	# Reject points behind the camera - unproject_position would otherwise
+	# still return an (incorrect) on-screen-looking point for them.
+	var camera_direction := -cam.global_transform.basis.z.normalized()
+	var to_position := (world_pos - cam.global_position).normalized()
+	if camera_direction.dot(to_position) <= 0:
+		return false
+	return rect.has_point(cam.unproject_position(world_pos))
 
 func select_target_at_mouse_position(mouse_pos: Vector2) -> void:
 	"""Select a ship target at the given mouse position (client-side selection)"""

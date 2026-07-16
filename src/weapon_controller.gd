@@ -23,6 +23,9 @@ var switch_progresss: Array[ProgressBar] = []
 var held_dur: Array[float] = []
 
 var shell_index: int = 1
+var multi_select: bool = false
+# used with multi_select
+var shell_indices: Array[int] = []
 
 @export var button_names: Array[String] = []
 var tool_tips: Array[Callable] = []
@@ -45,8 +48,6 @@ func _input(event: InputEvent) -> void:
 					if held_dur[i] < 0.2 and held_dur[i] > 0.0: # pressed for less than 0.2 seconds, treat as a tap
 						_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 						select_shell.rpc_id(1, i)
-					# if Time.get_ticks_msec() / 1000.0 - pressed_time < 0.2:
-					# 	_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 					held[i] = false
 					switched_shell = false
 
@@ -99,7 +100,7 @@ func update_weapon_ui(delta: float) -> void:
 			# 	_ship.get_node("Modules/PlayerControl").current_weapon_controller = self
 			# 	select_shell.rpc_id(1, i)
 			held_dur[i] = 0.0
-			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and shell_index == i:
+			if _ship.get_node("Modules/PlayerControl").current_weapon_controller == self and (shell_index == i if !multi_select else i in shell_indices):
 				button.button_pressed = true
 			else:
 				button.button_pressed = false
@@ -118,6 +119,11 @@ func select_shell(_shell_index: int) -> void:
 	if !(_Utils.authority()):
 		return
 	shell_index = clamp(_shell_index, 0, button_names.size() - 1)
+	if multi_select:
+		if shell_index in shell_indices:
+			shell_indices.erase(shell_index)
+		else:
+			shell_indices.append(shell_index)
 	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), shell_index)
 
 
@@ -126,55 +132,27 @@ func select_shell(_shell_index: int) -> void:
 @rpc("authority", "call_remote", "reliable")
 func select_shell_c(_shell_index: int) -> void:
 	shell_index = _shell_index
+	if multi_select:
+		if shell_index in shell_indices:
+			shell_indices.erase(shell_index)
+		else:
+			shell_indices.append(shell_index)
 
-# func get_weapon_ui(offset: int) -> Array[Button]:
-# 	print("weapon ui not setup")
-# 	return []
-# # Called when the node enters the scene tree for the first time.
-# func _ready() -> void:
-# 	pass # Replace with function body.
+# Replaces the whole multi-select set at once instead of toggling a single
+# index (select_shell above) - used by box-select drag selection.
+@rpc("any_peer", "call_remote", "reliable")
+func set_shell_indices(indices: Array[int]) -> void:
+	if !(_Utils.authority()):
+		return
+	if not multi_select:
+		return
+	var clamped: Array[int] = []
+	for idx in indices:
+		if idx >= 0 and idx < button_names.size() and idx not in clamped:
+			clamped.append(idx)
+	shell_indices = clamped
+	set_shell_indices_c.rpc_id(multiplayer.get_remote_sender_id(), clamped)
 
-
-# func update_weapon_ui(delta: float) -> bool:
-# 	var switched = false
-# 	for i in range(buttons.size()):
-# 		var button = buttons[i]
-# 		if button and button == curr_button:
-# 			button.button_pressed = _ship.get_node("Modules/PlayerControl").current_weapon_controller == self
-# 		# button.text = "AP" if shell_index == 0 else "HE"
-# 		if select_held:
-# 			held_duration += delta
-# 			button.button_pressed = true
-# 		else:
-# 			held_duration = 0.0
-# 			if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
-# 				button.button_pressed = false
-# 		if switch_progress and not switched_shell:
-# 			switch_progress[i].value = min(held_duration, 1.0)
-# 		if held_duration > 1.0 and not switched_shell:
-# 			# select_shell.rpc_id(1, 1 - shell_index)
-# 			switched = true
-# 			switched_shell = true
-# 			held_duration = 0.0
-# 	return switched
-# 	# for button in buttons:
-# 	# 	if button and button == curr_button:
-# 	# 		button.button_pressed = _ship.get_node("Modules/PlayerControl").current_weapon_controller == self
-# 	# 	button.text = "AP" if shell_index == 0 else "HE"
-# 	# 	if select_held:
-# 	# 		held_duration += delta
-# 	# 		button.button_pressed = true
-# 	# 	else:
-# 	# 		held_duration = 0.0
-# 	# 		if _ship.get_node("Modules/PlayerControl").current_weapon_controller != self:
-# 	# 			button.button_pressed = false
-# 	# 	if switch_progress and not switched_shell:
-# 	# 		switch_progress.value = min(held_duration, 1.0)
-# 	# 	if held_duration > 1.0 and not switched_shell:
-# 	# 		select_shell.rpc_id(1, 1 - shell_index)
-# 	# 		switched_shell = true
-# 	# 		held_duration = 0.0
-
-# # Called every frame. 'delta' is the elapsed time since the previous frame.
-# func _process(delta: float) -> void:
-# 	pass
+@rpc("authority", "call_remote", "reliable")
+func set_shell_indices_c(indices: Array[int]) -> void:
+	shell_indices = indices

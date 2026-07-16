@@ -54,3 +54,15 @@ func update_preview(meshes: Array[MeshInstance3D], do_show: bool, drop_center: V
 		var base := Vector3(base_xz.x, Aircraft.PREVIEW_HEIGHT, base_xz.y)
 		Aircraft.position_flat_rect(dead, base + fwd3 * (arming * 0.5), dir, TORPEDO_PREVIEW_WIDTH, arming)
 		Aircraft.position_flat_rect(live, base + fwd3 * (arming + live_len * 0.5), dir, TORPEDO_PREVIEW_WIDTH, live_len)
+
+func process_attack_point(point: Vector2, _direction: Vector2) -> Vector2:
+	var dir := _direction
+	if dir.length_squared() < 0.0001:
+		dir = Vector2(0.0, 1.0)
+	else:
+		dir = dir.normalized()
+	var arming: float = torpedo_params.arming_distance
+	var live_len: float = maxf(torpedo_range - arming, 0.0)
+	# var fwd3 := Vector3(dir.x, 0.0, dir.y)
+	var drop_center := point - dir * (arming + live_len * 0.1)
+	return drop_center

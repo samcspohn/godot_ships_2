@@ -22,6 +22,7 @@ var _preview_holding: bool = false
 var game_world: Node3D
 
 func _ready() -> void:
+	multi_select = true
 	_ship = get_parent().get_parent() as Ship
 	game_world = _ship.get_parent() as Node3D
 	# instantiate squadrons
@@ -70,10 +71,14 @@ func _physics_process(delta: float) -> void:
 		if squadron.all_finished_attack() or squadron.all_dead():
 			recall_squadron(i)
 
-	if attack_point != null and not fire_held and active_squadrons.has(shell_index): # release ordnance at drop point
-		var squadron := squadrons[shell_index]
-		aim_direction = _drag_direction(attack_point, aim_point, _direction_to(_ship.global_position, attack_point))
-		squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
+	assert(multi_select)
+	if attack_point != null and not fire_held: # release ordnance at drop point
+		for sh_index in shell_indices:
+			if sh_index >= squadrons.size():
+				continue
+			var squadron := squadrons[sh_index]
+			aim_direction = _drag_direction(attack_point, aim_point, _direction_to(_ship.global_position, attack_point))
+			squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
 		attack_point = null
 		aim_direction = Vector2.ZERO
 
@@ -87,7 +92,7 @@ func _process(delta: float) -> void:
 	for i in range(squadrons.size()):
 		var squadron = squadrons[i]
 		# always show drop-pattern preview allowing for drop point updates
-		_update_drop_preview(squadron, is_local_selection and i == shell_index)
+		_update_drop_preview(squadron, is_local_selection and i in shell_indices)
 		# show committed drop-pattern
 		if squadron.attack_point != null:
 			squadron.update_committed_attack_preview()
@@ -215,10 +220,12 @@ func fire_next_ready() -> void:
 # instead of replacing the current waypoint.
 @rpc("any_peer", "call_remote")
 func set_waypoint_at_aim(append: bool) -> void:
-	if not active_squadrons.has(shell_index):
-		launch_squadron(shell_index)
-
-	squadrons[shell_index].set_waypoint(Vector2(aim_point.x, aim_point.z), append)
+	for sh_index in shell_indices:
+		if sh_index >= squadrons.size():
+			continue
+		if not active_squadrons.has(sh_index):
+			launch_squadron(sh_index)
+		squadrons[sh_index].set_waypoint(Vector2(aim_point.x, aim_point.z), append)
 
 @rpc("any_peer", "call_remote")
 func set_fire_held(held: bool) -> void:

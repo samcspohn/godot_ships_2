@@ -38,6 +38,9 @@ var target_lock_enabled: bool = false : set = set_target_lock_enabled
 
 # UI node references - these will be populated from the scene
 @onready var crosshair_container: Control = $MainContainer/CrosshairContainer
+var _box_select_overlay: Control
+var _box_select_rect: Rect2 = Rect2()
+var _box_select_visible: bool = false
 @onready var crosshair_center: Control = $MainContainer/CrosshairContainer/CrosshairCenter
 @onready var time_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/TimeLabel
 @onready var distance_label: Label = $MainContainer/CrosshairContainer/TargetInfoContainer/TargetInfo/DistanceLabel
@@ -333,6 +336,18 @@ func _ready():
 
 	# Connect crosshair drawing
 	crosshair_container.connect("draw", _on_crosshair_container_draw)
+
+	# Full-viewport overlay for the aviation squadron box-select rectangle.
+	# Built in code (not the .tscn) so its rect always matches the viewport
+	# exactly - as a direct child of this CanvasLayer, PRESET_FULL_RECT sizes
+	# it against the viewport rather than a parent Control.
+	_box_select_overlay = Control.new()
+	_box_select_overlay.name = "BoxSelectOverlay"
+	_box_select_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_box_select_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_box_select_overlay.z_index = 5
+	_box_select_overlay.draw.connect(_on_box_select_overlay_draw)
+	add_child(_box_select_overlay)
 
 	# Setup hit/stat counters component
 	_setup_hit_stat_counters()
@@ -931,6 +946,22 @@ func _update_camera_angle_display():
 
 func _on_crosshair_container_draw():
 	pass  # lock-on indicator is now shown as a world-space icon above the ship UI
+
+func update_box_select(rect: Rect2) -> void:
+	_box_select_rect = rect
+	_box_select_visible = true
+	_box_select_overlay.queue_redraw()
+
+func hide_box_select() -> void:
+	if _box_select_visible:
+		_box_select_visible = false
+		_box_select_overlay.queue_redraw()
+
+func _on_box_select_overlay_draw() -> void:
+	if not _box_select_visible:
+		return
+	_box_select_overlay.draw_rect(_box_select_rect, Color(0.4, 0.9, 1.0, 0.15), true)
+	_box_select_overlay.draw_rect(_box_select_rect, Color(0.4, 0.9, 1.0, 0.9), false, 1.5)
 
 func setup_ship_ui(ship):
 	if ship == camera_controller._ship or ship in ship_ui_elements:

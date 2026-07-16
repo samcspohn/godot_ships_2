@@ -241,3 +241,6 @@ static func attack_lateral_offset(i: int, count: int, spacing: float, direction:
 	var local := attack_offset(i, count, spacing)
 	var right := Vector2(-direction.y, direction.x)
 	return right * local.x
+
+func process_attack_point(point: Vector2, direction: Vector2) -> Vector2:
+	return point

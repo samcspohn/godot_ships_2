@@ -310,7 +310,8 @@ func _apply_squadron_preview(meshes: Array[MeshInstance3D], show: bool, drop_cen
 		aircraft[0].update_preview(meshes, false, Vector2.ZERO, Vector2.ZERO, 0.0)
 		return
 	var p = params.p() as AircraftParams
-	aircraft[0].update_preview(meshes, true, drop_center, direction, p.formation_spacing)
+	var drop_point = aircraft[0].process_attack_point(drop_center, direction)
+	aircraft[0].update_preview(meshes, true, drop_point, direction, p.formation_spacing)
 
 # Local, pre-commit reticle preview - only ever driven by AviationController
 # for whichever squadron is selected by the local player (hidden for every
@@ -460,7 +461,7 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	holding_attack = false
 	in_attack_run = false
 	passed_entry_point = false
-	attack_point = point
+	attack_point = aircraft[0].process_attack_point(point, direction)
 	# add append flag
 	waypoints.clear()
 
