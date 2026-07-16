@@ -49,21 +49,29 @@ func _physics_process(_delta: float) -> void:
 	_aa_query.transform = Transform3D(Basis.IDENTITY, Vector3(ship_pos.x, CYLINDER_CENTER_Y, ship_pos.z))
 
 	var space_state := _ship.get_world_3d().direct_space_state
-	for result in space_state.intersect_shape(_aa_query, 64):
-		var hitbox: Area3D = result.get("collider")
-		if hitbox == null:
-			continue
-		var aircraft := hitbox.get_meta("aircraft", null) as Aircraft
-		if aircraft == null or not is_instance_valid(aircraft) or aircraft.dead:
-			continue
-		if aircraft._ship == null or aircraft._ship.team == null or aircraft._ship.team.team_id == _ship.team.team_id:
-			continue
+	# collider is the plane's Area3D hitbox; the Aircraft itself rides on it as
+	# metadata (see Aircraft._setup_hitbox)
+	var planes: Array = space_state.intersect_shape(_aa_query, 64).map(func(result):
+		return result.get("collider").get_meta("aircraft", null) as Aircraft
+	).filter(func(a: Aircraft):
+		return a != null and is_instance_valid(a) and not a.dead \
+			and a._ship != null and a._ship.team != null \
+			and a._ship.team.team_id != _ship.team.team_id
+	)
+
+	# apply full dps to one random plane in range; planes masked by terrain
+	# are dropped from the pool and another is drawn
+	while planes.size() > 0:
+		var i := randi() % planes.size()
+		var aircraft: Aircraft = planes[i]
 
 		# line-of-sight: fire from deck height so an island between ship and
 		# plane blocks the damage
 		_los_ray.from = ship_pos + Vector3(0.0, _ship.movement_controller.ship_draft * 0.5, 0.0)
 		_los_ray.to = aircraft.global_position
 		if not space_state.intersect_ray(_los_ray).is_empty():
+			planes.remove_at(i)
 			continue
 
 		aircraft.apply_aa_damage(dps)
+		break

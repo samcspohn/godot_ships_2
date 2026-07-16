@@ -873,7 +873,7 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
 
 func handle_air_spot(spotter: Ship, spotted: Ship, dist: float):
-	if spotted.concealment.get_concealment() > dist:
+	if (spotted.concealment.params.p() as ConcealmentParams).air_radius > dist:
 		spotted.visible_to_enemy = true
 		spotted.det_los = true
 		if closest_enemies_that_can_see.has(spotted):
