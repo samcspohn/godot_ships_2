@@ -257,7 +257,8 @@ func _process(delta):
 	var cam_to_ship_normalized = cam_to_ship.normalized()
 	var cam_to_ship_distance = cam_to_ship.length()
 
-	audio_listener.global_position = follow_ship.global_transform.origin + cam_to_ship_normalized * clamp(cam_to_ship_distance * 0.6, 80.0, 350.0)
+	# audio_listener.global_position = follow_ship.global_transform.origin + cam_to_ship_normalized * clamp(cam_to_ship_distance * 0.6, 80.0, 350.0)
+	audio_listener.global_position = global_position
 
 	# Apply accumulated zoom smoothly
 	if abs(zoom_accumulator) > 0.01:

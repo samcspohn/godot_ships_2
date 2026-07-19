@@ -17,7 +17,7 @@ func _init() -> void:
 	cost = 3
 	flavor_text = "Battle experience improves damage control readiness."
 	tooltip_stats = [
-		{"stat": "Per 100% max HP Potential Damage",  "value": ""},
+		{"stat": "Per 10k Potential Damage per Tier",  "value": ""},
 		{"stat": "  DC/RP Cooldown",          "value": "-%.1f%% (stacking)" % (COOLDOWN_PER_TIER * 100), "positive": true},
 		{"stat": "  DC/RP Duration",          "value": "+%.1f%% (stacking)" % (DURATION_PER_TIER * 100), "positive": true},
 		# {"stat": "Max Tiers",                 "value": "20 (-10% cooldown, +10% duration)"},
@@ -42,7 +42,7 @@ func apply(ship: Ship) -> void:
 	ship.add_dynamic_mod(_a)
 
 func _proc(_delta: float) -> void:
-	var new_tiers := int(_ship.stats.potential_damage / _ship.health_controller.max_hp)
+	var new_tiers := int(_ship.stats.potential_damage / (_ship.tier * 10000.0))
 	if new_tiers != _applied_tiers:
 		_applied_tiers = new_tiers
 		# _ship.update_dynamic_mods = true
@@ -95,9 +95,9 @@ func update_ui(container: Control) -> void:
 func init_hover(container: Control, ht) -> void:
 	ht.attach(container, func() -> String:
 		var cool_pct := (1.0 - pow(1.0 - COOLDOWN_PER_TIER, _applied_tiers)) * 100.0
-		# var dur_pct  := (pow(1.0 + DURATION_PER_TIER, _applied_tiers) - 1.0) * 100.0
-		return "Advanced Survivability Training\nStacks: %d\nDC/RP Cooldown: -%.1f%%" \
-			% [_applied_tiers, cool_pct]
+		var dur_pct  := (pow(1.0 + DURATION_PER_TIER, _applied_tiers) - 1.0) * 100.0
+		return "Advanced Survivability Training\nStacks: %d\nDC/RP Cooldown: -%.1f%%\nDC/RP Duration: +%.1f%%" \
+			% [_applied_tiers, cool_pct, dur_pct]
 	)
 
 func to_bytes() -> PackedByteArray:

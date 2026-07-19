@@ -991,7 +991,11 @@ void _ProjectileManager::fire_bullet_client(const Vector3 &pos, const Vector3 &v
 			if (shell.is_valid()) {
 				size = shell->get("size");
 			}
-			hit_effects->call("muzzle_blast_effect", pos, basis, size * size);
+			double caliber = 100.0;
+            if (shell.is_valid()) {
+                caliber = shell->get("caliber");
+            }
+			hit_effects->call("muzzle_blast_effect", pos, basis, caliber);
 		}
 
 		// // Play gun firing sound via SoundEffectManager

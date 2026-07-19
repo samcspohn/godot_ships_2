@@ -62,6 +62,8 @@ func _refresh_shape_radius() -> void:
 # within range of this ship, then raycast to each - aircraft behind terrain
 # (e.g. below an island ridgeline) are safe from AA fire.
 func _physics_process(_delta: float) -> void:
+	if !_ship.is_alive():
+		return
 	_refresh_shape_radius()
 
 	if Engine.get_physics_frames() % Engine.physics_ticks_per_second != _ship.id % Engine.physics_ticks_per_second:

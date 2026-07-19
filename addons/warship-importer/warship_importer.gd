@@ -1,6 +1,9 @@
 @tool
 extends EditorPlugin
 
+const GUN_SCRIPT_PATH := "res://src/artillary/Guns/Gun.gd"
+const TORPEDO_SCRIPT_PATH := "res://src/torpedo/torpedo_launcher.gd"
+
 var button: Button
 
 func _enter_tree() -> void:
@@ -53,42 +56,86 @@ func process_turret_mounts(node: Node) -> int:
 
 	return count + 1
 
-## Creates res://turrets/<turret_name>.tscn as an inherited scene of the GLB
-## at res://turrets/glb/<turret_name>.glb with Gun.gd attached to the root.
+## Creates res://assets/turrets/<turret_name>.tscn as an inherited scene of
+## the GLB at res://assets/turrets/glb/<turret_name>.glb, ensuring the GLB
+## imports with the matching turret script attached to its root.
 ## Returns the saved .tscn path, or "" if no GLB was found.
 func create_scene_from_glb(turret_name: String) -> String:
 	var glb_path := "res://assets/turrets/glb/%s.glb" % turret_name
 	if not ResourceLoader.exists(glb_path):
 		return ""
 
-	var glb_scene: PackedScene = load(glb_path)
-	if glb_scene == null:
-		printerr("Failed to load GLB: ", glb_path)
+	if not ensure_turret_root_import(glb_path, turret_script_path(turret_name)):
 		return ""
 
-	# GEN_EDIT_STATE_INSTANCE sets the root's scene_file_path to the GLB so pack()
-	# emits `instance=ExtResource(...)` and keeps the link live. MAIN_INHERITED
-	# leaves scene_file_path empty, causing pack() to embed the GLB node tree.
-	var root := glb_scene.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
-	root.name = turret_name
+	# An inherited scene cannot be built with PackedScene.pack() from script:
+	# the root's scene_inherited_state (what makes the saver emit
+	# `instance=ExtResource(<glb>)`) is editor-internal and not exposed, and a
+	# root's scene_file_path is ignored, so pack() always embeds a copy of the
+	# GLB node tree. Write the .tscn text directly so the GLB stays referenced
+	# and reimporting it updates the turret scene.
+	var glb_uid := ResourceLoader.get_resource_uid(glb_path)
+	var glb_ref := ResourceUID.id_to_text(glb_uid) if glb_uid != ResourceUID.INVALID_ID else glb_path
+	var glb_uid_attr := (' uid="%s"' % glb_ref) if glb_uid != ResourceUID.INVALID_ID else ""
+	var scene_uid := ResourceUID.id_to_text(ResourceUID.create_id())
 
-	var gun_script: Script = load("res://src/artillary/Guns/Gun.gd")
-	root.set_script(gun_script)
-	root.set("glb_path", glb_path)
-
-	var new_scene := PackedScene.new()
-	new_scene.pack(root)
-	root.queue_free()
+	var text := "\n".join([
+		'[gd_scene format=3 uid="%s"]' % scene_uid,
+		"",
+		'[ext_resource type="PackedScene"%s path="%s" id="1_glb"]' % [glb_uid_attr, glb_path],
+		"",
+		'[node name="%s" instance=ExtResource("1_glb")]' % turret_name,
+		'glb_path = "%s"' % glb_ref,
+		"",
+	])
 
 	var tscn_path := "res://assets/turrets/%s.tscn" % turret_name
-	var err := ResourceSaver.save(new_scene, tscn_path)
-	if err != OK:
-		printerr("Failed to save turret scene: ", tscn_path, " (error %d)" % err)
+	var file := FileAccess.open(tscn_path, FileAccess.WRITE)
+	if file == null:
+		printerr("Failed to write turret scene: ", tscn_path, " (error %d)" % FileAccess.get_open_error())
 		return ""
+	file.store_string(text)
+	file.close()
 
-	get_editor_interface().get_resource_filesystem().scan()
+	get_editor_interface().get_resource_filesystem().update_file(tscn_path)
 	print("Created turret scene from GLB: ", tscn_path)
 	return tscn_path
+
+## Picks the turret script for a GLB from its naming convention: torpedo
+## launchers carry a tube-count suffix (e.g. IJN_610mm_5t), guns a barrel
+## count (e.g. GER_800mm_2b_rf).
+func turret_script_path(turret_name: String) -> String:
+	var regex := RegEx.new()
+	regex.compile("_\\d+t(_|$)")
+	if regex.search(turret_name) != null:
+		return TORPEDO_SCRIPT_PATH
+	return GUN_SCRIPT_PATH
+
+## Sets the GLB's scene import options so its root node imports with the
+## turret script attached (same as picking it as Root Type in the Import
+## dock), then reimports it. Scenes inheriting the GLB are then turrets
+## without needing a script override. A GLB whose import already has a root
+## type or script configured is left untouched.
+func ensure_turret_root_import(glb_path: String, script_path: String) -> bool:
+	var import_path := glb_path + ".import"
+	var config := ConfigFile.new()
+	if config.load(import_path) != OK:
+		printerr("Failed to read import settings: ", import_path)
+		return false
+
+	if config.get_value("params", "nodes/root_script", null) != null:
+		return true
+	if config.get_value("params", "nodes/root_type", "") != "":
+		return true
+
+	config.set_value("params", "nodes/root_type", script_path)
+	config.set_value("params", "nodes/root_script", load(script_path))
+	if config.save(import_path) != OK:
+		printerr("Failed to write import settings: ", import_path)
+		return false
+
+	get_editor_interface().get_resource_filesystem().reimport_files(PackedStringArray([glb_path]))
+	return true
 
 ## Resolves the turret .tscn to instance for a mount.
 ## Order: explicit metadata override, exact-name scene, then the same name

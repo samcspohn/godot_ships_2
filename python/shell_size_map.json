@@ -1,0 +1,83 @@
+{
+  "res://assets/Ships/Bismarck/Bismarck3.tscn": [
+    3.8,
+    3.8
+  ],
+  "res://assets/Ships/DesMoines/127mm_gunparams.tres": [
+    2.0,
+    2.0
+  ],
+  "res://assets/Ships/DesMoines/DesMoines.tscn": [
+    2.5,
+    2.5
+  ],
+  "res://assets/Ships/H42/GER_128dp.tres": [
+    2.0,
+    2.0
+  ],
+  "res://assets/Ships/H42/H42.tscn": [
+    4.5,
+    4.5
+  ],
+  "res://assets/Ships/H44/H44.2.tscn": [
+    5.0,
+    5.0,
+    2.25,
+    2.25
+  ],
+  "res://assets/Ships/H44/H44.tscn": [
+    5.0,
+    5.0,
+    2.25,
+    2.25
+  ],
+  "res://assets/Ships/H45/H45.tscn": [
+    8.0,
+    8.0,
+    2.7,
+    2.7,
+    2.0,
+    2.0
+  ],
+  "res://assets/Ships/Montana/Montana.tscn": [
+    4.06,
+    4.06
+  ],
+  "res://assets/Ships/SP1/SP1.tscn": [
+    2.25,
+    2.25,
+    1.5,
+    1.5
+  ],
+  "res://assets/Ships/Shimakaze/Shimakaze.tscn": [
+    2.0,
+    2.0
+  ],
+  "res://assets/Ships/Yamato/Yamato.tscn": [
+    4.6,
+    4.6,
+    2.0,
+    2.0,
+    1.6
+  ],
+  "res://assets/turrets/Shells/IJN_127mm_type89_HE.tres": [
+    1.6
+  ],
+  "res://src/artillary/Guns/BB_gun1.tres": [
+    3.8
+  ],
+  "res://src/artillary/Guns/sec_gun1.tres": [
+    2.25,
+    2.25
+  ],
+  "res://src/artillary/Guns/sec_gun2.tres": [
+    1.75,
+    1.75
+  ],
+  "res://src/artillary/Shells/BB_shell.tres": [
+    3.8
+  ],
+  "res://src/aviation/dive_bomber.tscn": [
+    3.0
+  ]
+}

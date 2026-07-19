@@ -310,6 +310,9 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 		var mv = ship.get_node_or_null("Modules/MovementController")
 		if mv != null:
 			mv.set_physics_process(false)
+		var aaa = ship.get_node_or_null("Modules/AAAController")
+		if aaa != null:
+			aaa.set_physics_process(false)
 		ship._disable_weapons()
 		WaveManager.unregister_ship(ship)
 		WaveManager.add_muzzle_blast(ship.global_position,ship.movement_controller.ship_length * 0.6)

@@ -42,6 +42,8 @@ func sparks_effect(pos: Vector3, size: float, normal: Vector3) -> void:
 func muzzle_blast_effect(pos: Vector3, basis: Basis, size: float) -> void:
 	if muzzle_blast_template == null:
 		return
+	size *= 0.02
+	size = pow(size, 1.4)
 	var direction = (-basis.z).normalized()
 	muzzle_blast_template.emit(pos, direction, size, MUZZLE_BLAST_PARTICLES, 2.0 / sqrt(size))
 	var offset = direction.normalized() * size * 2.0

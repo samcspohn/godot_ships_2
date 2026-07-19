@@ -291,7 +291,7 @@ func _emit_muzzle_effects(event: Dictionary) -> void:
 		var dir: Vector3 = vel.normalized()
 		var up_ref: Vector3 = Vector3.FORWARD if absf(dir.dot(Vector3.UP)) > 0.99 else Vector3.UP
 		var fire_basis: Basis = Basis.looking_at(dir, up_ref)
-		HitEffects.muzzle_blast_effect(muzzle_pos, fire_basis, shell_size * shell_size)
+		HitEffects.muzzle_blast_effect(muzzle_pos, fire_basis, shell_size )
 
 	var wake_size: float = shell_size ** 2 * 2.0
 	WaveManager.add_muzzle_blast(Vector3(muzzle_pos.x, 0.0, muzzle_pos.z), wake_size * 0.5)

@@ -13,9 +13,9 @@ dest_files=["res://.godot/imported/GER_800mm_2b_rf.glb-55430934bedc53a6757dd1446
 
 [params]
 
-nodes/root_type=""
+nodes/root_type="res://src/artillary/Guns/Gun.gd"
 nodes/root_name=""
-nodes/root_script=null
+nodes/root_script=Resource("uid://xc16x5l6kqxq", "res://src/artillary/Guns/Gun.gd")
 nodes/apply_root_scale=true
 nodes/root_scale=1.0
 nodes/import_as_skeleton_bones=false
