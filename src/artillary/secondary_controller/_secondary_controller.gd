@@ -5,7 +5,7 @@ class_name SecondaryController_
 # var shell_index: int = 1 # default HE
 # var _ship: Ship
 var target: Ship
-var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
+var sequential_fire_delay: float = 0.4 # Delay between sequential gun fires
 var sequential_fire_timer: float = 0.0 # Timer for sequential firing
 
 # ui elements

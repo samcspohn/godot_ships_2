@@ -15,9 +15,11 @@
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="9_uq1it"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="10_566e5"]
 [ext_resource type="PackedScene" uid="uid://d0y6pel4m754v" path="res://assets/turrets/IJN_155mm_3b_3rd_yr.tscn" id="10_rniut"]
+[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="10_u3en7"]
 [ext_resource type="Resource" uid="uid://cfsrifmgvvm6k" path="res://assets/turrets/Shells/IJN_127mm_type89_HE.tres" id="10_uql7x"]
 [ext_resource type="PackedScene" uid="uid://bvn0hxpwoxai0" path="res://assets/turrets/IJN_127mm_2b_type89.tscn" id="11_566e5"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="12_g21k6"]
+[ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="12_kv3r5"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="12_ssrv5"]
 [ext_resource type="Texture2D" uid="uid://dqy7rro8nk8x4" path="res://icons/auto_repair_active.svg" id="13_0yy7r"]
 [ext_resource type="Texture2D" uid="uid://u6xx6jrcw23r" path="res://icons/health-normal (1).png" id="14_g7l6b"]
@@ -103,8 +105,6 @@ elevation_speed = 8.0
 shell1 = SubResource("Resource_pue0t")
 shell2 = SubResource("Resource_buwu7")
 grouping = 2.0
-h_spread = 0.008
-v_spread = 0.008
 reload_time = 29.0
 traverse_speed = 2.0
 _range = 21000.0
@@ -144,9 +144,9 @@ elevation_speed = 10.0
 shell1 = SubResource("Resource_uq1it")
 shell2 = SubResource("Resource_mlkym")
 grouping = 1.0
-h_spread = 0.025
-v_spread = 0.0175
-max_dispersion = 90.0
+v_dispersion_ = ExtResource("12_kv3r5")
+max_h_disp = 90.0
+max_v_disp = 63.0
 reload_time = 11.0
 traverse_speed = 20.0
 _range = 5000.0
@@ -170,9 +170,9 @@ elevation_speed = 10.0
 shell1 = SubResource("Resource_5nevt")
 shell2 = ExtResource("10_uql7x")
 grouping = 1.0
-h_spread = 0.07
-v_spread = 0.049
-max_dispersion = 130.0
+v_dispersion_ = ExtResource("12_kv3r5")
+max_h_disp = 130.0
+max_v_disp = 91.0
 reload_time = 6.0
 traverse_speed = 50.0
 _range = 4600.0
@@ -264,16 +264,16 @@ params = SubResource("Resource_k4jny")
 guns = [NodePath("../../../TurretMount_IJN_127mm_2b_type89/IJN_127mm_2b_type89"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_001/IJN_127mm_2b_type89_001"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_002/IJN_127mm_2b_type89_002"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_003/IJN_127mm_2b_type89_003"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_004/IJN_127mm_2b_type89_004"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_005/IJN_127mm_2b_type89_005"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_006/IJN_127mm_2b_type89_006"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_007/IJN_127mm_2b_type89_007"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_008/IJN_127mm_2b_type89_008"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_009/IJN_127mm_2b_type89_009"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_010/IJN_127mm_2b_type89_010"), NodePath("../../../TurretMount_IJN_127mm_2b_type89_011/IJN_127mm_2b_type89_011")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
+[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
 params = SubResource("Resource_mvym")
 
-[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("12_g21k6")]([SubResource("Resource_edgkl"), SubResource("Resource_ssrv5")])
 
-[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("17_svlgc")]([null, null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="8" unique_id=384504544]
+[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
 fparams = ExtResource("9_rniut")
 rparams = SubResource("Resource_g21k6")
 
@@ -289,7 +289,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.515571, 20.203222)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.8252096, 93.506035)
 
-[node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
+[node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
 dot_params = ExtResource("22_svlgc")
 rparams = SubResource("Resource_yhqtv")
 

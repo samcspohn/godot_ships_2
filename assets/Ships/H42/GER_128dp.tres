@@ -3,6 +3,7 @@
 [ext_resource type="Curve" uid="uid://m234hst2eqo6" path="res://src/artillary/default_sec_disp.tres" id="1_45qpm"]
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="2_qcafr"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="3_baugt"]
+[ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="4_qcafr"]
 
 [sub_resource type="Resource" id="Resource_fu2p2"]
 script = ExtResource("3_baugt")
@@ -36,10 +37,10 @@ elevation_speed = 50.0
 shell1 = SubResource("Resource_fu2p2")
 shell2 = SubResource("Resource_wrvf5")
 grouping = 1.0
-h_spread = 0.055
-v_spread = 0.03
 dispersion_ = ExtResource("1_45qpm")
-max_dispersion = 350.0
+v_dispersion_ = ExtResource("4_qcafr")
+max_h_disp = 350.0
+max_v_disp = 190.9
 reload_time = 4.5
 traverse_speed = 50.0
 _range = 4800.0

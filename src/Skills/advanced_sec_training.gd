@@ -38,11 +38,8 @@ func _a(ship: Ship):
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
 		params.grouping += GROUPING_MOD
-		# params.h_spread *= SPREAD_MOD
-		# params.v_spread *= SPREAD_MOD
-		params.max_dispersion *= SPREAD_MOD
-		# params.h_spread *= 0.90
-		# params.v_spread *= 0.90
+		params.max_h_disp *= SPREAD_MOD
+		params.max_v_disp *= SPREAD_MOD
 
 var num_enemies = 0
 var priority_target: Ship = null

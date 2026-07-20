@@ -226,28 +226,31 @@ func _apply_citadel_guarantee() -> void:
 ##   edge represents. Higher sigma -> shells cluster tighter toward the aim
 ##   point; lower sigma spreads them out. Typical naval values are ~1.5 - 2.1.
 ## _sigma_v = reserved for future per-axis sigma asymmetry; unused for now.
-## h_spread = max horizontal dispersion half-angle in radians (hard ceiling).
-## v_spread = max vertical dispersion half-angle in radians (hard ceiling).
+## h_dispersion_curve / max_h_disp = curve + scale for horizontal dispersion vs. range.
+## v_dispersion_curve / max_v_disp = curve + scale for vertical dispersion vs. range.
+func _sample_dispersion(curve: Curve, t: float, max_disp: float) -> float:
+	if t <= 1.0:
+		return curve.sample(t) * max_disp
+	var slope := curve.get_point_left_tangent(curve.point_count - 1)
+	return (curve.sample(1.0) + slope * (t - 1.0)) * max_disp
+
+
 func calculate_dispersed_launch(
 		aim_point: Vector3,
 		gun_position: Vector3,
 		shell_params: ShellParams,
 		sigma_h: float,
 		_sigma_v: float,
-		h_spread: float,
-		v_spread: float,
 		max_range: float,
-		dispersion_curve: Curve,
-		max_dispersion: float) -> Vector3:
+		h_dispersion_curve: Curve,
+		v_dispersion_curve: Curve,
+		max_h_disp: float,
+		max_v_disp: float) -> Vector3:
 
 	var dist_to_target := (aim_point - gun_position).length()
 	var t := maxf(dist_to_target / max_range, 0.0)
-	var dispersion_m: float
-	if t <= 1.0:
-		dispersion_m = dispersion_curve.sample(t) * max_dispersion
-	else:
-		var slope := dispersion_curve.get_point_left_tangent(dispersion_curve.point_count - 1)
-		dispersion_m = (dispersion_curve.sample(1.0) + slope * (t - 1.0)) * max_dispersion
+	var dispersion_h_m := _sample_dispersion(h_dispersion_curve, t, max_h_disp)
+	var dispersion_v_m := _sample_dispersion(v_dispersion_curve, t, max_v_disp)
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)
@@ -256,8 +259,8 @@ func calculate_dispersed_launch(
 	var v_offset := _v_offsets[_shell_index]
 	_shell_index += 1
 
-	var h_world := h_offset * dispersion_m * 0.5
-	var v_world := v_offset * dispersion_m * (v_spread / h_spread) * 0.5
+	var h_world := h_offset * dispersion_h_m * 0.5
+	var v_world := v_offset * dispersion_v_m * 0.5
 
 	var forward := (aim_point - gun_position).normalized()
 	# Fires straight up/down have no horizontal aim direction to build a

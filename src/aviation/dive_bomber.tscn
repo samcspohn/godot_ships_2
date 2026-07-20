@@ -22,9 +22,8 @@ albedo_color = Color(0.31431594, 0.31431618, 0.31431603, 1)
 [node name="DiveBomber" type="Node3D" unique_id=1779883306]
 script = ExtResource("1_dbomb")
 shell_params = SubResource("Resource_dbshell")
-h_spread = 1.0
-v_spread = 2.5
-max_dispersion = 60.0
+max_h_disp = 60.0
+max_v_disp = 150.0
 max_range = 200.0
 
 [node name="CSGCylinder3D" type="CSGCylinder3D" parent="." unique_id=108552329]

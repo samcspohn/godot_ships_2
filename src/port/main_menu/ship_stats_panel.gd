@@ -113,7 +113,7 @@ func _populate_artillery() -> void:
 		var s1: ShellParams = gp.shell1
 		main_caliber = s1.caliber
 		main_range_km = gp._range / 1000.0
-		base_spread = gp.h_spread
+		base_spread = gp.max_h_disp
 		base_grouping = gp.grouping
 		_artillery.add_stat_row("Guns",     "%d × %d × %.0f mm" % [num_guns, (barrels_total / num_guns) if num_guns > 0 else 0, s1.caliber])
 		_artillery.add_stat_row("Range",    "%.1f km" % (gp._range / 1000.0),   not _eq(gp._range, gb._range))
@@ -174,7 +174,7 @@ func _populate_artillery() -> void:
 	var caliber_score  := main_caliber / 5.0            # 380 mm → 76, 460 mm → 92
 	var range_score    := main_range_km * 5.0           # 20 km → 80, 25 km → 100
 	var sec_score      := sec_total_dpm / 6000.0        # 100k sec DPM → 50
-	var spread_score   := 1 - (base_spread / 0.017 * 0.6 + base_grouping / 1.8 * 0.4)
+	var spread_score   := 1 - (base_spread / 300.0 * 0.6 + base_grouping / 1.8 * 0.4)
 	var rating := main_dpm_score *  0.25 + range_score * 0.25 + caliber_score * 0.20 + sec_score * 0.10 + spread_score * 0.1
 	rating *= 0.9
 	if total_main_dpm > 0.0 or sec_total_dpm > 0.0:

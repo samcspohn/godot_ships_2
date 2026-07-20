@@ -409,10 +409,8 @@ func fire(mod: TargetMod = null) -> void:
 			for m in muzzles:
 				# var dispersed_velocity = get_params().calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), mod)
 				var grouping = get_params().grouping * (mod.grouping if mod else 1.0)
-				var h_spread = get_params().h_spread * (mod.h_spread if mod else 1.0)
-				var v_spread = get_params().v_spread * (mod.v_spread if mod else 1.0)
 				var base_range = get_base_params()._range
-				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, h_spread, v_spread, base_range, get_params().dispersion_, get_params().max_dispersion * (mod.h_spread if mod else 1.0))
+				var dispersed_velocity = dispersion_calculator.calculate_dispersed_launch(_aim_point, muzzles_pos, get_shell(), grouping, grouping, base_range, get_params().dispersion_, get_params().v_dispersion_, get_params().max_h_disp * (mod.h_spread if mod else 1.0), get_params().max_v_disp * (mod.v_spread if mod else 1.0))
 				# var aim = ProjectilePhysicsWithDrag.calculate_launch_vector(m.global_position, _aim_point, get_shell().speed, get_shell().drag)
 				if dispersed_velocity != null:
 					# Guns can't depress below MIN_ELEVATION_ANGLE. If the solution wants a

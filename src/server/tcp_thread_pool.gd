@@ -65,6 +65,7 @@ class ConnectionThread:
 	var peer: StreamPeerTCP
 	var queue: Array[PackedByteArray] = []
 	var mutex: Mutex = Mutex.new()
+	var semaphore: Semaphore = Semaphore.new()
 	var thread: Thread
 	var init: bool = false
 	var id: int = -1
@@ -78,13 +79,13 @@ class ConnectionThread:
 
 	func _run():
 		while not stop_requested and peer and peer.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			semaphore.wait()
 			mutex.lock()
 			while queue.size() > 0:
 				var bytes = queue.pop_front()
 				peer.put_u32(bytes.size())
 				peer.put_data(bytes)
 			mutex.unlock()
-			OS.delay_msec(1)
 		print("Connection closed")
 		mutex.lock()
 		queue.clear()
@@ -98,12 +99,14 @@ class ConnectionThread:
 		mutex.lock()
 		queue.append(data)
 		mutex.unlock()
+		semaphore.post()
 
 	func request_stop():
 		stop_requested = true
 		mutex.lock()
 		queue.clear()
 		mutex.unlock()
+		semaphore.post()
 		if peer and peer.get_status() == StreamPeerTCP.STATUS_CONNECTED:
 			peer.disconnect_from_host()
 
