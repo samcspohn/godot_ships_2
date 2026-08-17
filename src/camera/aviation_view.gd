@@ -10,7 +10,7 @@ var default_fov: float = 40.0
 
 var min_ground_distance: float = 500.0
 
-const aviation_angle_x: float = deg_to_rad(-45.0)
+const aviation_angle_x: float = deg_to_rad(-80.0)
 
 # rot_v/locked_rot_v are kept as genuine angles (same unit every other
 # CameraView uses) so that battle_camera.gd's generic view-switching code
