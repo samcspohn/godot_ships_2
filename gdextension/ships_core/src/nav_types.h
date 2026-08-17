@@ -252,8 +252,8 @@ struct NavTarget {
 
 inline float normalize_angle(float angle) {
 	// Normalize to [-PI, PI]
-	while (angle > Math_PI) angle -= Math_TAU;
-	while (angle < -Math_PI) angle += Math_TAU;
+	while (angle > Math::PI) angle -= Math::TAU;
+	while (angle < -Math::PI) angle += Math::TAU;
 	return angle;
 }
 

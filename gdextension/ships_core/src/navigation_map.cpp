@@ -1989,11 +1989,11 @@ CoverZone NavigationMap::compute_cover_zone_internal(int island_id, Vector2 thre
 	// The "cover" direction is opposite to the threat
 	// We want to find navigable water on the far side of the island from the threat
 	float threat_angle = std::atan2(threat_dir.x, threat_dir.y);  // atan2(x, z) for heading convention
-	float cover_angle = normalize_angle(threat_angle + Math_PI);
+	float cover_angle = normalize_angle(threat_angle + Math::PI);
 
 	// Sweep angles in the hemisphere opposite the threat
 	const int SWEEP_SAMPLES = 36;
-	const float SWEEP_RANGE = Math_PI * 0.8f;  // Sweep 144 degrees (±72° from cover direction)
+	const float SWEEP_RANGE = Math::PI * 0.8f;  // Sweep 144 degrees (±72° from cover direction)
 
 	float best_score = -std::numeric_limits<float>::infinity();
 	float valid_arc_start = cover_angle;
@@ -2092,8 +2092,8 @@ CoverZone NavigationMap::compute_cover_zone_internal(int island_id, Vector2 thre
 
 	// Best heading: perpendicular to threat direction (broadside)
 	// Two options — pick the one closer to the cover direction
-	float broadside1 = normalize_angle(threat_angle + Math_PI * 0.5f);
-	float broadside2 = normalize_angle(threat_angle - Math_PI * 0.5f);
+	float broadside1 = normalize_angle(threat_angle + Math::PI * 0.5f);
+	float broadside2 = normalize_angle(threat_angle - Math::PI * 0.5f);
 
 	// Prefer the broadside heading that keeps the ship roughly facing the threat
 	// (so guns can bear)

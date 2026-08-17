@@ -16,7 +16,7 @@ using namespace godot;
 
 namespace {
 constexpr double INF_DIST = 1.0e300;
-constexpr double DEG_TO_RAD = Math_PI / 180.0;
+constexpr double DEG_TO_RAD = Math::PI / 180.0;
 
 static double clampd(double v, double lo, double hi) {
 	return std::max(lo, std::min(v, hi));

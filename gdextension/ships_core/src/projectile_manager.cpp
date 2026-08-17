@@ -471,7 +471,7 @@ double _ProjectileManager::calculate_penetration_power(const Ref<Resource> &shel
 double _ProjectileManager::calculate_impact_angle(const Vector3 &velocity, const Vector3 &surface_normal) {
 	// Calculate angle between velocity vector and surface normal (returns radians)
 	double angle_rad = velocity.normalized().angle_to(surface_normal);
-	return std::min(angle_rad, Math_PI - angle_rad);
+	return std::min(angle_rad, Math::PI - angle_rad);
 }
 
 int _ProjectileManager::next_pow_of_2(int value) {

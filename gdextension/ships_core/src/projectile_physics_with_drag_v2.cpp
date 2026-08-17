@@ -693,7 +693,7 @@ Array ProjectilePhysicsWithDragV2::calculate_absolute_max_range(const Ref<Resour
 
 	// Binary search for optimal angle
 	double min_angle = 0.0;
-	double max_angle = Math_PI / 2.0 - 0.01;
+	double max_angle = Math::PI / 2.0 - 0.01;
 	double best_range = 0.0;
 	double best_angle = 0.0;
 	double best_time = 0.0;
@@ -743,7 +743,7 @@ double ProjectilePhysicsWithDragV2::calculate_angle_from_max_range(double max_ra
 
 	// Binary search to find angle that gives desired range
 	double min_angle = 0.0;
-	double max_angle = Math_PI / 4.0; // With drag, max range is usually below 45 degrees
+	double max_angle = Math::PI / 4.0; // With drag, max range is usually below 45 degrees
 
 	// First check if the range is achievable
 	Array max_range_result = calculate_absolute_max_range(shell_params);

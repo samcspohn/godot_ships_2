@@ -562,11 +562,11 @@ double ProjectilePhysicsWithDrag::calculate_angle_from_max_range(double max_rang
 	// Start with reasonable bounds: 0 to 45 degrees
 	// (with drag, maximum range is usually below 45 degrees)
 	double min_angle = 0.0;
-	double max_angle = Math_PI / 4.0;
+	double max_angle = Math::PI / 4.0;
 
 	// Find theoretical max range first
 	double max_possible_range = 0.0;
-	double test_angles[] = { Math_PI / 6.0, Math_PI / 5.0, Math_PI / 4.0, Math_PI / 3.0 };
+	double test_angles[] = { Math::PI / 6.0, Math::PI / 5.0, Math::PI / 4.0, Math::PI / 3.0 };
 	for (int i = 0; i < 4; i++) {
 		double test_range = calculate_max_range_from_angle(test_angles[i], shell_params);
 		if (test_range > max_possible_range) {

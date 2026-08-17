@@ -1033,9 +1033,9 @@ void ShipNavigator::update_normal(float delta) {
 				// Inside arrived zone but heading not aligned — scale throttle to
 				// heading error so the rudder has enough authority to turn quickly.
 				// Large misalignment demands more speed; near-aligned ships creep.
-				if (heading_error > static_cast<float>(Math_PI / 4.0))
+				if (heading_error > static_cast<float>(Math::PI / 4.0))
 					desired_magnitude = 3;  // >45°: aggressive turn
-				else if (heading_error > static_cast<float>(Math_PI / 8.0))
+				else if (heading_error > static_cast<float>(Math::PI / 8.0))
 					desired_magnitude = 2;  // >22.5°: moderate turn
 				else
 					desired_magnitude = 1;  // close to aligned: creep
@@ -1169,7 +1169,7 @@ void ShipNavigator::update_normal(float delta) {
 		const bool threat_overrode_forward = (choice.throttle >= 0 && nav_wants_reverse);
 
 		// Scale threshold and override duration by the ship's turnaround time
-		const float turnaround_time = static_cast<float>(Math_PI)
+		const float turnaround_time = static_cast<float>(Math::PI)
 		                              * params.turning_circle_radius
 		                              / std::max(params.max_speed, 1.0f);
 		const float stuck_threshold  = std::max(STUCK_MIN_SECS,  turnaround_time * STUCK_TCR_FACTOR);
@@ -1356,7 +1356,7 @@ void ShipNavigator::update_emergency(float delta) {
 		}
 
 		float escape_heading = std::atan2(escape_dir.x, escape_dir.y);
-		float rudder_heading = rev ? normalize_angle(escape_heading + Math_PI) : escape_heading;
+		float rudder_heading = rev ? normalize_angle(escape_heading + Math::PI) : escape_heading;
 		float candidate_rudder = compute_rudder_to_heading(rudder_heading, rev);
 		int throttle = rev ? -1 : 4;
 
@@ -1421,8 +1421,8 @@ void ShipNavigator::update_emergency(float delta) {
 		bool exit_reverse = to_dest_len < params.turning_circle_radius * 3.0f;
 		int exit_throttle = exit_reverse ? -1 : 2;
 		float wp_heading = std::atan2(to_dest.x, to_dest.y);
-		float exit_rudder = compute_rudder_to_heading(exit_reverse ? normalize_angle(wp_heading + Math_PI) : wp_heading, exit_reverse);
-		float exit_lookahead = 2.0f * Math_PI * params.turning_circle_radius;
+		float exit_rudder = compute_rudder_to_heading(exit_reverse ? normalize_angle(wp_heading + Math::PI) : wp_heading, exit_reverse);
+		float exit_lookahead = 2.0f * Math::PI * params.turning_circle_radius;
 
 		auto arc = predict_arc_to_heading(exit_rudder, exit_throttle, next_wp, exit_lookahead);
 		float arc_time = arc.empty() ? 0.0f : arc.back().time;
@@ -1885,7 +1885,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 	steering_candidates_total = n_candidates;
 
 	// --- Simulation parameters ---
-	const float turn_circumference = 2.0f * static_cast<float>(Math_PI) * params.turning_circle_radius;
+	const float turn_circumference = 2.0f * static_cast<float>(Math::PI) * params.turning_circle_radius;
 	const float sim_lookahead = std::max(turn_circumference, lookahead * 2.0f);
 	const float sim_max_time  = 120.0f;
 	constexpr float heading_align_thresh = 0.087f;  // ~5 degrees
@@ -1976,7 +1976,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			// For reverse candidates the effective heading is bow + π — the direction
 			// the ship will present when it switches back to forward drive.
 			float effective_target_h = (cand_throttle < 0)
-				? normalize_angle(target.heading + static_cast<float>(Math_PI))
+				? normalize_angle(target.heading + static_cast<float>(Math::PI))
 				: target.heading;
 			float nav_score = std::numeric_limits<float>::infinity();
 			for (const auto &pt : arc) {
@@ -1988,7 +1988,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 			if (nav_score == std::numeric_limits<float>::infinity()) {
 				// Did not align within arc — penalise by residual heading error
 				float h_err = std::abs(angle_difference(arc.back().heading, effective_target_h));
-				nav_score = arc.back().time + (h_err / static_cast<float>(Math_PI)) * 60.0f;
+				nav_score = arc.back().time + (h_err / static_cast<float>(Math::PI)) * 60.0f;
 			}
 
 			// Obstacle collision penalty (part of nav cost)
@@ -2087,7 +2087,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 					if (to_hvp.length() > 1.0f) {
 						float desired_h = std::atan2(to_hvp.x, to_hvp.y);
 						float h_err = std::abs(angle_difference(arc.back().heading, desired_h));
-						heading_align_time = arc.back().time + (h_err / static_cast<float>(Math_PI)) * 60.0f;
+						heading_align_time = arc.back().time + (h_err / static_cast<float>(Math::PI)) * 60.0f;
 					} else {
 						heading_align_time = arc.back().time;
 					}
@@ -2104,7 +2104,7 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 						if (pt.position.distance_to(wp_target) < wp_reach_radius) { h_at_wp = pt.heading; break; }
 					}
 					arrival_h = (cand_throttle < 0)
-						? normalize_angle(h_at_wp + static_cast<float>(Math_PI))
+						? normalize_angle(h_at_wp + static_cast<float>(Math::PI))
 						: h_at_wp;
 				} else {
 					Vector2 d_wp = wp_target - arc.back().position;
@@ -2112,8 +2112,8 @@ ShipNavigator::SteeringChoice ShipNavigator::select_best_steering(float desired_
 				}
 				const float exit_err = std::abs(angle_difference(arrival_h, desired_exit_heading));
 				const float fwd_speed = std::max(throttle_to_speed(4), 1.0f);
-				const float half_tc = (static_cast<float>(Math_PI) * params.turning_circle_radius) / fwd_speed;
-				nav_score += (exit_err / static_cast<float>(Math_PI)) * half_tc;
+				const float half_tc = (static_cast<float>(Math::PI) * params.turning_circle_radius) / fwd_speed;
+				nav_score += (exit_err / static_cast<float>(Math::PI)) * half_tc;
 			}
 
 			// Obstacle collision penalty (part of nav cost)
@@ -2585,7 +2585,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 
 	arc.push_back(ArcPoint(sim_pos, sim_heading, sim_speed, 0.0f));
 
-	float turning_circle_perimeter = 2.0f * Math_PI * params.turning_circle_radius;
+	float turning_circle_perimeter = 2.0f * Math::PI * params.turning_circle_radius;
 	float max_arc_distance = std::max(lookahead_distance, turning_circle_perimeter);
 
 	const float base_dt = 0.1f;
@@ -2679,7 +2679,7 @@ std::vector<ArcPoint> ShipNavigator::predict_arc_to_heading(float commanded_rudd
 					// For reverse arcs, check that the bow faces AWAY from the
 					// target (i.e. stern faces the target) rather than bow-toward.
 					if (reverse_alignment)
-						desired_heading = normalize_angle(desired_heading + static_cast<float>(Math_PI));
+						desired_heading = normalize_angle(desired_heading + static_cast<float>(Math::PI));
 					float heading_error = std::abs(angle_difference(sim_heading, desired_heading));
 					if (heading_error < alignment_threshold) {
 						break;
@@ -2867,7 +2867,7 @@ float ShipNavigator::compute_rudder_to_position(Vector2 target_pos, bool reverse
 
 	if (reverse) {
 		// Desired bow direction: pointing away from target so stern faces target.
-		float bow_away = normalize_angle(target_angle + Math_PI);
+		float bow_away = normalize_angle(target_angle + Math::PI);
 		return compute_rudder_to_heading(bow_away, true);
 	}
 
@@ -2887,7 +2887,7 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading, bool rever
 
 	float rudder;
 
-	const float full_rudder_threshold = static_cast<float>(Math_PI / 6.0);
+	const float full_rudder_threshold = static_cast<float>(Math::PI / 6.0);
 
 	if (abs_effective_diff < 0.02f) {
 		rudder = 0.0f;
@@ -2901,7 +2901,7 @@ float ShipNavigator::compute_rudder_to_heading(float desired_heading, bool rever
 		// Use state continuity as tiebreaker: current_rudder → angular
 		// velocity → deterministic default.
 		// Convention: negative rudder = right turn = positive angular_velocity_y.
-		constexpr float near_pi_threshold = static_cast<float>(Math_PI * 0.85);
+		constexpr float near_pi_threshold = static_cast<float>(Math::PI * 0.85);
 		if (abs_effective_diff > near_pi_threshold) {
 			if (std::abs(state.current_rudder) > 0.05f) {
 				rudder = (state.current_rudder < 0.0f) ? -1.0f : 1.0f;
