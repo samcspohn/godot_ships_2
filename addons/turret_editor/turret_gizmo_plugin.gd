@@ -269,10 +269,10 @@ func _commit_handle(gizmo, handle_id, _secondary, restore, cancel):
 func _set_handle(gizmo, handle_id, _secondary, camera, screen_pos):
 	var turret = gizmo.get_node_3d() as Turret
 	if not is_instance_valid(turret):
-		return 0.0
+		return
 	var info = _resolve_handle(turret, handle_id)
 	if info.is_empty():
-		return 0.0
+		return
 
 	var ray_origin = camera.project_ray_origin(screen_pos)
 	var ray_direction = camera.project_ray_normal(screen_pos)
@@ -292,7 +292,7 @@ func _set_handle(gizmo, handle_id, _secondary, camera, screen_pos):
 		display_angle -= TAU
 	var storage_angle = _display_to_storage(display_angle)
 	info["target"].set(info["prop"], storage_angle)
-	return display_angle
+	return
 
 # --- Geometry helpers ---
 

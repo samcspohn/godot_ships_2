@@ -86,10 +86,13 @@ func _ready() -> void:
 		# Capture mouse by default for camera control
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		mouse_captured = true
-	set_controller.call_deferred()
+
+		set_controller.call_deferred()
 
 func set_controller():
 	current_weapon_controller = ship.artillery_controller
+	setup_artillery_camera()
+
 
 
 
@@ -434,28 +437,28 @@ func _physics_process(_delta: float) -> void:
 		_pending_target_selection = null
 
 func _process(dt: float) -> void:
-	# Check if we need to initialize guns - do it only once
-	if needs_initialization:
-		needs_initialization = false
+	# # Check if we need to initialize guns - do it only once
+	# if needs_initialization:
+	# 	needs_initialization = false
 
-		# Check if guns are available in ArtilleryController
-		if ship.artillery_controller.guns.size() > 0:
-			# Copy guns from ship to local array
-			guns = ship.artillery_controller.guns
+	# 	# Check if guns are available in ArtilleryController
+	# 	if ship.artillery_controller.guns.size() > 0:
+	# 		# Copy guns from ship to local array
+	# 		guns = ship.artillery_controller.guns
 
-			# Setup artillery camera
-			setup_artillery_camera()
+	# 		# Setup artillery camera
 
-			print("Successfully initialized player guns: ", guns.size())
-		else:
-			print("Warning: No guns found in ship. This might be an initialization order issue.")
-			# Try again next frame if no guns found
-			needs_initialization = true
-			return # Skip processing until initialized
+	# 		print("Successfully initialized player guns: ", guns.size())
+	# 	else:
+	# 		print("Warning: No guns found in ship. This might be an initialization order issue.")
+	# 		# Try again next frame if no guns found
+	# 		#needs_initialization = true
+	# 		#return # Skip processing until initialized
+	# setup_artillery_camera()
 
-	if guns.size() > 0:
-		cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
-		cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
+	#if guns.size() > 0:
+	cam.projectile_speed = ship.artillery_controller.get_shell_params().speed
+	cam.projectile_drag_coefficient = ship.artillery_controller.get_shell_params().drag
 
 	# Handle double click timer
 	if click_count == 1:

@@ -1,7 +1,7 @@
 extends Upgrade
 class_name SecondaryGunMod3
 
-const RELOAD_MOD: float = 0.85
+const RELOAD_MOD: float = 0.8
 
 func _init() -> void:
 	upgrade_id = "sec_gun_3"

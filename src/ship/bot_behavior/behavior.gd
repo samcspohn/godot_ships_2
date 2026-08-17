@@ -1867,14 +1867,15 @@ func try_use_consumable():
 			if c.type == ConsumableItem.ConsumableType.DAMAGE_CONTROL:
 				damage_control = c.id
 				break
-	var repair_party = (_ship.consumable_manager.equipped_consumables[repair] as RepairParty)
-	repair_party = repair_party.p() as RepairParty
-	var heal_percent_per_repair = repair_party.heal_per_sec * repair_party.duration if repair != -1 else 0
-	var heal_per_repair = max_hp * heal_percent_per_repair
-	# var effective_heal = min(healable, heal_per_repair)
+	if repair != -1:
+		var repair_party = (_ship.consumable_manager.equipped_consumables[repair] as RepairParty)
+		repair_party = repair_party.p() as RepairParty
+		var heal_percent_per_repair = repair_party.heal_per_sec * repair_party.duration if repair != -1 else 0
+		var heal_per_repair = max_hp * heal_percent_per_repair
+		# var effective_heal = min(healable, heal_per_repair)
 
-	if healable > heal_per_repair or hp < 0.25:
-		if repair != -1:
+		if healable > heal_per_repair or hp < 0.25:
+			#if repair != -1:
 			_ship.consumable_manager.use_consumable(repair)
 
 	if damage_control != -1:

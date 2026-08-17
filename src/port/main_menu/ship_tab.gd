@@ -124,6 +124,7 @@ func _load_ship_buttons():
 	# Only allow selection of Bismarck3 and H44
 	var available_ships = [
 		{"name": "Bismarck3", "path": "res://assets/Ships/Bismarck/Bismarck3.tscn"},
+		{"name": "Graf Zeppelin", "path": "res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn"},
 		{"name": "Kaiser Wilhelm", "path": "res://assets/Ships/H42/H42.tscn"},
 		{"name": "SP1", "path": "res://assets/Ships/SP1/SP1.tscn"},
 		{"name": "Wotan", "path": "res://assets/Ships/H44/H44.2.tscn"},

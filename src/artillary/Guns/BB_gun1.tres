@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://f5a1lbtgbbk7" path="res://src/artillary/Guns/gun_params.gd" id="1_twqco"]
 [ext_resource type="Resource" uid="uid://clkhcp88wnsn5" path="res://src/artillary/Shells/BB_shell.tres" id="2_twqco"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="3_n61w7"]
+[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="5_0kgs8"]
 
 [sub_resource type="Resource" id="Resource_2muxd"]
 script = ExtResource("3_n61w7")

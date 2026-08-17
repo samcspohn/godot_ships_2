@@ -379,12 +379,12 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	var uset_bp := _rd.uniform_set_create([
 		_make_uni(IM, 0, _butterfly),
 	], sh_bp, 0)
-	var pc_bp := PackedByteArray(); pc_bp.resize(16)
+	var pc_bp := PackedByteArray(); pc_bp.resize(8)
 	pc_bp.encode_s32(0, _n); pc_bp.encode_s32(4, _log2n)
 	var cl_bp := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl_bp, _pip_butterfly_precomp)
 	_rd.compute_list_bind_uniform_set(cl_bp, uset_bp, 0)
-	_rd.compute_list_set_push_constant(cl_bp, pc_bp, 16)
+	_rd.compute_list_set_push_constant(cl_bp, pc_bp, 8)
 	_rd.compute_list_dispatch(cl_bp, _log2n, _n >> 4, 1)
 	_rd.compute_list_end()
 
@@ -426,11 +426,11 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 		_rd.compute_list_add_barrier(cl)
 
 	# 1. spectrum_update — evolves h(k,t) and packs displacement/slope spectra
-	var pc_su := PackedByteArray(); pc_su.resize(16)
+	var pc_su := PackedByteArray(); pc_su.resize(4)
 	pc_su.encode_float(0, time)
 	_rd.compute_list_bind_compute_pipeline(cl, _pip_spec_update)
 	_rd.compute_list_bind_uniform_set(cl, _uset_spec_update, 0)
-	_rd.compute_list_set_push_constant(cl, pc_su, 16)
+	_rd.compute_list_set_push_constant(cl, pc_su, 4)
 	_rd.compute_list_dispatch(cl, g, g, _c)
 	_rd.compute_list_add_barrier(cl)
 
@@ -439,13 +439,13 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 		var direction := 0 if step < _log2n else 1
 		var stage_i   := step if step < _log2n else step - _log2n
 		var ping_pong := step & 1
-		var pc_fft := PackedByteArray(); pc_fft.resize(16)
+		var pc_fft := PackedByteArray(); pc_fft.resize(12)
 		pc_fft.encode_s32(0, stage_i)
 		pc_fft.encode_s32(4, direction)
 		pc_fft.encode_s32(8, ping_pong)
 		_rd.compute_list_bind_compute_pipeline(cl, _pip_fft)
 		_rd.compute_list_bind_uniform_set(cl, _uset_fft, 0)
-		_rd.compute_list_set_push_constant(cl, pc_fft, 16)
+		_rd.compute_list_set_push_constant(cl, pc_fft, 12)
 		_rd.compute_list_dispatch(cl, g, g, _c)
 		_rd.compute_list_add_barrier(cl)
 

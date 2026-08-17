@@ -14,12 +14,13 @@ var fire_held: bool = false
 var sequential_fire_timer: float = 0.0
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
 
-func _init():
-	button_names = ["AP", "HE"]
-	tool_tips = [
-	 	Callable(_build_tooltip_text).bind(0),
-		Callable(_build_tooltip_text).bind(1)
-	]
+# func _init():
+# 	button_names = ["AP", "HE"]
+# 	tool_tips = [
+# 	 	Callable(_build_tooltip_text).bind(0),
+# 		Callable(_build_tooltip_text).bind(1)
+# 	]
+
 # @export var button_names: Array[String] = ["HE", "AP"]
 # # var select_held: bool = false
 # var buttons: Array[Button] = []
@@ -308,6 +309,21 @@ func _ready() -> void:
 
 		set_physics_process(false)
 
+	if guns.size() > 1:
+		button_names = ["AP", "HE"]
+		tool_tips = [
+			Callable(_build_tooltip_text).bind(0),
+			Callable(_build_tooltip_text).bind(1)
+		]
+	else:
+		button_names = ["N/A"]
+		tool_tips = [
+			# Callable(_build_tooltip_text).bind(0)
+			Callable(no_guns).bind(0)
+		]
+
+func no_guns(i: int) -> String:
+	return "N/A"
 ## Returns the 3D velocity vector at impact for a ballistic trajectory to target_pos.
 ## Returns Vector3.ZERO if no firing solution exists (e.g. target out of range).
 func get_landing_velocity_to_point(target_pos: Vector3) -> Vector3:

@@ -279,6 +279,8 @@ func spawn_player(id, player_name):
 				bot_controller.behavior = BBBehavior.new()
 			Ship.ShipClass.CA:
 				bot_controller.behavior = CABehavior.new()
+			Ship.ShipClass.CV:
+				bot_controller.behavior = CABehavior.new()
 		bot_controller.behavior.threat_mod = _get_bot_threat_mod(ship)
 		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)

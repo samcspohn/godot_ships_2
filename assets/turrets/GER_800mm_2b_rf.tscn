@@ -6,9 +6,9 @@
 [node name="GER_800mm_2b_rf" unique_id=565039468 instance=ExtResource("1_kj3gw")]
 _sound = ExtResource("2_jogg0")
 pitch = 0.2
-volume = 2.0
+volume = 3.0
 variance = 0.015
 glb_path = "uid://bj2fyxur1td7h"
 
-[node name="800mmTurret_col" parent="." index="1" unique_id=1204130558]
+[node name="800mmTurret_col" parent="." index="1" unique_id=662536660]
 layers = 0
