@@ -182,8 +182,8 @@ var minimap: Minimap
 var tracked_ships = {}
 var ship_ui_elements = {}
 
-# Aircraft world-space markers
-var aircraft_ui_elements: Dictionary = {}  # plane Node3D -> {container, label, owner_label}
+# Squadron world-space markers
+var aircraft_ui_elements: Dictionary = {}  # Squadron -> {root, header, owner_label, bars_container, bars: {aircraft -> ProgressBar}}
 var last_ship_search_time: float = 0.0
 var ship_search_interval: float = 2.0  # Search for new ships every 2 seconds
 var _status_refresh_timer: float = 0.0
@@ -1250,7 +1250,7 @@ func update_ship_ui(delta: float = 0.0):
 				ship_ui_elements.erase(ship)
 			tracked_ships.erase(ship)
 
-func setup_aircraft_ui(plane: Node3D, owner_ship: Ship, params: AircraftParams) -> void:
+func setup_aircraft_ui(squadron: Squadron, owner_ship: Ship) -> void:
 	var color: Color
 	if owner_ship == camera_controller._ship:
 		color = Color(1.0, 1.0, 1.0)
@@ -1260,18 +1260,18 @@ func setup_aircraft_ui(plane: Node3D, owner_ship: Ship, params: AircraftParams) 
 	else:
 		color = Color(1.0, 0.0, 0.0)
 
-	var container := VBoxContainer.new()
-	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	container.visible = false
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.visible = false
 
-	var icon_label := Label.new()
-	icon_label.text = "\u2708 %s" % params.type
-	icon_label.add_theme_font_size_override("font_size", 12)
-	icon_label.add_theme_color_override("font_color", color)
-	icon_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
-	icon_label.add_theme_constant_override("shadow_offset_x", 1)
-	icon_label.add_theme_constant_override("shadow_offset_y", 1)
-	container.add_child(icon_label)
+	var header := Label.new()
+	header.text = "\u2708 %s" % squadron.params.type
+	header.add_theme_font_size_override("font_size", 12)
+	header.add_theme_color_override("font_color", color)
+	header.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+	header.add_theme_constant_override("shadow_offset_x", 1)
+	header.add_theme_constant_override("shadow_offset_y", 1)
+	root.add_child(header)
 
 	var owner_label := Label.new()
 	owner_label.text = owner_ship.name
@@ -1280,14 +1280,32 @@ func setup_aircraft_ui(plane: Node3D, owner_ship: Ship, params: AircraftParams) 
 	owner_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
 	owner_label.add_theme_constant_override("shadow_offset_x", 1)
 	owner_label.add_theme_constant_override("shadow_offset_y", 1)
-	container.add_child(owner_label)
+	root.add_child(owner_label)
 
-	add_child(container)
+	var bars_container := HBoxContainer.new()
+	bars_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(bars_container)
 
-	aircraft_ui_elements[plane] = {
-		"container": container,
-		"icon_label": icon_label,
+	var bars = {}
+	for plane in squadron.aircraft:
+		var bar := ProgressBar.new()
+		bar.show_percentage = false
+		bar.max_value = squadron.params.hp
+		bar.value = plane.hp
+		bar.custom_minimum_size = Vector2(40, 8)
+		bar.visible = not plane.dead
+		bar.modulate = color
+		bars[plane] = bar
+		bars_container.add_child(bar)
+
+	add_child(root)
+
+	aircraft_ui_elements[squadron] = {
+		"root": root,
+		"header": header,
 		"owner_label": owner_label,
+		"bars_container": bars_container,
+		"bars": bars,
 	}
 
 
@@ -1297,44 +1315,56 @@ func update_aircraft_ui(_delta: float) -> void:
 	if not players_node:
 		return
 
-	# Collect all currently active planes across every ship
-	var active_planes: Dictionary = {}  # plane Node3D -> {owner_ship, params}
+	# Collect all currently active squadrons across every ship
+	var active_squadrons: Dictionary = {}  # Squadron -> owner Ship
 	for ship in players_node.get_children():
 		if not (ship is Ship) or not ship.aviation_controller:
 			continue
 		var av: AviationController = ship.aviation_controller
 		for squadron_idx in av.active_squadrons.keys():
-			if squadron_idx < av.squadrons.size() and squadron_idx < av.params.size():
-				for plane in av.squadrons[squadron_idx].aircraft:
-					if is_instance_valid(plane) and plane.visible:
-						active_planes[plane] = {"owner_ship": ship, "params": av.params[squadron_idx]}
+			if squadron_idx < av.squadrons.size():
+				active_squadrons[av.squadrons[squadron_idx]] = ship
 
-	# Remove markers for planes that are no longer active
+	# Remove markers for squadrons that are no longer active
 	var to_remove: Array = []
-	for plane in aircraft_ui_elements.keys():
-		if not active_planes.has(plane):
-			to_remove.append(plane)
-	for plane in to_remove:
-		aircraft_ui_elements[plane]["container"].queue_free()
-		aircraft_ui_elements.erase(plane)
+	for squadron in aircraft_ui_elements.keys():
+		if not active_squadrons.has(squadron):
+			to_remove.append(squadron)
+	for squadron in to_remove:
+		aircraft_ui_elements[squadron]["root"].queue_free()
+		aircraft_ui_elements.erase(squadron)
 
-	# Create markers for new planes; position all active markers
 	var camera := get_viewport().get_camera_3d()
 	if not camera:
 		return
-	for plane in active_planes.keys():
-		if not aircraft_ui_elements.has(plane):
-			var info = active_planes[plane]
-			setup_aircraft_ui(plane, info["owner_ship"], info["params"])
 
-		var ui = aircraft_ui_elements[plane]
-		var world_pos: Vector3 = plane.global_position + Vector3(0, 8, 0)
-		var on_screen: bool = is_position_visible_on_screen(world_pos)
-		var container: Control = ui["container"]
-		container.visible = on_screen
-		if on_screen:
-			var screen_pos: Vector2 = camera.unproject_position(world_pos)
-			container.position = screen_pos - Vector2(container.size.x * 0.5, container.size.y)
+	for squadron in active_squadrons.keys():
+		if not aircraft_ui_elements.has(squadron):
+			setup_aircraft_ui(squadron, active_squadrons[squadron])
+
+		var ui = aircraft_ui_elements[squadron]
+		var root: Control = ui["root"]
+		var anchor_world: Vector3 = squadron.node.global_position + Vector3(0, 8, 0)
+		if not is_position_visible_on_screen(anchor_world):
+			root.visible = false
+			continue
+		root.visible = true
+		var anchor_screen: Vector2 = camera.unproject_position(anchor_world)
+		root.position = anchor_screen
+
+		var owner_label: Label = ui["owner_label"]
+		var header: Label = ui["header"]
+		var bars_container: HBoxContainer = ui["bars_container"]
+		owner_label.position = Vector2(-owner_label.size.x * 0.5, -owner_label.size.y)
+		header.position = Vector2(-header.size.x * 0.5, -owner_label.size.y - header.size.y)
+		bars_container.position = Vector2(-bars_container.size.x * 0.5, 8)
+
+		var bars = ui["bars"]
+		for i in squadron.aircraft.size():
+			var plane: Aircraft = squadron.aircraft[i]
+			var bar: ProgressBar = bars[plane]
+			bar.visible = not plane.dead
+			bar.value = plane.hp
 
 
 func is_position_visible_on_screen(world_position):

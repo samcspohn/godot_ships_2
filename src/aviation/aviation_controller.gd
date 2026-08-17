@@ -257,6 +257,7 @@ func to_bytes() -> PackedByteArray:
 		for plane in squadron.aircraft:
 			writer.put_var(plane.global_position)
 			writer.put_var(plane.global_rotation)
+			writer.put_float(plane.hp)
 			writer.put_u8(1 if plane.dead else 0)
 		writer.put_var(params[index].to_bytes())
 	return writer.data_array
@@ -303,11 +304,13 @@ func from_bytes(b: PackedByteArray) -> void:
 		for j in range(plane_count):
 			var plane_pos = reader.get_var()
 			var plane_rot = reader.get_var()
+			var plane_hp = reader.get_float()
 			var plane_dead = reader.get_u8()
 			if squadron != null and j < squadron.aircraft.size():
 				var plane = squadron.aircraft[j]
 				plane.global_position = plane_pos
 				plane.global_rotation = plane_rot
+				plane.hp = plane_hp
 				plane.dead = plane_dead != 0
 				plane.visible = not plane.dead
 		if index < params.size():
