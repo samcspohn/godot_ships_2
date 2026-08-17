@@ -252,21 +252,17 @@ func _configure_weapon_button(button: Button, index: int) -> void:
 func _get_all_weapon_buttons() -> Array[Button]:
 	var buttons: Array[Button] = []
 	var ship = camera_controller._ship
-	# var offset = 0
 	buttons.append_array(ship.artillery_controller.get_weapon_ui(buttons.size()))
-	# offset = buttons.size()
 
 	if ship.torpedo_controller:
 		buttons.append_array(ship.torpedo_controller.get_weapon_ui(buttons.size()))
-		# offset = buttons.size()
-
-	if ship.secondary_controller:
-		buttons.append_array(ship.secondary_controller.get_weapon_ui(buttons.size()))
-		# offset = buttons.size()
 
 	if ship.aviation_controller:
 		buttons.append_array(ship.aviation_controller.get_weapon_ui(buttons.size()))
-		# offset = buttons.size()
+
+	if ship.secondary_controller:
+		buttons.append_array(ship.secondary_controller.get_weapon_ui(buttons.size()))
+
 	return buttons
 
 func setup_weapon_buttons():

@@ -315,12 +315,12 @@ func _ready() -> void:
 			Callable(_build_tooltip_text).bind(0),
 			Callable(_build_tooltip_text).bind(1)
 		]
-	else:
-		button_names = ["N/A"]
-		tool_tips = [
-			# Callable(_build_tooltip_text).bind(0)
-			Callable(no_guns).bind(0)
-		]
+	# else:
+	# 	button_names = ["N/A"]
+	# 	tool_tips = [
+	# 		# Callable(_build_tooltip_text).bind(0)
+	# 		Callable(no_guns).bind(0)
+	# 	]
 
 func no_guns(i: int) -> String:
 	return "N/A"

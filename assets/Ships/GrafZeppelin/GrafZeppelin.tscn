@@ -4,8 +4,6 @@
 [ext_resource type="PackedScene" uid="uid://d4mxymjiltp2p" path="res://assets/turrets/GER_105mm_2b.tscn" id="2_cit4j"]
 [ext_resource type="PackedScene" uid="uid://5qbpr6jjvoj6" path="res://src/modules.tscn" id="2_vx2y6"]
 [ext_resource type="Script" uid="uid://bhhhrilvw6s5b" path="res://src/hp_manager/hp_params.gd" id="3_njww4"]
-[ext_resource type="Script" uid="uid://xc16x5l6kqxq" path="res://src/artillary/Guns/Gun.gd" id="3_q30lf"]
-[ext_resource type="AudioStream" uid="uid://ctquyycgoncx7" path="res://assets/audio/explosion1_clean.wav" id="4_8uchy"]
 [ext_resource type="Script" uid="uid://8hn5uv3uclbk" path="res://src/hp_manager/hp_part.gd" id="4_sncso"]
 [ext_resource type="PackedScene" uid="uid://ruv6mhxhqe6v" path="res://assets/turrets/GER_150mm_2b_rf.tscn" id="5_0gh44"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_h1073"]
@@ -21,13 +19,19 @@
 [ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="12_8261o"]
 [ext_resource type="Resource" uid="uid://b3mu68ctnhpnv" path="res://src/Consumable/Registry/GER_T8-10_HYDRO.tres" id="12_seuen"]
 [ext_resource type="Script" uid="uid://dkqfpprasyxmh" path="res://src/weapon/fire_arc.gd" id="12_y1u82"]
+[ext_resource type="PackedScene" uid="uid://e1skh7d26jgi" path="res://src/aviation/AviationController.tscn" id="13_3ralp"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="13_whceh"]
+[ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="14_8261o"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="14_seuen"]
+[ext_resource type="PackedScene" uid="uid://dgvhh8a6kaxbp" path="res://src/aviation/torpedo_plane.tscn" id="15_6vanc"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="15_whceh"]
+[ext_resource type="PackedScene" uid="uid://c0chw5qnmt7o0" path="res://src/aviation/dive_bomber.tscn" id="16_8261o"]
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="16_whceh"]
+[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="17_6vanc"]
 
 [sub_resource type="Resource" id="Resource_vx2y6"]
 script = ExtResource("3_njww4")
+torpedo_protection = 0.2
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_y1u82"]
@@ -164,6 +168,39 @@ traverse_speed = 50.0
 _range = 4400.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
+[sub_resource type="Resource" id="Resource_gjp7r"]
+script = ExtResource("14_8261o")
+type = "Bomber"
+squadron_size = 5
+formation_spacing = 45.0
+_range = 19000.0
+altitude = 500.0
+attack_altitude = 200.0
+attack_descent_radius = 500.0
+plane_scene = ExtResource("16_8261o")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
+[sub_resource type="Resource" id="Resource_p52uv"]
+script = ExtResource("14_8261o")
+type = "Torpedo"
+squadron_size = 5
+_range = 14000.0
+speed = 250.0
+radio_range = 1000.0
+altitude = 500.0
+attack_altitude = 30.0
+plane_scene = ExtResource("15_6vanc")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
+[sub_resource type="Resource" id="Resource_l6vo6"]
+script = ExtResource("14_8261o")
+_range = 18000.0
+speed = 200.0
+altitude = 500.0
+attack_descent_radius = 0.0
+plane_scene = ExtResource("17_6vanc")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
 [sub_resource type="Resource" id="Resource_seuen"]
 script = ExtResource("9_f4xba")
 acceleration_time = 40.0
@@ -239,16 +276,20 @@ params = SubResource("Resource_8261o")
 guns = [NodePath("../../../TurretMount_GER_105mm_2b/GER_105mm_2b"), NodePath("../../../TurretMount_GER_105mm_2b_001/GER_105mm_2b_001"), NodePath("../../../TurretMount_GER_105mm_2b_002/GER_105mm_2b_002"), NodePath("../../../TurretMount_GER_105mm_2b_003/GER_105mm_2b_003"), NodePath("../../../TurretMount_GER_105mm_2b_004/GER_105mm_2b_004"), NodePath("../../../TurretMount_GER_105mm_2b_005/GER_105mm_2b_005")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
+[node name="AviationController" parent="Modules" index="4" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("13_3ralp")]
+params = Array[ExtResource("14_8261o")]([SubResource("Resource_gjp7r"), SubResource("Resource_gjp7r"), SubResource("Resource_gjp7r"), SubResource("Resource_p52uv"), SubResource("Resource_p52uv"), SubResource("Resource_l6vo6"), SubResource("Resource_l6vo6")])
+launcher = NodePath("../../Launcher")
+
+[node name="MovementController" parent="Modules" index="6" unique_id=1088594109]
 params = SubResource("Resource_seuen")
 
-[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("10_iib35")]([ExtResource("11_n0r6v"), ExtResource("12_seuen")])
 
-[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("13_whceh")]([null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
+[node name="FireManager" parent="Modules" index="10" unique_id=384504544]
 fparams = ExtResource("14_seuen")
 rparams = SubResource("Resource_whceh")
 
@@ -264,7 +305,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 16.481365, 26.222618)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 14.7941475, 90.57309)
 
-[node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
+[node name="FloodManager" parent="Modules" index="11" unique_id=485605645]
 dot_params = ExtResource("16_whceh")
 rparams = SubResource("Resource_jeuia")
 
@@ -295,127 +336,68 @@ layers = 0
 [node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(1014971008) index="4" unique_id=1643894787]
 layers = 0
 
-[node name="GER_105mm_2b" type="Node3D" parent="TurretMount_GER_105mm_2b" parent_id_path=PackedInt32Array(1691450306) index="0" unique_id=279287944 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
+[node name="GER_105mm_2b" parent="TurretMount_GER_105mm_2b" parent_id_path=PackedInt32Array(1691450306) index="0" unique_id=279287944 instance=ExtResource("2_cit4j")]
 slew_min_angle = 3.751473648080847
-slew_max_angle = 2.4839539804562722
+slew_max_angle = 2.483953980456272
 
-[node name="GER_105mm_2b_001" type="Node3D" parent="TurretMount_GER_105mm_2b_001" parent_id_path=PackedInt32Array(721148832) index="0" unique_id=821082893 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
+[node name="GER_105mm_2b_001" parent="TurretMount_GER_105mm_2b_001" parent_id_path=PackedInt32Array(721148832) index="0" unique_id=821082893 instance=ExtResource("2_cit4j")]
 slew_min_angle = 4.008273744593548
 slew_max_angle = 2.727914447802684
 fire_arcs = Array[ExtResource("12_y1u82")]([SubResource("Resource_iib35"), SubResource("Resource_n0r6v")])
 
-[node name="GER_105mm_2b_002" type="Node3D" parent="TurretMount_GER_105mm_2b_002" parent_id_path=PackedInt32Array(86698150) index="0" unique_id=2128780331 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
+[node name="GER_105mm_2b_002" parent="TurretMount_GER_105mm_2b_002" parent_id_path=PackedInt32Array(86698150) index="0" unique_id=2128780331 instance=ExtResource("2_cit4j")]
 slew_min_angle = 3.588296737553973
 slew_max_angle = 2.6821094540266017
 
-[node name="GER_105mm_2b_003" type="Node3D" parent="TurretMount_GER_105mm_2b_003" parent_id_path=PackedInt32Array(1332939052) index="0" unique_id=1627598470 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
+[node name="GER_105mm_2b_003" parent="TurretMount_GER_105mm_2b_003" parent_id_path=PackedInt32Array(1332939052) index="0" unique_id=1627598470 instance=ExtResource("2_cit4j")]
 slew_min_angle = 0.9284089214822124
 slew_max_angle = 5.530825935202037
 
-[node name="GER_105mm_2b_004" type="Node3D" parent="TurretMount_GER_105mm_2b_004" parent_id_path=PackedInt32Array(1920062799) index="0" unique_id=2047569048 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
-slew_min_angle = 0.9607023251275049
+[node name="GER_105mm_2b_004" parent="TurretMount_GER_105mm_2b_004" parent_id_path=PackedInt32Array(1920062799) index="0" unique_id=2047569048 instance=ExtResource("2_cit4j")]
+slew_min_angle = 0.9607023251275048
 slew_max_angle = 5.451296915063835
 
-[node name="GER_105mm_2b_005" type="Node3D" parent="TurretMount_GER_105mm_2b_005" parent_id_path=PackedInt32Array(1607603190) index="0" unique_id=2033105432 instance=ExtResource("2_cit4j")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.6
-volume = 0.5
-variance = 0.1
+[node name="GER_105mm_2b_005" parent="TurretMount_GER_105mm_2b_005" parent_id_path=PackedInt32Array(1607603190) index="0" unique_id=2033105432 instance=ExtResource("2_cit4j")]
 slew_min_angle = 1.0090744098965931
 slew_max_angle = 5.494131974763745
 
-[node name="GER_150mm_2b_rf" type="Node3D" parent="TurretMount_GER_150mm_2b_rf" parent_id_path=PackedInt32Array(1079812973) index="0" unique_id=1561814709 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf" parent="TurretMount_GER_150mm_2b_rf" parent_id_path=PackedInt32Array(1079812973) index="0" unique_id=1561814709 instance=ExtResource("5_0gh44")]
 slew_min_angle = 3.729324520216855
 slew_max_angle = 5.824790158721051
 
-[node name="GER_150mm_2b_rf_001" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_001" parent_id_path=PackedInt32Array(1792891271) index="0" unique_id=126256735 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_001" parent="TurretMount_GER_150mm_2b_rf_001" parent_id_path=PackedInt32Array(1792891271) index="0" unique_id=126256735 instance=ExtResource("5_0gh44")]
 slew_min_angle = 3.484940086591694
 slew_max_angle = 5.830126098219509
 
-[node name="GER_150mm_2b_rf_002" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_002" parent_id_path=PackedInt32Array(767828752) index="0" unique_id=1321647282 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
-slew_min_angle = 3.6236075413858493
+[node name="GER_150mm_2b_rf_002" parent="TurretMount_GER_150mm_2b_rf_002" parent_id_path=PackedInt32Array(767828752) index="0" unique_id=1321647282 instance=ExtResource("5_0gh44")]
+slew_min_angle = 3.6236075413858497
 slew_max_angle = 5.8318092229386584
 
-[node name="GER_150mm_2b_rf_003" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_003" parent_id_path=PackedInt32Array(1708708905) index="0" unique_id=264614292 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_003" parent="TurretMount_GER_150mm_2b_rf_003" parent_id_path=PackedInt32Array(1708708905) index="0" unique_id=264614292 instance=ExtResource("5_0gh44")]
 slew_min_angle = 3.637807532494592
 slew_max_angle = 5.724861264160711
 
 [node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="20" unique_id=1041729123]
 shape = SubResource("ConvexPolygonShape3D_duhqh")
 
-[node name="GER_150mm_2b_rf_004" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_004" parent_id_path=PackedInt32Array(530530403) index="0" unique_id=427883168 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_004" parent="TurretMount_GER_150mm_2b_rf_004" parent_id_path=PackedInt32Array(530530403) index="0" unique_id=427883168 instance=ExtResource("5_0gh44")]
 slew_min_angle = 0.4583951484585356
 slew_max_angle = 2.5538607869627312
 
-[node name="GER_150mm_2b_rf_005" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_005" parent_id_path=PackedInt32Array(259956725) index="0" unique_id=99820733 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_005" parent="TurretMount_GER_150mm_2b_rf_005" parent_id_path=PackedInt32Array(259956725) index="0" unique_id=99820733 instance=ExtResource("5_0gh44")]
 slew_min_angle = 0.45305920896007734
 slew_max_angle = 2.798245220587892
 
-[node name="GER_150mm_2b_rf_006" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_006" parent_id_path=PackedInt32Array(1721573011) index="0" unique_id=817696478 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_006" parent="TurretMount_GER_150mm_2b_rf_006" parent_id_path=PackedInt32Array(1721573011) index="0" unique_id=817696478 instance=ExtResource("5_0gh44")]
 slew_min_angle = 0.4513760842409278
 slew_max_angle = 2.659577765793737
 
-[node name="GER_150mm_2b_rf_007" type="Node3D" parent="TurretMount_GER_150mm_2b_rf_007" parent_id_path=PackedInt32Array(160696742) index="0" unique_id=138495468 instance=ExtResource("5_0gh44")]
-script = ExtResource("3_q30lf")
-_sound = ExtResource("4_8uchy")
-pitch = 1.1
-volume = 0.8
+[node name="GER_150mm_2b_rf_007" parent="TurretMount_GER_150mm_2b_rf_007" parent_id_path=PackedInt32Array(160696742) index="0" unique_id=138495468 instance=ExtResource("5_0gh44")]
 slew_min_angle = 0.5583240430188754
 slew_max_angle = 2.6453777746849942
+
+[node name="Launcher" type="Node3D" parent="." index="25" unique_id=609896696]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 12.768231, -97.60608)
 
 [editable path="Modules"]
 [editable path="Modules/FireManager"]

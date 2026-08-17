@@ -409,13 +409,22 @@ func _on_canvas_draw() -> void:
 			# draw_ship_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, color)
 
 	# draw gun ranges
-	draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.get_params()._range, Color(1, 1, 1, 0.5))
+	if ship.artillery_controller.guns.size() > 0:
+		draw_range_circle_on_minimap(ship.global_position, ship.artillery_controller.get_params()._range, Color(1, 1, 1, 0.5))
 
 	if ship.torpedo_controller:
 		draw_range_circle_on_minimap(ship.global_position, ship.torpedo_controller.get_params()._range, Color(1, 1, 1, 0.5))
 	if ship.secondary_controller.sub_controllers.size() > 0:
 		for controller in ship.secondary_controller.sub_controllers:
 			draw_range_circle_on_minimap(ship.global_position, controller.get_params()._range, Color.DARK_KHAKI)
+
+	# Aviation range circles, deduped so squadrons sharing params draw once
+	if ship.aviation_controller:
+		var air_ranges: Array[float] = []
+		for p in ship.aviation_controller.params:
+			if not air_ranges.has(p._range):
+				air_ranges.append(p._range)
+				draw_range_circle_on_minimap(ship.global_position, p._range, Color(0.7,0.9,1))
 
 	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0)
 

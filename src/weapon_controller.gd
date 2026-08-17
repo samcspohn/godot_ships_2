@@ -78,6 +78,13 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 		switch_progress.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
 
 		button.add_child(switch_progress)
+		var key_label = Label.new()
+		key_label.text = str(offset + i + 1)
+		key_label.position = Vector2(4, 2)
+		key_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		key_label.add_theme_font_size_override("font_size", 12)
+		key_label.modulate = Color(1, 1, 1, 0.7)
+		button.add_child(key_label)
 		buttons.append(button)
 		button_keys.append(offset + i)
 		switch_progresss.append(switch_progress)
