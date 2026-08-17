@@ -127,10 +127,12 @@ func select_shell(_shell_index: int) -> void:
 		return
 	shell_index = clamp(_shell_index, 0, button_names.size() - 1)
 	if multi_select:
-		if shell_index in shell_indices:
-			shell_indices.erase(shell_index)
-		else:
-			shell_indices.append(shell_index)
+		shell_indices.clear()
+		shell_indices.append(shell_index)
+		# if shell_index in shell_indices:
+		# 	shell_indices.erase(shell_index)
+		# else:
+		# 	shell_indices.append(shell_index)
 	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), shell_index)
 
 
@@ -140,10 +142,12 @@ func select_shell(_shell_index: int) -> void:
 func select_shell_c(_shell_index: int) -> void:
 	shell_index = _shell_index
 	if multi_select:
-		if shell_index in shell_indices:
-			shell_indices.erase(shell_index)
-		else:
-			shell_indices.append(shell_index)
+		shell_indices.clear()
+		shell_indices.append(shell_index)
+		# if shell_index in shell_indices:
+		# 	shell_indices.erase(shell_index)
+		# else:
+		# 	shell_indices.append(shell_index)
 
 # Replaces the whole multi-select set at once instead of toggling a single
 # index (select_shell above) - used by box-select drag selection.

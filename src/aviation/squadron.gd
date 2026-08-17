@@ -461,7 +461,8 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	holding_attack = false
 	in_attack_run = false
 	passed_entry_point = false
-	attack_point = aircraft[0].process_attack_point(point, direction)
+	attack_point = point
+	# attack_point = aircraft[0].process_attack_point(point, direction)
 	# add append flag
 	waypoints.clear()
 
@@ -491,9 +492,9 @@ func update_flight(delta: float, ship: Ship) -> void:
 		# fly the formation itself onto the attack heading; the slots (children
 		# of node) turn with it so aircraft chase a moving/rotating formation
 		# instead of beelining individually toward the target
-		wp = attack_point
+		wp = aircraft[0].process_attack_point(attack_point, attack_direction)
 		if not attack_fired:
-			var attack_pt: Vector2 = attack_point
+			var attack_pt: Vector2 = wp
 			var squadron_pos := Vector2(node.global_position.x, node.global_position.z)
 			var dist := squadron_pos.distance_to(attack_pt)
 			# cruise at normal altitude/formation until closing in, then descend
@@ -557,7 +558,7 @@ func update_flight(delta: float, ship: Ship) -> void:
 		Aircraft.steer(node, wp, altitude, p.speed, p.turning_radius, climb_rate, delta)
 
 	if checking_arrival:
-		var dist_after := Vector2(node.global_position.x, node.global_position.z).distance_to(attack_point)
+		var dist_after := Vector2(node.global_position.x, node.global_position.z).distance_to(aircraft[0].process_attack_point(attack_point, attack_direction))
 		if dist_after < 0.001:
 			_fire()
 			waypoints.clear()
