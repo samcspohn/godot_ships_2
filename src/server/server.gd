@@ -22,6 +22,15 @@ var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.
 # Timestamps (seconds, from Time.get_ticks_msec()/1000) of when each ship went unspotted
 var team_0_unspotted_times: Dictionary = {}  # Ship -> float
 var team_1_unspotted_times: Dictionary = {}  # Ship -> float
+# Motion frozen at the instant of last observation, parallel to the position and
+# time tables above. A contact nobody can see cannot be watched accelerating or
+# turning, so its velocity and heading are captured together with its position
+# and read back from here - reading them live off the Ship instead would hand
+# out exactly the information concealment is supposed to withhold.
+var team_0_unspotted_vels: Dictionary = {}   # Ship -> Vector3 (linear velocity when last seen)
+var team_1_unspotted_vels: Dictionary = {}
+var team_0_unspotted_rots: Dictionary = {}   # Ship -> float (rotation.y when last seen)
+var team_1_unspotted_rots: Dictionary = {}
 # Hydro LKP system.
 # hydro_lkp      – frozen last-known position per ship (updated every HYDRO_LKP_INTERVAL s).
 # hydro_lkp_times– server time of the last position refresh.
@@ -280,7 +289,7 @@ func spawn_player(id, player_name):
 			Ship.ShipClass.CA:
 				bot_controller.behavior = CABehavior.new()
 			Ship.ShipClass.CV:
-				bot_controller.behavior = CABehavior.new()
+				bot_controller.behavior = CVBehavior.new()
 		bot_controller.behavior.threat_mod = _get_bot_threat_mod(ship)
 		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)
@@ -642,6 +651,60 @@ func get_unspotted_enemy_times(team_id: int) -> Dictionary:
 	else:
 		return team_1_unspotted_times
 
+func get_unspotted_enemy_velocities(team_id: int) -> Dictionary:
+	"""Returns a dictionary mapping unspotted enemy ships to the linear velocity they
+	had when last observed. Key: Ship, Value: Vector3. Pair this with
+	get_unspotted_enemy_times() to dead-reckon a last-known position forward."""
+	if team_id == 0:
+		return team_0_unspotted_vels
+	else:
+		return team_1_unspotted_vels
+
+func get_unspotted_enemy_rotations(team_id: int) -> Dictionary:
+	"""Returns a dictionary mapping unspotted enemy ships to the heading (rotation.y)
+	they had when last observed. Key: Ship, Value: float."""
+	if team_id == 0:
+		return team_0_unspotted_rots
+	else:
+		return team_1_unspotted_rots
+
+## Records one complete last-known-contact record in `team_id`'s picture: where
+## the ship was, when that was observed, and the velocity and heading it had at
+## that instant. Every path that refreshes an LKP goes through here so the four
+## tables can never drift out of step - a position from one observation paired
+## with a velocity from another would dead-reckon to nonsense.
+func _write_unspotted_lkp(team_id: int, ship: Ship, observed_time: float) -> void:
+	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
+	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	unspotted[ship] = ship.global_position
+	times[ship]     = observed_time
+	vels[ship]      = ship.linear_velocity
+	rots[ship]      = ship.rotation.y
+
+## Drops every trace of a ship from `team_id`'s last-known-contact tables.
+func _erase_unspotted_lkp(team_id: int, ship: Ship) -> void:
+	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
+	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	unspotted.erase(ship)
+	times.erase(ship)
+	vels.erase(ship)
+	rots.erase(ship)
+
+## Heading to report with an LKP marker. While the ship is genuinely visible the
+## normal sync governs its heading anyway, so the live value is correct. While it
+## is not, the heading frozen at last observation is the only one the viewer has
+## earned - streaming the live heading makes the marker turn in place as the
+## unseen ship turns, which is a straight concealment leak.
+func _lkp_marker_rotation(team_id: int, ship: Ship) -> float:
+	if ship.visible_to_enemy:
+		return ship.rotation.y
+	var rots := team_0_unspotted_rots if team_id == 0 else team_1_unspotted_rots
+	return float(rots.get(ship, ship.rotation.y))
+
 func get_all_ships() -> Array:
 	var all_ships: Array = []
 	for p in players.values():
@@ -662,15 +725,12 @@ func _team_has_spotted_enemy(team_id: int) -> bool:
 
 func _seed_first_spot_unspotted_lkps(team_id: int) -> void:
 	var enemy_team_id := 1 if team_id == 0 else 0
-	var unspotted: Dictionary = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var times: Dictionary = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
 	for enemy in _get_team(enemy_team_id):
 		if not is_instance_valid(enemy):
 			continue
 		if enemy.visible_to_enemy:
 			continue
-		unspotted[enemy] = enemy.global_position
-		times[enemy] = current_time
+		_write_unspotted_lkp(team_id, enemy, current_time)
 
 
 func _update_team_clusters():
@@ -798,6 +858,9 @@ func defer_sync_ship(friendly: int, player_name: String, ship_data: Variant):
 		# partial update
 		var transform_data = ship_data
 		ship.parse_ship_transform(transform_data)
+	elif friendly == 3:
+		# aviation-only update (unspotted carrier, hull stays hidden)
+		ship.parse_ship_aviation(ship_data)
 	else:
 		ship.sync2(ship_data, friendly == 1)
 
@@ -1182,26 +1245,22 @@ func _physics_process(_delta: float) -> void:
 			if p.visible_to_enemy:
 				# Ship became spotted - remove from unspotted list
 				if unspotted_dict.has(p):
-					unspotted_dict.erase(p)
-					var times_dict = team_0_unspotted_times if enemy_team_id == 0 else team_1_unspotted_times
-					times_dict.erase(p)
+					_erase_unspotted_lkp(enemy_team_id, p)
 			else:
-				# Ship became unspotted - add to unspotted list with last known position
+				# Ship became unspotted - record the last known contact (position,
+				# plus the velocity and heading it had at this instant, which is
+				# the last moment anyone actually observed them)
 				# Only add if ship has been spotted before (last_spotted_time > 0 means it was spotted at some point)
 				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
-					unspotted_dict[p] = p.global_position
-					var times_dict = team_0_unspotted_times if enemy_team_id == 0 else team_1_unspotted_times
-					times_dict[p] = Time.get_ticks_msec() / 1000.0
+					_write_unspotted_lkp(enemy_team_id, p, Time.get_ticks_msec() / 1000.0)
 
 	# Clean up dead ships from unspotted lists
 	for ship in team_0_unspotted_enemies.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_0_unspotted_enemies.erase(ship)
-			team_0_unspotted_times.erase(ship)
+			_erase_unspotted_lkp(0, ship)
 	for ship in team_1_unspotted_enemies.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_1_unspotted_enemies.erase(ship)
-			team_1_unspotted_times.erase(ship)
+			_erase_unspotted_lkp(1, ship)
 	# Clean up dead ships from hydro LKP tables
 	for ship in team_0_hydro_lkp.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
@@ -1275,6 +1334,12 @@ func _physics_process(_delta: float) -> void:
 				writer.put_var(d1)
 			else:
 				writer.put_var(null)
+			# unspotted ships keep flying aircraft (squadrons live in the game
+			# world, not under the hull) - sync them alongside the hide record
+			if not p.visible_to_enemy and p.aviation_controller != null:
+				writer.put_u8(3)
+				writer.put_var(p_name)
+				writer.put_var(p.sync_ship_aviation())
 			team_1_bytes_list.push_back([p, writer.data_array])
 			writer.clear()
 		else:
@@ -1292,6 +1357,12 @@ func _physics_process(_delta: float) -> void:
 				writer.put_var(d1)
 			else:
 				writer.put_var(null)
+			# unspotted ships keep flying aircraft (squadrons live in the game
+			# world, not under the hull) - sync them alongside the hide record
+			if not p.visible_to_enemy and p.aviation_controller != null:
+				writer.put_u8(3)
+				writer.put_var(p_name)
+				writer.put_var(p.sync_ship_aviation())
 			team_0_bytes_list.push_back([p, writer.data_array])
 			writer.clear()
 
@@ -1315,6 +1386,9 @@ func _physics_process(_delta: float) -> void:
 					writer1.data_array += b[1]
 				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
 					writer1.data_array += partial_bytes_list[i][1]
+				elif b0.aviation_controller != null:
+					# unspotted carrier: always send its (hide + aviation) record
+					writer1.data_array += b[1]
 				i += 1
 			var team_0_bytes = writer1.data_array
 			if not team_0_bytes.is_empty():
@@ -1393,10 +1467,7 @@ func _refresh_hydro_lkp(team_id: int, ship: Ship) -> void:
 		lkp[ship]       = ship.global_position
 		lkp_times[ship] = current_time
 		# Keep bot-AI unspotted tables fresh on the same cadence
-		var unspotted       := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-		var unspotted_times := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-		unspotted[ship]       = ship.global_position
-		unspotted_times[ship] = current_time
+		_write_unspotted_lkp(team_id, ship, current_time)
 
 
 func _send_hydro_syncs() -> void:
@@ -1416,7 +1487,7 @@ func _send_hydro_syncs() -> void:
 			# If the ship is also LOS-visible, use its real position so the hydro
 			# ping doesn't conflict with the normal LOS sync and cause flickering.
 			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 1)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 1)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]
@@ -1432,7 +1503,7 @@ func _send_hydro_syncs() -> void:
 				lkp_times.erase(ship)
 				continue
 			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 1)
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 1)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]
@@ -1454,10 +1525,7 @@ func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
 	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
 		lkp[ship]  = ship.global_position
 		lkp_t[ship] = current_time
-		var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-		var u_times   := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-		unspotted[ship] = ship.global_position
-		u_times[ship]   = current_time
+		_write_unspotted_lkp(team_id, ship, current_time)
 
 
 func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
@@ -1474,10 +1542,7 @@ func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
 	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
 		lkp[ship]  = ship.global_position
 		lkp_t[ship] = current_time
-		var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-		var u_times   := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-		unspotted[ship] = ship.global_position
-		u_times[ship]   = current_time
+		_write_unspotted_lkp(team_id, ship, current_time)
 
 
 func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:
@@ -1575,7 +1640,7 @@ func _send_radar_syncs() -> void:
 			if not is_instance_valid(ship):
 				continue
 			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 2)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 2)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]
@@ -1590,7 +1655,7 @@ func _send_radar_syncs() -> void:
 				lkp_t.erase(ship)
 				continue
 			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 2)
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 2)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]
@@ -1611,7 +1676,7 @@ func _send_air_syncs() -> void:
 			if not is_instance_valid(ship):
 				continue
 			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, true, 3)
+			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 3)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]
@@ -1626,7 +1691,7 @@ func _send_air_syncs() -> void:
 				lkp_t.erase(ship)
 				continue
 			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, false, 3)
+			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 3)
 			for p_name in players:
 				var p_entry = players[p_name]
 				var p_ship: Ship = p_entry[0]

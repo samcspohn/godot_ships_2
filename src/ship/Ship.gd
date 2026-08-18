@@ -442,6 +442,15 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	visible_to_enemy = reader.get_u8() == 1
 	visible = true
 
+# Aviation-only sync for unspotted ships: the hull stays hidden (concealment)
+# but its squadrons are children of the game world, not the ship, so they stay
+# visible and must keep receiving state updates.
+func sync_ship_aviation() -> PackedByteArray:
+	return aviation_controller.to_bytes()
+
+func parse_ship_aviation(b: PackedByteArray) -> void:
+	aviation_controller.from_bytes(b)
+
 
 func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 	var pb = PackedByteArray()
@@ -773,9 +782,12 @@ func _set_det_flags(f: int) -> void:
 ## Serialise a passive-detection LKP update.  Uses current rotation.y (cosmetic)
 ## but the caller-supplied frozen position, an active flag, and a source byte
 ## (1 = Hydroacoustic Search, 2 = Radar, 3 = Air) so the client can set the right flag.
-func sync_ship_lkp(pos: Vector3, active: bool, source: int = 1) -> PackedByteArray:
+## `rot` is supplied by the server rather than read off this ship: for an
+## unobserved contact it is the heading frozen at last observation, not the live
+## one. See GameServer._lkp_marker_rotation().
+func sync_ship_lkp(pos: Vector3, rot: float, active: bool, source: int = 1) -> PackedByteArray:
 	var writer := StreamPeerBuffer.new()
-	writer.put_float(rotation.y)
+	writer.put_float(rot)
 	writer.put_float(pos.x)
 	writer.put_float(pos.z)
 	writer.put_u8(1 if active else 0)
@@ -803,17 +815,15 @@ func sync_unspotted(b: PackedByteArray) -> void:
 	# Only apply the LKP position when the ship is NOT already LOS-visible.
 	# When visible_to_enemy is true the normal sync path keeps global_position
 	# accurate; writing a stale frozen LKP on top of that causes flickering.
+	# The heading on the wire is already frozen to match the position it arrived
+	# with (live only while the ship really is visible), so it can be adopted
+	# directly. This used to stream the live heading every frame and guess at
+	# which ones to apply by watching for the position to move, which still let
+	# the contact turn in place whenever a refresh happened to land mid-turn.
+	rotation.y = lkp_rot
 	if not visible_to_enemy:
-		# The packet streams the ship's *live* heading every frame while the
-		# position is only refreshed every HYDRO_LKP_INTERVAL.  Adopt the heading
-		# only when the frozen position actually moves (a real LKP refresh);
-		# otherwise the contact would spin in place tracking the moving ship.
-		if lkp_x != global_position.x or lkp_z != global_position.z:
-			rotation.y = lkp_rot
 		global_position.x = lkp_x
 		global_position.z = lkp_z
-	else:
-		rotation.y = lkp_rot
 
 @rpc("any_peer", "reliable")
 func _hide():

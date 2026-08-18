@@ -11,6 +11,7 @@ var port_range_end = 29000    # Ending port for game servers
 const SHIP_CLASS_BB = 0  # Battleship
 const SHIP_CLASS_CA = 1  # Cruiser
 const SHIP_CLASS_DD = 2  # Destroyer
+const SHIP_CLASS_CV = 3  # Carrier
 const NUM_SHIPS_PER_TEAM = 12
 
 # Ship data: path -> {class, tier}
@@ -22,7 +23,8 @@ const SHIP_DATA = {
 	"res://assets/Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://assets/Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://assets/Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
-	"res://assets/Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10}
+	"res://assets/Ships/Shimakaze/Shimakaze.tscn": {"class": SHIP_CLASS_DD, "tier": 10},
+	"res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn": {"class": SHIP_CLASS_CV, "tier": 10}
 }
 
 # Available ships by class for bot team generation
@@ -40,6 +42,9 @@ const SHIPS_BY_CLASS = {
 	],
 	SHIP_CLASS_DD: [
 		"res://assets/Ships/Shimakaze/Shimakaze.tscn"
+	],
+	SHIP_CLASS_CV: [
+		"res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn"
 	]
 }
 var udp
@@ -402,16 +407,35 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	# 	var player_marker = " [PLAYER]" if spawn_list[i]["is_player"] else ""
 	# 	print("  Position %d: %s (%s)%s" % [i, class_label, spawn_list[i]["ship"].get_file(), player_marker])
 
+	# Only BB/CA/DD are dealt round-robin as filler; the carrier slot is placed
+	# explicitly below so there is exactly one per team rather than however many
+	# the rotation happens to land on.
 	var classes = [SHIP_CLASS_BB, SHIP_CLASS_CA, SHIP_CLASS_DD]
-	var spawn_classes = [[], [], []]
+	var spawn_classes = [[], [], [], []]  # indexed by ship class, carrier included
 	# var player_class_index = classes.find(player_ship_class)
 	spawn_classes[player_ship_class].append({
 		"class": player_ship_class,
 		"ship": player_ship,
 		"is_player": true
 	})
+
+	# One carrier per team. Both teams are built from this same spawn list, so a
+	# single entry here yields one carrier per side. When the player is already
+	# in a carrier their own entry fills their team's slot and the mirrored bot
+	# fills the enemy's - adding another would put two carriers on their team.
+	var bot_cv_count := 0
+	if player_ship_class != SHIP_CLASS_CV:
+		var cv_pool: Array = SHIPS_BY_CLASS[SHIP_CLASS_CV]
+		spawn_classes[SHIP_CLASS_CV].append({
+			"class": SHIP_CLASS_CV,
+			"ship": cv_pool[randi() % cv_pool.size()],
+			"is_player": false
+		})
+		bot_cv_count = 1
+
 	var class_index = (player_ship_class + 1) % classes.size()
-	for i in range(NUM_SHIPS_PER_TEAM - 1):
+	# the carrier takes one of the team's slots rather than adding to them
+	for i in range(NUM_SHIPS_PER_TEAM - 1 - bot_cv_count):
 		var ship_class = classes[class_index]
 		var ship_path = SHIPS_BY_CLASS[ship_class][randi() % SHIPS_BY_CLASS[ship_class].size()]  # Just take a random ship of that class
 		# var is_player = (ship_class == player_ship_class)
@@ -422,13 +446,14 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 		})
 		class_index = (class_index + 1) % classes.size()
 
-	spawn_classes[0].shuffle()
-	spawn_classes[1].shuffle()
-	spawn_classes[2].shuffle()
+	for class_list in spawn_classes:
+		class_list.shuffle()
 	spawn_classes.shuffle()
 
 	var spawn_list = []
-	var max_class_size = max(spawn_classes[0].size(), spawn_classes[1].size(), spawn_classes[2].size())
+	var max_class_size := 0
+	for cls in spawn_classes:
+		max_class_size = maxi(max_class_size, cls.size())
 	for i in range(max_class_size):
 		for cls in spawn_classes:
 			if i < cls.size():
@@ -485,8 +510,8 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 func _log_team_composition(team: Dictionary) -> void:
 	var team0_tiers = []
 	var team1_tiers = []
-	var team0_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0}
-	var team1_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0}
+	var team0_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0, SHIP_CLASS_CV: 0}
+	var team1_classes = {SHIP_CLASS_BB: 0, SHIP_CLASS_CA: 0, SHIP_CLASS_DD: 0, SHIP_CLASS_CV: 0}
 
 	for key in team:
 		var ship_path = team[key]["ship"]
@@ -502,19 +527,21 @@ func _log_team_composition(team: Dictionary) -> void:
 			team1_classes[ship_class] += 1
 
 	print("=== Team Composition ===")
-	print("Team 0: %d ships (BB:%d CA:%d DD:%d) - Tiers: %s (avg: %.1f)" % [
+	print("Team 0: %d ships (BB:%d CA:%d DD:%d CV:%d) - Tiers: %s (avg: %.1f)" % [
 		team0_tiers.size(),
 		team0_classes[SHIP_CLASS_BB],
 		team0_classes[SHIP_CLASS_CA],
 		team0_classes[SHIP_CLASS_DD],
+		team0_classes[SHIP_CLASS_CV],
 		str(team0_tiers),
 		_array_average(team0_tiers)
 	])
-	print("Team 1: %d ships (BB:%d CA:%d DD:%d) - Tiers: %s (avg: %.1f)" % [
+	print("Team 1: %d ships (BB:%d CA:%d DD:%d CV:%d) - Tiers: %s (avg: %.1f)" % [
 		team1_tiers.size(),
 		team1_classes[SHIP_CLASS_BB],
 		team1_classes[SHIP_CLASS_CA],
 		team1_classes[SHIP_CLASS_DD],
+		team1_classes[SHIP_CLASS_CV],
 		str(team1_tiers),
 		_array_average(team1_tiers)
 	])

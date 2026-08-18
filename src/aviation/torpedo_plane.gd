@@ -55,14 +55,26 @@ func update_preview(meshes: Array[MeshInstance3D], do_show: bool, drop_center: V
 		Aircraft.position_flat_rect(dead, base + fwd3 * (arming * 0.5), dir, TORPEDO_PREVIEW_WIDTH, arming)
 		Aircraft.position_flat_rect(live, base + fwd3 * (arming + live_len * 0.5), dir, TORPEDO_PREVIEW_WIDTH, live_len)
 
-func process_attack_point(point: Vector2, _direction: Vector2) -> Vector2:
-	var dir := _direction
+# Distance the torpedo runs from release to the ordered mark - the drop point
+# sits this far behind the mark, along the run direction.
+func run_to_mark() -> float:
+	var arming: float = torpedo_params.arming_distance
+	var live_len: float = maxf(torpedo_range - arming, 0.0)
+	return arming + live_len * 0.1
+
+func process_attack_point(point: Vector2, direction: Vector2) -> Vector2:
+	var dir := direction
 	if dir.length_squared() < 0.0001:
 		dir = Vector2(0.0, 1.0)
 	else:
 		dir = dir.normalized()
-	var arming: float = torpedo_params.arming_distance
-	var live_len: float = maxf(torpedo_range - arming, 0.0)
-	# var fwd3 := Vector3(dir.x, 0.0, dir.y)
-	var drop_center := point - dir * (arming + live_len * 0.1)
-	return drop_center
+	return point - dir * run_to_mark()
+
+# TorpedoManager advances torpedoes at params.speed * TORPEDO_SPEED_MULTIPLIER,
+# so dividing by params.speed alone overstates the run time threefold. Same
+# conversion TorpedoController.time_to_target uses.
+func ordnance_flight_time() -> float:
+	var ground_speed: float = torpedo_params.speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER
+	if ground_speed <= 0.0:
+		return 0.0
+	return run_to_mark() / ground_speed

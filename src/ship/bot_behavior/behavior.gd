@@ -506,19 +506,100 @@ func _get_overextension_score(enemy: Ship) -> float:
 
 # 	return best_target
 
+# ============================================================================
+# CONTACT SOLUTIONS
+# What a bot legitimately knows about an enemy's position and motion. Spotted
+# ships are read live; ships held only on a last-known position are read from the
+# server's frozen LKP record and dead-reckoned forward, so nothing here ever
+# tracks a ship nobody can see.
+# ============================================================================
+
+# Dead reckoning past this age is fiction - a ship unseen for this long has
+# almost certainly changed course, so the extrapolation stops growing rather than
+# flinging the solution kilometres down a heading nobody has confirmed. Matches
+# the staleness horizon _should_use_radar() already applies to an LKP.
+const LKP_MAX_LEAD_AGE: float = 30.0
+# An LKP older than this is not offered to the guns at all - see pick_target.
+const LKP_TARGET_MAX_AGE: float = LKP_MAX_LEAD_AGE
+# Priority multiplier applied to a target held only on an LKP. Shooting at a
+# dead-reckoned contact is a real option when everything has gone dark, but it
+# should always lose to a ship someone can actually see.
+const LKP_TARGET_PRIORITY_MULT: float = 0.4
+
+## Returns what this bot believes about `target`:
+##   position - live, or the LKP dead-reckoned forward by the age of the contact
+##   velocity - live, or the velocity frozen when it was last observed
+##   basis    - live, or a basis built from the heading frozen at that instant
+##   age      - 0 for a spotted ship, else how long ago the contact was observed
+##   is_lkp   - true when this is a last-known position rather than a live one
+##   valid    - false when the bot has no idea where the ship is at all
+## `valid` deliberately does not consider age: callers apply whatever staleness
+## policy suits them (the guns use LKP_TARGET_MAX_AGE; aviation will attack an
+## older contact, since flying out to look costs it nothing).
+func get_contact_solution(target: Ship) -> Dictionary:
+	if target.visible_to_enemy:
+		return {
+			position = target.global_position,
+			velocity = target.linear_velocity,
+			basis = target.global_transform.basis,
+			age = 0.0,
+			is_lkp = false,
+			valid = true,
+		}
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return {valid = false}
+	var team_id: int = _ship.team.team_id
+	var unspotted := server_node.get_unspotted_enemies(team_id)
+	var times := server_node.get_unspotted_enemy_times(team_id)
+	if not unspotted.has(target) or not times.has(target):
+		return {valid = false}
+	var age: float = Time.get_ticks_msec() / 1000.0 - float(times[target])
+	var frozen_vel: Vector3 = server_node.get_unspotted_enemy_velocities(team_id).get(target, Vector3.ZERO)
+	var frozen_rot: float = float(server_node.get_unspotted_enemy_rotations(team_id).get(target, 0.0))
+	var lkp: Vector3 = unspotted[target]
+	return {
+		position = lkp + frozen_vel * clampf(age, 0.0, LKP_MAX_LEAD_AGE),
+		velocity = frozen_vel,
+		basis = Basis.from_euler(Vector3(0.0, frozen_rot, 0.0)),
+		age = maxf(age, 0.0),
+		is_lkp = true,
+		valid = true,
+	}
+
+## Whether the guns should be offered this contact at all: a live spot always, an
+## LKP only while it is fresh enough that dead reckoning still means something.
+func is_engageable_contact(sol: Dictionary) -> bool:
+	if not sol.get("valid", false):
+		return false
+	return not sol.is_lkp or sol.age <= LKP_TARGET_MAX_AGE
+
+## Where the turrets should point for `target` given what the bot believes about
+## it, aim offset included. Returns null when there is no usable solution, which
+## is the caller's cue to hold rather than swing onto a ship it has lost.
+func contact_aim_point(target: Ship) -> Variant:
+	var contact := get_contact_solution(target)
+	if not is_engageable_contact(contact):
+		return null
+	return contact.position + contact.basis * target_aim_offset(target)
+
 var potential_target_weight_cache: Dictionary = {}  # Ship -> float
 func get_potential_target_weight(target: Ship) -> float:
 	if potential_target_weight_cache.has(target):
 		return potential_target_weight_cache[target]
 	var my_range = _ship.artillery_controller.get_params()._range
 	var hp_ratio = target.health_controller.current_hp / target.health_controller.max_hp
+	# Score the position the bot believes in, not the one it cannot see
+	var sol := get_contact_solution(target)
+	var sol_pos: Vector3 = sol.get("position", target.global_position)
+	var sol_basis: Basis = sol.get("basis", target.global_transform.basis)
 
 	# Prefer close targets; falls off exponentially beyond gun range
-	var weight = exp(-target.global_position.distance_to(_ship.global_position) / (my_range / 3))
+	var weight = exp(-sol_pos.distance_to(_ship.global_position) / (my_range / 3))
 
 	# Prefer targets presenting a large side profile (easier to hit)
-	var target_heading = target.global_transform.basis.z.normalized()
-	var to_target = (target.global_position - _ship.global_position).normalized()
+	var target_heading = sol_basis.z.normalized()
+	var to_target = (sol_pos - _ship.global_position).normalized()
 	var angle = target_heading.angle_to(to_target)
 	var side_profile = target.movement_controller.ship_length * abs(sin(angle)) + target.movement_controller.ship_beam * abs(cos(angle))
 	side_profile *= 0.01
@@ -538,19 +619,37 @@ func get_potential_target_weight(target: Ship) -> float:
 	# # Prefer high-threat targets
 	# weight += target.stats.total_damage * (1.0 / 150_000.0)
 
+	# A contact held only on a last-known position is worth shooting at, but only
+	# once nothing visible outranks it
+	if sol.get("is_lkp", false):
+		weight *= LKP_TARGET_PRIORITY_MULT
+
 	potential_target_weight_cache[target] = weight
 	return weight
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	potential_target_weight_cache.clear()
-	targets.sort_custom(func(a: Ship, b: Ship) -> bool:
+	# Ships held only on a fresh last-known position are candidates too, at
+	# reduced priority (see get_potential_target_weight). Without them the guns
+	# sit idle the moment every enemy goes dark, even with a contact well inside
+	# gun range that was observed seconds ago.
+	var candidates: Array[Ship] = targets.duplicate()
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node != null:
+		for enemy: Ship in server_node.get_unspotted_enemies(_ship.team.team_id).keys():
+			if not is_instance_valid(enemy) or not enemy.is_alive():
+				continue
+			if enemy.visible_to_enemy or candidates.has(enemy):
+				continue
+			candidates.append(enemy)
+	candidates.sort_custom(func(a: Ship, b: Ship) -> bool:
 		return get_potential_target_weight(a) > get_potential_target_weight(b)
 	)
 
-	# Find the highest-weight target that is visible and can be shot at
+	# Find the highest-weight target we have a usable solution for and can shoot at
 	var best: Ship = null
-	for potential in targets:
-		if potential.visible_to_enemy and can_hit_target(potential):
+	for potential in candidates:
+		if is_engageable_contact(get_contact_solution(potential)) and can_hit_target(potential):
 			best = potential
 			break
 
@@ -998,7 +1097,13 @@ func can_hit_target(target: Ship) -> bool:
 	var gun_params = _ship.artillery_controller.get_params()
 	if gun_params == null:
 		return false
-	if target.global_position.distance_to(_ship.global_position) > gun_params._range * 1.5:
+	# Check the shot the bot would actually take, which for an unspotted contact
+	# is at its dead-reckoned last-known position rather than where it really is
+	var contact := get_contact_solution(target)
+	if not contact.get("valid", false):
+		return false
+	var sol_pos: Vector3 = contact.position
+	if sol_pos.distance_to(_ship.global_position) > gun_params._range * 1.5:
 		# Quick early-out for very distant targets to avoid expensive sim checks
 		return false
 
@@ -1006,13 +1111,13 @@ func can_hit_target(target: Ship) -> bool:
 	if shell_params == null:
 		return false
 
-	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
+	var adjusted_target_pos = sol_pos + contact.basis * target_aim_offset(target)
 
 	# Use leading calculation so the sim check matches what we'd actually fire
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
-		target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
+		contact.velocity / ProjectileManager.get_shell_time_multiplier(),
 		shell_params
 	)
 	var lead_pos = lead_result[2]
@@ -1698,25 +1803,30 @@ func update_secondary_priority_target(primary_target: Ship, server: GameServer) 
 
 func engage_target(target: Ship):
 	"""Fire at target. Override for class-specific behavior."""
-	if target.global_position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
+	# Aim at the position the bot actually knows about: live for a spotted ship,
+	# the dead-reckoned last-known position for one that has gone dark.
+	var contact := get_contact_solution(target)
+	if not is_engageable_contact(contact):
+		return
+	var adjusted_target_pos: Vector3 = contact.position + contact.basis * target_aim_offset(target)
+	if contact.position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
 		return
 
 	#if not can_fire_guns():
-		#_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
+		#_ship.artillery_controller.set_aim_input(adjusted_target_pos)
 		#return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
 	if wants_to_be_concealed:
-		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
+		_ship.artillery_controller.set_aim_input(adjusted_target_pos)
 		_ship.secondary_controller.enabled = false
 		return
 	_ship.secondary_controller.enabled = true
 
-	var adjusted_target_pos = target.global_position + target.global_basis * target_aim_offset(target)
 	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 		_ship.global_position,
 		adjusted_target_pos,
-		target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
+		contact.velocity / ProjectileManager.get_shell_time_multiplier(),
 		_ship.artillery_controller.get_shell_params()
 	)
 	var target_lead = lead_result[2]
@@ -1763,6 +1873,360 @@ func engage_target(target: Ship):
 		gun.fire(_ship.artillery_controller.target_mod)
 		return
 
+
+# ============================================================================
+# AVIATION (shared by all ship classes; driven directly via the Squadron API,
+# never the player RPC path, whose shell_indices multi-select is empty for bots)
+# ============================================================================
+var _aviation_spot_issued: Dictionary = {}  # int (squadron index) -> Vector2
+const AVIATION_SPOT_REISSUE_DIST: float = 500.0
+var _aviation_shadow_issued: Dictionary = {}  # int (squadron index) -> Vector2
+const AVIATION_SHADOW_REISSUE_DIST: float = 500.0
+var _aviation_strike_target: Dictionary = {}  # int (squadron index) -> Ship it was sent after
+
+# Ordnance is only committed against a contact somebody is actually holding: a
+# live spot, or a last-known position still being refreshed. LKPs stop refreshing
+# the moment nothing can see the ship, so a contact older than this is one that
+# has been gone a while, and a run against it puts ordnance in the water.
+const LKP_STRIKE_MAX_AGE: float = 4.0
+# A run already under way is given a little more rope before being broken off:
+# LKPs refresh on GameServer.HYDRO_LKP_INTERVAL, which is itself 4s, so testing a
+# run against a strict 4s would have it flicker against its own refresh cadence.
+const LKP_STRIKE_ABORT_AGE: float = 6.0
+
+## Whether a squadron may be sent in to drop on this contact at all.
+func _contact_is_strikeable(sol: Dictionary) -> bool:
+	if not sol.get("valid", false):
+		return false
+	return not sol.is_lkp or sol.age <= LKP_STRIKE_MAX_AGE
+
+## Whether a run already committed should be broken off - the contact has gone
+## cold with the squadron still inbound.
+func _contact_strike_lost(sol: Dictionary) -> bool:
+	if not sol.get("valid", false):
+		return true
+	return sol.is_lkp and sol.age > LKP_STRIKE_ABORT_AGE
+
+## Same question for the run squadron `index` is actually flying. The contact
+## judged is the ship it was sent after, not whatever the bot happens to be
+## looking at this tick - the two diverge the moment a fresher enemy turns up
+## nearby, and a squadron committed against a ship that has since gone dark would
+## otherwise ride that fresh contact's coat-tails all the way onto empty water.
+func _strike_contact_lost(index: int, current_ship: Ship, current_sol: Dictionary) -> bool:
+	var committed_to = _aviation_strike_target.get(index, null)
+	if committed_to == null or committed_to == current_ship:
+		return _contact_strike_lost(current_sol)
+	if not is_instance_valid(committed_to) or not committed_to.is_alive():
+		return true
+	return _contact_strike_lost(get_contact_solution(committed_to))
+
+## Sends a squadron to loiter over a contact it is not allowed to strike, so it is
+## already overhead the moment that contact firms up again. Routing it by waypoint
+## rather than attack point is the whole point: set_waypoint() clears attack_point,
+## which drops the formation out of its attack run, and a run that reaches its mark
+## drops ordnance whether or not anything is still there to drop it on.
+func _shadow_contact(index: int, squad: Squadron, point: Vector2) -> void:
+	if squad.returning or squad.attack_fired:
+		return
+	_aviation_strike_target.erase(index)
+	# Always issue when there is a run to break off; otherwise only when the
+	# loiter point has actually moved, so the squadron is left to orbit in peace
+	# instead of being handed the same waypoint every tick.
+	if squad.attack_point == null:
+		var prev = _aviation_shadow_issued.get(index, null)
+		if prev != null and (point - prev).length() < AVIATION_SHADOW_REISSUE_DIST:
+			return
+	squad.set_waypoint(point, false)
+	_aviation_shadow_issued[index] = point
+
+func _squadron_is_spotter(squad: Squadron) -> bool:
+	return squad.aircraft[0] is SpottingAircraft
+
+func _squadron_range(squad: Squadron) -> float:
+	return (squad.params.p() as AircraftParams)._range
+
+# beyond this multiple of attack_descent_radius the drop point is still
+# re-aimed each tick to track a moving target; inside it the squadron is
+# committed to its final run and the drop point freezes - a committed squadron
+# can be dodged, which is deliberate, so the aim is never refreshed past here
+const ATTACK_COMMIT_RADIUS_MULT: float = 1.2
+
+# Squadron may (re)take an attack order while on deck, airborne uncommitted,
+# or mid-approach - until it enters the commit radius around its processed
+# attack point (the point update_flight() actually flies to, which for
+# torpedo runs is offset behind the ordered point).
+func _squadron_should_take_attack(squad: Squadron, p: AircraftParams) -> bool:
+	if squad.returning or squad.holding_attack:
+		return false
+	if squad.attack_point == null:
+		return true
+	var pos = Vector2(squad.node.global_position.x, squad.node.global_position.z)
+	var processed: Vector2 = squad.aircraft[0].process_attack_point(squad.attack_point, squad.attack_direction)
+	return pos.distance_to(processed) > ATTACK_COMMIT_RADIUS_MULT * p.attack_descent_radius
+
+func _squadron_speed(squad: Squadron) -> float:
+	return (squad.params.p() as AircraftParams).speed
+
+# Leads the mark so the ordnance meets the target where it will be: how stale
+# the position being aimed at already is (the contact's age, zero for a live one)
+# plus the plane's flight time to the actual drop point (via the entry point
+# update_flight() enforces) plus the ordnance's own travel time after release
+# (bomb fall, torpedo run). The drop point moves with the lead, so iterate.
+# The velocity comes from the contact solution, so an unspotted target is led on
+# the course it was last seen holding rather than the one it is secretly flying.
+func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, direction: Vector2, sol: Dictionary) -> Vector2:
+	if not is_instance_valid(air_ship) or not sol.get("valid", false):
+		return point
+	var sol_vel: Vector3 = sol.velocity
+	var vel = Vector2(sol_vel.x, sol_vel.z)
+	if vel.length_squared() < 1.0:
+		return point
+	var lkp_age: float = minf(sol.age, LKP_MAX_LEAD_AGE)
+	var origin := Vector2(squad.node.global_position.x, squad.node.global_position.z)
+	var speed := _squadron_speed(squad)
+	var plane: Aircraft = squad.aircraft[0]
+	var t_weapon := plane.ordnance_flight_time()
+	var p = squad.params.p() as AircraftParams
+	var dir := direction
+	if dir.length_squared() < 0.001:
+		dir = Vector2(0.0, 1.0)
+	else:
+		dir = dir.normalized()
+	var ordered := point
+	for i in range(3):
+		var drop := plane.process_attack_point(ordered, dir)
+		var entry := drop - dir * (p.attack_descent_radius as float)
+		var path := origin.distance_to(entry) + entry.distance_to(drop)
+		ordered = point + vel * (lkp_age + path / speed + t_weapon)
+	return ordered
+
+# Attack run direction: aligned with the target's beam, so the abreast
+# formation line spreads along the ship's length - torpedoes run across the
+# broadside, bombs land along the keel. Whichever side (right/left) the
+# squadron is already approaching from is taken, so it never has to turn
+# around mid-run. While it sits near the bow/stern axis the previously chosen
+# side is kept to stop the entry point flip-flopping side to side.
+const ATTACK_DIR_HYSTERESIS: float = 0.25
+var _aviation_attack_dir: Dictionary = {}  # int (squadron index) -> Vector2
+
+func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vector2) -> Vector2:
+	var origin := Vector2(squad.node.global_position.x, squad.node.global_position.z)
+	var travel := point - origin
+	if travel.length_squared() < 0.001:
+		travel = Vector2(0.0, 1.0)
+	else:
+		travel = travel.normalized()
+	if not is_instance_valid(air_ship):
+		return travel
+	var right := Vector2(air_ship.global_transform.basis.x.x, air_ship.global_transform.basis.x.z)
+	if right.length_squared() < 0.001:
+		return travel
+	right = right.normalized()
+	var preference := travel.dot(right)
+	var dir: Vector2 = right if preference >= 0.0 else -right
+	var prev: Vector2 = _aviation_attack_dir.get(index, Vector2.ZERO)
+	if absf(preference) < ATTACK_DIR_HYSTERESIS and prev.length_squared() > 0.001:
+		dir = prev.normalized()
+	_aviation_attack_dir[index] = dir
+	return dir
+
+# Per-tick aviation control. Attack squadrons (bombers/torpedo planes) full-launch
+# and re-aim their drop point on the air target every tick - the gun target if
+# valid, otherwise the nearest known enemy (visible or unspotted last-known
+# position) - until they enter their attack-descent commit radius, then let
+# them commit to the run. A run is only ever committed against a contact somebody
+# is actually holding; against anything staler the squadron is routed by waypoint
+# to loiter over the contact instead, and a run whose contact goes cold before
+# release is broken off the same way rather than dropping on open water. The drop point leads a moving target by the squadron's
+# ETA plus the ordnance's own flight time, and by however stale the aimed-at
+# position already was when it came from a last-known position rather than a live
+# one. Spotter squadrons take one known contact each, nearest first, and any left
+# over fan out across a search front centred on where the enemy is expected to be.
+func aviation_engage(target: Ship, server: GameServer) -> void:
+	var av: AviationController = _ship.aviation_controller
+	if av == null:
+		return
+	var has_air_target := false
+	var point := Vector2.ZERO
+	var dist := INF
+	var air_ship: Ship = null
+	# what the bot believes about the ship in `point`: live while it is spotted,
+	# its frozen last-known contact once it is not
+	var sol: Dictionary = {valid = false}
+	var target_valid: bool = target != null and target.is_alive() and target.visible_to_enemy
+	if target_valid:
+		point = Vector2(target.global_position.x, target.global_position.z)
+		dist = _ship.global_position.distance_to(target.global_position)
+		air_ship = target
+		sol = get_contact_solution(target)
+		has_air_target = true
+	else:
+		# _get_nearest_enemy() draws from both the spotted ships and the
+		# last-known positions of unspotted ones, so whether `point` is live or
+		# stale depends on which it picked - the contact solution sorts that out.
+		var info = _get_nearest_enemy()
+		if not info.is_empty():
+			point = Vector2(info.position.x, info.position.z)
+			dist = info.distance
+			air_ship = info.get("ship")
+			if air_ship != null:
+				sol = get_contact_solution(air_ship)
+			has_air_target = true
+	# Where a squadron shadows the contact from when it may not strike it: the
+	# believed position, so it loiters where the ship has probably got to.
+	var loiter_point := point
+	if sol.get("valid", false):
+		var sol_pos: Vector3 = sol.position
+		loiter_point = Vector2(sol_pos.x, sol_pos.z)
+	if has_air_target:
+		for i in range(av.squadrons.size()):
+			var squad: Squadron = av.squadrons[i]
+			if squad.aircraft.is_empty():
+				continue
+			if _squadron_is_spotter(squad):
+				continue
+			var p = squad.params.p() as AircraftParams
+			if dist > p._range:
+				continue
+			if squad.returning:
+				_aviation_attack_dir.erase(i)
+				_aviation_shadow_issued.erase(i)
+				_aviation_strike_target.erase(i)
+				continue
+			if not _squadron_should_take_attack(squad, p):
+				# Committed to the run. The drop point stays frozen from here by
+				# design, so if the contact goes cold before release the only way
+				# not to bomb open water is to break the run off entirely.
+				if _strike_contact_lost(i, air_ship, sol):
+					_shadow_contact(i, squad, loiter_point)
+				continue
+			av.ensure_launched(i)
+			if not _contact_is_strikeable(sol):
+				# Nothing solid to drop on yet - go and sit over the contact
+				# instead of committing a run that would release on empty water
+				_shadow_contact(i, squad, loiter_point)
+				continue
+			_aviation_shadow_issued.erase(i)
+			_aviation_strike_target[i] = air_ship
+			var dir := _attack_direction(i, squad, air_ship, point)
+			squad.set_attack(_lead_attack_point(squad, air_ship, point, dir, sol), dir)
+	else:
+		# Nothing known to strike anywhere - break off any run still in progress
+		# rather than let it fly on and bomb the last place it was pointed at
+		for i in range(av.squadrons.size()):
+			var squad: Squadron = av.squadrons[i]
+			if squad.aircraft.is_empty() or _squadron_is_spotter(squad):
+				continue
+			if squad.attack_point == null:
+				continue
+			_shadow_contact(i, squad, squad.attack_point)
+	# Gather the spotters first: each needs to know how many there are and which
+	# slice of the search front is its own
+	var spotters: Array[int] = []
+	for i in range(av.squadrons.size()):
+		var squad: Squadron = av.squadrons[i]
+		if squad.aircraft.is_empty() or not _squadron_is_spotter(squad):
+			continue
+		spotters.append(i)
+	for slot in range(spotters.size()):
+		var idx: int = spotters[slot]
+		_spot_squadron(av, idx, av.squadrons[idx], server, slot, spotters.size())
+
+# Total angle the leftover spotters are fanned across, centred on the bearing to
+# where the enemy is expected to be, so a carrier with several spotter squadrons
+# sweeps a front instead of stacking them all onto one point.
+const SPOTTER_FAN_ANGLE_DEG: float = 80.0
+
+# Where the enemy is expected to be. Anything actually known wins; failing that
+# the enemy spawn, which is the one bearing that does not depend on what this
+# ship happens to be doing. The ship's own heading is a last resort only - using
+# it as the primary source sent spotters sideways or backwards the moment a
+# carrier turned to put an island between itself and the enemy, which is exactly
+# when it turns and exactly when it needs the spotters pointed the other way.
+func _expected_enemy_center() -> Vector3:
+	var info = _get_nearest_enemy()
+	if not info.is_empty():
+		return info.position
+	_initialize_spawn_cache()
+	if _spawn_cache_initialized:
+		return _cached_enemy_spawn
+	return _ship.global_position - _ship.global_transform.basis.z * 10000.0
+
+# Keeps a search point inside the playable area - a spotter sent past the map
+# edge burns its whole sortie over empty water.
+func _clamp_to_map(p: Vector2) -> Vector2:
+	return Vector2(
+		clampf(p.x, -Ship.MAP_BOUNDARY, Ship.MAP_BOUNDARY),
+		clampf(p.y, -Ship.MAP_BOUNDARY, Ship.MAP_BOUNDARY))
+
+# Search station for a spotter with nothing specific to look at: max range out
+# along the bearing to the expected enemy, offset into its own slice of the fan
+# so `fan_count` squadrons cover a front rather than one point.
+func _sweep_point(squad: Squadron, fan_slot: int, fan_count: int) -> Vector2:
+	var ship_pos := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var center := _expected_enemy_center()
+	var bearing := Vector2(center.x - ship_pos.x, center.z - ship_pos.y)
+	if bearing.length_squared() < 1.0:
+		bearing = Vector2(-_ship.global_transform.basis.z.x, -_ship.global_transform.basis.z.z)
+	if bearing.length_squared() < 0.001:
+		bearing = Vector2(0.0, 1.0)
+	bearing = bearing.normalized()
+	var offset := 0.0
+	if fan_count > 1:
+		var t: float = float(fan_slot) / float(fan_count - 1) - 0.5
+		offset = t * deg_to_rad(SPOTTER_FAN_ANGLE_DEG)
+	return _clamp_to_map(ship_pos + bearing.rotated(offset) * _squadron_range(squad))
+
+# Last-known positions worth flying a spotter out to, nearest first. Read through
+# the contact solution, so a spotter is sent where the ship has probably got to
+# by now rather than where it was standing when it went dark.
+func _unspotted_contacts_in_range(server: GameServer, squad: Squadron) -> Array[Vector2]:
+	var points: Array[Vector2] = []
+	if server == null:
+		return points
+	var reach := _squadron_range(squad)
+	var ranked: Array[Dictionary] = []
+	for s: Ship in server.get_unspotted_enemies(_ship.team.team_id).keys():
+		if not is_instance_valid(s) or not s.is_alive():
+			continue
+		var sol := get_contact_solution(s)
+		if not sol.get("valid", false):
+			continue
+		var pos: Vector3 = sol.position
+		var d := _ship.global_position.distance_to(pos)
+		if d > reach:
+			continue
+		ranked.append({dist = d, point = Vector2(pos.x, pos.z)})
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.dist < b.dist)
+	for r in ranked:
+		points.append(r.point)
+	return points
+
+# One spotter per known contact, nearest first; every squadron left over fans out
+# across the search front instead of piling onto a contact another squadron has
+# already been sent to.
+func _spot_squadron(av: AviationController, index: int, squad: Squadron, server: GameServer,
+		fan_slot: int, fan_count: int) -> void:
+	if squad.returning:
+		return
+	if not squad.active:
+		_aviation_spot_issued.erase(index)
+	var contacts := _unspotted_contacts_in_range(server, squad)
+	var desired: Vector2
+	if fan_slot < contacts.size():
+		desired = contacts[fan_slot]
+	else:
+		# fan only the squadrons that are actually sweeping, so they spread over
+		# the whole front rather than crowding the slots the contacts left free
+		desired = _sweep_point(squad, fan_slot - contacts.size(), maxi(fan_count - contacts.size(), 1))
+	if _aviation_spot_issued.has(index) and (desired - _aviation_spot_issued[index]).length() < AVIATION_SPOT_REISSUE_DIST:
+		return
+	av.ensure_launched(index)
+	var dir = desired - Vector2(_ship.global_position.x, _ship.global_position.z)
+	if dir.length_squared() < 1.0:
+		dir = Vector2(0.0, 1.0)
+	squad.set_attack(desired, dir.normalized())
+	_aviation_spot_issued[index] = desired
 
 
 # ============================================================================

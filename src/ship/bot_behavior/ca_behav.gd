@@ -118,7 +118,11 @@ func _can_shoot_over(target: Ship) -> bool:
 	return false
 
 func engage_target(target: Ship) -> void:
-	var aim_pos = target.global_position + target.global_basis * target_aim_offset(target)
+	# Believed position, so a target that has gone dark is still tracked at its
+	# dead-reckoned last-known position instead of its real one
+	var aim_pos = contact_aim_point(target)
+	if aim_pos == null:
+		return
 	if not can_fire_guns():
 		_ship.artillery_controller.set_aim_input(aim_pos)
 		return

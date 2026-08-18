@@ -108,10 +108,28 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	var max_overextension: float = 0.0
 	var has_close_threat: bool = false
 
-	for ship in targets:
-		var disp = ship.global_position - _ship.global_position
+	# Ships held only on a fresh last-known position are candidates too, at
+	# reduced priority (LKP_TARGET_PRIORITY_MULT below) - a DD that has lost the
+	# plot still knows roughly where the enemy was seconds ago.
+	var candidates: Array[Ship] = targets.duplicate()
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node != null:
+		for enemy: Ship in server_node.get_unspotted_enemies(_ship.team.team_id).keys():
+			if not is_instance_valid(enemy) or not enemy.is_alive():
+				continue
+			if enemy.visible_to_enemy or candidates.has(enemy):
+				continue
+			candidates.append(enemy)
+
+	for ship in candidates:
+		# Score the position this bot believes in, not the one it cannot see
+		var contact := get_contact_solution(ship)
+		if not is_engageable_contact(contact):
+			continue
+		var contact_pos: Vector3 = contact.position
+		var disp = contact_pos - _ship.global_position
 		var dist = disp.length()
-		var angle = (-ship.basis.z).angle_to(disp)
+		var angle = (-(contact.basis.z as Vector3)).angle_to(disp)
 		angle -= PI / 4  # Best angle to torpedo is 45 degrees incoming
 		var priority: float = 0.0
 
@@ -146,6 +164,11 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		# Track whether any enemy is dangerously close
 		if dist < proximity_override_dist:
 			has_close_threat = true
+
+		# A contact held only on a last-known position stays in the running, but
+		# always loses to a ship someone can actually see
+		if contact.is_lkp:
+			priority *= LKP_TARGET_PRIORITY_MULT
 
 		var shootable = _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship)
 		candidate_data.append({
@@ -410,8 +433,11 @@ func engage_target(target: Ship):
 		_ship.secondary_controller.enabled = true
 	else:
 		_ship.secondary_controller.enabled = false
-		# Aim turrets but don't fire
-		_ship.artillery_controller.set_aim_input(target.global_position + target.global_basis * target_aim_offset(target))
+		# Aim turrets but don't fire - at the believed position, so a target that
+		# has gone dark is tracked at its dead-reckoned last-known position
+		var aim_pos = contact_aim_point(target)
+		if aim_pos != null:
+			_ship.artillery_controller.set_aim_input(aim_pos)
 
 	# Torpedoes are always managed
 	update_torpedo_aim(target)

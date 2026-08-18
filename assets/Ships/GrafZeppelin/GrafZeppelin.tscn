@@ -68,17 +68,19 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
 [sub_resource type="Resource" id="Resource_imprb"]
 script = ExtResource("8_fsyle")
+speed = 650.0
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_fsyle"]
 script = ExtResource("8_fsyle")
+speed = 650.0
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
 [sub_resource type="Resource" id="Resource_7ggnw"]
 script = ExtResource("7_fsyle")
 shell1 = SubResource("Resource_imprb")
 shell2 = SubResource("Resource_fsyle")
-_range = 10000.0
+_range = 20000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
 [sub_resource type="Resource" id="Resource_lv0yt"]

@@ -244,3 +244,8 @@ static func attack_lateral_offset(i: int, count: int, spacing: float, direction:
 
 func process_attack_point(point: Vector2, direction: Vector2) -> Vector2:
 	return point
+
+# How long the ordnance takes from release to reach its mark - the bot adds
+# this to the plane's flight time when leading a moving target.
+func ordnance_flight_time() -> float:
+	return 0.0

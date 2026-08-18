@@ -40,6 +40,22 @@ func fire_ordnance(_direction: Vector2) -> bool:
 		TcpThreadPool.send_display_shell(id, global_position, dispersed_velocity, t, shell_params, self, true)
 	return true
 
+# The bomb is aimed at the water straight below the release point, so its
+# flight time is a pure vertical drop from the attack altitude.
+# calculate_launch_vector() cannot answer that: it rejects any target with no
+# horizontal displacement ("directly above/below - can't solve with this
+# method") and hands back a -1.0 flight time, which fed the bot a *negative*
+# lead. Go at the same drag physics directly instead, with a straight-down
+# launch angle, and convert out of shell-physics time into real seconds the way
+# every other consumer of a solver flight time does.
+func ordnance_flight_time() -> float:
+	var p = params.p() as AircraftParams
+	var alt: float = p.attack_altitude if p.attack_altitude >= 0.0 else p.altitude
+	var t: float = ProjectilePhysicsWithDragV2.time_of_flight(-PI * 0.5, shell_params, -alt)
+	if is_nan(t) or t <= 0.0:
+		return 0.0
+	return t / ProjectileManager.get_shell_time_multiplier()
+
 # One preview square per aircraft, sized to the actual dispersion ellipse
 # (see update_preview below).
 static func make_preview_meshes(parent: Node3D, count: int) -> Array[MeshInstance3D]:

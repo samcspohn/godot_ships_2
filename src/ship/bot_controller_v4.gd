@@ -769,13 +769,17 @@ func _tick_behavior(delta: float) -> void:
 		needs_rescan = true
 	elif target is Ship and not target.is_alive():
 		needs_rescan = true
-	elif target is Ship and not target.visible_to_enemy:
-		# Target went hidden — rescan but only on the slower scan timer to avoid
-		# thrashing when targets flicker at concealment edge. We give it a grace
-		# period: only rescan if we've waited at least 2 seconds since last scan.
+	elif target is Ship and not target.visible_to_enemy \
+			and not behavior.is_engageable_contact(behavior.get_contact_solution(target)):
+		# Target went hidden and left no last-known contact worth shooting at —
+		# rescan but only on the slower scan timer to avoid thrashing when targets
+		# flicker at concealment edge. We give it a grace period: only rescan if
+		# we've waited at least 2 seconds since last scan. A target that is dark
+		# but still holds a fresh LKP is kept and engaged at its dead-reckoned
+		# position instead.
 		if target_scan_timer >= 2.0:
 			needs_rescan = true
-	elif target is Ship and target.visible_to_enemy and not behavior.can_hit_target(target):
+	elif target is Ship and not behavior.can_hit_target(target):
 		# Target is visible but terrain-blocked — rescan after a short grace
 		# period so we switch to a shootable enemy instead of sailing toward
 		# one we can't actually hit. Use 3s to avoid thrashing at island edges.
@@ -804,11 +808,14 @@ func _acquire_target(last_target: Ship) -> void:
 
 
 func _engage_target() -> void:
-	if target != null and target.visible_to_enemy and target.is_alive():
+	if target != null and target.is_alive() \
+			and (target.visible_to_enemy or behavior.is_engageable_contact(behavior.get_contact_solution(target))):
 		behavior.engage_target(target)
 	else:
 		# No valid target — aim at destination as fallback
 		_ship.artillery_controller.set_aim_input(behavior._get_spotted_danger_center())
+	# Aviation runs regardless of gun target: spotters need orders even when nothing is in gun range
+	behavior.aviation_engage(target, server_node)
 
 
 # ===========================================================================
