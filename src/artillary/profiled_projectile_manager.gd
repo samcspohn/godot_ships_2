@@ -60,6 +60,28 @@ func fireBullet(vel: Vector3, pos: Vector3, shell: Resource, t: float, owner_nod
 	return _impl.fireBullet(vel, pos, shell, t, owner_node, exclude)
 
 
+## Shells released by aircraft rather than fired from the owning ship's guns.
+##
+## Every projectile records its owner so damage and kills credit the carrier, but
+## that makes the launch position a lie about where the owner is: an air-dropped
+## bomb originates over the *target*, not over the ship being credited. Anything
+## that reads a launch position as intel about the shooter has to be able to tell
+## the two apart, so aircraft tag their ordnance here on release.
+##
+## Keyed by shell id with the launch time as the value, because shell ids come
+## from a reuse pool - matching the time as well means a recycled id belonging to
+## a later gun shell can never be mistaken for the air-dropped one that held it
+## before. The dict is self-limiting for the same reason: one live entry per id
+## in flight, overwritten on reuse.
+var _air_dropped_shells: Dictionary = {}  # int (shell id) -> float (launch time)
+
+func mark_air_dropped(shell_id: int, launch_time: float) -> void:
+	_air_dropped_shells[shell_id] = launch_time
+
+func is_air_dropped(shell_id: int, launch_time: float) -> bool:
+	return is_equal_approx(_air_dropped_shells.get(shell_id, INF), launch_time)
+
+
 func fire_bullet_client(
 	pos: Vector3,
 	vel: Vector3,

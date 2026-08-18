@@ -392,12 +392,26 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 
 		_island_travel_cost[_sort_isl["id"]] = _edge_dist + _arc_cost
 
-	# Sort islands by estimated navigation cost; committed island is kept
-	# first as long as it is still within firing range.
+	# The committed island keeps priority as long as it is still within firing
+	# range.  Resolve that once here rather than inside the comparator: testing
+	# it only on the left operand makes the comparison asymmetric (both
+	# comp(a, b) and comp(b, a) can be true), which breaks the sort.
+	var _priority_island_id: int = -1
+	if _target_island_id >= 0:
+		for _pri_isl in islands:
+			if _pri_isl["id"] == _target_island_id:
+				var _pc2d: Vector2 = _pri_isl["center"]
+				var _pc := Vector3(_pc2d.x, 0.0, _pc2d.y)
+				if my_pos.distance_to(_pc) - _pri_isl["radius"] < max_desired_range:
+					_priority_island_id = _target_island_id
+				break
+
+	# Sort islands by estimated navigation cost; committed island sorts first.
 	islands.sort_custom(func(a, b):
-		var ca = Vector3(a["center"].x, 0.0, a["center"].y)
-		if a["id"] == _target_island_id and my_pos.distance_to(ca) - a["radius"] < max_desired_range:
-			return true
+		var a_pri: bool = a["id"] == _priority_island_id
+		var b_pri: bool = b["id"] == _priority_island_id
+		if a_pri != b_pri:
+			return a_pri
 		return _island_travel_cost[a["id"]] < _island_travel_cost[b["id"]]
 	)
 

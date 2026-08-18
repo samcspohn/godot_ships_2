@@ -1929,15 +1929,29 @@ func _shadow_contact(index: int, squad: Squadron, point: Vector2) -> void:
 	if squad.returning or squad.attack_fired:
 		return
 	_aviation_strike_target.erase(index)
+	var station := _clamp_to_squadron_range(squad, point)
 	# Always issue when there is a run to break off; otherwise only when the
 	# loiter point has actually moved, so the squadron is left to orbit in peace
 	# instead of being handed the same waypoint every tick.
 	if squad.attack_point == null:
 		var prev = _aviation_shadow_issued.get(index, null)
-		if prev != null and (point - prev).length() < AVIATION_SHADOW_REISSUE_DIST:
+		if prev != null and (station - prev).length() < AVIATION_SHADOW_REISSUE_DIST:
 			return
-	squad.set_waypoint(point, false)
-	_aviation_shadow_issued[index] = point
+	squad.set_waypoint(station, false)
+	_aviation_shadow_issued[index] = station
+
+## Pulls a loiter station back inside the squadron's reach of the carrier.
+## Squadron._process_waypoints() clamps the waypoint itself, but set_waypoint()
+## also stores the raw point as idle_pos, and idle_pos is what the squadron
+## orbits once that waypoint is consumed - so handing it an out-of-reach point
+## parks the orbit outside the tether. Clamping here keeps both in agreement.
+func _clamp_to_squadron_range(squad: Squadron, point: Vector2) -> Vector2:
+	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var offset := point - carrier
+	var reach := _squadron_range(squad)
+	if reach <= 0.0 or offset.length_squared() <= reach * reach:
+		return point
+	return carrier + offset.normalized() * reach
 
 func _squadron_is_spotter(squad: Squadron) -> bool:
 	return squad.aircraft[0] is SpottingAircraft
@@ -1967,11 +1981,26 @@ func _squadron_should_take_attack(squad: Squadron, p: AircraftParams) -> bool:
 func _squadron_speed(squad: Squadron) -> float:
 	return (squad.params.p() as AircraftParams).speed
 
+# Furthest ahead of the last actual observation a contact's motion is worth
+# extrapolating. A squadron launched at max range is 1-2 minutes out, and a ship
+# doing 30+ knots covers 3-6 km in that time - projecting a frozen course that
+# far throws the drop point clean across the map, typically into the middle of
+# the enemy's own formation, and the run then breaks off on arrival having
+# achieved nothing. Nothing about a warship's course is worth trusting that far
+# out; it will have turned several times.
+#
+# Cutting the horizon short is safe in a way that overshooting is not: the drop
+# point is re-aimed every tick right up to the commit radius, so a lead that
+# starts too short is corrected continuously as the squadron closes, while one
+# that starts too long sends it somewhere absurd first.
+const MAX_LEAD_HORIZON: float = LKP_MAX_LEAD_AGE
+
 # Leads the mark so the ordnance meets the target where it will be: how stale
 # the position being aimed at already is (the contact's age, zero for a live one)
 # plus the plane's flight time to the actual drop point (via the entry point
 # update_flight() enforces) plus the ordnance's own travel time after release
-# (bomb fall, torpedo run). The drop point moves with the lead, so iterate.
+# (bomb fall, torpedo run), all measured from the last observation and capped at
+# MAX_LEAD_HORIZON. The drop point moves with the lead, so iterate.
 # The velocity comes from the contact solution, so an unspotted target is led on
 # the course it was last seen holding rather than the one it is secretly flying.
 func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, direction: Vector2, sol: Dictionary) -> Vector2:
@@ -1997,7 +2026,7 @@ func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, directi
 		var drop := plane.process_attack_point(ordered, dir)
 		var entry := drop - dir * (p.attack_descent_radius as float)
 		var path := origin.distance_to(entry) + entry.distance_to(drop)
-		ordered = point + vel * (lkp_age + path / speed + t_weapon)
+		ordered = point + vel * minf(lkp_age + path / speed + t_weapon, MAX_LEAD_HORIZON)
 	return ordered
 
 # Attack run direction: aligned with the target's beam, so the abreast
@@ -2005,11 +2034,15 @@ func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, directi
 # broadside, bombs land along the keel. Whichever side (right/left) the
 # squadron is already approaching from is taken, so it never has to turn
 # around mid-run. While it sits near the bow/stern axis the previously chosen
-# side is kept to stop the entry point flip-flopping side to side.
+# side is kept to stop the entry point flip-flopping side to side. The result is
+# then clamped into the same approach cone the player is held to, so a beam-on
+# run is only available when the carrier is already positioned off the target's
+# beam - which side was picked above decides which edge of the cone it settles
+# on, preserving the no-turn-around property.
 const ATTACK_DIR_HYSTERESIS: float = 0.25
 var _aviation_attack_dir: Dictionary = {}  # int (squadron index) -> Vector2
 
-func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vector2) -> Vector2:
+func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vector2, sol: Dictionary) -> Vector2:
 	var origin := Vector2(squad.node.global_position.x, squad.node.global_position.z)
 	var travel := point - origin
 	if travel.length_squared() < 0.001:
@@ -2018,7 +2051,13 @@ func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vecto
 		travel = travel.normalized()
 	if not is_instance_valid(air_ship):
 		return travel
-	var right := Vector2(air_ship.global_transform.basis.x.x, air_ship.global_transform.basis.x.z)
+	# The contact solution's basis, not the ship's live one: for a contact held
+	# on an LKP the live heading is something nobody has observed, so lining the
+	# run up on it both leaks concealment and aims the formation at a beam the
+	# target has since turned off of. Falls back to live only when there is no
+	# solution at all, in which case the ship is visible anyway.
+	var contact_basis: Basis = sol.get("basis", air_ship.global_transform.basis)
+	var right := Vector2(contact_basis.x.x, contact_basis.x.z)
 	if right.length_squared() < 0.001:
 		return travel
 	right = right.normalized()
@@ -2027,8 +2066,37 @@ func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vecto
 	var prev: Vector2 = _aviation_attack_dir.get(index, Vector2.ZERO)
 	if absf(preference) < ATTACK_DIR_HYSTERESIS and prev.length_squared() > 0.001:
 		dir = prev.normalized()
+	# set_attack() enforces the approach cone anyway, but the lead solution in
+	# _lead_attack_point() measures its flight path off this direction - hand it
+	# the run that will actually be flown, not the beam-on one that gets clamped
+	# away, or the entry point and ETA it derives are both wrong.
+	dir = Squadron.clamp_attack_direction(dir, point,
+		Vector2(_ship.global_position.x, _ship.global_position.z))
 	_aviation_attack_dir[index] = dir
 	return dir
+
+## Last line of defence before a strike is committed. Every list aviation draws
+## from is already team-filtered at the server, so this should never be able to
+## fire - it exists because the cost of being wrong is a squadron putting
+## torpedoes into a friendly, and one comparison is cheaper than that outcome.
+## The push_error is the point: if this ever trips, it names the ship and the
+## table it leaked through instead of leaving a silent friendly-fire run.
+var _friendly_contact_reported: Dictionary = {}  # Ship -> true, first report only
+
+func _is_hostile(other: Ship) -> bool:
+	if other == null or not is_instance_valid(other):
+		return false
+	if other.team == null or _ship.team == null:
+		return false
+	if other.team.team_id == _ship.team.team_id:
+		# Reported once per offending ship - this is evaluated every tick, and a
+		# leak that repeats would otherwise bury the rest of the log.
+		if not _friendly_contact_reported.has(other):
+			_friendly_contact_reported[other] = true
+			push_error("aviation: %s (team %d) offered friendly %s as a strike contact" % [
+				_ship.name, _ship.team.team_id, other.name])
+		return false
+	return true
 
 # Per-tick aviation control. Attack squadrons (bombers/torpedo planes) full-launch
 # and re-aim their drop point on the air target every tick - the gun target if
@@ -2053,7 +2121,8 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	# what the bot believes about the ship in `point`: live while it is spotted,
 	# its frozen last-known contact once it is not
 	var sol: Dictionary = {valid = false}
-	var target_valid: bool = target != null and target.is_alive() and target.visible_to_enemy
+	var target_valid: bool = target != null and target.is_alive() and target.visible_to_enemy \
+			and _is_hostile(target)
 	if target_valid:
 		point = Vector2(target.global_position.x, target.global_position.z)
 		dist = _ship.global_position.distance_to(target.global_position)
@@ -2066,12 +2135,15 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 		# stale depends on which it picked - the contact solution sorts that out.
 		var info = _get_nearest_enemy()
 		if not info.is_empty():
-			point = Vector2(info.position.x, info.position.z)
-			dist = info.distance
 			air_ship = info.get("ship")
-			if air_ship != null:
-				sol = get_contact_solution(air_ship)
-			has_air_target = true
+			if air_ship == null or _is_hostile(air_ship):
+				point = Vector2(info.position.x, info.position.z)
+				dist = info.distance
+				if air_ship != null:
+					sol = get_contact_solution(air_ship)
+				has_air_target = true
+			else:
+				air_ship = null
 	# Where a squadron shadows the contact from when it may not strike it: the
 	# believed position, so it loiters where the ship has probably got to.
 	var loiter_point := point
@@ -2085,13 +2157,26 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 				continue
 			if _squadron_is_spotter(squad):
 				continue
-			var p = squad.params.p() as AircraftParams
-			if dist > p._range:
-				continue
 			if squad.returning:
 				_aviation_attack_dir.erase(i)
 				_aviation_shadow_issued.erase(i)
 				_aviation_strike_target.erase(i)
+				continue
+			var p = squad.params.p() as AircraftParams
+			if dist > p._range:
+				# Contact is beyond this squadron's tether from the carrier.
+				# Skipping the rest of the loop here abandoned the squadron
+				# outright: an airborne one went on flying whatever order it last
+				# had, with no re-aim and no break-off, and orbited its last
+				# loiter point indefinitely. That is why this only ever bit
+				# torpedo squadrons - their range is short enough that a carrier
+				# sitting at its standoff distance straddles the boundary, so the
+				# gate flickers, while longer-ranged bombers stay inside it and
+				# keep being re-tasked. Shadow instead, so the squadron holds at
+				# the edge of its reach ready to strike the moment the carrier
+				# closes. One still on deck is left there.
+				if squad.active:
+					_shadow_contact(i, squad, loiter_point)
 				continue
 			if not _squadron_should_take_attack(squad, p):
 				# Committed to the run. The drop point stays frozen from here by
@@ -2108,7 +2193,7 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 				continue
 			_aviation_shadow_issued.erase(i)
 			_aviation_strike_target[i] = air_ship
-			var dir := _attack_direction(i, squad, air_ship, point)
+			var dir := _attack_direction(i, squad, air_ship, point, sol)
 			squad.set_attack(_lead_attack_point(squad, air_ship, point, dir, sol), dir)
 	else:
 		# Nothing known to strike anywhere - break off any run still in progress

@@ -11,6 +11,9 @@ var aircraft: Array[Aircraft] = []
 var params: AircraftParams
 var active: bool = false
 var launcher_node: Node3D
+# Carrier that owns this squadron. Kept so set_attack() can measure a commanded
+# attack direction against the carrier-to-target line (see clamp_attack_direction).
+var carrier: Ship
 var ground_marker: MeshInstance3D
 var ground_line: MeshInstance3D
 # Two fully independent sets of drop-pattern preview meshes (see
@@ -104,6 +107,7 @@ const LANDING_RADIUS: float = 50.0
 func setup(_params: AircraftParams, launcher: Node3D, ship: Ship, game_world: Node3D) -> void:
 	params = _params
 	launcher_node = launcher
+	carrier = ship
 	node = Node3D.new()
 	node.name = params.type
 	launcher.add_child(node)
@@ -448,6 +452,35 @@ func set_waypoint(waypoint: Vector2, append: bool) -> void:
 	attack_point = null
 	idle_pos = waypoint
 
+# Widest angle an attack run may deviate from the carrier-to-target line. The
+# squadron can be angled off the direct approach, but not swung around onto the
+# target's far side - reaching a beam-on drop means manoeuvring the carrier into
+# position first rather than just dragging the reticle around.
+const MAX_ATTACK_ANGLE: float = deg_to_rad(20.0)
+
+# Clamps `direction` into the MAX_ATTACK_ANGLE cone around the origin-to-point
+# line. Degenerate inputs (attacking a point on top of the carrier, or a zero
+# direction) fall back to whichever of the two vectors is still meaningful.
+static func clamp_attack_direction(direction: Vector2, point: Vector2, origin: Vector2) -> Vector2:
+	var reference := point - origin
+	if reference.length_squared() < 0.0001:
+		return direction.normalized() if direction.length_squared() > 0.0001 else Vector2(0.0, 1.0)
+	reference = reference.normalized()
+	if direction.length_squared() < 0.0001:
+		return reference
+	var dir := direction.normalized()
+	var offset := reference.angle_to(dir)
+	if absf(offset) <= MAX_ATTACK_ANGLE:
+		return dir
+	return reference.rotated(MAX_ATTACK_ANGLE * signf(offset))
+
+func _carrier_position() -> Vector2:
+	if is_instance_valid(carrier):
+		return Vector2(carrier.global_position.x, carrier.global_position.z)
+	if is_instance_valid(launcher_node):
+		return Vector2(launcher_node.global_position.x, launcher_node.global_position.z)
+	return Vector2.ZERO
+
 # Squadron owns the attack point/direction and turns the whole formation onto
 # the attack run; switching to the abreast attack formation spreads aircraft
 # out perpendicular to the attack direction so their ordnance lands in a
@@ -456,7 +489,7 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	# ignore new attack orders while flying itself home after a completed run
 	if returning:
 		return
-	attack_direction = direction
+	attack_direction = clamp_attack_direction(direction, point, _carrier_position())
 	attack_fired = false
 	holding_attack = false
 	in_attack_run = false

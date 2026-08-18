@@ -42,6 +42,10 @@ var team_1_hydro_lkp_times: Dictionary = {}
 var team_0_hydro_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
 var team_1_hydro_in_range: Dictionary = {}
 const HYDRO_LKP_INTERVAL: float = 4.0       # Seconds between frozen-position refreshes
+# How long a carrier stays revealed after putting aircraft in the air. Deliberately
+# equal to HYDRO_LKP_INTERVAL so the contact reads as exactly one LKP refresh -
+# it appears, holds frozen for one interval, and goes out, rather than tracking.
+const AIRCRAFT_LAUNCH_REVEAL_TIME: float = 4.0
 # Radar LKP system — mirrors the hydro system but uses radar_spotting_range_override.
 var team_0_radar_lkp: Dictionary = {}        # Ship -> Vector3
 var team_1_radar_lkp: Dictionary = {}
@@ -62,6 +66,10 @@ var team_0_air_lkp_times: Dictionary = {}    # Ship -> float
 var team_1_air_lkp_times: Dictionary = {}
 var team_0_air_in_range: Dictionary = {}     # Ship -> bool  (cleared each frame)
 var team_1_air_in_range: Dictionary = {}
+# Carriers currently given away by having put aircraft up, keyed by the team that
+# gets to see them -> the time the reveal lapses. See report_aircraft_launch().
+var team_0_launch_reveals: Dictionary = {}   # Ship -> float (expiry, current_time units)
+var team_1_launch_reveals: Dictionary = {}
 # One-time bootstrap per team: after the first visual spot, seed LKPs for
 # still-hidden enemies so bots can begin coordinated hunting immediately.
 var team_0_first_spot_lkp_seeded: bool = false
@@ -1289,6 +1297,8 @@ func _physics_process(_delta: float) -> void:
 			team_1_air_lkp.erase(ship)
 			team_1_air_lkp_times.erase(ship)
 
+	_apply_launch_reveals()
+
 	_send_hydro_syncs()
 	_send_radar_syncs()
 	_send_air_syncs()
@@ -1543,6 +1553,51 @@ func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
 		lkp[ship]  = ship.global_position
 		lkp_t[ship] = current_time
 		_write_unspotted_lkp(team_id, ship, current_time)
+
+
+## Called by AviationController when a squadron leaves the deck. Putting aircraft
+## up gives the carrier away: it is reported to the enemy team as a single air
+## contact, frozen where the launch happened, for AIRCRAFT_LAUNCH_REVEAL_TIME.
+##
+## Routed through the air LKP tables rather than inventing a parallel channel, so
+## it inherits the whole source = 3 pipeline already in place - _send_air_syncs()
+## pings enemy humans (3-D ghost via Ship._update_radar_ghost, amber marker via
+## the minimap's AIR_CONTACT state), and the _write_unspotted_lkp() call puts the
+## same intel in front of the bots. Both sides of the enemy team learn it at once.
+func report_aircraft_launch(ship: Ship) -> void:
+	if not is_instance_valid(ship) or ship.team == null:
+		return
+	if ship.health_controller == null or not ship.health_controller.is_alive():
+		return
+	var enemy_team_id: int = 1 if ship.team.team_id == 0 else 0
+	var lkp     := team_0_air_lkp        if enemy_team_id == 0 else team_1_air_lkp
+	var lkp_t   := team_0_air_lkp_times  if enemy_team_id == 0 else team_1_air_lkp_times
+	var reveals := team_0_launch_reveals if enemy_team_id == 0 else team_1_launch_reveals
+	# Written once here and never refreshed for the life of the reveal - that is
+	# what makes it a single ping rather than a live track. A carrier that keeps
+	# launching keeps re-reporting itself, which is the intent.
+	lkp[ship]     = ship.global_position
+	lkp_t[ship]   = current_time
+	reveals[ship] = current_time + AIRCRAFT_LAUNCH_REVEAL_TIME
+	_write_unspotted_lkp(enemy_team_id, ship, current_time)
+
+
+## Re-asserts still-live launch reveals into this frame's air-contact set.
+## team_*_air_in_range is wiped at the top of every detection pass and refilled
+## only by aircraft that actually hold line of sight, so a reveal has to be put
+## back each frame until it lapses. Letting it fall out on expiry is precisely
+## what makes _send_air_syncs() emit the clear packet and retire the contact -
+## no separate teardown needed.
+func _apply_launch_reveals() -> void:
+	for team_id in [0, 1]:
+		var reveals := team_0_launch_reveals if team_id == 0 else team_1_launch_reveals
+		var active  := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
+		for ship in reveals.keys():
+			if not is_instance_valid(ship) or ship.health_controller.is_dead() \
+					or current_time >= reveals[ship]:
+				reveals.erase(ship)
+				continue
+			active[ship] = true
 
 
 func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:

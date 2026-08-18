@@ -37,6 +37,9 @@ func fire_ordnance(_direction: Vector2) -> bool:
 			return true
 		var t = ProjectileManager.get_current_time()
 		var id = ProjectileManager.fireBullet(dispersed_velocity, global_position, shell_params, t, _ship)
+		# Released from over the target, not from the carrier the shell is owned
+		# by - flag it so nobody reads the launch point as the carrier's position.
+		ProjectileManager.mark_air_dropped(id, t)
 		TcpThreadPool.send_display_shell(id, global_position, dispersed_velocity, t, shell_params, self, true)
 	return true
 

@@ -102,7 +102,9 @@ func _process(delta: float) -> void:
 # freezes at the point the drag started and rotates to track the drag
 # direction, matching what will be committed on release (see
 # update_local_drag_state() for how the anchor itself is tracked). Otherwise
-# it just follows the cursor, facing away from the ship.
+# it just follows the cursor, facing away from the ship. Either way the
+# facing is clamped to Squadron.MAX_ATTACK_ANGLE either side of the
+# ship-to-target line.
 func _update_drop_preview(squadron: Squadron, show: bool) -> void:
 	if not show:
 		squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
@@ -116,6 +118,13 @@ func _update_drop_preview(squadron: Squadron, show: bool) -> void:
 	else:
 		center = aim_point
 		direction = _direction_to(_ship.global_position, aim_point)
+	# Run the drag through the same clamp set_attack() applies on commit, so the
+	# reticle stops rotating at the cone edge instead of promising an approach
+	# angle the squadron will not actually fly.
+	direction = Squadron.clamp_attack_direction(
+		direction,
+		Vector2(center.x, center.z),
+		Vector2(_ship.global_position.x, _ship.global_position.z))
 	squadron.update_reticle_preview(true, Vector2(center.x, center.z), direction)
 
 # Called directly (not via rpc) by the local player's PlayerController every
@@ -153,6 +162,14 @@ func launch_squadron(index: int) -> void:
 		return
 	squadrons[index].launch(game_world, launcher.global_position, launcher.global_rotation)
 	active_squadrons[index] = true
+	# Putting aircraft up reveals the carrier to the enemy for a few seconds.
+	# Authority-only: clients run this same call while replaying the server's
+	# squadron snapshot (see from_bytes), so without the gate every peer would
+	# re-report the launch against its own local clock.
+	if _Utils.authority():
+		var server = _ship.get_node_or_null("/root/Server")
+		if server != null:
+			server.report_aircraft_launch(_ship)
 
 func recall_squadron(index: int) -> void:
 	if active_squadrons.has(index):

@@ -555,7 +555,11 @@ func _register_torpedo_obstacles() -> void:
 
 		# Detected enemy torpedo — update the shooter's last known position to
 		# where it was launched from (start_position is set at fire time).
-		_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t)
+		# Air-dropped torpedoes carry no launcher (see TorpedoManager.fireTorpedo),
+		# and their launch point is over the target rather than over the carrier
+		# that owns them, so they say nothing about where that carrier is.
+		if torp.launcher != null:
+			_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t)
 
 		var obs_id: int = TORPEDO_ID_OFFSET - i
 		var pos_2d := Vector2(torp.position.x, torp.position.z)
@@ -599,7 +603,11 @@ func _update_shell_threats() -> void:
 		var sid := s["shell_id"] as int
 		if sid < projectiles.size():
 			var pdata = projectiles[sid]
-			if pdata != null:
+			if pdata != null and not ProjectileManager.is_air_dropped(sid, pdata.get_start_time()):
+				# Same reasoning as the torpedo case above: a bomb is released
+				# over whatever it is bombing - frequently one of our own ships -
+				# so treating its launch point as the owning carrier's position
+				# plants a phantom enemy contact right on top of a friendly.
 				_update_lkp_from_shooter(pdata.get_owner(), pdata.get_start_position(), pdata.get_start_time())
 
 		var vx: float = s["landing_vx"]
