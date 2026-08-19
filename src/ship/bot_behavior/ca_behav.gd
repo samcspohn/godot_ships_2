@@ -273,6 +273,18 @@ func _make_intent(dest: Vector3, heading: float, arrival_radius: float = 0.0) ->
 		return NavIntent.create(dest, heading, arrival_radius)
 	return NavIntent.create(dest, heading)
 
+## Mirror the cover skill's internal state onto the fields debug.gd draws from.
+## Shared with CVBehavior, which runs its own decision tree over the same skill.
+func _sync_cover_debug(ctx: SkillContext) -> void:
+	is_in_cover = _skill_cover.is_complete(ctx)
+	_cover_can_shoot = _skill_cover.can_shoot
+	if _skill_cover._nav_destination_valid:
+		_cover_zone_valid = true
+		_cover_island_center = _skill_cover._target_island_pos
+		_cover_island_radius = _skill_cover._target_island_radius
+	else:
+		_cover_zone_valid = false
+
 func _pick_nearest_spotted(ship: Ship, spotted: Array) -> Ship:
 	var best: Ship = null
 	var best_dist: float = INF
@@ -298,15 +310,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_init_flank_identity(ship, server)
 	var ctx = SkillContext.create(ship, target, server, self)
 
-	# Cover debug sync (kept for debug.gd compatibility)
-	is_in_cover = _skill_cover.is_complete(ctx)
-	_cover_can_shoot = _skill_cover.can_shoot
-	if _skill_cover._nav_destination_valid:
-		_cover_zone_valid = true
-		_cover_island_center = _skill_cover._target_island_pos
-		_cover_island_radius = _skill_cover._target_island_radius
-	else:
-		_cover_zone_valid = false
+	_sync_cover_debug(ctx)
 
 	var spotted = server.get_valid_targets(ship.team.team_id)
 	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
@@ -323,6 +327,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var intent: NavIntent = null
 	_suppress_guns = false
 	var previous_intent = _active_skill_name
+	var threat = get_threat_score(ctx)
 
 	var _ra_threshold := 8000.0
 	if _has_active_bb_shooter():
@@ -353,11 +358,21 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		if intent == null:
 			intent = _intent_sail_forward(ship)
 			_active_skill_name = &"SailForward"
-		return intent
+		return _finish_intent(intent, previous_intent)
 
 	# ── No spotted (unspotted only) ─────────────────────────────────────────
 	if not has_spotted:
-		intent = _skill_chase.execute(ctx, {"chase_timeout": 60.0})
+		# Everything has gone dark. Chasing the nearest last-known position is
+		# only reasonable while the picture is quiet — under pressure, get behind
+		# an island instead. Cover is requested with prioritize_cover so it is not
+		# rejected for being unshootable: with nothing spotted there is nothing to
+		# shoot at, and concealment is the whole point.
+		if threat >= get_chase_max_threat():
+			intent = _skill_cover.execute(ctx, cover_params, true)
+			if intent != null:
+				_active_skill_name = &"FindCover"
+				return intent
+		intent = _skill_chase.execute(ctx, {})
 		if intent != null:
 			_active_skill_name = &"Chase"
 		if intent == null:
@@ -367,10 +382,9 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		if intent == null:
 			intent = _intent_sail_forward(ship)
 			_active_skill_name = &"SailForward"
-		return intent
+		return _finish_intent(intent, previous_intent)
 
 	# ── Threat-score + distance decision tree ───────────────────────────────
-	var threat = get_threat_score(ctx)
 	var nearest = _pick_nearest_spotted(ship, spotted)
 	var dist = ship.global_position.distance_to(nearest.global_position) if nearest else INF
 	var gun_range = ship.artillery_controller.get_params()._range
@@ -522,8 +536,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 
 
-	if previous_intent == &"FindCover" and _active_skill_name != &"FindCover":
-		_skill_cover.reset()
+	intent = _finish_intent(intent, previous_intent)
 	# ── Post-process: spread ─────────────────────────────────────────────────
 	# if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"ForcedKite", &"ForcedPush"]:
 	# 	intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
@@ -534,6 +547,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# if _active_skill_name not in [&"Chase"]:
 	# intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
 
+	return intent
+
+
+## Common tail for every intent this behaviour returns. A cover destination that
+## was computed but not adopted must not stay reserved — the skill claims a spot
+## team-wide on every execute(), including the probes made from the kite paths,
+## and a claim nobody is using pushes team-mates onto islands further away.
+func _finish_intent(intent: NavIntent, previous_intent: StringName) -> NavIntent:
+	if _active_skill_name != &"FindCover":
+		_skill_cover.release_claim()
+		if previous_intent == &"FindCover":
+			_skill_cover.reset()
 	return intent
 
 

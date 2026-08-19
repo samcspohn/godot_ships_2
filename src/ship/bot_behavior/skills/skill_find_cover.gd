@@ -19,6 +19,13 @@ var _last_valid_intent: NavIntent = null
 const _TEAM_COVER_CLAIM_TTL_MS: int = 6000
 const _TEAM_COVER_MIN_SEPARATION_MULT: float = 3.0
 
+# How long a validated cover destination is reused before the island search is
+# re-run. Without this the skill holds its first pick for the whole engagement.
+const _COVER_RESEARCH_INTERVAL_MS: int = 3000
+# A freshly found destination must be at least this much closer than the one we
+# already hold before we abandon it — hysteresis against island thrashing.
+const _COVER_SWITCH_MARGIN: float = 0.7
+
 # Team-shared reservations: team_id -> ship_instance_id -> claim dictionary
 # claim = {"pos": Vector3, "island_id": int, "updated_ms": int}
 static var _team_cover_claims: Dictionary = {}
@@ -29,12 +36,15 @@ var _claimed_ship_id: int = -1
 
 
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
-	if _last_valid_intent != null and _is_last_intent_still_valid(ctx, params, prioritize_cover):
-		if _target_island_id >= 0:
-			_reserve_cover_claim(ctx, {
-				"id": _target_island_id,
-				"dest": _last_valid_intent.target_position,
-			})
+	var now_ms := Time.get_ticks_msec()
+	var cached_valid: bool = _last_valid_intent != null \
+		and _is_last_intent_still_valid(ctx, params, prioritize_cover)
+
+	# A valid cached destination is reused, but only for so long. It is a fixed
+	# world point chosen under an older picture; re-searching periodically is what
+	# lets a ship drop a distant island once a nearer one becomes viable.
+	if cached_valid and now_ms - _cover_recalc_ms < _COVER_RESEARCH_INTERVAL_MS:
+		_keep_cached_claim(ctx)
 		return _last_valid_intent
 
 	# var ship = ctx.ship
@@ -82,12 +92,28 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = fal
 	# var exit_radius = clearance * 3.5
 	# _arrived = dist < exit_radius if _arrived else dist < arrival_radius
 
+	_cover_recalc_ms = now_ms
 	var d = _get_cover_position(ctx, params, prioritize_cover)
 	if d.is_empty():
+		# Nothing better found — a destination that is still valid beats none.
+		if cached_valid:
+			_keep_cached_claim(ctx)
+			return _last_valid_intent
 		_release_cover_claim()
 		_last_valid_intent = null
 		return null
+
+	# Only abandon a still-valid destination for one that is materially closer.
+	if cached_valid and int(d["id"]) != _target_island_id:
+		var my_pos: Vector3 = ctx.ship.global_position
+		var cached_dist := my_pos.distance_to(_last_valid_intent.target_position)
+		var new_dist := my_pos.distance_to(d["dest"] as Vector3)
+		if new_dist > cached_dist * _COVER_SWITCH_MARGIN:
+			_keep_cached_claim(ctx)
+			return _last_valid_intent
+
 	_set_island(d)
+	can_shoot = d.get("can_shoot", false)
 	_reserve_cover_claim(ctx, d)
 	# "id": isl["id"],
 	# "center": isl_pos,
@@ -199,6 +225,22 @@ func _reserve_cover_claim(ctx: SkillContext, island: Dictionary) -> void:
 	_team_cover_claims[team_id] = team_claims
 	_claimed_team_id = team_id
 	_claimed_ship_id = ship_id
+
+## Re-stamp the reservation on the destination we are already holding, so the
+## claim stays alive while the cached intent is being reused.
+func _keep_cached_claim(ctx: SkillContext) -> void:
+	if _target_island_id < 0 or _last_valid_intent == null:
+		return
+	_reserve_cover_claim(ctx, {
+		"id": _target_island_id,
+		"dest": _last_valid_intent.target_position,
+	})
+
+## Drop this ship's team-wide reservation while keeping the cached search result.
+## Call when a cover intent was computed but not adopted: a ship that ends up
+## kiting must not sit on a spot its team-mates could otherwise use.
+func release_claim() -> void:
+	_release_cover_claim()
 
 func _release_cover_claim() -> void:
 	if _claimed_team_id < 0 or _claimed_ship_id < 0:
@@ -392,26 +434,13 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 
 		_island_travel_cost[_sort_isl["id"]] = _edge_dist + _arc_cost
 
-	# The committed island keeps priority as long as it is still within firing
-	# range.  Resolve that once here rather than inside the comparator: testing
-	# it only on the left operand makes the comparison asymmetric (both
-	# comp(a, b) and comp(b, a) can be true), which breaks the sort.
-	var _priority_island_id: int = -1
-	if _target_island_id >= 0:
-		for _pri_isl in islands:
-			if _pri_isl["id"] == _target_island_id:
-				var _pc2d: Vector2 = _pri_isl["center"]
-				var _pc := Vector3(_pc2d.x, 0.0, _pc2d.y)
-				if my_pos.distance_to(_pc) - _pri_isl["radius"] < max_desired_range:
-					_priority_island_id = _target_island_id
-				break
-
-	# Sort islands by estimated navigation cost; committed island sorts first.
+	# Sort islands by estimated navigation cost — nearest usable one wins.
+	# The committed island deliberately gets no priority here: it used to sort
+	# first while merely within firing range, which is how a ship ended up
+	# crossing kilometres to an island it had picked earlier while a perfectly
+	# good one sat next to it. Hysteresis lives in execute() instead, where a
+	# still-valid destination is only given up for a materially closer one.
 	islands.sort_custom(func(a, b):
-		var a_pri: bool = a["id"] == _priority_island_id
-		var b_pri: bool = b["id"] == _priority_island_id
-		if a_pri != b_pri:
-			return a_pri
 		return _island_travel_cost[a["id"]] < _island_travel_cost[b["id"]]
 	)
 
@@ -419,15 +448,27 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 	# When there are no known threats or valid targets, skip the full cover
 	# search.  The islands are already sorted nearest-first (arc_cost == 0 with
 	# no danger centre), so just walk the list and return the first island that
-	# has no spacing conflict.  Honour any existing island commitment via the
-	# sort comparator above (committed island sorts first when in range).
+	# has no spacing conflict.
 	if threats.is_empty() and targets.is_empty():
+		var clearance := ctx.behavior._get_ship_clearance()
 		for isl in islands:
 			var c2d: Vector2 = isl["center"]
 			var isl_pos := Vector3(c2d.x, 0.0, c2d.y)
 			var isl_radius: float = isl["radius"]
-			var away_dir := isl_pos.normalized() if isl_pos.length() > 0.01 else Vector3(1.0, 0.0, 0.0)
-			var dest := isl_pos + away_dir * isl_radius * 0.9
+			# Station on the side of the island facing our own lines. `radius` is
+			# the island's bounding radius, so the destination has to be walked out
+			# to the shoreline — a fraction of it lands on land.
+			var away_dir: Vector3 = ctx.behavior._cached_safe_dir
+			away_dir.y = 0.0
+			if away_dir.length_squared() < 0.01:
+				away_dir = my_pos - isl_pos
+				away_dir.y = 0.0
+			if away_dir.length_squared() < 0.01:
+				away_dir = Vector3(1.0, 0.0, 0.0)
+			away_dir = away_dir.normalized()
+			var dest := ctx.behavior._sdf_walk_to_shore(isl_pos, away_dir, isl_radius, clearance)
+			if dest == Vector3.ZERO:
+				continue
 			if not _has_cover_spacing_conflict(dest, other_claim_positions, min_cover_separation):
 				return {
 					"id": isl["id"],

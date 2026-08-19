@@ -178,6 +178,12 @@ func get_evasion_params() -> Dictionary:
 		vary_speed = false
 	}
 
+func get_chase_max_threat() -> float:
+	"""Highest threat score at which running down a last-known position is still
+	worth it.  Above this the ship takes cover instead: chasing a contact nobody
+	can see, at flank speed, into an unknown picture is how bots die."""
+	return 0.5
+
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	"""Weight for threat calculation based on enemy ship class."""
 	match ship_class:
@@ -1359,8 +1365,17 @@ func calculate_interception_point(shooter_pos: Vector3, target_pos: Vector3, tar
 # ISLAND COVER SYSTEM — SDF-based cover position search
 # ============================================================================
 
+# A contact nobody has seen for this long is no longer treated as a hard threat
+# for cover geometry. The server seeds an LKP for the whole enemy team on first
+# contact and never ages them out, so without this filter a cover position would
+# have to occlude flat LOS to every enemy on the map simultaneously — which no
+# island can do, and cover is then never found at all.
+const THREAT_LKP_MAX_AGE: float = LKP_MAX_LEAD_AGE
+
 func _gather_threat_positions(ship: Ship) -> Array:
-	"""All known enemy positions: currently visible + last-known unspotted."""
+	"""Threat positions the bot legitimately knows about: currently visible
+	enemies, plus last-known positions still fresh enough to mean something
+	(dead-reckoned forward). Stale contacts are dropped — see THREAT_LKP_MAX_AGE."""
 	var threats: Array = []
 	var server_node: GameServer = ship.get_node_or_null("/root/Server")
 	if server_node == null:
@@ -1370,7 +1385,14 @@ func _gather_threat_positions(ship: Ship) -> Array:
 			threats.append(enemy.global_position)
 	var unspotted = server_node.get_unspotted_enemies(ship.team.team_id)
 	for enemy_ship in unspotted.keys():
-		threats.append(unspotted[enemy_ship])
+		if not is_instance_valid(enemy_ship):
+			continue
+		var sol := get_contact_solution(enemy_ship)
+		if not sol.get("valid", false):
+			continue
+		if float(sol.age) > THREAT_LKP_MAX_AGE:
+			continue
+		threats.append(sol.position)
 	return threats
 
 func get_navigator() -> ShipNavigator:
@@ -1563,18 +1585,23 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var best_conflict_concealed: Vector3 = Vector3.ZERO
 	var offset_clearance = clearance * 2.0
 	var min_ring_separation_sq = (clearance * 0.5) * (clearance * 0.5)
+	# Sweep the hide window centred on hide_heading, so the island's actual
+	# hidden face is always sampled.  (Sweeping outward from the ship-facing side
+	# instead only overlapped the hide window in two narrow slivers whenever the
+	# ship approached from the threat side, so nearby islands were rejected and
+	# the search ran on to a distant one.)  Ties inside the window are broken
+	# toward whichever side the ship is already approaching from.
 	var ship_to_island_heading = atan2(my_pos.x - island_center.x, my_pos.z - island_center.z)
+	var ship_side: float = signf(angle_difference(hide_heading, ship_to_island_heading))
+	if ship_side == 0.0:
+		ship_side = 1.0
 	var max_steps = int(ceil(angle_half_span / maxf(angle_step, 0.001)))
 
 	for step_idx in range(max_steps + 1):
-		var offset = float(step_idx) * angle_step
+		var offset = minf(float(step_idx) * angle_step, angle_half_span)
 		for side in range(1 if step_idx == 0 else 2):
-			var signed_offset = 0.0 if step_idx == 0 else (offset if side == 0 else -offset)
-			var heading = ship_to_island_heading + signed_offset
-
-			# Only keep headings inside the hide window around hide_heading.
-			if absf(angle_difference(hide_heading, heading)) > angle_half_span + 0.001:
-				continue
+			var signed_offset = 0.0 if step_idx == 0 else (offset * ship_side if side == 0 else -offset * ship_side)
+			var heading = hide_heading + signed_offset
 
 			var dir = Vector3(sin(heading), 0.0, cos(heading))
 			var shore_pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
@@ -1639,11 +1666,15 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 					elif best_concealed_fallback == Vector3.ZERO:
 						best_concealed_fallback = pos
 
-	if best_concealed_fallback != Vector3.ZERO:
-		return { "pos": best_concealed_fallback, "can_shoot": false, "spacing_conflict": false }
-
+	# A shootable position always outranks a merely concealed one, even when it
+	# conflicts with a team-mate's reservation: callers that require shootability
+	# discard the whole island on can_shoot == false, so returning the concealed
+	# spot first threw away islands that could in fact be fought from.
 	if best_conflict_shootable != Vector3.ZERO:
 		return { "pos": best_conflict_shootable, "can_shoot": true, "spacing_conflict": true }
+
+	if best_concealed_fallback != Vector3.ZERO:
+		return { "pos": best_concealed_fallback, "can_shoot": false, "spacing_conflict": false }
 
 	if best_conflict_concealed != Vector3.ZERO:
 		return { "pos": best_conflict_concealed, "can_shoot": false, "spacing_conflict": true }

@@ -240,9 +240,17 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		if intent:
 			_active_skill_name = &"Flank"
 	elif spotted.size() == 0 and unspotted.size() > 0:
-		# Enemies exist but none spotted — chase then hunt
-		intent = _skill_chase.execute(ctx, {})
-		_active_skill_name = &"Chase"
+		# Enemies exist but none spotted — take cover while the picture is
+		# dangerous, and only run down a last-known position once it is quiet.
+		# prioritize_cover: with nothing spotted there is nothing to shoot at, so
+		# cover must not be rejected for being unshootable.
+		if threat >= get_chase_max_threat():
+			intent = _skill_cover.execute(ctx, {}, true)
+			if intent != null:
+				_active_skill_name = &"FindCover"
+		if intent == null:
+			intent = _skill_chase.execute(ctx, {})
+			_active_skill_name = &"Chase"
 	else:
 		if nearest_threat_dist < _ra_threshold and ship.visible_to_enemy:
 			if threat < 0.5:
@@ -301,6 +309,12 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# Reset camp lock when switching away from Camp
 	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
+	# A cover destination that was computed but not adopted must not stay
+	# reserved — the skill claims a spot team-wide on every execute(), including
+	# the probes made from the camp and kite paths, and a claim nobody is using
+	# pushes team-mates onto islands further away.
+	if _active_skill_name != &"FindCover":
+		_skill_cover.release_claim()
 	if _prev_skill_name == &"FindCover" and _active_skill_name != &"FindCover":
 		_skill_cover.reset()
 
