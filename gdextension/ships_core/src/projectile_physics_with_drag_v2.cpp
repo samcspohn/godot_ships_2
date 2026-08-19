@@ -1,6 +1,7 @@
 #include "projectile_physics_with_drag_v2.h"
 #include "projectile_physics.h"
 
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -34,7 +35,7 @@ void ProjectilePhysicsWithDragV2::_bind_methods() {
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_angle_from_max_range", "max_range", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_angle_from_max_range);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2",
 		D_METHOD("sim_can_shoot_over_terrain", "start_pos", "launch_vector", "flight_time",
-				 "shell_params", "nav_map", "space_state", "exclude_rids"),
+				 "shell_params", "nav_map", "space_state", "exclude_rids", "precision_world"),
 		&ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain);
 }
 
@@ -777,6 +778,48 @@ double ProjectilePhysicsWithDragV2::calculate_angle_from_max_range(double max_ra
 	return (min_angle + max_angle) / 2.0;
 }
 
+namespace {
+
+// Cheap conservative pre-filter: could this straight segment possibly touch
+// terrain?  The height grid stores the MAX terrain height per cell and is
+// sampled bilinearly, so it massively over-estimates height near shorelines —
+// it is only ever used to skip the physics ray, never to declare a block.
+static bool _segment_may_hit_terrain(const Ref<NavigationMap> &nav_map,
+		const Vector3 &from,
+		const Vector3 &to) {
+	if (!nav_map.is_valid() || !nav_map->is_built()) {
+		return true;
+	}
+
+	Vector3 delta = to - from;
+	double horizontal_len = std::sqrt((double)delta.x * delta.x + (double)delta.z * delta.z);
+	float cell_size = nav_map->get_cell_size_value();
+	double margin = std::max(2.0, (double)cell_size * 0.5);
+	double terrain_step = std::max(5.0, (double)cell_size * 0.5);
+
+	float start_sdf = nav_map->get_distance((float)from.x, (float)from.z);
+	if (start_sdf > horizontal_len + margin) {
+		return false;
+	}
+
+	int steps = horizontal_len > 0.001 ? std::max(2, (int)std::ceil(horizontal_len / terrain_step)) : 1;
+	for (int i = 0; i <= steps; i++) {
+		double alpha = (double)i / (double)steps;
+		Vector3 pos = from + delta * alpha;
+		float sdf = nav_map->get_distance((float)pos.x, (float)pos.z);
+		if (sdf > margin) {
+			continue;
+		}
+		float terrain_height = nav_map->get_terrain_height((float)pos.x, (float)pos.z);
+		if (terrain_height > 0.001f && (double)pos.y <= (double)terrain_height + margin) {
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
 Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		const Vector3 &start_pos,
 		const Vector3 &launch_vector,
@@ -784,16 +827,22 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		const Ref<Resource> &shell_params,
 		const Ref<NavigationMap> &nav_map,
 		PhysicsDirectSpaceState3D *space_state,
-		const Array &exclude_rids) {
+		const Array &exclude_rids,
+		Node *precision_world) {
 
 	Dictionary result;
 	result["terrain_blocked"] = false;
+	result["terrain_position"] = Vector3();
 	result["obb_hit"] = false;
 	result["obb_collider"] = Variant();
 	result["obb_position"] = Vector3();
 
-	double clamped_time = std::min(flight_time, 100.0);
-	double end_time = clamped_time + 0.5;
+	// The trajectory is only simulated up to the aim point.  Anything past it
+	// is irrelevant: the shell either hits what we aimed at or lands where the
+	// gunner intended, so terrain *behind* the target must never block the shot
+	// (this is what made every ship parked in front of an island unshootable at
+	// close range, where the arc is flat and overshoot travels a long way).
+	double end_time = std::min(flight_time, 100.0);
 	if (end_time <= 0.0) {
 		return result;
 	}
@@ -824,10 +873,20 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 
 	const bool has_nav_map = nav_map.is_valid() && nav_map->is_built();
 	const float cell_size = has_nav_map ? nav_map->get_cell_size_value() : 50.0f;
-	const double terrain_step = std::max(5.0, (double)cell_size * 0.5);
+	const double min_step = std::max(5.0, (double)cell_size * 0.5);
 	const double sdf_margin = std::max(2.0, (double)cell_size * 0.5);
 	const double max_low_altitude_time_step = 0.5;
 	const double ship_clear_height = 200.0;
+
+	auto position_at_time = [&](double t) -> Vector3 {
+		double horizontal_dist = _horizontal_position(cos_theta, t, speed, beta);
+		double y_offset = _vertical_position(sin_theta, t, speed, vt, tau);
+		return Vector3(
+			start_pos.x + dir_x * horizontal_dist,
+			start_pos.y + y_offset,
+			start_pos.z + dir_z * horizontal_dist
+		);
+	};
 
 	auto position_at_distance = [&](double horizontal_dist, double *out_t = nullptr) -> Vector3 {
 		double sample_t = _time_from_x(horizontal_dist, theta, speed, beta);
@@ -842,21 +901,31 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		);
 	};
 
-	// Build the OBB ray query once (reused across low-altitude segments).
+	// Build the ray queries once (reused across segments).
 	Ref<PhysicsRayQueryParameters3D> obb_ray;
+	Ref<PhysicsRayQueryParameters3D> terrain_ray;
+	TypedArray<RID> obb_excludes;
 	if (space_state != nullptr) {
+		for (int i = 0; i < exclude_rids.size(); i++) {
+			obb_excludes.append(exclude_rids[i]);
+		}
+
 		obb_ray.instantiate();
 		obb_ray->set_collide_with_bodies(true);
 		obb_ray->set_collide_with_areas(false);
 		obb_ray->set_hit_back_faces(true);
 		obb_ray->set_hit_from_inside(true);
 		obb_ray->set_collision_mask(1 << 4);  // OBB_COLLISION_LAYER
+		obb_ray->set_exclude(obb_excludes);
 
-		TypedArray<RID> exclude_typed;
-		for (int i = 0; i < exclude_rids.size(); i++) {
-			exclude_typed.append(exclude_rids[i]);
-		}
-		obb_ray->set_exclude(exclude_typed);
+		// Terrain is resolved against the real island colliders (layer 1), the
+		// same way live shells are in NativeArmorInteraction::process_travel.
+		terrain_ray.instantiate();
+		terrain_ray->set_collide_with_bodies(true);
+		terrain_ray->set_collide_with_areas(false);
+		terrain_ray->set_hit_back_faces(true);
+		terrain_ray->set_hit_from_inside(false);
+		terrain_ray->set_collision_mask(1);
 	}
 
 	Vector3 prev_pos = start_pos;
@@ -866,13 +935,13 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 	while (prev_dist < end_dist) {
 		double default_next_t = std::min(end_time, prev_t + max_low_altitude_time_step);
 		double default_next_dist = _horizontal_position(cos_theta, default_next_t, speed, beta);
-		double step_dist = std::max(terrain_step, default_next_dist - prev_dist);
+		double step_dist = std::max(min_step, default_next_dist - prev_dist);
 		bool can_skip_obb = false;
 
 		if (has_nav_map) {
 			float sdf_dist = nav_map->get_distance((float)prev_pos.x, (float)prev_pos.z);
 			if (sdf_dist > sdf_margin) {
-				step_dist = std::max(terrain_step, (double)sdf_dist - sdf_margin);
+				step_dist = std::max(step_dist, (double)sdf_dist - sdf_margin);
 			}
 		}
 
@@ -883,6 +952,7 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		if (std::min((double)prev_pos.y, (double)curr_pos.y) > ship_clear_height) {
 			can_skip_obb = true;
 		} else {
+			// Keep ray segments short while we are down in ship territory.
 			double capped_t = std::min(end_time, prev_t + max_low_altitude_time_step);
 			double capped_dist = _horizontal_position(cos_theta, capped_t, speed, beta);
 			if (capped_dist > prev_dist && capped_dist < next_dist) {
@@ -891,27 +961,111 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 			}
 		}
 
-		if (!can_skip_obb && space_state != nullptr && obb_ray.is_valid()) {
-			obb_ray->set_from(prev_pos);
-			obb_ray->set_to(curr_pos);
-			Dictionary hit = space_state->intersect_ray(obb_ray);
-			if (!hit.is_empty()) {
-				result["obb_hit"] = true;
-				result["obb_collider"] = hit["collider"];
-				result["obb_position"] = hit["position"];
-				return result;
+		// --- Terrain -------------------------------------------------------
+		bool terrain_found = false;
+		Vector3 terrain_pos;
+		double terrain_d2 = 0.0;
+		if (space_state != nullptr && terrain_ray.is_valid()) {
+			if (!has_nav_map || _segment_may_hit_terrain(nav_map, prev_pos, curr_pos)) {
+				// Walk the arc in short sub-segments: a single long chord sags
+				// below the real trajectory and would clip terrain the shell
+				// actually flies over.
+				int subs = 1;
+				if (next_t > prev_t) {
+					subs = std::max(1, (int)std::ceil((next_t - prev_t) / max_low_altitude_time_step));
+					subs = std::min(subs, 64);
+				}
+				Vector3 sub_from = prev_pos;
+				for (int i = 1; i <= subs; i++) {
+					Vector3 sub_to = (i == subs)
+						? curr_pos
+						: position_at_time(prev_t + (next_t - prev_t) * ((double)i / (double)subs));
+					terrain_ray->set_from(sub_from);
+					terrain_ray->set_to(sub_to);
+					Dictionary hit = space_state->intersect_ray(terrain_ray);
+					if (!hit.is_empty()) {
+						Vector3 hit_pos = hit["position"];
+						if (hit_pos.y > 0.001) {
+							terrain_found = true;
+							terrain_pos = hit_pos;
+							terrain_d2 = prev_pos.distance_squared_to(hit_pos);
+							break;
+						}
+					}
+					sub_from = sub_to;
+				}
+			}
+		} else if (has_nav_map) {
+			// No physics world available — fall back to the conservative
+			// height-grid estimate.
+			if (_segment_may_hit_terrain(nav_map, prev_pos, curr_pos)) {
+				terrain_found = true;
+				terrain_pos = curr_pos;
+				terrain_d2 = prev_pos.distance_squared_to(curr_pos);
 			}
 		}
 
-		if (has_nav_map) {
-			float sdf_dist = nav_map->get_distance((float)curr_pos.x, (float)curr_pos.z);
-			if (sdf_dist <= (float)sdf_margin) {
-				float terrain_h = nav_map->get_terrain_height((float)curr_pos.x, (float)curr_pos.z);
-				if (terrain_h > 0.001f && (float)curr_pos.y <= terrain_h) {
-					result["terrain_blocked"] = true;
-					return result;
+		// --- Ships ---------------------------------------------------------
+		bool obb_found = false;
+		Variant obb_collider;
+		Vector3 obb_pos;
+		double obb_d2 = 0.0;
+		if (!can_skip_obb && space_state != nullptr && obb_ray.is_valid()) {
+			obb_ray->set_from(prev_pos);
+			obb_ray->set_to(curr_pos);
+			obb_ray->set_exclude(obb_excludes);
+			// Ships skipped below are only skipped for this segment — a later
+			// segment may still run into the part of the hull it missed here.
+			const int base_excludes = obb_excludes.size();
+			for (int guard = 0; guard < 16; guard++) {
+				Dictionary hit = space_state->intersect_ray(obb_ray);
+				if (hit.is_empty()) {
+					break;
 				}
+				Vector3 hit_pos = hit["position"];
+				bool real_hit = true;
+				if (precision_world != nullptr) {
+					Object *ship = Object::cast_to<Object>(precision_world->call("get_ship_from_obb", hit["collider"]));
+					if (ship != nullptr) {
+						// The OBB is only a broadphase box — confirm the shell
+						// actually intersects hull geometry before calling the
+						// trajectory blocked.
+						Dictionary narrow = precision_world->call("narrowphase_hit", ship, prev_pos, curr_pos);
+						if (narrow.is_empty()) {
+							real_hit = false;
+						} else {
+							hit_pos = narrow["world_pos"];
+						}
+					}
+				}
+				if (real_hit) {
+					obb_found = true;
+					obb_collider = hit["collider"];
+					obb_pos = hit_pos;
+					obb_d2 = prev_pos.distance_squared_to(hit_pos);
+					break;
+				}
+				// Passed through the box without touching the hull — skip it and
+				// keep looking further along this segment.
+				if (!hit.has("rid")) {
+					break;
+				}
+				obb_excludes.append(hit["rid"]);
+				obb_ray->set_exclude(obb_excludes);
 			}
+			obb_excludes.resize(base_excludes);
+		}
+
+		if (terrain_found && (!obb_found || terrain_d2 <= obb_d2)) {
+			result["terrain_blocked"] = true;
+			result["terrain_position"] = terrain_pos;
+			return result;
+		}
+		if (obb_found) {
+			result["obb_hit"] = true;
+			result["obb_collider"] = obb_collider;
+			result["obb_position"] = obb_pos;
+			return result;
 		}
 
 		if (next_dist <= prev_dist + 1e-6) {

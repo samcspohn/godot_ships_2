@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
@@ -52,6 +53,37 @@ private:
 	PathResult current_path;          // From NavigationMap::find_path_internal
 	int current_wp_index;             // Index into current_path.waypoints
 	bool path_valid;
+
+	// --- Path request failure reporting ---
+	// run_plan_sync() is the only place a path is requested.  When HPA* cannot
+	// produce a route the navigator silently degrades to a fallback route, so
+	// failures used to be invisible.  Every failed request is now classified,
+	// counted, and warned about at a throttled rate: at most one warning per
+	// navigator per PATH_FAIL_WARN_INTERVAL seconds, with the number of
+	// suppressed failures folded into the next message.
+	enum class PathFailReason : int {
+		NONE               = 0,
+		NO_MAP             = 1,  // no built NavigationMap / HpaGraph to plan with
+		NO_ROUTE_KEPT_PATH = 2,  // HPA* found nothing; previous path retained
+		NO_ROUTE_DIRECT    = 3,  // HPA* found nothing; clear straight line used instead
+		NO_ROUTE_TRUNCATED = 4,  // no route; path stops short of the destination
+		NO_ROUTE_BLIND     = 5,  // no route and no clear line; steering straight at the destination
+	};
+
+	static constexpr float PATH_FAIL_WARN_INTERVAL = 5.0f;  // seconds between warnings from one navigator
+
+	int   path_fail_reason_;         // PathFailReason of the most recent failed request
+	int   path_fail_count_;          // failed requests since construction (or last clear)
+	int   path_fail_suppressed_;     // failures swallowed by the throttle since the last warning
+	float path_fail_warn_cooldown_;  // seconds until another warning may print
+
+	// True when the last successful plan only came back after HpaGraph muted
+	// the threat layer — i.e. the current route knowingly crosses enemy
+	// detection coverage because no stealthy route existed.
+	bool path_threat_relaxed_;
+
+	static const char *path_fail_reason_name(int reason);
+	void report_path_failure(PathFailReason reason);
 
 	// --- HPA* (Hierarchical A*) pathfinding ---
 	// When set, strategic path planning uses hierarchical A* for fast
@@ -398,6 +430,13 @@ public:
 	float get_desired_heading() const;
 	float get_distance_to_destination() const;
 	bool is_arrived() const;
+
+	// --- Path request failures (see PathFailReason) ---
+	bool is_path_threat_relaxed() const { return path_threat_relaxed_; }
+	int get_path_failure_count() const { return path_fail_count_; }
+	int get_last_path_failure_reason() const { return path_fail_reason_; }
+	String get_last_path_failure_reason_name() const { return String(path_fail_reason_name(path_fail_reason_)); }
+	void clear_path_failures();
 
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }

@@ -70,11 +70,6 @@ var team_1_air_in_range: Dictionary = {}
 # gets to see them -> the time the reveal lapses. See report_aircraft_launch().
 var team_0_launch_reveals: Dictionary = {}   # Ship -> float (expiry, current_time units)
 var team_1_launch_reveals: Dictionary = {}
-# One-time bootstrap per team: after the first visual spot, seed LKPs for
-# still-hidden enemies so bots can begin coordinated hunting immediately.
-var team_0_first_spot_lkp_seeded: bool = false
-var team_1_first_spot_lkp_seeded: bool = false
-
 # Known enemy clusters (spotted + last known positions of unspotted)
 var team_0_known_enemy_clusters: Array[Dictionary] = []
 var team_1_known_enemy_clusters: Array[Dictionary] = []
@@ -92,6 +87,18 @@ var map: Map = null
 # (team_id, effective_radius); the global tick below republishes enemy
 # positions once per THREAT_UPDATE_INTERVAL frames.
 var threat_registry: ThreatRegistry = ThreatRegistry.new()
+# One per team, so each side's threat picture includes the enemies it has not
+# seen as well as the ones it has (see _publish_team_threats). Deterministic
+# from the spawns, the clock and the team lists - the same model the bots
+# themselves reason with (see EnemyPresumption).
+var _team_presumption: Array[EnemyPresumption] = [
+	EnemyPresumption.new(), EnemyPresumption.new()]
+## Weight ceiling and floor for a presumed contact in the threat picture. A
+## guess never pushes a route as hard as a ship somebody is actually looking at,
+## and never stops counting entirely either - the ship is out there whether or
+## not anyone can say where.
+const PRESUMED_THREAT_WEIGHT_MAX: float = 0.6
+const PRESUMED_THREAT_WEIGHT_MIN: float = 0.15
 const THREAT_UPDATE_INTERVAL: int = 4
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
 
@@ -722,25 +729,6 @@ func get_all_ships() -> Array:
 	return all_ships
 
 
-func _team_has_spotted_enemy(team_id: int) -> bool:
-	for ship in _get_enemy_ships(team_id):
-		if not is_instance_valid(ship):
-			continue
-		if ship.health_controller.is_alive() and ship.visible_to_enemy:
-			return true
-	return false
-
-
-func _seed_first_spot_unspotted_lkps(team_id: int) -> void:
-	var enemy_team_id := 1 if team_id == 0 else 0
-	for enemy in _get_team(enemy_team_id):
-		if not is_instance_valid(enemy):
-			continue
-		if enemy.visible_to_enemy:
-			continue
-		_write_unspotted_lkp(team_id, enemy, current_time)
-
-
 func _update_team_clusters():
 	team_0_known_enemy_clusters = _compute_known_enemy_clusters(0)
 	team_1_known_enemy_clusters = _compute_known_enemy_clusters(1)
@@ -958,8 +946,14 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 		else:
 			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
 
-func handle_air_spot(spotter: Ship, spotted: Ship, dist: float):
-	if (spotted.concealment.params.p() as ConcealmentParams).air_radius > dist:
+## `plane_range` is the looking aircraft's own reach (AircraftParams.spotting_range).
+## BOTH sides of the sighting have to hold: the aircraft has to be able to see
+## that far, and the ship has to be visible from that far away. Neither one
+## carries the other - a squadron with a 8 km reach still sees nothing until it
+## is inside a 2.5 km air_radius, and a ship careless enough to be visible from
+## 10 km is still unseen by an aircraft that only looks 8 km.
+func handle_air_spot(spotter: Ship, spotted: Ship, dist: float, plane_range: float):
+	if minf((spotted.concealment.params.p() as ConcealmentParams).air_radius, plane_range) > dist:
 		spotted.det_air = true
 		# A clear-LOS air spot is LKP-style (frozen position, refreshed every
 		# HYDRO_LKP_INTERVAL) rather than a live reveal - mirrors hydro/radar.
@@ -1232,14 +1226,13 @@ func _physics_process(_delta: float) -> void:
 
 	handle_spot_attribution()
 
-	# One-time per team: once they spot any enemy at all, snapshot current
-	# positions of every still-hidden enemy as LKPs.
-	if not team_0_first_spot_lkp_seeded and _team_has_spotted_enemy(0):
-		_seed_first_spot_unspotted_lkps(0)
-		team_0_first_spot_lkp_seeded = true
-	if not team_1_first_spot_lkp_seeded and _team_has_spotted_enemy(1):
-		_seed_first_spot_unspotted_lkps(1)
-		team_1_first_spot_lkp_seeded = true
+	# A team's picture is now made only of ships it has actually seen. There used
+	# to be a bootstrap here that, the instant a team spotted anything at all,
+	# handed it a free last-known position for every OTHER enemy as well - one
+	# ship walking into view lit up the entire opposing fleet. It existed because
+	# bots had no other way to believe in a ship nobody had seen; they now work
+	# that out for themselves from the spawns and the clock, without being told
+	# where anyone is (see EnemyPresumption).
 
 	for p_name in players:
 		var p: Ship = players[p_name][0]
@@ -1441,9 +1434,11 @@ func _update_threat_registry() -> void:
 func _publish_team_threats(team_id: int) -> void:
 	var ids := PackedInt32Array()
 	var data := PackedVector3Array()
+	var published: Dictionary = {}
 	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
 	for enemy in valid_targets:
 		if is_instance_valid(enemy) and enemy.is_alive():
+			published[enemy] = true
 			ids.append(int(enemy.get_instance_id()))
 			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
 
@@ -1457,9 +1452,26 @@ func _publish_team_threats(team_id: int) -> void:
 		var decay: float = 1.0 - clamp((now - last_time) / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
 		if decay <= 0.0:
 			continue
+		published[enemy_ship] = true
 		var lp: Vector3 = unspotted[enemy_ship]
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(lp.x, lp.z, decay))
+
+	# Everything left: ships never seen at all, and ships whose last known
+	# position has decayed away to nothing. Routing that avoids only the enemies
+	# somebody happens to be looking at is routing that sails straight into the
+	# rest of the fleet - the whole point of moving unseen is to stay clear of
+	# where the enemy IS, not of where they have been observed to be. Weighted
+	# by how well the guess is pinned down, and never as strongly as a sighting.
+	for guess in _team_presumption[team_id].contacts(team_id, self):
+		var enemy_ship: Ship = guess.ship
+		if published.has(enemy_ship):
+			continue
+		var weight: float = lerpf(PRESUMED_THREAT_WEIGHT_MIN, PRESUMED_THREAT_WEIGHT_MAX,
+			EnemyPresumption.certainty(guess))
+		var at: Vector3 = guess.position
+		ids.append(int(enemy_ship.get_instance_id()))
+		data.append(Vector3(at.x, at.z, weight))
 
 	threat_registry.update_team(team_id, ids, data)
 
@@ -1640,7 +1652,7 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 					collision = space_state.intersect_ray(ray_query)
 					has_los = collision.is_empty()
 					if has_los:
-						handle_air_spot(a, b, dist)
+						handle_air_spot(a, b, dist, (plane.params.p() as AircraftParams).spotting_range)
 		if b.aviation_controller != null:
 			for squadron_id in b.aviation_controller.active_squadrons.keys():
 				for plane in b.aviation_controller.squadrons[squadron_id].aircraft:
@@ -1651,7 +1663,7 @@ func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameter
 					collision = space_state.intersect_ray(ray_query)
 					has_los = collision.is_empty()
 					if has_los:
-						handle_air_spot(b, a, dist)
+						handle_air_spot(b, a, dist, (plane.params.p() as AircraftParams).spotting_range)
 
 
 func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:

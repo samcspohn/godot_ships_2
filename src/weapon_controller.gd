@@ -104,6 +104,9 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 
 
 const COOLDOWN_COLOR := Color(1.0, 0.82, 0.12, 0.45)
+# Alpha every cooldown colour is drawn at, so an overridden one still reads as
+# part of the button rather than a panel over it.
+const COOLDOWN_ALPHA: float = 0.45
 # Fallback corner radius, used only if the button's own style is not a
 # StyleBoxFlat to read the real radius off (see _button_corner_radius).
 const COOLDOWN_CORNER_RADIUS: int = 3
@@ -164,6 +167,12 @@ func get_button_cooldown(_index: int) -> float:
 func is_button_ready(_index: int) -> bool:
 	return true
 
+## Colour of this button's cooldown bar, re-read every frame so one bar can say
+## what KIND of wait it is showing rather than needing one bar per kind (see
+## AviationController, where the same bar is a sortie, a rearm or a deck wait).
+func get_button_cooldown_color(_index: int) -> Color:
+	return COOLDOWN_COLOR
+
 
 func update_weapon_ui(delta: float) -> void:
 	for i in range(buttons.size()):
@@ -186,6 +195,11 @@ func update_weapon_ui(delta: float) -> void:
 			var cooldown := get_button_cooldown(i)
 			cooldown_progress.value = cooldown
 			cooldown_progress.visible = cooldown > 0.0
+			if cooldown_progress.visible:
+				var fill := cooldown_progress.get_theme_stylebox("fill") as StyleBoxFlat
+				var color := get_button_cooldown_color(i)
+				if fill != null and fill.bg_color != color:
+					fill.bg_color = color
 		button.self_modulate = Color.WHITE if is_button_ready(i) else UNAVAILABLE_TINT
 		if switch_progress and not switched_shell:
 			switch_progress.value = min(held_dur[i], 1.0)

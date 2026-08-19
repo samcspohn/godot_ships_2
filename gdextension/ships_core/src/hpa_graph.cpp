@@ -42,6 +42,9 @@ void HpaGraph::_bind_methods() {
 	ClassDB::bind_method(
 		D_METHOD("add_obstacle", "id", "pos", "radius"),
 		&HpaGraph::add_obstacle);
+	ClassDB::bind_method(D_METHOD("get_last_fail_stage"), &HpaGraph::get_last_fail_stage);
+	ClassDB::bind_method(D_METHOD("get_last_fail_stage_name"), &HpaGraph::get_last_fail_stage_name);
+	ClassDB::bind_method(D_METHOD("did_last_query_ignore_threats"), &HpaGraph::did_last_query_ignore_threats);
 	ClassDB::bind_method(D_METHOD("remove_obstacle", "id"), &HpaGraph::remove_obstacle);
 	ClassDB::bind_method(D_METHOD("clear_obstacles"), &HpaGraph::clear_obstacles);
 	ClassDB::bind_method(D_METHOD("get_node_count"), &HpaGraph::get_node_count);
@@ -728,9 +731,45 @@ PathResult HpaGraph::constrained_cell_astar(
 // find_path
 // ============================================================================
 
+const char *HpaGraph::fail_stage_name(int stage) {
+	switch (stage) {
+		case FAIL_NOT_BUILT:       return "graph not built";
+		case FAIL_START_SNAP:      return "start not navigable at query clearance";
+		case FAIL_GOAL_SNAP:       return "goal not navigable at query clearance";
+		case FAIL_CLUSTER_ASTAR:   return "cluster A* found no corridor";
+		case FAIL_CONNECTOR_ASTAR: return "connector could not bridge a guide segment";
+		case FAIL_STRING_PULL:     return "assembled path collapsed";
+		case FAIL_SEPARATE_WATER:  return "goal is in a water region the ship cannot reach";
+		default:                   return "none";
+	}
+}
+
 PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) const {
+	last_query_ignored_threats_ = false;
+
+	PathResult r = find_path_query(from, to, query_clearance);
+	if (r.valid || threat_blocked_count_ == 0) {
+		return r;
+	}
+
+	// Strict pass failed with a threat layer stamped.  Threat circles are a
+	// routing preference, not terrain: a ship sitting inside enemy detection
+	// coverage would otherwise be walled in by its own threat bubble and keep
+	// following a stale path.  Retry with threats muted so it can at least
+	// move; the caller can inspect did_last_query_ignore_threats().
+	threats_muted_ = true;
+	r = find_path_query(from, to, query_clearance);
+	threats_muted_ = false;
+
+	last_query_ignored_threats_ = r.valid;
+	return r;
+}
+
+PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clearance) const {
 	using Clock = std::chrono::steady_clock;
 	auto query_t0 = Clock::now();
+
+	last_fail_stage_ = FAIL_NONE;
 
 	// Timing buckets (kept for perf metrics compatibility).
 	float connect_us   = 0.0f;   // guide-point LOS / local A* time
@@ -843,7 +882,10 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		return r;
 	};
 
-	if (!built_) return finalize_query(no_path);
+	if (!built_) {
+		last_fail_stage_ = FAIL_NOT_BUILT;
+		return finalize_query(no_path);
+	}
 
 	// ── Query clearance ────────────────────────────────────────────────────
 	// Use the ship's actual clearance (ship_length/2 + ship_beam) when
@@ -861,11 +903,78 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 	int from_gx = world_to_gx(from.x), from_gz = world_to_gz(from.y);
 	int to_gx   = world_to_gx(to.x),   to_gz   = world_to_gz(to.y);
 
+	// ── Endpoint snapping ──────────────────────────────────────────────────
+	// Callers validate endpoints against the ship's hull clearance, but we
+	// plan at a larger margin (hull + manoeuvring buffer).  A start hugging a
+	// shoreline for cover, or a goal sitting inside that margin, has no cell
+	// navigable at q_cl — cluster A* would treat its own goal cluster as
+	// impassable and every stage below would fail.  Snap each endpoint to the
+	// nearest cell that *is* navigable at q_cl and plan between those; the
+	// true endpoints are restored as the path's first and last waypoints
+	// below, so the ship still steers to exactly where it was told to go.
+	Vector2 plan_from = from;
+	Vector2 plan_to   = to;
+
+	auto snap_endpoint = [&](int &gx, int &gz, Vector2 &out) -> bool {
+		float wx, wz;
+		grid_to_world(gx, gz, wx, wz);
+		if (nav_map_->get_distance(wx, wz) >= q_cl) return true;  // already clear
+		int sx = gx, sz = gz;
+		if (!nav_map_->find_nearest_navigable(sx, sz, q_cl)) return false;
+		gx = sx;
+		gz = sz;
+		grid_to_world(gx, gz, wx, wz);
+		out = Vector2(wx, wz);
+		return true;
+	};
+
+	if (!snap_endpoint(from_gx, from_gz, plan_from)) {
+		last_fail_stage_ = FAIL_START_SNAP;
+		return finalize_query(no_path);
+	}
+	if (!snap_endpoint(to_gx, to_gz, plan_to)) {
+		last_fail_stage_ = FAIL_GOAL_SNAP;
+		return finalize_query(no_path);
+	}
+
+	// Everything below plans between the snapped points.
+	const Vector2 true_from = from;
+	const Vector2 true_to   = to;
+	const bool start_snapped = true_from.distance_to(plan_from) > 1.0f;
+	const bool goal_snapped  = true_to.distance_to(plan_to)   > 1.0f;
+	from = plan_from;
+	to   = plan_to;
+
+	// Re-attach the caller's endpoints around a route planned between the
+	// snapped ones, so the ship is steered from where it actually is to where
+	// it was actually sent.  Both extra legs are short and point away from
+	// land by construction (the snap walks up the SDF gradient).
+	auto restore_endpoints = [&](PathResult r) -> PathResult {
+		if (!r.valid || r.waypoints.empty()) return r;
+		if (r.flags.size() != r.waypoints.size())
+			r.flags.assign(r.waypoints.size(), WP_NONE);
+		if (start_snapped && r.waypoints.front().distance_to(true_from) > 1.0f) {
+			r.waypoints.insert(r.waypoints.begin(), true_from);
+			r.flags.insert(r.flags.begin(), WP_NONE);
+		}
+		if (goal_snapped && r.waypoints.back().distance_to(true_to) > 1.0f) {
+			r.waypoints.push_back(true_to);
+			r.flags.push_back(WP_NONE);
+		}
+		r.total_distance = 0.0f;
+		for (size_t i = 0; i + 1 < r.waypoints.size(); ++i)
+			r.total_distance += r.waypoints[i].distance_to(r.waypoints[i + 1]);
+		return r;
+	};
+
 	int from_cid = cluster_id(cell_cx(from_gx), cell_cz(from_gz));
 	int to_cid   = cluster_id(cell_cx(to_gx),   cell_cz(to_gz));
 
 	// ── Threat layer ───────────────────────────────────────────────────────
-	bool threat_layer_active = (threat_blocked_count_ > 0);
+	// threats_muted_ is set by the relaxed retry in find_path(); it has to
+	// disable LOS rejection too, not just cluster blocking, or the retry would
+	// still be walled in by the same threat circles.
+	bool threat_layer_active = (threat_blocked_count_ > 0) && !threats_muted_;
 
 	// Reject a LOS segment that clips any threat-blocked cluster AABB.
 	// Iterates the compact threat_blocked_cids_ list rather than every cluster.
@@ -894,7 +1003,7 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		r.flags          = { WP_NONE, WP_NONE };
 		r.total_distance = from.distance_to(to);
 		r.valid          = true;
-		return finalize_query(r);
+		return finalize_query(restore_endpoints(r));
 	}
 
 	// ── Step 2: Build guide-point sequence ─────────────────────────────────────
@@ -948,10 +1057,20 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 			if (sub_path.empty()) {
 				auto t0 = Clock::now();
 				PathResult local = constrained_cell_astar(from, to, q_cl, allowed_macros);
+				bool reachable = true;
+				if (!local.valid || local.waypoints.size() < 2) {
+					// Single macro, but no channel within it — search the full
+					// grid rather than declaring the destination unreachable.
+					reachable = nav_map_->is_reachable(from, to, q_cl);
+					if (reachable)
+						local = nav_map_->find_path_internal(from, to, q_cl, 0.0f);
+				}
 				auto t1 = Clock::now();
 				refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
 				connector_local_search_runs++;
-				return finalize_query(local);
+				if (!local.valid)
+					last_fail_stage_ = reachable ? FAIL_CONNECTOR_ASTAR : FAIL_SEPARATE_WATER;
+				return finalize_query(restore_endpoints(local));
 			}
 
 			for (int i = 1; i + 1 < static_cast<int>(sub_path.size()); ++i) {
@@ -969,7 +1088,10 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		auto t_abs1 = Clock::now();
 		abstract_us = std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
 
-		if (cluster_path.empty()) return finalize_query(no_path);
+		if (cluster_path.empty()) {
+			last_fail_stage_ = FAIL_CLUSTER_ASTAR;
+			return finalize_query(no_path);
+		}
 
 		// Corridor mask: every macro on the abstract path plus its 8 neighbours.
 		// Gives the per-pair sub A* room to detour around in-corridor terrain
@@ -1061,8 +1183,10 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 	const float merge_eps = cell_size_ * 0.1f;
 
 	for (int i = 1; i < static_cast<int>(guide.size()); ++i) {
-		const Vector2 &A = waypoints.back();
-		const Vector2 &B = guide[i];
+		// By value: waypoints is appended to below, which would dangle a
+		// reference into it.
+		const Vector2 A = waypoints.back();
+		const Vector2 B = guide[i];
 
 		int ax = world_to_gx(A.x), az = world_to_gz(A.y);
 		int bx = world_to_gx(B.x), bz = world_to_gz(B.y);
@@ -1113,12 +1237,38 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		// Sub A* couldn't help — run cell A* constrained to the HPA corridor.
 		connector_local_search_runs++;
 		PathResult local = constrained_cell_astar(A, B, q_cl, allowed_macros);
+
+		bool segment_reachable = true;
+		if (!local.valid || local.waypoints.size() < 2) {
+			// The corridor has no channel this ship fits through.  Cluster A*
+			// links two clusters when each merely *contains* a navigable cell,
+			// so it happily bridges an isthmus that no cell-level route can
+			// cross — the corridor it handed us is then unusable.  Retry the
+			// segment on the full grid (terrain only) before giving up: a
+			// longer real route beats no route.  The region test gates the
+			// expensive search and stays silent when the two really are
+			// separate bodies of water.
+			segment_reachable = nav_map_->is_reachable(A, B, q_cl);
+			if (segment_reachable) {
+				connector_local_search_runs++;
+				local = nav_map_->find_path_internal(A, B, q_cl, 0.0f);
+			}
+		}
+
 		if (local.valid && local.waypoints.size() >= 2) {
 			for (int j = 1; j < static_cast<int>(local.waypoints.size()); ++j) {
 				if (waypoints.back().distance_to(local.waypoints[j]) > merge_eps)
 					waypoints.push_back(local.waypoints[j]);
 			}
+		} else if (i + 1 < static_cast<int>(guide.size())) {
+			// B is an intermediate guide point.  The guide is advisory — a sub
+			// centre picked near the chord can land on the far side of an
+			// island — so drop it and let the next iteration route from A to
+			// the following guide point instead.
+			continue;
 		} else {
+			last_fail_stage_ = segment_reachable ? FAIL_CONNECTOR_ASTAR
+			                                     : FAIL_SEPARATE_WATER;
 			return finalize_query(no_path);
 		}
 	}
@@ -1158,7 +1308,10 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 	connect_us = start_connect_us + goal_connect_us; // 0 in new design
 
 	// ── Step 7: Package result ─────────────────────────────────────────────
-	if (pulled.size() < 2) return finalize_query(no_path);
+	if (pulled.size() < 2) {
+		last_fail_stage_ = FAIL_STRING_PULL;
+		return finalize_query(no_path);
+	}
 
 	PathResult result;
 	result.waypoints = pulled;
@@ -1167,7 +1320,7 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 		result.total_distance += pulled[i].distance_to(pulled[i + 1]);
 	result.valid = true;
 
-	return finalize_query(result);
+	return finalize_query(restore_endpoints(result));
 }
 
 // ============================================================================

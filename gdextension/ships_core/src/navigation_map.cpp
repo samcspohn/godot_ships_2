@@ -43,6 +43,7 @@ void NavigationMap::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_distance", "x", "z"), &NavigationMap::get_distance);
 	ClassDB::bind_method(D_METHOD("get_gradient", "x", "z"), &NavigationMap::get_gradient);
 	ClassDB::bind_method(D_METHOD("is_navigable", "x", "z", "clearance"), &NavigationMap::is_navigable);
+	ClassDB::bind_method(D_METHOD("is_reachable", "a", "b", "clearance"), &NavigationMap::is_reachable);
 
 	// Raycasting
 	ClassDB::bind_method(D_METHOD("raycast", "from", "to", "clearance"), &NavigationMap::raycast);
@@ -1448,6 +1449,28 @@ bool NavigationMap::find_nearest_navigable(int &ix, int &iz, float clearance) co
 	}
 
 	return false;
+}
+
+bool NavigationMap::is_reachable(Vector2 a, Vector2 b, float clearance) const {
+	if (!built) return false;
+
+	float ax = a.x, az = a.y, bx = b.x, bz = b.y;
+	clamp_world_to_bounds(ax, az);
+	clamp_world_to_bounds(bx, bz);
+
+	float gax, gaz, gbx, gbz;
+	world_to_grid(ax, az, gax, gaz);
+	world_to_grid(bx, bz, gbx, gbz);
+
+	int aix = std::max(0, std::min(static_cast<int>(std::round(gax)), grid_width - 1));
+	int aiz = std::max(0, std::min(static_cast<int>(std::round(gaz)), grid_height - 1));
+	int bix = std::max(0, std::min(static_cast<int>(std::round(gbx)), grid_width - 1));
+	int biz = std::max(0, std::min(static_cast<int>(std::round(gbz)), grid_height - 1));
+
+	if (!find_nearest_navigable(aix, aiz, clearance)) return false;
+	if (!find_nearest_navigable(bix, biz, clearance)) return false;
+
+	return same_region(aix, aiz, bix, biz);
 }
 
 PackedVector2Array NavigationMap::find_path(Vector2 from, Vector2 to, float clearance,

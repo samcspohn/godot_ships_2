@@ -1372,16 +1372,54 @@ func calculate_interception_point(shooter_pos: Vector3, target_pos: Vector3, tar
 # island can do, and cover is then never found at all.
 const THREAT_LKP_MAX_AGE: float = LKP_MAX_LEAD_AGE
 
+## Where the enemy probably is, for the ships nobody is holding - see
+## EnemyPresumption, which builds it from the spawns, the clock and the team
+## list rather than from anything it is not entitled to see. Positioning only:
+## a guess never becomes a target.
+var _presumption := EnemyPresumption.new()
+
+func get_presumed_contacts(lead: float = 0.0) -> Array[Dictionary]:
+	if _ship == null or _ship.team == null:
+		return []
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	return _presumption.contacts(_ship.team.team_id, server_node, lead)
+
+## How close a presumed enemy has to be before it constrains where this ship
+## hides - about the range from which something could actually shoot back.
+const PRESUMED_THREAT_REACH: float = 18000.0
+## How much of an enemy's threat survives not knowing exactly where it is,
+## across the full range of the presumption's own confidence (see
+## EnemyPresumption.certainty). Never the full weight of a ship in plain sight,
+## and never nothing at all.
+const PRESUMED_CERTAINTY_MAX: float = 0.85
+const PRESUMED_CERTAINTY_MIN: float = 0.25
+
+## At most this many guesses may constrain one decision. Every threat added is
+## another line a cover position has to be masked from, and a position masked
+## from everything on the map generally does not exist. The nearest few are the
+## ones that would actually be shooting.
+const PRESUMED_THREAT_LIMIT: int = 3
+## And only guesses still worth calling a position. Once the uncertainty is
+## this wide the guess says "somewhere over there", which is not something a
+## cover position can be masked from - letting it veto cover anyway would leave
+## a ship refusing every island on the map on the strength of a shrug.
+const PRESUMED_THREAT_MAX_RADIUS: float = 6000.0
+
 func _gather_threat_positions(ship: Ship) -> Array:
 	"""Threat positions the bot legitimately knows about: currently visible
 	enemies, plus last-known positions still fresh enough to mean something
-	(dead-reckoned forward). Stale contacts are dropped — see THREAT_LKP_MAX_AGE."""
+	(dead-reckoned forward). Stale contacts are dropped — see THREAT_LKP_MAX_AGE.
+	Made up to a full picture with the nearest presumed contacts, so a position
+	is judged against the enemies that are probably there and not only against
+	the ones that happen to be visible from it."""
 	var threats: Array = []
 	var server_node: GameServer = ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return threats
+	var held: Dictionary = {}
 	for enemy in server_node.get_valid_targets(ship.team.team_id):
 		if is_instance_valid(enemy) and enemy.health_controller.is_alive():
+			held[enemy] = true
 			threats.append(enemy.global_position)
 	var unspotted = server_node.get_unspotted_enemies(ship.team.team_id)
 	for enemy_ship in unspotted.keys():
@@ -1392,7 +1430,26 @@ func _gather_threat_positions(ship: Ship) -> Array:
 			continue
 		if float(sol.age) > THREAT_LKP_MAX_AGE:
 			continue
+		held[enemy_ship] = true
 		threats.append(sol.position)
+	# Everything else the enemy owns is somewhere too, and the whole point of
+	# taking cover is to not be shot by it. Without this a cruiser tucks itself
+	# behind an island from the one contact it can see and parks broadside to
+	# the flank nobody has looked at all game.
+	var guesses: Array[Dictionary] = []
+	for guess in get_presumed_contacts():
+		if held.has(guess.ship):
+			continue
+		if float(guess.radius) > PRESUMED_THREAT_MAX_RADIUS:
+			continue
+		var guess_pos: Vector3 = guess.position
+		var d: float = ship.global_position.distance_to(guess_pos)
+		if d > PRESUMED_THREAT_REACH:
+			continue
+		guesses.append({dist = d, position = guess_pos})
+	guesses.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.dist < b.dist)
+	for k in range(mini(guesses.size(), PRESUMED_THREAT_LIMIT)):
+		threats.append(guesses[k].position)
 	return threats
 
 func get_navigator() -> ShipNavigator:
@@ -1730,10 +1787,25 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
 	var hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
 
-	var spotted = server.get_valid_targets(_ship.team.team_id)
-	var unspotted = server.get_unspotted_enemies(_ship.team.team_id)
-	var enemies = spotted + unspotted.keys()
-	if enemies.is_empty():
+	# What is out there and how sure we are of it. A spotted enemy is where it
+	# is seen to be; everything else the enemy owns is at its believed position
+	# with a certainty to match (see EnemyPresumption). Two things change here
+	# from reading the contact tables directly: a ship nobody has ever seen now
+	# counts at all - it still shoots, and a bot that only fears what it can see
+	# will happily hold a position that is only safe from what it can see - and
+	# an unspotted one is judged on where the team thinks it is rather than on
+	# its live position, which is not something this bot is entitled to know.
+	var contacts: Array[Dictionary] = []
+	for enemy in server.get_valid_targets(_ship.team.team_id):
+		contacts.append({ship = enemy, position = enemy.global_position, certainty = 1.0})
+	for guess in get_presumed_contacts():
+		contacts.append({
+			ship = guess.ship,
+			position = guess.position,
+			certainty = lerpf(PRESUMED_CERTAINTY_MIN, PRESUMED_CERTAINTY_MAX,
+				EnemyPresumption.certainty(guess)),
+		})
+	if contacts.is_empty():
 		_threat_score_cache = hp_pressure * 0.3 * threat_mod
 		_threat_score_frame = frame
 		return _threat_score_cache
@@ -1743,10 +1815,14 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
 	var threat_scale: float = 1.0 - pow(t_norm, 4)
 
-	for enemy in enemies:
+	for contact in contacts:
+		var enemy: Ship = contact.ship
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
-		var dist        = enemy.global_position.distance_to(_ship.global_position)
+		if enemy.artillery_controller == null:
+			continue
+		var believed: Vector3 = contact.position
+		var dist        = believed.distance_to(_ship.global_position)
 		var enemy_range = enemy.artillery_controller.get_params()._range
 		var enemy_hp    = enemy.health_controller.current_hp
 		# Only count enemies whose guns can plausibly reach us
@@ -1765,8 +1841,13 @@ func get_threat_score(ctx: SkillContext) -> float:
 		raw_val *= threat_scale
 		raw_val *= threat_mod
 		var this_threat = 1.0 - exp(-raw_val)
-		if not enemy.visible_to_enemy:
-			this_threat *= 0.7  # unspotted enemies can move while undetected, making their threat less certain # todo: consider a more sophisticated "uncertainty" model that decays over time since last spotted
+		# Not knowing exactly where something is makes it less frightening, but
+		# on a sliding scale: a contact that went dark seconds ago is nearly as
+		# dangerous as one in plain sight, while a ship placed by nothing but the
+		# clock and a spawn line is a rumour. This used to be a flat discount on
+		# everything unspotted, which made a fresh loss of contact and a
+		# ten-minute-old guess equally worrying.
+		this_threat *= float(contact.certainty)
 		raw_threat *= (1.0 - this_threat)
 
 	# var friendly = server.get_team_ships(_ship.team.team_id)
@@ -2172,8 +2253,10 @@ func _enemy_aa_reach(server: GameServer) -> float:
 		return reach
 	for enemy in server.get_valid_targets(_ship.team.team_id):
 		reach = maxf(reach, _ship_aa_reach(enemy))
-	for enemy in server.get_unspotted_enemies(_ship.team.team_id).keys():
-		reach = maxf(reach, _ship_aa_reach(enemy))
+	# Ships nobody is holding shoot at aircraft too, and what they are armed
+	# with is public. Only their POSITION is guesswork (see _aviation_threats).
+	for guess in get_presumed_contacts():
+		reach = maxf(reach, _ship_aa_reach(guess.ship))
 	return reach
 
 static func _ship_aa_reach(other: Ship) -> float:
@@ -2271,10 +2354,10 @@ func _live_hot_spots() -> Array[Dictionary]:
 	return live
 
 ## Every position the air group should keep its distance from, as
-## {position, radius}: known enemies at their believed position out to their AA
-## reach, and remembered hot spots. Last-known positions count however stale they
-## are - the alternative is forgetting a ship that has never been seen at all,
-## which is exactly the ship this exists for.
+## {position, radius}: enemies at their believed position out to their AA reach,
+## and remembered hot spots. Believed covers everything - held, last seen a while
+## ago, or never seen at all - because the ship this exists for is precisely the
+## one nobody has laid eyes on.
 func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 	var threats: Array[Dictionary] = []
 	if server != null and _ship.team != null:
@@ -2284,14 +2367,21 @@ func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 				threats.append({
 					position = Vector2(enemy.global_position.x, enemy.global_position.z),
 					radius = reach + AVIATION_AA_MARGIN})
-		var unspotted := server.get_unspotted_enemies(_ship.team.team_id)
-		for enemy in unspotted.keys():
-			var reach := _ship_aa_reach(enemy)
+		# Everything not currently held, at wherever it is believed to be: a
+		# last-known position while that is what there is, and otherwise the
+		# presumption built from the spawns and the clock (see
+		# EnemyPresumption). Without this the air group plans its rally around
+		# the handful of ships that happen to be visible and forms up on top of
+		# the rest of the fleet.
+		for guess in get_presumed_contacts():
+			if float(guess.radius) > PRESUMED_THREAT_MAX_RADIUS:
+				continue
+			var reach := _ship_aa_reach(guess.ship)
 			if reach <= 0.0:
 				continue
-			var lkp: Vector3 = unspotted[enemy]
+			var at: Vector3 = guess.position
 			threats.append({
-				position = Vector2(lkp.x, lkp.z),
+				position = Vector2(at.x, at.z),
 				radius = reach + AVIATION_AA_MARGIN})
 	for spot in _live_hot_spots():
 		threats.append({position = spot.position, radius = AVIATION_HOT_SPOT_RADIUS})
@@ -2342,14 +2432,16 @@ func _hold_rally(rally: Vector2) -> Vector2:
 # Where a spotter sits to watch a contact. Both bounds are measured on the edges
 # of the orbit rather than its centre, since the squadron circles the station at
 # circle_range: far enough out that the near edge clears the AA envelope, close
-# enough in that the far edge still holds the ship inside spotting_range. When
-# both cannot be met the spotting bound wins - a spotter that cannot see the ship
-# is doing nothing at all - and it stands as far off as it can while still
-# holding the contact.
-func _spot_station(squad: Squadron, contact: Vector2, aa_reach: float) -> Vector2:
+# enough in that the far edge still holds the ship inside `detect` - the range at
+# which this squadron actually sees THIS ship (see _air_detect_radius), which is
+# usually the ship's own air_radius rather than anything the squadron brings.
+# When both bounds cannot be met the spotting one wins and the squadron sits in
+# the AA: a spotter that cannot see the ship is doing nothing at all, and holding
+# a contact is worth being shot at for. It still stands as far off as it can.
+func _spot_station(squad: Squadron, contact: Vector2, aa_reach: float, detect: float) -> Vector2:
 	var p := squad.params.p() as AircraftParams
 	var nearest_safe: float = aa_reach + p.circle_range + AVIATION_AA_MARGIN
-	var furthest_seen: float = p.spotting_range - p.circle_range
+	var furthest_seen: float = detect - p.circle_range
 	var standoff: float = maxf(minf(nearest_safe, furthest_seen), 0.0)
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var away := carrier - contact
@@ -2778,6 +2870,62 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 		var dir := _attack_direction(i, squad, air_ship, point, sol)
 		squad.set_attack(_lead_attack_point(squad, air_ship, point, dir, sol), dir)
 
+## Whether putting a spotter up is worth what it costs. Launching reveals the
+## ship for a few seconds (see AviationController.launch_squadron), so a plane
+## sent up on spawn to sweep empty water buys nothing and tells the enemy where
+## its ship is - which is the entire information exchange, in their favour.
+##
+## Decided the same way the bot decides to fire radar (see _should_use_radar):
+## only from what the team legitimately holds, never from omniscience.
+##
+## Triggers:
+##   1. Already detected, or already being shot at - the launch gives away
+##      nothing that is not given away, so anything the spotter turns up is free.
+##   2. A ship held right now within the squadron's useful reach: worth having
+##      eyes over it before it goes dark, and worth extending gun range onto.
+##   3. A ship the team has lost recently enough that it is probably still
+##      somewhere a plane could find it, within that same reach.
+## Nothing anywhere means nothing to look at: the plane stays on the deck.
+const SPOTTER_LKP_MAX_AGE: float = 60.0
+
+func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
+	if server == null or _ship.team == null:
+		return false
+	if _ship.visible_to_enemy or not active_shooters_at_me.is_empty():
+		return true
+	# How far out a contact can be and still be findable: as far as the squadron
+	# can fly, plus however close it then has to get to actually see it.
+	var fly_reach := _squadron_operating_radius(squad)
+	var my_team: int = _ship.team.team_id
+	for enemy in server.get_valid_targets(my_team):
+		if not is_instance_valid(enemy):
+			continue
+		var reach := fly_reach + _air_detect_radius(squad, enemy)
+		if enemy.global_position.distance_to(_ship.global_position) <= reach:
+			return true
+	var unspotted := server.get_unspotted_enemies(my_team)
+	var times := server.get_unspotted_enemy_times(my_team)
+	var now: float = Time.get_ticks_msec() / 1000.0
+	for enemy in unspotted.keys():
+		if not is_instance_valid(enemy):
+			continue
+		if now - float(times.get(enemy, 0.0)) > SPOTTER_LKP_MAX_AGE:
+			continue  # lost too long ago to still be where the plane would look
+		var lkp: Vector3 = unspotted[enemy]
+		if lkp.distance_to(_ship.global_position) <= fly_reach + _air_detect_radius(squad, enemy):
+			return true
+	# Nothing observed, but the clock still says something: a fleet that left
+	# its spawn some minutes ago has come far enough by now to be worth flying
+	# out to meet. This is what keeps the plane on the deck at the start of a
+	# battle - the presumed enemy is still on their spawn line, well out of
+	# reach - and puts it up once that stops being true (see EnemyPresumption).
+	for guess in get_presumed_contacts():
+		var search_reach := fly_reach + _air_detect_radius(squad, guess.ship)
+		if (guess.position as Vector3).distance_to(_ship.global_position) <= search_reach:
+			return true
+	return false
+
+
 # Total angle the leftover spotters are fanned across, centred on the bearing to
 # where the enemy is expected to be, so a carrier with several spotter squadrons
 # sweeps a front instead of stacking them all onto one point.
@@ -2793,6 +2941,15 @@ func _expected_enemy_center() -> Vector3:
 	var info = _get_nearest_enemy()
 	if not info.is_empty():
 		return info.position
+	# Nothing held anywhere: fall back on where the enemy line has presumably
+	# got to rather than on the spawn it left, which stops being the right
+	# bearing within the first couple of minutes.
+	var guesses := get_presumed_contacts()
+	if not guesses.is_empty():
+		var center := Vector3.ZERO
+		for guess in guesses:
+			center += guess.position as Vector3
+		return center / float(guesses.size())
 	_initialize_spawn_cache()
 	if _spawn_cache_initialized:
 		return _cached_enemy_spawn
@@ -2826,27 +2983,54 @@ func _sweep_point(squad: Squadron, fan_slot: int, fan_count: int) -> Vector2:
 # Last-known positions worth flying a spotter out to, nearest first. Read through
 # the contact solution, so a spotter is sent where the ship has probably got to
 # by now rather than where it was standing when it went dark.
-func _unspotted_contacts_in_range(server: GameServer, squad: Squadron) -> Array[Vector2]:
-	var points: Array[Vector2] = []
+func _unspotted_contacts_in_range(server: GameServer, squad: Squadron) -> Array[Dictionary]:
+	var points: Array[Dictionary] = []
 	if server == null:
 		return points
-	var reach := _squadron_operating_radius(squad)
+	# A plane does not have to reach the ship, only get within sight of it - but
+	# only as far within sight as that particular ship allows, which for most is
+	# a good deal less than the squadron can see (see _air_detect_radius).
+	var fly_reach := _squadron_operating_radius(squad)
+	var speed := _squadron_speed(squad)
 	var ranked: Array[Dictionary] = []
-	for s: Ship in server.get_unspotted_enemies(_ship.team.team_id).keys():
-		if not is_instance_valid(s) or not s.is_alive():
-			continue
-		var sol := get_contact_solution(s)
-		if not sol.get("valid", false):
-			continue
-		var pos: Vector3 = sol.position
+	for guess in get_presumed_contacts():
+		var pos: Vector3 = guess.position
+		var detect := _air_detect_radius(squad, guess.ship)
+		# Led by the flight out: a spotter sent where a ship is believed to be
+		# NOW arrives to find nothing, while one sent where it will be by the
+		# time the plane gets there arrives with the ship inside detection
+		# range. This is what lets a carrier put eyes on an enemy that has
+		# never been seen at all - by the time the squadron is at the edge of
+		# its reach, the enemy has closed the rest of the way itself.
+		if speed > 0.0:
+			pos = _presumption.project(guess, _ship.global_position.distance_to(pos) / speed)
 		var d := _ship.global_position.distance_to(pos)
-		if d > reach:
-			continue
-		ranked.append({dist = d, point = Vector2(pos.x, pos.z)})
+		if d - detect > fly_reach:
+			continue  # the squadron cannot get close enough to see it
+		ranked.append({dist = d, point = Vector2(pos.x, pos.z), detect = detect})
 	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.dist < b.dist)
 	for r in ranked:
-		points.append(r.point)
+		points.append({point = r.point, detect = r.detect})
 	return points
+
+# How far this squadron's aircraft can see at all - only half of what decides a
+# sighting (see _air_detect_radius).
+func _squadron_spot_radius(squad: Squadron) -> float:
+	return (squad.params.p() as AircraftParams).spotting_range
+
+# The range at which this squadron actually finds THIS ship. Both halves have to
+# hold (see GameServer.handle_air_spot): the aircraft has to look that far, and
+# the ship has to be visible from that far. So the tighter of the two governs,
+# and a long-sighted spotter buys nothing against a ship that has to be closed
+# right up on. Falls back to the squadron's own reach when the ship's
+# concealment is not readable.
+func _air_detect_radius(squad: Squadron, enemy: Ship) -> float:
+	var reach := _squadron_spot_radius(squad)
+	if enemy == null or not is_instance_valid(enemy):
+		return reach
+	if enemy.concealment == null or enemy.concealment.params == null:
+		return reach
+	return minf(reach, (enemy.concealment.params.p() as ConcealmentParams).air_radius)
 
 # One spotter per known contact, nearest first; every squadron left over fans out
 # across the search front instead of piling onto a contact another squadron has
@@ -2864,7 +3048,9 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 		# it. A spotter sees far enough to keep the contact from outside its AA,
 		# and inside it a lone squadron is shot down one plane every few seconds
 		# for the whole sortie (see _spot_station).
-		desired = _spot_station(squad, contacts[fan_slot], aa_reach)
+		var contact: Dictionary = contacts[fan_slot]
+		desired = _clamp_to_squadron_range(
+			squad, _spot_station(squad, contact.point, aa_reach, contact.detect))
 	else:
 		# fan only the squadrons that are actually sweeping, so they spread over
 		# the whole front rather than crowding the slots the contacts left free
@@ -2874,7 +3060,8 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 	if not squad.active:
 		# Still on deck: ask for the takeoff slot and station it once it is up -
 		# an order given now would be cleared by the launch anyway.
-		_request_launch(index, priority)
+		if _should_launch_spotter(squad, server):
+			_request_launch(index, priority)
 		return
 	var dir = desired - Vector2(_ship.global_position.x, _ship.global_position.z)
 	if dir.length_squared() < 1.0:

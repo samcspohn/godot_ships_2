@@ -14,6 +14,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/vector2.hpp>
 
@@ -128,11 +129,40 @@ public:
 	/// Returns true after a successful build().
 	bool is_built() const { return built_; }
 
+	/// Where a failed query gave up.  Reported by the caller so a "no route"
+	/// warning names the stage instead of just the symptom.
+	enum FailStage : int {
+		FAIL_NONE = 0,
+		FAIL_NOT_BUILT,       // graph has no build() behind it
+		FAIL_START_SNAP,      // start has no cell navigable at the query clearance
+		FAIL_GOAL_SNAP,       // goal has no cell navigable at the query clearance
+		FAIL_CLUSTER_ASTAR,   // macro A* found no corridor (disconnected water)
+		FAIL_CONNECTOR_ASTAR, // corridor found, but a guide segment could not be bridged
+		FAIL_STRING_PULL,     // assembled path collapsed to fewer than 2 points
+		FAIL_SEPARATE_WATER,  // goal sits in a water region the start cannot reach at all
+	};
+
 	/// Find a path from world-space 'from' to 'to'.
 	/// query_clearance: ship clearance (ship_length/2 + ship_beam).  When
 	/// <= 0, falls back to the clearance passed to build().
+	///
+	/// Endpoints are snapped to the nearest cell navigable at query_clearance
+	/// before searching, and the true endpoints are restored as the first and
+	/// last waypoints — so a start hugging a shoreline or a goal inside the
+	/// planning margin still produces a route.  If the strict query fails while
+	/// a threat layer is stamped, it is retried with threats muted: threat
+	/// avoidance is a routing preference, and a risky route beats no route.
 	PathResult find_path(Vector2 from, Vector2 to,
 						 float query_clearance = -1.0f) const;
+
+	/// FailStage of the most recent query (FAIL_NONE when it succeeded).
+	int get_last_fail_stage() const { return last_fail_stage_; }
+	String get_last_fail_stage_name() const { return String(fail_stage_name(last_fail_stage_)); }
+	static const char *fail_stage_name(int stage);
+
+	/// True when the most recent query only succeeded after muting threats,
+	/// i.e. the returned route knowingly crosses enemy detection coverage.
+	bool did_last_query_ignore_threats() const { return last_query_ignored_threats_; }
 
 	/// Convenience wrapper — returns only the waypoint positions as a
 	/// PackedVector2Array for GDScript callers.
@@ -365,7 +395,9 @@ private:
 	inline bool cluster_blocked(int cid) const {
 		if (cid < 0 || cid >= static_cast<int>(cluster_block_count_.size()))
 			return false;
-		return cluster_block_count_[cid] > 0 || cluster_threat_blocked_[cid] != 0;
+		if (cluster_block_count_[cid] > 0) return true;
+		// threats_muted_ is set for the relaxed retry in find_path().
+		return !threats_muted_ && cluster_threat_blocked_[cid] != 0;
 	}
 
 	/// Corridor-constrained cell A* used by HPA refinement when LOS/sub-cluster
@@ -376,6 +408,15 @@ private:
 
 	/// Return all cluster ids whose AABB overlaps the circle (pos, radius).
 	std::vector<int> clusters_in_radius(Vector2 pos, float radius) const;
+
+	/// One pass of the query.  find_path() runs this strictly, then once more
+	/// with threats_muted_ if the strict pass found nothing.
+	PathResult find_path_query(Vector2 from, Vector2 to, float query_clearance) const;
+
+	// --- Per-query state (single-threaded; the graph is stamped per query) ---
+	mutable bool threats_muted_ = false;              // relaxed retry in progress
+	mutable bool last_query_ignored_threats_ = false; // last result came from the relaxed retry
+	mutable int  last_fail_stage_ = FAIL_NONE;        // where the last failed query gave up
 };
 
 } // namespace godot

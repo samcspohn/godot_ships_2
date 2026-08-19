@@ -23,6 +23,12 @@ var attacking: bool = false
 var hp: float = 0.0
 var dead: bool = false
 
+# Whether getting this aircraft into the air already spends what it carries, so
+# the squadron owes a rearm on landing whether or not it ever reached an attack
+# point. False for anything holding ordnance it can bring home again.
+func expends_on_launch() -> bool:
+	return false
+
 # Physics hitbox used by AAAController's cylinder cast to find aircraft within
 # AA range. A child Area3D so it tracks this node's transform for free as it
 # flies/reparents. NOTE: any shape QUERYING against this layer must use a

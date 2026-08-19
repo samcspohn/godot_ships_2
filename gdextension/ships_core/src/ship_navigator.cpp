@@ -82,6 +82,13 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_distance_to_destination"), &ShipNavigator::get_distance_to_destination);
 	ClassDB::bind_method(D_METHOD("is_arrived"), &ShipNavigator::is_arrived);
 
+	// Path request failures
+	ClassDB::bind_method(D_METHOD("is_path_threat_relaxed"), &ShipNavigator::is_path_threat_relaxed);
+	ClassDB::bind_method(D_METHOD("get_path_failure_count"), &ShipNavigator::get_path_failure_count);
+	ClassDB::bind_method(D_METHOD("get_last_path_failure_reason"), &ShipNavigator::get_last_path_failure_reason);
+	ClassDB::bind_method(D_METHOD("get_last_path_failure_reason_name"), &ShipNavigator::get_last_path_failure_reason_name);
+	ClassDB::bind_method(D_METHOD("clear_path_failures"), &ShipNavigator::clear_path_failures);
+
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
@@ -176,6 +183,12 @@ ShipNavigator::ShipNavigator() {
 	emergency_grounding_pos = Vector2();
 	emergency_initialized = false;
 	bot_id_ = 0;
+
+	path_fail_reason_ = static_cast<int>(PathFailReason::NONE);
+	path_fail_count_ = 0;
+	path_fail_suppressed_ = 0;
+	path_fail_warn_cooldown_ = 0.0f;
+	path_threat_relaxed_ = false;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -745,6 +758,10 @@ void ShipNavigator::set_steering_output(float rudder, int throttle, bool collisi
 
 void ShipNavigator::update(float delta) {
 	auto t0 = std::chrono::steady_clock::now();
+
+	if (path_fail_warn_cooldown_ > 0.0f) {
+		path_fail_warn_cooldown_ = std::max(0.0f, path_fail_warn_cooldown_ - delta);
+	}
 
 	// Reset stage timings every frame so emergency-mode frames don't retain
 	// stale NORMAL-mode values.
@@ -1442,18 +1459,73 @@ void ShipNavigator::update_emergency(float delta) {
 // Plan management
 // ============================================================================
 
+const char *ShipNavigator::path_fail_reason_name(int reason) {
+	switch (static_cast<PathFailReason>(reason)) {
+		case PathFailReason::NO_MAP:             return "no built navigation map / HPA graph";
+		case PathFailReason::NO_ROUTE_KEPT_PATH: return "no route found, keeping previous path";
+		case PathFailReason::NO_ROUTE_DIRECT:    return "no route found, using straight line to destination";
+		case PathFailReason::NO_ROUTE_TRUNCATED: return "no route found, path truncated short of destination";
+		case PathFailReason::NO_ROUTE_BLIND:     return "no route found, steering blind at destination";
+		default:                                 return "none";
+	}
+}
+
+// Record a failed path request and warn about it, throttled to one message per
+// PATH_FAIL_WARN_INTERVAL per navigator so a permanently unreachable
+// destination (or a fleet of bots hitting the same wall) cannot flood the log.
+void ShipNavigator::report_path_failure(PathFailReason reason) {
+	path_fail_reason_ = static_cast<int>(reason);
+	path_fail_count_++;
+	path_fail_suppressed_++;
+
+	if (path_fail_warn_cooldown_ > 0.0f) {
+		return;  // folded into the next warning via path_fail_suppressed_
+	}
+
+	int suppressed = path_fail_suppressed_ - 1;  // this one is being reported
+	path_fail_suppressed_ = 0;
+	path_fail_warn_cooldown_ = PATH_FAIL_WARN_INTERVAL;
+
+	UtilityFunctions::push_warning(
+		"[ShipNavigator] bot ", bot_id_, ": path request failed — ",
+		path_fail_reason_name(path_fail_reason_),
+		" | from=", state.position,
+		" to=", target.position,
+		" dist=", state.position.distance_to(target.position),
+		" clearance=", get_ship_clearance() + 200.0f,
+		" threats=", threat_bin_ ? static_cast<int>(threat_bin_->threats.size()) : 0,
+		" hpa_stage=", hpa_graph_.is_valid() ? hpa_graph_->get_last_fail_stage_name() : String("n/a"),
+		" suppressed=", suppressed,
+		" total=", path_fail_count_);
+}
+
+void ShipNavigator::clear_path_failures() {
+	path_fail_reason_ = static_cast<int>(PathFailReason::NONE);
+	path_fail_count_ = 0;
+	path_fail_suppressed_ = 0;
+	path_fail_warn_cooldown_ = 0.0f;
+}
+
 void ShipNavigator::run_plan_sync() {
 	// Add 100 m buffer on top of the hard hull clearance so waypoints are
 	// placed well away from terrain, giving the arc planner room to manoeuvre.
 	const float plan_min_clearance = get_ship_clearance() + 200.0f;
+
+	// Every exit below the HPA* block is a degraded result.  planner_ready
+	// separates "the planner ran and found nothing" from "there was nothing to
+	// plan with", so the warning names the actual root cause.
+	const bool planner_ready = hpa_graph_.is_valid() && hpa_graph_->is_built() &&
+	                           map.is_valid() && map->is_built();
+	auto report_fallback = [&](PathFailReason reason) {
+		report_path_failure(planner_ready ? reason : PathFailReason::NO_MAP);
+	};
 
 	// -----------------------------------------------------------------------
 	// HPA* path (primary): threat-aware hierarchical A*.
 	// HpaGraph is shared by many ships; apply this navigator's threat layer
 	// immediately before each query so the correct threats are stamped.
 	// -----------------------------------------------------------------------
-	if (hpa_graph_.is_valid() && hpa_graph_->is_built() &&
-		map.is_valid() && map->is_built()) {
+	if (planner_ready) {
 
 		if (threat_bin_) {
 			hpa_graph_->stamp_threats(threat_bin_->threats);
@@ -1463,6 +1535,7 @@ void ShipNavigator::run_plan_sync() {
 		}
 
 		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
+		path_threat_relaxed_ = pr.valid && hpa_graph_->did_last_query_ignore_threats();
 		if (pr.valid && !pr.waypoints.empty()) {
 			// Always end at the exact destination — HPA* snaps to grid nodes
 			// so the final grid node may not be target.position.
@@ -1477,6 +1550,7 @@ void ShipNavigator::run_plan_sync() {
 		// a straight-line fallback.  The ship continues following its existing
 		// route while navigate_to() retries on the next call.
 		if (path_valid && !current_path.waypoints.empty()) {
+			report_path_failure(PathFailReason::NO_ROUTE_KEPT_PATH);
 			return;
 		}
 		// No prior path available — fall through to straight-line fallbacks.
@@ -1495,6 +1569,7 @@ void ShipNavigator::run_plan_sync() {
 			direct.flags.push_back(WP_NONE);
 			direct.valid = true;
 			direct.total_distance = state.position.distance_to(target.position);
+			report_fallback(PathFailReason::NO_ROUTE_DIRECT);
 			accept_plan_result(direct);
 			return;
 		}
@@ -1541,6 +1616,12 @@ void ShipNavigator::run_plan_sync() {
 		direct.total_distance = 0.0f;
 		for (size_t i = 0; i + 1 < direct.waypoints.size(); ++i)
 			direct.total_distance += direct.waypoints[i].distance_to(direct.waypoints[i + 1]);
+
+		// Ending short of the destination means the route was cut off by
+		// terrain/threats; ending on it means we never verified a clear line.
+		bool truncated = direct.waypoints.back().distance_to(target.position) > 1.0f;
+		report_fallback(truncated ? PathFailReason::NO_ROUTE_TRUNCATED
+		                          : PathFailReason::NO_ROUTE_BLIND);
 		accept_plan_result(direct);
 	}
 }

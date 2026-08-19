@@ -205,9 +205,6 @@ private:
 		return std::sqrt(dx * dx + dz * dz);
 	}
 
-	// Find the nearest navigable cell to the given grid position
-	bool find_nearest_navigable(int &ix, int &iz, float clearance) const;
-
 	// Check if two grid cells are in the same navigable region (O(1) reachability test)
 	inline bool same_region(int x0, int z0, int x1, int z1) const {
 		if (!in_bounds(x0, z0) || !in_bounds(x1, z1)) return false;
@@ -257,6 +254,21 @@ public:
 
 	// Check if a circle of given radius can navigate at this position
 	bool is_navigable(float x, float z, float clearance) const;
+
+	// Walk the SDF gradient from grid cell (ix, iz) to the nearest cell with
+	// at least `clearance` of open water, writing the result back into ix/iz.
+	// Returns false when no such cell is reachable (land-locked / flat SDF).
+	// Public so planners layered on top of the map (HpaGraph) can snap their
+	// endpoints to the clearance *they* plan at, which is larger than the hull
+	// clearance callers validate destinations against.
+	bool find_nearest_navigable(int &ix, int &iz, float clearance) const;
+
+	// O(1) reachability test between two world positions at the given
+	// clearance: both are snapped to their nearest navigable cell, then the
+	// precomputed water regions decide whether a route can exist at all.
+	// Cheap enough to gate an expensive A* with, and silent — unlike
+	// find_path_internal(), which logs its own diagnosis.
+	bool is_reachable(Vector2 a, Vector2 b, float clearance) const;
 
 	// --- Raycasting ---
 

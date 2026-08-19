@@ -56,6 +56,23 @@ var _alive_counts: Array[int] = []
 var _regen_remaining: Array[float] = []
 var _regen_pending: Array[int] = []
 
+# What a squadron's progress bar is counting down, replicated alongside the
+# timer itself so every peer colours the bar the same way (see
+# get_button_cooldown_color).
+enum Cooldown {
+	NONE = 0,
+	DECK = 1, # waiting on the flight deck: takeoff interval, or a replacement plane
+	RELOAD = 2, # rearming after dropping its ordnance
+	DEPLOYED = 3, # airborne, running down its fuel
+}
+var _cooldown_kind: Array[int] = []
+
+# Airborne squadrons show their remaining sortie in cyan and rearming ones their
+# rearm in red; everything else - the deck interval, a squadron waiting on a
+# replacement plane - keeps the default yellow.
+const DEPLOYED_COLOR := Color(0.25, 0.85, 1.0, COOLDOWN_ALPHA)
+const RELOAD_COLOR := Color(1.0, 0.28, 0.22, COOLDOWN_ALPHA)
+
 func _ready() -> void:
 	multi_select = true
 	_ship = get_parent().get_parent() as Ship
@@ -79,7 +96,8 @@ func _ready() -> void:
 			else:
 				var remaining := get_cooldown_remaining(i)
 				if remaining > 0.0:
-					text += "\nReady in: %.0fs" % remaining
+					var label := "Rearming" if _cooldown_kind[i] == Cooldown.RELOAD else "Ready in"
+					text += "\n%s: %.0fs" % [label, remaining]
 			return text
 		)
 		button_names.append(params[i].type)
@@ -89,6 +107,7 @@ func _ready() -> void:
 		_alive_counts.append((params[i].p() as AircraftParams).squadron_size)
 		_regen_remaining.append(0.0)
 		_regen_pending.append(0)
+		_cooldown_kind.append(Cooldown.NONE)
 
 		var squadron := Squadron.new()
 		squadron.setup(params[i], launcher, _ship, game_world)
@@ -234,24 +253,35 @@ func _tick_cooldowns(delta: float) -> void:
 		_reload_remaining[i] = maxf(_reload_remaining[i] - delta, 0.0)
 		_alive_counts[i] = squadrons[i].alive_count()
 		var plane_params := params[i].p() as AircraftParams
+		if squadrons[i].active:
+			# Airborne: the bar is the sortie itself running out, not a wait.
+			_cooldown_remaining[i] = squadrons[i].fuel_remaining
+			_cooldown_total[i] = maxf(plane_params.fuel_time, 0.001)
+			_cooldown_kind[i] = Cooldown.DEPLOYED
+			continue
 		# Show whichever timer is actually holding the squadron on deck, along
 		# with the full duration of that same timer so the bar reads as a
 		# fraction of the wait the player is currently sitting through.
 		var remaining := 0.0
 		var total := 0.0
+		var kind: int = Cooldown.NONE
 		if _launch_lockout > remaining:
 			remaining = _launch_lockout
 			total = takeoff_interval
+			kind = Cooldown.DECK
 		if _reload_remaining[i] > remaining:
 			remaining = _reload_remaining[i]
 			total = maxf(plane_params.ordnance_reload_time, 0.001)
+			kind = Cooldown.RELOAD
 		# A squadron with nothing left to fly is waiting on the production line
 		# rather than on the deck, so count down to its next plane instead.
 		if _alive_counts[i] == 0 and _regen_remaining[i] > remaining:
 			remaining = _regen_remaining[i]
 			total = maxf(plane_params.plane_regen_time, 0.001)
+			kind = Cooldown.DECK
 		_cooldown_remaining[i] = remaining
 		_cooldown_total[i] = total
+		_cooldown_kind[i] = kind
 
 # Rebuilds lost aircraft, one at a time per squadron and all squadrons at once.
 # A plane shot down goes onto the line the moment it is lost - the squadron does
@@ -354,6 +384,16 @@ func is_launch_ready(index: int) -> bool:
 # look on squadrons that cannot be put up yet.
 func get_button_cooldown(index: int) -> float:
 	return get_cooldown_fraction(index)
+
+func get_button_cooldown_color(index: int) -> Color:
+	if index < 0 or index >= _cooldown_kind.size():
+		return COOLDOWN_COLOR
+	match _cooldown_kind[index]:
+		Cooldown.DEPLOYED:
+			return DEPLOYED_COLOR
+		Cooldown.RELOAD:
+			return RELOAD_COLOR
+	return COOLDOWN_COLOR
 
 func is_button_ready(index: int) -> bool:
 	if index < 0 or index >= squadrons.size():
@@ -496,6 +536,7 @@ func to_bytes() -> PackedByteArray:
 		writer.put_u8(_alive_counts[i])
 		writer.put_float(_regen_remaining[i])
 		writer.put_u8(_regen_pending[i])
+		writer.put_u8(_cooldown_kind[i])
 	writer.put_u8(active_squadrons.size())
 	for index in active_squadrons.keys():
 		var squadron = squadrons[index]
@@ -536,12 +577,14 @@ func from_bytes(b: PackedByteArray) -> void:
 		var alive = reader.get_u8()
 		var regen = reader.get_float()
 		var pending = reader.get_u8()
+		var kind = reader.get_u8()
 		if i < _cooldown_remaining.size():
 			_cooldown_remaining[i] = remaining
 			_cooldown_total[i] = total
 			_alive_counts[i] = alive
 			_regen_remaining[i] = regen
 			_regen_pending[i] = pending
+			_cooldown_kind[i] = kind
 
 	var seen_indices: Dictionary[int, bool] = {}
 	var active_count = reader.get_u8()

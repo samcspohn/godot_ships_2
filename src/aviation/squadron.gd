@@ -83,7 +83,9 @@ var holding_attack: bool = false
 var returning: bool = false
 # Seconds of endurance left on this sortie. Set to AircraftParams.fuel_time at
 # launch and burned down in update_flight(); on empty the squadron breaks off
-# whatever it is doing and flies itself home (see abort_sortie()). Authority-owned
+# whatever it is doing and flies itself home (see abort_sortie()); it keeps
+# running down on the way back, which is what the deployed bar on the squadron
+# button shows draining. Authority-owned
 # and replicated so every peer can show the remaining loiter time.
 var fuel_remaining: float = 0.0
 # true once this sortie has actually released its ordnance (see _fire). A
@@ -402,7 +404,9 @@ func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -
 	in_landing_approach = false
 	attack_point = null
 	fuel_remaining = p.fuel_time
-	ordnance_spent = false
+	# Most squadrons only spend their load by dropping it; a spotter spends its
+	# sortie by flying it (see Aircraft.expends_on_launch).
+	ordnance_spent = aircraft.size() > 0 and aircraft[0].expends_on_launch()
 	for plane in aircraft:
 		# A plane shot down on an earlier sortie stays on the deck (dead,
 		# hidden) until a replacement for it has been built, so a squadron that
@@ -596,12 +600,12 @@ func abort_sortie() -> void:
 
 func update_flight(delta: float, ship: Ship) -> void:
 	var p = params.p() as AircraftParams
-	# Endurance only limits how long the squadron can loiter over the battle -
-	# once it has turned for home it flies the return leg however long that takes.
-	if not returning:
-		fuel_remaining = maxf(fuel_remaining - delta, 0.0)
-		if fuel_remaining <= 0.0:
-			abort_sortie()
+	# Endurance runs down for the whole sortie, but only forces the squadron home
+	# while it is still out working - once it has turned for base it flies the
+	# return leg however long that takes.
+	fuel_remaining = maxf(fuel_remaining - delta, 0.0)
+	if fuel_remaining <= 0.0 and not returning:
+		abort_sortie()
 	var wp: Vector2
 	var altitude: float = p.altitude
 	var climb_rate: float = p.climb_rate

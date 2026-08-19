@@ -502,8 +502,12 @@ static func sim_can_shoot_over_terrain_static(
 			exclude_rids.append(entry["obb_body"].get_rid())
 
 	# Delegate the heavy loop to C++:
-	#   - Terrain: zero-cost height-grid lookup via NavigationMap (no physics queries)
-	#   - Ships:   single segment ray per step against OBB broadphase layer (1 << 4)
+	#   - Terrain: NavigationMap height grid is used only to skip segments that
+	#     cannot possibly touch land; anything closer is resolved with a real
+	#     raycast against the island colliders (layer 1)
+	#   - Ships:   OBB broadphase ray (1 << 4), confirmed against the ship's
+	#     precision armor geometry before it counts as blocking
+	#   - The arc stops at the aim point, so terrain behind the target is ignored
 	var result: Dictionary = ProjectilePhysicsWithDragV2.sim_can_shoot_over_terrain(
 		pos,
 		launch_vector,
@@ -511,7 +515,8 @@ static func sim_can_shoot_over_terrain_static(
 		shell_params,
 		NavigationMapManager.get_map(),
 		space_state,
-		exclude_rids
+		exclude_rids,
+		PrecisionPhysicsWorld
 	)
 
 	# Terrain blocked the shot.

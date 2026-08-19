@@ -208,3 +208,28 @@ func get_timing_avoidance_us() -> float:
 
 func get_timing_plan_us() -> float:
 	return _impl.get_timing_plan_us()
+
+
+## --- Path request failures ---
+## The navigator warns (throttled) whenever a path request cannot be planned
+## and it has to fall back to a degraded route.  These expose the same info so
+## callers/debug overlays can react without scraping the log.
+
+func is_path_threat_relaxed() -> bool:
+	return _impl.is_path_threat_relaxed()
+
+
+func get_path_failure_count() -> int:
+	return _impl.get_path_failure_count()
+
+
+func get_last_path_failure_reason() -> int:
+	return _impl.get_last_path_failure_reason()
+
+
+func get_last_path_failure_reason_name() -> String:
+	return _impl.get_last_path_failure_reason_name()
+
+
+func clear_path_failures() -> void:
+	_impl.clear_path_failures()

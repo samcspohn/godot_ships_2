@@ -7,6 +7,7 @@
 #include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/physics_direct_space_state3d.hpp>
 #include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -146,14 +147,19 @@ public:
 	static double calculate_angle_from_max_range(double max_range, const Ref<Resource> &shell_params);
 
 	/// Simulate trajectory clearance over terrain and ships.
+	/// The arc is only walked as far as the aim point — terrain beyond the
+	/// target never blocks the shot.
 	/// @param start_pos    Muzzle position
 	/// @param launch_vector Initial velocity vector
-	/// @param flight_time  Expected time of flight (capped to 100s)
+	/// @param flight_time  Time of flight to the aim point (capped to 100s)
 	/// @param shell_params ShellParams resource
-	/// @param nav_map      NavigationMap for terrain height lookup (may be null)
-	/// @param space_state  PhysicsDirectSpaceState3D for OBB raycasting (may be null)
+	/// @param nav_map      NavigationMap, used only to skip terrain raycasts (may be null)
+	/// @param space_state  PhysicsDirectSpaceState3D for terrain/OBB raycasting (may be null)
 	/// @param exclude_rids Array of RIDs to exclude from OBB ray (e.g. own ship's OBB)
-	/// @return Dictionary { terrain_blocked: bool, obb_hit: bool, obb_collider: Object, obb_position: Vector3 }
+	/// @param precision_world PrecisionPhysicsWorld autoload, used to confirm coarse
+	///                     OBB hits against the ship's real armor geometry (may be null)
+	/// @return Dictionary { terrain_blocked: bool, terrain_position: Vector3,
+	///                     obb_hit: bool, obb_collider: Object, obb_position: Vector3 }
 	static Dictionary sim_can_shoot_over_terrain(
 		const Vector3 &start_pos,
 		const Vector3 &launch_vector,
@@ -161,7 +167,8 @@ public:
 		const Ref<Resource> &shell_params,
 		const Ref<NavigationMap> &nav_map,
 		PhysicsDirectSpaceState3D *space_state,
-		const Array &exclude_rids
+		const Array &exclude_rids,
+		Node *precision_world
 	);
 
 private:
