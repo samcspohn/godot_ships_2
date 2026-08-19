@@ -81,6 +81,16 @@ var holding_attack: bool = false
 # back to the launcher instead of being teleported home instantly. While
 # returning, the squadron ignores any further attack commands.
 var returning: bool = false
+# Seconds of endurance left on this sortie. Set to AircraftParams.fuel_time at
+# launch and burned down in update_flight(); on empty the squadron breaks off
+# whatever it is doing and flies itself home (see abort_sortie()). Authority-owned
+# and replicated so every peer can show the remaining loiter time.
+var fuel_remaining: float = 0.0
+# true once this sortie has actually released its ordnance (see _fire). A
+# squadron that comes home still loaded - recalled, out of fuel, or never given a
+# target - owes no rearming time, only the deck (see
+# AviationController.recall_squadron).
+var ordnance_spent: bool = false
 # true once a returning squadron has closed within landing_descent_radius of
 # the launcher and switched onto its final landing formation/altitude.
 var in_landing_approach: bool = false:
@@ -137,6 +147,7 @@ func setup(_params: AircraftParams, launcher: Node3D, ship: Ship, game_world: No
 		plane.params = params
 		plane._ship = ship
 		plane.target = slot
+		plane.hp = p.hp
 		plane._setup_hitbox()
 		launcher.add_child(plane)
 		plane.position = Vector3.ZERO
@@ -316,6 +327,19 @@ func _apply_squadron_preview(meshes: Array[MeshInstance3D], show: bool, drop_cen
 	var p = params.p() as AircraftParams
 	var drop_point = aircraft[0].process_attack_point(drop_center, direction)
 	aircraft[0].update_preview(meshes, true, drop_point, direction, p.formation_spacing)
+	# Aircraft the squadron is currently short leave a hole in the formation, so
+	# blank out their share of the pattern - what is left is what will actually
+	# be dropped.
+	# Every update_preview() implementation lays its meshes out per aircraft in
+	# index order (one each for bombs, two each for torpedoes), so an aircraft's
+	# meshes are always its own consecutive run of that many.
+	var per_plane: int = meshes.size() / aircraft.size()
+	if per_plane > 0:
+		for i in range(aircraft.size()):
+			if not aircraft[i].dead:
+				continue
+			for j in range(per_plane):
+				meshes[i * per_plane + j].visible = false
 
 # Local, pre-commit reticle preview - only ever driven by AviationController
 # for whichever squadron is selected by the local player (hidden for every
@@ -377,30 +401,47 @@ func launch(game_world: Node3D, launch_pos: Vector3, launch_rotation: Vector3) -
 	returning = false
 	in_landing_approach = false
 	attack_point = null
+	fuel_remaining = p.fuel_time
+	ordnance_spent = false
 	for plane in aircraft:
+		# A plane shot down on an earlier sortie stays on the deck (dead,
+		# hidden) until a replacement for it has been built, so a squadron that
+		# took losses puts up a smaller formation until it has been made good
+		# again (see AviationController._tick_regen). Survivors were already
+		# patched back up to full when they landed (see recall()).
+		if plane.dead:
+			continue
 		plane.visible = true
 		plane.set_physics_process(true)
 		plane.should_recall = false
-		plane.dead = false
-		plane.hp = p.hp
 		plane.set_hitbox_enabled(true)
 		plane.reparent(game_world)
 		plane.global_position = launch_pos
 
 func recall(launcher: Node3D) -> void:
+	var p = params.p() as AircraftParams
 	active = false
 	attack_point = null
 	attack_fired = false
 	holding_attack = false
 	returning = false
 	in_landing_approach = false
+	fuel_remaining = 0.0
 	waypoints.clear()
 	for plane in aircraft:
 		plane.visible = false
 		plane.set_physics_process(false)
 		plane.should_recall = false
 		plane.set_hitbox_enabled(false)
-		plane.reparent(launcher)
+		# Anything still alive here made it back to the carrier, so it is
+		# repaired for its next sortie - damage costs nothing but the landing,
+		# while a plane actually lost costs a full build time to replace.
+		if not plane.dead:
+			plane.hp = p.hp
+		# Planes lost on an earlier sortie never left the launcher (see
+		# launch()), so only bring home the ones that actually flew.
+		if plane.get_parent() != launcher:
+			plane.reparent(launcher)
 		plane.position = Vector3.ZERO
 	node.reparent(launcher)
 	node.position = Vector3.ZERO
@@ -429,16 +470,60 @@ func all_finished_attack() -> bool:
 			return false
 	return true
 
+# Aircraft on strength right now - what the squadron would put up if it
+# launched this instant. Falls as planes are shot down and climbs back as
+# replacements are built (see AviationController._tick_regen).
+func alive_count() -> int:
+	var count := 0
+	for plane in aircraft:
+		if not plane.dead:
+			count += 1
+	return count
+
+# Puts one replacement aircraft on the deck, ready for the next sortie. Only
+# called while the squadron is parked - a plane finished while it is airborne
+# waits until the rest land (see AviationController.recall_squadron). Returns
+# false if the squadron is already back up to full strength.
+func revive_one() -> bool:
+	var p = params.p() as AircraftParams
+	for plane in aircraft:
+		if not plane.dead:
+			continue
+		plane.dead = false
+		plane.hp = p.hp
+		plane.visible = false
+		plane.set_physics_process(false)
+		plane.should_recall = false
+		plane.set_hitbox_enabled(false)
+		if plane.get_parent() != launcher_node:
+			plane.reparent(launcher_node)
+		plane.position = Vector3.ZERO
+		return true
+	return false
+
+# Client-side reconciliation for a squadron sitting on the deck, where every
+# aircraft is parked and hidden and only the head count matters. The authority
+# replicates that count (AviationController._alive_counts) rather than the
+# individual dead flags, which are only synced while a squadron is airborne, so
+# replacements built between sorties still show up on every peer.
+func set_alive_count(count: int) -> void:
+	var p = params.p() as AircraftParams
+	for i in range(aircraft.size()):
+		var should_be_dead: bool = i >= count
+		if aircraft[i].dead == should_be_dead:
+			continue
+		aircraft[i].dead = should_be_dead
+		if not should_be_dead:
+			aircraft[i].hp = p.hp
+
 # true once every aircraft in the squadron has been shot down by AA - the
 # squadron has nothing left to fly home, so it's recalled immediately instead
-# of going through the normal return-to-base flight.
+# of going through the normal return-to-base flight. It stays grounded until a
+# replacement plane has been built (see AviationController.can_launch).
 func all_dead() -> bool:
 	if aircraft.size() == 0:
 		return false
-	for plane in aircraft:
-		if not plane.dead:
-			return false
-	return true
+	return alive_count() == 0
 
 func set_waypoint(waypoint: Vector2, append: bool) -> void:
 	# ignore new waypoints while flying itself home after a completed run
@@ -499,8 +584,24 @@ func set_attack(point: Vector2, direction: Vector2) -> void:
 	# add append flag
 	waypoints.clear()
 
+# Breaks off whatever the squadron is doing and sends it home. Used when the
+# sortie runs out of endurance, and by the bots to cut a sortie short that is no
+# longer worth flying; the normal end-of-attack return goes through _fire().
+func abort_sortie() -> void:
+	attack_point = null
+	waypoints.clear()
+	holding_attack = false
+	attack_fired = false
+	returning = true
+
 func update_flight(delta: float, ship: Ship) -> void:
 	var p = params.p() as AircraftParams
+	# Endurance only limits how long the squadron can loiter over the battle -
+	# once it has turned for home it flies the return leg however long that takes.
+	if not returning:
+		fuel_remaining = maxf(fuel_remaining - delta, 0.0)
+		if fuel_remaining <= 0.0:
+			abort_sortie()
 	var wp: Vector2
 	var altitude: float = p.altitude
 	var climb_rate: float = p.climb_rate
@@ -603,10 +704,16 @@ func update_flight(delta: float, ship: Ship) -> void:
 func _fire() -> void:
 	attack_fired = true
 	var recall_after := true
+	var any_fired := false
 	for plane in aircraft:
 		if plane.dead: # shot down - can't fire
 			continue
+		any_fired = true
 		recall_after = plane.fire_ordnance(attack_direction) and recall_after
+	# Only a one-shot release actually expends anything - a spotter arriving on
+	# station has "fired" in the sense of reaching its mark, and goes back up
+	# needing nothing but a free deck.
+	ordnance_spent = any_fired and recall_after
 	if recall_after:
 		returning = true
 		attack_point = null

@@ -3,6 +3,10 @@ class_name AviationController
 
 
 @export var params: Array[AircraftParams] = [] # plane params
+# Deck-wide (rather than per-squadron) aviation parameters - currently just the
+# minimum spacing between takeoffs. Left unset in the scene, a default instance
+# is created in _ready() so every carrier still gets a working flight deck.
+@export var deck_params: AviationParams
 @export var launcher: Node3D
 
 var squadrons: Array[Squadron] = []
@@ -21,18 +25,70 @@ var _preview_holding: bool = false
 
 var game_world: Node3D
 
+# ── launch cooldowns ────────────────────────────────────────────────────────
+# Authority-side timers. Seconds left on the deck-wide takeoff lockout started
+# by the last launch (see launch_squadron), and, per squadron, seconds left of
+# the ordnance reload started when it landed (see recall_squadron). A squadron
+# may only launch once BOTH have run out - see can_launch().
+var _launch_lockout: float = 0.0
+var _reload_remaining: Array[float] = []
+# Display state mirrored on every peer: for each squadron, seconds left on
+# whichever of the two timers above is currently the longer one, and the full
+# duration of that same timer so the UI can draw it as a fraction. Derived
+# every tick from the authoritative timers on the server and replicated
+# verbatim to clients (see to_bytes/from_bytes), which decay them locally
+# between snapshots so the bars run smoothly.
+var _cooldown_remaining: Array[float] = []
+var _cooldown_total: Array[float] = []
+# Aircraft each squadron has on strength. Replicated alongside the cooldowns
+# rather than derived from the plane `dead` flags, which are only synced while a
+# squadron is airborne - clients reconcile their parked squadrons against this
+# count instead (see from_bytes and Squadron.set_alive_count).
+var _alive_counts: Array[int] = []
+
+# ── aircraft replacement ────────────────────────────────────────────────────
+# Losses are made good over time rather than permanently. Per squadron: seconds
+# left on the replacement currently being built, and the number of finished
+# replacements parked and waiting for the squadron to land before they can join
+# it. Every squadron builds in parallel with every other, but only one plane at
+# a time within a squadron. _regen_remaining is replicated for the UI (and
+# decayed locally between snapshots, same as the cooldowns).
+var _regen_remaining: Array[float] = []
+var _regen_pending: Array[int] = []
+
 func _ready() -> void:
 	multi_select = true
 	_ship = get_parent().get_parent() as Ship
 	game_world = _ship.get_parent() as Node3D
+	if deck_params == null:
+		deck_params = AviationParams.new()
+	deck_params = deck_params.instantiate(_ship) as AviationParams
 	# instantiate squadrons
 	for i in range(params.size()):
 		params[i] = params[i].instantiate(_ship) as AircraftParams
 		tool_tips.append(func () -> String:
 			var p = params[i].p()
-			return "%s\nRange: %.1f\nSpeed: %.1f" % [p.type, p._range, p.speed]
+			var text := "%s\nRange: %.1f\nSpeed: %.1f\nReload: %.0fs" % [p.type, p._range, p.speed, p.ordnance_reload_time]
+			text += "\nPlanes: %d/%d" % [get_alive_count(i), squadrons[i].aircraft.size()]
+			if get_regen_remaining(i) > 0.0:
+				text += "\nNew plane in: %.0fs" % get_regen_remaining(i)
+			if get_regen_pending(i) > 0:
+				text += "\n+%d joining on landing" % get_regen_pending(i)
+			if squadrons[i].active:
+				text += "\nFuel: %.0fs" % squadrons[i].fuel_remaining
+			else:
+				var remaining := get_cooldown_remaining(i)
+				if remaining > 0.0:
+					text += "\nReady in: %.0fs" % remaining
+			return text
 		)
 		button_names.append(params[i].type)
+		_reload_remaining.append(0.0)
+		_cooldown_remaining.append(0.0)
+		_cooldown_total.append(0.0)
+		_alive_counts.append((params[i].p() as AircraftParams).squadron_size)
+		_regen_remaining.append(0.0)
+		_regen_pending.append(0)
 
 		var squadron := Squadron.new()
 		squadron.setup(params[i], launcher, _ship, game_world)
@@ -56,6 +112,9 @@ func _physics_process(delta: float) -> void:
 		var squadron = squadrons[i]
 		squadron._update_ground_indicator()
 		squadron._update_waypoint_indicators()
+
+	_tick_regen(delta)
+	_tick_cooldowns(delta)
 
 	if not _Utils.authority():
 		return
@@ -157,6 +216,154 @@ static func _direction_to(from: Vector3, to: Vector3) -> Vector2:
 	return offset.normalized()
 
 
+# ── launch cooldowns ────────────────────────────────────────────────────────
+
+# Runs on every peer. The authority owns the timers and derives the display
+# state from them; everyone else just decays the last replicated display value
+# so the UI bars keep moving between snapshots instead of stepping down once
+# per network update (from_bytes overwrites them again the moment one lands).
+func _tick_cooldowns(delta: float) -> void:
+	if not _Utils.authority():
+		for i in range(_cooldown_remaining.size()):
+			_cooldown_remaining[i] = maxf(_cooldown_remaining[i] - delta, 0.0)
+		return
+
+	_launch_lockout = maxf(_launch_lockout - delta, 0.0)
+	var takeoff_interval: float = maxf((deck_params.p() as AviationParams).min_takeoff_interval, 0.001)
+	for i in range(_reload_remaining.size()):
+		_reload_remaining[i] = maxf(_reload_remaining[i] - delta, 0.0)
+		_alive_counts[i] = squadrons[i].alive_count()
+		var plane_params := params[i].p() as AircraftParams
+		# Show whichever timer is actually holding the squadron on deck, along
+		# with the full duration of that same timer so the bar reads as a
+		# fraction of the wait the player is currently sitting through.
+		var remaining := 0.0
+		var total := 0.0
+		if _launch_lockout > remaining:
+			remaining = _launch_lockout
+			total = takeoff_interval
+		if _reload_remaining[i] > remaining:
+			remaining = _reload_remaining[i]
+			total = maxf(plane_params.ordnance_reload_time, 0.001)
+		# A squadron with nothing left to fly is waiting on the production line
+		# rather than on the deck, so count down to its next plane instead.
+		if _alive_counts[i] == 0 and _regen_remaining[i] > remaining:
+			remaining = _regen_remaining[i]
+			total = maxf(plane_params.plane_regen_time, 0.001)
+		_cooldown_remaining[i] = remaining
+		_cooldown_total[i] = total
+
+# Rebuilds lost aircraft, one at a time per squadron and all squadrons at once.
+# A plane shot down goes onto the line the moment it is lost - the squadron does
+# not have to land first - but a replacement finished while the squadron is
+# airborne has to wait on deck for it to come home (see recall_squadron).
+# Clients just decay the replicated timer so the tooltip keeps counting down
+# between snapshots.
+func _tick_regen(delta: float) -> void:
+	if not _Utils.authority():
+		for i in range(_regen_remaining.size()):
+			_regen_remaining[i] = maxf(_regen_remaining[i] - delta, 0.0)
+		return
+
+	for i in range(squadrons.size()):
+		var squadron := squadrons[i]
+		# Planes the squadron is still short, not counting the ones already
+		# built and parked waiting for it to land.
+		var missing: int = squadron.aircraft.size() - squadron.alive_count() - _regen_pending[i]
+		if missing <= 0:
+			_regen_remaining[i] = 0.0
+			continue
+		if _regen_remaining[i] <= 0.0:
+			# Nothing on the line yet (or the last one just rolled off) - start
+			# the next plane. Sequential within the squadron: only ever one.
+			_regen_remaining[i] = maxf((params[i].p() as AircraftParams).plane_regen_time, 0.001)
+		_regen_remaining[i] = maxf(_regen_remaining[i] - delta, 0.0)
+		if _regen_remaining[i] > 0.0:
+			continue
+		if squadron.active:
+			_regen_pending[i] += 1
+		else:
+			squadron.revive_one()
+
+# Seconds until this squadron's next replacement plane is ready, or 0 if it is
+# at full strength. Valid on every peer (see _tick_regen and to_bytes).
+func get_regen_remaining(index: int) -> float:
+	if index < 0 or index >= _regen_remaining.size():
+		return 0.0
+	return _regen_remaining[index]
+
+# Replacement planes built while this squadron was airborne, waiting on deck to
+# join it once it lands. Valid on every peer.
+func get_regen_pending(index: int) -> int:
+	if index < 0 or index >= _regen_pending.size():
+		return 0
+	return _regen_pending[index]
+
+# Authority-side launch gate: a squadron has to be on deck, rearmed, and clear
+# of the deck-wide takeoff lockout left by the last launch.
+func can_launch(index: int) -> bool:
+	if index < 0 or index >= squadrons.size():
+		return false
+	if squadrons[index].active:
+		return false
+	# Nothing left to put up - the squadron stays grounded until a replacement
+	# plane has been built for it (see _tick_regen).
+	if squadrons[index].all_dead():
+		return false
+	if _launch_lockout > 0.0:
+		return false
+	return _reload_remaining[index] <= 0.0
+
+# Seconds left before this squadron may launch. Valid on every peer (see
+# _tick_cooldowns) so the UI and tooltips read the same value the server does.
+func get_cooldown_remaining(index: int) -> float:
+	if index < 0 or index >= _cooldown_remaining.size():
+		return 0.0
+	return _cooldown_remaining[index]
+
+# 0..1 share of the current cooldown still to run - what the yellow bar on the
+# squadron button draws. 0 exactly when the squadron is ready to launch.
+func get_cooldown_fraction(index: int) -> float:
+	if index < 0 or index >= _cooldown_remaining.size():
+		return 0.0
+	var total: float = _cooldown_total[index]
+	if total <= 0.0:
+		return 0.0
+	return clampf(_cooldown_remaining[index] / total, 0.0, 1.0)
+
+# Aircraft this squadron has on strength; 0 means it is grounded until its next
+# replacement plane is built. Valid on every peer (see _tick_cooldowns and
+# to_bytes/from_bytes).
+func get_alive_count(index: int) -> int:
+	if index < 0 or index >= _alive_counts.size():
+		return 0
+	return _alive_counts[index]
+
+# Client-safe view of can_launch() - the timers themselves only exist on the
+# authority, but their replicated display state says the same thing.
+func is_launch_ready(index: int) -> bool:
+	if index < 0 or index >= squadrons.size():
+		return false
+	if squadrons[index].active:
+		return false
+	if get_alive_count(index) <= 0:
+		return false
+	return get_cooldown_remaining(index) <= 0.0
+
+# WeaponController UI hooks - drives the yellow cooldown bar and the dimmed
+# look on squadrons that cannot be put up yet.
+func get_button_cooldown(index: int) -> float:
+	return get_cooldown_fraction(index)
+
+func is_button_ready(index: int) -> bool:
+	if index < 0 or index >= squadrons.size():
+		return false
+	# An airborne squadron is not launchable, but its button is still live: it
+	# is how the player selects it to give it orders. Only a squadron stuck on
+	# deck reads as unavailable.
+	return squadrons[index].active or is_launch_ready(index)
+
+
 func launch_squadron(index: int) -> void:
 	if index >= squadrons.size():
 		return
@@ -170,16 +377,40 @@ func launch_squadron(index: int) -> void:
 		var server = _ship.get_node_or_null("/root/Server")
 		if server != null:
 			server.report_aircraft_launch(_ship)
+		# Nothing else leaves the deck until the next takeoff slot comes round.
+		_launch_lockout = (deck_params.p() as AviationParams).min_takeoff_interval
 
 func recall_squadron(index: int) -> void:
 	if active_squadrons.has(index):
 		squadrons[index].recall(launcher)
 		active_squadrons.erase(index)
+		if _Utils.authority() and index < _reload_remaining.size():
+			# Replacements built while the squadron was up were parked on deck
+			# waiting for it; now that it is home they join the formation.
+			for _i in range(_regen_pending[index]):
+				squadrons[index].revive_one()
+			_regen_pending[index] = 0
+			# Back on deck. Rearming is only owed for ordnance actually dropped:
+			# a squadron that came home still loaded is waiting on nothing but
+			# the next free takeoff slot.
+			if squadrons[index].ordnance_spent:
+				_reload_remaining[index] = (params[index].p() as AircraftParams).ordnance_reload_time
+			else:
+				_reload_remaining[index] = 0.0
+
+# Replaying the server's snapshot on a client: the squadron is already up as
+# far as the authority is concerned, so this deliberately skips the cooldown
+# gate ensure_launched() applies to genuine launch commands.
+func _replay_launch(index: int) -> void:
+	if index >= squadrons.size():
+		return
+	if not squadrons[index].active:
+		launch_squadron(index)
 
 func ensure_launched(index: int) -> void:
 	if index >= squadrons.size():
 		return
-	if not squadrons[index].active:
+	if not squadrons[index].active and can_launch(index):
 		launch_squadron(index)
 
 func get_aim_ui() -> Dictionary:
@@ -228,7 +459,7 @@ func fire_all() -> void:
 
 @rpc("any_peer", "call_remote")
 func fire_next_ready() -> void:
-	if not active_squadrons.has(shell_index):
+	if not active_squadrons.has(shell_index) and can_launch(shell_index):
 		launch_squadron(shell_index)
 
 # Sends the selected squadron to the current aim point without attacking;
@@ -241,6 +472,8 @@ func set_waypoint_at_aim(append: bool) -> void:
 		if sh_index >= squadrons.size():
 			continue
 		if not active_squadrons.has(sh_index):
+			if not can_launch(sh_index):
+				continue
 			launch_squadron(sh_index)
 		squadrons[sh_index].set_waypoint(Vector2(aim_point.x, aim_point.z), append)
 
@@ -254,6 +487,15 @@ func set_fire_held(held: bool) -> void:
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
+	# Launch cooldowns for every squadron, airborne or not - the buttons have to
+	# show the wait on squadrons that are not in the active list below.
+	writer.put_u8(squadrons.size())
+	for i in range(squadrons.size()):
+		writer.put_float(_cooldown_remaining[i])
+		writer.put_float(_cooldown_total[i])
+		writer.put_u8(_alive_counts[i])
+		writer.put_float(_regen_remaining[i])
+		writer.put_u8(_regen_pending[i])
 	writer.put_u8(active_squadrons.size())
 	for index in active_squadrons.keys():
 		var squadron = squadrons[index]
@@ -268,6 +510,7 @@ func to_bytes() -> PackedByteArray:
 		writer.put_u8(1 if squadron.in_attack_run else 0)
 		writer.put_u8(1 if squadron.returning else 0)
 		writer.put_u8(1 if squadron.in_landing_approach else 0)
+		writer.put_float(squadron.fuel_remaining)
 		writer.put_u8(squadron.waypoints.size())
 		for wp in squadron.waypoints:
 			writer.put_var(wp)
@@ -286,6 +529,20 @@ func from_bytes(b: PackedByteArray) -> void:
 		for plane in squadron.aircraft:
 			plane.visible = false
 
+	var cooldown_count = reader.get_u8()
+	for i in range(cooldown_count):
+		var remaining = reader.get_float()
+		var total = reader.get_float()
+		var alive = reader.get_u8()
+		var regen = reader.get_float()
+		var pending = reader.get_u8()
+		if i < _cooldown_remaining.size():
+			_cooldown_remaining[i] = remaining
+			_cooldown_total[i] = total
+			_alive_counts[i] = alive
+			_regen_remaining[i] = regen
+			_regen_pending[i] = pending
+
 	var seen_indices: Dictionary[int, bool] = {}
 	var active_count = reader.get_u8()
 	for i in range(active_count):
@@ -301,11 +558,12 @@ func from_bytes(b: PackedByteArray) -> void:
 		var squadron_in_attack_run = reader.get_u8()
 		var squadron_returning = reader.get_u8()
 		var squadron_in_landing_approach = reader.get_u8()
+		var squadron_fuel_remaining = reader.get_float()
 		var squadron_waypoint_count = reader.get_u8()
 		var squadron_waypoints: Array[Vector2] = []
 		for w in range(squadron_waypoint_count):
 			squadron_waypoints.append(reader.get_var())
-		ensure_launched(index)
+		_replay_launch(index)
 		var squadron = squadrons[index] if index < squadrons.size() else null
 		if squadron != null:
 			squadron.node.global_position = squadron_pos
@@ -317,6 +575,7 @@ func from_bytes(b: PackedByteArray) -> void:
 			squadron.in_attack_run = squadron_in_attack_run != 0
 			squadron.returning = squadron_returning != 0
 			squadron.in_landing_approach = squadron_in_landing_approach != 0
+			squadron.fuel_remaining = squadron_fuel_remaining
 			squadron.waypoints = squadron_waypoints
 		for j in range(plane_count):
 			var plane_pos = reader.get_var()
@@ -325,11 +584,19 @@ func from_bytes(b: PackedByteArray) -> void:
 			var plane_dead = reader.get_u8()
 			if squadron != null and j < squadron.aircraft.size():
 				var plane = squadron.aircraft[j]
+				plane.dead = plane_dead != 0
+				plane.visible = not plane.dead
+				# A replacement plane built between this client's last two
+				# snapshots can still be parented to the launcher when the
+				# squadron goes up, since Squadron.launch() skips the planes it
+				# believes are dead - put it into the world with the rest.
+				if not plane.dead and plane.get_parent() != game_world:
+					plane.reparent(game_world)
+					plane.set_physics_process(true)
+					plane.set_hitbox_enabled(true)
 				plane.global_position = plane_pos
 				plane.global_rotation = plane_rot
 				plane.hp = plane_hp
-				plane.dead = plane_dead != 0
-				plane.visible = not plane.dead
 		if index < params.size():
 			var params_bytes = reader.get_var()
 			params[index].from_bytes(params_bytes)
@@ -342,3 +609,9 @@ func from_bytes(b: PackedByteArray) -> void:
 		if not seen_indices.has(index) and squadrons[index].active:
 			squadrons[index].recall(launcher)
 			active_squadrons.erase(index)
+		# Parked squadrons never appear in the snapshot above, so their plane
+		# `dead` flags would otherwise go stale as replacements are built on the
+		# server. Only the head count matters on deck (see Squadron.launch), and
+		# that is replicated - reconcile against it.
+		if not squadrons[index].active:
+			squadrons[index].set_alive_count(_alive_counts[index])

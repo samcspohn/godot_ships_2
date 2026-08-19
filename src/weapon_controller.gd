@@ -19,6 +19,10 @@ var button_keys: Array[int] = []
 var buttons: Array[Button] = []
 # var button_keys: Array[int] = []
 var switch_progresss: Array[ProgressBar] = []
+# Yellow "not available yet" overlay drawn on top of each button, driven by
+# get_button_cooldown() below. Unused (and invisible) unless a subclass
+# overrides that hook - see AviationController's launch cooldowns.
+var cooldown_progresss: Array[ProgressBar] = []
 # var held: Array[bool] = []
 var held_dur: Array[float] = []
 
@@ -68,6 +72,9 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 			held[i] = false
 			switched_shell = false
 		)
+		var cooldown_progress = _make_cooldown_bar(button)
+		button.add_child(cooldown_progress)
+
 		var switch_progress = ProgressBar.new()
 		switch_progress.min_value = 0.0
 		switch_progress.max_value = 1.0
@@ -88,11 +95,74 @@ func get_weapon_ui(offset: int) -> Array[Button]:
 		buttons.append(button)
 		button_keys.append(offset + i)
 		switch_progresss.append(switch_progress)
+		cooldown_progresss.append(cooldown_progress)
 		held.append(false)
 		held_dur.append(0.0)
 		# button.name = "WeaponButton" + str(i + offset)
 		ui_buttons.append(button)
 	return ui_buttons
+
+
+const COOLDOWN_COLOR := Color(1.0, 0.82, 0.12, 0.45)
+# Fallback corner radius, used only if the button's own style is not a
+# StyleBoxFlat to read the real radius off (see _button_corner_radius).
+const COOLDOWN_CORNER_RADIUS: int = 3
+# Tint applied to a button whose weapon cannot be used right now (self_modulate
+# rather than modulate so the cooldown bar on top of it stays bright).
+const UNAVAILABLE_TINT := Color(0.5, 0.5, 0.5, 1.0)
+
+# Corner radius of the button's own background, so anything overlaid on top of
+# it can be rounded off to match instead of poking out past its corners.
+static func _button_corner_radius(button: Button) -> int:
+	var style := button.get_theme_stylebox("normal") as StyleBoxFlat
+	if style == null:
+		return COOLDOWN_CORNER_RADIUS
+	return style.corner_radius_bottom_left
+
+# Yellow bar filling from the bottom of a weapon button, showing how much of
+# the current cooldown is left. Kept transparent-backgrounded, and rounded to
+# the button's own corner radius, so it reads as part of the button rather
+# than a square overlay on top of it.
+func _make_cooldown_bar(button: Button) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = 0.0
+	bar.visible = false
+	bar.show_percentage = false
+	bar.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.fill_mode = ProgressBar.FILL_BOTTOM_TO_TOP
+	var background := StyleBoxFlat.new()
+	background.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	bar.add_theme_stylebox_override("background", background)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = COOLDOWN_COLOR
+	bar.add_theme_stylebox_override("fill", fill)
+	_match_button_corners(bar, button)
+	# The button is not in the scene tree yet, so the radius just applied comes
+	# from the default theme - redo it once it is parented, in case a theme
+	# inherited from an ancestor rounds its corners differently.
+	button.tree_entered.connect(_match_button_corners.bind(bar, button))
+	return bar
+
+# Rounds a bar overlaid on `button` to the button's own corner radius.
+func _match_button_corners(bar: ProgressBar, button: Button) -> void:
+	var radius := _button_corner_radius(button)
+	(bar.get_theme_stylebox("background") as StyleBoxFlat).set_corner_radius_all(radius)
+	(bar.get_theme_stylebox("fill") as StyleBoxFlat).set_corner_radius_all(radius)
+
+# ── per-button availability hooks ───────────────────────────────────────────
+# Default to "always ready, no cooldown"; subclasses that have one override
+# these (see AviationController).
+
+## 0..1 share of this button's cooldown still to run; 0 hides the bar.
+func get_button_cooldown(_index: int) -> float:
+	return 0.0
+
+## false dims the button to show the weapon cannot be used yet.
+func is_button_ready(_index: int) -> bool:
+	return true
 
 
 func update_weapon_ui(delta: float) -> void:
@@ -111,6 +181,12 @@ func update_weapon_ui(delta: float) -> void:
 				button.button_pressed = true
 			else:
 				button.button_pressed = false
+		var cooldown_progress = cooldown_progresss[i]
+		if cooldown_progress:
+			var cooldown := get_button_cooldown(i)
+			cooldown_progress.value = cooldown
+			cooldown_progress.visible = cooldown > 0.0
+		button.self_modulate = Color.WHITE if is_button_ready(i) else UNAVAILABLE_TINT
 		if switch_progress and not switched_shell:
 			switch_progress.value = min(held_dur[i], 1.0)
 		if held_dur[i] > 1.0 and not switched_shell:

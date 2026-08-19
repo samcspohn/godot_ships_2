@@ -164,8 +164,10 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_518sv"]
 script = ExtResource("12_n0aqy")
 speed = 200.0
+spotting_range = 8000.0
 altitude = 500.0
 attack_descent_radius = 0.0
+fuel_time = 120.0
 plane_scene = ExtResource("13_nx45m")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 

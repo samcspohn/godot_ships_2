@@ -198,8 +198,10 @@ metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 script = ExtResource("14_8261o")
 _range = 18000.0
 speed = 200.0
+spotting_range = 8000.0
 altitude = 500.0
 attack_descent_radius = 0.0
+fuel_time = 120.0
 plane_scene = ExtResource("17_6vanc")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 

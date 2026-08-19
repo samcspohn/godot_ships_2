@@ -13,10 +13,13 @@ var should_recall: bool = false
 # aircraft snap into the tighter attack formation faster (see fly_toward()).
 var attacking: bool = false
 
-# Hit points, reset to params.hp each time the squadron launches (see
-# Squadron.launch()). Depleted by AA fire (see AAAController) - once it hits
-# zero the aircraft is dead: hidden, unable to fire, and excluded from the AA
-# hitbox query.
+# Hit points, set when the squadron is built (see Squadron.setup()) and
+# restored in full every time this aircraft lands back on the carrier (see
+# Squadron.recall()). Depleted by AA fire (see AAAController) - once it hits
+# zero the aircraft is dead: hidden, unable to fire, excluded from the AA
+# hitbox query, and left behind by every launch until a replacement for it has
+# been built (see AviationController._tick_regen, Squadron.revive_one). Damage
+# heals the moment the aircraft lands; a loss costs a full build time.
 var hp: float = 0.0
 var dead: bool = false
 
