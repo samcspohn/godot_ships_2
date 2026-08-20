@@ -1076,6 +1076,38 @@ Dictionary ProjectilePhysicsWithDragV2::sim_can_shoot_over_terrain(
 		prev_t = next_t;
 	}
 
+	// --- Aim point probe ---------------------------------------------------
+	// The arc above stops exactly at the aim point, and the aim point is very
+	// often a raycast hit that lies *on* a terrain face (the camera aims at
+	// land the same way).  A ray that terminates on the surface it is testing
+	// is a floating-point coin flip, so the indicator flickered blocked /
+	// unblocked frame to frame while pointing at a hillside.
+	//
+	// Probe a short way past the aim point to make that case deterministic.
+	// The margin is deliberately tiny next to a ship (25 m against ~200 m of
+	// hull), so terrain *behind* a target still never blocks the shot.
+	if (space_state != nullptr && terrain_ray.is_valid()) {
+		const double terrain_end_margin = 0.1;
+		// Start slightly short of the aim point: the loop already proved that
+		// stretch is clear, and it guarantees the probe begins in open air so
+		// the crossing into the surface registers.
+		Vector3 probe_from = position_at_distance(std::max(0.0, end_dist - 0.1));
+		Vector3 probe_to = position_at_distance(end_dist + terrain_end_margin);
+		if (!has_nav_map || _segment_may_hit_terrain(nav_map, probe_from, probe_to)) {
+			terrain_ray->set_from(probe_from);
+			terrain_ray->set_to(probe_to);
+			Dictionary hit = space_state->intersect_ray(terrain_ray);
+			if (!hit.is_empty()) {
+				Vector3 hit_pos = hit["position"];
+				if (hit_pos.y > 0.001) {
+					result["terrain_blocked"] = true;
+					result["terrain_position"] = hit_pos;
+					return result;
+				}
+			}
+		}
+	}
+
 	return result;
 }
 

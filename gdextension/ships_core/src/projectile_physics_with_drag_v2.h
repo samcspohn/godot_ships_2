@@ -148,7 +148,10 @@ public:
 
 	/// Simulate trajectory clearance over terrain and ships.
 	/// The arc is only walked as far as the aim point — terrain beyond the
-	/// target never blocks the shot.
+	/// target never blocks the shot.  Terrain (and only terrain) is probed a
+	/// further 25 m past the aim point so that aiming directly *at* a hillside
+	/// reads as a stable hit instead of flickering on a ray that would
+	/// otherwise terminate exactly on the surface it is testing.
 	/// @param start_pos    Muzzle position
 	/// @param launch_vector Initial velocity vector
 	/// @param flight_time  Time of flight to the aim point (capped to 100s)
