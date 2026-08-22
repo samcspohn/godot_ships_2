@@ -27,6 +27,9 @@
 [ext_resource type="Texture2D" uid="uid://buvvj6r1012t4" path="res://icons/health-normal.png" id="16_u4el4"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="17_3t06y"]
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="21_slgwc"]
+[ext_resource type="PackedScene" uid="uid://e1skh7d26jgi" path="res://src/aviation/AviationController.tscn" id="24_dyvjp"]
+[ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="25_im8nd"]
+[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="26_dyvjp"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="26_gho4i"]
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://assets/particles/templates/torpedo_wake_template.tres" id="27_slgwc"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="28_slgwc"]
@@ -143,6 +146,18 @@ script = ExtResource("16_2n0p4")
 max_buildup = 200.0
 metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 
+[sub_resource type="Resource" id="Resource_xbxil"]
+script = ExtResource("25_im8nd")
+hp = 3000.0
+_range = 7000.0
+speed = 200.0
+spotting_range = 8000.0
+altitude = 500.0
+attack_descent_radius = 500.0
+fuel_time = 120.0
+plane_scene = ExtResource("26_dyvjp")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
+
 [sub_resource type="Resource" id="Resource_2kpxh"]
 script = ExtResource("7_17org")
 min_angle = 3.329022979917352
@@ -237,6 +252,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 46.814842)
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 102.283875)
 
+[node name="AviationController" parent="Modules" index="11" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("24_dyvjp")]
+params = Array[ExtResource("25_im8nd")]([SubResource("Resource_xbxil")])
+launcher = NodePath("../../Node3D")
+
 [node name="Barbette" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="0" unique_id=2008372412]
 layers = 0
 material_override = ExtResource("2_p5v3p")
@@ -272,6 +291,9 @@ material_override = ExtResource("2_p5v3p")
 [node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="8" unique_id=1455362311]
 layers = 0
 material_override = ExtResource("2_p5v3p")
+
+[node name="Node3D" type="Node3D" parent="." index="11" unique_id=95957654]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.238106, 131.27266)
 
 [node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(1147287005) index="0" unique_id=692518245 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.311709020881438
@@ -326,11 +348,11 @@ slew_max_angle = 5.7563277507883175
 slew_min_angle = 0.5264804156489946
 slew_max_angle = 5.761145084078789
 
-[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="26" unique_id=1811592778]
+[node name="HullPhysicsCollision" type="CollisionShape3D" parent="." index="27" unique_id=1811592778]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.22723103, -7.6293945e-05, 0.13959503)
 shape = SubResource("ConvexPolygonShape3D_p5v3p")
 
-[node name="Wake" type="Node3D" parent="." index="27" unique_id=971959505]
+[node name="Wake" type="Node3D" parent="." index="28" unique_id=971959505]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -133.6432)
 visible = false
 script = ExtResource("26_gho4i")
@@ -341,7 +363,7 @@ speed_scale = 0.3
 auto_start = true
 metadata/_custom_type_script = "uid://cqvqu5qahwwrs"
 
-[node name="Wake2" type="Node3D" parent="." index="28" unique_id=189659520]
+[node name="Wake2" type="Node3D" parent="." index="29" unique_id=189659520]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 119.49855)
 visible = false
 script = ExtResource("26_gho4i")
@@ -352,7 +374,7 @@ speed_scale = 0.3
 auto_start = true
 metadata/_custom_type_script = "uid://cqvqu5qahwwrs"
 
-[node name="Exaust" type="Node3D" parent="." index="29" unique_id=144749235]
+[node name="Exaust" type="Node3D" parent="." index="30" unique_id=144749235]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 25.8507, -10.242676)
 script = ExtResource("26_gho4i")
 template = ExtResource("28_slgwc")
@@ -362,7 +384,7 @@ speed_scale = 0.2
 auto_start = true
 metadata/_custom_type_script = "uid://cqvqu5qahwwrs"
 
-[node name="Exaust2" type="Node3D" parent="." index="30" unique_id=1077308909]
+[node name="Exaust2" type="Node3D" parent="." index="31" unique_id=1077308909]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 23.65583, 13.169266)
 script = ExtResource("26_gho4i")
 template = ExtResource("28_slgwc")

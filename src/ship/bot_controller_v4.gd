@@ -559,7 +559,7 @@ func _register_torpedo_obstacles() -> void:
 		# and their launch point is over the target rather than over the carrier
 		# that owns them, so they say nothing about where that carrier is.
 		if torp.launcher != null:
-			_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t)
+			_update_lkp_from_shooter(torp.owner, torp.start_position, torp.t, true)
 
 		var obs_id: int = TORPEDO_ID_OFFSET - i
 		var pos_2d := Vector2(torp.position.x, torp.position.z)
@@ -624,13 +624,27 @@ func _update_shell_threats() -> void:
 		)
 
 
-## Update the server's unspotted-enemy last-known-position for a ship that
-## revealed itself by firing a shell or torpedo.
+## How wrong a torpedo-derived position might be: where the error bar starts, and
+## how fast it opens up per second of the torpedo's run. A destroyer that fired a
+## minute ago has had a minute to be somewhere else, at roughly the speed one
+## makes while repositioning after a launch.
+const TORPEDO_INFER_RADIUS_MIN: float = 500.0
+const TORPEDO_INFER_RADIUS_GROWTH: float = 15.0
+
+## Record what a projectile gives away about whoever fired it.
+##
+## Gunfire and torpedoes say very different things. A muzzle flash is an
+## observation - the ship was there, just now - and becomes a real last-known
+## position the guns may engage. A torpedo wake is a deduction: it is detected
+## when it arrives, and only places its launcher somewhere back along the track
+## at some point in the past, so it becomes an inferred contact that steers
+## positioning and never aims a gun.
 ## - shooter    : the Object returned by ProjectileData.get_owner() or TorpedoData.owner
 ## - launch_pos  : world position where the projectile originated (start_position)
 ## - launch_time : ProjectileManager time when the projectile was fired (used to
 ##                 reject stale updates — we only keep the most recent launch's intel)
-func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time: float) -> void:
+## - is_torpedo  : route the intel to the inferred-contact table instead of the LKP tables
+func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time: float, is_torpedo: bool = false) -> void:
 	if not is_instance_valid(shooter):
 		return
 	if not shooter is Ship:
@@ -665,17 +679,34 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	var valid_targets: Array = server_node.get_valid_targets(my_team_id)
 	if valid_targets.has(s):
 		return
-	# Write the launch position as fresh intel into the unspotted-enemy dicts.
-	# Flattening Y keeps it consistent with how every other LKP is stored.
-	var flat_pos := Vector3(launch_pos.x, 0.0, launch_pos.z)
-	var unspotted: Dictionary = server_node.team_0_unspotted_enemies if my_team_id == 0 else server_node.team_1_unspotted_enemies
-	var times: Dictionary   = server_node.team_0_unspotted_times    if my_team_id == 0 else server_node.team_1_unspotted_times
-	unspotted[s] = flat_pos
-	# Use the wall-clock equivalent of the launch time so the staleness decay
-	# in _publish_team_threats reflects how long ago the shot was actually fired,
-	# not merely when this bot happened to detect the projectile.
-	times[s]     = _pm_time_to_wall_time(launch_time)
+	# Use the wall-clock equivalent of the launch time so staleness everywhere
+	# downstream reflects how long ago the shot was actually fired, not merely
+	# when this bot happened to detect the projectile.
+	var observed_time: float = _pm_time_to_wall_time(launch_time)
 	_shooter_lkp_launch_times[sid] = launch_time
+
+	if is_torpedo:
+		# A wake is not a sighting. We see it when it reaches us, which can be a
+		# minute after it was launched, and all it establishes is that somebody
+		# was somewhere back along that track a long time ago. Recording it as an
+		# observation would let the guns shell a launch point the DD left before
+		# the torpedoes were even halfway here - so it goes in as a deduction,
+		# with an error bar that grows with however far the run has come.
+		var run_time: float = maxf(Time.get_ticks_msec() / 1000.0 - observed_time, 0.0)
+		server_node.record_inferred_contact(
+			my_team_id,
+			s,
+			launch_pos,
+			observed_time,
+			TORPEDO_INFER_RADIUS_MIN + run_time * TORPEDO_INFER_RADIUS_GROWTH,
+			"torpedo")
+		return
+
+	# Gunfire is different: the flash IS the observation. A ship that fires has
+	# shown where it is at that instant, so this stays real intel the guns may
+	# shoot back at - kept honest by recording it stationary and by the short
+	# window Behavior.LKP_TARGET_MAX_AGE allows.
+	server_node.record_observed_contact_at(my_team_id, s, launch_pos, observed_time)
 
 
 ## Convert a ProjectileManager accumulated time value to its wall-clock equivalent

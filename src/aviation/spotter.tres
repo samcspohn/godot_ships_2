@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="AircraftParams" format=3 uid="uid://be3de4c4jkw70"]
+
+[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="1_52ipx"]
+[ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="2_pnh0b"]
+
+[resource]
+script = ExtResource("2_pnh0b")
+hp = 3000.0
+speed = 200.0
+spotting_range = 8000.0
+altitude = 500.0
+attack_descent_radius = 500.0
+fuel_time = 120.0
+plane_scene = ExtResource("1_52ipx")
+metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"

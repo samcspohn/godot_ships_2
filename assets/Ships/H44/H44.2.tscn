@@ -21,9 +21,9 @@
 [ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="12_n0aqy"]
 [ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="12_pqw46"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="13_4ql0v"]
-[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="13_nx45m"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="14_iv11n"]
 [ext_resource type="Resource" uid="uid://cv6jnnhx7qnla" path="res://src/Consumable/Registry/GER_T11_HYDRO.tres" id="15_eq5gm"]
+[ext_resource type="Resource" uid="uid://be3de4c4jkw70" path="res://src/aviation/spotter.tres" id="15_n6hqb"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="16_qnn6a"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="17_jalvm"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="18_0ahhb"]
@@ -161,16 +161,6 @@ traverse_speed = 50.0
 _range = 5900.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_518sv"]
-script = ExtResource("12_n0aqy")
-speed = 200.0
-spotting_range = 8000.0
-altitude = 500.0
-attack_descent_radius = 0.0
-fuel_time = 120.0
-plane_scene = ExtResource("13_nx45m")
-metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
-
 [sub_resource type="Resource" id="Resource_ku67v"]
 script = ExtResource("9_uwp4f")
 acceleration_time = 40.0
@@ -268,7 +258,7 @@ guns = [NodePath("../../../TurretMount_GER_150mm_2b_gerrat60/GER_150mm_2b_gerrat
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="AviationController" parent="Modules" index="4" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("11_r7nol")]
-params = Array[ExtResource("12_n0aqy")]([SubResource("Resource_518sv")])
+params = Array[ExtResource("12_n0aqy")]([ExtResource("15_n6hqb")])
 launcher = NodePath("../../CSGBox3D")
 
 [node name="MovementController" parent="Modules" index="6" unique_id=1088594109]

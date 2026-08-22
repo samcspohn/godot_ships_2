@@ -24,7 +24,7 @@
 [ext_resource type="Resource" uid="uid://b3mu68ctnhpnv" path="res://src/Consumable/Registry/GER_T8-10_HYDRO.tres" id="14_fr2ey"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="14_ghpuu"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="15_p63jr"]
-[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="15_q2oem"]
+[ext_resource type="Resource" uid="uid://be3de4c4jkw70" path="res://src/aviation/spotter.tres" id="15_yn4vk"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="18_4j3yv"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="19_nht2y"]
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="20_4j3yv"]
@@ -111,16 +111,6 @@ reload_time = 28.0
 traverse_speed = 4.0
 _range = 15500.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
-
-[sub_resource type="Resource" id="Resource_518sv"]
-script = ExtResource("14_etgj4")
-speed = 200.0
-spotting_range = 8000.0
-altitude = 500.0
-attack_descent_radius = 0.0
-fuel_time = 120.0
-plane_scene = ExtResource("15_q2oem")
-metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 
 [sub_resource type="Resource" id="Resource_8ntne"]
 script = ExtResource("10_dxypq")
@@ -229,7 +219,7 @@ guns = [NodePath("../../../TurretMount_GER_128mm_2b_L_54/GER_128mm_2b_L_54"), No
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="AviationController" parent="Modules" index="4" unique_id=643396560 node_paths=PackedStringArray("launcher") instance=ExtResource("13_yn4vk")]
-params = Array[ExtResource("14_etgj4")]([SubResource("Resource_518sv")])
+params = Array[ExtResource("14_etgj4")]([ExtResource("15_yn4vk")])
 launcher = NodePath("../../Node3D")
 
 [node name="MovementController" parent="Modules" index="6" unique_id=1088594109]

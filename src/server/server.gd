@@ -31,6 +31,18 @@ var team_0_unspotted_vels: Dictionary = {}   # Ship -> Vector3 (linear velocity 
 var team_1_unspotted_vels: Dictionary = {}
 var team_0_unspotted_rots: Dictionary = {}   # Ship -> float (rotation.y when last seen)
 var team_1_unspotted_rots: Dictionary = {}
+# Inferred contacts: where a team has DEDUCED an enemy is without anyone having
+# seen it. Bloom with nothing in sight means somebody has line of sight to us;
+# a torpedo wake means somebody was on that bearing when it was launched. Both
+# are real information and both belong in the picture - but neither is an
+# observation, and the difference matters enough to keep them out of the four
+# tables above entirely rather than trusting every reader to check a flag.
+# Nothing here can ever reach a gun: Behavior.get_contact_solution() only reads
+# the LKP tables, so an inference is structurally incapable of producing an aim
+# point. EnemyPresumption folds these in as anchors, which is what they are for.
+# Ship -> {position: Vector3, time: float, radius: float, source: String}
+var team_0_inferred_contacts: Dictionary = {}
+var team_1_inferred_contacts: Dictionary = {}
 # Hydro LKP system.
 # hydro_lkp      – frozen last-known position per ship (updated every HYDRO_LKP_INTERVAL s).
 # hydro_lkp_times– server time of the last position refresh.
@@ -698,6 +710,76 @@ func _write_unspotted_lkp(team_id: int, ship: Ship, observed_time: float) -> voi
 	vels[ship]      = ship.linear_velocity
 	rots[ship]      = ship.rotation.y
 
+## Records a last-known contact at an explicitly observed position rather than at
+## the ship's live one - for intel that pins a ship somewhere it may no longer
+## be, such as the muzzle flash of a salvo fired from behind terrain.
+##
+## The contact is recorded stationary on purpose. A flash gives a position and
+## nothing else: dead-reckoning it forward on a velocity nobody measured would
+## walk the solution away from the one thing that was actually seen. The heading
+## already on file is kept if there is one, since that at least came from a real
+## sighting, and only feeds aim offset and target weighting rather than the
+## position itself.
+func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, observed_time: float) -> void:
+	if not is_instance_valid(ship) or not ship.is_alive():
+		return
+	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
+	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
+	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	unspotted[ship] = Vector3(position.x, 0.0, position.z)
+	times[ship]     = observed_time
+	vels[ship]      = Vector3.ZERO
+	rots[ship]      = float(rots.get(ship, 0.0))
+
+## How long a deduction stays in the picture. Generous - an inference is already
+## weighted by its own uncertainty radius, so an old one fades rather than
+## misleading - but finite, so it eventually stops outranking the spawn-line
+## estimate that would otherwise be the better guess by then.
+const INFERRED_CONTACT_MAX_AGE: float = 60.0
+
+func _prune_inferred_contacts(inferred: Dictionary) -> void:
+	var now: float = Time.get_ticks_msec() / 1000.0
+	for ship in inferred.keys():
+		if not is_instance_valid(ship) or ship.health_controller.is_dead():
+			inferred.erase(ship)
+			continue
+		if now - float(inferred[ship].get("time", now)) > INFERRED_CONTACT_MAX_AGE:
+			inferred.erase(ship)
+
+## Every enemy `team_id` has deduced the position of without seeing it.
+## Key: Ship, Value: {position, time, radius, source}. See the table declaration
+## for why these are kept apart from the LKP tables.
+func get_inferred_contacts(team_id: int) -> Dictionary:
+	return team_0_inferred_contacts if team_id == 0 else team_1_inferred_contacts
+
+## Records what `team_id` has worked out about where `ship` is without observing
+## it. `radius` is how wrong the position might be, and is the whole reason this
+## is not an LKP - an inference comes with its own error bar rather than
+## inheriting one from age alone.
+##
+## A genuine sighting always outranks a deduction, so this is a no-op while the
+## ship is spotted, and any existing inference is dropped: once you can see it,
+## there is nothing left to guess about.
+func record_inferred_contact(team_id: int, ship: Ship, position: Vector3, observed_time: float, radius: float, source: String) -> void:
+	if not is_instance_valid(ship) or not ship.is_alive():
+		return
+	var inferred := team_0_inferred_contacts if team_id == 0 else team_1_inferred_contacts
+	if ship.visible_to_enemy:
+		inferred.erase(ship)
+		return
+	# Keep whichever deduction is more recent. Two bots on the same team can each
+	# infer the same ship in the same frame from different evidence.
+	var prev: Dictionary = inferred.get(ship, {})
+	if not prev.is_empty() and float(prev.get("time", -INF)) > observed_time:
+		return
+	inferred[ship] = {
+		position = Vector3(position.x, 0.0, position.z),
+		time = observed_time,
+		radius = maxf(radius, 0.0),
+		source = source,
+	}
+
 ## Drops every trace of a ship from `team_id`'s last-known-contact tables.
 func _erase_unspotted_lkp(team_id: int, ship: Ship) -> void:
 	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
@@ -1247,6 +1329,8 @@ func _physics_process(_delta: float) -> void:
 				# Ship became spotted - remove from unspotted list
 				if unspotted_dict.has(p):
 					_erase_unspotted_lkp(enemy_team_id, p)
+				# A sighting settles whatever was being deduced about it.
+				get_inferred_contacts(enemy_team_id).erase(p)
 			else:
 				# Ship became unspotted - record the last known contact (position,
 				# plus the velocity and heading it had at this instant, which is
@@ -1262,6 +1346,12 @@ func _physics_process(_delta: float) -> void:
 	for ship in team_1_unspotted_enemies.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			_erase_unspotted_lkp(1, ship)
+	# Clean up the inferred-contact tables: dead ships, and deductions old enough
+	# that the evidence behind them has stopped meaning anything. Without the
+	# expiry a one-off bloom would keep overriding the spawn-line estimate for
+	# the rest of the match, long after the ship it was about had steamed off.
+	_prune_inferred_contacts(team_0_inferred_contacts)
+	_prune_inferred_contacts(team_1_inferred_contacts)
 	# Clean up dead ships from hydro LKP tables
 	for ship in team_0_hydro_lkp.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():

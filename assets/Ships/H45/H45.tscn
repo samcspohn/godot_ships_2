@@ -19,9 +19,9 @@
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="12_b7fic"]
 [ext_resource type="Script" uid="uid://c1b4m6o6v8jtx" path="res://src/aviation/aircraft_params.gd" id="12_r8df4"]
 [ext_resource type="Curve" uid="uid://dt13bvxo82mnx" path="res://src/artillary/default_sec_v_disp.tres" id="12_vbiij"]
-[ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="13_n33ro"]
 [ext_resource type="Resource" uid="uid://cj43pm5o6aibf" path="res://src/Consumable/DamageControl.tres" id="13_rhces"]
 [ext_resource type="Resource" uid="uid://b0w0iw2uhv8sl" path="res://src/Consumable/Registry/GER_BB_repair.tres" id="14_ni6n4"]
+[ext_resource type="Resource" uid="uid://be3de4c4jkw70" path="res://src/aviation/spotter.tres" id="15_b304y"]
 [ext_resource type="Script" uid="uid://dr7ents37sxlk" path="res://src/Upgrades/upgrade.gd" id="16_2d0xp"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="18_kgkxf"]
 [ext_resource type="Texture2D" uid="uid://dsa4gjkh8wy6c" path="res://icons/hydroacoustic_search_inactive.svg" id="18_r8df4"]
@@ -187,16 +187,6 @@ traverse_speed = 50.0
 _range = 6400.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 
-[sub_resource type="Resource" id="Resource_4bcda"]
-script = ExtResource("12_r8df4")
-speed = 250.0
-spotting_range = 8000.0
-altitude = 500.0
-attack_descent_radius = 100.0
-fuel_time = 120.0
-plane_scene = ExtResource("13_n33ro")
-metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
-
 [sub_resource type="Resource" id="Resource_2d0xp"]
 script = ExtResource("11_g67im")
 max_speed_knots = 28.0
@@ -290,7 +280,7 @@ metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
 [node name="AviationController" type="Node" parent="Modules" index="4" unique_id=1663183427 node_paths=PackedStringArray("launcher")]
 script = ExtResource("11_nqm6r")
-params = Array[ExtResource("12_r8df4")]([SubResource("Resource_4bcda")])
+params = Array[ExtResource("12_r8df4")]([ExtResource("15_b304y")])
 launcher = NodePath("../../AviationLauncher")
 metadata/_custom_type_script = "uid://dh28dceq3bgga"
 

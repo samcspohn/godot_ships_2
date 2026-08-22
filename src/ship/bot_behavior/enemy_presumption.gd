@@ -14,6 +14,15 @@ class_name EnemyPresumption
 ## already has - the spawn positions, the clock, and the enemy team list - plus
 ## whatever the team has actually observed. It never reads a live enemy position.
 ##
+## It is also where everything the team has DEDUCED rather than seen ends up.
+## Bloom with nothing in sight means someone concealed has line of sight to us; a
+## torpedo wake means someone was back along that bearing a while ago. Both used
+## to be written into the last-known-position tables, which made them
+## indistinguishable from sightings and let bots put salvos onto ships they had
+## merely inferred. They now arrive here instead, as anchors carrying their own
+## uncertainty radius (GameServer.record_inferred_contact), which keeps them in
+## the positioning picture and out of reach of anything that fires.
+##
 ## `server` is left untyped on purpose. GameServer publishes this same picture
 ## into the shared threat registry, so naming the type here would make the two
 ## scripts reference each other and leave the parser resolving a cycle.
@@ -74,6 +83,7 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 	var roster: Array = server.get_team_ships(enemy_team)
 	var lkp: Dictionary = server.get_unspotted_enemies(my_team)
 	var times: Dictionary = server.get_unspotted_enemy_times(my_team)
+	var inferences: Dictionary = server.get_inferred_contacts(my_team)
 	var now: float = Time.get_ticks_msec() / 1000.0
 	var out: Array[Dictionary] = []
 
@@ -85,14 +95,31 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 		# see, and a guess must never displace an observation.
 		if enemy.visible_to_enemy:
 			continue
+		# Three grades of anchor, best first: somewhere it was actually seen,
+		# somewhere it has been deduced to be, or its station in the line its
+		# fleet is presumed to have advanced in. Whichever of the first two is
+		# more recent wins - a bloom deduction made this instant says more than a
+		# sighting from a minute ago, and a sighting from two seconds ago says
+		# more than a torpedo launch point from a minute back.
 		var anchor: Vector3
 		var age: float
-		if lkp.has(enemy):
+		var base_radius: float = RADIUS_MIN
+		var inferred: Dictionary = inferences.get(enemy, {})
+		var lkp_time: float = float(times.get(enemy, now)) if lkp.has(enemy) else -INF
+		var inferred_time: float = float(inferred.get("time", -INF))
+		if lkp.has(enemy) and lkp_time >= inferred_time:
 			# Last seen somewhere specific. That still says which flank it is
 			# on, however old it is - the guess is how much further along it has
 			# got since, not a fresh position.
 			anchor = lkp[enemy]
-			age = maxf(now - float(times.get(enemy, now)), 0.0)
+			age = maxf(now - lkp_time, 0.0)
+		elif not inferred.is_empty():
+			# Worked out rather than seen. The position is only as good as the
+			# error bar whoever deduced it recorded alongside it, so that becomes
+			# the floor the usual staleness growth builds on top of.
+			anchor = inferred.position
+			age = maxf(now - inferred_time, 0.0)
+			base_radius = maxf(RADIUS_MIN, float(inferred.get("radius", RADIUS_MIN)))
 		else:
 			# Never seen at all. Everything known about it is that it came off
 			# their spawn, so it is placed in the line abreast of its fleet and
@@ -103,7 +130,7 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 		out.append({
 			ship = enemy,
 			position = _advance(anchor, elapsed, _advance_mult(enemy)),
-			radius = clampf(RADIUS_MIN + elapsed * RADIUS_GROWTH, RADIUS_MIN, RADIUS_MAX),
+			radius = clampf(base_radius + elapsed * RADIUS_GROWTH, RADIUS_MIN, RADIUS_MAX),
 			advance_mult = _advance_mult(enemy),
 		})
 

@@ -233,8 +233,8 @@ func _probe_concealment(server: GameServer) -> bool:
 	##
 	## Decision tree:
 	##   1. No spotted enemies:
-	##      → If detected with active bloom, a concealed ship has LOS; inject
-	##        proxy and suppress. Otherwise safe to fire.
+	##      → If detected with active bloom, a concealed ship has LOS; record an
+	##        inferred contact and suppress. Otherwise safe to fire.
 	##   2. For each spotted enemy:
 	##      a. LOS blocked by terrain → skip (terrain shields us from them).
 	##      b. LOS unblocked + we are already detected + enemy inside base
@@ -242,7 +242,7 @@ func _probe_concealment(server: GameServer) -> bool:
 	##      c. LOS unblocked → open water; firing will expose/keep us exposed
 	##        → suppress_useful = true.
 	##   3. All spotted enemies have blocked LOS:
-	##      → If detected, a concealed ship must have LOS; inject proxy + suppress.
+	##      → If detected, a concealed ship must have LOS; record inferred contact + suppress.
 	##      → If not detected, terrain shields us from all threats; safe to fire.
 	##   4. Return suppress_useful.
 	##
@@ -262,7 +262,7 @@ func _probe_concealment(server: GameServer) -> bool:
 	if spotted.is_empty():
 		# If we are detected with bloom, a concealed ship must have direct LOS.
 		if _ship.visible_to_enemy and concealment_node.bloom_value > 0.0:
-			_inject_proxy_spotter(server)
+			_infer_concealed_spotter(server)
 			return true
 		return false
 
@@ -288,7 +288,7 @@ func _probe_concealment(server: GameServer) -> bool:
 		if _ship.visible_to_enemy:
 			# Terrain covers every spotted enemy yet we are still detected —
 			# a concealed ship must have direct LOS.
-			_inject_proxy_spotter(server)
+			_infer_concealed_spotter(server)
 			return true
 		# Not detected and all enemies behind terrain — safe to fire.
 		return false
@@ -296,10 +296,26 @@ func _probe_concealment(server: GameServer) -> bool:
 	return suppress_useful
 
 
-func _inject_proxy_spotter(server: GameServer) -> void:
-	## If concealment.spotted_by is a valid, living, currently-unspotted ship,
-	## write it into the server's unspotted-enemies dict so the navigation and
-	## threat systems treat it as a known threat even though it is concealed.
+func _infer_concealed_spotter(server: GameServer) -> void:
+	## Bloom with nothing in sight means a concealed ship has line of sight to
+	## us. That is real information, and the navigation and threat systems should
+	## act on it - but it is a deduction, not a sighting, so it goes into the
+	## inferred-contact table rather than the LKP tables. Nothing that aims a gun
+	## reads it (see get_contact_solution): a bot may back off, take cover, or go
+	## looking for a ship it has worked out is nearby, and may not shell it.
+	##
+	## What bloom establishes is a maximum RANGE, not a bearing: whoever it is has
+	## us inside our own detection radius with clear LOS. So the bearing has to
+	## come from somewhere else - the spotter's last-known position if there is
+	## one, otherwise wherever the presumption model already has it - and the
+	## contact is placed along that bearing, pulled in to the range bound.
+	##
+	## It is never anchored on our own position. A contact recorded on top of the
+	## ship that deduced it publishes a threat zone onto that ship (see
+	## GameServer._publish_team_threats), which reads as an enemy sitting on a
+	## friendly and poisons every cover and standoff decision made around it. If
+	## no bearing can be had, nothing is recorded: the presumption model's own
+	## spawn-line estimate is already a better answer than a point on ourselves.
 	var concealment_node = _ship.concealment
 	if concealment_node == null:
 		return
@@ -308,24 +324,56 @@ func _inject_proxy_spotter(server: GameServer) -> void:
 		return
 	if not spotter.health_controller.is_alive():
 		return
-	# Don't inject if the spotter is already in the spotted (visible) list
-	var spotted = server.get_valid_targets(_ship.team.team_id)
-	if spotter in spotted:
-		return
+	# Nothing to deduce about a ship we can already see.
 	var my_team: int = _ship.team.team_id
-	var unspotted: Dictionary = server.team_0_unspotted_enemies if my_team == 0 else server.team_1_unspotted_enemies
-	var unspotted_times: Dictionary = server.team_0_unspotted_times if my_team == 0 else server.team_1_unspotted_times
-	# Only refresh the stored position when the last known position no longer
-	# has line-of-sight to us.  If the old position still has clear LOS to our
-	# ship the spotter may not have moved — keeping the stale position prevents
-	# bots from being omniscient about a concealed spotter's exact location.
-	# We always write on first contact (spotter not yet in the dict).
-	if spotter in unspotted:
+	if spotter in server.get_valid_targets(my_team):
+		return
+
+	var detect_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
+	var my_pos: Vector3 = _ship.global_position
+
+	# Where to take the bearing from. A last-known position is preferred: if it
+	# still has clear LOS to us the spotter may simply not have moved, and that
+	# real observation already says everything this deduction would, so we leave
+	# it alone rather than talking over it with something vaguer.
+	var unspotted: Dictionary = server.get_unspotted_enemies(my_team)
+	var bearing_from: Vector3 = Vector3.ZERO
+	var have_bearing: bool = false
+	if unspotted.has(spotter):
 		var last_known: Vector3 = unspotted[spotter]
-		if not NavigationMapManager.is_los_blocked(last_known, _ship.global_position):
+		if not NavigationMapManager.is_los_blocked(last_known, my_pos):
 			return
-	unspotted[spotter] = spotter.global_position
-	unspotted_times[spotter] = Time.get_ticks_msec() / 1000.0
+		bearing_from = last_known
+		have_bearing = true
+	else:
+		# Never seen. The presumption model still has an opinion about which
+		# flank it is on, built from the spawns and the clock, and that opinion
+		# is the only direction anyone has earned.
+		for guess in get_presumed_contacts():
+			if guess.ship == spotter:
+				bearing_from = guess.position
+				have_bearing = true
+				break
+	if not have_bearing:
+		return
+
+	var to_contact: Vector3 = bearing_from - my_pos
+	to_contact.y = 0.0
+	var d: float = to_contact.length()
+	if d < 1.0:
+		# Degenerate bearing - the only anchor available would be on top of us.
+		return
+	# Keep the direction, give up the range: bloom says it is no further off than
+	# our detection radius, and says nothing at all about how much closer.
+	var anchor: Vector3 = my_pos + to_contact / d * minf(d, detect_radius)
+
+	server.record_inferred_contact(
+		my_team,
+		spotter,
+		anchor,
+		Time.get_ticks_msec() / 1000.0,
+		detect_radius,
+		"bloom")
 
 # ============================================================================
 # NAVIGATION UTILITIES
@@ -526,7 +574,12 @@ func _get_overextension_score(enemy: Ship) -> float:
 # the staleness horizon _should_use_radar() already applies to an LKP.
 const LKP_MAX_LEAD_AGE: float = 30.0
 # An LKP older than this is not offered to the guns at all - see pick_target.
-const LKP_TARGET_MAX_AGE: float = LKP_MAX_LEAD_AGE
+# Deliberately much shorter than LKP_MAX_LEAD_AGE: dead reckoning stays useful
+# for half a minute when the question is "roughly where is that fleet", but a
+# gun is a point solution. Past ten seconds a ship has had time to turn, and
+# shells walked onto a heading nobody has confirmed since are wasted salvos that
+# also give away the firing ship for nothing.
+const LKP_TARGET_MAX_AGE: float = 10.0
 # Priority multiplier applied to a target held only on an LKP. Shooting at a
 # dead-reckoned contact is a real option when everything has gone dark, but it
 # should always lose to a ship someone can actually see.
