@@ -267,7 +267,7 @@ func _release_cover_claim() -> void:
 func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var ship = ctx.ship
 	var my_pos: Vector3 = ship.global_position
-	var threats = ctx.behavior._gather_threat_positions(ship)
+	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
 	var max_desired_range = ship.artillery_controller.get_params()._range * 0.7
 	var min_cover_separation = ctx.behavior._get_ship_clearance() * _TEAM_COVER_MIN_SEPARATION_MULT
@@ -390,7 +390,7 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 	var max_desired_range = gun_range * params.get("max_range", 0.7)
 	# var min_safe_range = gun_range * 0.35
 
-	var threats = ctx.behavior._gather_threat_positions(ship)
+	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
 	if ctx.server == null:
 		return {}
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
@@ -561,7 +561,7 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary, prioriti
 	if pos.distance_to(ship.global_position) > ship.artillery_controller.get_params()._range * 1.0: # adjust to 1 for more safety
 		return false
 
-	var threats = ctx.behavior._gather_threat_positions(ship)
+	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
 	for threat_pos in threats:
 		if not ctx.behavior._is_los_blocked_with_clearance(pos, threat_pos):
 			return false

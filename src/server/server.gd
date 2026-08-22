@@ -318,6 +318,11 @@ func spawn_player(id, player_name):
 			Ship.ShipClass.CV:
 				bot_controller.behavior = CVBehavior.new()
 		bot_controller.behavior.threat_mod = _get_bot_threat_mod(ship)
+		# How good this bot is meant to be. Absent from a lineup means REGULAR,
+		# which is exactly how every bot behaved before aptitude existed, so old
+		# match configs keep working untouched.
+		bot_controller.behavior.aptitude = BotAptitude.from_config(
+			team_data.get("aptitude", BotAptitude.Level.REGULAR))
 		# bot_controller.behavior = BotBehavior.new()  # Use generic behavior for now, can be customized based on ship class or other factors
 		player.get_node("Modules").add_child(bot_controller)
 		bot_controller._ship = player
@@ -1086,11 +1091,21 @@ func _broadcast_match_end():
 	for p_name in players:
 		var ship: Ship = players[p_name][0]
 		var stats: Stats = ship.stats
+		# What tier this bot was dealt, so the leaderboard can say whether the
+		# ship at the bottom of the table was outplayed or was a recruit. Empty
+		# for humans, who do not have one.
+		var aptitude_name: String = ""
+		if ship.team.is_bot:
+			var bot_controller = ship.get_node_or_null("Modules/BotController")
+			if bot_controller != null and bot_controller.behavior != null \
+					and bot_controller.behavior.aptitude != null:
+				aptitude_name = bot_controller.behavior.aptitude.level_name()
 		var entry := {
 			"player_name": p_name,
 			"ship_name": ship.ship_name,
 			"team_id": ship.team.team_id,
 			"is_bot": ship.team.is_bot,
+			"aptitude": aptitude_name,
 			"alive": ship.is_alive(),
 			"total_damage": stats.total_damage,
 			"frags": stats.frags,

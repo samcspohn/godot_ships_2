@@ -19,6 +19,23 @@ const PLAYER_HIGHLIGHT := Color(1.0, 0.84, 0.0, 0.15)
 const ROW_BG_EVEN := Color(0.08, 0.08, 0.12, 0.7)
 const ROW_BG_ODD := Color(0.12, 0.12, 0.16, 0.7)
 
+## Bot aptitude tiers, abbreviated to keep the column narrow and coloured so the
+## table can be read at a glance - a ship at the bottom of the list means one
+## thing if it was an ace and quite another if it was a recruit. Humans have no
+## tier and get a blank cell.
+const APTITUDE_ABBREV := {
+	"RECRUIT": "REC",
+	"REGULAR": "REG",
+	"VETERAN": "VET",
+	"ACE": "ACE",
+}
+const APTITUDE_COLORS := {
+	"RECRUIT": Color(0.55, 0.55, 0.55),
+	"REGULAR": Color(0.80, 0.80, 0.80),
+	"VETERAN": Color(0.45, 0.85, 0.55),
+	"ACE": Color(1.0, 0.84, 0.0),
+}
+
 var _return_button: Button
 var _tab_container: TabContainer
 
@@ -273,7 +290,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 
 	# Header row
 	var header_row := _make_leaderboard_row(
-		"Ship", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot",
+		"Ship", "Apt", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot",
 		LABEL_GRAY, false, 14
 	)
 	vbox.add_child(header_row)
@@ -305,8 +322,10 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 			name_color = ENEMY_COLOR
 
 		var row_bg := ROW_BG_EVEN if row_index % 2 == 0 else ROW_BG_ODD
+		var apt_name: String = str(entry.get("aptitude", ""))
 		var row := _make_leaderboard_row(
 			display_name,
+			APTITUDE_ABBREV.get(apt_name, ""),
 			"%d" % entry.get("total_damage", 0.0),
 			str(entry.get("frags", 0)),
 			str(entry.get("main_hits", 0)),
@@ -324,6 +343,13 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 		var name_label: Label = row.get_child(0).get_child(0)
 		name_label.add_theme_color_override("font_color", name_color)
 
+		# Aptitude cell is the second label, tinted by tier. A dead ship stays
+		# greyed out throughout, so the tier tint does not undo that.
+		if APTITUDE_COLORS.has(apt_name):
+			var apt_label: Label = row.get_child(0).get_child(1)
+			apt_label.add_theme_color_override("font_color",
+				DEAD_COLOR if not is_alive else APTITUDE_COLORS[apt_name])
+
 		vbox.add_child(row)
 		row_index += 1
 
@@ -331,8 +357,9 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 
 
 func _make_leaderboard_row(
-	col_name: String, col_dmg: String, col_kills: String, col_main: String,
-	col_sec: String, col_torp: String, col_fire: String, col_spot: String,
+	col_name: String, col_apt: String, col_dmg: String, col_kills: String,
+	col_main: String, col_sec: String, col_torp: String, col_fire: String,
+	col_spot: String,
 	text_color: Color, highlight: bool, font_size: int = 15,
 	row_bg_color: Color = Color.TRANSPARENT,
 ) -> PanelContainer:
@@ -364,6 +391,7 @@ func _make_leaderboard_row(
 	# Column definitions: [text, min_width, alignment]
 	var columns := [
 		[col_name, 220, HORIZONTAL_ALIGNMENT_LEFT],
+		[col_apt, 44, HORIZONTAL_ALIGNMENT_LEFT],
 		[col_dmg, 80, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_kills, 50, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_main, 50, HORIZONTAL_ALIGNMENT_RIGHT],
@@ -373,11 +401,16 @@ func _make_leaderboard_row(
 		[col_spot, 80, HORIZONTAL_ALIGNMENT_RIGHT],
 	]
 
-	for col in columns:
+	for i in range(columns.size()):
+		var col = columns[i]
 		var label := _make_label(col[0], font_size, text_color, col[2])
 		label.custom_minimum_size.x = col[1]
-		if col[2] == HORIZONTAL_ALIGNMENT_LEFT:
+		# Only the name column absorbs slack; everything else keeps its width so
+		# the columns stay lined up between the two team tables.
+		if i == 0:
 			label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		elif col[2] == HORIZONTAL_ALIGNMENT_LEFT:
+			label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		else:
 			label.size_flags_horizontal = Control.SIZE_SHRINK_END
 		label.clip_text = true

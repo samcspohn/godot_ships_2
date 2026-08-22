@@ -67,6 +67,11 @@ var _threat_score_cache: float = 0.0
 var _threat_score_frame: int = -1
 var threat_mod: float = 1.0
 
+## How good this bot is meant to be. Set at spawn beside threat_mod (see
+## GameServer._add_player); defaults to REGULAR so a bot created without one
+## behaves exactly as every bot did before aptitude existed.
+var aptitude: BotAptitude = BotAptitude.for_level(BotAptitude.Level.REGULAR)
+
 ## Set to true by each ship class in get_nav_intent when the ship wants the
 ## bot controller to route around enemy detection zones during transit.
 ## Reset to false at the start of every get_nav_intent call so it is always
@@ -573,17 +578,27 @@ func _get_overextension_score(enemy: Ship) -> float:
 # flinging the solution kilometres down a heading nobody has confirmed. Matches
 # the staleness horizon _should_use_radar() already applies to an LKP.
 const LKP_MAX_LEAD_AGE: float = 30.0
-# An LKP older than this is not offered to the guns at all - see pick_target.
-# Deliberately much shorter than LKP_MAX_LEAD_AGE: dead reckoning stays useful
-# for half a minute when the question is "roughly where is that fleet", but a
-# gun is a point solution. Past ten seconds a ship has had time to turn, and
-# shells walked onto a heading nobody has confirmed since are wasted salvos that
-# also give away the firing ship for nothing.
-const LKP_TARGET_MAX_AGE: float = 10.0
 # Priority multiplier applied to a target held only on an LKP. Shooting at a
 # dead-reckoned contact is a real option when everything has gone dark, but it
 # should always lose to a ship someone can actually see.
 const LKP_TARGET_PRIORITY_MULT: float = 0.4
+## Fallback for the staleness limit below when a bot somehow has no aptitude.
+## Equal to BotAptitude REGULAR, which is what this was as a flat constant.
+const LKP_TARGET_MAX_AGE_DEFAULT: float = 10.0
+
+## How stale a last-known position may be and still be offered to the guns - see
+## pick_target. Deliberately much shorter than LKP_MAX_LEAD_AGE: dead reckoning
+## stays useful for half a minute when the question is "roughly where is that
+## fleet", but a gun is a point solution. Past ten seconds or so a ship has had
+## time to turn, and shells walked onto a heading nobody has confirmed since are
+## wasted salvos that also give away the firing ship for nothing.
+##
+## Per-bot rather than fixed: holding a dead-reckoned solution together while a
+## ship is dark is a gunnery skill, and it is the right place to express "better
+## shot" - unlike intel, which the tiers must not differ on in any way a gun can
+## read (see BotAptitude).
+func lkp_target_max_age() -> float:
+	return aptitude.lkp_target_max_age if aptitude != null else LKP_TARGET_MAX_AGE_DEFAULT
 
 ## Returns what this bot believes about `target`:
 ##   position - live, or the LKP dead-reckoned forward by the age of the contact
@@ -593,7 +608,7 @@ const LKP_TARGET_PRIORITY_MULT: float = 0.4
 ##   is_lkp   - true when this is a last-known position rather than a live one
 ##   valid    - false when the bot has no idea where the ship is at all
 ## `valid` deliberately does not consider age: callers apply whatever staleness
-## policy suits them (the guns use LKP_TARGET_MAX_AGE; aviation will attack an
+## policy suits them (the guns use lkp_target_max_age(); aviation will attack an
 ## older contact, since flying out to look costs it nothing).
 func get_contact_solution(target: Ship) -> Dictionary:
 	if target.visible_to_enemy:
@@ -626,12 +641,105 @@ func get_contact_solution(target: Ship) -> Dictionary:
 		valid = true,
 	}
 
+# ============================================================================
+# AIM SOLUTION
+# How this bot leads a target, and how wrong it gets it. Two separate things are
+# modelled here, and they are separate on purpose:
+#
+#   Whether the bot leads along the target's ARC or along its instantaneous
+#   heading. A ship under helm travels a circle; over a fifteen-second shell
+#   flight that is hundreds of metres away from where its heading pointed, and
+#   a bot that ignores it misses consistently to the OUTSIDE of the turn. The
+#   arithmetic lives in ProjectilePhysicsWithDragV2 rather than here, since it
+#   is ballistics and not judgement.
+#
+#   How badly the bot misreads the numbers it feeds that solver - how fast the
+#   target is going, and how hard it is turning. This is judgement, so it lives
+#   here, and it is the difference between the tiers.
+# ============================================================================
+
+## How long a bot stays committed to one wrong reading of a target before taking
+## another look. Re-rolling every frame would average out to a perfect solution
+## across a salvo and read as dispersion rather than as misjudgement; a gunner
+## who has a ship's speed wrong stays wrong about it for a bit, then corrects.
+const AIM_ERROR_HOLD_MS: int = 6000
+## Bounds on the misreadings, so a bad roll is a bad shot and never a shot at
+## something going backwards or turning the other way.
+const AIM_SPEED_MULT_MIN: float = 0.35
+const AIM_SPEED_MULT_MAX: float = 1.65
+const AIM_TURN_MULT_MIN: float = 0.0
+const AIM_TURN_MULT_MAX: float = 2.0
+
+var _aim_error: Dictionary = {}   # Ship -> {speed_mult, turn_mult, until_ms}
+var _aim_rng := RandomNumberGenerator.new()
+
+## This bot's current reading of `target`, as multipliers on the truth. Held for
+## AIM_ERROR_HOLD_MS, then re-rolled - so a bot's shots stay coherently wrong for
+## a while rather than jittering around the right answer.
+func _target_aim_error(target: Ship) -> Dictionary:
+	var now_ms: int = Time.get_ticks_msec()
+	var held: Dictionary = _aim_error.get(target, {})
+	if not held.is_empty() and now_ms < int(held.get("until_ms", 0)):
+		return held
+	var speed_sd: float = aptitude.lead_speed_jitter if aptitude != null else 0.0
+	var turn_sd: float = aptitude.turn_rate_jitter if aptitude != null else 0.0
+	var rolled := {
+		speed_mult = clampf(1.0 + _aim_rng.randfn(0.0, speed_sd),
+			AIM_SPEED_MULT_MIN, AIM_SPEED_MULT_MAX) if speed_sd > 0.0 else 1.0,
+		turn_mult = clampf(1.0 + _aim_rng.randfn(0.0, turn_sd),
+			AIM_TURN_MULT_MIN, AIM_TURN_MULT_MAX) if turn_sd > 0.0 else 1.0,
+		until_ms = now_ms + AIM_ERROR_HOLD_MS,
+	}
+	_aim_error[target] = rolled
+	# Cheap housekeeping: drop readings of ships that are gone.
+	if _aim_error.size() > 24:
+		for k in _aim_error.keys():
+			if not is_instance_valid(k) or not k.is_alive():
+				_aim_error.erase(k)
+	return rolled
+
+## The rate `target` is believed to be turning at, radians/sec about +Y.
+##
+## Zero unless this bot reckons turns at all, and zero for anything it cannot
+## actually see: a rate of turn is something you read off a ship by watching it,
+## and a contact held on a last-known position is not being watched. Concealment
+## is not negotiable just because the bot is a good shot.
+func _believed_yaw_rate(target: Ship, contact: Dictionary) -> float:
+	if aptitude == null or not aptitude.turn_reckoning:
+		return 0.0
+	if contact.get("is_lkp", true):
+		return 0.0
+	if not is_instance_valid(target):
+		return 0.0
+	return target.angular_velocity.y * float(_target_aim_error(target).turn_mult)
+
+## Where to put the shells for `target`: the full firing solution, arc-aware and
+## with this bot's misreadings baked in. Returns null when there is no solution.
+##
+## `aim_point` is the point being led (already offset by target_aim_offset).
+func aim_lead_point(target: Ship, contact: Dictionary, aim_point: Vector3) -> Variant:
+	var shell_params = _ship.artillery_controller.get_shell_params()
+	if shell_params == null:
+		return null
+	var err := _target_aim_error(target)
+	var believed_vel: Vector3 = contact.velocity * float(err.speed_mult) \
+		/ ProjectileManager.get_shell_time_multiplier()
+	var yaw_rate: float = _believed_yaw_rate(target, contact)
+	var lead_result: Array
+	if absf(yaw_rate) > 0.0:
+		lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector_turning(
+			_ship.global_position, aim_point, believed_vel, yaw_rate, shell_params)
+	else:
+		lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+			_ship.global_position, aim_point, believed_vel, shell_params)
+	return lead_result[2]
+
 ## Whether the guns should be offered this contact at all: a live spot always, an
 ## LKP only while it is fresh enough that dead reckoning still means something.
 func is_engageable_contact(sol: Dictionary) -> bool:
 	if not sol.get("valid", false):
 		return false
-	return not sol.is_lkp or sol.age <= LKP_TARGET_MAX_AGE
+	return not sol.is_lkp or sol.age <= lkp_target_max_age()
 
 ## Where the turrets should point for `target` given what the bot believes about
 ## it, aim offset included. Returns null when there is no usable solution, which
@@ -1172,14 +1280,10 @@ func can_hit_target(target: Ship) -> bool:
 
 	var adjusted_target_pos = sol_pos + contact.basis * target_aim_offset(target)
 
-	# Use leading calculation so the sim check matches what we'd actually fire
-	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-		_ship.global_position,
-		adjusted_target_pos,
-		contact.velocity / ProjectileManager.get_shell_time_multiplier(),
-		shell_params
-	)
-	var lead_pos = lead_result[2]
+	# Lead exactly the way this bot would actually fire - same arc reckoning,
+	# same misjudgement - so the terrain check answers the question about the
+	# shot being taken rather than about an idealised one.
+	var lead_pos = aim_lead_point(target, contact, adjusted_target_pos)
 	if lead_pos == null:
 		return false
 
@@ -1435,7 +1539,66 @@ func get_presumed_contacts(lead: float = 0.0) -> Array[Dictionary]:
 	if _ship == null or _ship.team == null:
 		return []
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if aptitude != null:
+		_refresh_intuition(server_node)
+		_presumption.configure(aptitude.use_spawn_line, aptitude.radius_growth_mult,
+			aptitude.kinematic_reckoning, _intuition)
 	return _presumption.contacts(_ship.team.team_id, server_node, lead)
+
+## How far ahead this bot solves for when choosing where to sit. See
+## BotAptitude.lead_horizon: zero is "where is everyone now", which is how a ship
+## ends up behind an island that masks it this instant and leaves it in the open
+## by the time the push it could see coming actually arrives.
+func lead_horizon() -> float:
+	return aptitude.lead_horizon if aptitude != null else 0.0
+
+# ---------------------------------------------------------------------------
+# INTUITION - the sanctioned cheat
+# ---------------------------------------------------------------------------
+## Ground-truth fixes on enemy ships, Ship -> {position, velocity, rotation,
+## time}, taken every BotAptitude.intuition_interval seconds and never in
+## between. This is the one place a bot is handed something it did not earn, so
+## it is worth being exact about what it is and is not.
+##
+## It is a periodic FIX, not a feed: between refreshes the error bar opens like
+## any other anchor's, so what an ace plays like is somebody who checks the
+## minimap and reasons well from it, not somebody seeing through islands.
+##
+## And it is walled off. This table is read by EnemyPresumption and by nothing
+## else - get_contact_solution() reads the LKP tables, so an intuition fix is
+## structurally incapable of producing an aim point, exactly like a deduction.
+## An ace positions better. It does not shoot at what it cannot see.
+var _intuition: Dictionary = {}
+var _intuition_last_refresh: float = -INF
+
+func _refresh_intuition(server_node: GameServer) -> void:
+	if server_node == null or aptitude == null or _ship == null or _ship.team == null:
+		return
+	var interval: float = aptitude.intuition_interval
+	if interval <= 0.0:
+		if not _intuition.is_empty():
+			_intuition.clear()
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - _intuition_last_refresh < interval:
+		# Drop anyone who died since the last fix so a sunk ship cannot go on
+		# steering this bot around a patch of empty water.
+		for enemy in _intuition.keys():
+			if not is_instance_valid(enemy) or not enemy.is_alive():
+				_intuition.erase(enemy)
+		return
+	_intuition_last_refresh = now
+	_intuition.clear()
+	var enemy_team: int = 1 - _ship.team.team_id
+	for enemy in server_node.get_team_ships(enemy_team):
+		if not is_instance_valid(enemy) or not enemy.is_alive():
+			continue
+		_intuition[enemy] = {
+			position = Vector3(enemy.global_position.x, 0.0, enemy.global_position.z),
+			velocity = enemy.linear_velocity,
+			rotation = enemy.rotation.y,
+			time = now,
+		}
 
 ## How close a presumed enemy has to be before it constrains where this ship
 ## hides - about the range from which something could actually shoot back.
@@ -1458,13 +1621,21 @@ const PRESUMED_THREAT_LIMIT: int = 3
 ## a ship refusing every island on the map on the strength of a shrug.
 const PRESUMED_THREAT_MAX_RADIUS: float = 6000.0
 
-func _gather_threat_positions(ship: Ship) -> Array:
+func _gather_threat_positions(ship: Ship, lead: float = 0.0) -> Array:
 	"""Threat positions the bot legitimately knows about: currently visible
 	enemies, plus last-known positions still fresh enough to mean something
 	(dead-reckoned forward). Stale contacts are dropped — see THREAT_LKP_MAX_AGE.
 	Made up to a full picture with the nearest presumed contacts, so a position
 	is judged against the enemies that are probably there and not only against
-	the ones that happen to be visible from it."""
+	the ones that happen to be visible from it.
+
+	`lead` asks the whole question `lead` seconds from now instead of this
+	instant, for deciding where to BE rather than where to have been. Cover is
+	the case that needs it: an island that masks a ship from where the enemy
+	stands right now is worth nothing if the enemy will have rounded it by the
+	time the ship arrives. Every source is carried forward, not just the guesses
+	— a future picture with half its contacts left in the present is not a
+	picture of anything."""
 	var threats: Array = []
 	var server_node: GameServer = ship.get_node_or_null("/root/Server")
 	if server_node == null:
@@ -1473,7 +1644,7 @@ func _gather_threat_positions(ship: Ship) -> Array:
 	for enemy in server_node.get_valid_targets(ship.team.team_id):
 		if is_instance_valid(enemy) and enemy.health_controller.is_alive():
 			held[enemy] = true
-			threats.append(enemy.global_position)
+			threats.append(_led_position(enemy.global_position, enemy.linear_velocity, lead))
 	var unspotted = server_node.get_unspotted_enemies(ship.team.team_id)
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship):
@@ -1484,13 +1655,13 @@ func _gather_threat_positions(ship: Ship) -> Array:
 		if float(sol.age) > THREAT_LKP_MAX_AGE:
 			continue
 		held[enemy_ship] = true
-		threats.append(sol.position)
+		threats.append(_led_position(sol.position, sol.velocity, lead))
 	# Everything else the enemy owns is somewhere too, and the whole point of
 	# taking cover is to not be shot by it. Without this a cruiser tucks itself
 	# behind an island from the one contact it can see and parks broadside to
 	# the flank nobody has looked at all game.
 	var guesses: Array[Dictionary] = []
-	for guess in get_presumed_contacts():
+	for guess in get_presumed_contacts(lead):
 		if held.has(guess.ship):
 			continue
 		if float(guess.radius) > PRESUMED_THREAT_MAX_RADIUS:
@@ -1504,6 +1675,21 @@ func _gather_threat_positions(ship: Ship) -> Array:
 	for k in range(mini(guesses.size(), PRESUMED_THREAT_LIMIT)):
 		threats.append(guesses[k].position)
 	return threats
+
+## Runs an observed position forward on its observed course. Held to the same
+## horizon the presumption model trusts a course over, so a lead never turns into
+## a confident claim about a ship that has had time to do something else.
+func _led_position(pos: Vector3, vel: Vector3, lead: float) -> Vector3:
+	if lead <= 0.0:
+		return pos
+	var flat := Vector3(vel.x, 0.0, vel.z)
+	var speed := flat.length()
+	if speed < 1.0:
+		return pos
+	if speed > EnemyPresumption.KINEMATIC_SPEED_CAP:
+		flat = flat / speed * EnemyPresumption.KINEMATIC_SPEED_CAP
+	var trust: float = clampf(1.0 - lead / EnemyPresumption.KINEMATIC_TRUST_HORIZON, 0.0, 1.0)
+	return pos + flat * lead * trust
 
 func get_navigator() -> ShipNavigator:
 	"""Expose the owning BotControllerV4 navigator to skills via SkillContext."""
@@ -1988,13 +2174,8 @@ func engage_target(target: Ship):
 		return
 	_ship.secondary_controller.enabled = true
 
-	var lead_result = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-		_ship.global_position,
-		adjusted_target_pos,
-		contact.velocity / ProjectileManager.get_shell_time_multiplier(),
-		_ship.artillery_controller.get_shell_params()
-	)
-	var target_lead = lead_result[2]
+	# Arc-aware, and wrong in whatever way this bot's aptitude is wrong.
+	var target_lead = aim_lead_point(target, contact, adjusted_target_pos)
 
 	if target_lead == null:
 		return

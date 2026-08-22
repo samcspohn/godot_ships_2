@@ -121,6 +121,45 @@ public:
 	static Array calculate_leading_launch_vector(const Vector3 &start_pos, const Vector3 &target_pos,
 		const Vector3 &target_velocity, const Ref<Resource> &shell_params);
 
+	/// Where a target under a constant rate of turn will be after `t` seconds.
+	///
+	/// Straight-line leading treats a ship as a point sliding along its velocity
+	/// vector. A ship that is turning is not doing that: it is travelling a
+	/// circular arc, and over a shell flight of ten or fifteen seconds a warship
+	/// under helm can end up several hundred metres off where its instantaneous
+	/// heading pointed. Leading a turning ship without this is what makes a shot
+	/// consistently miss to the outside of the turn.
+	///
+	/// The arc is the exact integral of a velocity rotating at a constant rate:
+	///     d(t) = v * sin(wt)/w  +  perp(v) * (1 - cos(wt))/w
+	/// where perp() rotates a vector +90 degrees about +Y, matching Godot's
+	/// rotation convention. As w approaches zero this reduces to v*t, so the
+	/// straight-line case falls out of the same expression rather than needing
+	/// its own path (a small-|w| branch guards the division only).
+	///
+	/// Vertical motion is left as plain v.y*t - yaw does not tilt a hull.
+	/// @param pos Current target position
+	/// @param vel Current target velocity
+	/// @param yaw_rate Rate of turn about +Y, radians per second
+	/// @param t Seconds to advance
+	/// @return Position after `t` seconds of constant-rate turn
+	static Vector3 advance_turning(const Vector3 &pos, const Vector3 &vel,
+		double yaw_rate, double t);
+
+	/// Calculate launch vector to lead a TURNING target with drag effects.
+	///
+	/// Identical to calculate_leading_launch_vector except that the target is
+	/// carried forward along its arc (see advance_turning) at each refinement
+	/// step instead of along a straight line. With yaw_rate = 0 the two agree.
+	/// @param start_pos Starting position
+	/// @param target_pos Current target position
+	/// @param target_velocity Target velocity vector
+	/// @param target_yaw_rate Target rate of turn about +Y, radians per second
+	/// @param shell_params Resource with speed, drag, vt, tau properties
+	/// @return Array [launch_vector, time_to_target, predicted_target_position] or [null, -1, null] if no solution
+	static Array calculate_leading_launch_vector_turning(const Vector3 &start_pos, const Vector3 &target_pos,
+		const Vector3 &target_velocity, double target_yaw_rate, const Ref<Resource> &shell_params);
+
 	/// Calculate the impact position where y = 0
 	/// @param start_pos Starting position
 	/// @param launch_velocity Initial velocity vector

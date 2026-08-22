@@ -626,10 +626,14 @@ func _update_shell_threats() -> void:
 
 ## How wrong a torpedo-derived position might be: where the error bar starts, and
 ## how fast it opens up per second of the torpedo's run. A destroyer that fired a
-## minute ago has had a minute to be somewhere else, at roughly the speed one
-## makes while repositioning after a launch.
-const TORPEDO_INFER_RADIUS_MIN: float = 500.0
-const TORPEDO_INFER_RADIUS_GROWTH: float = 15.0
+## minute ago has had a minute to be somewhere else, and a destroyer leaving a
+## launch is not loitering - it is running, at most of what it has, in whatever
+## direction it likes. Sized against a DD's flank speed rather than a stroll:
+## anything smaller floors out at EnemyPresumption.RADIUS_MIN and the contact
+## comes back out reading as certain as a fresh sighting, which is exactly what
+## routing intel through an error bar was supposed to prevent.
+const TORPEDO_INFER_RADIUS_MIN: float = 800.0
+const TORPEDO_INFER_RADIUS_GROWTH: float = 25.0
 
 ## Record what a projectile gives away about whoever fired it.
 ##
@@ -705,7 +709,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# Gunfire is different: the flash IS the observation. A ship that fires has
 	# shown where it is at that instant, so this stays real intel the guns may
 	# shoot back at - kept honest by recording it stationary and by the short
-	# window Behavior.LKP_TARGET_MAX_AGE allows.
+	# window Behavior.lkp_target_max_age() allows.
 	server_node.record_observed_contact_at(my_team_id, s, launch_pos, observed_time)
 
 
@@ -1338,6 +1342,31 @@ func _emit_debug_draws() -> void:
 	# --- q) World-space label (nav state + skill info) ---
 	if behavior != null:
 		var lines: PackedStringArray = PackedStringArray()
+
+		# Aptitude first, with the dials it actually turned on. Naming the tier
+		# alone would say what this bot was dealt but not whether any of it took
+		# effect, and the whole point of a tier is the behaviour behind it.
+		# Dormant dials are left off so the low tiers stay short.
+		var apt: BotAptitude = behavior.aptitude
+		if apt != null:
+			var apt_bits: PackedStringArray = PackedStringArray()
+			apt_bits.append("lkp %.0fs" % apt.lkp_target_max_age)
+			if apt.lead_speed_jitter > 0.0:
+				apt_bits.append("spd±%.0f%%" % (apt.lead_speed_jitter * 100.0))
+			if apt.turn_reckoning:
+				apt_bits.append("arc" if apt.turn_rate_jitter <= 0.0
+					else "arc±%.0f%%" % (apt.turn_rate_jitter * 100.0))
+			if not apt.use_spawn_line:
+				apt_bits.append("no-line")
+			if apt.radius_growth_mult != 1.0:
+				apt_bits.append("blur x%.1f" % apt.radius_growth_mult)
+			if apt.lead_horizon > 0.0:
+				apt_bits.append("lead %.0fs" % apt.lead_horizon)
+			if apt.kinematic_reckoning:
+				apt_bits.append("kin")
+			if apt.intuition_interval > 0.0:
+				apt_bits.append("fix %.0fs" % apt.intuition_interval)
+			lines.append("[%s] %s" % [apt.level_name(), " · ".join(apt_bits)])
 
 		var state_names = ["NORMAL", "EMERGENCY"]
 		if navigator != null:

@@ -298,6 +298,31 @@ func find_best_game_server():
 # Spawn positions: Ships are grouped into 3 clusters (left flank, center, right flank)
 # Each cluster contains one of each class (DD, CA, BB), with the bonus class adding a 4th to one cluster
 # Cluster order is shuffled so the player can end up on either flank or in the middle
+## Aptitude for the bots in a single-player lineup - see BotAptitude.
+##
+## Empty means deal each side a spread (BotAptitude.deal): mostly regulars, a few
+## recruits, a few veterans, an ace or two. Both sides are dealt separately from
+## the same weights, so neither gets a handicap and neither gets the same team
+## twice.
+##
+## Put a tier name here ("ACE", "RECRUIT", ...) to force every bot to it instead,
+## which is the knob to reach for when tuning one tier and wanting a whole match
+## of it to watch.
+const SINGLE_PLAYER_BOT_APTITUDE: String = ""
+
+## Tiers for `count` bots: the forced tier if one is set above, otherwise a dealt
+## spread.
+func _deal_bot_aptitudes(count: int) -> Array:
+	if not SINGLE_PLAYER_BOT_APTITUDE.is_empty():
+		var forced: Array = []
+		for i in range(count):
+			forced.append(SINGLE_PLAYER_BOT_APTITUDE)
+		return forced
+	var dealt: Array = []
+	for lv in BotAptitude.deal(count):
+		dealt.append(lv)
+	return dealt
+
 func create_balanced_single_player_teams(player_name: String, player_ship: String) -> Dictionary:
 	var team = {}
 
@@ -467,6 +492,17 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 
 	var bot_id_counter = 1001
 
+	# One spread per side. The player's team is a bot short - the player is in it
+	# - so the two deals are for different counts and are drawn separately.
+	var player_team_bot_count: int = 0
+	for entry in spawn_list:
+		if not entry["is_player"]:
+			player_team_bot_count += 1
+	var player_team_aptitudes: Array = _deal_bot_aptitudes(player_team_bot_count)
+	var enemy_team_aptitudes: Array = _deal_bot_aptitudes(spawn_list.size())
+	var player_team_apt_idx: int = 0
+	var enemy_team_apt_idx: int = 0
+
 	# Fill player's team using the spawn list
 	for spawn_pos in range(spawn_list.size()):
 		var entry = spawn_list[spawn_pos]
@@ -486,8 +522,10 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 				"player_id": bot_id,
 				"ship": entry["ship"],
 				"is_bot": true,
+				"aptitude": player_team_aptitudes[player_team_apt_idx],
 				"spawn_position": spawn_pos
 			}
+			player_team_apt_idx += 1
 
 	# Fill enemy team - same spawn list for mirrored tier balance
 	for spawn_pos in range(spawn_list.size()):
@@ -499,8 +537,10 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 			"player_id": bot_id,
 			"ship": entry["ship"],
 			"is_bot": true,
+			"aptitude": enemy_team_aptitudes[enemy_team_apt_idx],
 			"spawn_position": spawn_pos
 		}
+		enemy_team_apt_idx += 1
 
 	# Log team composition for debugging
 	_log_team_composition(team)

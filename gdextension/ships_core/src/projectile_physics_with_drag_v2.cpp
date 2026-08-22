@@ -29,6 +29,8 @@ void ProjectilePhysicsWithDragV2::_bind_methods() {
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_velocity_at_time", "launch_vector", "time", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_velocity_at_time);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_launch_vector", "start_pos", "target_pos", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_launch_vector);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_leading_launch_vector", "start_pos", "target_pos", "target_velocity", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_leading_launch_vector);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("advance_turning", "pos", "vel", "yaw_rate", "t"), &ProjectilePhysicsWithDragV2::advance_turning);
+	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_leading_launch_vector_turning", "start_pos", "target_pos", "target_velocity", "target_yaw_rate", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_leading_launch_vector_turning);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_impact_position", "start_pos", "launch_velocity", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_impact_position);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_absolute_max_range", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_absolute_max_range);
 	ClassDB::bind_static_method("ProjectilePhysicsWithDragV2", D_METHOD("calculate_max_range_from_angle", "angle", "shell_params"), &ProjectilePhysicsWithDragV2::calculate_max_range_from_angle);
@@ -625,6 +627,89 @@ Array ProjectilePhysicsWithDragV2::calculate_leading_launch_vector(const Vector3
 	Array final_result = calculate_launch_vector(start_pos, final_target_pos, shell_params);
 
 	// Return launch vector, time to target, and the final target position
+	if (final_result[0].get_type() == Variant::NIL) {
+		result.push_back(Variant()); // null
+		result.push_back(-1.0);
+		result.push_back(Variant()); // null
+	} else {
+		result.push_back(final_result[0]);
+		result.push_back(final_result[1]);
+		result.push_back(final_target_pos);
+	}
+	return result;
+}
+
+Vector3 ProjectilePhysicsWithDragV2::advance_turning(const Vector3 &pos, const Vector3 &vel,
+	double yaw_rate, double t) {
+
+	// Below this rate the arc and the straight line are indistinguishable over
+	// any shell flight, and the 1/w terms below would be dividing by noise.
+	const double MIN_YAW_RATE = 1e-5;
+	if (Math::abs(yaw_rate) < MIN_YAW_RATE) {
+		return pos + vel * t;
+	}
+
+	const Vector3 flat_vel(vel.x, 0.0, vel.z);
+	// perp(v): v rotated +90 degrees about +Y. Godot's Y rotation maps
+	// (x, z) -> (x*cos + z*sin, -x*sin + z*cos), so at 90 degrees that is
+	// (z, -x).
+	const Vector3 perp(flat_vel.z, 0.0, -flat_vel.x);
+
+	const double a = yaw_rate * t;
+	const double along = Math::sin(a) / yaw_rate;
+	const double across = (1.0 - Math::cos(a)) / yaw_rate;
+
+	Vector3 disp = flat_vel * along + perp * across;
+	disp.y = vel.y * t;
+	return pos + disp;
+}
+
+Array ProjectilePhysicsWithDragV2::calculate_leading_launch_vector_turning(const Vector3 &start_pos, const Vector3 &target_pos,
+	const Vector3 &target_velocity, double target_yaw_rate, const Ref<Resource> &shell_params) {
+
+	Array result;
+
+	double v0, beta, vt, tau;
+	if (!_extract_params(shell_params, v0, beta, vt, tau)) {
+		result.push_back(Variant()); // null
+		result.push_back(-1.0);
+		result.push_back(Variant()); // null
+		return result;
+	}
+
+	// Same initial estimate as the straight-line solver: time to the target's
+	// present position, ignoring drag, which converges in very few steps.
+	Array initial_result = ProjectilePhysics::calculate_launch_vector(start_pos, target_pos, v0);
+
+	if (initial_result[0].get_type() == Variant::NIL) {
+		result.push_back(Variant()); // null
+		result.push_back(-1.0);
+		result.push_back(Variant()); // null
+		return result; // No solution exists in basic physics
+	}
+
+	double time_estimate = initial_result[1];
+
+	// Refine: each pass carries the target along its ARC for the current flight
+	// time, then re-solves for the flight time to that new point.
+	for (int i = 0; i < 3; i++) {
+		Vector3 predicted_pos = advance_turning(target_pos, target_velocity, target_yaw_rate, time_estimate);
+
+		Array iter_result = calculate_launch_vector(start_pos, predicted_pos, shell_params);
+
+		if (iter_result[0].get_type() == Variant::NIL) {
+			result.push_back(Variant()); // null
+			result.push_back(-1.0);
+			result.push_back(Variant()); // null
+			return result;
+		}
+
+		time_estimate = iter_result[1];
+	}
+
+	Vector3 final_target_pos = advance_turning(target_pos, target_velocity, target_yaw_rate, time_estimate);
+	Array final_result = calculate_launch_vector(start_pos, final_target_pos, shell_params);
+
 	if (final_result[0].get_type() == Variant::NIL) {
 		result.push_back(Variant()); // null
 		result.push_back(-1.0);
