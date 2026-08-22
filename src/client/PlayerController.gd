@@ -20,9 +20,22 @@ var targeting_enabled: bool = false # True when mouse can select targets
 # the cursor is released (Ctrl held) and the left mouse button is down. A
 # release that moved less than BOX_SELECT_DRAG_THRESHOLD px is treated as a
 # plain click (ship target selection) instead of a box-select.
+#
+# Both endpoints come from the event's own `position`, never from
+# get_viewport().get_mouse_position(): that returns polled cursor state which
+# only advances as mouse events are processed, and mouse motion is accumulated
+# and flushed once per frame while button events flush as they arrive. A drag
+# fast enough to finish inside a frame would have its release read back the
+# *press* position, collapsing the rect below the threshold and silently
+# demoting the whole box-select to a plain click.
 const BOX_SELECT_DRAG_THRESHOLD: float = 6.0
 var _box_select_start: Vector2 = Vector2.ZERO
 var _box_select_dragging: bool = false
+
+# Temporary diagnostic for the box-select/aim-UI bug: flip to true to log what
+# the drag rect was, where each airborne squadron projected to on screen, and
+# what selection was sent to the server. Remove once the cause is pinned down.
+const BOX_SELECT_DEBUG: bool = false
 
 # Timing variables
 var double_click_timer: float = 0.3 # Maximum time between clicks to register as double click
@@ -134,15 +147,15 @@ func _input(event: InputEvent) -> void:
 			_cameraInput = event.relative
 		elif _box_select_dragging:
 			if cam and cam.ui:
-				cam.ui.update_box_select(_rect_from_points(_box_select_start, get_viewport().get_mouse_position()))
+				cam.ui.update_box_select(_rect_from_points(_box_select_start, event.position))
 	elif event is InputEventMouseButton:
 		if not mouse_captured: # Only handle mouse clicks when cursor is released
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					_box_select_start = get_viewport().get_mouse_position()
+					_box_select_start = event.position
 					_box_select_dragging = true
 				else:
-					var release_pos := get_viewport().get_mouse_position()
+					var release_pos: Vector2 = event.position
 					if _box_select_dragging and release_pos.distance_to(_box_select_start) > BOX_SELECT_DRAG_THRESHOLD:
 						_box_select_squadrons(_rect_from_points(_box_select_start, release_pos))
 					else:
@@ -237,13 +250,43 @@ func _box_select_squadrons(rect: Rect2) -> void:
 	var selected: Array[int] = []
 	for i in range(aviation.squadrons.size()):
 		var squadron: Squadron = aviation.squadrons[i]
-		if not squadron.active or squadron.ground_marker == null:
+		if not squadron.active:
 			continue
-		if _world_point_in_screen_rect(squadron.ground_marker.global_position, rect):
+		if _squadron_in_screen_rect(squadron, rect):
 			selected.append(i)
 	if selected.size() > 0:
 		current_weapon_controller = aviation
+	if BOX_SELECT_DEBUG:
+		print("[boxsel] rect=%s selected=%s cwc_is_aviation=%s cam=%s" % [
+			rect, selected, current_weapon_controller == aviation, cam])
 	aviation.set_shell_indices.rpc_id(1, selected)
+
+# A squadron counts as boxed if any part of it falls inside the rect: the
+# aircraft themselves, the formation leader they fly on, or the ground marker
+# below them. Testing the ground marker alone (as this used to) meant a box
+# drawn around the planes in the sky missed squadrons whose marker - projected
+# from sea level, far from the planes on screen at altitude - happened to fall
+# outside it.
+func _squadron_in_screen_rect(squadron: Squadron, rect: Rect2) -> bool:
+	if BOX_SELECT_DEBUG and cam:
+		var marker_pos: Variant = squadron.ground_marker.global_position if squadron.ground_marker != null else null
+		print("    [boxsel] node_world=%s node_screen=%s marker_world=%s marker_screen=%s planes=%d" % [
+			squadron.node.global_position if squadron.node != null else null,
+			cam.unproject_position(squadron.node.global_position) if squadron.node != null else null,
+			marker_pos,
+			cam.unproject_position(marker_pos) if marker_pos != null else null,
+			squadron.aircraft.size()])
+	if squadron.node != null and _world_point_in_screen_rect(squadron.node.global_position, rect):
+		return true
+	for plane in squadron.aircraft:
+		if plane.dead or not plane.visible:
+			continue
+		if _world_point_in_screen_rect(plane.global_position, rect):
+			return true
+	if squadron.ground_marker != null and squadron.ground_marker.visible:
+		if _world_point_in_screen_rect(squadron.ground_marker.global_position, rect):
+			return true
+	return false
 
 func _world_point_in_screen_rect(world_pos: Vector3, rect: Rect2) -> bool:
 	if not cam:

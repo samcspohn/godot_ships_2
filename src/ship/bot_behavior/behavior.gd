@@ -2207,16 +2207,42 @@ func _squadron_operating_radius(squad: Squadron) -> float:
 	var p := squad.params.p() as AircraftParams
 	return minf(p._range, p.speed * p.fuel_time * AVIATION_TRANSIT_FUEL_FRACTION)
 
-# Seconds for this squadron to reach `point` from where it is now - from the
-# carrier while it is still on deck.
-func _squadron_eta(squad: Squadron, point: Vector2) -> float:
+# Seconds from now until this squadron's ordnance is actually in the water, as
+# opposed to how long it takes to get near the target. The difference matters,
+# and it is not small: a run is flown to an entry point attack_descent_radius
+# out along the attack direction and only then down the run-in, so a beam-on
+# attack ordered from a rally that sits off the beam flies a dog-leg rather than
+# a straight line. Torpedo squadrons then drop short of the mark and the fish
+# swim the rest (process_attack_point), and the swim counts too.
+#
+# This is the figure the release deadline is measured against - see
+# _run_strike_group. A group that waits for a broadside using a straight-line
+# ETA is a group that runs its tanks dry on the dog-leg it forgot about, turns
+# for home with its ordnance still aboard, and pays a full cycle for nothing.
+func _strike_eta(squad: Squadron, point: Vector2, dir: Vector2) -> float:
 	var speed := _squadron_speed(squad)
 	if speed <= 0.0:
 		return INF
 	var from := Vector2(_ship.global_position.x, _ship.global_position.z)
 	if squad.active:
 		from = Vector2(squad.node.global_position.x, squad.node.global_position.z)
-	return from.distance_to(point) / speed
+	var run := dir
+	if run.length_squared() < 0.0001:
+		run = Vector2(0.0, 1.0)
+	else:
+		run = run.normalized()
+	var p := squad.params.p() as AircraftParams
+	var plane: Aircraft = squad.aircraft[0]
+	var drop := plane.process_attack_point(point, run)
+	var entry := drop - run * (p.attack_descent_radius as float)
+	var eta: float = (from.distance_to(entry) + entry.distance_to(drop)) / speed
+	# Swinging from the transit heading onto the run-in is flown, not teleported:
+	# at the turning radius the squadron actually has, a 90-degree hook onto the
+	# beam is a real slice of the tank.
+	var approach := entry - from
+	if approach.length_squared() > 1.0:
+		eta += p.turning_radius * absf(approach.normalized().angle_to(run)) / speed
+	return eta + plane.ordnance_flight_time()
 
 # Share of its roster the squadron has on strength right now.
 func _squadron_strength(av: AviationController, index: int, squad: Squadron) -> float:
@@ -2265,6 +2291,168 @@ static func _ship_aa_reach(other: Ship) -> float:
 	if other.aaa_controller == null or other.aaa_controller.get_params() == null:
 		return 0.0
 	return other.aaa_controller.get_params()._range
+
+# Damage that same ship does inside that reach, per second. Reach and dps are
+# read separately and per-ship rather than rolled into one "threat" number,
+# because they answer different questions: reach says where the air group may
+# not go, dps says which of two targets it costs less to attack. A short-ranged
+# ship with heavy mounts and a long-ranged one with light mounts are opposite
+# answers to those two questions, and ships will carry different mounts.
+static func _ship_aa_dps(other: Ship) -> float:
+	if other == null or not is_instance_valid(other) or not other.is_alive():
+		return 0.0
+	if other.aaa_controller == null or other.aaa_controller.get_params() == null:
+		return 0.0
+	return other.aaa_controller.get_params().dps
+
+
+# ── AA exposure ─────────────────────────────────────────────────────────────
+# What attacking a given ship actually costs, in aircraft. AA fires on whatever
+# is inside its envelope (see AAAController), so the price of a run is the time
+# the squadron spends inside every envelope that covers the approach, times what
+# each of those ships does per second. That is a number in hit points, which is
+# the only form in which "this target is defended and that one is not" can be
+# compared against "this target is worth more than that one".
+#
+# The whole final leg is priced, not just the drop point: a squadron flies in
+# along the attack direction from attack_descent_radius out and overflies the
+# mark afterwards, and most of the fire it takes is on those legs rather than at
+# the instant of release.
+
+## Length of `segment` (from -> to) that lies inside the circle (centre, radius).
+## Standard ray/circle clip, kept explicit because it runs per threat per
+## candidate target every tick.
+static func _segment_in_circle(from: Vector2, to: Vector2, centre: Vector2, radius: float) -> float:
+	var d := to - from
+	var len_sq := d.length_squared()
+	if len_sq < 0.0001 or radius <= 0.0:
+		return 0.0
+	var f := from - centre
+	var b := 2.0 * f.dot(d)
+	var c := f.length_squared() - radius * radius
+	var disc := b * b - 4.0 * len_sq * c
+	if disc <= 0.0:
+		return 0.0
+	var root := sqrt(disc)
+	var t0 := clampf((-b - root) / (2.0 * len_sq), 0.0, 1.0)
+	var t1 := clampf((-b + root) / (2.0 * len_sq), 0.0, 1.0)
+	if t1 <= t0:
+		return 0.0
+	return (t1 - t0) * sqrt(len_sq)
+
+## Hit points a squadron expects to lose flying a run at `point` along `dir`,
+## given the threat picture built this tick.
+##
+## Three legs are priced, because the fire is taken on all three and mostly not
+## at the moment of release: the approach from the carrier's side in to the
+## entry point, the run-in itself, and the overfly afterwards. Modelling the
+## approach as a straight leg off the carrier rather than off the rally is
+## deliberate - the rally is chosen to be clear of everything, so from there on
+## the whole point is that the squadron has to cross whatever lies between. It
+## also makes the figure sensitive to which SIDE the target is attacked from: a
+## run threaded in past an escort is charged for that escort and the same run
+## from the open flank is not.
+##
+## Threats include the presumed positions of ships nobody is holding and the
+## remembered hot spots, exactly as the rally does - a target ringed by escorts
+## that have never been spotted is not a soft one.
+func _aa_exposure(point: Vector2, dir: Vector2, squad: Squadron) -> float:
+	var threats := _aviation_threat_cache
+	if threats.is_empty():
+		return 0.0
+	var speed := _squadron_speed(squad)
+	if speed <= 0.0:
+		return 0.0
+	var run := dir
+	if run.length_squared() < 0.0001:
+		return 0.0
+	run = run.normalized()
+	var p := squad.params.p() as AircraftParams
+	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var entry := point - run * (p.attack_descent_radius as float)
+	var egress := point + run * (p.attack_descent_radius as float)
+	var planes: float = maxf(float(squad.alive_count()), 1.0)
+	var damage: float = 0.0
+	for threat in threats:
+		var dps: float = threat.get("dps", 0.0)
+		if dps <= 0.0:
+			continue
+		# The envelope itself, not the margin the rally keeps clear of it: this
+		# is a run, and a run is meant to go inside. AVIATION_AA_MARGIN is
+		# standoff policy for loitering, not where the guns actually start.
+		var radius: float = maxf(float(threat.radius) - AVIATION_AA_MARGIN, 0.0)
+		var at: Vector2 = threat.position
+		var inside := _segment_in_circle(carrier, entry, at, radius) \
+				+ _segment_in_circle(entry, point, at, radius) \
+				+ _segment_in_circle(point, egress, at, radius)
+		if inside <= 0.0:
+			continue
+		# AAAController fires once a second at ONE plane in range, so a ship's
+		# dps is shared across whatever the squadron brings - the same reason
+		# the group forms up before going in (see _run_strike_group).
+		damage += dps * (inside / speed) / planes
+	return damage
+
+## The same figure as a share of one aircraft's hit points, so it can be
+## compared across squadrons carrying different airframes.
+func _aa_exposure_ratio(point: Vector2, dir: Vector2, squad: Squadron) -> float:
+	var p := squad.params.p() as AircraftParams
+	if p.hp <= 0.0:
+		return 0.0
+	return _aa_exposure(point, dir, squad) / p.hp
+
+
+# ── broadside presentation ──────────────────────────────────────────────────
+# A run is aimed along the target's beam so the abreast formation spreads across
+# the ship's length - torpedoes run over the broadside, bombs fall along the
+# keel (see _attack_direction). How much of that length the run actually crosses
+# is the sine of the angle between the run and the target's heading: beam-on is
+# the whole ship, bow-on is its width. That number is a direct multiplier on
+# what the drop is worth, so it belongs in target selection and in the decision
+# to release, not only in the aiming.
+#
+# It is not free to choose, either: set_attack() clamps the run into
+# MAX_ATTACK_ANGLE around the carrier-to-target line, so a beam-on drop is only
+# available when the carrier is already off the target's beam. Which is why this
+# is measured through the same clamp rather than assuming the beam is reachable.
+
+## Run the squadron would actually fly against the contact believed to be at
+## `point`, clamped into the approach cone. Side is chosen the way
+## _attack_direction chooses it - the beam nearer the approach, so the formation
+## never has to turn around.
+func _beam_run_direction(point: Vector2, sol: Dictionary) -> Vector2:
+	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var bearing := point - carrier
+	if bearing.length_squared() < 0.0001:
+		return Vector2(0.0, 1.0)
+	bearing = bearing.normalized()
+	# With no solution there is no heading to lie across, so the run is simply
+	# the direct approach - which is also what the cone would clamp it to.
+	if not sol.get("valid", false):
+		return bearing
+	var basis: Basis = sol.get("basis", Basis.IDENTITY)
+	var right := Vector2(basis.x.x, basis.x.z)
+	if right.length_squared() < 0.0001:
+		return bearing
+	right = right.normalized()
+	var beam: Vector2 = right if bearing.dot(right) >= 0.0 else -right
+	return Squadron.clamp_attack_direction(beam, point, carrier)
+
+## Share of the target's length the achievable run crosses: 1.0 fully beam-on,
+## falling to 0 bow-on. Contacts with no usable solution score 0.5 - unknown
+## heading, so neither rewarded nor waited for.
+func _broadside_quality(point: Vector2, sol: Dictionary) -> float:
+	if not sol.get("valid", false):
+		return 0.5
+	var basis: Basis = sol.get("basis", Basis.IDENTITY)
+	var forward := Vector2(-basis.z.x, -basis.z.z)
+	if forward.length_squared() < 0.0001:
+		return 0.5
+	forward = forward.normalized()
+	var dir := _beam_run_direction(point, sol)
+	if dir.length_squared() < 0.0001:
+		return 0.5
+	return clampf(absf(dir.normalized().cross(forward)), 0.0, 1.0)
 
 # Where a strike group forms up: on the carrier's side of the contact and clear
 # of the AA envelope, so squadrons waiting for the rest of the group can orbit
@@ -2360,13 +2548,17 @@ func _live_hot_spots() -> Array[Dictionary]:
 ## one nobody has laid eyes on.
 func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 	var threats: Array[Dictionary] = []
+	# Heaviest AA known anywhere, used to price the hot spots below.
+	var worst_dps: float = 0.0
 	if server != null and _ship.team != null:
 		for enemy in server.get_valid_targets(_ship.team.team_id):
 			var reach := _ship_aa_reach(enemy)
+			worst_dps = maxf(worst_dps, _ship_aa_dps(enemy))
 			if reach > 0.0:
 				threats.append({
 					position = Vector2(enemy.global_position.x, enemy.global_position.z),
-					radius = reach + AVIATION_AA_MARGIN})
+					radius = reach + AVIATION_AA_MARGIN,
+					dps = _ship_aa_dps(enemy)})
 		# Everything not currently held, at wherever it is believed to be: a
 		# last-known position while that is what there is, and otherwise the
 		# presumption built from the spawns and the clock (see
@@ -2377,19 +2569,54 @@ func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 			if float(guess.radius) > PRESUMED_THREAT_MAX_RADIUS:
 				continue
 			var reach := _ship_aa_reach(guess.ship)
+			worst_dps = maxf(worst_dps, _ship_aa_dps(guess.ship))
 			if reach <= 0.0:
 				continue
 			var at: Vector3 = guess.position
 			threats.append({
 				position = Vector2(at.x, at.z),
-				radius = reach + AVIATION_AA_MARGIN})
+				radius = reach + AVIATION_AA_MARGIN,
+				dps = _ship_aa_dps(guess.ship)})
+	# A hot spot is a place planes got hurt by something nobody has ever seen,
+	# so there is no ship to read a dps off. Priced at the heaviest AA on the
+	# board: the unknown is the one thing that could be anything, and the cost of
+	# under-rating it is a squadron routed back through whatever made the mark.
 	for spot in _live_hot_spots():
-		threats.append({position = spot.position, radius = AVIATION_HOT_SPOT_RADIUS})
+		threats.append({
+			position = spot.position,
+			radius = AVIATION_HOT_SPOT_RADIUS,
+			dps = worst_dps})
 	return threats
 
 ## This tick's threat picture, built once in aviation_engage() and read by every
 ## station the air group is sent to.
 var _aviation_threat_cache: Array[Dictionary] = []
+
+## The AA reach that actually bears on `point`: the widest envelope among the
+## threats that reach it, or come within a rally margin of doing so.
+##
+## _enemy_aa_reach() answers the same question with the maximum over the whole
+## board, which is only the same answer while every ship carries the same mounts.
+## Once they do not, the single longest-ranged ship on the map dictates the
+## stand-off of every squadron everywhere, including groups forming up against a
+## contact twenty kilometres away from it - the rally is shoved out, transit
+## grows, and the extra distance buys nothing because the ship that justified it
+## was never going to reach them.
+##
+## Falls back to `fallback` when nothing is known to bear on the point at all,
+## so a station worked out against a contact nobody is holding is still placed
+## with the board-wide figure rather than with none.
+func _aa_reach_near(point: Vector2, fallback: float) -> float:
+	var reach: float = 0.0
+	for threat in _aviation_threat_cache:
+		var radius: float = maxf(float(threat.radius) - AVIATION_AA_MARGIN, 0.0)
+		if radius <= 0.0:
+			continue
+		var at: Vector2 = threat.position
+		if at.distance_to(point) - radius > AVIATION_RALLY_MARGIN:
+			continue
+		reach = maxf(reach, radius)
+	return reach if reach > 0.0 else fallback
 
 ## Pushes a point out of every threat envelope it sits inside, straight away from
 ## whatever it is too close to.
@@ -2457,6 +2684,11 @@ func _spot_station(squad: Squadron, contact: Vector2, aa_reach: float, detect: f
 # instead and the best request each tick is the one actually put up.
 const LAUNCH_PRIORITY_STRIKE: float = 100.0
 const LAUNCH_PRIORITY_SPOT: float = 50.0
+# A strike sent after a contact nobody is holding, to be overhead when it is
+# found. Bottom of the pile: it is worth doing with a slot nothing else wants,
+# and never worth taking one off a squadron that has something to drop on now or
+# off the spotter that is going to give it something to drop on.
+const LAUNCH_PRIORITY_SEARCH: float = 25.0
 # A spotter outranks a strike squadron when there is nothing to strike: the air
 # group cannot work a contact nobody is holding, and the deck slot spent finding
 # one buys every squadron behind it a target.
@@ -2616,6 +2848,282 @@ func _is_hostile(other: Ship) -> bool:
 		return false
 	return true
 
+
+# ── air target selection ────────────────────────────────────────────────────
+# The air group does not attack whatever the guns are shooting at, and it does
+# not attack whatever is nearest. Those were both stand-ins for a choice nobody
+# was making, and they are the wrong choice for aviation specifically, because a
+# strike's value is decided almost entirely by two things the gun target says
+# nothing about:
+#
+#   * how the target is lying. A run crosses the target's length only when it
+#     comes in on the beam (see _broadside_quality); against a ship bow-on to
+#     the carrier the same squadron, the same ordnance and the same losses buy a
+#     fraction of the damage. This is a multiplier on the whole sortie.
+#   * what is defending it. AA is per-ship in reach AND in damage, and a ship
+#     sitting alone is a different proposition from the identical ship inside
+#     two escorts' envelopes - the second costs aircraft, and every aircraft is
+#     a full plane_regen_time to replace.
+#
+# Both are scored here, against everything the bot legitimately believes in, and
+# the result is what the hull stations off as well (see CVBehavior).
+# Deliberately sticky: the chosen contact is what the rally is measured from and
+# what the group is forming up against, so a target that changes every time two
+# candidates trade places by a percent is a group that never goes in at all.
+
+## How much better a rival has to score before the group swings onto it.
+const AIR_TARGET_STICK_MARGIN: float = 1.3
+## Worth of a run that crosses none of the target's length, relative to one that
+## crosses all of it. Not zero: a bow-on ship is still worth bombing, it is just
+## worth much less, and a floor here is what stops the group refusing every
+## target on the board because none of them happens to be beam-on right now.
+const AIR_TARGET_BROADSIDE_FLOOR: float = 0.35
+## Extra weight on a target that is already hurt - the same drop is likelier to
+## finish it, and a sunk ship stops shooting at everything.
+const AIR_TARGET_DAMAGE_BONUS: float = 0.5
+## What a contact nobody is holding is worth relative to the same ship on a live
+## spot, at the two ends of how findable it still is.
+##
+## A carrier is not restricted to what its team can already see, and charging a
+## flat discount for that pretended it was: a contact that went dark on our own
+## flank a moment ago lost to a live one clean across the map, when the air group
+## could simply have flown over and looked. Every aircraft carries eyes
+## (AircraftParams.spotting_range), so being unspotted costs the group a search on
+## arrival, not the target's worth - and how much of a search depends entirely on
+## how far the ship can have wandered off its dead reckoning by the time the
+## squadron gets there, against how wide a swathe the squadron sees on the way in
+## (see _refind_odds). Only a position vague enough that the sweep would genuinely
+## miss it falls back to the old flat discount.
+const AIR_TARGET_REFIND_BEST: float = 0.95
+const AIR_TARGET_REFIND_FLOOR: float = 0.35
+## Odds of re-finding the contact below which the deck is not committed to it: a
+## squadron sent after a position this vague arrives with nothing to drop on and
+## spends a whole cycle finding that out.
+const AIR_TARGET_SEARCH_MIN_ODDS: float = 0.5
+## Share of the score given up at the very edge of the group's reach. Transit is
+## cycle time and cycle time is the carrier's real DPM, so a near target beats an
+## equal far one - gently, since this must not overrule the two big terms above.
+const AIR_TARGET_TRANSIT_PENALTY: float = 0.25
+
+## The contact the whole air group is currently working. Read by the hull so it
+## stations off the ship its own squadrons are attacking (see
+## CVBehavior._strike_anchor) - a carrier stationed off some other contact puts
+## the target outside the approach cone and the beam-on run stops being
+## available at all.
+var _air_target: Ship = null
+
+func get_air_target() -> Ship:
+	if _air_target != null and (not is_instance_valid(_air_target) or not _air_target.is_alive()):
+		_air_target = null
+	return _air_target
+
+## Squadrons that could fly this strike: attack squadrons with planes on
+## strength, airborne or on deck. Used as the yardstick for reach and for what a
+## run costs, so selection is judged against the group that would actually go.
+func _strike_squadrons(av: AviationController) -> Array[int]:
+	var out: Array[int] = []
+	for i in range(av.squadrons.size()):
+		var squad: Squadron = av.squadrons[i]
+		if squad.aircraft.is_empty() or _squadron_is_spotter(squad):
+			continue
+		if av.get_alive_count(i) <= 0:
+			continue
+		out.append(i)
+	return out
+
+## Mean share of an aircraft the group expects to lose per plane running in on
+## `point` from the beam. Averaged over the squadrons rather than taken from one,
+## since they differ in speed, descent radius and toughness.
+func _group_aa_cost(av: AviationController, strike: Array[int], point: Vector2,
+		dir: Vector2) -> float:
+	if strike.is_empty():
+		return 0.0
+	var total: float = 0.0
+	for i in strike:
+		total += _aa_exposure_ratio(point, dir, av.squadrons[i])
+	return total / float(strike.size())
+
+## Furthest the group can usefully be tasked - the longest reach among the
+## squadrons that could fly. A contact only one long-legged bomber squadron can
+## get to is still a contact worth choosing over nothing.
+func _group_reach(av: AviationController, strike: Array[int]) -> float:
+	var reach: float = 0.0
+	for i in strike:
+		reach = maxf(reach, _squadron_operating_radius(av.squadrons[i]))
+	return reach
+
+## What a class is worth to a STRIKE, which is not what it is worth to the guns -
+## get_threat_class_weight() answers "how much does this thing hurt me", and a
+## carrier scores low there precisely because it has no guns worth fearing. From
+## the air the ordering is close to reversed: what matters is how easy the ship
+## is to hit with a spread, how little it survives, and how much it is still
+## going to do if it is left alone.
+static func _air_target_class_value(ship_class: Ship.ShipClass) -> float:
+	match ship_class:
+		# Big, slow, thin-skinned, and every minute it stays afloat is another
+		# strike arriving over our own fleet. Nothing else on the board pays
+		# back a sortie like this.
+		Ship.ShipClass.CV: return 1.4
+		# The fleet's damage, and a target a torpedo spread can hardly miss -
+		# deck armour is an argument about bombs, not about torpedoes.
+		Ship.ShipClass.BB: return 1.0
+		Ship.ShipClass.CA: return 0.7
+		# Small, fast and turning hard: most of a spread misses, and what does
+		# connect kills something cheap. Worth striking when it is what there is.
+		Ship.ShipClass.DD: return 0.5
+	return 1.0
+
+## What one strike on `enemy` is worth, all in. Zero means do not attack it.
+func _air_target_score(av: AviationController, strike: Array[int], enemy: Ship,
+		sol: Dictionary, reach: float) -> float:
+	if not sol.get("valid", false):
+		return 0.0
+	var pos: Vector3 = sol.position
+	var at := Vector2(pos.x, pos.z)
+	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var dist := carrier.distance_to(at)
+
+	var score := _air_target_class_value(enemy.ship_class)
+	if score <= 0.0:
+		return 0.0
+
+	var hc := enemy.health_controller
+	if hc != null and hc.max_hp > 0.0:
+		var hp_ratio: float = clampf(hc.current_hp / hc.max_hp, 0.0, 1.0)
+		score *= 1.0 + AIR_TARGET_DAMAGE_BONUS * (1.0 - hp_ratio)
+
+	# How the target is lying, through the approach cone the run is actually
+	# held to - so this is what the drop would achieve from where the carrier
+	# is standing, not what it would achieve in the abstract.
+	var quality := _broadside_quality(at, sol)
+	score *= AIR_TARGET_BROADSIDE_FLOOR + (1.0 - AIR_TARGET_BROADSIDE_FLOOR) * quality
+
+	# What delivering it costs, in aircraft. Priced along the run the group would
+	# actually fly, so escorts sitting off the approach side are charged for and
+	# ones on the far side are not.
+	score /= 1.0 + _group_aa_cost(av, strike, at, _beam_run_direction(at, sol))
+
+	# Transit. Inside the group's reach this is a mild preference for the nearer
+	# of two equals; outside it the contact is one no squadron can be sent to
+	# yet, and only wins when there is nothing else at all.
+	if reach > 0.0:
+		if dist <= reach:
+			score *= 1.0 - AIR_TARGET_TRANSIT_PENALTY * (dist / reach)
+		else:
+			score *= (1.0 - AIR_TARGET_TRANSIT_PENALTY) * reach / dist
+
+	# Nobody is holding it. What that costs is the search on arrival, priced by
+	# how well the group can expect that search to go - not a flat haircut on
+	# what the ship is worth.
+	if not _contact_is_strikeable(sol):
+		score *= lerpf(AIR_TARGET_REFIND_FLOOR, AIR_TARGET_REFIND_BEST,
+			_refind_odds(av, enemy, sol, dist))
+	return score
+
+## How well the air group can expect to find `enemy` again where it believes it
+## is, 1 for a mark it cannot plausibly have left and 0 for one it could be
+## anywhere in. This is the whole difference between a carrier and a gun ship:
+## the guns can only shoot what the team is holding, while the air group goes and
+## re-acquires the contact itself, so an unspotted ship is a search problem
+## rather than a target it does not have.
+##
+## Two quantities decide it. The searcher is the squadron with the best eyes on
+## THIS ship (see _air_detect_radius - a long-sighted spotter buys nothing
+## against a ship that has to be closed right up on), and its detection radius is
+## the swathe it sweeps on the way in. Against that, how far the ship can have
+## come off its dead reckoning by the time that squadron is overhead: the course
+## it was last seen holding, run out over the time already elapsed PLUS the
+## transit still to fly. Coupling the drift to the transit is what makes this
+## discriminate at all - a contact that went dark on the flank is all but certain
+## to still be in the sweep, and the identical contact across the map has had two
+## more minutes to be somewhere else by the time anyone gets there.
+##
+## Floored at the rate the presumption model already ages a position at, so a
+## contact last seen stopped is not treated as nailed to the water forever.
+func _refind_odds(av: AviationController, enemy: Ship, sol: Dictionary, dist: float) -> float:
+	if not sol.get("valid", false):
+		return 0.0
+	var sweep: float = 0.0
+	var speed: float = 0.0
+	for i in range(av.squadrons.size()):
+		var squad: Squadron = av.squadrons[i]
+		if squad.aircraft.is_empty() or av.get_alive_count(i) <= 0:
+			continue
+		if dist > _squadron_operating_radius(squad):
+			continue  # cannot get there, so it is not the one doing the finding
+		var detect := _air_detect_radius(squad, enemy)
+		if detect > sweep:
+			sweep = detect
+			speed = _squadron_speed(squad)
+	if sweep <= 0.0:
+		return 0.0
+	var eta: float = dist / speed if speed > 0.0 else 0.0
+	var vel: Vector3 = sol.velocity
+	var rate: float = maxf(Vector2(vel.x, vel.z).length(), EnemyPresumption.RADIUS_GROWTH)
+	var drift: float = rate * (float(sol.age) + eta)
+	return sweep / (sweep + drift)
+
+## Picks the contact the air group works this tick. Returns
+## {ship, sol, point, distance}, empty when there is nothing anywhere.
+## `gun_target` is only a candidate like any other - it is included so the ship
+## the hull is already shooting at is never overlooked, not so it wins.
+func _select_air_target(av: AviationController, server: GameServer, gun_target: Ship) -> Dictionary:
+	if server == null or _ship.team == null:
+		return {}
+	var strike := _strike_squadrons(av)
+	var reach := _group_reach(av, strike)
+
+	# Untyped on purpose: the two sources are a typed array and a dictionary's
+	# keys, and a typed array will not take the second.
+	var candidates: Array = []
+	candidates.append_array(server.get_valid_targets(_ship.team.team_id))
+	candidates.append_array(server.get_unspotted_enemies(_ship.team.team_id).keys())
+	if gun_target != null and not candidates.has(gun_target):
+		candidates.append(gun_target)
+
+	var held := get_air_target()
+	var best: Ship = null
+	var best_sol: Dictionary = {valid = false}
+	var best_score: float = 0.0
+	var held_score: float = 0.0
+	var seen: Dictionary = {}
+	for enemy: Ship in candidates:
+		if enemy == null or not is_instance_valid(enemy) or not enemy.is_alive():
+			continue
+		if seen.has(enemy) or not _is_hostile(enemy):
+			continue
+		seen[enemy] = true
+		var sol := get_contact_solution(enemy)
+		var score := _air_target_score(av, strike, enemy, sol, reach)
+		if score <= 0.0:
+			continue
+		if enemy == held:
+			held_score = score
+		if score > best_score:
+			best_score = score
+			best = enemy
+			best_sol = sol
+	if best == null:
+		_air_target = null
+		return {}
+	# Hold the current contact unless something is clearly better. The rally, the
+	# whole group's stand-off and the hull's own station are all measured from
+	# this ship; swapping it on a hair's difference resets all three.
+	if held != null and held != best and held_score > 0.0 \
+			and best_score < held_score * AIR_TARGET_STICK_MARGIN:
+		best = held
+		best_sol = get_contact_solution(held)
+	_air_target = best
+	var pos: Vector3 = best_sol.position if best_sol.get("valid", false) else best.global_position
+	var at := Vector2(pos.x, pos.z)
+	return {
+		ship = best,
+		sol = best_sol,
+		point = at,
+		distance = Vector2(_ship.global_position.x, _ship.global_position.z).distance_to(at),
+	}
+
+
 # Per-tick aviation control. Attack squadrons (bombers/torpedo planes) full-launch
 # and re-aim their drop point on the air target every tick - the gun target if
 # valid, otherwise the nearest known enemy (visible or unspotted last-known
@@ -2644,15 +3152,19 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	# what the bot believes about the ship in `point`: live while it is spotted,
 	# its frozen last-known contact once it is not
 	var sol: Dictionary = {valid = false}
-	var target_valid: bool = target != null and target.is_alive() and target.visible_to_enemy \
-			and _is_hostile(target)
-	if target_valid:
-		point = Vector2(target.global_position.x, target.global_position.z)
-		dist = _ship.global_position.distance_to(target.global_position)
-		air_ship = target
-		sol = get_contact_solution(target)
+	# The contact worth striking, not the one the guns happen to be on: how it is
+	# lying and what is defending it decide the sortie (see _select_air_target).
+	# `point` is the believed position throughout, so a contact held only on an
+	# LKP is worked where it has probably got to rather than where it went dark.
+	var pick := _select_air_target(av, server, target)
+	if not pick.is_empty():
+		air_ship = pick.ship
+		sol = pick.sol
+		point = pick.point
+		dist = pick.distance
 		has_air_target = true
 	else:
+		# Nothing scoreable - no solution on anything, or nothing hostile alive.
 		# _get_nearest_enemy() draws from both the spotted ships and the
 		# last-known positions of unspotted ones, so whether `point` is live or
 		# stale depends on which it picked - the contact solution sorts that out.
@@ -2673,6 +3185,11 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	if sol.get("valid", false):
 		var sol_pos: Vector3 = sol.position
 		loiter_point = Vector2(sol_pos.x, sol_pos.z)
+	# Whether a contact nobody is holding is worth sending the deck after anyway.
+	# Only consulted while it is unstrikeable; a held contact is not a search.
+	var refind: float = 1.0
+	if has_air_target and air_ship != null and not _contact_is_strikeable(sol):
+		refind = _refind_odds(av, air_ship, sol, dist)
 	var aa_reach := _enemy_aa_reach(server)
 	if has_air_target:
 		# Squadrons airborne, in reach and willing to work this contact, waiting
@@ -2757,10 +3274,23 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 				continue
 			if not _contact_is_strikeable(sol):
 				# Nothing solid to drop on yet - wait it out on station rather
-				# than committing a run that would release on empty water
+				# than committing a run that would release on empty water.
 				_aviation_in_group.erase(i)
 				if squad.active:
 					_shadow_contact(i, squad, loiter_point)
+					continue
+				# Still on deck. Go anyway when the contact is one the group can
+				# expect to FIND on arrival (see _refind_odds): the whole point
+				# of choosing an unspotted contact is that the air group goes and
+				# re-acquires it, and a deck that waits for somebody else to spot
+				# it first pays the transit twice - once for the spotter, then
+				# again from the deck afterwards. Ranked below a strike on a held
+				# contact and below the spotter that is going to do the finding,
+				# so this only ever takes a slot nothing better wanted.
+				if refind >= AIR_TARGET_SEARCH_MIN_ODDS:
+					var search_strength := _squadron_strength(av, i, squad)
+					if search_strength >= AVIATION_MIN_LAUNCH_STRENGTH:
+						_request_launch(i, LAUNCH_PRIORITY_SEARCH + search_strength)
 				continue
 			if not squad.active:
 				# On deck and willing. Ask for the next takeoff slot, and hold the
@@ -2783,7 +3313,11 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 		# clearance had just pushed it out of. Only the capped distance is
 		# remembered, so backing away from a threat never becomes licence to
 		# creep forward again next tick.
-		var rally := _clear_of_threats(_hold_rally(_strike_rally_point(point, aa_reach)))
+		# Seeded from the AA that actually bears on the contact rather than the
+		# heaviest on the board (see _aa_reach_near); _clear_of_threats below is
+		# what handles everything else the rally would otherwise sit inside.
+		var rally := _clear_of_threats(_hold_rally(
+			_strike_rally_point(point, _aa_reach_near(point, aa_reach))))
 		_run_strike_group(av, group, rally, waiting_for_more, point, air_ship, sol)
 	else:
 		# Not one contact anywhere, live or remembered - the tables have to be
@@ -2819,11 +3353,15 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	# With nothing to strike, finding something is the most valuable thing the
 	# deck can do, so a spotter takes the takeoff slot ahead of any strike
 	# squadron - which would otherwise spend it flying at a contact nobody holds.
-	var spot_priority: float = LAUNCH_PRIORITY_SPOT if has_air_target else LAUNCH_PRIORITY_BLIND_SPOT
+	# A contact chosen but not held counts as nothing to strike for this: the
+	# group is going after it either way, and the sortie that turns it into a
+	# target the group may actually drop on is this one.
+	var spot_priority: float = LAUNCH_PRIORITY_SPOT if _contact_is_strikeable(sol) \
+		else LAUNCH_PRIORITY_BLIND_SPOT
 	for slot in range(spotters.size()):
 		var idx: int = spotters[slot]
 		_spot_squadron(idx, av.squadrons[idx], server, slot, spotters.size(),
-			aa_reach, spot_priority)
+			aa_reach, spot_priority, air_ship)
 	# One deck slot, awarded to the best of this tick's requests.
 	_grant_launch(av)
 
@@ -2837,25 +3375,52 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 ## squadrons that arrive together mostly come home dented. The deck can only put
 ## one squadron up per takeoff interval, so the concentration the old
 ## launch-everything behaviour got for free now has to be rebuilt in the air.
+##
+## The rally is also where the group waits for its shot. A run only crosses the
+## target's length when it comes in on the beam (see _broadside_quality), and
+## which way a ship is lying is not something the carrier controls - it is
+## something that comes round if you wait for it, because ships turn. So a
+## formed group holding on a target that is bow-on holds a little longer rather
+## than spending its ordnance on the narrowest profile the ship has. What stops
+## that becoming a group that waits forever is the fuel deadline below: the
+## squadrons go in on whatever presentation they have got the moment waiting any
+## longer would leave them unable to fly the run at all.
 func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2,
 		waiting_for_more: bool, point: Vector2, air_ship: Ship, sol: Dictionary) -> void:
 	if group.is_empty():
 		return
+	# Direction the group would attack from if it went in now - the run the fuel
+	# deadline has to cover, and the one whose beam presentation is judged.
+	var run_dir := _beam_run_direction(point, sol)
 	# The group cannot wait longer than its most fuel-critical member can afford
 	# and still fly the run: a 15s takeoff interval across a five-squadron deck is
 	# a minute of forming up, which at the edge of the tether is most of a tank.
+	# Costed on the run actually flown, dog-leg onto the beam included, so the
+	# deadline is the real one rather than a straight-line optimism (_strike_eta).
+	#
+	# The reserve held back is the larger of the strike reserve and the loiter
+	# path's own give-up point: _shadow_contact() sends a squadron home once it
+	# drops under AVIATION_RTB_FUEL_RESERVE, and a group told to keep holding
+	# past that point is a group that flies its whole sortie to the rally and
+	# then turns for base still loaded.
+	var reserve: float = maxf(AVIATION_STRIKE_FUEL_RESERVE, AVIATION_RTB_FUEL_RESERVE)
 	var slack: float = INF
 	var formed := true
 	for i in group:
 		var squad: Squadron = av.squadrons[i]
 		slack = minf(slack,
-			squad.fuel_remaining - _squadron_eta(squad, point) - AVIATION_STRIKE_FUEL_RESERVE)
+			squad.fuel_remaining - _strike_eta(squad, point, run_dir) - reserve)
 		var pos := Vector2(squad.node.global_position.x, squad.node.global_position.z)
 		if pos.distance_to(rally) > AVIATION_RALLY_ARRIVE_DIST:
 			formed = false
+	# Out of time: go in now, on whatever beam the target is showing. Ordnance
+	# dropped at a bad angle still beats ordnance flown home - that is a whole
+	# cycle (transit, rearm, transit) thrown away for nothing.
+	var out_of_time: bool = slack <= 0.0
 	# A lone squadron has nobody to form up with, so it goes in as soon as there
 	# is nothing left to wait for rather than flying to a rally point first.
-	var release: bool = slack <= 0.0 or (not waiting_for_more and (formed or group.size() <= 1))
+	var ready: bool = not waiting_for_more and (formed or group.size() <= 1)
+	var release: bool = out_of_time or (ready and not _wait_for_broadside(point, sol))
 	if release:
 		# This group is on its way in; the next one works out its own stand-off.
 		_rally_hold_dist = INF
@@ -2869,6 +3434,24 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 		_aviation_strike_target[i] = air_ship
 		var dir := _attack_direction(i, squad, air_ship, point, sol)
 		squad.set_attack(_lead_attack_point(squad, air_ship, point, dir, sol), dir)
+
+
+## Beam presentation below which a formed group would rather keep waiting at the
+## rally than go in. 0.8 is roughly 53 degrees off the target's bow: past that
+## the run still crosses most of the hull, and holding out for a perfect beam
+## costs more in fuel and in the target simply steaming out of reach than the
+## last few per cent of length is worth.
+const BROADSIDE_RELEASE_QUALITY: float = 0.8
+
+## Whether the group should keep holding for a better angle. Only ever true
+## against a contact somebody is actually looking at: the heading on a
+## last-known position is one nobody has watched since it was frozen, so waiting
+## for it to come round is waiting on a number that cannot change. Against those
+## the group goes in on what it has.
+func _wait_for_broadside(point: Vector2, sol: Dictionary) -> bool:
+	if not sol.get("valid", false) or bool(sol.get("is_lkp", true)):
+		return false
+	return _broadside_quality(point, sol) < BROADSIDE_RELEASE_QUALITY
 
 ## Whether putting a spotter up is worth what it costs. Launching reveals the
 ## ship for a few seconds (see AviationController.launch_squadron), so a plane
@@ -2980,10 +3563,12 @@ func _sweep_point(squad: Squadron, fan_slot: int, fan_count: int) -> Vector2:
 		offset = t * deg_to_rad(SPOTTER_FAN_ANGLE_DEG)
 	return _clamp_to_map(ship_pos + bearing.rotated(offset) * _squadron_operating_radius(squad))
 
-# Last-known positions worth flying a spotter out to, nearest first. Read through
-# the contact solution, so a spotter is sent where the ship has probably got to
-# by now rather than where it was standing when it went dark.
-func _unspotted_contacts_in_range(server: GameServer, squad: Squadron) -> Array[Dictionary]:
+# Last-known positions worth flying a spotter out to, nearest first, with `watch`
+# - the contact the air group is working - ahead of the lot. Read through the
+# contact solution, so a spotter is sent where the ship has probably got to by
+# now rather than where it was standing when it went dark.
+func _unspotted_contacts_in_range(server: GameServer, squad: Squadron,
+		watch: Ship = null) -> Array[Dictionary]:
 	var points: Array[Dictionary] = []
 	if server == null:
 		return points
@@ -3007,8 +3592,11 @@ func _unspotted_contacts_in_range(server: GameServer, squad: Squadron) -> Array[
 		var d := _ship.global_position.distance_to(pos)
 		if d - detect > fly_reach:
 			continue  # the squadron cannot get close enough to see it
-		ranked.append({dist = d, point = Vector2(pos.x, pos.z), detect = detect})
-	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.dist < b.dist)
+		ranked.append({dist = d, point = Vector2(pos.x, pos.z), detect = detect, ship = guess.ship})
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if (a.ship == watch) != (b.ship == watch):
+			return a.ship == watch
+		return a.dist < b.dist)
 	for r in ranked:
 		points.append({point = r.point, detect = r.detect})
 	return points
@@ -3034,14 +3622,19 @@ func _air_detect_radius(squad: Squadron, enemy: Ship) -> float:
 
 # One spotter per known contact, nearest first; every squadron left over fans out
 # across the search front instead of piling onto a contact another squadron has
-# already been sent to.
+# already been sent to. `watch` is the contact the air group has chosen, which
+# jumps the queue ahead of nearest-first: the strike is measured from that ship,
+# is already forming up against it, and is waiting on somebody to put eyes back
+# on it - a spotter sent to a nearer contact nobody is going to attack leaves the
+# whole group holding.
 func _spot_squadron(index: int, squad: Squadron, server: GameServer,
-		fan_slot: int, fan_count: int, aa_reach: float, priority: float) -> void:
+		fan_slot: int, fan_count: int, aa_reach: float, priority: float,
+		watch: Ship = null) -> void:
 	if squad.returning:
 		return
 	if not squad.active:
 		_aviation_spot_issued.erase(index)
-	var contacts := _unspotted_contacts_in_range(server, squad)
+	var contacts := _unspotted_contacts_in_range(server, squad, watch)
 	var desired: Vector2
 	if fan_slot < contacts.size():
 		# Watching a particular ship: stand off it instead of orbiting on top of
@@ -3049,8 +3642,12 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 		# and inside it a lone squadron is shot down one plane every few seconds
 		# for the whole sortie (see _spot_station).
 		var contact: Dictionary = contacts[fan_slot]
-		desired = _clamp_to_squadron_range(
-			squad, _spot_station(squad, contact.point, aa_reach, contact.detect))
+		# Stood off the AA around THIS contact, not the longest reach anywhere:
+		# with mixed batteries the board-wide figure pushes every spotter past
+		# the range it can still see from, and _spot_station then has to choose
+		# between seeing and being safe when it never actually had to.
+		desired = _clamp_to_squadron_range(squad, _spot_station(
+			squad, contact.point, _aa_reach_near(contact.point, aa_reach), contact.detect))
 	else:
 		# fan only the squadrons that are actually sweeping, so they spread over
 		# the whole front rather than crowding the slots the contacts left free

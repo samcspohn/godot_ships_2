@@ -26,10 +26,27 @@ var cooldown_progresss: Array[ProgressBar] = []
 # var held: Array[bool] = []
 var held_dur: Array[float] = []
 
+# The selected weapon, for controllers that only ever have one selected at a
+# time. MEANINGLESS when multi_select is on - read selected_indices() instead,
+# never this. A multi-select controller's selection lives solely in
+# shell_indices; letting shell_index shadow it is how a box-selected squadron
+# ended up being aimed and launched with a different squadron's parameters.
 var shell_index: int = 1
+# Temporary diagnostic for the box-select/aim-UI bug - see
+# PlayerController.BOX_SELECT_DEBUG. Remove once the cause is pinned down.
+const SHELL_INDEX_DEBUG: bool = false
 var multi_select: bool = false
 # used with multi_select
 var shell_indices: Array[int] = []
+
+# The current selection, whichever mode this controller is in - the one thing
+# every caller should read rather than picking shell_index or shell_indices
+# themselves.
+func selected_indices() -> Array[int]:
+	if multi_select:
+		return shell_indices
+	var single: Array[int] = [shell_index]
+	return single
 
 @export var button_names: Array[String] = []
 var tool_tips: Array[Callable] = []
@@ -215,45 +232,56 @@ func _process(delta: float) -> void:
 func select_shell(_shell_index: int) -> void:
 	if !(_Utils.authority()):
 		return
-	shell_index = clamp(_shell_index, 0, button_names.size() - 1)
-	if multi_select:
-		shell_indices.clear()
-		shell_indices.append(shell_index)
-		# if shell_index in shell_indices:
-		# 	shell_indices.erase(shell_index)
-		# else:
-		# 	shell_indices.append(shell_index)
-	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), shell_index)
+	var idx: int = clamp(_shell_index, 0, button_names.size() - 1)
+	_apply_selection(idx)
+	select_shell_c.rpc_id(multiplayer.get_remote_sender_id(), idx)
 
 
 
 # todo: only broadcast if shooting or detected
 @rpc("authority", "call_remote", "reliable")
 func select_shell_c(_shell_index: int) -> void:
-	shell_index = _shell_index
+	_apply_selection(_shell_index)
+
+# Selects a single index. In multi_select mode the selection lives entirely in
+# shell_indices and shell_index is left untouched - see selected_indices().
+func _apply_selection(idx: int) -> void:
 	if multi_select:
-		shell_indices.clear()
-		shell_indices.append(shell_index)
-		# if shell_index in shell_indices:
-		# 	shell_indices.erase(shell_index)
-		# else:
-		# 	shell_indices.append(shell_index)
+		var single: Array[int] = [idx]
+		shell_indices = single
+	else:
+		shell_index = idx
 
 # Replaces the whole multi-select set at once instead of toggling a single
 # index (select_shell above) - used by box-select drag selection.
-@rpc("any_peer", "call_remote", "reliable")
-func set_shell_indices(indices: Array[int]) -> void:
-	if !(_Utils.authority()):
-		return
-	if not multi_select:
-		return
+func _apply_shell_indices(indices: Array[int]) -> void:
+	shell_indices = indices
+
+func _clamp_shell_indices(indices: Array[int]) -> Array[int]:
 	var clamped: Array[int] = []
 	for idx in indices:
 		if idx >= 0 and idx < button_names.size() and idx not in clamped:
 			clamped.append(idx)
-	shell_indices = clamped
+	return clamped
+
+@rpc("any_peer", "call_remote", "reliable")
+func set_shell_indices(indices: Array[int]) -> void:
+	if !(_Utils.authority()):
+		if SHELL_INDEX_DEBUG:
+			print("[shellidx] set_shell_indices ignored (not authority) ", indices)
+		return
+	if not multi_select:
+		if SHELL_INDEX_DEBUG:
+			print("[shellidx] set_shell_indices ignored (not multi_select) ", indices)
+		return
+	var clamped := _clamp_shell_indices(indices)
+	_apply_shell_indices(clamped)
+	if SHELL_INDEX_DEBUG:
+		print("[shellidx] server applied %s -> echoing to %d" % [clamped, multiplayer.get_remote_sender_id()])
 	set_shell_indices_c.rpc_id(multiplayer.get_remote_sender_id(), clamped)
 
 @rpc("authority", "call_remote", "reliable")
 func set_shell_indices_c(indices: Array[int]) -> void:
-	shell_indices = indices
+	if SHELL_INDEX_DEBUG:
+		print("[shellidx] client received %s (was %s)" % [indices, shell_indices])
+	_apply_shell_indices(indices)

@@ -6,7 +6,7 @@ class_name AviationParams
 
 # Minimum time between takeoffs: after any squadron launches, no other squadron
 # on this deck may launch until this many seconds have passed.
-@export var min_takeoff_interval: float = 15.0
+@export var min_takeoff_interval: float = 8.0
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()

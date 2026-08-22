@@ -28,6 +28,8 @@
 [ext_resource type="PackedScene" uid="uid://c0chw5qnmt7o0" path="res://src/aviation/dive_bomber.tscn" id="16_8261o"]
 [ext_resource type="Resource" uid="uid://c38psq1gkcxld" path="res://src/Flood/default_flood.tres" id="16_whceh"]
 [ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="17_6vanc"]
+[ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="29_pl0w1"]
+[ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="30_8tg1i"]
 
 [sub_resource type="Resource" id="Resource_vx2y6"]
 script = ExtResource("3_njww4")
@@ -191,6 +193,7 @@ speed = 250.0
 radio_range = 1000.0
 altitude = 500.0
 attack_altitude = 30.0
+ordnance_reload_time = 50.0
 plane_scene = ExtResource("15_6vanc")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"
 
@@ -402,6 +405,15 @@ slew_max_angle = 2.6453777746849942
 
 [node name="Launcher" type="Node3D" parent="." index="25" unique_id=609896696]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 12.768231, -97.60608)
+
+[node name="TrailEmitter4" type="Node3D" parent="." index="26" unique_id=2080069259]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12.484497, 31.634008, -17.27306)
+script = ExtResource("29_pl0w1")
+template = ExtResource("30_8tg1i")
+emit_rate = 0.2
+size_multiplier = 10.0
+speed_scale = 0.4
+auto_start = true
 
 [editable path="Modules"]
 [editable path="Modules/FireManager"]

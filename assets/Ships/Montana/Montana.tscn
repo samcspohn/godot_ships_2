@@ -33,6 +33,7 @@
 
 [sub_resource type="Resource" id="Resource_1a04s"]
 script = ExtResource("3_461ox")
+pen_repair = 0.6
 torpedo_protection = 0.38
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
@@ -236,92 +237,92 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 46.814842)
 [node name="Flood4" parent="Modules/FloodManager" index="3" unique_id=437283516]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 102.283875)
 
-[node name="Barbette" parent="armor" parent_id_path=PackedInt32Array(586149686) index="0" unique_id=458736925]
+[node name="Barbette" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="0" unique_id=2008372412]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Barbette_001" parent="armor" parent_id_path=PackedInt32Array(586149686) index="1" unique_id=1153618002]
+[node name="Barbette_001" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="1" unique_id=1760352231]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Barbette_002" parent="armor" parent_id_path=PackedInt32Array(586149686) index="2" unique_id=1059082421]
+[node name="Barbette_002" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="2" unique_id=759978774]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Barbette_003" parent="armor" parent_id_path=PackedInt32Array(586149686) index="3" unique_id=2090517056]
+[node name="Barbette_003" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="3" unique_id=1296167562]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Hull_Bow" parent="armor" parent_id_path=PackedInt32Array(586149686) index="4" unique_id=735643705]
+[node name="Hull_Bow" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="4" unique_id=165164678]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Hull_Casemate" parent="armor" parent_id_path=PackedInt32Array(586149686) index="5" unique_id=1929840477]
+[node name="Hull_Casemate" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="5" unique_id=1084933095]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Hull_Citadel" parent="armor" parent_id_path=PackedInt32Array(586149686) index="6" unique_id=1961653111]
+[node name="Hull_Citadel" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="6" unique_id=230181964]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Hull_Stern" parent="armor" parent_id_path=PackedInt32Array(586149686) index="7" unique_id=1587991321]
+[node name="Hull_Stern" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="7" unique_id=1297976063]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(586149686) index="8" unique_id=229761389]
+[node name="Superstructure" parent="armor" parent_id_path=PackedInt32Array(1133810111) index="8" unique_id=1455362311]
 layers = 0
 material_override = ExtResource("2_p5v3p")
 
-[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(168423638) index="0" unique_id=692518245 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b" parent="TurretMount_AMER_127mm_2b" parent_id_path=PackedInt32Array(1147287005) index="0" unique_id=692518245 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.311709020881438
 
-[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" parent_id_path=PackedInt32Array(366368564) index="0" unique_id=215390708 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_001" parent="TurretMount_AMER_127mm_2b_001" parent_id_path=PackedInt32Array(1099716147) index="0" unique_id=215390708 instance=ExtResource("4_pgac8")]
 slew_max_angle = 2.9714762862981483
 
-[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" parent_id_path=PackedInt32Array(201413647) index="0" unique_id=1953986525 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_002" parent="TurretMount_AMER_127mm_2b_002" parent_id_path=PackedInt32Array(2025029843) index="0" unique_id=1953986525 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.287250455556486
 
-[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" parent_id_path=PackedInt32Array(2100095084) index="0" unique_id=1253728703 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_003" parent="TurretMount_AMER_127mm_2b_003" parent_id_path=PackedInt32Array(690136550) index="0" unique_id=1253728703 instance=ExtResource("4_pgac8")]
 slew_max_angle = 2.9959348516231
 
-[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" parent_id_path=PackedInt32Array(1399872589) index="0" unique_id=1887831203 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_004" parent="TurretMount_AMER_127mm_2b_004" parent_id_path=PackedInt32Array(721673087) index="0" unique_id=1887831203 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.329022979917352
 slew_max_angle = 0.0
 fire_arcs = Array[ExtResource("7_17org")]([SubResource("Resource_2kpxh")])
 
-[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" parent_id_path=PackedInt32Array(1392637163) index="0" unique_id=1745462910 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_005" parent="TurretMount_AMER_127mm_2b_005" parent_id_path=PackedInt32Array(987732078) index="0" unique_id=1745462910 instance=ExtResource("4_pgac8")]
 slew_max_angle = 2.9541623272622344
 fire_arcs = Array[ExtResource("7_17org")]([SubResource("Resource_xe3bn")])
 
-[node name="AMER_127mm_2b_006" parent="TurretMount_AMER_127mm_2b_006" parent_id_path=PackedInt32Array(337376843) index="0" unique_id=1464193657 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_006" parent="TurretMount_AMER_127mm_2b_006" parent_id_path=PackedInt32Array(1456569836) index="0" unique_id=1464193657 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.1441501483919496
 slew_max_angle = 6.087657874590754
 
-[node name="AMER_127mm_2b_007" parent="TurretMount_AMER_127mm_2b_007" parent_id_path=PackedInt32Array(881750606) index="0" unique_id=1511496953 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_007" parent="TurretMount_AMER_127mm_2b_007" parent_id_path=PackedInt32Array(1129105181) index="0" unique_id=1511496953 instance=ExtResource("4_pgac8")]
 slew_min_angle = 0.19552743258883257
 slew_max_angle = 3.1390351587876366
 
-[node name="AMER_127mm_2b_008" parent="TurretMount_AMER_127mm_2b_008" parent_id_path=PackedInt32Array(273788278) index="0" unique_id=1934956462 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_008" parent="TurretMount_AMER_127mm_2b_008" parent_id_path=PackedInt32Array(183836582) index="0" unique_id=1934956462 instance=ExtResource("4_pgac8")]
 slew_min_angle = 3.143718026905004
 slew_max_angle = 6.130761317159305
 
-[node name="AMER_127mm_2b_009" parent="TurretMount_AMER_127mm_2b_009" parent_id_path=PackedInt32Array(929554447) index="0" unique_id=778645517 instance=ExtResource("4_pgac8")]
+[node name="AMER_127mm_2b_009" parent="TurretMount_AMER_127mm_2b_009" parent_id_path=PackedInt32Array(1383966540) index="0" unique_id=778645517 instance=ExtResource("4_pgac8")]
 slew_min_angle = 0.1524239900202815
 slew_max_angle = 3.139467280274582
 
-[node name="AMER_406mm_50cal_mk7_3b" parent="TurretMount_AMER_406mm_50cal_mk7_3b" parent_id_path=PackedInt32Array(1296018047) index="0" unique_id=2092918940 instance=ExtResource("7_xe3bn")]
+[node name="AMER_406mm_50cal_mk7_3b" parent="TurretMount_AMER_406mm_50cal_mk7_3b" parent_id_path=PackedInt32Array(1308270357) index="0" unique_id=2092918940 instance=ExtResource("7_xe3bn")]
 slew_min_angle = 3.665191429188092
 slew_max_angle = 2.6179938779914944
 
-[node name="AMER_406mm_50cal_mk7_3b_001" parent="TurretMount_AMER_406mm_50cal_mk7_3b_001" parent_id_path=PackedInt32Array(2114844038) index="0" unique_id=1561915643 instance=ExtResource("7_xe3bn")]
+[node name="AMER_406mm_50cal_mk7_3b_001" parent="TurretMount_AMER_406mm_50cal_mk7_3b_001" parent_id_path=PackedInt32Array(2091353618) index="0" unique_id=1561915643 instance=ExtResource("7_xe3bn")]
 slew_min_angle = 3.670325030602319
 slew_max_angle = 2.6179938779914944
 
-[node name="AMER_406mm_50cal_mk7_3b_002" parent="TurretMount_AMER_406mm_50cal_mk7_3b_002" parent_id_path=PackedInt32Array(1714006594) index="0" unique_id=944195247 instance=ExtResource("7_xe3bn")]
+[node name="AMER_406mm_50cal_mk7_3b_002" parent="TurretMount_AMER_406mm_50cal_mk7_3b_002" parent_id_path=PackedInt32Array(619734700) index="0" unique_id=944195247 instance=ExtResource("7_xe3bn")]
 slew_min_angle = 0.5277540469275266
 slew_max_angle = 5.7563277507883175
 
-[node name="AMER_406mm_50cal_mk7_3b_003" parent="TurretMount_AMER_406mm_50cal_mk7_3b_003" parent_id_path=PackedInt32Array(875918673) index="0" unique_id=1223855363 instance=ExtResource("7_xe3bn")]
+[node name="AMER_406mm_50cal_mk7_3b_003" parent="TurretMount_AMER_406mm_50cal_mk7_3b_003" parent_id_path=PackedInt32Array(1377195637) index="0" unique_id=1223855363 instance=ExtResource("7_xe3bn")]
 slew_min_angle = 0.5264804156489946
 slew_max_angle = 5.761145084078789
 

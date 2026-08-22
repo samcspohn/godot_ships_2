@@ -113,7 +113,8 @@ func _ready() -> void:
 		squadron.setup(params[i], launcher, _ship, game_world)
 		squadrons.append(squadron)
 
-	shell_index = 0
+	# multi_select: the selection is shell_indices only (see
+	# WeaponController.selected_indices) - nothing here reads shell_index.
 	set_physics_process(true)
 	set_process(true)
 
@@ -138,9 +139,6 @@ func _physics_process(delta: float) -> void:
 	if not _Utils.authority():
 		return
 
-	if shell_index >= params.size():
-		shell_index = 0
-
 	for i in range(squadrons.size()):
 		var squadron = squadrons[i]
 		if not squadron.active:
@@ -151,7 +149,7 @@ func _physics_process(delta: float) -> void:
 
 	assert(multi_select)
 	if attack_point != null and not fire_held: # release ordnance at drop point
-		for sh_index in shell_indices:
+		for sh_index in selected_indices():
 			if sh_index >= squadrons.size():
 				continue
 			var squadron := squadrons[sh_index]
@@ -164,13 +162,25 @@ func _physics_process(delta: float) -> void:
 # preview tracks the mouse/aim_point smoothly instead of lagging behind at
 # the physics tick rate. Purely visual - see Squadron.update_reticle_preview
 # and Squadron.update_committed_attack_preview.
+var _preview_debug_timer: float = 0.0
+
 func _process(delta: float) -> void:
 	super._process(delta)
 	var is_local_selection: bool = _ship.control is PlayerController and _ship.control.current_weapon_controller == self
+	if SHELL_INDEX_DEBUG and _ship.control is PlayerController:
+		_preview_debug_timer -= delta
+		if _preview_debug_timer <= 0.0:
+			_preview_debug_timer = 1.0
+			var active_list: Array[int] = []
+			for i in range(squadrons.size()):
+				if squadrons[i].active:
+					active_list.append(i)
+			print("[preview] local_sel=%s selected=%s active=%s aim=%s" % [
+				is_local_selection, selected_indices(), active_list, aim_point])
 	for i in range(squadrons.size()):
 		var squadron = squadrons[i]
 		# always show drop-pattern preview allowing for drop point updates
-		_update_drop_preview(squadron, is_local_selection and i in shell_indices)
+		_update_drop_preview(squadron, is_local_selection and i in selected_indices())
 		# show committed drop-pattern
 		if squadron.attack_point != null:
 			squadron.update_committed_attack_preview()
@@ -454,35 +464,67 @@ func ensure_launched(index: int) -> void:
 		launch_squadron(index)
 
 func get_aim_ui() -> Dictionary:
-	if active_squadrons.size() == 0:
+	# Time-to-target only means anything for a squadron that is actually in the
+	# air, so read it off a selected *airborne* one rather than the first
+	# selected squadron, which may still be sitting on deck.
+	var index := _primary_active_index()
+	if index < 0:
 		return {
 			"terrain_hit": false,
 			"penetration_power": 0.0,
 			"time_to_target": 0.0
 		}
-	if shell_index >= params.size():
-		shell_index = 0
-	var squadron := squadrons[shell_index]
-	var plane_params := params[shell_index]
+	var squadron := squadrons[index]
+	var plane_params := params[index]
 	var dist = squadron.node.global_position.distance_to(aim_point)
 	var speed: float = plane_params.p().speed
 	var ui := {
 		"terrain_hit": false,
 		"penetration_power": 0.0,
-		"time_to_target": dist / speed
+		"time_to_target": dist / speed if speed > 0.0 else 0.0
 	}
 	return ui
 
 func get_shell_params():
 	return null
 
-func get_params() -> AircraftParams:
-	if shell_index >= params.size():
-		return null
-	return params[shell_index]
+# First selected squadron that is currently airborne, or -1 if none is.
+func _primary_active_index() -> int:
+	for i in selected_indices():
+		if i >= 0 and i < squadrons.size() and squadrons[i].active:
+			return i
+	return -1
 
+# Params of the first selected squadron. Null when nothing is selected - this
+# controller is multi_select, so there is no "current" squadron to fall back
+# on, and callers have to cope with having none.
+func get_params() -> AircraftParams:
+	for i in selected_indices():
+		if i >= 0 and i < params.size():
+			return params[i]
+	return null
+
+# With several squadrons selected at once the aim point has to stay inside
+# reach of *every* one of them - otherwise the shortest-ranged squadron in the
+# box (typically the torpedo bombers) silently gets orders it cannot fly. The
+# camera clamps to this and set_aim_input() clamps again server-side.
+#
+# With nothing selected there is no squadron to aim for, so fall back to the
+# longest range any of them has rather than 0 - a 0 clamp would pin aim_point
+# to the ship and snap the camera in on itself.
 func get_max_range() -> float:
-	return get_params()._range
+	var max_range := -1.0
+	for i in selected_indices():
+		if i < 0 or i >= params.size():
+			continue
+		var r: float = params[i].p()._range
+		if max_range < 0.0 or r < max_range:
+			max_range = r
+	if max_range >= 0.0:
+		return max_range
+	for p in params:
+		max_range = maxf(max_range, p.p()._range)
+	return maxf(max_range, 0.0)
 
 func set_aim_input(point: Vector3) -> void:
 	var ship_pos := _ship.global_position
@@ -497,10 +539,17 @@ func set_aim_input(point: Vector3) -> void:
 func fire_all() -> void:
 	pass
 
+# Puts up every selected squadron that is ready to fly. Used to launch only
+# squadrons[shell_index], which in multi_select mode is not the selection at
+# all - a box-selected squadron would sit on deck while some other one took
+# off.
 @rpc("any_peer", "call_remote")
 func fire_next_ready() -> void:
-	if not active_squadrons.has(shell_index) and can_launch(shell_index):
-		launch_squadron(shell_index)
+	for sh_index in selected_indices():
+		if sh_index < 0 or sh_index >= squadrons.size():
+			continue
+		if not active_squadrons.has(sh_index) and can_launch(sh_index):
+			launch_squadron(sh_index)
 
 # Sends the selected squadron to the current aim point without attacking;
 # launches it first if it isn't airborne yet (mirrors fire_next_ready()).
@@ -508,7 +557,7 @@ func fire_next_ready() -> void:
 # instead of replacing the current waypoint.
 @rpc("any_peer", "call_remote")
 func set_waypoint_at_aim(append: bool) -> void:
-	for sh_index in shell_indices:
+	for sh_index in selected_indices():
 		if sh_index >= squadrons.size():
 			continue
 		if not active_squadrons.has(sh_index):

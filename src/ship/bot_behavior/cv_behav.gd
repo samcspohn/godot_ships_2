@@ -146,15 +146,35 @@ func _enemy_gun_reach(server: GameServer) -> float:
 # ============================================================================
 
 func _strike_anchor(server: GameServer) -> Dictionary:
-	## The contact the air group is working, and the one the hull stations off:
-	## the nearest one fresh enough to still mean something, read through the
-	## contact solution so the station is set against where a ship has probably
-	## got to rather than where it was standing when it went dark. This is the
-	## same contact aviation_engage() sends ordnance after, deliberately — hull
-	## and air group must not be working two different enemies.
-	## Returns {valid, position, distance}.
+	## The contact the air group is working, and the one the hull stations off.
+	## This is literally the ship aviation_engage() picked (see
+	## Behavior._select_air_target), not a second opinion about which enemy
+	## matters — hull and air group must not be working two different enemies,
+	## and here that is not just tidiness. The approach cone clamps every attack
+	## run to MAX_ATTACK_ANGLE either side of the CARRIER-to-target line, so
+	## where this hull stands is what decides whether a beam-on drop is
+	## available at all. Stationing off some other contact does not merely waste
+	## the transit; it takes the broadside off the table for the whole air group.
+	##
+	## Falls back to the nearest believable contact while there is no air target
+	## — on the first tick, or with the deck empty.
+	## Returns {valid, position, distance, basis, live}.
+	var chosen: Ship = get_air_target()
+	if chosen != null:
+		var chosen_sol: Dictionary = get_contact_solution(chosen)
+		if chosen_sol.get("valid", false) and float(chosen_sol.age) <= LKP_MAX_LEAD_AGE:
+			var at: Vector3 = chosen_sol.position
+			return {
+				valid = true,
+				position = at,
+				distance = _ship.global_position.distance_to(at),
+				basis = chosen_sol.get("basis", Basis.IDENTITY),
+				live = not bool(chosen_sol.is_lkp),
+			}
 	var best_pos: Vector3 = Vector3.ZERO
 	var best_dist: float = INF
+	var best_basis: Basis = Basis.IDENTITY
+	var best_live: bool = false
 	for enemy in server.get_valid_targets(_ship.team.team_id):
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
@@ -162,6 +182,8 @@ func _strike_anchor(server: GameServer) -> Dictionary:
 		if d < best_dist:
 			best_dist = d
 			best_pos = enemy.global_position
+			best_basis = enemy.global_transform.basis
+			best_live = true
 	for enemy in server.get_unspotted_enemies(_ship.team.team_id).keys():
 		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
 			continue
@@ -175,9 +197,17 @@ func _strike_anchor(server: GameServer) -> Dictionary:
 		if d2 < best_dist:
 			best_dist = d2
 			best_pos = pos
+			best_basis = sol.get("basis", Basis.IDENTITY)
+			best_live = false
 	if best_dist == INF:
 		return {valid = false}
-	return {valid = true, position = best_pos, distance = best_dist}
+	return {
+		valid = true,
+		position = best_pos,
+		distance = best_dist,
+		basis = best_basis,
+		live = best_live,
+	}
 
 
 func _standoff_band(server: GameServer) -> Dictionary:
@@ -220,10 +250,25 @@ func _has_screen(server: GameServer, anchor_pos: Vector3, station_dist: float) -
 	return false
 
 
-func _station_point(anchor_pos: Vector3, dist: float) -> Vector3:
+func _station_point(anchor_pos: Vector3, dist: float, beam: Basis = Basis.IDENTITY,
+		work_beam: bool = false) -> Vector3:
 	## The point at `dist` from the contact along the bearing we already hold —
 	## the carrier slides in and out along its own radius rather than taking a
 	## new line that would walk it across the enemy's front.
+	##
+	## With `work_beam` set it also eases around that radius toward the contact's
+	## beam. This is the hull's only real contribution to the strike: an attack
+	## run is clamped to MAX_ATTACK_ANGLE either side of the carrier-to-target
+	## line, so a beam-on drop — the one that crosses the target's whole length
+	## instead of its width — is available only from off the target's beam. The
+	## air group waits at its rally for that presentation (see
+	## Behavior._wait_for_broadside); this is the half of the arrangement that
+	## goes and gets it rather than hoping the target obliges.
+	##
+	## Bounded to BEAM_WORK_MAX_BIAS off the bearing already held, and always the
+	## short way round, so the carrier eases along its arc over successive ticks
+	## instead of setting a course across the enemy's front to reach the ideal
+	## point in one leg.
 	var away: Vector3 = _ship.global_position - anchor_pos
 	away.y = 0.0
 	if away.length_squared() < 1.0:
@@ -231,9 +276,49 @@ func _station_point(anchor_pos: Vector3, dist: float) -> Vector3:
 		away.y = 0.0
 	if away.length_squared() < 0.01:
 		away = Vector3(0.0, 0.0, 1.0)
-	var pos: Vector3 = anchor_pos + away.normalized() * dist
+	away = away.normalized()
+	_beam_work_active = false
+	if work_beam:
+		away = _bias_toward_beam(away, beam)
+	var pos: Vector3 = anchor_pos + away * dist
 	pos.y = 0.0
 	return _get_valid_nav_point(pos)
+
+
+## Widest the station bearing may be swung off the one currently held in a
+## single decision. A carrier that jumped straight to the ideal beam bearing
+## would order a leg around the standoff arc that crosses in front of whatever
+## it is stationed off; easing round means the navigator is always steering to
+## somewhere just off the beam it already occupies.
+const BEAM_WORK_MAX_BIAS: float = deg_to_rad(30.0)
+## Inside this much of the beam the station is left alone. Without it the hull
+## shuffles either side of the ideal bearing forever as the contact yaws.
+const BEAM_WORK_DEAD_ZONE: float = deg_to_rad(8.0)
+
+
+## Set while the station bearing is actually being swung, purely so the debug
+## readout distinguishes a carrier working onto the beam from one parked on
+## station — the two look identical by distance alone, which is what the skill
+## name is otherwise derived from.
+var _beam_work_active: bool = false
+
+
+func _bias_toward_beam(away: Vector3, beam: Basis) -> Vector3:
+	## Swings the standoff bearing toward whichever of the contact's two beams it
+	## is already nearer, by at most BEAM_WORK_MAX_BIAS.
+	var right: Vector3 = Vector3(beam.x.x, 0.0, beam.x.z)
+	if right.length_squared() < 0.0001:
+		return away
+	right = right.normalized()
+	# Standing off the contact's beam means standing where its beam points at
+	# us, so the bearing we want is the beam axis itself — whichever end of it
+	# is the shorter move from here.
+	var ideal: Vector3 = right if away.dot(right) >= 0.0 else -right
+	var offset: float = away.signed_angle_to(ideal, Vector3.UP)
+	if absf(offset) <= BEAM_WORK_DEAD_ZONE:
+		return away
+	_beam_work_active = true
+	return away.rotated(Vector3.UP, clampf(offset, -BEAM_WORK_MAX_BIAS, BEAM_WORK_MAX_BIAS))
 
 
 func _update_exposure(ship: Ship) -> bool:
@@ -294,6 +379,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 
 	var anchor_pos: Vector3 = anchor.position
 	var anchor_dist: float = anchor.distance
+	var anchor_beam: Basis = anchor.get("basis", Basis.IDENTITY)
 	var min_dist: float = band.min_dist
 
 	# ── Contact inside the floor, or somebody is already shooting ───────────
@@ -329,8 +415,18 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		cover_min = maxf(min_dist, hold_dist * (1.0 - BAND_TOLERANCE))
 	intent = _take_cover(ctx, cover_params, anchor_pos, cover_min, hold_dist * COVER_BAND_SLACK)
 	if intent == null:
-		intent = _station_intent(ctx, anchor_pos, _station_point(anchor_pos, target_dist))
-		if target_dist < anchor_dist - 1.0:
+		# Working onto the beam is only ever done while unseen and screened, and
+		# only against a contact somebody is actually watching. Once we are
+		# exposed the hull's job is distance, not a better firing angle for the
+		# air group; and a heading frozen on a last-known position is not one
+		# there is any point manoeuvring against, since it cannot be seen to
+		# change.
+		var work_beam: bool = not defensive and bool(anchor.get("live", false))
+		intent = _station_intent(ctx, anchor_pos,
+			_station_point(anchor_pos, target_dist, anchor_beam, work_beam))
+		if _beam_work_active:
+			_active_skill_name = &"WorkBeam"
+		elif target_dist < anchor_dist - 1.0:
 			_active_skill_name = &"Close"
 		elif target_dist > anchor_dist + 1.0:
 			_active_skill_name = &"Withdraw"
