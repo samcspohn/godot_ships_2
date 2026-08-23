@@ -44,6 +44,12 @@ var _hit_count_offset: int = 0
 # Public API
 # ---------------------------------------------------------------------------
 
+## True while a companion log is open and accepting hits.  The native armor sim
+## (_ProjectileManager) polls this once per frame and only builds the per-plate
+## step payload when it returns true.
+func is_logging() -> bool:
+	return _file != null
+
 ## Open a companion .armorlog file alongside the given replay file path.
 ## ship_to_id is a copy of ReplayRecorder._ship_to_id (Ship → int).
 ## Must be called from begin_match before any hits are recorded.

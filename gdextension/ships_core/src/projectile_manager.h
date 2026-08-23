@@ -67,6 +67,7 @@ private:
 
 	// Cached autoload references
 	Node *armor_interaction;
+	Node *armor_sim_logger;
 	Node *precision_physics_world;
 	Node *navigation_map_manager;
 	Ref<NavigationMap> navigation_map;

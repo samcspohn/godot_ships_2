@@ -24,6 +24,14 @@ struct ArmorHitResult {
 	Vector3 collision_normal;
 	double shell_integrity = 1.0;
 	bool overmatch_first_armor = false;
+
+	// Armor-sim log payload, mirroring what the old GDScript _ArmorInteraction
+	// handed to ArmorSimLogger.record_hit().  Only populated when process_travel
+	// is called with log_armor = true (i.e. while a match recording is active),
+	// so the normal path pays nothing for the Dictionary/Array churn.
+	bool log_valid = false;
+	Array log_steps;
+	Vector3 log_final_pos;
 };
 
 class NativeArmorInteraction {
@@ -65,7 +73,8 @@ public:
 		PhysicsDirectSpaceState3D *space_state,
 		Node *precision_physics_world,
 		const Ref<NavigationMap> &nav_map,
-		RaycastCache &raycast_cache);
+		RaycastCache &raycast_cache,
+		bool log_armor = false);
 
 private:
 	struct ShellState {
@@ -140,7 +149,8 @@ private:
 		int face_index,
 		double fuze,
 		bool hit_water,
-		Node *precision_physics_world);
+		Node *precision_physics_world,
+		bool log_armor);
 
 	static double calculate_effective_thickness(double thickness_mm, double impact_angle_rad);
 	static double calculate_exit_velocity(double entry_speed, double pen_capability_mm, double effective_armor_mm);

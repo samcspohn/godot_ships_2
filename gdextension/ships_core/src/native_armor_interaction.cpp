@@ -375,7 +375,8 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 		PhysicsDirectSpaceState3D *space_state,
 		Node *precision_physics_world,
 		const Ref<NavigationMap> &nav_map,
-		RaycastCache &raycast_cache) {
+		RaycastCache &raycast_cache,
+		bool log_armor) {
 	if (!projectile.is_valid()) {
 		return ArmorHitResult();
 	}
@@ -518,7 +519,8 @@ ArmorHitResult NativeArmorInteraction::process_travel(const Ref<ProjectileData> 
 			(int)precision_hit["face_index"],
 			fuze,
 			hit_water,
-			precision_physics_world);
+			precision_physics_world,
+			log_armor);
 	}
 
 	return ArmorHitResult();
@@ -534,7 +536,8 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 		int face_index,
 		double fuze,
 		bool hit_water,
-		Node *precision_physics_world) {
+		Node *precision_physics_world,
+		bool log_armor) {
 	if (hit_node == nullptr || !projectile.is_valid()) {
 		return ArmorHitResult();
 	}
@@ -573,11 +576,36 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 
 	if ((int)params->get("type") == 0) {
 		double armor_mm = get_armor(hit_node, face_index);
-		HitResult he_result = ((double)params->get("overmatch") >= armor_mm) ? (is_citadel(hit_node) ? CITADEL : PENETRATION) : SHATTER;
-		return make_result(he_result, first_hit_pos, hit_node, impact_velocity, ship, first_hit_normal);
+		bool he_citadel = is_citadel(hit_node);
+		bool he_pens = (double)params->get("overmatch") >= armor_mm;
+		HitResult he_result = he_pens ? (he_citadel ? CITADEL : PENETRATION) : SHATTER;
+		ArmorHitResult he_hit = make_result(he_result, first_hit_pos, hit_node, impact_velocity, ship, first_hit_normal);
+		if (log_armor) {
+			// HE resolves against a single plate, so the log gets one step whose
+			// entry and exit velocity are identical and whose effective thickness
+			// is the raw plate value (no obliquity correction for HE).
+			Dictionary step;
+			step["result"] = (int)(he_pens ? ARMOR_PEN : ARMOR_SHATTER);
+			step["is_citadel"] = he_citadel;
+			step["armor_mm"] = armor_mm;
+			step["effective_mm"] = armor_mm;
+			step["impact_angle"] = calculate_impact_angle(
+				basis_xform(ship_basis_inv, impact_velocity).normalized(), hit_normal);
+			step["pen"] = (double)params->get("overmatch");
+			step["integrity"] = 1.0;
+			step["pos"] = first_hit_pos;
+			step["vel"] = impact_velocity;
+			step["impact_vel"] = impact_velocity;
+			step["armor_path"] = hit_node->get("armor_path");
+			he_hit.log_steps.append(step);
+			he_hit.log_final_pos = first_hit_pos;
+			he_hit.log_valid = true;
+		}
+		return he_hit;
 	}
 
 	ArmorResult result = ARMOR_OVERPEN;
+	Array log_steps;
 	bool hit_cit = false;
 	bool over_pen = false;
 	int iteration = 0;
@@ -594,6 +622,9 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 		shell.pen = calculate_de_marre_penetration((double)params->get("mass"), speed, (double)params->get("caliber")) * (double)params->get("penetration_modifier");
 		shell.position = hit_position + offset;
 		offset = Vector3();
+		// World-space velocity as the shell arrives at this plate, captured before
+		// any branch below modifies it — this is the step's "impact_vel".
+		Vector3 log_impact_vel = log_armor ? basis_xform(ship_basis, shell.velocity) : Vector3();
 
 		if (armor_mm <= (double)params->get("overmatch")) {
 			if (is_citadel(hit_node)) hit_cit = true;
@@ -653,6 +684,24 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 			}
 		}
 
+		if (log_armor) {
+			// pos = world-space entry point into this plate,
+			// vel = world-space velocity leaving it.
+			Dictionary step;
+			step["result"] = (int)result;
+			step["is_citadel"] = is_citadel(hit_node);
+			step["armor_mm"] = armor_mm;
+			step["effective_mm"] = e_armor;
+			step["impact_angle"] = impact_angle;
+			step["pen"] = shell.pen;
+			step["integrity"] = shell.integrity;
+			step["pos"] = ship_xform.xform(hit_position);
+			step["vel"] = basis_xform(ship_basis, shell.velocity);
+			step["impact_vel"] = log_impact_vel;
+			step["armor_path"] = hit_node->get("armor_path");
+			log_steps.append(step);
+		}
+
 		if (result == ARMOR_SHATTER || result == ARMOR_PARTIAL_PEN || shell.get_speed() < MIN_VELOCITY) {
 			shell.calc_end_position();
 			break;
@@ -701,5 +750,10 @@ ArmorHitResult NativeArmorInteraction::process_hit(Object *hit_node,
 		first_hit_normal,
 		shell.integrity);
 	hit_result.overmatch_first_armor = overmatch_first_armor;
+	if (log_armor && !log_steps.is_empty()) {
+		hit_result.log_steps = log_steps;
+		hit_result.log_final_pos = ship_xform.xform(shell.end_position);
+		hit_result.log_valid = true;
+	}
 	return hit_result;
 }

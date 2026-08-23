@@ -166,6 +166,7 @@ _ProjectileManager::_ProjectileManager() {
 	trail_template = Ref<Resource>();
 	camera = nullptr;
 	armor_interaction = nullptr;
+	armor_sim_logger = nullptr;
 	precision_physics_world = nullptr;
 	navigation_map_manager = nullptr;
 	navigation_map = Ref<NavigationMap>();
@@ -633,6 +634,15 @@ void _ProjectileManager::_physics_process(double delta) {
 		UtilityFunctions::push_warning("ProjectileManager: No PhysicsDirectSpaceState3D available");
 	}
 
+	// Resolved lazily: ArmorSimLogger is registered after ProjectileManager in the
+	// autoload list, so it does not exist yet at _ready() time.
+	if (armor_sim_logger == nullptr && has_node("/root/ArmorSimLogger")) {
+		armor_sim_logger = get_node<Node>("/root/ArmorSimLogger");
+	}
+	// Only build the per-plate armor log payload while a match recording has an
+	// open .armorlog companion file; queried once per frame, not per projectile.
+	bool log_armor = armor_sim_logger != nullptr && (bool)armor_sim_logger->call("is_logging");
+
 	int id = 0;
 	for (int i = 0; i < projectiles.size(); i++) {
 		Variant p_var = projectiles[i];
@@ -672,7 +682,7 @@ void _ProjectileManager::_physics_process(double delta) {
 		// are cached per owner/exclude set; only from/to is updated per projectile.
 		NativeArmorInteraction::RaycastCache &armor_rays = get_armor_ray_cache(p);
 		ArmorHitResult hit_result = NativeArmorInteraction::process_travel(
-			p, ray_query->get_from(), t, space_state, precision_physics_world, navigation_map, armor_rays);
+			p, ray_query->get_from(), t, space_state, precision_physics_world, navigation_map, armor_rays, log_armor);
 
 		if (!hit_result.hit) {
 			// If the shell is underwater and process_travel returned null,
@@ -690,6 +700,28 @@ void _ProjectileManager::_physics_process(double delta) {
 		// CITADEL=5, CITADEL_OVERPEN=6, WATER=7, TERRAIN=8
 		// _ProjectileManager::HitResult enum values (for RPC):
 		// PENETRATION=0, RICOCHET=1, OVERPENETRATION=2, SHATTER=3, NOHIT=4, CITADEL=5, WATER=6
+
+		// Mirror the armor interaction into the .armorlog companion file that the
+		// shell/match replay tools read back.  Done here rather than inside the
+		// armor sim so the native path stays free of script calls.
+		if (hit_result.log_valid && armor_sim_logger != nullptr) {
+			Node3D *victim = Object::cast_to<Node3D>(hit_result.ship);
+			if (victim != nullptr) {
+				Ref<Resource> log_params = p->get_params();
+				armor_sim_logger->call("record_hit",
+					(int64_t)p->get_shell_uid(),
+					hit_result.result_type,
+					p->get_owner(),
+					victim,
+					victim->get_global_position(),
+					victim->get_rotation().y,
+					log_params.is_valid() ? (int)log_params->get("type") : 0,
+					log_params.is_valid() ? (double)log_params->get("caliber") : 0.0,
+					hit_result.log_steps,
+					hit_result.log_final_pos,
+					log_params);
+			}
+		}
 
 		int armor_result_type = hit_result.result_type;
 		Vector3 explosion_position = hit_result.explosion_position;
