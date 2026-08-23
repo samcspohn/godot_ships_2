@@ -54,14 +54,14 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_n0aqy"]
 script = ExtResource("4_ve12q")
-pool1 = 18095.0
-pool2 = 36190.0
+pool1 = 3619.0000000000005
+pool2 = 7238.000000000001
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_nx45m"]
 script = ExtResource("4_ve12q")
-pool1 = 18095.0
-pool2 = 36190.0
+pool1 = 3619.0000000000005
+pool2 = 7238.000000000001
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_n6hqb"]

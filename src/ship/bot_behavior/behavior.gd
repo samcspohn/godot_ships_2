@@ -1006,6 +1006,34 @@ func _get_spotted_danger_center() -> Vector3:
 	_spotted_danger_center_frame = frame
 	return result
 
+## Where the enemy is for the purpose of deciding which SIDE of something to sit
+## on. Falls back to the presumption model when nothing is spotted or held.
+##
+## Deliberately separate from _get_spotted_danger_center(), which several callers
+## rely on returning ZERO to mean "nothing confirmed" - one of them points the
+## turrets at it, and turrets must never swing onto a guess. Choosing a side is
+## the opposite case: there is always a side, and before first contact the honest
+## answer is "away from where their fleet must be coming from", not "no opinion".
+## Without this, hide-side geometry silently switched off for the whole opening
+## of a match - exactly when a bot is picking the island it will fight from.
+func _get_positioning_danger_center() -> Vector3:
+	var confirmed := _get_spotted_danger_center()
+	if confirmed != Vector3.ZERO:
+		return confirmed
+	var weighted := Vector3.ZERO
+	var total := 0.0
+	for guess in get_presumed_contacts():
+		var w: float = maxf(EnemyPresumption.certainty(guess), 0.05)
+		weighted += (guess.position as Vector3) * w
+		total += w
+	if total > 0.00001:
+		var out: Vector3 = weighted / total
+		if not (is_nan(out.x) or is_nan(out.z)):
+			return out
+	# Nothing believed at all: the enemy spawn is still a fact of the map.
+	_initialize_spawn_cache()
+	return _cached_enemy_spawn
+
 func _get_nearest_enemy() -> Dictionary:
 	"""Find the nearest known enemy. Returns {position, distance, ship} or empty dict."""
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
@@ -1747,13 +1775,33 @@ func _push_clear_of_threats(pos: Vector3, threat_positions: Array, min_dist: flo
 			break
 	return pos
 
+## How far from our own spawn a ship has to be before "back toward the spawn" is
+## a meaningful direction. Sitting on it, that vector is noise pointing nowhere.
+const SAFE_DIR_SPAWN_MIN_DIST: float = 2000.0
+
 func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
-	"""Determine the 'safe' direction: toward our spawn from the ship,
-	or away from the nearest enemy cluster if spawn is unavailable."""
+	"""Determine the 'safe' direction: toward our own lines.
+
+	The spawn AXIS is the primary source, not the bearing from the ship to its
+	own spawn. At the start of a match a ship is sitting on its spawn, so that
+	bearing is a near-zero vector - it used to fail the length check, fall all
+	the way through to the ship's forward vector, and freeze there. Ships spawn
+	facing the enemy, so every bot began the match believing safety lay straight
+	up the map, and took cover on the enemy side of every island it picked.
+	The axis is well defined everywhere, including at the spawn itself."""
 	_initialize_spawn_cache()
 	if _cached_friendly_spawn != Vector3.ZERO:
 		var dir = _cached_friendly_spawn - ship.global_position
 		dir.y = 0.0
+		# Only once the ship is properly off its spawn does its own bearing back
+		# to it beat the axis - by then it carries real lateral information.
+		if dir.length_squared() > SAFE_DIR_SPAWN_MIN_DIST * SAFE_DIR_SPAWN_MIN_DIST:
+			return dir.normalized()
+		if _cached_enemy_spawn != Vector3.ZERO:
+			var axis = _cached_friendly_spawn - _cached_enemy_spawn
+			axis.y = 0.0
+			if axis.length_squared() > 1.0:
+				return axis.normalized()
 		if dir.length_squared() > 1.0:
 			return dir.normalized()
 
@@ -1777,10 +1825,22 @@ func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
 		return fwd.normalized()
 	return Vector3(0, 0, -1)
 
+## Safe direction goes stale: it is derived from where the ship is and what it
+## can see, and both change. Computing it once and keeping it for the whole match
+## is how a value picked in the first frame - before the spawn cache was even
+## populated - went on steering cover selection twenty minutes later.
+const SAFE_DIR_REFRESH_MS: int = 2000
+var _safe_dir_next_refresh_ms: int = -1
+
 func _ensure_safe_dir(ship: Ship, server: GameServer) -> void:
-	if not _safe_dir_initialized:
-		_cached_safe_dir = _compute_safe_direction(ship, server)
+	var now_ms: int = Time.get_ticks_msec()
+	if _safe_dir_initialized and now_ms < _safe_dir_next_refresh_ms:
+		return
+	var fresh := _compute_safe_direction(ship, server)
+	if fresh.length_squared() > 0.01:
+		_cached_safe_dir = fresh
 		_safe_dir_initialized = true
+	_safe_dir_next_refresh_ms = now_ms + SAFE_DIR_REFRESH_MS
 
 func _compute_hide_heading(island_center: Vector3, threats: Array) -> float:
 	"""Average the headings from island_center to each threat, then add PI
@@ -1844,7 +1904,113 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0) -> Dictionary:
+# ============================================================================
+# COVER PRIORITY TARGETS
+# ============================================================================
+## How many enemies a cover search will try to build a position around before
+## settling for one it can merely shoot something from. Each one costs another
+## sweep of the island's candidate points, which is why the priority search only
+## runs when the ship is already ON an island (see SkillFindCover) - choosing a
+## new island stays on the cheap any-target path.
+const COVER_PRIORITY_MAX: int = 3
+## Weight multiplier for a contact closing on us at flank speed. Being shot at is
+## a fact; being approached is an intention, and the whole point of this list is
+## to notice a battleship deciding to come and dig us out before it arrives.
+const COVER_CLOSING_WEIGHT: float = 2.5
+## Weight multiplier for an enemy confirmed to be shooting at us right now.
+const COVER_SHOOTER_WEIGHT: float = 3.0
+
+## Enemies worth building a firing position around, most valuable first.
+##
+## Deliberately NOT pick_target(). That answers "what can I shoot right now",
+## and filters out anything terrain currently blocks - which is exactly the
+## enemy a better position would let us engage. Filtering by present
+## shootability while searching for a place to shoot FROM is circular: it can
+## only ever confirm the spot we are already in.
+##
+## Ranked by danger to this ship rather than by ease of killing: hull class fear
+## (a cruiser is right to weigh a battleship heavily), whether it is closing, and
+## whether it is shooting at us. That is what makes a CA build its position
+## around the battleship pushing onto its island instead of around whichever
+## destroyer happened to be in the arc first.
+func cover_priority_targets(max_count: int = COVER_PRIORITY_MAX) -> Array:
+	var out: Array = []
+	if _ship == null or _ship.team == null:
+		return out
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return out
+	var my_pos: Vector3 = _ship.global_position
+
+	var scored: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	var pools: Array = [server_node.get_valid_targets(_ship.team.team_id),
+		server_node.get_unspotted_enemies(_ship.team.team_id).keys()]
+	for pool in pools:
+		for enemy in pool:
+			if not is_instance_valid(enemy) or not enemy.is_alive() or seen.has(enemy):
+				continue
+			seen[enemy] = true
+			# Read through the contact solution so a contact held only on a
+			# last-known position is placed where the bot believes it is, never
+			# where it actually is.
+			var sol := get_contact_solution(enemy)
+			if not sol.get("valid", false):
+				continue
+			var weight: float = get_potential_target_weight(enemy)
+			weight *= get_threat_class_weight(enemy.ship_class)
+
+			var to_enemy: Vector3 = (sol.position as Vector3) - my_pos
+			to_enemy.y = 0.0
+			if to_enemy.length_squared() > 1.0:
+				var closing: float = -(sol.velocity as Vector3).dot(to_enemy.normalized())
+				if closing > 0.0:
+					weight *= 1.0 + clampf(closing / EnemyPresumption.NOMINAL_FLANK_SPEED,
+						0.0, 1.0) * COVER_CLOSING_WEIGHT
+			if active_shooters_at_me.has(enemy):
+				weight *= COVER_SHOOTER_WEIGHT
+
+			scored.append({ship = enemy, weight = weight})
+
+	scored.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a.weight) > float(b.weight))
+	for i in range(mini(scored.size(), maxi(max_count, 0))):
+		out.append(scored[i].ship)
+	return out
+
+## Where to aim a shootability test at `enemy`, using only what the bot is
+## entitled to know. Null when it has no idea where the ship is.
+func cover_test_position(enemy: Ship) -> Variant:
+	var sol := get_contact_solution(enemy)
+	if not sol.get("valid", false):
+		return null
+	return (sol.position as Vector3) + (sol.basis as Basis) * target_aim_offset(enemy)
+
+## Can a ship standing at `from_pos` put a shell on `target_pos`, terrain and all?
+func _can_shoot_point_from(from_pos: Vector3, target_pos: Vector3, shell_params, gun_range_sq: float) -> bool:
+	if shell_params == null:
+		return false
+	if from_pos.distance_squared_to(target_pos) > gun_range_sq:
+		return false
+	var gun_proxy_pos = from_pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
+	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
+	if sol[0] == null:
+		return false
+	return Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship).can_shoot_over_terrain
+
+## Whether anything at all in `targets` can be engaged from `from_pos`.
+func _can_shoot_at_any_from(from_pos: Vector3, targets: Array, shell_params, gun_range_sq: float) -> bool:
+	if shell_params == null:
+		return false
+	for t_ship in targets:
+		if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+			continue
+		var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
+		if _can_shoot_point_from(from_pos, target_pos, shell_params, gun_range_sq):
+			return true
+	return false
+
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0, priority_targets: Array = []) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
@@ -1879,6 +2045,8 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var best_concealed_fallback: Vector3 = Vector3.ZERO
 	var best_conflict_shootable: Vector3 = Vector3.ZERO
 	var best_conflict_concealed: Vector3 = Vector3.ZERO
+	# Only populated on the priority path; see the sweep below.
+	var concealed_candidates: Array[Dictionary] = []
 	var offset_clearance = clearance * 2.0
 	var min_ring_separation_sq = (clearance * 0.5) * (clearance * 0.5)
 	# Sweep the hide window centred on hide_heading, so the island's actual
@@ -1932,22 +2100,16 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 							spacing_conflict = true
 							break
 
-				var can_shoot_any: bool = false
-				if shell_params != null:
-					var gun_proxy_pos = pos + Vector3(0, _ship.movement_controller.ship_draft / 2.0, 0)
-					for t_ship in targets:
-						if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
-							continue
-						var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
-						if pos.distance_squared_to(target_pos) > gun_range_sq:
-							continue
-						var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(gun_proxy_pos, target_pos, shell_params)
-						if sol[0] == null:
-							continue
-						var shoot_result = Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship)
-						if shoot_result.can_shoot_over_terrain:
-							can_shoot_any = true
-							break
+				# With a priority list the whole candidate set has to be swept
+				# before anything is chosen - the first point that can shoot
+				# SOMETHING is exactly the wrong answer when what we need is a
+				# point that can shoot the ship coming for us. Bank the candidate
+				# and decide once the sweep is done.
+				if not priority_targets.is_empty():
+					concealed_candidates.append({pos = pos, conflict = spacing_conflict})
+					continue
+
+				var can_shoot_any: bool = _can_shoot_at_any_from(pos, targets, shell_params, gun_range_sq)
 
 				if can_shoot_any:
 					if spacing_conflict:
@@ -1961,6 +2123,47 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 							best_conflict_concealed = pos
 					elif best_concealed_fallback == Vector3.ZERO:
 						best_concealed_fallback = pos
+
+	# ── Priority resolution ─────────────────────────────────────────────────
+	# Every concealed point on the island is now known. Offer the whole set to
+	# the most dangerous enemy first; only if no point on the island can reach
+	# it does the next one get a turn. A position that can engage the ship
+	# pushing onto us beats one that can engage something harmless, even when
+	# the harmless one was found first and is closer to hand.
+	if not priority_targets.is_empty():
+		for pri in priority_targets:
+			if not is_instance_valid(pri) or not pri.is_alive():
+				continue
+			var pri_pos = cover_test_position(pri)
+			if pri_pos == null:
+				continue
+			var conflicted: Vector3 = Vector3.ZERO
+			for cand in concealed_candidates:
+				var cpos: Vector3 = cand.pos
+				if not _can_shoot_point_from(cpos, pri_pos, shell_params, gun_range_sq):
+					continue
+				if not bool(cand.conflict):
+					return { "pos": cpos, "can_shoot": true, "spacing_conflict": false }
+				if conflicted == Vector3.ZERO:
+					conflicted = cpos
+			if conflicted != Vector3.ZERO:
+				return { "pos": conflicted, "can_shoot": true, "spacing_conflict": true }
+		# None of the priority enemies can be reached from anywhere on this
+		# island. Fall back to the ordinary question - can we shoot anything at
+		# all from here - so the island is not thrown away over it.
+		for cand in concealed_candidates:
+			var cpos2: Vector3 = cand.pos
+			var shootable: bool = _can_shoot_at_any_from(cpos2, targets, shell_params, gun_range_sq)
+			if shootable:
+				if not bool(cand.conflict):
+					return { "pos": cpos2, "can_shoot": true, "spacing_conflict": false }
+				if best_conflict_shootable == Vector3.ZERO:
+					best_conflict_shootable = cpos2
+			elif bool(cand.conflict):
+				if best_conflict_concealed == Vector3.ZERO:
+					best_conflict_concealed = cpos2
+			elif best_concealed_fallback == Vector3.ZERO:
+				best_concealed_fallback = cpos2
 
 	# A shootable position always outranks a merely concealed one, even when it
 	# conflicts with a team-mate's reservation: callers that require shootability

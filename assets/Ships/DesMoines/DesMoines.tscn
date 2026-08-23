@@ -13,6 +13,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_in36t"]
 [ext_resource type="Script" uid="uid://dytt41ol6shn4" path="res://src/artillary/secondary_controller/sec_sub_controller.gd" id="6_t5p80"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="9_08c6r"]
+[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="9_f6wpl"]
 [ext_resource type="Resource" uid="uid://bqvwywgnyh75g" path="res://assets/Ships/DesMoines/127mm_gunparams.tres" id="9_vp8fe"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="9_xosf1"]
 [ext_resource type="Texture2D" uid="uid://cmv3e3opyj6ni" path="res://icons/auto_repair_inactive.svg" id="10_8wi57"]
@@ -53,14 +54,14 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_slang"]
 script = ExtResource("3_seiyl")
-pool1 = 3206.6666666666665
-pool2 = 6413.333333333333
+pool1 = 1122.3333333333335
+pool2 = 2244.666666666667
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_jbscf"]
 script = ExtResource("3_seiyl")
-pool1 = 3206.6666666666665
-pool2 = 6413.333333333333
+pool1 = 1122.3333333333335
+pool2 = 2244.666666666667
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kqusw"]
@@ -180,8 +181,6 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_f6wpl")
 _max_hp = 48100.0
-bow_percent = 0.2
-stern_percent = 0.2
 superstructure_percent = 0.3
 casemate_percent = 0.5
 citadel = SubResource("Resource_6pn0f")
@@ -206,16 +205,16 @@ params = ExtResource("9_vp8fe")
 guns = [NodePath("../../../TurretMount_AMER_127mm_2b/AMER_127mm_2b"), NodePath("../../../TurretMount_AMER_127mm_2b_001/AMER_127mm_2b_001"), NodePath("../../../TurretMount_AMER_127mm_2b_004/AMER_127mm_2b_004"), NodePath("../../../TurretMount_AMER_127mm_2b_002/AMER_127mm_2b_002"), NodePath("../../../TurretMount_AMER_127mm_2b_005/AMER_127mm_2b_005"), NodePath("../../../TurretMount_AMER_127mm_2b_003/AMER_127mm_2b_003")]
 metadata/_custom_type_script = "uid://dytt41ol6shn4"
 
-[node name="MovementController" parent="Modules" index="4" unique_id=1088594109]
+[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
 params = SubResource("Resource_mvdm")
 
-[node name="ConsumableManager" parent="Modules" index="5" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("9_08c6r")]([SubResource("Resource_wrnye"), SubResource("Resource_2pjxp"), ExtResource("16_e3uhd"), ExtResource("17_8wi57")])
 
-[node name="Upgrades" parent="Modules" index="6" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
 upgrades = Array[ExtResource("12_krgon")]([null, null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="8" unique_id=384504544]
+[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
 fparams = ExtResource("9_xosf1")
 rparams = SubResource("Resource_d0r0t")
 
@@ -231,7 +230,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.579692, 25.037924)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.407345, 83.97769)
 
-[node name="FloodManager" parent="Modules" index="9" unique_id=485605645]
+[node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
 dot_params = ExtResource("23_8wi57")
 rparams = SubResource("Resource_pgbjw")
 

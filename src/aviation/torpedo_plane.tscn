@@ -8,6 +8,7 @@ script = ExtResource("2_p5req")
 speed_knts = 30.0
 damage = 4000.0
 flood_buildup = 30.0
+arming_distance = 300.0
 metadata/_custom_type_script = "uid://ckumdqdogqvlk"
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0dff1"]

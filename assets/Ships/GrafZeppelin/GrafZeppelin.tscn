@@ -38,7 +38,7 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_y1u82"]
 script = ExtResource("4_sncso")
-pool1 = 19200.0
+pool1 = 192000.0
 pool2 = 192000.0
 
 [sub_resource type="Resource" id="Resource_f4xba"]
@@ -48,13 +48,13 @@ pool2 = 34133.333333333336
 
 [sub_resource type="Resource" id="Resource_seitd"]
 script = ExtResource("4_sncso")
-pool1 = 3200.0
-pool2 = 6400.0
+pool1 = 1493.3333333333333
+pool2 = 2986.6666666666665
 
 [sub_resource type="Resource" id="Resource_ac2mx"]
 script = ExtResource("4_sncso")
-pool1 = 3200.0
-pool2 = 6400.0
+pool1 = 1493.3333333333333
+pool2 = 2986.6666666666665
 
 [sub_resource type="Resource" id="Resource_ksruj"]
 script = ExtResource("4_sncso")

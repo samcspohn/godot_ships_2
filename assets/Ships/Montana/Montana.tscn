@@ -52,13 +52,13 @@ pool2 = 39840.0
 
 [sub_resource type="Resource" id="Resource_4k3dg"]
 script = ExtResource("3_xwt2m")
-pool1 = 4980.0
-pool2 = 9960.0
+pool1 = 2324.0000000000005
+pool2 = 4648.000000000001
 
 [sub_resource type="Resource" id="Resource_dyvjp"]
 script = ExtResource("3_xwt2m")
-pool1 = 4980.0
-pool2 = 9960.0
+pool1 = 2324.0000000000005
+pool2 = 4648.000000000001
 
 [sub_resource type="Resource" id="Resource_im8nd"]
 script = ExtResource("3_xwt2m")

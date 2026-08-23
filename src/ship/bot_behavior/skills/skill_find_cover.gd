@@ -267,11 +267,22 @@ func _release_cover_claim() -> void:
 func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 	var ship = ctx.ship
 	var my_pos: Vector3 = ship.global_position
-	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
+	# Already on this island, so the horizon is the short hop to a station on it
+	# rather than the full lead - see _cover_eta_lead.
+	var threats = ctx.behavior._gather_threat_positions(ship,
+		_cover_eta_lead(ctx, [{"center": Vector2(_target_island_pos.x, _target_island_pos.z),
+			"radius": _target_island_radius}], my_pos))
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
 	var max_desired_range = ship.artillery_controller.get_params()._range * 0.7
 	var min_cover_separation = ctx.behavior._get_ship_clearance() * _TEAM_COVER_MIN_SEPARATION_MULT
 	var other_claim_positions = _collect_other_claim_positions(ctx)
+	# Already committed to this island, so we can afford the better question:
+	# not "is there a spot here I can shoot SOMETHING from" but "is there a spot
+	# here I can shoot the ship that actually matters from". Each priority enemy
+	# costs another sweep of the candidate set, which is why this is confined to
+	# the on-island path - picking a NEW island stays on the cheap
+	# first-shootable-wins search.
+	var priority_targets: Array = ctx.behavior.cover_priority_targets()
 
 	# ── Fastest path: re-validate the last known-good cover position ─────────
 	# This is a fixed world point that was previously confirmed as hidden AND
@@ -284,7 +295,7 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 				cached_hidden = false
 				break
 		if cached_hidden:
-			var can_shoot_cached := _can_shoot_from(ctx, cached_pos, targets)
+			var can_shoot_cached := _serves_priority(ctx, cached_pos, targets, priority_targets)
 			var cached_conflict = _has_cover_spacing_conflict(cached_pos, other_claim_positions, min_cover_separation)
 			if (targets.is_empty() or can_shoot_cached) and not cached_conflict:
 				return {
@@ -308,7 +319,7 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 				all_hidden = false
 				break
 		if all_hidden:
-			var can_shoot_here := _can_shoot_from(ctx, my_pos, targets)
+			var can_shoot_here := _serves_priority(ctx, my_pos, targets, priority_targets)
 			var current_conflict = _has_cover_spacing_conflict(my_pos, other_claim_positions, min_cover_separation)
 			if (targets.is_empty() or can_shoot_here) and not current_conflict:
 				if can_shoot_here:
@@ -339,7 +350,8 @@ func _recalc_same_island(ctx: SkillContext, _target: Ship) -> Dictionary:
 		targets,
 		max_desired_range,
 		other_claim_positions,
-		min_cover_separation
+		min_cover_separation,
+		priority_targets
 	)
 
 	# Island can't conceal us at all — abandon it.
@@ -388,9 +400,14 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 	var my_pos = ship.global_position
 	var gun_range = ship.artillery_controller.get_params()._range
 	var max_desired_range = gun_range * params.get("max_range", 0.7)
-	# var min_safe_range = gun_range * 0.35
 
-	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
+	# Solve for when the ship will actually BE there, not for a flat horizon.
+	# A bot that leads the whole threat picture sixty seconds while arriving in
+	# fifteen is solving a different battle: contacts get carried past the ship,
+	# the sheltered face of an island flips to the exposed one, and it sails
+	# around to hide on the side facing the enemy.
+	var eta_lead := _cover_eta_lead(ctx, islands, my_pos)
+	var threats = ctx.behavior._gather_threat_positions(ship, eta_lead)
 	if ctx.server == null:
 		return {}
 	var targets = ctx.server.get_valid_targets(ship.team.team_id)
@@ -409,7 +426,13 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 	# the spotted danger centre -- one shared reference point, computed once.
 	# When there is no danger centre (no enemies), arc_cost is always 0 so the
 	# sort reduces to a pure proximity sort, which is exactly what we want.
-	var _danger_center: Vector3 = ctx.behavior._get_spotted_danger_center()
+	# Which side of an island to sit on is a question that always has an answer,
+	# so this uses the positioning centre rather than the confirmed-only one.
+	# With the confirmed centre, arc_cost collapsed to zero before first contact
+	# and islands were ranked on raw proximity alone - no account of how far the
+	# ship would have to sail AROUND one to reach the sheltered face, which is
+	# how a bot ends up committing to an island it has to pass the enemy to use.
+	var _danger_center: Vector3 = ctx.behavior._get_positioning_danger_center()
 	var _use_danger_center: bool = _danger_center != Vector3.ZERO
 
 	var _island_travel_cost: Dictionary = {}
@@ -455,6 +478,11 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 			var c2d: Vector2 = isl["center"]
 			var isl_pos := Vector3(c2d.x, 0.0, c2d.y)
 			var isl_radius: float = isl["radius"]
+			# Same rule as the full search, and the same exemption: never pick
+			# cover past the enemy, but never give up cover already held either.
+			if int(isl["id"]) != _target_island_id and _use_danger_center \
+					and isl_pos.distance_to(_danger_center) < gun_range * 0.35:
+				continue
 			# Station on the side of the island facing our own lines. `radius` is
 			# the island's bounding radius, so the destination has to be walked out
 			# to the shoreline — a fraction of it lands on land.
@@ -481,10 +509,35 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 
 	var spacing_conflict_fallback: Dictionary = {}
 
+	# Cover has to be on our side of the fight. Without a floor here the search
+	# happily returns an island past the enemy line - the ship then steams the
+	# length of the map, through everything, to hide behind it.
+	#
+	# It applies to islands we would TRAVEL to, never to the one we are already
+	# using. An island being fought over is not an island to be avoided: a
+	# battleship pushing onto a cruiser drags the danger centre inside this
+	# radius, which used to reject the cruiser's own island and send it running
+	# broadside-on for a "safer" one. Standing and killing the ship that closed
+	# is the entire reason targets are ranked by who is pushing.
+	var min_safe_range: float = gun_range * 0.35
+
+	# Only the committed island earns the expensive priority sweep, and only
+	# while we have one - choosing a new island stays on the cheap
+	# first-shootable-wins search. Preference for the held island is not handled
+	# here: it is the nearest, so the sort above already puts it first.
+	var priority_targets: Array = []
+	if _target_island_id >= 0:
+		priority_targets = ctx.behavior.cover_priority_targets()
+
 	for isl in islands:
 		var center_2d: Vector2 = isl["center"]
 		var isl_pos = Vector3(center_2d.x, 0.0, center_2d.y)
 		var isl_radius: float = isl["radius"]
+
+		var is_committed: bool = int(isl["id"]) == _target_island_id
+		if not is_committed and _use_danger_center \
+				and isl_pos.distance_to(_danger_center) < min_safe_range:
+			continue
 
 		var hide_h: float
 		if threats.size() > 0:
@@ -493,6 +546,9 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 			hide_h = atan2(ctx.behavior._cached_safe_dir.x, ctx.behavior._cached_safe_dir.z)
 
 		# Always sort candidate positions on the island by proximity to the ship
+		# The island we are already on is the one worth spending a full priority
+		# sweep on - and the sort has already put it first, since it is the
+		# nearest. Every other island gets the cheap first-shootable-wins search.
 		var cover_result = ctx.behavior._find_cover_position_on_island(
 			isl_pos,
 			isl_radius,
@@ -501,7 +557,8 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 			targets,
 			max_desired_range,
 			other_claim_positions,
-			min_cover_separation
+			min_cover_separation,
+			priority_targets if is_committed else []
 		)
 		# Normally only consider islands we can shoot from; when prioritizing
 		# cover, accept the nearest concealing island regardless of shootability.
@@ -534,6 +591,27 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 	return {}
 
 
+## Seconds until the ship could realistically be in cover, used as the horizon
+## the threat picture is solved for. Measured to the nearest island edge, which
+## is the one the sort is about to prefer anyway, and capped by the bot's own
+## lead_horizon so a low-aptitude bot still solves for the present.
+func _cover_eta_lead(ctx: SkillContext, islands: Array, my_pos: Vector3) -> float:
+	var horizon: float = ctx.behavior.lead_horizon()
+	if horizon <= 0.0:
+		return 0.0
+	var nearest_edge := INF
+	for isl in islands:
+		var c2d: Vector2 = isl["center"]
+		var d: float = my_pos.distance_to(Vector3(c2d.x, 0.0, c2d.y)) - float(isl["radius"])
+		nearest_edge = minf(nearest_edge, maxf(d, 0.0))
+	if not is_finite(nearest_edge):
+		return 0.0
+	var speed: float = ctx.ship.movement_controller.max_speed
+	if speed <= 0.1:
+		return 0.0
+	return clampf(nearest_edge / speed, 0.0, horizon)
+
+
 func _set_island(island: Dictionary) -> void:
 	if _target_island_id != island["id"]:
 		# Switching islands — cached position belongs to the old island.
@@ -561,7 +639,14 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary, prioriti
 	if pos.distance_to(ship.global_position) > ship.artillery_controller.get_params()._range * 1.0: # adjust to 1 for more safety
 		return false
 
-	var threats = ctx.behavior._gather_threat_positions(ship, ctx.behavior.lead_horizon())
+	# Validity of a destination we are still travelling to is judged for when we
+	# arrive there, so the horizon is the time left to run.
+	var travel_eta: float = 0.0
+	var travel_speed: float = ship.movement_controller.max_speed
+	if travel_speed > 0.1 and ctx.behavior.lead_horizon() > 0.0:
+		travel_eta = clampf(pos.distance_to(ship.global_position) / travel_speed,
+			0.0, ctx.behavior.lead_horizon())
+	var threats = ctx.behavior._gather_threat_positions(ship, travel_eta)
 	for threat_pos in threats:
 		if not ctx.behavior._is_los_blocked_with_clearance(pos, threat_pos):
 			return false
@@ -578,6 +663,41 @@ func _is_last_intent_still_valid(ctx: SkillContext, params: Dictionary, prioriti
 
 	can_shoot = not targets.is_empty()
 	return true
+
+
+## Whether a position is good enough to STAY in. With a priority list that means
+## it can reach one of the enemies that matter; without one it falls back to the
+## old any-target question.
+##
+## This is what stops the fast paths undoing the priority search: a spot that can
+## only reach a harmless destroyer used to satisfy them outright, so a cruiser
+## parked there never re-searched and never noticed the battleship coming round
+## its island. Rejecting here only costs a full sweep, which then returns the
+## best position available - possibly this same one.
+func _serves_priority(ctx: SkillContext, from_pos: Vector3, targets: Array, priority_targets: Array) -> bool:
+	if priority_targets.is_empty():
+		return _can_shoot_from(ctx, from_pos, targets)
+	var shell_params = ctx.ship.artillery_controller.get_shell_params()
+	if shell_params == null:
+		return false
+	var gun_range: float = ctx.ship.artillery_controller.get_params()._range
+	var gun_range_sq: float = gun_range * gun_range
+	var considered := 0
+	for pri in priority_targets:
+		if not is_instance_valid(pri) or not pri.is_alive():
+			continue
+		# Through the contact solution, never the live transform: a priority
+		# target may be one the team has lost, and testing against where it
+		# really is would hand this bot a position built on a ship it cannot see.
+		var pri_pos = ctx.behavior.cover_test_position(pri)
+		if pri_pos == null:
+			continue
+		considered += 1
+		if ctx.behavior._can_shoot_point_from(from_pos, pri_pos, shell_params, gun_range_sq):
+			return true
+	if considered == 0:
+		return _can_shoot_from(ctx, from_pos, targets)
+	return false
 
 
 func _can_shoot_from(ctx: SkillContext, from_pos: Vector3, targets: Array) -> bool:
