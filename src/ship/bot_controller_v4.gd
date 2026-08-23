@@ -1245,7 +1245,7 @@ func _emit_debug_draws() -> void:
 
 			# Cover zone circle (color depends on state)
 			var zone_color: Color
-			var spotted_in_cover = ca.is_in_cover and _ship.visible_to_enemy
+			var spotted_in_cover = ca.is_in_cover and _ship.is_detected()
 			if spotted_in_cover:
 				zone_color = Color(1.0, 0.0, 0.0, 0.8)
 			elif ca.is_in_cover:

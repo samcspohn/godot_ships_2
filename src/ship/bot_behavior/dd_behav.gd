@@ -133,7 +133,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		angle -= PI / 4  # Best angle to torpedo is 45 degrees incoming
 		var priority: float = 0.0
 
-		if !_ship.visible_to_enemy:
+		if !_ship.is_detected():
 			# Hidden - prioritize torpedo targets
 			priority = cos(angle) * ship.movement_controller.ship_length / dist
 			if torpedo_range > 0:
@@ -170,7 +170,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		if contact.is_lkp:
 			priority *= LKP_TARGET_PRIORITY_MULT
 
-		var shootable = _ship.visible_to_enemy and dist <= gun_range and can_hit_target(ship)
+		var shootable = _ship.is_detected() and dist <= gun_range and can_hit_target(ship)
 		candidate_data.append({
 			ship = ship,
 			base_priority = priority,
@@ -326,7 +326,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_active_skill_name = &"Hunt"
 
 	# ── 2. Detected → retreat directly away from danger center; shed detection ASAP ──
-	elif ship.visible_to_enemy:
+	elif ship.is_detected():
 		if threat < 0.5:
 			intent = _skill_push.execute(ctx, {})
 			if intent:
@@ -427,8 +427,9 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 	return false
 
 func engage_target(target: Ship):
-	# Guns only when already spotted (revealing position is already done)
-	if _ship.visible_to_enemy or not _suppress_guns and can_fire_guns():
+	# Guns only when already spotted (revealing position is already done),
+	# including on a ping or by aircraft, not just LOS.
+	if _ship.is_detected() or not _suppress_guns and can_fire_guns():
 		super.engage_target(target)
 		_ship.secondary_controller.enabled = true
 	else:

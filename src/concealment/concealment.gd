@@ -10,7 +10,33 @@ var blooms: Dictionary[float, float] = {} # value : time_remaining
 var bloom_while_not_visible: float = 0.0
 var prev_visible: bool = false
 var last_spotted_time: float = -101.0
+
+## Which channel is holding us. Ranked for attribution by _SPOT_RANK, not by
+## their ordinals — the three last-known-position channels are worth the same, so
+## credit between them falls to distance. Only eyes on outrank them.
+enum SpotSource { NONE = 0, AIR = 1, HYDRO = 2, RADAR = 3, LOS = 4 }
+
+const _SPOT_RANK: Dictionary = {
+	SpotSource.NONE: 0,
+	SpotSource.AIR: 1,
+	SpotSource.HYDRO: 1,
+	SpotSource.RADAR: 1,
+	SpotSource.LOS: 2,
+}
+
+## Enemy ship the other team has to thank for holding us: eyes on, the pinging
+## hydro/radar, or the carrier whose aircraft are overhead (planes have no stat
+## line, so the credit lands on their carrier). Rebuilt every server detection
+## frame, never latched — spotting damage is for damage taken WHILE lit.
 var spotted_by: Ship = null
+var spot_source: SpotSource = SpotSource.NONE
+## Last frame anything at all held us. last_spotted_time is LOS-only because the
+## bloom rules key on LOS.
+var last_detected_time: float = -101.0
+
+var _pending_spotter: Ship = null
+var _pending_source: SpotSource = SpotSource.NONE
+var _pending_dist: float = INF
 
 func _ready() -> void:
 	params = params.instantiate(_ship) as ConcealmentParams
@@ -60,6 +86,39 @@ func _physics_process(delta: float) -> void:
 	for amount in to_remove:
 		blooms.erase(amount)
 	bloom_radius = max(max_bloom, params.p().radius)
+
+
+## Called by the server alongside the det_* flag reset.
+func begin_spot_frame() -> void:
+	_pending_spotter = null
+	_pending_source = SpotSource.NONE
+	_pending_dist = INF
+
+
+## Higher rank wins; at equal rank, the nearest spotter does.
+func propose_spotter(spotter: Ship, source: SpotSource, dist: float) -> void:
+	if spotter == null or source == SpotSource.NONE:
+		return
+	var rank: int = _SPOT_RANK[source]
+	var pending_rank: int = _SPOT_RANK[_pending_source]
+	if rank < pending_rank:
+		return
+	if rank == pending_rank and dist >= _pending_dist:
+		return
+	_pending_spotter = spotter
+	_pending_source = source
+	_pending_dist = dist
+
+
+## Returns the source in force before this frame, so the caller can tell a fresh
+## contact from one already being held.
+func commit_spot_frame(now: float) -> SpotSource:
+	var prev := spot_source
+	spotted_by = _pending_spotter
+	spot_source = _pending_source
+	if spot_source != SpotSource.NONE:
+		last_detected_time = now
+	return prev
 
 
 func bloom(amount: float) -> void:

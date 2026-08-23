@@ -252,7 +252,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_chase.execute(ctx, {})
 			_active_skill_name = &"Chase"
 	else:
-		if nearest_threat_dist < _ra_threshold and ship.visible_to_enemy:
+		if nearest_threat_dist < _ra_threshold and ship.is_detected():
 			if threat < 0.5:
 				# Optimal heading is bow-in — push toward enemy
 				intent = _skill_push.execute(ctx, {})
@@ -296,7 +296,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 				# 	intent
 
 				var cover_intent = _skill_cover.execute(ctx, {})
-				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.visible_to_enemy or active_shooters_at_me.is_empty()) and nearest_threat_dist > 10000.0:
+				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.is_detected() or active_shooters_at_me.is_empty()) and nearest_threat_dist > 10000.0:
 					intent = cover_intent
 					_active_skill_name = &"FindCover"
 				else:

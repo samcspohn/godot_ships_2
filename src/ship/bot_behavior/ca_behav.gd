@@ -102,7 +102,7 @@ func get_hunting_params() -> Dictionary:
 	}
 
 func should_evade(_destination: Vector3) -> bool:
-	if not _ship.visible_to_enemy:
+	if not _ship.is_detected():
 		return false
 	return true
 
@@ -419,7 +419,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 			intent = _skill_push.execute(ctx, {})
 			if intent != null:
 				_active_skill_name = &"Push"
-	elif (nearest_threat_dist < _ra_threshold) and ship.visible_to_enemy:
+	elif (nearest_threat_dist < _ra_threshold) and ship.is_detected():
 		# # High threat and enemy is close — find the optimal presentation angle
 		# # then choose angle skill (bow-in) or kite (stern-in) accordingly.
 		# forced = true
@@ -459,7 +459,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 		_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
 
 	else:
-		if not ship.visible_to_enemy:
+		if not ship.is_detected():
 			# Undetected — seek cover as normal, fall back to angle
 			intent = _skill_cover.execute(ctx, cover_params, false)
 			if intent != null:

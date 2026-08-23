@@ -993,7 +993,6 @@ func is_point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 var consumable_toggled: Dictionary[Ship, bool] = {}
 var visible_toggled: Dictionary[Ship, bool] = {}
 var sunk_toggled: Dictionary[Ship, bool] = {}
-var closest_enemies_that_can_see = {}
 
 # Called when a ship's consumable state changes (used or cooldown ended).
 # Flags the ship so the next server sync sends a full update even if off-screen.
@@ -1028,10 +1027,7 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
 		spotted.visible_to_enemy = true
 		spotted.det_los = true
-		if closest_enemies_that_can_see.has(spotted):
-			closest_enemies_that_can_see[spotted].append([spotter,dist])
-		else:
-			closest_enemies_that_can_see[spotted] = [[spotter,dist]]
+		spotted.concealment.propose_spotter(spotter, Concealment.SpotSource.LOS, dist)
 
 ## `plane_range` is the looking aircraft's own reach (AircraftParams.spotting_range).
 ## BOTH sides of the sighting have to hold: the aircraft has to be able to see
@@ -1042,6 +1038,9 @@ func handle_spot(spotter: Ship, spotted: Ship, dist: float):
 func handle_air_spot(spotter: Ship, spotted: Ship, dist: float, plane_range: float):
 	if minf((spotted.concealment.params.p() as ConcealmentParams).air_radius, plane_range) > dist:
 		spotted.det_air = true
+		# Aircraft have no stat line; the spot credits the carrier that put them
+		# up. Unconditional — a LOS spotter outranks AIR anyway.
+		spotted.concealment.propose_spotter(spotter, Concealment.SpotSource.AIR, dist)
 		# A clear-LOS air spot is LKP-style (frozen position, refreshed every
 		# HYDRO_LKP_INTERVAL) rather than a live reveal - mirrors hydro/radar.
 		# A ship already visible via ship-to-ship LOS/assured acquisition
@@ -1049,22 +1048,23 @@ func handle_air_spot(spotter: Ship, spotted: Ship, dist: float, plane_range: flo
 		if not spotted.visible_to_enemy:
 			_refresh_air_lkp(spotter.team.team_id, spotted)
 
+## Publishes the spotting credit worked out over this frame's detection pass.
+## Runs over every ship, not just the ones somebody found: a ship nobody holds
+## any more must have its provider cleared, or damage taken long after the
+## contact broke still pays out as spotting damage.
 func handle_spot_attribution():
-	for spotted in closest_enemies_that_can_see.keys():
-		var closest_spotter: Ship = null
-		var closest_dist: float = INF
-		for spotter_info in closest_enemies_that_can_see[spotted]:
-			var spotter: Ship = spotter_info[0]
-			var dist: float = spotter_info[1]
-			if dist < closest_dist:
-				closest_dist = dist
-				closest_spotter = spotter
-		if closest_spotter != null:
-			spotted.concealment.spotted_by = closest_spotter
-			if !visible_toggled[spotted] and spotted.concealment.last_spotted_time < current_time - UNSPOTTED_TIME:
-				closest_spotter.stats.spotting_count += 1
-				closest_spotter.stats.damage_events.append({"type": "spot"})
-	closest_enemies_that_can_see.clear()
+	for p_name in players:
+		var c: Concealment = (players[p_name][0] as Ship).concealment
+		var was_lit_at: float = c.last_detected_time
+		var prev_source := c.commit_spot_frame(current_time)
+		var provider: Ship = c.spotted_by
+		if provider == null:
+			continue
+		# One ribbon per contact, and not for one the team keeps re-finding.
+		if prev_source == Concealment.SpotSource.NONE \
+				and was_lit_at < current_time - UNSPOTTED_TIME:
+			provider.stats.spotting_count += 1
+			provider.stats.damage_events.append({"type": "spot"})
 
 
 func _broadcast_match_end():
@@ -1289,7 +1289,6 @@ func _physics_process(_delta: float) -> void:
 	ray_query.collision_mask = 1 | (1 << 3) | (1 << 5) # terrain + smoke
 
 
-	closest_enemies_that_can_see.clear()
 	visible_toggled.clear()
 	team_0_hydro_in_range.clear()
 	team_1_hydro_in_range.clear()
@@ -1310,6 +1309,7 @@ func _physics_process(_delta: float) -> void:
 		ship.det_hydro = false
 		ship.det_radar = false
 		ship.det_air = false
+		ship.concealment.begin_spot_frame()
 		if ship.health_controller.is_alive():
 			alive_players.append(ship)
 
@@ -1715,6 +1715,10 @@ func _apply_launch_reveals() -> void:
 				reveals.erase(ship)
 				continue
 			active[ship] = true
+			# Reported to the enemy as an air contact, so the carrier is detected
+			# and must know it — a bot carrier stops acting as though it were
+			# dark. No spotting provider: the launch gave it away, not an enemy.
+			ship.det_air = true
 
 
 func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:
@@ -1791,6 +1795,13 @@ func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: b
 		target.det_hydro = true
 	else:
 		target.det_radar = true
+
+	# The ping lights the target and gives the pinger away in the same instant, so
+	# each side's provider is whoever is on the other end of it.
+	var src: Concealment.SpotSource = Concealment.SpotSource.HYDRO if is_hydro \
+		else Concealment.SpotSource.RADAR
+	target.concealment.propose_spotter(detector, src, dist)
+	detector.concealment.propose_spotter(target, src, dist)
 
 	if not target.visible_to_enemy:
 		if is_hydro:

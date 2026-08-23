@@ -266,6 +266,8 @@ func _probe_concealment(server: GameServer) -> bool:
 	# No spotted enemies at all
 	if spotted.is_empty():
 		# If we are detected with bloom, a concealed ship must have direct LOS.
+		# visible_to_enemy, not is_detected(): the deduction is "somebody has eyes
+		# on us", and a ping lights us with nobody in LOS at all.
 		if _ship.visible_to_enemy and concealment_node.bloom_value > 0.0:
 			_infer_concealed_spotter(server)
 			return true
@@ -282,9 +284,10 @@ func _probe_concealment(server: GameServer) -> bool:
 
 		if not los_blocked:
 			all_los_blocked = false
-			if _ship.visible_to_enemy and d < base_radius:
+			if _ship.is_detected() and d < base_radius:
 				# Already detected and enemy is inside base detection radius
-				# with direct LOS — suppressing bloom won't make them lose us.
+				# with direct LOS — suppressing bloom won't make them lose us,
+				# and neither will it shake a ping.
 				return false
 			# Open-water enemy: firing creates or sustains bloom that exposes us.
 			suppress_useful = true
@@ -292,7 +295,8 @@ func _probe_concealment(server: GameServer) -> bool:
 	if all_los_blocked:
 		if _ship.visible_to_enemy:
 			# Terrain covers every spotted enemy yet we are still detected —
-			# a concealed ship must have direct LOS.
+			# a concealed ship must have direct LOS. visible_to_enemy only: a ping
+			# is not evidence of a hidden ship in LOS.
 			_infer_concealed_spotter(server)
 			return true
 		# Not detected and all enemies behind terrain — safe to fire.
@@ -884,7 +888,7 @@ func get_speed_multiplier() -> float:
 
 func should_evade(destination: Vector3) -> bool:
 	"""Determine if ship should be evading vs traveling to destination."""
-	if not _ship.visible_to_enemy:
+	if not _ship.is_detected():
 		return false
 
 	var dist_to_dest = _ship.global_position.distance_to(destination)
@@ -3911,7 +3915,7 @@ const SPOTTER_LKP_MAX_AGE: float = 60.0
 func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
 	if server == null or _ship.team == null:
 		return false
-	if _ship.visible_to_enemy or not active_shooters_at_me.is_empty():
+	if _ship.is_detected() or not active_shooters_at_me.is_empty():
 		return true
 	# How far out a contact can be and still be findable: as far as the squadron
 	# can fly, plus however close it then has to get to actually see it.
@@ -4165,7 +4169,7 @@ func _normalize_angle(angle: float) -> float:
 func get_debug_skill_info() -> Dictionary:
 	var info: Dictionary = {}
 	info["skill"] = String(_active_skill_name) if _active_skill_name != &"" else "None"
-	info["visible"] = _ship.visible_to_enemy if _ship != null else false
+	info["visible"] = _ship.is_detected() if _ship != null else false
 	info["in_cover"] = is_in_cover
 	info["concealment"] = wants_to_be_concealed
 	if _ship != null:
@@ -4264,7 +4268,13 @@ func try_use_consumable():
 
 func _should_use_smoke() -> bool:
 	# Simple heuristic: use smoke if we're low HP and have an active BB shooter targeting us.
-	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 and active_shooters_at_me.size() > 0 and _ship.visible_to_enemy and not (_ship.radar_detected or _ship.hydro_detected):
+	# Smoke breaks LOS, so it answers being seen or air-spotted but does nothing
+	# about a ping — popping it while pinged wastes the charge and parks us.
+	# det_* are the server-side flags; radar_detected/hydro_detected are written
+	# by the sync_unspotted RPC and are always false on the server.
+	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 \
+			and active_shooters_at_me.size() > 0 and _ship.is_detected() \
+			and not (_ship.det_radar or _ship.det_hydro):
 		return true
 	return false
 
@@ -4309,6 +4319,8 @@ func _should_use_hydro() -> bool:
 	# If we are detected but no visible enemy is close enough to account for
 	# our detection, a concealed ship must be within our concealment radius.
 	# Using hydro here is a legitimate deduction, not omniscient knowledge.
+	# visible_to_enemy only: the deduction is about LOS, and hydro answers neither
+	# a radar ping (see _should_use_radar trigger 3) nor an aircraft.
 	if _ship.visible_to_enemy and _ship.concealment != null:
 		var my_concealment := _ship.concealment.get_concealment()
 		var has_visible_spotter := false
@@ -4377,7 +4389,10 @@ func _should_use_radar() -> bool:
 	var spotted := server_node.get_valid_targets(my_team)
 
 	# --- Trigger 1: detected but no visible enemy within radar range ---
-	if _ship.visible_to_enemy and _ship.concealment != null:
+	# A ping counts: hydro reaches ~4 km and radar ~8 km, so whoever is lighting
+	# us is inside radar range. Air is excluded — radar cannot answer aircraft.
+	if (_ship.visible_to_enemy or _ship.det_hydro or _ship.det_radar) \
+			and _ship.concealment != null:
 		var has_close_visible := false
 		for enemy in spotted:
 			if not is_instance_valid(enemy):

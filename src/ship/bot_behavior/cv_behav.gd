@@ -325,7 +325,7 @@ func _update_exposure(ship: Ship) -> bool:
 	## Detection flickers as islands and spotters come and go; the withdrawal it
 	## triggers must not, or the carrier ends up oscillating on the spot instead
 	## of actually opening the range.
-	if ship.visible_to_enemy or not active_shooters_at_me.is_empty():
+	if ship.is_detected() or not active_shooters_at_me.is_empty():
 		_exposed_until_ms = Time.get_ticks_msec() + EXPOSURE_MEMORY_MS
 		return true
 	return Time.get_ticks_msec() < _exposed_until_ms

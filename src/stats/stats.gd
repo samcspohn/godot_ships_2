@@ -125,7 +125,9 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		# _ships_damaged[damaged_ship] = ship_damage + damage
 		damage_ship(damaged_ship, damage)
 
-	# Track ship damage
+	# spotted_by is whoever holds the target right now — LOS, hydro/radar ping, or
+	# aircraft (credited to their carrier). Cleared when the contact breaks, so
+	# this only pays out for damage taken while the target was lit.
 	if damaged_ship:
 		var spotter = damaged_ship.concealment.spotted_by
 		if spotter and spotter != _ship:

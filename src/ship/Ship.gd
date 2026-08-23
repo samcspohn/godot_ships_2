@@ -769,6 +769,13 @@ func sync_player(b: PackedByteArray):
 	self.visible = true
 
 
+## Held by the enemy through any channel: LOS, a hydro/radar ping, or aircraft
+## overhead. What the bots key hiding behaviour on — a ship being pinged is just
+## as shootable as one in sight, even with LOS broken.
+func is_detected() -> bool:
+	return visible_to_enemy or det_los or det_hydro or det_radar or det_air
+
+
 func _det_flags() -> int:
 	return (1 if det_los else 0) | (2 if det_hydro else 0) | (4 if det_radar else 0) | (8 if det_air else 0)
 
