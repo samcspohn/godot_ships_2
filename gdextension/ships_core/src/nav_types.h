@@ -52,9 +52,10 @@ struct IslandData {
 	Vector2 center;                    // average of all land cells
 	float radius;                      // max distance from center to any land cell
 	float area;                        // land cell count × cell_size²
+	float max_height;                  // tallest terrain Y on the island
 	std::vector<Vector2> edge_points;  // sampled shoreline points (SDF ≈ 0)
 
-	IslandData() : id(-1), center(Vector2()), radius(0.0f), area(0.0f) {}
+	IslandData() : id(-1), center(Vector2()), radius(0.0f), area(0.0f), max_height(0.0f) {}
 
 	Dictionary to_dictionary() const {
 		Dictionary dict;
@@ -62,6 +63,7 @@ struct IslandData {
 		dict["center"] = center;
 		dict["radius"] = radius;
 		dict["area"] = area;
+		dict["max_height"] = max_height;
 		PackedVector2Array edges;
 		for (const auto &pt : edge_points) {
 			edges.push_back(pt);

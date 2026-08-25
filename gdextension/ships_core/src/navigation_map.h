@@ -31,6 +31,14 @@ private:
 	// --- SDF Grid ---
 	std::vector<float> sdf_grid;  // Signed distance values; positive = water, negative = land
 	std::vector<float> height_grid;  // Max terrain height per cell; 0.0f = water
+	// height_grid lightly blurred, and the only thing terrain shadows are cast
+	// from. The raw grid's coastline is a 50 m staircase because the land mask is
+	// per-cell, and a shadow cast from a staircase has staircase edges however
+	// smoothly it is interpolated. Blurring rounds the caster instead of the
+	// result. Kept separate: height_grid itself must stay sharp for the shell-arc
+	// terrain test, which a lowered ridge would let shells through.
+	std::vector<float> shadow_height_grid;
+	float max_terrain_height;        // Tallest cell in height_grid; bounds the shadow march
 	int grid_width;
 	int grid_height;
 	float cell_size;
@@ -119,7 +127,10 @@ private:
 
 	// Bilinear interpolation of SDF at fractional grid coordinates
 	float sample_bilinear(float gx, float gz) const;
+	float sample_grid_bilinear(const std::vector<float> &grid, float gx, float gz) const;
 	float sample_height_bilinear(float gx, float gz) const;
+	float sample_height_smooth(float x, float z) const;
+	void build_shadow_height_grid();
 
 	// --- SDF construction internals ---
 
@@ -143,7 +154,7 @@ private:
 	void compute_sdf_from_mask(const std::vector<bool> &land_mask);
 
 	// Extract islands from the land mask via flood fill
-	void extract_islands(const std::vector<bool> &land_mask);
+	void extract_islands(const std::vector<bool> &land_mask, const std::vector<float> &height_grid);
 
 	// Compute connected regions of navigable water cells for O(1) reachability checks.
 	// Must be called after compute_sdf_from_mask. Uses a minimum clearance of 0 (any water cell).
@@ -426,8 +437,38 @@ public:
 	// Get raw height data as a flat float array (row-major, max terrain Y per cell; 0.0f = water)
 	PackedFloat32Array get_height_data() const;
 
+	// The blurred height field terrain shadows are actually cast from - what the
+	// drop-shadow overlay uploads, so it shades exactly what the rule refuses.
+	PackedFloat32Array get_shadow_height_data() const;
+
 	// Get terrain height at a world XZ position via bilinear interpolation
 	float get_terrain_height(float x, float z) const;
+
+	// Tallest terrain on the map. Zero before the map is built.
+	float get_max_terrain_height() const { return max_terrain_height; }
+
+	// --- Terrain shadow (fixed-slope horizon) queries ---
+	//
+	// Walks the height grid from `point` toward `origin` along a ray that leaves
+	// the ground under `point` climbing at `slope` (rise over run), and reports
+	// how far the tallest blocker along the way sticks up THROUGH that ray, in
+	// metres of height. Positive means the ray is broken and `point` sits in the
+	// terrain's shadow as seen from `origin`; zero means the line is clear.
+	//
+	// Land goes through the same walk as water, from the ground under it: the
+	// near flank of an island is clear because the run-in only ever descends
+	// across it, while the far flank and the water beyond share one continuous
+	// zone. Nothing is special-cased, so there is no seam between the two.
+	//
+	// Because the ray climbs linearly, nothing further than
+	// get_max_terrain_height() / slope can possibly block it, so the walk is
+	// bounded regardless of how far apart the two points are.
+	//
+	// Moving `point` directly away from `origin` raises the ray over every
+	// blocker at one metre of height per metre of travel, so depth / slope is
+	// exactly how much further out a shadowed point has to move to come clear.
+	float terrain_shadow_depth(Vector2 point, Vector2 origin, float slope) const;
+	bool is_terrain_shadowed(Vector2 point, Vector2 origin, float slope) const;
 
 
 

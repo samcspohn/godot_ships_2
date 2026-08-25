@@ -73,6 +73,15 @@ void NavigationMap::_bind_methods() {
 	// Height grid queries
 	ClassDB::bind_method(D_METHOD("get_terrain_height", "x", "z"), &NavigationMap::get_terrain_height);
 	ClassDB::bind_method(D_METHOD("get_height_data"), &NavigationMap::get_height_data);
+	ClassDB::bind_method(D_METHOD("get_shadow_height_data"), &NavigationMap::get_shadow_height_data);
+	ClassDB::bind_method(D_METHOD("get_max_terrain_height"), &NavigationMap::get_max_terrain_height);
+	ClassDB::bind_method(D_METHOD("get_min_x"), &NavigationMap::get_min_x);
+	ClassDB::bind_method(D_METHOD("get_min_z"), &NavigationMap::get_min_z);
+	ClassDB::bind_method(D_METHOD("get_max_x"), &NavigationMap::get_max_x);
+	ClassDB::bind_method(D_METHOD("get_max_z"), &NavigationMap::get_max_z);
+	// Terrain shadow (fixed-slope horizon) queries
+	ClassDB::bind_method(D_METHOD("terrain_shadow_depth", "point", "origin", "slope"), &NavigationMap::terrain_shadow_depth);
+	ClassDB::bind_method(D_METHOD("is_terrain_shadowed", "point", "origin", "slope"), &NavigationMap::is_terrain_shadowed);
 }
 
 // ============================================================================
@@ -89,6 +98,7 @@ NavigationMap::NavigationMap() {
 	max_z = 17500.0f;
 	built = false;
 	region_count = 0;
+	max_terrain_height = 0.0f;
 
 	// Precompute turn angle lookup table for all 8-direction pairs
 	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
@@ -270,7 +280,7 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	compute_sdf_from_mask(land_mask);
 
 	// Step 3: Extract island metadata
-	extract_islands(land_mask);
+	extract_islands(land_mask, height_grid);
 
 	// Step 4: Compute connected water regions for O(1) reachability checks
 	compute_regions();
@@ -279,6 +289,9 @@ void NavigationMap::build_from_collision_shapes(TypedArray<Node3D> island_bodies
 	allocate_astar_buffers();
 
 	this->height_grid = std::move(height_grid);
+	max_terrain_height = 0.0f;
+	for (float h : this->height_grid) max_terrain_height = std::max(max_terrain_height, h);
+	build_shadow_height_grid();
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Build complete. ", islands.size(), " islands detected, ",
 							region_count, " navigable regions.");
@@ -427,13 +440,16 @@ void NavigationMap::build_from_raycast_scan(PhysicsDirectSpaceState3D *space_sta
 
 	// --- Reuse the same SDF pipeline as build_from_collision_shapes ---
 	compute_sdf_from_mask(land_mask);
-	extract_islands(land_mask);
+	extract_islands(land_mask, height_grid);
 	compute_regions();
 
 	// Allocate reusable A* buffers
 	allocate_astar_buffers();
 
 	this->height_grid = std::move(height_grid);
+	max_terrain_height = 0.0f;
+	for (float h : this->height_grid) max_terrain_height = std::max(max_terrain_height, h);
+	build_shadow_height_grid();
 	built = true;
 	UtilityFunctions::print("[NavigationMap] Raycast build complete. ", islands.size(), " islands detected, ",
 							region_count, " navigable regions.");
@@ -942,7 +958,7 @@ void NavigationMap::compute_sdf_from_mask(const std::vector<bool> &land_mask) {
 // Island extraction
 // ============================================================================
 
-void NavigationMap::extract_islands(const std::vector<bool> &land_mask) {
+void NavigationMap::extract_islands(const std::vector<bool> &land_mask, const std::vector<float> &height_grid) {
 	islands.clear();
 
 	int total_cells = grid_width * grid_height;
@@ -1007,7 +1023,9 @@ void NavigationMap::extract_islands(const std::vector<bool> &land_mask) {
 			);
 			island.area = static_cast<float>(cell_count) * cell_size * cell_size;
 
-			// Compute radius (max distance from center to any land cell)
+			// Compute radius (max distance from center to any land cell) and the
+			// tallest cell on the island — the latter sets how far this island's
+			// terrain shadow can reach (see terrain_shadow_depth).
 			float max_dist_sq = 0.0f;
 			for (const auto &[cx, cz] : island_cells) {
 				float wx, wz;
@@ -1016,6 +1034,8 @@ void NavigationMap::extract_islands(const std::vector<bool> &land_mask) {
 				float dz = wz - island.center.y;  // center.y is world Z
 				float d = dx * dx + dz * dz;
 				if (d > max_dist_sq) max_dist_sq = d;
+				float h = height_grid[cz * grid_width + cx];
+				if (h > island.max_height) island.max_height = h;
 			}
 			island.radius = std::sqrt(max_dist_sq);
 
@@ -1136,7 +1156,7 @@ float NavigationMap::sample_bilinear(float gx, float gz) const {
 	return v0 * (1.0f - fz) + v1 * fz;
 }
 
-float NavigationMap::sample_height_bilinear(float gx, float gz) const {
+float NavigationMap::sample_grid_bilinear(const std::vector<float> &grid, float gx, float gz) const {
 	gx = std::max(0.0f, std::min(gx, static_cast<float>(grid_width - 1)));
 	gz = std::max(0.0f, std::min(gz, static_cast<float>(grid_height - 1)));
 
@@ -1148,15 +1168,45 @@ float NavigationMap::sample_height_bilinear(float gx, float gz) const {
 	float fx = gx - static_cast<float>(x0);
 	float fz = gz - static_cast<float>(z0);
 
-	float v00 = height_grid[z0 * grid_width + x0];
-	float v10 = height_grid[z0 * grid_width + x1];
-	float v01 = height_grid[z1 * grid_width + x0];
-	float v11 = height_grid[z1 * grid_width + x1];
+	float v00 = grid[z0 * grid_width + x0];
+	float v10 = grid[z0 * grid_width + x1];
+	float v01 = grid[z1 * grid_width + x0];
+	float v11 = grid[z1 * grid_width + x1];
 
 	float v0 = v00 * (1.0f - fx) + v10 * fx;
 	float v1 = v01 * (1.0f - fx) + v11 * fx;
 
 	return v0 * (1.0f - fz) + v1 * fz;
+}
+
+float NavigationMap::sample_height_bilinear(float gx, float gz) const {
+	return sample_grid_bilinear(height_grid, gx, gz);
+}
+
+// Separable 1-2-1 blur, once per axis. Enough to round the per-cell coastline
+// without meaningfully lowering a ridge: a peak that spans several cells keeps
+// its height, while a single-cell step gets shoulders.
+void NavigationMap::build_shadow_height_grid() {
+	int total = grid_width * grid_height;
+	shadow_height_grid.assign(total, 0.0f);
+	if (height_grid.empty()) return;
+	std::vector<float> tmp(total, 0.0f);
+	for (int z = 0; z < grid_height; z++) {
+		for (int x = 0; x < grid_width; x++) {
+			int i = z * grid_width + x;
+			float l = height_grid[z * grid_width + std::max(x - 1, 0)];
+			float r = height_grid[z * grid_width + std::min(x + 1, grid_width - 1)];
+			tmp[i] = 0.25f * l + 0.5f * height_grid[i] + 0.25f * r;
+		}
+	}
+	for (int z = 0; z < grid_height; z++) {
+		for (int x = 0; x < grid_width; x++) {
+			int i = z * grid_width + x;
+			float u = tmp[std::max(z - 1, 0) * grid_width + x];
+			float d = tmp[std::min(z + 1, grid_height - 1) * grid_width + x];
+			shadow_height_grid[i] = 0.25f * u + 0.5f * tmp[i] + 0.25f * d;
+		}
+	}
 }
 
 // ============================================================================
@@ -1196,6 +1246,70 @@ float NavigationMap::get_terrain_height(float x, float z) const {
 	}
 
 	return sample_height_bilinear(gx, gz);
+}
+
+// ============================================================================
+// Terrain shadow queries
+// ============================================================================
+
+// Height with the cell-to-cell blend eased instead of straight. Plain bilinear
+// is only C0: its gradient jumps at every cell boundary, and a level set of it -
+// which is exactly what the edge of a terrain shadow is - comes out kinked on a
+// 50 m lattice. Easing the blend makes the field C1 and the edge smooth. The
+// overlay shader samples the same way, so the zone it draws and the drop the
+// authority refuses share an edge.
+float NavigationMap::sample_height_smooth(float x, float z) const {
+	if (!built || shadow_height_grid.empty()) return 0.0f;
+	float gx, gz;
+	world_to_grid(x, z, gx, gz);
+	if (gx < 0.0f || gx >= static_cast<float>(grid_width) ||
+		gz < 0.0f || gz >= static_cast<float>(grid_height)) {
+		return 0.0f;
+	}
+	float ix = std::floor(gx);
+	float iz = std::floor(gz);
+	float fx = gx - ix;
+	float fz = gz - iz;
+	fx = fx * fx * (3.0f - 2.0f * fx);
+	fz = fz * fz * (3.0f - 2.0f * fz);
+	return sample_grid_bilinear(shadow_height_grid, ix + fx, iz + fz);
+}
+
+float NavigationMap::terrain_shadow_depth(Vector2 point, Vector2 origin, float slope) const {
+	if (!built || height_grid.empty() || slope <= 0.0f || max_terrain_height <= 0.0f) return 0.0f;
+
+	Vector2 to_origin = origin - point;
+	float span = to_origin.length();
+	if (span < 0.001f) return 0.0f;
+	Vector2 dir = to_origin / span;
+
+	// Past this the ray is already above the tallest thing on the map.
+	float limit = std::min(span, max_terrain_height / slope);
+	// Half a cell, so a ridge one cell wide cannot be stepped over.
+	float step = cell_size * 0.5f;
+
+	// The ray leaves the ground under the drop point, not sea level. The grid
+	// marks every cell a triangle touches and bilinear sampling bleeds that
+	// height a further cell into the water, so a point sitting just off a shore
+	// samples the island's own height AT ITSELF - which read as blocked even on
+	// the near side, where the island is behind the point and shields nothing.
+	// Subtracting it makes the first sample zero by construction, so only
+	// terrain rising above the drop point's own ground can break the run-in.
+	float base = sample_height_smooth(point.x, point.y);
+
+	float depth = 0.0f;
+	for (float s = 0.0f; s <= limit; s += step) {
+		Vector2 p = point + dir * s;
+		float h = sample_height_smooth(p.x, p.y);
+		if (h <= 0.0f) continue;
+		float d = h - base - s * slope;
+		if (d > depth) depth = d;
+	}
+	return depth;
+}
+
+bool NavigationMap::is_terrain_shadowed(Vector2 point, Vector2 origin, float slope) const {
+	return terrain_shadow_depth(point, origin, slope) > 0.0f;
 }
 
 Vector2 NavigationMap::get_gradient(float x, float z) const {
@@ -2629,6 +2743,16 @@ PackedFloat32Array NavigationMap::get_sdf_data() const {
 	for (size_t i = 0; i < sdf_grid.size(); i++) {
 		result[static_cast<int>(i)] = sdf_grid[i];
 	}
+	return result;
+}
+
+PackedFloat32Array NavigationMap::get_shadow_height_data() const {
+	PackedFloat32Array result;
+	if (!built || shadow_height_grid.empty()) return result;
+	int total = grid_width * grid_height;
+	result.resize(total);
+	float *w = result.ptrw();
+	for (int i = 0; i < total; i++) w[i] = shadow_height_grid[i];
 	return result;
 }
 

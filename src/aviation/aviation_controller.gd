@@ -149,12 +149,18 @@ func _physics_process(delta: float) -> void:
 
 	assert(multi_select)
 	if attack_point != null and not fire_held: # release ordnance at drop point
-		for sh_index in selected_indices():
-			if sh_index >= squadrons.size():
-				continue
-			var squadron := squadrons[sh_index]
-			aim_direction = _drag_direction(attack_point, aim_point, _direction_to(_ship.global_position, attack_point))
-			squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
+		# Terrain between the mark and this carrier breaks the run-in, so no
+		# squadron flying off it can get down onto the mark - the whole order is
+		# refused rather than any part of it flown (see DropShadow). The reticle
+		# has been red over this water the whole time the player was aiming at
+		# it, so there is nothing here to report back.
+		if not DropShadow.is_blocked(Vector2(attack_point.x, attack_point.z), _carrier_xz()):
+			for sh_index in selected_indices():
+				if sh_index >= squadrons.size():
+					continue
+				var squadron := squadrons[sh_index]
+				aim_direction = _drag_direction(attack_point, aim_point, _direction_to(_ship.global_position, attack_point))
+				squadron.set_attack(Vector2(attack_point.x, attack_point.z), aim_direction)
 		attack_point = null
 		aim_direction = Vector2.ZERO
 
@@ -177,6 +183,7 @@ func _process(delta: float) -> void:
 					active_list.append(i)
 			print("[preview] local_sel=%s selected=%s active=%s aim=%s" % [
 				is_local_selection, selected_indices(), active_list, aim_point])
+	_update_dead_zone_overlay(is_local_selection)
 	for i in range(squadrons.size()):
 		var squadron = squadrons[i]
 		# always show drop-pattern preview allowing for drop point updates
@@ -185,6 +192,33 @@ func _process(delta: float) -> void:
 		if squadron.attack_point != null:
 			squadron.update_committed_attack_preview()
 			# squadron.update_reticle_preview(false, Vector2.ZERO, Vector2.ZERO)
+
+# Where the run-in is measured from. Squadron._carrier_position() uses the same
+# point, so what the dead zone shows and what clamp_attack_direction() holds the
+# approach to are anchored on the same ship.
+func _carrier_xz() -> Vector2:
+	return Vector2(_ship.global_position.x, _ship.global_position.z)
+
+# Map-wide shading of the water no squadron off this carrier can be sent to.
+# Built on first use rather than in _ready(), since only the peer actually flying
+# this carrier ever needs it and nothing knows which peer that is until a player
+# selects the controller.
+var _dead_zone_overlay: DropShadowOverlay
+
+func _update_dead_zone_overlay(show_zones: bool) -> void:
+	if _dead_zone_overlay == null:
+		if not show_zones:
+			return
+		_dead_zone_overlay = DropShadowOverlay.create(game_world)
+	_dead_zone_overlay.update(show_zones, _carrier_xz())
+
+# The overlay is world-space, so it lives under the game world rather than under
+# this carrier - which means it has to be taken down by hand when the carrier
+# goes, or a sunk-and-respawned player leaves one behind every time.
+func _exit_tree() -> void:
+	if _dead_zone_overlay != null:
+		_dead_zone_overlay.queue_free()
+		_dead_zone_overlay = null
 
 # Live aiming preview: while held (dragging out an attack), the pattern
 # freezes at the point the drag started and rotates to track the drag
@@ -212,8 +246,10 @@ func _update_drop_preview(squadron: Squadron, show: bool) -> void:
 	direction = Squadron.clamp_attack_direction(
 		direction,
 		Vector2(center.x, center.z),
-		Vector2(_ship.global_position.x, _ship.global_position.z))
+		_carrier_xz())
 	squadron.update_reticle_preview(true, Vector2(center.x, center.z), direction)
+	squadron.set_reticle_blocked(
+		DropShadow.is_blocked(Vector2(center.x, center.z), _carrier_xz()))
 
 # Called directly (not via rpc) by the local player's PlayerController every
 # frame so the preview anchor updates instantly instead of waiting on a

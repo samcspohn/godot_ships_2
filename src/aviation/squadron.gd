@@ -350,6 +350,12 @@ func _apply_squadron_preview(meshes: Array[MeshInstance3D], show: bool, drop_cen
 func update_reticle_preview(show: bool, drop_center: Vector2, direction: Vector2) -> void:
 	_apply_squadron_preview(_reticle_meshes, show, drop_center, direction)
 
+# Recolours the live reticle to say whether the mark under it is one this
+# squadron may actually be sent at - terrain between it and the carrier breaks
+# the run-in (see DropShadow), and the order would be refused on release.
+func set_reticle_blocked(blocked: bool) -> void:
+	Aircraft.set_preview_blocked(_reticle_meshes, blocked)
+
 # Continuously shows the frozen drop pattern at the commanded attack_point,
 # facing attack_direction, once an attack has actually been commanded -
 # replaces the old pole and arrow attack marker. Purely derived from

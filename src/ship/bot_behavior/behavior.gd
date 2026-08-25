@@ -2488,14 +2488,28 @@ func _committed_contact(index: int, current_ship: Ship, current_sol: Dictionary)
 		return {ship = null, sol = {valid = false}}
 	return {ship = committed, sol = get_contact_solution(committed)}
 
+## Whether terrain between `point` and this carrier breaks a squadron's run-in,
+## so ordnance cannot be put there at all (see DropShadow). Bots are held to the
+## same rule the player is - AviationController refuses the order either way, and
+## a squadron sent at a mark in the dead zone flies the whole sortie for nothing.
+func _drop_blocked(point: Vector2) -> bool:
+	return DropShadow.is_blocked(point,
+		Vector2(_ship.global_position.x, _ship.global_position.z))
+
 ## Points a squadron's run at `contact`: approach side, lead, drop point. Called
 ## every tick until the approach commits, so the aim tracks the contact right up
-## to the point the run freezes.
-func _aim_run(index: int, squad: Squadron, contact: Ship, contact_sol: Dictionary) -> void:
+## to the point the run freezes. Returns false without ordering anything when the
+## lead has walked the drop point into a dead zone - the contact has got itself
+## behind cover, and the caller has to find the squadron something else to do.
+func _aim_run(index: int, squad: Squadron, contact: Ship, contact_sol: Dictionary) -> bool:
 	var pos: Vector3 = contact_sol.position if contact_sol.get("valid", false) else contact.global_position
 	var at := Vector2(pos.x, pos.z)
 	var dir := _attack_direction(index, squad, contact, at, contact_sol)
-	squad.set_attack(_lead_attack_point(squad, contact, at, dir, contact_sol), dir)
+	var drop := _lead_attack_point(squad, contact, at, dir, contact_sol)
+	if _drop_blocked(drop):
+		return false
+	squad.set_attack(drop, dir)
+	return true
 
 ## The best contact for a squadron that has just lost the one it was sent after:
 ## strikeable right now, inside the reach it is tasked on, and nearest to where
@@ -2527,6 +2541,8 @@ func _replacement_contact(squad: Squadron, server: GameServer, lost: Ship) -> Di
 		var at := Vector2(enemy_pos.x, enemy_pos.z)
 		if carrier.distance_to(at) > reach:
 			continue
+		if _drop_blocked(at):
+			continue
 		var d := from.distance_to(at)
 		if d < best_dist:
 			best_dist = d
@@ -2548,8 +2564,10 @@ func _retarget_or_hold(index: int, squad: Squadron, server: GameServer, lost: Sh
 	# old one from says nothing about this one.
 	_aviation_attack_dir.erase(index)
 	_aviation_shadow_issued.erase(index)
+	if not _aim_run(index, squad, swap.ship, swap.sol):
+		_shadow_contact(index, squad, hold_point)
+		return
 	_aviation_strike_target[index] = swap.ship
-	_aim_run(index, squad, swap.ship, swap.sol)
 
 ## Squadrons currently part of a forming strike group, kept between ticks purely
 ## so the reach test below can be hysteretic - see where it is read.
@@ -3424,6 +3442,14 @@ func _air_target_score(av: AviationController, strike: Array[int], enemy: Ship,
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var dist := carrier.distance_to(at)
 
+	# Behind terrain, as far as the air group is concerned: no squadron off this
+	# carrier can get down onto it, so it is worth nothing to the deck no matter
+	# what it is. Judged from where the ship is BELIEVED to be, same as the rest
+	# of the score - a contact whose last known position is sheltered is one the
+	# group would fly out to and then be unable to attack.
+	if _drop_blocked(at):
+		return 0.0
+
 	var score := _air_target_class_value(enemy.ship_class)
 	if score <= 0.0:
 		return 0.0
@@ -3685,7 +3711,12 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 				if run.ship == null or _contact_strike_lost(run.sol):
 					_retarget_or_hold(i, squad, server, run.ship, loiter_point)
 					continue
-				_aim_run(i, squad, run.ship, run.sol)
+				# The lead is re-solved every tick, so a target steaming in behind
+				# an island walks its own drop point into the dead zone. The run
+				# is over the moment that happens - pressing on only spends the
+				# ordnance on water the squadron is not allowed to drop on.
+				if not _aim_run(i, squad, run.ship, run.sol):
+					_retarget_or_hold(i, squad, server, run.ship, loiter_point)
 				continue
 			# ── still forming up ─────────────────────────────────────────────
 			# The reach a squadron is judged against widens slightly once it is
@@ -3870,11 +3901,19 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 		if not release:
 			_shadow_contact(i, squad, rally)
 			continue
+		var dir := _attack_direction(i, squad, air_ship, point, sol)
+		var drop := _lead_attack_point(squad, air_ship, point, dir, sol)
+		if _drop_blocked(drop):
+			# Scoring already rejects targets in a dead zone, so reaching this
+			# means the lead has pushed the mark into one since. Keep the
+			# squadron at the rally rather than releasing it onto a run that
+			# cannot be flown.
+			_shadow_contact(i, squad, rally)
+			continue
 		_aviation_in_group.erase(i)
 		_aviation_shadow_issued.erase(i)
 		_aviation_strike_target[i] = air_ship
-		var dir := _attack_direction(i, squad, air_ship, point, sol)
-		squad.set_attack(_lead_attack_point(squad, air_ship, point, dir, sol), dir)
+		squad.set_attack(drop, dir)
 
 
 ## Beam presentation below which a formed group would rather keep waiting at the

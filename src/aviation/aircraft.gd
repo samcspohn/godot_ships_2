@@ -213,6 +213,9 @@ const PREVIEW_HEIGHT: float = 1.0 # fixed height above sea level
 
 static func make_flat_marker(color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
+	# Kept so set_preview_blocked() can recolour the marker and put it back
+	# again without every aircraft type having to hand its own palette over.
+	mesh_instance.set_meta("base_color", color)
 	var box := BoxMesh.new()
 	box.size = Vector3.ONE
 	var material := StandardMaterial3D.new()
@@ -228,6 +231,21 @@ static func make_flat_marker(color: Color) -> MeshInstance3D:
 	mesh_instance.mesh = box
 	mesh_instance.visible = false
 	return mesh_instance
+
+# Colour a drop-pattern preview takes on over a mark the squadron cannot be
+# ordered to attack, because terrain breaks its run-in (see DropShadow). Each
+# marker keeps its own alpha so the shapes stay as readable as they are in
+# their normal colours.
+const PREVIEW_BLOCKED_COLOR := Color(1.0, 0.15, 0.1)
+
+static func set_preview_blocked(meshes: Array[MeshInstance3D], blocked: bool) -> void:
+	for m in meshes:
+		var base: Color = m.get_meta("base_color")
+		var color := base
+		if blocked:
+			color = Color(PREVIEW_BLOCKED_COLOR.r, PREVIEW_BLOCKED_COLOR.g,
+				PREVIEW_BLOCKED_COLOR.b, base.a)
+		((m.mesh as BoxMesh).material as StandardMaterial3D).albedo_color = color
 
 # Lays a flat marker down flush with the ground, `length` long along
 # `forward2` (world XZ) and `width` wide across it, centered on `center`.
