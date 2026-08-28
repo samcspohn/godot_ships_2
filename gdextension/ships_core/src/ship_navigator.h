@@ -217,6 +217,37 @@ private:
 	// without ever forbidding the water.
 	static constexpr float HUG_CLEARANCE_BUFFER = 25.0f;  // preferred stand-off on top of hull clearance
 
+	// --- Path stickiness (see accept_plan_result) ---
+	// A ship replans at ~5 Hz against a memoryless search, so two routes around
+	// opposite sides of an island — near-identical in length — trade places as
+	// the argmin on nothing more than the destination sliding a few hundred
+	// metres.  The ship's turning circle is wider than the gap between them, so
+	// it commits to neither and stalls off the headland.  HpaGraph's PathBias
+	// stops most of that in the search; this is the backstop that decides
+	// whether a route that still came back different is worth switching to.
+	//
+	// Everything is in metres, scaled off the turning-circle radius so the
+	// margins mean the same thing to a destroyer and a battleship.
+	// The window both mechanisms work in, in turning-circle radii.  Everything
+	// hinges on this being bounded.  The corridor discount is multiplicative
+	// per abstract step, so a route riding the corridor saves
+	// (1 - PATH_BIAS_FACTOR) x however much of it it rides: stamp the whole
+	// remaining route and an 8 km corridor is worth 2 km of detour, which buys
+	// a run out to the old destination's clusters and a 180 back.  Stamping
+	// only the near field caps the discount at a fraction of a turning circle
+	// — enough to break a tie between two ways around the island ahead, structurally
+	// unable to pay for a detour.  Beyond the window there is nothing to be
+	// sticky about: the ship replans that stretch many times before reaching it.
+	static constexpr float PATH_NEAR_FIELD_TCR    = 6.0f;
+
+	static constexpr int   PATH_COMPARE_SAMPLES   = 24;   // arclength samples per route comparison
+	static constexpr float SWITCH_MIN_SEP_TCR     = 0.5f; // below this mean separation it is the same route, replanned
+	static constexpr float SWITCH_BASE_TCR        = 0.35f;// flat switching margin
+	static constexpr float SWITCH_SEPARATION_GAIN = 1.5f; // extra margin per metre of mean separation
+	static constexpr float SWITCH_FORK_TCR        = 2.0f; // a fork nearer than this is already committed to
+	static constexpr float SWITCH_COMMIT_TCR      = 6.0f; // extra margin demanded inside that commit zone
+	static constexpr int   PATH_CLEAR_MAX_SEGMENTS = 32;  // cap on validity raycasts per acceptance test
+
 	// --- Stuck / bow-in detection ---
 	// Accumulated when the navigator wants reverse (destination is behind) but
 	// threat scoring keeps choosing forward candidates.  Once the threshold
@@ -343,6 +374,38 @@ private:
 
 	void accept_plan_result(const PathResult &forward_result);
 
+	// The part of |p| the ship has yet to sail, as a bare polyline prefixed
+	// with the ship's own position.  Nothing is synthesised onto the end: a
+	// route is only ever compared against, or kept, while it still ends at the
+	// live destination (see accept_plan_result).
+	std::vector<Vector2> remaining_path(const PathResult &p, int from_index) const;
+
+	// |p| clipped to the first max_len metres of arclength.
+	static std::vector<Vector2> truncate_path(const std::vector<Vector2> &p, float max_len);
+
+	// How far ahead stickiness applies.  See PATH_NEAR_FIELD_TCR.
+	float get_near_field_range() const;
+
+	// Resample a polyline to |n| points at uniform arclength fractions, so two
+	// routes of different lengths can be compared point-for-point.
+	static void resample_path(const std::vector<Vector2> &p, int n, std::vector<Vector2> &out);
+
+	// Polyline length plus the initial heading error charged at the turning
+	// circle radius.  Cluster A* has no idea which way the ship is pointing, so
+	// a shorter route that demands a 180 is not the cheaper one.
+	float path_travel_cost(const std::vector<Vector2> &p) const;
+
+	// True when every leg of |p| clears terrain at the hull clearance.  Terrain
+	// only, deliberately: threats and dynamic obstacles move every frame, and
+	// letting them expire a route here would reintroduce the churn this whole
+	// mechanism exists to remove.  Both are handled by the arc follower.
+	bool is_path_terrain_clear(const std::vector<Vector2> &p) const;
+
+	// --- Path stickiness instrumentation ---
+	int   path_switch_count_;      // plans accepted that changed the route
+	int   path_switch_rejected_;   // plans rejected as not worth the switch
+	float path_last_divergence_;   // mean separation of the last compared pair (metres)
+
 	// --- Two-state update methods ---
 
 	void update(float delta);
@@ -454,6 +517,11 @@ public:
 	int get_last_path_failure_reason() const { return path_fail_reason_; }
 	String get_last_path_failure_reason_name() const { return String(path_fail_reason_name(path_fail_reason_)); }
 	void clear_path_failures();
+
+	// --- Path stickiness (see accept_plan_result) ---
+	int   get_path_switch_count() const { return path_switch_count_; }
+	int   get_path_switch_rejected_count() const { return path_switch_rejected_; }
+	float get_path_divergence() const { return path_last_divergence_; }
 
 	float get_clearance_radius() const { return get_ship_clearance(); }
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }

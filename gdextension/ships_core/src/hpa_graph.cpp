@@ -337,7 +337,9 @@ void HpaGraph::clear_obstacles() {
 // Clusters with max_sdf < q_cl are impassable for this ship.
 // ============================================================================
 
-std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) const {
+std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl,
+                                         const std::vector<uint8_t> *bias_mask,
+                                         float bias_factor) const {
 	if (from_cid == to_cid) return { from_cid };
 	if (from_cid < 0 || to_cid < 0 ||
 		from_cid >= (int)clusters_.size() ||
@@ -345,6 +347,15 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 
 	const int N = static_cast<int>(clusters_.size());
 	const float INF = std::numeric_limits<float>::infinity();
+
+	// Discounting in-corridor steps lowers the cheapest possible cost per unit
+	// distance to bias_factor, so the heuristic has to come down by the same
+	// factor or it stops being admissible and A* can return a non-optimal
+	// route under the biased metric.
+	const bool biased = (bias_mask != nullptr) &&
+	                    (bias_mask->size() == clusters_.size()) &&
+	                    bias_factor > 0.0f && bias_factor < 1.0f;
+	const float h_scale = biased ? bias_factor : 1.0f;
 
 	std::vector<float> g(N, INF);
 	std::vector<int>   parent(N, -1);
@@ -355,7 +366,7 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 		const Cluster &c = clusters_[cid];
 		float dx = c.wx_center - goal_c.wx_center;
 		float dz = c.wz_center - goal_c.wz_center;
-		return std::sqrt(dx * dx + dz * dz);
+		return std::sqrt(dx * dx + dz * dz) * h_scale;
 	};
 
 	using PQ = std::pair<float, int>;
@@ -400,6 +411,7 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 				}
 
 				float step_cost = is_diag ? diagonal_step_cost_ : cardinal_step_cost_;
+				if (biased && (*bias_mask)[ncid]) step_cost *= bias_factor;
 				float ng = g[cur] + step_cost;
 
 				if (ng < g[ncid]) {
@@ -432,7 +444,9 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl) c
 
 std::vector<int> HpaGraph::sub_cluster_astar(
 		int from_sid, int to_sid, float q_cl,
-		const std::vector<uint8_t>* allowed_macros) const {
+		const std::vector<uint8_t>* allowed_macros,
+		const std::vector<uint8_t>* bias_mask,
+		float bias_factor) const {
 	if (from_sid == to_sid) return { from_sid };
 	const int N = static_cast<int>(sub_clusters_.size());
 	if (from_sid < 0 || to_sid < 0 || from_sid >= N || to_sid >= N) return {};
@@ -443,6 +457,13 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 	const float sub_card = static_cast<float>(sub_size_) * cell_size_;
 	const float sub_diag = sub_card * 1.41421356237f;
 
+	// See cluster_astar(): the heuristic is scaled by bias_factor to stay
+	// admissible against the discounted in-corridor step cost.
+	const bool biased = (bias_mask != nullptr) &&
+	                    (bias_mask->size() == sub_clusters_.size()) &&
+	                    bias_factor > 0.0f && bias_factor < 1.0f;
+	const float h_scale = biased ? bias_factor : 1.0f;
+
 	std::vector<float> g(N, INF);
 	std::vector<int>   parent(N, -1);
 	std::vector<bool>  closed(N, false);
@@ -452,7 +473,7 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 		const SubCluster &s = sub_clusters_[sid];
 		float dx = s.wx_center - goal_s.wx_center;
 		float dz = s.wz_center - goal_s.wz_center;
-		return std::sqrt(dx * dx + dz * dz);
+		return std::sqrt(dx * dx + dz * dz) * h_scale;
 	};
 
 	auto macro_allowed = [&](int parent_cid) -> bool {
@@ -520,6 +541,7 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 				}
 
 				float step_cost = is_diag ? sub_diag : sub_card;
+				if (biased && (*bias_mask)[nsid]) step_cost *= bias_factor;
 				float ng = g[cur] + step_cost;
 
 				if (ng < g[nsid]) {
@@ -1008,11 +1030,55 @@ std::vector<Vector2> HpaGraph::hug_string_pull(const std::vector<Vector2> &in,
 	return sweep_pass(path);
 }
 
+// ============================================================================
+// build_path_bias — stamp a route polyline onto the abstract grids
+// ============================================================================
+
+void HpaGraph::build_path_bias(const std::vector<Vector2> &path, PathBias &out) const {
+	out.active = false;
+	if (!built_ || path.size() < 2) return;
+
+	out.macro.assign(clusters_.size(), 0);
+	out.sub.assign(sub_clusters_.size(), 0);
+
+	auto mark = [&](const Vector2 &p) {
+		int gx = std::max(0, std::min(static_cast<int>((p.x - min_x_) / cell_size_), grid_w_ - 1));
+		int gz = std::max(0, std::min(static_cast<int>((p.y - min_z_) / cell_size_), grid_h_ - 1));
+		int cid = cluster_id(cell_cx(gx), cell_cz(gz));
+		int sid = sub_id(cell_scx(gx), cell_scz(gz));
+		if (cid >= 0 && cid < static_cast<int>(out.macro.size())) out.macro[cid] = 1;
+		if (sid >= 0 && sid < static_cast<int>(out.sub.size()))   out.sub[sid]   = 1;
+	};
+
+	// Half a sub-cluster per step: fine enough that the stamped subs form an
+	// unbroken chain (a coarser stride would leave gaps the biased search
+	// cannot follow), coarse enough that a 20 km route is a few hundred marks.
+	const float step = std::max(1.0f, static_cast<float>(sub_size_) * cell_size_ * 0.5f);
+
+	mark(path.front());
+	for (size_t i = 0; i + 1 < path.size(); ++i) {
+		const Vector2 &a = path[i];
+		const Vector2 &b = path[i + 1];
+		float len = a.distance_to(b);
+		if (!(len > 0.0f)) continue;   // also rejects NaN
+		int n = std::min(static_cast<int>(len / step), PATH_BIAS_MAX_STEPS_PER_SEG);
+		for (int s = 1; s <= n; ++s)
+			mark(a.lerp(b, static_cast<float>(s) / static_cast<float>(n + 1)));
+		mark(b);
+	}
+
+	out.active = true;
+}
+
 PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance,
-                               float hug_clearance) const {
+                               float hug_clearance,
+                               const std::vector<Vector2> *bias_path) const {
 	last_query_ignored_threats_ = false;
 
-	PathResult r = find_path_query(from, to, query_clearance, hug_clearance);
+	PathBias bias;
+	if (bias_path) build_path_bias(*bias_path, bias);
+
+	PathResult r = find_path_query(from, to, query_clearance, hug_clearance, bias);
 	if (r.valid || threat_blocked_count_ == 0) {
 		return r;
 	}
@@ -1023,7 +1089,7 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance,
 	// following a stale path.  Retry with threats muted so it can at least
 	// move; the caller can inspect did_last_query_ignore_threats().
 	threats_muted_ = true;
-	r = find_path_query(from, to, query_clearance, hug_clearance);
+	r = find_path_query(from, to, query_clearance, hug_clearance, bias);
 	threats_muted_ = false;
 
 	last_query_ignored_threats_ = r.valid;
@@ -1031,7 +1097,7 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance,
 }
 
 PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clearance,
-                                     float hug_clearance) const {
+                                     float hug_clearance, const PathBias &bias) const {
 	using Clock = std::chrono::steady_clock;
 	auto query_t0 = Clock::now();
 
@@ -1315,6 +1381,11 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	// same-macro fast path and the per-pair connector below.
 	std::vector<uint8_t> allowed_macros(clusters_.size(), 0);
 
+	// Corridor stickiness (see PathBias).  Null when the caller passed no
+	// existing route, which leaves every search below at its unbiased cost.
+	const std::vector<uint8_t> *macro_bias = bias.active ? &bias.macro : nullptr;
+	const std::vector<uint8_t> *sub_bias   = bias.active ? &bias.sub   : nullptr;
+
 	if (from_cid == to_cid) {
 		// (a) Same macro — sub A* over this single macro, no corridor needed.
 		allowed_macros[from_cid] = 1;
@@ -1322,7 +1393,7 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 		if (from_sid != to_sid) {
 			auto t_abs0 = Clock::now();
 			std::vector<int> sub_path = sub_cluster_astar(
-				from_sid, to_sid, q_cl, &allowed_macros);
+				from_sid, to_sid, q_cl, &allowed_macros, sub_bias, PATH_BIAS_FACTOR);
 			auto t_abs1 = Clock::now();
 			abstract_us += std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
 
@@ -1356,7 +1427,8 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	} else {
 		// (b) Cross macro — macro A* then sub-aware guide selection.
 		auto t_abs0 = Clock::now();
-		std::vector<int> cluster_path = cluster_astar(from_cid, to_cid, q_cl);
+		std::vector<int> cluster_path = cluster_astar(from_cid, to_cid, q_cl,
+		                                              macro_bias, PATH_BIAS_FACTOR);
 		auto t_abs1 = Clock::now();
 		abstract_us = std::chrono::duration<float, std::micro>(t_abs1 - t_abs0).count();
 
@@ -1480,7 +1552,8 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 
 		if (a_sid != b_sid) {
 			std::vector<int> sub_path =
-				sub_cluster_astar(a_sid, b_sid, q_cl, &allowed_macros);
+				sub_cluster_astar(a_sid, b_sid, q_cl, &allowed_macros,
+				                  sub_bias, PATH_BIAS_FACTOR);
 
 			// Count open intermediates — only worth using if the sub layer
 			// produced at least one open detour point; otherwise the route

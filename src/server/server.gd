@@ -317,7 +317,6 @@ func spawn_player(id, player_name):
 				bot_controller.behavior = CABehavior.new()
 			Ship.ShipClass.CV:
 				bot_controller.behavior = CVBehavior.new()
-		bot_controller.behavior.threat_mod = _get_bot_threat_mod(ship)
 		# How good this bot is meant to be. Absent from a lineup means REGULAR,
 		# which is exactly how every bot behaved before aptitude existed, so old
 		# match configs keep working untouched.
@@ -549,18 +548,6 @@ func _load_ship_config_from_file(config_path: String) -> Dictionary:
 	}
 
 
-func _get_bot_threat_mod(ship_path: String) -> float:
-	var settings := _load_ship_config_from_file(BOT_SHIP_CONFIG_PATH)
-	assert(not settings.is_empty(), "Missing bot ship config: " + BOT_SHIP_CONFIG_PATH)
-
-	var ship_config: Dictionary = settings["ship_config"]
-	assert(ship_config.has(ship_path), "Missing bot ship entry in config: " + ship_path)
-
-	var upgrades: Dictionary = ship_config[ship_path]
-	assert(upgrades.has("threat-mod"), "Missing threat-mod for bot ship: " + ship_path)
-	return float(upgrades["threat-mod"])
-
-
 # Function to load and apply player or bot config
 func _load_and_apply_player_config(ship: Ship, player_name: String, ship_path: String = "", is_bot: bool = false) -> void:
 	if player_name.is_empty() or not ship:
@@ -585,6 +572,9 @@ func _load_and_apply_player_config(ship: Ship, player_name: String, ship_path: S
 	print("Applying ", upgrades.size(), " upgrades/skills entries to ship for player: ", player_name)
 
 	for slot_str in upgrades:
+		# "threat-mod" is a dead key. Bots no longer read it — how close a ship
+		# fights is deduced from its build (BotBehavior.engagement_range) — but
+		# existing configs still carry one, and it is not an upgrade id.
 		if slot_str == "skills" or slot_str == "threat-mod":
 			continue
 		var upgrade_id: String = upgrades[slot_str]

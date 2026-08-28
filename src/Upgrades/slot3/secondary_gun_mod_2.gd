@@ -6,9 +6,11 @@ const SPREAD_MOD: float = 0.90
 const GROUPING_MOD: float = 0.1
 
 func _init() -> void:
-	upgrade_id = "sec_gun_1"
+	# Must match the key this script is registered under in UpgradeRegistry.tscn.
+	upgrade_id = "sec_gun_2"
 	name = "Secondary Battery Mod 2"
-	description = "Increases secondary battery range by 25% and reduces dispersion by 20%."
+	description = "Increases secondary battery range by %s, reduces dispersion by %s, and tightens grouping." \
+		% [fmt_mult_pct(RANGE_MOD).trim_prefix("+"), fmt_mult_pct(SPREAD_MOD).trim_prefix("-")]
 	tier = 3
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Extended barrels and improved sighting give secondaries real reach."

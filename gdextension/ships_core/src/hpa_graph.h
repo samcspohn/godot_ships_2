@@ -78,6 +78,30 @@ struct HpaObstacle {
 };
 
 // ---------------------------------------------------------------------------
+// PathBias — the corridor occupied by the route a ship is already following.
+//
+// A* over the cluster / sub-cluster grids is memoryless: two routes around
+// opposite sides of an island differ by a few percent of cost, so which one is
+// the argmin flips on nothing more than the ship crossing a cluster boundary
+// or the destination sliding a few hundred metres.  Replanning at 5 Hz then
+// alternates between them and the ship, whose turning circle is far wider than
+// the gap between the two routes, ends up steering at neither.
+//
+// Stamping the previous route into these masks and charging a discounted step
+// cost inside them makes the search sticky: the class of route the ship is
+// already committed to wins every tie, and only a materially cheaper
+// alternative can move it.  Both levels are stamped because which side of an
+// island a route takes is settled at the macro layer for large islands and at
+// the sub layer for ones smaller than a cluster.
+// ---------------------------------------------------------------------------
+
+struct PathBias {
+	std::vector<uint8_t> macro;   // parallel to clusters_
+	std::vector<uint8_t> sub;     // parallel to sub_clusters_
+	bool                 active = false;
+};
+
+// ---------------------------------------------------------------------------
 // HpaGraph — Cluster-grid hierarchical navigation graph.
 //
 // Level 0 : SDF grid cells (stored in NavigationMap).
@@ -118,6 +142,18 @@ public:
 	// Hard ceiling on vertices so a pathological route cannot make the pull
 	// quadratic in path length.
 	static constexpr int PULL_MAX_VERTS    = 192;
+
+	// --- Path bias (see PathBias / build_path_bias in hpa_graph.cpp) ---
+	// Step-cost multiplier charged for abstract nodes the ship's current route
+	// already runs through.  At 0.75 a corridor route wins any tie and stays
+	// chosen until an alternative is more than a third shorter — enough that
+	// replan-to-replan noise (the destination sliding a few hundred metres,
+	// the ship crossing a cluster boundary) can no longer flip which side of
+	// an island the route takes, while a genuinely better channel still wins.
+	static constexpr float PATH_BIAS_FACTOR = 0.75f;
+	// Cap on rasterisation steps per route segment, so a degenerate waypoint
+	// pair cannot turn the stamp into an unbounded loop.
+	static constexpr int PATH_BIAS_MAX_STEPS_PER_SEG = 512;
 
 	// ------------------------------------------------------------------
 	// Lifecycle
@@ -178,9 +214,15 @@ public:
 	/// planning margin still produces a route.  If the strict query fails while
 	/// a threat layer is stamped, it is retried with threats muted: threat
 	/// avoidance is a routing preference, and a risky route beats no route.
+	///
+	/// bias_path, when supplied, is the route the caller is already following.
+	/// The abstract layers charge a PATH_BIAS_FACTOR discount for nodes it runs
+	/// through, so the returned route stays in the same corridor unless a
+	/// materially cheaper one exists.  See PathBias.
 	PathResult find_path(Vector2 from, Vector2 to,
 						 float query_clearance = -1.0f,
-						 float hug_clearance = -1.0f) const;
+						 float hug_clearance = -1.0f,
+						 const std::vector<Vector2> *bias_path = nullptr) const;
 
 	/// FailStage of the most recent query (FAIL_NONE when it succeeded).
 	int get_last_fail_stage() const { return last_fail_stage_; }
@@ -364,8 +406,13 @@ private:
 	/// A* over the cluster grid.  Returns ordered cluster IDs from
 	/// from_cid to to_cid (inclusive), or empty if no path exists.
 	/// Clusters with max_sdf < q_cl are treated as impassable.
+	/// bias_mask, when supplied, flags clusters the caller's existing route
+	/// runs through; entering one costs bias_factor of a normal step.  The
+	/// heuristic is scaled by the same factor so it stays admissible.
 	std::vector<int> cluster_astar(
-			int from_cid, int to_cid, float q_cl) const;
+			int from_cid, int to_cid, float q_cl,
+			const std::vector<uint8_t> *bias_mask = nullptr,
+			float bias_factor = 1.0f) const;
 
 	/// A* over the sub-cluster grid.  Returns ordered sub-cluster IDs from
 	/// from_sid to to_sid (inclusive), or empty if no path exists.
@@ -373,9 +420,12 @@ private:
 	/// If allowed_macros is non-null, only sub-clusters whose parent_cid bit
 	/// is set in the supplied per-macro mask are considered passable.  This
 	/// constrains the search to a corridor of macros along an abstract path.
+	/// bias_mask / bias_factor work as in cluster_astar(), at sub granularity.
 	std::vector<int> sub_cluster_astar(
 			int from_sid, int to_sid, float q_cl,
-			const std::vector<uint8_t>* allowed_macros = nullptr) const;
+			const std::vector<uint8_t>* allowed_macros = nullptr,
+			const std::vector<uint8_t>* bias_mask = nullptr,
+			float bias_factor = 1.0f) const;
 
 	// ------------------------------------------------------------------
 	// Inline coordinate / SDF helpers
@@ -440,7 +490,12 @@ private:
 	/// One pass of the query.  find_path() runs this strictly, then once more
 	/// with threats_muted_ if the strict pass found nothing.
 	PathResult find_path_query(Vector2 from, Vector2 to, float query_clearance,
-							   float hug_clearance) const;
+							   float hug_clearance, const PathBias &bias) const;
+
+	/// Rasterise a route polyline into per-cluster and per-sub-cluster masks.
+	/// Steps along each segment at half a sub-cluster so the stamped chain is
+	/// contiguous.  Leaves out.active false when there is nothing to stamp.
+	void build_path_bias(const std::vector<Vector2> &path, PathBias &out) const;
 
 	/// Exact line-of-sight: sphere-traces the smooth (bilinear) SDF.
 	/// NavigationMap::line_of_sight() samples the grid nearest-neighbour and is

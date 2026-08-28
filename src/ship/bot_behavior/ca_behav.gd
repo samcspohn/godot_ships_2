@@ -210,7 +210,7 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		var chase := _run_skill(&"Chase", ctx)
 		if chase != null:
 			return chase
-	return _run_skill(&"Push", ctx)
+	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 ## Cover navigates to a hide position, so its heading belongs to the navigator.
 ## Every other close-arm skill wants a say in where the hull points, and near
@@ -239,11 +239,11 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 			# us; if terrain covers every contact, shoot.
 			_suppress_guns = _has_open_line_of_sight(ctx, sit)
 			return hide
-		return _run_skill(&"Push", ctx)
+		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 	var cover_intent := _skill_cover.execute(ctx, cover_params, false)
 	if cover_intent == null:
-		return _run_skill(&"Push", ctx)
+		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 	var off_path: bool = sit.nearest != null \
 		and sit.threat > d.cover_abandon_threat \
@@ -257,7 +257,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# but lean the destination slightly toward the island we gave up on.
 	var intent := _run_skill(&"Kite", ctx, {"desired_range_ratio": 0.65})
 	if intent == null:
-		intent = _run_skill(&"Push", ctx)
+		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 	if intent != null:
 		intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.1)
 	return intent

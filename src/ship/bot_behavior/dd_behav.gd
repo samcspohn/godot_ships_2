@@ -293,7 +293,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 			# Push, but only to the range our weapons actually want. For a boat
 			# with tubes that is torpedo range, which is why closing further
 			# would just walk it into gun range for nothing.
-			intent = _run_skill(&"Push", ctx, {"desired_range": _engagement_range(ship)})
+			intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 			if intent != null:
 				wants_stealth = false
 				wants_to_be_concealed = false
@@ -327,10 +327,15 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 ## The cap is held short of nominal tube range because update_torpedo_aim()
 ## rejects an intercept solved beyond 0.9x of it, so sitting at the nominal
 ## maximum yields a firing position that never fires.
+##
+## Threat does not enter into it while there are tubes: the base class yields to
+## main-battery range under pressure because closing to use secondaries is a bad
+## trade, but a torpedo boat under pressure has MORE reason to stay in the band
+## where it launches undetected, not less.  With no tubes the boat is a gunboat
+## and takes the shared answer.
 const TORPEDO_ENGAGE_RATIO: float = 0.8
-const GUN_ENGAGE_RATIO: float = 0.85
 
-func _engagement_range(ship: Ship) -> float:
+func engagement_range(ship: Ship, threat: float) -> float:
 	if ship.torpedo_controller != null:
 		var torp_range: float = ship.torpedo_controller.get_params()._range
 		if torp_range > 0.0:
@@ -339,7 +344,7 @@ func _engagement_range(ship: Ship) -> float:
 			# undetected launch at all, and the boat has to close to tube range
 			# and accept being seen.
 			return minf(conceal * SkillSpot.SAFE_MARGIN, torp_range * TORPEDO_ENGAGE_RATIO)
-	return ship.artillery_controller.get_params()._range * GUN_ENGAGE_RATIO
+	return super(ship, threat)
 
 
 ## Destroyers always route stealth-aware: undetected it keeps them outside enemy

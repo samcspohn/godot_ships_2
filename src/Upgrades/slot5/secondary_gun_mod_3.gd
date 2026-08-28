@@ -6,7 +6,8 @@ const RELOAD_MOD: float = 0.8
 func _init() -> void:
 	upgrade_id = "sec_gun_3"
 	name = "Secondary Battery Mod 3"
-	description = "Reduces secondary battery reload time by 15%."
+	description = "Reduces secondary battery reload time by %s." \
+		% fmt_mult_pct(RELOAD_MOD).trim_prefix("-")
 	tier = 5
 	icon = preload("res://icons/auto-repair (1).png")
 	flavor_text = "Pre-loaded magazines and optimised shell handling keep the secondary batteries blazing."

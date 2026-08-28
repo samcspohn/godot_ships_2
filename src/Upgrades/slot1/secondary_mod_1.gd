@@ -6,12 +6,16 @@ const SPREAD_MOD: float = 0.95
 const RELOAD_MOD: float = 0.95
 
 func _init() -> void:
-	upgrade_id = "sec_gun_1"
+	# Must match the key this script is registered under in UpgradeRegistry.tscn.
+	# create_upgrade() overwrites this field with the registry key, so a wrong
+	# value here is invisible at runtime and wrong everywhere else.
+	upgrade_id = "sec_mod_1"
 	name = "Secondary Battery Mod 1"
-	description = "Increases secondary battery range by 25% and reduces dispersion by 20%."
+	description = "Increases secondary battery range by %s and reduces secondary dispersion and reload time by %s." \
+		% [fmt_mult_pct(RANGE_MOD).trim_prefix("+"), fmt_mult_pct(SPREAD_MOD).trim_prefix("-")]
 	tier = 1
 	icon = preload("res://icons/auto-repair (1).png")
-	flavor_text = "Extended barrels and improved sighting give secondaries real reach."
+	flavor_text = "Better mountings and a tidier fire-control loop, across the board."
 	tooltip_stats = [
 		{"stat": "Secondary Range", "value": fmt_mult_pct(RANGE_MOD), "positive": true},
 		{"stat": "Secondary Dispersion", "value": fmt_mult_pct(SPREAD_MOD), "positive": true},

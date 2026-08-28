@@ -82,6 +82,30 @@ var cover_min_threat_dist: float = 10000.0
 var cover_abandon_threat: float = 0.85
 
 # ---------------------------------------------------------------------------
+# Engagement range — how close this bot wants to fight, read off its build
+# ---------------------------------------------------------------------------
+
+## Fraction of main-battery range the bot fights at when the main battery is the
+## only thing it has to bring to bear.
+var gun_engage_ratio: float = 0.60
+
+## How far the secondaries must reach, as a fraction of main-battery range,
+## before they justify giving up standoff to use them. Below this the hull is a
+## gunship that happens to carry secondaries, and the water it would cross to
+## bring them into play costs more than the second battery is worth.
+var secondary_commit_ratio: float = 0.5
+
+## Where inside secondary range a brawler wants to sit. Short of the maximum,
+## because a ship parked exactly on the edge of its own secondary range spends
+## most of the fight drifting outside it.
+var secondary_engage_ratio: float = 0.9
+
+## Threat above which the bot stops trying to bring its secondaries to bear and
+## reverts to main-battery range. Closing into a losing fight to use a shorter
+## gun is how a brawler dies.
+var secondary_yield_threat: float = 0.6
+
+# ---------------------------------------------------------------------------
 # Reverse-alignment band — how close a threat must be before the bot will back
 # out of a turn rather than swing its broadside through it.
 # ---------------------------------------------------------------------------
@@ -124,6 +148,7 @@ static func for_battleship() -> BotDoctrine:
 	d.camp_max_threat = 0.6
 	d.cover_max_threat = 0.7
 	d.cover_min_threat_dist = 10000.0
+	d.gun_engage_ratio = 0.60
 	d.ra_bb_shooter_hurt = 13000.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
@@ -139,6 +164,7 @@ static func for_cruiser() -> BotDoctrine:
 	d.dark_chain = [&"Chase", &"Hunt", &"SailForward"]
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
+	d.gun_engage_ratio = 0.70
 	d.ra_bb_shooter_hurt = 11000.0
 	# The CA's broadside post-process is deliberately off: its engaged arm sets
 	# heading_weight itself and a second opinion on heading fights it.
@@ -165,6 +191,9 @@ static func for_destroyer() -> BotDoctrine:
 	d.close_arm_uses_cover = false
 	d.close_arm_reverse_align = false
 	d.push_threat = 0.5
+	# A destroyer that is shooting rather than launching is already committed,
+	# so it fights near the edge of its guns instead of holding a standoff.
+	d.gun_engage_ratio = 0.85
 	d.use_broadside = true
 	d.broadside_exclude = [&"Retreat", &"Spot"]
 	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat"]

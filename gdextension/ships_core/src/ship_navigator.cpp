@@ -89,6 +89,11 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_path_failure_reason_name"), &ShipNavigator::get_last_path_failure_reason_name);
 	ClassDB::bind_method(D_METHOD("clear_path_failures"), &ShipNavigator::clear_path_failures);
 
+	// Path stickiness
+	ClassDB::bind_method(D_METHOD("get_path_switch_count"), &ShipNavigator::get_path_switch_count);
+	ClassDB::bind_method(D_METHOD("get_path_switch_rejected_count"), &ShipNavigator::get_path_switch_rejected_count);
+	ClassDB::bind_method(D_METHOD("get_path_divergence"), &ShipNavigator::get_path_divergence);
+
 	ClassDB::bind_method(D_METHOD("get_clearance_radius"), &ShipNavigator::get_ship_clearance);
 	ClassDB::bind_method(D_METHOD("get_soft_clearance_radius"), &ShipNavigator::get_soft_clearance);
 
@@ -189,6 +194,10 @@ ShipNavigator::ShipNavigator() {
 	path_fail_suppressed_ = 0;
 	path_fail_warn_cooldown_ = 0.0f;
 	path_threat_relaxed_ = false;
+
+	path_switch_count_ = 0;
+	path_switch_rejected_ = 0;
+	path_last_divergence_ = 0.0f;
 }
 
 ShipNavigator::~ShipNavigator() {
@@ -1536,8 +1545,27 @@ void ShipNavigator::run_plan_sync() {
 			hpa_graph_->clear_threats();
 		}
 
+		// Bias the search toward the near field of the route already being
+		// followed.  Two clips, and both matter.  Dropping the legs already
+		// sailed keeps the corridor from pulling backwards; clipping the far
+		// end to get_near_field_range() is what bounds the discount, because
+		// the saving from riding the corridor scales with how much of it the
+		// new route can ride.  Stamped to the destination, a long corridor pays
+		// for a detour out to the old goal and a turn back — the shape that
+		// looks like a route to the previous destination with a 180 on the end.
+		// See HpaGraph::PathBias and PATH_NEAR_FIELD_TCR.
+		std::vector<Vector2> bias_path;
+		if (path_valid && current_path.waypoints.size() >= 2) {
+			int first = std::max(0, std::min(current_wp_index - 1,
+			                                 static_cast<int>(current_path.waypoints.size()) - 1));
+			std::vector<Vector2> tail(current_path.waypoints.begin() + first,
+			                          current_path.waypoints.end());
+			bias_path = truncate_path(tail, get_near_field_range());
+		}
+
 		PathResult pr = hpa_graph_->find_path(state.position, target.position,
-		                                      plan_min_clearance, hug_clearance);
+		                                      plan_min_clearance, hug_clearance,
+		                                      bias_path.size() >= 2 ? &bias_path : nullptr);
 		path_threat_relaxed_ = pr.valid && hpa_graph_->did_last_query_ignore_threats();
 		if (pr.valid && !pr.waypoints.empty()) {
 			// Always end at the exact destination — HPA* snaps to grid nodes
@@ -2468,46 +2496,233 @@ bool ShipNavigator::is_target_behind_within_reverse_zone(Vector2 target_pos) con
 // Path acceptance (oscillation check + commit)
 // ============================================================================
 
+float ShipNavigator::get_near_field_range() const {
+	return std::max(params.turning_circle_radius, 1.0f) * PATH_NEAR_FIELD_TCR;
+}
+
+std::vector<Vector2> ShipNavigator::remaining_path(const PathResult &p, int from_index) const {
+	std::vector<Vector2> out;
+	out.push_back(state.position);
+	for (int i = std::max(0, from_index); i < static_cast<int>(p.waypoints.size()); ++i) {
+		if (out.back().distance_to(p.waypoints[i]) > 1.0f)
+			out.push_back(p.waypoints[i]);
+	}
+	return out;
+}
+
+std::vector<Vector2> ShipNavigator::truncate_path(const std::vector<Vector2> &p, float max_len) {
+	std::vector<Vector2> out;
+	if (p.empty()) return out;
+	out.push_back(p[0]);
+	float acc = 0.0f;
+	for (size_t i = 0; i + 1 < p.size(); ++i) {
+		float seg = p[i].distance_to(p[i + 1]);
+		if (acc + seg >= max_len) {
+			float t = (seg > 1e-6f) ? (max_len - acc) / seg : 0.0f;
+			out.push_back(p[i].lerp(p[i + 1], clamp_f(t, 0.0f, 1.0f)));
+			return out;
+		}
+		acc += seg;
+		out.push_back(p[i + 1]);
+	}
+	return out;
+}
+
+void ShipNavigator::resample_path(const std::vector<Vector2> &p, int n,
+                                  std::vector<Vector2> &out) {
+	out.clear();
+	if (n < 2) return;
+	if (p.size() < 2) {
+		out.assign(n, p.empty() ? Vector2() : p[0]);
+		return;
+	}
+
+	std::vector<float> cum(p.size(), 0.0f);
+	for (size_t i = 1; i < p.size(); ++i)
+		cum[i] = cum[i - 1] + p[i - 1].distance_to(p[i]);
+
+	const float total = cum.back();
+	if (total <= 1e-3f) {
+		out.assign(n, p[0]);
+		return;
+	}
+
+	out.reserve(n);
+	size_t seg = 0;
+	for (int k = 0; k < n; ++k) {
+		float d = total * static_cast<float>(k) / static_cast<float>(n - 1);
+		while (seg + 2 < p.size() && cum[seg + 1] < d) ++seg;
+		float seg_len = cum[seg + 1] - cum[seg];
+		float t = (seg_len > 1e-6f) ? (d - cum[seg]) / seg_len : 0.0f;
+		out.push_back(p[seg].lerp(p[seg + 1], clamp_f(t, 0.0f, 1.0f)));
+	}
+}
+
+float ShipNavigator::path_travel_cost(const std::vector<Vector2> &p) const {
+	if (p.size() < 2) return 0.0f;
+
+	float cost = 0.0f;
+	for (size_t i = 0; i + 1 < p.size(); ++i)
+		cost += p[i].distance_to(p[i + 1]);
+
+	// Bearing off the first point that is far enough away to define one.  The
+	// leg to the very next waypoint can be a metre long when the ship is on top
+	// of it, and a bearing taken from that is noise — which would make this
+	// cost jitter between replans and reintroduce exactly the churn the
+	// switching margin exists to damp.
+	const float bearing_min_leg = std::max(get_ship_clearance(), 1.0f);
+	for (size_t i = 1; i < p.size(); ++i) {
+		Vector2 ahead = p[i] - p[0];
+		if (ahead.length() < bearing_min_leg && i + 1 < p.size()) continue;
+		if (ahead.length_squared() <= 1e-6f) break;
+		float bearing = std::atan2(ahead.x, ahead.y);
+		cost += std::fabs(angle_difference(state.heading, bearing)) * params.turning_circle_radius;
+		break;
+	}
+	return cost;
+}
+
+bool ShipNavigator::is_path_terrain_clear(const std::vector<Vector2> &p) const {
+	if (!map.is_valid() || !map->is_built()) return true;   // nothing to check against
+
+	const int n = static_cast<int>(p.size()) - 1;   // segment count
+	if (n < 1) return true;
+
+	const float cl = get_ship_clearance();
+
+	// Final leg first, then the capped forward walk.  Ordering it this way
+	// keeps the segment cap from silently skipping the approach to the
+	// destination on a long route, which is the leg terrain is most likely to
+	// have invalidated.
+	if (map->raycast_internal(p[n - 1], p[n], cl).hit) return false;
+
+	int segments = std::min(n - 1, PATH_CLEAR_MAX_SEGMENTS);
+	for (int i = 0; i < segments; ++i) {
+		if (map->raycast_internal(p[i], p[i + 1], cl).hit) return false;
+	}
+	return true;
+}
+
 void ShipNavigator::accept_plan_result(const PathResult &forward_result) {
 	if (forward_result.valid && !forward_result.waypoints.empty()) {
+		// The plan's first waypoint is usually the ship's own position; start
+		// on the second when so, or the follower spends a frame steering at
+		// where it already is.
+		int new_wp_idx = 0;
+		if (forward_result.waypoints.size() > 1 &&
+			state.position.distance_to(forward_result.waypoints[0]) < params.turning_circle_radius * 0.25f) {
+			new_wp_idx = 1;
+		}
+
 		bool should_accept = true;
 
-		if (path_valid && current_path.waypoints.size() >= 2
+		// An incumbent is only a candidate while it still ends where the ship is
+		// currently being sent.  Once the destination has moved, the stored
+		// route goes somewhere else, and the follower consumes its waypoints
+		// before it ever looks at target.position — so keeping it would sail
+		// the ship to the old point.  There is nothing to repair here: the
+		// fresh plan already routes to the new destination, string-pulled, and
+		// the near-field bias has already made it stick to the corridor the
+		// incumbent was defending.  Take it.
+		const bool incumbent_on_target =
+			path_valid && !current_path.waypoints.empty() &&
+			current_path.waypoints.back().distance_to(target.position) <= get_reach_radius();
+
+		if (incumbent_on_target && current_path.waypoints.size() >= 2
 			&& forward_result.waypoints.size() >= 2
 			&& current_wp_index < (int)current_path.waypoints.size()) {
 
-			Vector2 to_dest = target.position - state.position;
+			std::vector<Vector2> old_rem = remaining_path(current_path, current_wp_index);
+			std::vector<Vector2> new_rem = remaining_path(forward_result, new_wp_idx);
 
-			Vector2 old_wp = current_path.waypoints[current_wp_index];
-			Vector2 to_old = old_wp - state.position;
-			float old_cross = to_dest.x * to_old.y - to_dest.y * to_old.x;
+			// A route that no longer clears terrain is not a route.  Skipping
+			// the comparison entirely in that case is what keeps every margin
+			// below from being able to strand the ship.
+			if (old_rem.size() >= 2 && new_rem.size() >= 2 && is_path_terrain_clear(old_rem)) {
+				// Divergence is measured over the near field only, the same
+				// window the search bias runs in.  Two routes that agree for
+				// the next few turning circles and part company 8 km out
+				// demand identical steering now, and switching between them
+				// costs nothing — rejecting on a difference the ship will
+				// replan long before reaching it only keeps a worse route.
+				const float near_range = get_near_field_range();
+				std::vector<Vector2> old_near = truncate_path(old_rem, near_range);
+				std::vector<Vector2> new_near = truncate_path(new_rem, near_range);
 
-			int new_wp_idx = 0;
-			if (forward_result.waypoints.size() > 1 &&
-				state.position.distance_to(forward_result.waypoints[0]) < params.turning_circle_radius * 0.25f) {
-				new_wp_idx = 1;
-			}
-			Vector2 new_wp = forward_result.waypoints[new_wp_idx];
-			Vector2 to_new = new_wp - state.position;
-			float new_cross = to_dest.x * to_new.y - to_dest.y * to_new.x;
+				std::vector<Vector2> a, b;
+				resample_path(old_near, PATH_COMPARE_SAMPLES, a);
+				resample_path(new_near, PATH_COMPARE_SAMPLES, b);
 
-			bool sides_differ = (old_cross * new_cross < 0.0f);
-			float deviation = state.position.distance_to(old_wp);
-			bool ship_on_old_path = (deviation < params.turning_circle_radius * 3.0f);
+				// Mean separation answers "how different is this route", and
+				// the first sample that exceeds a couple of hull widths says
+				// where along the old route the two part company.  Comparing
+				// at equal arclength fractions rather than by waypoint index
+				// is what makes this work at all: the two plans have no
+				// waypoints in common and rarely even the same count.
+				const float fork_eps = get_ship_clearance() * 2.0f;
+				float sep_sum = 0.0f;
+				float fork_frac = 1.0f;
+				bool forked = false;
+				for (int i = 0; i < PATH_COMPARE_SAMPLES; ++i) {
+					float d = a[i].distance_to(b[i]);
+					sep_sum += d;
+					if (!forked && d > fork_eps) {
+						fork_frac = static_cast<float>(i) / static_cast<float>(PATH_COMPARE_SAMPLES - 1);
+						forked = true;
+					}
+				}
+				float separation = sep_sum / static_cast<float>(PATH_COMPARE_SAMPLES);
+				path_last_divergence_ = separation;
 
-			if (sides_differ && ship_on_old_path) {
-				should_accept = false;
+				const float tcr = std::max(params.turning_circle_radius, 1.0f);
+
+				if (separation >= tcr * SWITCH_MIN_SEP_TCR) {
+					// Genuinely a different route.  Charge the switch and make
+					// it win on the merits.  Below the threshold it is the same
+					// route replanned, and taking it is free: identical
+					// steering, fresher obstacle and threat data.
+					//
+					// fork_frac indexes the near-field window the samples were
+					// taken over, so the distance to the split is a fraction of
+					// that window, not of the whole route.
+					float near_len = 0.0f;
+					for (size_t i = 0; i + 1 < old_near.size(); ++i)
+						near_len += old_near[i].distance_to(old_near[i + 1]);
+					float fork_dist = fork_frac * near_len;
+
+					float switch_cost = tcr * SWITCH_BASE_TCR
+					                  + separation * SWITCH_SEPARATION_GAIN;
+
+					// A fork closer than a couple of turning radii is one the
+					// ship is already inside: it cannot reach the other branch
+					// from here without first sailing past the split, so
+					// switching now only points the bow between the two.  This
+					// is a steep price rather than a veto, so a route that is
+					// genuinely kilometres better can still buy its way out
+					// instead of the ship being pinned to a bad commitment.
+					if (fork_dist < tcr * SWITCH_FORK_TCR)
+						switch_cost += tcr * SWITCH_COMMIT_TCR;
+
+					// Cost is weighed over the whole route, not the window: both
+					// end at the same destination (incumbent_on_target), so the
+					// totals are directly comparable, and a near-field detour
+					// that pays for itself further out should still win.
+					should_accept = (path_travel_cost(new_rem) + switch_cost
+					                 < path_travel_cost(old_rem));
+				}
 			}
 		}
 
 		if (should_accept) {
 			current_path = forward_result;
 			path_valid = true;
-			current_wp_index = 0;
-			if (current_path.waypoints.size() > 1 &&
-				state.position.distance_to(current_path.waypoints[0]) < params.turning_circle_radius * 0.25f) {
-				current_wp_index = 1;
-			}
+			current_wp_index = new_wp_idx;
+			path_switch_count_++;
+		} else {
+			// The incumbent is kept exactly as it stands.  It only reached this
+			// branch by already ending at the live destination, so there is no
+			// stale tail to repair and nothing to synthesise onto it.
+			path_switch_rejected_++;
 		}
 	} else {
 		// Path planning came back invalid (no route found or D* Lite not yet

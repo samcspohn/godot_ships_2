@@ -65,9 +65,8 @@ var _spotted_danger_center_cache: Vector3 = Vector3.ZERO
 var _spotted_danger_center_frame: int = -1
 var _threat_score_cache: float = 0.0
 var _threat_score_frame: int = -1
-var threat_mod: float = 1.0
 
-## How good this bot is meant to be. Set at spawn beside threat_mod (see
+## How good this bot is meant to be. Set at spawn (see
 ## GameServer._add_player); defaults to REGULAR so a bot created without one
 ## behaves exactly as every bot did before aptitude existed.
 var aptitude: BotAptitude = BotAptitude.for_level(BotAptitude.Level.REGULAR)
@@ -2241,6 +2240,42 @@ func _doc() -> BotDoctrine:
 		_doctrine = doctrine()
 	return _doctrine
 
+## How close this bot wants to fight, in metres, read off the ship it is driving.
+##
+## This is what replaced threat-mod. That number asked a human to score every
+## hull's appetite for a brawl by hand, in a config file, and then bent the
+## threat score by it — so a ship that wanted to fight close did it by being
+## bad at being afraid. The appetite is already in the ship, and it is a
+## distance rather than a mood: a hull whose secondaries reach most of the way
+## to its main-battery range has a second battery worth crossing water for, and
+## one whose secondaries are a short-range afterthought does not.
+##
+## Reading it live means the BUILD counts, which is the part a static number
+## could never do. Long Range Secondary Training, Basic Secondary Training and
+## the secondary range upgrades all multiply the same `_range` that
+## get_max_range() reports, so the same hull specced for secondaries fights
+## closer than it does specced for main-battery work, with nothing to configure
+## and nothing to keep in sync.
+##
+## `threat` is this tick's threat score. Above the doctrine's yield point the
+## secondaries stop being an argument for closing: a fight already going badly
+## does not get better by walking into it to use a shorter gun.
+func engagement_range(ship: Ship, threat: float) -> float:
+	var d := _doc()
+	var gun_range: float = ship.artillery_controller.get_params()._range
+	var gun_dist: float = gun_range * d.gun_engage_ratio
+	if threat >= d.secondary_yield_threat:
+		return gun_dist
+	if not is_instance_valid(ship.secondary_controller):
+		return gun_dist
+	var sec_range: float = ship.secondary_controller.get_max_range()
+	if sec_range < gun_range * d.secondary_commit_ratio:
+		return gun_dist
+	# minf(): the secondaries may only ever pull the ship CLOSER. A hull that
+	# already wanted to fight inside its own secondary range has nothing to
+	# close for, and this must not push it back out to arm's length.
+	return minf(sec_range * d.secondary_engage_ratio, gun_dist)
+
 ## Extra params handed to SkillFindCover. CA scales its cover standoff by its
 ## positioning params; everything else takes the skill's defaults.
 func _cover_params() -> Dictionary:
@@ -2306,6 +2341,7 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 				nearest_threat_dist = dist
 
 	var hp_ratio: float = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var threat: float = get_threat_score(ctx)
 	var ra_threshold := d.ra_base
 	if _has_active_bb_shooter():
 		ra_threshold = d.ra_bb_shooter
@@ -2322,7 +2358,10 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 		nearest_threat_dist = nearest_threat_dist,
 		hp_ratio = hp_ratio,
 		gun_range = ship.artillery_controller.get_params()._range,
-		threat = get_threat_score(ctx),
+		threat = threat,
+		# How close this ship wants to be, from its build. Computed once here so
+		# every arm that has to decide a distance reads the same answer.
+		engagement_range = engagement_range(ship, threat),
 		ra_threshold = ra_threshold,
 		arm = &"engaged",
 		forced = false,
@@ -2348,6 +2387,18 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	var sit := _build_situation(ctx)
 	var prev_skill := _active_skill_name
 	var intent: NavIntent = null
+
+	# Cornered: at this much threat the way out is concealment, not gunnery.
+	# Whether that is even on offer is _probe_concealment()'s question, so ask it
+	# rather than reading is_detected(). It returns false when a spotted enemy
+	# has clear line of sight from inside our own detection radius — nothing we
+	# stop doing will shake that ship, so the guns keep working even though we
+	# are threatened — and true when holding fire would let the bloom decay and
+	# drop us. Being detected is therefore no longer a veto: where going dark is
+	# still reachable, breaking contact beats one more salvo.
+	if sit.threat > 0.95 and _probe_concealment(ctx.server):
+		wants_stealth = true
+		wants_to_be_concealed = true
 
 	if not sit.has_enemies:
 		sit["arm"] = &"idle"
@@ -2393,7 +2444,7 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	sit["arm"] = &"close"
 	var intent: NavIntent = null
 	if sit.threat < d.push_threat:
-		intent = _run_skill(&"Push", ctx)
+		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 	else:
 		# High threat. If concealing cover lies along the way, hide behind it;
 		# otherwise kite away with the guns still on the target.
@@ -2412,12 +2463,12 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 
 ## What to do when the odds look good. Base pushes; CA prefers to run down a
 ## closer unseen contact rather than cross the map to a distant visible one.
-func _select_low_threat_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Push", ctx)
+func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 ## Per-class hook: the engaged arm. Base falls back to pushing.
-func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Push", ctx)
+func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 ## Per-class hook: adjust an intent produced by the close arm. CA uses it to
 ## hand heading authority to the navigator near terrain.
@@ -2499,7 +2550,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 				EnemyPresumption.certainty(guess)),
 		})
 	if contacts.is_empty():
-		_threat_score_cache = hp_pressure * 0.3 * threat_mod
+		_threat_score_cache = hp_pressure * 0.3
 		_threat_score_frame = frame
 		return _threat_score_cache
 
@@ -2532,7 +2583,6 @@ func get_threat_score(ctx: SkillContext) -> float:
 		if !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
 		raw_val *= threat_scale
-		raw_val *= threat_mod
 		var this_threat = 1.0 - exp(-raw_val)
 		# Not knowing exactly where something is makes it less frightening, but
 		# on a sliding scale: a contact that went dark seconds ago is nearly as

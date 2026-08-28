@@ -8,7 +8,7 @@ class_name BotAptitude
 ## chooses between (src/ship/bot_behavior/skills/). A third meaning would make
 ## every future search for either of them ambiguous.
 ##
-## One of these hangs off each Behavior, set at spawn beside threat_mod (see
+## One of these hangs off each Behavior, set at spawn (see
 ## GameServer._add_player). Every dial is a number a system reads, so a tier is
 ## a row in a table rather than a special case scattered through the AI. Nothing
 ## here may hand a bot information it has not earned through a channel that

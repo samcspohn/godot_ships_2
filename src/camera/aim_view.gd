@@ -12,7 +12,7 @@ var min_fov = 1.0
 var max_fov = 10.0
 var height = 60.0
 # var player_controller: PlayerController
-const angle = 0.03
+const angle = 0.04
 func _ready():
 	current_fov = max_fov
 	current_zoom = current_fov
