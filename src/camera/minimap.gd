@@ -426,7 +426,19 @@ func _on_canvas_draw() -> void:
 				air_ranges.append(p._range)
 				draw_range_circle_on_minimap(ship.global_position, p._range, Color(0.7,0.9,1))
 
-	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0)
+	# AA envelope, only for ships that actually mount guns that can reach
+	if ship.aaa_controller and ship.aaa_controller.get_params():
+		var aa_params: AAAParams = ship.aaa_controller.get_params()
+		if aa_params._range > 0.0 and aa_params.dps > 0.0:
+			draw_range_circle_on_minimap(ship.global_position, aa_params._range, AIR_RANGE_COLOR)
+
+	draw_dashed_circle_on_minimap(ship.global_position, ship.concealment.get_concealment(), Color(1, 1, 1, 0.5), 8.0, 4.0, 2.0)
+
+	# Air detection radius: static (bloom only widens the surface radius), so it
+	# comes straight off the params rather than get_concealment().
+	var air_conceal := (ship.concealment.params.p() as ConcealmentParams).air_radius
+	if air_conceal > 0.0:
+		draw_dashed_circle_on_minimap(ship.global_position, air_conceal, Color(1, 1, 1, 0.5), 8.0, 4.0, 3.0)
 
 	# Draw Hydroacoustic Search torpedo detection range as a translucent filled circle
 	var hydro_torp_range := _get_active_hydro_torpedo_detection_range(ship)

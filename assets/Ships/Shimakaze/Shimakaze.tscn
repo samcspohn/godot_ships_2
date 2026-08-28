@@ -11,6 +11,7 @@
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="6_nguxy"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="8_q7yd3"]
 [ext_resource type="Resource" uid="uid://rcvxbov740x0" path="res://src/Fire/default_fire.tres" id="8_x5bwd"]
+[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="9_4n5yk"]
 [ext_resource type="Script" uid="uid://kgwonrqfsvxk" path="res://src/Fire/resistance_params.gd" id="9_cvobt"]
 [ext_resource type="Script" uid="uid://cvrvionelmhv6" path="res://src/Consumable/damage_control.gd" id="9_okiv0"]
 [ext_resource type="Script" uid="uid://drnfyeps8j1r0" path="res://src/Consumable/repair_party.gd" id="10_y8kxj"]
@@ -42,32 +43,32 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_4n5yk"]
 script = ExtResource("3_pxp4h")
-pool1 = 48000.0
-pool2 = 48000.0
+pool1 = 45300.0
+pool2 = 45300.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_mrsjx"]
 script = ExtResource("3_pxp4h")
-pool1 = 4800.0
-pool2 = 9600.0
+pool1 = 4530.0
+pool2 = 9060.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ldxem"]
 script = ExtResource("3_pxp4h")
-pool1 = 1333.3333333333333
-pool2 = 2666.6666666666665
+pool1 = 1258.3333333333333
+pool2 = 2516.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_xci8g"]
 script = ExtResource("3_pxp4h")
-pool1 = 1333.3333333333333
-pool2 = 2666.6666666666665
+pool1 = 1258.3333333333333
+pool2 = 2516.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vwm28"]
 script = ExtResource("3_pxp4h")
-pool1 = 2133.3333333333335
-pool2 = 4266.666666666667
+pool1 = 2013.3333333333333
+pool2 = 4026.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e6iqp"]
@@ -202,7 +203,7 @@ use_hull_collision = true
 
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_v7rh5")
-_max_hp = 16000.0
+_max_hp = 15100.0
 bow_percent = 0.25
 stern_percent = 0.25
 superstructure_percent = 0.4
@@ -226,16 +227,16 @@ params = SubResource("Resource_17h8w")
 launchers = [NodePath("../../TurretMount_IJN_610mm_5t_002/IJN_610mm_5t_002"), NodePath("../../TurretMount_IJN_610mm_5t/IJN_610mm_5t"), NodePath("../../TurretMount_IJN_610mm_5t_001/IJN_610mm_5t_001")]
 metadata/_custom_type_script = "uid://c8pq6m1rejha6"
 
-[node name="MovementController" parent="Modules" index="5" unique_id=1088594109]
+[node name="MovementController" parent="Modules" index="6" unique_id=1088594109]
 params = SubResource("Resource_mvsh")
 
-[node name="ConsumableManager" parent="Modules" index="6" unique_id=1189768979]
+[node name="ConsumableManager" parent="Modules" index="7" unique_id=1189768979]
 equipped_consumables = Array[ExtResource("8_q7yd3")]([SubResource("Resource_spx66"), SubResource("Resource_pipf2"), ExtResource("20_v7rh5")])
 
-[node name="Upgrades" parent="Modules" index="7" unique_id=151881377]
+[node name="Upgrades" parent="Modules" index="8" unique_id=151881377]
 upgrades = Array[ExtResource("11_56jcx")]([null, null, null, null, null, null])
 
-[node name="FireManager" parent="Modules" index="9" unique_id=384504544]
+[node name="FireManager" parent="Modules" index="10" unique_id=384504544]
 fparams = ExtResource("8_x5bwd")
 rparams = SubResource("Resource_s4v2q")
 
@@ -251,7 +252,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.9876962, 18.795391)
 [node name="Fire4" parent="Modules/FireManager" index="3" unique_id=1410703645]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.739234, 43.647743)
 
-[node name="FloodManager" parent="Modules" index="10" unique_id=485605645]
+[node name="FloodManager" parent="Modules" index="11" unique_id=485605645]
 dot_params = ExtResource("22_2by4h")
 rparams = SubResource("Resource_y7d2n")
 

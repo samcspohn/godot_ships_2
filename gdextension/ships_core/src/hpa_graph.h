@@ -108,6 +108,17 @@ public:
 	static constexpr int DEFAULT_CLUSTER_SIZE = 16;
 	static constexpr int DEFAULT_SUB_SIZE     = 4;
 
+	// --- String-pull tuning (see hug_string_pull() in hpa_graph.cpp) ---
+	// Bisection steps per tangent sweep / relaxation slide.  8 resolves a
+	// segment to 1/256 of its length, well below cell resolution.
+	static constexpr int PULL_BISECT_STEPS = 8;
+	// Relaxation sweeps over the polyline.  Converges in 2-3 on ordinary
+	// coastlines; the pass exits early once no vertex moves.
+	static constexpr int PULL_RELAX_ITERS  = 4;
+	// Hard ceiling on vertices so a pathological route cannot make the pull
+	// quadratic in path length.
+	static constexpr int PULL_MAX_VERTS    = 192;
+
 	// ------------------------------------------------------------------
 	// Lifecycle
 	// ------------------------------------------------------------------
@@ -146,6 +157,21 @@ public:
 	/// query_clearance: ship clearance (ship_length/2 + ship_beam).  When
 	/// <= 0, falls back to the clearance passed to build().
 	///
+	/// The two clearances answer different questions and are independent:
+	///
+	///   query_clearance is the *passability floor* — the minimum water the
+	///   ship physically needs.  Inflating it past what the hull requires does
+	///   not add safety margin, it deletes channels: a strait the ship fits
+	///   through is declared impassable and the route is forced out around the
+	///   whole landmass.  Pass the ship's true minimum.
+	///
+	///   hug_clearance is the *preferred stand-off* — how far off the coast the
+	///   string pull parks a corner when there is room to choose.  It may sit
+	///   above query_clearance; where the corridor is too tight to honour it
+	///   (a strait, a cover slot tucked against a headland) the pull degrades
+	///   that stretch to query_clearance rather than abandoning the route.
+	///   When <= 0 the pull uses query_clearance.
+	///
 	/// Endpoints are snapped to the nearest cell navigable at query_clearance
 	/// before searching, and the true endpoints are restored as the first and
 	/// last waypoints — so a start hugging a shoreline or a goal inside the
@@ -153,7 +179,8 @@ public:
 	/// a threat layer is stamped, it is retried with threats muted: threat
 	/// avoidance is a routing preference, and a risky route beats no route.
 	PathResult find_path(Vector2 from, Vector2 to,
-						 float query_clearance = -1.0f) const;
+						 float query_clearance = -1.0f,
+						 float hug_clearance = -1.0f) const;
 
 	/// FailStage of the most recent query (FAIL_NONE when it succeeded).
 	int get_last_fail_stage() const { return last_fail_stage_; }
@@ -167,7 +194,8 @@ public:
 	/// Convenience wrapper — returns only the waypoint positions as a
 	/// PackedVector2Array for GDScript callers.
 	PackedVector2Array find_path_packed(Vector2 from, Vector2 to,
-										 float query_clearance = -1.0f) const;
+										 float query_clearance = -1.0f,
+										 float hug_clearance = -1.0f) const;
 
 	// Dynamic obstacles ------------------------------------------------
 
@@ -411,7 +439,29 @@ private:
 
 	/// One pass of the query.  find_path() runs this strictly, then once more
 	/// with threats_muted_ if the strict pass found nothing.
-	PathResult find_path_query(Vector2 from, Vector2 to, float query_clearance) const;
+	PathResult find_path_query(Vector2 from, Vector2 to, float query_clearance,
+							   float hug_clearance) const;
+
+	/// Exact line-of-sight: sphere-traces the smooth (bilinear) SDF.
+	/// NavigationMap::line_of_sight() samples the grid nearest-neighbour and is
+	/// therefore optimistic by up to half a cell diagonal, which is invisible
+	/// when routes stand well off the coast but becomes most of the margin once
+	/// they are planned at the hull minimum.  Every place this planner *chooses*
+	/// to jump a gap uses this instead, so what it accepts is what the ship gets.
+	bool los_clear(const Vector2 &a, const Vector2 &b, float cl) const;
+
+	/// True when segment a-b clips no threat-blocked cluster AABB.
+	/// `active` short-circuits to true when no threat layer is in play.
+	bool segment_threat_clear(const Vector2 &a, const Vector2 &b, bool active) const;
+
+	/// Coastline-hugging string pull.  Replaces the assembled route's coarse
+	/// corners with tangent points derived from the terrain itself.
+	/// hard_cl is the passability floor the input route already satisfies and
+	/// which the output may never breach; hug_cl is the preferred stand-off the
+	/// pull aims for and falls back from.  See hpa_graph.cpp.
+	std::vector<Vector2> hug_string_pull(const std::vector<Vector2> &in,
+										 float hard_cl, float hug_cl,
+										 bool threat_active) const;
 
 	// --- Per-query state (single-threaded; the graph is stamped per query) ---
 	mutable bool threats_muted_ = false;              // relaxed retry in progress

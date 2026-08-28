@@ -1492,7 +1492,7 @@ void ShipNavigator::report_path_failure(PathFailReason reason) {
 		" | from=", state.position,
 		" to=", target.position,
 		" dist=", state.position.distance_to(target.position),
-		" clearance=", get_ship_clearance() + 200.0f,
+		" clearance=", get_ship_clearance(),
 		" threats=", threat_bin_ ? static_cast<int>(threat_bin_->threats.size()) : 0,
 		" hpa_stage=", hpa_graph_.is_valid() ? hpa_graph_->get_last_fail_stage_name() : String("n/a"),
 		" suppressed=", suppressed,
@@ -1507,9 +1507,11 @@ void ShipNavigator::clear_path_failures() {
 }
 
 void ShipNavigator::run_plan_sync() {
-	// Add 100 m buffer on top of the hard hull clearance so waypoints are
-	// placed well away from terrain, giving the arc planner room to manoeuvre.
-	const float plan_min_clearance = get_ship_clearance() + 200.0f;
+	// Search at the hull's true minimum; buy sea room through the hug stand-off
+	// instead.  See HUG_CLEARANCE_BUFFER in the header for why padding the
+	// search clearance is the wrong lever.
+	const float plan_min_clearance = get_ship_clearance();
+	const float hug_clearance      = get_ship_clearance() + HUG_CLEARANCE_BUFFER;
 
 	// Every exit below the HPA* block is a degraded result.  planner_ready
 	// separates "the planner ran and found nothing" from "there was nothing to
@@ -1534,7 +1536,8 @@ void ShipNavigator::run_plan_sync() {
 			hpa_graph_->clear_threats();
 		}
 
-		PathResult pr = hpa_graph_->find_path(state.position, target.position, plan_min_clearance);
+		PathResult pr = hpa_graph_->find_path(state.position, target.position,
+		                                      plan_min_clearance, hug_clearance);
 		path_threat_relaxed_ = pr.valid && hpa_graph_->did_last_query_ignore_threats();
 		if (pr.valid && !pr.waypoints.empty()) {
 			// Always end at the exact destination — HPA* snaps to grid nodes

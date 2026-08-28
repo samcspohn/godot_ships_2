@@ -200,6 +200,23 @@ private:
 	static constexpr float SHELL_TIME_TOLERANCE = 2.0f;    // floor for eff_tol in score_arc_shell_threat (seconds); arc sampling density drives the real value
 	static constexpr float SOFT_TERRAIN_PENALTY = 15.0f;   // nav-seconds added when an arc enters the soft-clearance zone (nudge, not disqualification)
 
+	// --- Path planning clearances ---
+	// The corridor is searched at get_ship_clearance() exactly — the hull's
+	// true minimum, and the same value sdf_proximity_cost() treats as the hard
+	// limit, so the planner and the arc follower agree on what is passable.
+	// Padding the *search* does not buy margin, it deletes channels: a strait
+	// the ship fits through gets marked impassable and the route is pushed out
+	// around the entire landmass, which is what made ships stand off an island
+	// before rounding it.
+	//
+	// Sea room is bought at the other end instead.  HUG_CLEARANCE_BUFFER is the
+	// stand-off string pulling aims for when there is room to choose; where the
+	// water is tighter than that the pull gives it back down to the hull
+	// minimum rather than losing the route.  Beyond that the arc planner's soft
+	// clearance (SOFT_TERRAIN_PENALTY) nudges the steered trajectory out
+	// without ever forbidding the water.
+	static constexpr float HUG_CLEARANCE_BUFFER = 25.0f;  // preferred stand-off on top of hull clearance
+
 	// --- Stuck / bow-in detection ---
 	// Accumulated when the navigator wants reverse (destination is behind) but
 	// threat scoring keeps choosing forward candidates.  Once the threshold

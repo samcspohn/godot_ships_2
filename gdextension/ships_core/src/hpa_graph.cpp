@@ -37,8 +37,8 @@ void HpaGraph::_bind_methods() {
 		&HpaGraph::build, DEFVAL(DEFAULT_CLUSTER_SIZE));
 	ClassDB::bind_method(D_METHOD("is_built"), &HpaGraph::is_built);
 	ClassDB::bind_method(
-		D_METHOD("find_path_packed", "from", "to", "query_clearance"),
-		&HpaGraph::find_path_packed, DEFVAL(-1.0f));
+		D_METHOD("find_path_packed", "from", "to", "query_clearance", "hug_clearance"),
+		&HpaGraph::find_path_packed, DEFVAL(-1.0f), DEFVAL(-1.0f));
 	ClassDB::bind_method(
 		D_METHOD("add_obstacle", "id", "pos", "radius"),
 		&HpaGraph::add_obstacle);
@@ -710,7 +710,10 @@ PathResult HpaGraph::constrained_cell_astar(
 		for (size_t test = raw.size() - 1; test > anchor + 1; --test) {
 			int ax = world_to_gx(raw[anchor].x), az = world_to_gz(raw[anchor].y);
 			int bx = world_to_gx(raw[test].x),   bz = world_to_gz(raw[test].y);
-			if (line_allowed(ax, az, bx, bz)) {
+			// line_allowed() enforces the macro corridor but samples cells
+			// nearest-neighbour; los_clear() is what makes the shortcut exact.
+			if (line_allowed(ax, az, bx, bz) &&
+				los_clear(raw[anchor], raw[test], q_cl)) {
 				farthest = test;
 				break;
 			}
@@ -744,10 +747,272 @@ const char *HpaGraph::fail_stage_name(int stage) {
 	}
 }
 
-PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) const {
+// ============================================================================
+// los_clear — exact line-of-sight on the smooth SDF
+// ============================================================================
+//
+// Sphere trace with a floored step.  A ray running parallel to a shoreline has
+// sdf - clearance close to zero the whole way, which would otherwise degrade
+// into thousands of micro-steps; the SDF is 1-Lipschitz, so a floored step can
+// miss a dip of at most that floor below the sampled value, and testing against
+// cl + floor/2 folds the error in.  `cl` is therefore a true floor, at the cost
+// of rejecting segments whose real closest approach lands in the top half-step.
+
+bool HpaGraph::los_clear(const Vector2 &a, const Vector2 &b, float cl) const {
+	const float step   = cell_size_ * 0.25f;
+	const float thresh = cl + step * 0.5f;
+	Vector2 d = b - a;
+	float len = d.length();
+	if (len < 1e-4f) return nav_map_->get_distance(a.x, a.y) >= thresh;
+	Vector2 n = d / len;
+	float t = 0.0f;
+	while (t < len) {
+		Vector2 p = a + n * t;
+		float sdf = nav_map_->get_distance(p.x, p.y);
+		if (sdf < thresh) return false;
+		t += std::max(sdf - thresh, step);
+	}
+	return nav_map_->get_distance(b.x, b.y) >= thresh;
+}
+
+// ============================================================================
+// segment_threat_clear
+// ============================================================================
+
+bool HpaGraph::segment_threat_clear(const Vector2 &a, const Vector2 &b, bool active) const {
+	if (!active) return true;
+	const float hc = cell_size_ * 0.5f;
+	for (int cid : threat_blocked_cids_) {
+		const Cluster &cl = clusters_[cid];
+		float wx0, wz0, wx1, wz1;
+		grid_to_world(cl.x0, cl.z0, wx0, wz0);
+		grid_to_world(cl.x1, cl.z1, wx1, wz1);
+		if (segment_clips_aabb(a.x, a.y, b.x, b.y,
+		                       wx0 - hc, wz0 - hc, wx1 + hc, wz1 + hc))
+			return false;
+	}
+	return true;
+}
+
+// ============================================================================
+// hug_string_pull — coastline-hugging path smoothing
+// ============================================================================
+//
+// The route reaching this pass is assembled from cluster centres, sub-cluster
+// centres and cell-A* fragments, so its corners sit wherever the abstract
+// layers happened to put them — typically a whole cluster (16 cells) out from
+// the shoreline that forced the detour.  Greedy LOS simplification can only
+// ever *choose among* those corners, never move one, so the ship swings wide
+// of an island instead of rounding it and spends the turn broadside and in
+// the open.
+//
+// This pass re-derives the corners from the terrain in four steps:
+//
+//   1. Tangent sweep.  From the current anchor, find the farthest route point
+//      still visible, then bisect along the *next* segment for the last point
+//      that is still visible.  That point is where the ray from the anchor
+//      grazes whatever blocks it — a real tangent, not a cluster centre.
+//   2. Subdivide, so step 3 has vertices to work with along the long straights
+//      the sweep leaves behind.
+//   3. Relax.  Each interior vertex slides toward the chord between its two
+//      neighbours as far as line-of-sight allows.  A vertex whose detour was
+//      unnecessary collapses onto the chord; a vertex rounding a headland
+//      stops the instant one of its legs grazes land — leaving it exactly
+//      hug_cl off the coast, which is the hug.
+//   4. Sweep again to drop the vertices step 3 made redundant.
+//
+// Two clearances, because they answer different questions.  hard_cl is the
+// passability floor the assembled route already satisfies and which nothing
+// emitted here may breach.  hug_cl is the stand-off the pull aims for when it
+// has a choice; where the corridor is too tight to honour it, that stretch
+// degrades to hard_cl rather than the route being abandoned.  Either may be the
+// larger of the two.
+//
+// Homotopy is preserved by construction — a vertex only moves to a position
+// whose two legs are both clear, and the sweep only ever shortcuts along
+// segments of the route it was given.
+
+std::vector<Vector2> HpaGraph::hug_string_pull(const std::vector<Vector2> &in,
+                                               float hard_cl,
+                                               float hug_cl,
+                                               bool threat_active) const {
+	if (in.size() < 3) return in;
+
+	// Sphere-traced visibility on the smooth (bilinear) SDF rather than
+	// NavigationMap::line_of_sight().  That samples the grid nearest-neighbour,
+	// so it is optimistic by up to half a cell diagonal — irrelevant while the
+	// route stands a full planning buffer off the coast, but this pass exists
+	// to bring corners in close, and at hug_cl a 35 m error is most of the
+	// margin.
+	//
+	// The step is floored: a ray running parallel to a shoreline has
+	// sdf - clearance ≈ 0 the whole way, which would otherwise degrade the
+	// trace into thousands of micro-steps — and grazing rays are precisely what
+	// this pass generates.  The SDF is 1-Lipschitz, so a floored step can miss
+	// a dip of at most min_step below the sampled value; testing against
+	// hug_cl + min_step/2 folds that error in, leaving hug_cl a true floor.
+	// Terrain + threat visibility, the single predicate the whole pass runs on.
+	auto clear = [&](const Vector2 &a, const Vector2 &b, float cl) -> bool {
+		return los_clear(a, b, cl) && segment_threat_clear(a, b, threat_active);
+	};
+
+	const float merge_eps = cell_size_ * 0.1f;
+
+	// ── Steps 1 & 4: tangent sweep ─────────────────────────────────────────
+	auto sweep_pass = [&](const std::vector<Vector2> &src) -> std::vector<Vector2> {
+		const int n = static_cast<int>(src.size());
+		std::vector<Vector2> out;
+		out.reserve(src.size());
+		out.push_back(src[0]);
+
+		int i = 0;
+		while (i + 1 < n) {
+			const Vector2 A = out.back();
+
+			// Farthest route point the anchor can still see.  Scanning down to
+			// i + 1 rather than defaulting to it keeps j honest: every j below
+			// is a verified-visible index, which is what the bisection needs
+			// for its lower bound.
+			//
+			// Two tiers.  Preferred stand-off first; if nothing ahead can be
+			// reached while holding it — a strait, or a goal tucked against a
+			// headland — retry at the passability floor.  That second scan
+			// cannot fail: the anchor is either an input vertex or a point
+			// bisected onto an input segment, and the input route satisfies
+			// hard_cl throughout, so t = i + 1 is always reachable.  Without
+			// this tier a hug_cl above hard_cl would fall through to the
+			// last-resort branch and emit a segment nothing had validated.
+			int j = -1;
+			float use_cl = hug_cl;
+			for (int t = n - 1; t > i; --t) {
+				if (clear(A, src[t], hug_cl)) { j = t; break; }
+			}
+			if (j < 0 && hug_cl > hard_cl) {
+				use_cl = hard_cl;
+				for (int t = n - 1; t > i; --t) {
+					if (clear(A, src[t], hard_cl)) { j = t; break; }
+				}
+			}
+
+			if (j < 0) {
+				// Belt-and-braces: the input route itself fails its own floor.
+				// Copy its next vertex rather than inventing one.
+				out.push_back(src[i + 1]);
+				++i;
+				continue;
+			}
+			if (j >= n - 1) break;   // goal is visible — appended below
+
+			// src[j + 1] is hidden from the anchor.  Bisect src[j] → src[j + 1]
+			// for the last point that is not: the ray that just grazes the
+			// obstacle.  Bisect at whichever tier found j, so the emitted point
+			// is validated at the clearance it was chosen under.
+			float lo = 0.0f, hi = 1.0f;
+			for (int b = 0; b < PULL_BISECT_STEPS; ++b) {
+				float mid = (lo + hi) * 0.5f;
+				if (clear(A, src[j].lerp(src[j + 1], mid), use_cl)) lo = mid;
+				else                                                hi = mid;
+			}
+			Vector2 P = src[j].lerp(src[j + 1], lo);
+
+			// P collapses onto the anchor only when the anchor already sits on
+			// src[j]; advancing i is then the whole of this iteration's work.
+			if (out.back().distance_to(P) > merge_eps) out.push_back(P);
+			i = j;
+
+			if (static_cast<int>(out.size()) >= PULL_MAX_VERTS) {
+				// Ceiling hit — keep the remaining route verbatim so the result
+				// is still a valid path, just a less pretty one.
+				for (int k = i + 1; k < n - 1; ++k) out.push_back(src[k]);
+				break;
+			}
+		}
+
+		if (out.back().distance_to(src[n - 1]) > merge_eps) out.push_back(src[n - 1]);
+		return out;
+	};
+
+	// ── Step 2: subdivide ──────────────────────────────────────────────────
+	auto subdivide = [&](const std::vector<Vector2> &src, float spacing) -> std::vector<Vector2> {
+		std::vector<Vector2> out;
+		out.reserve(src.size() * 2);
+		out.push_back(src[0]);
+		for (size_t k = 1; k < src.size(); ++k) {
+			int budget = PULL_MAX_VERTS - static_cast<int>(out.size());
+			int splits = (spacing > 0.0f)
+				? static_cast<int>(src[k - 1].distance_to(src[k]) / spacing) : 0;
+			splits = std::max(0, std::min(splits, budget));
+			for (int sp = 1; sp <= splits; ++sp)
+				out.push_back(src[k - 1].lerp(src[k],
+					static_cast<float>(sp) / static_cast<float>(splits + 1)));
+			out.push_back(src[k]);
+		}
+		return out;
+	};
+
+	// ── Step 3: relax ──────────────────────────────────────────────────────
+	// One sweep over the interior vertices; returns true if any of them moved.
+	auto relax_once = [&](std::vector<Vector2> &p) -> bool {
+		bool moved = false;
+		for (size_t k = 1; k + 1 < p.size(); ++k) {
+			const Vector2 U = p[k - 1];
+			const Vector2 V = p[k];
+			const Vector2 W = p[k + 1];
+
+			Vector2 chord = W - U;
+			float L2 = chord.length_squared();
+			if (L2 < 1e-6f) continue;
+
+			// Foot of V on the chord — where this vertex would sit if nothing
+			// were in the way.
+			float t = std::max(0.0f, std::min(1.0f, (V - U).dot(chord) / L2));
+			Vector2 delta = (U + chord * t) - V;
+			float travel = delta.length();
+			if (travel <= merge_eps) continue;
+
+			// Which clearance this vertex relaxes under.  One sitting in open
+			// water may not come closer than the preferred stand-off; one
+			// already inside it — threading a strait, or holding a cover slot
+			// against a headland — is allowed to keep relaxing down to the
+			// floor, because refusing to move it there would strand it on the
+			// coarse corner this pass exists to remove.
+			float v_cl = (nav_map_->get_distance(V.x, V.y) >= hug_cl) ? hug_cl : hard_cl;
+
+			float lo = 0.0f;
+			if (clear(U, V + delta, v_cl) && clear(V + delta, W, v_cl)) {
+				lo = 1.0f;   // whole detour was unnecessary
+			} else {
+				float hi = 1.0f;
+				for (int b = 0; b < PULL_BISECT_STEPS; ++b) {
+					float mid = (lo + hi) * 0.5f;
+					Vector2 C = V + delta * mid;
+					if (clear(U, C, v_cl) && clear(C, W, v_cl)) lo = mid;
+					else                                        hi = mid;
+				}
+			}
+
+			if (lo * travel <= merge_eps) continue;
+			p[k] = V + delta * lo;
+			moved = true;
+		}
+		return moved;
+	};
+
+	std::vector<Vector2> path = sweep_pass(in);
+	if (path.size() < 3) return path;
+
+	path = subdivide(path, std::max(hug_cl, cell_size_ * 2.0f));
+	for (int it = 0; it < PULL_RELAX_ITERS; ++it) {
+		if (!relax_once(path)) break;
+	}
+	return sweep_pass(path);
+}
+
+PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance,
+                               float hug_clearance) const {
 	last_query_ignored_threats_ = false;
 
-	PathResult r = find_path_query(from, to, query_clearance);
+	PathResult r = find_path_query(from, to, query_clearance, hug_clearance);
 	if (r.valid || threat_blocked_count_ == 0) {
 		return r;
 	}
@@ -758,14 +1023,15 @@ PathResult HpaGraph::find_path(Vector2 from, Vector2 to, float query_clearance) 
 	// following a stale path.  Retry with threats muted so it can at least
 	// move; the caller can inspect did_last_query_ignore_threats().
 	threats_muted_ = true;
-	r = find_path_query(from, to, query_clearance);
+	r = find_path_query(from, to, query_clearance, hug_clearance);
 	threats_muted_ = false;
 
 	last_query_ignored_threats_ = r.valid;
 	return r;
 }
 
-PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clearance) const {
+PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clearance,
+                                     float hug_clearance) const {
 	using Clock = std::chrono::steady_clock;
 	auto query_t0 = Clock::now();
 
@@ -892,6 +1158,15 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	// provided; fall back to the build-time default otherwise.
 	float q_cl = (query_clearance > 0.0f) ? query_clearance : clearance_;
 
+	// Preferred stand-off for the string-pulling pass.  Deliberately NOT
+	// clamped against q_cl: the two are independent questions.  q_cl decides
+	// which channels exist at all and should be the hull's true minimum; hug_cl
+	// decides where in a channel the route sits, and is free to sit above q_cl
+	// (open water — keep some sea room) or below it (the caller searched with a
+	// margin and wants it given back).  hug_string_pull() honours whichever
+	// way round they come.
+	float hug_cl = (hug_clearance > 0.0f) ? hug_clearance : q_cl;
+
 	// ── Grid coordinate helpers ────────────────────────────────────────────
 	auto world_to_gx = [&](float wx) -> int {
 		return std::max(0, std::min(static_cast<int>((wx - min_x_) / cell_size_), grid_w_ - 1));
@@ -923,8 +1198,17 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 		if (!nav_map_->find_nearest_navigable(sx, sz, q_cl)) return false;
 		gx = sx;
 		gz = sz;
-		grid_to_world(gx, gz, wx, wz);
-		out = Vector2(wx, wz);
+		// find_nearest_navigable() validates the cell in NavigationMap's index
+		// convention, where index i samples world (min + i*cell).  HpaGraph's
+		// own grid_to_world() is cell-centred (min + (i+0.5)*cell), so
+		// converting the returned index with it lands half a cell away from the
+		// cell that was actually checked.  Under the old inflated planning
+		// margin that error vanished into the buffer; at the hull minimum half
+		// a cell is most of the margin, and the "snapped" endpoint comes back
+		// less navigable than the one we rejected.  Convert the way the
+		// validating side counts.
+		out = Vector2(min_x_ + static_cast<float>(sx) * cell_size_,
+					  min_z_ + static_cast<float>(sz) * cell_size_);
 		return true;
 	};
 
@@ -979,24 +1263,12 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	// Reject a LOS segment that clips any threat-blocked cluster AABB.
 	// Iterates the compact threat_blocked_cids_ list rather than every cluster.
 	auto threat_clear = [&](const Vector2 &a, const Vector2 &b) -> bool {
-		if (!threat_layer_active) return true;
-		const float hc = cell_size_ * 0.5f;
-		for (int cid : threat_blocked_cids_) {
-			const Cluster &cl = clusters_[cid];
-			float wx0, wz0, wx1, wz1;
-			grid_to_world(cl.x0, cl.z0, wx0, wz0);
-			grid_to_world(cl.x1, cl.z1, wx1, wz1);
-			if (segment_clips_aabb(a.x, a.y, b.x, b.y,
-			                       wx0 - hc, wz0 - hc, wx1 + hc, wz1 + hc))
-				return false;
-		}
-		return true;
+		return segment_threat_clear(a, b, threat_layer_active);
 	};
 
 	// ── Step 1: Direct LOS shortcut ────────────────────────────────────────
 	connector_los_attempts++;
-	if (nav_map_->line_of_sight(from_gx, from_gz, to_gx, to_gz, q_cl) &&
-		threat_clear(from, to)) {
+	if (los_clear(from, to, q_cl) && threat_clear(from, to)) {
 		connector_los_hits++;
 		PathResult r;
 		r.waypoints      = { from, to };
@@ -1192,7 +1464,7 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 		int bx = world_to_gx(B.x), bz = world_to_gz(B.y);
 
 		connector_los_attempts++;
-		bool los_ok = nav_map_->line_of_sight(ax, az, bx, bz, q_cl);
+		bool los_ok = los_clear(A, B, q_cl);
 		if (los_ok && threat_layer_active) los_ok = threat_clear(A, B);
 
 		if (los_ok) {
@@ -1218,17 +1490,47 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 				if (is_sub_open(sub_path[j])) ++open_intermediates;
 
 			if (!sub_path.empty() && open_intermediates > 0) {
+				// Gather the open sub centres this path would contribute.
+				std::vector<Vector2> chain;
+				chain.reserve(sub_path.size());
 				for (int j = 1; j + 1 < static_cast<int>(sub_path.size()); ++j) {
 					int sid = sub_path[j];
 					if (!is_sub_open(sid)) continue;
 					const SubCluster &s = sub_clusters_[sid];
 					Vector2 P(s.wx_center, s.wz_center);
-					if (waypoints.back().distance_to(P) > merge_eps)
-						waypoints.push_back(P);
+					const Vector2 &prev = chain.empty() ? A : chain.back();
+					if (prev.distance_to(P) > merge_eps)
+						chain.push_back(P);
 				}
-				if (waypoints.back().distance_to(B) > merge_eps)
-					waypoints.push_back(B);
-				sub_helped = true;
+				if (chain.empty() || chain.back().distance_to(B) > merge_eps)
+					chain.push_back(B);
+
+				// Non-open subs were skipped above, so consecutive survivors
+				// are not necessarily adjacent: the straight line between two
+				// of them cuts across whatever the skipped sub contained, and
+				// a sub is "not open" precisely because it holds land.  These
+				// centres are emitted as final waypoints, not as advisory
+				// guides, so nothing downstream would catch it — the route
+				// would simply cross the island.  Verify every link before
+				// committing; one failure drops the whole chain to the cell A*
+				// below, which is exact.
+				bool chain_ok = true;
+				Vector2 prev = A;
+				for (const Vector2 &P : chain) {
+					connector_los_attempts++;
+					if (!los_clear(prev, P, q_cl) || !threat_clear(prev, P)) {
+						chain_ok = false;
+						break;
+					}
+					connector_los_hits++;
+					prev = P;
+				}
+
+				if (chain_ok) {
+					for (const Vector2 &P : chain)
+						waypoints.push_back(P);
+					sub_helped = true;
+				}
 			}
 		}
 
@@ -1282,25 +1584,10 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	}
 
 	// ── Step 6: String pulling ─────────────────────────────────────────────
-	// Greedy forward LOS simplification using the ship's actual clearance.
-	std::vector<Vector2> pulled;
-	pulled.push_back(waypoints.front());
-
-	size_t anchor = 0;
-	while (anchor < waypoints.size() - 1) {
-		size_t farthest = anchor + 1;
-		for (size_t test = waypoints.size() - 1; test > anchor + 1; --test) {
-			int ax = world_to_gx(waypoints[anchor].x), az = world_to_gz(waypoints[anchor].y);
-			int bx = world_to_gx(waypoints[test].x),   bz = world_to_gz(waypoints[test].y);
-			if (nav_map_->line_of_sight(ax, az, bx, bz, q_cl) &&
-				threat_clear(waypoints[anchor], waypoints[test])) {
-				farthest = test;
-				break;
-			}
-		}
-		pulled.push_back(waypoints[farthest]);
-		anchor = farthest;
-	}
+	// Coastline-hugging pull at hug_cl.  Unlike plain greedy LOS simplification
+	// this may introduce waypoints that were not in the assembled route, so the
+	// corners come from the terrain instead of from cluster centres.
+	std::vector<Vector2> pulled = hug_string_pull(waypoints, q_cl, hug_cl, threat_layer_active);
 
 	auto t_ref1 = Clock::now();
 	refine_us = std::chrono::duration<float, std::micro>(t_ref1 - t_ref0).count();
@@ -1328,8 +1615,9 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 // ============================================================================
 
 PackedVector2Array HpaGraph::find_path_packed(Vector2 from, Vector2 to,
-                                               float query_clearance) const {
-	PathResult pr = find_path(from, to, query_clearance);
+                                               float query_clearance,
+                                               float hug_clearance) const {
+	PathResult pr = find_path(from, to, query_clearance, hug_clearance);
 	PackedVector2Array out;
 	for (const Vector2 &wp : pr.waypoints)
 		out.push_back(wp);
