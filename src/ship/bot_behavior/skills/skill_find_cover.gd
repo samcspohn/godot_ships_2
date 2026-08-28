@@ -740,35 +740,58 @@ func reset() -> void:
 
 
 # ---------------------------------------------------------------------------
-# Returns true if the current cover destination is reasonably "on the way"
-# relative to the optimal engagement heading toward `nearest`.
+# Returns true if the current cover destination is reasonably "on the way" —
+# that is, whether reaching it costs a detour, rather than whether it happens
+# to lie toward the enemy.  Two courses count as "the way":
+#
+#   * the course made good — where the hull is travelling RIGHT NOW.  Cover the
+#     ship is already closing on is not a detour whichever compass point it sits
+#     on, and abandoning it the instant the ship is spotted throws away every
+#     metre already spent getting there.  Taken from velocity rather than from
+#     the bow so that a ship backing down reads as travelling astern.
+#   * the retreat course SkillKite would run, away from the danger centre.  If
+#     the ship is about to disengage, cover along the way out is free.
+#
+# Either one passing is enough.  Cover on neither course — off the beam of a
+# ship that is neither approaching it nor withdrawing past it — is a genuine
+# detour and does not count.
 #
 # Angle tolerance scales with distance to cover:
-#   70° when cover is <= 1000 m away  (almost there — accept wide detours)
-#   10° when cover is >= 5000 m away  (far detour is too costly)
+#   60° when cover is <= 1000 m away  (almost there — accept wide detours)
+#   15° when cover is >= 6000 m away  (far detour is too costly)
 #
 # Call this AFTER execute() so that _nav_destination is up to date.
 # ---------------------------------------------------------------------------
-func is_cover_on_the_way(ctx: SkillContext, nearest: Ship) -> bool:
+func is_cover_on_the_way(ctx: SkillContext) -> bool:
 	if not _nav_destination_valid:
 		return false
 	var ship = ctx.ship
 	var to_cover = _nav_destination - ship.global_position
 	to_cover.y = 0.0
 	var dist_to_cover = to_cover.length()
-	if dist_to_cover < 750.0:
+	if dist_to_cover < 1000.0:
 		return true
 
-	var t = clampf((dist_to_cover - 750.0) / 4000.0, 0.0, 1.0)
+	var t = clampf((dist_to_cover - 1000.0) / 5000.0, 0.0, 1.0)
 	var angle_tol = lerpf(deg_to_rad(60.0), deg_to_rad(15.0), t)
+	var cover_bearing = atan2(to_cover.x, to_cover.z)
 
-	var to_nearest = nearest.global_position - ship.global_position
-	to_nearest.y = 0.0
-	var enemy_bearing = atan2(to_nearest.x, to_nearest.z)
-	var optimal_heading = SkillAngle.calc_heading(ctx, {})
-	var cover_bearing = atan2(to_cover.x, to_cover.z) if dist_to_cover > 1.0 else optimal_heading
-	var bearing_diff = absf(angle_difference(optimal_heading, cover_bearing))
-	if bearing_diff > PI / 2.0: # bearing is behind us
-		bearing_diff = PI - bearing_diff # convert to smaller angle on the other side
+	# Course made good.  Below steerage way there is no course to read, so fall
+	# back to the bow — that is where the ship will accelerate.
+	var vel: Vector3 = ship.linear_velocity
+	vel.y = 0.0
+	var course: float
+	if vel.length_squared() > 1.0:
+		course = atan2(vel.x, vel.z)
+	else:
+		var fwd: Vector3 = -ship.global_transform.basis.z
+		course = atan2(fwd.x, fwd.z)
+	if absf(angle_difference(course, cover_bearing)) <= angle_tol:
+		return true
 
-	return bearing_diff <= angle_tol
+	# SkillAngle.calc_heading() is bearing toward the danger centre; the retreat
+	# SkillKite would run is the far side of it.  Keep the two in step: this must
+	# be the same flip SkillKite makes.  Tested second because it is the more
+	# expensive of the two.
+	var retreat_heading = wrapf(SkillAngle.calc_heading(ctx, {}) + PI, -PI, PI)
+	return absf(angle_difference(retreat_heading, cover_bearing)) <= angle_tol

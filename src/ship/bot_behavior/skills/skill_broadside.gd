@@ -16,6 +16,19 @@ extends BotSkill
 ##    An oscillation timer blends between the raw navigation heading and the
 ##    broadside heading to introduce unpredictability.
 ##
+## Torpedo tubes get their own solver.  A launcher slews through a full circle
+## (slew_limits_enabled = false on every launcher scene), so the slew-limit
+## quadrant solve the guns use reads no constraint off them at all and would
+## quietly return the navigation heading unchanged.  What actually restricts a
+## tube is its `fire_arcs` — the port/starboard sectors it is permitted to fire
+## over — so the torpedo path samples ship headings and takes the one nearest
+## the navigation heading at which every loaded tube bears.
+##
+## The tubes REFINE the gun heading rather than replacing it: a ship holding a
+## loaded salvo on a target inside torpedo range keeps the heading its guns
+## chose whenever the tubes can already fire from it, and only swings off that
+## heading when doing so puts more tubes on the target.
+##
 ## 2. Heading weight:  the navigator's arc-scoring weight is driven by the
 ##    average gun reload fraction (0 = just fired, 1 = all ready).  When guns
 ##    are reloading, heading_weight ≈ 0 and the navigator steers freely toward
@@ -45,12 +58,24 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 
 	var target = ctx.target
 	var gun_range = ctx.ship.artillery_controller.get_params()._range
+
+	# Loaded torpedo tubes bearing on a target inside torpedo range.  Gathered
+	# before the range gate because they widen it: a torpedo boat closing on a
+	# battleship is often still outside its own gun range when the tubes bear.
+	var torp_launchers: Array = _ready_torpedo_launchers(ctx)
+	var torp_range: float = 0.0
+	if not torp_launchers.is_empty():
+		torp_range = ctx.ship.torpedo_controller.get_params()._range
+
 	# We need a threat position to compute gun bearings against.
 	var threat_pos: Vector3 = Vector3.ZERO
 	# var to_threat: Vector3
 	if target != null and is_instance_valid(target):
-		if target.global_position.distance_to(ctx.ship.global_position) > gun_range:
+		var target_dist: float = target.global_position.distance_to(ctx.ship.global_position)
+		if target_dist > maxf(gun_range, torp_range):
 			return intent
+		if target_dist > torp_range:
+			torp_launchers = []
 		threat_pos = target.global_position
 		var _threat_pos = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
 			ship.global_position,
@@ -94,7 +119,25 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 		to_wp.y = 0.0
 		if to_wp.length_squared() >= 1.0:
 			desired_heading = atan2(to_wp.x, to_wp.z)
+	# Guns first: they are the weapon every ship has, and their heading is the
+	# right starting point even for a torpedo boat.
+	var weapons: Array = guns
+	var aim_bearing: float = threat_bearing
 	var broadside_heading: float = _find_best_all_guns_heading(guns, threat_bearing, desired_heading)
+
+	# Then let loaded tubes refine it, but only if their arcs actually exclude
+	# the heading the guns picked.  Refining rather than replacing matters: a
+	# launcher with no fire_arcs authored is unconstrained, so replacing would
+	# hand back the raw navigation heading and silently drop gun shaping from
+	# every torpedo-armed gunship.
+	if not torp_launchers.is_empty():
+		var torp_bearing: float = _torpedo_bearing(ctx, threat_bearing)
+		var refined: float = _find_best_torpedo_heading(
+			torp_launchers, torp_bearing, broadside_heading)
+		if not is_equal_approx(refined, broadside_heading):
+			broadside_heading = refined
+			weapons = torp_launchers
+			aim_bearing = torp_bearing
 
 	# --- Oscillation: blend the target heading between navigation and broadside ---
 	# Period matches gun reload so the ship completes one full swing per salvo cycle.
@@ -113,7 +156,7 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# traversed close to their needed angle at the broadside heading.  When
 	# turrets still have a long way to rotate, blend → 0 and the ship stays
 	# near its navigation heading rather than presenting its side for nothing.
-	var guns_in_position: float = _guns_in_position_fraction(guns, broadside_heading, threat_bearing)
+	var guns_in_position: float = _guns_in_position_fraction(weapons, broadside_heading, aim_bearing)
 	blend *= guns_in_position
 
 	# Final target heading: gradually morphs from navigation heading toward broadside.
@@ -129,11 +172,15 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# var total_reload: float = 0.0
 	# for gun in guns:
 	# 	total_reload += gun.reload
+	# Hold the firing angle when anything that can shoot from it is loaded --
+	# tubes included, since we may have turned the hull specifically for them.
 	var reloaded = 0.0
-	for gun: Gun in guns:
-		if gun.reload >= 1.0:
+	for w: Turret in guns:
+		if w.reload >= 1.0:
 			reloaded = 1.0
 			break
+	if reloaded < 1.0 and not torp_launchers.is_empty():
+		reloaded = 1.0
 	# var guns_ready: float = total_reload / float(guns.size()) * 2.0  # 0..1
 
 	intent.target_heading = final_heading
@@ -145,6 +192,85 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 ## ---------------------------------------------------------------------------
 ## Internals
 ## ---------------------------------------------------------------------------
+
+## Heading that puts the MOST tubes on `threat_bearing`, searched outward from
+## `preferred_heading` and returning it unchanged unless some other heading is
+## strictly better.
+##
+## Counting rather than requiring every tube to bear: launchers on port and
+## starboard sponsons have arcs that cannot all be satisfied at once, so an
+## all-or-nothing test would never fire for such a ship and would silently
+## disable torpedo shaping on exactly the hulls whose arcs matter most.  Count
+## also gives the right answer for the two cases that do exist today —
+## centreline tubes with a sector per side (any beam heading satisfies all of
+## them) and tubes with no arcs authored at all (every heading satisfies all of
+## them, so the preferred heading wins immediately and the hull is left alone).
+##
+## Sampled rather than solved in closed form because fire_arcs is a list of
+## arbitrary sectors, not the single contiguous span the slew-limit solve
+## assumes.  Because the search walks outward, the first heading to reach a
+## given count is the nearest one that reaches it.
+func _find_best_torpedo_heading(launchers: Array, threat_bearing: float, preferred_heading: float) -> float:
+	var best_count: int = _tubes_bearing_count(launchers, preferred_heading, threat_bearing)
+	if best_count == launchers.size():
+		return preferred_heading
+	var best_heading: float = preferred_heading
+
+	var steps: int = int(PI / SAMPLE_STEP)
+	for i in range(1, steps + 1):
+		var offset: float = float(i) * SAMPLE_STEP
+		for heading: float in [
+			wrapf(preferred_heading + offset, -PI, PI),
+			wrapf(preferred_heading - offset, -PI, PI),
+		]:
+			var count: int = _tubes_bearing_count(launchers, heading, threat_bearing)
+			if count > best_count:
+				best_count = count
+				best_heading = heading
+				if best_count == launchers.size():
+					return best_heading
+	return best_heading
+
+
+## How many launchers may fire on `threat_bearing` with the ship at
+## `ship_heading`.  Uses Turret.is_angle_in_fire_arcs, which is the same
+## predicate the launcher itself gates firing on, so a heading this skill
+## steers to is by construction one the tubes will actually shoot from.
+func _tubes_bearing_count(launchers: Array, ship_heading: float, threat_bearing: float) -> int:
+	var count: int = 0
+	for l: Turret in launchers:
+		# Turret-local frame: world bearing, minus the hull, minus the mount.
+		var needed_local: float = threat_bearing - ship_heading - l.base_rotation
+		needed_local = atan2(sin(needed_local), cos(needed_local))
+		if l.is_angle_in_fire_arcs(needed_local):
+			count += 1
+	return count
+
+
+## Torpedo launchers with a salvo ready, or an empty array if the ship has no
+## tubes or none are loaded.  Empty means "steer for the guns".
+func _ready_torpedo_launchers(ctx: SkillContext) -> Array:
+	var out: Array = []
+	var tc = ctx.ship.torpedo_controller
+	if tc == null or tc.get_params() == null:
+		return out
+	for l: TorpedoLauncher in tc.launchers:
+		if is_instance_valid(l) and l.reload >= 1.0:
+			out.append(l)
+	return out
+
+
+## Bearing the tubes must bear on.  The behavior already solves the torpedo
+## intercept every tick in update_torpedo_aim(); reuse it rather than steering
+## to the gun lead, which is a much shorter flight time and a different point.
+func _torpedo_bearing(ctx: SkillContext, fallback_bearing: float) -> float:
+	if not ctx.behavior.has_valid_torpedo_solution:
+		return fallback_bearing
+	var to_lead: Vector3 = ctx.behavior.torpedo_target_position - ctx.ship.global_position
+	to_lead.y = 0.0
+	if to_lead.length_squared() < 1.0:
+		return fallback_bearing
+	return atan2(to_lead.x, to_lead.z)
 
 ## Find the ship heading (world-space) at which all guns can bear on the threat,
 ## staying as close to `preferred_heading` as possible.

@@ -8,17 +8,6 @@ var _overmatch_cache: Dictionary = {}
 
 const OVERMATCH_RATIO_THRESHOLD: float = 0.4  # 40% of faces must be overmatchable to prefer AP
 
-# Skills
-var _skill_hunt: SkillHunt = SkillHunt.new()
-var _skill_chase: SkillChase = SkillChase.new()
-var _skill_broadside: SkillBroadside = SkillBroadside.new()
-var _skill_kite: SkillKite = SkillKite.new()
-var _skill_camp: SkillCamp = SkillCamp.new()
-var _skill_flank: SkillFlank = SkillFlank.new()
-var _skill_cover: SkillFindCover = SkillFindCover.new()
-var _skill_spread: SkillSpread = SkillSpread.new()
-var _skill_push: SkillPush = SkillPush.new()
-
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
@@ -176,164 +165,45 @@ func target_aim_offset(_target: Ship) -> Vector3:
 # NAVINTENT — V4 bot controller interface
 # ============================================================================
 
+func doctrine() -> BotDoctrine:
+	return BotDoctrine.for_battleship()
+
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # BBs push or camp — never route around detection zones
 	wants_to_be_concealed = false
-	var ctx = SkillContext.create(ship, target, server, self)
 	_init_flank_identity(ship, server)
-	var spotted = server.get_valid_targets(ship.team.team_id)
-	var has_spotted = spotted.size() > 0
-	var unspotted = server.get_unspotted_enemies(ship.team.team_id)
-	var has_enemies = has_spotted or not unspotted.is_empty()
-	var params = get_positioning_params()
-	var gun_range = ship.artillery_controller.get_params()._range
-	var threat = get_threat_score(ctx)
-	var _unspotted_near = _nearest_unspotted_info(server)
+	return _nav_core(SkillContext.create(ship, target, server, self))
 
-	var nearest: Ship = null
-	var _nearest_dist: float = INF
-	for _e in spotted:
-		if is_instance_valid(_e) and _e.health_controller.is_alive():
-			var _d = ship.global_position.distance_to(_e.global_position)
-			if _d < _nearest_dist:
-				_nearest_dist = _d
-				nearest = _e
-	var dist: float = _nearest_dist
+## The engaged arm: not close aboard, or not detected. A battleship walks a
+## threat ladder — flank while it is quiet, camp while it is manageable, get
+## behind an island as it builds, and kite once it is bad.
+func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var d := _doc()
+	if sit.threat < d.flank_max_threat or sit.nearest_dist > sit.gun_range:
+		return _run_skill(&"Flank", ctx)
 
-	var _prev_skill_name = _active_skill_name
-	var intent: NavIntent = null
+	if sit.threat < d.camp_max_threat and active_shooters_at_me.is_empty():
+		var camp := _run_skill(&"Camp", ctx, {"here": true})
+		# Probe cover so its team-wide claim bookkeeping stays warm; _finish_nav
+		# releases the claim again because Camp is what actually got adopted.
+		_skill_cover.execute(ctx, {})
+		return camp
 
-	var nearest_threat_dist = INF
-	for s in unspotted:
-		if (s as Ship).ship_class != Ship.ShipClass.DD:
-			var d = ship.global_position.distance_to(unspotted[s])
-			if d < nearest_threat_dist:
-				nearest_threat_dist = d
-	for s in spotted:
-		if s.ship_class != Ship.ShipClass.DD:
-			var d = ship.global_position.distance_to(s.global_position)
-			if d < nearest_threat_dist:
-				nearest_threat_dist = d
+	if sit.threat < d.cover_max_threat:
+		return _run_skill(&"FindCover", ctx)
 
-	var forced = false
+	var cover_intent := _skill_cover.execute(ctx, {}, false)
+	var cover_usable: bool = cover_intent != null \
+		and (_skill_cover.is_cover_on_the_way(ctx)
+			or not ctx.ship.is_detected()
+			or active_shooters_at_me.is_empty()) \
+		and sit.nearest_threat_dist > d.cover_min_threat_dist
+	if cover_usable:
+		_active_skill_name = &"FindCover"
+		return cover_intent
+	return _run_skill(&"Kite", ctx)
 
-	# if close and visible_to_enemy
-	# 	if threat < 0.5
-	# 		push
-	# 	else
-	# 		kite
-	# threat < 0.2
-	# 	flank
-	# threat < 0.5
-	# 	camp
-	# else
-	# 	kite/cover
-	var _ra_threshold := 8000.0
-	if _has_active_bb_shooter():
-		_ra_threshold = 10000.0
-		if ship.health_controller.current_hp / ship.health_controller.max_hp < 0.5:
-			_ra_threshold = 13000.0
-
-	if not has_enemies:
-		# No enemies at all — hunt then chase
-		intent = _skill_flank.execute(ctx, {})
-		if intent:
-			_active_skill_name = &"Flank"
-	elif spotted.size() == 0 and unspotted.size() > 0:
-		# Enemies exist but none spotted — take cover while the picture is
-		# dangerous, and only run down a last-known position once it is quiet.
-		# prioritize_cover: with nothing spotted there is nothing to shoot at, so
-		# cover must not be rejected for being unshootable.
-		if threat >= get_chase_max_threat():
-			intent = _skill_cover.execute(ctx, {}, true)
-			if intent != null:
-				_active_skill_name = &"FindCover"
-		if intent == null:
-			intent = _skill_chase.execute(ctx, {})
-			_active_skill_name = &"Chase"
-	else:
-		if nearest_threat_dist < _ra_threshold and ship.is_detected():
-			if threat < 0.5:
-				# Optimal heading is bow-in — push toward enemy
-				intent = _skill_push.execute(ctx, {})
-				if intent != null:
-					_active_skill_name = &"Push"
-			else:
-				# High threat (kite path): if concealing cover is on the way, hide;
-				# otherwise kite away while keeping guns on target.
-				intent = _try_cover_on_the_way(ctx, nearest, _skill_cover, {})
-				if intent == null:
-					intent = _skill_kite.execute(ctx, {})
-					if intent != null:
-						_active_skill_name = &"Kite"
-			if intent != null:
-				_apply_reverse_alignment(intent, nearest_threat_dist, _ra_threshold)
-
-			if threat < 0.25 or threat > 0.75:
-				forced = true  # Don't deviate from push/kite if very low or high threat
-				# (allows more aggressive pushes and safer kiting)
-		else:
-			if threat < 0.4 or _nearest_dist > gun_range:
-				intent = _skill_flank.execute(ctx, {})
-				if intent:
-					_active_skill_name = &"Flank"
-			# elif threat < 0.4:
-			# 	intent = _skill_push.execute(ctx, {})
-			# 	if intent:
-			# 		_active_skill_name = &"Push"
-			elif threat < 0.6 and active_shooters_at_me.size() == 0:
-				intent = _skill_camp.execute(ctx, {"here": true})
-				_skill_cover.execute(ctx, {})
-				if intent:
-					_active_skill_name = &"Camp"
-			elif threat < 0.7:
-				# intent = _skill_camp.execute(ctx, {"here": true})
-				intent = _skill_cover.execute(ctx, {})
-				if intent:
-					_active_skill_name = &"FindCover"
-			else:
-				# if _nearest_dist > gun_range:
-				# 	intent
-
-				var cover_intent = _skill_cover.execute(ctx, {})
-				if cover_intent != null and (_skill_cover.is_cover_on_the_way(ctx, nearest) or !ship.is_detected() or active_shooters_at_me.is_empty()) and nearest_threat_dist > 10000.0:
-					intent = cover_intent
-					_active_skill_name = &"FindCover"
-				else:
-					intent = _skill_kite.execute(ctx, {})
-					if intent:
-						_active_skill_name = &"Kite"
-
-
-
-	# Reset camp lock when switching away from Camp
-	if _prev_skill_name == &"Camp" and _active_skill_name != &"Camp":
-		_skill_camp.reset()
-	# A cover destination that was computed but not adopted must not stay
-	# reserved — the skill claims a spot team-wide on every execute(), including
-	# the probes made from the camp and kite paths, and a claim nobody is using
-	# pushes team-mates onto islands further away.
-	if _active_skill_name != &"FindCover":
-		_skill_cover.release_claim()
-	if _prev_skill_name == &"FindCover" and _active_skill_name != &"FindCover":
-		_skill_cover.reset()
-
-	 # Post-process broadside when skill is not Hunt or SailForward
-	if _active_skill_name not in  [&"Hunt", &"SailForward"] and not forced:
-		intent = _skill_broadside.apply(intent, ctx, {"oscillation_bias": 0.5})
-
-	var _a = _probe_concealment(server)
-	# Post-process spread when skill is not FindCover, Angle, or Kite
-	if _active_skill_name not in [&"FindCover", &"Push", &"Kite", &"Camp"]:
-		intent = _skill_spread.apply(intent, ctx, {"spread_distance": 1000.0, "spread_multiplier": 1.0})
-
-	return intent
-
-
-## Compute approach heading from ship to destination
-func _calc_approach_heading(ship: Ship, dest: Vector3) -> float:
-	var to_dest = dest - ship.global_position
-	to_dest.y = 0.0
-	if to_dest.length_squared() > 1.0:
-		return atan2(to_dest.x, to_dest.z)
-	return _get_ship_heading()
+func _apply_gun_policy(ctx: SkillContext, _sit: Dictionary) -> void:
+	# Result deliberately unused: BBs never suppress. The call is kept for its
+	# side effect — deducing a concealed spotter from unexplained bloom.
+	_probe_concealment(ctx.server)

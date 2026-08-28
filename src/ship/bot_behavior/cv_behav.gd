@@ -101,7 +101,6 @@ const SCREEN_SHOCK_MS: int = 15000
 ## a collapse forever after.
 const SCREEN_REFERENCE_DECAY: float = 0.1
 
-var _skill_retreat: SkillRetreat = SkillRetreat.new()
 
 var _exposed_until_ms: int = 0
 
@@ -642,7 +641,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	_sync_cover_debug(ctx)
 
 	var spotted: Array = server.get_valid_targets(ship.team.team_id)
-	_update_enemy_tracking(ship, server, spotted)
 
 	# The guns are a liability, not an asset: firing blooms, and bloom is what
 	# gets a carrier seen. Fire only when concealment is already lost anyway.

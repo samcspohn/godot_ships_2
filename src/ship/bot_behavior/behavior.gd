@@ -98,8 +98,28 @@ var wants_to_be_concealed: bool = false
 ## no projectiles are in the air. Managed by BotControllerV4; use .has(ship) in skills.
 var active_shooters_at_me: Dictionary = {}  # Ship -> float expiry_sec
 
+# Skill instances. One set lives here rather than one set per behaviour
+# subclass: the shared ladder in _nav_core() dispatches to them by name, and
+# three private copies of the same eight skills was how BB ended up holding a
+# SkillHunt it never called and DD a SkillRetreat only the CV used.
+var _skill_hunt: SkillHunt = SkillHunt.new()
+var _skill_chase: SkillChase = SkillChase.new()
+var _skill_cover: SkillFindCover = SkillFindCover.new()
+var _skill_kite: SkillKite = SkillKite.new()
+var _skill_push: SkillPush = SkillPush.new()
+var _skill_camp: SkillCamp = SkillCamp.new()
+var _skill_flank: SkillFlank = SkillFlank.new()
+var _skill_spot: SkillSpot = SkillSpot.new()
+var _skill_retreat: SkillRetreat = SkillRetreat.new()
+var _skill_broadside: SkillBroadside = SkillBroadside.new()
+var _skill_spread: SkillSpread = SkillSpread.new()
+
 # Skill instances (created in subclass _init or on first use)
 var _skills: Dictionary = {}  # StringName -> BotSkill
+
+## Doctrine — the numbers this bot fights by. Built once on first use from
+## whatever doctrine() returns.
+var _doctrine: BotDoctrine = null
 
 # Flank identity (rolled once at match start)
 var _flank_side: int = 0      # -1 left, +1 right, 0 unassigned
@@ -1755,30 +1775,6 @@ func _safe_validate(ship: Ship, pos: Vector3) -> Vector3:
 		pos = NavigationMapManager.validate_destination(ship.global_position, pos, clearance, turning_radius)
 	return pos
 
-func _push_clear_of_threats(pos: Vector3, threat_positions: Array, min_dist: float) -> Vector3:
-	"""Iteratively push pos away from every threat position until it is at least
-	min_dist from all of them.  Runs up to 8 relaxation passes.  The result
-	still needs to be fed through _get_valid_nav_point to clear land."""
-	for _pass in range(8):
-		var any_violation := false
-		for tp in threat_positions:
-			var tp3 := tp as Vector3
-			var offset := pos - tp3
-			offset.y = 0.0
-			var dist := offset.length()
-			if dist < min_dist:
-				any_violation = true
-				var push_dir: Vector3
-				if dist > 0.1:
-					push_dir = offset.normalized()
-				else:
-					push_dir = Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
-				pos += push_dir * (min_dist - dist)
-				pos.y = 0.0
-		if not any_violation:
-			break
-	return pos
-
 ## How far from our own spawn a ship has to be before "back toward the spawn" is
 ## a meaningful direction. Sitting on it, that vector is noise pointing nowhere.
 const SAFE_DIR_SPAWN_MIN_DIST: float = 2000.0
@@ -2211,6 +2207,257 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 		return cw
 	return ccw
 
+
+
+# ============================================================================
+# NAV CORE — the one decision ladder every behaviour runs
+# ============================================================================
+#
+# BB, CA and DD used to each own a copy of this function. They agreed on the
+# shape and disagreed on about a dozen numbers, so the copies drifted: the
+# nearest-threat scan and the reverse-alignment band were character-identical
+# between BB and CA, while BB carried a SkillHunt it never called and CA a whole
+# island-state block that only called itself.
+#
+# The ladder now lives here once and reads its numbers off a BotDoctrine. Four
+# arms, in order:
+#
+#   idle     — nothing is known to exist anywhere
+#   dark     — enemies exist, none are spotted
+#   close    — something is spotted, it is near, and we are detected
+#   engaged  — everything else
+#
+# The first three are fully shared. Only `engaged` still differs per class, and
+# only because BB fights down a threat ladder, CA splits on its own detection
+# state, and DD is deciding between torpedoes and spotting. Those three are the
+# genuine behavioural difference and stay as _select_engaged_skill() overrides.
+
+func doctrine() -> BotDoctrine:
+	## Override per class to supply a different row of the table.
+	return BotDoctrine.new()
+
+func _doc() -> BotDoctrine:
+	if _doctrine == null:
+		_doctrine = doctrine()
+	return _doctrine
+
+## Extra params handed to SkillFindCover. CA scales its cover standoff by its
+## positioning params; everything else takes the skill's defaults.
+func _cover_params() -> Dictionary:
+	return {}
+
+## Dispatch a skill by name and record it as active. Returns null when the skill
+## declines the situation, so callers can walk a fallback chain.
+func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
+	var intent: NavIntent = null
+	match skill_name:
+		&"Hunt":        intent = _skill_hunt.execute(ctx, params)
+		&"Chase":       intent = _skill_chase.execute(ctx, params)
+		&"FindCover":   intent = _skill_cover.execute(ctx, params, bool(params.get("prioritize_cover", false)))
+		&"Kite":        intent = _skill_kite.execute(ctx, params)
+		&"Push":        intent = _skill_push.execute(ctx, params)
+		&"Camp":        intent = _skill_camp.execute(ctx, params)
+		&"Flank":       intent = _skill_flank.execute(ctx, params)
+		&"Spot":        intent = _skill_spot.execute(ctx, params)
+		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
+		&"SailForward": intent = _intent_sail_forward(ctx.ship)
+	if intent != null:
+		_active_skill_name = skill_name
+	return intent
+
+## Walk a chain of skill names, returning the first that accepts.
+func _run_chain(chain: Array[StringName], ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
+	for skill_name in chain:
+		var intent := _run_skill(skill_name, ctx, params)
+		if intent != null:
+			return intent
+	return null
+
+## Everything the ladder reads about the current moment, gathered once.
+func _build_situation(ctx: SkillContext) -> Dictionary:
+	var ship := ctx.ship
+	var d := _doc()
+	var spotted := ctx.server.get_valid_targets(ship.team.team_id)
+	var unspotted := ctx.server.get_unspotted_enemies(ship.team.team_id)
+
+	var nearest: Ship = null
+	var nearest_dist: float = INF
+	for e in spotted:
+		if not is_instance_valid(e) or not e.health_controller.is_alive():
+			continue
+		var dist := ship.global_position.distance_to(e.global_position)
+		if dist < nearest_dist:
+			nearest_dist = dist
+			nearest = e
+
+	# Distance to the nearest thing carrying real guns. DDs are excluded on
+	# purpose: a destroyer close aboard is a torpedo problem, not a reason to
+	# back a battleship out of a turn.
+	var nearest_threat_dist: float = INF
+	for s in unspotted:
+		if (s as Ship).ship_class != Ship.ShipClass.DD:
+			var dist := ship.global_position.distance_to(unspotted[s])
+			if dist < nearest_threat_dist:
+				nearest_threat_dist = dist
+	for s in spotted:
+		if s.ship_class != Ship.ShipClass.DD:
+			var dist := ship.global_position.distance_to(s.global_position)
+			if dist < nearest_threat_dist:
+				nearest_threat_dist = dist
+
+	var hp_ratio: float = ship.health_controller.current_hp / ship.health_controller.max_hp
+	var ra_threshold := d.ra_base
+	if _has_active_bb_shooter():
+		ra_threshold = d.ra_bb_shooter
+		if hp_ratio < d.ra_hurt_hp_ratio:
+			ra_threshold = d.ra_bb_shooter_hurt
+
+	return {
+		spotted = spotted,
+		unspotted = unspotted,
+		has_spotted = spotted.size() > 0,
+		has_enemies = spotted.size() > 0 or not unspotted.is_empty(),
+		nearest = nearest,
+		nearest_dist = nearest_dist,
+		nearest_threat_dist = nearest_threat_dist,
+		hp_ratio = hp_ratio,
+		gun_range = ship.artillery_controller.get_params()._range,
+		threat = get_threat_score(ctx),
+		ra_threshold = ra_threshold,
+		arm = &"engaged",
+		forced = false,
+	}
+
+## Common tail for any intent a behaviour returns, whether or not it came out of
+## the shared ladder (CVBehavior runs its own tree over the same skills).
+##
+## A cover destination that was computed but not adopted must not stay reserved:
+## the skill claims a spot team-wide on every execute(), including the probes
+## made from the camp and kite paths, and a claim nobody is using pushes
+## team-mates onto islands further away.
+func _finish_intent(intent: NavIntent, previous_skill: StringName) -> NavIntent:
+	if _active_skill_name != &"FindCover":
+		_skill_cover.release_claim()
+		if previous_skill == &"FindCover":
+			_skill_cover.reset()
+	return intent
+
+## The ladder. Subclasses call this from get_nav_intent() after setting up ctx.
+func _nav_core(ctx: SkillContext) -> NavIntent:
+	var d := _doc()
+	var sit := _build_situation(ctx)
+	var prev_skill := _active_skill_name
+	var intent: NavIntent = null
+
+	if not sit.has_enemies:
+		sit["arm"] = &"idle"
+		intent = _run_chain(d.idle_chain, ctx, _cover_params())
+	elif not sit.has_spotted and not d.dark_chain.is_empty():
+		sit["arm"] = &"dark"
+		# Everything has gone dark. Running down the nearest last-known position
+		# at flank speed is only reasonable while the picture is quiet; under
+		# pressure, get behind an island instead. Cover is asked for with
+		# prioritize_cover because with nothing spotted there is nothing to shoot
+		# at, so it must not be rejected for being unshootable.
+		if d.dark_takes_cover and sit.threat >= get_chase_max_threat():
+			var cp := _cover_params()
+			cp["prioritize_cover"] = true
+			intent = _run_skill(&"FindCover", ctx, cp)
+		if intent == null:
+			intent = _run_chain(d.dark_chain, ctx)
+	else:
+		intent = _select_nav_skill(ctx, sit)
+
+	if intent == null and d.universal_sail_forward_fallback:
+		intent = _run_skill(&"SailForward", ctx)
+
+	_apply_gun_policy(ctx, sit)
+	return _finish_nav(intent, ctx, sit, prev_skill)
+
+## Arms 3 and 4. The close arm is shared; the engaged arm is the hook.
+func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var d := _doc()
+
+	# CA decides on threat before it decides on distance: a cruiser that likes
+	# its odds pushes whether or not the enemy is close aboard.
+	if d.low_threat_arm_first and sit.threat < d.push_threat:
+		sit["arm"] = &"low_threat"
+		return _select_low_threat_skill(ctx, sit)
+
+	var close := ctx.ship.is_detected()
+	if d.close_arm_range_gated:
+		close = close and sit.nearest_threat_dist < float(sit.ra_threshold)
+	if not close:
+		return _select_engaged_skill(ctx, sit)
+
+	sit["arm"] = &"close"
+	var intent: NavIntent = null
+	if sit.threat < d.push_threat:
+		intent = _run_skill(&"Push", ctx)
+	else:
+		# High threat. If concealing cover lies along the way, hide behind it;
+		# otherwise kite away with the guns still on the target.
+		if d.close_arm_uses_cover:
+			intent = _try_cover_on_the_way(ctx, sit.nearest, _skill_cover, _cover_params())
+		if intent == null:
+			intent = _run_skill(&"Kite", ctx)
+	if intent != null:
+		_shape_close_intent(intent, ctx, sit)
+		if d.close_arm_reverse_align:
+			_apply_reverse_alignment(intent, sit.nearest_threat_dist, sit.ra_threshold)
+	# Do not let the post-processors steer a committed push or a committed kite.
+	if sit.threat < d.force_below or sit.threat >= d.force_above:
+		sit["forced"] = true
+	return intent
+
+## What to do when the odds look good. Base pushes; CA prefers to run down a
+## closer unseen contact rather than cross the map to a distant visible one.
+func _select_low_threat_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _run_skill(&"Push", ctx)
+
+## Per-class hook: the engaged arm. Base falls back to pushing.
+func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _run_skill(&"Push", ctx)
+
+## Per-class hook: adjust an intent produced by the close arm. CA uses it to
+## hand heading authority to the navigator near terrain.
+func _shape_close_intent(_intent: NavIntent, _ctx: SkillContext, _sit: Dictionary) -> void:
+	pass
+
+## Per-class hook: concealment and gun suppression policy for this tick.
+func _apply_gun_policy(_ctx: SkillContext, _sit: Dictionary) -> void:
+	pass
+
+## Common tail. Releases skill state that was claimed but not adopted, then runs
+## the heading and anti-clump post-processors.
+func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
+	var d := _doc()
+
+	# Camp holds a position lock; switching away has to drop it or the next
+	# activation reuses a stale spot.
+	if prev_skill == &"Camp" and _active_skill_name != &"Camp":
+		_skill_camp.reset()
+
+	intent = _finish_intent(intent, prev_skill)
+	if intent == null:
+		return null
+	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
+			and not d.post_process_idle_arms:
+		return intent
+
+	var forced: bool = bool(sit.forced)
+
+	if d.use_broadside and not forced and _active_skill_name not in d.broadside_exclude:
+		intent = _skill_broadside.apply(intent, ctx, d.broadside_params)
+
+	if not forced and _active_skill_name not in d.spread_exclude:
+		var sp: Dictionary = d.spread_overrides.get(_active_skill_name, {
+			"spread_distance": d.spread_distance,
+			"spread_multiplier": d.spread_multiplier,
+		})
+		intent = _skill_spread.apply(intent, ctx, sp)
+
+	return intent
 
 
 # ============================================================================
@@ -4167,7 +4414,7 @@ func _try_cover_on_the_way(ctx: SkillContext, nearest: Ship, cover_skill: SkillF
 	if nearest == null:
 		return null
 	var cover_intent := cover_skill.execute(ctx, cover_params, false)
-	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx, nearest):
+	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx):
 		_active_skill_name = &"FindCover"
 		return cover_intent
 	return null

@@ -223,8 +223,8 @@ func sort_leaderboard(a, b):
 	var b_spotting = b.get("spotting_damage", 0)
 	var a_kills = a.get("frags", 0)
 	var b_kills = b.get("frags", 0)
-	var a_score = a_dmg + a_spotting * 0.7 + a_kills * 10000
-	var b_score = b_dmg + b_spotting * 0.7 + b_kills * 10000
+	var a_score = a_dmg + a_spotting * 0.5 + a_kills * 10000
+	var b_score = b_dmg + b_spotting * 0.5 + b_kills * 10000
 	return a_score > b_score # Sort descending by score
 
 # ===========================================================================

@@ -4,6 +4,12 @@ extends BotSkill
 ## Uses SkillAngle.calc_heading() to pick a course that arrives bow-angled rather
 ## than perfectly bow-on, but sets the NavIntent heading to enemy_bearing so the
 ## hull faces the threat during the approach.
+##
+## Params:
+##   desired_range — stop closing at this distance from the target instead of
+##     driving onto it.  This is where a ship's engagement range lives: a
+##     torpedo boat passes its torpedo range and stops where it can launch, a
+##     gunship passes 0 (the default) and closes all the way.
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var target = ctx.target
@@ -29,7 +35,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# if can_reverse:
 	# 	dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 2.0
 	# else:
-	dest = ship.global_position + fwd * to_enemy.length()
+	# Close only as far as the engagement range allows.  At or inside it the
+	# push degenerates to a heading change, which is what we want — the ship
+	# holds station at range and lets Broadside/Angle work the hull around.
+	var desired_range: float = params.get("desired_range", 0.0)
+	var close_dist: float = maxf(to_enemy.length() - desired_range, 0.0)
+	dest = ship.global_position + fwd * close_dist
 	dest.y = 0.0
 
 	dest = ctx.behavior._get_valid_nav_point(dest)
