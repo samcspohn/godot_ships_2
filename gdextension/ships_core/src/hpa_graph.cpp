@@ -40,6 +40,10 @@ void HpaGraph::_bind_methods() {
 		D_METHOD("find_path_packed", "from", "to", "query_clearance", "hug_clearance"),
 		&HpaGraph::find_path_packed, DEFVAL(-1.0f), DEFVAL(-1.0f));
 	ClassDB::bind_method(
+		D_METHOD("find_path_biased_packed", "from", "to", "query_clearance",
+				 "hug_clearance", "bias_path"),
+		&HpaGraph::find_path_biased_packed);
+	ClassDB::bind_method(
 		D_METHOD("add_obstacle", "id", "pos", "radius"),
 		&HpaGraph::add_obstacle);
 	ClassDB::bind_method(D_METHOD("get_last_fail_stage"), &HpaGraph::get_last_fail_stage);
@@ -180,9 +184,13 @@ void HpaGraph::build_clusters() {
 			grid_to_world((c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2,
 			              c.wx_center, c.wz_center);
 
-			// Full SDF scan to get max_sdf and min_sdf.
+			// Full SDF scan for max_sdf, min_sdf and how much of the cluster is
+			// actually water.  nav_frac is measured at the *build* clearance,
+			// not per query: it ranks clusters by openness for cost shaping,
+			// and that ordering barely moves with query clearance.
 			float max_sdf = NEG_INF;
 			float min_sdf = POS_INF;
+			int   nav_cells = 0, tot_cells = 0;
 			for (int gz = c.z0; gz <= c.z1; ++gz) {
 				for (int gx = c.x0; gx <= c.x1; ++gx) {
 					float wx, wz;
@@ -190,10 +198,14 @@ void HpaGraph::build_clusters() {
 					float sdf = nav_map_->get_distance(wx, wz);
 					if (sdf > max_sdf) max_sdf = sdf;
 					if (sdf < min_sdf) min_sdf = sdf;
+					if (sdf >= clearance_) ++nav_cells;
+					++tot_cells;
 				}
 			}
 			c.max_sdf  = max_sdf;
 			c.min_sdf  = min_sdf;
+			c.nav_frac = (tot_cells > 0)
+				? static_cast<float>(nav_cells) / static_cast<float>(tot_cells) : 0.0f;
 			c.navigable = (max_sdf >= clearance_);
 		}
 	}
@@ -240,6 +252,7 @@ void HpaGraph::build_sub_clusters() {
 				s.x0 = x0; s.z0 = z0; s.x1 = x1; s.z1 = z1;
 				s.max_sdf = NEG_INF;
 				s.min_sdf = NEG_INF;
+				s.nav_frac = 0.0f;
 				s.navigable = false;
 				// Centre still computed for debug/visualisation.
 				grid_to_world((x0 + x1) / 2, (z0 + z1) / 2,
@@ -258,6 +271,7 @@ void HpaGraph::build_sub_clusters() {
 
 			float max_sdf = NEG_INF;
 			float min_sdf = POS_INF;
+			int   nav_cells = 0, tot_cells = 0;
 			for (int gz = s.z0; gz <= s.z1; ++gz) {
 				for (int gx = s.x0; gx <= s.x1; ++gx) {
 					float wx, wz;
@@ -265,10 +279,14 @@ void HpaGraph::build_sub_clusters() {
 					float sdf = nav_map_->get_distance(wx, wz);
 					if (sdf > max_sdf) max_sdf = sdf;
 					if (sdf < min_sdf) min_sdf = sdf;
+					if (sdf >= clearance_) ++nav_cells;
+					++tot_cells;
 				}
 			}
 			s.max_sdf   = max_sdf;
 			s.min_sdf   = min_sdf;
+			s.nav_frac  = (tot_cells > 0)
+				? static_cast<float>(nav_cells) / static_cast<float>(tot_cells) : 0.0f;
 			s.navigable = (max_sdf >= clearance_);
 		}
 	}
@@ -369,14 +387,19 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl,
 		return std::sqrt(dx * dx + dz * dz) * h_scale;
 	};
 
-	using PQ = std::pair<float, int>;
+	// (f, -g, id).  Ties on f are rife once step costs are quantised, and
+	// breaking them on the raw node id resolves them by grid position — a
+	// systematic pull toward low cz then low cx, and a different arbitrary
+	// choice from one replan to the next.  Preferring the larger g drives the
+	// frontier toward the goal instead, deterministically.
+	using PQ = std::tuple<float, float, int>;
 	std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
 
 	g[from_cid] = 0.0f;
-	open.push({ heur(from_cid), from_cid });
+	open.push({ heur(from_cid), 0.0f, from_cid });
 
 	while (!open.empty()) {
-		auto [f, cur] = open.top(); open.pop();
+		int cur = std::get<2>(open.top()); open.pop();
 		if (closed[cur]) continue;
 		closed[cur] = true;
 		if (cur == to_cid) break;
@@ -410,14 +433,17 @@ std::vector<int> HpaGraph::cluster_astar(int from_cid, int to_cid, float q_cl,
 					if (clusters_[cid_z].max_sdf < q_cl) continue;
 				}
 
-				float step_cost = is_diag ? diagonal_step_cost_ : cardinal_step_cost_;
+				// Congestion averaged over the two endpoints: how much water
+				// this step actually crosses, not merely whether it may.
+				float step_cost = (is_diag ? diagonal_step_cost_ : cardinal_step_cost_) *
+					0.5f * (cluster_cost_mul(cur) + cluster_cost_mul(ncid));
 				if (biased && (*bias_mask)[ncid]) step_cost *= bias_factor;
 				float ng = g[cur] + step_cost;
 
 				if (ng < g[ncid]) {
 					g[ncid] = ng;
 					parent[ncid] = cur;
-					open.push({ ng + heur(ncid), ncid });
+					open.push({ ng + heur(ncid), -ng, ncid });
 				}
 			}
 		}
@@ -503,14 +529,15 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 		return {};
 	}
 
-	using PQ = std::pair<float, int>;
+	// (f, -g, id) — see the tie-break note in cluster_astar().
+	using PQ = std::tuple<float, float, int>;
 	std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
 
 	g[from_sid] = 0.0f;
-	open.push({ heur(from_sid), from_sid });
+	open.push({ heur(from_sid), 0.0f, from_sid });
 
 	while (!open.empty()) {
-		auto [f, cur] = open.top(); open.pop();
+		int cur = std::get<2>(open.top()); open.pop();
 		if (closed[cur]) continue;
 		closed[cur] = true;
 		if (cur == to_sid) break;
@@ -540,14 +567,18 @@ std::vector<int> HpaGraph::sub_cluster_astar(
 					if (!sub_passable(sid_z)) continue;
 				}
 
-				float step_cost = is_diag ? sub_diag : sub_card;
+				// Same shaping as the macro layer, at sub granularity: a sub
+				// passable only through one of its sixteen cells should not
+				// price like open water.
+				float step_cost = (is_diag ? sub_diag : sub_card) *
+					0.5f * (sub_cost_mul(cur) + sub_cost_mul(nsid));
 				if (biased && (*bias_mask)[nsid]) step_cost *= bias_factor;
 				float ng = g[cur] + step_cost;
 
 				if (ng < g[nsid]) {
 					g[nsid] = ng;
 					parent[nsid] = cur;
-					open.push({ ng + heur(nsid), nsid });
+					open.push({ ng + heur(nsid), -ng, nsid });
 				}
 			}
 		}
@@ -668,17 +699,18 @@ PathResult HpaGraph::constrained_cell_astar(
 		return std::sqrt(dx * dx + dz * dz);
 	};
 
-	using PQ = std::pair<float, int>;
+	// (f, -g, id) — see the tie-break note in cluster_astar().
+	using PQ = std::tuple<float, float, int>;
 	std::priority_queue<PQ, std::vector<PQ>, std::greater<PQ>> open;
 	g[start_idx] = 0.0f;
 	parent[start_idx] = start_idx;
-	open.push({ heur(sx, sz), start_idx });
+	open.push({ heur(sx, sz), 0.0f, start_idx });
 
 	const int dx8[] = {-1, 0, 1, -1, 1, -1, 0, 1};
 	const int dz8[] = {-1, -1, -1, 0, 0, 1, 1, 1};
 
 	while (!open.empty()) {
-		auto [f, cur] = open.top(); open.pop();
+		int cur = std::get<2>(open.top()); open.pop();
 		if (closed[cur]) continue;
 		closed[cur] = 1;
 		if (cur == end_idx) break;
@@ -704,7 +736,7 @@ PathResult HpaGraph::constrained_cell_astar(
 			if (ng < g[nidx]) {
 				g[nidx] = ng;
 				parent[nidx] = cur;
-				open.push({ ng + heur(nx, nz), nidx });
+				open.push({ ng + heur(nx, nz), -ng, nidx });
 			}
 		}
 	}
@@ -1295,6 +1327,13 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 	from = plan_from;
 	to   = plan_to;
 
+	// ── Threat layer ───────────────────────────────────────────────────────
+	// threats_muted_ is set by the relaxed retry in find_path(); it has to
+	// disable LOS rejection too, not just cluster blocking, or the retry would
+	// still be walled in by the same threat circles.  Declared here because
+	// restore_endpoints() re-runs the string pull, which needs it.
+	bool threat_layer_active = (threat_blocked_count_ > 0) && !threats_muted_;
+
 	// Re-attach the caller's endpoints around a route planned between the
 	// snapped ones, so the ship is steered from where it actually is to where
 	// it was actually sent.  Both extra legs are short and point away from
@@ -1303,13 +1342,31 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 		if (!r.valid || r.waypoints.empty()) return r;
 		if (r.flags.size() != r.waypoints.size())
 			r.flags.assign(r.waypoints.size(), WP_NONE);
+		bool spliced = false;
 		if (start_snapped && r.waypoints.front().distance_to(true_from) > 1.0f) {
 			r.waypoints.insert(r.waypoints.begin(), true_from);
 			r.flags.insert(r.flags.begin(), WP_NONE);
+			spliced = true;
 		}
 		if (goal_snapped && r.waypoints.back().distance_to(true_to) > 1.0f) {
 			r.waypoints.push_back(true_to);
 			r.flags.push_back(WP_NONE);
+			spliced = true;
+		}
+		if (spliced && r.waypoints.size() >= 3) {
+			// The spliced legs never went through the pull, so the join between
+			// a true endpoint and the planned route keeps whatever corner the
+			// snap left there.  Re-pull the whole polyline.  The pass preserves
+			// its first and last points, and where an endpoint sits too close
+			// to land to see anything it copies vertices verbatim rather than
+			// inventing them — so a start inside the planning margin still
+			// comes back intact.
+			std::vector<Vector2> repulled =
+				hug_string_pull(r.waypoints, q_cl, hug_cl, threat_layer_active);
+			if (repulled.size() >= 2) {
+				r.waypoints = repulled;
+				r.flags.assign(r.waypoints.size(), WP_NONE);
+			}
 		}
 		r.total_distance = 0.0f;
 		for (size_t i = 0; i + 1 < r.waypoints.size(); ++i)
@@ -1319,12 +1376,6 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 
 	int from_cid = cluster_id(cell_cx(from_gx), cell_cz(from_gz));
 	int to_cid   = cluster_id(cell_cx(to_gx),   cell_cz(to_gz));
-
-	// ── Threat layer ───────────────────────────────────────────────────────
-	// threats_muted_ is set by the relaxed retry in find_path(); it has to
-	// disable LOS rejection too, not just cluster blocking, or the retry would
-	// still be walled in by the same threat circles.
-	bool threat_layer_active = (threat_blocked_count_ > 0) && !threats_muted_;
 
 	// Reject a LOS segment that clips any threat-blocked cluster AABB.
 	// Iterates the compact threat_blocked_cids_ list rather than every cluster.
@@ -1407,6 +1458,22 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 					reachable = nav_map_->is_reachable(from, to, q_cl);
 					if (reachable)
 						local = nav_map_->find_path_internal(from, to, q_cl, 0.0f);
+				}
+				// Same treatment the cross-macro route gets.  constrained_cell_astar
+				// greedily simplifies, so this arrives LOS-taut but never
+				// subdivided or relaxed, and would otherwise be the one route
+				// shape that keeps its raw cell-grid corners.
+				if (local.valid && local.waypoints.size() >= 3) {
+					std::vector<Vector2> pulled_local =
+						hug_string_pull(local.waypoints, q_cl, hug_cl, threat_layer_active);
+					if (pulled_local.size() >= 2) {
+						local.waypoints = pulled_local;
+						local.flags.assign(local.waypoints.size(), WP_NONE);
+						local.total_distance = 0.0f;
+						for (size_t k = 0; k + 1 < local.waypoints.size(); ++k)
+							local.total_distance +=
+								local.waypoints[k].distance_to(local.waypoints[k + 1]);
+					}
 				}
 				auto t1 = Clock::now();
 				refine_us = std::chrono::duration<float, std::micro>(t1 - t0).count();
@@ -1686,6 +1753,21 @@ PathResult HpaGraph::find_path_query(Vector2 from, Vector2 to, float query_clear
 // ============================================================================
 // find_path_packed
 // ============================================================================
+
+PackedVector2Array HpaGraph::find_path_biased_packed(
+		Vector2 from, Vector2 to,
+		float query_clearance, float hug_clearance,
+		const PackedVector2Array &bias_path) const {
+	std::vector<Vector2> bias;
+	bias.reserve(static_cast<size_t>(bias_path.size()));
+	for (int i = 0; i < bias_path.size(); ++i) bias.push_back(bias_path[i]);
+
+	PathResult pr = find_path(from, to, query_clearance, hug_clearance,
+	                          bias.size() >= 2 ? &bias : nullptr);
+	PackedVector2Array out;
+	for (const Vector2 &wp : pr.waypoints) out.push_back(wp);
+	return out;
+}
 
 PackedVector2Array HpaGraph::find_path_packed(Vector2 from, Vector2 to,
                                                float query_clearance,

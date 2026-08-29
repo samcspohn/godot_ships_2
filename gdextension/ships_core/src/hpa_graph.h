@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <queue>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -36,6 +37,7 @@ struct Cluster {
 	int   sub_x1, sub_z1; // inclusive sub-cluster grid range end
 	float max_sdf;       // max SDF in cluster  (most open water cell)
 	float min_sdf;       // min SDF in cluster  (closest to land)
+	float nav_frac;      // fraction of cells navigable at build clearance
 	float wx_center;     // world X of cluster centre
 	float wz_center;     // world Z of cluster centre
 	bool  navigable;     // max_sdf >= build clearance
@@ -62,6 +64,7 @@ struct SubCluster {
 	int   x1, z1;        // inclusive cell range end
 	float max_sdf;       // max SDF in sub  (most open cell)
 	float min_sdf;       // min SDF in sub  (closest to land)
+	float nav_frac;      // fraction of cells navigable at build clearance
 	float wx_center;     // world X of sub centre
 	float wz_center;     // world Z of sub centre
 	bool  navigable;     // max_sdf >= build clearance
@@ -155,6 +158,24 @@ public:
 	// pair cannot turn the stamp into an unbounded loop.
 	static constexpr int PATH_BIAS_MAX_STEPS_PER_SEG = 512;
 
+	// --- Cost shaping (see cluster_astar / sub_cluster_astar) ---
+	// A node is passable when a *single* one of its cells is navigable, so
+	// without this an 800 m step through a one-cell channel prices exactly like
+	// open ocean.  The macro layer then prefers threading an archipelago to
+	// sailing round it, the refinement weaves through the corridor it committed
+	// to, and the route comes back longer than the alternative it priced
+	// identically.  Charging for how much of a node is actually water restores
+	// the ordering, and — because the refinement stops having to rescue bad
+	// corridors with cell A* — makes queries markedly cheaper, not dearer.
+	//
+	// It also sharpens the cost landscape, which matters beyond length: two
+	// ways round an island used to differ by a couple of percent, which is what
+	// let the argmin flip on replan noise (see PathBias).  Pricing the
+	// constricted side for its constriction makes that a real gap.
+	//
+	// The multiplier is >= 1, so a plain Euclidean heuristic stays admissible.
+	static constexpr float CONGESTION_GAIN = 0.75f;
+
 	// ------------------------------------------------------------------
 	// Lifecycle
 	// ------------------------------------------------------------------
@@ -238,6 +259,15 @@ public:
 	PackedVector2Array find_path_packed(Vector2 from, Vector2 to,
 										 float query_clearance = -1.0f,
 										 float hug_clearance = -1.0f) const;
+
+	/// As find_path_packed(), but with the caller's existing route supplied as
+	/// the stickiness corridor.  Exists so GDScript (test/test_hpa_optimality.gd)
+	/// can exercise the biased query the navigator actually issues — the
+	/// unbiased one has a stronger heuristic and understates the real cost.
+	PackedVector2Array find_path_biased_packed(Vector2 from, Vector2 to,
+											   float query_clearance,
+											   float hug_clearance,
+											   const PackedVector2Array &bias_path) const;
 
 	// Dynamic obstacles ------------------------------------------------
 
@@ -468,6 +498,16 @@ private:
 		float wx, wz;
 		grid_to_world(gx, gz, wx, wz);
 		return nav_map_->get_distance(wx, wz) >= clearance_;
+	}
+
+	/// Step-cost multiplier for a node, from how much of it is actually water.
+	/// >= 1 always, so the Euclidean heuristic stays a lower bound.
+	inline float cluster_cost_mul(int cid) const {
+		return 1.0f + CONGESTION_GAIN * (1.0f - clusters_[cid].nav_frac);
+	}
+
+	inline float sub_cost_mul(int sid) const {
+		return 1.0f + CONGESTION_GAIN * (1.0f - sub_clusters_[sid].nav_frac);
 	}
 
 	inline bool cluster_blocked(int cid) const {

@@ -238,14 +238,14 @@ private:
 	// — enough to break a tie between two ways around the island ahead, structurally
 	// unable to pay for a detour.  Beyond the window there is nothing to be
 	// sticky about: the ship replans that stretch many times before reaching it.
-	static constexpr float PATH_NEAR_FIELD_TCR    = 6.0f;
+	static constexpr float PATH_NEAR_FIELD_TCR    = 10.0f;
 
 	static constexpr int   PATH_COMPARE_SAMPLES   = 24;   // arclength samples per route comparison
 	static constexpr float SWITCH_MIN_SEP_TCR     = 0.5f; // below this mean separation it is the same route, replanned
 	static constexpr float SWITCH_BASE_TCR        = 0.35f;// flat switching margin
 	static constexpr float SWITCH_SEPARATION_GAIN = 1.5f; // extra margin per metre of mean separation
 	static constexpr float SWITCH_FORK_TCR        = 2.0f; // a fork nearer than this is already committed to
-	static constexpr float SWITCH_COMMIT_TCR      = 6.0f; // extra margin demanded inside that commit zone
+	static constexpr float SWITCH_COMMIT_TCR      = 10.0f; // extra margin demanded inside that commit zone
 	static constexpr int   PATH_CLEAR_MAX_SEGMENTS = 32;  // cap on validity raycasts per acceptance test
 
 	// --- Stuck / bow-in detection ---
