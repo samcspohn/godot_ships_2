@@ -39,7 +39,26 @@ enum Level {
 ## while a ship is dark is a real gunnery skill, and it is the RIGHT place to
 ## express "better shot" - unlike intel, which the tiers must not differ on in
 ## any way a gun can read.
-@export var lkp_target_max_age: float = 10.0
+##
+## Short even at the top of the table. This applies to a contact a sensor is
+## actually holding or that went dark in front of someone - the kind the humans
+## on the team see as a marker in the world - and even those stop being a gun
+## solution quickly, because a ship that has been dark for ten seconds has had
+## time to turn and the shells are already in the air.
+@export var lkp_target_max_age: float = 5.0
+
+## How stale a contact located ONLY by the flash of a salvo may be and still be
+## offered to the guns, or 0 to never shoot at one at all.
+##
+## Separate from lkp_target_max_age because it is a different piece of intel.
+## A hydro, radar or air contact is a ship being held by a sensor, refreshed on
+## a cadence, and drawn in the world for everyone on the team; a muzzle flash is
+## one frozen instant of a ship that is otherwise unfindable, with no velocity
+## behind it and nothing to dead-reckon. Working a firing solution out of that
+## is a read only the good gunners have, so the bottom of the table simply does
+## not take the shot - which is also what stops a whole team of bots walking
+## salvos onto a concealed shooter's launch point long after it left.
+@export var gunfire_lkp_max_age: float = 0.0
 
 ## Standard deviation of the error this bot makes judging how fast a target is
 ## going, as a fraction of the real speed. 0.2 means it typically leads a ship
@@ -105,7 +124,8 @@ static func for_level(l: int) -> BotAptitude:
 	a.level = l
 	match l:
 		Level.RECRUIT:
-			a.lkp_target_max_age = 5.0
+			a.lkp_target_max_age = 3.0
+			a.gunfire_lkp_max_age = 0.0
 			a.use_spawn_line = false
 			a.radius_growth_mult = 1.6
 			a.lead_horizon = 0.0
@@ -115,7 +135,8 @@ static func for_level(l: int) -> BotAptitude:
 			a.turn_reckoning = false
 			a.turn_rate_jitter = 0.0
 		Level.REGULAR:
-			a.lkp_target_max_age = 10.0
+			a.lkp_target_max_age = 5.0
+			a.gunfire_lkp_max_age = 0.0
 			a.use_spawn_line = true
 			a.radius_growth_mult = 1.0
 			a.lead_horizon = 0.0
@@ -125,7 +146,8 @@ static func for_level(l: int) -> BotAptitude:
 			a.turn_reckoning = false
 			a.turn_rate_jitter = 0.0
 		Level.VETERAN:
-			a.lkp_target_max_age = 14.0
+			a.lkp_target_max_age = 7.0
+			a.gunfire_lkp_max_age = 4.0
 			a.use_spawn_line = true
 			a.radius_growth_mult = 0.8
 			a.lead_horizon = 30.0
@@ -135,7 +157,8 @@ static func for_level(l: int) -> BotAptitude:
 			a.turn_reckoning = true
 			a.turn_rate_jitter = 0.30
 		Level.ACE:
-			a.lkp_target_max_age = 18.0
+			a.lkp_target_max_age = 9.0
+			a.gunfire_lkp_max_age = 4.0
 			a.use_spawn_line = true
 			a.radius_growth_mult = 0.6
 			a.lead_horizon = 60.0

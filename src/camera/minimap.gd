@@ -405,6 +405,7 @@ func _on_canvas_draw() -> void:
 				"locked": battle_camera != null and battle_camera.target_lock_enabled \
 						and is_instance_valid(battle_camera.locked_target) \
 						and battle_camera.locked_target == tracked_ship,
+				"dead": ship_state == ShipState.DEAD,
 			})
 			# draw_ship_on_minimap(tracked_ship.global_position, -tracked_ship.rotation.y, color)
 
@@ -461,26 +462,29 @@ func _on_canvas_draw() -> void:
 	for aura in ship_auras_to_draw:
 		draw_ship_aura_on_minimap(aura.pos, aura.rot, aura.color, 1.3)
 
-	# Draw ships
+	# Draw wrecks first so living ships never end up hidden under them
 	for ship_info in ships_to_draw:
-		var mm_pos = world_to_minimap_position(ship_info.pos)
-		if ship_info.locked:
-			_draw_lock_circle(mm_pos)
-			_draw_heading_line(mm_pos, ship_info.rot, ship_info.color)
-		draw_ship_on_minimap(ship_info.pos, ship_info.rot, ship_info.color, 1.0, ship_info.name)
-		# Draw consumable icons for this ship
-		if ship_info.consumables.size() > 0:
-			draw_consumables_on_minimap(ship_info.pos, ship_info.consumables)
+		if ship_info.dead:
+			_draw_tracked_ship(ship_info)
+
+	# Draw living ships
+	for ship_info in ships_to_draw:
+		if not ship_info.dead:
+			_draw_tracked_ship(ship_info)
 
 	# Draw player ship on top if it exists
 	if is_instance_valid(player_ship):
 		var _player_mm_pos = world_to_minimap_position(player_ship.global_position)
 		draw_ship_on_minimap(player_ship.global_position, -player_ship.rotation.y, PLAYER_COLOR, 1.0, player_ship.ship_name)
-		# Draw player consumable icons
-		if player_ship.consumable_manager:
-			var player_consumables = player_ship.consumable_manager.get_active_icons()
-			if player_consumables.size() > 0:
-				draw_consumables_on_minimap(player_ship.global_position, player_consumables)
+
+	# Consumable icons go last so they stay readable over every ship marker
+	for ship_info in ships_to_draw:
+		if ship_info.consumables.size() > 0:
+			draw_consumables_on_minimap(ship_info.pos, ship_info.consumables)
+	if is_instance_valid(player_ship) and player_ship.consumable_manager:
+		var player_consumables = player_ship.consumable_manager.get_active_icons()
+		if player_consumables.size() > 0:
+			draw_consumables_on_minimap(player_ship.global_position, player_consumables)
 
 	# Draw aircraft indicators
 	for ac in tracked_aircraft:
@@ -520,6 +524,13 @@ func _on_canvas_draw() -> void:
 	if minimap_pos.x < 0 or minimap_pos.y < 0 or minimap_pos.x > minimap_sizes[mm_idx] or minimap_pos.y > minimap_sizes[mm_idx]:
 		return
 	_draw_aim_point(minimap_pos)
+
+func _draw_tracked_ship(ship_info: Dictionary) -> void:
+	var mm_pos = world_to_minimap_position(ship_info.pos)
+	if ship_info.locked:
+		_draw_lock_circle(mm_pos)
+		_draw_heading_line(mm_pos, ship_info.rot, ship_info.color)
+	draw_ship_on_minimap(ship_info.pos, ship_info.rot, ship_info.color, 1.0, ship_info.name)
 
 func draw_dashed_circle_on_minimap(world_position: Vector3, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0, width: float = 2.0) -> void:
 	var minimap_pos = world_to_minimap_position(world_position)

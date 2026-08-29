@@ -607,12 +607,16 @@ const LKP_MAX_LEAD_AGE: float = 30.0
 const LKP_TARGET_PRIORITY_MULT: float = 0.4
 ## Fallback for the staleness limit below when a bot somehow has no aptitude.
 ## Equal to BotAptitude REGULAR, which is what this was as a flat constant.
-const LKP_TARGET_MAX_AGE_DEFAULT: float = 10.0
+const LKP_TARGET_MAX_AGE_DEFAULT: float = 5.0
+## Fallback for the muzzle-flash window. Zero, not REGULAR-equal by accident:
+## REGULAR does not shoot at a flash contact either, and a bot with no aptitude
+## at all should take the more conservative of the two readings.
+const GUNFIRE_LKP_MAX_AGE_DEFAULT: float = 0.0
 
 ## How stale a last-known position may be and still be offered to the guns - see
 ## pick_target. Deliberately much shorter than LKP_MAX_LEAD_AGE: dead reckoning
 ## stays useful for half a minute when the question is "roughly where is that
-## fleet", but a gun is a point solution. Past ten seconds or so a ship has had
+## fleet", but a gun is a point solution. Within a few seconds a ship has had
 ## time to turn, and shells walked onto a heading nobody has confirmed since are
 ## wasted salvos that also give away the firing ship for nothing.
 ##
@@ -623,12 +627,22 @@ const LKP_TARGET_MAX_AGE_DEFAULT: float = 10.0
 func lkp_target_max_age() -> float:
 	return aptitude.lkp_target_max_age if aptitude != null else LKP_TARGET_MAX_AGE_DEFAULT
 
+## The same limit for a contact located only by the flash of a salvo, where 0
+## means the bot will not shoot at one at all. Far shorter than the sensor-held
+## case for every tier that takes the shot, because there is nothing behind it:
+## a flash is recorded stationary, so the "solution" is simply the point the
+## ship was standing at one instant, and it walks out from under the shells as
+## soon as it moves. See BotAptitude.gunfire_lkp_max_age.
+func gunfire_lkp_max_age() -> float:
+	return aptitude.gunfire_lkp_max_age if aptitude != null else GUNFIRE_LKP_MAX_AGE_DEFAULT
+
 ## Returns what this bot believes about `target`:
 ##   position - live, or the LKP dead-reckoned forward by the age of the contact
 ##   velocity - live, or the velocity frozen when it was last observed
 ##   basis    - live, or a basis built from the heading frozen at that instant
 ##   age      - 0 for a spotted ship, else how long ago the contact was observed
 ##   is_lkp   - true when this is a last-known position rather than a live one
+##   source   - which kind of intel the LKP came from (GameServer.LKP_SOURCE_*)
 ##   valid    - false when the bot has no idea where the ship is at all
 ## `valid` deliberately does not consider age: callers apply whatever staleness
 ## policy suits them (the guns use lkp_target_max_age(); aviation will attack an
@@ -641,6 +655,7 @@ func get_contact_solution(target: Ship) -> Dictionary:
 			basis = target.global_transform.basis,
 			age = 0.0,
 			is_lkp = false,
+			source = GameServer.LKP_SOURCE_OBSERVED,
 			valid = true,
 		}
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
@@ -655,12 +670,15 @@ func get_contact_solution(target: Ship) -> Dictionary:
 	var frozen_vel: Vector3 = server_node.get_unspotted_enemy_velocities(team_id).get(target, Vector3.ZERO)
 	var frozen_rot: float = float(server_node.get_unspotted_enemy_rotations(team_id).get(target, 0.0))
 	var lkp: Vector3 = unspotted[target]
+	var source: String = String(server_node.get_unspotted_enemy_sources(team_id).get(
+		target, GameServer.LKP_SOURCE_OBSERVED))
 	return {
 		position = lkp + frozen_vel * clampf(age, 0.0, LKP_MAX_LEAD_AGE),
 		velocity = frozen_vel,
 		basis = Basis.from_euler(Vector3(0.0, frozen_rot, 0.0)),
 		age = maxf(age, 0.0),
 		is_lkp = true,
+		source = source,
 		valid = true,
 	}
 
@@ -759,10 +777,21 @@ func aim_lead_point(target: Ship, contact: Dictionary, aim_point: Vector3) -> Va
 
 ## Whether the guns should be offered this contact at all: a live spot always, an
 ## LKP only while it is fresh enough that dead reckoning still means something.
+##
+## Which window applies depends on where the contact came from. A ship held by
+## hydro, radar or air - or one that went dark in front of somebody - is real
+## enough to shoot at for a few seconds. A ship known only from the flash of a
+## salvo is not: most bots leave it alone entirely, and the ones that do take
+## the shot get a much shorter window (see gunfire_lkp_max_age).
 func is_engageable_contact(sol: Dictionary) -> bool:
 	if not sol.get("valid", false):
 		return false
-	return not sol.is_lkp or sol.age <= lkp_target_max_age()
+	if not sol.is_lkp:
+		return true
+	if String(sol.get("source", GameServer.LKP_SOURCE_OBSERVED)) == GameServer.LKP_SOURCE_GUNFIRE:
+		var window: float = gunfire_lkp_max_age()
+		return window > 0.0 and sol.age <= window
+	return sol.age <= lkp_target_max_age()
 
 ## Where the turrets should point for `target` given what the bot believes about
 ## it, aim offset included. Returns null when there is no usable solution, which
@@ -2009,7 +2038,7 @@ func _can_shoot_at_any_from(from_pos: Vector3, targets: Array, shell_params, gun
 			return true
 	return false
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0, priority_targets: Array = []) -> Dictionary:
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0, priority_targets: Array = [], anchor_heading: float = NAN) -> Dictionary:
 	"""Search for a position around the island that is fully concealed from
 	enemies (flat LOS blocked to ALL threats) and allows shooting over the
 	island at targets (ballistic arc simulation).
@@ -2054,17 +2083,37 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	# ship approached from the threat side, so nearby islands were rejected and
 	# the search ran on to a distant one.)  Ties inside the window are broken
 	# toward whichever side the ship is already approaching from.
+	#
+	# An anchor_heading overrides that centre with the bearing the ship already
+	# holds around THIS island.  A re-search of the island a ship is already
+	# using is not a fresh question: sweeping outward from hide_heading picks
+	# whichever face the window happens to sample first, so a few degrees of
+	# drift in the threat picture flips the answer to the far side and the ship
+	# sails around the island to reach it, then back again next tick.  Starting
+	# at the bearing already held returns the nearest viable point to where the
+	# ship stands, which is usually the point it is already on.  The window is
+	# widened by the gap to hide_heading so the hidden face is still reached
+	# when the held side stops concealing, just later in the order.
 	var ship_to_island_heading = atan2(my_pos.x - island_center.x, my_pos.z - island_center.z)
-	var ship_side: float = signf(angle_difference(hide_heading, ship_to_island_heading))
+	var sweep_center := hide_heading
+	var sweep_half_span := angle_half_span
+	var ship_side: float
+	if is_finite(anchor_heading):
+		var to_hide := angle_difference(anchor_heading, hide_heading)
+		sweep_center = anchor_heading
+		sweep_half_span = minf(angle_half_span + absf(to_hide), PI)
+		ship_side = signf(to_hide)
+	else:
+		ship_side = signf(angle_difference(hide_heading, ship_to_island_heading))
 	if ship_side == 0.0:
 		ship_side = 1.0
-	var max_steps = int(ceil(angle_half_span / maxf(angle_step, 0.001)))
+	var max_steps = int(ceil(sweep_half_span / maxf(angle_step, 0.001)))
 
 	for step_idx in range(max_steps + 1):
-		var offset = minf(float(step_idx) * angle_step, angle_half_span)
+		var offset = minf(float(step_idx) * angle_step, sweep_half_span)
 		for side in range(1 if step_idx == 0 else 2):
 			var signed_offset = 0.0 if step_idx == 0 else (offset * ship_side if side == 0 else -offset * ship_side)
-			var heading = hide_heading + signed_offset
+			var heading = sweep_center + signed_offset
 
 			var dir = Vector3(sin(heading), 0.0, cos(heading))
 			var shore_pos = _sdf_walk_to_shore(island_center, dir, island_radius, clearance)
@@ -2738,7 +2787,7 @@ var _aviation_strike_target: Dictionary = {}  # int (squadron index) -> Ship it 
 # live spot, or a last-known position still being refreshed. LKPs stop refreshing
 # the moment nothing can see the ship, so a contact older than this is one that
 # has been gone a while, and a run against it puts ordnance in the water.
-const LKP_STRIKE_MAX_AGE: float = 4.0
+const LKP_STRIKE_MAX_AGE: float = 40.0
 # A run already under way is given a little more rope before being broken off:
 # LKPs refresh on GameServer.HYDRO_LKP_INTERVAL, which is itself 4s, so testing a
 # run against a strict 4s would have it flicker against its own refresh cadence.

@@ -31,6 +31,21 @@ var team_0_unspotted_vels: Dictionary = {}   # Ship -> Vector3 (linear velocity 
 var team_1_unspotted_vels: Dictionary = {}
 var team_0_unspotted_rots: Dictionary = {}   # Ship -> float (rotation.y when last seen)
 var team_1_unspotted_rots: Dictionary = {}
+# What kind of intel each LKP came from, parallel to the four tables above.
+# Every contact in them is a real observation, but they are not all the same
+# kind of observation, and a gun should not treat them as if they were: a hydro,
+# radar or air contact is a ship being watched right now through a sensor that
+# also paints a 3-D marker for the humans on that team, whereas a muzzle flash
+# is one instant of one salvo from a ship nobody can otherwise find. Behavior
+# reads this to decide how long, and for which bots, a contact stays shootable.
+var team_0_unspotted_sources: Dictionary = {}   # Ship -> String, one of LKP_SOURCE_*
+var team_1_unspotted_sources: Dictionary = {}
+## A ship that was, or is being, directly observed - it went dark in front of
+## someone, or a sensor is holding it. This is the normal case.
+const LKP_SOURCE_OBSERVED: String = "observed"
+## A ship located only by the flash of a salvo it fired from concealment. Real
+## intel, but a single frozen instant rather than a track.
+const LKP_SOURCE_GUNFIRE: String = "gunfire"
 # Inferred contacts: where a team has DEDUCED an enemy is without anyone having
 # seen it. Bloom with nothing in sight means somebody has line of sight to us;
 # a torpedo wake means somebody was on that bearing when it was launched. Both
@@ -690,6 +705,15 @@ func get_unspotted_enemy_rotations(team_id: int) -> Dictionary:
 	else:
 		return team_1_unspotted_rots
 
+func get_unspotted_enemy_sources(team_id: int) -> Dictionary:
+	"""Returns a dictionary mapping unspotted enemy ships to the kind of intel their
+	last-known position came from. Key: Ship, Value: String (one of LKP_SOURCE_*).
+	Absent means the contact predates source tracking; treat it as OBSERVED."""
+	if team_id == 0:
+		return team_0_unspotted_sources
+	else:
+		return team_1_unspotted_sources
+
 ## Records one complete last-known-contact record in `team_id`'s picture: where
 ## the ship was, when that was observed, and the velocity and heading it had at
 ## that instant. Every path that refreshes an LKP goes through here so the four
@@ -700,10 +724,12 @@ func _write_unspotted_lkp(team_id: int, ship: Ship, observed_time: float) -> voi
 	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
 	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
 	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
 	unspotted[ship] = ship.global_position
 	times[ship]     = observed_time
 	vels[ship]      = ship.linear_velocity
 	rots[ship]      = ship.rotation.y
+	sources[ship]   = LKP_SOURCE_OBSERVED
 
 ## Records a last-known contact at an explicitly observed position rather than at
 ## the ship's live one - for intel that pins a ship somewhere it may no longer
@@ -715,17 +741,20 @@ func _write_unspotted_lkp(team_id: int, ship: Ship, observed_time: float) -> voi
 ## already on file is kept if there is one, since that at least came from a real
 ## sighting, and only feeds aim offset and target weighting rather than the
 ## position itself.
-func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, observed_time: float) -> void:
+func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, observed_time: float,
+		source: String = LKP_SOURCE_GUNFIRE) -> void:
 	if not is_instance_valid(ship) or not ship.is_alive():
 		return
 	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
 	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
 	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
 	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
 	unspotted[ship] = Vector3(position.x, 0.0, position.z)
 	times[ship]     = observed_time
 	vels[ship]      = Vector3.ZERO
 	rots[ship]      = float(rots.get(ship, 0.0))
+	sources[ship]   = source
 
 ## How long a deduction stays in the picture. Generous - an inference is already
 ## weighted by its own uncertainty radius, so an old one fades rather than
@@ -781,10 +810,12 @@ func _erase_unspotted_lkp(team_id: int, ship: Ship) -> void:
 	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
 	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
 	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
+	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
 	unspotted.erase(ship)
 	times.erase(ship)
 	vels.erase(ship)
 	rots.erase(ship)
+	sources.erase(ship)
 
 ## Heading to report with an LKP marker. While the ship is genuinely visible the
 ## normal sync governs its heading anyway, so the live value is correct. While it

@@ -32,7 +32,6 @@ color_over_life = SubResource("GradientTexture1D_explosion")
 scale_over_life = SubResource("CurveTexture_scale_explosion")
 emission_over_life = SubResource("CurveTexture_emission_explosion")
 emission_energy = 5.0
-initial_velocity_min = 2.0
 initial_velocity_max = 6.0
 spread = 120.0
 gravity = Vector3(0, 0, 0)

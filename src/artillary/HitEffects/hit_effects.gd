@@ -14,8 +14,8 @@ class_name HitEffects_
 
 # Particle counts per effect type
 const SPLASH_PARTICLES: int = 20
-const HE_EXPLOSION_PARTICLES: int = 10
-const SPARKS_PARTICLES: int = 30
+const HE_EXPLOSION_PARTICLES: int = 25
+const SPARKS_PARTICLES: int = 50
 const MUZZLE_BLAST_PARTICLES: int = 20
 
 func _ready() -> void:

@@ -707,10 +707,13 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 		return
 
 	# Gunfire is different: the flash IS the observation. A ship that fires has
-	# shown where it is at that instant, so this stays real intel the guns may
-	# shoot back at - kept honest by recording it stationary and by the short
-	# window Behavior.lkp_target_max_age() allows.
-	server_node.record_observed_contact_at(my_team_id, s, launch_pos, observed_time)
+	# shown where it is at that instant, so this stays real intel - but it is
+	# tagged as such rather than passed off as a sensor track, because it is one
+	# frozen instant with no motion behind it. Only the tiers with the gunnery to
+	# work a solution out of that shoot back at it, and only briefly: see
+	# Behavior.gunfire_lkp_max_age().
+	server_node.record_observed_contact_at(my_team_id, s, launch_pos, observed_time,
+		GameServer.LKP_SOURCE_GUNFIRE)
 
 
 ## Convert a ProjectileManager accumulated time value to its wall-clock equivalent
@@ -1351,6 +1354,8 @@ func _emit_debug_draws() -> void:
 		if apt != null:
 			var apt_bits: PackedStringArray = PackedStringArray()
 			apt_bits.append("lkp %.0fs" % apt.lkp_target_max_age)
+			if apt.gunfire_lkp_max_age > 0.0:
+				apt_bits.append("flash %.0fs" % apt.gunfire_lkp_max_age)
 			if apt.lead_speed_jitter > 0.0:
 				apt_bits.append("spd±%.0f%%" % (apt.lead_speed_jitter * 100.0))
 			if apt.turn_reckoning:

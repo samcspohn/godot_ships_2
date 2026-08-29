@@ -48,7 +48,7 @@ func handle_mouse_event(event):
 		var curr_range = player_controller.current_weapon_controller.get_max_range()
 		if locked_ship == null:
 			var dist = _angle_to_distance(rot_v)
-			rot_h -= event.relative.x * 0.0001 / (dist / curr_range)  # Scale horizontal rotation by distance to aim point
+			rot_h -= event.relative.x * 0.0002 / (dist / curr_range)  # Scale horizontal rotation by distance to aim point
 			# Vertical mouse motion moves the aim point closer to/farther from the
 			# ship, treated as a linear ground distance rather than an angle.
 			dist -= event.relative.y * 5.0
@@ -56,7 +56,7 @@ func handle_mouse_event(event):
 			rot_v = _distance_to_angle(dist)
 		else:
 			var dist = _angle_to_distance(rot_v + locked_rot_v)
-			locked_rot_h -= event.relative.x * 0.0001 / (dist / curr_range)
+			locked_rot_h -= event.relative.x * 0.0002 / (dist / curr_range)
 			dist -= event.relative.y * 5.0
 			dist = clamp(dist, min_ground_distance, curr_range)
 			locked_rot_v = _distance_to_angle(dist) - rot_v

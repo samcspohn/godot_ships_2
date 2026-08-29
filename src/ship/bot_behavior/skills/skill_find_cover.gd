@@ -103,6 +103,17 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = fal
 		_last_valid_intent = null
 		return null
 
+	# Same island, and the fresh pick is the spot we already hold: keep the one
+	# we have. The anchored sweep is centred on a bearing that moves with the
+	# ship, so its candidate headings shift a few degrees every tick; without
+	# this the station-keeping wobble would be fed straight back into the
+	# destination as a slow creep around the island.
+	if cached_valid and int(d["id"]) == _target_island_id:
+		var held_pos: Vector3 = _last_valid_intent.target_position
+		if held_pos.distance_to(d["dest"] as Vector3) < ctx.behavior._get_ship_clearance():
+			_keep_cached_claim(ctx)
+			return _last_valid_intent
+
 	# Only abandon a still-valid destination for one that is materially closer.
 	if cached_valid and int(d["id"]) != _target_island_id:
 		var my_pos: Vector3 = ctx.ship.global_position
@@ -162,6 +173,32 @@ func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = fal
 	# intent.skip_threat_adjustment = true
 	# return _broadside.apply(intent, ctx, {"oscillation_bias": broadside_bias})
 	# _get_cover_position(ctx)
+
+
+## Bearing around `isl_pos` that a re-search of the island we already hold should
+## start from, so the search asks "is there still a good spot near the one I
+## have" rather than re-deciding the island from scratch.
+##
+## Once the ship is at the island that bearing is the ship's own - the position
+## it is actually holding. While still travelling it is the destination already
+## claimed, which is the point the ship is committed to and the one team-mates
+## are spacing themselves against; the ship's live bearing out there is just the
+## approach, and centring on it would walk the destination around the island as
+## the ship closes.
+##
+## Returns NAN (no anchor - sweep the hide window as usual) when the reference
+## point sits on the island centre and has no meaningful bearing.
+func _committed_anchor_heading(ctx: SkillContext, isl_pos: Vector3, isl_radius: float) -> float:
+	var my_pos: Vector3 = ctx.ship.global_position
+	var near_radius: float = isl_radius + ctx.behavior._get_ship_clearance() * 6.0
+	var from_pos: Vector3 = my_pos
+	if _nav_destination_valid and my_pos.distance_to(isl_pos) > near_radius:
+		from_pos = _nav_destination
+	var to_pos: Vector3 = from_pos - isl_pos
+	to_pos.y = 0.0
+	if to_pos.length_squared() < 1.0:
+		return NAN
+	return atan2(to_pos.x, to_pos.z)
 
 
 func _resolve_min_cover_separation(ctx: SkillContext, params: Dictionary) -> float:
@@ -549,6 +586,9 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 		# The island we are already on is the one worth spending a full priority
 		# sweep on - and the sort has already put it first, since it is the
 		# nearest. Every other island gets the cheap first-shootable-wins search.
+		# Re-searching the island we already hold starts from the bearing we
+		# hold on it, not from a fresh sweep of the hide window - see
+		# _committed_anchor_heading.
 		var cover_result = ctx.behavior._find_cover_position_on_island(
 			isl_pos,
 			isl_radius,
@@ -558,7 +598,8 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary, prioritize_cover
 			max_desired_range,
 			other_claim_positions,
 			min_cover_separation,
-			priority_targets if is_committed else []
+			priority_targets if is_committed else [],
+			_committed_anchor_heading(ctx, isl_pos, isl_radius) if is_committed else NAN
 		)
 		# Normally only consider islands we can shoot from; when prioritizing
 		# cover, accept the nearest concealing island regardless of shootability.
