@@ -25,7 +25,6 @@ const _COVER_RESEARCH_INTERVAL_MS: int = 3000
 # Half-width of the abeam window, measured off dead abeam of the danger vector.
 # Cover inside it is a broadside transit across the fight, never "on the way" —
 # see is_cover_on_the_way.
-const _COVER_BEAM_HALF_WINDOW: float = deg_to_rad(30.0)
 # A freshly found destination must be at least this much closer than the one we
 # already hold before we abandon it — hysteresis against island thrashing.
 const _COVER_SWITCH_MARGIN: float = 0.7
