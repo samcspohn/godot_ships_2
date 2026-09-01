@@ -458,7 +458,9 @@ func _play_shell_sound(pos: Vector3, caliber: float, gun: Node, is_secondary: bo
 	if listener == null:
 		return
 	var g := gun as Gun
-	if listener.global_position.distance_to(pos) > g.volume * 2000.0:
+	var list_pos: Vector2 = Vector2(listener.global_position.x, listener.global_position.z)
+	var pos_2d: Vector2 = Vector2(pos.x, pos.z)
+	if list_pos.distance_to(pos_2d) > g.volume * 2000.0:
 		return
 
 	var stream: AudioStream = g._sound if g._sound != null else _fallback_sound
