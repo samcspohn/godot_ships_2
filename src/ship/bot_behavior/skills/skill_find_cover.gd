@@ -22,6 +22,10 @@ const _TEAM_COVER_MIN_SEPARATION_MULT: float = 3.0
 # How long a validated cover destination is reused before the island search is
 # re-run. Without this the skill holds its first pick for the whole engagement.
 const _COVER_RESEARCH_INTERVAL_MS: int = 3000
+# Half-width of the abeam window, measured off dead abeam of the danger vector.
+# Cover inside it is a broadside transit across the fight, never "on the way" —
+# see is_cover_on_the_way.
+const _COVER_BEAM_HALF_WINDOW: float = deg_to_rad(30.0)
 # A freshly found destination must be at least this much closer than the one we
 # already hold before we abandon it — hysteresis against island thrashing.
 const _COVER_SWITCH_MARGIN: float = 0.7
@@ -1072,6 +1076,10 @@ func reset() -> void:
 # ship that is neither approaching it nor withdrawing past it — is a genuine
 # detour and does not count.
 #
+# Both courses are read against the danger vector first: cover lying abeam of
+# it is a transit across the fight and is rejected outright, whatever the hull
+# is doing at this instant.
+#
 # Angle tolerance scales with distance to cover:
 #   60° when cover is <= 1000 m away  (almost there — accept wide detours)
 #   15° when cover is >= 6000 m away  (far detour is too costly)
@@ -1085,29 +1093,17 @@ func is_cover_on_the_way(ctx: SkillContext) -> bool:
 	var to_cover = _nav_destination - ship.global_position
 	to_cover.y = 0.0
 	var dist_to_cover = to_cover.length()
-	if dist_to_cover < 1000.0:
+	if dist_to_cover < 750.0:
 		return true
 
 	var t = clampf((dist_to_cover - 750.0) / 5000.0, 0.0, 1.0)
 	var angle_tol = lerpf(deg_to_rad(60.0), deg_to_rad(15.0), t)
 	var cover_bearing = atan2(to_cover.x, to_cover.z)
 
-	# Course made good.  Below steerage way there is no course to read, so fall
-	# back to the bow — that is where the ship will accelerate.
-	var vel: Vector3 = ship.linear_velocity
-	vel.y = 0.0
-	var course: float
-	if vel.length_squared() > 1.0:
-		course = atan2(vel.x, vel.z)
-	else:
-		var fwd: Vector3 = -ship.global_transform.basis.z
-		course = atan2(fwd.x, fwd.z)
-	if absf(angle_difference(course, cover_bearing)) <= angle_tol:
+	var retreat_heading = wrapf(SkillAngle.calc_heading(ctx, {}), -PI, PI)
+	var to_retreat: Vector2 = Vector2(sin(retreat_heading), cos(retreat_heading))
+	var to_cover_2d: Vector2 = Vector2(sin(cover_bearing), cos(cover_bearing))
+	if absf(to_retreat.dot(to_cover_2d)) >= cos(angle_tol):
 		return true
 
-	# SkillAngle.calc_heading() is bearing toward the danger centre; the retreat
-	# SkillKite would run is the far side of it.  Keep the two in step: this must
-	# be the same flip SkillKite makes.  Tested second because it is the more
-	# expensive of the two.
-	var retreat_heading = wrapf(SkillAngle.calc_heading(ctx, {}) + PI, -PI, PI)
-	return absf(angle_difference(retreat_heading, cover_bearing)) <= angle_tol
+	return false
