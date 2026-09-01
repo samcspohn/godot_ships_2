@@ -128,9 +128,6 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.CV: return 0.5
 	return 1.0
 
-func _roll_flank_depth() -> float:
-	return randf_range(0.05, 0.15)  # stay closer to the friendly line than a BB
-
 func get_chase_max_threat() -> float:
 	# Never. The hull does not go looking for a contact it cannot see; that is
 	# what the spotter squadrons are for.
@@ -636,7 +633,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# routes around known enemy detection envelopes instead of straight through.
 	wants_stealth = true
 	_ensure_safe_dir(ship, server)
-	_init_flank_identity(ship, server)
 	var ctx: SkillContext = SkillContext.create(ship, target, server, self)
 	_sync_cover_debug(ctx)
 

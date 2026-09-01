@@ -27,8 +27,8 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 1.0
-		Ship.ShipClass.CA: return 2.0   # CAs are DD hunters
+		Ship.ShipClass.BB: return 0.5
+		Ship.ShipClass.CA: return 1.5   # CAs are DD hunters
 		Ship.ShipClass.DD: return 0.5
 	return 1.0
 
@@ -48,9 +48,6 @@ func get_hunting_params() -> Dictionary:
 		approach_multiplier = 0.8,      # DDs hunt aggressively
 		cautious_hp_threshold = 0.3,
 	}
-
-func _roll_flank_depth() -> float:
-	return randf_range(0.4, 0.9)
 
 # ============================================================================
 # EVASION - DD-specific with speed variation
@@ -272,7 +269,6 @@ func doctrine() -> BotDoctrine:
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; the gun policy below sets it
 	wants_to_be_concealed = false
-	_init_flank_identity(ship, server)
 	return _nav_core(SkillContext.create(ship, target, server, self))
 
 ## The engaged arm.  There is no separate torpedo-run manoeuvre any more: a
@@ -287,26 +283,37 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var ship := ctx.ship
 	var intent: NavIntent = null
 
-	if sit.threat < d.push_threat:
-		if sit.has_spotted and ctx.target != null \
-				and not _has_better_unspotted_torp_target(ship, ctx.target, ctx.server):
-			# Push, but only to the range our weapons actually want. For a boat
-			# with tubes that is torpedo range, which is why closing further
-			# would just walk it into gun range for nothing.
-			intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
-			if intent != null:
-				wants_stealth = false
-				wants_to_be_concealed = false
-				_suppress_guns = false
-		else:
-			# Either nothing is lit, or something closer and unlit is a better
-			# torpedo target than what we can see — go put eyes on it first.
-			intent = _run_skill(&"Chase", ctx)
+	# The one case that is not scouting: something is lit, it is the best thing
+	# on offer, and the odds are good. Push, but only to the range our weapons
+	# actually want - for a boat with tubes that is torpedo range, and closing
+	# further would just walk it into gun range for nothing.
+	if sit.threat < d.push_threat and sit.has_spotted and ctx.target != null \
+			and not _has_better_unspotted_torp_target(ship, ctx.target, ctx.server):
+		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+		if intent != null:
+			wants_stealth = false
+			wants_to_be_concealed = false
+			_suppress_guns = false
 
-	if sit.threat >= d.push_threat or intent == null:
+	# Everything else is the same errand - go and make vision - so it is one
+	# ladder rather than a branch per reason for being on it. Under pressure the
+	# guns were the wrong answer anyway; with nothing lit there is nothing to
+	# shoot; with something lit that is not worth pushing, the boat still wants
+	# eyes on whatever it would rather be shooting at instead.
+	#
+	# Spot before Chase, which is the fix for a destroyer that used to ram.
+	# Chase drives at the nearest last-known position at flank speed and arrives
+	# lit up, alone, at a place the contact has already left. Spot goes to where
+	# the contact can be SEEN from, which is the same errand done in a way the
+	# boat survives. Chase stays as the fallback for when there is a position to
+	# run down but no station worth holding, and Hunt below it for when the boat
+	# does not believe in anything at all.
+	if intent == null:
 		intent = _run_skill(&"Spot", ctx)
-		if intent == null:
-			intent = _run_skill(&"Hunt", ctx)
+	if intent == null:
+		intent = _run_skill(&"Chase", ctx)
+	if intent == null:
+		intent = _run_skill(&"Hunt", ctx)
 
 	return intent
 

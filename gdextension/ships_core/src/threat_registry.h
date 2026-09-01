@@ -3,11 +3,11 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 
 #include <cstdint>
-#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -16,90 +16,84 @@
 namespace godot {
 
 
-
-// Per-enemy persistent state.  Updated by update_team() each tick.
-struct EnemyArcState {
+// One enemy, as the threat picture sees it.  Updated by update_team() each tick
+// and persistent across calls so an entry survives the ship moving.
+struct EnemyThreatState {
 	int     enemy_id        = -1;
 	Vector2 position        = Vector2();   // world XZ
 	float   decay           = 1.0f;        // [0,1] — fades for unspotted ships
+	// How far this ship can force-spot regardless of anybody's concealment:
+	// radar, hydroacoustic search. Zero for a ship with nothing running. This
+	// is the enemy's own reach and has nothing to do with who is asking, which
+	// is exactly why it lives here and the observer's radius does not.
+	float   force_spot      = 0.0f;
 	bool    seen_this_tick  = false;
 };
 
-// One bin holds the rasterized arc set + blocked grid for a (team_id,
-// radius_bin) combination.  Multiple ShipNavigators may hold a stable
-// pointer to the same bin — refcounting controls bin lifetime.
-struct ThreatBin {
-	int team_id;
-	int radius_bin;          // ceil(effective_radius / RADIUS_BIN_SIZE)
-	float radius;            // canonical radius for this bin (radius_bin * RADIUS_BIN_SIZE)
-	int refcount = 0;
-	uint64_t version = 0;    // bumped on every rebuild — consumers diff this
-	std::vector<ThreatCircle> threats;
-};
 
-// Global cache of per-team enemy positions and per-bin computed arc grids.
+// Per-team enemy positions, shared by every ship on the opposing side.
 //
 // GDScript drives a single global tick (typically every 4 frames) by calling
-// update_team(team_id, ids, positions_with_decay).  Each ShipNavigator
-// acquires a bin matched to its (team_id, effective_radius) and consumes the
-// bin's pre-built ThreatCircle list.
+// update_team(). Each ShipNavigator then builds its OWN threat circle list from
+// this data via build_threats(), sized to its own detection radius.
 //
+// Circles used to be pre-built here and shared, keyed by team and by the
+// observer's radius rounded up to the nearest kilometre. That saved almost
+// nothing - the expensive part, HpaGraph::stamp_threats, was always per-ship
+// anyway - and it cost a great deal of accuracy: every ship routed against a
+// radius up to a kilometre larger than its own, which put the standoff a
+// spotting skill wanted reliably INSIDE the circle the router refused to path
+// through, so the strict pass failed and threat avoidance was dropped entirely
+// for that query. Building per ship is O(enemies) per ship per update tick and
+// removes the quantisation completely.
 class ThreatRegistry : public RefCounted {
 	GDCLASS(ThreatRegistry, RefCounted)
 
 public:
-	// Quantization step for binning effective radii.  1000 m means ships
-	// within 1 km of each other's effective avoidance radius share a bin.
-	static constexpr float RADIUS_BIN_SIZE = 1000.0f;
-
 	ThreatRegistry();
 	~ThreatRegistry();
 
 	// --- C++-only API (used by ShipNavigator) ---
 
-	// Acquire (or create) a bin for (team_id, effective_radius).
-	// Returned pointer is stable until release_bin drops refcount to zero.
-	ThreatBin* acquire_bin(int team_id, float effective_radius);
-	void release_bin(ThreatBin* bin);
+	// Build the threat circles for one observer. `observer_radius` is the range
+	// at which that ship is itself detectable, plus whatever margin it wants;
+	// the radius used for each enemy is the larger of that and the enemy's own
+	// force-spotting reach, because a radar cruiser sees you at radar range no
+	// matter how well you are hidden.
+	void build_threats(int team_id, float observer_radius,
+	                   std::vector<ThreatCircle>& out) const;
 
-	static int radius_to_bin(float radius);
+	// Bumped every time update_team() changes anything for this team, so a
+	// consumer can skip rebuilding. Never zero, so zero is safe as "never synced".
+	uint64_t get_team_version(int team_id) const;
 
 	// --- GDScript-exposed API ---
 
-	// Replace the per-team enemy position list and refresh every bin in
-	// that team.  |ids| and |positions_with_decay| are parallel arrays:
-	// each Vector3 element is (world.x, world.z, decay scalar).  Decay <= 0
-	// entries are dropped.  Persistent EnemyArcState entries are matched by
-	// id across calls so arc lengths survive ship movement; vanished ids
-	// are pruned.
+	// Replace the per-team enemy list. The three arrays are parallel:
+	//   ids                  — ship instance IDs
+	//   positions_with_decay — (world.x, world.z, decay); decay <= 0 is dropped
+	//   force_spot_ranges    — metres of radar/hydro reach, 0 for none
+	// Entries are matched by id across calls; vanished ids are pruned.
 	void update_team(int team_id,
 	                 const PackedInt32Array& ids,
-	                 const PackedVector3Array& positions_with_decay);
+	                 const PackedVector3Array& positions_with_decay,
+	                 const PackedFloat32Array& force_spot_ranges);
 
-	// Drop every bin and team data (e.g. between matches).
+	// Drop every team's data (e.g. between matches).
 	void reset();
 
-	int get_bin_count() const { return (int)bins_.size(); }
+	int get_enemy_count(int team_id) const;
 
 protected:
 	static void _bind_methods();
 
 private:
-	using Key = uint64_t;
-	static Key make_key(int team_id, int radius_bin) {
-		return ((uint64_t)(uint32_t)team_id << 32) | (uint32_t)radius_bin;
-	}
-
-	// Per-team enemy state, keyed by enemy_id.  Persistent across update_team
-	// calls so each ship's arc length probes accumulate over time.
 	struct TeamData {
-		std::unordered_map<int, EnemyArcState> enemies;
+		std::unordered_map<int, EnemyThreatState> enemies;
+		// Starts at 1 so a consumer can use 0 for "never synced".
+		uint64_t version = 1;
 	};
 	std::unordered_map<int, TeamData> teams_;
-	std::unordered_map<Key, std::unique_ptr<ThreatBin>> bins_;
-
-	void rebuild_bin(ThreatBin* bin);
-	void rebuild_team_bins(int team_id);
 };
 
 } // namespace godot

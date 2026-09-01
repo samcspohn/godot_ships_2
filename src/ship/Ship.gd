@@ -99,6 +99,8 @@ var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 var _precision_registered: bool = false
 
+## Set to true to re-apply all mods from the templates once a second (dev only).
+const DEBUG_LIVE_MOD_RECALC: bool = false
 var _debug_recalc_timer: float = 0.0
 
 var super_structure: Node3D = null
@@ -160,22 +162,33 @@ func _disable_weapons():
 
 
 
+## True while a mod layer holds values written by a mod callable, i.e. while it
+## still differs from the layer below it. When a layer is already clean there is
+## nothing to restore, so the (per-Moddable) reset signal is skipped entirely.
+var _static_layer_modded: bool = false
+var _dynamic_layer_modded: bool = false
+
 func _update_static_mods(): # called when changed
-	reset_mods.emit()
+	var static_changed: bool = _static_layer_modded or not static_mods.is_empty()
+	if _static_layer_modded:
+		reset_mods.emit()
+		_static_layer_modded = false
 	for mod in static_mods:
 		mod.call(self)
-	#reset_dynamic_mods.emit()
-	_update_dynamic_mods()
+		_static_layer_modded = true
 	update_static_mods = false
-	# update_static_mods.emit()
+	# dynamic_mod is rebuilt from the freshly-modded static_mod, so it always
+	# needs refreshing when the static layer moved.
+	_update_dynamic_mods(static_changed)
 
-func _update_dynamic_mods(): # called when updated by signal
-	reset_dynamic_mods.emit()
+func _update_dynamic_mods(static_changed: bool = false): # called when updated by signal
+	if static_changed or _dynamic_layer_modded:
+		reset_dynamic_mods.emit()
+		_dynamic_layer_modded = false
 	for mod in dynamic_mods:
 		mod.call(self)
+		_dynamic_layer_modded = true
 	update_dynamic_mods = false
-	# update_static_mods.emit()
-	#
 
 func remove_physics_recurs(node: Node) -> void:
 	for child in node.get_children():
@@ -350,7 +363,12 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
-	if OS.is_debug_build():
+	if DEBUG_LIVE_MOD_RECALC and OS.is_debug_build():
+		# Dev-only hot reload: rebuilds every Moddable from its template so edits
+		# to .tres stat files show up without a restart. Costs a full static +
+		# dynamic mod rebuild for the whole ship, so it stays off by default —
+		# with ~23 Moddables/ship and every ship's timer firing on the same frame
+		# it was a multi-ms hitch once a second.
 		_debug_recalc_timer += delta
 		if _debug_recalc_timer >= 1.0:
 			_debug_recalc_timer = 0.0

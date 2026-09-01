@@ -17,18 +17,14 @@ var is_in_cover: bool = false
 var _cached_safe_dir: Vector3 = Vector3.ZERO
 var _safe_dir_initialized: bool = false
 
-# ============================================================================
 # TORPEDO SYSTEM (moved from DD - available to ships with torpedoes)
-# ============================================================================
 var torpedo_fire_interval: float = 3.0
 var torpedo_fire_timer: float = 0.0
 var torpedo_target_position: Vector3 = Vector3.ZERO
 var has_valid_torpedo_solution: bool = false
 var current_torpedo_range: float = 0.0
 
-# Long-term velocity average for torpedo prediction
-# EMA with a ~100s time constant ≈ average displacement over the last 100 seconds,
-# with recent frames weighted more heavily than old ones.
+# Long-term velocity average for torpedo prediction, recent frames weighted more.
 var _torp_avg_target: Ship = null
 var _torp_vel_ema: Vector3 = Vector3.ZERO
 const TORP_VEL_EMA_SECONDS: float = 100.0   # long-average time constant
@@ -71,36 +67,23 @@ var _threat_score_frame: int = -1
 ## behaves exactly as every bot did before aptitude existed.
 var aptitude: BotAptitude = BotAptitude.for_level(BotAptitude.Level.REGULAR)
 
-## Set to true by each ship class in get_nav_intent when the ship wants the
-## bot controller to route around enemy detection zones during transit.
-## Reset to false at the start of every get_nav_intent call so it is always
-## freshly computed — never stale from a previous tick.
-## Rules of thumb:
-##   DD  : true whenever undetected (torpedo approach, spotting run)
-##   CA  : true when undetected + seeking island cover + no torpedo launcher
-##         (torpedo CAs push close regardless of detection)
-##   BB  : always false — BBs push or camp, never sneak
+## Set by each ship class in get_nav_intent; true when the bot should route
+## around enemy detection zones during transit. Reset every call, so it's
+## always freshly computed. DD: whenever undetected. CA: undetected + seeking
+## cover + no torpedo launcher. BB: always false.
 var wants_stealth: bool = false
 
-## Set to true by each ship class in get_nav_intent when the ship wants to
-## suppress gun fire in order to let firing bloom decay and re-enter
-## concealment. When true, engage_target will aim turrets but NOT fire.
-## Reset to false at the start of every get_nav_intent call.
-##   DD  : true when detected AND bloom active AND nearest enemy beyond base radius
-##   CA  : true when in stealth-cover mode AND same bloom condition
-##   BB  : always false
+## Set by each ship class in get_nav_intent to suppress gun fire so bloom can
+## decay; engage_target still aims but won't fire. Reset every call.
+## DD/CA: while detected with bloom active and no enemy inside base radius. BB: never.
 var wants_to_be_concealed: bool = false
 
-## Enemies currently shooting at this bot.
-## Maps Ship -> float wall-clock expiry (seconds). An enemy is kept for 1.5x its
-## reload time after its last detected shell so the window stays open even when
-## no projectiles are in the air. Managed by BotControllerV4; use .has(ship) in skills.
+## Enemies currently shooting at this bot: Ship -> wall-clock expiry (secs),
+## kept for 1.5x reload time after the last detected shell. Set by BotControllerV4.
 var active_shooters_at_me: Dictionary = {}  # Ship -> float expiry_sec
 
-# Skill instances. One set lives here rather than one set per behaviour
-# subclass: the shared ladder in _nav_core() dispatches to them by name, and
-# three private copies of the same eight skills was how BB ended up holding a
-# SkillHunt it never called and DD a SkillRetreat only the CV used.
+# Shared skill instances (not one set per subclass) so the _nav_core() ladder
+# dispatches by name without ending up with unused per-class duplicates.
 var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
 var _skill_cover: SkillFindCover = SkillFindCover.new()
@@ -120,16 +103,13 @@ var _skills: Dictionary = {}  # StringName -> BotSkill
 ## whatever doctrine() returns.
 var _doctrine: BotDoctrine = null
 
-# Flank identity (rolled once at match start)
-var _flank_side: int = 0      # -1 left, +1 right, 0 unassigned
-var _flank_depth: float = 0.0
-var _flank_initialized: bool = false
+# Battle frame rebuilt from live positions each frame (see FleetFrame).
+var _fleet_frame: FleetFrame = null
+var _fleet_frame_frame: int = -1
 
 var _suppress_guns: bool = false
 
-# ============================================================================
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
-# ============================================================================
 
 func get_target_weights() -> Dictionary:
 	"""Override to customize target selection weights."""
@@ -216,35 +196,7 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.DD: return 1.0
 	return 1.0
 
-# ============================================================================
 # TACTICAL STATE HELPERS
-# ============================================================================
-
-func _init_flank_identity(ship: Ship, server: GameServer) -> void:
-	if _flank_initialized:
-		return
-	_flank_initialized = true
-	var spawn_pos = ship.global_position
-	var team_spawn = server.get_team_spawn_position(ship.team.team_id)
-	if team_spawn == Vector3.ZERO:
-		_flank_side = 1 if randf() > 0.5 else -1
-		_flank_depth = _roll_flank_depth()
-		return
-	var to_ship = spawn_pos - team_spawn
-	to_ship.y = 0.0
-	var enemy_spawn = server.get_team_spawn_position(1 - ship.team.team_id)
-	var forward = (enemy_spawn - team_spawn).normalized() if enemy_spawn != Vector3.ZERO else Vector3(0, 0, -1)
-	var right = Vector3.UP.cross(forward).normalized()
-	var side_dot = to_ship.dot(right)
-	if abs(side_dot) < 2000.0:
-		_flank_side = 1 if randf() > 0.5 else -1
-	else:
-		_flank_side = 1 if side_dot > 0 else -1
-	_flank_depth = _roll_flank_depth()
-
-func _roll_flank_depth() -> float:
-	## Override per ship class
-	return randf_range(0.2, 0.5)
 
 func can_fire_guns() -> bool:
 	## Always allowed at the base level.
@@ -252,28 +204,9 @@ func can_fire_guns() -> bool:
 	return true
 
 func _probe_concealment(server: GameServer) -> bool:
-	## Returns true when guns should be suppressed to protect or achieve
-	## concealment.
-	##
-	## Decision tree:
-	##   1. No spotted enemies:
-	##      → If detected with active bloom, a concealed ship has LOS; record an
-	##        inferred contact and suppress. Otherwise safe to fire.
-	##   2. For each spotted enemy:
-	##      a. LOS blocked by terrain → skip (terrain shields us from them).
-	##      b. LOS unblocked + we are already detected + enemy inside base
-	##         radius → suppression is useless (they see us regardless) → false.
-	##      c. LOS unblocked → open water; firing will expose/keep us exposed
-	##        → suppress_useful = true.
-	##   3. All spotted enemies have blocked LOS:
-	##      → If detected, a concealed ship must have LOS; record inferred contact + suppress.
-	##      → If not detected, terrain shields us from all threats; safe to fire.
-	##   4. Return suppress_useful.
-	##
-	## NOTE: intentionally no top-level visible_to_enemy guard — we suppress
-	## proactively in open water even before the ship is detected so that bloom
-	## never builds up in the first place.
-
+	## True when guns should be suppressed to protect or achieve concealment.
+	## No top-level visible_to_enemy guard: suppresses proactively in open water
+	## before detection, so bloom never builds up in the first place.
 	var concealment_node = _ship.concealment
 	if concealment_node == null:
 		return false
@@ -284,9 +217,7 @@ func _probe_concealment(server: GameServer) -> bool:
 
 	# No spotted enemies at all
 	if spotted.is_empty():
-		# If we are detected with bloom, a concealed ship must have direct LOS.
-		# visible_to_enemy, not is_detected(): the deduction is "somebody has eyes
-		# on us", and a ping lights us with nobody in LOS at all.
+		# visible_to_enemy, not is_detected(): a ping alone isn't evidence of LOS.
 		if _ship.visible_to_enemy and concealment_node.bloom_value > 0.0:
 			_infer_concealed_spotter(server)
 			return true
@@ -304,18 +235,14 @@ func _probe_concealment(server: GameServer) -> bool:
 		if not los_blocked:
 			all_los_blocked = false
 			if _ship.is_detected() and d < base_radius:
-				# Already detected and enemy is inside base detection radius
-				# with direct LOS — suppressing bloom won't make them lose us,
-				# and neither will it shake a ping.
+				# Already detected + LOS + inside radius: suppressing won't lose them.
 				return false
 			# Open-water enemy: firing creates or sustains bloom that exposes us.
 			suppress_useful = true
 
 	if all_los_blocked:
 		if _ship.visible_to_enemy:
-			# Terrain covers every spotted enemy yet we are still detected —
-			# a concealed ship must have direct LOS. visible_to_enemy only: a ping
-			# is not evidence of a hidden ship in LOS.
+			# Still detected despite terrain cover: a hidden spotter must have LOS.
 			_infer_concealed_spotter(server)
 			return true
 		# Not detected and all enemies behind terrain — safe to fire.
@@ -325,25 +252,17 @@ func _probe_concealment(server: GameServer) -> bool:
 
 
 func _infer_concealed_spotter(server: GameServer) -> void:
-	## Bloom with nothing in sight means a concealed ship has line of sight to
-	## us. That is real information, and the navigation and threat systems should
-	## act on it - but it is a deduction, not a sighting, so it goes into the
-	## inferred-contact table rather than the LKP tables. Nothing that aims a gun
-	## reads it (see get_contact_solution): a bot may back off, take cover, or go
-	## looking for a ship it has worked out is nearby, and may not shell it.
+	## Bloom with nothing in sight means an unseen ship has LOS on us. That's a
+	## deduction, not a sighting, so it goes in the inferred-contact table, not
+	## the LKP tables — nothing that aims a gun reads it (see get_contact_solution).
 	##
-	## What bloom establishes is a maximum RANGE, not a bearing: whoever it is has
-	## us inside our own detection radius with clear LOS. So the bearing has to
-	## come from somewhere else - the spotter's last-known position if there is
-	## one, otherwise wherever the presumption model already has it - and the
-	## contact is placed along that bearing, pulled in to the range bound.
+	## Bloom only bounds a maximum RANGE (our detection radius), not a bearing,
+	## so the bearing comes from the spotter's LKP if it still has LOS, else the
+	## presumption model's spawn-line guess.
 	##
-	## It is never anchored on our own position. A contact recorded on top of the
-	## ship that deduced it publishes a threat zone onto that ship (see
-	## GameServer._publish_team_threats), which reads as an enemy sitting on a
-	## friendly and poisons every cover and standoff decision made around it. If
-	## no bearing can be had, nothing is recorded: the presumption model's own
-	## spawn-line estimate is already a better answer than a point on ourselves.
+	## Never anchored on our own position: that would place an inferred enemy on
+	## top of a friendly and poison cover/standoff decisions around it (see
+	## GameServer._publish_team_threats). If no bearing exists, nothing is recorded.
 	var concealment_node = _ship.concealment
 	if concealment_node == null:
 		return
@@ -360,10 +279,8 @@ func _infer_concealed_spotter(server: GameServer) -> void:
 	var detect_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
 	var my_pos: Vector3 = _ship.global_position
 
-	# Where to take the bearing from. A last-known position is preferred: if it
-	# still has clear LOS to us the spotter may simply not have moved, and that
-	# real observation already says everything this deduction would, so we leave
-	# it alone rather than talking over it with something vaguer.
+	# Prefer the spotter's LKP bearing if it still has LOS to us — a real
+	# observation beats a vaguer guess.
 	var unspotted: Dictionary = server.get_unspotted_enemies(my_team)
 	var bearing_from: Vector3 = Vector3.ZERO
 	var have_bearing: bool = false
@@ -374,9 +291,7 @@ func _infer_concealed_spotter(server: GameServer) -> void:
 		bearing_from = last_known
 		have_bearing = true
 	else:
-		# Never seen. The presumption model still has an opinion about which
-		# flank it is on, built from the spawns and the clock, and that opinion
-		# is the only direction anyone has earned.
+		# Never seen: fall back to the presumption model's spawn/clock-based flank guess.
 		for guess in get_presumed_contacts():
 			if guess.ship == spotter:
 				bearing_from = guess.position
@@ -403,9 +318,7 @@ func _infer_concealed_spotter(server: GameServer) -> void:
 		detect_radius,
 		"bloom")
 
-# ============================================================================
 # NAVIGATION UTILITIES
-# ============================================================================
 
 func _get_valid_nav_point(target: Vector3) -> Vector3:
 	# V4 path: use NavigationMapManager SDF + safe destination selection
@@ -418,18 +331,13 @@ func _get_valid_nav_point(target: Vector3) -> Vector3:
 				turning_radius = _ship.movement_controller._p().turning_circle_radius
 
 			var ship_pos = _ship.global_position if _ship else target
-			# Use the C++ safe_nav_point which handles:
-			#   1. Pushing points out of land with adequate buffer
-			#   2. Sliding points tangentially along coastlines so the ship
-			#      approaches parallel to shore rather than head-on
-			#   3. Ensuring at least clearance + turning_radius margin from land
+			# C++ safe_nav_point: pushes off land, slides tangentially along
+			# coastlines, and keeps clearance + turning_radius margin.
 			var safe_target = NavigationMapManager.safe_nav_point(
 				ship_pos, target, clearance, turning_radius
 			)
 
-			# Second pass: validate the full approach path won't create an
-			# unrecoverable collision course (e.g. destination behind an island
-			# that forces a perpendicular approach on the last segment)
+			# Validate the approach won't force a collision course (e.g. behind an island).
 			safe_target = NavigationMapManager.validate_destination(
 				ship_pos, safe_target, clearance, turning_radius
 			)
@@ -443,9 +351,7 @@ func _get_valid_nav_point(target: Vector3) -> Vector3:
 	var closest_point = NavigationServer3D.map_get_closest_point(nav_map, target)
 	return closest_point
 
-# ============================================================================
 # TARGET SELECTION
-# ============================================================================
 
 func _get_overextension_score(enemy: Ship) -> float:
 	"""Calculate how far an enemy has pushed into friendly territory.
@@ -466,187 +372,46 @@ func _get_overextension_score(enemy: Ship) -> float:
 	var projection = enemy_from_enemy_spawn.dot(spawn_axis)
 	return clampf(projection / total_distance, 0.0, 1.0)
 
-# func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
-# 	"""Configurable target selection using weights from get_target_weights().
-# 	Prefers targets we can actually hit (not behind cover) over ones we can't.
-# 	Balances proximity threats against overextended enemies using a weight system:
-# 	 - Enemies very close to the bot get a strong proximity boost.
-# 	 - Enemies farthest into friendly territory get an overextension bonus.
-# 	 - When no enemy is dangerously close, the most overextended enemy wins."""
-# 	var weights = get_target_weights()
-# 	var gun_range = _ship.artillery_controller.get_params()._range
-# 	var proximity_override_dist: float = weights.get("proximity_override_distance", 3000.0)
-# 	var overextension_bonus: float = weights.get("overextension_bonus", 2.0)
-# 	var overextension_weight: float = weights.get("overextension_weight", 0.4)
-
-# 	# --- First pass: compute base priority and overextension for every target ---
-# 	var candidate_data: Array[Dictionary] = []
-# 	var max_overextension: float = 0.0
-# 	var has_close_threat: bool = false
-
-# 	for ship in targets:
-# 		var disp = ship.global_position - _ship.global_position
-# 		var dist = disp.length()
-# 		var angle = (-ship.basis.z).angle_to(disp)
-# 		var hp_ratio = ship.health_controller.current_hp / ship.health_controller.max_hp
-
-# 		# Calculate apparent size (broadside profile)
-# 		var priority: float = 0.0
-# 		if weights.prefer_broadside:
-# 			priority = ship.movement_controller.ship_length / dist * abs(sin(angle)) + ship.movement_controller.ship_beam / dist * abs(cos(angle))
-# 		else:
-# 			priority = ship.movement_controller.ship_length / dist
-
-# 		# Apply class modifier
-# 		var class_mods: Dictionary = weights.class_modifiers
-# 		if class_mods.has(ship.ship_class):
-# 			priority *= class_mods[ship.ship_class]
-
-# 		# Combine with range and HP weights
-# 		var size_contrib = priority * weights.size_weight
-# 		var range_contrib = (1.0 - dist / gun_range) * weights.range_weight
-# 		var hp_contrib = (1.0 - hp_ratio) * weights.hp_weight
-# 		priority = size_contrib + range_contrib + hp_contrib
-
-# 		# Boost targets within range
-# 		if dist <= gun_range:
-# 			priority *= weights.in_range_multiplier
-
-# 		# Apply flanking priority boost
-# 		var flank_info = _get_flanking_info(ship)
-# 		if flank_info.is_flanking:
-# 			var flank_multiplier = weights.get("flanking_multiplier", 5.0)
-# 			var depth_scale = 1.0 + flank_info.penetration_depth
-# 			priority *= flank_multiplier * depth_scale
-
-# 		# Overextension score: how far into friendly territory this enemy is
-# 		var overext = _get_overextension_score(ship)
-# 		if overext > max_overextension:
-# 			max_overextension = overext
-
-# 		# Track whether any enemy is dangerously close
-# 		if dist < proximity_override_dist:
-# 			has_close_threat = true
-
-# 		var shootable = dist <= gun_range and can_hit_target(ship)
-# 		candidate_data.append({
-# 			ship = ship,
-# 			base_priority = priority,
-# 			dist = dist,
-# 			overextension = overext,
-# 			shootable = shootable,
-# 		})
-
-# 	# --- Second pass: apply overextension vs proximity weighting ---
-# 	var best_shootable_target: Ship = null
-# 	var best_shootable_priority: float = -1.0
-# 	var best_fallback_target: Ship = null
-# 	var best_fallback_priority: float = -1.0
-
-# 	for data in candidate_data:
-# 		var priority: float = data.base_priority
-# 		var dist: float = data.dist
-# 		var overext: float = data.overextension
-# 		var ship: Ship = data.ship
-
-# 		# Overextension contribution: reward enemies deeper into friendly territory
-# 		if max_overextension > 0.0 and overextension_weight > 0.0:
-# 			# Normalized 0-1 among current targets (most forward = 1.0)
-# 			var relative_overext = overext / max_overextension
-# 			var overext_contrib = relative_overext * overextension_weight
-# 			priority += overext_contrib
-
-# 			# Extra bonus for the most overextended target when nothing is dangerously close
-# 			if not has_close_threat and relative_overext > 0.9:
-# 				priority *= overextension_bonus
-
-# 		# Proximity override: if this enemy is very close, give a strong boost
-# 		if dist < proximity_override_dist:
-# 			# Scales from 1.0 at the threshold up to 3.0 at point-blank
-# 			var proximity_factor = 1.0 + 2.0 * (1.0 - dist / proximity_override_dist)
-# 			priority *= proximity_factor
-
-# 		# Sort into shootable vs fallback
-# 		if data.shootable:
-# 			if priority > best_shootable_priority:
-# 				best_shootable_target = ship
-# 				best_shootable_priority = priority
-# 		else:
-# 			if priority > best_fallback_priority:
-# 				best_fallback_target = ship
-# 				best_fallback_priority = priority
-
-# 	# Prefer shootable targets; only fall back to blocked targets if nothing is shootable
-# 	var best_target = best_shootable_target if best_shootable_target != null else best_fallback_target
-
-# 	# Stick to last target if nearby and alive, but only if it's still shootable
-# 	if best_target != null and last_target != null and last_target.is_alive():
-# 		if last_target.position.distance_to(best_target.position) < 1000:
-# 			# If last target is shootable (or both are blocked), keep it for stability
-# 			if best_shootable_target == null or can_hit_target(last_target):
-# 				return last_target
-
-# 	return best_target
-
-# ============================================================================
 # CONTACT SOLUTIONS
-# What a bot legitimately knows about an enemy's position and motion. Spotted
-# ships are read live; ships held only on a last-known position are read from the
-# server's frozen LKP record and dead-reckoned forward, so nothing here ever
-# tracks a ship nobody can see.
-# ============================================================================
+# What a bot legitimately knows about an enemy: live if spotted, else
+# dead-reckoned from the frozen LKP record — never a ship nobody can see.
 
-# Dead reckoning past this age is fiction - a ship unseen for this long has
-# almost certainly changed course, so the extrapolation stops growing rather than
-# flinging the solution kilometres down a heading nobody has confirmed. Matches
-# the staleness horizon _should_use_radar() already applies to an LKP.
+# Dead reckoning past this age is fiction; extrapolation stops growing rather
+# than flinging the solution down an unconfirmed heading. Matches the
+# staleness horizon _should_use_radar() already applies to an LKP.
 const LKP_MAX_LEAD_AGE: float = 30.0
-# Priority multiplier applied to a target held only on an LKP. Shooting at a
-# dead-reckoned contact is a real option when everything has gone dark, but it
-# should always lose to a ship someone can actually see.
+# Priority multiplier for a target held only on an LKP — a real option when dark,
+# but should always lose to a ship someone can actually see.
 const LKP_TARGET_PRIORITY_MULT: float = 0.4
 ## Fallback for the staleness limit below when a bot somehow has no aptitude.
 ## Equal to BotAptitude REGULAR, which is what this was as a flat constant.
 const LKP_TARGET_MAX_AGE_DEFAULT: float = 5.0
-## Fallback for the muzzle-flash window. Zero, not REGULAR-equal by accident:
-## REGULAR does not shoot at a flash contact either, and a bot with no aptitude
-## at all should take the more conservative of the two readings.
+## Fallback for the muzzle-flash window. Zero, not REGULAR-equal: a bot with no
+## aptitude at all should take the more conservative of the two readings.
 const GUNFIRE_LKP_MAX_AGE_DEFAULT: float = 0.0
 
-## How stale a last-known position may be and still be offered to the guns - see
-## pick_target. Deliberately much shorter than LKP_MAX_LEAD_AGE: dead reckoning
-## stays useful for half a minute when the question is "roughly where is that
-## fleet", but a gun is a point solution. Within a few seconds a ship has had
-## time to turn, and shells walked onto a heading nobody has confirmed since are
-## wasted salvos that also give away the firing ship for nothing.
-##
-## Per-bot rather than fixed: holding a dead-reckoned solution together while a
-## ship is dark is a gunnery skill, and it is the right place to express "better
-## shot" - unlike intel, which the tiers must not differ on in any way a gun can
-## read (see BotAptitude).
+## How stale an LKP may be and still be offered to the guns (see pick_target).
+## Much shorter than LKP_MAX_LEAD_AGE: a gun is a point solution, and within a
+## few seconds a dead-reckoned heading is stale enough to waste the salvo.
+## Per-bot rather than fixed: holding a solution together is a gunnery skill,
+## unlike intel, which the tiers must not differ on (see BotAptitude).
 func lkp_target_max_age() -> float:
 	return aptitude.lkp_target_max_age if aptitude != null else LKP_TARGET_MAX_AGE_DEFAULT
 
-## The same limit for a contact located only by the flash of a salvo, where 0
-## means the bot will not shoot at one at all. Far shorter than the sensor-held
-## case for every tier that takes the shot, because there is nothing behind it:
-## a flash is recorded stationary, so the "solution" is simply the point the
-## ship was standing at one instant, and it walks out from under the shells as
-## soon as it moves. See BotAptitude.gunfire_lkp_max_age.
+## Same limit for a muzzle-flash-only contact; 0 means never shoot at one. Far
+## shorter than the sensor-held case: a flash is a stationary point, and the
+## ship walks out from under the shells as soon as it moves.
 func gunfire_lkp_max_age() -> float:
 	return aptitude.gunfire_lkp_max_age if aptitude != null else GUNFIRE_LKP_MAX_AGE_DEFAULT
 
 ## Returns what this bot believes about `target`:
-##   position - live, or the LKP dead-reckoned forward by the age of the contact
-##   velocity - live, or the velocity frozen when it was last observed
-##   basis    - live, or a basis built from the heading frozen at that instant
-##   age      - 0 for a spotted ship, else how long ago the contact was observed
-##   is_lkp   - true when this is a last-known position rather than a live one
-##   source   - which kind of intel the LKP came from (GameServer.LKP_SOURCE_*)
-##   valid    - false when the bot has no idea where the ship is at all
-## `valid` deliberately does not consider age: callers apply whatever staleness
-## policy suits them (the guns use lkp_target_max_age(); aviation will attack an
-## older contact, since flying out to look costs it nothing).
+##   position/velocity/basis - live, or frozen and dead-reckoned from the LKP
+##   age    - 0 for a spotted ship, else seconds since the contact was observed
+##   is_lkp - true when this is a last-known position rather than a live one
+##   source - which kind of intel the LKP came from (GameServer.LKP_SOURCE_*)
+##   valid  - false when the bot has no idea where the ship is at all
+## `valid` ignores age; callers apply their own staleness policy (guns use
+## lkp_target_max_age(); aviation attacks older contacts since flying to look is free).
 func get_contact_solution(target: Ship) -> Dictionary:
 	if target.visible_to_enemy:
 		return {
@@ -682,22 +447,11 @@ func get_contact_solution(target: Ship) -> Dictionary:
 		valid = true,
 	}
 
-# ============================================================================
 # AIM SOLUTION
-# How this bot leads a target, and how wrong it gets it. Two separate things are
-# modelled here, and they are separate on purpose:
-#
-#   Whether the bot leads along the target's ARC or along its instantaneous
-#   heading. A ship under helm travels a circle; over a fifteen-second shell
-#   flight that is hundreds of metres away from where its heading pointed, and
-#   a bot that ignores it misses consistently to the OUTSIDE of the turn. The
-#   arithmetic lives in ProjectilePhysicsWithDragV2 rather than here, since it
-#   is ballistics and not judgement.
-#
-#   How badly the bot misreads the numbers it feeds that solver - how fast the
-#   target is going, and how hard it is turning. This is judgement, so it lives
-#   here, and it is the difference between the tiers.
-# ============================================================================
+# Two separate things: arc-vs-heading lead (ballistics, lives in
+# ProjectilePhysicsWithDragV2) and how badly the bot misreads the target's
+# speed/turn rate fed into that solver (judgement, lives here — the
+# difference between tiers).
 
 ## How long a bot stays committed to one wrong reading of a target before taking
 ## another look. Re-rolling every frame would average out to a perfect solution
@@ -739,12 +493,9 @@ func _target_aim_error(target: Ship) -> Dictionary:
 				_aim_error.erase(k)
 	return rolled
 
-## The rate `target` is believed to be turning at, radians/sec about +Y.
-##
-## Zero unless this bot reckons turns at all, and zero for anything it cannot
-## actually see: a rate of turn is something you read off a ship by watching it,
-## and a contact held on a last-known position is not being watched. Concealment
-## is not negotiable just because the bot is a good shot.
+## Believed turn rate for `target`, rad/sec about +Y. Zero unless this bot
+## reckons turns, and zero for an LKP-only contact: a turn rate is read by
+## watching a ship, and concealment isn't negotiable just because the bot aims well.
 func _believed_yaw_rate(target: Ship, contact: Dictionary) -> float:
 	if aptitude == null or not aptitude.turn_reckoning:
 		return 0.0
@@ -775,14 +526,10 @@ func aim_lead_point(target: Ship, contact: Dictionary, aim_point: Vector3) -> Va
 			_ship.global_position, aim_point, believed_vel, shell_params)
 	return lead_result[2]
 
-## Whether the guns should be offered this contact at all: a live spot always, an
-## LKP only while it is fresh enough that dead reckoning still means something.
-##
-## Which window applies depends on where the contact came from. A ship held by
-## hydro, radar or air - or one that went dark in front of somebody - is real
-## enough to shoot at for a few seconds. A ship known only from the flash of a
-## salvo is not: most bots leave it alone entirely, and the ones that do take
-## the shot get a much shorter window (see gunfire_lkp_max_age).
+## Whether the guns should be offered this contact: a live spot always, an LKP
+## only while fresh. Window depends on source — sensor-held (hydro/radar/air)
+## gets a few seconds; a muzzle-flash-only contact gets a much shorter one, if
+## any (see gunfire_lkp_max_age).
 func is_engageable_contact(sol: Dictionary) -> bool:
 	if not sol.get("valid", false):
 		return false
@@ -834,12 +581,7 @@ func get_potential_target_weight(target: Ship) -> float:
 	# Prefer damaged targets (finish them off), but keep full-health targets at 10% weight floor
 	weight += maxf(pow(1.0 - hp_ratio, 2.0), 0.5)
 
-
-	# # Prefer high-threat targets
-	# weight += target.stats.total_damage * (1.0 / 150_000.0)
-
-	# A contact held only on a last-known position is worth shooting at, but only
-	# once nothing visible outranks it
+	# LKP-only contacts are worth shooting at, but only once nothing visible outranks them.
 	if sol.get("is_lkp", false):
 		weight *= LKP_TARGET_PRIORITY_MULT
 
@@ -848,10 +590,8 @@ func get_potential_target_weight(target: Ship) -> float:
 
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	potential_target_weight_cache.clear()
-	# Ships held only on a fresh last-known position are candidates too, at
-	# reduced priority (see get_potential_target_weight). Without them the guns
-	# sit idle the moment every enemy goes dark, even with a contact well inside
-	# gun range that was observed seconds ago.
+	# LKP-held ships are candidates too, at reduced priority (see
+	# get_potential_target_weight) — otherwise the guns sit idle the moment everyone goes dark.
 	var candidates: Array[Ship] = targets.duplicate()
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node != null:
@@ -874,14 +614,6 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 
 	if best == null:
 		return null
-
-	# # Keep the current target unless a significantly better one exists (25% threshold)
-	# if last_target != null and last_target.is_alive() \
-	# 		and last_target.visible_to_enemy and can_hit_target(last_target):
-	# 	var last_weight = get_potential_target_weight(last_target)
-	# 	var best_weight = get_potential_target_weight(best)
-	# 	if best_weight <= last_weight * 1.1:
-	# 		return last_target
 
 	return best
 
@@ -926,9 +658,7 @@ func get_overmatch_ratio(target: Ship, zone_type: ArmorPart.Type) -> float:
 		return 0.0
 	return float(overmatched_faces) / float(total_faces)
 
-# ============================================================================
 # EVASION SYSTEM
-# ============================================================================
 
 func get_speed_multiplier() -> float:
 	"""Returns current speed multiplier for evasion. Override in DD for speed variation."""
@@ -993,11 +723,9 @@ func _get_weighted_threat_bearing() -> Variant:
 	var to_danger = danger_center - _ship.global_position
 	return atan2(to_danger.x, to_danger.z)
 
-# ============================================================================
 # THREAT ANALYSIS
-# ============================================================================
 
-
+const _10k2: float = pow(10_000, 2.0)
 
 func _get_spotted_danger_center() -> Vector3:
 	"""Calculate threat-weighted center of currently spotted enemies.
@@ -1022,7 +750,7 @@ func _get_spotted_danger_center() -> Vector3:
 			var dist = to_ship.length()
 			if dist < 1.0:
 				dist = 1.0
-			var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
+			var base_weight = 1.0 / (dist * dist / _10k2 + 1.0)
 			var threat = get_threat_class_weight(ship.ship_class)
 			var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
 			if dist > ship_range:
@@ -1030,7 +758,6 @@ func _get_spotted_danger_center() -> Vector3:
 			var weight = base_weight * threat
 			if active_shooters_at_me.has(ship):
 				weight *= 100.0  # Boost weight for enemies actively shooting at us
-				# Optionally, could also factor in how recently they shot at us based on expiry time
 			weighted_pos += ship.global_position * weight
 			total_weight += weight
 		for ship in unspotted.keys():
@@ -1039,7 +766,7 @@ func _get_spotted_danger_center() -> Vector3:
 			var dist = to_ship.length()
 			if dist < 1.0:
 				dist = 1.0
-			var base_weight = 1.0 / (dist * dist / 100_000_000.0 + 1.0)
+			var base_weight = 1.0 / (dist * dist / _10k2 + 1.0)
 			var threat = get_threat_class_weight(ship.ship_class) if is_instance_valid(ship) else 1.0
 			var ship_range = ship.artillery_controller.get_params()._range if ship.artillery_controller != null else 10000.0
 			if dist > ship_range:
@@ -1058,16 +785,13 @@ func _get_spotted_danger_center() -> Vector3:
 	_spotted_danger_center_frame = frame
 	return result
 
-## Where the enemy is for the purpose of deciding which SIDE of something to sit
-## on. Falls back to the presumption model when nothing is spotted or held.
+## Where the enemy is for choosing which SIDE to sit on. Falls back to the
+## presumption model when nothing is spotted or held.
 ##
-## Deliberately separate from _get_spotted_danger_center(), which several callers
-## rely on returning ZERO to mean "nothing confirmed" - one of them points the
-## turrets at it, and turrets must never swing onto a guess. Choosing a side is
-## the opposite case: there is always a side, and before first contact the honest
-## answer is "away from where their fleet must be coming from", not "no opinion".
-## Without this, hide-side geometry silently switched off for the whole opening
-## of a match - exactly when a bot is picking the island it will fight from.
+## Deliberately separate from _get_spotted_danger_center(), whose ZERO return
+## means "nothing confirmed" to callers that must never swing turrets onto a
+## guess. Side-picking has no such abstain option — before first contact the
+## honest answer is "away from where their fleet must be coming from".
 func _get_positioning_danger_center() -> Vector3:
 	var confirmed := _get_spotted_danger_center()
 	if confirmed != Vector3.ZERO:
@@ -1270,9 +994,7 @@ func _calculate_spread_offset(friendly: Array[Ship], min_spread_distance: float,
 
 	return spread_offset
 
-# ============================================================================
 # HUNTING BEHAVIOR
-# ============================================================================
 
 func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], current_destination: Vector3) -> Vector3:
 	"""Common hunting behavior when no enemies are visible."""
@@ -1286,14 +1008,6 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 	var unspotted_enemies = server_node.get_unspotted_enemies(_ship.team.team_id)
 
 	if unspotted_enemies.is_empty():
-		#var avg_enemy = server_node.get_enemy_avg_position(_ship.team.team_id)
-		#if avg_enemy != Vector3.ZERO:
-			## Move toward the enemy average, stopping one gun range short
-			#var to_enemy = (avg_enemy - _ship.global_position).normalized()
-			#var standoff = gun_range * params.approach_multiplier
-			#var hunt_pos = avg_enemy - to_enemy * standoff
-			#hunt_pos.y = 0.0
-			#return _get_valid_nav_point(hunt_pos)
 		return current_destination
 
 	# Find closest unspotted enemy
@@ -1311,10 +1025,8 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 		return current_destination
 
 	var to_target = (closest_pos - _ship.global_position).normalized()
-	# Unspotted enemy positions are stale — the enemy has likely moved since
-	# going dark.  Use a reduced standoff so we actually close to where we
-	# can re-spot them instead of hovering at max range from a phantom.
-	# Halve the approach_multiplier for unspotted targets so ships push in.
+	# Unspotted positions are stale; use a reduced (halved) standoff so we
+	# actually close in to re-spot instead of hovering at max range from a phantom.
 	var approach_mult = params.approach_multiplier * 0.5
 	var standoff = gun_range * lerp(approach_mult, approach_mult * 1.5, 1.0 - hp_ratio)
 	standoff = clamp(standoff, 0.0, gun_range * 0.6)
@@ -1324,14 +1036,6 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 	# Apply spread
 	var pos_params = get_positioning_params()
 	desired_pos += _calculate_spread_offset(friendly, pos_params.spread_distance, pos_params.spread_multiplier)
-
-	## Bias toward friendlies when low HP
-	#if hp_ratio < params.cautious_hp_threshold:
-		##var nearest_cluster = server_node.get_nearest_friendly_cluster(_ship.global_position, _ship.team.team_id)
-		#if not nearest_cluster.is_empty():
-			#var cluster_center: Vector3 = nearest_cluster.center
-			#var to_cluster = (cluster_center - _ship.global_position).normalized()
-			#desired_pos = closest_pos - (to_target * 0.6 + to_cluster * 0.4).normalized() * standoff
 
 	return _get_valid_nav_point(desired_pos)
 
@@ -1378,9 +1082,7 @@ func can_hit_target(target: Ship) -> bool:
 	var can_shoot = Gun.sim_can_shoot_over_terrain_static(fire_pos, sol[0], sol[1], shell_params, _ship)
 	return can_shoot.can_shoot_over_terrain
 
-# ============================================================================
 # TORPEDO SYSTEM
-# ============================================================================
 
 func update_torpedo_aim(target_ship: Ship):
 	"""Update torpedo aiming solution. Call this for ships with torpedoes."""
@@ -1404,15 +1106,12 @@ func update_torpedo_aim(target_ship: Ship):
 
 	var torpedo_speed = torpedo_controller.get_torp_params().speed * TorpedoManager.TORPEDO_SPEED_MULTIPLIER
 
-	# --- Velocity prediction: blend current velocity with long-term average ---
 	# Reset EMA when target changes so we don't carry over a different ship's history.
 	if _torp_avg_target != target_ship:
 		_torp_avg_target = target_ship
 		_torp_vel_ema = target_ship.linear_velocity
 
-	# EMA alpha: each frame nudges the average toward current velocity.
-	# Time constant of 100s means the average reflects ~100s of position displacement,
-	# naturally weighting recent frames more than old ones.
+	# EMA alpha nudges the average toward current velocity each frame (100s time constant).
 	var dt: float = 1.0 / Engine.physics_ticks_per_second
 	var ema_alpha: float = clamp(dt / TORP_VEL_EMA_SECONDS, 0.0, 1.0)
 	_torp_vel_ema = lerp(_torp_vel_ema, target_ship.linear_velocity, ema_alpha)
@@ -1598,21 +1297,15 @@ func calculate_interception_point(shooter_pos: Vector3, target_pos: Vector3, tar
 
 	return target_pos + target_vel * t
 
-# ============================================================================
 # ISLAND COVER SYSTEM — SDF-based cover position search
-# ============================================================================
 
-# A contact nobody has seen for this long is no longer treated as a hard threat
-# for cover geometry. The server seeds an LKP for the whole enemy team on first
-# contact and never ages them out, so without this filter a cover position would
-# have to occlude flat LOS to every enemy on the map simultaneously — which no
-# island can do, and cover is then never found at all.
+# A contact unseen this long stops counting as a hard threat for cover geometry.
+# The server never ages LKPs out on its own, so without this filter cover would
+# have to occlude LOS to every enemy on the map at once — and never be found.
 const THREAT_LKP_MAX_AGE: float = LKP_MAX_LEAD_AGE
 
-## Where the enemy probably is, for the ships nobody is holding - see
-## EnemyPresumption, which builds it from the spawns, the clock and the team
-## list rather than from anything it is not entitled to see. Positioning only:
-## a guess never becomes a target.
+## Where the enemy probably is for ships nobody is holding — see EnemyPresumption,
+## built from spawns/clock/team list only. Positioning only: a guess never becomes a target.
 var _presumption := EnemyPresumption.new()
 
 func get_presumed_contacts(lead: float = 0.0) -> Array[Dictionary]:
@@ -1625,29 +1318,165 @@ func get_presumed_contacts(lead: float = 0.0) -> Array[Dictionary]:
 			aptitude.kinematic_reckoning, _intuition)
 	return _presumption.contacts(_ship.team.team_id, server_node, lead)
 
-## How far ahead this bot solves for when choosing where to sit. See
-## BotAptitude.lead_horizon: zero is "where is everyone now", which is how a ship
-## ends up behind an island that masks it this instant and leaves it in the open
-## by the time the push it could see coming actually arrives.
+## How far ahead this bot solves for when choosing where to sit (see
+## BotAptitude.lead_horizon). Zero = "where is everyone now" — the ship picks
+## cover for this instant and is left exposed once a foreseeable push arrives.
 func lead_horizon() -> float:
 	return aptitude.lead_horizon if aptitude != null else 0.0
 
-# ---------------------------------------------------------------------------
+## How much of the enemy team this bot's picture accounts for, 0..1. See
+## EnemyPresumption.coverage - the number that separates "I am guessing" from
+## "I can read this".
+func presumption_coverage() -> float:
+	if _ship == null or _ship.team == null:
+		return 0.0
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return 0.0
+	if aptitude != null:
+		_refresh_intuition(server_node)
+		_presumption.configure(aptitude.use_spawn_line, aptitude.radius_growth_mult,
+			aptitude.kinematic_reckoning, _intuition)
+	return _presumption.coverage(_ship.team.team_id, server_node)
+
+## The shape of the battle right now: which way is up-field, which side of our
+## own line a position is on (see FleetFrame). Rebuilt every physics frame,
+## not remembered — a spawn-assigned side only stays true while the fight
+## keeps its starting shape. Memoised per frame since many bots ask per tick.
+func fleet_frame() -> FleetFrame:
+	var frame: int = Engine.get_physics_frames()
+	if _fleet_frame != null and _fleet_frame_frame == frame:
+		return _fleet_frame
+	_initialize_spawn_cache()
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server") if _ship != null else null
+	var my_team: int = _ship.team.team_id if _ship != null and _ship.team != null else 0
+	_fleet_frame = FleetFrame.build(my_team, server_node, get_presumed_contacts(),
+		_cached_enemy_spawn - _cached_friendly_spawn)
+	_fleet_frame_frame = frame
+	return _fleet_frame
+
+## Which side of our own line this bot is on, as a signed scalar. Never rounded
+## to a side here: see FleetFrame.SIDE_DEADBAND for why the sign is the one
+## thing a stateless frame must not take on its own.
+func my_flank_side() -> float:
+	if _ship == null:
+		return 0.0
+	return fleet_frame().side_of(_ship.global_position)
+
+## Whether `pos` is ground this bot should consider its business. Below
+## EnemyPresumption.COMMIT_COVERAGE, most of the enemy team is unaccounted for
+## and one sighting says nothing about the rest, so a ship holds its flank
+## instead of chasing it. Above that threshold the enemy has demonstrably
+## committed, and the restriction lifts.
+func flank_permits(pos: Vector3) -> bool:
+	if presumption_coverage() >= EnemyPresumption.COMMIT_COVERAGE:
+		return true
+	if _ship == null:
+		return true
+	return fleet_frame().same_flank(_ship.global_position, pos)
+
+## The frame of the fight immediately around `focus`, not the whole battle —
+## see FleetFrame.build()'s `locality`. Use this to manoeuvre: it lets two ships
+## form an axis on an isolated enemy and take opposite sides of it even while
+## the main lines fight on a different axis elsewhere.
+## `scale` defaults to gun range. Single-slot memo, not a dictionary: skills
+## ask about one engagement per tick, and the frame is cheap enough not to need a real cache.
+var _local_frame: FleetFrame = null
+var _local_frame_key: Array = []
+
+func local_frame(focus: Vector3, scale: float = -1.0) -> FleetFrame:
+	if scale < 0.0:
+		scale = _ship.artillery_controller.get_params()._range \
+			if _ship != null and _ship.artillery_controller != null else 10000.0
+	var key: Array = [Engine.get_physics_frames(), focus, scale]
+	if _local_frame != null and _local_frame_key == key:
+		return _local_frame
+	_initialize_spawn_cache()
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server") if _ship != null else null
+	var my_team: int = _ship.team.team_id if _ship != null and _ship.team != null else 0
+	_local_frame = FleetFrame.build(my_team, server_node, get_presumed_contacts(),
+		_cached_enemy_spawn - _cached_friendly_spawn, focus, scale)
+	_local_frame_key = key
+	return _local_frame
+
+## Where the enemy will be `lead` seconds from now, to ask whether a piece of
+## ground will have anything WITHIN REACH by the time the ship gets there.
+## Positions only — never picks a target.
+##
+## `known_only` = false includes presumed line stations (the honest answer
+## while most of the enemy team is unaccounted for); true keeps only what's
+## been observed or deduced, once enough of the team is tracked that the rest can't be the main body.
+func reach_positions(lead: float, known_only: bool) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if _ship == null or _ship.team == null:
+		return out
+	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
+	if server_node == null:
+		return out
+	# Held in sight: known by definition, and wanted under either rule.
+	for enemy in server_node.get_valid_targets(_ship.team.team_id):
+		if is_instance_valid(enemy) and enemy.health_controller.is_alive():
+			out.append(_led_position(enemy.global_position, enemy.linear_velocity, lead))
+	for guess in get_presumed_contacts(lead):
+		if known_only and not bool(guess.get("known", false)):
+			continue
+		out.append(guess.position)
+	return out
+
+## Fraction of flank speed actually made good en route to cover. Well under 1:
+## the ship has to spin up, the route bends around islands, helm isn't full the
+## whole way. Estimating off max_speed was why cover kept getting chosen for a
+## picture the ship then took twice as long to reach.
+const COVER_TRANSIT_SPEED_FRACTION: float = 0.7
+
+## Seconds a cover position must still be good for AFTER the ship gets there.
+## Cover masked at the instant of arrival and open ten seconds later is a
+## rendezvous with a salvo, not cover. Folding this into the horizon (rather
+## than testing a second picture) also widens the error bar with distance, for free.
+const COVER_HOLD_MARGIN: float = 15.0
+
+## Ceiling on a cover horizon, whatever the passage works out to. A sanity
+## clamp, not a modelling limit — EnemyPresumption already bounds its own
+## projection. What actually keeps a ship off a 3-minute passage is the ranking
+## it feeds (SkillFindCover._advance_penalty), not this.
+const COVER_HORIZON_MAX: float = 180.0
+
+## Cover horizons are rounded to this before the threat picture is asked for.
+## Each candidate island solves its own arrival time, so one decision asks for a
+## spread of horizons; without a quantum every one would miss the threat memo
+## and EnemyPresumption's lead cache, reprojecting the whole roster per island.
+const COVER_HORIZON_QUANTUM: float = 5.0
+
+## Seconds out to solve a cover decision for, so the search tests where the
+## enemy will be when the ship arrives, not where it was when it set off.
+##
+## Two things combine: the passage time (every tier gets this — it's a fact
+## about your own hull, not a read of the enemy; gating it on lead_horizon left
+## the bottom two tiers choosing cover in the present tense and arriving at
+## islands that had stopped covering anything minutes earlier), and
+## lead_horizon as a FLOOR on top (the actual read of the enemy — an ACE shifts
+## before a push arrives, a RECRUIT only solves for its own arrival).
+func cover_horizon(travel_distance: float) -> float:
+	var speed: float = 0.0
+	if _ship != null and _ship.movement_controller != null:
+		speed = _ship.movement_controller.max_speed * COVER_TRANSIT_SPEED_FRACTION
+	if speed <= 0.1:
+		return 0.0
+	var eta: float = maxf(travel_distance, 0.0) / speed + COVER_HOLD_MARGIN
+	return snappedf(clampf(maxf(eta, lead_horizon()), 0.0, COVER_HORIZON_MAX),
+		COVER_HORIZON_QUANTUM)
+
 # INTUITION - the sanctioned cheat
-# ---------------------------------------------------------------------------
 ## Ground-truth fixes on enemy ships, Ship -> {position, velocity, rotation,
 ## time}, taken every BotAptitude.intuition_interval seconds and never in
-## between. This is the one place a bot is handed something it did not earn, so
-## it is worth being exact about what it is and is not.
+## between — the one place a bot is handed something it did not earn.
 ##
-## It is a periodic FIX, not a feed: between refreshes the error bar opens like
-## any other anchor's, so what an ace plays like is somebody who checks the
-## minimap and reasons well from it, not somebody seeing through islands.
-##
-## And it is walled off. This table is read by EnemyPresumption and by nothing
-## else - get_contact_solution() reads the LKP tables, so an intuition fix is
-## structurally incapable of producing an aim point, exactly like a deduction.
-## An ace positions better. It does not shoot at what it cannot see.
+## A periodic FIX, not a feed: between refreshes the error bar opens like any
+## other anchor's, so an ace plays like someone who reads the minimap well, not
+## someone seeing through islands. And it's walled off: only EnemyPresumption
+## reads this table, never get_contact_solution() — an intuition fix cannot
+## produce an aim point, exactly like a deduction. An ace positions better; it
+## does not shoot at what it cannot see.
 var _intuition: Dictionary = {}
 var _intuition_last_refresh: float = -INF
 
@@ -1683,31 +1512,34 @@ func _refresh_intuition(server_node: GameServer) -> void:
 ## How close a presumed enemy has to be before it constrains where this ship
 ## hides - about the range from which something could actually shoot back.
 const PRESUMED_THREAT_REACH: float = 18000.0
-## How much of an enemy's threat survives not knowing exactly where it is,
-## across the full range of the presumption's own confidence (see
-## EnemyPresumption.certainty). Never the full weight of a ship in plain sight,
-## and never nothing at all.
+## How much of an enemy's threat survives not knowing exactly where it is
+## (see EnemyPresumption.certainty) — never full weight, never zero.
 const PRESUMED_CERTAINTY_MAX: float = 0.85
 const PRESUMED_CERTAINTY_MIN: float = 0.25
 
-## At most this many guesses may constrain one decision. Every threat added is
-## another line a cover position has to be masked from, and a position masked
-## from everything on the map generally does not exist. The nearest few are the
-## ones that would actually be shooting.
+## At most this many guesses may constrain one decision — masking cover from
+## every threat on the map generally isn't possible; the nearest few matter most.
 const PRESUMED_THREAT_LIMIT: int = 3
-## And only guesses still worth calling a position. Once the uncertainty is
-## this wide the guess says "somewhere over there", which is not something a
-## cover position can be masked from - letting it veto cover anyway would leave
-## a ship refusing every island on the map on the strength of a shrug.
+## Only guesses still precise enough to call a position — beyond this the guess
+## says "somewhere over there" and shouldn't be able to veto cover on its own.
 const PRESUMED_THREAT_MAX_RADIUS: float = 6000.0
 
+## Below this a threat's spread is inside the noise of the LOS clearance buffer,
+## so probing it costs two raycasts and can only ever agree with the centre.
+const THREAT_SPREAD_MIN_PROBE: float = 200.0
+
+# One threat picture per (frame, horizon). Cover now asks for a picture per
+# candidate island, and every one of those walks the whole enemy roster.
+var _threat_cache: Dictionary = {}
+var _threat_cache_frame: int = -1
+
 func _gather_threat_positions(ship: Ship, lead: float = 0.0) -> Array:
-	"""Threat positions the bot legitimately knows about: currently visible
-	enemies, plus last-known positions still fresh enough to mean something
-	(dead-reckoned forward). Stale contacts are dropped — see THREAT_LKP_MAX_AGE.
-	Made up to a full picture with the nearest presumed contacts, so a position
-	is judged against the enemies that are probably there and not only against
-	the ones that happen to be visible from it.
+	"""Everything shooting at us might be, as {position, spread}: currently
+	visible enemies, plus last-known positions still fresh enough to mean
+	something (dead-reckoned forward). Stale contacts are dropped — see
+	THREAT_LKP_MAX_AGE. Made up to a full picture with the nearest presumed
+	contacts, so a position is judged against the enemies that are probably there
+	and not only against the ones that happen to be visible from it.
 
 	`lead` asks the whole question `lead` seconds from now instead of this
 	instant, for deciding where to BE rather than where to have been. Cover is
@@ -1715,16 +1547,36 @@ func _gather_threat_positions(ship: Ship, lead: float = 0.0) -> Array:
 	stands right now is worth nothing if the enemy will have rounded it by the
 	time the ship arrives. Every source is carried forward, not just the guesses
 	— a future picture with half its contacts left in the present is not a
-	picture of anything."""
+	picture of anything.
+
+	`spread` is how far sideways that contact could be from where this picture
+	puts it, and it is the half of the answer that used to be thrown away. A
+	projected position is a guess with an error bar on it, and a cover position
+	tested against the bare point pretends otherwise — which is exactly how a
+	ship ends up behind an island that masks one pixel of a five-kilometre
+	uncertainty disc. See _is_masked_from_threat and EnemyPresumption.guess_spread.
+	"""
 	var threats: Array = []
 	var server_node: GameServer = ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return threats
+	var frame: int = Engine.get_physics_frames()
+	if _threat_cache_frame != frame:
+		_threat_cache.clear()
+		_threat_cache_frame = frame
+	elif _threat_cache.has(lead):
+		return _threat_cache[lead]
+	# Seen right now, so the only thing that could be wrong about this position is
+	# however far forward it has been run.
+	var lead_spread: float = EnemyPresumption.lead_spread(lead)
 	var held: Dictionary = {}
 	for enemy in server_node.get_valid_targets(ship.team.team_id):
 		if is_instance_valid(enemy) and enemy.health_controller.is_alive():
 			held[enemy] = true
-			threats.append(_led_position(enemy.global_position, enemy.linear_velocity, lead))
+			threats.append({
+				position = _led_position(enemy.global_position, enemy.linear_velocity, lead),
+				spread = lead_spread,
+			})
 	var unspotted = server_node.get_unspotted_enemies(ship.team.team_id)
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship):
@@ -1735,7 +1587,12 @@ func _gather_threat_positions(ship: Ship, lead: float = 0.0) -> Array:
 		if float(sol.age) > THREAT_LKP_MAX_AGE:
 			continue
 		held[enemy_ship] = true
-		threats.append(_led_position(sol.position, sol.velocity, lead))
+		# A contact that went dark carries the time it has been dark as well as the
+		# time it is being run forward: both are staleness in the same projection.
+		threats.append({
+			position = _led_position(sol.position, sol.velocity, lead),
+			spread = EnemyPresumption.lead_spread(float(sol.age) + lead),
+		})
 	# Everything else the enemy owns is somewhere too, and the whole point of
 	# taking cover is to not be shot by it. Without this a cruiser tucks itself
 	# behind an island from the one contact it can see and parks broadside to
@@ -1750,10 +1607,15 @@ func _gather_threat_positions(ship: Ship, lead: float = 0.0) -> Array:
 		var d: float = ship.global_position.distance_to(guess_pos)
 		if d > PRESUMED_THREAT_REACH:
 			continue
-		guesses.append({dist = d, position = guess_pos})
+		guesses.append({
+			dist = d,
+			position = guess_pos,
+			spread = EnemyPresumption.guess_spread(guess),
+		})
 	guesses.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.dist < b.dist)
 	for k in range(mini(guesses.size(), PRESUMED_THREAT_LIMIT)):
-		threats.append(guesses[k].position)
+		threats.append({position = guesses[k].position, spread = guesses[k].spread})
+	_threat_cache[lead] = threats
 	return threats
 
 ## Runs an observed position forward on its observed course. Held to the same
@@ -1853,10 +1715,8 @@ func _compute_safe_direction(ship: Ship, server: GameServer) -> Vector3:
 		return fwd.normalized()
 	return Vector3(0, 0, -1)
 
-## Safe direction goes stale: it is derived from where the ship is and what it
-## can see, and both change. Computing it once and keeping it for the whole match
-## is how a value picked in the first frame - before the spawn cache was even
-## populated - went on steering cover selection twenty minutes later.
+## Safe direction goes stale (position/visibility both change). Computed once,
+## a stale first-frame value went on steering cover selection 20 minutes later.
 const SAFE_DIR_REFRESH_MS: int = 2000
 var _safe_dir_next_refresh_ms: int = -1
 
@@ -1878,8 +1738,8 @@ func _compute_hide_heading(island_center: Vector3, threats: Array) -> float:
 		return 0.0
 	var sum_sin = 0.0
 	var sum_cos = 0.0
-	for threat_pos in threats:
-		var to_threat = threat_pos - island_center
+	for threat in threats:
+		var to_threat: Vector3 = (threat.position as Vector3) - island_center
 		to_threat.y = 0.0
 		if to_threat.length_squared() < 1.0:
 			continue
@@ -1932,14 +1792,33 @@ func _is_los_blocked_with_clearance(from_pos: Vector3, to_pos: Vector3) -> bool:
 	)
 	return result["hit"]
 
-# ============================================================================
+## Whether `pos` stays hidden from a threat everywhere that threat plausibly
+## is, not just the one point this picture names.
+##
+## Only SIDEWAYS error is probed — a contact nearer/further on the same
+## bearing is still behind the same island, but one that's rounded to the side
+## is the error that gets ships killed. Tests centre + a perpendicular step
+## either way, sized by EnemyPresumption's error bar for that contact. Centre
+## is tested first and rejects most candidates cheaply.
+func _is_masked_from_threat(pos: Vector3, threat: Dictionary) -> bool:
+	var threat_pos: Vector3 = threat.position
+	if not _is_los_blocked_with_clearance(pos, threat_pos):
+		return false
+	var spread: float = float(threat.get("spread", 0.0))
+	if spread < THREAT_SPREAD_MIN_PROBE:
+		return true
+	var lateral := Vector3(pos.z - threat_pos.z, 0.0, threat_pos.x - pos.x)
+	var span: float = lateral.length()
+	if span < 1.0:
+		return true
+	lateral = lateral / span * spread
+	return _is_los_blocked_with_clearance(pos, threat_pos + lateral) \
+		and _is_los_blocked_with_clearance(pos, threat_pos - lateral)
+
 # COVER PRIORITY TARGETS
-# ============================================================================
 ## How many enemies a cover search will try to build a position around before
-## settling for one it can merely shoot something from. Each one costs another
-## sweep of the island's candidate points, which is why the priority search only
-## runs when the ship is already ON an island (see SkillFindCover) - choosing a
-## new island stays on the cheap any-target path.
+## settling for any-target. Costs another sweep per candidate, so it only runs
+## when already ON an island (see SkillFindCover) — picking a new island stays cheap.
 const COVER_PRIORITY_MAX: int = 3
 ## Weight multiplier for a contact closing on us at flank speed. Being shot at is
 ## a fact; being approached is an intention, and the whole point of this list is
@@ -1950,17 +1829,14 @@ const COVER_SHOOTER_WEIGHT: float = 3.0
 
 ## Enemies worth building a firing position around, most valuable first.
 ##
-## Deliberately NOT pick_target(). That answers "what can I shoot right now",
-## and filters out anything terrain currently blocks - which is exactly the
-## enemy a better position would let us engage. Filtering by present
-## shootability while searching for a place to shoot FROM is circular: it can
-## only ever confirm the spot we are already in.
+## Deliberately NOT pick_target(): that filters out anything terrain currently
+## blocks, which is exactly the enemy a better position would let us engage —
+## filtering by present shootability while searching for a place to shoot FROM
+## is circular.
 ##
-## Ranked by danger to this ship rather than by ease of killing: hull class fear
-## (a cruiser is right to weigh a battleship heavily), whether it is closing, and
-## whether it is shooting at us. That is what makes a CA build its position
-## around the battleship pushing onto its island instead of around whichever
-## destroyer happened to be in the arc first.
+## Ranked by danger (hull-class fear, closing, shooting at us), not ease of
+## killing — so a CA builds its position around the battleship pushing its
+## island, not whichever destroyer was in the arc first.
 func cover_priority_targets(max_count: int = COVER_PRIORITY_MAX) -> Array:
 	var out: Array = []
 	if _ship == null or _ship.team == null:
@@ -1979,9 +1855,8 @@ func cover_priority_targets(max_count: int = COVER_PRIORITY_MAX) -> Array:
 			if not is_instance_valid(enemy) or not enemy.is_alive() or seen.has(enemy):
 				continue
 			seen[enemy] = true
-			# Read through the contact solution so a contact held only on a
-			# last-known position is placed where the bot believes it is, never
-			# where it actually is.
+			# Use the contact solution so an LKP-only contact is placed where the
+			# bot believes it is, not where it actually is.
 			var sol := get_contact_solution(enemy)
 			if not sol.get("valid", false):
 				continue
@@ -2007,12 +1882,28 @@ func cover_priority_targets(max_count: int = COVER_PRIORITY_MAX) -> Array:
 	return out
 
 ## Where to aim a shootability test at `enemy`, using only what the bot is
-## entitled to know. Null when it has no idea where the ship is.
-func cover_test_position(enemy: Ship) -> Variant:
+## entitled to know, `lead` seconds from now. Null when it has no idea where
+## the ship is. The lead makes this a firing position, not a souvenir: a spot
+## chosen for where the enemy stands today is worth nothing once it steams out of arc.
+func cover_test_position(enemy: Ship, lead: float = 0.0) -> Variant:
 	var sol := get_contact_solution(enemy)
 	if not sol.get("valid", false):
 		return null
-	return (sol.position as Vector3) + (sol.basis as Basis) * target_aim_offset(enemy)
+	var at: Vector3 = _led_position(sol.position, sol.velocity, lead)
+	return at + (sol.basis as Basis) * target_aim_offset(enemy)
+
+
+## Aim points for `targets` as they will stand `lead` seconds from now. Built
+## once per cover search, not per candidate — the ballistic solver below is too
+## expensive to re-derive its inputs a few hundred times.
+func led_target_points(targets: Array, lead: float = 0.0) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	for t_ship in targets:
+		if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
+			continue
+		out.append(_led_position(t_ship.global_position, t_ship.linear_velocity, lead)
+			+ t_ship.global_basis * target_aim_offset(t_ship))
+	return out
 
 ## Can a ship standing at `from_pos` put a shell on `target_pos`, terrain and all?
 func _can_shoot_point_from(from_pos: Vector3, target_pos: Vector3, shell_params, gun_range_sq: float) -> bool:
@@ -2026,22 +1917,39 @@ func _can_shoot_point_from(from_pos: Vector3, target_pos: Vector3, shell_params,
 		return false
 	return Gun.sim_can_shoot_over_terrain_static(gun_proxy_pos, sol[0], sol[1], shell_params, _ship).can_shoot_over_terrain
 
-## Whether anything at all in `targets` can be engaged from `from_pos`.
-func _can_shoot_at_any_from(from_pos: Vector3, targets: Array, shell_params, gun_range_sq: float) -> bool:
+## Whether any of `target_points` (already carried forward to the search
+## horizon, see led_target_points) can be engaged from `from_pos`.
+func _can_shoot_at_any_from(from_pos: Vector3, target_points: Array, shell_params, gun_range_sq: float) -> bool:
 	if shell_params == null:
 		return false
-	for t_ship in targets:
-		if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
-			continue
-		var target_pos = t_ship.global_position + t_ship.global_basis * target_aim_offset(t_ship)
+	for target_pos in target_points:
 		if _can_shoot_point_from(from_pos, target_pos, shell_params, gun_range_sq):
 			return true
 	return false
 
-func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0, priority_targets: Array = [], anchor_heading: float = NAN) -> Dictionary:
-	"""Search for a position around the island that is fully concealed from
-	enemies (flat LOS blocked to ALL threats) and allows shooting over the
-	island at targets (ballistic arc simulation).
+func _find_cover_position_on_island(island_center: Vector3, island_radius: float, hide_heading: float, threats: Array, targets: Array, max_range: float, avoid_positions: Array = [], min_separation: float = 0.0, priority_targets: Array = [], anchor_heading: float = NAN, lead: float = 0.0, reach_points: Array = [], require_shootable: bool = true) -> Dictionary:
+	"""Search for a position around the island that is concealed from every
+	threat across its whole plausible spread (see _is_masked_from_threat) and has
+	something within reach of it.
+
+	The whole question is asked for `lead` seconds from now, which is when the
+	ship would actually be standing there: `threats` and `reach_points` arrive
+	already projected to that horizon, and the targets are carried forward to
+	match.
+
+	Two different pictures, deliberately:
+	  * `threats` - everything that might shoot US, with an error bar each. What
+		the position has to be hidden from.
+	  * `reach_points` - where the enemy is expected to BE. What the position has
+		to be close enough to for the ground to be worth taking. Empty means fall
+		back to `threats`, which is what the caller wants before it has a stage.
+
+	`require_shootable` runs the ballistic solver over `targets` and rejects
+	anything it cannot fire from. That is the expensive question and it is asked
+	ONLY of the island a ship is already standing on (see SkillFindCover). Asking
+	it while CHOOSING an island is what used to drag bots up the map: shootability
+	is monotone in how far forward you stand, so any hard gate on it selects the
+	most advanced island that clears it, every time.
 
 	Generates two rings of candidate points — shore-line positions and offset
 	positions pushed out by 2.5× clearance.  When sort_by_proximity is true,
@@ -2063,6 +1971,18 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var gun_range = _ship.artillery_controller.get_params()._range
 	var gun_range_sq = gun_range * gun_range
 	var max_range_sq = max_range * max_range
+	# Everything below is judged for the moment the ship ARRIVES, so the enemies it
+	# is meant to be able to shoot have to be where they will be by then too.
+	var target_points: Array[Vector3] = []
+	if require_shootable:
+		target_points = led_target_points(targets, lead)
+	# Reassigned, not appended: reach_points is owned by the caller and reused
+	# across islands, so growing it here would leak this island's fallback into the next.
+	var reach: Array = reach_points
+	if reach.is_empty():
+		reach = []
+		for threat in threats:
+			reach.append(threat.position)
 	var threat_count = threats.size()
 	var my_pos = _ship.global_position
 	var enforce_spacing := min_separation > 0.0 and not avoid_positions.is_empty()
@@ -2077,23 +1997,16 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 	var concealed_candidates: Array[Dictionary] = []
 	var offset_clearance = clearance * 2.0
 	var min_ring_separation_sq = (clearance * 0.5) * (clearance * 0.5)
-	# Sweep the hide window centred on hide_heading, so the island's actual
-	# hidden face is always sampled.  (Sweeping outward from the ship-facing side
-	# instead only overlapped the hide window in two narrow slivers whenever the
-	# ship approached from the threat side, so nearby islands were rejected and
-	# the search ran on to a distant one.)  Ties inside the window are broken
-	# toward whichever side the ship is already approaching from.
+	# Sweep the hide window centred on hide_heading so the island's actual
+	# hidden face is always sampled — sweeping from the ship-facing side instead
+	# only overlapped the window in narrow slivers when approaching from the
+	# threat side, rejecting nearby islands in favor of a distant one.
 	#
-	# An anchor_heading overrides that centre with the bearing the ship already
-	# holds around THIS island.  A re-search of the island a ship is already
-	# using is not a fresh question: sweeping outward from hide_heading picks
-	# whichever face the window happens to sample first, so a few degrees of
-	# drift in the threat picture flips the answer to the far side and the ship
-	# sails around the island to reach it, then back again next tick.  Starting
-	# at the bearing already held returns the nearest viable point to where the
-	# ship stands, which is usually the point it is already on.  The window is
-	# widened by the gap to hide_heading so the hidden face is still reached
-	# when the held side stops concealing, just later in the order.
+	# anchor_heading overrides the centre with the bearing already held around
+	# THIS island: re-searching from hide_heading let a few degrees of drift
+	# flip the answer to the far side and sail the ship back and forth. The
+	# window is widened by the gap to hide_heading so the hidden face is still
+	# reached once the held side stops concealing.
 	var ship_to_island_heading = atan2(my_pos.x - island_center.x, my_pos.z - island_center.z)
 	var sweep_center := hide_heading
 	var sweep_half_span := angle_half_span
@@ -2126,17 +2039,19 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 				if ring == 1 and shore_pos != Vector3.ZERO and pos.distance_squared_to(shore_pos) <= min_ring_separation_sq:
 					continue
 
+				# Cover with nobody in reach of it is a place to hide, not a place to
+				# fight from, and the horizon means "in reach when we get there".
 				var any_in_range = false
-				for threat_pos in threats:
-					if pos.distance_squared_to(threat_pos) <= max_range_sq:
+				for reach_pos in reach:
+					if pos.distance_squared_to(reach_pos) <= max_range_sq:
 						any_in_range = true
 						break
 				if not any_in_range:
 					continue
 
 				var hidden_count: int = 0
-				for threat_pos in threats:
-					if _is_los_blocked_with_clearance(pos, threat_pos):
+				for threat in threats:
+					if _is_masked_from_threat(pos, threat):
 						hidden_count += 1
 				if hidden_count < threat_count:
 					continue
@@ -2148,16 +2063,23 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 							spacing_conflict = true
 							break
 
-				# With a priority list the whole candidate set has to be swept
-				# before anything is chosen - the first point that can shoot
-				# SOMETHING is exactly the wrong answer when what we need is a
-				# point that can shoot the ship coming for us. Bank the candidate
-				# and decide once the sweep is done.
+				# Priority list: bank the candidate and decide once the whole
+				# island is swept — the first point that can shoot SOMETHING is
+				# the wrong answer when we need the one that can shoot the ship
+				# coming for us. Without shootability required, a hidden point
+				# with something in reach IS the answer.
+				if not require_shootable:
+					if spacing_conflict:
+						if best_conflict_concealed == Vector3.ZERO:
+							best_conflict_concealed = pos
+						continue
+					return { "pos": pos, "can_shoot": false, "spacing_conflict": false }
+
 				if not priority_targets.is_empty():
 					concealed_candidates.append({pos = pos, conflict = spacing_conflict})
 					continue
 
-				var can_shoot_any: bool = _can_shoot_at_any_from(pos, targets, shell_params, gun_range_sq)
+				var can_shoot_any: bool = _can_shoot_at_any_from(pos, target_points, shell_params, gun_range_sq)
 
 				if can_shoot_any:
 					if spacing_conflict:
@@ -2173,16 +2095,14 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 						best_concealed_fallback = pos
 
 	# ── Priority resolution ─────────────────────────────────────────────────
-	# Every concealed point on the island is now known. Offer the whole set to
-	# the most dangerous enemy first; only if no point on the island can reach
-	# it does the next one get a turn. A position that can engage the ship
-	# pushing onto us beats one that can engage something harmless, even when
-	# the harmless one was found first and is closer to hand.
+	# Every concealed point is now known. Offer the whole set to the most
+	# dangerous enemy first — a position that can engage the ship pushing on us
+	# beats one that can engage something harmless, even if found first.
 	if not priority_targets.is_empty():
 		for pri in priority_targets:
 			if not is_instance_valid(pri) or not pri.is_alive():
 				continue
-			var pri_pos = cover_test_position(pri)
+			var pri_pos = cover_test_position(pri, lead)
 			if pri_pos == null:
 				continue
 			var conflicted: Vector3 = Vector3.ZERO
@@ -2196,12 +2116,11 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 					conflicted = cpos
 			if conflicted != Vector3.ZERO:
 				return { "pos": conflicted, "can_shoot": true, "spacing_conflict": true }
-		# None of the priority enemies can be reached from anywhere on this
-		# island. Fall back to the ordinary question - can we shoot anything at
-		# all from here - so the island is not thrown away over it.
+		# No priority enemy is reachable from this island — fall back to "can we
+		# shoot anything at all from here" so the island isn't discarded.
 		for cand in concealed_candidates:
 			var cpos2: Vector3 = cand.pos
-			var shootable: bool = _can_shoot_at_any_from(cpos2, targets, shell_params, gun_range_sq)
+			var shootable: bool = _can_shoot_at_any_from(cpos2, target_points, shell_params, gun_range_sq)
 			if shootable:
 				if not bool(cand.conflict):
 					return { "pos": cpos2, "can_shoot": true, "spacing_conflict": false }
@@ -2213,10 +2132,9 @@ func _find_cover_position_on_island(island_center: Vector3, island_radius: float
 			elif best_concealed_fallback == Vector3.ZERO:
 				best_concealed_fallback = cpos2
 
-	# A shootable position always outranks a merely concealed one, even when it
-	# conflicts with a team-mate's reservation: callers that require shootability
-	# discard the whole island on can_shoot == false, so returning the concealed
-	# spot first threw away islands that could in fact be fought from.
+	# Shootable always outranks merely concealed, even with a reservation
+	# conflict: callers discard the whole island on can_shoot == false, so
+	# returning concealed first threw away islands that could be fought from.
 	if best_conflict_shootable != Vector3.ZERO:
 		return { "pos": best_conflict_shootable, "can_shoot": true, "spacing_conflict": true }
 
@@ -2257,28 +2175,20 @@ func _tangential_heading(island_center: Vector3, from_pos: Vector3) -> float:
 
 
 
-# ============================================================================
 # NAV CORE — the one decision ladder every behaviour runs
-# ============================================================================
 #
-# BB, CA and DD used to each own a copy of this function. They agreed on the
-# shape and disagreed on about a dozen numbers, so the copies drifted: the
-# nearest-threat scan and the reverse-alignment band were character-identical
-# between BB and CA, while BB carried a SkillHunt it never called and CA a whole
-# island-state block that only called itself.
+# BB/CA/DD used to each own a copy of this function; they agreed on shape and
+# disagreed on a dozen numbers, so the copies drifted and each carried dead
+# code the others didn't need. Now it lives here once, reading its numbers off
+# a BotDoctrine. Four arms, in order:
+#   idle    — nothing is known to exist anywhere
+#   dark    — enemies exist, none are spotted
+#   close   — something is spotted, near, and we are detected
+#   engaged — everything else
 #
-# The ladder now lives here once and reads its numbers off a BotDoctrine. Four
-# arms, in order:
-#
-#   idle     — nothing is known to exist anywhere
-#   dark     — enemies exist, none are spotted
-#   close    — something is spotted, it is near, and we are detected
-#   engaged  — everything else
-#
-# The first three are fully shared. Only `engaged` still differs per class, and
-# only because BB fights down a threat ladder, CA splits on its own detection
-# state, and DD is deciding between torpedoes and spotting. Those three are the
-# genuine behavioural difference and stay as _select_engaged_skill() overrides.
+# Only `engaged` still differs per class (BB fights down a threat ladder, CA
+# splits on detection state, DD picks torpedoes vs spotting) — via
+# _select_engaged_skill() overrides.
 
 func doctrine() -> BotDoctrine:
 	## Override per class to supply a different row of the table.
@@ -2291,24 +2201,14 @@ func _doc() -> BotDoctrine:
 
 ## How close this bot wants to fight, in metres, read off the ship it is driving.
 ##
-## This is what replaced threat-mod. That number asked a human to score every
-## hull's appetite for a brawl by hand, in a config file, and then bent the
-## threat score by it — so a ship that wanted to fight close did it by being
-## bad at being afraid. The appetite is already in the ship, and it is a
-## distance rather than a mood: a hull whose secondaries reach most of the way
-## to its main-battery range has a second battery worth crossing water for, and
-## one whose secondaries are a short-range afterthought does not.
+## Replaces threat-mod, which asked a human to hand-score each hull's appetite
+## for a brawl in a config file. The appetite is already in the ship: a hull
+## whose secondaries reach most of the way to main-battery range is worth
+## closing for, one with short-range secondaries isn't — and reading it live
+## means talents/upgrades that multiply secondary `_range` count automatically.
 ##
-## Reading it live means the BUILD counts, which is the part a static number
-## could never do. Long Range Secondary Training, Basic Secondary Training and
-## the secondary range upgrades all multiply the same `_range` that
-## get_max_range() reports, so the same hull specced for secondaries fights
-## closer than it does specced for main-battery work, with nothing to configure
-## and nothing to keep in sync.
-##
-## `threat` is this tick's threat score. Above the doctrine's yield point the
-## secondaries stop being an argument for closing: a fight already going badly
-## does not get better by walking into it to use a shorter gun.
+## `threat` is this tick's threat score; above the doctrine's yield point,
+## secondaries stop being an argument for closing a fight already going badly.
 func engagement_range(ship: Ship, threat: float) -> float:
 	var d := _doc()
 	var gun_range: float = ship.artillery_controller.get_params()._range
@@ -2374,9 +2274,8 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 			nearest_dist = dist
 			nearest = e
 
-	# Distance to the nearest thing carrying real guns. DDs are excluded on
-	# purpose: a destroyer close aboard is a torpedo problem, not a reason to
-	# back a battleship out of a turn.
+	# Distance to the nearest real-gun threat; DDs excluded — a destroyer close
+	# aboard is a torpedo problem, not a reason to back a battleship out of a turn.
 	var nearest_threat_dist: float = INF
 	for s in unspotted:
 		if (s as Ship).ship_class != Ship.ShipClass.DD:
@@ -2416,13 +2315,11 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 		forced = false,
 	}
 
-## Common tail for any intent a behaviour returns, whether or not it came out of
+## Common tail for any intent a behaviour returns, whether or not it came from
 ## the shared ladder (CVBehavior runs its own tree over the same skills).
-##
-## A cover destination that was computed but not adopted must not stay reserved:
-## the skill claims a spot team-wide on every execute(), including the probes
-## made from the camp and kite paths, and a claim nobody is using pushes
-## team-mates onto islands further away.
+## A computed-but-not-adopted cover destination must not stay reserved: the
+## skill claims a spot on every execute() (including camp/kite probes), and an
+## unused claim pushes team-mates onto islands further away.
 func _finish_intent(intent: NavIntent, previous_skill: StringName) -> NavIntent:
 	if _active_skill_name != &"FindCover":
 		_skill_cover.release_claim()
@@ -2438,13 +2335,10 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	var intent: NavIntent = null
 
 	# Cornered: at this much threat the way out is concealment, not gunnery.
-	# Whether that is even on offer is _probe_concealment()'s question, so ask it
-	# rather than reading is_detected(). It returns false when a spotted enemy
-	# has clear line of sight from inside our own detection radius — nothing we
-	# stop doing will shake that ship, so the guns keep working even though we
-	# are threatened — and true when holding fire would let the bloom decay and
-	# drop us. Being detected is therefore no longer a veto: where going dark is
-	# still reachable, breaking contact beats one more salvo.
+	# Ask _probe_concealment() rather than is_detected(): it returns false when
+	# a spotted enemy already has clear LOS from inside our detection radius (so
+	# nothing we stop doing would shake them), true when holding fire would let
+	# bloom decay. Being detected is therefore not a veto on going dark.
 	if sit.threat > 0.95 and _probe_concealment(ctx.server):
 		wants_stealth = true
 		wants_to_be_concealed = true
@@ -2454,11 +2348,10 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		intent = _run_chain(d.idle_chain, ctx, _cover_params())
 	elif not sit.has_spotted and not d.dark_chain.is_empty():
 		sit["arm"] = &"dark"
-		# Everything has gone dark. Running down the nearest last-known position
-		# at flank speed is only reasonable while the picture is quiet; under
-		# pressure, get behind an island instead. Cover is asked for with
-		# prioritize_cover because with nothing spotted there is nothing to shoot
-		# at, so it must not be rejected for being unshootable.
+		# Everything has gone dark. Running down the last-known position at flank
+		# speed is only reasonable while the picture is quiet; under pressure, take
+		# cover instead. prioritize_cover: with nothing spotted there's nothing to
+		# shoot at, so cover must not be rejected for being unshootable.
 		if d.dark_takes_cover and sit.threat >= get_chase_max_threat():
 			var cp := _cover_params()
 			cp["prioritize_cover"] = true
@@ -2560,17 +2453,23 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	return intent
 
 
-# ============================================================================
 # NAVINTENT — V4 bot controller interface
-# ============================================================================
+# Threat calibration. The reference engagement - the thing one unit of pressure
+# means - is a single enemy of my own class, at parity HP, point blank, actively
+# shooting at me, at the start of the match. That case is defined to score
+# exactly 0.5, and every other situation is read against it: two such enemies
+# 0.75, three 0.875, a half-HP one alone 0.33, one at half its gun range 0.41.
+const THREAT_HP_FALLOFF: float = 0.7                             # diminishing returns on an HP advantage
+const THREAT_HP_PARITY: float = 1.0 - exp(-THREAT_HP_FALLOFF)    # raw HP curve evaluated at parity
+const THREAT_SATURATION: float = log(2.0)                        # one unit of pressure halves remaining safety
+
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
-	## Each spotted enemy within its own gun range contributes a per-enemy threat
-	## via an asymptotic function (1 − e^−x), so threat approaches 1 as the raw
-	## pressure increases but never exceeds it. Raw pressure is
-	##   enemy_hp / my_hp × range_pressure × class_w
-	## Multiple enemies compound multiplicatively via raw_threat *= (1 − this_threat).
-	## Subclasses override get_threat_class_weight() to tune per-class fear.
+	## Each enemy within its own gun range contributes hp_pressure × range_pressure
+	## × class_w, and pressures compound: threat = 1 − 2^−(total pressure), so one
+	## unit of pressure halves remaining safety and threat approaches but never
+	## reaches 1. Calibrated by the reference engagement above; subclasses tune
+	## per-class fear via get_threat_class_weight().
 	var server: GameServer = ctx.server
 	var frame := Engine.get_physics_frames()
 	if frame == _threat_score_frame:
@@ -2578,16 +2477,12 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var my_hp  = _ship.health_controller.current_hp
 	var max_hp = _ship.health_controller.max_hp
 	var hp_ratio = my_hp / max_hp if max_hp > 0.0 else 0.0
-	var hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
+	var my_hp_pressure = clampf(1.0 - hp_ratio, 0.0, 1.0)
 
-	# What is out there and how sure we are of it. A spotted enemy is where it
-	# is seen to be; everything else the enemy owns is at its believed position
-	# with a certainty to match (see EnemyPresumption). Two things change here
-	# from reading the contact tables directly: a ship nobody has ever seen now
-	# counts at all - it still shoots, and a bot that only fears what it can see
-	# will happily hold a position that is only safe from what it can see - and
-	# an unspotted one is judged on where the team thinks it is rather than on
-	# its live position, which is not something this bot is entitled to know.
+	# What is out there and how sure we are of it: a spotted enemy is where it's
+	# seen, everything else is at its believed position with matching certainty
+	# (see EnemyPresumption). A never-seen ship still counts (it still shoots),
+	# and an unspotted one is judged on the team's belief, not its live position.
 	var contacts: Array[Dictionary] = []
 	for enemy in server.get_valid_targets(_ship.team.team_id):
 		contacts.append({ship = enemy, position = enemy.global_position, certainty = 1.0})
@@ -2599,7 +2494,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 				EnemyPresumption.certainty(guess)),
 		})
 	if contacts.is_empty():
-		_threat_score_cache = hp_pressure * 0.3
+		_threat_score_cache = my_hp_pressure * 0.3
 		_threat_score_frame = frame
 		return _threat_score_cache
 
@@ -2621,41 +2516,29 @@ func get_threat_score(ctx: SkillContext) -> float:
 		# Only count enemies whose guns can plausibly reach us
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
-		# 0.0 at range edge → 1.0 at point-blank
-		var range_pressure = clampf(0.5 + (0.5 - 0.5 * pow(dist / enemy_range, 2.0)), 0.0, 1.0)
+		# 1.0 at point-blank → 0.0 at the range edge. This was inverted: it read
+		# pow(dist / enemy_range, 2.0), which is 0 in a knife fight and 1 at the
+		# horizon, so the closer a bot got the safer it believed itself to be.
+		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
-		# raw_threat *= (1.0 - range_pressure * class_w)
-		# Asymptotic: approaches 1 as raw pressure increases, never exceeds it.
-		# 1 − e^(−x): x=0 → 0.0, x=1 → 0.63, x=2 → 0.86, x→∞ → 1.0
-		var raw_val = enemy_hp / my_hp * range_pressure * class_w
+		# How much ship is pointed at me, measured in units of my own remaining HP
+		# and with diminishing returns: parity is exactly 1.0, half my HP is 0.59,
+		# and no enemy however healthy is worth more than ~1.99 of me.
+		var hp_pressure = (1.0 - exp(-THREAT_HP_FALLOFF * enemy_hp / my_hp)) / THREAT_HP_PARITY
+		var raw_val = hp_pressure * range_pressure * class_w
 		if !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
 		raw_val *= threat_scale
-		var this_threat = 1.0 - exp(-raw_val)
-		# Not knowing exactly where something is makes it less frightening, but
-		# on a sliding scale: a contact that went dark seconds ago is nearly as
-		# dangerous as one in plain sight, while a ship placed by nothing but the
-		# clock and a spawn line is a rumour. This used to be a flat discount on
-		# everything unspotted, which made a fresh loss of contact and a
-		# ten-minute-old guess equally worrying.
+		var this_threat = 1.0 - exp(-THREAT_SATURATION * raw_val)
+		# Not knowing exactly where something is makes it less frightening, but on
+		# a sliding scale: a contact gone dark seconds ago is nearly as dangerous
+		# as one in plain sight, while a spawn-line rumour barely counts. Used to
+		# be a flat discount on everything unspotted, equating a fresh loss of
+		# contact with a ten-minute-old guess.
 		this_threat *= float(contact.certainty)
 		raw_threat *= (1.0 - this_threat)
 
-	# var friendly = server.get_team_ships(_ship.team.team_id)
-	# for mate in friendly:
-	# 	var dist = mate.global_position.distance_to(_ship.global_position)
-	# 	if mate != _ship and mate.health_controller.is_alive() and dist < 4000.0:
-	# 		# Nearby allies reduce threat via their own HP ratio (more HP = more support they can provide)
-	# 		var mate_hp_ratio = mate.health_controller.current_hp / mate.health_controller.max_hp if mate.health_controller.max_hp > 0.0 else 0.0
-	# 		raw_threat *= lerpf(1.0, 2.0, mate_hp_ratio)
-
-	# # Low HP amplifies perceived threat so damaged ships play more defensively
-	# raw_threat *= lerpf(1.0, 2.0, hp_pressure)
-
-	# # Normalize: 5 threat-weight units ≈ maximum threat
-	# return clampf(raw_threat / 5.0, 0.0, 1.0)
-	# raw_threat *= hp_ratio
 	var base_threat = clampf(1 - raw_threat, 0.0, 1.0)
 
 	# As the match timer runs out, reduce threat so bots play more aggressively.
@@ -2670,9 +2553,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 
 
 
-# ============================================================================
 # COMBAT
-# ============================================================================
 
 func _secondary_target_offset(target: Ship) -> Vector3:
 	var super_idx = target.armor_parts.find_custom(func(part):
@@ -2773,24 +2654,19 @@ func engage_target(target: Ship):
 		return
 
 
-# ============================================================================
 # AVIATION (shared by all ship classes; driven directly via the Squadron API,
 # never the player RPC path, whose shell_indices multi-select is empty for bots)
-# ============================================================================
 var _aviation_spot_issued: Dictionary = {}  # int (squadron index) -> Vector2
 const AVIATION_SPOT_REISSUE_DIST: float = 500.0
 var _aviation_shadow_issued: Dictionary = {}  # int (squadron index) -> Vector2
 const AVIATION_SHADOW_REISSUE_DIST: float = 500.0
 var _aviation_strike_target: Dictionary = {}  # int (squadron index) -> Ship it was sent after
 
-# Ordnance is only committed against a contact somebody is actually holding: a
-# live spot, or a last-known position still being refreshed. LKPs stop refreshing
-# the moment nothing can see the ship, so a contact older than this is one that
-# has been gone a while, and a run against it puts ordnance in the water.
+# Ordnance only commits to a contact someone is holding: a live spot, or an
+# LKP still refreshing. Past this age it's been gone a while — a run wastes ordnance.
 const LKP_STRIKE_MAX_AGE: float = 40.0
-# A run already under way is given a little more rope before being broken off:
-# LKPs refresh on GameServer.HYDRO_LKP_INTERVAL, which is itself 4s, so testing a
-# run against a strict 4s would have it flicker against its own refresh cadence.
+# A run already under way gets a bit more rope before breaking off: LKPs
+# refresh every HYDRO_LKP_INTERVAL (4s), so testing against a strict 4s would flicker.
 const LKP_STRIKE_ABORT_AGE: float = 6.0
 
 ## Whether a squadron may be sent in to drop on this contact at all.
@@ -2806,11 +2682,9 @@ func _contact_strike_lost(sol: Dictionary) -> bool:
 		return true
 	return sol.is_lkp and sol.age > LKP_STRIKE_ABORT_AGE
 
-## Same question for the run squadron `index` is actually flying. The contact
-## judged is the ship it was sent after, not whatever the bot happens to be
-## looking at this tick - the two diverge the moment a fresher enemy turns up
-## nearby, and a squadron committed against a ship that has since gone dark would
-## otherwise ride that fresh contact's coat-tails all the way onto empty water.
+## Same question for the squadron `index` is actually flying: judged against
+## the ship it was sent after, not whatever the bot is looking at this tick —
+## otherwise a committed run rides a fresher contact's coat-tails onto empty water.
 func _strike_contact_lost(index: int, current_ship: Ship, current_sol: Dictionary) -> bool:
 	var committed_to = _aviation_strike_target.get(index, null)
 	if committed_to == null or committed_to == current_ship:
@@ -2819,13 +2693,10 @@ func _strike_contact_lost(index: int, current_ship: Ship, current_sol: Dictionar
 		return true
 	return _contact_strike_lost(get_contact_solution(committed_to))
 
-## The contact a squadron is actually running in on: the one it was released
-## against, not whatever the bot happens to be looking at this tick. Re-aiming a
-## run at a ship somebody has just spotted is how a strike ends up attacking
-## nothing at all - it swings onto the new contact, that contact goes dark, the
-## run breaks off, and the squadron dissolves back into a rally it should never
-## have been able to return to. Returns {ship, sol}; a null ship means the
-## committed contact is gone for good.
+## The contact a squadron is actually running in on: released against, not
+## whatever the bot is looking at this tick. Re-aiming onto a freshly-spotted
+## ship is how a strike attacks nothing — it swings onto the new contact, that
+## goes dark, and the run dissolves back into a rally. {ship, sol}; null ship = gone for good.
 func _committed_contact(index: int, current_ship: Ship, current_sol: Dictionary) -> Dictionary:
 	var committed = _aviation_strike_target.get(index, null)
 	if committed == null or committed == current_ship:
@@ -2834,19 +2705,15 @@ func _committed_contact(index: int, current_ship: Ship, current_sol: Dictionary)
 		return {ship = null, sol = {valid = false}}
 	return {ship = committed, sol = get_contact_solution(committed)}
 
-## Whether terrain between `point` and this carrier breaks a squadron's run-in,
-## so ordnance cannot be put there at all (see DropShadow). Bots are held to the
-## same rule the player is - AviationController refuses the order either way, and
-## a squadron sent at a mark in the dead zone flies the whole sortie for nothing.
+## Whether terrain breaks a squadron's run-in to `point` (see DropShadow). Bots
+## are held to the same rule the player is — AviationController refuses either way.
 func _drop_blocked(point: Vector2) -> bool:
 	return DropShadow.is_blocked(point,
 		Vector2(_ship.global_position.x, _ship.global_position.z))
 
 ## Points a squadron's run at `contact`: approach side, lead, drop point. Called
-## every tick until the approach commits, so the aim tracks the contact right up
-## to the point the run freezes. Returns false without ordering anything when the
-## lead has walked the drop point into a dead zone - the contact has got itself
-## behind cover, and the caller has to find the squadron something else to do.
+## every tick until the approach commits, tracking the contact until it freezes.
+## Returns false (orders nothing) when the lead walked the drop into a dead zone.
 func _aim_run(index: int, squad: Squadron, contact: Ship, contact_sol: Dictionary) -> bool:
 	var pos: Vector3 = contact_sol.position if contact_sol.get("valid", false) else contact.global_position
 	var at := Vector2(pos.x, pos.z)
@@ -2857,11 +2724,9 @@ func _aim_run(index: int, squad: Squadron, contact: Ship, contact_sol: Dictionar
 	squad.set_attack(drop, dir)
 	return true
 
-## The best contact for a squadron that has just lost the one it was sent after:
-## strikeable right now, inside the reach it is tasked on, and nearest to where
-## the squadron already IS rather than to the carrier - a replacement behind it
-## costs the whole transit over again. Returns {ship, sol}, empty if there is
-## nothing worth turning onto.
+## Best replacement contact for a squadron that just lost the one it was sent
+## after: strikeable now, in reach, nearest to where the squadron already IS
+## (not the carrier — a replacement behind it costs the whole transit again).
 func _replacement_contact(squad: Squadron, server: GameServer, lost: Ship) -> Dictionary:
 	if server == null or _ship.team == null:
 		return {}
@@ -2895,11 +2760,9 @@ func _replacement_contact(squad: Squadron, server: GameServer, lost: Ship) -> Di
 			best = {ship = enemy, sol = enemy_sol}
 	return best
 
-## What a squadron does when the contact it was committed against is gone. It
-## does not fly home to start over - that spends the transit twice and a rearm on
-## top - it turns onto the nearest thing it can still reach from where it is. Only
-## with nothing left to strike does it hold, out of AA, ready for the next
-## contact to firm up.
+## What a squadron does when its committed contact is gone: turns onto the
+## nearest thing it can still reach rather than flying home to start over (that
+## spends the transit twice, plus a rearm). Holds, clear of AA, only if nothing's left.
 func _retarget_or_hold(index: int, squad: Squadron, server: GameServer, lost: Ship,
 		hold_point: Vector2) -> void:
 	var swap := _replacement_contact(squad, server, lost)
@@ -2920,11 +2783,10 @@ func _retarget_or_hold(index: int, squad: Squadron, server: GameServer, lost: Sh
 var _aviation_in_group: Dictionary = {}  # int (squadron index) -> true
 const AVIATION_RANGE_HYSTERESIS: float = 1.1
 
-## Sends a squadron to loiter over a contact it is not allowed to strike, so it is
-## already overhead the moment that contact firms up again. Routing it by waypoint
-## rather than attack point is the whole point: set_waypoint() clears attack_point,
-## which drops the formation out of its attack run, and a run that reaches its mark
-## drops ordnance whether or not anything is still there to drop it on.
+## Sends a squadron to loiter over a contact it isn't allowed to strike, so it's
+## overhead once the contact firms up. Uses waypoint, not attack point:
+## set_waypoint() clears attack_point, dropping the formation out of its attack
+## run — an attack run that reaches its mark drops ordnance regardless.
 func _shadow_contact(index: int, squad: Squadron, point: Vector2) -> void:
 	if squad.returning or squad.attack_fired:
 		return
@@ -2936,11 +2798,9 @@ func _shadow_contact(index: int, squad: Squadron, point: Vector2) -> void:
 		_aviation_shadow_issued.erase(index)
 		squad.abort_sortie()
 		return
-	# Clear of every AA envelope known or remembered. Loitering used to mean
-	# orbiting the contact itself, which was free when a shot-down plane was
-	# back on the next launch; now it is a squadron parked inside an AA envelope
-	# for a whole sortie, losing a plane every few seconds and a build time with
-	# each one.
+	# Clear of every known/remembered AA envelope. Loitering used to mean orbiting
+	# the contact itself; now a lost plane costs a full build time, so parking in
+	# an AA envelope for a whole sortie is no longer free.
 	var station := _clamp_to_squadron_range(squad, _clear_of_threats(point))
 	# Always issue when there is a run to break off; otherwise only when the
 	# loiter point has actually moved, so the squadron is left to orbit in peace
@@ -2952,11 +2812,9 @@ func _shadow_contact(index: int, squad: Squadron, point: Vector2) -> void:
 	squad.set_waypoint(station, false)
 	_aviation_shadow_issued[index] = station
 
-## Pulls a loiter station back inside the squadron's reach of the carrier.
-## Squadron._process_waypoints() clamps the waypoint itself, but set_waypoint()
-## also stores the raw point as idle_pos, and idle_pos is what the squadron
-## orbits once that waypoint is consumed - so handing it an out-of-reach point
-## parks the orbit outside the tether. Clamping here keeps both in agreement.
+## Pulls a loiter station back inside the squadron's reach. set_waypoint() also
+## stores the raw point as idle_pos, which is what the squadron orbits once the
+## waypoint is consumed — an out-of-reach point parks the orbit outside the tether.
 func _clamp_to_squadron_range(squad: Squadron, point: Vector2) -> Vector2:
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var offset := point - carrier
@@ -2972,23 +2830,19 @@ func _squadron_range(squad: Squadron) -> float:
 	return (squad.params.p() as AircraftParams)._range
 
 
-# ── air group economics ─────────────────────────────────────────────────────
-# Everything in this block exists because sorties and losses now cost real time.
-# A lost plane is AircraftParams.plane_regen_time to replace and they rebuild one
-# at a time; nothing leaves the deck until AviationParams.min_takeoff_interval
-# has passed since the last launch; and a sortie ends when fuel_time runs out
-# whether or not it achieved anything.
+# AIR GROUP ECONOMICS — sorties and losses cost real time: a lost plane takes
+# AircraftParams.plane_regen_time to replace (rebuilt one at a time), nothing
+# launches until min_takeoff_interval has passed, and a sortie ends when
+# fuel_time runs out regardless of result.
 
-# Share of a squadron's endurance it may spend flying out. The rest has to cover
-# forming up, the approach and the drop. The flight home is free - fuel only
-# counts until the squadron turns for base (see Squadron.update_flight).
+# Share of endurance spent flying out; the rest covers forming up, approach and
+# drop. Flight home is free (see Squadron.update_flight).
 const AVIATION_TRANSIT_FUEL_FRACTION: float = 0.5
 # A squadron under this share of its roster stays on deck: a two-plane strike
 # achieves little, and every plane it loses is another full build time.
 const AVIATION_MIN_LAUNCH_STRENGTH: float = 0.6
-# An airborne squadron that has lost this share of what it launched with breaks
-# off instead of pressing on. The run's value is already gone; the survivors'
-# build time has not been spent yet.
+# Breaks off a run instead of pressing on once losses reach this share of what
+# launched — the run's value is gone but the survivors' build time isn't spent yet.
 const AVIATION_ABORT_STRENGTH: float = 0.5
 # A squadron with nothing left to do and less fuel than this goes home rather
 # than orbiting - it starts rearming sooner and stops standing in AA fire.
@@ -2996,34 +2850,28 @@ const AVIATION_RTB_FUEL_RESERVE: float = 25.0
 # Fuel held back for the run itself when deciding how long a group may keep
 # forming up: the approach, the drop, and being wrong about the target's course.
 const AVIATION_STRIKE_FUEL_RESERVE: float = 20.0
-# How long a strike group will hold for a squadron still on the deck. Longer than
-# a takeoff interval so the next launch is always worth waiting for, far short of
-# a rearm (which is a whole cycle away) or a rebuild.
+# How long a strike group holds for a squadron still on deck — longer than a
+# takeoff interval so the next launch is worth waiting for, short of a rearm cycle.
 const AVIATION_JOIN_WAIT_MAX: float = 25.0
 # Clearance kept between an orbiting squadron and the edge of the AA envelope.
 const AVIATION_AA_MARGIN: float = 500.0
 
-# Furthest from the carrier a squadron can usefully be tasked: its tether, or as
-# far as it can fly on its transit share of a tank, whichever binds first. The
-# fuel bound is what usually binds for spotters - an 18km reach at 200 m/s is 90s
-# of a 120s tank, so a station at the tether edge is one the squadron arrives at
-# on fumes and turns straight around from.
+# Furthest from the carrier a squadron can usefully be tasked: its tether, or
+# its transit-share fuel range, whichever binds first. Fuel usually binds for
+# spotters — an 18km reach at 200 m/s is 90s of a 120s tank.
 func _squadron_operating_radius(squad: Squadron) -> float:
 	var p := squad.params.p() as AircraftParams
 	return minf(p._range, p.speed * p.fuel_time * AVIATION_TRANSIT_FUEL_FRACTION)
 
-# Seconds from now until this squadron's ordnance is actually in the water, as
-# opposed to how long it takes to get near the target. The difference matters,
-# and it is not small: a run is flown to an entry point attack_descent_radius
-# out along the attack direction and only then down the run-in, so a beam-on
-# attack ordered from a rally that sits off the beam flies a dog-leg rather than
-# a straight line. Torpedo squadrons then drop short of the mark and the fish
-# swim the rest (process_attack_point), and the swim counts too.
+# Seconds until this squadron's ordnance is actually in the water — not how
+# long to get near the target. The difference is real: a run flies to an entry
+# point attack_descent_radius out, then down the run-in, so an off-beam rally
+# flies a dog-leg. Torpedo squadrons drop short and the fish swim the rest
+# (process_attack_point), which counts too.
 #
-# This is the figure the release deadline is measured against - see
-# _run_strike_group. A group that waits for a broadside using a straight-line
-# ETA is a group that runs its tanks dry on the dog-leg it forgot about, turns
-# for home with its ordnance still aboard, and pays a full cycle for nothing.
+# Measured against this, not a straight-line ETA, by the release deadline (see
+# _run_strike_group) — a straight-line estimate runs the tanks dry on the
+# forgotten dog-leg and comes home with ordnance still aboard.
 func _strike_eta(squad: Squadron, point: Vector2, dir: Vector2) -> float:
 	var speed := _squadron_speed(squad)
 	if speed <= 0.0:
@@ -3098,11 +2946,10 @@ static func _ship_aa_reach(other: Ship) -> float:
 	return other.aaa_controller.get_params()._range
 
 # Damage that same ship does inside that reach, per second. Reach and dps are
-# read separately and per-ship rather than rolled into one "threat" number,
-# because they answer different questions: reach says where the air group may
-# not go, dps says which of two targets it costs less to attack. A short-ranged
-# ship with heavy mounts and a long-ranged one with light mounts are opposite
-# answers to those two questions, and ships will carry different mounts.
+# tracked separately, not rolled into one "threat" number: reach says where the
+# air group may not go, dps says which of two targets costs less to attack —
+# a short-ranged ship with heavy mounts and a long-ranged one with light mounts
+# answer those differently.
 static func _ship_aa_dps(other: Ship) -> float:
 	if other == null or not is_instance_valid(other) or not other.is_alive():
 		return 0.0
@@ -3111,18 +2958,14 @@ static func _ship_aa_dps(other: Ship) -> float:
 	return other.aaa_controller.get_params().dps
 
 
-# ── AA exposure ─────────────────────────────────────────────────────────────
-# What attacking a given ship actually costs, in aircraft. AA fires on whatever
-# is inside its envelope (see AAAController), so the price of a run is the time
-# the squadron spends inside every envelope that covers the approach, times what
-# each of those ships does per second. That is a number in hit points, which is
-# the only form in which "this target is defended and that one is not" can be
-# compared against "this target is worth more than that one".
+# AA EXPOSURE — what attacking a ship costs, in aircraft. AA fires on whatever
+# is inside its envelope (see AAAController), so the price of a run is time
+# spent inside every covering envelope times that ship's dps — a hit-point
+# figure comparable against target value.
 #
 # The whole final leg is priced, not just the drop point: a squadron flies in
-# along the attack direction from attack_descent_radius out and overflies the
-# mark afterwards, and most of the fire it takes is on those legs rather than at
-# the instant of release.
+# from attack_descent_radius out and overflies the mark afterwards, taking most
+# of its fire on those legs rather than at the instant of release.
 
 ## Length of `segment` (from -> to) that lies inside the circle (centre, radius).
 ## Standard ray/circle clip, kept explicit because it runs per threat per
@@ -3145,22 +2988,16 @@ static func _segment_in_circle(from: Vector2, to: Vector2, centre: Vector2, radi
 		return 0.0
 	return (t1 - t0) * sqrt(len_sq)
 
-## Hit points a squadron expects to lose flying a run at `point` along `dir`,
-## given the threat picture built this tick.
+## Hit points a squadron expects to lose flying a run at `point` along `dir`.
 ##
-## Three legs are priced, because the fire is taken on all three and mostly not
-## at the moment of release: the approach from the carrier's side in to the
-## entry point, the run-in itself, and the overfly afterwards. Modelling the
-## approach as a straight leg off the carrier rather than off the rally is
-## deliberate - the rally is chosen to be clear of everything, so from there on
-## the whole point is that the squadron has to cross whatever lies between. It
-## also makes the figure sensitive to which SIDE the target is attacked from: a
-## run threaded in past an escort is charged for that escort and the same run
-## from the open flank is not.
+## Three legs are priced (approach from carrier to entry, run-in, overfly),
+## since most fire lands there, not at release. Approach is modelled off the
+## carrier, not the rally, deliberately: it makes the figure sensitive to which
+## SIDE is attacked — a run threaded past an escort is charged for it, the same
+## run from the open flank isn't.
 ##
-## Threats include the presumed positions of ships nobody is holding and the
-## remembered hot spots, exactly as the rally does - a target ringed by escorts
-## that have never been spotted is not a soft one.
+## Threats include presumed and remembered-hot-spot positions, same as the
+## rally — a target ringed by unspotted escorts isn't soft.
 func _aa_exposure(point: Vector2, dir: Vector2, squad: Squadron) -> float:
 	var threats := _aviation_threat_cache
 	if threats.is_empty():
@@ -3207,24 +3044,18 @@ func _aa_exposure_ratio(point: Vector2, dir: Vector2, squad: Squadron) -> float:
 	return _aa_exposure(point, dir, squad) / p.hp
 
 
-# ── broadside presentation ──────────────────────────────────────────────────
-# A run is aimed along the target's beam so the abreast formation spreads across
-# the ship's length - torpedoes run over the broadside, bombs fall along the
-# keel (see _attack_direction). How much of that length the run actually crosses
-# is the sine of the angle between the run and the target's heading: beam-on is
-# the whole ship, bow-on is its width. That number is a direct multiplier on
-# what the drop is worth, so it belongs in target selection and in the decision
-# to release, not only in the aiming.
+# BROADSIDE PRESENTATION — a run is aimed along the target's beam so the
+# formation spreads across its length (torpedoes over the broadside, bombs
+# along the keel; see _attack_direction). Coverage is the sine of the angle
+# between run and heading (beam-on = full ship, bow-on = its width) — a direct
+# value multiplier, so it belongs in target selection too, not just aiming.
 #
-# It is not free to choose, either: set_attack() clamps the run into
-# MAX_ATTACK_ANGLE around the carrier-to-target line, so a beam-on drop is only
-# available when the carrier is already off the target's beam. Which is why this
-# is measured through the same clamp rather than assuming the beam is reachable.
+# Not free to choose: set_attack() clamps the run into MAX_ATTACK_ANGLE around
+# the carrier-to-target line, so beam-on is only available when the carrier is
+# already off the beam — measured through the same clamp, not assumed reachable.
 
-## Run the squadron would actually fly against the contact believed to be at
-## `point`, clamped into the approach cone. Side is chosen the way
-## _attack_direction chooses it - the beam nearer the approach, so the formation
-## never has to turn around.
+## Run the squadron would fly against the contact at `point`, clamped into the
+## approach cone. Side chosen like _attack_direction: the beam nearer the approach.
 func _beam_run_direction(point: Vector2, sol: Dictionary) -> Vector2:
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var bearing := point - carrier
@@ -3259,11 +3090,9 @@ func _broadside_quality(point: Vector2, sol: Dictionary) -> float:
 		return 0.5
 	return clampf(absf(dir.normalized().cross(forward)), 0.0, 1.0)
 
-# Where a strike group forms up: on the carrier's side of the contact and clear
-# of the AA envelope, so squadrons waiting for the rest of the group can orbit
-# without being shot at. Derived rather than tuned - it moves with the contact and
-# with whatever AA the enemy actually brings. Never placed further out than the
-# carrier itself, which would have squadrons forming up behind their own deck.
+# Where a strike group forms up: carrier-side of the contact, clear of the AA
+# envelope, so waiting squadrons can orbit unshot at. Derived, not tuned — moves
+# with the contact and whatever AA is actually present. Never further out than the carrier itself.
 const AVIATION_RALLY_MARGIN: float = 1500.0
 const AVIATION_RALLY_ARRIVE_DIST: float = 1500.0
 
@@ -3275,30 +3104,24 @@ func _strike_rally_point(point: Vector2, aa_reach: float) -> Vector2:
 	return point + away.normalized() * minf(aa_reach + AVIATION_RALLY_MARGIN, away.length())
 
 
-# ── rally threat memory ─────────────────────────────────────────────────────
-# A rally derived from the aimed contact alone is not safe and is not stable.
-# Not safe, because any other ship can be sitting on it - and a ship whose AA
-# outranges its own air-detection radius shoots squadrons that never see it, so
-# nothing about it ever reaches the contact tables. Not stable, because the
-# contact the rally is measured from flips the moment such a ship is spotted:
-# the rally is recomputed against a much nearer ship and pulls back, the
-# squadron leaves, the ship goes dark again, the rally springs forward onto the
-# same spot, and the group cycles in and out of the same AA envelope.
+# RALLY THREAT MEMORY — a rally derived from the aimed contact alone is neither
+# safe nor stable. Not safe: any ship can be sitting on it, including one whose
+# AA outranges its own detection radius (shoots squadrons it never appears to).
+# Not stable: the moment such a ship is spotted the rally recomputes closer,
+# the squadron backs off, the ship goes dark, and the rally springs forward
+# again — cycling in and out of the same envelope.
 #
-# So the rally is cleared of every threat that is known OR remembered, and,
-# while a group is forming, is allowed to be pulled back but never pushed
-# forward again - the cycle cannot start if the return leg does not exist.
+# So the rally clears every threat known OR remembered, and while a group
+# forms, may only be pulled back, never pushed forward — no return leg, no cycle.
 
-## How long a place where planes got hurt keeps being avoided. Long, because the
-## ship that did it is by assumption one nothing can see: there will be no second
-## piece of evidence until another squadron flies into it.
+## How long a place where planes got hurt keeps being avoided — long, since the
+## ship responsible is assumed unspottable until another squadron flies in.
 const AVIATION_HOT_SPOT_MEMORY_MS: int = 120000
 ## Radius kept clear around one. Sized to cover a typical AA envelope from
 ## wherever inside it the damage happened to be noticed.
 const AVIATION_HOT_SPOT_RADIUS: float = 4000.0
-## Passes of threat separation. The rally usually clears everything on the
-## first; the rest are for the case where backing away from one envelope walks
-## it into another.
+## Passes of threat separation — the rally usually clears on the first; the
+## rest handle backing out of one envelope walking into another.
 const AVIATION_RALLY_CLEAR_PASSES: int = 3
 
 var _aviation_hot_spots: Array[Dictionary] = []  # {position: Vector2, until_ms: int}
@@ -3307,10 +3130,8 @@ var _aviation_squadron_hp: Dictionary = {}       # int (squadron index) -> float
 # currently forming up. Reset once that group goes in or disperses.
 var _rally_hold_dist: float = INF
 
-## Watches a squadron's total health for damage taken while it is NOT on an
-## attack run. Over the target, being shot at is the point; anywhere else it is
-## the only evidence that something is out there shooting, and it arrives whether
-## or not the shooter was ever detected.
+## Watches a squadron's health for damage taken while NOT on an attack run —
+## the only evidence something is shooting from a spot nobody has detected.
 func _sample_loiter_damage(index: int, squad: Squadron) -> void:
 	var total: float = 0.0
 	for plane in squad.aircraft:
@@ -3347,10 +3168,9 @@ func _live_hot_spots() -> Array[Dictionary]:
 	return live
 
 ## Every position the air group should keep its distance from, as
-## {position, radius}: enemies at their believed position out to their AA reach,
-## and remembered hot spots. Believed covers everything - held, last seen a while
-## ago, or never seen at all - because the ship this exists for is precisely the
-## one nobody has laid eyes on.
+## {position, radius}: enemies at their believed position out to AA reach, plus
+## remembered hot spots. "Believed" covers held, stale, and never-seen alike —
+## the ship this exists for is exactly the one nobody has laid eyes on.
 func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 	var threats: Array[Dictionary] = []
 	# Heaviest AA known anywhere, used to price the hot spots below.
@@ -3364,12 +3184,9 @@ func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 					position = Vector2(enemy.global_position.x, enemy.global_position.z),
 					radius = reach + AVIATION_AA_MARGIN,
 					dps = _ship_aa_dps(enemy)})
-		# Everything not currently held, at wherever it is believed to be: a
-		# last-known position while that is what there is, and otherwise the
-		# presumption built from the spawns and the clock (see
-		# EnemyPresumption). Without this the air group plans its rally around
-		# the handful of ships that happen to be visible and forms up on top of
-		# the rest of the fleet.
+		# Everything not currently held, at its believed position: an LKP while
+		# fresh, else the spawn/clock presumption (see EnemyPresumption). Without
+		# this the air group rallies only around visible ships and forms up on top of the rest of the fleet.
 		for guess in get_presumed_contacts():
 			if float(guess.radius) > PRESUMED_THREAT_MAX_RADIUS:
 				continue
@@ -3382,10 +3199,8 @@ func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 				position = Vector2(at.x, at.z),
 				radius = reach + AVIATION_AA_MARGIN,
 				dps = _ship_aa_dps(guess.ship)})
-	# A hot spot is a place planes got hurt by something nobody has ever seen,
-	# so there is no ship to read a dps off. Priced at the heaviest AA on the
-	# board: the unknown is the one thing that could be anything, and the cost of
-	# under-rating it is a squadron routed back through whatever made the mark.
+	# A hot spot has no ship to read dps off, so it's priced at the heaviest AA
+	# on the board — under-rating an unknown risks routing a squadron back through it.
 	for spot in _live_hot_spots():
 		threats.append({
 			position = spot.position,
@@ -3397,20 +3212,16 @@ func _aviation_threats(server: GameServer) -> Array[Dictionary]:
 ## station the air group is sent to.
 var _aviation_threat_cache: Array[Dictionary] = []
 
-## The AA reach that actually bears on `point`: the widest envelope among the
-## threats that reach it, or come within a rally margin of doing so.
+## The AA reach that actually bears on `point`: the widest envelope among
+## threats that reach it (or come close, within a rally margin).
 ##
-## _enemy_aa_reach() answers the same question with the maximum over the whole
-## board, which is only the same answer while every ship carries the same mounts.
-## Once they do not, the single longest-ranged ship on the map dictates the
-## stand-off of every squadron everywhere, including groups forming up against a
-## contact twenty kilometres away from it - the rally is shoved out, transit
-## grows, and the extra distance buys nothing because the ship that justified it
-## was never going to reach them.
+## Unlike _enemy_aa_reach()'s board-wide max, which only matches once every
+## ship carries the same mounts — otherwise the single longest-ranged ship on
+## the map dictates every squadron's standoff everywhere, even 20km from it,
+## for no benefit.
 ##
-## Falls back to `fallback` when nothing is known to bear on the point at all,
-## so a station worked out against a contact nobody is holding is still placed
-## with the board-wide figure rather than with none.
+## Falls back to `fallback` when nothing bears on the point at all, so an
+## unheld contact still gets the board-wide figure instead of none.
 func _aa_reach_near(point: Vector2, fallback: float) -> float:
 	var reach: float = 0.0
 	for threat in _aviation_threat_cache:
@@ -3445,11 +3256,9 @@ func _clear_of_threats(point: Vector2) -> Vector2:
 			break
 	return out
 
-## Caps how far forward the rally may sit while a group is forming up. The
-## bearing stays live so the group still waits on the right side of the carrier,
-## but the distance only ever ratchets inward - a rally that was pulled back
-## because squadrons were being shot at there does not drift out again the moment
-## whatever shot them stops being visible.
+## Caps how far forward the rally may sit while a group forms up. Bearing stays
+## live (group waits on the right side of the carrier), but distance only ever
+## ratchets inward — a rally pulled back under fire doesn't drift out again once the shooter goes dark.
 func _hold_rally(rally: Vector2) -> Vector2:
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var offset := rally - carrier
@@ -3461,15 +3270,12 @@ func _hold_rally(rally: Vector2) -> Vector2:
 		return carrier
 	return carrier + offset / d * _rally_hold_dist
 
-# Where a spotter sits to watch a contact. Both bounds are measured on the edges
-# of the orbit rather than its centre, since the squadron circles the station at
-# circle_range: far enough out that the near edge clears the AA envelope, close
-# enough in that the far edge still holds the ship inside `detect` - the range at
-# which this squadron actually sees THIS ship (see _air_detect_radius), which is
-# usually the ship's own air_radius rather than anything the squadron brings.
-# When both bounds cannot be met the spotting one wins and the squadron sits in
-# the AA: a spotter that cannot see the ship is doing nothing at all, and holding
-# a contact is worth being shot at for. It still stands as far off as it can.
+# Where a spotter sits to watch a contact. Bounds are measured on the orbit's
+# edges, not its centre, since the squadron circles at circle_range: near edge
+# clears the AA envelope, far edge still holds the ship inside `detect` (see
+# _air_detect_radius — usually the ship's own air_radius, not the squadron's).
+# When both can't be met, spotting wins and the squadron sits in the AA: a
+# spotter that can't see is doing nothing, and holding a contact is worth being shot at for.
 func _spot_station(squad: Squadron, contact: Vector2, aa_reach: float, detect: float) -> Vector2:
 	var p := squad.params.p() as AircraftParams
 	var nearest_safe: float = aa_reach + p.circle_range + AVIATION_AA_MARGIN
@@ -3482,17 +3288,15 @@ func _spot_station(squad: Squadron, contact: Vector2, aa_reach: float, detect: f
 	return contact + away.normalized() * minf(standoff, away.length())
 
 
-# ── deck scheduling ─────────────────────────────────────────────────────────
-# Only one squadron leaves the deck per AviationParams.min_takeoff_interval, and
-# AviationController.ensure_launched() simply refuses when the slot is not free -
+# DECK SCHEDULING — only one squadron leaves per min_takeoff_interval, and
+# AviationController.ensure_launched() just refuses when the slot isn't free —
 # so left alone, array order decides who flies. Squadrons ask for the slot
-# instead and the best request each tick is the one actually put up.
+# instead; the best request each tick wins it.
 const LAUNCH_PRIORITY_STRIKE: float = 100.0
 const LAUNCH_PRIORITY_SPOT: float = 50.0
-# A strike sent after a contact nobody is holding, to be overhead when it is
-# found. Bottom of the pile: it is worth doing with a slot nothing else wants,
-# and never worth taking one off a squadron that has something to drop on now or
-# off the spotter that is going to give it something to drop on.
+# A strike sent to be overhead when an unheld contact is found. Bottom of the
+# pile: never worth taking a slot from a squadron with something to drop on
+# now, or from the spotter finding it.
 const LAUNCH_PRIORITY_SEARCH: float = 25.0
 # A spotter outranks a strike squadron when there is nothing to strike: the air
 # group cannot work a contact nobody is holding, and the deck slot spent finding
@@ -3514,16 +3318,14 @@ func _grant_launch(av: AviationController) -> void:
 	_launch_request_index = -1
 	_launch_request_priority = -INF
 
-# beyond this multiple of attack_descent_radius the drop point is still
-# re-aimed each tick to track a moving target; inside it the squadron is
-# committed to its final run and the drop point freezes - a committed squadron
-# can be dodged, which is deliberate, so the aim is never refreshed past here
+# Beyond this multiple of attack_descent_radius the drop point is still
+# re-aimed to track the target; inside it the run is committed and frozen
+# (dodgeable, deliberately).
 const ATTACK_COMMIT_RADIUS_MULT: float = 1.2
 
-# Squadron may (re)take an attack order while on deck, airborne uncommitted,
-# or mid-approach - until it enters the commit radius around its processed
-# attack point (the point update_flight() actually flies to, which for
-# torpedo runs is offset behind the ordered point).
+# Squadron may (re)take an attack order until it enters the commit radius
+# around its processed attack point (update_flight()'s actual target; offset
+# behind the order for torpedo runs).
 func _squadron_should_take_attack(squad: Squadron, p: AircraftParams) -> bool:
 	if squad.returning or squad.holding_attack:
 		return false
@@ -3536,28 +3338,22 @@ func _squadron_should_take_attack(squad: Squadron, p: AircraftParams) -> bool:
 func _squadron_speed(squad: Squadron) -> float:
 	return (squad.params.p() as AircraftParams).speed
 
-# Furthest ahead of the last actual observation a contact's motion is worth
-# extrapolating. A squadron launched at max range is 1-2 minutes out, and a ship
-# doing 30+ knots covers 3-6 km in that time - projecting a frozen course that
-# far throws the drop point clean across the map, typically into the middle of
-# the enemy's own formation, and the run then breaks off on arrival having
-# achieved nothing. Nothing about a warship's course is worth trusting that far
-# out; it will have turned several times.
+# Furthest ahead of the last observation a contact's motion is worth
+# extrapolating. A squadron 1-2 minutes out vs a 30+ knot ship (3-6km in that
+# time) means projecting a frozen course that far throws the drop point across
+# the map, often into the enemy's own formation, for nothing — no warship's
+# course is trustworthy that far out.
 #
-# Cutting the horizon short is safe in a way that overshooting is not: the drop
-# point is re-aimed every tick right up to the commit radius, so a lead that
-# starts too short is corrected continuously as the squadron closes, while one
-# that starts too long sends it somewhere absurd first.
+# Cutting the horizon short is safe in a way overshooting isn't: the drop point
+# is re-aimed every tick up to the commit radius, so a short lead self-corrects
+# while a long one sends the squadron somewhere absurd first.
 const MAX_LEAD_HORIZON: float = LKP_MAX_LEAD_AGE
 
-# Leads the mark so the ordnance meets the target where it will be: how stale
-# the position being aimed at already is (the contact's age, zero for a live one)
-# plus the plane's flight time to the actual drop point (via the entry point
-# update_flight() enforces) plus the ordnance's own travel time after release
-# (bomb fall, torpedo run), all measured from the last observation and capped at
-# MAX_LEAD_HORIZON. The drop point moves with the lead, so iterate.
-# The velocity comes from the contact solution, so an unspotted target is led on
-# the course it was last seen holding rather than the one it is secretly flying.
+# Leads the mark: contact age + flight time to the drop point (via the entry
+# point update_flight() enforces) + ordnance travel time (bomb fall/torpedo
+# run), capped at MAX_LEAD_HORIZON. Drop point moves with the lead, so iterate.
+# Velocity comes from the contact solution, so an unspotted target is led on
+# its last-seen course, not its secret current one.
 func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, direction: Vector2, sol: Dictionary) -> Vector2:
 	if not is_instance_valid(air_ship) or not sol.get("valid", false):
 		return point
@@ -3584,16 +3380,12 @@ func _lead_attack_point(squad: Squadron, air_ship: Ship, point: Vector2, directi
 		ordered = point + vel * minf(lkp_age + path / speed + t_weapon, MAX_LEAD_HORIZON)
 	return ordered
 
-# Attack run direction: aligned with the target's beam, so the abreast
-# formation line spreads along the ship's length - torpedoes run across the
-# broadside, bombs land along the keel. Whichever side (right/left) the
-# squadron is already approaching from is taken, so it never has to turn
-# around mid-run. While it sits near the bow/stern axis the previously chosen
-# side is kept to stop the entry point flip-flopping side to side. The result is
-# then clamped into the same approach cone the player is held to, so a beam-on
-# run is only available when the carrier is already positioned off the target's
-# beam - which side was picked above decides which edge of the cone it settles
-# on, preserving the no-turn-around property.
+# Attack run direction: aligned with the target's beam so the formation spreads
+# along its length (torpedoes across the broadside, bombs along the keel).
+# Takes whichever side the squadron is already approaching from, so it never
+# turns around mid-run; near the bow/stern axis, keeps the previous side to
+# stop flip-flopping. Then clamped into the player's approach cone — the side
+# picked above decides which cone edge it settles on, preserving no-turn-around.
 const ATTACK_DIR_HYSTERESIS: float = 0.25
 var _aviation_attack_dir: Dictionary = {}  # int (squadron index) -> Vector2
 
@@ -3606,11 +3398,10 @@ func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vecto
 		travel = travel.normalized()
 	if not is_instance_valid(air_ship):
 		return travel
-	# The contact solution's basis, not the ship's live one: for a contact held
-	# on an LKP the live heading is something nobody has observed, so lining the
-	# run up on it both leaks concealment and aims the formation at a beam the
-	# target has since turned off of. Falls back to live only when there is no
-	# solution at all, in which case the ship is visible anyway.
+	# Contact solution's basis, not the ship's live one: an LKP's live heading is
+	# unobserved, so using it both leaks concealment and aims at a beam the
+	# target may have turned off of. Falls back to live only with no solution at
+	# all (ship is visible then anyway).
 	var contact_basis: Basis = sol.get("basis", air_ship.global_transform.basis)
 	var right := Vector2(contact_basis.x.x, contact_basis.x.z)
 	if right.length_squared() < 0.001:
@@ -3621,21 +3412,19 @@ func _attack_direction(index: int, squad: Squadron, air_ship: Ship, point: Vecto
 	var prev: Vector2 = _aviation_attack_dir.get(index, Vector2.ZERO)
 	if absf(preference) < ATTACK_DIR_HYSTERESIS and prev.length_squared() > 0.001:
 		dir = prev.normalized()
-	# set_attack() enforces the approach cone anyway, but the lead solution in
-	# _lead_attack_point() measures its flight path off this direction - hand it
-	# the run that will actually be flown, not the beam-on one that gets clamped
-	# away, or the entry point and ETA it derives are both wrong.
+	# set_attack() enforces the cone anyway, but _lead_attack_point() measures its
+	# flight path off this direction — hand it the run actually flown, not the
+	# clamped-away beam-on one, or the entry point/ETA it derives are both wrong.
 	dir = Squadron.clamp_attack_direction(dir, point,
 		Vector2(_ship.global_position.x, _ship.global_position.z))
 	_aviation_attack_dir[index] = dir
 	return dir
 
-## Last line of defence before a strike is committed. Every list aviation draws
-## from is already team-filtered at the server, so this should never be able to
-## fire - it exists because the cost of being wrong is a squadron putting
-## torpedoes into a friendly, and one comparison is cheaper than that outcome.
-## The push_error is the point: if this ever trips, it names the ship and the
-## table it leaked through instead of leaving a silent friendly-fire run.
+## Last line of defence before a strike commits. Every list aviation draws from
+## is already team-filtered server-side, so this should never fire — it exists
+## because the cost of being wrong is a torpedo run on a friendly, and one
+## comparison is cheap insurance. push_error names the ship and leak instead of
+## a silent friendly-fire run.
 var _friendly_contact_reported: Dictionary = {}  # Ship -> true, first report only
 
 func _is_hostile(other: Ship) -> bool:
@@ -3654,51 +3443,37 @@ func _is_hostile(other: Ship) -> bool:
 	return true
 
 
-# ── air target selection ────────────────────────────────────────────────────
-# The air group does not attack whatever the guns are shooting at, and it does
-# not attack whatever is nearest. Those were both stand-ins for a choice nobody
-# was making, and they are the wrong choice for aviation specifically, because a
-# strike's value is decided almost entirely by two things the gun target says
-# nothing about:
+# AIR TARGET SELECTION — not whatever the guns are shooting, not whatever's
+# nearest (both stand-ins for a choice nobody was making, and wrong for
+# aviation, since a strike's value depends on two things the gun target ignores):
+#   * how the target is lying — a run only crosses its full length beam-on (see
+#     _broadside_quality); bow-on, the same sortie buys a fraction of the damage.
+#   * what defends it — AA is per-ship in reach AND damage; escorted costs
+#     aircraft, and every aircraft is a full plane_regen_time to replace.
 #
-#   * how the target is lying. A run crosses the target's length only when it
-#     comes in on the beam (see _broadside_quality); against a ship bow-on to
-#     the carrier the same squadron, the same ordnance and the same losses buy a
-#     fraction of the damage. This is a multiplier on the whole sortie.
-#   * what is defending it. AA is per-ship in reach AND in damage, and a ship
-#     sitting alone is a different proposition from the identical ship inside
-#     two escorts' envelopes - the second costs aircraft, and every aircraft is
-#     a full plane_regen_time to replace.
-#
-# Both are scored here, against everything the bot legitimately believes in, and
-# the result is what the hull stations off as well (see CVBehavior).
-# Deliberately sticky: the chosen contact is what the rally is measured from and
-# what the group is forming up against, so a target that changes every time two
-# candidates trade places by a percent is a group that never goes in at all.
+# Scored here against everything believed, and reused for hull stationing (see
+# CVBehavior). Deliberately sticky: the chosen contact is what the rally and
+# group formation measure from, so a target that flips every 1% swing never
+# lets the group go in.
 
 ## How much better a rival has to score before the group swings onto it.
 const AIR_TARGET_STICK_MARGIN: float = 1.3
-## Worth of a run that crosses none of the target's length, relative to one that
-## crosses all of it. Not zero: a bow-on ship is still worth bombing, it is just
-## worth much less, and a floor here is what stops the group refusing every
-## target on the board because none of them happens to be beam-on right now.
+## Worth of a fully bow-on run relative to a fully beam-on one. Not zero: a
+## floor stops the group refusing every target because none is beam-on right now.
 const AIR_TARGET_BROADSIDE_FLOOR: float = 0.35
 ## Extra weight on a target that is already hurt - the same drop is likelier to
 ## finish it, and a sunk ship stops shooting at everything.
 const AIR_TARGET_DAMAGE_BONUS: float = 0.5
-## What a contact nobody is holding is worth relative to the same ship on a live
-## spot, at the two ends of how findable it still is.
+## What an unheld contact is worth relative to the same ship on a live spot, at
+## the two ends of how findable it still is.
 ##
-## A carrier is not restricted to what its team can already see, and charging a
-## flat discount for that pretended it was: a contact that went dark on our own
-## flank a moment ago lost to a live one clean across the map, when the air group
-## could simply have flown over and looked. Every aircraft carries eyes
-## (AircraftParams.spotting_range), so being unspotted costs the group a search on
-## arrival, not the target's worth - and how much of a search depends entirely on
-## how far the ship can have wandered off its dead reckoning by the time the
-## squadron gets there, against how wide a swathe the squadron sees on the way in
-## (see _refind_odds). Only a position vague enough that the sweep would genuinely
-## miss it falls back to the old flat discount.
+## A carrier isn't restricted to what its team can see, so a flat discount was
+## wrong: it lost a contact that went dark nearby to a live one across the map,
+## when the air group could just fly over and look. Every aircraft has eyes
+## (AircraftParams.spotting_range), so unspotted costs a search on arrival, not
+## the target's worth — sized by how far it could have wandered vs. how wide a
+## swathe the squadron sees en route (see _refind_odds). Only a position vague
+## enough to genuinely evade the sweep falls back to a flat discount.
 const AIR_TARGET_REFIND_BEST: float = 0.95
 const AIR_TARGET_REFIND_FLOOR: float = 0.35
 ## Odds of re-finding the contact below which the deck is not committed to it: a
@@ -3712,9 +3487,8 @@ const AIR_TARGET_TRANSIT_PENALTY: float = 0.25
 
 ## The contact the whole air group is currently working. Read by the hull so it
 ## stations off the ship its own squadrons are attacking (see
-## CVBehavior._strike_anchor) - a carrier stationed off some other contact puts
-## the target outside the approach cone and the beam-on run stops being
-## available at all.
+## CVBehavior._strike_anchor) — stationing off a different contact puts the
+## target outside the approach cone and beam-on runs stop being available.
 var _air_target: Ship = null
 
 func get_air_target() -> Ship:
@@ -3757,12 +3531,10 @@ func _group_reach(av: AviationController, strike: Array[int]) -> float:
 		reach = maxf(reach, _squadron_operating_radius(av.squadrons[i]))
 	return reach
 
-## What a class is worth to a STRIKE, which is not what it is worth to the guns -
-## get_threat_class_weight() answers "how much does this thing hurt me", and a
-## carrier scores low there precisely because it has no guns worth fearing. From
-## the air the ordering is close to reversed: what matters is how easy the ship
-## is to hit with a spread, how little it survives, and how much it is still
-## going to do if it is left alone.
+## What a class is worth to a STRIKE — not the same question as
+## get_threat_class_weight() (guns), where a carrier scores low for having no
+## guns worth fearing. From the air the ordering is near-reversed: ease of hit,
+## survivability, and what's left undone if ignored.
 static func _air_target_class_value(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		# Big, slow, thin-skinned, and every minute it stays afloat is another
@@ -3788,11 +3560,10 @@ func _air_target_score(av: AviationController, strike: Array[int], enemy: Ship,
 	var carrier := Vector2(_ship.global_position.x, _ship.global_position.z)
 	var dist := carrier.distance_to(at)
 
-	# Behind terrain, as far as the air group is concerned: no squadron off this
-	# carrier can get down onto it, so it is worth nothing to the deck no matter
-	# what it is. Judged from where the ship is BELIEVED to be, same as the rest
-	# of the score - a contact whose last known position is sheltered is one the
-	# group would fly out to and then be unable to attack.
+	# Behind terrain, as far as the air group is concerned: no squadron can get
+	# down onto it, so it's worth nothing regardless. Judged from the BELIEVED
+	# position, like the rest of the score — a sheltered LKP is one the group
+	# would fly to and then be unable to attack.
 	if _drop_blocked(at):
 		return 0.0
 
@@ -3834,25 +3605,18 @@ func _air_target_score(av: AviationController, strike: Array[int], enemy: Ship,
 	return score
 
 ## How well the air group can expect to find `enemy` again where it believes it
-## is, 1 for a mark it cannot plausibly have left and 0 for one it could be
-## anywhere in. This is the whole difference between a carrier and a gun ship:
-## the guns can only shoot what the team is holding, while the air group goes and
-## re-acquires the contact itself, so an unspotted ship is a search problem
-## rather than a target it does not have.
+## is: 1 for a mark it can't have left, 0 for one that could be anywhere. This is
+## the difference between a carrier and a gun ship — guns can only shoot what
+## the team holds, aviation re-acquires the contact itself.
 ##
-## Two quantities decide it. The searcher is the squadron with the best eyes on
-## THIS ship (see _air_detect_radius - a long-sighted spotter buys nothing
-## against a ship that has to be closed right up on), and its detection radius is
-## the swathe it sweeps on the way in. Against that, how far the ship can have
-## come off its dead reckoning by the time that squadron is overhead: the course
-## it was last seen holding, run out over the time already elapsed PLUS the
-## transit still to fly. Coupling the drift to the transit is what makes this
-## discriminate at all - a contact that went dark on the flank is all but certain
-## to still be in the sweep, and the identical contact across the map has had two
-## more minutes to be somewhere else by the time anyone gets there.
+## Two quantities: the sweep of the squadron with the best eyes on THIS ship
+## (see _air_detect_radius — a long-sighted spotter buys nothing against a ship
+## that must be closed on), against how far the ship could have drifted off its
+## last-seen course over elapsed time PLUS transit still to fly. Coupling drift
+## to transit is what discriminates: a contact dark on the flank is still in the
+## sweep, the same contact across the map has had minutes more to wander.
 ##
-## Floored at the rate the presumption model already ages a position at, so a
-## contact last seen stopped is not treated as nailed to the water forever.
+## Floored at the presumption model's own aging rate, so a stopped contact isn't nailed to the water forever.
 func _refind_odds(av: AviationController, enemy: Ship, sol: Dictionary, dist: float) -> float:
 	if not sol.get("valid", false):
 		return 0.0
@@ -3876,10 +3640,9 @@ func _refind_odds(av: AviationController, enemy: Ship, sol: Dictionary, dist: fl
 	var drift: float = rate * (float(sol.age) + eta)
 	return sweep / (sweep + drift)
 
-## Picks the contact the air group works this tick. Returns
-## {ship, sol, point, distance}, empty when there is nothing anywhere.
-## `gun_target` is only a candidate like any other - it is included so the ship
-## the hull is already shooting at is never overlooked, not so it wins.
+## Picks the contact the air group works this tick. Returns {ship, sol, point,
+## distance}, empty if nothing. `gun_target` is just another candidate —
+## included so it's never overlooked, not so it wins.
 func _select_air_target(av: AviationController, server: GameServer, gun_target: Ship) -> Dictionary:
 	if server == null or _ship.team == null:
 		return {}
@@ -3937,18 +3700,14 @@ func _select_air_target(av: AviationController, server: GameServer, gun_target: 
 	}
 
 
-# Per-tick aviation control. Attack squadrons (bombers/torpedo planes) full-launch
-# and re-aim their drop point on the air target every tick - the gun target if
-# valid, otherwise the nearest known enemy (visible or unspotted last-known
-# position) - until they enter their attack-descent commit radius, then let
-# them commit to the run. A run is only ever committed against a contact somebody
-# is actually holding; against anything staler the squadron is routed by waypoint
-# to loiter over the contact instead, and a run whose contact goes cold before
-# release is broken off the same way rather than dropping on open water. The drop point leads a moving target by the squadron's
-# ETA plus the ordnance's own flight time, and by however stale the aimed-at
-# position already was when it came from a last-known position rather than a live
-# one. Spotter squadrons take one known contact each, nearest first, and any left
-# over fan out across a search front centred on where the enemy is expected to be.
+# Per-tick aviation control. Attack squadrons full-launch and re-aim their drop
+# point on the air target every tick (gun target if valid, else nearest known
+# enemy) until they enter the commit radius, then commit to the run. A run only
+# ever commits against a held contact; anything staler gets loitered over by
+# waypoint instead, and a run whose contact goes cold before release breaks off
+# the same way. Drop point leads by ETA + ordnance flight time + LKP staleness.
+# Spotters take one known contact each, nearest first; leftovers fan out across
+# a search front centred on the enemy's expected position.
 func aviation_engage(target: Ship, server: GameServer) -> void:
 	var av: AviationController = _ship.aviation_controller
 	if av == null:
@@ -3965,10 +3724,9 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	# what the bot believes about the ship in `point`: live while it is spotted,
 	# its frozen last-known contact once it is not
 	var sol: Dictionary = {valid = false}
-	# The contact worth striking, not the one the guns happen to be on: how it is
-	# lying and what is defending it decide the sortie (see _select_air_target).
-	# `point` is the believed position throughout, so a contact held only on an
-	# LKP is worked where it has probably got to rather than where it went dark.
+	# The contact worth striking, not the gun target: lying and defenses decide
+	# the sortie (see _select_air_target). `point` is the believed position, so
+	# an LKP is worked where it's probably got to, not where it went dark.
 	var pick := _select_air_target(av, server, target)
 	if not pick.is_empty():
 		air_ship = pick.ship
@@ -3977,10 +3735,8 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 		dist = pick.distance
 		has_air_target = true
 	else:
-		# Nothing scoreable - no solution on anything, or nothing hostile alive.
-		# _get_nearest_enemy() draws from both the spotted ships and the
-		# last-known positions of unspotted ones, so whether `point` is live or
-		# stale depends on which it picked - the contact solution sorts that out.
+		# Nothing scoreable. _get_nearest_enemy() draws from both spotted ships
+		# and LKPs, so whether `point` ends up live or stale depends on which it picked.
 		var info = _get_nearest_enemy()
 		if not info.is_empty():
 			air_ship = info.get("ship")
@@ -4046,46 +3802,34 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 					_retarget_or_hold(i, squad, server,
 						_aviation_strike_target.get(i, null), loiter_point)
 				continue
-			# ── released and running in ──────────────────────────────────────
-			# Judged entirely on the contact it was sent after. Nothing about the
-			# rest of the picture reaches a squadron that is already inbound: it
-			# does not swing onto a ship somebody just spotted, and it does not
-			# fall back into the forming group when one goes dark. Either it
-			# presses the attack it was committed to, or the run is over.
+			# Released and running in: judged only on the contact it was sent
+			# after. An inbound squadron doesn't swing onto a freshly-spotted
+			# ship or fall back into the forming group — it presses the
+			# committed attack, or the run is over.
 			if squad.active and squad.attack_point != null:
 				var run := _committed_contact(i, air_ship, sol)
 				if run.ship == null or _contact_strike_lost(run.sol):
 					_retarget_or_hold(i, squad, server, run.ship, loiter_point)
 					continue
-				# The lead is re-solved every tick, so a target steaming in behind
-				# an island walks its own drop point into the dead zone. The run
-				# is over the moment that happens - pressing on only spends the
-				# ordnance on water the squadron is not allowed to drop on.
+				# The lead re-solves every tick, so a target steaming behind an
+				# island walks its own drop point into the dead zone — the run is
+				# over the moment that happens, pressing on only wastes ordnance.
 				if not _aim_run(i, squad, run.ship, run.sol):
 					_retarget_or_hold(i, squad, server, run.ship, loiter_point)
 				continue
-			# ── still forming up ─────────────────────────────────────────────
-			# The reach a squadron is judged against widens slightly once it is
-			# part of the group. A contact sitting on the boundary would otherwise
-			# flick a squadron in and out of the strike from one tick to the next,
-			# and the tick it happens to be out is the tick the group goes in
-			# without it - leaving it loitering while the others attack.
+			# Still forming up: reach widens slightly once part of the group, so
+			# a boundary contact doesn't flick a squadron in and out of the
+			# strike — the tick it's out is the tick the group goes in without it.
 			var reach := _squadron_operating_radius(squad)
 			if _aviation_in_group.has(i):
 				reach *= AVIATION_RANGE_HYSTERESIS
 			if dist > reach:
-				# Contact is beyond this squadron's useful reach from the carrier
-				# - its tether, or as far as its fuel takes it. Skipping the rest
-				# of the loop here abandoned the squadron outright: an airborne
-				# one went on flying whatever order it last had, with no re-aim
-				# and no break-off, and orbited its last loiter point
-				# indefinitely. That is why this only ever bit torpedo squadrons
-				# - their range is short enough that a carrier sitting at its
-				# standoff distance straddles the boundary, so the gate flickers,
-				# while longer-ranged bombers stay inside it and keep being
-				# re-tasked. Shadow instead, so the squadron holds at the edge of
-				# its reach ready to strike the moment the carrier closes. One
-				# still on deck is left there.
+				# Beyond this squadron's reach (tether or fuel). Used to just skip
+				# — an airborne squadron flew its last order forever with no
+				# re-aim or break-off, which mainly bit short-ranged torpedo
+				# squadrons straddling the standoff boundary (bombers stayed
+				# inside it and kept being re-tasked). Shadow instead, so it holds
+				# at the edge of its reach ready to strike once the carrier closes.
 				_aviation_in_group.erase(i)
 				if squad.active:
 					_shadow_contact(i, squad, loiter_point)
@@ -4097,14 +3841,11 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 				if squad.active:
 					_shadow_contact(i, squad, loiter_point)
 					continue
-				# Still on deck. Go anyway when the contact is one the group can
-				# expect to FIND on arrival (see _refind_odds): the whole point
-				# of choosing an unspotted contact is that the air group goes and
-				# re-acquires it, and a deck that waits for somebody else to spot
-				# it first pays the transit twice - once for the spotter, then
-				# again from the deck afterwards. Ranked below a strike on a held
-				# contact and below the spotter that is going to do the finding,
-				# so this only ever takes a slot nothing better wanted.
+				# Still on deck. Go anyway if the group can expect to FIND the
+				# contact on arrival (see _refind_odds) — waiting for a spotter to
+				# find it first pays the transit twice. Ranked below a held-contact
+				# strike and below the spotter doing the finding, so this only
+				# takes a slot nothing better wanted.
 				if refind >= AIR_TARGET_SEARCH_MIN_ODDS:
 					var search_strength := _squadron_strength(av, i, squad)
 					if search_strength >= AVIATION_MIN_LAUNCH_STRENGTH:
@@ -4126,25 +3867,18 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 		# pull-back.
 		if group.is_empty():
 			_rally_hold_dist = INF
-		# Cap how far forward it may sit first, then clear it of threats: the
-		# other order lets the cap drag the rally back into an envelope the
-		# clearance had just pushed it out of. Only the capped distance is
-		# remembered, so backing away from a threat never becomes licence to
-		# creep forward again next tick.
-		# Seeded from the AA that actually bears on the contact rather than the
-		# heaviest on the board (see _aa_reach_near); _clear_of_threats below is
-		# what handles everything else the rally would otherwise sit inside.
+		# Cap forward distance first, then clear threats — the other order lets
+		# the cap drag the rally back into an envelope clearance just pushed it
+		# out of. Only the capped distance is remembered, so backing off never
+		# licenses creeping forward again next tick. Seeded from AA that
+		# actually bears on the contact (see _aa_reach_near), not the board max.
 		var rally := _clear_of_threats(_hold_rally(
 			_strike_rally_point(point, _aa_reach_near(point, aa_reach))))
 		_run_strike_group(av, group, rally, waiting_for_more, point, air_ship, sol)
 	else:
-		# Not one contact anywhere, live or remembered - the tables have to be
-		# completely empty for this, so there is nothing to turn onto either. A
-		# run still in progress is aimed at open water, so it breaks off and
-		# holds where it already is, ready for whatever turns up next; only once
-		# it is too low on fuel for that to lead anywhere does it go home (see
-		# _shadow_contact). Nothing is forming up, so there is no stand-off to
-		# preserve.
+		# No contact anywhere, live or remembered — tables are fully empty. A
+		# run in progress is aimed at open water, so it breaks off and holds
+		# where it is; only goes home once too low on fuel (see _shadow_contact).
 		_rally_hold_dist = INF
 		for i in range(av.squadrons.size()):
 			var squad: Squadron = av.squadrons[i]
@@ -4168,12 +3902,10 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 		if av.get_alive_count(i) <= 0:
 			continue
 		spotters.append(i)
-	# With nothing to strike, finding something is the most valuable thing the
-	# deck can do, so a spotter takes the takeoff slot ahead of any strike
-	# squadron - which would otherwise spend it flying at a contact nobody holds.
-	# A contact chosen but not held counts as nothing to strike for this: the
-	# group is going after it either way, and the sortie that turns it into a
-	# target the group may actually drop on is this one.
+	# With nothing to strike, finding something is the deck's most valuable
+	# move, so a spotter outranks any strike squadron for the slot. A chosen but
+	# unheld contact counts as nothing to strike: the group's going after it
+	# either way, and this sortie is what turns it into a droppable target.
 	var spot_priority: float = LAUNCH_PRIORITY_SPOT if _contact_is_strikeable(sol) \
 		else LAUNCH_PRIORITY_BLIND_SPOT
 	for slot in range(spotters.size()):
@@ -4184,25 +3916,19 @@ func aviation_engage(target: Ship, server: GameServer) -> void:
 	_grant_launch(av)
 
 
-## Holds a forming strike group clear of the target and sends the whole group in
-## at once. Concentration is the entire point: a ship's AA fires once a second at
-## ONE plane inside its envelope (see AAAController), so its damage is divided
-## among every plane over the target at that moment, and damage that does not
-## finish a plane heals as soon as it lands (see Squadron.recall). Squadrons that
-## trickle in one at a time each face that fire alone and are shot down for good;
-## squadrons that arrive together mostly come home dented. The deck can only put
-## one squadron up per takeoff interval, so the concentration the old
-## launch-everything behaviour got for free now has to be rebuilt in the air.
+## Holds a forming strike group clear of the target and sends it in all at once.
+## Concentration is the point: AA fires once a second at ONE plane in its
+## envelope (see AAAController), dividing damage among every plane over the
+## target at once, and non-fatal damage heals on landing (see Squadron.recall).
+## Trickling in gets squadrons shot down alone; arriving together comes home
+## dented. Deck launches one squadron per interval, so concentration has to be
+## rebuilt in the air instead of coming free from launch-everything.
 ##
-## The rally is also where the group waits for its shot. A run only crosses the
-## target's length when it comes in on the beam (see _broadside_quality), and
-## which way a ship is lying is not something the carrier controls - it is
-## something that comes round if you wait for it, because ships turn. So a
-## formed group holding on a target that is bow-on holds a little longer rather
-## than spending its ordnance on the narrowest profile the ship has. What stops
-## that becoming a group that waits forever is the fuel deadline below: the
-## squadrons go in on whatever presentation they have got the moment waiting any
-## longer would leave them unable to fly the run at all.
+## The rally is also where the group waits for its shot: a run only crosses the
+## full length beam-on (see _broadside_quality), and presentation comes round
+## on its own since ships turn — a bow-on target is worth holding a little
+## longer for. The fuel deadline below stops that becoming forever: squadrons
+## go in on whatever presentation they've got the moment waiting longer would strand them.
 func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2,
 		waiting_for_more: bool, point: Vector2, air_ship: Ship, sol: Dictionary) -> void:
 	if group.is_empty():
@@ -4210,17 +3936,14 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 	# Direction the group would attack from if it went in now - the run the fuel
 	# deadline has to cover, and the one whose beam presentation is judged.
 	var run_dir := _beam_run_direction(point, sol)
-	# The group cannot wait longer than its most fuel-critical member can afford
-	# and still fly the run: a 15s takeoff interval across a five-squadron deck is
-	# a minute of forming up, which at the edge of the tether is most of a tank.
-	# Costed on the run actually flown, dog-leg onto the beam included, so the
-	# deadline is the real one rather than a straight-line optimism (_strike_eta).
+	# The group can't wait longer than its most fuel-critical member allows: a
+	# 15s takeoff interval across five squadrons is a minute of forming up, most
+	# of a tank at the edge of the tether. Costed on the run actually flown,
+	# dog-leg included (_strike_eta), not straight-line optimism.
 	#
-	# The reserve held back is the larger of the strike reserve and the loiter
-	# path's own give-up point: _shadow_contact() sends a squadron home once it
-	# drops under AVIATION_RTB_FUEL_RESERVE, and a group told to keep holding
-	# past that point is a group that flies its whole sortie to the rally and
-	# then turns for base still loaded.
+	# Reserve is the larger of the strike reserve and the loiter give-up point
+	# (_shadow_contact sends a squadron home under AVIATION_RTB_FUEL_RESERVE) —
+	# holding past that flies the whole sortie to the rally and back still loaded.
 	var reserve: float = maxf(AVIATION_STRIKE_FUEL_RESERVE, AVIATION_RTB_FUEL_RESERVE)
 	var slack: float = INF
 	var formed := true
@@ -4250,10 +3973,9 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 		var dir := _attack_direction(i, squad, air_ship, point, sol)
 		var drop := _lead_attack_point(squad, air_ship, point, dir, sol)
 		if _drop_blocked(drop):
-			# Scoring already rejects targets in a dead zone, so reaching this
-			# means the lead has pushed the mark into one since. Keep the
-			# squadron at the rally rather than releasing it onto a run that
-			# cannot be flown.
+			# Scoring already rejects dead-zone targets, so reaching this means
+			# the lead pushed the mark into one since. Keep the squadron at the
+			# rally instead of releasing an unflyable run.
 			_shadow_contact(i, squad, rally)
 			continue
 		_aviation_in_group.erase(i)
@@ -4262,39 +3984,30 @@ func _run_strike_group(av: AviationController, group: Array[int], rally: Vector2
 		squad.set_attack(drop, dir)
 
 
-## Beam presentation below which a formed group would rather keep waiting at the
-## rally than go in. 0.8 is roughly 53 degrees off the target's bow: past that
-## the run still crosses most of the hull, and holding out for a perfect beam
-## costs more in fuel and in the target simply steaming out of reach than the
-## last few per cent of length is worth.
+## Beam presentation below which a formed group keeps waiting at the rally
+## rather than going in. 0.8 ≈ 53° off the bow: past that the run still crosses
+## most of the hull, and holding for a perfect beam costs more fuel/reach than
+## the last few percent of length is worth.
 const BROADSIDE_RELEASE_QUALITY: float = 0.8
 
-## Whether the group should keep holding for a better angle. Only ever true
-## against a contact somebody is actually looking at: the heading on a
-## last-known position is one nobody has watched since it was frozen, so waiting
-## for it to come round is waiting on a number that cannot change. Against those
-## the group goes in on what it has.
+## Whether the group should keep holding for a better angle. Only true against
+## a contact someone is actually watching — an LKP's heading is frozen and
+## can't come round, so those groups go in on what they've got.
 func _wait_for_broadside(point: Vector2, sol: Dictionary) -> bool:
 	if not sol.get("valid", false) or bool(sol.get("is_lkp", true)):
 		return false
 	return _broadside_quality(point, sol) < BROADSIDE_RELEASE_QUALITY
 
 ## Whether putting a spotter up is worth what it costs. Launching reveals the
-## ship for a few seconds (see AviationController.launch_squadron), so a plane
-## sent up on spawn to sweep empty water buys nothing and tells the enemy where
-## its ship is - which is the entire information exchange, in their favour.
+## ship for a few seconds (see AviationController.launch_squadron), so sweeping
+## empty water buys nothing and gives the enemy a free bearing.
 ##
-## Decided the same way the bot decides to fire radar (see _should_use_radar):
-## only from what the team legitimately holds, never from omniscience.
-##
-## Triggers:
-##   1. Already detected, or already being shot at - the launch gives away
-##      nothing that is not given away, so anything the spotter turns up is free.
-##   2. A ship held right now within the squadron's useful reach: worth having
-##      eyes over it before it goes dark, and worth extending gun range onto.
-##   3. A ship the team has lost recently enough that it is probably still
-##      somewhere a plane could find it, within that same reach.
-## Nothing anywhere means nothing to look at: the plane stays on the deck.
+## Decided like radar (_should_use_radar): only from what the team legitimately
+## holds, never omniscience. Triggers:
+##   1. Already detected/being shot at — nothing more to give away, so anything found is free.
+##   2. A ship held now within the squadron's reach — worth eyes on before it goes dark.
+##   3. A ship lost recently enough to probably still be within that reach.
+## Nothing anywhere: the plane stays on the deck.
 const SPOTTER_LKP_MAX_AGE: float = 60.0
 
 func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
@@ -4323,11 +4036,10 @@ func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
 		var lkp: Vector3 = unspotted[enemy]
 		if lkp.distance_to(_ship.global_position) <= fly_reach + _air_detect_radius(squad, enemy):
 			return true
-	# Nothing observed, but the clock still says something: a fleet that left
-	# its spawn some minutes ago has come far enough by now to be worth flying
-	# out to meet. This is what keeps the plane on the deck at the start of a
-	# battle - the presumed enemy is still on their spawn line, well out of
-	# reach - and puts it up once that stops being true (see EnemyPresumption).
+	# Nothing observed, but the clock still says something: a fleet minutes off
+	# spawn has come far enough to be worth meeting. Keeps the plane on deck at
+	# battle start (presumed enemy still on the spawn line, out of reach) and
+	# launches it once that stops being true (see EnemyPresumption).
 	for guess in get_presumed_contacts():
 		var search_reach := fly_reach + _air_detect_radius(squad, guess.ship)
 		if (guess.position as Vector3).distance_to(_ship.global_position) <= search_reach:
@@ -4340,12 +4052,10 @@ func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
 # sweeps a front instead of stacking them all onto one point.
 const SPOTTER_FAN_ANGLE_DEG: float = 80.0
 
-# Where the enemy is expected to be. Anything actually known wins; failing that
-# the enemy spawn, which is the one bearing that does not depend on what this
-# ship happens to be doing. The ship's own heading is a last resort only - using
-# it as the primary source sent spotters sideways or backwards the moment a
-# carrier turned to put an island between itself and the enemy, which is exactly
-# when it turns and exactly when it needs the spotters pointed the other way.
+# Where the enemy is expected to be. Known wins; else the enemy spawn (a
+# bearing independent of this ship's own behavior). Own heading is last
+# resort: using it primarily sent spotters backwards exactly when the carrier
+# turned to put an island between itself and the enemy — precisely when it needed them pointed elsewhere.
 func _expected_enemy_center() -> Vector3:
 	var info = _get_nearest_enemy()
 	if not info.is_empty():
@@ -4389,10 +4099,9 @@ func _sweep_point(squad: Squadron, fan_slot: int, fan_count: int) -> Vector2:
 		offset = t * deg_to_rad(SPOTTER_FAN_ANGLE_DEG)
 	return _clamp_to_map(ship_pos + bearing.rotated(offset) * _squadron_operating_radius(squad))
 
-# Last-known positions worth flying a spotter out to, nearest first, with `watch`
-# - the contact the air group is working - ahead of the lot. Read through the
-# contact solution, so a spotter is sent where the ship has probably got to by
-# now rather than where it was standing when it went dark.
+# LKPs worth flying a spotter to, nearest first, with `watch` (the air group's
+# working contact) jumped to the front. Sent to where the ship's probably got
+# to, not where it went dark.
 func _unspotted_contacts_in_range(server: GameServer, squad: Squadron,
 		watch: Ship = null) -> Array[Dictionary]:
 	var points: Array[Dictionary] = []
@@ -4407,12 +4116,9 @@ func _unspotted_contacts_in_range(server: GameServer, squad: Squadron,
 	for guess in get_presumed_contacts():
 		var pos: Vector3 = guess.position
 		var detect := _air_detect_radius(squad, guess.ship)
-		# Led by the flight out: a spotter sent where a ship is believed to be
-		# NOW arrives to find nothing, while one sent where it will be by the
-		# time the plane gets there arrives with the ship inside detection
-		# range. This is what lets a carrier put eyes on an enemy that has
-		# never been seen at all - by the time the squadron is at the edge of
-		# its reach, the enemy has closed the rest of the way itself.
+		# Led by the flight out: sent where the ship WILL be by arrival, not
+		# where it is now, so a plane finds it in range instead of empty water
+		# — this is what lets a carrier find an enemy never seen at all.
 		if speed > 0.0:
 			pos = _presumption.project(guess, _ship.global_position.distance_to(pos) / speed)
 		var d := _ship.global_position.distance_to(pos)
@@ -4432,12 +4138,10 @@ func _unspotted_contacts_in_range(server: GameServer, squad: Squadron,
 func _squadron_spot_radius(squad: Squadron) -> float:
 	return (squad.params.p() as AircraftParams).spotting_range
 
-# The range at which this squadron actually finds THIS ship. Both halves have to
-# hold (see GameServer.handle_air_spot): the aircraft has to look that far, and
-# the ship has to be visible from that far. So the tighter of the two governs,
-# and a long-sighted spotter buys nothing against a ship that has to be closed
-# right up on. Falls back to the squadron's own reach when the ship's
-# concealment is not readable.
+# The range at which this squadron actually finds THIS ship. Both halves must
+# hold (see GameServer.handle_air_spot) — the tighter governs, so a long-sighted
+# spotter buys nothing against a ship that must be closed on. Falls back to the
+# squadron's own reach when concealment isn't readable.
 func _air_detect_radius(squad: Squadron, enemy: Ship) -> float:
 	var reach := _squadron_spot_radius(squad)
 	if enemy == null or not is_instance_valid(enemy):
@@ -4446,12 +4150,10 @@ func _air_detect_radius(squad: Squadron, enemy: Ship) -> float:
 		return reach
 	return minf(reach, (enemy.concealment.params.p() as ConcealmentParams).air_radius)
 
-# One spotter per known contact, nearest first; every squadron left over fans out
-# across the search front instead of piling onto a contact another squadron has
-# already been sent to. `watch` is the contact the air group has chosen, which
-# jumps the queue ahead of nearest-first: the strike is measured from that ship,
-# is already forming up against it, and is waiting on somebody to put eyes back
-# on it - a spotter sent to a nearer contact nobody is going to attack leaves the
+# One spotter per known contact, nearest first; leftovers fan out across the
+# search front instead of piling onto an already-covered contact. `watch` (the
+# air group's chosen contact) jumps the queue: the strike is forming up on it
+# and needs eyes back on it, so a nearer but unattacked contact would leave the
 # whole group holding.
 func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 		fan_slot: int, fan_count: int, aa_reach: float, priority: float,
@@ -4463,15 +4165,12 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 	var contacts := _unspotted_contacts_in_range(server, squad, watch)
 	var desired: Vector2
 	if fan_slot < contacts.size():
-		# Watching a particular ship: stand off it instead of orbiting on top of
-		# it. A spotter sees far enough to keep the contact from outside its AA,
-		# and inside it a lone squadron is shot down one plane every few seconds
-		# for the whole sortie (see _spot_station).
+		# Watching a particular ship: stand off, not orbit on top — inside its
+		# AA a lone squadron loses a plane every few seconds for the whole
+		# sortie (see _spot_station).
 		var contact: Dictionary = contacts[fan_slot]
-		# Stood off the AA around THIS contact, not the longest reach anywhere:
-		# with mixed batteries the board-wide figure pushes every spotter past
-		# the range it can still see from, and _spot_station then has to choose
-		# between seeing and being safe when it never actually had to.
+		# Stood off THIS contact's AA, not the board-wide max — with mixed
+		# batteries the board figure pushes spotters past their own sight range for no reason.
 		desired = _clamp_to_squadron_range(squad, _spot_station(
 			squad, contact.point, _aa_reach_near(contact.point, aa_reach), contact.detect))
 	else:
@@ -4493,9 +4192,7 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 	_aviation_spot_issued[index] = desired
 
 
-# ============================================================================
 # UTILITIES
-# ============================================================================
 
 # Heading error (radians) within which the hull is considered aligned with the
 # bidirectional desired-heading line, allowing the ship to engage reverse.
@@ -4547,9 +4244,7 @@ func _normalize_angle(angle: float) -> float:
 		angle += TAU
 	return angle
 
-# ============================================================================
 # DEBUG — Skill / tactical state info for the 3D world label
-# ============================================================================
 
 func get_debug_skill_info() -> Dictionary:
 	var info: Dictionary = {}
@@ -4569,9 +4264,7 @@ func get_debug_skill_info() -> Dictionary:
 			info["torp_reload"] = _get_max_torp_reload()
 	return info
 
-# ============================================================================
 # CONSUMABLES
-# ============================================================================
 
 var repair = -1
 var damage_control = -1
@@ -4652,11 +4345,10 @@ func try_use_consumable():
 			_ship.consumable_manager.use_consumable(smoke_screen)
 
 func _should_use_smoke() -> bool:
-	# Simple heuristic: use smoke if we're low HP and have an active BB shooter targeting us.
-	# Smoke breaks LOS, so it answers being seen or air-spotted but does nothing
-	# about a ping — popping it while pinged wastes the charge and parks us.
-	# det_* are the server-side flags; radar_detected/hydro_detected are written
-	# by the sync_unspotted RPC and are always false on the server.
+	# Low HP + an active BB shooter. Smoke breaks LOS (seen/air-spotted), but does
+	# nothing about a ping — popping it while pinged wastes the charge and parks us.
+	# det_*: server-side flags; radar_detected/hydro_detected are always false
+	# server-side (set by sync_unspotted RPC).
 	if _ship.health_controller.current_hp / _ship.health_controller.max_hp < 0.5 \
 			and active_shooters_at_me.size() > 0 and _ship.is_detected() \
 			and not (_ship.det_radar or _ship.det_hydro):
@@ -4664,27 +4356,19 @@ func _should_use_smoke() -> bool:
 	return false
 
 func _should_use_hydro() -> bool:
-	# Decides whether to activate Hydroacoustic Search without omniscient
-	# knowledge.  Only information that is legitimately visible to this team
-	# is considered, so bots cannot cheat.
-	#
-	# Triggers:
-	#   1. Already-detected enemy torpedoes (visible_to_enemy == true) are
-	#      within ~8 km and pointed generally toward this ship.
-	#   2. A spotted enemy DD is within torpedo-threat range (~8 km).
-	#   3. This ship is spotted but no visible enemy is close enough to
-	#   account for it - a concealed ship must be nearby.
-	#   4. An enemy DD was last seen at close range (<8 km) recently (<45 s).
+	# Only information legitimately visible to this team — bots cannot cheat.
+	# Triggers: (1) a tracked, visible enemy torpedo; (2) a spotted enemy DD
+	# within ~8km; (3) we're spotted with no visible enemy close enough to
+	# account for it (a concealed ship must be near); (4) an enemy DD's LKP
+	# within 8km and under 45s old.
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return false
 
 	var my_team: int = _ship.team.team_id
 
-	# --- Trigger 1: already-tracked incoming torpedo ---
-	# BotControllerV4._register_torpedo_obstacles() already filters for armed,
-	# visible (detected), enemy torpedoes within torpedo_track_range and keeps
-	# a live count.  Re-scanning TorpedoManager here would be redundant.
+	# Trigger 1: BotControllerV4._register_torpedo_obstacles() already filters
+	# and counts armed, visible enemy torpedoes — re-scanning here would be redundant.
 	var controller = get_parent()
 	if controller != null and controller.get("tracked_torpedo_count") != null:
 		if (controller.tracked_torpedo_count as int) > 0:
@@ -4700,12 +4384,9 @@ func _should_use_hydro() -> bool:
 			if dist < 8000.0:
 				return true
 
-	# --- Trigger 3: spotted by a ship we cannot see ---
-	# If we are detected but no visible enemy is close enough to account for
-	# our detection, a concealed ship must be within our concealment radius.
-	# Using hydro here is a legitimate deduction, not omniscient knowledge.
-	# visible_to_enemy only: the deduction is about LOS, and hydro answers neither
-	# a radar ping (see _should_use_radar trigger 3) nor an aircraft.
+	# Trigger 3: detected but no visible enemy accounts for it — a concealed
+	# ship must be within our concealment radius; a legitimate deduction, not
+	# omniscience. visible_to_enemy only: about LOS, not a radar ping or aircraft.
 	if _ship.visible_to_enemy and _ship.concealment != null:
 		var my_concealment := _ship.concealment.get_concealment()
 		var has_visible_spotter := false
@@ -4719,13 +4400,10 @@ func _should_use_hydro() -> bool:
 		if not has_visible_spotter:
 			return true
 
-	# --- Trigger 4: unspotted enemy DD recently seen within hydro spotting range ---
-	# The unspotted-enemies dict is also written by _refresh_hydro_lkp() every
-	# HYDRO_LKP_INTERVAL seconds, which keeps the timestamp perpetually fresh for
-	# any DD in another friendly's hydro cone.  Using 8 000 m here (double the
-	# default 4 000 m hydro spotting range) caused trigger 4 to fire on DDs that
-	# are well outside the range where this ship's hydro would actually help.
-	# Fix: gate on the actual hydro spotting range (+ 1 km lead for movement).
+	# Trigger 4: unspotted DD's LKP within hydro range. _refresh_hydro_lkp()
+	# keeps the timestamp fresh for any DD in a friendly's hydro cone, so using a
+	# flat 8000m (2x default range) fired on DDs this ship's hydro couldn't
+	# reach. Fixed: gate on actual spotting range (+1km lead for movement).
 	var hydro_threat_range := 5000.0  # conservative default if consumable not found
 	if hydroacoustic_search != -1:
 		for c in _ship.consumable_manager.equipped_consumables:
@@ -4752,18 +4430,11 @@ func _should_use_hydro() -> bool:
 
 
 func _should_use_radar() -> bool:
-	# Decides whether to activate Radar without omniscient knowledge.
-	# Only information legitimately available to this bot is used.
-	#
-	# Triggers:
-	#   1. This ship is detected but no visible enemy is within radar range
-	#      (~8 km) to account for it — a concealed enemy must be nearby.
-	#   2. An unspotted enemy has a recent LKP (< 30 s) within radar range —
-	#      the LKP is already in the shared unspotted-enemies table so this is
-	#      not omniscient; it capitalises on information the team already has.
-	#   3. This ship's det_hydro or det_radar flag is set — an enemy with active
-	#      detection is within ~4–8 km.  If no enemy is currently visible,
-	#      firing radar may flush out that concealed spotter.
+	# Only information legitimately available to this bot. Triggers: (1)
+	# detected with no visible enemy within radar range (~8km) to account for
+	# it; (2) an unspotted enemy's LKP (<30s old) within radar range — already
+	# shared team info, not omniscience; (3) det_hydro/det_radar set with
+	# nothing visible — radar may flush out the concealed spotter.
 	var server_node: GameServer = _ship.get_node_or_null("/root/Server")
 	if server_node == null:
 		return false
@@ -4802,10 +4473,8 @@ func _should_use_radar() -> bool:
 		if dist < RADAR_RANGE:
 			return true
 
-	# --- Trigger 3: being detected by active sonar/radar with no visible enemies ---
-	# det_hydro/det_radar are server-authoritative flags the bot legitimately reads.
-	# HYDRO means an enemy pinger is within ~4 km; RADAR within ~8 km.
-	# If no enemy is currently visible, the concealed pinger may be within radar range.
+	# Trigger 3: det_hydro/det_radar (server-authoritative; hydro ~4km, radar
+	# ~8km) set with nothing visible — the concealed pinger may be within radar range.
 	if (_ship.det_hydro or _ship.det_radar) and spotted.is_empty():
 		return true
 

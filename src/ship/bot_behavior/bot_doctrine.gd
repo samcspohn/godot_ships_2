@@ -183,7 +183,12 @@ static func for_cruiser() -> BotDoctrine:
 
 static func for_destroyer() -> BotDoctrine:
 	var d := BotDoctrine.new()
-	d.idle_chain = [&"Hunt"]
+	# Spot first, Hunt only if it declines. The idle arm is reached when the
+	# team has never seen anything at all, which for a destroyer is not an
+	# absence of work - it is the description of its job. Hunting picks a
+	# position off the friendly line and drives to it; spotting goes and finds
+	# out where the enemy actually is, which is the thing nobody else can do.
+	d.idle_chain = [&"Spot", &"Hunt"]
 	# No dark arm: a DD with nothing spotted is still doing its job (making
 	# vision for the team), so it goes straight to the engaged ladder.
 	d.dark_chain = []

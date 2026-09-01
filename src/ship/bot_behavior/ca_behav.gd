@@ -25,7 +25,7 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 1.4
+		Ship.ShipClass.BB: return 2.0
 		Ship.ShipClass.CA: return 1.0
 		Ship.ShipClass.DD: return 0.3
 	return 1.0
@@ -195,7 +195,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_to_be_concealed = false
 	_suppress_guns = false
 	_ensure_safe_dir(ship, server)
-	_init_flank_identity(ship, server)
 	var ctx := SkillContext.create(ship, target, server, self)
 	_sync_cover_debug(ctx)
 	return _nav_core(ctx)

@@ -1560,6 +1560,7 @@ func _update_threat_registry() -> void:
 func _publish_team_threats(team_id: int) -> void:
 	var ids := PackedInt32Array()
 	var data := PackedVector3Array()
+	var force_spots := PackedFloat32Array()
 	var published: Dictionary = {}
 	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
 	for enemy in valid_targets:
@@ -1567,6 +1568,7 @@ func _publish_team_threats(team_id: int) -> void:
 			published[enemy] = true
 			ids.append(int(enemy.get_instance_id()))
 			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
+			force_spots.append(_force_spot_reach(enemy))
 
 	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
 	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
@@ -1582,6 +1584,7 @@ func _publish_team_threats(team_id: int) -> void:
 		var lp: Vector3 = unspotted[enemy_ship]
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(lp.x, lp.z, decay))
+		force_spots.append(_force_spot_reach(enemy_ship))
 
 	# Everything left: ships never seen at all, and ships whose last known
 	# position has decayed away to nothing. Routing that avoids only the enemies
@@ -1598,8 +1601,37 @@ func _publish_team_threats(team_id: int) -> void:
 		var at: Vector3 = guess.position
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(at.x, at.z, weight))
+		# No force-spot reach for a pure presumption. A guess about a ship
+		# nobody has ever seen carries no claim about what that ship has
+		# running, and inventing one would let a bot route around a radar
+		# nobody has any evidence of.
+		force_spots.append(0.0)
 
-	threat_registry.update_team(team_id, ids, data)
+	threat_registry.update_team(team_id, ids, data, force_spots)
+
+
+## How far `enemy` can force-spot regardless of anyone's concealment: radar or
+## hydroacoustic search, whichever is further, and zero when neither is running.
+##
+## This is the half of a threat circle that concealment cannot answer. A
+## destroyer sizes its standoff on its own concealment radius and is right to,
+## until a cruiser eight kilometres away turns on radar - at which point the
+## whole calculation is void and the only number that matters is the cruiser's.
+## Routing that models only concealment sends that destroyer confidently into a
+## bubble it cannot hide in.
+##
+## Read live, and only for ships the team has a real position for (see the
+## caller). Whether a consumable is RUNNING is arguably not something an
+## unspotted contact should broadcast - but the moment it matters it has
+## force-spotted us anyway, so modelling it is the difference between a bot that
+## avoids radar and one that only ever discovers it from inside.
+func _force_spot_reach(enemy: Ship) -> float:
+	if enemy == null or enemy.concealment == null or enemy.concealment.params == null:
+		return 0.0
+	var cp := enemy.concealment.params.p() as ConcealmentParams
+	if cp == null:
+		return 0.0
+	return maxf(maxf(cp.spotting_range_override, cp.radar_spotting_range_override), 0.0)
 
 
 func _refresh_hydro_lkp(team_id: int, ship: Ship) -> void:

@@ -281,14 +281,24 @@ private:
 	// --- Incoming shell avoidance ---
 	std::vector<IncomingShell> incoming_shells_;
 
-	// --- Enemy threat arcs (for stealth pathfinding) ---
+	// --- Enemy threat circles (for stealth pathfinding) ---
 	// Registered by GDScript when the bot wants to route around enemy
-	// detection coverage.  ShipNavigator references a shared ThreatBin
-	// owned by a ThreatRegistry; multiple ships with the same (team,
-	// binned effective_radius) share the same threat circle list.
+	// detection coverage.  The registry holds only per-team enemy positions;
+	// the circle list is built HERE, at this ship's own detection radius, so
+	// nothing is shared and nothing is rounded.  See ThreatRegistry.
 	Ref<ThreatRegistry> threat_registry_;
-	ThreatBin* threat_bin_ = nullptr;
-	uint64_t threat_last_version_ = 0;
+	int threat_team_ = -1;
+	float threat_radius_ = 0.0f;
+	// Rebuilt lazily from the registry whenever the team's picture changes.
+	// Mutable because the const query paths (destination push, debug clusters)
+	// have to see the current picture too, and refreshing is not a state change
+	// anyone outside can observe.
+	mutable std::vector<ThreatCircle> threats_;
+	mutable uint64_t threat_synced_version_ = 0;   // 0 = never synced
+
+	// Pull this ship's circle list up to date with the registry. Cheap and
+	// idempotent: a version compare, and O(enemies) only when it moved.
+	void refresh_threats() const;
 
 
 
@@ -527,6 +537,16 @@ public:
 	float get_soft_clearance_radius() const { return get_soft_clearance(); }
 
 	TypedArray<Dictionary> get_debug_threat_clusters() const;
+
+	// --- Threat introspection / benchmarking ---
+	// Number of circles this ship is currently routing against, refreshing from
+	// the registry first. The cheapest possible probe of the per-ship rebuild,
+	// which is the cost that dropping the shared bins moved onto each ship.
+	int get_threat_circle_count() const;
+	// Run the real stamp path once (refresh + HpaGraph::stamp_threats). Exposed
+	// for benchmarking: get_debug_threat_clusters() is NOT a proxy for it, as it
+	// sweeps every cluster in the graph while stamping prunes by radius first.
+	void debug_stamp_threats();
 
 	// Adjust |dest| away from threat circles (circle+LOS model).
 	// Returns Dictionary { position: Vector2, adjusted: bool }.

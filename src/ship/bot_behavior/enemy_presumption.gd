@@ -85,6 +85,52 @@ const KINEMATIC_SPEED_CAP: float = NOMINAL_FLANK_SPEED * 1.5
 ## slop in it. See BotAptitude.intuition_interval.
 const INTUITION_RADIUS_MIN: float = 2000.0
 
+## How much of a guess's uncertainty radius is actually probed when asking
+## whether a cover position is masked from it, and the ceiling on that probe.
+##
+## A presumption is a disc, not a point, and the difference matters enormously to
+## cover. What opens a line around an island is the enemy being to the LEFT or
+## RIGHT of where it was pictured, not nearer or further along the same bearing -
+## so a masked position is only really masked if it stays masked with the contact
+## displaced sideways by about as much as the guess could be wrong.
+##
+## The geometry of that is also what makes forward cover honest, at no cost in
+## special-casing. The same sideways probe is a wide arc close in and a narrow
+## one far out - two kilometres is +/-34 degrees at three kilometres' standoff
+## and +/-9 degrees at twelve - so the nearer a position is to the enemy, the
+## more island it takes to satisfy. Swept over the real map, a 2.5 km probe
+## leaves 45% of the concealed spots standing at 3 km standoff and 60% at 16 km:
+## a gradient against sitting in the enemy's lap, arrived at from the geometry
+## rather than from a rule saying "do not go forward".
+##
+## Deliberately a fraction of the radius rather than all of it, and capped.
+## Requiring concealment from every point a shrug could mean is a test nothing
+## passes, and a search that finds no cover at all leaves ships in the open,
+## which is worse than imperfect cover. Those two numbers are what keep this a
+## margin rather than a veto - every island on the map still yields a hiding
+## place at every spread and standoff measured.
+const EXPOSURE_PROBE_FRACTION: float = 0.5
+const EXPOSURE_PROBE_MAX: float = 2500.0
+
+## How much of the enemy team has to be accounted for before a bot is entitled to
+## act on the SHAPE of the picture rather than merely on its own caution.
+##
+## Below this, what a bot knows is a handful of contacts and a lot of blank
+## water, and the blank water is where the rest of them are. Decisions taken
+## there have to assume the unseen half is anywhere it could be - so a ship picks
+## ground it can hold and waits to be shown otherwise. Above it, the picture has
+## a shape: this many hulls are HERE, therefore that few can be anywhere else,
+## and a bot may commit to reading where the fight is rather than hedging against
+## everywhere it might be.
+##
+## Six in ten is the point at which the unaccounted remainder stops being able to
+## outnumber what is accounted for. It is used for cover today (see
+## SkillFindCover) and is meant to be the same threshold every commitment
+## decision reads - abandoning a flank, pushing, going to spot - so that a bot's
+## willingness to commit is one property of its intel rather than a different
+## number per skill.
+const COMMIT_COVERAGE: float = 0.6
+
 # ---------------------------------------------------------------------------
 # Per-owner tuning. The server's team-wide instances keep the defaults - shared
 # intel cannot vary by who is asking - while each bot's own instance takes these
@@ -119,6 +165,7 @@ func configure(p_use_spawn_line: bool, p_radius_growth_mult: float,
 	kinematic_reckoning = p_kinematic_reckoning
 	intuition = p_intuition
 	_cache_frame = -1
+	_lead_cache.clear()
 	_lead_cache_frame = -1
 
 # Geometry of this battle, resolved once: the spawn axis everything is measured
@@ -132,13 +179,17 @@ var _max_advance: float = 0.0
 # One build per physics frame is plenty - several systems ask per tick.
 var _cache: Array[Dictionary] = []
 var _cache_frame: int = -1
-# Lead projections get a slot of their own, keyed by the horizon asked for. A
-# caller that wants the picture N seconds out generally wants it several times
-# in the same frame, and rebuilding the whole roster for each of those is pure
-# waste. One slot is enough: horizons vary between callers, not within one.
-var _lead_cache: Array[Dictionary] = []
+# Lead projections are cached per horizon asked for. A caller that wants the
+# picture N seconds out generally wants it several times in the same frame, and
+# rebuilding the whole roster for each of those is pure waste.
+#
+# A dictionary rather than the single slot this used to be: cover now solves each
+# candidate island for ITS own arrival time (Behavior.cover_horizon), so one
+# decision asks for a whole series of horizons and a one-slot cache would miss on
+# every one of them. Callers round their horizons to a quantum before asking,
+# which is what keeps the number of distinct keys per frame small.
+var _lead_cache: Dictionary = {}
 var _lead_cache_frame: int = -1
-var _lead_cache_value: float = -1.0
 
 
 ## Every enemy `my_team` is not holding right now, as
@@ -153,8 +204,13 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 	if lead <= 0.0:
 		if _cache_frame == frame:
 			return _cache
-	elif _lead_cache_frame == frame and is_equal_approx(_lead_cache_value, lead):
-		return _lead_cache
+	else:
+		if _lead_cache_frame != frame:
+			_lead_cache.clear()
+			_lead_cache_frame = frame
+		elif _lead_cache.has(lead):
+			var hit: Array[Dictionary] = _lead_cache[lead]
+			return hit
 
 	var enemy_team: int = 1 - my_team
 	if not _resolve_geometry(server, my_team, enemy_team):
@@ -241,6 +297,10 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 		var mult: float = _advance_mult(enemy)
 		out.append({
 			ship = enemy,
+			# Whether this entry rests on something the team observed or deduced, as
+			# opposed to a station in a presumed line. Both are guesses; only one of
+			# them is a guess ABOUT THIS SHIP. See coverage().
+			known = best_time != -INF,
 			position = _project_anchor(anchor, anchor_vel, elapsed, mult),
 			radius = clampf(base_radius + elapsed * RADIUS_GROWTH * radius_growth_mult,
 				RADIUS_MIN, RADIUS_MAX),
@@ -253,9 +313,8 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 		_cache = out
 		_cache_frame = frame
 	else:
-		_lead_cache = out
+		_lead_cache[lead] = out
 		_lead_cache_frame = frame
-		_lead_cache_value = lead
 	return out
 
 
@@ -267,6 +326,63 @@ static func certainty(guess: Dictionary) -> float:
 	if span <= 0.0:
 		return 1.0
 	return clampf(1.0 - (float(guess.radius) - RADIUS_MIN) / span, 0.0, 1.0)
+
+
+## How far sideways a presumed contact has to be displaced before a position
+## masked from its point estimate should stop being called masked. See
+## EXPOSURE_PROBE_FRACTION - the radius already carries both the age of whatever
+## the guess was built on and however far forward it has been run, so this needs
+## no horizon of its own.
+static func guess_spread(guess: Dictionary) -> float:
+	return minf(float(guess.get("radius", RADIUS_MIN)) * EXPOSURE_PROBE_FRACTION,
+		EXPOSURE_PROBE_MAX)
+
+
+## The same question for a contact the team actually observed and has since run
+## forward on its own course: how wrong that projection could be by the time it
+## matters.
+##
+## RADIUS_GROWTH is the rate this model already uses for exactly this - the
+## lateral wandering and the decisions nobody watched a ship make - so a sighting
+## projected a minute out and a guess a minute old end up with comparable error
+## bars, which is the honest answer. Zero at zero lead: a ship in plain sight
+## right now is a point, and always was.
+static func lead_spread(seconds: float) -> float:
+	return minf(maxf(seconds, 0.0) * RADIUS_GROWTH, EXPOSURE_PROBE_MAX)
+
+
+## How much of the living enemy team this picture actually accounts for, 0 (we
+## are looking at an empty ocean and inventing a fleet) to 1 (every hull is
+## either in sight or freshly placed).
+##
+## Weighted rather than counted, and that is the whole point. A ship seen four
+## minutes ago is not knowledge; it is a rumour with a nine-kilometre error bar,
+## and counting it as "known" would license exactly the overconfidence this
+## number exists to prevent. Each anchored contact therefore contributes its own
+## certainty(), which decays as its radius opens, so coverage FALLS again when a
+## picture goes cold. A bot that committed on good intel and then lost the thread
+## becomes uncommitted, instead of driving on into water it stopped
+## understanding twenty seconds ago.
+##
+## Ships nobody has ever seen contribute nothing at all. They are the 40%.
+func coverage(my_team: int, server) -> float:
+	if server == null:
+		return 0.0
+	var enemy_team: int = 1 - my_team
+	var living: int = 0
+	for enemy in server.get_team_ships(enemy_team):
+		if is_instance_valid(enemy) and enemy.is_alive():
+			living += 1
+	if living == 0:
+		return 1.0
+	# contacts() covers every living enemy the team is NOT holding, so whatever is
+	# missing from it is being held in sight right now and is known outright.
+	var unheld: Array[Dictionary] = contacts(my_team, server)
+	var accounted: float = float(living - unheld.size())
+	for guess in unheld:
+		if bool(guess.get("known", false)):
+			accounted += certainty(guess)
+	return clampf(accounted / float(living), 0.0, 1.0)
 
 
 ## Runs one presumed contact further forward - for asking where a ship will be

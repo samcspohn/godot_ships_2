@@ -166,12 +166,14 @@ var _last_path_destination: Vector3 = Vector3.ZERO
 
 var should_query_behavior: bool = false
 
-## Cached effective detection-avoidance radius used to pick a ThreatRegistry
-## bin.  Constant for the ship's lifetime once ship + concealment are ready;
-## 0 means "not yet computable, retry lazily".
+## Cached effective detection-avoidance radius this ship routes against — its
+## own concealment radius plus turning room. Used exactly: the registry builds
+## this ship's threat circles at this radius rather than rounding it up to a
+## shared bin. Constant for the ship's lifetime once ship + concealment are
+## ready; 0 means "not yet computable, retry lazily".
 var _threat_effective_radius: float = 0.0
-## Whether the navigator currently holds a ThreatBin subscription.  Avoids
-## redundant set_threat_source churn when wants_stealth is stable.
+## Whether the navigator is currently subscribed to the shared ThreatRegistry.
+## Avoids redundant set_threat_source churn when wants_stealth is stable.
 var _threat_subscribed: bool = false
 
 
@@ -1264,10 +1266,17 @@ func _emit_debug_draws() -> void:
 			# LOS lines from ship to each threat
 			var threats: Array = behavior._gather_threat_positions(_ship)
 			var ship_los_pos = _ship.global_position
-			for threat_pos in threats:
+			for threat in threats:
+				var threat_pos: Vector3 = threat.position
 				var blocked = NavigationMapManager.is_los_blocked(ship_los_pos, threat_pos)
 				var los_color = Color(0.0, 1.0, 0.0, 0.6) if blocked else Color(1.0, 0.0, 0.0, 0.8)
 				Debug.draw_line(Vector3(ship_los_pos.x, 25.0, ship_los_pos.z), Vector3(threat_pos.x, 25.0, threat_pos.z), los_color)
+				# The spread the cover search actually tests against - how far sideways
+				# this contact could be from where the picture puts it.
+				var spread: float = float(threat.get("spread", 0.0))
+				if spread >= behavior.THREAT_SPREAD_MIN_PROBE:
+					Debug.draw_circle(Vector3(threat_pos.x, 25.0, threat_pos.z), spread,
+						Color(1.0, 0.6, 0.0, 0.35), 24)
 
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:

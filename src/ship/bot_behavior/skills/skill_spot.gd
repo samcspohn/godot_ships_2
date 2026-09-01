@@ -31,6 +31,23 @@ const SPOT_MARGIN            := 1.0
 ## every metre of cushion is a metre further from the enemy than we need to be.
 const SAFE_MARGIN            := 1.15
 
+## How far across the gap between the fleets a scout will go on presumption
+## alone, as a fraction of the current separation (FleetFrame.depth_of).
+##
+## A budget rather than a distance so it stays meaningful as the fight closes:
+## the fleets converge, the gap shrinks, and the same fraction keeps a scout
+## ahead of its own line without ever putting it on the far side of the middle.
+## It also frees up on its own - as our fleet advances the friendly pole moves
+## up with it, so a ship that has spent its budget gets more without deciding
+## anything.
+const STAGING_MAX_DEPTH: float = 0.35
+
+## The same budget once there is something real to go and look at. Looser than
+## STAGING_MAX_DEPTH because the errand is no longer speculative - but still
+## short of 1.0, which is the enemy fleet's own centre. A spotting station past
+## that is not a station, it is a boat that has driven through them.
+const COMMITTED_MAX_DEPTH: float = 0.75
+
 ## How many times our own concealment radius we're willing to travel to reach
 ## an unspotted enemy.  Keeps ships from hunting targets across the whole map.
 ## Overridable via params key "max_target_distance".
@@ -97,6 +114,12 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			var d := s.global_position.distance_to(ship.global_position)
 			if d > max_target_dist:
 				continue
+			# Below COMMIT_COVERAGE a sighting on the far flank says nothing
+			# about where the rest of them are, and chasing it is how a screen
+			# abandons the flank it was holding. The gate lifts on its own once
+			# the picture is good enough to read. See BotBehavior.flank_permits.
+			if not ctx.behavior.flank_permits(s.global_position):
+				continue
 			targets.append({
 				pos         = s.global_position,
 				concealment = (s.concealment.params.p() as ConcealmentParams).radius,
@@ -114,6 +137,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			var d := pos.distance_to(ship.global_position)
 			if d >= best_dist or d > max_target_dist:
 				continue
+			if not ctx.behavior.flank_permits(pos):
+				continue
 			best_dist = d
 			var ec: float = (s.concealment.params.p() as ConcealmentParams).radius \
 				if is_instance_valid(s) else my_concealment * 2.0
@@ -122,9 +147,17 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 			targets.append(best_entry)
 
 	if targets.is_empty():
-		# Nothing to hold a station against; the next contact starts fresh.
+		# STAGING. Nothing is lit and nothing is held, so there is no station to
+		# compute - a ring around a contact nobody has seen is a ring around a
+		# rumour, and placing one puts the destination wherever the rumour is,
+		# which is how a scout ends up alone in enemy water.
+		#
+		# The honest question at this intel level is not "where do I stand to
+		# see X" but "which way do I go to find out", so take ground along the
+		# bearing to the nearest thing believed to be on our flank and stop
+		# where the budget runs out.
 		_station_valid = false
-		return null
+		return _staging_intent(ctx, my_concealment, safe_margin)
 
 	# ── Compute distance-weighted centroid and sweet-spot ring radius ─────────
 	# Inverse-distance weighting ensures nearby enemies dominate the centroid
@@ -232,7 +265,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	_station_angle = chosen_angle
 	_station_valid = true
-	var best_pos: Vector3 = chosen.pos
+	var best_pos: Vector3 = ctx.behavior._get_valid_nav_point(
+		_clamp_to_budget(ctx.behavior, ship.global_position, chosen.pos, COMMITTED_MAX_DEPTH))
 
 	# ── Build NavIntent ──────────────────────────────────────────────────────
 	var to_dest := best_pos - ship.global_position
@@ -291,3 +325,95 @@ func _score_station(ctx: SkillContext, angle: float, env: Dictionary) -> Diction
 	score += W_DISTANCE * clampf(1.0 - dist_to_us / float(env.dist_scale), 0.0, 1.0)
 
 	return { pos = c3d, score = score, covered = covered }
+
+
+## Ground worth taking when nothing at all has been seen. See STAGING_MAX_DEPTH.
+##
+## Returns a hold rather than null once the budget is spent: the alternative in
+## the destroyer ladder is Chase, which runs at the nearest last-known position
+## at flank speed, and arriving lit up and alone somewhere the contact has
+## already left is worse than holding the ground we came for.
+##
+## Null only when this bot believes in nothing on its own flank - which for a
+## low-aptitude bot is the normal case, since it does not credit ships nobody
+## has seen at all (EnemyPresumption.use_spawn_line). Those fall through to Hunt
+## as they always did.
+func _staging_intent(ctx: SkillContext, my_concealment: float, safe_margin: float) -> NavIntent:
+	var behavior = ctx.behavior
+	var ship: Ship = ctx.ship
+	var here: Vector3 = ship.global_position
+
+	var best: Dictionary = {}
+	var best_dist: float = INF
+	for guess in behavior.get_presumed_contacts():
+		var gp: Vector3 = guess.position
+		# The flank gate, not a distance gate. Below COMMIT_COVERAGE this is
+		# what stops the whole screen sliding across the map onto one flank.
+		if not behavior.flank_permits(gp):
+			continue
+		var d: float = gp.distance_to(here)
+		if d < best_dist:
+			best_dist = d
+			best = guess
+	if best.is_empty():
+		return null
+
+	var bearing: Vector3 = (best.position as Vector3) - here
+	bearing.y = 0.0
+	if bearing.length_squared() < 1.0:
+		return null
+	bearing = bearing.normalized()
+
+	# Stop short by our own detection radius: the errand is to see it, not to
+	# meet it, and the contact is a disc rather than a point anyway.
+	var travel: float = maxf(best_dist - my_concealment * safe_margin, 0.0)
+
+	# Spend no more of the gap than the budget allows.
+	var dest: Vector3 = _clamp_to_budget(behavior, here, here + bearing * maxf(travel, 0.0),
+		STAGING_MAX_DEPTH)
+	dest.y = 0.0
+	dest = behavior._get_valid_nav_point(dest)
+
+	var to_dest: Vector3 = dest - here
+	to_dest.y = 0.0
+	var heading: float = atan2(to_dest.x, to_dest.z) \
+		if to_dest.length_squared() > 1.0 else behavior._get_ship_heading()
+
+	# Staging never accepts exposure to make vision - that is a decision for a
+	# contact we have actually found.
+	stealth_corridor = true
+	return NavIntent.create(dest, heading)
+
+
+## Pull `dest` back along the line from `here` until it is no deeper into the
+## enemy half than `budget` allows. See FleetFrame.depth_of.
+##
+## Applied to every destination this skill produces, not just the speculative
+## ones. The ring that Phase 1 and Phase 2 place has no opinion about depth at
+## all: it sits at a fixed radius around an inverse-distance-weighted centroid,
+## and a centroid is not the front of the enemy line. With contacts spread
+## through their half, the centroid can be kilometres behind the leading ship,
+## so a ring around it puts the station past that ship even though the arc is
+## sampled on the hemisphere facing us. That is how a spotting destination ends
+## up behind their line while every individual step looks reasonable.
+##
+## A clamp rather than a rejection: the bearing was still the right idea, it was
+## only followed too far.
+func _clamp_to_budget(behavior, here: Vector3, dest: Vector3, budget: float) -> Vector3:
+	var frame: FleetFrame = behavior.fleet_frame()
+	if frame.separation <= FleetFrame.MIN_SEPARATION:
+		return dest
+	var span: Vector3 = dest - here
+	span.y = 0.0
+	if span.length_squared() < 1.0:
+		return dest
+	var here_depth: float = frame.depth_of(here)
+	var dest_depth: float = frame.depth_of(dest)
+	if dest_depth <= budget or dest_depth - here_depth <= 0.001:
+		return dest
+	# Already past the budget before moving: do not advance at all, but do not
+	# reverse either - backing out is a retreat decision, not a spotting one.
+	var scale: float = clampf((budget - here_depth) / (dest_depth - here_depth), 0.0, 1.0)
+	var out: Vector3 = here + span * scale
+	out.y = 0.0
+	return out

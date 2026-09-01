@@ -22,8 +22,8 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 0.5
-		Ship.ShipClass.CA: return 1.0
+		Ship.ShipClass.BB: return 1.0
+		Ship.ShipClass.CA: return 1.5
 		Ship.ShipClass.DD: return 2.0
 	return 1.0
 
@@ -61,9 +61,6 @@ func get_hunting_params() -> Dictionary:
 		approach_multiplier = 0.4,      # Stand off 40% of gun range in front of last known position
 		cautious_hp_threshold = 0.4,    # Only pull back toward friendlies when quite damaged
 	}
-
-func _roll_flank_depth() -> float:
-	return randf_range(0.1, 0.3)
 
 # ============================================================================
 # AMMO AND AIM - Class-specific targeting logic
@@ -171,7 +168,6 @@ func doctrine() -> BotDoctrine:
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # BBs push or camp — never route around detection zones
 	wants_to_be_concealed = false
-	_init_flank_identity(ship, server)
 	return _nav_core(SkillContext.create(ship, target, server, self))
 
 ## The engaged arm: not close aboard, or not detected. A battleship walks a

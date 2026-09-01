@@ -101,6 +101,10 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_debug_threat_clusters"), &ShipNavigator::get_debug_threat_clusters);
 	ClassDB::bind_method(D_METHOD("adjust_destination_for_threats", "ship_pos", "dest"),
 		&ShipNavigator::adjust_destination_for_threats);
+	ClassDB::bind_method(D_METHOD("get_threat_circle_count"),
+		&ShipNavigator::get_threat_circle_count);
+	ClassDB::bind_method(D_METHOD("debug_stamp_threats"),
+		&ShipNavigator::debug_stamp_threats);
 
 	// Timing
 	ClassDB::bind_method(D_METHOD("get_timing_update_us"), &ShipNavigator::get_timing_update_us);
@@ -201,10 +205,8 @@ ShipNavigator::ShipNavigator() {
 }
 
 ShipNavigator::~ShipNavigator() {
-	if (threat_bin_ && threat_registry_.is_valid()) {
-		threat_registry_->release_bin(threat_bin_);
-	}
-	threat_bin_ = nullptr;
+	threats_.clear();
+	threat_synced_version_ = 0;
 	threat_registry_.unref();
 }
 
@@ -398,33 +400,23 @@ void ShipNavigator::add_incoming_shell(int id, Vector2 landing_pos, float time_r
 }
 
 void ShipNavigator::set_threat_source(Ref<ThreatRegistry> registry, int team_id, float effective_radius) {
-	ThreatBin* new_bin = nullptr;
-	if (registry.is_valid()) {
-		new_bin = registry->acquire_bin(team_id, effective_radius);
-	}
-	if (new_bin == threat_bin_) {
-		// Already pointing at this exact bin — drop the duplicate ref we
-		// just acquired and bail.
-		if (registry.is_valid() && new_bin) {
-			registry->release_bin(new_bin);
-		}
-		return;
-	}
-	if (threat_bin_ && threat_registry_.is_valid()) {
-		threat_registry_->release_bin(threat_bin_);
+	if (registry == threat_registry_ && team_id == threat_team_ &&
+		std::abs(effective_radius - threat_radius_) < 0.01f) {
+		return;   // nothing about the subscription changed
 	}
 	threat_registry_ = registry;
-	threat_bin_ = new_bin;
-	threat_last_version_ = 0; // force refresh next push
+	threat_team_ = registry.is_valid() ? team_id : -1;
+	threat_radius_ = registry.is_valid() ? effective_radius : 0.0f;
+	threats_.clear();
+	threat_synced_version_ = 0;   // force a rebuild on next use
 }
 
 void ShipNavigator::clear_threat_source() {
-	if (threat_bin_ && threat_registry_.is_valid()) {
-		threat_registry_->release_bin(threat_bin_);
-	}
-	threat_bin_ = nullptr;
 	threat_registry_.unref();
-	threat_last_version_ = 0;
+	threat_team_ = -1;
+	threat_radius_ = 0.0f;
+	threats_.clear();
+	threat_synced_version_ = 0;
 	// Clear the HPA* cluster-level threat layer immediately so paths are
 	// no longer routed around the now-removed detection zones.
 	if (hpa_graph_.is_valid() && hpa_graph_->is_built()) {
@@ -663,15 +655,44 @@ TypedArray<Dictionary> ShipNavigator::get_debug_threat_clusters() const {
 	if (!hpa_graph_.is_valid() || !hpa_graph_->is_built()) return TypedArray<Dictionary>();
 	// Use the pure-query path so we always see THIS navigator's threat bin,
 	// not whatever ship last stamped the shared cluster_threat_blocked_ array.
-	if (!threat_bin_ || threat_bin_->threats.empty()) return TypedArray<Dictionary>();
-	return hpa_graph_->compute_debug_threat_clusters(threat_bin_->threats);
+	refresh_threats();
+	if (threats_.empty()) return TypedArray<Dictionary>();
+	return hpa_graph_->compute_debug_threat_clusters(threats_);
+}
+
+int ShipNavigator::get_threat_circle_count() const {
+	refresh_threats();
+	return static_cast<int>(threats_.size());
+}
+
+void ShipNavigator::debug_stamp_threats() {
+	refresh_threats();
+	if (!hpa_graph_.is_valid() || !hpa_graph_->is_built()) return;
+	if (threats_.empty()) {
+		hpa_graph_->clear_threats();
+		return;
+	}
+	hpa_graph_->stamp_threats(threats_);
+}
+
+void ShipNavigator::refresh_threats() const {
+	if (threat_registry_.is_null() || threat_team_ < 0 || threat_radius_ <= 0.0f) {
+		if (!threats_.empty()) threats_.clear();
+		threat_synced_version_ = 0;
+		return;
+	}
+	uint64_t v = threat_registry_->get_team_version(threat_team_);
+	if (v == threat_synced_version_) return;
+	threat_registry_->build_threats(threat_team_, threat_radius_, threats_);
+	threat_synced_version_ = v;
 }
 
 Dictionary ShipNavigator::adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const {
 	Dictionary out;
 	out["position"] = dest;
 	out["adjusted"] = false;
-	if (!threat_bin_ || threat_bin_->threats.empty()) return out;
+	refresh_threats();
+	if (threats_.empty()) return out;
 	if (!map.is_valid() || !map->is_built()) return out;
 
 	Vector2 adjusted = dest;
@@ -681,7 +702,7 @@ Dictionary ShipNavigator::adjust_destination_for_threats(Vector2 ship_pos, Vecto
 	// multiple overlapping threat circles eventually escapes.
 	for (int pass = 0; pass < 4; ++pass) {
 		bool pushed = false;
-		for (const auto &t : threat_bin_->threats) {
+		for (const auto &t : threats_) {
 			if (t.radius <= 0.0f) continue;
 			float dx = adjusted.x - t.origin.x;
 			float dz = adjusted.y - t.origin.y;
@@ -1502,7 +1523,7 @@ void ShipNavigator::report_path_failure(PathFailReason reason) {
 		" to=", target.position,
 		" dist=", state.position.distance_to(target.position),
 		" clearance=", get_ship_clearance(),
-		" threats=", threat_bin_ ? static_cast<int>(threat_bin_->threats.size()) : 0,
+		" threats=", static_cast<int>(threats_.size()),
 		" hpa_stage=", hpa_graph_.is_valid() ? hpa_graph_->get_last_fail_stage_name() : String("n/a"),
 		" suppressed=", suppressed,
 		" total=", path_fail_count_);
@@ -1538,9 +1559,9 @@ void ShipNavigator::run_plan_sync() {
 	// -----------------------------------------------------------------------
 	if (planner_ready) {
 
-		if (threat_bin_) {
-			hpa_graph_->stamp_threats(threat_bin_->threats);
-			threat_last_version_ = threat_bin_->version;
+		refresh_threats();
+		if (!threats_.empty()) {
+			hpa_graph_->stamp_threats(threats_);
 		} else {
 			hpa_graph_->clear_threats();
 		}
@@ -1590,7 +1611,7 @@ void ShipNavigator::run_plan_sync() {
 	// -----------------------------------------------------------------------
 	// Straight-line fallback (terrain-only, no threats)
 	// -----------------------------------------------------------------------
-	if (!threat_bin_ && map.is_valid() && map->is_built()) {
+	if (threats_.empty() && map.is_valid() && map->is_built()) {
 		RayResult los = map->raycast_internal(state.position, target.position, plan_min_clearance);
 		if (!los.hit) {
 			PathResult direct;
@@ -1624,9 +1645,9 @@ void ShipNavigator::run_plan_sync() {
 				float test_d = std::min(d, total);
 				Vector2 test = state.position + dir_n * test_d;
 				if (map->get_distance(test.x, test.y) < plan_min_clearance) break;
-				if (threat_bin_) {
+				if (!threats_.empty()) {
 					bool in_threat = false;
-					for (const auto &t : threat_bin_->threats) {
+					for (const auto &t : threats_) {
 						float dx = test.x - t.origin.x, dz = test.y - t.origin.y;
 						if (dx*dx + dz*dz < t.radius*t.radius) { in_threat = true; break; }
 					}
