@@ -81,6 +81,17 @@ var cover_min_threat_dist: float = 10000.0
 ## engagement path and kites instead.
 var cover_abandon_threat: float = 0.85
 
+## Whether this bot's escape route is concealment rather than manoeuvre. Set for
+## a hull that can actually go dark and gain something by it: it stops shooting
+## under pressure, routes around enemy detection zones, and holds fire whenever
+## letting bloom decay would drop it. A gun-armed hull that cannot break contact
+## by any of that only loses its own damage output by trying.
+var trades_on_concealment: bool = false
+
+## Threat above which a bot that trades on concealment stops shooting and starts
+## hiding. Read only when trades_on_concealment is set.
+var stealth_threat: float = 0.5
+
 # ---------------------------------------------------------------------------
 # Engagement range — how close this bot wants to fight, read off its build
 # ---------------------------------------------------------------------------
@@ -210,4 +221,35 @@ static func for_destroyer() -> BotDoctrine:
 	d.force_above = INF
 	d.universal_sail_forward_fallback = true
 	d.post_process_idle_arms = true
+	d.trades_on_concealment = true
+	d.stealth_threat = 0.5
+	return d
+
+
+## The open-water gunboat destroyer, for a hull with no undetected launch band -
+## tubes that do not reach meaningfully past its own detection radius, or no
+## tubes at all. See DDBehavior._is_gunboat(), which measures the band rather
+## than naming the hull.
+##
+## Such a boat cannot fight the way for_destroyer() assumes. Going dark buys it
+## nothing it can shoot from, so it does the opposite: sits near the edge of its
+## own guns in open water, keeps firing, and survives on helm rather than on
+## concealment. Everything below is that one decision.
+static func for_gunboat_destroyer() -> BotDoctrine:
+	var d := for_destroyer()
+	# The whole reversal, in one flag: no hiding, no held fire, no routing
+	# around detection zones. stealth_threat is left where for_destroyer() put
+	# it and simply stops being read.
+	d.trades_on_concealment = false
+	# Being seen is this boat's normal condition rather than the emergency it is
+	# for a torpedo boat, so distance decides the close arm again - the same way
+	# it does for every other gun-armed hull. Camping near maximum gun range,
+	# the close arm should be reached only when something has genuinely closed.
+	d.close_arm_range_gated = true
+	d.close_arm_uses_cover = true
+	# Camping is the playstyle, so the camp position has to sit still: the
+	# navigator dodges shells by working inside the jitter radius around it (see
+	# BotControllerV4._update_shell_threats), and a spread offset that walks the
+	# position every tick spends that room on nothing.
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Camp"]
 	return d

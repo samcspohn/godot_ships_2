@@ -178,6 +178,7 @@ max_speed_knots = 36.0
 acceleration_time = 9.0
 deceleration_time = 9.0
 turning_circle_radius = 300.0
+turn_speed_loss = 0.12
 rudder_response_time = 5.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
 

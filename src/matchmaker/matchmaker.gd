@@ -20,6 +20,7 @@ const SHIP_DATA = {
 	# "res://assets/Ships/H45/H45.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
 	"res://assets/Ships/H44/H44.2.tscn": {"class": SHIP_CLASS_BB, "tier": 11},
 	"res://assets/Ships/H42/H42.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
+	"res://assets/Ships/SP1/SP1.tscn": {"class": SHIP_CLASS_DD, "tier": 10},
 	"res://assets/Ships/Yamato/Yamato.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://assets/Ships/Montana/Montana.tscn": {"class": SHIP_CLASS_BB, "tier": 10},
 	"res://assets/Ships/DesMoines/DesMoines.tscn": {"class": SHIP_CLASS_CA, "tier": 10},
@@ -41,7 +42,8 @@ const SHIPS_BY_CLASS = {
 		"res://assets/Ships/DesMoines/DesMoines.tscn"
 	],
 	SHIP_CLASS_DD: [
-		"res://assets/Ships/Shimakaze/Shimakaze.tscn"
+		"res://assets/Ships/Shimakaze/Shimakaze.tscn",
+		"res://assets/Ships/SP1/SP1.tscn"
 	],
 	SHIP_CLASS_CV: [
 		"res://assets/Ships/GrafZeppelin/GrafZeppelin.tscn"

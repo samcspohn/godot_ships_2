@@ -10,9 +10,6 @@ const SPEED_VARIATION_PERIOD: float = 3.0
 const SPEED_VARIATION_MIN: float = 0.6
 const SPEED_VARIATION_MAX: float = 1.0
 
-## Threat above which the destroyer stops shooting and starts hiding.
-const STEALTH_THREAT: float = 0.5
-
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
@@ -76,6 +73,11 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	 - Enemies farthest into friendly territory get an overextension bonus.
 	 - When nothing is dangerously close, the most overextended enemy wins."""
 	var gun_range = _ship.artillery_controller.get_params()._range
+	# A gunboat scores gun targets whether or not it is currently lit. Being dark
+	# is a passing accident for it, not the setup for a torpedo run, and picking
+	# a target it means to hit with tubes it does not really have leaves it
+	# tracking the wrong ship the moment it is seen again.
+	var is_torpedo_boat: bool = not _is_gunboat(_ship)
 	var torpedo_range: float = -1.0
 	var proximity_override_dist: float = 2500.0  # DDs are fast, smaller threshold
 	var overextension_weight: float = 0.3
@@ -114,7 +116,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		angle -= PI / 4  # Best angle to torpedo is 45 degrees incoming
 		var priority: float = 0.0
 
-		if !_ship.is_detected():
+		if is_torpedo_boat and !_ship.is_detected():
 			# Hidden - prioritize torpedo targets
 			priority = cos(angle) * ship.movement_controller.ship_length / dist
 			if torpedo_range > 0:
@@ -256,8 +258,57 @@ func target_aim_offset(_target: Ship) -> Vector3:
 # NAVINTENT — decision arms specific to the destroyer
 # ============================================================================
 
+## How much wider than its own detection radius a boat's tubes must reach before
+## the water in between counts as a launch band worth building a playstyle on.
+## A boat at 1.0 can only launch from exactly the range at which it is seen,
+## which is not a torpedo boat - it is a gunboat carrying tubes.
+const GUNBOAT_BAND_RATIO: float = 1.5
+
+## Whether this hull fights in the open with its guns rather than from the dark
+## with its tubes.
+##
+## Measured, not named, so a hull is classified by what it can actually do. The
+## question is whether there is any water from which this boat can launch
+## without being seen, which is the gap between the two terms engagement_range()
+## already takes the min() of - concealment out to tube range. When that gap
+## closes the min() starts returning a standoff the boat cannot legally fire
+## from, and stealth has stopped being a weapon.
+##
+## Reads post-upgrade numbers (Moddable.p()), so a concealment module or a
+## captain skill moves the answer, and a range-only gunnery skill such as
+## Advanced Firing Training deliberately does not - it touches neither term.
+func _is_gunboat(ship: Ship) -> bool:
+	if not is_instance_valid(ship):
+		return false
+	if ship.torpedo_controller == null:
+		return true
+	var torp_range: float = ship.torpedo_controller.get_params()._range
+	if torp_range <= 0.0:
+		return true
+	var conceal: float = (ship.concealment.params.p() as ConcealmentParams).radius
+	if conceal <= 0.0:
+		return false  # conceals perfectly; the dark is free
+	return torp_range * TORPEDO_ENGAGE_RATIO \
+		< conceal * SkillSpot.SAFE_MARGIN * GUNBOAT_BAND_RATIO
+
 func doctrine() -> BotDoctrine:
-	return BotDoctrine.for_destroyer()
+	return BotDoctrine.for_gunboat_destroyer() if _is_gunboat(_ship) \
+		else BotDoctrine.for_destroyer()
+
+## Which row _doc() is currently holding, so a flip can be noticed.
+var _doctrine_is_gunboat: bool = false
+
+## BotBehavior._doc() builds the row once and keeps it, but the classification
+## above reads post-upgrade numbers and upgrades are applied deferred
+## (GameServer._add_player), so the first read can land on the bare hull. Re-run
+## the classifier - two property reads - every call, and rebuild only when the
+## answer actually changes.
+func _doc() -> BotDoctrine:
+	var gunboat := _is_gunboat(_ship)
+	if _doctrine == null or gunboat != _doctrine_is_gunboat:
+		_doctrine_is_gunboat = gunboat
+		_doctrine = doctrine()
+	return _doctrine
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; the gun policy below sets it
@@ -275,6 +326,9 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var d := _doc()
 	var ship := ctx.ship
 	var intent: NavIntent = null
+
+	if not d.trades_on_concealment:
+		return _select_gunboat_engaged_skill(ctx, sit)
 
 	# The one case that is not scouting: something is lit, it is the best thing
 	# on offer, and the odds are good. Push, but only to the range our weapons
@@ -311,6 +365,52 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	return intent
 
 
+## The engaged arm for a boat that fights in the open with its guns.
+##
+## A gunboat has no dark water to shoot from, so it trades on manoeuvre instead:
+## it sits near the edge of its own gun range and dodges. Camp is what says that
+## - it locks a firing position and hands the navigator a jitter radius to work
+## inside, which is exactly the room BotControllerV4._update_shell_threats()
+## needs to steer around incoming salvos. Push would chase a standoff that moves
+## with the target and spend the fight under helm for a reason that has nothing
+## to do with the shells in the air.
+##
+## Above camp_max_threat the position is no longer worth holding. From a camp
+## near maximum gun range, opening the range usually breaks contact outright,
+## so cover is tried first only because terrain is strictly better when it is
+## going spare.
+##
+## With nothing spotted the boat falls through to the same errand the torpedo
+## boat runs - go and make vision - because a destroyer that cannot see anything
+## still has the fleet's eyes whatever it is armed with.
+func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var d := _doc()
+	var intent: NavIntent = null
+
+	if sit.has_spotted:
+		if sit.threat < d.camp_max_threat:
+			# Camp wants a fraction of gun range; engagement_range() is the
+			# metres. Convert rather than passing gun_engage_ratio directly, so
+			# the camp distance stays the one answer every other arm uses.
+			intent = _run_skill(&"Camp", ctx, {
+				"desired_range_ratio": sit.engagement_range / maxf(sit.gun_range, 1.0),
+				"here": false,
+			})
+		else:
+			intent = _run_skill(&"FindCover", ctx, _cover_params())
+			if intent == null:
+				intent = _run_skill(&"Kite", ctx)
+
+	if intent == null:
+		intent = _run_skill(&"Spot", ctx)
+	if intent == null:
+		intent = _run_skill(&"Chase", ctx)
+	if intent == null:
+		intent = _run_skill(&"Hunt", ctx)
+
+	return intent
+
+
 ## The distance this destroyer wants to fight at.
 ##
 ## For a boat with tubes this is NOT tube range.  Detection is one-sided in our
@@ -336,7 +436,10 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 const TORPEDO_ENGAGE_RATIO: float = 0.8
 
 func engagement_range(ship: Ship, threat: float) -> float:
-	if ship.torpedo_controller != null:
+	# Tubes alone are not the test - the band they can be fired from is. Without
+	# one the min() below returns a standoff short of the boat's own guns that it
+	# still cannot launch from, which is the worst of both weapons.
+	if not _is_gunboat(ship) and ship.torpedo_controller != null:
 		var torp_range: float = ship.torpedo_controller.get_params()._range
 		if torp_range > 0.0:
 			var conceal: float = (ship.concealment.params.p() as ConcealmentParams).radius
@@ -347,11 +450,19 @@ func engagement_range(ship: Ship, threat: float) -> float:
 	return super(ship, threat)
 
 
-## Destroyers always route stealth-aware: undetected it keeps them outside enemy
-## detection zones in transit, detected it routes them back toward cover so they
-## shed detection as fast as possible.
+## A torpedo boat routes stealth-aware: undetected it keeps out of enemy
+## detection zones in transit, detected it routes back toward cover so it sheds
+## detection as fast as possible. A gunboat does none of it - every branch here
+## costs it gun time, and it has no dark water to spend that time reaching.
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
-	if sit.threat > STEALTH_THREAT:
+	var d := _doc()
+	if not d.trades_on_concealment:
+		wants_stealth = false
+		wants_to_be_concealed = false
+		_suppress_guns = false
+		return
+
+	if sit.threat > d.stealth_threat:
 		# Only ask the navigator to route around detection zones when staying
 		# out of them is actually possible. Against a contact that conceals
 		# better than we do there is no such route, and subscribing anyway
@@ -398,7 +509,7 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done),
 	# including on a ping or by aircraft, not just LOS.
-	if _ship.is_detected() or not _suppress_guns and can_fire_guns():
+	if _ship.is_detected() or (not _suppress_guns and can_fire_guns()):
 		super.engage_target(target)
 		_ship.secondary_controller.enabled = true
 	else:
