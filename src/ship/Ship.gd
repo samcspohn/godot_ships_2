@@ -99,8 +99,8 @@ var update_static_mods: bool = false
 var update_dynamic_mods: bool = false
 var _precision_registered: bool = false
 
-## Set to true to re-apply all mods from the templates once a second (dev only).
-const DEBUG_LIVE_MOD_RECALC: bool = false
+## Set to true to re-apply all mods from the templates once a second (dev only). PERFORMANCE EXPENSIVE
+const DEBUG_LIVE_MOD_RECALC: bool = true
 var _debug_recalc_timer: float = 0.0
 
 var super_structure: Node3D = null
