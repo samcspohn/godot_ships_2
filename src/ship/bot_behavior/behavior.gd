@@ -111,26 +111,6 @@ var _suppress_guns: bool = false
 
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
 
-func get_target_weights() -> Dictionary:
-	"""Override to customize target selection weights."""
-	return {
-		size_weight = 0.3,
-		range_weight = 0.5,
-		hp_weight = 0.2,
-		overextension_weight = 0.4,  # Weight for how far into friendly territory an enemy has pushed
-		class_modifiers = {
-			Ship.ShipClass.BB: 1.0,
-			Ship.ShipClass.CA: 1.0,
-			Ship.ShipClass.DD: 1.0,
-		},
-		prefer_broadside = true,
-		in_range_multiplier = 10.0,
-		flanking_multiplier = 5.0,  # Priority boost for flanking enemies
-		# If an enemy is closer than this distance, always prioritize it over overextended targets
-		proximity_override_distance = 3000.0,
-		# Bonus multiplier applied to the most overextended target among candidates
-		overextension_bonus = 2.0,
-	}
 
 func get_flanking_params() -> Dictionary:
 	"""Override to customize flanking detection thresholds."""
@@ -145,13 +125,13 @@ func get_flanking_params() -> Dictionary:
 	}
 
 func get_positioning_params() -> Dictionary:
-	"""Override to customize positioning behavior."""
+	"""Spread tuning for the hunting position, and nothing else.
+	Sole reader is _get_hunting_position(); the spread POST-PROCESSOR takes
+	its own spread_distance/spread_multiplier from BotDoctrine instead, so
+	these two numbers only shape where a bot stands off a last-known
+	position. Everything else this dictionary used to carry had no reader
+	left after the move to BotDoctrine and has been removed."""
 	return {
-		base_range_ratio = 0.60,
-		range_increase_when_damaged = 0.20,
-		min_safe_distance_ratio = 0.40,
-		flank_bias_healthy = 0.5,
-		flank_bias_damaged = 0.2,
 		spread_distance = 500.0,
 		spread_multiplier = 2.0,
 	}
@@ -170,7 +150,6 @@ func get_hunting_params() -> Dictionary:
 	"""Override to customize hunting behavior."""
 	return {
 		approach_multiplier = 0.4,
-		cautious_hp_threshold = 0.5,
 	}
 
 func get_evasion_params() -> Dictionary:
@@ -179,7 +158,6 @@ func get_evasion_params() -> Dictionary:
 		min_angle = deg_to_rad(25),
 		max_angle = deg_to_rad(35),
 		evasion_period = 6.0,
-		vary_speed = false
 	}
 
 func get_chase_max_threat() -> float:
@@ -2225,8 +2203,9 @@ func engagement_range(ship: Ship, threat: float) -> float:
 	# close for, and this must not push it back out to arm's length.
 	return minf(sec_range * d.secondary_engage_ratio, gun_dist)
 
-## Extra params handed to SkillFindCover. CA scales its cover standoff by its
-## positioning params; everything else takes the skill's defaults.
+## Extra params handed to SkillFindCover. No behaviour overrides this today, so
+## every hull takes the skill's own defaults; the hook stays because a per-bot
+## cover standoff ("max_range") is the obvious thing to drive from doctrine.
 func _cover_params() -> Dictionary:
 	return {}
 

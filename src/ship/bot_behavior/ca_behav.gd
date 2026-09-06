@@ -7,7 +7,6 @@ var ammo = ShellParams.ShellType.HE
 # state, read by BotControllerV4's debug drawing — nothing else uses it.
 var _cover_zone_valid: bool = false
 var _cover_zone_radius: float = 200.0
-var _cover_can_shoot: bool = false
 var _cover_island_center: Vector3 = Vector3.ZERO
 var _cover_island_radius: float = 0.0
 
@@ -20,7 +19,6 @@ func get_evasion_params() -> Dictionary:
 		min_angle = deg_to_rad(30),
 		max_angle = deg_to_rad(45),
 		evasion_period = 5.0,
-		vary_speed = false
 	}
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
@@ -30,31 +28,9 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.DD: return 0.3
 	return 1.0
 
-func get_target_weights() -> Dictionary:
-	return {
-		size_weight = 0.4,
-		range_weight = 0.6,
-		hp_weight = 0.0,
-		class_modifiers = {
-			Ship.ShipClass.BB: 1.0,
-			Ship.ShipClass.CA: 1.2,
-			Ship.ShipClass.DD: 1.5,
-		},
-		prefer_broadside = true,
-		in_range_multiplier = 10.0,
-		flanking_multiplier = 5.0,
-		overextension_weight = 0.4,  # CAs balance between close threats and overextended enemies
-		proximity_override_distance = 3000.0,
-		overextension_bonus = 2.0,
-	}
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.7,
-		range_increase_when_damaged = 0.30,
-		min_safe_distance_ratio = 0.40,
-		flank_bias_healthy = 0.6,
-		flank_bias_damaged = 0.2,
 		spread_distance = 2000.0,
 		spread_multiplier = 2.0,
 	}
@@ -64,7 +40,6 @@ func get_positioning_params() -> Dictionary:
 func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.3,
-		cautious_hp_threshold = 0.5,
 	}
 
 func should_evade(_destination: Vector3) -> bool:
@@ -172,7 +147,6 @@ func target_aim_offset(_target: Ship) -> Vector3:
 ## Shared with CVBehavior, which runs its own decision tree over the same skill.
 func _sync_cover_debug(ctx: SkillContext) -> void:
 	is_in_cover = _skill_cover.is_complete(ctx)
-	_cover_can_shoot = _skill_cover.can_shoot
 	if _skill_cover._nav_destination_valid:
 		_cover_zone_valid = true
 		_cover_island_center = _skill_cover._target_island_pos
@@ -186,9 +160,6 @@ func _sync_cover_debug(ctx: SkillContext) -> void:
 
 func doctrine() -> BotDoctrine:
 	return BotDoctrine.for_cruiser()
-
-func _cover_params() -> Dictionary:
-	return {"desired_range": get_positioning_params().base_range_ratio}
 
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	wants_stealth = false  # reset each tick; set true below if conditions are met
@@ -254,7 +225,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 
 	# Cover is too far off the engagement path and we are being shot at — kite,
 	# but lean the destination slightly toward the island we gave up on.
-	var intent := _run_skill(&"Kite", ctx, {"desired_range_ratio": 0.65})
+	var intent := _run_skill(&"Kite", ctx)
 	if intent == null:
 		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 	if intent != null:

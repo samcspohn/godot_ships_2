@@ -640,10 +640,9 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	var ship = ctx.ship
 	var my_pos = ship.global_position
 	var gun_range = ship.artillery_controller.get_params()._range
-	# NOTE: CABehavior._cover_params() passes "desired_range", not "max_range", so
-	# its value has never reached this line. Left as found rather than silently
-	# changing what a cruiser does - but the default below is what is actually in
-	# force for every hull today.
+	# No caller passes "max_range" today, so _STAGE_REACH_RATIO is in force for
+	# every hull. The parameter is kept because doctrine is the natural place to
+	# set it per bot.
 	var max_desired_range = gun_range * params.get("max_range", _STAGE_REACH_RATIO)
 
 	if ctx.server == null:

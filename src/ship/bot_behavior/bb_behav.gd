@@ -17,7 +17,6 @@ func get_evasion_params() -> Dictionary:
 		min_angle = deg_to_rad(25),
 		max_angle = deg_to_rad(35),
 		evasion_period = 20.0,  # Slow, deliberate weaves
-		vary_speed = false
 	}
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
@@ -27,31 +26,9 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 		Ship.ShipClass.DD: return 2.0
 	return 1.0
 
-func get_target_weights() -> Dictionary:
-	return {
-		size_weight = 0.3,
-		range_weight = 0.5,
-		hp_weight = 0.2,
-		class_modifiers = {
-			Ship.ShipClass.BB: 1.0,
-			Ship.ShipClass.CA: 1.0,
-			Ship.ShipClass.DD: 1.0,
-		},
-		prefer_broadside = true,
-		in_range_multiplier = 10.0,
-		flanking_multiplier = 4.0,  # BBs prioritize flanking enemies (slightly lower than CA/DD since BBs turn slowly)
-		overextension_weight = 0.5,  # BBs care a lot about overextended enemies (big guns punish pushes)
-		proximity_override_distance = 4000.0,  # BBs have larger proximity threshold due to slow turning
-		overextension_bonus = 2.5,  # Strong bonus for the most forward enemy when nothing is close
-	}
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.60,           # 60% of gun range — active engagement distance
-		range_increase_when_damaged = 0.10, # Up to +10% range when low HP — don't retreat to max range
-		min_safe_distance_ratio = 0.30,     # Only retreat if something gets within 30% range (very close)
-		flank_bias_healthy = 0.6,
-		flank_bias_damaged = 0.2,
 		spread_distance = 3000.0,
 		spread_multiplier = 1.0,
 	}
@@ -59,7 +36,6 @@ func get_positioning_params() -> Dictionary:
 func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.4,      # Stand off 40% of gun range in front of last known position
-		cautious_hp_threshold = 0.4,    # Only pull back toward friendlies when quite damaged
 	}
 
 # ============================================================================

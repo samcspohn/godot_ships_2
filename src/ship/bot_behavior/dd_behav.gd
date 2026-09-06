@@ -22,7 +22,6 @@ func get_evasion_params() -> Dictionary:
 		min_angle = deg_to_rad(10),
 		max_angle = deg_to_rad(25),
 		evasion_period = 2.5,  # Quick, erratic weaving
-		vary_speed = true      # Only DDs vary speed
 	}
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
@@ -34,11 +33,6 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 
 func get_positioning_params() -> Dictionary:
 	return {
-		base_range_ratio = 0.50,
-		range_increase_when_damaged = 0.30,
-		min_safe_distance_ratio = 0.30,
-		flank_bias_healthy = 0.7,
-		flank_bias_damaged = 0.1,
 		spread_distance = 1500.0,  # DDs spread more
 		spread_multiplier = 1.0,
 	}
@@ -46,7 +40,6 @@ func get_positioning_params() -> Dictionary:
 func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.8,      # DDs hunt aggressively
-		cautious_hp_threshold = 0.3,
 	}
 
 # ============================================================================
