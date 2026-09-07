@@ -96,8 +96,8 @@ var _v_offsets := PackedFloat64Array()
 var _sigma := 1.0
 
 # Citadel ellipse for post-processing (in normalised fraction space, set externally)
-var _citadel_h_frac := 0.5
-var _citadel_v_frac := 0.2
+var _citadel_h_frac := 0.4
+var _citadel_v_frac := 0.1
 var _citadel_guarantee_enabled := true
 
 func _init(sigma: float = 1.0) -> void:

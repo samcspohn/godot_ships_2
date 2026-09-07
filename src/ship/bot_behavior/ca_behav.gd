@@ -1,7 +1,6 @@
 extends BotBehavior
 class_name CABehavior
 
-var ammo = ShellParams.ShellType.HE
 
 # Cover-zone mirror. Written by _sync_cover_debug() from the cover skill's own
 # state, read by BotControllerV4's debug drawing — nothing else uses it.
@@ -65,83 +64,7 @@ func engage_target(target: Ship) -> void:
 		return
 	super.engage_target(target)
 
-func pick_ammo(_target: Ship) -> int:
-	return 0 if ammo == ShellParams.ShellType.AP else 1
 
-func target_aim_offset(_target: Ship) -> Vector3:
-	var disp = _ship.global_position - _target.global_position
-	var angle = (-_target.basis.z).angle_to(disp)
-	var dist = disp.length()
-	var offset = Vector3.ZERO
-	var dist_ratio: float = dist / _ship.artillery_controller.get_params()._range
-
-	ammo = ShellParams.ShellType.HE
-	var ap_auto_bounce: float = _ship.artillery_controller.get_params().shell1.auto_bounce
-	var is_broadside = abs(angle - PI / 2.0) < lerp(ap_auto_bounce, PI * 0.25, pow(dist_ratio, 3.0))
-	var bow_in = angle < PI / 2.0
-	var stern_in = !bow_in
-
-	match _target.ship_class:
-		Ship.ShipClass.BB:
-			if dist < 6000: # brawling range
-				if is_broadside:
-					ammo = ShellParams.ShellType.AP
-					if _target.health_controller.casemate.pool1 > 0:
-						offset.y = _target.movement_controller.ship_height / 4
-					elif _target.health_controller.bow.pool1 > 0 and bow_in:
-						offset.z = -_target.movement_controller.ship_length / 4
-						offset.y = _target.movement_controller.ship_height / 5
-					elif _target.health_controller.stern.pool1 > 0 and stern_in:
-						offset.z = _target.movement_controller.ship_length / 4
-						offset.y = _target.movement_controller.ship_height / 5
-					else:
-						offset.y = _target.movement_controller.ship_height / 4
-				else:
-					ammo = ShellParams.ShellType.HE
-					if _target.health_controller.bow.pool1 > 0 and bow_in:
-						offset.z = -_target.movement_controller.ship_length / 4
-						offset.y = _target.movement_controller.ship_height / 5
-					elif _target.health_controller.stern.pool1 > 0 and stern_in:
-						offset.z = _target.movement_controller.ship_length / 4
-						offset.y = _target.movement_controller.ship_height / 5
-					else: # superstrucure
-						offset.y = _target.movement_controller.ship_height / 2
-
-			if is_broadside and dist < 12000:
-				ammo = ShellParams.ShellType.AP
-				offset.y = _target.movement_controller.ship_height / 4
-			else: # angled and/or farther than 6000
-				var fire_pos = null
-				var priority_fires = [1,2,0,3]
-				for i in priority_fires:
-				# for fire: Fire in _target.fire_manager.fires:
-					var fire: Fire = _target.fire_manager.fires[i]
-					if fire.lifetime <= 0:
-						fire_pos = fire.position
-						break
-				if fire_pos != null:
-					offset = fire_pos
-				else:
-					offset.y = _target.movement_controller.ship_height / 2
-
-
-
-		Ship.ShipClass.CA:
-			if is_broadside:
-				if dist < 10000:
-					ammo = ShellParams.ShellType.AP
-					offset.y = 0.5
-				# elif dist < 10000:
-				# 	ammo = ShellParams.ShellType.AP
-				# 	offset.y = _target.movement_controller.ship_height / 4
-				else:
-					offset.y = _target.movement_controller.ship_height / 3
-			else:
-				offset.y = _target.movement_controller.ship_height / 3
-		Ship.ShipClass.DD:
-			offset.y = 1.0
-
-	return offset
 
 ## Mirror the cover skill's internal state onto the fields debug.gd draws from.
 ## Shared with CVBehavior, which runs its own decision tree over the same skill.

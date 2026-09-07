@@ -21,6 +21,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if to_enemy.length_squared() < 1.0:
 		return null
 	var enemy_bearing = atan2(to_enemy.x, to_enemy.z)
+	to_enemy = ctx.behavior._get_spotted_danger_center()
+	enemy_bearing = atan2(to_enemy.x, to_enemy.z)
 
 	var heading = SkillAngle.calc_heading(ctx, params)
 	# mix enemy bearing with threat bearing

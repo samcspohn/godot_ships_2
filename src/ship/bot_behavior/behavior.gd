@@ -96,6 +96,10 @@ var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 
+## Shell and aim-point solver. One per bot, because it caches per-target
+## solutions and the target's armour zone breakdown.
+var _gunnery: BotGunnery = BotGunnery.new()
+
 # Skill instances (created in subclass _init or on first use)
 var _skills: Dictionary = {}  # StringName -> BotSkill
 
@@ -596,45 +600,31 @@ func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	return best
 
 
+## Which shell to load, as an index into GunParams.shell1/shell2.
+##
+## Was a match on the target's class. Now the same solver that picks the aim
+## point picks the shell, because the two are one decision: HE at a superstructure
+## and AP at a citadel are different answers to "where can this gun hurt this
+## hull", and choosing them separately lets them disagree.
 func pick_ammo(target: Ship) -> int:
-	var ammo = ShellParams.ShellType.AP
-	if target.ship_class == Ship.ShipClass.DD:
-		ammo = ShellParams.ShellType.HE
-	return 0 if ammo == ShellParams.ShellType.AP else 1
+	var solution := _gunnery.solve(_ship, target)
+	return int(solution.get("ammo", 0))
 
-func target_aim_offset(_target: Ship) -> Vector3:
-	"""Returns the offset to the target to aim at in local space. Override in subclasses."""
-	return Vector3.ZERO
+## Where to point for a target this bot is only considering. Cheap by design -
+## see BotGunnery.aim_hint(). Used by the paths that run over every enemy on the
+## map; target_aim_offset() below is for the one actually being shot at.
+func aim_offset_hint(target: Ship) -> Vector3:
+	return _gunnery.aim_hint(target)
 
-func get_overmatch_ratio(target: Ship, zone_type: ArmorPart.Type) -> float:
-	"""Returns the fraction (0.0–1.0) of faces on the target's armor zone that
-	our AP shell can overmatch. Requires target.armor_system and armor_parts."""
-	if target.armor_system == null:
-		return 0.0
+## Where on the target to aim, in the target's local space.
+##
+## Shared by every hull: BotGunnery scores the target's own armour zones against
+## this ship's own shells, so a battleship and a destroyer shooting at the same
+## cruiser reach different answers without either of them being written down.
+func target_aim_offset(target: Ship) -> Vector3:
+	var solution := _gunnery.solve(_ship, target)
+	return solution.get("offset", Vector3.ZERO) as Vector3
 
-	var ap_overmatch: int = _ship.artillery_controller.get_params().shell1.overmatch
-
-	var total_faces: int = 0
-	var overmatched_faces: int = 0
-
-	for part in target.armor_parts:
-		if part.type != zone_type:
-			continue
-		var stats = target.armor_system.get_node_armor_stats(part.armor_path)
-		if stats.is_empty():
-			continue
-		var distribution: Dictionary = stats.armor_distribution
-		for thickness in distribution:
-			var count: int = distribution[thickness]
-			if thickness <= 0:
-				continue
-			total_faces += count
-			if thickness <= ap_overmatch:
-				overmatched_faces += count
-
-	if total_faces == 0:
-		return 0.0
-	return float(overmatched_faces) / float(total_faces)
 
 # EVASION SYSTEM
 
@@ -1040,7 +1030,7 @@ func can_hit_target(target: Ship) -> bool:
 	if shell_params == null:
 		return false
 
-	var adjusted_target_pos = sol_pos + contact.basis * target_aim_offset(target)
+	var adjusted_target_pos = sol_pos + contact.basis * aim_offset_hint(target)
 
 	# Lead exactly the way this bot would actually fire - same arc reckoning,
 	# same misjudgement - so the terrain check answers the question about the
@@ -1868,7 +1858,7 @@ func cover_test_position(enemy: Ship, lead: float = 0.0) -> Variant:
 	if not sol.get("valid", false):
 		return null
 	var at: Vector3 = _led_position(sol.position, sol.velocity, lead)
-	return at + (sol.basis as Basis) * target_aim_offset(enemy)
+	return at + (sol.basis as Basis) * aim_offset_hint(enemy)
 
 
 ## Aim points for `targets` as they will stand `lead` seconds from now. Built
@@ -1880,7 +1870,7 @@ func led_target_points(targets: Array, lead: float = 0.0) -> Array[Vector3]:
 		if not is_instance_valid(t_ship) or not t_ship.health_controller.is_alive():
 			continue
 		out.append(_led_position(t_ship.global_position, t_ship.linear_velocity, lead)
-			+ t_ship.global_basis * target_aim_offset(t_ship))
+			+ t_ship.global_basis * aim_offset_hint(t_ship))
 	return out
 
 ## Can a ship standing at `from_pos` put a shell on `target_pos`, terrain and all?
@@ -2318,7 +2308,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	# a spotted enemy already has clear LOS from inside our detection radius (so
 	# nothing we stop doing would shake them), true when holding fire would let
 	# bloom decay. Being detected is therefore not a veto on going dark.
-	if sit.threat > 0.95 and _probe_concealment(ctx.server):
+	if sit.threat > 0.9 and _probe_concealment(ctx.server):
 		wants_stealth = true
 		wants_to_be_concealed = true
 
@@ -2596,8 +2586,12 @@ func engage_target(target: Ship):
 	# Always update aim toward the target so turrets rotate correctly
 	_ship.artillery_controller.set_aim_input(target_lead)
 
+	# Only on a change. select_shell() is an @rpc: calling it re-broadcasts the
+	# selection to every client, reliably, and engage_target() runs every tick
+	# for every bot that is shooting at anything.
 	var ammo = pick_ammo(target)
-	_ship.artillery_controller.select_shell(ammo)
+	if _ship.artillery_controller.shell_index != ammo:
+		_ship.artillery_controller.select_shell(ammo)
 
 	# Only fire guns whose actual aim point is near the intended target AND
 	# whose shell arc clears terrain. This prevents two bugs:

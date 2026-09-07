@@ -1,7 +1,6 @@
 extends BotBehavior
 class_name DDBehavior
 
-var ammo = ShellParams.ShellType.HE
 
 # Speed variation for evasion
 var speed_variation_timer: float = 0.0
@@ -203,56 +202,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	# (when hidden, torpedo targets don't need line-of-fire for guns)
 	return best_shootable if best_shootable != null else best_fallback
 
-# ============================================================================
-# AMMO AND AIM - Class-specific targeting logic
-# ============================================================================
 
-func pick_ammo(_target: Ship) -> int:
-	return 0 if ammo == ShellParams.ShellType.AP else 1
-
-func target_aim_offset(_target: Ship) -> Vector3:
-	var disp = _ship.global_position - _target.global_position
-	var angle = (-_target.basis.z).angle_to(disp)
-	var dist = disp.length()
-	var offset = Vector3.ZERO
-
-	ammo = ShellParams.ShellType.HE
-
-	match _target.ship_class:
-		Ship.ShipClass.BB:
-			# HE at battleship superstructure
-			ammo = ShellParams.ShellType.HE
-			offset.y = _target.movement_controller.ship_height / 2
-		Ship.ShipClass.CA:
-			# Check if broadside
-			if abs(sin(angle)) > sin(deg_to_rad(70)):
-				if dist < 500:
-					# AP at broadside cruisers waterline < 500
-					ammo = ShellParams.ShellType.AP
-					offset.y = 0.0
-				elif dist < 1000:
-					# AP at broadside cruisers when < 1000
-					ammo = ShellParams.ShellType.AP
-					offset.y = 0.5
-				else:
-					# HE at cruiser superstructure
-					ammo = ShellParams.ShellType.HE
-					offset.y = _target.movement_controller.ship_height / 2
-			else:
-				# HE at cruiser superstructure when angled
-				ammo = ShellParams.ShellType.HE
-				offset.y = _target.movement_controller.ship_height / 2
-		Ship.ShipClass.DD:
-			# Check if broadside for AP at waterline
-			if abs(sin(angle)) > sin(deg_to_rad(70)) and dist < 1000:
-				# AP at broadside destroyers at waterline when < 1000
-				ammo = ShellParams.ShellType.AP
-				offset.y = 0.0
-			else:
-				# HE at destroyers
-				ammo = ShellParams.ShellType.HE
-				offset.y = 1.0
-	return offset
 
 # ============================================================================
 # NAVINTENT — decision arms specific to the destroyer
