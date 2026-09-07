@@ -111,5 +111,6 @@ visible = false
 material_override = ExtResource("2_7hjns")
 
 [node name="Plane_020" parent="." index="26" unique_id=1348909282 groups=["map"]]
+visible = false
 
 [node name="Ocean" parent="." index="27" unique_id=689554270 instance=ExtResource("4_mi1vd")]
