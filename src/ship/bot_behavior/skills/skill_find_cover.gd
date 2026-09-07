@@ -1091,11 +1091,11 @@ func is_cover_on_the_way(ctx: SkillContext) -> bool:
 	var to_cover = _nav_destination - ship.global_position
 	to_cover.y = 0.0
 	var dist_to_cover = to_cover.length()
-	if dist_to_cover < 750.0:
+	if dist_to_cover < 0.0:
 		return true
 
-	var t = clampf((dist_to_cover - 750.0) / 5000.0, 0.0, 1.0)
-	var angle_tol = lerpf(deg_to_rad(60.0), deg_to_rad(15.0), t)
+	var t = clampf((dist_to_cover - 0.0) / 5000.0, 0.0, 1.0)
+	var angle_tol = lerpf(deg_to_rad(45.0), deg_to_rad(15.0), t)
 	var cover_bearing = atan2(to_cover.x, to_cover.z)
 
 	var retreat_heading = wrapf(SkillAngle.calc_heading(ctx, {}), -PI, PI)

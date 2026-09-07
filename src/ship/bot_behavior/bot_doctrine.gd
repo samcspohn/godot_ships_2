@@ -73,6 +73,13 @@ var flank_max_threat: float = 0.4
 var camp_max_threat: float = 0.6
 var cover_max_threat: float = 0.7
 
+## Threat at which an open-water gun boat breaks off its push and kites, paired
+## with push_threat above, which is where it turns back in. The gap between the
+## two is the hysteresis that makes the pair an oscillation rather than a
+## chatter: one threshold would leave the boat alternating destinations every
+## tick while threat sat on it. See DDBehavior._open_water_kiting().
+var kite_threat: float = 0.6
+
 ## Minimum distance to the nearest non-DD threat before cover is preferred to
 ## kiting at high threat.
 var cover_min_threat_dist: float = 10000.0
@@ -232,8 +239,8 @@ static func for_destroyer() -> BotDoctrine:
 ## than naming the hull.
 ##
 ## Such a boat cannot fight the way for_destroyer() assumes. Going dark buys it
-## nothing it can shoot from, so it does the opposite: sits near the edge of its
-## own guns in open water, keeps firing, and survives on helm rather than on
+## nothing it can shoot from, so it does the opposite: it fights in the open at
+## the edge of its own guns, keeps firing, and survives on helm rather than on
 ## concealment. Everything below is that one decision.
 static func for_gunboat_destroyer() -> BotDoctrine:
 	var d := for_destroyer()
@@ -243,13 +250,13 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	d.trades_on_concealment = false
 	# Being seen is this boat's normal condition rather than the emergency it is
 	# for a torpedo boat, so distance decides the close arm again - the same way
-	# it does for every other gun-armed hull. Camping near maximum gun range,
-	# the close arm should be reached only when something has genuinely closed.
+	# it does for every other gun-armed hull. Fighting out near maximum gun
+	# range, the close arm should be reached only when something has genuinely
+	# closed.
 	d.close_arm_range_gated = true
 	d.close_arm_uses_cover = true
-	# Camping is the playstyle, so the camp position has to sit still: the
-	# navigator dodges shells by working inside the jitter radius around it (see
-	# BotControllerV4._update_shell_threats), and a spread offset that walks the
-	# position every tick spends that room on nothing.
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Camp"]
+	# The engaged arm swings between push and kite on these two (see
+	# DDBehavior._open_water_kiting). push_threat comes from for_destroyer() and
+	# is the turn-back-in edge; this is the break-off edge.
+	d.kite_threat = 0.6
 	return d

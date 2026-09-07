@@ -203,6 +203,33 @@ func _table_test() -> void:
 			rng2, asp2, d2.x, d2.y, "AP" if ammo2 == 0 else "HE",
 			at2.x, at2.y, at2.z, zone, ap_best, he_best])
 
+	# Ask the solver for a few geometries and report what it actually chose,
+	# with the measured AP rate the fire bonus is now weighed against.
+	_say("")
+	_say("solver answers (fire bonus scaled by measured AP, not nominal):")
+	for pr in [[6000.0, 90.0], [12000.0, 90.0], [8000.0, 22.5], [15000.0, 22.5]]:
+		var rr: float = pr[0]
+		var aa: float = pr[1]
+		var ang := deg_to_rad(aa)
+		_shooter.global_transform = Transform3D(Basis(),
+			_target.global_position + Vector3(sin(ang), 0.0, -cos(ang)) * rr)
+		_shooter.force_update_transform()
+		var kk = G._bucket_key(_shooter, _target)
+		var sol2 := {}
+		for i in 400:
+			sol2 = G.solve(_shooter, _target)
+			G._budget_left = G.SOLVER_BUDGET_PER_FRAME
+			G._drain()
+			if G._aim_table.has(kk):
+				break
+		var ans2 = G._aim_table.get(kk, {})
+		_say("  %6.0f m %5.1f deg -> %s  x=%5.1f y=%5.2f z=%6.1f  payout %8.0f" % [
+			rr, aa, "AP" if int(ans2.get("ammo", 0)) == 0 else "HE",
+			(ans2.get("offset", Vector3.ZERO) as Vector3).x,
+			(ans2.get("offset", Vector3.ZERO) as Vector3).y,
+			(ans2.get("offset", Vector3.ZERO) as Vector3).z,
+			float(ans2.get("payout", 0.0))])
+
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()

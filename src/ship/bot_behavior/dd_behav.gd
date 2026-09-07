@@ -315,41 +315,99 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	return intent
 
 
+## Minimum seconds a kite leg runs before threat is allowed to turn the boat
+## back in. The hysteresis band alone already stops threshold chatter, but
+## threat can step discontinuously as well as slide - a shooter's window
+## expiring, a contact dying, an enemy passing out of its own gun range - and
+## with no floor on the leg the boat can reverse helm a tick after committing
+## and spend the engagement in a turn. Breaking off is deliberately not damped:
+## a boat that has started taking fire leaves immediately.
+const OPEN_WATER_KITE_DWELL: float = 3.0
+
+## Which way the open-water oscillation is currently swinging, and when this leg
+## began. Persist across ticks; _select_gunboat_engaged_skill() clears them when
+## the picture goes dark.
+var _ow_kiting: bool = false
+var _ow_leg_started: float = 0.0
+
+## True while the boat is on the kite half of the open-water swing.
+##
+## Threat already answers the question this arm is asking. get_threat_score()
+## halves the contribution of every contact that is not in
+## active_shooters_at_me, so the same geometry reads roughly twice as dangerous
+## with shells in the air as without - "am I being shot at" is a term in the
+## score, not a separate flag to go and consult.
+##
+## Two thresholds rather than one, because a single one is not an oscillation,
+## it is a chatter: threat parks on the boundary and the boat alternates
+## destinations every physics tick without ever sailing either leg. Kiting
+## starts at kite_threat and only ends back below push_threat. The gap between
+## them is crossed by range - range_pressure falls as (dist/enemy_range)^3 -
+## which is precisely what the two legs spend, so each leg has to actually be
+## sailed before it can end.
+func _open_water_kiting(sit: Dictionary) -> bool:
+	var d := _doc()
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if _ow_kiting:
+		if sit.threat <= d.push_threat and now - _ow_leg_started >= OPEN_WATER_KITE_DWELL:
+			_ow_kiting = false
+			_ow_leg_started = now
+	elif sit.threat >= d.kite_threat:
+		_ow_kiting = true
+		_ow_leg_started = now
+	return _ow_kiting
+
+
 ## The engaged arm for a boat that fights in the open with its guns.
 ##
-## A gunboat has no dark water to shoot from, so it trades on manoeuvre instead:
-## it sits near the edge of its own gun range and dodges. Camp is what says that
-## - it locks a firing position and hands the navigator a jitter radius to work
-## inside, which is exactly the room BotControllerV4._update_shell_threats()
-## needs to steer around incoming salvos. Push would chase a standoff that moves
-## with the target and spend the fight under helm for a reason that has nothing
-## to do with the shells in the air.
+## A gunboat has no dark water to shoot from, so it trades on manoeuvre instead
+## - and manoeuvre here means the range itself, worked back and forth. It pushes
+## in while nobody is shooting at it, and opens the range once somebody is, then
+## pushes again once that has cost the shooters their accuracy. That swing is
+## the playstyle: the boat is only ever gaining ground or spending it, and the
+## thing it spends it on is being hard to hit.
 ##
-## Above camp_max_threat the position is no longer worth holding. From a camp
-## near maximum gun range, opening the range usually breaks contact outright,
-## so cover is tried first only because terrain is strictly better when it is
-## going spare.
+## This used to camp a locked firing position below camp_max_threat and hand the
+## navigator a jitter radius to dodge inside. A camp is a stationary answer to a
+## moving problem: the jitter radius is a couple of turning circles, which is
+## room to sidestep one salvo, not room to make a battery re-range. Sitting in
+## it also let the enemy hold a firing solution for as long as it pleased, which
+## is the one thing a boat with a destroyer's plating cannot afford.
+##
+## Cover is still tried first on the kite leg - terrain beats water whenever it
+## is going spare - and open water is simply the case where FindCover declines,
+## which is what makes Kite the answer here rather than a fallback.
 ##
 ## With nothing spotted the boat falls through to the same errand the torpedo
 ## boat runs - go and make vision - because a destroyer that cannot see anything
 ## still has the fleet's eyes whatever it is armed with.
 func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var d := _doc()
 	var intent: NavIntent = null
 
 	if sit.has_spotted:
-		if sit.threat < d.camp_max_threat:
-			# Camp wants a fraction of gun range; engagement_range() is the
-			# metres. Convert rather than passing gun_engage_ratio directly, so
-			# the camp distance stays the one answer every other arm uses.
-			intent = _run_skill(&"Camp", ctx, {
-				"desired_range_ratio": sit.engagement_range / maxf(sit.gun_range, 1.0),
-				"here": false,
-			})
-		else:
+		if _open_water_kiting(sit):
 			intent = _run_skill(&"FindCover", ctx, _cover_params())
 			if intent == null:
 				intent = _run_skill(&"Kite", ctx)
+		else:
+			# Push stops closing at the engagement range, so this is not a
+			# charge - it is the boat taking back the water it gave up on the
+			# last kite leg and no more.
+			#
+			# line_of_fire because that stop is the whole point of the leg. A
+			# gunboat that pushes back in and parks behind an island has spent
+			# the water and bought nothing: it is not shooting, and the next
+			# kite leg will spend the same water again. Camp never had to ask
+			# because it held a position it was already shooting from.
+			intent = _run_skill(&"Push", ctx, {
+				"desired_range": sit.engagement_range,
+				"line_of_fire": true,
+			})
+	else:
+		# Nothing lit: the swing has nothing to swing against, and a leg left
+		# latched here would decide the first tick of the next engagement on a
+		# threat reading from the last one.
+		_ow_kiting = false
 
 	if intent == null:
 		intent = _run_skill(&"Spot", ctx)

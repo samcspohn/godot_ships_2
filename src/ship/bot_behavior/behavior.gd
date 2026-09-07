@@ -180,6 +180,40 @@ func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 
 # TACTICAL STATE HELPERS
 
+## When the shell type was last switched, so a salvo cannot be split across two.
+var _ammo_changed_at: float = 0.0
+
+## Whether the battery may change shell now.
+##
+## A salvo goes out over about a second - ArtilleryController staggers it
+## through fire_next_ready() - while pick_ammo() is asked every tick, so
+## applying a change the moment it appears reloads the guns that have not fired
+## yet and sends half a salvo of the wrong shell. Replay 1788733215 has Wotan
+## doing exactly that against a Des Moines: twenty AP then nineteen HE inside
+## one second, salvo after salvo.
+##
+## The safe moment is when every gun is loaded, because then nothing is part way
+## through. The reload-time fallback is a safety valve: a battery firing
+## continuously may never have all barrels ready at once, and without it the
+## shell type would latch for the rest of the match.
+func _may_change_ammo() -> bool:
+	var ac = _ship.artillery_controller
+	if ac == null:
+		return true
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var all_loaded: bool = true
+	for gun in ac.guns:
+		if not is_instance_valid(gun):
+			continue
+		if gun.reload < 1.0:
+			all_loaded = false
+			break
+	if all_loaded:
+		return true
+	var reload: float = ac.get_params().reload_time if ac.get_params() != null else 0.0
+	return now - _ammo_changed_at >= reload
+
+
 func can_fire_guns() -> bool:
 	## Always allowed at the base level.
 	## Each ship class gates firing in its own engage_target override.
@@ -2470,7 +2504,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var raw_threat: float = 1.0
 	var time_remaining: float = server.get_match_time_remaining()
 	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
-	var threat_scale: float = 1.0 - pow(t_norm, 4)
+	var threat_scale: float = 1.0 - pow(t_norm, 3.0)
 
 	for contact in contacts:
 		var enemy: Ship = contact.ship
@@ -2586,12 +2620,13 @@ func engage_target(target: Ship):
 	# Always update aim toward the target so turrets rotate correctly
 	_ship.artillery_controller.set_aim_input(target_lead)
 
-	# Only on a change. select_shell() is an @rpc: calling it re-broadcasts the
-	# selection to every client, reliably, and engage_target() runs every tick
-	# for every bot that is shooting at anything.
+	# Only on a change, and only between salvos. select_shell() is an @rpc, so
+	# calling it re-broadcasts the selection to every client reliably, and
+	# engage_target() runs every tick for every bot that is shooting.
 	var ammo = pick_ammo(target)
-	if _ship.artillery_controller.shell_index != ammo:
+	if _ship.artillery_controller.shell_index != ammo and _may_change_ammo():
 		_ship.artillery_controller.select_shell(ammo)
+		_ammo_changed_at = Time.get_ticks_msec() / 1000.0
 
 	# Only fire guns whose actual aim point is near the intended target AND
 	# whose shell arc clears terrain. This prevents two bugs:

@@ -79,7 +79,9 @@ const DMG_OVERPENETRATION: float = 0.1
 
 ## What a fire is worth, as a fraction of the target's maximum HP: average
 ## total fire damage against a hull with a normal commander build and upgrades.
-const FIRE_VALUE_PER_FIRE: float = 0.1
+const FIRE_VALUE_PER_FIRE: float = 0.11
+
+const REASONABLE_NUMBER_OF_FIRES: float = 2.5
 
 ## The salvo: one perfectly accurate shell, then three placed in the dispersion
 ## ellipse. Positions are in the -1..1 units DispersionCalculator uses for its
@@ -376,6 +378,10 @@ static func _begin_bucket(key: Array, shooter: Ship, target: Ship) -> Dictionary
 		# to be now: the requester may have moved on, and the bucket has to stay
 		# worth finishing for whoever asks next.
 		"dispersion": _dispersion_at(gun_params, (float(key[3]) + 0.5) * RANGE_BUCKET_M),
+		# Shells per second the whole battery puts out, so a measured
+		# per-shell payout converts to a rate.
+		"salvo_rate": (float(shooter.artillery_controller.guns.size())
+			/ gun_params.reload_time) if gun_params.reload_time > 0.0 else 0.0,
 		"aspect": (float(key[2]) + 0.5) * ASPECT_BUCKET_DEG,
 		"range": (float(key[3]) + 0.5) * RANGE_BUCKET_M,
 	}
@@ -451,6 +457,29 @@ static func _best_of(state: Dictionary) -> Dictionary:
 	var sums: PackedFloat64Array = state["sums"]
 	var counts: PackedFloat64Array = state["counts"]
 	var center: Vector3 = state["center"]
+	var target: Ship = state["target"]
+
+	# What AP is actually worth here, measured - ricochets, overpenetrations and
+	# all. A synthetic rate off nominal shell damage says a Des Moines threatens
+	# a battleship with every shell; the bucket says most of them bounce or sail
+	# through, and the fire has to be weighed against what really lands.
+	var best_ap: float = 0.0
+	for slot in candidates.size():
+		if counts[slot] > 0.0:
+			best_ap = maxf(best_ap, sums[slot] / counts[slot])
+
+	# A fire is damage over TIME, so it is only worth what the guns could not
+	# have done in the same time. Where AP out-damages the burn the bonus is cut
+	# in proportion; where AP mostly bounces the fire keeps its full value, which
+	# is why HE stays right against a hull AP cannot hurt.
+	var fire_scale: float = 1.0
+	var ap_dps: float = best_ap * float(state["salvo_rate"])
+	if ap_dps > 0.0:
+		var fp := target.fire_manager.fparams.p() as DOTParams \
+			if target.fire_manager != null and target.fire_manager.fparams != null else null
+		if fp != null:
+			var fire_dps: float = fp.dmg_rate * target.health_controller.max_hp
+			fire_scale = clampf(fire_dps / ap_dps, 0.0, 1.0)
 
 	var best: float = 0.0
 	var best_slot: int = -1
@@ -461,6 +490,10 @@ static func _best_of(state: Dictionary) -> Dictionary:
 		var value: float = sums[slot] / counts[slot]
 		if value <= 0.0:
 			continue
+		# HE slots carry the fire the shell would start where it lands.
+		if slot >= candidates.size():
+			value += _fire_value(state["shell2"], target,
+				candidates[slot % candidates.size()]) * fire_scale
 		var dist: float = (candidates[slot % candidates.size()] as Vector3).distance_to(center)
 		if value > best or (is_equal_approx(value, best) and dist < best_dist):
 			best = value
@@ -614,7 +647,8 @@ static func _superstructure_bounds(target: Ship) -> AABB:
 ## burning, and crediting it again is how HE ends up overvalued everywhere. Only
 ## the section actually aimed at matters, which is why this takes the aim point
 ## rather than just the shell.
-static func _fire_value(shell: ShellParams, target: Ship, local_aim: Vector3) -> float:
+static func _fire_value(shell: ShellParams, target: Ship,
+		local_aim: Vector3) -> float:
 	if shell.fire_buildup <= 0.0 or not is_instance_valid(target):
 		return 0.0
 	var fm = target.fire_manager
@@ -625,6 +659,9 @@ static func _fire_value(shell: ShellParams, target: Ship, local_aim: Vector3) ->
 		return 0.0
 
 	# The section this aim point belongs to is the nearest fire node to it.
+	# Fire._apply_build_up() ignores a hit while lifetime > 0, so a shell landing
+	# on a section already alight buys nothing - the fire it would have started
+	# is already burning.
 	var nearest: Fire = null
 	var nearest_d: float = INF
 	for f in fm.fires:
@@ -635,7 +672,7 @@ static func _fire_value(shell: ShellParams, target: Ship, local_aim: Vector3) ->
 			nearest_d = d
 			nearest = f
 	if nearest != null and nearest.lifetime > 0.0:
-		return 0.0  # already burning here
+		return 0.0
 
 	var chance: float = clampf(shell.fire_buildup / rp.max_buildup, 0.0, 1.0)
 	return chance * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE
@@ -703,7 +740,10 @@ static func _walk_payout(target: Ship, owner: Ship, shell: ShellParams,
 	var direct: float = float(RESULT_PAYOUT.get(res.result_type, 0.0)) * shell.damage
 	if direct <= 0.0:
 		return 0.0
-	return direct + _fire_value(shell, target, local_aim)
+	# Direct damage only. The fire bonus depends on what AP turned out to be
+	# worth against THIS hull at THIS geometry, which is not known until the
+	# bucket's AP slots have been walked - see _best_of().
+	return direct
 
 
 ## A bucket is a shooter hull, a target hull, an aspect and a range. Nothing
