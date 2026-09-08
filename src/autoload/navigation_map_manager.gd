@@ -10,7 +10,6 @@ extends Node
 ##   NavigationMapManager.get_map()                              — returns the shared NavigationMap
 
 var _map: NavigationMap = null
-var _waypoint_graph: WaypointGraph = null
 var _hpa_graph: HpaGraph = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
@@ -53,7 +52,7 @@ func build_map(island_bodies: Array[StaticBody3D], map_bounds: Rect2, cell_size:
 		_map.get_cell_size_value()
 	])
 
-	_build_waypoint_graph()
+	_build_hpa_graph()
 
 
 ## Build the navigation map using downward raycasts through the physics engine.
@@ -100,28 +99,17 @@ func build_map_raycast(island_bodies: Array[StaticBody3D], map_bounds: Rect2,
 		_map.get_cell_size_value()
 	])
 
-	_build_waypoint_graph()
+	_build_hpa_graph()
 
-## Build the shared WaypointGraph and HpaGraph from the NavigationMap (called internally after map build).
-func _build_waypoint_graph() -> void:
+## Build the shared HpaGraph from the NavigationMap (called internally after map build).
+func _build_hpa_graph() -> void:
 	if _map == null or not _map.is_built():
 		return
 
 	var start_time = Time.get_ticks_msec()
-	_waypoint_graph = WaypointGraph.new()
-	_waypoint_graph.build(_map, DEFAULT_MIN_SHIP_RADIUS)
-	var elapsed = Time.get_ticks_msec() - start_time
-
-	print("[NavigationMapManager] WaypointGraph built in %.1f ms — %d nodes, %d edges" % [
-		elapsed,
-		_waypoint_graph.node_count(),
-		_waypoint_graph.get_edge_count()
-	])
-
-	start_time = Time.get_ticks_msec()
 	_hpa_graph = HpaGraph.new()
 	_hpa_graph.build(_map, DEFAULT_MIN_SHIP_RADIUS)
-	elapsed = Time.get_ticks_msec() - start_time
+	var elapsed = Time.get_ticks_msec() - start_time
 
 	print("[NavigationMapManager] HpaGraph built in %.1f ms — %d nodes across %d clusters" % [
 		elapsed,
@@ -132,10 +120,6 @@ func _build_waypoint_graph() -> void:
 ## Returns the shared NavigationMap instance, or null if not yet built.
 func get_map() -> NavigationMap:
 	return _map
-
-## Returns the shared WaypointGraph instance, or null if not yet built.
-func get_waypoint_graph() -> WaypointGraph:
-	return _waypoint_graph
 
 ## Returns the shared HpaGraph instance, or null if not yet built.
 func get_hpa_graph() -> HpaGraph:
