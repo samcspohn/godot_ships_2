@@ -13,3 +13,5 @@ godot = { version = "0.5.5", features = ["api-4-7"] }
 [profile.release]
 opt-level = 3
 lto = "thin"
+# Line tables so panic backtraces name real functions and lines.
+debug = 1

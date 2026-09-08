@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{CollisionObject3D, Node, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource};
 
@@ -145,7 +146,7 @@ pub struct NativeArmorInteraction;
 impl ShellState {
     pub fn calc_end_position(&mut self) {
         let mut fuze_left = if let Some(p) = &self.params {
-            p.get("fuze_delay").to::<f64>() - self.fuze
+            p.get("fuze_delay").to_f64() - self.fuze
         } else {
             0.0
         };
@@ -230,7 +231,7 @@ impl NativeArmorInteraction {
 
     pub fn get_k_nose(params: &Option<Gd<Resource>>) -> f64 {
         if let Some(p) = params {
-            if p.get("type").to::<i32>() == 0 {
+            if p.get("type").to_i32() == 0 {
                 return K_NOSE_COMMON;
             }
         }
@@ -242,7 +243,7 @@ impl NativeArmorInteraction {
         armor_mm: f64, e_armor: f64,
     ) -> ArmorEval {
         let mut eval = ArmorEval::default();
-        let caliber = params.as_ref().map(|p| p.get("caliber").to::<f64>()).unwrap_or(1.0);
+        let caliber = params.as_ref().map(|p| p.get("caliber").to_f64()).unwrap_or(1.0);
         let k_nose = Self::get_k_nose(params);
         let cos_a = impact_angle.cos().max(0.05);
         let tan_a = clampd(impact_angle, 0.0, 89.0 * DEG_TO_RAD).tan();
@@ -310,7 +311,10 @@ impl NativeArmorInteraction {
         let append_ship_obb = |ship: &Option<Gd<Object>>, obb_rids: &mut VarArray| {
             let Some(ship) = ship else { return; };
             let mut pw = precision_physics_world.clone();
-            let entry: VarDictionary = pw.call("get_ship_entry", &[ship.to_variant()]).to();
+            let entry: VarDictionary = pw
+                .call("get_ship_entry", &[ship.to_variant()])
+                .try_to()
+                .unwrap_or_default();
             if entry.is_empty() || !entry.contains_key("obb_body") {
                 return;
             }
@@ -361,7 +365,7 @@ impl NativeArmorInteraction {
     pub fn duplicate_shell_params_with_drag(params: &Option<Gd<Resource>>, drag_multiplier: f64) -> Option<Gd<Resource>> {
         let params = params.as_ref()?;
         let mut dup = params.duplicate_ex().deep(true).done()?;
-        let drag = dup.get("drag").to::<f64>();
+        let drag = dup.get("drag").to_f64();
         dup.set("drag", &(drag * drag_multiplier).to_variant());
         Some(dup)
     }
@@ -370,7 +374,7 @@ impl NativeArmorInteraction {
         let Some(water_params) = Self::duplicate_shell_params_with_drag(params, WATER_DRAG) else {
             return water_hit;
         };
-        let fuze_delay = water_params.get("fuze_delay").to::<f64>();
+        let fuze_delay = water_params.get("fuze_delay").to_f64();
         crate::ballistics::drag_v2::ProjectilePhysicsWithDragV2::calculate_position_at_time_impl(
             water_hit, entry_vel, fuze_delay, &water_params,
         )
@@ -464,14 +468,14 @@ impl NativeArmorInteraction {
 
     pub fn is_citadel(part: &Option<Gd<Object>>) -> bool {
         match part {
-            Some(p) => p.get("is_citadel").to::<bool>(),
+            Some(p) => p.get("is_citadel").to_bool(),
             None => false,
         }
     }
 
     pub fn armor_type(part: &Option<Gd<Object>>) -> i32 {
         match part {
-            Some(p) => p.get("type").to::<i32>(),
+            Some(p) => p.get("type").to_i32(),
             None => -1,
         }
     }
@@ -479,7 +483,7 @@ impl NativeArmorInteraction {
     pub fn get_armor(armor_part: &Option<Gd<Object>>, face_index: i32) -> f64 {
         let Some(armor_part) = armor_part else { return 0.0; };
         let mut p = armor_part.clone();
-        p.call("get_armor", &[face_index.to_variant()]).to::<f64>()
+        p.call("get_armor", &[face_index.to_variant()]).to_f64()
     }
 
     /// Returns a `hit_result::*` value.

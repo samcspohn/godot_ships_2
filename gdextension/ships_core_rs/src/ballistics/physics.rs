@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 
 const GRAVITY: f64 = -9.8;
@@ -109,7 +110,7 @@ impl ProjectilePhysics {
             return no_solution();
         }
 
-        let mut time_estimate: f64 = result.at(1).to();
+        let mut time_estimate: f64 = result.at(1).to_f64();
 
         for _ in 0..1 {
             let predicted_pos = target_pos + target_velocity * time_estimate as f32;
@@ -119,7 +120,7 @@ impl ProjectilePhysics {
                 return no_solution();
             }
 
-            time_estimate = result.at(1).to();
+            time_estimate = result.at(1).to_f64();
         }
 
         let final_target_pos = target_pos + target_velocity * time_estimate as f32;

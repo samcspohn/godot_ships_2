@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Node, PhysicsDirectSpaceState3D};
 
@@ -275,7 +276,7 @@ impl NativeArmorInteraction {
                 let total_dist = (fuzed_position - water_pos).length() as f64;
                 let hit_dist = (precision_hit_pos - water_pos).length() as f64;
                 let fuze_delay = match projectile.bind().params.as_ref() {
-                    Some(p) => p.get("fuze_delay").to::<f64>(),
+                    Some(p) => p.get("fuze_delay").to_f64(),
                     None => 0.0,
                 };
                 let t_impact = fuze_delay * (hit_dist / total_dist.max(0.001));
@@ -300,7 +301,7 @@ impl NativeArmorInteraction {
                 precision_hit.get("local_normal").unwrap().to(),
                 projectile,
                 precision_vel,
-                precision_hit.get("face_index").unwrap().to(),
+                precision_hit.get("face_index").unwrap().to_i32(),
                 fuze,
                 hit_water,
                 precision_physics_world,
@@ -368,14 +369,14 @@ impl NativeArmorInteraction {
         shell.params = Some(params.clone());
         shell.calc_end_position();
 
-        if hit_water && params.get("type").to::<i32>() == 0 {
+        if hit_water && params.get("type").to_i32() == 0 {
             return Self::make_result(hit_result::WATER, first_hit_pos, None, impact_velocity, None, first_hit_normal, 1.0);
         }
 
-        if params.get("type").to::<i32>() == 0 {
+        if params.get("type").to_i32() == 0 {
             let armor_mm = Self::get_armor(&hit_node, face_index);
             let he_citadel = Self::is_citadel(&hit_node);
-            let he_pens = params.get("overmatch").to::<f64>() >= armor_mm;
+            let he_pens = params.get("overmatch").to_f64() >= armor_mm;
             let he_result = if he_pens {
                 if he_citadel { hit_result::CITADEL } else { hit_result::PENETRATION }
             } else {
@@ -403,7 +404,7 @@ impl NativeArmorInteraction {
                     "impact_angle",
                     Self::calculate_impact_angle(basis_xform(&ship_basis_inv, impact_velocity).normalized(), hit_normal),
                 );
-                step.set("pen", params.get("overmatch").to::<f64>());
+                step.set("pen", params.get("overmatch").to_f64());
                 step.set("integrity", 1.0f64);
                 step.set("pos", first_hit_pos);
                 step.set("vel", impact_velocity);
@@ -425,7 +426,7 @@ impl NativeArmorInteraction {
         let mut offset = Vector3::ZERO;
         let mut face_index = face_index;
 
-        while shell.fuze <= params.get("fuze_delay").to::<f64>()
+        while shell.fuze <= params.get("fuze_delay").to_f64()
             && result != ArmorResult::Shatter
             && Self::same_object(
                 &hit_node.as_ref().unwrap().get("ship").to::<Option<Gd<Object>>>(),
@@ -439,17 +440,17 @@ impl NativeArmorInteraction {
             let impact_angle = Self::calculate_impact_angle(shell.velocity.normalized(), hit_normal);
             let e_armor = Self::calculate_effective_thickness(armor_mm, impact_angle);
             shell.pen = Self::calculate_de_marre_penetration(
-                params.get("mass").to(),
+                params.get("mass").to_f64(),
                 speed,
-                params.get("caliber").to(),
-            ) * params.get("penetration_modifier").to::<f64>();
+                params.get("caliber").to_f64(),
+            ) * params.get("penetration_modifier").to_f64();
             shell.position = hit_position + offset;
             offset = Vector3::ZERO;
             // World-space velocity as the shell arrives at this plate, captured before
             // any branch below modifies it — this is the step's "impact_vel".
             let log_impact_vel = if log_armor { basis_xform(&ship_basis, shell.velocity) } else { Vector3::ZERO };
 
-            if armor_mm <= params.get("overmatch").to::<f64>() {
+            if armor_mm <= params.get("overmatch").to_f64() {
                 if Self::is_citadel(&hit_node) {
                     hit_cit = true;
                 }
@@ -464,15 +465,15 @@ impl NativeArmorInteraction {
                 if shell.velocity.length_squared() > 0.0 {
                     offset += shell.velocity.normalized() * (EPSILON as f32);
                 }
-                if shell.fuze < 0.0 && e_armor >= params.get("arming_threshold").to::<f64>() {
+                if shell.fuze < 0.0 && e_armor >= params.get("arming_threshold").to_f64() {
                     shell.fuze = 0.0;
                 }
-            } else if impact_angle >= params.get("auto_bounce").to::<f64>() {
+            } else if impact_angle >= params.get("auto_bounce").to_f64() {
                 result = ArmorResult::Ricochet;
                 let k_nose = Self::get_k_nose(&Some(params.clone()));
                 let cos_a = impact_angle.cos().max(0.05);
                 let tan_a = clampd(impact_angle, 0.0, 89.0 * DEG_TO_RAD).tan();
-                let td_ratio = armor_mm / params.get("caliber").to::<f64>().max(1.0);
+                let td_ratio = armor_mm / params.get("caliber").to_f64().max(1.0);
                 let engagement = clampd(td_ratio / TD_ENGAGE_REF, 0.0, 1.0).powf(TD_ENGAGE_POWER);
                 let f_td = 1.0 + TD_MOD_SCALE * clampd(td_ratio - TD_MOD_ONSET, 0.0, TD_MOD_MAX);
                 let deflection_mult = 1.0 + engagement * k_nose * tan_a.powf(DEFLECTION_GAMMA) * f_td;
@@ -498,7 +499,7 @@ impl NativeArmorInteraction {
                     }
                     ArmorResult::Shatter => {
                         shell.velocity = Vector3::ZERO;
-                        shell.fuze = params.get("fuze_delay").to::<f64>();
+                        shell.fuze = params.get("fuze_delay").to_f64();
                         shell.position += hit_normal * (EPSILON as f32);
                     }
                     ArmorResult::PartialPen => {
@@ -520,7 +521,7 @@ impl NativeArmorInteraction {
                         if shell.velocity.length_squared() > 0.0 {
                             offset += shell.velocity.normalized() * (EPSILON as f32);
                         }
-                        if shell.fuze < 0.0 && e_armor >= params.get("arming_threshold").to::<f64>() {
+                        if shell.fuze < 0.0 && e_armor >= params.get("arming_threshold").to_f64() {
                             shell.fuze = 0.0;
                         }
                     }
@@ -565,7 +566,7 @@ impl NativeArmorInteraction {
             }
             if next_hit.is_empty() {
                 if shell.fuze >= 0.0 {
-                    shell.fuze = params.get("fuze_delay").to::<f64>();
+                    shell.fuze = params.get("fuze_delay").to_f64();
                 }
                 break;
             }
@@ -574,7 +575,7 @@ impl NativeArmorInteraction {
             hit_node = next_hit.get("armor").unwrap().to();
             hit_position = next_hit.get("position").unwrap().to();
             hit_normal = next_hit.get("normal").unwrap().to::<Vector3>().normalized();
-            face_index = next_hit.get("face_index").unwrap().to();
+            face_index = next_hit.get("face_index").unwrap().to_i32();
             let fuze_elapsed = old_pos.distance_to(hit_position) as f64 / shell.get_speed().max(0.001);
             if shell.fuze >= 0.0 {
                 shell.fuze += fuze_elapsed;

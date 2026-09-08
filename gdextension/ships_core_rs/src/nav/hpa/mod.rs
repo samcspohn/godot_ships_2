@@ -380,7 +380,7 @@ impl HpaGraph {
     #[func]
     pub(crate) fn build(
         &mut self,
-        nav_map: Gd<NavigationMap>,
+        nav_map: Option<Gd<NavigationMap>>,
         clearance: f32,
         #[opt(default = DEFAULT_CLUSTER_SIZE)] cluster_size: i32,
     ) {
@@ -427,13 +427,13 @@ impl HpaGraph {
     }
 
     #[func]
-    fn add_obstacle(&mut self, id: i32, pos: Vector2, radius: f32) {
-        self.add_obstacle_impl(id, pos, radius);
+    fn add_obstacle(&mut self, id: i64, pos: Vector2, radius: f32) {
+        self.add_obstacle_impl(id as i32, pos, radius);
     }
 
     #[func]
-    fn remove_obstacle(&mut self, id: i32) {
-        self.remove_obstacle_impl(id);
+    fn remove_obstacle(&mut self, id: i64) {
+        self.remove_obstacle_impl(id as i32);
     }
 
     #[func]

@@ -115,7 +115,7 @@ impl INode for ProjectileManager {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
-            shell_time_multiplier: 1.0,
+            shell_time_multiplier: 2.0,
             current_time: 0.0,
             client_time: 0.0,
             next_id: 0,
@@ -156,10 +156,10 @@ impl INode for ProjectileManager {
     }
 }
 
-// The C++ additionally binds _init_compute_trails and _find_particle_system
-// (neither has any caller — _find_particle_system is only reachable from
-// _init_compute_trails, which is itself never invoked) and next_pow_of_2 (whose
-// binding is unused, though the function is live internally).
+// _init_compute_trails MUST stay bound: _ready connects it BY NAME to a
+// SceneTreeTimer timeout signal (projectile_manager.cpp:319), so no
+// call-site grep can see it. The C++ also binds next_pow_of_2, whose binding
+// has no caller though the function is live internally.
 #[godot_api]
 impl ProjectileManager {
     #[func] pub(crate) fn get_shell_time_multiplier(&self) -> f64 { self.shell_time_multiplier }
@@ -185,15 +185,21 @@ impl ProjectileManager {
     #[func] pub(crate) fn get_camera(&self) -> Option<Gd<Camera3D>> { self.camera.clone() }
     #[func] pub(crate) fn set_camera(&mut self, value: Option<Gd<Camera3D>>) { self.camera = value; }
 
-    #[func] pub(crate) fn calculate_penetration_power(&self, shell_params: Gd<Resource>, velocity: f64) -> f64 {
-        self.calculate_penetration_power_impl(&shell_params, velocity)
+    #[func] pub(crate) fn calculate_penetration_power(&self, shell_params: Option<Gd<Resource>>, velocity: f64) -> f64 {
+        self.calculate_penetration_power_impl(shell_params.as_ref(), velocity)
     }
     #[func] pub(crate) fn calculate_impact_angle(&self, velocity: Vector3, surface_normal: Vector3) -> f64 {
         self.calculate_impact_angle_impl(velocity, surface_normal)
     }
-    #[func] pub(crate) fn find_ship(&self, node: Gd<Node>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
+    #[func] pub(crate) fn find_ship(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
     #[func(rename = findShip)]
-    pub(crate) fn find_ship_camel(&self, node: Gd<Node>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
+    pub(crate) fn find_ship_camel(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> { self.find_ship_impl(node) }
+
+    /// Connected BY NAME to a SceneTreeTimer in _ready; do not unbind.
+    /// gdext will not register a leading-underscore fn name directly, so the
+    /// Godot-side name is set explicitly.
+    #[func(rename = _init_compute_trails)]
+    pub(crate) fn init_compute_trails(&mut self) { self.init_compute_trails_impl(); }
 
     #[func] pub(crate) fn clear_all(&mut self) { self.clear_all_impl(); }
     #[func] pub(crate) fn sync_time(&mut self, server_time: f64) { self.sync_time_impl(server_time); }
@@ -204,22 +210,22 @@ impl ProjectileManager {
     // Every GDScript caller passes all arguments, so the C++ DEFVALs on
     // fire_bullet/fire_bullet_client are not needed on the bindings.
     #[func] pub(crate) fn fire_bullet(&mut self, vel: Vector3, pos: Vector3, shell: Gd<Resource>, t: f64,
-                           owner: Gd<Object>, exclude: VarArray) -> i32 {
+                           owner: Option<Gd<Object>>, exclude: VarArray) -> i32 {
         self.fire_bullet_impl(vel, pos, &shell, t, owner, exclude)
     }
     #[func(rename = fireBullet)]
     pub(crate) fn fire_bullet_camel(&mut self, vel: Vector3, pos: Vector3, shell: Gd<Resource>, t: f64,
-                         owner: Gd<Object>, exclude: VarArray) -> i32 {
+                         owner: Option<Gd<Object>>, exclude: VarArray) -> i32 {
         self.fire_bullet_impl(vel, pos, &shell, t, owner, exclude)
     }
     #[func] pub(crate) fn fire_bullet_client(&mut self, pos: Vector3, vel: Vector3, t: f64, id: i32,
-                                  shell: Gd<Resource>, owner: Gd<Object>,
+                                  shell: Gd<Resource>, owner: Option<Gd<Object>>,
                                   muzzle_blast: bool, basis: Basis) {
         self.fire_bullet_client_impl(pos, vel, t, id, &shell, owner, muzzle_blast, basis);
     }
     #[func(rename = fireBulletClient)]
     pub(crate) fn fire_bullet_client_camel(&mut self, pos: Vector3, vel: Vector3, t: f64, id: i32,
-                                shell: Gd<Resource>, owner: Gd<Object>,
+                                shell: Gd<Resource>, owner: Option<Gd<Object>>,
                                 muzzle_blast: bool, basis: Basis) {
         self.fire_bullet_client_impl(pos, vel, t, id, &shell, owner, muzzle_blast, basis);
     }
@@ -262,10 +268,10 @@ impl ProjectileManager {
         self.create_ricochet_rpc2_impl(data);
     }
 
-    #[func] pub(crate) fn apply_fire_damage(&mut self, projectile: Gd<ProjectileData>, ship: Gd<Object>, hit_position: Vector3) {
+    #[func] pub(crate) fn apply_fire_damage(&mut self, projectile: Gd<ProjectileData>, ship: Option<Gd<Object>>, hit_position: Vector3) {
         self.apply_fire_damage_impl(&projectile, ship, hit_position);
     }
-    #[func] pub(crate) fn print_armor_debug(&self, armor_result: VarDictionary, ship: Gd<Object>) {
+    #[func] pub(crate) fn print_armor_debug(&self, armor_result: VarDictionary, ship: Option<Gd<Object>>) {
         self.print_armor_debug_impl(armor_result, ship);
     }
     #[func] pub(crate) fn validate_penetration_formula(&self) { self.validate_penetration_formula_impl(); }

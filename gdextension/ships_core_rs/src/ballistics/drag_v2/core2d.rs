@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::Resource;
 
@@ -9,10 +10,10 @@ impl P {
         // `Gd<Resource>` cannot be null the way `Ref<>` can in C++, so the
         // `shell_params.is_valid()` check in the source always takes the
         // "valid" branch here.
-        let v0: f64 = shell_params.get("speed").to();
-        let beta: f64 = shell_params.get("drag").to();
-        let vt: f64 = shell_params.get("vt").to();
-        let tau: f64 = shell_params.get("tau").to();
+        let v0: f64 = shell_params.get("speed").to_f64();
+        let beta: f64 = shell_params.get("drag").to_f64();
+        let vt: f64 = shell_params.get("vt").to_f64();
+        let tau: f64 = shell_params.get("tau").to_f64();
 
         let c = theta.cos();
         let s = theta.sin();
@@ -36,10 +37,10 @@ impl P {
             return Vector2::new(f32::NAN, f32::NAN);
         }
 
-        let v0: f64 = shell_params.get("speed").to();
-        let beta: f64 = shell_params.get("drag").to();
-        let vt: f64 = shell_params.get("vt").to();
-        let tau: f64 = shell_params.get("tau").to();
+        let v0: f64 = shell_params.get("speed").to_f64();
+        let beta: f64 = shell_params.get("drag").to_f64();
+        let vt: f64 = shell_params.get("vt").to_f64();
+        let tau: f64 = shell_params.get("tau").to_f64();
 
         let theta = Self::vacuum_angle(target_x, target_y, v0, high_arc);
         if theta.is_nan() {
@@ -55,9 +56,9 @@ impl P {
     /// Time of flight for `theta` to reach `target_y`, or NAN if unreachable.
     pub(crate) fn time_of_flight_impl(theta: f64, shell_params: &Gd<Resource>, target_y: f64) -> f64 {
         // See `position()`: the `shell_params.is_valid()` branch is dead here.
-        let v0: f64 = shell_params.get("speed").to();
-        let vt: f64 = shell_params.get("vt").to();
-        let tau: f64 = shell_params.get("tau").to();
+        let v0: f64 = shell_params.get("speed").to_f64();
+        let vt: f64 = shell_params.get("vt").to_f64();
+        let tau: f64 = shell_params.get("tau").to_f64();
 
         let s = theta.sin();
         let vy0 = v0 * s;
@@ -325,10 +326,10 @@ impl P {
     /// vt/tau == 0.0 until `_update_derived_values()` runs; the C++ performs no
     /// extra validation for that case, so neither does this.
     pub(crate) fn extract_params(shell_params: &Gd<Resource>) -> Option<(f64, f64, f64, f64)> {
-        let v0: f64 = shell_params.get("speed").to();
-        let beta: f64 = shell_params.get("drag").to();
-        let vt: f64 = shell_params.get("vt").to();
-        let tau: f64 = shell_params.get("tau").to();
+        let v0: f64 = shell_params.get("speed").to_f64();
+        let beta: f64 = shell_params.get("drag").to_f64();
+        let vt: f64 = shell_params.get("vt").to_f64();
+        let tau: f64 = shell_params.get("tau").to_f64();
         Some((v0, beta, vt, tau))
     }
 }

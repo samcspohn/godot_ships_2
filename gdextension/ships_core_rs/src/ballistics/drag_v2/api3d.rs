@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Node, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource};
 
@@ -159,7 +160,7 @@ impl P {
             return no_solution3(); // No solution exists in basic physics
         }
 
-        let mut time_estimate: f64 = initial_result.at(1).to();
+        let mut time_estimate: f64 = initial_result.at(1).to_f64();
 
         // Refine the estimate iteratively - only 3 iterations needed with good initial estimate
         for _ in 0..3 {
@@ -173,7 +174,7 @@ impl P {
                 return no_solution3();
             }
 
-            time_estimate = iter_result.at(1).to();
+            time_estimate = iter_result.at(1).to_f64();
         }
 
         // Final calculation with the best time estimate
@@ -237,7 +238,7 @@ impl P {
             return no_solution3(); // No solution exists in basic physics
         }
 
-        let mut time_estimate: f64 = initial_result.at(1).to();
+        let mut time_estimate: f64 = initial_result.at(1).to_f64();
 
         // Refine: each pass carries the target along its ARC for the current flight
         // time, then re-solves for the flight time to that new point.
@@ -250,7 +251,7 @@ impl P {
                 return no_solution3();
             }
 
-            time_estimate = iter_result.at(1).to();
+            time_estimate = iter_result.at(1).to_f64();
         }
 
         let final_target_pos = Self::advance_turning(target_pos, target_velocity, target_yaw_rate, time_estimate);
@@ -596,7 +597,10 @@ impl P {
                                     "narrowphase_hit",
                                     &[ship_variant, prev_pos.to_variant(), curr_pos.to_variant()],
                                 );
-                                let narrow: VarDictionary = narrow_variant.to();
+                                // C++ `(Dictionary)variant` yields an empty dict when the
+                                // call returns nil; gdext's `.to()` would panic instead.
+                                let narrow: VarDictionary =
+                                    narrow_variant.try_to().unwrap_or_default();
                                 if narrow.is_empty() {
                                     real_hit = false;
                                 } else {

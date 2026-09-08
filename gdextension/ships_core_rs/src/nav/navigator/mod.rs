@@ -373,13 +373,13 @@ impl ShipNavigator {
 #[godot_api]
 impl ShipNavigator {
     #[func]
-    fn set_map(&mut self, map: Gd<NavigationMap>) {
-        self.map = Some(map);
+    fn set_map(&mut self, map: Option<Gd<NavigationMap>>) {
+        self.map = map;
     }
 
     #[func]
-    fn set_hpa_graph(&mut self, graph: Gd<HpaGraph>) {
-        self.hpa_graph = Some(graph);
+    fn set_hpa_graph(&mut self, graph: Option<Gd<HpaGraph>>) {
+        self.hpa_graph = graph;
     }
 
     #[func]
@@ -388,8 +388,12 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn set_bot_id(&mut self, id: i32) {
-        self.bot_id = id;
+    /// C++ takes `int`; Godot marshals the 64-bit Variant into it with silent
+    /// truncation, and callers pass `get_instance_id()`, which does not fit in
+    /// i32. Taking i64 and truncating reproduces the C++ exactly — a bare i32
+    /// parameter makes gdext reject the call instead.
+    fn set_bot_id(&mut self, id: i64) {
+        self.bot_id = id as i32;
     }
 
     #[func]
@@ -573,25 +577,26 @@ impl ShipNavigator {
     }
 
     #[func]
+    /// See set_bot_id: BotControllerV4 passes `ship.get_instance_id()` here.
     fn register_obstacle(
         &mut self,
-        id: i32,
+        id: i64,
         position: Vector2,
         velocity: Vector2,
         radius: f32,
         length: f32,
     ) {
-        self.register_obstacle_impl(id, position, velocity, radius, length);
+        self.register_obstacle_impl(id as i32, position, velocity, radius, length);
     }
 
     #[func]
-    fn update_obstacle(&mut self, id: i32, position: Vector2, velocity: Vector2) {
-        self.update_obstacle_impl(id, position, velocity);
+    fn update_obstacle(&mut self, id: i64, position: Vector2, velocity: Vector2) {
+        self.update_obstacle_impl(id as i32, position, velocity);
     }
 
     #[func]
-    fn remove_obstacle(&mut self, id: i32) {
-        self.remove_obstacle_impl(id);
+    fn remove_obstacle(&mut self, id: i64) {
+        self.remove_obstacle_impl(id as i32);
     }
 
     #[func]
@@ -607,7 +612,7 @@ impl ShipNavigator {
     #[func]
     fn add_incoming_shell(
         &mut self,
-        id: i32,
+        id: i64,
         landing_pos: Vector2,
         time_remaining: f32,
         caliber: f32,
@@ -615,7 +620,7 @@ impl ShipNavigator {
         threat_half_len: f32,
     ) {
         self.incoming_shells.push(IncomingShell::new(
-            id,
+            id as i32,
             landing_pos,
             time_remaining,
             caliber,
@@ -625,7 +630,7 @@ impl ShipNavigator {
     }
 
     #[func]
-    fn set_threat_source(&mut self, registry: Gd<ThreatRegistry>, team_id: i32, effective_radius: f32) {
+    fn set_threat_source(&mut self, registry: Option<Gd<ThreatRegistry>>, team_id: i32, effective_radius: f32) {
         self.set_threat_source_impl(registry, team_id, effective_radius);
     }
 

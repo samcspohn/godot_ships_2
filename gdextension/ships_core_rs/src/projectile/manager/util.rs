@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Engine, Node, Resource};
 
@@ -6,16 +7,20 @@ use crate::projectile::armor::{NativeArmorInteraction, RaycastCache};
 use crate::projectile::data::ProjectileData;
 
 impl ProjectileManager {
-    pub(crate) fn calculate_penetration_power_impl(&self, shell_params: &Gd<Resource>, velocity: f64) -> f64 {
+    pub(crate) fn calculate_penetration_power_impl(&self, shell_params: Option<&Gd<Resource>>, velocity: f64) -> f64 {
         // `Gd<Resource>` cannot be null the way `Ref<>` can in C++, so the
         // `shell_params.is_valid()` early-return in the source is unreachable here.
 
         // Get shell parameters
-        let weight_kg: f64 = shell_params.get("mass").to();
-        let caliber_mm: f64 = shell_params.get("caliber").to();
+        // C++ guards `if (!shell_params.is_valid()) return 0.0;`
+        let Some(shell_params) = shell_params else {
+            return 0.0;
+        };
+        let weight_kg: f64 = shell_params.get("mass").to_f64();
+        let caliber_mm: f64 = shell_params.get("caliber").to_f64();
         let velocity_ms: f64 = velocity;
-        let shell_type: i32 = shell_params.get("type").to();
-        let penetration_modifier: f64 = shell_params.get("penetration_modifier").to();
+        let shell_type: i32 = shell_params.get("type").to_i32();
+        let penetration_modifier: f64 = shell_params.get("penetration_modifier").to_f64();
 
         // Modified naval armor penetration formula based on historical data
         // This version uses empirically derived constants for realistic results
@@ -74,8 +79,8 @@ impl ProjectileManager {
         result
     }
 
-    pub(crate) fn find_ship_impl(&self, node: Gd<Node>) -> Option<Gd<Object>> {
-        Self::find_ship_rec(Some(node))
+    pub(crate) fn find_ship_impl(&self, node: Option<Gd<Node>>) -> Option<Gd<Object>> {
+        Self::find_ship_rec(node)
     }
 
     /// Recursive walk-up-the-tree helper. The C++ `find_ship(Node*)` is

@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Object, Resource, StreamPeerBuffer};
 
@@ -10,9 +11,9 @@ use super::ShellLandingEntry;
 impl ProjectileManager {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn fire_bullet_impl(&mut self, vel: Vector3, pos: Vector3, shell: &Gd<Resource>,
-                                   t: f64, owner: Gd<Object>, exclude: VarArray) -> i32 {
+                                   t: f64, owner: Option<Gd<Object>>, exclude: VarArray) -> i32 {
         let id = if let Some(reused) = self.ids_reuse.pop() {
-            reused.to::<i32>()
+            reused.to_i32()
         } else {
             let id = self.next_id;
             self.next_id += 1;
@@ -51,12 +52,12 @@ impl ProjectileManager {
         let flight_time = ProjectilePhysicsWithDragV2::time_of_flight_impl(theta, shell, (-pos.y) as f64);
 
         if !flight_time.is_nan() && flight_time > 0.0 {
-            let caliber = shell.get("caliber").to::<f32>();
+            let caliber = shell.get("caliber").to_f32();
             // C++: `if (owner != nullptr)` — `owner` here is `Gd<Object>`, never
             // null, so that outer guard is unconditionally true and omitted;
             // only the inner "team" property nil-check remains meaningful.
-            let team_id: i32 = match owner.get("team").try_to::<Gd<Object>>() {
-                Ok(team_obj) => team_obj.get("team_id").to::<i32>(),
+            let team_id: i32 = match owner.as_ref().map_or(Variant::nil(), |o| o.get("team")).try_to::<Gd<Object>>() {
+                Ok(team_obj) => team_obj.get("team_id").to_i32(),
                 Err(_) => -1,
             };
 
@@ -98,9 +99,9 @@ impl ProjectileManager {
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn fire_bullet_client_impl(&mut self, pos: Vector3, vel: Vector3, t: f64, id: i32,
-                                          shell: &Gd<Resource>, owner: Gd<Object>,
+                                          shell: &Gd<Resource>, owner: Option<Gd<Object>>,
                                           muzzle_blast: bool, basis: Basis) {
-        self.fire_bullet_client_core(pos, vel, t, id, shell, Some(owner), muzzle_blast, basis);
+        self.fire_bullet_client_core(pos, vel, t, id, shell, owner, muzzle_blast, basis);
     }
 
     /// Shared body for [`fire_bullet_client_impl`] and the ricochet path.
@@ -124,7 +125,7 @@ impl ProjectileManager {
         // C++ guards shell-dependent reads on `shell.is_valid()`; `shell` here
         // is `&Gd<Resource>` and can never be invalid, so those guards are
         // omitted (see judgement calls in the report).
-        let shell_type = shell.get("type").to::<i32>();
+        let shell_type = shell.get("type").to_i32();
         let shell_color = if shell_type == 1 {
             Color::from_rgba(0.05, 0.1, 1.0, 1.0) // Blue for AP
         } else {
@@ -134,8 +135,8 @@ impl ProjectileManager {
         // Fire shell through GPU renderer (it manages its own IDs internally)
         let mut gpu_id: i32 = -1;
         if let Some(gpu) = self.gpu_renderer.as_mut() {
-            let drag = shell.get("drag").to::<f64>();
-            let size = shell.get("size").to::<f64>();
+            let drag = shell.get("drag").to_f64();
+            let size = shell.get("size").to_f64();
             gpu_id = gpu
                 .call(
                     "fire_shell",
@@ -148,7 +149,7 @@ impl ProjectileManager {
                         shell_color.to_variant(),
                     ],
                 )
-                .to::<i32>();
+                .to_i32();
         }
 
         // Still track in projectiles array for trail emission and ID mapping
@@ -183,7 +184,7 @@ impl ProjectileManager {
             // Call HitEffects.muzzle_blast_effect - this is a GDScript autoload
             if self.base().has_node("/root/HitEffects") {
                 if let Some(mut hit_effects) = self.base().get_node_or_null("/root/HitEffects") {
-                    let caliber = shell.get("caliber").to::<f64>();
+                    let caliber = shell.get("caliber").to_f64();
                     hit_effects.call(
                         "muzzle_blast_effect",
                         &[pos.to_variant(), basis.to_variant(), caliber.to_variant()],
@@ -261,7 +262,7 @@ impl ProjectileManager {
 
         let mut radius = 1.0_f64;
         if let Some(params) = bullet.bind().params.clone() {
-            radius = params.get("size").to::<f64>();
+            radius = params.get("size").to_f64();
         }
 
         // Free the GPU emitter if one was allocated
@@ -432,7 +433,7 @@ impl ProjectileManager {
         self.create_ricochet_rpc_impl(original_shell_id, new_shell_id, ricochet_position, ricochet_velocity, ricochet_time);
     }
 
-    pub(crate) fn apply_fire_damage_impl(&mut self, projectile: &Gd<ProjectileData>, ship: Gd<Object>, hit_position: Vector3) {
+    pub(crate) fn apply_fire_damage_impl(&mut self, projectile: &Gd<ProjectileData>, ship: Option<Gd<Object>>, hit_position: Vector3) {
         // C++: `if (!projectile.is_valid() || ship == nullptr) return;` —
         // `projectile: &Gd<ProjectileData>` and `ship: Gd<Object>` can never be
         // null/invalid in Rust, so this guard is unconditionally false and is
@@ -441,19 +442,24 @@ impl ProjectileManager {
             return;
         };
 
-        let fire_buildup = params.get("fire_buildup").to::<f64>();
+        let fire_buildup = params.get("fire_buildup").to_f64();
         if fire_buildup <= 0.0 {
             return;
         }
 
         // Get fire manager from ship
+        // C++ guards `if (ship == nullptr) return;`
+        let Some(ship) = ship else {
+            return;
+        };
         let fire_manager_var = ship.get("fire_manager");
         let Ok(fire_manager) = fire_manager_var.try_to::<Gd<Object>>() else {
             return;
         };
 
-        // Find closest fire
-        let fires = fire_manager.get("fires").to::<VarArray>();
+        // Find closest fire. `fires` is a GDScript `Array[Fire]`, so it must be
+        // read as AnyArray — see VariantCast::to_any_array.
+        let fires = fire_manager.get("fires").to_any_array();
         let mut closest_fire: Option<Gd<Object>> = None;
         let mut closest_fire_dist = 1e9_f64;
 
@@ -475,12 +481,15 @@ impl ProjectileManager {
         }
     }
 
-    pub(crate) fn print_armor_debug_impl(&self, armor_result: VarDictionary, ship: Gd<Object>) {
+    pub(crate) fn print_armor_debug_impl(&self, armor_result: VarDictionary, ship: Option<Gd<Object>>) {
         // C++: `if (ship == nullptr) return;` — `ship: Gd<Object>` can never be
         // null in Rust, so this guard is unconditionally false and is omitted.
         let mut ship_class = "Unknown".to_string();
+        let Some(ship) = ship else {
+            return;
+        };
         if let Ok(health_controller) = ship.get("health_controller").try_to::<Gd<Object>>() {
-            let max_hp = health_controller.get("max_hp").to::<f64>();
+            let max_hp = health_controller.get("max_hp").to_f64();
             ship_class = if max_hp > 40000.0 {
                 "Battleship".to_string()
             } else if max_hp > 15000.0 {
@@ -490,7 +499,7 @@ impl ProjectileManager {
             };
         }
 
-        let result_type = armor_result.get("result_type").map(|v| v.to::<i32>()).unwrap_or(0);
+        let result_type = armor_result.get("result_type").map(|v| v.to_i32()).unwrap_or(0);
         let result_name = match result_type {
             PENETRATION => "PENETRATION",
             RICOCHET => "RICOCHET",

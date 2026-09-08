@@ -155,7 +155,7 @@ impl ShipNavigator {
 
     pub(crate) fn set_threat_source_impl(
         &mut self,
-        registry: Gd<ThreatRegistry>,
+        registry: Option<Gd<ThreatRegistry>>,
         team_id: i32,
         effective_radius: f32,
     ) {
@@ -163,7 +163,7 @@ impl ShipNavigator {
         // `registry.is_valid()` ternaries in the source always take the "valid"
         // branch here.
         let same_registry = match &self.threat_registry {
-            Some(r) => *r == registry,
+            Some(r) => registry.as_ref().is_some_and(|n| *r == *n),
             None => false,
         };
         if same_registry
@@ -172,7 +172,7 @@ impl ShipNavigator {
         {
             return; // nothing about the subscription changed
         }
-        self.threat_registry = Some(registry);
+        self.threat_registry = registry;
         self.threat_team = team_id;
         self.threat_radius = effective_radius;
         self.threats.borrow_mut().clear();

@@ -1,3 +1,4 @@
+use crate::variant_cast::VariantCast;
 use godot::classes::multiplayer_api::RpcMode;
 use godot::classes::multiplayer_peer::TransferMode;
 use godot::classes::{Os, PhysicsRayQueryParameters3D, ProjectSettings, ResourceLoader, Script};
@@ -10,7 +11,67 @@ use crate::projectile::armor::{hit_result as armor_hit, NativeArmorInteraction};
 use crate::projectile::data::ProjectileData;
 
 impl ProjectileManager {
+    /// Deferred from `_ready` via a 0.5 s SceneTreeTimer so the particle system
+    /// is guaranteed to exist by the time we look for it.
+    pub(crate) fn init_compute_trails_impl(&mut self) {
+        godot_print!("ProjectileManager: Initializing compute trails...");
+
+        self.compute_particle_system = self.find_particle_system();
+
+        let Some(mut cps) = self.compute_particle_system.clone() else {
+            godot_warn!("ProjectileManager: UnifiedParticleSystem not found, trails disabled");
+            return;
+        };
+
+        godot_print!("ProjectileManager: Found UnifiedParticleSystem");
+
+        // The template is pre-registered by ParticleSystemInit with
+        // align_to_velocity = true; register it here and take its id.
+        let Some(tpl) = self.trail_template.clone() else {
+            godot_warn!("ProjectileManager: trail_template not set, trails disabled");
+            return;
+        };
+        let registered_id = cps
+            .call("ensure_template_registered", &[tpl.to_variant()])
+            .to_i32();
+        godot_print!("ProjectileManager: trail template registered with id = {}", registered_id);
+        if registered_id < 0 {
+            godot_warn!("ProjectileManager: Failed to register trail template, trails disabled");
+            return;
+        }
+
+        let final_id = tpl.get("template_id").try_to::<i32>().unwrap_or(-1);
+        godot_print!("ProjectileManager: Using compute shader trails (template_id={})", final_id);
+    }
+
+    fn find_particle_system(&self) -> Option<Gd<Node>> {
+        if !self.base().is_inside_tree() {
+            godot_warn!("ProjectileManager: Not in scene tree, cannot find particle system");
+            return None;
+        }
+        let root = self.base().get_tree().get_root();
+
+        if root.has_node("UnifiedParticleSystem") {
+            return root.get_node_or_null("UnifiedParticleSystem");
+        }
+
+        // Search root children, then one level deeper.
+        for child in root.get_children().iter_shared() {
+            if child.get_class() == GString::from("UnifiedParticleSystem") {
+                return Some(child);
+            }
+            for grandchild in child.get_children().iter_shared() {
+                if grandchild.get_class() == GString::from("UnifiedParticleSystem") {
+                    return Some(grandchild);
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn ready_impl(&mut self) {
+        crate::panic_guard::install();
+        godot_print!("[ProjectileManager] _ready: begin");
         // The C++ constructor calls `ray_query.instantiate()`, `mesh_ray_query.instantiate()`
         // and sizes `shell_grid`; mod.rs::init() (this port's constructor equivalent) can't do
         // that itself (building `PhysicsRayQueryParameters3D` needs `NewGd`, and the fields
@@ -119,17 +180,62 @@ impl ProjectileManager {
         self.base_mut().rpc_config("sync_time", &sync_time_rpc.to_variant());
 
         self.projectiles = Self::single_nil_slot_array();
+        // Deferred so the UnifiedParticleSystem is guaranteed to exist
+        // (projectile_manager.cpp:318-319). Connected BY NAME, as the C++ does.
+        let mut timer = self.base().get_tree().create_timer(0.5);
+        let cb = Callable::from_object_method(&self.to_gd(), "_init_compute_trails");
+        timer.connect("timeout", &cb);
+
         self.base_mut().set_process(false);
         self.base_mut().set_physics_process(false);
+
+        godot_print!(
+            "[ProjectileManager] _ready: done | shell_time_multiplier={} | gpu_renderer={} \
+compute_particle_system={} camera={} trail_template={}",
+            self.shell_time_multiplier,
+            self.gpu_renderer.is_some(),
+            self.compute_particle_system.is_some(),
+            self.camera.is_some(),
+            self.trail_template.is_some()
+        );
+        godot_print!(
+            "[ProjectileManager] _ready: autoloads | armor_interaction={} armor_sim_logger={} \
+precision_physics_world={} navigation_map_manager={} navigation_map={} tcp_thread_pool={} \
+sound_effect_manager={}",
+            self.armor_interaction.is_some(),
+            self.armor_sim_logger.is_some(),
+            self.precision_physics_world.is_some(),
+            self.navigation_map_manager.is_some(),
+            self.navigation_map.is_some(),
+            self.tcp_thread_pool.is_some(),
+            self.sound_effect_manager.is_some()
+        );
+        godot_print!(
+            "[ProjectileManager] _ready: state | ray_query={} mesh_ray_query={} projectiles={} \
+shell_grid_cells={}",
+            self.ray_query.is_some(),
+            self.mesh_ray_query.is_some(),
+            self.projectiles.len(),
+            self.shell_grid.len()
+        );
     }
 
     pub(crate) fn process_impl(&mut self, delta: f64) {
+        let this = self as *mut Self;
+        // SAFETY: single-threaded Godot main loop; the closure is the only user
+        // of `this` and does not outlive this call.
+        crate::panic_guard::guard("_ProjectileManager::_process", || unsafe {
+            (*this).process_inner(delta)
+        });
+    }
+
+    fn process_inner(&mut self, delta: f64) {
         if self.camera.is_none() {
             return;
         }
         let physics_fps = ProjectSettings::singleton()
             .get_setting("physics/common/physics_ticks_per_second")
-            .to::<i32>();
+            .to_i32();
 
         // Update shell positions in GPU renderer and trail particles
         self.process_trails_only_impl(self.client_time);
@@ -150,7 +256,7 @@ impl ProjectileManager {
     pub(crate) fn process_trails_only_impl(&mut self, current_time: f64) {
         let physics_fps = ProjectSettings::singleton()
             .get_setting("physics/common/physics_ticks_per_second")
-            .to::<i32>();
+            .to_i32();
         // Matches a dead C++ local: `step_size` is computed but only consumed by the
         // trail-popping smoothing code, which is commented out in the source.
         let _step_size = 1.0 / physics_fps as f64;
@@ -161,48 +267,58 @@ impl ProjectileManager {
                 continue;
             };
 
-            let Some(shell_params) = p.get("params").try_to::<Gd<Resource>>().ok() else {
+            // `p` is a Rust-native ProjectileData, so read its fields through
+            // `bind()` instead of the dynamic `get("name")` property path; this
+            // mirrors the C++ `p->get_params()` / `p->get_start_time()` direct
+            // member calls. The guard is kept short-lived because it must not be
+            // held across any call that re-enters the same object.
+            let (params_opt, start_time, start_position, launch_velocity, frame_count, mut emitter_id) = {
+                let b = p.bind();
+                (b.params.clone(), b.start_time, b.start_position, b.launch_velocity, b.frame_count, b.emitter_id)
+            };
+
+            let Some(shell_params) = params_opt else {
                 continue;
             };
-            let t = (current_time - p.get("start_time").to::<f64>()) * self.shell_time_multiplier;
+            let t = (current_time - start_time) * self.shell_time_multiplier;
 
             // Calculate position for rendering and trail emission using the native
             // ProjectilePhysicsWithDragV2 static method directly.
             let new_position = ProjectilePhysicsWithDragV2::calculate_position_at_time_impl(
-                p.get("start_position").to::<Vector3>(),
-                p.get("launch_velocity").to::<Vector3>(),
+                start_position,
+                launch_velocity,
                 t,
                 &shell_params,
             );
-            p.set("position", &new_position.to_variant());
+            p.bind_mut().position = new_position;
 
             // Update GPU renderer with new position
-            let gpu_id = p.get("frame_count").to::<i32>(); // GPU slot ID stored in frame_count
+            let gpu_id = frame_count; // GPU slot ID stored in frame_count
             if let Some(gpu) = self.gpu_renderer.as_mut() {
                 if gpu_id >= 0 {
                     gpu.call("update_shell_position", &[gpu_id.to_variant(), new_position.to_variant()]);
                 }
             }
 
-            if p.get("emitter_id").to::<i32>() < 0
-                && (p.get("position").to::<Vector3>() - p.get("start_position").to::<Vector3>()).length_squared() > 15.0 * 15.0
+            // `position` was just assigned `new_position` and the setter is a plain
+            // field write, so re-reading the field here would return the same value.
+            if emitter_id < 0
+                && (new_position - start_position).length_squared() > 15.0 * 15.0
             {
                 // Allocate GPU emitter for trail emission
                 let current_trail_id = self
                     .trail_template
                     .as_ref()
-                    .map(|t| t.get("template_id").to::<i32>())
+                    .map(|t| t.get("template_id").to_i32())
                     .unwrap_or(-1);
                 if let Some(cps) = self.compute_particle_system.as_mut() {
                     if current_trail_id >= 0 {
-                        let mut size: f64 = 1.0;
-                        let shell = p.get("params");
-                        if let Ok(shell) = shell.try_to::<Gd<Resource>>() {
-                            size = shell.get("size").to::<f64>();
-                        }
+                        // `size` lives on the GDScript ShellParams resource, so this
+                        // one stays a dynamic property read.
+                        let size: f64 = shell_params.get("size").to_f64();
                         let width_scale = size * 0.9;
                         // emit_rate = 0.05 means 1 particle per 20 units (matching old step_size)
-                        let emitter_id = cps
+                        let new_emitter_id = cps
                             .call(
                                 "allocate_emitter",
                                 &[
@@ -214,19 +330,20 @@ impl ProjectileManager {
                                     0.0f64.to_variant(),            // velocity_boost
                                 ],
                             )
-                            .to::<i32>();
-                        p.set("emitter_id", &emitter_id.to_variant());
+                            .to_i32();
+                        p.bind_mut().emitter_id = new_emitter_id;
+                        emitter_id = new_emitter_id;
                     }
                 }
             }
 
             // Use GPU emitter system for trails if available
             if let Some(cps) = self.compute_particle_system.as_mut() {
-                if p.get("emitter_id").to::<i32>() >= 0 {
+                if emitter_id >= 0 {
                     // Simply update the emitter position - GPU handles emission automatically
                     cps.call(
                         "update_emitter_position",
-                        &[p.get("emitter_id").to::<i32>().to_variant(), p.get("position").to::<Vector3>().to_variant()],
+                        &[emitter_id.to_variant(), new_position.to_variant()],
                     );
                 }
             }
@@ -246,7 +363,7 @@ impl ProjectileManager {
             };
 
             // Remove GPU renderer shell sprite
-            let gpu_id = p.get("frame_count").to::<i32>();
+            let gpu_id = p.bind().frame_count;
             if let Some(gpu) = self.gpu_renderer.as_mut() {
                 if gpu_id >= 0 {
                     gpu.call("destroy_shell", &[gpu_id.to_variant()]);
@@ -254,7 +371,7 @@ impl ProjectileManager {
             }
 
             // Free trail emitter
-            let emitter_id = p.get("emitter_id").to::<i32>();
+            let emitter_id = p.bind().emitter_id;
             if let Some(cps) = self.compute_particle_system.as_mut() {
                 if emitter_id >= 0 {
                     cps.call("free_emitter", &[emitter_id.to_variant()]);
@@ -285,6 +402,15 @@ impl ProjectileManager {
     }
 
     pub(crate) fn physics_process_impl(&mut self, delta: f64) {
+        let this = self as *mut Self;
+        // SAFETY: single-threaded Godot main loop; the closure is the only user
+        // of `this` and does not outlive this call.
+        crate::panic_guard::guard("_ProjectileManager::_physics_process", || unsafe {
+            (*this).physics_process_inner(delta)
+        });
+    }
+
+    fn physics_process_inner(&mut self, delta: f64) {
         let sync_time_arg = self.current_time.to_variant();
         let _ = self.base_mut().rpc("sync_time", &[sync_time_arg]);
         self.current_time += delta; // raw wall-clock seconds; scaling applied at physics call sites
@@ -315,7 +441,7 @@ impl ProjectileManager {
         // Only build the per-plate armor log payload while a match recording has an
         // open .armorlog companion file; queried once per frame, not per projectile.
         let log_armor = match self.armor_sim_logger.as_mut() {
-            Some(logger) => logger.call("is_logging", &[]).to::<bool>(),
+            Some(logger) => logger.call("is_logging", &[]).to_bool(),
             None => false,
         };
 
@@ -329,24 +455,32 @@ impl ProjectileManager {
             // loop index; use it directly instead of tracking a parallel counter.
             let id = i as i32;
 
-            let t = (self.current_time - p.get("start_time").to::<f64>()) * self.shell_time_multiplier;
+            // Native-field reads via `bind()` rather than the dynamic `get("name")`
+            // path — see process_trails_only_impl. The guard is dropped before
+            // `process_travel`, which binds `p` itself.
+            let (start_time, prev_position, params_opt, start_position, launch_velocity) = {
+                let b = p.bind();
+                (b.start_time, b.position, b.params.clone(), b.start_position, b.launch_velocity)
+            };
 
-            self.ray_query.as_mut().unwrap().set_from(p.get("position").to::<Vector3>());
+            let t = (self.current_time - start_time) * self.shell_time_multiplier;
+
+            self.ray_query.as_mut().unwrap().set_from(prev_position);
 
             // Calculate new position using native ProjectilePhysicsWithDragV2 static method
-            let Some(params) = p.get("params").try_to::<Gd<Resource>>().ok() else {
+            let Some(params) = params_opt else {
                 godot_warn!("ProjectileManager: Projectile has invalid shell_params, skipping");
                 continue;
             };
             let new_position = ProjectilePhysicsWithDragV2::calculate_position_at_time_impl(
-                p.get("start_position").to::<Vector3>(),
-                p.get("launch_velocity").to::<Vector3>(),
+                start_position,
+                launch_velocity,
                 t,
                 &params,
             );
-            p.set("position", &new_position.to_variant());
-            self.ray_query.as_mut().unwrap().set_to(p.get("position").to::<Vector3>());
-            p.call("increment_frame_count", &[]);
+            p.bind_mut().position = new_position;
+            self.ray_query.as_mut().unwrap().set_to(new_position);
+            p.bind_mut().increment_frame_count();
 
             // Process travel through the native armor interaction path. Ray query objects
             // are cached per owner/exclude set; only from/to is updated per projectile.
@@ -371,11 +505,11 @@ impl ProjectileManager {
             if !hit_result.hit {
                 // If the shell is underwater and process_travel returned null,
                 // destroy it — it should not survive to the next frame.
-                if p.get("position").to::<Vector3>().y < 0.0 {
+                if new_position.y < 0.0 {
                     godot_print!("ProjectileManager: Shell is underwater with no hit result, destroying");
                     self.destroy_bullet_rpc_impl(
                         id,
-                        p.get("position").to::<Vector3>(),
+                        new_position,
                         rpc_hit::WATER,
                         Vector3::new(0.0, 1.0, 0.0),
                     );
@@ -395,14 +529,16 @@ impl ProjectileManager {
             if hit_result.log_valid {
                 if let Some(victim) = hit_result.ship.clone().and_then(|s| s.try_cast::<Node3D>().ok()) {
                     if let Some(logger) = self.armor_sim_logger.as_mut() {
-                        let log_type = params.get("type").to::<i32>();
-                        let log_caliber = params.get("caliber").to::<f64>();
+                        let log_type = params.get("type").to_i32();
+                        let log_caliber = params.get("caliber").to_f64();
+                        let log_shell_uid = p.bind().shell_uid as i64;
+                        let log_owner = p.bind().owner.clone();
                         logger.call(
                             "record_hit",
                             &[
-                                (p.get("shell_uid").to::<u32>() as i64).to_variant(),
+                                log_shell_uid.to_variant(),
                                 hit_result.result_type.to_variant(),
-                                p.get("owner").try_to::<Gd<Object>>().ok().to_variant(),
+                                log_owner.to_variant(),
                                 victim.to_variant(),
                                 victim.get_global_position().to_variant(),
                                 victim.get_rotation().y.to_variant(),
@@ -423,14 +559,14 @@ impl ProjectileManager {
             let ship_opt = hit_result.ship.clone();
             let armor_part_var = hit_result.armor_part.clone();
             let ricochet_velocity = hit_result.velocity;
-            let owner = p.get("owner").try_to::<Gd<Object>>().ok();
+            let owner = p.bind().owner.clone();
 
             if let Some(owner_obj) = owner.clone() {
                 let stats_var = owner_obj.get("stats");
                 if !stats_var.is_nil() {
                     if let Ok(stats) = stats_var.try_to::<Gd<Object>>() {
-                        let base_damage = params.get("damage").to::<f64>();
-                        let caliber = params.get("caliber").to::<f64>();
+                        let base_damage = params.get("damage").to_f64();
+                        let caliber = params.get("caliber").to_f64();
                         let mut stats = stats;
                         stats.call(
                             "record_potential_damage",
@@ -460,10 +596,10 @@ impl ProjectileManager {
 
             // Handle ship hits — only apply damage if we have a valid ship and owner
             if let (Some(ship), Some(owner_obj)) = (ship_opt.clone(), owner.clone()) {
-                let exclude = p.get("exclude").to::<VarArray>();
+                let exclude = p.bind().exclude.clone();
 
                 if !NativeArmorInteraction::is_owner_or_excluded(&ship_opt, &owner, &exclude) {
-                    let base_damage = params.get("damage").to::<f64>();
+                    let base_damage = params.get("damage").to_f64();
 
                     // Map ArmorInteraction result to damage and RPC result type
                     match armor_result_type {
@@ -521,7 +657,7 @@ impl ProjectileManager {
                                     ricochet_position,
                                     &params,
                                     self.current_time,
-                                    owner_obj.clone(),
+                                    Some(owner_obj.clone()),
                                     new_exclude,
                                 );
 
@@ -548,7 +684,7 @@ impl ProjectileManager {
                     if !health_controller_var.is_nil() {
                         if let Ok(health_controller) = health_controller_var.try_to::<Gd<Object>>() {
                             let mut health_controller = health_controller;
-                            if health_controller.call("is_alive", &[]).to::<bool>() {
+                            if health_controller.call("is_alive", &[]).to_bool() {
                                 let team = ship
                                     .get("team")
                                     .try_to::<Gd<Object>>()
@@ -557,14 +693,14 @@ impl ProjectileManager {
                                     .get("team")
                                     .try_to::<Gd<Object>>()
                                     .expect("ProjectileManager: owner has no team object");
-                                let owner_team_id = owner_team.get("team_id").to::<i32>();
-                                let team_id = team.get("team_id").to::<i32>();
+                                let owner_team_id = owner_team.get("team_id").to_i32();
+                                let team_id = team.get("team_id").to_i32();
 
                                 // Skip damage for friendly fire, but still let the shell be destroyed below
                                 if team_id != owner_team_id {
                                     let is_penetration =
                                         rpc_result_type == rpc_hit::PENETRATION || rpc_result_type == rpc_hit::CITADEL;
-                                    let is_secondary = params.get("_secondary").to::<bool>();
+                                    let is_secondary = params.get("_secondary").to_bool();
                                     damage_type = if is_secondary { 4 } else { 0 }; // 0 = SHELL, 4 = SECONDARY
                                     let dmg_sunk = health_controller
                                         .call(
@@ -579,10 +715,10 @@ impl ProjectileManager {
                                                 owner_obj.to_variant(),
                                             ],
                                         )
-                                        .to::<VarArray>();
+                                        .to_any_array();
 
                                     // Apply fire damage
-                                    self.apply_fire_damage_impl(&p, ship.clone(), explosion_position);
+                                    self.apply_fire_damage_impl(&p, Some(ship.clone()), explosion_position);
 
                                     // Delegate all stat tracking to GDScript Stats.record_hit()
                                     if dmg_sunk.len() > 0 {
@@ -590,9 +726,9 @@ impl ProjectileManager {
                                         if !stats_var.is_nil() {
                                             if let Ok(stats) = stats_var.try_to::<Gd<Object>>() {
                                                 let mut stats = stats;
-                                                let is_secondary = params.get("_secondary").to::<bool>();
-                                                let sunk = dmg_sunk.len() > 1 && dmg_sunk.at(1).to::<bool>();
-                                                let hit_damage = dmg_sunk.at(0).to::<f64>();
+                                                let is_secondary = params.get("_secondary").to_bool();
+                                                let sunk = dmg_sunk.len() > 1 && dmg_sunk.at(1).to_bool();
+                                                let hit_damage = dmg_sunk.at(0).to_f64();
 
                                                 // Use the surface contact point (explosion_position from
                                                 // ArmorInteraction) rather than the ship centre so replay

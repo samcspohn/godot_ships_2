@@ -4,7 +4,7 @@ use super::{Cluster, HpaGraph, HpaObstacle, SubCluster, DEFAULT_CLUSTER_SIZE, DE
 use crate::nav::map::NavigationMap;
 
 impl HpaGraph {
-    pub(crate) fn build_impl(&mut self, map: Gd<NavigationMap>, clearance: f32, cluster_size: i32) {
+    pub(crate) fn build_impl(&mut self, map: Option<Gd<NavigationMap>>, clearance: f32, cluster_size: i32) {
         self.built = false;
         self.clusters.clear();
         self.sub_clusters.clear();
@@ -16,6 +16,10 @@ impl HpaGraph {
 
         // `map.is_valid()` has no Rust equivalent — `Gd<NavigationMap>` is always a
         // valid reference once constructed, so only the `is_built()` check applies.
+        let Some(map) = map else {
+            godot_print!("[HpaGraph] build: NavigationMap is not built");
+            return;
+        };
         if !map.bind().built {
             godot_print!("[HpaGraph] build: NavigationMap is not built");
             return;
@@ -35,7 +39,7 @@ impl HpaGraph {
             self.min_x = m.min_x;
             self.min_z = m.min_z;
         }
-        self.nav_map = Some(map);
+        self.nav_map = Some(map.clone());
 
         self.ncx = (self.grid_w + self.cluster_size - 1) / self.cluster_size;
         self.ncz = (self.grid_h + self.cluster_size - 1) / self.cluster_size;
