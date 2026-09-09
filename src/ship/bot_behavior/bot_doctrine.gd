@@ -123,6 +123,28 @@ var secondary_engage_ratio: float = 0.9
 ## gun is how a brawler dies.
 var secondary_yield_threat: float = 0.6
 
+## Threat at which a push holds the FULL engagement range, and the fraction of
+## it a push at zero threat closes to.
+##
+## The engagement range is a ceiling, not a station. A push that always stopped
+## on it fought every engagement at the same distance whether it was winning or
+## losing, and the only thing that ever moved the ship back out was the ladder
+## above swapping the skill for a kite - one step, at one threshold. Scaling the
+## standoff with threat instead makes the range itself the negotiation: with
+## nothing shooting, the bot keeps coming; as closing raises the threat it is
+## closing into, the standoff opens back out and the approach stalls of its own
+## accord. The ship settles where threat sits at push_equalize_threat, and the
+## push/kite pair swings around that point rather than around a fixed circle.
+##
+## Set to the threat where this bot stops pushing at all, so the standoff has
+## reached the full engagement range exactly as the ladder takes the push away.
+## 0 disables the scaling and the push stops on the flat engagement range.
+var push_equalize_threat: float = 0.5
+
+## Floor on the above, as a fraction of the engagement range, so an unopposed
+## push closes hard without driving onto the enemy's hull.
+var push_equalize_floor: float = 0.5
+
 # ---------------------------------------------------------------------------
 # Reverse-alignment band — how close a threat must be before the bot will back
 # out of a turn rather than swing its broadside through it.
@@ -167,6 +189,9 @@ static func for_battleship() -> BotDoctrine:
 	d.cover_max_threat = 0.7
 	d.cover_min_threat_dist = 10000.0
 	d.gun_engage_ratio = 0.60
+	# The close arm pushes below push_threat and kites above it, so that is where
+	# the standoff has to have finished opening back out.
+	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 13000.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
@@ -183,6 +208,7 @@ static func for_cruiser() -> BotDoctrine:
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
 	d.gun_engage_ratio = 0.70
+	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 11000.0
 	# The CA's broadside post-process is deliberately off: its engaged arm sets
 	# heading_weight itself and a second opinion on heading fights it.
@@ -217,6 +243,12 @@ static func for_destroyer() -> BotDoctrine:
 	# A destroyer that is shooting rather than launching is already committed,
 	# so it fights near the edge of its guns instead of holding a standoff.
 	d.gun_engage_ratio = 0.85
+	# No range negotiation for a torpedo boat: its engagement range is the
+	# closest standoff that keeps it dark (DDBehavior.engagement_range), and
+	# water given up for a quiet approach is not water low threat should be
+	# spending. Inside it the boat is seen, which is the one thing the whole
+	# approach was buying.
+	d.push_equalize_threat = 0.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Retreat", &"Spot"]
 	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat"]
@@ -259,4 +291,8 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	# DDBehavior._open_water_kiting). push_threat comes from for_destroyer() and
 	# is the turn-back-in edge; this is the break-off edge.
 	d.kite_threat = 0.6
+	# The push leg gets the range back gradually rather than all at once: this
+	# boat's push and kite are the two halves of one swing, so the standoff it
+	# is pushing to should be full only where the next kite leg breaks off.
+	d.push_equalize_threat = d.kite_threat
 	return d

@@ -245,7 +245,11 @@ static func set_preview_blocked(meshes: Array[MeshInstance3D], blocked: bool) ->
 		if blocked:
 			color = Color(PREVIEW_BLOCKED_COLOR.r, PREVIEW_BLOCKED_COLOR.g,
 				PREVIEW_BLOCKED_COLOR.b, base.a)
-		((m.mesh as BoxMesh).material as StandardMaterial3D).albedo_color = color
+		var mat := (m.mesh as BoxMesh).material as StandardMaterial3D
+		# Called every frame from Squadron.set_reticle_blocked(); writing
+		# albedo_color pushes a shader uniform each time, so skip the no-ops.
+		if mat.albedo_color != color:
+			mat.albedo_color = color
 
 # Lays a flat marker down flush with the ground, `length` long along
 # `forward2` (world XZ) and `width` wide across it, centered on `center`.
@@ -256,8 +260,12 @@ static func position_flat_rect(mesh_instance: MeshInstance3D, center: Vector3, f
 	mesh_instance.visible = true
 	var forward3 := Vector3(forward2.x, 0.0, forward2.y)
 	var right3 := Vector3(-forward2.y, 0.0, forward2.x)
-	mesh_instance.global_transform = Transform3D(Basis(right3, Vector3.UP, forward3), center)
-	(mesh_instance.mesh as BoxMesh).size = Vector3(width, PREVIEW_THICKNESS, length)
+	# Scale through the instance basis rather than the mesh: make_flat_marker()
+	# builds a unit BoxMesh, and writing BoxMesh.size makes the primitive
+	# regenerate and re-upload its surface - once per marker per frame, for a
+	# shape that never actually changes topology.
+	mesh_instance.global_transform = Transform3D(
+		Basis(right3 * width, Vector3.UP * PREVIEW_THICKNESS, forward3 * length), center)
 
 # World-space (XZ) lateral offset of aircraft `i` (of `count`) from the
 # formation center, perpendicular to `direction` - mirrors attack_offset()'s

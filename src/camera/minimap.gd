@@ -17,6 +17,7 @@ const FOV_ARC_RANGE = 15500.0 # Range of the FOV arc in world units
 const FOV_ARC_SEGMENTS = 32 # Number of segments for smooth arc
 const TORPEDO_MARKER_SIZE = 6 # Base size for torpedo triangle markers
 const AIRCRAFT_MARKER_SIZE = 25 # Base size for aircraft diamond markers
+const AVIATION_COLOR_LIGHTEN = 0.5 # How far aircraft/orbit colors are lightened from the ship marker colors
 
 
 # Static minimap texture shared across all instances
@@ -37,7 +38,17 @@ var ship_markers_canvas: Control
 var player_ship: Node3D = null
 var tracked_ships: Array[Dictionary] = []
 var tracked_aircraft: Array = []  # {pos, rot, color} - rebuilt each physics frame
-var tracked_squadron_paths: Array = []  # {base, waypoints, attack_point} - rebuilt each physics frame
+var tracked_squadron_paths: Array = []  # {base, waypoints, attack_point} - own ship only, rebuilt each physics frame
+var tracked_orbits: Array = []  # {center, radius, color} - one per airborne squadron, rebuilt each physics frame
+
+## Debug toggle, F9. When false the minimap skips every circle and arc it would
+## otherwise draw - weapon range rings, the concealment/hydro/radar dashed
+## circles, squadron orbit rings, the FOV arc outline, target lock rings,
+## detection auras, waypoint dots, consumable dots and the aim point - while
+## still drawing ship and aircraft markers, names, lines and the map itself.
+## Exists purely so the cost of all that curved geometry can be measured by
+## flipping it off mid-match; nothing but the draw calls reads it.
+var draw_circles: bool = true
 
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
@@ -218,6 +229,7 @@ func _physics_process(_delta: float) -> void:
 	# Rebuild aircraft list from all known ships
 	tracked_aircraft.clear()
 	tracked_squadron_paths.clear()
+	tracked_orbits.clear()
 	var all_ships: Array = tracked_ships.map(func(d): return d["ship"])
 	if is_instance_valid(player_ship):
 		all_ships.append(player_ship)
@@ -228,13 +240,15 @@ func _physics_process(_delta: float) -> void:
 		var is_friendly: bool = is_instance_valid(player_ship) \
 				and is_instance_valid(s.team) and is_instance_valid(player_ship.team) \
 				and s.team.team_id == player_ship.team.team_id
+		# Lightened relative to the ship marker colors so aircraft and their orbit
+		# rings read as a distinct, softer layer over the map.
 		var color: Color
 		if s == player_ship:
 			color = PLAYER_COLOR
 		elif is_friendly:
-			color = FRIENDLY_COLOR
+			color = FRIENDLY_COLOR.lightened(AVIATION_COLOR_LIGHTEN)
 		else:
-			color = ENEMY_COLOR
+			color = ENEMY_COLOR.lightened(AVIATION_COLOR_LIGHTEN)
 		for squadron_idx in av.active_squadrons.keys():
 			if squadron_idx >= av.squadrons.size():
 				continue
@@ -256,26 +270,47 @@ func _physics_process(_delta: float) -> void:
 				elif not squadron.returning:
 					orbit_center = Vector3(squadron.idle_pos.x, 0.0, squadron.idle_pos.y)
 					orbit_radius = squadron_params.circle_range if squadron.holding_attack else squadron_params.idle_radius
-			tracked_squadron_paths.append({
-				"base": Vector2(squadron.node.global_position.x, squadron.node.global_position.z),
-				"waypoints": squadron.waypoints.duplicate(),
-				"attack_point": squadron.attack_point,
-			})
+			# Commanded routes are only drawn for the squadrons the player is
+			# actually flying - waypoints are replicated to every peer, so
+			# collecting them for every carrier both cost a per-squadron array
+			# copy each tick and put other players' routes on your minimap.
+			if s == player_ship:
+				tracked_squadron_paths.append({
+					"base": Vector2(squadron.node.global_position.x, squadron.node.global_position.z),
+					"waypoints": squadron.waypoints.duplicate(),
+					"attack_point": squadron.attack_point,
+				})
+			var any_plane_shown := false
 			for plane in squadron.aircraft:
 				if not is_instance_valid(plane) or not plane.visible:
 					continue
+				any_plane_shown = true
 				tracked_aircraft.append({
 					"pos": plane.global_position,
 					"rot": plane.rotation.y,
 					"color": color,
-					"orbit_center": orbit_center,
-					"orbit_radius": orbit_radius,
 				})
+			# One orbit ring per squadron, not per plane. This used to ride along
+			# on every aircraft entry and get drawn once per aircraft, so an
+			# eight-plane squadron stamped the same filled circle and the same
+			# 48-segment arc eight times over. Gated on a plane actually being
+			# shown, which is what kept the ring off a squadron with nothing
+			# visible back when it was drawn from inside the aircraft list.
+			if any_plane_shown and orbit_center != null and orbit_radius > 0.0:
+				tracked_orbits.append({"center": orbit_center, "radius": orbit_radius, "color": color})
 
 	if not ship_markers_canvas.is_connected("draw", _on_canvas_draw):
 		ship_markers_canvas.connect("draw", _on_canvas_draw)
 
 func _input(_event: InputEvent) -> void:
+	var key := _event as InputEventKey
+	if key != null and key.pressed and not key.echo and key.keycode == KEY_F9:
+		draw_circles = not draw_circles
+		print("[minimap] circle drawing: %s" % ("ON" if draw_circles else "OFF"))
+		if ship_markers_canvas:
+			ship_markers_canvas.queue_redraw()
+		return
+
 	var prev_mmidx = mm_idx
 	if _event.is_action_pressed("map_up"):
 		mm_idx = clamp(mm_idx + 1, 0, num_sizes - 1)
@@ -443,7 +478,7 @@ func _on_canvas_draw() -> void:
 
 	# Draw Hydroacoustic Search torpedo detection range as a translucent filled circle
 	var hydro_torp_range := _get_active_hydro_torpedo_detection_range(ship)
-	if hydro_torp_range > 0.0:
+	if hydro_torp_range > 0.0 and draw_circles:
 		var torp_fill_color := Color(HYDRO_RANGE_COLOR.r, HYDRO_RANGE_COLOR.g, HYDRO_RANGE_COLOR.b, 0.2)
 		ship_markers_canvas.draw_circle(world_to_minimap_position(ship.global_position), hydro_torp_range * scale_factor.x, torp_fill_color)
 
@@ -486,13 +521,24 @@ func _on_canvas_draw() -> void:
 		if player_consumables.size() > 0:
 			draw_consumables_on_minimap(player_ship.global_position, player_consumables)
 
+	# Squadron orbit rings, one per squadron (see _physics_process). Drawn ahead
+	# of the aircraft so the markers stay readable on top of them.
+	if draw_circles:
+		for orbit in tracked_orbits:
+			var center_mm := world_to_minimap_position(orbit["center"])
+			var radius_mm: float = float(orbit["radius"]) * scale_factor.x
+			# Tinted to the owner (white own / green friendly / red enemy) to match
+			# the aircraft markers drawn on top of the ring.
+			var orbit_color: Color = orbit["color"]
+			var fill := orbit_color
+			fill.a = 0.08
+			var stroke := orbit_color
+			stroke.a = 0.45
+			ship_markers_canvas.draw_circle(center_mm, radius_mm, fill)
+			ship_markers_canvas.draw_arc(center_mm, radius_mm, 0.0, TAU, 48, stroke, 1.0)
+
 	# Draw aircraft indicators
 	for ac in tracked_aircraft:
-		if ac.orbit_center != null and ac.orbit_radius > 0.0:
-			var center_mm := world_to_minimap_position(ac.orbit_center)
-			var radius_mm: float = float(ac.orbit_radius) * scale_factor.x
-			ship_markers_canvas.draw_circle(center_mm, radius_mm, Color(1.0, 1.0, 1.0, 0.08))
-			ship_markers_canvas.draw_arc(center_mm, radius_mm, 0.0, TAU, 48, Color(1.0, 1.0, 1.0, 0.45), 1.0)
 		_draw_aircraft_marker(world_to_minimap_position(ac.pos), ac.rot, ac.color)
 
 	# Draw squadron waypoint routes (green) and the line to the next
@@ -565,6 +611,8 @@ func _get_active_radar_spotting_range(ship: Ship) -> float:
 	return -1.0
 
 func _draw_dashed_circle(center: Vector2, radius: float, color: Color, dash_length: float = 5.0, gap_length: float = 3.0, width: float = 2.0) -> void:
+	if not draw_circles:
+		return
 	var circumference = TAU * radius
 	var num_dashes = int(circumference / (dash_length + gap_length))
 	var angle_step = TAU / num_dashes
@@ -585,6 +633,8 @@ func draw_ship_aura_on_minimap(world_position: Vector3, ship_rotation: float, co
 	_draw_ship_aura(minimap_pos, ship_rotation, color, marker_size)
 
 func _draw_ship_aura(minimap_pos: Vector2, _ship_rotation: float, color: Color, scaling: float) -> void:
+	if not draw_circles:
+		return
 	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
 	ship_markers_canvas.draw_circle(minimap_pos, marker_size * scaling / 2.0, color)
 
@@ -605,6 +655,8 @@ func draw_ship_on_minimap(world_position: Vector3, ship_rotation: float, color: 
 
 # Draw range circle around ship (clipping handled by clip_contents on ship_markers_canvas)
 func draw_range_circle_on_minimap(world_position: Vector3, weapon_range: float, color: Color) -> void:
+	if not draw_circles:
+		return
 	var minimap_pos = world_to_minimap_position(world_position)
 	var minimap_radius = weapon_range * scale_factor.x
 	ship_markers_canvas.draw_arc(minimap_pos, minimap_radius, 0, TAU, 64, color, 2.0)
@@ -659,7 +711,8 @@ func _draw_squadron_path(path: Dictionary) -> void:
 	for wp in waypoints:
 		var wp_mm := world_to_minimap_position(Vector3(wp.x, 0.0, wp.y))
 		ship_markers_canvas.draw_line(prev_mm, wp_mm, Squadron.WAYPOINT_COLOR, SQUADRON_PATH_LINE_WIDTH)
-		ship_markers_canvas.draw_circle(wp_mm, SQUADRON_WAYPOINT_MARKER_RADIUS, Squadron.WAYPOINT_COLOR)
+		if draw_circles:
+			ship_markers_canvas.draw_circle(wp_mm, SQUADRON_WAYPOINT_MARKER_RADIUS, Squadron.WAYPOINT_COLOR)
 		prev_mm = wp_mm
 
 	if waypoints.size() == 0 and path["attack_point"] != null:
@@ -669,6 +722,8 @@ func _draw_squadron_path(path: Dictionary) -> void:
 
 
 func _draw_aim_point(aim_position: Vector2):
+	if not draw_circles:
+		return
 	ship_markers_canvas.draw_circle(aim_position, 2, Color.WHITE, false)
 
 func _draw_ship_name(marker_position: Vector2, ship_name: String, color: Color) -> void:
@@ -700,6 +755,8 @@ func _draw_heading_line(minimap_pos: Vector2, ship_rotation: float, color: Color
 
 
 func _draw_lock_circle(minimap_pos: Vector2) -> void:
+	if not draw_circles:
+		return
 	var marker_size = SHIP_MARKER_SIZE * minimap_sizes[mm_idx] / minimap_sizes.back()
 	var radius = marker_size * 0.9
 	var col = Color.WHITE
@@ -787,7 +844,8 @@ func draw_torpedoes_on_minimap() -> void:
 		#
 
 		# draw a circle instead
-		ship_markers_canvas.draw_circle(minimap_pos, marker_size / 2.0, color)
+		if draw_circles:
+			ship_markers_canvas.draw_circle(minimap_pos, marker_size / 2.0, color)
 
 # Draw a translucent arc showing the camera's field of view
 func draw_camera_fov_arc(range: float) -> void:
@@ -838,9 +896,11 @@ func draw_camera_fov_arc(range: float) -> void:
 	if points.size() >= 3:
 		ship_markers_canvas.draw_colored_polygon(points, FOV_ARC_COLOR)
 
-		# Draw arc outline for better visibility
+		# Draw arc outline for better visibility. The cone's two edge lines below
+		# share this colour, so it stays declared out here.
 		var outline_color = Color(FOV_ARC_COLOR.r, FOV_ARC_COLOR.g, FOV_ARC_COLOR.b, 0.5)
-		ship_markers_canvas.draw_arc(minimap_center, arc_radius, start_angle, end_angle, FOV_ARC_SEGMENTS, outline_color, 1.5)
+		if draw_circles:
+			ship_markers_canvas.draw_arc(minimap_center, arc_radius, start_angle, end_angle, FOV_ARC_SEGMENTS, outline_color, 1.5)
 
 		# Draw the two edge lines of the FOV cone
 		var start_point = minimap_center + Vector2(cos(start_angle), sin(start_angle)) * arc_radius

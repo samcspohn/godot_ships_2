@@ -82,10 +82,143 @@ func _physics_process(_delta: float) -> void:
 	if _done:
 		return
 	_done = true
-	if OS.get_cmdline_user_args().has("--table"):
+	if OS.get_cmdline_user_args().has("--sec"):
+		_secondary_test()
+	elif OS.get_cmdline_user_args().has("--table"):
 		_table_test()
 	else:
 		_run()
+
+
+## The secondary battery, which is the same solver asked a different question.
+##
+## Reported per MOUNT as well as combined, because the combining is the whole
+## point: with two calibres firing at once a point is worth what the ship does
+## there, and the ship is a 150mm penetration and a 105mm shatter arriving at
+## different rates. The per-mount columns are what the combined column is made
+## of, so a wrong answer can be traced to which gun disagreed.
+func _secondary_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var sec = _shooter.secondary_controller
+	if sec == null or sec.sub_controllers.is_empty():
+		_say("shooter has no secondary battery")
+		_out.close()
+		get_tree().quit()
+		return
+
+	_say("")
+	_say("secondary battery of %s:" % _shooter.scene_file_path.get_file())
+	for sc in sec.sub_controllers:
+		var sp: GunParams = sc.get_params()
+		_say("  %2d x %5.0f mm  reload %5.2f s  range %5.0f m  ->  %.2f shells/s   AP %s / HE %s" % [
+			(sc.guns as Array).size(), sp.shell1.caliber, sp.reload_time, sp._range,
+			float((sc.guns as Array).size()) / sp.reload_time,
+			"%.0f dmg" % sp.shell1.damage, "%.0f dmg" % sp.shell2.damage])
+
+	var space := get_world_3d().direct_space_state
+	var pts: Array = G._aim_candidates(_target)
+	var ssb: AABB = G._superstructure_bounds(_target)
+	_say("")
+	_say("grid: %d aim points" % pts.size())
+
+	for pr in [[1500.0, 90.0], [3500.0, 90.0], [4500.0, 90.0], [1500.0, 22.5], [3500.0, 22.5]]:
+		# Put the shooter where the request says, then take the geometry back OUT
+		# of the bucket key. The solver answers at the middle of a bucket, not at
+		# the range and aspect it was asked about - 90 degrees lands in the
+		# 90-105 bucket and is solved at 97.5 - so a scan run at the requested
+		# aspect is answering a different question and the two cannot be
+		# compared. Everything below uses the bucket's own geometry.
+		var ang0 := deg_to_rad(float(pr[1]))
+		_shooter.global_transform = Transform3D(Basis(),
+			_target.global_position + Vector3(sin(ang0), 0.0, -cos(ang0)) * float(pr[0]))
+		_shooter.force_update_transform()
+		var kk = G._bucket_key(_shooter, _target, G.KIND_SECONDARY)
+		var rng: float = (float(kk[G.KEY_RANGE]) + 0.5) * G._range_bucket(G.KIND_SECONDARY)
+		var asp: float = (float(kk[G.KEY_ASPECT]) + 0.5) * G.ASPECT_BUCKET_DEG
+		var bats: Array = G._batteries(_shooter, G.KIND_SECONDARY, rng)
+		_say("")
+		_say("=== asked %.0f m %.1f deg -> bucket %.0f m %.1f deg : %d of %d mounts reach ===" % [
+			float(pr[0]), float(pr[1]), rng, asp, bats.size(), sec.sub_controllers.size()])
+		if bats.is_empty():
+			_say("  nothing aboard reaches this far")
+			continue
+		var total_rate := 0.0
+		for b in bats:
+			total_rate += float(b["rate"])
+
+		# Score every point the way _slot_value does, and show the mounts.
+		var best := -1.0
+		var best_pt := Vector3.ZERO
+		var best_ammo := 0
+		var best_parts: Array = []
+		for c in pts:
+			for am in [0, 1]:
+				var combined := 0.0
+				var parts: Array = []
+				for b in bats:
+					var sh: ShellParams = b["shell1"] if am == 0 else b["shell2"]
+					if sh == null:
+						parts.append(0.0)
+						continue
+					var acc := 0.0
+					for smp in G.SALVO_SAMPLES.size():
+						acc += G._walk_payout(_target, _shooter, sh, c, smp, asp,
+							rng, b["dispersion"], space)
+					acc /= G.SALVO_SAMPLES.size()
+					parts.append(acc)
+					combined += acc * float(b["rate"])
+				combined /= total_rate
+				if combined > best:
+					best = combined
+					best_pt = c
+					best_ammo = am
+					best_parts = parts
+		var zone := "super" if (ssb.size.y > 0.0 and best_pt.y >= ssb.position.y) else "hull"
+		var cols: PackedStringArray = []
+		for i in best_parts.size():
+			cols.append("%5.0fmm %7.0f x %.2f/s" % [
+				(bats[i]["shell1"] as ShellParams).caliber,
+				float(best_parts[i]), float(bats[i]["rate"])])
+		# Direct damage only. The solver additionally credits an HE slot with the
+		# fire it would start (scaled against measured AP), so an HE row here can
+		# legitimately come out below the solver's answer - see BotGunnery._best_of.
+		_say("  best point: %s at x=%5.1f y=%5.2f z=%6.1f (%s)  combined %7.0f/shell  %7.0f dps  [direct only]" % [
+			"AP" if best_ammo == 0 else "HE", best_pt.x, best_pt.y, best_pt.z, zone,
+			best, best * total_rate])
+		_say("    mounts: %s" % " | ".join(cols))
+
+		# And what the solver itself lands on, through the budgeted service.
+		var sol := {}
+		for i in 2000:
+			sol = G.solve_secondary(_shooter, _target)
+			G._budget_left = G.SOLVER_BUDGET_PER_FRAME
+			G._drain()
+			if G._aim_table.has(kk):
+				break
+		var ans = G._aim_table.get(kk, {})
+		var off: Vector3 = ans.get("offset", Vector3.ZERO)
+		# Re-walk the exhaustive scan's winner AFTER the solver moved the
+		# shooter, to see whether the two disagree about the same point.
+		var recheck := 0.0
+		for b2 in bats:
+			var sh2: ShellParams = b2["shell1"] if best_ammo == 0 else b2["shell2"]
+			if sh2 == null:
+				continue
+			var acc2 := 0.0
+			for smp2 in G.SALVO_SAMPLES.size():
+				acc2 += G._walk_payout(_target, _shooter, sh2, best_pt, smp2, asp,
+					rng, b2["dispersion"], space)
+			recheck += (acc2 / G.SALVO_SAMPLES.size()) * float(b2["rate"])
+		recheck /= total_rate
+		_say("    same point re-walked after the solve: %7.0f (scan said %7.0f)" % [recheck, best])
+		_say("    solver:  %s at x=%5.1f y=%5.2f z=%6.1f  payout %7.0f" % [
+			"AP" if int(ans.get("ammo", 0)) == 0 else "HE",
+			off.x, off.y, off.z, float(ans.get("payout", 0.0))])
+
+	_say("")
+	_say("[%d ms] quitting" % _ms())
+	_out.close()
+	get_tree().quit()
 
 
 ## Drive the solver the way a battle would. Real physics frames cannot be used

@@ -119,6 +119,11 @@ func _ready() -> void:
 	set_process(true)
 
 
+# Whether the world-space ground/waypoint markers were drawn last tick, so a
+# carrier that stops being locally controlled gets its markers taken down once
+# instead of every tick forever after.
+var _indicators_shown: bool = false
+
 # Runs every physics tick (fixed rate). Ground/waypoint marker raycasts need
 # the physics thread (PhysicsDirectSpaceState3D is unavailable during
 # _process()), and flight simulation/attack commits need to stay in lockstep
@@ -128,10 +133,19 @@ func _ready() -> void:
 # lagging behind the mouse since physics ticks and render frames are not
 # 1:1 - it now runs in _process below instead.
 func _physics_process(delta: float) -> void:
-	for i in range(squadrons.size()):
-		var squadron = squadrons[i]
-		squadron._update_ground_indicator()
-		squadron._update_waypoint_indicators()
+	# These markers are decoration for the player flying this carrier. They live
+	# in world space, and waypoints are replicated to every peer, so running them
+	# for every carrier on the map both cost ~10x the raycasts/transform updates
+	# actually needed and drew enemy carriers' commanded routes into your world.
+	var draw_indicators: bool = _ship.control is PlayerController
+	if draw_indicators:
+		for squadron in squadrons:
+			squadron._update_ground_indicator()
+			squadron._update_waypoint_indicators()
+	elif _indicators_shown:
+		for squadron in squadrons:
+			squadron.hide_indicators()
+	_indicators_shown = draw_indicators
 
 	_tick_regen(delta)
 	_tick_cooldowns(delta)
@@ -610,7 +624,23 @@ func set_fire_held(held: bool) -> void:
 
 
 
-func to_bytes() -> PackedByteArray:
+## True if any airborne squadron currently has a commanded route. Only active
+## squadrons get serialized, so those are the only ones whose waypoints could
+## leak - and if none of them have any, the friendly and enemy encodings of this
+## carrier are byte-identical and the server can skip building both.
+func has_waypoints() -> bool:
+	for index in active_squadrons:
+		if index < squadrons.size() and not squadrons[index].waypoints.is_empty():
+			return true
+	return false
+
+## `include_waypoints` false omits every squadron's commanded route from the
+## packet. Waypoints are the player's intent, not observable state - an enemy
+## who receives them knows where a strike is headed before it turns, which no
+## amount of client-side hiding can prevent once the bytes are on their machine.
+## The waypoint count is still written (as 0), so the stream stays
+## self-describing and from_bytes() needs no matching flag to stay aligned.
+func to_bytes(include_waypoints: bool = true) -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
 	# Launch cooldowns for every squadron, airborne or not - the buttons have to
 	# show the wait on squadrons that are not in the active list below.
@@ -637,9 +667,12 @@ func to_bytes() -> PackedByteArray:
 		writer.put_u8(1 if squadron.returning else 0)
 		writer.put_u8(1 if squadron.in_landing_approach else 0)
 		writer.put_float(squadron.fuel_remaining)
-		writer.put_u8(squadron.waypoints.size())
-		for wp in squadron.waypoints:
-			writer.put_var(wp)
+		if include_waypoints:
+			writer.put_u8(squadron.waypoints.size())
+			for wp in squadron.waypoints:
+				writer.put_var(wp)
+		else:
+			writer.put_u8(0)
 		for plane in squadron.aircraft:
 			writer.put_var(plane.global_position)
 			writer.put_var(plane.global_rotation)
@@ -722,8 +755,12 @@ func from_bytes(b: PackedByteArray) -> void:
 					plane.reparent(game_world)
 					plane.set_physics_process(true)
 					plane.set_hitbox_enabled(true)
-				plane.global_position = plane_pos
-				plane.global_rotation = plane_rot
+				# One transform write rather than a position write followed by a
+				# rotation write - global_rotation has to decompose the basis to
+				# euler and recompose it, and each write propagates separately.
+				# Plane scenes are unit-scaled and nothing scales them at
+				# runtime, so composing the basis outright is equivalent.
+				plane.global_transform = Transform3D(Basis.from_euler(plane_rot), plane_pos)
 				plane.hp = plane_hp
 		if index < params.size():
 			var params_bytes = reader.get_var()

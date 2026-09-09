@@ -2558,10 +2558,45 @@ func get_threat_score(ctx: SkillContext) -> float:
 
 # COMBAT
 
+## Where the secondaries point on the priority target, and what they load.
+##
+## The same solver the turrets use (BotGunnery.solve_secondary), which earns its
+## keep here more than it does forward: a secondary battery is several calibres
+## firing at once, and the point that suits a 150mm is not automatically the
+## point that suits a 105mm. The solver scores each candidate by what every mount
+## that can reach it actually does there, weighted by rate of fire, so a plate
+## one calibre penetrates and the other shatters on is judged on the damage the
+## SHIP does rather than on either mount's opinion of it.
+##
+## The shell is only changed off a FINISHED bucket. A secondary battery is always
+## part-way through reloading something, so there is no between-salvos moment to
+## wait for the way there is forward - the protection against flapping is that a
+## partial survey never gets to reload anything.
 func _secondary_target_offset(target: Ship) -> Vector3:
+	var sec = _ship.secondary_controller
+	var solved := _gunnery.solve_secondary(_ship, target)
+	if bool(solved.get("probed", false)):
+		var ammo := int(solved.get("ammo", sec.shell_index))
+		if sec.shell_index != ammo:
+			sec.select_shell(ammo)
+	if bool(solved.get("walked", false)):
+		return solved["offset"]
+	return _superstructure_offset(target)
+
+
+## The middle of the deckhouse, in the target's local space. What the secondaries
+## aimed at before there was a solver, and still the right answer while a bucket
+## is being surveyed: it is the least armoured thing on a big ship and the only
+## part of one that small calibres reliably hurt.
+##
+## Reads the armour part rather than Ship.super_structure because this one does
+## have a usable global_position - the part is parented to the superstructure
+## mesh, which is the one zone node that sits where it says it does.
+func _superstructure_offset(target: Ship) -> Vector3:
 	var super_idx = target.armor_parts.find_custom(func(part):
 		return part.type == ArmorPart.Type.SUPERSTRUCTURE)
-	assert(super_idx != -1, "Secondary target offset requires a superstructure armor part")
+	if super_idx == -1:
+		return _gunnery.aim_hint(target)
 	var superstructure := target.armor_parts[super_idx] as ArmorPart
 	return target.to_local(superstructure.global_position) + Vector3(0, 0.5, 0)
 

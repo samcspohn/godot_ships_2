@@ -451,14 +451,14 @@ func create_balanced_single_player_teams(player_name: String, player_ship: Strin
 	# in a carrier their own entry fills their team's slot and the mirrored bot
 	# fills the enemy's - adding another would put two carriers on their team.
 	var bot_cv_count := 0
-	if player_ship_class != SHIP_CLASS_CV:
-		var cv_pool: Array = SHIPS_BY_CLASS[SHIP_CLASS_CV]
-		spawn_classes[SHIP_CLASS_CV].append({
-			"class": SHIP_CLASS_CV,
-			"ship": cv_pool[randi() % cv_pool.size()],
-			"is_player": false
-		})
-		bot_cv_count = 1
+	# if player_ship_class != SHIP_CLASS_CV:
+	# 	var cv_pool: Array = SHIPS_BY_CLASS[SHIP_CLASS_CV]
+	# 	spawn_classes[SHIP_CLASS_CV].append({
+	# 		"class": SHIP_CLASS_CV,
+	# 		"ship": cv_pool[randi() % cv_pool.size()],
+	# 		"is_player": false
+	# 	})
+	# 	bot_cv_count = 1
 
 	var class_index = (player_ship_class + 1) % classes.size()
 	# the carrier takes one of the team's slots rather than adding to them

@@ -166,6 +166,18 @@ class Weapon:
 	var reload_bar: ProgressBar
 	var indicator: Control
 	var reload_timer: Label
+	# Resolved once in setup_weapon_controller(). update_gun_reload_bars() runs
+	# over every gun on every physics tick, and re-walking these by name each
+	# time (5 get_node()s + a get_params() per gun) was the bulk of its cost.
+	var under_tex: TextureProgressBar
+	var progress_tex: TextureProgressBar
+	var angle_label: Label
+	var params
+	# Last values pushed to the labels/modulates, so we skip the string
+	# formatting and the property writes when nothing actually changed.
+	var last_timer_text: String = ""
+	var last_angle_text: String = ""
+	var last_color: Color = Color(0, 0, 0, 0)
 
 # # Gun reload tracking
 # var gun_reload_bars: Array[ProgressBar] = []
@@ -1094,6 +1106,10 @@ func setup_ship_ui(ship):
 		# segments rather than one segment that never expires.
 		"dmg_prev_hp": start_hp,
 		"dmg_segments": [],
+		# What hp_label currently reads, so update_ship_ui() can skip rebuilding
+		# an identical string (and re-shaping the Label) every frame.
+		"hp_text_hp": ship.health_controller.current_hp,
+		"hp_text_max": ship.health_controller.max_hp,
 	}
 
 func update_ship_ui(delta: float = 0.0):
@@ -1116,9 +1132,49 @@ func update_ship_ui(delta: float = 0.0):
 
 	# Update each ship's UI
 	var secondary_offset = camera_controller._ship.secondary_controller.target_offset if camera_controller._ship and camera_controller._ship.secondary_controller else Vector3.ZERO
+	# Everything below is identical for every tracked ship, so it is resolved
+	# once here rather than per ship (this loop used to do two get_viewport()s,
+	# two unproject_position()s, a get_visible_rect(), a Time query and an
+	# Input query for each ship on the map, every frame).
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+	var cam_origin := camera.global_position
+	var cam_forward := -camera.global_transform.basis.z
+	var viewport_rect := get_viewport().get_visible_rect()
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var alt_held: bool = Input.is_key_pressed(KEY_ALT)
+	var desired_mode: String = "alt" if alt_held else "normal"
+	var own_team_id: int = camera_controller._ship.team.team_id
+	var target_glyph: String = "◉" if secondary_offset == Vector3.ZERO else "◎+"
 	for ship: Ship in tracked_ships.keys():
 		if is_instance_valid(ship) and ship in ship_ui_elements:
 			var ui = ship_ui_elements[ship]
+
+			# Where this ship's marker lands on screen. Decided up front so a
+			# ship that is behind the camera or off the edge - which is most of
+			# them, most of the time - costs a dot product rather than a full
+			# HP bar / damage strip / consumable-row refresh for a widget
+			# nobody can see. One unproject, reused for the placement below.
+			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
+			var screen_pos = Vector2.ZERO
+			var in_front: bool = cam_forward.dot(ship_position - cam_origin) > 0.0
+			if in_front:
+				screen_pos = camera.unproject_position(ship_position)
+			var ship_visible = in_front and viewport_rect.has_point(screen_pos) and ship.visible
+
+			if not ship_visible:
+				ui.container.visible = false
+				ui.lock_icon.visible = false
+				# Keep just enough damage-bar state alive that the strip is
+				# right the moment the ship comes back on screen: the baseline
+				# has to follow the HP it will reappear at, and any segments
+				# tracked before it left have aged out unseen.
+				ui["dmg_prev_hp"] = ship.health_controller.current_hp
+				var hidden_segments: Array = ui["dmg_segments"]
+				if not hidden_segments.is_empty():
+					hidden_segments.clear()
+				continue
 
 			# Get ship's HP if it has an HP manager
 			var ship_hp_manager = ship.health_controller
@@ -1130,13 +1186,15 @@ func update_ship_ui(delta: float = 0.0):
 
 				# Update progress bar and label (colors are already set by template)
 				ui.hp_bar.value = hp_percent
-				ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
+				if ui["hp_text_hp"] != ship_current_hp or ui["hp_text_max"] != max_hp:
+					ui["hp_text_hp"] = ship_current_hp
+					ui["hp_text_max"] = max_hp
+					ui.hp_label.text = "%d/%d" % [ship_current_hp, max_hp]
 
 				# --- "recently lost HP" damage bar -----------------------------------
 				# Sits behind the HP fill, showing the gap between the current HP and
 				# the HP from up to DAMAGE_BAR_CLEAR_DELAY ago. Each damage tick is its
 				# own expiring segment, so the strip trails down as old damage ages out.
-				var now: float = Time.get_ticks_msec() / 1000.0
 				var prev_hp: float = ui["dmg_prev_hp"]
 				var segments: Array = ui["dmg_segments"]
 
@@ -1171,9 +1229,7 @@ func update_ship_ui(delta: float = 0.0):
 						# Stepping down to the next level: drain smoothly in _process.
 						bar.value = max(target, bar.value - DAMAGE_BAR_DROP_RATE * delta)
 
-			if ship.team.team_id == camera_controller._ship.team.team_id: # friendly
-				var alt_held: bool = Input.is_key_pressed(KEY_ALT)
-				var desired_mode: String = "alt" if alt_held else "normal"
+			if ship.team.team_id == own_team_id: # friendly
 				var current_mode: String = ui.status.get_meta("consumable_mode", "")
 				var normal_icons: Array = ui["normal_icons"]
 				var alt_widgets: Array = ui["alt_widgets"]
@@ -1210,12 +1266,12 @@ func update_ship_ui(delta: float = 0.0):
 
 
 
-			if ship.team.team_id != camera_controller._ship.team.team_id:
+			if ship.team.team_id != own_team_id:
 				# Update target indicator visibility
 				var is_targeted = (ship == current_secondary_target)
 				if ui.target_indicator.visible != is_targeted:
 					ui.target_indicator.visible = is_targeted
-				ui.target_indicator.get_child(0).text = "◉" if secondary_offset == Vector3.ZERO else "◎+"
+				ui.target_indicator.get_child(0).text = target_glyph
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -1223,24 +1279,13 @@ func update_ship_ui(delta: float = 0.0):
 			# 	var base_color = Color(1, 0.6, 0, 0.9)  # Orange color
 			# 	ui.target_indicator.color = base_color.lerp(Color(1, 1, 0, 1), pulse_value * 0.5)  # Pulse to yellow
 
-			# Position UI above ship in the world
-			var ship_position = ship.global_position + Vector3(0, 20, 0) # Add height offset
-			var screen_pos = Vector2.ZERO
-			if not camera_controller.is_position_behind(ship_position):
-				screen_pos = get_viewport().get_camera_3d().unproject_position(ship_position)
-
-			# Check if ship is visible on screen
-			var ship_visible = is_position_visible_on_screen(ship_position) and ship.visible
-			ui.container.visible = ship_visible && (ship as Ship).health_controller.is_alive()
-			if not ship_visible:
-				ui.lock_icon.visible = false
-
-			if ship_visible:
-				# Position the container above the ship, centered
-				var container_size = Vector2(90, 40) # Use template size
-				ui.container.position = screen_pos - Vector2(container_size.x / 2, container_size.y)
-				# Show lock-on icon when this ship is the active locked target
-				ui.lock_icon.visible = target_lock_enabled and locked_target == ship
+			# Position UI above the ship, centered (screen_pos was computed at
+			# the top of the loop, along with the visibility test).
+			ui.container.visible = ship.health_controller.is_alive()
+			var container_size = Vector2(90, 40) # Use template size
+			ui.container.position = screen_pos - Vector2(container_size.x / 2, container_size.y)
+			# Show lock-on icon when this ship is the active locked target
+			ui.lock_icon.visible = target_lock_enabled and locked_target == ship
 		else:
 			# Ship no longer valid, remove it
 			if ship in ship_ui_elements:
@@ -1306,6 +1351,11 @@ func setup_aircraft_ui(squadron: Squadron, owner_ship: Ship) -> void:
 		"owner_label": owner_label,
 		"bars_container": bars_container,
 		"bars": bars,
+		# Sizes the child offsets were last computed against (see
+		# update_aircraft_ui). Start unset so the first visible frame lays out.
+		"layout_owner": Vector2.INF,
+		"layout_header": Vector2.INF,
+		"layout_bars": Vector2.INF,
 	}
 
 
@@ -1337,6 +1387,12 @@ func update_aircraft_ui(_delta: float) -> void:
 	var camera := get_viewport().get_camera_3d()
 	if not camera:
 		return
+	# Same per-frame constants the ship markers use - resolved once instead of
+	# once per squadron. is_position_visible_on_screen() re-fetched the viewport
+	# and camera and unprojected a second time on top of the unproject below.
+	var cam_origin := camera.global_position
+	var cam_forward := -camera.global_transform.basis.z
+	var viewport_rect := get_viewport().get_visible_rect()
 
 	for squadron in active_squadrons.keys():
 		if not aircraft_ui_elements.has(squadron):
@@ -1345,19 +1401,35 @@ func update_aircraft_ui(_delta: float) -> void:
 		var ui = aircraft_ui_elements[squadron]
 		var root: Control = ui["root"]
 		var anchor_world: Vector3 = squadron.node.global_position + Vector3(0, 8, 0)
-		if not is_position_visible_on_screen(anchor_world):
+		# Off-screen squadrons cost a dot product, not a marker reflow plus a
+		# per-plane bar refresh.
+		if cam_forward.dot(anchor_world - cam_origin) <= 0.0:
+			root.visible = false
+			continue
+		var anchor_screen: Vector2 = camera.unproject_position(anchor_world)
+		if not viewport_rect.has_point(anchor_screen):
 			root.visible = false
 			continue
 		root.visible = true
-		var anchor_screen: Vector2 = camera.unproject_position(anchor_world)
 		root.position = anchor_screen
 
 		var owner_label: Label = ui["owner_label"]
 		var header: Label = ui["header"]
 		var bars_container: HBoxContainer = ui["bars_container"]
-		owner_label.position = Vector2(-owner_label.size.x * 0.5, -owner_label.size.y)
-		header.position = Vector2(-header.size.x * 0.5, -owner_label.size.y - header.size.y)
-		bars_container.position = Vector2(-bars_container.size.x * 0.5, 8)
+		# These three offsets are relative to root, so they only move when the
+		# labels or the bar row change size - which happens when a plane is lost,
+		# not every frame. Re-centering them each frame meant three
+		# Control.set_position calls per squadron for an unchanged layout.
+		var owner_size := owner_label.size
+		var header_size := header.size
+		var bars_size := bars_container.size
+		if ui["layout_owner"] != owner_size or ui["layout_header"] != header_size or ui["layout_bars"] != bars_size:
+			ui["layout_owner"] = owner_size
+			ui["layout_header"] = header_size
+			ui["layout_bars"] = bars_size
+			owner_label.position = Vector2(-owner_size.x * 0.5, -owner_size.y)
+			header.position = Vector2(-header_size.x * 0.5, -owner_size.y - header_size.y)
+			bars_container.position = Vector2(-bars_size.x * 0.5, 8)
 
 		var bars = ui["bars"]
 		for i in squadron.aircraft.size():
@@ -1614,6 +1686,12 @@ func setup_weapon_controller(controller: Node):
 		(weapon_data.reload_bar as Control).custom_minimum_size.x = width
 		(weapon_data.reload_bar as Control).size.x = width
 
+		weapon_data.reload_timer = weapon_data.reload_bar.get_child(0) as Label
+		weapon_data.under_tex = weapon_data.indicator.get_node("UnderTexture") as TextureProgressBar
+		weapon_data.progress_tex = weapon_data.indicator.get_node("ProgressTexture") as TextureProgressBar
+		weapon_data.angle_label = weapon_data.indicator.get_node("AngleLabel") as Label
+		weapon_data.params = turret.controller.get_params()
+
 		weapons[controller].append(weapon_data)
 		crosshair_container.add_child(weapon_data.indicator)
 		gun_container.add_child(weapon_data.reload_bar)
@@ -1751,35 +1829,42 @@ func update_flood_bars():
 			bar.modulate.a = 0.0
 
 func update_gun_reload_bars():
-	# Update reload progress for each weapon
-	var already_drawn_indicators = []
-	var overlapping_indicators = {}
+	# Update reload progress for each weapon. Both of these hold Weapon records
+	# rather than raw indicator Controls, so the overlap fan-out below can reach
+	# the cached UnderTexture/ProgressTexture refs instead of re-resolving them
+	# by name for every member of every cluster, every tick.
+	var already_drawn: Array = []
+	var overlapping: Dictionary = {}
+
+	var current_controller = player_controller.current_weapon_controller
+	var gun_indicator_pos: Vector2 = gun_indicator.global_position
+	var aim_point: Vector3 = camera_controller.aim_position
+	aim_point.y = 0.0
 
 	for controller in weapons.keys():
 		var turret_list = weapons[controller]
-		for t in turret_list:
+		var is_current: bool = controller == current_controller
+		for t: Weapon in turret_list:
 			var gun: Turret = t.weapon
-			var params = gun.controller.get_params()
-			var bar = t.reload_bar
-			var indicator = t.indicator
-			var timer_label = bar.get_child(0) as Label
-
+			var params = t.params
+			var bar: ProgressBar = t.reload_bar
+			var indicator: Control = t.indicator
+			var reload: float = gun.reload
 
 			# Update reload progress
-			bar.value = gun.reload
-			var under_tex = indicator.get_node("UnderTexture") as TextureProgressBar
-			var progress_tex = indicator.get_node("ProgressTexture") as TextureProgressBar
-			progress_tex.value = gun.reload
-			if gun.reload >= 1.0:
-				timer_label.text = "%.1f" % (gun.reload * params.reload_time)
-			else:
-				timer_label.text = "%.1f" % ((1.0 - gun.reload) * params.reload_time)
+			bar.value = reload
+			var under_tex := t.under_tex
+			var progress_tex := t.progress_tex
+			progress_tex.value = reload
+			var remaining: float = (reload if reload >= 1.0 else 1.0 - reload) * params.reload_time
+			var timer_text := "%.1f" % remaining
+			if timer_text != t.last_timer_text:
+				t.last_timer_text = timer_text
+				t.reload_timer.text = timer_text
 
 			var gun_pos = gun.global_position
 			gun_pos.y = 0.0
-			var aim_point = camera_controller.aim_position
-			aim_point.y = 0.0
-			var aim_dir = gun_pos.direction_to(aim_point).normalized()
+			var aim_dir = gun_pos.direction_to(aim_point)
 
 			var gun_forw = -gun.global_transform.basis.z
 			gun_forw.y = 0.0
@@ -1789,12 +1874,12 @@ func update_gun_reload_bars():
 			var angle = rad_to_deg(angle_rad)
 
 			indicator.visible = true
-			if abs(angle) > 0.9:
-				indicator.get_node("AngleLabel").text = "%.0f°" % abs(angle)
-			else:
-				indicator.get_node("AngleLabel").text = ""
+			var angle_text := "%.0f°" % absf(angle) if absf(angle) > 0.9 else ""
+			if angle_text != t.last_angle_text:
+				t.last_angle_text = angle_text
+				t.angle_label.text = angle_text
 
-			indicator.global_position = gun_indicator.global_position - Vector2(angle * 4.0, 0)
+			indicator.global_position = gun_indicator_pos - Vector2(angle * 4.0, 0)
 
 			var color_mod: float
 			var color: Color
@@ -1805,53 +1890,56 @@ func update_gun_reload_bars():
 					color_mod = valid_cannot_fire_color_mod
 			else:
 				color_mod = invalid_cannot_fire_color_mod
-			if gun.reload >= 1.0:
+			if reload >= 1.0:
 				color = ready_gun_color * color_mod
 			else:
 				color = reloading_gun_color * color_mod
-			bar.self_modulate = color
-			progress_tex.tint_progress = color
+			# self_modulate/tint_progress both dirty the canvas item on write,
+			# so only push a colour that actually moved.
+			if color != t.last_color:
+				t.last_color = color
+				bar.self_modulate = color
+				progress_tex.tint_progress = color
 
-
-			if controller != player_controller.current_weapon_controller:
+			if not is_current:
 				indicator.visible = false
 				continue
 
 
-			var closest_indicator: Control = null
+			var closest: Weapon = null
 			# Avoid overlapping indicators
-			for other_indicator in already_drawn_indicators:
-				var dist = indicator.global_position.distance_to(other_indicator.global_position)
-				if dist < 6.0:
-					closest_indicator = other_indicator
+			var indicator_pos: Vector2 = indicator.global_position
+			for other: Weapon in already_drawn:
+				if indicator_pos.distance_squared_to(other.indicator.global_position) < 36.0:
+					closest = other
 					break
-			if closest_indicator:
-				indicator.get_node("AngleLabel").visible = false
-				indicator.global_position = closest_indicator.global_position
-				if overlapping_indicators.has(closest_indicator):
-					overlapping_indicators[closest_indicator].append(indicator)
+			if closest:
+				t.angle_label.visible = false
+				indicator.global_position = closest.indicator.global_position
+				if overlapping.has(closest):
+					overlapping[closest].append(t)
 				else:
-					overlapping_indicators[closest_indicator] = [closest_indicator, indicator]
+					overlapping[closest] = [closest, t]
+				var cluster: Array = overlapping[closest]
 				var gap = 15
-				var num_indicators = overlapping_indicators[closest_indicator].size()
+				var num_indicators = cluster.size()
 				var step = (360.0 - (gap * num_indicators)) / num_indicators
 				var angle_idx = 0
 				var start = gap / 2.0
-				for k: Control in overlapping_indicators[closest_indicator]:
-					var k_under_tex = k.get_node("UnderTexture") as TextureProgressBar
-					var k_progress_tex = k.get_node("ProgressTexture") as TextureProgressBar
-					k_under_tex.radial_fill_degrees = step
-					k_under_tex.radial_initial_angle = start + angle_idx * (step + gap)
-					k_progress_tex.radial_fill_degrees = step
-					k_progress_tex.radial_initial_angle = start + angle_idx * (step + gap)
+				for k: Weapon in cluster:
+					var initial_angle: float = start + angle_idx * (step + gap)
+					k.under_tex.radial_fill_degrees = step
+					k.under_tex.radial_initial_angle = initial_angle
+					k.progress_tex.radial_fill_degrees = step
+					k.progress_tex.radial_initial_angle = initial_angle
 					angle_idx += 1
 			else:
-				indicator.get_node("AngleLabel").visible = true
+				t.angle_label.visible = true
 				under_tex.radial_fill_degrees = 360
 				under_tex.radial_initial_angle = 0
 				progress_tex.radial_fill_degrees = 360
 				progress_tex.radial_initial_angle = 0
-			already_drawn_indicators.append(indicator)
+			already_drawn.append(t)
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):

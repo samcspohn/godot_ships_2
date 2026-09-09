@@ -195,25 +195,42 @@ static func _make_sphere_marker(color: Color, radius: float) -> MeshInstance3D:
 	mesh_instance.visible = false
 	return mesh_instance
 
+# One unit-height cylinder shared by every line segment in the game. It is
+# never mutated after creation - _position_line() stretches it through the
+# instance transform instead of resizing the mesh, so the primitive never
+# has to regenerate its surface (which it would do, and re-upload to the
+# GPU, on every single `height` write).
+static var _shared_line_mesh: CylinderMesh = null
+
+static func _line_mesh() -> CylinderMesh:
+	if _shared_line_mesh == null:
+		_shared_line_mesh = CylinderMesh.new()
+		_shared_line_mesh.top_radius = 1.5
+		_shared_line_mesh.bottom_radius = 1.5
+		_shared_line_mesh.height = 1.0
+		# Cheapest possible tube: these markers are hairline-thin on screen.
+		_shared_line_mesh.radial_segments = 6
+		_shared_line_mesh.rings = 0
+	return _shared_line_mesh
+
 # A thin cylinder used as a generic line segment between two arbitrary
 # points - see _position_line(), which orients/scales it every frame.
+# Colour lives in a per-instance material_override, since the mesh itself is
+# shared with every other line.
 static func _make_line_mesh(color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
-	var cylinder := CylinderMesh.new()
-	cylinder.top_radius = 1.5
-	cylinder.bottom_radius = 1.5
-	cylinder.height = 1.0
+	mesh_instance.mesh = _line_mesh()
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	cylinder.material = material
-	mesh_instance.mesh = cylinder
+	mesh_instance.material_override = material
 	mesh_instance.visible = false
 	return mesh_instance
 
 static func _set_line_color(line: MeshInstance3D, color: Color) -> void:
-	var material := (line.mesh as CylinderMesh).material as StandardMaterial3D
-	material.albedo_color = color
+	var material := line.material_override as StandardMaterial3D
+	if material.albedo_color != color:
+		material.albedo_color = color
 
 # Orients/scales a line mesh (built by _make_line_mesh()) to run between two
 # arbitrary world points - not just vertical, so it can be used both for the
@@ -231,25 +248,72 @@ static func _position_line(line: MeshInstance3D, from: Vector3, to: Vector3) -> 
 		helper_axis = Vector3.FORWARD
 	var x_axis := helper_axis.cross(y_axis).normalized()
 	var z_axis := x_axis.cross(y_axis).normalized()
-	line.global_transform = Transform3D(Basis(x_axis, y_axis, z_axis), (from + to) * 0.5)
-	(line.mesh as CylinderMesh).height = length
+	# Stretch the unit-height cylinder along its own Y only, so the segment
+	# spans `length` while keeping its radius. Doing it here rather than via
+	# CylinderMesh.height keeps the shared mesh immutable - writing `height`
+	# forces the primitive to rebuild and re-upload its surface every frame.
+	line.global_transform = Transform3D(Basis(x_axis, y_axis * length, z_axis), (from + to) * 0.5)
+
+# Reused across every ground query on every squadron - PhysicsRayQueryParameters3D
+# is a RefCounted object and allocating a fresh one per waypoint per tick was a
+# meaningful share of the cost of drawing these markers.
+static var _ground_query: PhysicsRayQueryParameters3D = null
 
 # Raycasts straight down from (x, node's current altitude, z), capped at
 # water level (y = 0). Used to place the ground marker/waypoint markers on
 # the water/terrain below.
 func _ground_height_at(x: float, z: float) -> float:
-	var space_state := node.get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(Vector3(x, node.global_position.y, z), Vector3(x, 0.0, z))
-	query.collision_mask = 1 # terrain layer
-	var result := space_state.intersect_ray(query)
+	if _ground_query == null:
+		_ground_query = PhysicsRayQueryParameters3D.new()
+		_ground_query.collision_mask = 1 # terrain layer
+	_ground_query.from = Vector3(x, node.global_position.y, z)
+	_ground_query.to = Vector3(x, 0.0, z)
+	var result := node.get_world_3d().direct_space_state.intersect_ray(_ground_query)
 	return result.position.y if not result.is_empty() else 0.0
+
+# Waypoint/attack-point ground heights, memoised against the XZ they were
+# measured at. Waypoints only move when the player retargets or when the
+# carrier drifts far enough to clamp them back into range, so re-raycasting
+# every one of them on every physics tick was almost entirely wasted work.
+# Keyed by position rather than by a dirty flag so it stays correct no matter
+# which of the several places that mutate `waypoints` did the mutating.
+var _ground_cache_xz: Array[Vector2] = []
+var _ground_cache_y: Array[float] = []
+
+func _cached_ground_height(index: int, x: float, z: float) -> float:
+	var xz := Vector2(x, z)
+	while _ground_cache_xz.size() <= index:
+		_ground_cache_xz.append(Vector2.INF)
+		_ground_cache_y.append(0.0)
+	if _ground_cache_xz[index] != xz:
+		_ground_cache_xz[index] = xz
+		_ground_cache_y[index] = _ground_height_at(x, z)
+	return _ground_cache_y[index]
 
 # Vertical clearance kept between the squadron and the top of its ground line.
 const GROUND_LINE_CLEARANCE: float = 20.0
 
+# Takes every world-space marker down without tearing them apart, for a
+# squadron that has stopped being drawn (see
+# AviationController._physics_process). recall() does the full teardown; this
+# just stops showing what is already there, so a squadron that becomes
+# locally-controlled again picks straight back up.
+func hide_indicators() -> void:
+	if ground_marker != null:
+		ground_marker.visible = false
+	if ground_line != null:
+		ground_line.visible = false
+	if next_target_line != null:
+		next_target_line.visible = false
+	for marker in waypoint_markers:
+		marker.visible = false
+	for line in waypoint_connector_lines:
+		line.visible = false
+
 # Positions the ground marker/line below the squadron. Purely client-side
-# visual - safe to call on every peer every frame since it only reads the
-# already-synced node.global_position.
+# visual, derived entirely from the already-synced node.global_position - but
+# only driven for the locally-controlled carrier, since that is the only player
+# these markers are for (see AviationController._physics_process).
 func _update_ground_indicator() -> void:
 	if ground_marker == null or ground_line == null or not active:
 		return
@@ -266,8 +330,10 @@ func _update_ground_indicator() -> void:
 # Draws green spheres at each waypoint and green connector lines between
 # consecutive waypoints, plus a single line from the squadron's own ground
 # marker to whatever it's currently heading toward next - green for a
-# waypoint, orange for the attack point. Purely client-side visual, safe on
-# every peer since it only reads already-synced state.
+# waypoint, orange for the attack point. Purely client-side visual, and driven
+# only for the locally-controlled carrier - waypoints are replicated to every
+# peer, so drawing these for every squadron put enemy routes on your screen
+# (see AviationController._physics_process).
 func _update_waypoint_indicators() -> void:
 	if not active or world_node == null:
 		return
@@ -290,7 +356,7 @@ func _update_waypoint_indicators() -> void:
 	var ground_ys: Array[float] = []
 	for i in range(waypoints.size()):
 		var wp: Vector2 = waypoints[i]
-		var gy := _ground_height_at(wp.x, wp.y)
+		var gy := _cached_ground_height(i, wp.x, wp.y)
 		ground_ys.append(gy)
 		waypoint_markers[i].visible = true
 		waypoint_markers[i].global_position = Vector3(wp.x, gy, wp.y)
@@ -306,7 +372,9 @@ func _update_waypoint_indicators() -> void:
 		_set_line_color(next_target_line, WAYPOINT_COLOR)
 	elif attack_point != null:
 		var ap: Vector2 = attack_point
-		var ap_ground := _ground_height_at(ap.x, ap.y)
+		# Slot reserved past the end of the waypoint list, so it never collides
+		# with a waypoint's cache entry.
+		var ap_ground := _cached_ground_height(waypoints.size(), ap.x, ap.y)
 		_position_line(next_target_line, ground_marker.global_position, Vector3(ap.x, ap_ground, ap.y))
 		_set_line_color(next_target_line, ATTACK_LINE_COLOR)
 	else:

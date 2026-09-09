@@ -1440,13 +1440,24 @@ func _physics_process(_delta: float) -> void:
 		var team_id = p.team.team_id
 		var d0 = p.sync_ship_data2(p.visible_to_enemy, true) # friendly view
 		var d1 = p.sync_ship_data2(p.visible_to_enemy, false) # enemy view
-		var dt = p.sync_ship_transform()
-
 		writer.put_u8(2) # partial update
 		writer.put_var(p_name)
-		writer.put_var(dt)
-		partial_bytes_list.push_back([p, writer.data_array])
+		writer.put_var(p.sync_ship_transform())
+		var dt_friendly: PackedByteArray = writer.data_array
 		writer.clear()
+
+		# This record reaches both teams, so the copy bound for the enemy is
+		# reserialized without squadron routes. Only worth a second pass when
+		# there is actually something to strip - with no route commanded the two
+		# encodings are identical, which is the common case.
+		var dt_enemy: PackedByteArray = dt_friendly
+		if p.aviation_controller != null and p.aviation_controller.has_waypoints():
+			writer.put_u8(2)
+			writer.put_var(p_name)
+			writer.put_var(p.sync_ship_transform(false))
+			dt_enemy = writer.data_array
+			writer.clear()
+		partial_bytes_list.push_back([p, dt_friendly, dt_enemy])
 
 		if team_id == 0:
 			# friendly
@@ -1468,7 +1479,7 @@ func _physics_process(_delta: float) -> void:
 			if not p.visible_to_enemy and p.aviation_controller != null:
 				writer.put_u8(3)
 				writer.put_var(p_name)
-				writer.put_var(p.sync_ship_aviation())
+				writer.put_var(p.sync_ship_aviation(false))
 			team_1_bytes_list.push_back([p, writer.data_array])
 			writer.clear()
 		else:
@@ -1491,7 +1502,7 @@ func _physics_process(_delta: float) -> void:
 			if not p.visible_to_enemy and p.aviation_controller != null:
 				writer.put_u8(3)
 				writer.put_var(p_name)
-				writer.put_var(p.sync_ship_aviation())
+				writer.put_var(p.sync_ship_aviation(false))
 			team_0_bytes_list.push_back([p, writer.data_array])
 			writer.clear()
 
@@ -1514,7 +1525,8 @@ func _physics_process(_delta: float) -> void:
 				elif visible_toggled.has(b0) or consumable_toggled.has(b0) or sunk_toggled.has(b0) or is_point_in_frustum(b0.global_position, p.frustum_planes):
 					writer1.data_array += b[1]
 				elif b0.team.team_id == p.team.team_id or b0.visible_to_enemy:
-					writer1.data_array += partial_bytes_list[i][1]
+					# Index 1 carries squadron routes, index 2 does not.
+					writer1.data_array += partial_bytes_list[i][1 if b0.team.team_id == p.team.team_id else 2]
 				elif b0.aviation_controller != null:
 					# unspotted carrier: always send its (hide + aviation) record
 					writer1.data_array += b[1]

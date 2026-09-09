@@ -427,7 +427,10 @@ func initialized_client():
 	self.initialized = true
 
 
-func sync_ship_transform() -> PackedByteArray:
+## `include_waypoints` false strips squadron routes from the aviation block (see
+## AviationController.to_bytes). This record goes to both teams, so the server
+## builds a friendly and an enemy copy of it - see GameServer's partial update.
+func sync_ship_transform(include_waypoints: bool = true) -> PackedByteArray:
 	var pb = PackedByteArray()
 	var writer = StreamPeerBuffer.new()
 	writer.put_float(rotation.y)
@@ -438,7 +441,7 @@ func sync_ship_transform() -> PackedByteArray:
 	writer.put_var(health_controller.to_bytes())
 
 	if aviation_controller != null:
-		writer.put_var(aviation_controller.to_bytes())
+		writer.put_var(aviation_controller.to_bytes(include_waypoints))
 	writer.put_u8(1 if visible_to_enemy else 0)
 	pb = writer.get_data_array()
 	return pb
@@ -446,10 +449,20 @@ func sync_ship_transform() -> PackedByteArray:
 func parse_ship_transform(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	rotation.y = reader.get_float()
+	# `global_position.x = ...` is a read-modify-write: it runs the getter, edits
+	# a copy, then runs the setter - and each setter walks the ship's whole
+	# subtree (turrets, guns, armor parts, hitboxes, modules) marking transforms
+	# dirty. Doing it once per axis meant three of those walks per snapshot per
+	# ship. Read the floats first, then write the position once.
+	var rot_y := reader.get_float()
 	# server_rotation.y = reader.get_float()
-	global_position.x = reader.get_float()
-	global_position.z = reader.get_float()
+	var pos_x := reader.get_float()
+	var pos_z := reader.get_float()
+	rotation.y = rot_y
+	var gp := global_position
+	gp.x = pos_x
+	gp.z = pos_z
+	global_position = gp
 	# # global_position.y = 0
 	# health_controller.current_hp = reader.get_float()
 	# health_controller.max_hp = reader.get_float()
@@ -463,8 +476,8 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 # Aviation-only sync for unspotted ships: the hull stays hidden (concealment)
 # but its squadrons are children of the game world, not the ship, so they stay
 # visible and must keep receiving state updates.
-func sync_ship_aviation() -> PackedByteArray:
-	return aviation_controller.to_bytes()
+func sync_ship_aviation(include_waypoints: bool = true) -> PackedByteArray:
+	return aviation_controller.to_bytes(include_waypoints)
 
 func parse_ship_aviation(b: PackedByteArray) -> void:
 	aviation_controller.from_bytes(b)
@@ -513,9 +526,11 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 		for tl in torpedo_controller.launchers:
 			writer.put_var(tl.to_bytes(false))
 
-	# aviation data
+	# aviation data. Squadron routes ride along only in the friendly view - the
+	# enemy copy of this same ship never carries them (see
+	# AviationController.to_bytes).
 	if aviation_controller != null:
-		writer.put_var(aviation_controller.to_bytes())
+		writer.put_var(aviation_controller.to_bytes(friendly))
 
 	writer.put_32(multiplayer.get_unique_id())
 
