@@ -22,9 +22,9 @@ func get_evasion_params() -> Dictionary:
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
-		Ship.ShipClass.BB: return 0.5
+		Ship.ShipClass.BB: return 1.0
 		Ship.ShipClass.CA: return 1.5   # CAs are DD hunters
-		Ship.ShipClass.DD: return 0.5
+		Ship.ShipClass.DD: return 1.0
 	return 1.0
 
 func get_positioning_params() -> Dictionary:

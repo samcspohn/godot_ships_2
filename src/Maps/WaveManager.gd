@@ -13,6 +13,15 @@ const FOAM_DIFFUSE := 0.03    # diffusion spreads foam forward; keep at 0 and re
 const MAX_SHIPS := 32
 const MAX_IMPULSES := 64
 
+# The wave sim is an explicit finite-difference scheme: c2/damp/foam_decay are
+# per-step constants and the scheme is only stable below a CFL limit, so it
+# cannot simply be scaled by delta.  Instead it runs at a fixed rate and the
+# frame dispatches however many sub-steps have accumulated.  All tuning below
+# is therefore expressed per sim step at SIM_HZ, independent of framerate.
+const SIM_HZ := 60.0
+const SIM_DT := 1.0 / SIM_HZ
+const MAX_SUBSTEPS := 4    # cap so a hitch cannot cascade into a longer hitch
+
 @export var ocean_material: ShaderMaterial
 const SHADER_FILE := preload("res://src/Maps/wave.glsl")
 
@@ -27,6 +36,7 @@ var _wrap: Array = [null, null]
 var _initialized := false
 var _parity := 0
 var _time := 0.0
+var _sim_accum := 0.0
 
 var _index_img: Image
 var _index_tex: ImageTexture
@@ -141,6 +151,13 @@ func _free(slot: int) -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	_sim_accum += delta
+	var substeps := int(_sim_accum / SIM_DT)
+	if substeps > MAX_SUBSTEPS:
+		substeps = MAX_SUBSTEPS
+		_sim_accum = 0.0
+	else:
+		_sim_accum -= substeps * SIM_DT
 	for s in _ships:
 		if not is_instance_valid(s) or !s.is_inside_tree(): continue
 		var sc := _world_cell(s.global_position)
@@ -181,7 +198,11 @@ func _process(delta: float) -> void:
 	for s in _ships:
 		if not is_instance_valid(s) or ship_count >= MAX_SHIPS or !s.is_inside_tree(): continue
 		var prev: Vector3 = _prev_pos.get(s, s.global_position)
-		_prev_pos[s] = s.global_position
+		# On a frame that runs no sub-step the motion is not consumed; leave the
+		# previous transform in place so the next stepping frame sweeps the
+		# whole accumulated distance instead of dropping it.
+		if substeps > 0:
+			_prev_pos[s] = s.global_position
 		# Use the ship's actual transform for heading so the hull stamp always
 		# tracks the visual bow regardless of turn rate.
 		# Godot's forward convention is -Z, so negate basis.z.
@@ -203,7 +224,8 @@ func _process(delta: float) -> void:
 		_ships_bytes.encode_float(sbase + 36, prev_fwd_xz.x)
 		_ships_bytes.encode_float(sbase + 40, prev_fwd_xz.y)
 		_ships_bytes.encode_float(sbase + 44, 0.0)
-		_prev_fwd[s] = fwd_xz
+		if substeps > 0:
+			_prev_fwd[s] = fwd_xz
 		ship_count += 1
 	var impulse_count := 0
 	var next_impulses: Array = []
@@ -216,18 +238,21 @@ func _process(delta: float) -> void:
 			_impulses_bytes.encode_float(base + 12, imp.s)
 			_impulses_bytes.encode_float(base + 16, imp.f)
 			impulse_count += 1
-		imp.n -= 1
+		imp.n -= substeps
 		if imp.n > 0:
 			next_impulses.append(imp)
 	_impulses = next_impulses
 	_index_tex.update(_index_img)
+	# Each sub-step flips the ping-pong pair, so the newest state after this
+	# frame lands in _tex[(parity + substeps) % 2].
+	var new_parity := (_parity + substeps) % 2
 	if _initialized and ocean_material:
-		ocean_material.set_shader_parameter("wave_array", _wrap[1 - _parity])
+		ocean_material.set_shader_parameter("wave_array", _wrap[new_parity])
 		ocean_material.set_shader_parameter("tiles_on", true)
 	RenderingServer.call_on_render_thread(
-		_render_update.bind(_parity, _tiles_bytes.duplicate(), _ships_bytes.duplicate(), ship_count, _clear_queue.duplicate(), _impulses_bytes.duplicate(), impulse_count))
+		_render_update.bind(_parity, _tiles_bytes.duplicate(), _ships_bytes.duplicate(), ship_count, _clear_queue.duplicate(), _impulses_bytes.duplicate(), impulse_count, substeps))
 	_clear_queue.clear()
-	_parity = 1 - _parity
+	_parity = new_parity
 
 func _init_rd() -> void:
 	_rd = RenderingServer.get_rendering_device()
@@ -260,7 +285,7 @@ func _init_rd() -> void:
 		var w := Texture2DArrayRD.new(); w.texture_rd_rid = _tex[i]; _wrap[i] = w
 	_initialized = true
 
-func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray, ship_count: int, clears: Array, impulses: PackedByteArray, impulse_count: int) -> void:
+func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray, ship_count: int, clears: Array, impulses: PackedByteArray, impulse_count: int, substeps: int) -> void:
 	if not _initialized: _init_rd()
 	for slot in clears:
 		_rd.texture_clear(_tex[0], Color(0,0,0,0), 0, 1, slot, 1)
@@ -268,7 +293,10 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	_rd.buffer_update(_buf, 0, tiles.size(), tiles)
 	_rd.buffer_update(_ships_buf, 0, ships.size(), ships)
 	_rd.buffer_update(_impulses_buf, 0, impulses.size(), impulses)
-	var pc := PackedByteArray(); pc.resize(32)
+	if substeps <= 0:
+		return
+	# Per sim step at SIM_HZ — not per rendered frame.
+	var pc := PackedByteArray(); pc.resize(48)
 	pc.encode_s32(0, TILE_RES)
 	pc.encode_float(4, 0.001)    # c2: wave speed ~3.7 m/s → 22° wake at 10 m/s (≈Kelvin)
 	pc.encode_float(8, 0.999)   # damp: low enough that waves reach 100m with ~78% amplitude
@@ -280,7 +308,13 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	var g := (TILE_RES + 7) / 8
 	var cl := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(cl, _pipeline)
-	_rd.compute_list_bind_uniform_set(cl, _uset[parity], 0)
-	_rd.compute_list_set_push_constant(cl, pc, pc.size())
-	_rd.compute_list_dispatch(cl, g, g, POOL)
+	for i in substeps:
+		pc.encode_float(32, float(i) / float(substeps))       # sub_t0
+		pc.encode_float(36, float(i + 1) / float(substeps))   # sub_t1
+		_rd.compute_list_bind_uniform_set(cl, _uset[(parity + i) % 2], 0)
+		_rd.compute_list_set_push_constant(cl, pc, pc.size())
+		_rd.compute_list_dispatch(cl, g, g, POOL)
+		# Step i+1 reads the texture step i just wrote.
+		if i + 1 < substeps:
+			_rd.compute_list_add_barrier(cl)
 	_rd.compute_list_end()

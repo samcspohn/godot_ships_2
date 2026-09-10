@@ -27,7 +27,13 @@ layout(push_constant, std430) uniform Push {
     float disp_scale;
     float slope_scale;
     float foam_bias;
+    // Both rates are supplied already exponentiated by the frame's delta on the
+    // CPU, so foam fades and builds at the same wall-clock rate at any framerate.
     float foam_decay;
+    float foam_rise;
+    float _pad0;
+    float _pad1;
+    float _pad2;
 } pc;
 
 void main() {
@@ -62,11 +68,11 @@ void main() {
     float old_foam = imageLoad(fft_foam, id).r;
     // Blended rise: foam always decays; wave crests add to it rather than
     // holding it at a fixed level.  max(…, 0) prevents pulling foam down
-    // when foam_gen is weaker than the current decayed value.  Blend rate
-    // 0.5 reaches 90% of the target in ~3 frames — fast enough to look
-    // immediate while eliminating the hard 'held vs decaying' boundary
-    // that caused periodic stripes during dissipation.
+    // when foam_gen is weaker than the current decayed value.  The rise rate
+    // reaches 90% of the target in ~50 ms — fast enough to look immediate
+    // while eliminating the hard 'held vs decaying' boundary that caused
+    // periodic stripes during dissipation.
     float a = old_foam * pc.foam_decay;
-    float new_foam = a + max(foam_gen - a, 0.0) * 0.5;
+    float new_foam = a + max(foam_gen - a, 0.0) * pc.foam_rise;
     imageStore(fft_foam, id, vec4(new_foam, 0.0, 0.0, 0.0));
 }

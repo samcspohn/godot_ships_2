@@ -62,6 +62,14 @@ layout(push_constant, std430) uniform Params {
     float tile_world;
     float foam_diffuse;
     int impulse_count;
+    // Sub-step window within the current frame, as fractions of the frame's
+    // ship motion.  The sim runs at a fixed rate and may execute several
+    // sub-steps per rendered frame; each one advances the hull stamp over
+    // [sub_t0, sub_t1] so the injected wake does not depend on framerate.
+    float sub_t0;
+    float sub_t1;
+    float _pad0;
+    float _pad1;
 } P;
 
 float load_h(ivec2 c, int layer, Tile t) {
@@ -82,6 +90,14 @@ float load_foam(ivec2 c, int layer, Tile t) {
 
 float hull_profile(float nx, float ny) {
     return max(0.0, 1.0 - nx * nx - ny * ny);
+}
+
+// Interpolate a heading between two frames without ever returning a zero
+// vector (mix() collapses when the ship reverses heading in one frame).
+vec2 lerp_dir(vec2 a, vec2 b, float t) {
+    vec2 d = mix(a, b, t);
+    float l = length(d);
+    return (l > 1e-5) ? d / l : b;
 }
 
 void main() {
@@ -120,14 +136,22 @@ void main() {
 
     for (int i = 0; i < P.ship_count; i++) {
         Ship ship = ships[i];
-        vec2 perp = vec2(-ship.forward.y, ship.forward.x);
-        vec2 prev_forward = vec2(ship.prev_fwd_x, ship.prev_fwd_y);
+        vec2 frame_prev_forward = vec2(ship.prev_fwd_x, ship.prev_fwd_y);
+
+        // Slice the frame's motion down to this sub-step so the hull sweeps the
+        // same world distance per unit of simulated time at any framerate.
+        vec2 pos = mix(ship.prev_world_xz, ship.world_xz, P.sub_t1);
+        vec2 prev_pos = mix(ship.prev_world_xz, ship.world_xz, P.sub_t0);
+        vec2 forward = lerp_dir(frame_prev_forward, ship.forward, P.sub_t1);
+        vec2 prev_forward = lerp_dir(frame_prev_forward, ship.forward, P.sub_t0);
+
+        vec2 perp = vec2(-forward.y, forward.x);
         vec2 prev_perp = vec2(-prev_forward.y, prev_forward.x);
 
-        vec2 d = world_pos - ship.world_xz;
-        vec2 d_prev = world_pos - ship.prev_world_xz;
+        vec2 d = world_pos - pos;
+        vec2 d_prev = world_pos - prev_pos;
 
-        float lx = dot(d, ship.forward) / ship.half_len;
+        float lx = dot(d, forward) / ship.half_len;
         float ly = dot(d, perp) / ship.radius;
         float lx_prev = dot(d_prev, prev_forward) / ship.half_len;
         float ly_prev = dot(d_prev, prev_perp) / ship.radius;
@@ -135,11 +159,11 @@ void main() {
         // Scale dc injection by forward vs lateral velocity fraction.
         // Lateral drift sweeps the full hull side, inflating |dc| across many cells.
         // Reduce lateral contribution to ~25% of forward contribution.
-        vec2 vel = ship.world_xz - ship.prev_world_xz;
+        vec2 vel = pos - prev_pos;
         float vel_len = length(vel);
         float dir_scale = 1.0;
         if (vel_len > 0.0001) {
-            float fwd_frac = abs(dot(vel, ship.forward)) / vel_len;
+            float fwd_frac = abs(dot(vel, forward)) / vel_len;
             float lat_frac = abs(dot(vel, perp)) / vel_len;
             dir_scale = fwd_frac + lat_frac * 0.2;
         }

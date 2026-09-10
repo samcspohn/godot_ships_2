@@ -56,7 +56,14 @@ const UBO_SIZE := 96   # OceanParams std140 layout, see README
 @export var disp_scale: float = 1.0
 @export var slope_scale: float = 1.0
 @export var foam_bias: float = 1.0    # J threshold for whitecap generation (tune up for more foam)
-@export var foam_decay: float = 0.985 # per-frame foam fade (~1 s half-life at 60 fps)
+@export var foam_decay: float = 0.985 # foam fade per 1/60 s (~1 s half-life)
+## Foam rise per 1/60 s toward the current whitecap target.
+const FOAM_RISE := 0.5
+## Reference rate the two foam constants above are expressed against.
+const FOAM_RATE_HZ := 60.0
+## Clamp on the delta used to exponentiate the foam rates, so a hitch cannot
+## wipe the foam field in a single frame.
+const FOAM_MAX_DELTA := 0.1
 
 ## Changing grid_size or cascade_count requires toggling this to true.
 @export var reinitialize: bool = false:
@@ -162,8 +169,15 @@ func _process(delta: float) -> void:
 		ubo_bytes = _build_ubo_bytes()
 		_spectrum_dirty = false
 
+	# Foam accumulates in-place once per frame, so its per-step decay and rise
+	# rates have to be re-exponentiated for this frame's delta — otherwise foam
+	# fades twice as fast at 120 fps as it does at 60.
+	var steps := minf(delta, FOAM_MAX_DELTA) * FOAM_RATE_HZ
+	var decay := pow(foam_decay, steps)
+	var rise := 1.0 - pow(1.0 - FOAM_RISE, steps)
+
 	RenderingServer.call_on_render_thread(
-		_render_update.bind(_time, ubo_bytes, do_spec, disp_scale, slope_scale, foam_bias, foam_decay))
+		_render_update.bind(_time, ubo_bytes, do_spec, disp_scale, slope_scale, foam_bias, decay, rise))
 
 
 # =====================================================================
@@ -405,7 +419,7 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 # =====================================================================
 
 func _render_update(time: float, ubo_bytes: PackedByteArray,
-		do_spec: bool, ds: float, ss: float, fb: float, fd: float) -> void:
+		do_spec: bool, ds: float, ss: float, fb: float, fd: float, fr: float) -> void:
 	if not _initialized:
 		_init_rd(ubo_bytes)
 		ubo_bytes = PackedByteArray()   # already consumed by _init_rd
@@ -450,12 +464,13 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 		_rd.compute_list_add_barrier(cl)
 
 	# 3. compose — unpacks IFFT result, fills derivatives.ba, accumulates foam
-	var pc_co := PackedByteArray(); pc_co.resize(16)
+	var pc_co := PackedByteArray(); pc_co.resize(32)
 	pc_co.encode_float(0, ds);  pc_co.encode_float(4, ss)
 	pc_co.encode_float(8, fb);  pc_co.encode_float(12, fd)
+	pc_co.encode_float(16, fr)
 	_rd.compute_list_bind_compute_pipeline(cl, _pip_compose)
 	_rd.compute_list_bind_uniform_set(cl, _uset_compose, 0)
-	_rd.compute_list_set_push_constant(cl, pc_co, 16)
+	_rd.compute_list_set_push_constant(cl, pc_co, 32)
 	_rd.compute_list_dispatch(cl, g, g, _c)
 	_rd.compute_list_add_barrier(cl)
 

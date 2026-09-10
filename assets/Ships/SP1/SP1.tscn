@@ -198,7 +198,7 @@ heal_per_sec = 0.02
 icon = ExtResource("17_m572y")
 disabled_icon = ExtResource("16_ac8mu")
 cooldown_time = 40.0
-duration = 20.0
+duration = 15.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 

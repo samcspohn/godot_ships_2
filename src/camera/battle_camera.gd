@@ -502,23 +502,24 @@ func _calculate_target_info():
 			aim_position = _ray_water_or_far(ray_origin, aim_direction, ray_length)
 		else:
 			# Compute the ballistically correct lead position for the locked target.
-			var shell_params: ShellParams = player_controller.current_weapon_controller.get_shell_params()
-			var gun_pos: Vector3 = _ship.global_position
-			gun_pos.y += _ship.movement_controller.ship_draft * 0.5
-
-			# Divide target velocity by shell_time_multiplier so the lead matches the
-			# accelerated projectile simulation used by ProjectileManager.
-			var lead_result: Array = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
-				gun_pos,
-				locked_target.global_position,
-				locked_target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
-				shell_params
-			)
-
-			# [launch_vector, flight_time, predicted_target_position] or [null, -1, null]
 			var lead_pos: Vector3
-			if lead_result[0] != null:
-				lead_pos = lead_result[2] as Vector3
+			var shell_params: ShellParams = player_controller.current_weapon_controller.get_shell_params()
+			if shell_params != null:
+				var gun_pos: Vector3 = _ship.global_position
+				gun_pos.y += _ship.movement_controller.ship_draft * 0.5
+
+				# Divide target velocity by shell_time_multiplier so the lead matches the
+				# accelerated projectile simulation used by ProjectileManager.
+				var lead_result: Array = ProjectilePhysicsWithDragV2.calculate_leading_launch_vector(
+					gun_pos,
+					locked_target.global_position,
+					locked_target.linear_velocity / ProjectileManager.get_shell_time_multiplier(),
+					shell_params
+				)
+
+				# [launch_vector, flight_time, predicted_target_position] or [null, -1, null]
+				if lead_result[0] != null:
+					lead_pos = lead_result[2] as Vector3
 			else:
 				lead_pos = locked_target.global_position
 
