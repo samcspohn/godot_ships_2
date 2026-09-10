@@ -1,11 +1,19 @@
 class_name SkillChase
 extends BotSkill
+## Run down the nearest known enemy, spotted or not, at flank speed.
+##
+## Both halves of the picture count.  This used to decline outright whenever the
+## unspotted list was empty, which reads as "nothing to run down" but is not:
+## the ladder also reaches Chase with contacts lit and simply out of reach —
+## beyond the guns, or behind an island — and that is precisely a distance
+## problem, which is the thing this skill is for.  Declining there left the bot
+## with nothing to do about an enemy it could see and could not shoot.
 
 func execute(ctx: SkillContext, _params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
 	var unspotted: Dictionary = ctx.server.get_unspotted_enemies(ship.team.team_id)
 	var spotted = ctx.server.get_valid_targets(ship.team.team_id)
-	if unspotted.is_empty():
+	if unspotted.is_empty() and spotted.is_empty():
 		return null
 
 	# TODO: implement displacement prediction for unspotted targets, rather than just chasing the last known position. This is especially important for fast ships like Interceptors that can quickly outpace the bot's pursuit.
@@ -19,11 +27,15 @@ func execute(ctx: SkillContext, _params: Dictionary) -> NavIntent:
 			best_dist = d
 			best_pos = pos
 	for s in spotted:
+		if not is_instance_valid(s) or not s.health_controller.is_alive():
+			continue
 		var pos: Vector3 = s.global_position
 		var d := pos.distance_to(ship.global_position)
 		if d < best_dist:
 			best_dist = d
 			best_pos = pos
+	if best_dist == INF:
+		return null
 
 	best_pos.y = 0.0
 	best_pos = ctx.behavior._get_valid_nav_point(best_pos)

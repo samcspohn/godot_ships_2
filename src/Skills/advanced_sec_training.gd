@@ -81,6 +81,18 @@ func _proc(_delta: float) -> void:
 		_ship.remove_dynamic_mod(_a)
 		_ship.add_dynamic_mod(_a)
 
+## Swap the current buildup's contribution for the maximum one. Both layers are
+## already in `mod`, so the current contribution has to come back out before the
+## ceiling goes in - grouping is additive and spread multiplicative, the same way
+## _a() puts them there.
+func peak_secondary_target_mod(mod: TargetMod) -> void:
+	mod.grouping += max_grouping_bonus - grouping_multiplier
+	var peak_spread := 1.0 - max_spread_bonus
+	if spread_multiplier > 0.0:
+		mod.h_spread *= peak_spread / spread_multiplier
+		mod.v_spread *= peak_spread / spread_multiplier
+
+
 func init_ui(control):
 	var ui: PackedScene = load("res://src/Skills/skill_ui/adv_sec_training.tscn")
 	var progress = ui.instantiate()

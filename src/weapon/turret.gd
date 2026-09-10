@@ -438,16 +438,22 @@ func initialize_armor_system() -> void:
 	if not success:
 		print("   ❌ Failed to load armor data for: ", resolved_glb_path)
 
-	enable_backface_collision_recursive(self)
+	var parts = enable_backface_collision_recursive(self)
 
 	# Register turret armor parts with PrecisionPhysicsWorld.
 	# The ship registered before turret deferred init ran, so these parts
 	# were missed.  add_armor_part handles late registration.
+	var registered_parts: int = 0
 	if _ship != null and PrecisionPhysicsWorld != null:
 		for part: ArmorPart in _ship.armor_parts:
 			# Only register parts that belong to this turret (children of self)
 			if part.get_parent() == self or self.is_ancestor_of(part):
 				PrecisionPhysicsWorld.add_armor_part(_ship, part)
+				registered_parts += 1
+	if registered_parts == 0:
+		for part in parts:
+			PrecisionPhysicsWorld.add_armor_part(_ship, part)
+
 
 	print("done")
 
@@ -465,7 +471,12 @@ func collect_static_bodies(node: Node, out: Array[StaticBody3D]) -> void:
 	for child in node.get_children():
 		collect_static_bodies(child, out)
 
-func enable_backface_collision_recursive(node: Node) -> void:
+func enable_backface_collision_recursive(node: Node) -> Array:
+	var out: Array = []
+	enable_backface_collision_recursive_collect(node, out)
+	return out
+
+func enable_backface_collision_recursive_collect(node: Node, out: Array) -> void:
 	var path: String = ""
 	var n = node
 	while n != self:
@@ -488,16 +499,8 @@ func enable_backface_collision_recursive(node: Node) -> void:
 		armor_part.armor_path = path
 		armor_part.ship = self._ship
 		node.add_child(armor_part)
+		out.append(armor_part)
 		self._ship.armor_parts.append(armor_part)
-		# self.aabb = self.aabb.merge((node as MeshInstance3D).get_aabb())
-		# static_body.collision_layer = 1 << 1
-		# static_body.collision_mask = 0
-		# if node.name == "Hull":
-		# 	hull = armor_part
-		# 	print("armor_part.collision_layer: ", armor_part.collision_layer)
-		# 	print("armor_part.collision_mask: ", armor_part.collision_mask)
-		# elif node.name == "Citadel":
-		# 	citadel = armor_part
 
 	for child in node.get_children():
-		enable_backface_collision_recursive(child)
+		enable_backface_collision_recursive_collect(child, out)

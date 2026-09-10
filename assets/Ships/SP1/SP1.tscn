@@ -80,7 +80,7 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 script = ExtResource("5_rk6eg")
 speed = 875.0
 drag = 4e-05
-damage = 4000.0
+damage = 4500.0
 size = 1.35
 caliber = 150.0
 mass = 45.3
@@ -97,7 +97,7 @@ damage = 1700.0
 size = 1.35
 caliber = 150.0
 mass = 45.3
-fire_buildup = 10.0
+fire_buildup = 12.0
 fuze_delay = 0.001
 type = 0
 auto_bounce = 1.571
@@ -175,9 +175,8 @@ metadata/_custom_type_script = "uid://cq5883re36gh7"
 [sub_resource type="Resource" id="Resource_1hwfh"]
 script = ExtResource("11_klw4b")
 max_speed_knots = 36.0
-acceleration_time = 9.0
-deceleration_time = 9.0
-turning_circle_radius = 300.0
+deceleration_time = 8.0
+turning_circle_radius = 270.0
 turn_speed_loss = 0.12
 rudder_response_time = 5.0
 metadata/_custom_type_script = "uid://bucnglt43enq8"
@@ -190,6 +189,7 @@ name = "Damage Control"
 icon = ExtResource("14_ac8mu")
 disabled_icon = ExtResource("13_g7xjy")
 duration = 10.0
+max_stack = -1
 metadata/_custom_type_script = "uid://cvrvionelmhv6"
 
 [sub_resource type="Resource" id="Resource_s8ahg"]
@@ -198,7 +198,7 @@ heal_per_sec = 0.02
 icon = ExtResource("17_m572y")
 disabled_icon = ExtResource("16_ac8mu")
 cooldown_time = 40.0
-duration = 10.0
+duration = 20.0
 max_stack = 2
 metadata/_custom_type_script = "uid://drnfyeps8j1r0"
 

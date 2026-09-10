@@ -117,6 +117,17 @@ func remove(ship: Ship):
 func _proc(_delta: float):
 	pass
 
+## Raise `mod` from what this skill is contributing RIGHT NOW to what it would
+## contribute at full effect.
+##
+## For a skill whose contribution is constant this is nothing to do, which is
+## why the default is empty. It exists for the ones that ramp: code that has to
+## reason about a battery rather than fire it - a bot deciding what to load, a
+## stat panel quoting a ceiling - needs the number the battery converges on, not
+## the one it happens to be at during the first salvo. See BotGunnery.
+func peak_secondary_target_mod(_mod: TargetMod) -> void:
+	pass
+
 func init_ui(container: Control):
 	pass
 

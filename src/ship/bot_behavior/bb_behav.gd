@@ -56,7 +56,16 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var d := _doc()
 	if sit.threat < d.flank_max_threat or sit.nearest_dist > sit.gun_range:
-		return _run_skill(&"Flank", ctx)
+		var flank := _run_skill(&"Flank", ctx)
+		if flank != null:
+			return flank
+		# Flank declined, which it only does with the fight already inside half
+		# gun range (SkillFlank.NO_FLANK_RANGE_RATIO).  There is no manoeuvre
+		# left to make at that distance, so take the odds this arm was entered
+		# on and push; above the push threshold, fall through to the ladder
+		# below, which is the same ship deciding it does not like them any more.
+		if sit.threat < d.push_threat:
+			return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
 	if sit.threat < d.camp_max_threat and active_shooters_at_me.is_empty():
 		var camp := _run_skill(&"Camp", ctx, {"here": true})

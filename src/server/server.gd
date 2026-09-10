@@ -181,6 +181,12 @@ func _ready():
 	# Tell TorpedoManager to find the new server node (needed after scene reload)
 	(TorpedoManager as _TorpedoManager).reacquire_server()
 
+	# The bot aim solver caches buckets in statics, which survive the scene
+	# reload the last match ended with. Anything still queued there points at
+	# ships from that match, and the first contact of this one would walk into
+	# a freed instance.
+	BotGunnery.clear_all()
+
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
 
@@ -1186,6 +1192,7 @@ func _reset_server():
 	# stale references to freed ships/nodes causing null crashes
 	ProjectileManager.clear_all()
 	(TorpedoManager as _TorpedoManager).clear_all()
+	BotGunnery.clear_all()
 
 	get_tree().call_deferred("reload_current_scene")
 

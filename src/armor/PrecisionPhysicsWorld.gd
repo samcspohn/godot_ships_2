@@ -395,6 +395,16 @@ func local_dir_to_world(ship: Ship, local_dir: Vector3) -> Vector3:
 
 
 ## Look up the Ship associated with an OBB StaticBody3D hit.
+## True when `part` is mounted on a turret rather than on the hull.
+##
+## Public face of the same parent walk the precision bodies use to decide what
+## has to be re-synced every frame: a part on a turret moves with the turret.
+## Scoring asks the same question for a different reason - what a shell is worth
+## when it goes through one.
+func is_turret_part(part: ArmorPart) -> bool:
+	return part != null and _is_dynamic_part(part)
+
+
 func get_ship_from_obb(obb_body: Node) -> Ship:
 	if obb_body == null or not obb_body.has_meta("ship"):
 		return null

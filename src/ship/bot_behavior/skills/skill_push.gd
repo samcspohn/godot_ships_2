@@ -6,10 +6,12 @@ extends BotSkill
 ## hull faces the threat during the approach.
 ##
 ## Params:
-##   desired_range — stop closing at this distance from the target instead of
-##     driving onto it.  This is where a ship's engagement range lives: a
-##     torpedo boat passes its torpedo range and stops where it can launch, a
-##     gunship passes 0 (the default) and closes all the way.
+##   desired_range — stop closing at this distance instead of driving onto the
+##     enemy.  This is where a ship's engagement range lives: a torpedo boat
+##     passes its torpedo range and stops where it can launch, a gunship passes
+##     0 (the default) and closes all the way.  Held against the danger centre
+##     AND against whatever the approach would otherwise walk into first — see
+##     _standoff_breach().
 ##   line_of_fire — refuse a stop point the guns cannot actually fire from, and
 ##     swing around the standoff arc until one is found.  Opt-in because it
 ##     costs a ballistic solve and it is the wrong question for a boat whose
@@ -57,17 +59,26 @@ func reset() -> void:
 	_ratio_time = -1.0
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
-	var target = ctx.target
-	if target == null:
-		return null
 	var ship = ctx.ship
 
 	# Push onto the weighted danger centre rather than onto the single ship the
 	# targeting code happens to be holding — closing on one contact walks the
 	# hull past everything else that is shooting.  The target is the fallback
 	# for the moment before anything is confirmed, when the centre reads ZERO.
+	#
+	# And only the fallback.  This used to decline outright on a null target,
+	# which put the whole ladder at the mercy of the gunnery: ctx.target is
+	# pick_target()'s answer, and pick_target() returns null whenever nothing has
+	# a firing solution — masked by terrain, or simply out of range.  That is the
+	# situation a push is FOR, and refusing it left the arms above with no
+	# aggressive option at exactly the moment closing was the only thing that
+	# would restore the shot.
+	var target = ctx.target
 	var danger_center: Vector3 = ctx.behavior._get_spotted_danger_center()
-	if danger_center == Vector3.ZERO:
+	var confirmed_center: bool = danger_center != Vector3.ZERO
+	if not confirmed_center:
+		if target == null or not is_instance_valid(target):
+			return null
 		danger_center = target.global_position
 
 	# Relative to the ship.  This used to read the danger centre as though it
@@ -83,19 +94,48 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return null
 	var enemy_bearing := atan2(to_enemy.x, to_enemy.z)
 
-	var heading = SkillAngle.calc_heading(ctx, params)
-	# mix enemy bearing with threat bearing
-	heading = lerp_angle(enemy_bearing, heading, 0.2)
+	# Where the hull POINTS, which is a different question from where it goes.
+	# SkillAngle answers with an attitude — the armour angle it wants against the
+	# guns that can actually reach it — and the mix keeps most of the bearing so
+	# the ship still arrives facing the fight rather than beam-on to it.
+	#
+	# Only when the centre is confirmed. SkillAngle reads the same danger centre
+	# this skill does, and on ZERO it does not decline: it hands back the bearing
+	# to the map ORIGIN. Blending that swung every push away from the contact it
+	# had just fallen back to, by however far the origin happened to lie off it.
+	var heading := enemy_bearing
+	if confirmed_center:
+		heading = lerp_angle(enemy_bearing, SkillAngle.calc_heading(ctx, params), 0.2)
 
-	var fwd = Vector3(sin(heading), 0.0, cos(heading))
 	# Close only as far as the standoff allows — the engagement range the caller
 	# asked for, pulled in by _equalized_range() for however much of the fight
 	# the bot is not currently having.  At or inside it the push degenerates to a
 	# heading change, which is what we want — the ship holds station at range and
 	# lets Broadside/Angle work the hull around.
 	var desired_range: float = _equalized_range(ctx, params, float(params.get("desired_range", 0.0)))
-	var close_dist: float = maxf(to_enemy.length() - desired_range, 0.0)
-	var dest: Vector3 = ship.global_position + fwd * close_dist
+	var center_dist: float = to_enemy.length()
+	var close_dist: float = maxf(center_dist - desired_range, 0.0)
+
+	# Down the BEARING, not down the heading.  Walking close_dist along the
+	# angled heading answered neither question: the stop point came out off the
+	# line to the enemy, and therefore not at desired_range from it, by more the
+	# harder the ship was angling.
+	var dir: Vector3 = to_enemy / center_dist
+
+	# The centre says which WAY to go; what stands in front says how FAR.  A
+	# weighted centroid sits behind the ships that make it — a fleet spread
+	# across the map centres well past its own vanguard — so a standoff measured
+	# only to the centre spends that whole gap, and the push walks the hull to
+	# arm's length of a point in the middle of the enemy line, straight past
+	# everything standing between here and it.
+	#
+	# So the standoff is held against every contact rather than just the
+	# centroid: how far the approach can run before the ship is inside
+	# desired_range of any of them.  See _standoff_breach().
+	if desired_range > 0.0:
+		close_dist = minf(close_dist, _standoff_breach(ctx, dir, desired_range, close_dist))
+
+	var dest: Vector3 = ship.global_position + dir * close_dist
 	dest.y = 0.0
 
 	if params.get("line_of_fire", false):
@@ -103,6 +143,47 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	dest = ctx.behavior._get_valid_nav_point(dest)
 	return NavIntent.create(dest, heading)
+
+
+## How far the ship may run along `dir` before it is within `radius` of a known
+## enemy; `limit` when none of them constrains the run.
+##
+## Ray against a circle per contact, which is the exact question and costs a dot
+## product and a square root to answer.  Two cases deliberately constrain
+## nothing:
+##
+##   - a contact the line passes wide of (perpendicular offset already past the
+##     standoff).  The approach never enters its bubble, so it has no opinion
+##     about how far the approach goes.
+##   - a contact the ship is ALREADY inside the standoff of.  Forward is the way
+##     out of that bubble, not further into it, and clamping the run to zero here
+##     would park a push for as long as anything at all sat close aboard — which
+##     for a battleship is every destroyer on the map.  The arms above are what
+##     decide whether a fight this close is still worth having.
+func _standoff_breach(ctx: SkillContext, dir: Vector3, radius: float, limit: float) -> float:
+	var ship_pos: Vector3 = ctx.ship.global_position
+	var team_id: int = ctx.ship.team.team_id
+	var r_sq: float = radius * radius
+	var out: float = limit
+	var positions: Array = []
+	for e in ctx.server.get_valid_targets(team_id):
+		if is_instance_valid(e):
+			positions.append(e.global_position)
+	positions.append_array(ctx.server.get_unspotted_enemies(team_id).values())
+
+	for pos in positions:
+		var to_contact: Vector3 = (pos as Vector3) - ship_pos
+		to_contact.y = 0.0
+		var along: float = to_contact.dot(dir)
+		if along <= 0.0:
+			continue
+		var perp_sq: float = maxf(to_contact.length_squared() - along * along, 0.0)
+		if perp_sq >= r_sq:
+			continue
+		var entry: float = along - sqrt(r_sq - perp_sq)
+		if entry > 0.0:
+			out = minf(out, entry)
+	return out
 
 
 ## Shrink the standoff toward the threat the bot is willing to fight at.

@@ -29,6 +29,14 @@ var dark_chain: Array[StringName] = []
 ## Whether the dark arm may take cover instead of chasing when threat is high.
 var dark_takes_cover: bool = false
 
+## Whether contacts being lit but unshootable — all of them out of range or
+## behind terrain — sends this bot straight to Chase, ahead of the arms that
+## decide on threat.  On for the gun line, whose whole job is measured in time
+## spent with the batteries on something.  Off for the destroyer, whose engaged
+## arm already ladders Spot before Chase on purpose: a boat that runs down every
+## last-known position at flank speed arrives lit, alone, and dead.
+var chase_when_unshootable: bool = true
+
 ## Whether the close-quarters arm is gated on nearest_threat_dist < ra_threshold
 ## (BB/CA) or fires on detection alone (DD).
 var close_arm_range_gated: bool = true
@@ -260,6 +268,9 @@ static func for_destroyer() -> BotDoctrine:
 	d.force_above = INF
 	d.universal_sail_forward_fallback = true
 	d.post_process_idle_arms = true
+	# Spot first — see _select_engaged_skill(), which reaches Chase anyway once
+	# there is no station worth holding.
+	d.chase_when_unshootable = false
 	d.trades_on_concealment = true
 	d.stealth_threat = 0.5
 	return d

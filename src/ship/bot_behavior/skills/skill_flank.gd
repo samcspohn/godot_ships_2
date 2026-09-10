@@ -4,6 +4,18 @@ extends BotSkill
 const MAP_HALF_WIDTH: float = 17500.0
 const MIN_RADIUS: float = 2000.0  # Prevent radius collapsing to zero near the battle center
 
+## Fraction of gun range inside which the flank is refused outright.
+##
+## A flank is a manoeuvre made at a distance: it slides the ship around an arc
+## to arrive on a bearing the enemy line is not facing, and it costs the whole
+## transit to do it.  Once the fight is this close that trade has already been
+## settled — the guns are in range, everything on the other side can see us, and
+## sliding sideways along the arc buys an angle nobody is still waiting for
+## while spending the one thing that matters, which is time with the batteries
+## on the target.  Declining hands the ladder back to Push, which is what a ship
+## already in the fight should be doing.
+const NO_FLANK_RANGE_RATIO: float = 0.5
+
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship = ctx.ship
 	var ship_pos = ship.global_position
@@ -54,6 +66,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	# 		sum += p
 	# 	battle_center = sum / float(enemy_pos.size())
 	var battle_center = ctx.behavior._get_spotted_danger_center()
+
+	# Too close to be flanking anything.  ZERO is not a position — it is the
+	# danger centre's way of saying nothing is confirmed — so it is not measured
+	# against, and the idle arm keeps its flank.
+	if battle_center != Vector3.ZERO \
+			and ship_pos.distance_to(battle_center) < gun_range * NO_FLANK_RANGE_RATIO:
+		return null
+
 	var friendly_center: Vector3
 	if friendly_pos.is_empty():
 		friendly_center = Vector3.ZERO

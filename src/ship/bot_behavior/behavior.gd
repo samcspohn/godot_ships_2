@@ -2361,6 +2361,21 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 			intent = _run_skill(&"FindCover", ctx, cp)
 		if intent == null:
 			intent = _run_chain(d.dark_chain, ctx)
+	elif d.chase_when_unshootable and not _has_shootable_contact(ctx):
+		# Contacts are lit and not one of them can be shot — everything is either
+		# beyond the guns or masked by terrain.  That is a distance problem, and
+		# nothing else on the ladder is an answer to one: Camp holds a range that
+		# is already not working, FindCover searches for a firing position
+		# against a target list that is empty, and Flank spends the whole transit
+		# sliding along an arc every point of which is just as far out.  Close,
+		# and let the ladder have the fight back once there is a shot in it.
+		sit["arm"] = &"chase"
+		intent = _run_skill(&"Chase", ctx)
+		if intent == null:
+			# Hand the arm back before falling through, or _finish_nav would
+			# post-process whatever ran below as though it were the chase.
+			sit["arm"] = &"engaged"
+			intent = _select_nav_skill(ctx, sit)
 	else:
 		intent = _select_nav_skill(ctx, sit)
 
@@ -2369,6 +2384,16 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
+
+## Whether this ship currently has anything it can actually put a shell into.
+##
+## Asks the gunnery rather than re-deriving it: ctx.target is pick_target()'s
+## answer, which is already "the highest-weight contact with a usable solution
+## that can_hit_target() clears, or null".  Re-running that search here would
+## cost a ballistic solve per enemy to reach the same conclusion, and would let
+## the ladder and the guns disagree about whether the ship is in the fight.
+func _has_shootable_contact(ctx: SkillContext) -> bool:
+	return ctx.target != null and is_instance_valid(ctx.target)
 
 ## Arms 3 and 4. The close arm is shared; the engaged arm is the hook.
 func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
