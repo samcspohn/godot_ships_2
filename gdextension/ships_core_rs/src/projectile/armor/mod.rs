@@ -55,6 +55,95 @@ pub mod hit_result {
     pub const CITADEL_OVERPEN: i32 = 6;
     pub const WATER: i32 = 7;
     pub const TERRAIN: i32 = 8;
+
+    /// The name of a result, for logs and debug output. Copied verbatim from the
+    /// constants above rather than derived, so a renumbering that misses one
+    /// shows up as a wrong name instead of a silently shifted table.
+    pub fn name(value: i32) -> &'static str {
+        match value {
+            PENETRATION => "PENETRATION",
+            PARTIAL_PEN => "PARTIAL_PEN",
+            RICOCHET => "RICOCHET",
+            OVERPENETRATION => "OVERPENETRATION",
+            SHATTER => "SHATTER",
+            CITADEL => "CITADEL",
+            CITADEL_OVERPEN => "CITADEL_OVERPEN",
+            WATER => "WATER",
+            TERRAIN => "TERRAIN",
+            _ => "UNKNOWN",
+        }
+    }
+}
+
+/// The armour walk's result codes, as GDScript sees them.
+///
+/// GDScript used to reach these through the `ArmorInteraction` autoload's
+/// `HitResult` enum. That autoload is the pre-port GDScript armour
+/// implementation; live shells have gone through `NativeArmorInteraction` since
+/// the cutover, so the enum GDScript was reading belonged to a walk nothing
+/// takes any more. The values happened to agree, which is exactly what made it
+/// worth fixing - nothing would have caught them drifting apart.
+///
+/// Never instantiated. It exists so ClassDB has somewhere to hang the constants,
+/// the way `Mesh` carries `PRIMITIVE_*`; GDScript reads them off the class name
+/// as `NativeArmorInteraction.CITADEL`.
+#[derive(GodotClass)]
+#[class(base = RefCounted, init, rename = NativeArmorInteraction)]
+pub struct NativeArmorInteractionConsts {
+    base: Base<godot::classes::RefCounted>,
+}
+
+#[godot_api]
+impl NativeArmorInteractionConsts {
+    #[constant] const PENETRATION: i32 = hit_result::PENETRATION;
+    #[constant] const PARTIAL_PEN: i32 = hit_result::PARTIAL_PEN;
+    #[constant] const RICOCHET: i32 = hit_result::RICOCHET;
+    #[constant] const OVERPENETRATION: i32 = hit_result::OVERPENETRATION;
+    #[constant] const SHATTER: i32 = hit_result::SHATTER;
+    #[constant] const CITADEL: i32 = hit_result::CITADEL;
+    #[constant] const CITADEL_OVERPEN: i32 = hit_result::CITADEL_OVERPEN;
+    #[constant] const WATER: i32 = hit_result::WATER;
+    #[constant] const TERRAIN: i32 = hit_result::TERRAIN;
+
+    /// The name of a result code. Replaces `ArmorInteraction.HitResult.keys()`,
+    /// which callers were indexing by hand to turn a result into a string.
+    #[func]
+    fn result_name(value: i32) -> GString {
+        GString::from(hit_result::name(value))
+    }
+
+    /// The nose deflection coefficient for a shell.
+    #[func]
+    fn get_k_nose(params: Option<Gd<Resource>>) -> f64 {
+        NativeArmorInteraction::get_k_nose(&params)
+    }
+
+    /// The obliquity terms, as the Dictionary the GDScript version returned:
+    /// `multiplier`, `geometric`, `deflection`, `engagement`, `td_ratio`.
+    #[func]
+    fn calculate_obliquity_multiplier(impact_angle_rad: f64, armor_mm: f64,
+            caliber_mm: f64, k_nose: f64) -> VarDictionary {
+        let ob = NativeArmorInteraction::calculate_obliquity_multiplier(
+            impact_angle_rad, armor_mm, caliber_mm, k_nose);
+        let mut out = VarDictionary::new();
+        out.set("multiplier", ob.multiplier);
+        out.set("geometric", ob.geometric);
+        out.set("deflection", ob.deflection);
+        out.set("engagement", ob.engagement);
+        out.set("td_ratio", ob.td_ratio);
+        out
+    }
+
+    /// De Marre penetration, in millimetres of armour.
+    ///
+    /// The gun UI needs this to say what a shell would go through at the range
+    /// it is aimed at, and it was reading a GDScript copy of the formula that
+    /// lived on the pre-port armour class. One formula, one place: a UI that
+    /// disagrees with the walk about penetration is a UI that lies.
+    #[func]
+    fn calculate_de_marre_penetration(mass_kg: f64, velocity_ms: f64, caliber_mm: f64) -> f64 {
+        NativeArmorInteraction::calculate_de_marre_penetration(mass_kg, velocity_ms, caliber_mm)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +210,17 @@ pub struct ShellState {
     pub fuze: f64,
     pub pen: f64,
     pub integrity: f64,
+}
+
+/// The parts of the obliquity calculation, mirroring the Dictionary the GDScript
+/// `calculate_obliquity_multiplier` returned.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Obliquity {
+    pub multiplier: f64,
+    pub geometric: f64,
+    pub deflection: f64,
+    pub engagement: f64,
+    pub td_ratio: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -238,6 +338,37 @@ impl NativeArmorInteraction {
         K_NOSE_APC
     }
 
+    /// The obliquity terms: the geometric line-of-sight multiplier, the
+    /// deflection penalty, and the intermediates both are built from.
+    ///
+    /// Lifted verbatim out of `evaluate_armor_interaction` so the walk and
+    /// anything that wants to ask about deflection on its own share ONE copy of
+    /// the expression. Same operations, same order, same types - this is the
+    /// same code in a function, not a reimplementation of it.
+    ///
+    /// `geometric` is dead inside the walk (it is computed and never read in the
+    /// C++ source too) but it is half of `multiplier`, which is what a caller
+    /// asking for obliquity on its own actually wants, so it is returned rather
+    /// than dropped.
+    pub fn calculate_obliquity_multiplier(impact_angle: f64, armor_mm: f64,
+            caliber_mm: f64, k_nose: f64) -> Obliquity {
+        let cos_a = impact_angle.cos().max(0.05);
+        let tan_a = clampd(impact_angle, 0.0, 89.0 * DEG_TO_RAD).tan();
+        let geometric = (1.0f64 / cos_a).powf(OBLIQUITY_ALPHA);
+        let td_ratio = armor_mm / caliber_mm.max(1.0);
+        let engagement = clampd(td_ratio / TD_ENGAGE_REF, 0.0, 1.0).powf(TD_ENGAGE_POWER);
+        let f_td = 1.0 + TD_MOD_SCALE * clampd(td_ratio - TD_MOD_ONSET, 0.0, TD_MOD_MAX);
+        let raw_deflection = k_nose * tan_a.powf(DEFLECTION_GAMMA) * f_td;
+        let deflection = 1.0 + engagement * raw_deflection;
+        Obliquity {
+            multiplier: geometric * deflection,
+            geometric,
+            deflection,
+            engagement,
+            td_ratio,
+        }
+    }
+
     pub fn evaluate_armor_interaction(
         shell: &ShellState, params: &Option<Gd<Resource>>, impact_angle: f64,
         armor_mm: f64, e_armor: f64,
@@ -245,16 +376,8 @@ impl NativeArmorInteraction {
         let mut eval = ArmorEval::default();
         let caliber = params.as_ref().map(|p| p.get("caliber").to_f64()).unwrap_or(1.0);
         let k_nose = Self::get_k_nose(params);
-        let cos_a = impact_angle.cos().max(0.05);
-        let tan_a = clampd(impact_angle, 0.0, 89.0 * DEG_TO_RAD).tan();
-        // `geometric` is computed and never used in the C++ source either --
-        // dead code, kept for bit-exact transliteration.
-        let _geometric = (1.0f64 / cos_a).powf(OBLIQUITY_ALPHA);
-        let td_ratio = armor_mm / caliber.max(1.0);
-        let engagement = clampd(td_ratio / TD_ENGAGE_REF, 0.0, 1.0).powf(TD_ENGAGE_POWER);
-        let f_td = 1.0 + TD_MOD_SCALE * clampd(td_ratio - TD_MOD_ONSET, 0.0, TD_MOD_MAX);
-        let raw_deflection = k_nose * tan_a.powf(DEFLECTION_GAMMA) * f_td;
-        let deflection = 1.0 + engagement * raw_deflection;
+        let deflection = Self::calculate_obliquity_multiplier(
+            impact_angle, armor_mm, caliber, k_nose).deflection;
 
         eval.deflection_mult = deflection;
         eval.physics_armor = e_armor * deflection;

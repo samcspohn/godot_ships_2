@@ -16,7 +16,7 @@ class_name _PrecisionPhysicsWorld
 ## reference the ORIGINAL ArmorPart nodes — raycast results return real
 ## ArmorParts directly.  No cloning, no back-mapping.
 ##
-## Usage flow (from ArmorInteraction.process_travel):
+## Usage flow (from the armour walk's process_travel):
 ## 1. Cast ray in main world against OBB colliders (layer 1 << 4).
 ## 2. If OBB is hit, identify which ship.
 ## 3. Transform ray to ship-local space.
@@ -57,7 +57,7 @@ func _physics_process(_delta: float) -> void:
 	_expire_obb_hits()
 
 
-## Called by ArmorInteraction when a shell hits an OBB in the broadphase.
+## Called by the armour walk when a shell hits an OBB in the broadphase.
 func notify_obb_hit(ship: Ship) -> void:
 	_obb_hit_ships[ship.get_instance_id()] = Time.get_ticks_msec()
 

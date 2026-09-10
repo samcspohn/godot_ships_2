@@ -13,5 +13,5 @@ variance = 0.25
 slew_max_angle = 0.0
 glb_path = "uid://c7kxmqf5odbws"
 
-[node name="Barrels" parent="Turret" parent_id_path=PackedInt32Array(416867547) index="0" unique_id=764462049]
+[node name="Barrels" parent="Turret" parent_id_path=PackedInt32Array(1072961596) index="0" unique_id=513665631]
 lod_bias = 100.0

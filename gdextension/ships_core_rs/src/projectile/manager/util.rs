@@ -1,9 +1,10 @@
 use crate::variant_cast::VariantCast;
 use godot::prelude::*;
-use godot::classes::{Engine, Node, Resource};
+use godot::classes::{Engine, Node, PhysicsDirectSpaceState3D, Resource};
 
 use super::{ProjectileManager, SHELL_GRID_CELL, SHELL_GRID_MIN, SHELL_GRID_DIM};
 use crate::projectile::armor::{NativeArmorInteraction, RaycastCache};
+use crate::nav::map::NavigationMap;
 use crate::projectile::data::ProjectileData;
 
 impl ProjectileManager {
@@ -202,5 +203,113 @@ impl ProjectileManager {
             }
         }
         result
+    }
+
+    /// Fill in the armour-path autoloads if they are not cached yet.
+    ///
+    /// `ready_impl` caches these once, inside its server branch, which is right
+    /// for the live simulation - only the server walks shells. Everything else
+    /// that wants to ask the armour a question (the bot gunnery survey, the probe
+    /// rig) then has to make sure they are there first, because their absence is
+    /// not an error anywhere downstream: it just makes every shell miss.
+    pub(crate) fn ensure_armor_autoloads(&mut self) {
+        if self.precision_physics_world.is_none() {
+            self.precision_physics_world = self.base().get_node_or_null("/root/PrecisionPhysicsWorld");
+        }
+        if self.navigation_map.is_none() {
+            if self.navigation_map_manager.is_none() {
+                self.navigation_map_manager = self.base().get_node_or_null("/root/NavigationMapManager");
+            }
+            if let Some(mgr) = self.navigation_map_manager.as_mut() {
+                let map_var = mgr.call("get_map", &[]);
+                self.navigation_map = map_var.try_to::<Gd<NavigationMap>>().ok();
+            }
+        }
+    }
+
+    /// Walk one shell through the armour exactly as a live shell is walked, and
+    /// hand the outcome back to GDScript as a Dictionary.
+    ///
+    /// The bot gunnery solver scores an aim point by firing a test shell at it
+    /// and paying what the game would pay for the result, which is only a
+    /// measurement of the game if it is the game's own armour path. There are
+    /// two, and they do not agree: this one, and the legacy GDScript
+    /// `ArmorInteraction` autoload that predates the native port. Live shells
+    /// have gone through here since the cutover, so anything asking "what would
+    /// this shell do" has to come through here too.
+    ///
+    /// Everything the walk needs beyond the shell itself - the precision world,
+    /// the navigation map that gates the terrain raycast, the cached ray query
+    /// objects - already hangs off this node, which is why the entry point is
+    /// here rather than on a free function.
+    ///
+    /// `space_state` is the caller's, NOT the live one: the solver walks in a
+    /// space holding a copy of the target's broadphase box and nothing else (see
+    /// BotGunnery._survey_space). Only the broadphase reads it - the armour
+    /// itself is found through the precision world either way - so the walk is
+    /// the real one even though the space is not.
+    pub(crate) fn sim_process_travel_impl(
+        &mut self,
+        projectile: Gd<ProjectileData>,
+        prev_pos: Vector3,
+        t: f64,
+        space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
+        log_armor: bool,
+    ) -> VarDictionary {
+        let mut out = VarDictionary::new();
+        let Some(mut space_state) = space_state else {
+            out.set("hit", false);
+            return out;
+        };
+
+        // The armour walk is nothing without the precision world: with it unset,
+        // find_valid_obb_hit() returns empty and every shell reports a clean miss
+        // rather than an error. `ready_impl` only caches it on the SERVER branch,
+        // and a caller asking what a shell would do is not necessarily one - the
+        // probe rig is a plain scene run. Resolve it here rather than let a whole
+        // survey come back silently zero.
+        self.ensure_armor_autoloads();
+
+        // Cloned up front for the same reason lifecycle.rs clones them:
+        // `get_armor_ray_cache` needs `&mut self` and Rust will not let that
+        // coexist with other borrows of `self` in the same call.
+        let precision_physics_world = self.precision_physics_world.clone();
+        let navigation_map = self.navigation_map.clone();
+        let armor_rays = self.get_armor_ray_cache(&projectile);
+        let res = NativeArmorInteraction::process_travel(
+            &projectile,
+            prev_pos,
+            t,
+            Some(&mut space_state),
+            precision_physics_world.as_ref(),
+            &navigation_map,
+            armor_rays,
+            log_armor,
+        );
+
+        out.set("hit", res.hit);
+        out.set("result_type", res.result_type);
+        out.set("explosion_position", res.explosion_position);
+        out.set("velocity", res.velocity);
+        out.set("collision_normal", res.collision_normal);
+        out.set("shell_integrity", res.shell_integrity);
+        out.set("overmatch_first_armor", res.overmatch_first_armor);
+        out.set(
+            "armor_part",
+            &res.armor_part.map(|p| p.to_variant()).unwrap_or_else(Variant::nil),
+        );
+        out.set(
+            "ship",
+            &res.ship.map(|s| s.to_variant()).unwrap_or_else(Variant::nil),
+        );
+        // Plate-by-plate detail, only when asked for. The probe rig prints it;
+        // the solver walks thousands of shells a second and never wants it, which
+        // is why the whole Dictionary/Array churn is behind the flag.
+        if log_armor {
+            out.set("log_valid", res.log_valid);
+            out.set("log_steps", &res.log_steps);
+            out.set("log_final_pos", res.log_final_pos);
+        }
+        out
     }
 }

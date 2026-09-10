@@ -235,7 +235,7 @@ func get_aim_ui() -> Dictionary:
 				shell_params
 			)
 			var velocity_at_impact = velocity_at_impact_vec.length()
-			var raw_pen = _ArmorInteraction.calculate_de_marre_penetration(
+			var raw_pen = NativeArmorInteraction.calculate_de_marre_penetration(
 				shell.mass,
 				velocity_at_impact,
 				shell.caliber)

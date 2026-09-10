@@ -41,7 +41,8 @@ var last_armor_result: String = ""
 var shell_velocity_zero: bool = false
 
 # ---------------------------------------------------------------------------
-# Validation mode — re-runs ArmorInteraction.process_travel on the logged hit
+# Validation mode — re-runs the NATIVE armour walk on the logged hit, which is the
+# same walk that produced it. See _native_walk().
 # inside a separate SubViewport so paths don't overlap.
 # ---------------------------------------------------------------------------
 var is_validating: bool = false
@@ -104,12 +105,48 @@ const _FB_OVERMATCH:       int  = 34
 const _FB_ARMING_THRESH:   int  = 83
 const _FB_FUZE_DELAY:  float = 0.035
 
-## Result type int -> readable string (matches ArmorInteraction.HitResult)
+## Walk one shell through the armour and return the outcome.
+##
+## The NATIVE walk - the one that produced the hit being validated. This used to
+## call the `ArmorInteraction` autoload, which is the PRE-PORT GDScript
+## implementation; live shells have gone through NativeArmorInteraction since the
+## cutover, so a validator on the old path was comparing a recording of one
+## implementation against a different one and reporting the difference between
+## them as a discrepancy in the recording.
+##
+## `log_armor` is on: the step log is the whole point here, and it replaces both
+## of the legacy walk's debug out-params. Its `log_steps` is a FLAT array of step
+## dictionaries where `struct_out` was one array of steps per ship crossed, and
+## it carries `pos` as a real Vector3 where `events` carried human-readable
+## strings that the trajectory view used to parse back into numbers.
+static func _native_walk(projectile: ProjectileData, prev_pos: Vector3, t: float,
+		space_state: PhysicsDirectSpaceState3D) -> Dictionary:
+	return ProjectileManager.get_raw().sim_process_travel(
+		projectile, prev_pos, t, space_state, true)
+
+
+## The walk's step log in the shape the display code already reads: one entry,
+## because the native log covers the one ship the shell resolved against.
+static func _struct_out_of(result: Dictionary) -> Array:
+	if not bool(result.get("hit", false)):
+		return []
+	return [{
+		"steps": result.get("log_steps", []),
+		"final_pos": result.get("log_final_pos", Vector3.ZERO),
+		"final_hit_type": int(result.get("result_type", -1)),
+	}]
+
+
+## Result type int -> readable string (matches NativeArmorInteraction's codes).
+## Kept as a local table rather than calling NativeArmorInteraction.result_name()
+## because a replay reads result codes out of a FILE: an old recording holds
+## whatever the codes meant when it was written, and a table here can be given a
+## version check, where the live one always answers for today's build.
 const _HIT_RESULT_NAMES: Array = [
 	"PENETRATION", "PARTIAL_PEN", "RICOCHET", "OVERPENETRATION",
 	"SHATTER", "CITADEL", "CITADEL_OVERPEN", "WATER", "TERRAIN"
 ]
-## Step result int -> readable string (matches ArmorInteraction.ArmorResult)
+## Step result int -> readable string (matches NativeArmorInteraction's ArmorResult)
 const _STEP_RESULT_NAMES: Array = [
 	"RICOCHET", "OVERPEN", "PEN", "PARTIAL_PEN", "SHATTER"
 ]
@@ -865,7 +902,7 @@ func update_camera_position():
 		update_camera_transform()
 
 func calculate_final_result():
-	# Replicate the logic from ArmorInteraction.gd to determine final hit result
+	# Replicate the walk's own logic to determine final hit result
 	# This needs to match the exact logic from process_hit() around line 370-390
 
 	var final_result = "UNKNOWN"
@@ -879,7 +916,7 @@ func calculate_final_result():
 
 	var d = PrecisionPhysicsWorld.precision_get_part_hit(ship, final_shell_pos)
 
-	# var damage_result = ArmorInteraction.HitResult.WATER
+	# var damage_result = NativeArmorInteraction.WATER
 	# final_result = "WATER"
 	# Check definitive outcomes first (shatter/ricochet)
 	if over_penetration:
@@ -1114,53 +1151,48 @@ func run_validation_simulation(shell_data: Dictionary):
 	projectile.position = shell_data["current_pos"]
 	var time_step: float = shell_data["time_step"]
 
-	var sim_events: Array = []
-	var result = ArmorInteraction.process_travel(projectile, prev_pos, time_step, space_state, sim_events)
+	var result: Dictionary = _native_walk(projectile, prev_pos, time_step, space_state)
 
 	# Visualization and UI updates must happen on the main thread, so defer them
-	call_deferred("_on_validation_complete", sim_events, result)
+	call_deferred("_on_validation_complete", result)
 
-func _on_validation_complete(sim_events: Array, result):
+func _on_validation_complete(result: Dictionary):
 	# Called on the main thread after physics simulation completes.
+	var sim_steps: Array = result.get("log_steps", [])
+
 	# Visualize both trajectories
-	visualize_trajectories(sim_events)
+	visualize_trajectories(sim_steps, result)
 
-	# Print results from both logged events and simulated events
-	print_comparison_results(sim_events, result)
+	# Print results from both logged events and simulated steps
+	print_comparison_results(sim_steps, result)
 
-func visualize_trajectories(sim_events: Array):
+## Draw the logged trajectory and the simulated one over it.
+##
+## The simulated side is read straight off the walk's step log. It used to be
+## recovered by string-scraping "Shell: ... pos=(x, y, z)" out of the debug event
+## text and re-parsing the numbers with float() - so the picture was only as good
+## as a %.15f round trip, and an impact marker was placed at "the last position
+## parsed so far" rather than at the plate it belonged to. The steps carry `pos`
+## as a Vector3 and each one IS its own plate, so both problems go away.
+func visualize_trajectories(sim_steps: Array, result: Dictionary):
 	# Visualize logged trajectory using world-space positions directly.
 	trail_points.clear()
 	for event in events:
 		process_event(event)
 
-	# Extract and visualize simulated trajectory from events
+	# Simulated trajectory: one point per plate the shell met, then wherever it
+	# ended up.
 	sim_trail_points.clear()
-	for event_str in sim_events:
-		# Parse position from event strings like "Shell: ... pos=(x, y, z)"
-		if event_str is String and event_str.contains("pos=(") and event_str.contains("Shell:"):
-			var pos_start = event_str.find("pos=(") + 5
-			var pos_end = event_str.find(")", pos_start)
-			var pos_str = event_str.substr(pos_start, pos_end - pos_start)
-			var parts = pos_str.split(",")
-			if parts.size() >= 3:
-				var pos = Vector3(
-					float(parts[0].strip_edges()),
-					float(parts[1].strip_edges()),
-					float(parts[2].strip_edges())
-				)
-				sim_trail_points.append(pos)
+	for step in sim_steps:
+		var pos: Vector3 = (step as Dictionary).get("pos", Vector3.ZERO)
+		sim_trail_points.append(pos)
+		var res: int = int((step as Dictionary).get("result", -1))
+		if res >= 0 and res < _STEP_RESULT_NAMES.size():
+			create_impact_marker(pos, _STEP_RESULT_NAMES[res])
 
-		# Create markers for simulated armor hits
-		if event_str is String and event_str.contains("Armor:"):
-			# Parse result type
-			var result_start = event_str.find("Armor: ") + 7
-			var result_end = event_str.find(",", result_start)
-			if result_end != -1:
-				var result_type = event_str.substr(result_start, result_end - result_start).strip_edges()
-				# Use the last position as the impact point
-				if sim_trail_points.size() > 0:
-					create_impact_marker(sim_trail_points[-1], result_type)
+	var final_pos: Vector3 = result.get("log_final_pos", Vector3.ZERO)
+	if final_pos != Vector3.ZERO:
+		sim_trail_points.append(final_pos)
 
 	update_sim_trail()
 
@@ -1205,7 +1237,7 @@ func update_camera_for_both_trajectories():
 	camera_distance = max(size * 1.5, 50.0)
 	update_camera_transform()
 
-func print_comparison_results(sim_events: Array, sim_result):
+func print_comparison_results(sim_steps: Array, sim_result: Dictionary):
 	print("\\n========== SHELL REPLAY VALIDATION ==========")
 	print("\\n--- LOGGED EVENTS ---")
 
@@ -1240,24 +1272,28 @@ func print_comparison_results(sim_events: Array, sim_result):
 			"Final Hit Result":
 				print("Final Hit Result: %s" % event.data["result"])
 
-	print("\\n--- SIMULATED EVENTS ---")
+	print("\\n--- SIMULATED PLATES ---")
 
-	for event_str in sim_events:
-		print(event_str)
+	# One line per plate, from the walk's own step log. This printed the debug
+	# event STRINGS the legacy walk emitted; the native walk has no such strings,
+	# and the steps behind them are better data anyway.
+	# AP formatting: this mode has no logged_hit to read a shell type off, and the
+	# AP line is a superset of the HE one (it also carries shell integrity).
+	for i in sim_steps.size():
+		print("  " + _format_step_line(i, sim_steps[i], false))
 
-	if sim_result != null:
-		var result_name = ArmorInteraction.HitResult.keys()[sim_result.result_type]
+	if bool(sim_result.get("hit", false)):
+		var result_name = String(NativeArmorInteraction.result_name(
+			int(sim_result.get("result_type", -1))))
 		print("Final Simulated Result: %s" % result_name)
-		if sim_result.armor_part != null:
+		var part = sim_result.get("armor_part")
+		if part != null:
 			print("  Armor Part: %s (citadel: %s)" % [
-				sim_result.armor_part.armor_path,
-				sim_result.armor_part.is_citadel
+				part.armor_path,
+				part.is_citadel
 			])
-		print("  Position: (%.1f, %.1f, %.1f)" % [
-			sim_result.explosion_position.x,
-			sim_result.explosion_position.y,
-			sim_result.explosion_position.z
-		])
+		var epos: Vector3 = sim_result.get("explosion_position", Vector3.ZERO)
+		print("  Position: (%.1f, %.1f, %.1f)" % [epos.x, epos.y, epos.z])
 	else:
 		print("Final Simulated Result: NO HIT")
 
@@ -1483,12 +1519,10 @@ func _run_validate_simulation(val_data: Dictionary) -> void:
 	# Raycast against the main world where _val_ship lives.
 	var space_state: PhysicsDirectSpaceState3D = world_3d.get_world_3d().direct_space_state
 
-	var sim_events: Array = []
-	var struct_out: Array = []
-	var result: ArmorInteraction.ArmorResultData = ArmorInteraction.process_travel(
-		projectile, prev_pos, 1.0 / 20.0, space_state, sim_events, struct_out)
+	var result: Dictionary = _native_walk(projectile, prev_pos, 1.0 / 20.0, space_state)
+	var struct_out: Array = _struct_out_of(result)
 
-	call_deferred("_on_validate_complete", val_data["logged_hit"], struct_out, result, sim_events)
+	call_deferred("_on_validate_complete", val_data["logged_hit"], struct_out, result)
 
 
 ## Return a prev_pos that is `margin` metres outside the victim ship's OBB along
@@ -1582,8 +1616,8 @@ func _reconstruct_ricochet_entry(step: Dictionary, params: ShellParams) -> Vecto
 	if impact_angle > params.auto_bounce:
 		energy_loss = 0.1   # autobounce
 	else:
-		var k_nose: float = _ArmorInteraction.get_k_nose(params)
-		var obliquity: Dictionary = _ArmorInteraction.calculate_obliquity_multiplier(
+		var k_nose: float = NativeArmorInteraction.get_k_nose(params)
+		var obliquity: Dictionary = NativeArmorInteraction.calculate_obliquity_multiplier(
 			impact_angle, armor_mm, params.caliber, k_nose)
 		var physics_armor: float = e_armor * obliquity["deflection"]
 		energy_loss = clampf(pen * cos(impact_angle) / maxf(physics_armor, 0.1), 0.0, 0.8)
@@ -1622,8 +1656,7 @@ func _reconstruct_ricochet_entry(step: Dictionary, params: ShellParams) -> Vecto
 func _on_validate_complete(
 		logged_hit: Dictionary,
 		struct_out:  Array,
-		result:      ArmorInteraction.ArmorResultData,
-		sim_events:  Array) -> void:
+		result:      Dictionary) -> void:
 
 	# Feed the simulated hit directly into the validation ArmorTrailVisualizer.
 	if _val_vis != null and is_instance_valid(_val_vis) and not struct_out.is_empty():
@@ -1638,14 +1671,14 @@ func _on_validate_complete(
 	_populate_validation_comparison(logged_hit, struct_out, result)
 
 	# Detailed comparison to the console for numeric inspection.
-	_print_validate_comparison(logged_hit, struct_out, result, sim_events)
+	_print_validate_comparison(logged_hit, struct_out, result)
 
 
 ## Rebuild _hit_steps_list showing logged steps on top, simulated below.
 func _populate_validation_comparison(
 		logged_hit: Dictionary,
 		struct_out:  Array,
-		result:      ArmorInteraction.ArmorResultData) -> void:
+		result:      Dictionary) -> void:
 
 	_hit_steps_list.clear()
 
@@ -1674,9 +1707,9 @@ func _populate_validation_comparison(
 		_hit_steps_list.add_item(_format_step_line(i, sim_steps[i], is_he))
 
 	var sim_result_name: String
-	if result != null:
-		sim_result_name = ArmorInteraction.HitResult.keys()[
-			ArmorInteraction.HitResult.values().find(result.result_type)]
+	if bool(result.get("hit", false)):
+		sim_result_name = String(NativeArmorInteraction.result_name(
+			int(result.get("result_type", -1))))
 	elif sim_final_type >= 0:
 		sim_result_name = _HIT_RESULT_NAMES[clampi(sim_final_type, 0, _HIT_RESULT_NAMES.size() - 1)]
 	else:
@@ -1719,8 +1752,7 @@ func _format_step_line(i: int, s: Dictionary, is_he: bool) -> String:
 func _print_validate_comparison(
 		logged_hit: Dictionary,
 		struct_out:  Array,
-		result:      ArmorInteraction.ArmorResultData,
-		sim_events:  Array) -> void:
+		result:      Dictionary) -> void:
 
 	print("\n========== ARMOR LOG VALIDATION ==========")
 	var ts: float = logged_hit.get("timestamp", 0.0)
@@ -1764,17 +1796,12 @@ func _print_validate_comparison(
 				s.get("pen", 0.0), s.get("integrity", 1.0),
 				s.get("vel", Vector3.ZERO).length()])
 	var sim_res_name: String
-	if result != null:
-		sim_res_name = ArmorInteraction.HitResult.keys()[
-			ArmorInteraction.HitResult.values().find(result.result_type)]
+	if bool(result.get("hit", false)):
+		sim_res_name = String(NativeArmorInteraction.result_name(
+			int(result.get("result_type", -1))))
 	else:
-		sim_res_name = "(null)"
+		sim_res_name = "(no hit)"
 	print("  Final simulated: %s" % sim_res_name)
-
-	print("\n--- SIMULATION STRING EVENTS ---")
-	for ev in sim_events:
-		if ev is String:
-			print("  " + ev)
 
 	print("==========================================\n")
 

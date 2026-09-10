@@ -4,9 +4,10 @@ extends RefCounted
 ## Picks the shell and the aim point by firing test shells at the target.
 ##
 ## A candidate aim point is scored by walking one shell through
-## ArmorInteraction.process_travel() - the same entry point the real shells go
-## through - and paying its HitResult at the rate ProjectileManager pays it. The
-## best candidate wins; nothing in this file models armour itself.
+## ProjectileManager.sim_process_travel() - the NATIVE armour walk, the same one
+## the real shells go through - and paying its HitResult at the rate
+## ProjectileManager pays it. The best candidate wins; nothing in this file
+## models armour itself.
 ##
 ## The answer depends on the target's aspect and range and on nothing else that
 ## moves, so it is computed per BUCKET of those two and shared by every bot in
@@ -60,7 +61,7 @@ const SHELLS_PER_SLOT: int = 20
 ## the old flat width, and are mirrored about the beam so stern aspects are
 ## resolved like bow aspects.
 ##
-## Resolution has to be dense near bow-on and nowhere else. ArmorInteraction's
+## Resolution has to be dense near bow-on and nowhere else. The armour walk's
 ## ricochet angle is a function of T/D - Yamato AP bounces at 55 degrees off
 ## normal against 410mm, 85 against 25mm - which in aspect is a cliff edge
 ## somewhere between 5 and 35 degrees depending on the plate the shell finds.
@@ -137,15 +138,15 @@ const KEY_RANGE: int = 4
 ## (see _walk_payout) and solve() mirrors the answer when the shooter is to port,
 ## so both beams share one bucket.
 const HULL_STATIONS := [
-	[-0.4, [0.0]],
-	[-0.25, [0.0, 0.55, 0.95]],
 	[0.0, [0.95]],
+	[-0.25, [0.0, 0.55, 0.95]],
 	[0.25, [0.0, 0.55, 0.95]],
+	[-0.4, [0.0]],
 	[0.4, [0.0]],
 ]
 
 ## Hull heights, as fractions of freeboard: waterline, belt, upper works.
-const HULL_HEIGHT_FRACS := [0.05, 0.50, 0.8]
+const HULL_HEIGHT_FRACS := [0.05, 0.50, 0.9]
 
 ## The superstructure is its own target with its own grid, sized from its own
 ## mesh: scaling its sample points off the whole hull put them in the water or
@@ -167,18 +168,41 @@ const WALK_MARGIN_M: float = 15.0
 const WALK_ENTRY_MIN_M: float = 60.0
 const WALK_EXIT_MIN_M: float = 80.0
 
-## How many complete passes over the aim grid each ACTIVE bucket is given per
-## physics frame. A pass is one shell at every candidate, of both shell types,
-## from every mount, so SHELLS_PER_SLOT passes finish a bucket.
+## How many AIM POINTS of the grid each ACTIVE bucket is walked at per physics
+## frame. A point costs one shell of each type from every mount, so a bucket
+## spends POINTS_PER_BUCKET_PER_FRAME x 2 x (mounts) walks a frame and takes
+## (grid / POINTS_PER_BUCKET_PER_FRAME) frames to complete one pass over it.
+##
+## The slice is measured in POINTS and not in whole passes because the grid is
+## thirty-nine of them and a fleet action is two dozen live buckets: a pass
+## apiece was seventy-eight walks per bucket per frame, and the frame paid for
+## every point on every hull before any bot had an answer worth more than the
+## first. Walking a few points a frame spreads the same survey over more frames
+## at a tenth of the per-frame cost, and costs nothing in quality because the
+## bucket is finished to exactly the same sample count either way.
+##
+## What makes a part-walked pass usable is the candidate ORDER: _iterate() goes
+## point by point and _aim_candidates() emits HULL_STATIONS in priority order,
+## so the points a slice reaches first are the ones most worth reaching. A bot
+## asking mid-pass gets the best of the points surveyed so far - see
+## _best_so_far() - which starts at the middle of the hull and only improves.
+##
+## Measuring the slice in points rather than in walks also makes a bucket take
+## the same number of frames however many mounts it has to score, so a
+## three-calibre secondary battery converges with the main battery instead of
+## three times slower.
 ##
 ## The budget is per bucket rather than global, and is spent only on buckets
 ## somebody is asking about THIS frame, so nothing is queued behind anything
 ## else: a fleet that all sees the same ship from the same quarter costs one
 ## bucket, and twenty-four separate duels cost twenty-four but are each answered
-## in the same number of frames. Roughly
-## (active buckets) x PASSES_PER_BUCKET_PER_FRAME x (grid x 2 x mounts) walks a
-## frame.
-const PASSES_PER_BUCKET_PER_FRAME: int = 1
+## in the same number of frames.
+##
+## Two, measured: a native walk costs tens of microseconds, so four walks is
+## about a fifth of a millisecond per bucket per frame and two dozen live buckets
+## fit inside a physics frame with room to spare. A full pass was seventy-eight
+## walks and twenty-four of those did not fit at all.
+const POINTS_PER_BUCKET_PER_FRAME: int = 4
 
 ## How many physics frames a bucket stays active after the last request, so a bot
 ## that solves on alternate ticks does not keep dropping out of the working set.
@@ -193,16 +217,21 @@ static var _budget_frame: int = -1
 ## The physics space the survey is walked in: the target's broadphase box, and
 ## nothing else that exists.
 ##
-## The walk cannot run in the live space. ArmorInteraction's terrain ray is
-## collision_mask 1 with no exclude list and every turret carries a GLB-imported
-## `-col` StaticBody3D on layer 1, so a shell crossing the target's own turrets
-## came back HitResult.TERRAIN - which _walk_payout scores as a clean miss, i.e.
-## the whole superstructure row of the grid worth nothing. Its OBB ray sees other
-## ships' bounding boxes, which then get baked into an answer cached by scene
-## path and shared by the whole team. The live game escapes the turret case
-## because the Rust path gates the terrain raycast behind a navigation-map SDF
-## check (NativeArmorInteraction::should_raycast_terrain); ArmorInteraction.gd
-## always casts.
+## The walk cannot run in the live space, for two reasons that survive the walk
+## being the native one.
+##
+## The terrain ray is collision_mask 1 with no exclude list, and every turret
+## carries a GLB-imported `-col` StaticBody3D on layer 1 - so a shell crossing
+## the target's own turrets comes back HitResult.TERRAIN, which _walk_payout
+## scores as a clean miss, i.e. the whole superstructure row of the grid worth
+## nothing. Live shells mostly escape this because
+## NativeArmorInteraction::should_raycast_terrain gates the cast behind a
+## navigation-map SDF check, but that is a distance test against the map and not
+## a promise, and a survey run near an island would take the cast and eat the
+## turrets. Here the ray is simply cast into a space with no terrain in it.
+##
+## And the OBB ray sees other ships' bounding boxes, which would then get baked
+## into an answer cached by scene path and shared by the whole team.
 ##
 ## Only the OBB has to be here, because that is the broadphase the narrowphase
 ## hangs off - the armour itself already lives in the ship's own
@@ -216,13 +245,35 @@ static var _survey_obbs: Dictionary = {}
 static var _survey_shapes: Array = []
 
 
+## The native _ProjectileManager, which is where the armour walk lives.
+##
+## Reached PAST the ProjectileManager autoload deliberately. That autoload is
+## ProfiledProjectileManager, a GDScript proxy whose whole job is to make
+## projectile calls show up in the profiler as named GDScript frames; a survey
+## makes thousands of walks a second and has no use for a profiler frame on each
+## of them. Cached because get_raw() is an @onready node lookup.
+static var _native_pm: Object = null
+
+
+## The node to walk shells on, or null before the autoload is up.
+static func _projectile_native() -> Object:
+	if _native_pm == null or not is_instance_valid(_native_pm):
+		_native_pm = ProjectileManager.get_raw() if ProjectileManager != null else null
+	return _native_pm
+
+
 ## Payouts by result, from ProjectileManager::process_hit.
+##
+## Keyed on NativeArmorInteraction's codes, which is the enum the walk in
+## _walk_payout() actually reports. SHATTER, RICOCHET, WATER and TERRAIN are
+## absent rather than zero: `get` defaults them, and a result that pays nothing
+## and a result nobody thought about should not be spelled the same way.
 const RESULT_PAYOUT := {
-	ArmorInteraction.HitResult.CITADEL: DMG_CITADEL,
-	ArmorInteraction.HitResult.CITADEL_OVERPEN: DMG_CITADEL_OVERPEN,
-	ArmorInteraction.HitResult.PENETRATION: DMG_PENETRATION,
-	ArmorInteraction.HitResult.PARTIAL_PEN: 0.0667,
-	ArmorInteraction.HitResult.OVERPENETRATION: DMG_OVERPENETRATION,
+	NativeArmorInteraction.CITADEL: DMG_CITADEL,
+	NativeArmorInteraction.CITADEL_OVERPEN: DMG_CITADEL_OVERPEN,
+	NativeArmorInteraction.PENETRATION: DMG_PENETRATION,
+	NativeArmorInteraction.PARTIAL_PEN: 0.0667,
+	NativeArmorInteraction.OVERPENETRATION: DMG_OVERPENETRATION,
 }
 
 ## Finished buckets, shared by every bot in the process: armour geometry does not
@@ -425,7 +476,7 @@ static func survey_space_state(target: Ship) -> PhysicsDirectSpaceState3D:
 ## Copy the target's broadphase box into the survey space.
 ##
 ## The body answers as the REAL OBB node's instance id, because that is the
-## identity the rest of the pipeline knows the ship by: ArmorInteraction hands
+## identity the rest of the pipeline knows the ship by: the armour walk hands
 ## the ray's collider to PrecisionPhysicsWorld.get_ship_from_obb(), which reads
 ## its "ship" meta.
 static func _mirror_obb(target: Ship) -> RID:
@@ -525,12 +576,20 @@ static func clear_all() -> void:
 
 
 ## Ask the solver for this bucket's aim point: the best answer worked out so far,
-## or empty if the bucket has not been started and the target is unusable.
+## or empty when there is not one yet.
 ##
 ## This is a request, not a computation. Asking is what marks the bucket active,
-## and an active bucket is refined a couple of passes a frame until it is done
-## (see _drain). The caller is guaranteed one walk, so it always leaves with an
-## answer and picks up a better one each time it asks.
+## and an active bucket is walked at a few more aim points every frame until it
+## is done (see _drain).
+##
+## Opening a bucket walks NOTHING. The caller leaves with an empty answer and
+## _solve() points it at the middle of the hull, which is where a survey that
+## has seen one shell would point it anyway - the grid leads with the centre
+## precisely because it is the answer to fall back on. Paying for a walk here
+## made every bot that acquired a target spend an armour traversal inside its own
+## tick, off the frame's budget and outside it, and bought a first answer no
+## better than the free one. From the next frame on the drain is walking the
+## priority stations and each ask picks up whatever that has found.
 func _probe_bucket(key: Array, shooter: Ship, target: Ship) -> Dictionary:
 	if key.is_empty():
 		return {}
@@ -543,10 +602,6 @@ func _probe_bucket(key: Array, shooter: Ship, target: Ship) -> Dictionary:
 		if state.is_empty():
 			return {}
 		_aim_progress[key] = state
-		# One walk on the spot, so a bot that has just been given a target does
-		# not wait a frame to know where to point. The candidate order below
-		# puts the safe answer first, so that one walk is worth having alone.
-		_iterate(key, 1)
 
 	# Asked for this frame, so it is refined this frame - whether it was opened
 	# just now or has been sitting half surveyed.
@@ -568,9 +623,10 @@ static func _service_frame() -> void:
 	_drain()
 
 
-## Give each active bucket its passes for this frame. Every active bucket gets
-## the same number, so none is starved by another being older or busier, and
-## nothing is spent on buckets nobody asked for.
+## Give each active bucket its slice of the grid for this frame. Every active
+## bucket gets the same number of aim points, so none is starved by another being
+## older, busier or carrying more mounts, and nothing is spent on buckets nobody
+## asked for.
 static func _drain() -> void:
 	var stale: Array = []
 	for key in _active:
@@ -581,7 +637,7 @@ static func _drain() -> void:
 		if state.is_empty():
 			stale.append(key)  # finished, or abandoned by _iterate
 			continue
-		if _iterate(key, PASSES_PER_BUCKET_PER_FRAME * int(state["per_pass"])) == 0:
+		if _iterate(key, POINTS_PER_BUCKET_PER_FRAME * int(state["per_point"])) == 0:
 			# No progress possible: called outside the physics step, or the
 			# ships that opened the bucket are gone.
 			stale.append(key)
@@ -617,7 +673,8 @@ static func _begin_bucket(key: Array, shooter: Ship, target: Ship) -> Dictionary
 	var slots: int = candidates.size() * 2 * batteries.size()
 	return {
 		"i": 0,
-		"per_pass": slots,
+		# What one aim point costs in walks, which is what _drain() budgets in.
+		"per_point": 2 * batteries.size(),
 		"sums": _zeros(slots),
 		"counts": _zeros(slots),
 		# Walks that actually struck the target, per slot. Separate from `sums`
@@ -766,6 +823,11 @@ static func _zeros(n: int) -> PackedFloat64Array:
 ## One walk is one shell: an aim point, a shell type, a mount, and one of the
 ## places a shell aimed there comes down. The bucket is finished when every aim
 ## point has had all SHELLS_PER_SLOT of them from every mount.
+##
+## `budget` is a slice of a pass, not a whole one - _drain() sizes it from
+## POINTS_PER_BUCKET_PER_FRAME - so this resumes mid-grid from `state["i"]` and
+## leaves off mid-grid, and the survey is only ever complete or a priority-
+## ordered prefix of a pass ahead of the rest of it.
 static func _iterate(key: Array, budget: int) -> int:
 	var state: Dictionary = _aim_progress.get(key, {})
 	if state.is_empty():
@@ -787,11 +849,19 @@ static func _iterate(key: Array, budget: int) -> int:
 	var candidates: Array = state["candidates"]
 	var batteries: Array = state["batteries"]
 	var nb: int = batteries.size()
-	# Breadth first: every aim point gets one shell of each type from every mount
-	# before any gets a second look. Walking one shell type or one calibre to
-	# exhaustion first would leave the bucket choosing between a full survey and
-	# a single data point - and this way a bucket cut short by the budget is a
-	# whole survey at a smaller sample rather than part of a survey.
+	# Breadth first, aim point by aim point: every point gets one shell of each
+	# type from every mount before any gets a second look. Walking one shell type
+	# or one calibre to exhaustion first would leave the bucket choosing between a
+	# full survey and a single data point - and this way a bucket stopped on a
+	# pass boundary is a whole survey at a smaller sample rather than part of a
+	# survey.
+	#
+	# A frame's slice is smaller than a pass (see POINTS_PER_BUCKET_PER_FRAME),
+	# so the usual stopping point is mid-pass: the leading points at n + 1 shells
+	# and the trailing ones at n. That is why the aim point is the SLOWEST-moving
+	# index here rather than the fastest - it makes the part of the grid a slice
+	# has reached a prefix of _aim_candidates(), which is in priority order, so
+	# the extra shell always goes to the points most worth having it.
 	var per_pass: int = candidates.size() * 2 * nb
 	var total: int = per_pass * SHELLS_PER_SLOT
 	var sums: PackedFloat64Array = state["sums"]
@@ -1019,24 +1089,56 @@ static func _fire_value_rated(state: Dictionary, ci: int) -> float:
 
 
 ## The best answer for a bucket so far, finished or not.
+##
+## Scored at most ONCE per bucket per frame and handed out from there. _best_of()
+## is a sweep of the whole grid - two means over it, plus a fire lookup per
+## candidate - and this is asked on every solve() of every bot, twice per bot per
+## tick (behavior.gd calls it for the aim point and again for the shell) and once
+## more for every bot sharing the bucket. Twenty-four duels came to a hundred
+## sweeps a frame over an answer that changes at most once in it.
+##
+## The cache is keyed on the bucket's walk count, so it survives exactly as long
+## as the survey has not moved: _iterate() advancing `i` retires it on its own
+## with nothing to invalidate. A bucket nobody is draining holds its answer, and
+## a finished one is in _aim_table and never reaches here.
 static func _best_so_far(key: Array) -> Dictionary:
 	if _aim_table.has(key):
 		return _aim_table[key]
 	var state: Dictionary = _aim_progress.get(key, {})
 	if state.is_empty():
 		return {}
+	# Nothing walked yet, so there is nothing to be best. Says so without
+	# sweeping a grid of empty accumulators to find it out - the frame a bucket
+	# is opened, every bot on it takes this path.
+	if int(state["i"]) == 0:
+		return {}
 	# Same freed-instance guard as _iterate(): _best_of() reads the target as a
 	# Ship, so an unfinished bucket whose target has gone is dropped, not scored.
 	if not is_instance_valid(state["target"]) or not is_instance_valid(state["owner"]):
 		_aim_progress.erase(key)
 		return {}
-	return _best_of(state)
+	if int(state.get("best_i", -1)) == int(state["i"]):
+		return state["best"]
+	var best := _best_of(state)
+	state["best_i"] = state["i"]
+	state["best"] = best
+	return best
 
 
-## Candidate aim points in the target's local space, best guess first. Order
-## matters because the first walk is the answer a bot leaves with: the middle of
-## the freeboard leads, and the waterline follows because that is where the
-## citadels come from.
+## Candidate aim points in the target's local space, in PRIORITY ORDER.
+##
+## Order is load-bearing, not cosmetic. A bucket is walked a couple of aim points
+## a frame (see POINTS_PER_BUCKET_PER_FRAME), so at any moment before it finishes
+## the part of the grid that has been surveyed is a PREFIX of this list, and the
+## answer a bot leaves with is the best of that prefix. Reordering this changes
+## what every bot in the process aims at for the first few seconds of every
+## engagement.
+##
+## HULL_STATIONS leads, in its own order - amidships outboard, then the quarters,
+## then the ends - and each station is walked waterline first, because that is
+## where the citadels come from. The superstructure grid comes last: it is the
+## answer when nothing can penetrate, and nothing-can-penetrate is a conclusion
+## the hull points have to be walked to reach.
 static func _aim_candidates(target: Ship) -> Array:
 	var mc = target.movement_controller
 	if mc == null:
@@ -1228,7 +1330,8 @@ static func _walk_span(target: Ship, to: Vector3, dir: Vector3) -> Vector2:
 ## The firing position is synthesised from the bucket rather than read off the
 ## shooter, which is what lets a bucket be shared and finished later. `owner` is
 ## still a real ship because process_travel() treats an owner-less projectile as
-## visual-only and returns null without resolving armour.
+## visual-only: it skips find_valid_obb_hit() entirely and takes the raw
+## broadphase hit, so the shell can meet the shooter's own hull.
 static func _walk_payout(target: Ship, owner: Ship, shell: ShellParams,
 		candidate: Vector3, offset: Vector2, aspect_deg: float, range_m: float,
 		dispersion: Vector2, space: PhysicsDirectSpaceState3D) -> Vector2:
@@ -1264,17 +1367,25 @@ static func _walk_payout(target: Ship, owner: Ship, shell: ShellParams,
 	proj.initialize(to + dir * span.y, launch[0], 0.0, shell, owner, [])
 	proj.set_frame_count(1)
 
-	var res = ArmorInteraction.process_travel(proj, prev_pos, tof, space)
-	if res == null:
+	# The NATIVE walk, the one live shells go through. Not the GDScript
+	# ArmorInteraction autoload of the same name: that is the pre-port
+	# implementation, it is still loaded for legacy and debug callers, and it does
+	# not answer the same as the shells do - which makes it worthless as the thing
+	# a survey measures. See _ProjectileManager::sim_process_travel_impl.
+	var pm := _projectile_native()
+	if pm == null:
+		return Vector2.ZERO
+	var res: Dictionary = pm.sim_process_travel(proj, prev_pos, tof, space)
+	if not bool(res.get("hit", false)):
 		return Vector2.ZERO
 	# Whatever the shell met, it has to have been the ship being asked about. The
 	# segment straddles the aim point by well over a beam, so in a brawl it can
 	# cross a third ship first. A terrain hit lands here too, which is correct:
 	# an island in the last hundred metres is a shot not worth taking.
-	if res.ship != target:
+	if res.get("ship") != target:
 		return Vector2.ZERO
-	var payout: float = float(RESULT_PAYOUT.get(res.result_type, 0.0))
-	if PrecisionPhysicsWorld.is_turret_part(res.armor_part):
+	var payout: float = float(RESULT_PAYOUT.get(int(res["result_type"]), 0.0))
+	if PrecisionPhysicsWorld.is_turret_part(res.get("armor_part")):
 		payout = minf(payout, DMG_TURRET)
 	var direct: float = payout * shell.damage
 	# Direct damage only, and it can legitimately be zero on a landed shell. The

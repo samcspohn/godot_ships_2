@@ -1,5 +1,5 @@
 use godot::prelude::*;
-use godot::classes::{Camera3D, Node, PhysicsRayQueryParameters3D, Resource, INode};
+use godot::classes::{Camera3D, Node, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource, INode};
 use std::collections::BTreeMap;
 
 use crate::nav::map::NavigationMap;
@@ -278,5 +278,13 @@ impl ProjectileManager {
 
     #[func] pub(crate) fn get_shells_near_position(&self, position: Vector2, radius: f32, exclude_team_id: i32) -> VarArray {
         self.get_shells_near_position_impl(position, radius, exclude_team_id)
+    }
+
+    /// Run one shell through the live armour path and return the outcome.
+    /// The bot gunnery solver's survey walk; see `sim_process_travel_impl`.
+    #[func] pub(crate) fn sim_process_travel(&mut self, projectile: Gd<ProjectileData>,
+            prev_pos: Vector3, t: f64, space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
+            #[opt(default = false)] log_armor: bool) -> VarDictionary {
+        self.sim_process_travel_impl(projectile, prev_pos, t, space_state, log_armor)
     }
 }

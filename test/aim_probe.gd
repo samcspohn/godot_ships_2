@@ -4,11 +4,16 @@ extends Node3D
 ##
 ## BotGunnery models armour as oriented patches with one line of flight and no
 ## occlusion beyond what centroids imply. This rig instead calls
-## ArmorInteraction.process_travel() - the same entry point the shells
-## themselves go through, OBB broadphase into precision narrowphase into the
+## ProjectileManager.get_raw().sim_process_travel() - the NATIVE armour walk,
+## the one live shells go through, OBB broadphase into precision narrowphase into the
 ## plate-by-plate walk - so the approximation can be checked against the thing
 ## it approximates, and so a bucketed aim table can be generated from ground
 ## truth rather than from a model of it.
+##
+## Not the GDScript ArmorInteraction autoload, which is the pre-port
+## implementation and does not answer the same: a rig that measured THAT would be
+## checking the solver against a walk no shell in the game has taken since the
+## native cutover.
 ##
 ## Needs a live scene: the precision bodies only exist once a Ship has entered
 ## the tree and registered itself (Ship._ready), and the broadphase ray needs a
@@ -278,19 +283,26 @@ func _table_test() -> void:
 	_shooter.force_update_transform()
 	var key = G._bucket_key(_shooter, _target)
 
-	_say("budget %d passes/bucket/frame; %d aim points x 2 shells = %d walks/pass, x %d shells = %d walks/bucket" % [
-		G.PASSES_PER_BUCKET_PER_FRAME, G._aim_candidates(_target).size(),
+	_say("budget %d aim points/bucket/frame = %d walks/frame; %d aim points x 2 shells = %d walks/pass, x %d shells = %d walks/bucket" % [
+		G.POINTS_PER_BUCKET_PER_FRAME, G.POINTS_PER_BUCKET_PER_FRAME * 2,
+		G._aim_candidates(_target).size(),
 		G._aim_candidates(_target).size() * 2, G.SHELLS_PER_SLOT,
 		G._aim_candidates(_target).size() * 2 * G.SHELLS_PER_SLOT])
 	_say("[%d ms] grid built, entering solve loop" % _ms())
 	_say("frame | bots asking | aim y | ammo | walks done | state")
 
 	# Wall clock across the whole survey, so the per-walk cost below is measured
-	# on the real armour walk and not estimated from it. PASSES_PER_BUCKET_PER_FRAME
-	# times this is what one active bucket adds to a physics frame.
+	# on the real armour walk and not estimated from it. A frame's slice times
+	# this is what one active bucket adds to a physics frame.
+	#
+	# The frame cap is the walks in a bucket over the walks in a slice, plus
+	# slack: the survey is deliberately spread thin now, so a bucket takes
+	# hundreds of simulated frames rather than the twenty it used to.
 	var t_walks: int = 0
 	var walks_timed: int = 0
-	for frame in 40:
+	var frame_cap: int = int(ceil(float(G._aim_candidates(_target).size())
+		/ float(G.POINTS_PER_BUCKET_PER_FRAME))) * G.SHELLS_PER_SLOT + 8
+	for frame in frame_cap:
 		# Twenty bots of one class all asking about the same contact. They
 		# collapse onto one bucket, so this is one question, not twenty.
 		var solution := {}
@@ -300,12 +312,15 @@ func _table_test() -> void:
 		var progress = G._aim_progress.get(key, {})
 		var done: int = int(progress.get("i", -1))
 		var finished: bool = G._aim_table.has(key)
-		_say("%5d | %11d | %5.2f | %4d | %10s | %s" % [
-			frame, 20,
-			(solution.get("offset", Vector3.ZERO) as Vector3).y,
-			int(solution.get("ammo", -1)),
-			"all" if finished else str(done),
-			"SOLVED" if finished else "refining"])
+		# One row every twenty frames plus the two that matter - the first ask
+		# and the solve - because the survey now runs for a couple of hundred.
+		if finished or frame < 2 or frame % 20 == 0:
+			_say("%5d | %11d | %5.2f | %4d | %10s | %s" % [
+				frame, 20,
+				(solution.get("offset", Vector3.ZERO) as Vector3).y,
+				int(solution.get("ammo", -1)),
+				"all" if finished else str(done),
+				"SOLVED" if finished else "refining"])
 		if finished:
 			break
 		# Simulate the next physics frame arriving.
@@ -319,8 +334,7 @@ func _table_test() -> void:
 		walks_timed += int(G._aim_progress.get(key, {}).get("i", total)) - before
 	if walks_timed > 0:
 		var per_walk: float = float(t_walks) / float(walks_timed)
-		var per_frame: float = per_walk * G.PASSES_PER_BUCKET_PER_FRAME \
-			* float(G._aim_candidates(_target).size() * 2)
+		var per_frame: float = per_walk * float(G.POINTS_PER_BUCKET_PER_FRAME * 2)
 		_say("")
 		_say("cost: %d walks in %.1f ms = %.1f us/walk" % [
 			walks_timed, t_walks / 1000.0, per_walk])
@@ -658,17 +672,17 @@ func _turret_walk(shell: ShellParams, aspect_deg: float, range_m: float,
 	var proj := ProjectileData.new()
 	proj.initialize(to + dir * 80.0, launch[0], 0.0, shell, _shooter, [])
 	proj.set_frame_count(1)
-	var res = ArmorInteraction.process_travel(proj, prev_pos, tof, space)
-	if res == null:
+	var res: Dictionary = ProjectileManager.get_raw().sim_process_travel(proj, prev_pos, tof, space)
+	if not bool(res.get("hit", false)):
 		return {"error": "no hit"}
 
-	var part = res.armor_part
+	var part = res.get("armor_part")
 	var is_turret: bool = part != null and PrecisionPhysicsWorld.is_turret_part(part)
-	var payout: float = float(PAYOUT.get(_name_of(res.result_type), 0.0))
+	var payout: float = float(PAYOUT.get(_name_of(res["result_type"]), 0.0))
 	if is_turret:
 		payout = minf(payout, _gunnery.DMG_TURRET)
 	return {
-		"result": _name_of(res.result_type),
+		"result": _name_of(res["result_type"]),
 		"part": String(part.armor_path) if part != null else "",
 		"turret": is_turret,
 		"payout": payout,
@@ -709,18 +723,16 @@ func _walk(shell: ShellParams, aspect_deg: float, range_m: float,
 	proj.initialize(to + dir * 80.0, launch[0], 0.0, shell, _shooter, [])
 	proj.set_frame_count(1)
 
-	var res = ArmorInteraction.process_travel(
+	var res: Dictionary = ProjectileManager.get_raw().sim_process_travel(
 		proj, prev_pos, tof, _gunnery.survey_space_state(_target))
-	if res == null:
+	if not bool(res.get("hit", false)):
 		return "null"
-	return _name_of(res.result_type)
+	return _name_of(res["result_type"])
 
 
+## The native walk reports its result as a bare int; this is its name.
 func _name_of(result) -> String:
-	var keys := ArmorInteraction.HitResult.keys()
-	var values := ArmorInteraction.HitResult.values()
-	var idx := values.find(int(result))
-	return String(keys[idx]) if idx >= 0 else "?%d" % int(result)
+	return String(NativeArmorInteraction.result_name(int(result)))
 
 
 func _say(line: String) -> void:
@@ -749,15 +761,18 @@ func _detail(shell: ShellParams, local_aim: Vector3, asp: float, rng: float) -> 
 	var proj := ProjectileData.new()
 	proj.initialize(to + dir * 80.0, launch[0], 0.0, shell, _shooter, [])
 	proj.set_frame_count(1)
-	var steps: Array = []
-	var res = ArmorInteraction.process_travel(proj, prev, launch[1],
-		_gunnery.survey_space_state(_target), [], steps)
-	if res == null:
+	# log_armor on, so the walk reports the plates it met. The native log is a
+	# FLAT array of steps, where the old GDScript struct_out nested one array of
+	# steps per ship crossed.
+	var res: Dictionary = ProjectileManager.get_raw().sim_process_travel(proj, prev, launch[1],
+		_gunnery.survey_space_state(_target), true)
+	if not bool(res.get("hit", false)):
 		return "null"
+	var steps: Array = res.get("log_steps", [])
 	var plate := "?"
-	if not steps.is_empty() and not (steps[0]["steps"] as Array).is_empty():
-		plate = "%.0fmm" % float((steps[0]["steps"] as Array)[0]["armor_mm"])
-	return "%s %s" % [_name_of(res.result_type).substr(0, 9), plate]
+	if not steps.is_empty():
+		plate = "%.0fmm" % float((steps[0] as Dictionary)["armor_mm"])
+	return "%s %s" % [_name_of(res["result_type"]).substr(0, 9), plate]
 
 
 func freeboard_min(pts: Array, ss: AABB) -> float:

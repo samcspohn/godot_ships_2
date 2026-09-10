@@ -46,7 +46,8 @@ var spotting_damage: float = 0
 
 var potential_damage: float = 0
 
-# Hit type to counter name mapping (matches ArmorInteraction.HitResult values)
+# Hit type to counter name mapping (matches NativeArmorInteraction's result codes,
+# which is what ProjectileManager passes to record_hit)
 const HIT_TYPE_COUNTERS := {
 	0: "penetration_count",      # PENETRATION
 	1: "partial_pen_count",      # PARTIAL_PEN
@@ -66,7 +67,7 @@ func damage_ship(ship: Ship, damage: float) -> void:
 
 ## Records a hit event and updates all relevant stats.
 ## Called from C++ ProjectileManager to consolidate all stat tracking.
-## [param hit_type] ArmorInteraction.HitResult enum value
+## [param hit_type] NativeArmorInteraction result code
 ## [param damage] Amount of damage dealt
 ## [param is_secondary] Whether this was a secondary battery hit
 ## [param position] World position of the hit

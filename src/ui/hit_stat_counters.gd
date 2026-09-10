@@ -12,7 +12,7 @@ static var STAT_CONFIG = {
 	"penetration": {
 		"category": "sub",
 		"display_name": "P",
-		"hit_result": ArmorInteraction.HitResult.PENETRATION,
+		"hit_result": NativeArmorInteraction.PENETRATION,
 		"stat_main": "penetration_count",
 		"stat_sec": "sec_penetration_count",
 		"bg_color": Color(0.4, 0.4, 0.4, 0.9),
@@ -21,7 +21,7 @@ static var STAT_CONFIG = {
 	"overpenetration": {
 		"category": "sub",
 		"display_name": "Op",
-		"hit_result": ArmorInteraction.HitResult.OVERPENETRATION,
+		"hit_result": NativeArmorInteraction.OVERPENETRATION,
 		"stat_main": "overpen_count",
 		"stat_sec": "sec_overpen_count",
 		"bg_color": Color(0.4, 0.32, 0.08, 0.9),
@@ -30,7 +30,7 @@ static var STAT_CONFIG = {
 	"shatter": {
 		"category": "sub",
 		"display_name": "S",
-		"hit_result": ArmorInteraction.HitResult.SHATTER,
+		"hit_result": NativeArmorInteraction.SHATTER,
 		"stat_main": "shatter_count",
 		"stat_sec": "sec_shatter_count",
 		"bg_color": Color(0.32, 0.08, 0.08, 0.9),
@@ -39,7 +39,7 @@ static var STAT_CONFIG = {
 	"ricochet": {
 		"category": "sub",
 		"display_name": "R",
-		"hit_result": ArmorInteraction.HitResult.RICOCHET,
+		"hit_result": NativeArmorInteraction.RICOCHET,
 		"stat_main": "ricochet_count",
 		"stat_sec": "sec_ricochet_count",
 		"bg_color": Color(0.24, 0.24, 0.4, 0.9),
@@ -48,7 +48,7 @@ static var STAT_CONFIG = {
 	"citadel": {
 		"category": "sub",
 		"display_name": "C",
-		"hit_result": ArmorInteraction.HitResult.CITADEL,
+		"hit_result": NativeArmorInteraction.CITADEL,
 		"stat_main": "citadel_count",
 		"stat_sec": "sec_citadel_count",
 		"bg_color": Color(0.142, 0.142, 0.142, 0.9),
@@ -57,7 +57,7 @@ static var STAT_CONFIG = {
 	"citadel_overpen": {
 		"category": "sub",
 		"display_name": "Co",
-		"hit_result": ArmorInteraction.HitResult.CITADEL_OVERPEN,
+		"hit_result": NativeArmorInteraction.CITADEL_OVERPEN,
 		"stat_main": "citadel_overpen_count",
 		"stat_sec": "sec_citadel_overpen_count",
 		"bg_color": Color(0.5, 0.25, 0.1, 0.9),
@@ -66,7 +66,7 @@ static var STAT_CONFIG = {
 	"partial_pen": {
 		"category": "sub",
 		"display_name": "Pp",
-		"hit_result": ArmorInteraction.HitResult.PARTIAL_PEN,
+		"hit_result": NativeArmorInteraction.PARTIAL_PEN,
 		"stat_main": "partial_pen_count",
 		"stat_sec": "sec_partial_pen_count",
 		"bg_color": Color(0.3, 0.3, 0.5, 0.9),
@@ -492,7 +492,10 @@ func process_damage_events(damage_events: Array):
 		var type = event.get("type", "")
 		match type:
 			"hit":
-				var event_type: ArmorInteraction.HitResult = event.get("hit_type", -1)
+				# A NativeArmorInteraction result code. Plain int, not a GDScript
+				# enum type: the codes come from ClassDB constants now, and Godot
+				# has no enum type to annotate them with.
+				var event_type: int = event.get("hit_type", -1)
 				var is_secondary: bool = event.get("sec", false)
 				var summary_type = "sec" if is_secondary else "main"
 
