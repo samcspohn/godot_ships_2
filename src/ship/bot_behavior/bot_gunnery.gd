@@ -202,7 +202,7 @@ const WALK_EXIT_MIN_M: float = 80.0
 ## about a fifth of a millisecond per bucket per frame and two dozen live buckets
 ## fit inside a physics frame with room to spare. A full pass was seventy-eight
 ## walks and twenty-four of those did not fit at all.
-const POINTS_PER_BUCKET_PER_FRAME: int = 4
+const POINTS_PER_BUCKET_PER_FRAME: int = 2
 
 ## How many physics frames a bucket stays active after the last request, so a bot
 ## that solves on alternate ticks does not keep dropping out of the working set.

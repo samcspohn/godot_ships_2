@@ -10,6 +10,7 @@ speed = 200.0
 spotting_range = 8000.0
 altitude = 500.0
 attack_descent_radius = 500.0
+ordnance_reload_time = 200.0
 fuel_time = 120.0
 plane_scene = ExtResource("1_52ipx")
 metadata/_custom_type_script = "uid://c1b4m6o6v8jtx"

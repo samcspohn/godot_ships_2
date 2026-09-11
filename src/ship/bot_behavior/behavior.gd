@@ -2529,7 +2529,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 	var raw_threat: float = 1.0
 	var time_remaining: float = server.get_match_time_remaining()
 	var t_norm: float = clampf(1.0 - time_remaining / server.MATCH_DURATION, 0.0, 1.0)
-	var threat_scale: float = 1.0 - pow(t_norm, 3.0)
+	var threat_scale: float = 1.0 - pow(t_norm, 4.0)
 
 	for contact in contacts:
 		var enemy: Ship = contact.ship
