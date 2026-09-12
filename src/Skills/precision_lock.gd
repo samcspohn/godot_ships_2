@@ -46,8 +46,8 @@ func _init():
 
 func _a(ship: Ship) -> void:
 	var main := ship.artillery_controller.params.dynamic_mod as GunParams
-	main.max_h_disp *= (1.0 - _spread_reduction)
-	main.max_v_disp *= (1.0 - _spread_reduction)
+	main.dispersion.h_disp *= (1.0 - _spread_reduction)
+	main.dispersion.v_disp *= (1.0 - _spread_reduction)
 
 func _proc(delta: float) -> void:
 	var ac := _ship.artillery_controller

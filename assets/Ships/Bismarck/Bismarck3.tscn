@@ -33,6 +33,8 @@
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="31_ww2ma"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="32_afiln"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="33_movp"]
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="disp_script"]
+[ext_resource type="Resource" uid="uid://dh4tqmvx2plbn" path="res://src/artillary/Dispersion/ger_bb_main.tres" id="disp_ger_bb"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_4pvtd"]
 
@@ -121,6 +123,7 @@ script = ExtResource("6_lcoqi")
 elevation_speed = 6.0
 shell1 = SubResource("Resource_060o5")
 shell2 = SubResource("Resource_gitck")
+dispersion = ExtResource("disp_ger_bb")
 reload_time = 26.0
 traverse_speed = 6.0
 _range = 15000.0

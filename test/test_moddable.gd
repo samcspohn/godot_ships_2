@@ -92,10 +92,15 @@ func _test_reference_stability() -> void:
 	ship._update_static_mods()
 
 	var shell_ref: ShellParams = params.p().shell1
-	var curve_ref: Curve = params.p().dispersion_
+	var disp_ref: DispersionParams = params.p().dispersion
+	var curve_ref: Curve = disp_ref.h_curve
 	ship._update_static_mods()
 	_check("shell1 is the same object after rebuild", is_same(shell_ref, params.p().shell1))
-	_check("shared Curve stays shared with template", is_same(curve_ref, tmpl.dispersion_))
+	_check("dispersion is the same object after rebuild", is_same(disp_ref, params.p().dispersion))
+	# The dispersion resource is shared between every ship of a line, so a skill
+	# writing to it must be writing to this ship's own copy, not the .tres.
+	_check("layer owns its own dispersion", not is_same(disp_ref, tmpl.dispersion))
+	_check("shared Curve stays shared with template", is_same(curve_ref, tmpl.dispersion.h_curve))
 	ship.free()
 
 

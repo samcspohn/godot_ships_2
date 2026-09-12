@@ -21,15 +21,15 @@ func _init():
 var main_gun_bonus = 1.0
 func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
-	main.max_h_disp *= main_gun_bonus
-	main.max_v_disp *= main_gun_bonus
+	main.dispersion.h_disp *= main_gun_bonus
+	main.dispersion.v_disp *= main_gun_bonus
 
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.params.dynamic_mod as GunParams
 		# sec_params.reload_time *= sec_reload_mod
-		sec_params.max_h_disp *= sec_spread_mod
-		sec_params.max_v_disp *= sec_spread_mod
-		sec_params.grouping += sec_grouping_bonus
+		sec_params.dispersion.h_disp *= sec_spread_mod
+		sec_params.dispersion.v_disp *= sec_spread_mod
+		sec_params.dispersion.sigma += sec_grouping_bonus
 		# sec_params._range *= sec_range
 
 var enabled = false

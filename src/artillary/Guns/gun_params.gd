@@ -1,4 +1,5 @@
 # extends Moddable
+@tool
 extends TurretParams
 class_name GunParams
 
@@ -9,11 +10,65 @@ class_name GunParams
 @export var shell1: ShellParams
 @export var shell2: ShellParams
 
-@export var grouping: float = 1.8
-@export var dispersion_: Curve = preload("res://src/artillary/default_dispersion.tres")
-@export var v_dispersion_: Curve = preload("res://src/artillary/default_v_dispersion.tres")
-@export var max_h_disp: float = 270.0
-@export var max_v_disp: float = 135.0
+## Sigma and the dispersion ellipse, as a resource of its own so a whole line
+## can share one set of values. See DispersionParams: the ellipse is authored at
+## a reference range (20 km for a main battery), not at this gun's own range.
+## The read-only "Dispersion At Max Range" row below the resource resolves those
+## numbers against this gun's range.
+@export var dispersion: DispersionParams = preload("res://src/artillary/Dispersion/default_main.tres"):
+	set(value):
+		_unwatch_dispersion()
+		dispersion = value
+		_watch_dispersion()
+
+## Name of the transient inspector row; not stored, not a script variable, so it
+## stays out of Moddable's copy plans and out of the .tres file.
+const MAX_RANGE_DISPERSION := &"dispersion_at_max_range"
+
+
+func _init() -> void:
+	_watch_dispersion()
+
+
+## The ellipse this gun actually throws at its own maximum range. The numbers on
+## `dispersion` are quoted at that resource's reference range (20 km for a main
+## battery) so a whole line can share one resource - which means they are NOT the
+## spread this particular gun gets. This row is, so it is what to read when
+## tuning range or dispersion.
+func _get_property_list() -> Array[Dictionary]:
+	return [{
+		"name": MAX_RANGE_DISPERSION,
+		"type": TYPE_STRING,
+		"hint": PROPERTY_HINT_NONE,
+		"hint_string": "",
+		"usage": PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY,
+	}]
+
+
+func _get(property: StringName) -> Variant:
+	if property != MAX_RANGE_DISPERSION:
+		return null
+	if dispersion == null:
+		return "(no dispersion params)"
+	var d: Vector2 = dispersion.dispersion_at_max_range(_range)
+	return "%.0f x %.0f m   at %.1f km" % [d.x, d.y, _range / 1000.0]
+
+
+## Editing the shared DispersionParams (or a curve on it) has to redraw the row
+## above, and nothing propagates a sub-resource's change to its owner on its own.
+func _watch_dispersion() -> void:
+	if not Engine.is_editor_hint():
+		return
+	if dispersion != null and not dispersion.changed.is_connected(notify_property_list_changed):
+		dispersion.changed.connect(notify_property_list_changed)
+	notify_property_list_changed()
+
+
+func _unwatch_dispersion() -> void:
+	if Engine.is_editor_hint() and dispersion != null \
+			and dispersion.changed.is_connected(notify_property_list_changed):
+		dispersion.changed.disconnect(notify_property_list_changed)
+
 
 func from_params(gun_params: GunParams) -> void:
 	reload_time = gun_params.reload_time
@@ -22,11 +77,10 @@ func from_params(gun_params: GunParams) -> void:
 	_range = gun_params._range
 	shell1 = gun_params.shell1
 	shell2 = gun_params.shell2
-	grouping = gun_params.grouping
-	max_h_disp = gun_params.max_h_disp
-	max_v_disp = gun_params.max_v_disp
+	dispersion = gun_params.dispersion
 
 func to_dict() -> Dictionary:
+	var d := _disp()
 	return {
 		"reload_time": reload_time,
 		"traverse_speed": traverse_speed,
@@ -42,10 +96,20 @@ func to_dict() -> Dictionary:
 			"drag": shell2.drag,
 			"damage": shell2.damage
 		},
-		"grouping": grouping,
-		"max_h_disp": max_h_disp,
-		"max_v_disp": max_v_disp
+		"sigma": d.sigma,
+		"h_disp": d.h_disp,
+		"v_disp": d.v_disp,
+		"reference_range": d.reference_range
 	}
+
+
+## The dispersion block, creating a default one if this params has none. Only the
+## numbers travel over the wire / through a Dictionary — the curves come from the
+## resource both ends loaded out of the ship scene.
+func _disp() -> DispersionParams:
+	if dispersion == null:
+		dispersion = DispersionParams.new()
+	return dispersion
 
 func to_bytes() -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
@@ -65,9 +129,11 @@ func to_bytes() -> PackedByteArray:
 	writer.put_float(shell2.damage)
 	writer.put_float(shell2.penetration_modifier)
 
-	writer.put_float(grouping)
-	writer.put_float(max_h_disp)
-	writer.put_float(max_v_disp)
+	var d := _disp()
+	writer.put_float(d.sigma)
+	writer.put_float(d.h_disp)
+	writer.put_float(d.v_disp)
+	writer.put_float(d.reference_range)
 
 	return writer.get_data_array()
 
@@ -87,9 +153,11 @@ func from_dict(d: Dictionary) -> void:
 	shell2.speed = s2.get("speed", 820)
 	shell2.drag = s2.get("drag", 0.00895)
 	shell2.damage = s2.get("damage", 10000)
-	grouping = d.get("grouping", 1.8)
-	max_h_disp = d.get("max_h_disp", 270.0)
-	max_v_disp = d.get("max_v_disp", 135.0)
+	var disp := _disp()
+	disp.sigma = d.get("sigma", 1.8)
+	disp.h_disp = d.get("h_disp", 270.0)
+	disp.v_disp = d.get("v_disp", 135.0)
+	disp.reference_range = d.get("reference_range", DispersionParams.MAIN_REFERENCE_RANGE)
 
 func from_bytes(b: PackedByteArray) -> void:
 	var reader = StreamPeerBuffer.new()
@@ -106,18 +174,8 @@ func from_bytes(b: PackedByteArray) -> void:
 	shell2.drag = reader.get_float()
 	shell2.damage = reader.get_float()
 	shell2.penetration_modifier = reader.get_float()
-	grouping = reader.get_float()
-	max_h_disp = reader.get_float()
-	max_v_disp = reader.get_float()
-
-
-#func calculate_dispersed_launch(aim_point: Vector3, gun_position: Vector3, shell: ShellParams, target_mod: TargetMod) -> Vector3:
-	##var shell: ShellParams = shell1 if shell_index == 0 else shell2
-	#return DispersionCalculator.calculate_dispersed_launch(
-		#aim_point,
-		#gun_position,
-		#shell,
-		#grouping * (target_mod.grouping if target_mod else 1.0),
-		#max_h_disp * (target_mod.h_spread if target_mod else 1.0),
-		#max_v_disp * (target_mod.v_spread if target_mod else 1.0)
-	#)
+	var disp := _disp()
+	disp.sigma = reader.get_float()
+	disp.h_disp = reader.get_float()
+	disp.v_disp = reader.get_float()
+	disp.reference_range = reader.get_float()

@@ -30,6 +30,7 @@
 [ext_resource type="PackedScene" uid="uid://duqydpqkhoko4" path="res://src/aviation/spotter_plane.tscn" id="17_6vanc"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="29_pl0w1"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="30_8tg1i"]
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="disp_script"]
 
 [sub_resource type="Resource" id="Resource_vx2y6"]
 script = ExtResource("3_njww4")
@@ -114,16 +115,22 @@ ricochet_angle = 0.785398
 overmatch = 38
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
+[sub_resource type="Resource" id="Resource_disp_6vanc"]
+script = ExtResource("disp_script")
+sigma = 1.0
+h_curve = ExtResource("11_3ralp")
+v_curve = ExtResource("12_8261o")
+reference_range = 5000.0
+h_disp = 180.0
+v_disp = 90.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_6vanc"]
 script = ExtResource("7_fsyle")
 elevation_speed = 50.0
 shell1 = SubResource("Resource_lv0yt")
 shell2 = SubResource("Resource_2kkbv")
-grouping = 1.0
-dispersion_ = ExtResource("11_3ralp")
-v_dispersion_ = ExtResource("12_8261o")
-max_h_disp = 180.0
-max_v_disp = 90.0
+dispersion = SubResource("Resource_disp_6vanc")
 reload_time = 7.5
 traverse_speed = 50.0
 _range = 5000.0
@@ -159,14 +166,20 @@ ricochet_angle = 0.785398
 overmatch = 26
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
+[sub_resource type="Resource" id="Resource_disp_8261o"]
+script = ExtResource("disp_script")
+sigma = 1.0
+reference_range = 5000.0
+h_disp = 169.378
+v_disp = 80.341
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_8261o"]
 script = ExtResource("7_fsyle")
 elevation_speed = 50.0
 shell1 = SubResource("Resource_4w3ul")
 shell2 = SubResource("Resource_3ralp")
-grouping = 1.0
-max_h_disp = 150.0
-max_v_disp = 70.0
+dispersion = SubResource("Resource_disp_8261o")
 reload_time = 3.3
 traverse_speed = 50.0
 _range = 4400.0

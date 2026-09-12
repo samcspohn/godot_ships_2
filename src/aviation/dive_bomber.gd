@@ -3,14 +3,10 @@ class_name DiveBomberAircraft
 
 @export var shell_params: ShellParams
 
-# Dispersion parameters normally supplied by GunParams - baked in here since a
-# dive bomber has no gun/turret/target-mod to source them from.
-@export var grouping: float = 1.8
-@export var dispersion_curve: Curve = preload("res://src/artillary/default_dispersion.tres")
-@export var v_dispersion_curve: Curve = preload("res://src/artillary/default_dispersion.tres")
-@export var max_h_disp: float = 270.0
-@export var max_v_disp: float = 135.0
-@export var max_range: float = 3000.0  # used only to sample dispersion_curve (t = dist / max_range)
+# Dispersion normally comes off the firing gun's GunParams - a dive bomber has no
+# gun/turret/target-mod to source one from, so it carries its own block.
+@export var dispersion: DispersionParams
+@export var max_range: float = 3000.0  # used only to sample the dispersion curves (t = dist / max_range)
 
 var _dispersion_calculator: DispersionCalculator
 
@@ -26,13 +22,13 @@ func _ready() -> void:
 # Mirrors Gun.fire()'s dispersion + fireBullet usage, minus the gun/target-mod
 # plumbing that doesn't apply to an aircraft-dropped bomb.
 func fire_ordnance(_direction: Vector2) -> bool:
+	if shell_params == null or dispersion == null:
+		return true
 
 	var aim_point := Vector3(global_position.x, 0.0, global_position.z)
 	for i in range(2):
 		var dispersed_velocity: Variant = _dispersion_calculator.calculate_dispersed_launch(
-				aim_point, global_position, shell_params,
-				grouping, grouping,
-				max_range, dispersion_curve, v_dispersion_curve, max_h_disp, max_v_disp)
+				aim_point, global_position, shell_params, max_range, dispersion)
 		if dispersed_velocity == null:
 			return true
 		var t = ProjectileManager.get_current_time()
@@ -70,7 +66,7 @@ static func make_preview_meshes(parent: Node3D, count: int) -> Array[MeshInstanc
 	return meshes
 
 # Lays out one square per aircraft abreast of drop_center, facing direction,
-# sized to twice max_h_disp (matching the actual bomb spread).
+# sized to twice the drop's horizontal ellipse (matching the actual bomb spread).
 func update_preview(meshes: Array[MeshInstance3D], do_show: bool, drop_center: Vector2, direction: Vector2, formation_spacing: float) -> void:
 	if not do_show:
 		for m in meshes:
@@ -81,7 +77,7 @@ func update_preview(meshes: Array[MeshInstance3D], do_show: bool, drop_center: V
 		dir = Vector2(0.0, 1.0)
 	else:
 		dir = dir.normalized()
-	var side: float = max_h_disp * 2.0
+	var side: float = (dispersion.h_at(max_range, max_range) * 2.0) if dispersion != null else 0.0
 	for i in range(meshes.size()):
 		var lateral := Aircraft.attack_lateral_offset(i, meshes.size(), formation_spacing, dir)
 		var pos_xz := drop_center + lateral

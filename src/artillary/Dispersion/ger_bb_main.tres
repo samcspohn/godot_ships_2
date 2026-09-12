@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="DispersionParams" format=3 uid="uid://dh4tqmvx2plbn"]
+
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="1_disp"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="2_hcrv"]
+[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="3_vcrv"]
+
+[resource]
+script = ExtResource("1_disp")
+h_disp = 270.0
+v_disp = 120.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"

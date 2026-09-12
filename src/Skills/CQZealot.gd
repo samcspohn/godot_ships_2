@@ -29,13 +29,13 @@ func _a(ship: Ship):
 	var main = ship.artillery_controller.params.dynamic_mod as GunParams
 	main.reload_time *= reload_modifier
 	main._range *= base_range_modifier
-	main.max_h_disp *= base_spread_modifier
-	main.max_v_disp *= base_spread_modifier
+	main.dispersion.h_disp *= base_spread_modifier
+	main.dispersion.v_disp *= base_spread_modifier
 	for sec in ship.secondary_controller.sub_controllers:
 		var sec_params = sec.params.dynamic_mod as GunParams
 		sec_params.reload_time *= reload_modifier
-		sec_params.max_h_disp *= base_spread_modifier
-		sec_params.max_v_disp *= base_spread_modifier
+		sec_params.dispersion.h_disp *= base_spread_modifier
+		sec_params.dispersion.v_disp *= base_spread_modifier
 
 var num_enemies = 0
 func _proc(_delta: float) -> void:

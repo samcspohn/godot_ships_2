@@ -2,6 +2,8 @@
 
 [ext_resource type="Script" uid="uid://bakgvhum7yu68" path="res://src/aviation/dive_bomber.gd" id="1_dbomb"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="2_shell"]
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="3_disp"]
+[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="4_hcrv"]
 
 [sub_resource type="Resource" id="Resource_dbshell"]
 script = ExtResource("2_shell")
@@ -16,14 +18,23 @@ fuze_delay = 0.001
 type = 0
 overmatch = 40
 
+[sub_resource type="Resource" id="Resource_dbdisp"]
+script = ExtResource("3_disp")
+sigma = 1.8
+h_curve = ExtResource("4_hcrv")
+v_curve = ExtResource("4_hcrv")
+reference_range = 200.0
+h_disp = 50.0
+v_disp = 100.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0dff1"]
 albedo_color = Color(0.31431594, 0.31431618, 0.31431603, 1)
 
 [node name="DiveBomber" type="Node3D" unique_id=1779883306]
 script = ExtResource("1_dbomb")
 shell_params = SubResource("Resource_dbshell")
-max_h_disp = 50.0
-max_v_disp = 100.0
+dispersion = SubResource("Resource_dbdisp")
 max_range = 200.0
 
 [node name="CSGCylinder3D" type="CSGCylinder3D" parent="." unique_id=108552329]

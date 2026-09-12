@@ -767,7 +767,7 @@ static func _peak_target_mod(shooter: Ship, mod: Moddable, peak: bool) -> Target
 ## walk in it.
 static func _battery(p: GunParams, base: GunParams, mod: TargetMod,
 		gun_count: int, range_m: float, citadel_guarantee: bool) -> Variant:
-	if p == null or gun_count <= 0 or p.reload_time <= 0.0:
+	if p == null or p.dispersion == null or gun_count <= 0 or p.reload_time <= 0.0:
 		return null
 	if p.shell1 == null and p.shell2 == null:
 		return null
@@ -775,7 +775,7 @@ static func _battery(p: GunParams, base: GunParams, mod: TargetMod,
 		return null
 	var h_spread: float = mod.h_spread if mod != null else 1.0
 	var v_spread: float = mod.v_spread if mod != null else 1.0
-	var grouping: float = p.grouping * (mod.grouping if mod != null else 1.0)
+	var grouping: float = p.dispersion.sigma * (mod.grouping if mod != null else 1.0)
 	# Gun.fire() normalises the range fraction against the BASE range, so a range
 	# upgrade widens the group at a given distance rather than moving the whole
 	# curve out with it.
@@ -1171,25 +1171,15 @@ static func _aim_candidates(target: Ship) -> Array:
 	return out
 
 
-## The salvo's spread in metres at `dist`, horizontal and vertical. Same curve
-## sampling DispersionCalculator._sample_dispersion() does, including the linear
-## extrapolation past maximum range, and the same TargetMod scaling on the
-## ceilings that Gun.fire() applies.
+## The salvo's spread in metres at `dist`, horizontal and vertical. Straight off
+## the gun's own DispersionParams, with the same TargetMod scaling Gun.fire()
+## applies.
 static func _dispersion_at(p: GunParams, base_range: float, h_spread: float,
 		v_spread: float, dist: float) -> Vector2:
-	var t: float = maxf(dist / maxf(base_range, 1.0), 0.0)
-	return Vector2(
-		_sample_curve(p.dispersion_, t, p.max_h_disp * h_spread),
-		_sample_curve(p.v_dispersion_, t, p.max_v_disp * v_spread))
-
-
-static func _sample_curve(curve: Curve, t: float, max_disp: float) -> float:
-	if curve == null:
-		return 0.0
-	if t <= 1.0:
-		return curve.sample(t) * max_disp
-	var slope: float = curve.get_point_left_tangent(curve.point_count - 1)
-	return (curve.sample(1.0) + slope * (t - 1.0)) * max_disp
+	if p.dispersion == null:
+		return Vector2.ZERO
+	var d: Vector2 = p.dispersion.dispersion_at(dist, base_range)
+	return Vector2(d.x * h_spread, d.y * v_spread)
 
 
 ## Where one shell of a salvo aimed at `candidate` comes down, given that shell's

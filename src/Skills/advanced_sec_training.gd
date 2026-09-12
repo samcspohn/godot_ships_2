@@ -37,9 +37,9 @@ func _a(ship: Ship):
 	for sec: SecSubController in ship.secondary_controller.sub_controllers:
 		var params: GunParams = sec.params.dynamic_mod as GunParams
 		params.reload_time *= RELOAD_MOD
-		params.grouping += GROUPING_MOD
-		params.max_h_disp *= SPREAD_MOD
-		params.max_v_disp *= SPREAD_MOD
+		params.dispersion.sigma += GROUPING_MOD
+		params.dispersion.h_disp *= SPREAD_MOD
+		params.dispersion.v_disp *= SPREAD_MOD
 
 var num_enemies = 0
 var priority_target: Ship = null

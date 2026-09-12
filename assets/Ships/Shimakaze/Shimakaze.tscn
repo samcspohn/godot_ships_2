@@ -33,6 +33,7 @@
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="28_omo1p"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="29_2by4h"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="30_movp"]
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="disp_script"]
 
 [sub_resource type="Resource" id="Resource_v7rh5"]
 script = ExtResource("3_8soek")
@@ -103,14 +104,20 @@ type = 0
 overmatch = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
+[sub_resource type="Resource" id="Resource_disp_xdnm8"]
+script = ExtResource("disp_script")
+sigma = 2.25
+reference_range = 20000.0
+h_disp = 194.737
+v_disp = 104.167
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_xdnm8"]
 script = ExtResource("5_o13ib")
 elevation_speed = 5.0
 shell1 = SubResource("Resource_wm6vg")
 shell2 = SubResource("Resource_7xkp8")
-grouping = 2.25
-max_h_disp = 100.0
-max_v_disp = 50.0
+dispersion = SubResource("Resource_disp_xdnm8")
 reload_time = 7.0
 traverse_speed = 10.0
 _range = 10000.0

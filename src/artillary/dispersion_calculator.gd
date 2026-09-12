@@ -222,38 +222,31 @@ func _apply_citadel_guarantee() -> void:
 ## Perturbs a launch vector by applying dispersion as world-space offsets to the aim point.
 ## h = lateral (perpendicular to aim in horizontal plane)
 ## v = vertical (elevation angle adjustment)
-## sigma_h = WoWs-style sigma: the number of standard deviations the ellipse
-##   edge represents. Higher sigma -> shells cluster tighter toward the aim
-##   point; lower sigma spreads them out. Typical naval values are ~1.5 - 2.1.
-## _sigma_v = reserved for future per-axis sigma asymmetry; unused for now.
-## h_dispersion_curve / max_h_disp = curve + scale for horizontal dispersion vs. range.
-## v_dispersion_curve / max_v_disp = curve + scale for vertical dispersion vs. range.
-static func sample_dispersion(curve: Curve, t: float, max_disp: float) -> float:
-	if t <= 1.0:
-		return curve.sample(t) * max_disp
-	var slope := curve.get_point_left_tangent(curve.point_count - 1)
-	return (curve.sample(1.0) + slope * (t - 1.0)) * max_disp
-
-
+## disp = the gun's DispersionParams: sigma plus the ellipse authored at its
+##   reference range. Sigma is the number of standard deviations the ellipse edge
+##   represents — higher sigma clusters shells toward the aim point, lower spreads
+##   them out. Typical naval values are ~1.5 - 2.1.
+## max_range = the gun's BASE range, which the dispersion curves are normalised
+##   against, so a range upgrade widens the group at a given distance instead of
+##   dragging the whole curve out with it.
+## sigma_mult / h_spread / v_spread = the firing TargetMod's per-shot scaling.
 func calculate_dispersed_launch(
 		aim_point: Vector3,
 		gun_position: Vector3,
 		shell_params: ShellParams,
-		sigma_h: float,
-		_sigma_v: float,
 		max_range: float,
-		h_dispersion_curve: Curve,
-		v_dispersion_curve: Curve,
-		max_h_disp: float,
-		max_v_disp: float) -> Vector3:
+		disp: DispersionParams,
+		sigma_mult: float = 1.0,
+		h_spread: float = 1.0,
+		v_spread: float = 1.0) -> Vector3:
 
 	var dist_to_target := (aim_point - gun_position).length()
-	var t := maxf(dist_to_target / max_range, 0.0)
-	var dispersion_h_m := sample_dispersion(h_dispersion_curve, t, max_h_disp)
-	var dispersion_v_m := sample_dispersion(v_dispersion_curve, t, max_v_disp)
+	var dispersion: Vector2 = disp.dispersion_at(dist_to_target, max_range)
+	var dispersion_h_m := dispersion.x * h_spread
+	var dispersion_v_m := dispersion.y * v_spread
 
 	if _shell_index >= SHELL_COUNT:
-		_new_salvo(sigma_h)
+		_new_salvo(disp.sigma * sigma_mult)
 
 	var h_offset := _h_offsets[_shell_index]
 	var v_offset := _v_offsets[_shell_index]

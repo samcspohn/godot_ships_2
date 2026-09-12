@@ -36,6 +36,7 @@
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="30_1brck"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="31_vafbj"]
 [ext_resource type="PackedScene" uid="uid://b1v7uh5a6feq1" path="res://assets/turrets/IJN_610mm_5t.tscn" id="34_vafbj"]
+[ext_resource type="Script" uid="uid://bt4mqhp2dxlvn" path="res://src/artillary/dispersion_params.gd" id="disp_script"]
 
 [sub_resource type="Resource" id="Resource_cdljw"]
 script = ExtResource("3_xqdg0")
@@ -105,14 +106,20 @@ ricochet_angle = 0.785398
 overmatch = 38
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
+[sub_resource type="Resource" id="Resource_disp_eirte"]
+script = ExtResource("disp_script")
+sigma = 2.2
+reference_range = 20000.0
+h_disp = 125.365
+v_disp = 28.567
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_eirte"]
 script = ExtResource("4_smt5x")
 elevation_speed = 8.0
 shell1 = SubResource("Resource_e8hl0")
 shell2 = SubResource("Resource_lyw5o")
-grouping = 2.2
-max_h_disp = 70.0
-max_v_disp = 15.0
+dispersion = SubResource("Resource_disp_eirte")
 reload_time = 6.0
 traverse_speed = 8.0
 _range = 10900.0
@@ -144,15 +151,21 @@ type = 0
 overmatch = 22
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
+[sub_resource type="Resource" id="Resource_disp_klw4b"]
+script = ExtResource("disp_script")
+sigma = 1.0
+v_curve = ExtResource("11_1brck")
+reference_range = 5000.0
+h_disp = 106.241
+v_disp = 51.857
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_klw4b"]
 script = ExtResource("4_smt5x")
 elevation_speed = 50.0
 shell1 = SubResource("Resource_8hv6v")
 shell2 = SubResource("Resource_xqdg0")
-grouping = 1.0
-v_dispersion_ = ExtResource("11_1brck")
-max_h_disp = 90.0
-max_v_disp = 45.0
+dispersion = SubResource("Resource_disp_klw4b")
 reload_time = 3.0
 traverse_speed = 50.0
 _range = 4200.0

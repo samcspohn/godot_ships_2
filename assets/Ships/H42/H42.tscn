@@ -9,10 +9,8 @@
 [ext_resource type="Resource" uid="uid://8cp40uc7e88c" path="res://src/artillary/Guns/sec_gun1.tres" id="5_cg3gh"]
 [ext_resource type="Script" uid="uid://bmckcfm6ohb58" path="res://src/concealment/concealment_params.gd" id="5_dxypq"]
 [ext_resource type="PackedScene" uid="uid://bjbwq876urf86" path="res://assets/turrets/GER_450mm_2b_rf.tscn" id="5_qmp4j"]
-[ext_resource type="Curve" uid="uid://b0pf7bur34d3n" path="res://src/artillary/default_dispersion.tres" id="6_tnqux"]
 [ext_resource type="PackedScene" uid="uid://ruv6mhxhqe6v" path="res://assets/turrets/GER_150mm_2b_rf.tscn" id="7_cg3gh"]
 [ext_resource type="Script" uid="uid://d0r4vucnli08f" path="res://src/artillary/Shells/shell_params.gd" id="7_dxypq"]
-[ext_resource type="Curve" uid="uid://comrss3kxqy4s" path="res://src/artillary/default_v_dispersion.tres" id="9_cwbsn"]
 [ext_resource type="Script" uid="uid://bucnglt43enq8" path="res://src/movement/movement_params.gd" id="10_dxypq"]
 [ext_resource type="Script" uid="uid://dnb0sat2lxj21" path="res://src/Consumable/consumable_item.gd" id="11_fdfuf"]
 [ext_resource type="Resource" uid="uid://dnhj8jhxnv4wa" path="res://assets/Ships/H42/GER_128dp.tres" id="11_jk17q"]
@@ -34,6 +32,7 @@
 [ext_resource type="Resource" uid="uid://cypes1be6ipnd" path="res://assets/particles/templates/torpedo_wake_template.tres" id="26_sj1sh"]
 [ext_resource type="Script" uid="uid://cqvqu5qahwwrs" path="res://addons/Godot-Unified-Particle-System/particles/particle_emitter.gd" id="27_3x33r"]
 [ext_resource type="Resource" uid="uid://y0b3hgvb71lx" path="res://assets/particles/templates/funnel_exhaust_smoke_template.tres" id="28_m24ri"]
+[ext_resource type="Resource" uid="uid://dh4tqmvx2plbn" path="res://src/artillary/Dispersion/ger_bb_main.tres" id="disp_ger_bb"]
 
 [sub_resource type="Resource" id="Resource_b6c11"]
 script = ExtResource("3_uym8b")
@@ -105,8 +104,7 @@ script = ExtResource("5_2oa6y")
 elevation_speed = 4.0
 shell1 = SubResource("Resource_ghpuu")
 shell2 = SubResource("Resource_nht2y")
-max_h_disp = 214.465
-max_v_disp = 107.233
+dispersion = ExtResource("disp_ger_bb")
 reload_time = 28.0
 traverse_speed = 4.0
 _range = 15500.0

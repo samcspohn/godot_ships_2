@@ -196,7 +196,7 @@ func _refresh_solution(ship: Ship, enemy: Ship) -> void:
 	dominant_tof = tof if tof > 0.0 else DEFAULT_TOF
 
 	# Dispersion at this range, in metres of ellipse width, sampled off the same
-	# curves the shooter's own gunnery uses.
+	# params the shooter's own gunnery uses.
 	var dist: float = ship.global_position.distance_to(enemy.global_position)
-	var t: float = maxf(dist / maxf(gp._range, 1.0), 0.0)
-	dominant_dispersion = DispersionCalculator.sample_dispersion(gp.dispersion_, t, gp.max_h_disp)
+	if gp.dispersion != null:
+		dominant_dispersion = gp.dispersion.h_at(dist, gp._range)
