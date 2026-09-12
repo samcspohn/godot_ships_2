@@ -154,6 +154,10 @@ func is_collision_imminent() -> bool:
 	return _impl.is_collision_imminent()
 
 
+func is_torpedo_override_active() -> bool:
+	return _impl.is_torpedo_override_active()
+
+
 func get_desired_heading() -> float:
 	return _impl.get_desired_heading()
 

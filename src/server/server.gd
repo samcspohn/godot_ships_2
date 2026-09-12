@@ -425,7 +425,7 @@ func spawn_player(id, player_name):
 		var pid = players[p_name][2]
 		# notify new client of current players
 		if not is_bot:
-			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV3 or p.control is BotControllerV4)
+			spawn_players_client.rpc_id(id, pid,p.name, p.global_position, p.global_rotation.y, p.team.team_id, p_ship, p.control is BotControllerV4)
 		#notify current players of new player
 		if not p.team.is_bot:
 			spawn_players_client.rpc_id(pid, id, player.name, spawn_pos, rot_y, team_id, ship, is_bot)

@@ -3,9 +3,8 @@ use std::f64::consts::PI;
 
 use super::{
     ShipNavigator, SteeringChoice, ThreatEval, BOW_STERN_CLIP_START, DODGE_COMMITMENT_BIAS,
-    DODGE_COMMITMENT_DURATION, GRAZE_MIN_FACTOR, PARKED_SPEED_THRESHOLD,
-    PURE_PURSUIT_MIN_IMPROVEMENT, SHELL_NAV_BUDGET, SHELL_TIME_TOLERANCE, SOFT_TERRAIN_PENALTY,
-    TORPEDO_NAV_BUDGET, TORPEDO_VIRTUAL_CALIBER,
+    DODGE_COMMITMENT_DURATION, GRAZE_MIN_FACTOR, PARKED_SPEED_THRESHOLD, SHELL_TIME_TOLERANCE,
+    SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER,
 };
 use crate::nav::types::{angle_difference, clamp_f, lerp_f, normalize_angle, ArcPoint};
 
@@ -141,6 +140,7 @@ impl ShipNavigator {
 
             let cal_weight = (TORPEDO_VIRTUAL_CALIBER * TORPEDO_VIRTUAL_CALIBER) / (200.0 * 200.0);
             let mut worst = 0.0f32;
+            let mut hit_time = f32::INFINITY;
 
             for apt in arc {
                 // Project torpedo position to arc time
@@ -165,6 +165,9 @@ impl ShipNavigator {
                 // Torpedo hit - full damage, no angle discount
                 if cal_weight > worst {
                     worst = cal_weight;
+                }
+                if apt.time < hit_time {
+                    hit_time = apt.time;
                 }
             }
 
@@ -200,6 +203,7 @@ impl ShipNavigator {
                         && along_beam_ext.abs() <= hsb + obs.radius
                     {
                         worst = cal_weight;
+                        hit_time = t;
                         break;
                     }
                     t += step_time;
@@ -207,6 +211,9 @@ impl ShipNavigator {
             }
 
             result.torpedo_score += worst;
+            if hit_time < result.torpedo_time {
+                result.torpedo_time = hit_time;
+            }
         }
 
         result
@@ -290,28 +297,11 @@ impl ShipNavigator {
             }
         }
 
-        // shells_safe: true when no shell can possibly intercept the ship before
-        // landing.  Quick geometric pre-filter: if the ship's maximum reachable
-        // radius in the shell's remaining flight time does not overlap the landing
-        // position (padded by half the ship's extents), the shell is guaranteed to
-        // miss without any arc simulation.
-        let mut shells_safe = true;
-        if !self.incoming_shells.is_empty() {
-            let quick_hsl = self.params.ship_length * 0.5;
-            let quick_hsb = self.params.ship_beam * 0.5;
-            for shell in &self.incoming_shells {
-                if shell.time_remaining < 0.5 {
-                    continue;
-                }
-                let max_reach = self.params.max_speed * shell.time_remaining + quick_hsl + quick_hsb;
-                if self.state.position.distance_to(shell.landing_pos) <= max_reach {
-                    shells_safe = false;
-                    break;
-                }
-            }
-        }
-
-        if terrain_safe && obstacles_safe && shells_safe {
+        // Shells deliberately do NOT gate the fast path any more.  They only
+        // break ties inside the torpedo override, which cannot be reached when
+        // obstacles_safe holds -- so a ship in open water under gunfire takes the
+        // one-arc fast path, and SkillEvade does the dodging.
+        if terrain_safe && obstacles_safe {
             let fast_path_lookahead = self.params.turning_circle_radius * 1.5;
             self.winning_arc =
                 self.predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
@@ -353,6 +343,11 @@ impl ShipNavigator {
             throttle: i32,
         }
 
+        // Any torpedo in the obstacle set puts the candidate list into override
+        // shape.  Cheap superset of "a torpedo actually threatens an arc" -- the
+        // real test needs the simulated arcs, which do not exist yet.
+        let torpedoes_present = self.obstacles.values().any(|o| o.is_torpedo());
+
         let rudder_offsets: [f32; 7] = [0.0, 0.3, -0.3, 0.6, -0.6, -1.0, 1.0];
         // Include all 7 offsets (+-0.3, +-0.6, +-1.0) so the ship can execute hard
         // full-rudder turns to dodge torpedoes - previously only +-0.3 were tried.
@@ -384,6 +379,16 @@ impl ShipNavigator {
             add_candidate(0.6, -1);
             add_candidate(-1.0, -1);
             add_candidate(1.0, -1);
+
+            // Outrunning or combing a spread is frequently a FULL AHEAD
+            // manoeuvre, and the offsets above only ever sample the throttle the
+            // navigator already wanted (plus reverse).  Without these the
+            // override could not choose speed at all.
+            if torpedoes_present && desired_throttle < 4 {
+                for &off in rudder_offsets.iter() {
+                    add_candidate(desired_rudder + off, 4);
+                }
+            }
         }
 
         let n_candidates = candidates.len();
@@ -761,153 +766,91 @@ impl ShipNavigator {
         }
 
         // =========================================================
-        // Two-pass selection
+        // Selection
         // =========================================================
-        // Pass 1: best pure-navigation score
-        let mut best_nav = f32::INFINITY;
-        for p in &pass_data {
-            if p.nav_score < best_nav {
-                best_nav = p.nav_score;
-            }
-        }
+        // Shell evasion no longer lives here.  A steering optimiser that scores
+        // "time to waypoint, subject to not being hit" has a degenerate optimum
+        // -- stop -- and the enemy's fire control closes the loop around it: the
+        // bot slows, the next salvo lands short, and the locally-optimal answer
+        // to a short salvo is to keep the speed change.  That converged on zero
+        // speed, which is the easiest possible thing to hit.  SkillEvade owns
+        // shell evasion now, at the behaviour layer, where it can commit to a
+        // pattern across salvos instead of re-deciding every frame.
+        //
+        // Two regimes remain:
+        //   * no torpedo threatens any arc  -> pure navigation.
+        //   * a torpedo threatens some arc  -> torpedo avoidance HARD OVERRIDES
+        //     navigation, ranked lexicographically.
+        let torpedoes_threaten = pass_data.iter().any(|p| p.threats.torpedo_score > 0.0);
+        self.torpedo_override_active = torpedoes_threaten;
 
-        // Pass 2: threat budgets
-        // Shell budget: how many extra nav-seconds we accept to get a better shell angle.
-        //   Zeroed when stuck_override_active (ship pushes through shell fire).
-        // Torpedo budget: much larger - surviving a torpedo is worth a major detour.
-        let mut has_torpedoes = false;
-        for obs in self.obstacles.values() {
-            if obs.is_torpedo() {
-                has_torpedoes = true;
-                break;
-            }
-        }
-
-        let shell_budget = if shells_safe || self.stuck_override_active {
-            0.0
-        } else {
-            SHELL_NAV_BUDGET
-        };
-        let torpedo_budget = if has_torpedoes { TORPEDO_NAV_BUDGET } else { 0.0 };
-        let budget_threshold = best_nav + shell_budget + torpedo_budget;
-
-        // Pre-compute the minimum raw threat among budget-eligible candidates.
-        // Normalising to relative scores means the best-achievable threat = 0.
-        // When all arcs are hit equally (min > 0, e.g. ship stationary broadside),
-        // every relative score is 0 and nav_score becomes the natural tiebreaker -
-        // the arc that gets the ship to the destination wins instead of one that
-        // merely presents a slightly different angle to the incoming shell.
-        let mut min_shell_eligible = 0.0f32;
-        let mut min_torp_eligible = 0.0f32;
-        {
-            let mut ms = f32::INFINITY;
-            let mut mt = f32::INFINITY;
-            for p in &pass_data {
-                if p.nav_score > budget_threshold {
-                    continue;
-                }
-                if !self.stuck_override_active {
-                    ms = ms.min(p.threats.shell_score);
-                }
-                mt = mt.min(p.threats.torpedo_score);
-            }
-            if ms < f32::INFINITY {
-                min_shell_eligible = ms;
-            }
-            if mt < f32::INFINITY {
-                min_torp_eligible = mt;
-            }
-        }
-
-        // Pass 2: pick lowest relative threat within budget, nav_score as tiebreaker.
         let mut best_idx: i32 = -1;
-        let mut best_eff_threat = f32::INFINITY;
-        for i in 0..pass_data.len() {
-            if pass_data[i].nav_score > budget_threshold {
-                continue;
-            }
-            if pass_data[i].any_obs_collision {
-                any_collision = true;
-            }
 
-            // Shell score: suppressed during stuck override; otherwise normalised to
-            // best-achievable so that "equally bad" arcs all score 0 here.
-            let shell_t = if self.stuck_override_active {
-                0.0
-            } else {
-                pass_data[i].threats.shell_score - min_shell_eligible
-            };
-            let mut eff_threat = shell_t + (pass_data[i].threats.torpedo_score - min_torp_eligible);
-
-            // Commitment bias: penalise candidates opposing the committed dodge direction,
-            // but only when this arc is strictly worse than the minimum-threat arc.
-            if self.dodge_committed_rudder != 0.0 && eff_threat > 0.0 {
-                if pass_data[i].rudder * self.dodge_committed_rudder < -0.01 {
-                    eff_threat += DODGE_COMMITMENT_BIAS;
-                }
-            }
-
-            // Primary criterion: lowest relative threat.
-            // Tiebreaker (within floating-point noise): lowest nav_score.
-            let better_threat = eff_threat < best_eff_threat;
-            let equal_threat = !better_threat && eff_threat <= best_eff_threat + 1e-4;
-            let better_nav = best_idx >= 0 && pass_data[i].nav_score < pass_data[best_idx as usize].nav_score;
-
-            if better_threat || (equal_threat && better_nav) {
-                best_eff_threat = eff_threat;
-                best_idx = i as i32;
-            }
-        }
-
-        // Safety fallback: best_nav is always within budget, so best_idx should
-        // never be -1 when n_pass > 0.  Guard anyway.
-        if best_idx == -1 {
+        if torpedoes_threaten {
+            // Lexicographic ranking.  Each key is only consulted when every key
+            // before it ties, so navigation cannot buy its way past a torpedo.
+            //   1. fewest torpedo hits          (torpedo_score is 100 per hit)
+            //   2. latest first impact          (buys another decision cycle)
+            //   3. lowest shell threat          (vary speed/heading against guns
+            //                                    while dodging -- the arcs here
+            //                                    already differ in throttle)
+            //   4. lowest nav score             (get on with the mission)
+            let mut best: Option<(f32, f32, f32, f32)> = None;
             for i in 0..pass_data.len() {
-                if pass_data[i].nav_score <= best_nav + 1e-3 {
-                    best_idx = i as i32;
-                    break;
+                let p = &pass_data[i];
+                if p.any_obs_collision {
+                    any_collision = true;
                 }
-            }
-        }
 
-        // =========================================================
-        // Pure-pursuit baseline gate
-        // Only deviate from the navigator's desired rudder when the
-        // winning arc offers a meaningful reduction in combined threat.
-        // If the improvement over pure pursuit is < PURE_PURSUIT_MIN_IMPROVEMENT
-        // (15 %), revert to pure pursuit to avoid unnecessary jinking.
-        // Disabled when stuck_override_active (nav intent must push through).
-        // =========================================================
-        if best_idx != -1 && !self.stuck_override_active && !shells_safe {
-            // Find pass_data entry that matches the pure-pursuit candidate
-            // (desired_rudder, desired_throttle).  It is always added first as
-            // rudder_offsets[0] == 0, so the closest-rudder match at the right
-            // throttle will be it.
-            let mut pp_idx: i32 = -1;
-            let mut pp_rudder_diff = f32::INFINITY;
-            for i in 0..pass_data.len() {
-                if pass_data[i].throttle != desired_throttle {
-                    continue;
+                // Commitment: a candidate that reverses an in-progress dodge is
+                // ranked as if it ate one more torpedo.  Half a second of
+                // hysteresis is what stops the ship dithering between two
+                // symmetric escapes and taking neither.
+                let mut torp = p.threats.torpedo_score;
+                if self.dodge_committed_rudder != 0.0
+                    && p.rudder * self.dodge_committed_rudder < -0.01
+                {
+                    torp += DODGE_COMMITMENT_BIAS;
                 }
-                let diff = (pass_data[i].rudder - desired_rudder).abs();
-                if diff < pp_rudder_diff {
-                    pp_rudder_diff = diff;
-                    pp_idx = i as i32;
-                }
-            }
-            if pp_idx != -1 && best_idx != pp_idx {
-                let pp_threat = pass_data[pp_idx as usize].threats.combined();
-                let win_threat = pass_data[best_idx as usize].threats.combined();
-                // Only gate when pure pursuit actually has a non-trivial threat score.
-                // When pp_threat == 0 both arcs are equally safe and nav score already
-                // governs, so no gating is needed.
-                if pp_threat > 1e-4 {
-                    let improvement = (pp_threat - win_threat) / pp_threat;
-                    if improvement < PURE_PURSUIT_MIN_IMPROVEMENT {
-                        best_idx = pp_idx;
+
+                // Negated so that "larger is worse" holds for every key and the
+                // whole tuple can be compared with a single <.
+                let key = (torp, -p.threats.torpedo_time, p.threats.shell_score, p.nav_score);
+                let better = match best {
+                    None => true,
+                    Some(b) => {
+                        key.0 < b.0 - 1e-4
+                            || ((key.0 - b.0).abs() <= 1e-4
+                                && (key.1 < b.1 - 1e-4
+                                    || ((key.1 - b.1).abs() <= 1e-4
+                                        && (key.2 < b.2 - 1e-4
+                                            || ((key.2 - b.2).abs() <= 1e-4 && key.3 < b.3)))))
                     }
+                };
+                if better {
+                    best = Some(key);
+                    best_idx = i as i32;
                 }
             }
+        } else {
+            // Pure navigation.  The obstacle-collision penalty is already folded
+            // into nav_score, so this is the whole decision.
+            let mut best_nav = f32::INFINITY;
+            for i in 0..pass_data.len() {
+                if pass_data[i].any_obs_collision {
+                    any_collision = true;
+                }
+                if pass_data[i].nav_score < best_nav {
+                    best_nav = pass_data[i].nav_score;
+                    best_idx = i as i32;
+                }
+            }
+        }
+
+        // pass_data is non-empty here (the empty case returned above), so this
+        // guard should be unreachable.  Kept because best_idx indexes below.
+        if best_idx == -1 {
+            best_idx = 0;
         }
 
         result.rudder = pass_data[best_idx as usize].rudder;
@@ -926,26 +869,17 @@ impl ShipNavigator {
         self.perf_last_steering_arc_points_simulated = steering_arc_points_simulated;
 
         // --- Update dodge commitment ---
-        // threats_active: mirrors the shells_safe reachability check so that
-        // non-threatening shells (landing too far to reach) do not prevent the
-        // commitment timer from clearing.
-        let mut threats_active = !shells_safe;
-        if !threats_active {
-            for obs in self.obstacles.values() {
-                if obs.is_torpedo() {
-                    threats_active = true;
-                    break;
-                }
-            }
-        }
-
-        if threats_active && (result.rudder - desired_rudder).abs() > 0.1 {
+        // Commitment is a torpedo-override concept only.  It used to be armed by
+        // shell threat too, which meant the ship latched a rudder direction in
+        // response to gunfire and then spent the next half second refusing the
+        // opposite turn -- part of what made bots freeze under fire.
+        if torpedoes_threaten && (result.rudder - desired_rudder).abs() > 0.1 {
             let rudder_sign = if result.rudder > 0.0 { 1.0 } else { -1.0 };
             if self.dodge_committed_rudder == 0.0 || rudder_sign == self.dodge_committed_rudder {
                 self.dodge_committed_rudder = rudder_sign;
                 self.dodge_commitment_timer = DODGE_COMMITMENT_DURATION;
             }
-        } else if !threats_active {
+        } else if !torpedoes_threaten {
             self.dodge_committed_rudder = 0.0;
             self.dodge_commitment_timer = 0.0;
         }

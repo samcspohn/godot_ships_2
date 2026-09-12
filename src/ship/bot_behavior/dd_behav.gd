@@ -2,23 +2,9 @@ extends BotBehavior
 class_name DDBehavior
 
 
-# Speed variation for evasion
-var speed_variation_timer: float = 0.0
-var current_speed_multiplier: float = 1.0
-const SPEED_VARIATION_PERIOD: float = 3.0
-const SPEED_VARIATION_MIN: float = 0.6
-const SPEED_VARIATION_MAX: float = 1.0
-
 # ============================================================================
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
-
-func get_evasion_params() -> Dictionary:
-	return {
-		min_angle = deg_to_rad(10),
-		max_angle = deg_to_rad(25),
-		evasion_period = 2.5,  # Quick, erratic weaving
-	}
 
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
@@ -37,28 +23,6 @@ func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.8,      # DDs hunt aggressively
 	}
-
-# ============================================================================
-# EVASION - DD-specific with speed variation
-# ============================================================================
-
-func get_desired_heading(target: Ship, current_heading: float, delta: float, destination: Vector3) -> Dictionary:
-	"""Override to add speed variation for DDs."""
-	var result = super.get_desired_heading(target, current_heading, delta, destination)
-
-	# Update speed variation when evading
-	if result.use_evasion:
-		speed_variation_timer += delta
-		var speed_wave = (sin(speed_variation_timer * TAU / SPEED_VARIATION_PERIOD) + 1.0) / 2.0
-		current_speed_multiplier = lerp(SPEED_VARIATION_MIN, SPEED_VARIATION_MAX, speed_wave)
-	else:
-		current_speed_multiplier = 1.0
-
-	return result
-
-func get_speed_multiplier() -> float:
-	"""Returns current speed multiplier for evasion."""
-	return current_speed_multiplier
 
 # ============================================================================
 # TARGET SELECTION - DD-specific logic (visible vs hidden priority)
@@ -465,8 +429,16 @@ func engagement_range(ship: Ship, threat: float) -> float:
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	var d := _doc()
 	if not d.trades_on_concealment:
-		wants_stealth = false
-		wants_to_be_concealed = false
+		# One exception, and it is not this arm's to make: the cornered rule in
+		# _nav_core() has already fired by the time we get here, and it applies
+		# to every hull. Past CORNERED_THREAT with bloom that would actually
+		# decay, the guns are no longer buying the gunboat anything - it is
+		# being shot at by more than it can trade with, and the only exit left
+		# is the one every other class takes. Clear the flags only on the ticks
+		# that rule did not fire, so the tick it does is not undone here.
+		if not _cornered:
+			wants_stealth = false
+			wants_to_be_concealed = false
 		_suppress_guns = false
 		return
 

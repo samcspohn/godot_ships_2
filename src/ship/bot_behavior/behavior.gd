@@ -5,11 +5,6 @@ class_name BotBehavior
 var _ship: Ship = null
 var nav: NavigationAgent3D
 
-# Evasion state variables
-var evasion_timer: float = 0.0
-var evasion_direction: int = 1  # 1 or -1, which side we're currently angling
-var last_target_bearing: float = 0.0  # Track target to keep guns on it
-
 # Island cover state (used by CA and bot controller)
 var is_in_cover: bool = false
 
@@ -95,6 +90,12 @@ var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
+var _skill_evade: SkillEvade = SkillEvade.new()
+
+## The enemy's firing cycle as this ship observes it.  SkillEvade and
+## SkillBroadside both steer off it and must not disagree, so there is exactly
+## one per bot and both read it rather than each running their own shell query.
+var salvo_clock: SalvoClock = SalvoClock.new()
 
 ## Shell and aim-point solver. One per bot, because it caches per-target
 ## solutions and the target's armour zone breakdown.
@@ -112,6 +113,11 @@ var _fleet_frame: FleetFrame = null
 var _fleet_frame_frame: int = -1
 
 var _suppress_guns: bool = false
+
+## True while the cornered rule in _nav_core() has fired this tick. Set before
+## the ladder runs, so a subclass _apply_gun_policy() can tell the concealment
+## flags that rule already decided apart from the ones it writes itself.
+var _cornered: bool = false
 
 # CONFIGURABLE WEIGHT SYSTEMS - Override in subclasses
 
@@ -154,14 +160,6 @@ func get_hunting_params() -> Dictionary:
 	"""Override to customize hunting behavior."""
 	return {
 		approach_multiplier = 0.4,
-	}
-
-func get_evasion_params() -> Dictionary:
-	"""Override for class-specific evasion parameters."""
-	return {
-		min_angle = deg_to_rad(25),
-		max_angle = deg_to_rad(35),
-		evasion_period = 6.0,
 	}
 
 func get_chase_max_threat() -> float:
@@ -660,70 +658,13 @@ func target_aim_offset(target: Ship) -> Vector3:
 	return solution.get("offset", Vector3.ZERO) as Vector3
 
 
-# EVASION SYSTEM
+# EVASION
 
+## Speed scalar applied to the navigator's chosen throttle every frame
+## (BotControllerV4 step 6).  Read every frame while SkillEvade only runs on the
+## intent cadence, so the skill holds a wall-clock phase and answers from it.
 func get_speed_multiplier() -> float:
-	"""Returns current speed multiplier for evasion. Override in DD for speed variation."""
-	return 1.0
-
-func should_evade(destination: Vector3) -> bool:
-	"""Determine if ship should be evading vs traveling to destination."""
-	if not _ship.is_detected():
-		return false
-
-	var dist_to_dest = _ship.global_position.distance_to(destination)
-	var movement = _ship.get_node_or_null("Modules/MovementController") as ShipMovementV4
-	if movement == null:
-		return true
-
-	var arrival_threshold = movement.turning_circle_radius * 2.0
-	return dist_to_dest < arrival_threshold
-
-func get_desired_heading(target: Ship, current_heading: float, delta: float, destination: Vector3) -> Dictionary:
-	"""Returns {heading: float, use_evasion: bool}."""
-	if not should_evade(destination):
-		return {heading = current_heading, use_evasion = false}
-
-	var threat_bearing = _get_weighted_threat_bearing()
-	if threat_bearing == null:
-		return {heading = current_heading, use_evasion = false}
-
-	var evasion_heading = _calculate_evasion_heading(target, threat_bearing, delta)
-	return {heading = evasion_heading, use_evasion = true}
-
-func _calculate_evasion_heading(target: Ship, threat_bearing: float, delta: float) -> float:
-	"""Calculate heading that angles toward threat while keeping guns on target."""
-	var params = get_evasion_params()
-	var min_angle = params.min_angle
-	var max_angle = params.max_angle
-	var period = params.evasion_period
-
-	evasion_timer += delta
-
-	var wave = (sin(evasion_timer * TAU / period) + 1.0) / 2.0
-	var current_angle = lerp(min_angle, max_angle, wave)
-
-	if target != null:
-		var to_target = target.global_position - _ship.global_position
-		var target_bearing = atan2(to_target.x, to_target.z)
-		var wave_derivative = cos(evasion_timer * TAU / period)
-
-		if wave_derivative < 0:
-			var current_ship_heading = _get_ship_heading()
-			var angle_to_target = _normalize_angle(target_bearing - current_ship_heading)
-			evasion_direction = 1 if angle_to_target > 0 else -1
-
-		last_target_bearing = target_bearing
-
-	return _normalize_angle(threat_bearing + current_angle * evasion_direction)
-
-func _get_weighted_threat_bearing() -> Variant:
-	"""Returns bearing to weighted average of enemy clusters. null if no threats."""
-	var danger_center = _get_spotted_danger_center()
-	if danger_center == Vector3.ZERO:
-		return null
-	var to_danger = danger_center - _ship.global_position
-	return atan2(to_danger.x, to_danger.z)
+	return _skill_evade.speed_multiplier()
 
 # THREAT ANALYSIS
 
@@ -2330,6 +2271,10 @@ func _finish_intent(intent: NavIntent, previous_skill: StringName) -> NavIntent:
 			_skill_cover.reset()
 	return intent
 
+## Threat above which concealment stops being a playstyle and becomes the only
+## exit. See the cornered check in _nav_core().
+const CORNERED_THREAT: float = 0.9
+
 ## The ladder. Subclasses call this from get_nav_intent() after setting up ctx.
 func _nav_core(ctx: SkillContext) -> NavIntent:
 	var d := _doc()
@@ -2342,7 +2287,12 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	# a spotted enemy already has clear LOS from inside our detection radius (so
 	# nothing we stop doing would shake them), true when holding fire would let
 	# bloom decay. Being detected is therefore not a veto on going dark.
-	if sit.threat > 0.9 and _probe_concealment(ctx.server):
+	#
+	# This holds for every hull, including the ones whose doctrine otherwise
+	# never hides: it is not a preference about how to fight, it is the last
+	# thing left when the fighting has already gone badly enough.
+	_cornered = sit.threat > CORNERED_THREAT and _probe_concealment(ctx.server)
+	if _cornered:
 		wants_stealth = true
 		wants_to_be_concealed = true
 
@@ -2459,17 +2409,46 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	if prev_skill == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
 
+	# One shared reading of the enemy's firing cycle, taken before anything that
+	# steers off it and before any early return -- get_speed_multiplier() is read
+	# every frame regardless of which arm we are in, so a tick that skips the
+	# clock would leave the ship holding a stale evasive throttle indefinitely.
+	salvo_clock.tick(ctx.ship, ctx.server, self)
+
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
+		_skill_evade.reset()
 		return null
 	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
 			and not d.post_process_idle_arms:
+		_skill_evade.reset()
 		return intent
 
 	var forced: bool = bool(sit.forced)
 
-	if d.use_broadside and not forced and _active_skill_name not in d.broadside_exclude:
+	# --- Broadside vs. evade ---
+	# These two genuinely fight: broadside pulls toward a stable firing angle,
+	# evasion pulls away from any stable angle at all.  They are arbitrated by
+	# the salvo clock rather than by a priority number, because the clock already
+	# says which one is right.  Broadside gets the reload gap -- the window after
+	# a salvo splashes, when unmasking is free.  Evade gets everything else.
+	#
+	# Two consequences fall out for free.  Evade always wins while shells are
+	# actually in the air, and broadside can only ever engage after an enemy has
+	# shot at us, because the window opens on an observed splash and on nothing
+	# else.
+	var threat: float = float(sit.threat)
+	var evade_wins: bool = salvo_clock.under_fire and (
+		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
+	)
+
+	if d.use_broadside and not forced and _active_skill_name not in d.broadside_exclude \
+			and not evade_wins:
 		intent = _skill_broadside.apply(intent, ctx, d.broadside_params)
+	elif evade_wins and not forced and _active_skill_name not in d.evade_exclude:
+		intent = _skill_evade.apply(intent, ctx, d.evade_params)
+	else:
+		_skill_evade.reset()
 
 	if not forced and _active_skill_name not in d.spread_exclude:
 		var sp: Dictionary = d.spread_overrides.get(_active_skill_name, {
@@ -2488,14 +2467,24 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 # exactly 0.5, and every other situation is read against it: two such enemies
 # 0.75, three 0.875, a half-HP one alone 0.33, one at half its gun range 0.41.
 const THREAT_HP_FALLOFF: float = 0.7                             # diminishing returns on an HP advantage
-const THREAT_HP_PARITY: float = 1.0 - exp(-THREAT_HP_FALLOFF)    # raw HP curve evaluated at parity
+const THREAT_HP_CONDITION_FALLOFF: float = 0.5                   # diminishing returns on my own damage
 const THREAT_SATURATION: float = log(2.0)                        # one unit of pressure halves remaining safety
+
+## A saturating curve normalised so that _threat_sat(1.0, f) == 1.0 for ANY
+## falloff. That identity is what holds the calibration above: every factor of
+## raw_val is one of these evaluated at the reference engagement, so the
+## reference multiplies out to exactly 1.0 and threat to exactly 0.5 whatever
+## the falloffs are tuned to. Tuning a falloff changes how fast a term leaves
+## the reference, never where the reference sits.
+func _threat_sat(x: float, falloff: float) -> float:
+	return (1.0 - exp(-falloff * x)) / (1.0 - exp(-falloff))
 
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
-	## Each enemy within its own gun range contributes hp_pressure × range_pressure
-	## × class_w, and pressures compound: threat = 1 − 2^−(total pressure), so one
-	## unit of pressure halves remaining safety and threat approaches but never
+	## Each enemy within its own gun range contributes matchup × condition ×
+	## range_pressure × class_w, and pressures compound: threat = 1 − 2^−(total
+	## pressure), so one unit of pressure halves remaining safety and threat
+	## approaches but never
 	## reaches 1. Calibrated by the reference engagement above; subclasses tune
 	## per-class fear via get_threat_class_weight().
 	var server: GameServer = ctx.server
@@ -2550,11 +2539,24 @@ func get_threat_score(ctx: SkillContext) -> float:
 		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
 		var class_w = get_threat_class_weight(enemy.ship_class)
-		# How much ship is pointed at me, measured in units of my own remaining HP
-		# and with diminishing returns: parity is exactly 1.0, half my HP is 0.59,
-		# and no enemy however healthy is worth more than ~1.99 of me.
-		var hp_pressure = (1.0 - exp(-THREAT_HP_FALLOFF * enemy_hp / my_hp)) / THREAT_HP_PARITY
-		var raw_val = hp_pressure * range_pressure * class_w
+		# How much ship is pointed at me, measured against my FULL bar rather than
+		# against what is left of it: parity is exactly 1.0, an enemy down to half
+		# its HP is 0.59, and no enemy however healthy is worth more than ~1.99 of
+		# me. This is the matchup, and it is the same fact whether or not I am
+		# hurt - a battleship outmasses a destroyer by the same multiple at either
+		# one's full health and at its last thousand points.
+		var matchup = _threat_sat(enemy_hp / maxf(max_hp, 1.0), THREAT_HP_FALLOFF)
+		# What being hurt has actually cost me, as its own term rather than as a
+		# denominator on the one above. Folding the two together is what left the
+		# destroyer unable to notice its own damage: divided by REMAINING HP, a
+		# hull whose bar is a fraction of every gun ship's is already past the
+		# knee of the saturating curve at full health, so the ratio is pinned near
+		# the ~1.99 ceiling from the first shell and losing HP cannot move it. A
+		# gunboat DD read 0.67 against a battleship at full health and 0.71 at 5%.
+		# Split out, each term is 1.0 at the reference engagement, so the 0.5
+		# calibration is unchanged and the own-damage axis comes back to life.
+		var condition = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
+		var raw_val = matchup * condition * range_pressure * class_w
 		if !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
 		raw_val *= threat_scale

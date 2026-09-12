@@ -78,13 +78,15 @@ impl ShipNavigator {
                 sim_rudder = commanded_rudder;
             }
 
-            if target_speed_val > sim_speed {
-                let accel_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
-                sim_speed = move_toward_f(sim_speed, target_speed_val, dt * accel_rate);
-            } else {
-                let decel_rate = self.params.max_speed / self.params.deceleration_time.max(0.1);
-                sim_speed = move_toward_f(sim_speed, target_speed_val, dt * decel_rate);
-            }
+            // ShipMovementV4 ramps engine_power symmetrically -- move_toward with
+            // `delta / acceleration_time` in BOTH directions -- and never reads
+            // deceleration_time at all.  Predicting deceleration off
+            // deceleration_time therefore modelled a ship that does not exist:
+            // Montana leaves the param at its 4.0 default, so the arc predictor
+            // believed it could go 28.8 m/s -> 0 in four seconds and scored
+            // throttle-chop dodges that the real hull cannot perform.
+            let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
+            sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
 
             let effective_speed = sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
 
@@ -217,13 +219,15 @@ impl ShipNavigator {
                 rudder_settled = true;
             }
 
-            if target_speed_val > sim_speed {
-                let accel_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
-                sim_speed = move_toward_f(sim_speed, target_speed_val, dt * accel_rate);
-            } else {
-                let decel_rate = self.params.max_speed / self.params.deceleration_time.max(0.1);
-                sim_speed = move_toward_f(sim_speed, target_speed_val, dt * decel_rate);
-            }
+            // ShipMovementV4 ramps engine_power symmetrically -- move_toward with
+            // `delta / acceleration_time` in BOTH directions -- and never reads
+            // deceleration_time at all.  Predicting deceleration off
+            // deceleration_time therefore modelled a ship that does not exist:
+            // Montana leaves the param at its 4.0 default, so the arc predictor
+            // believed it could go 28.8 m/s -> 0 in four seconds and scored
+            // throttle-chop dodges that the real hull cannot perform.
+            let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
+            sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
 
             let effective_speed = sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
 

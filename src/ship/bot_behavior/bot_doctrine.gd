@@ -172,6 +172,15 @@ var use_broadside: bool = true
 var broadside_exclude: Array[StringName] = [&"Hunt", &"SailForward"]
 var broadside_params: Dictionary = {}
 
+## Evasion post-process.  Evade and broadside contend for heading, arbitrated by
+## the salvo clock: broadside owns the reload gap, evade owns the rest.  This
+## threshold is the one case where threat overrides that -- above it the ship
+## stays evasive even in the reload gap, because the window it would be trading
+## the angle for is not worth what is pointed at it.
+var evade_override_threat: float = 0.75
+var evade_exclude: Array[StringName] = [&"SailForward"]
+var evade_params: Dictionary = {}
+
 var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite"]
 var spread_distance: float = 1000.0
 var spread_multiplier: float = 1.0
@@ -205,6 +214,9 @@ static func for_battleship() -> BotDoctrine:
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
 	d.broadside_params = {"oscillation_bias": 0.5}
 	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp"]
+	# A battleship's evasion IS its angling, so it is never worth suppressing:
+	# the presentation weave costs it nothing it was going to use anyway.
+	d.evade_override_threat = 0.6
 	d.post_process_idle_arms = true
 	return d
 
@@ -219,7 +231,9 @@ static func for_cruiser() -> BotDoctrine:
 	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 11000.0
 	# The CA's broadside post-process is deliberately off: its engaged arm sets
-	# heading_weight itself and a second opinion on heading fights it.
+	# heading_weight itself and a second opinion on heading fights it.  Evade is
+	# not in the same position -- with broadside off there is nothing for it to
+	# contend with, and a cruiser under fire has the rudder to make weaving pay.
 	d.use_broadside = false
 	d.spread_exclude = [&"FindCover", &"Push", &"Kite"]
 	d.low_threat_arm_first = true

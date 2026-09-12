@@ -421,10 +421,18 @@ func _update_nav_intent() -> void:
 	# When similar, still pass through position + heading so the navigator
 	# always sees the freshest coordinates. It decides whether to replan
 	# based on its own threshold in navigate_to().
+	#
+	# heading_weight travels with the heading.  _is_intent_similar() compares
+	# position and hold_radius only, so a post-processor that varies heading
+	# WITHOUT moving the destination -- which is exactly what SkillEvade's
+	# serpentine does, deliberately, to avoid forcing a replan -- stays on this
+	# branch indefinitely.  Without copying the weight, the heading it writes is
+	# below the navigator's 0.001 threshold and is silently ignored.
 	if new_intent != null and _last_raw_intent != null and _is_intent_similar(_last_raw_intent, new_intent):
 		_last_raw_intent = new_intent
 		_last_intent.target_heading = new_intent.target_heading
 		_last_intent.target_position = new_intent.target_position
+		_last_intent.heading_weight = new_intent.heading_weight
 		return
 
 	# Store the raw behavior intent BEFORE validation modifies it.
@@ -674,7 +682,12 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 	# the window, not just the first detection per salvo.
 	if behavior != null and s.artillery_controller != null:
 		var reload_sec: float = s.artillery_controller.get_params().reload_time
-		var expiry: float = Time.get_ticks_msec() / 1000.0 + 60.0
+		# 1.5 reload cycles, as the comment above has always said.  This was
+		# hardcoded to 60.0 -- reload_sec was computed and thrown away -- which
+		# meant "a destroyer shot at me once" stayed true for a full minute.
+		# The salvo clock and both post-processing skills key off this flag, so
+		# it has to mean what it says.
+		var expiry: float = Time.get_ticks_msec() / 1000.0 + reload_sec * 1.5
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry
@@ -1535,7 +1548,7 @@ func get_nav_state_string() -> String:
 # V3 COMPATIBILITY STUBS
 # ===========================================================================
 
-## These methods exist so that systems that reference BotControllerV3's interface
+## These methods exist so that systems that reference the legacy bot-controller interface
 ## (e.g. camera debug drawing, server queries) don't break when V4 is used.
 
 ## No-op: V4 doesn't use navigation agents or proxies

@@ -28,11 +28,12 @@ pub const PATH_FAIL_WARN_INTERVAL: f32 = 5.0;
 pub const DODGE_COMMITMENT_DURATION: f32 = 0.5;
 pub const DODGE_COMMITMENT_BIAS: f32 = 150.0;
 
-// --- Two-pass threat budgets, in navigation-seconds: how much extra travel
-// time we accept to improve the threat score. Shells nudge heading; torpedoes
-// justify a major detour.
-pub const SHELL_NAV_BUDGET: f32 = 50.0;
-pub const TORPEDO_NAV_BUDGET: f32 = 500.0;
+// The shared nav-second budget these two constants used to define is gone.
+// SHELL_NAV_BUDGET (50 s) let a bot throw away a kilometre of travel per salvo,
+// and TORPEDO_NAV_BUDGET (500 s) was added to it whenever ANY torpedo existed
+// anywhere -- harmless or not -- which inflated the shell budget elevenfold and
+// left the optimiser effectively unconstrained.  Torpedoes now hard-override
+// instead of outbidding, so neither budget has a meaning.
 pub const SHELL_TIME_TOLERANCE: f32 = 2.0;
 pub const SOFT_TERRAIN_PENALTY: f32 = 15.0;
 
@@ -66,7 +67,6 @@ pub const PARKED_SPEED_THRESHOLD: f32 = 10.0;
 pub const TORPEDO_VIRTUAL_CALIBER: f32 = 2000.0;
 pub const GRAZE_MIN_FACTOR: f32 = 0.15;
 pub const BOW_STERN_CLIP_START: f32 = 0.80;
-pub const PURE_PURSUIT_MIN_IMPROVEMENT: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
@@ -98,20 +98,27 @@ pub struct SteeringChoice {
     pub collision_imminent: bool,
 }
 
-/// Two-pass threat score returned by score_arc_shell_threat. Shell and torpedo
-/// scores stay separate so the caller can apply different budgets and suppress
-/// shells when the stuck override is active.
-#[derive(Clone, Copy, Debug, Default)]
+/// Threat score returned by score_arc_shell_threat. Shell and torpedo scores
+/// stay separate because they are now consumed by different mechanisms: the
+/// torpedo score drives a hard override of navigation, while the shell score is
+/// only a tiebreak WITHIN that override (SkillEvade owns shell evasion the rest
+/// of the time).
+#[derive(Clone, Copy, Debug)]
 pub struct ThreatEval {
     /// Dimensionless: sum of cal_weight * angle_factor for hitting shells.
     pub shell_score: f32,
     /// Dimensionless: cal_weight for any torpedo intersection.
     pub torpedo_score: f32,
+    /// Arc time of the EARLIEST torpedo intersection, `INFINITY` when none.
+    /// Under torpedo override this breaks ties between arcs that eat the same
+    /// number of torpedoes: later impact is strictly better, because it buys
+    /// another decision cycle in which the picture can change.
+    pub torpedo_time: f32,
 }
 
-impl ThreatEval {
-    pub fn combined(&self) -> f32 {
-        self.shell_score + self.torpedo_score
+impl Default for ThreatEval {
+    fn default() -> Self {
+        Self { shell_score: 0.0, torpedo_score: 0.0, torpedo_time: f32::INFINITY }
     }
 }
 
@@ -229,6 +236,12 @@ pub struct ShipNavigator {
 
     pub(crate) dodge_committed_rudder: f32,
     pub(crate) dodge_commitment_timer: f32,
+    /// True on the last `select_best_steering` when a torpedo threatened at
+    /// least one candidate arc, i.e. navigation was hard-overridden.  Read by
+    /// SkillEvade, which stands its speed scalar down while it holds -- the
+    /// navigator has planned a specific arc and scaling its throttle behind its
+    /// back would invalidate the very dodge it just solved for.
+    pub(crate) torpedo_override_active: bool,
 
     pub(crate) direction_conflict_timer: f32,
     pub(crate) stuck_override_active: bool,
@@ -331,6 +344,7 @@ impl IRefCounted for ShipNavigator {
             health_fraction: 1.0,
             dodge_committed_rudder: 0.0,
             dodge_commitment_timer: 0.0,
+            torpedo_override_active: false,
             direction_conflict_timer: 0.0,
             stuck_override_active: false,
             stuck_override_timer: 0.0,
@@ -414,6 +428,12 @@ impl ShipNavigator {
     #[func]
     fn get_nav_state(&self) -> i32 {
         self.nav_state as i32
+    }
+
+    /// See `torpedo_override_active`.
+    #[func]
+    fn is_torpedo_override_active(&self) -> bool {
+        self.torpedo_override_active
     }
 
     #[func]

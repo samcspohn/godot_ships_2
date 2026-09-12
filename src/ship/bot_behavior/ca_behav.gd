@@ -13,13 +13,6 @@ var _cover_island_radius: float = 0.0
 # WEIGHT CONFIGURATION
 # ============================================================================
 
-func get_evasion_params() -> Dictionary:
-	return {
-		min_angle = deg_to_rad(30),
-		max_angle = deg_to_rad(45),
-		evasion_period = 5.0,
-	}
-
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 2.0
@@ -40,11 +33,6 @@ func get_hunting_params() -> Dictionary:
 	return {
 		approach_multiplier = 0.3,
 	}
-
-func should_evade(_destination: Vector3) -> bool:
-	if not _ship.is_detected():
-		return false
-	return true
 
 # ============================================================================
 # AMMO AND AIM

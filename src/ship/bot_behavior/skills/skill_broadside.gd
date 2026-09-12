@@ -159,6 +159,19 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	var guns_in_position: float = _guns_in_position_fraction(weapons, broadside_heading, aim_bearing)
 	blend *= guns_in_position
 
+	# Salvo-window gate.  Unmasking is only free in the gap after the most
+	# dangerous enemy's salvo has splashed and before the next one is airborne;
+	# the rest of the cycle belongs to SkillEvade.  _finish_nav already refuses
+	# to run this skill outside that window, so reaching here with the window
+	# shut means nobody observable is shooting -- in which case the oscillation
+	# is unopposed and the gate should not fire.  What it does catch is the
+	# knife-range case: when reload minus flight time leaves no safe gap at all
+	# the window duration collapses to zero, and the ship correctly never shows
+	# its side to something that can hit it before it finishes turning.
+	var clock: SalvoClock = ctx.behavior.salvo_clock
+	if clock != null and clock.under_fire and not clock.broadside_window_open():
+		blend = 0.0
+
 	# Final target heading: gradually morphs from navigation heading toward broadside.
 	# var final_heading: float = _lerp_angle(desired_heading, broadside_heading, blend)
 	var final_heading: float = broadside_heading

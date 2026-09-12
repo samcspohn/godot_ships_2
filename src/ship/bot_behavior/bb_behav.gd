@@ -8,13 +8,6 @@ class_name BBBehavior
 # WEIGHT CONFIGURATION - Override base class methods
 # ============================================================================
 
-func get_evasion_params() -> Dictionary:
-	return {
-		min_angle = deg_to_rad(25),
-		max_angle = deg_to_rad(35),
-		evasion_period = 20.0,  # Slow, deliberate weaves
-	}
-
 func get_threat_class_weight(ship_class: Ship.ShipClass) -> float:
 	match ship_class:
 		Ship.ShipClass.BB: return 1.0

@@ -228,7 +228,7 @@ func _apply_citadel_guarantee() -> void:
 ## _sigma_v = reserved for future per-axis sigma asymmetry; unused for now.
 ## h_dispersion_curve / max_h_disp = curve + scale for horizontal dispersion vs. range.
 ## v_dispersion_curve / max_v_disp = curve + scale for vertical dispersion vs. range.
-func _sample_dispersion(curve: Curve, t: float, max_disp: float) -> float:
+static func sample_dispersion(curve: Curve, t: float, max_disp: float) -> float:
 	if t <= 1.0:
 		return curve.sample(t) * max_disp
 	var slope := curve.get_point_left_tangent(curve.point_count - 1)
@@ -249,8 +249,8 @@ func calculate_dispersed_launch(
 
 	var dist_to_target := (aim_point - gun_position).length()
 	var t := maxf(dist_to_target / max_range, 0.0)
-	var dispersion_h_m := _sample_dispersion(h_dispersion_curve, t, max_h_disp)
-	var dispersion_v_m := _sample_dispersion(v_dispersion_curve, t, max_v_disp)
+	var dispersion_h_m := sample_dispersion(h_dispersion_curve, t, max_h_disp)
+	var dispersion_v_m := sample_dispersion(v_dispersion_curve, t, max_v_disp)
 
 	if _shell_index >= SHELL_COUNT:
 		_new_salvo(sigma_h)
