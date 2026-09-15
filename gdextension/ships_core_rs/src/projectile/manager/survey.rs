@@ -1,11 +1,15 @@
 use crate::variant_cast::VariantCast;
 use godot::prelude::*;
-use godot::classes::{Node, Node3D, PhysicsDirectSpaceState3D, Resource};
+use godot::classes::{Node3D, PhysicsDirectSpaceState3D, Resource};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 
+use super::util::armor_rays_for;
 use super::ProjectileManager;
 use crate::ballistics::drag_v2::ProjectilePhysicsWithDragV2;
-use crate::projectile::armor::{hit_result, NativeArmorInteraction};
+use crate::projectile::armor::mesh::{ArmorMesh, V3};
+use crate::projectile::armor::walk::{walk_plates, ShellSpec, StepLog};
+use crate::projectile::armor::{hit_result, NativeArmorInteraction, K_NOSE_APC};
 use crate::projectile::data::ProjectileData;
 
 pub const CELL_MISS: u8 = 0xFF;
@@ -94,43 +98,71 @@ fn axis_weights(
     (g, q)
 }
 
-struct WalkCtx {
-    xf: Transform3D,
-    basis_inv: Basis,
-    aabb: Aabb,
-    target_obj: Gd<Object>,
-    owner: Gd<Object>,
-    ppw: Option<Gd<Node>>,
-    turret_cache: BTreeMap<i64, bool>,
+/// One shell through plane point `p` (ship-local) arriving along `dir` at
+/// `speed`, straddling the hull: (result byte, first part, plates met).
+fn walk_cell(
+    mesh: &ArmorMesh, aabb: Aabb, spec: &ShellSpec, p: Vector3, dir: Vector3, speed: f64, log: bool,
+) -> (u8, usize, Vec<StepLog>) {
+    let (entry, exit) = walk_span(aabb, p, dir);
+    let prev = p - dir * entry;
+    if prev.y <= 1.0 {
+        return (CELL_MISS, 0, Vec::new());
+    }
+    let from = prev - dir * 10.0;
+    let to = p + dir * exit;
+    let Some(hit) = mesh.raycast(V3::from_godot(from), V3::from_godot(to)) else {
+        return (CELL_MISS, 0, Vec::new());
+    };
+    let out = walk_plates(mesh, spec, &hit, dir * (speed as f32), -1.0, false, log);
+    let part = out.final_part.unwrap_or(out.first_part);
+    let mut code = (out.damage_result.clamp(0, 15) as u8) & CELL_CODE_MASK;
+    if mesh.is_dynamic(part) {
+        code |= CELL_TURRET;
+    }
+    (code, out.first_part, out.steps)
 }
 
-struct WalkOut {
-    code: u8,
-    steps: VarArray,
-    part: Option<Gd<Object>>,
-}
-
-impl WalkCtx {
-    fn new(target: &Gd<Node3D>, owner: Gd<Object>, ppw: Option<Gd<Node>>) -> Self {
-        let xf = target.get_global_transform();
-        Self {
-            xf,
-            basis_inv: xf.basis.inverse(),
-            aabb: target.get("aabb").try_to::<Aabb>().unwrap_or_default(),
-            target_obj: target.clone().upcast::<Object>(),
-            owner,
-            ppw,
-            turret_cache: BTreeMap::new(),
+/// Breakpoints of the result over penetration at one point: coarse samples,
+/// then bisection wherever neighbours differ.
+#[allow(clippy::too_many_arguments)]
+fn sweep(
+    mesh: &ArmorMesh, aabb: Aabb, base: &ShellSpec, base_pen: f64, p: Vector3, dir: Vector3,
+    speed: f64, pens: &[f64], bisect_mm: f64, overmatch: f64,
+) -> (Vec<(f32, u8)>, u64) {
+    let mut walks: u64 = 0;
+    let at = |pen: f64, walks: &mut u64| -> u8 {
+        let mut s = *base;
+        s.pen_mod = pen / base_pen;
+        s.overmatch = overmatch;
+        *walks += 1;
+        walk_cell(mesh, aabb, &s, p, dir, speed, false).0
+    };
+    let mut samples: Vec<(f64, u8)> = pens.iter().map(|&pen| (pen, at(pen, &mut walks))).collect();
+    let mut budget = MAX_SWEEP_WALKS;
+    loop {
+        let mut split: Option<usize> = None;
+        for k in 1..samples.len() {
+            if samples[k].1 != samples[k - 1].1 && samples[k].0 - samples[k - 1].0 > bisect_mm {
+                split = Some(k);
+                break;
+            }
+        }
+        let Some(k) = split else { break };
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        let mid = 0.5 * (samples[k].0 + samples[k - 1].0);
+        let c = at(mid, &mut walks);
+        samples.insert(k, (mid, c));
+    }
+    let mut bps = vec![(0.0f32, samples[0].1)];
+    for k in 1..samples.len() {
+        if samples[k].1 != samples[k - 1].1 {
+            bps.push((samples[k].0 as f32, samples[k].1));
         }
     }
-
-    fn is_turret(&mut self, part: &Option<Gd<Object>>) -> bool {
-        let (Some(part), Some(world)) = (part, self.ppw.as_mut()) else { return false };
-        let id = part.instance_id().to_i64();
-        *self.turret_cache.entry(id).or_insert_with(|| {
-            world.call("is_turret_part", &[part.to_variant()]).to_bool()
-        })
-    }
+    (bps, walks)
 }
 
 impl ProjectileManager {
@@ -143,55 +175,9 @@ impl ProjectileManager {
         ) * shell.get("penetration_modifier").to_f64()
     }
 
-    /// One shell through the plane point `p` (target-local) arriving along
-    /// world `dir` at world velocity `vel`, straddling the hull.
-    fn walk_one(
-        &mut self,
-        ctx: &mut WalkCtx,
-        proj: &mut Gd<ProjectileData>,
-        shell: &Gd<Resource>,
-        p: Vector3,
-        dir: Vector3,
-        vel: Vector3,
-        tof: f64,
-        space: &mut Gd<PhysicsDirectSpaceState3D>,
-        log: bool,
-    ) -> WalkOut {
-        let miss = WalkOut { code: CELL_MISS, steps: VarArray::new(), part: None };
-        let to = ctx.xf * p;
-        let ld = (ctx.basis_inv * dir).normalized();
-        let (entry, exit) = walk_span(ctx.aabb, p, ld);
-        let prev = to - dir * entry;
-        if prev.y <= 1.0 {
-            return miss;
-        }
-        {
-            let mut pd = proj.bind_mut();
-            pd.initialize(to + dir * exit, vel, 0.0, shell.clone(), Some(ctx.owner.clone()), VarArray::new());
-            pd.frame_count = 1;
-        }
-        let ppw = ctx.ppw.clone();
-        let nav_map = self.navigation_map.clone();
-        let rays = self.get_armor_ray_cache(proj);
-        let res = NativeArmorInteraction::process_travel(
-            proj, prev, tof, Some(space), ppw.as_ref(), &nav_map, rays, log,
-        );
-        if !res.hit {
-            return miss;
-        }
-        match &res.ship {
-            Some(s) if *s == ctx.target_obj => {}
-            _ => return miss,
-        }
-        let mut code = (res.result_type.clamp(0, 15) as u8) & CELL_CODE_MASK;
-        if ctx.is_turret(&res.armor_part) {
-            code |= CELL_TURRET;
-        }
-        WalkOut { code, steps: res.log_steps, part: res.armor_part }
-    }
-
     /// Validation walk: one real shell of `shell` at each point, fired from
-    /// `from` with the real ballistics. One result byte per point.
+    /// `from` with the real ballistics through the live path. One result byte
+    /// per point.
     pub(crate) fn survey_walk_impl(
         &mut self,
         target: Gd<Node3D>,
@@ -207,11 +193,17 @@ impl ProjectileManager {
         out.fill(CELL_MISS);
         let Some(mut space) = space_state else { return out };
         self.ensure_armor_autoloads();
-        let mut ctx = WalkCtx::new(&target, owner, self.precision_physics_world.clone());
+        let ppw = self.precision_physics_world.clone();
+        let nav_map = self.navigation_map.clone();
+        let xf = target.get_global_transform();
+        let basis_inv = xf.basis.inverse();
+        let aabb: Aabb = target.get("aabb").try_to::<Aabb>().unwrap_or_default();
+        let target_id = target.instance_id().to_i64();
+        let target_obj = target.clone().upcast::<Object>();
         let mut proj = ProjectileData::new_gd();
         for i in 0..n {
             let p = points[i];
-            let to = ctx.xf * p;
+            let to = xf * p;
             let launch = ProjectilePhysicsWithDragV2::calculate_launch_vector_impl(from, to, &shell);
             let v0 = launch.at(0);
             if v0.is_nil() {
@@ -224,169 +216,140 @@ impl ProjectileManager {
             let tof = launch.at(1).to_f64();
             let impact = ProjectilePhysicsWithDragV2::calculate_velocity_at_time_impl(vel, tof, &shell);
             let dir = impact.normalized();
-            out[i] = self.walk_one(&mut ctx, &mut proj, &shell, p, dir, vel, tof, &mut space, false).code;
+            let ld = (basis_inv * dir).normalized();
+            let (entry, exit) = walk_span(aabb, p, ld);
+            let prev = to - dir * entry;
+            if prev.y <= 1.0 {
+                continue;
+            }
+            {
+                let mut pd = proj.bind_mut();
+                pd.initialize(to + dir * exit, vel, 0.0, shell.clone(), Some(owner.clone()), VarArray::new());
+                pd.frame_count = 1;
+            }
+            let rays = armor_rays_for(&mut self.armor_ray_cache, ppw.as_ref(), &proj);
+            let res = NativeArmorInteraction::process_travel(
+                &proj, prev, tof, Some(&mut space), ppw.as_ref(), &mut self.armor, &nav_map, rays, false,
+            );
+            if !res.hit {
+                continue;
+            }
+            match &res.ship {
+                Some(s) if *s == target_obj => {}
+                _ => continue,
+            }
+            let mut code = (res.result_type.clamp(0, 15) as u8) & CELL_CODE_MASK;
+            let turret = res.armor_part.as_ref().and_then(|part| {
+                let sa = self.armor.get(target_id)?;
+                let idx = sa.parts.iter().position(|p| p == part)?;
+                Some(sa.mesh.is_dynamic(idx))
+            }).unwrap_or(false);
+            if turret {
+                code |= CELL_TURRET;
+            }
+            out[i] = code;
         }
         out
     }
 
-    /// Bake one lattice: parallel rays along world `dir` at speed `v_ref`.
-    /// Cells are grouped into profiles by the plates they meet, and each profile
-    /// is swept in penetration (via `penetration_modifier` on a copy of
-    /// `ref_shell`, overmatch off) to find where the result changes.
-    ///
-    /// Returns cells -> profile index, per-profile breakpoint lists (mm, code),
-    /// and the first plate's thickness and citadel/turret flags for HE and
-    /// overmatch resolution at runtime.
+    /// Bake one lattice: parallel rays along ship-local `dir` at `v_ref`,
+    /// walked on worker threads against the target's armour mesh. Cells are
+    /// grouped into profiles by the plates they meet, and each profile is
+    /// swept in penetration to find where the result changes, once with
+    /// overmatch off and once with the first plate overmatched when any fleet
+    /// shell could.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn survey_sweep_impl(
         &mut self,
         target: Gd<Node3D>,
-        owner: Gd<Object>,
         ref_shell: Gd<Resource>,
         dir: Vector3,
         v_ref: f64,
         points: PackedVector3Array,
-        space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
         coarse_pens: PackedFloat32Array,
         bisect_mm: f64,
         om_max: f64,
     ) -> VarDictionary {
-        let n = points.len();
         let mut out = VarDictionary::new();
-        let Some(mut space) = space_state else { return out };
         if coarse_pens.is_empty() {
             return out;
         }
-        self.ensure_armor_autoloads();
-        let mut ctx = WalkCtx::new(&target, owner, self.precision_physics_world.clone());
-        let mut proj = ProjectileData::new_gd();
+        let id = target.instance_id().to_i64();
+        self.armor_sync(id);
+        let Some(sa) = self.armor.get(id) else { return out };
+        let mesh = &sa.mesh;
+        let aabb: Aabb = target.get("aabb").try_to::<Aabb>().unwrap_or_default();
         let dir = dir.normalized();
-        let vel = dir * (v_ref as f32);
 
-        let Some(mut ap) = ref_shell.duplicate_ex().deep(true).done() else { return out };
-        ap.set("overmatch", &0i64.to_variant());
-        ap.set("type", &1i64.to_variant());
-        let Some(mut he) = ref_shell.duplicate_ex().deep(true).done() else { return out };
-        he.set("overmatch", &0i64.to_variant());
-        he.set("type", &0i64.to_variant());
-        let base_pen = NativeArmorInteraction::calculate_de_marre_penetration(
-            ap.get("mass").to_f64(), v_ref, ap.get("caliber").to_f64(),
-        ).max(1e-6);
-        let set_pen = |ap: &mut Gd<Resource>, pen: f64| {
-            ap.set("penetration_modifier", &(pen / base_pen).to_variant());
-        };
-        let mut walks: i64 = 0;
+        let mut base = ShellSpec::from_params(&ref_shell);
+        base.overmatch = 0.0;
+        base.is_he = false;
+        base.k_nose = K_NOSE_APC;
+        let base_pen = NativeArmorInteraction::calculate_de_marre_penetration(base.mass, v_ref, base.caliber).max(1e-6);
+        let pts: Vec<Vector3> = (0..points.len()).map(|i| points[i]).collect();
+        let pens: Vec<f64> = (0..coarse_pens.len()).map(|k| coarse_pens[k] as f64).collect();
+        let mut spec_mid = base;
+        spec_mid.pen_mod = pens[pens.len() / 2] / base_pen;
+
+        let classified: Vec<(u8, String, f32, u8)> = pts
+            .par_iter()
+            .map(|&p| {
+                let (code, first_part, steps) = walk_cell(mesh, aabb, &spec_mid, p, dir, v_ref, true);
+                if code == CELL_MISS {
+                    return (code, String::from("miss"), -1.0, 0);
+                }
+                let mut sig = String::new();
+                for st in &steps {
+                    sig.push_str(&format!("{}|{:.0}|{:.2}|{};", st.part, st.armor_mm, st.impact_angle, st.is_citadel));
+                }
+                sig.push_str(&format!("={}", code));
+                let first_mm = steps.first().map(|s| s.armor_mm as f32).unwrap_or(-1.0);
+                let mut flags = 0u8;
+                if mesh.is_citadel(first_part) {
+                    flags |= FLAG_CITADEL;
+                }
+                if mesh.is_dynamic(first_part) {
+                    flags |= FLAG_TURRET;
+                }
+                (code, sig, first_mm, flags)
+            })
+            .collect();
 
         struct Profile {
             rep: usize,
             first_mm: f32,
             flags: u8,
-            bps: Vec<(f32, u8)>,
-            /// Same sweep with the first plate (and anything thinner) overmatched.
-            bps_om: Vec<(f32, u8)>,
         }
         let mut profiles: Vec<Profile> = Vec::new();
         let mut sig_index: BTreeMap<String, usize> = BTreeMap::new();
         let mut cells = PackedInt32Array::new();
-        cells.resize(n);
-
-        let mid_pen = coarse_pens[coarse_pens.len() / 2] as f64;
-        set_pen(&mut ap, mid_pen);
-        for i in 0..n {
-            let w = self.walk_one(&mut ctx, &mut proj, &ap, points[i], dir, vel, 0.0, &mut space, true);
-            walks += 1;
-            let sig = if w.code == CELL_MISS {
-                String::from("miss")
-            } else {
-                let mut s = String::new();
-                for k in 0..w.steps.len() {
-                    let st: VarDictionary = w.steps.at(k).try_to().unwrap_or_default();
-                    s.push_str(&format!(
-                        "{}|{:.0}|{:.2}|{};",
-                        st.get("armor_path").map(|v| v.to_string()).unwrap_or_default(),
-                        st.get("armor_mm").map(|v| v.to_f64()).unwrap_or(0.0),
-                        st.get("impact_angle").map(|v| v.to_f64()).unwrap_or(0.0),
-                        st.get("is_citadel").map(|v| v.to_bool()).unwrap_or(false),
-                    ));
-                }
-                s.push_str(&format!("={}", w.code));
-                s
-            };
-            let idx = *sig_index.entry(sig).or_insert_with(|| {
-                let first_mm = if w.code == CELL_MISS || w.steps.is_empty() {
-                    -1.0
-                } else {
-                    let st: VarDictionary = w.steps.at(0).try_to().unwrap_or_default();
-                    st.get("armor_mm").map(|v| v.to_f64()).unwrap_or(0.0) as f32
-                };
-                profiles.push(Profile { rep: i, first_mm, flags: 0, bps: Vec::new(), bps_om: Vec::new() });
+        cells.resize(pts.len());
+        for (i, (_, sig, first_mm, flags)) in classified.iter().enumerate() {
+            let idx = *sig_index.entry(sig.clone()).or_insert_with(|| {
+                profiles.push(Profile { rep: i, first_mm: *first_mm, flags: *flags });
                 profiles.len() - 1
             });
             cells[i] = idx as i32;
         }
 
-        for prof in profiles.iter_mut() {
-            if prof.first_mm < 0.0 {
-                prof.bps.push((0.0, CELL_MISS));
-                continue;
-            }
-            let p = points[prof.rep];
-            // First plate identity from an HE probe, which stops at the plate it meets.
-            let hw = self.walk_one(&mut ctx, &mut proj, &he, p, dir, vel, 0.0, &mut space, false);
-            walks += 1;
-            if NativeArmorInteraction::is_citadel(&hw.part) {
-                prof.flags |= FLAG_CITADEL;
-            }
-            if hw.code != CELL_MISS && (hw.code & CELL_TURRET) != 0 {
-                prof.flags |= FLAG_TURRET;
-            }
-
-            for om_pass in 0..2 {
-                if om_pass == 1 {
-                    if prof.first_mm as f64 > om_max {
-                        break;
-                    }
-                    ap.set("overmatch", &(prof.first_mm as f64).to_variant());
+        let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
+            .par_iter()
+            .map(|prof| {
+                if prof.first_mm < 0.0 {
+                    return (vec![(0.0, CELL_MISS)], Vec::new(), 0);
+                }
+                let p = pts[prof.rep];
+                let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0);
+                let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
+                    sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64)
                 } else {
-                    ap.set("overmatch", &0i64.to_variant());
-                }
-                let mut samples: Vec<(f64, u8)> = Vec::new();
-                for k in 0..coarse_pens.len() {
-                    let pen = coarse_pens[k] as f64;
-                    set_pen(&mut ap, pen);
-                    let c = self.walk_one(&mut ctx, &mut proj, &ap, p, dir, vel, 0.0, &mut space, false).code;
-                    walks += 1;
-                    samples.push((pen, c));
-                }
-                let mut budget = MAX_SWEEP_WALKS;
-                loop {
-                    let mut split: Option<usize> = None;
-                    for k in 1..samples.len() {
-                        if samples[k].1 != samples[k - 1].1 && samples[k].0 - samples[k - 1].0 > bisect_mm {
-                            split = Some(k);
-                            break;
-                        }
-                    }
-                    let Some(k) = split else { break };
-                    if budget == 0 {
-                        break;
-                    }
-                    budget -= 1;
-                    let mid = 0.5 * (samples[k].0 + samples[k - 1].0);
-                    set_pen(&mut ap, mid);
-                    let c = self.walk_one(&mut ctx, &mut proj, &ap, p, dir, vel, 0.0, &mut space, false).code;
-                    walks += 1;
-                    samples.insert(k, (mid, c));
-                }
-                let bps = if om_pass == 0 { &mut prof.bps } else { &mut prof.bps_om };
-                bps.push((0.0, samples[0].1));
-                for k in 1..samples.len() {
-                    if samples[k].1 != samples[k - 1].1 {
-                        bps.push((samples[k].0 as f32, samples[k].1));
-                    }
-                }
-            }
-        }
+                    (Vec::new(), 0)
+                };
+                (bps, bps_om, w1 + w2)
+            })
+            .collect();
 
+        let mut walks: i64 = pts.len() as i64;
         let mut prof_off = PackedInt32Array::new();
         let mut bp_mm = PackedFloat32Array::new();
         let mut bp_code = PackedByteArray::new();
@@ -395,14 +358,15 @@ impl ProjectileManager {
         let mut bp_code_om = PackedByteArray::new();
         let mut first_mm = PackedFloat32Array::new();
         let mut first_flags = PackedByteArray::new();
-        for prof in &profiles {
+        for (prof, (bps, bps_om, w)) in profiles.iter().zip(sweeps.iter()) {
+            walks += *w as i64;
             prof_off.push(bp_mm.len() as i32);
-            for (mm, code) in &prof.bps {
+            for (mm, code) in bps {
                 bp_mm.push(*mm);
                 bp_code.push(*code);
             }
             prof_off_om.push(bp_mm_om.len() as i32);
-            for (mm, code) in &prof.bps_om {
+            for (mm, code) in bps_om {
                 bp_mm_om.push(*mm);
                 bp_code_om.push(*code);
             }
@@ -428,6 +392,7 @@ impl ProjectileManager {
     /// `overmatch` (mm). HE resolves off the first plate alone, as the walk does.
     /// AP reads the swept breakpoints, from the overmatched sweep when the shell
     /// overmatches the first plate.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn lattice_resolve_impl(
         cells: &PackedInt32Array,
         prof_off: &PackedInt32Array,
@@ -467,8 +432,6 @@ impl ProjectileManager {
                 codes.push((c as u8) | turret);
                 continue;
             }
-            // A shell that overmatches the first plate reads the sweep that had
-            // that plate overmatched, when one was baked.
             let om = overmatch >= fm && prof_off_om.len() == np + 1
                 && prof_off_om[pi + 1] > prof_off_om[pi];
             let (offs, mms, cds) = if om {
@@ -504,6 +467,7 @@ impl ProjectileManager {
     /// (lattice-plane coordinates), integrating `cells` under the gun's
     /// truncated-Gaussian kernel. Returns [value, landed] per aim; value is in
     /// payout-multiplier units, -1 where no walked cell carries any mass.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn lattice_score_impl(
         cells: &PackedByteArray,
         nx: i32,

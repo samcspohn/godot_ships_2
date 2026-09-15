@@ -132,6 +132,7 @@ func _physics_process(_delta: float) -> void:
 		_turret_test()
 	elif OS.get_cmdline_user_args().has("--validate"):
 		_validate()
+
 	else:
 		_run()
 

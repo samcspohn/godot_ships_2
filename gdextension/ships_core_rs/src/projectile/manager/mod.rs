@@ -3,13 +3,15 @@ use godot::classes::{Camera3D, Node, Node3D, PhysicsDirectSpaceState3D, PhysicsR
 use std::collections::BTreeMap;
 
 use crate::nav::map::NavigationMap;
+use crate::projectile::armor::registry::ArmorRegistry;
 use crate::projectile::armor::RaycastCache;
 use crate::projectile::data::ProjectileData;
 
+mod armor_api;
 mod fire;
 mod lifecycle;
 mod survey;
-mod util;
+pub(crate) mod util;
 
 /// Matches GDScript HitResult.
 pub mod hit_result {
@@ -109,6 +111,8 @@ pub struct ProjectileManager {
     /// HashMap randomises order per process.
     pub(crate) shell_landings: BTreeMap<i32, ShellLandingEntry>,
     pub(crate) armor_ray_cache: BTreeMap<u64, ArmorRayCacheEntry>,
+    /// Per-ship armour meshes: the narrowphase the walk runs against.
+    pub(crate) armor: ArmorRegistry,
 }
 
 #[godot_api]
@@ -141,6 +145,7 @@ impl INode for ProjectileManager {
             shell_grid: Vec::new(),
             shell_landings: BTreeMap::new(),
             armor_ray_cache: BTreeMap::new(),
+            armor: ArmorRegistry::default(),
         }
     }
 
@@ -296,12 +301,27 @@ impl ProjectileManager {
         self.survey_walk_impl(target, owner, shell, from, points, space_state)
     }
 
+    #[func] pub(crate) fn armor_register_ship(&mut self, ship: Gd<Node3D>) { self.armor_register_ship_impl(ship) }
+    #[func] pub(crate) fn armor_unregister_ship(&mut self, ship_id: i64) { self.armor_unregister_ship_impl(ship_id) }
+    #[func] pub(crate) fn armor_add_part(&mut self, ship: Gd<Node3D>, part: Gd<Node3D>, local_xform: Transform3D,
+            faces: PackedVector3Array, thickness: PackedFloat32Array, armor_type: i32, dynamic: bool) -> i32 {
+        self.armor_add_part_impl(ship, part, local_xform, faces, thickness, armor_type, dynamic)
+    }
+    #[func] pub(crate) fn armor_part_count(&self, ship: Gd<Node3D>) -> i32 { self.armor_part_count_impl(ship) }
+    /// Closest armour hit along a ship-local segment: armor, position, normal, face_index.
+    #[func] pub(crate) fn armor_raycast(&mut self, ship: Gd<Node3D>, from_local: Vector3, to_local: Vector3) -> VarDictionary {
+        self.armor_raycast_impl(ship, from_local, to_local)
+    }
+    /// The armour part a ship-local point is inside, or null.
+    #[func] pub(crate) fn armor_part_at(&mut self, ship: Gd<Node3D>, local_pos: Vector3) -> Option<Gd<Object>> {
+        self.armor_part_at_impl(ship, local_pos)
+    }
+
     /// Offline bake of one lattice; see `survey_sweep_impl`.
-    #[func] pub(crate) fn survey_sweep(&mut self, target: Gd<Node3D>, owner: Gd<Object>, ref_shell: Gd<Resource>,
-            dir: Vector3, v_ref: f64, points: PackedVector3Array,
-            space_state: Option<Gd<PhysicsDirectSpaceState3D>>, coarse_pens: PackedFloat32Array,
+    #[func] pub(crate) fn survey_sweep(&mut self, target: Gd<Node3D>, ref_shell: Gd<Resource>,
+            dir: Vector3, v_ref: f64, points: PackedVector3Array, coarse_pens: PackedFloat32Array,
             bisect_mm: f64, om_max: f64) -> VarDictionary {
-        self.survey_sweep_impl(target, owner, ref_shell, dir, v_ref, points, space_state, coarse_pens, bisect_mm, om_max)
+        self.survey_sweep_impl(target, ref_shell, dir, v_ref, points, coarse_pens, bisect_mm, om_max)
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.

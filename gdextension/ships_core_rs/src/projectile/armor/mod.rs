@@ -28,6 +28,10 @@ fn variant_array_to_rid_array(values: &VarArray) -> Array<Rid> {
     out
 }
 
+pub mod mesh;
+pub mod registry;
+pub mod walk;
+
 pub const DE_MARRE_K: f64 = 0.06;
 pub const MIN_VELOCITY: f64 = 10.0;
 pub const DEFLECTION_ALPHA: f64 = 0.35;
@@ -206,7 +210,7 @@ pub struct ShellState {
     pub position: Vector3,
     pub end_position: Vector3,
     pub velocity: Vector3,
-    pub params: Option<Gd<Resource>>,
+    pub fuze_delay: f64,
     pub fuze: f64,
     pub pen: f64,
     pub integrity: f64,
@@ -245,11 +249,7 @@ pub struct NativeArmorInteraction;
 
 impl ShellState {
     pub fn calc_end_position(&mut self) {
-        let mut fuze_left = if let Some(p) = &self.params {
-            p.get("fuze_delay").to_f64() - self.fuze
-        } else {
-            0.0
-        };
+        let mut fuze_left = self.fuze_delay - self.fuze;
         if self.fuze < 0.0 {
             fuze_left = 1.0;
         }
@@ -370,14 +370,12 @@ impl NativeArmorInteraction {
     }
 
     pub fn evaluate_armor_interaction(
-        shell: &ShellState, params: &Option<Gd<Resource>>, impact_angle: f64,
+        shell: &ShellState, spec: &walk::ShellSpec, impact_angle: f64,
         armor_mm: f64, e_armor: f64,
     ) -> ArmorEval {
         let mut eval = ArmorEval::default();
-        let caliber = params.as_ref().map(|p| p.get("caliber").to_f64()).unwrap_or(1.0);
-        let k_nose = Self::get_k_nose(params);
         let deflection = Self::calculate_obliquity_multiplier(
-            impact_angle, armor_mm, caliber, k_nose).deflection;
+            impact_angle, armor_mm, spec.caliber, spec.k_nose).deflection;
 
         eval.deflection_mult = deflection;
         eval.physics_armor = e_armor * deflection;
@@ -610,7 +608,7 @@ impl NativeArmorInteraction {
     }
 
     /// Returns a `hit_result::*` value.
-    pub fn resolve_hit_result(armor_result: ArmorResult, final_part: &Option<Gd<Object>>,
+    pub fn resolve_hit_result(armor_result: ArmorResult, has_final_part: bool, final_is_citadel: bool,
                               hit_cit: bool, over_pen: bool) -> i32 {
         if armor_result == ArmorResult::Shatter {
             return hit_result::SHATTER;
@@ -619,14 +617,13 @@ impl NativeArmorInteraction {
             return hit_result::PARTIAL_PEN;
         }
 
-        let in_citadel = final_part.is_some() && Self::armor_type(final_part) == 1;
-        if in_citadel {
+        if has_final_part && final_is_citadel {
             return hit_result::CITADEL;
         }
         if hit_cit && over_pen {
             return hit_result::CITADEL_OVERPEN;
         }
-        if final_part.is_some() {
+        if has_final_part {
             return hit_result::PENETRATION;
         }
         if over_pen {

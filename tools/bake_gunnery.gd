@@ -13,15 +13,14 @@ const BISECT_MM: float = 2.0
 const HULL_SPACING_M: float = 3000.0
 const RANGE_STEP_M: float = 250.0
 
-## The survey space: the target's broadphase box and nothing else, so the
-## terrain ray finds no turret colliders and no other hull is in the way.
+## Survey space for the probe rig's live walks: the target's broadphase box and
+## nothing else. The bake itself does not use it.
 static var _survey_space: RID = RID()
 static var _survey_obbs: Dictionary = {}
 static var _survey_shapes: Array = []
 
 var _hulls: Array = []
 var _to_bake: Array = []
-var _owner: Ship = null
 var _force: bool = false
 var _done: bool = false
 var _t0: int = Time.get_ticks_msec()
@@ -43,9 +42,6 @@ func _ready() -> void:
 			_hulls.append(ship)
 			if paths.is_empty() or paths.has(p):
 				_to_bake.append(ship)
-	if not _hulls.is_empty():
-		# The walk needs a real owner that is not the target, or it skips the OBB test.
-		_owner = _spawn((_hulls[0] as Ship).scene_file_path, Vector3(-HULL_SPACING_M, 0.0, 0.0))
 	set_physics_process(true)
 
 
@@ -90,8 +86,6 @@ func _physics_process(_delta: float) -> void:
 		return
 	for h in _hulls:
 		_force_turrets(h)
-	_force_turrets(_owner)
-	survey_space_state(_hulls[0])
 	var shells := _collect_shells()
 	var ref := _reference_shell(shells)
 	if ref == null:
@@ -111,7 +105,6 @@ func _physics_process(_delta: float) -> void:
 	print("bake: reference speeds " + " ".join(cols))
 	for h in _to_bake:
 		_bake(h, ref, v_ref, om_max)
-	_free_survey_space()
 	print("bake: done in %.1f s" % ((Time.get_ticks_msec() - _t0) / 1000.0))
 	get_tree().quit()
 
@@ -221,9 +214,8 @@ func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: floa
 		print("bake: %s up to date" % path)
 		return
 	var pm = ProjectileManager.get_raw()
-	var space := survey_space_state(hull)
-	if space == null:
-		print("bake: %s has no survey space (armour not registered?)" % hull.scene_file_path)
+	if pm.armor_part_count(hull) == 0:
+		print("bake: %s has no armour registered" % hull.scene_file_path)
 		return
 	var aspects := BotGunnery._aspect_edges().size()
 	var descents := BotGunnery.descent_edges().size()
@@ -246,9 +238,8 @@ func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: floa
 			var geo := BotGunnery.build_lattice(hull, ai, di)
 			if geo.is_empty():
 				continue
-			var res: Dictionary = pm.survey_sweep(hull, _owner, ref,
-				hull.global_basis * (geo["dir"] as Vector3), v_ref[di], geo["points"], space,
-				PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
+			var res: Dictionary = pm.survey_sweep(hull, ref, geo["dir"], v_ref[di],
+				geo["points"], PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
 			if res.is_empty():
 				continue
 			walks += int(res["walks"])

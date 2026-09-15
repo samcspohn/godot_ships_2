@@ -490,13 +490,14 @@ shell_grid_cells={}",
             let precision_physics_world = self.precision_physics_world.clone();
             let navigation_map = self.navigation_map.clone();
             let from_pos = self.ray_query.as_ref().unwrap().get_from();
-            let armor_rays = self.get_armor_ray_cache(&p);
+            let armor_rays = super::util::armor_rays_for(&mut self.armor_ray_cache, precision_physics_world.as_ref(), &p);
             let hit_result = NativeArmorInteraction::process_travel(
                 &p,
                 from_pos,
                 t,
                 space_state.as_mut(),
                 precision_physics_world.as_ref(),
+                &mut self.armor,
                 &navigation_map,
                 armor_rays,
                 log_armor,

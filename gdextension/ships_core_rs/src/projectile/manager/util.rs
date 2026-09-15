@@ -2,7 +2,9 @@ use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Engine, Node, PhysicsDirectSpaceState3D, Resource};
 
-use super::{ProjectileManager, SHELL_GRID_CELL, SHELL_GRID_MIN, SHELL_GRID_DIM};
+use std::collections::BTreeMap;
+
+use super::{ArmorRayCacheEntry, ProjectileManager, SHELL_GRID_CELL, SHELL_GRID_MIN, SHELL_GRID_DIM};
 use crate::projectile::armor::{NativeArmorInteraction, RaycastCache};
 use crate::nav::map::NavigationMap;
 use crate::projectile::data::ProjectileData;
@@ -96,32 +98,34 @@ impl ProjectileManager {
         Self::find_ship_rec(node.get_parent())
     }
 
-    pub(crate) fn armor_ray_cache_key(&self, projectile: &Gd<ProjectileData>) -> u64 {
-        // `projectile.is_valid()` in C++ is likewise always true here; see the
-        // `&Gd<Resource>` note above.
-        let owner = projectile.bind().owner.clone();
-        match owner {
-            // `InstanceId::to_u64` is a private godot-core method; `to_i64() as u64`
-            // reinterprets the same bits, matching C++'s `(uint64_t)get_instance_id()`.
-            Some(owner) => owner.instance_id().to_i64() as u64,
-            None => 0u64,
-        }
-    }
+}
 
-    /// C++ returns `RaycastCache&`; Rust hands back a mutable borrow from the map.
-    pub(crate) fn get_armor_ray_cache(&mut self, projectile: &Gd<ProjectileData>) -> &mut RaycastCache {
-        let key = self.armor_ray_cache_key(projectile);
-        let entry = self.armor_ray_cache.entry(key).or_default();
-        if entry.rays.terrain_ray.is_none() || entry.rays.obb_ray.is_none() || entry.rays.water_ray.is_none() {
-            NativeArmorInteraction::configure_raycast_cache(
-                projectile,
-                self.precision_physics_world.as_ref(),
-                &mut entry.rays,
-            );
-        }
-        entry.last_used_frame = Engine::singleton().get_physics_frames();
-        &mut entry.rays
+pub(crate) fn armor_ray_cache_key(projectile: &Gd<ProjectileData>) -> u64 {
+    let owner = projectile.bind().owner.clone();
+    match owner {
+        // `InstanceId::to_u64` is a private godot-core method; `to_i64() as u64`
+        // reinterprets the same bits, matching C++'s `(uint64_t)get_instance_id()`.
+        Some(owner) => owner.instance_id().to_i64() as u64,
+        None => 0u64,
     }
+}
+
+/// The cached broadphase ray queries for a projectile's owner/exclude set. A
+/// free function over the map so callers can hold `&mut self.armor` alongside.
+pub(crate) fn armor_rays_for<'a>(
+    cache: &'a mut BTreeMap<u64, ArmorRayCacheEntry>, precision_physics_world: Option<&Gd<Node>>,
+    projectile: &Gd<ProjectileData>,
+) -> &'a mut RaycastCache {
+    let key = armor_ray_cache_key(projectile);
+    let entry = cache.entry(key).or_default();
+    if entry.rays.terrain_ray.is_none() || entry.rays.obb_ray.is_none() || entry.rays.water_ray.is_none() {
+        NativeArmorInteraction::configure_raycast_cache(projectile, precision_physics_world, &mut entry.rays);
+    }
+    entry.last_used_frame = Engine::singleton().get_physics_frames();
+    &mut entry.rays
+}
+
+impl ProjectileManager {
 
     pub(crate) fn shell_grid_index(&self, wx: f32, wz: f32) -> i32 {
         let mut gx = ((wx - SHELL_GRID_MIN) / SHELL_GRID_CELL) as i32;
@@ -275,13 +279,14 @@ impl ProjectileManager {
         // coexist with other borrows of `self` in the same call.
         let precision_physics_world = self.precision_physics_world.clone();
         let navigation_map = self.navigation_map.clone();
-        let armor_rays = self.get_armor_ray_cache(&projectile);
+        let armor_rays = armor_rays_for(&mut self.armor_ray_cache, precision_physics_world.as_ref(), &projectile);
         let res = NativeArmorInteraction::process_travel(
             &projectile,
             prev_pos,
             t,
             Some(&mut space_state),
             precision_physics_world.as_ref(),
+            &mut self.armor,
             &navigation_map,
             armor_rays,
             log_armor,
