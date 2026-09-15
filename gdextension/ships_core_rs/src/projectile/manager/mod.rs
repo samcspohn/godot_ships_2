@@ -296,6 +296,28 @@ impl ProjectileManager {
         self.survey_walk_impl(target, owner, shell, from, points, space_state)
     }
 
+    /// Offline bake of one lattice; see `survey_sweep_impl`.
+    #[func] pub(crate) fn survey_sweep(&mut self, target: Gd<Node3D>, owner: Gd<Object>, ref_shell: Gd<Resource>,
+            dir: Vector3, v_ref: f64, points: PackedVector3Array,
+            space_state: Option<Gd<PhysicsDirectSpaceState3D>>, coarse_pens: PackedFloat32Array,
+            bisect_mm: f64, om_max: f64) -> VarDictionary {
+        self.survey_sweep_impl(target, owner, ref_shell, dir, v_ref, points, space_state, coarse_pens, bisect_mm, om_max)
+    }
+
+    /// Penetration as the armour walk computes it; see `walk_penetration_impl`.
+    #[func] pub(crate) fn walk_penetration(shell: Gd<Resource>, velocity: f64) -> f64 {
+        Self::walk_penetration_impl(&shell, velocity)
+    }
+
+    /// Resolve a baked lattice to result bytes for one shell; see `lattice_resolve_impl`.
+    #[func] pub(crate) fn lattice_resolve(cells: PackedInt32Array, prof_off: PackedInt32Array,
+            bp_mm: PackedFloat32Array, bp_code: PackedByteArray, prof_off_om: PackedInt32Array,
+            bp_mm_om: PackedFloat32Array, bp_code_om: PackedByteArray, first_mm: PackedFloat32Array,
+            first_flags: PackedByteArray, pen: f64, overmatch: f64, is_he: bool) -> PackedByteArray {
+        Self::lattice_resolve_impl(&cells, &prof_off, &bp_mm, &bp_code, &prof_off_om, &bp_mm_om, &bp_code_om,
+            &first_mm, &first_flags, pen, overmatch, is_he)
+    }
+
     /// Dispersion-kernel scoring of a survey lattice; see `lattice_score_impl`.
     #[func] pub(crate) fn lattice_score(cells: PackedByteArray, nx: i32, ny: i32, rect: Vector4,
             aims: PackedVector2Array, half_disp: Vector2, sigma: f64, guarantee: f64, ellipse: Vector2,
