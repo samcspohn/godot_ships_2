@@ -2,13 +2,9 @@ extends Node3D
 
 ## Aim-point probe: runs the REAL armour walk against a real hull.
 ##
-## BotGunnery models armour as oriented patches with one line of flight and no
-## occlusion beyond what centroids imply. This rig instead calls
-## ProjectileManager.get_raw().sim_process_travel() - the NATIVE armour walk,
-## the one live shells go through, OBB broadphase into precision narrowphase into the
-## plate-by-plate walk - so the approximation can be checked against the thing
-## it approximates, and so a bucketed aim table can be generated from ground
-## truth rather than from a model of it.
+## Calls ProjectileManager.get_raw().sim_process_travel() - the NATIVE armour
+## walk live shells go through - directly, and drives BotGunnery (which walks
+## its lattices through the same path) to completion to inspect its answers.
 ##
 ## Not the GDScript ArmorInteraction autoload, which is the pre-port
 ## implementation and does not answer the same: a rig that measured THAT would be
@@ -138,13 +134,8 @@ func _physics_process(_delta: float) -> void:
 		_run()
 
 
-## The secondary battery, which is the same solver asked a different question.
-##
-## Reported per MOUNT as well as combined, because the combining is the whole
-## point: with two calibres firing at once a point is worth what the ship does
-## there, and the ship is a 150mm penetration and a 105mm shatter arriving at
-## different rates. The per-mount columns are what the combined column is made
-## of, so a wrong answer can be traced to which gun disagreed.
+## Drive the secondary solver to completion at a few geometries and report
+## what it chose, per mount.
 func _secondary_test() -> void:
 	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
 	var sec = _shooter.secondary_controller
@@ -153,7 +144,6 @@ func _secondary_test() -> void:
 		_out.close()
 		get_tree().quit()
 		return
-
 	_say("")
 	_say("secondary battery of %s:" % _shooter.scene_file_path.get_file())
 	for sc in sec.sub_controllers:
@@ -162,20 +152,7 @@ func _secondary_test() -> void:
 			(sc.guns as Array).size(), sp.shell1.caliber, sp.reload_time, sp._range,
 			float((sc.guns as Array).size()) / sp.reload_time,
 			"%.0f dmg" % sp.shell1.damage, "%.0f dmg" % sp.shell2.damage])
-
-	var space: PhysicsDirectSpaceState3D = _gunnery.survey_space_state(_target)
-	var pts: Array = G._aim_candidates(_target)
-	var ssb: AABB = G._superstructure_bounds(_target)
-	_say("")
-	_say("grid: %d aim points" % pts.size())
-
 	for pr in [[1500.0, 90.0], [3500.0, 90.0], [4500.0, 90.0], [1500.0, 22.5], [3500.0, 22.5]]:
-		# Put the shooter where the request says, then take the geometry back OUT
-		# of the bucket key. The solver answers at the middle of a bucket, not at
-		# the range and aspect it was asked about - 90 degrees lands in the
-		# 90-105 bucket and is solved at 97.5 - so a scan run at the requested
-		# aspect is answering a different question and the two cannot be
-		# compared. Everything below uses the bucket's own geometry.
 		var ang0 := deg_to_rad(float(pr[1]))
 		_shooter.global_transform = Transform3D(Basis(),
 			_target.global_position + Vector3(sin(ang0), 0.0, -cos(ang0)) * float(pr[0]))
@@ -190,90 +167,81 @@ func _secondary_test() -> void:
 		if bats.is_empty():
 			_say("  nothing aboard reaches this far")
 			continue
-		var total_rate := 0.0
-		for b in bats:
-			total_rate += float(b["rate"])
-
-		# Score every point the way _slot_value does, and show the mounts.
-		var best := -1.0
-		var best_pt := Vector3.ZERO
-		var best_ammo := 0
-		var best_parts: Array = []
-		for c in pts:
-			for am in [0, 1]:
-				var combined := 0.0
-				var parts: Array = []
-				for b in bats:
-					var sh: ShellParams = b["shell1"] if am == 0 else b["shell2"]
-					if sh == null:
-						parts.append(0.0)
-						continue
-					var offs: Array = b["offsets"]
-					var acc := 0.0
-					for off in offs:
-						acc += G._walk_payout(_target, _shooter, sh, c, off, asp,
-							rng, b["dispersion"], space).x
-					acc /= offs.size()
-					parts.append(acc)
-					combined += acc * float(b["rate"])
-				combined /= total_rate
-				if combined > best:
-					best = combined
-					best_pt = c
-					best_ammo = am
-					best_parts = parts
-		var zone := "super" if (ssb.size.y > 0.0 and best_pt.y >= ssb.position.y) else "hull"
-		var cols: PackedStringArray = []
-		for i in best_parts.size():
-			cols.append("%5.0fmm %7.0f x %.2f/s" % [
-				(bats[i]["shell1"] as ShellParams).caliber,
-				float(best_parts[i]), float(bats[i]["rate"])])
-		# Direct damage only. The solver additionally credits an HE slot with the
-		# fire it would start (scaled against measured AP), so an HE row here can
-		# legitimately come out below the solver's answer - see BotGunnery._best_of.
-		_say("  best point: %s at x=%5.1f y=%5.2f z=%6.1f (%s)  combined %7.0f/shell  %7.0f dps  [direct only]" % [
-			"AP" if best_ammo == 0 else "HE", best_pt.x, best_pt.y, best_pt.z, zone,
-			best, best * total_rate])
-		_say("    mounts: %s" % " | ".join(cols))
-
-		# And what the solver itself lands on, through the budgeted service.
-		var sol := {}
-		for i in 2000:
-			sol = G.solve_secondary(_shooter, _target)
-			G._drain()
-			if G._aim_table.has(kk):
-				break
-		var ans = G._aim_table.get(kk, {})
-		var off: Vector3 = ans.get("offset", Vector3.ZERO)
-		# Re-walk the exhaustive scan's winner AFTER the solver moved the
-		# shooter, to see whether the two disagree about the same point.
-		var recheck := 0.0
-		for b2 in bats:
-			var sh2: ShellParams = b2["shell1"] if best_ammo == 0 else b2["shell2"]
-			if sh2 == null:
-				continue
-			var offs2: Array = b2["offsets"]
-			var acc2 := 0.0
-			for off2 in offs2:
-				acc2 += G._walk_payout(_target, _shooter, sh2, best_pt, off2, asp,
-					rng, b2["dispersion"], space).x
-			recheck += (acc2 / offs2.size()) * float(b2["rate"])
-		recheck /= total_rate
-		_say("    same point re-walked after the solve: %7.0f (scan said %7.0f)" % [recheck, best])
-		_say("    solver:  %s at x=%5.1f y=%5.2f z=%6.1f  payout %7.0f" % [
-			"AP" if int(ans.get("ammo", 0)) == 0 else "HE",
-			off.x, off.y, off.z, float(ans.get("payout", 0.0))])
-
+		var sol := _drive(G, G.KIND_SECONDARY, 4000)
+		_say("  solver: %s at x=%5.1f y=%5.2f z=%6.1f  probed=%s  walks=%d in %.1f ms" % [
+			"AP" if int(sol.get("ammo", 0)) == 0 else "HE",
+			(sol.get("offset", Vector3.ZERO) as Vector3).x,
+			(sol.get("offset", Vector3.ZERO) as Vector3).y,
+			(sol.get("offset", Vector3.ZERO) as Vector3).z,
+			sol.get("probed", false), _last_walks, _last_ms])
+	var shells: Array = []
+	for sc in sec.sub_controllers:
+		shells.append((sc.get_params() as GunParams).shell1)
+		shells.append((sc.get_params() as GunParams).shell2)
+	_say("")
+	_remap_report(G, G.KIND_SECONDARY, shells)
 	_say("")
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()
 
 
-## Drive the solver the way a battle would. Real physics frames cannot be used
-## here - this rig only ever gets one - so the frame boundary is simulated by
-## refilling the budget and draining, which is exactly what _service_frame()
-## does when a real frame ticks over.
+## Per range bucket: fall angle, striking speed, and which bucket's lattice
+## answers for it after BotGunnery merges alike trajectories.
+func _remap_report(G, kind: int, shells: Array) -> void:
+	for sh in shells:
+		if sh == null:
+			continue
+		var edges: PackedFloat64Array = G._range_edges(kind)
+		var cols: PackedStringArray = []
+		for i in edges.size():
+			var r: float = G._range_center(kind, i)
+			var l: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(
+				Vector3(0, G.GUN_HEIGHT_M, 0), Vector3(r, 0, 0), sh)
+			var desc := "-"
+			if not l.is_empty() and l[0]:
+				var v: Vector3 = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(l[0], l[1], sh)
+				desc = "%.0fdeg/%.0fm/s" % [rad_to_deg(atan2(-v.y, Vector2(v.x, v.z).length())), v.length()]
+			cols.append("%d(%.0fm %s)>%d" % [i, r, desc, G._canonical_range(sh, kind, i)])
+		_say("range remap %.0fmm %s:" % [sh.caliber, "AP" if sh.type == ShellParams.ShellType.AP else "HE"])
+		_say("   " + " ".join(cols))
+
+
+var _last_walks: int = 0
+var _last_ms: float = 0.0
+
+## Ask and drain until the answer is complete, simulating physics ticks.
+func _drive(G, kind: int, max_ticks: int) -> Dictionary:
+	var sol := {}
+	var t_total: int = 0
+	_last_walks = 0
+	for tick in max_ticks:
+		var before := _walked_total(G)
+		var t0 := Time.get_ticks_usec()
+		if kind == G.KIND_SECONDARY:
+			sol = G.solve_secondary(_shooter, _target)
+		else:
+			sol = G.solve(_shooter, _target)
+		G._budget_frame = -1
+		G._drain()
+		t_total += Time.get_ticks_usec() - t0
+		_last_walks += _walked_total(G) - before
+		if bool(sol.get("probed", false)):
+			break
+	_last_ms = t_total / 1000.0
+	return sol
+
+
+func _walked_total(G) -> int:
+	var n := 0
+	for id in G._slabs:
+		for bk in G._slabs[id]["buckets"]:
+			n += int(G._slabs[id]["buckets"][bk]["walked"])
+	return n
+
+
+## Convergence and cost of one main-battery answer, then the answers at a few
+## geometries, then an ASCII dump of one lattice.
 func _table_test() -> void:
 	_say("[%d ms] _table_test enter" % _ms())
 	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
@@ -281,176 +249,91 @@ func _table_test() -> void:
 	_shooter.global_transform = Transform3D(Basis(),
 		_target.global_position + Vector3(sin(a), 0.0, -cos(a)) * 9000.0)
 	_shooter.force_update_transform()
-	var key = G._bucket_key(_shooter, _target)
-
-	_say("budget %d aim points/bucket/frame = %d walks/frame; %d aim points x 2 shells = %d walks/pass, x %d shells = %d walks/bucket" % [
-		G.POINTS_PER_BUCKET_PER_FRAME, G.POINTS_PER_BUCKET_PER_FRAME * 2,
-		G._aim_candidates(_target).size(),
-		G._aim_candidates(_target).size() * 2, G.SHELLS_PER_SLOT,
-		G._aim_candidates(_target).size() * 2 * G.SHELLS_PER_SLOT])
-	_say("[%d ms] grid built, entering solve loop" % _ms())
-	_say("frame | bots asking | aim y | ammo | walks done | state")
-
-	# Wall clock across the whole survey, so the per-walk cost below is measured
-	# on the real armour walk and not estimated from it. A frame's slice times
-	# this is what one active bucket adds to a physics frame.
-	#
-	# The frame cap is the walks in a bucket over the walks in a slice, plus
-	# slack: the survey is deliberately spread thin now, so a bucket takes
-	# hundreds of simulated frames rather than the twenty it used to.
-	var t_walks: int = 0
-	var walks_timed: int = 0
-	var frame_cap: int = int(ceil(float(G._aim_candidates(_target).size())
-		/ float(G.POINTS_PER_BUCKET_PER_FRAME))) * G.SHELLS_PER_SLOT + 8
-	for frame in frame_cap:
-		# Twenty bots of one class all asking about the same contact. They
-		# collapse onto one bucket, so this is one question, not twenty.
-		var solution := {}
+	_say("budget %d cells/bucket/tick, cap %d walks/tick, ~%d cells/lattice" % [
+		G.CELLS_PER_BUCKET_PER_TICK, G.WALKS_PER_TICK_CAP, G.LATTICE_CELLS])
+	_say("tick | aim y | ammo | walked | state")
+	var sol := {}
+	var walks := 0
+	var t_walks := 0
+	for tick in 2000:
 		for bot in 20:
-			solution = G.solve(_shooter, _target)
-
-		var progress = G._aim_progress.get(key, {})
-		var done: int = int(progress.get("i", -1))
-		var finished: bool = G._aim_table.has(key)
-		# One row every twenty frames plus the two that matter - the first ask
-		# and the solve - because the survey now runs for a couple of hundred.
-		if finished or frame < 2 or frame % 20 == 0:
-			_say("%5d | %11d | %5.2f | %4d | %10s | %s" % [
-				frame, 20,
-				(solution.get("offset", Vector3.ZERO) as Vector3).y,
-				int(solution.get("ammo", -1)),
-				"all" if finished else str(done),
-				"SOLVED" if finished else "refining"])
-		if finished:
+			sol = G.solve(_shooter, _target)
+		var done: bool = bool(sol.get("probed", false))
+		if done or tick < 2 or tick % 5 == 0:
+			_say("%4d | %5.2f | %4d | %6d | %s" % [tick,
+				(sol.get("offset", Vector3.ZERO) as Vector3).y, int(sol.get("ammo", -1)),
+				_walked_total(G), "SOLVED" if done else "refining"])
+		if done:
 			break
-		# Simulate the next physics frame arriving.
-		var total: int = G._aim_candidates(_target).size() * 2 * G.SHELLS_PER_SLOT
-		var before: int = int(G._aim_progress.get(key, {}).get("i", 0))
-		var t0: int = Time.get_ticks_usec()
+		var before := _walked_total(G)
+		var t0 := Time.get_ticks_usec()
+		G._budget_frame = -1
 		G._drain()
 		t_walks += Time.get_ticks_usec() - t0
-		# The bucket's state is erased on the frame it finishes, so read the
-		# walk count off the total rather than off a state that has gone.
-		walks_timed += int(G._aim_progress.get(key, {}).get("i", total)) - before
-	if walks_timed > 0:
-		var per_walk: float = float(t_walks) / float(walks_timed)
-		var per_frame: float = per_walk * float(G.POINTS_PER_BUCKET_PER_FRAME * 2)
+		walks += _walked_total(G) - before
+	if walks > 0:
 		_say("")
-		_say("cost: %d walks in %.1f ms = %.1f us/walk" % [
-			walks_timed, t_walks / 1000.0, per_walk])
-		_say("      one active bucket = %.2f ms/frame; 24 of them = %.1f ms/frame" % [
-			per_frame / 1000.0, per_frame * 24.0 / 1000.0])
-		_say("      (a 60 Hz physics frame is 16.7 ms)")
+		_say("cost: %d walks in %.1f ms = %.1f us/walk" % [walks, t_walks / 1000.0,
+			float(t_walks) / walks])
 
-	# Geometry actually available to aim at, vs what the grid covers.
-	var mc = _target.movement_controller
-	var free: float = mc.ship_height - mc.ship_draft
-	var top: float = _target.aabb.position.y + _target.aabb.size.y
 	_say("")
-	_say("ship_height=%.1f draft=%.1f -> freeboard=%.1f   length=%.0f" % [
-		mc.ship_height, mc.ship_draft, free, mc.ship_length])
-	_say("ship.aabb pos=(%.1f, %.1f, %.1f) size=(%.1f, %.1f, %.1f)  -> top y=%.1f" % [
-		_target.aabb.position.x, _target.aabb.position.y, _target.aabb.position.z,
-		_target.aabb.size.x, _target.aabb.size.y, _target.aabb.size.z,
-		_target.aabb.position.y + _target.aabb.size.y])
-	if _target.super_structure != null:
-		var ss: Node3D = _target.super_structure
-		var xf: Transform3D = ss.global_transform
-		_say("super_structure '%s' world y=%.2f (ship y=%.2f)" % [
-			ss.name, xf.origin.y, xf.origin.y - _target.global_position.y])
-	else:
-		_say("super_structure: null")
-	_say("aim points: %d" % G._aim_candidates(_target).size())
-
-	_say("[%d ms] solve loop done" % _ms())
-	# The grid, split into hull and superstructure.
-	var gp: GunParams = _shooter.artillery_controller.get_params()
-	var ss: AABB = G._superstructure_bounds(_target)
-	var pts: Array = G._aim_candidates(_target)
-	var n_hull := 0
-	for st in G.HULL_STATIONS:
-		n_hull += (st[1] as Array).size()
-	n_hull *= G.HULL_HEIGHT_FRACS.size()
-	_say("")
-	_say("grid: %d points = %d hull + %d superstructure   (%d walks/bucket)" % [
-		pts.size(), n_hull, pts.size() - n_hull, pts.size() * 2])
-	_say("superstructure bounds: pos=(%.1f, %.1f, %.1f) size=(%.1f, %.1f, %.1f)" % [
-		ss.position.x, ss.position.y, ss.position.z, ss.size.x, ss.size.y, ss.size.z])
-
-	var bx: Array = G._batteries(_shooter, G.KIND_MAIN, 9000.0)
-	if not bx.is_empty():
-		var dx: Vector2 = (bx[0] as Dictionary)["dispersion"]
-		_say("spread at 9000 m: %.0f x %.0f m over %d drawn shells" % [
-			dx.x, dx.y, ((bx[0] as Dictionary)["offsets"] as Array).size()])
-
-	# What each aim point is worth, per shell, at a few geometries.
-	var gpp: GunParams = _shooter.artillery_controller.get_params()
-	var space2: PhysicsDirectSpaceState3D = _gunnery.survey_space_state(_target)
-	var ssb: AABB = G._superstructure_bounds(_target)
-	var pts2: Array = G._aim_candidates(_target)
-	var disp_cache := {}
-	_say("")
-	_say("best aim point by geometry (mean of %d shells drawn from the real calculator)" % G.SHELLS_PER_SLOT)
-	for pair2 in [[6000.0, 90.0], [12000.0, 90.0], [8000.0, 22.5], [15000.0, 22.5]]:
-		var rng2: float = pair2[0]
-		var asp2: float = pair2[1]
-		var bats2: Array = G._batteries(_shooter, G.KIND_MAIN, rng2)
-		if bats2.is_empty():
-			_say("  %6.0f m %5.1f deg | no mount reaches" % [rng2, asp2])
-			continue
-		var bat2: Dictionary = bats2[0]
-		var d2: Vector2 = bat2["dispersion"]
-		var offs3: Array = bat2["offsets"]
-		var best2 := -1.0
-		var at2 := Vector3.ZERO
-		var ammo2 := 0
-		var ap_best := 0.0
-		var he_best := 0.0
-		for c2 in pts2:
-			for am in [0, 1]:
-				var sh2: ShellParams = gpp.shell1 if am == 0 else gpp.shell2
-				var acc := 0.0
-				for off3 in offs3:
-					acc += G._walk_payout(_target, _shooter, sh2, c2, off3, asp2, rng2, d2, space2).x
-				acc /= offs3.size()
-				if am == 0: ap_best = maxf(ap_best, acc)
-				else: he_best = maxf(he_best, acc)
-				if acc > best2:
-					best2 = acc; at2 = c2; ammo2 = am
-		var zone := "super" if (ssb.size.y > 0.0 and at2.y >= ssb.position.y) else "hull"
-		_say("  %6.0f m %5.1f deg | spread %4.0fx%-4.0f | %s at x=%5.1f y=%5.2f z=%6.1f (%s) | AP %8.0f  HE %8.0f" % [
-			rng2, asp2, d2.x, d2.y, "AP" if ammo2 == 0 else "HE",
-			at2.x, at2.y, at2.z, zone, ap_best, he_best])
-
-	# Ask the solver for a few geometries and report what it actually chose,
-	# with the measured AP rate the fire bonus is now weighed against.
-	_say("")
-	_say("solver answers (fire bonus scaled by measured AP, not nominal):")
-	for pr in [[6000.0, 90.0], [12000.0, 90.0], [8000.0, 22.5], [15000.0, 22.5]]:
-		var rr: float = pr[0]
-		var aa: float = pr[1]
-		var ang := deg_to_rad(aa)
+	_say("solver answers:")
+	for pr in [[6000.0, 90.0], [12000.0, 90.0], [8000.0, 22.5], [15000.0, 22.5], [3000.0, 5.0]]:
+		var ang := deg_to_rad(float(pr[1]))
 		_shooter.global_transform = Transform3D(Basis(),
-			_target.global_position + Vector3(sin(ang), 0.0, -cos(ang)) * rr)
+			_target.global_position + Vector3(sin(ang), 0.0, -cos(ang)) * float(pr[0]))
 		_shooter.force_update_transform()
-		var kk = G._bucket_key(_shooter, _target)
-		var sol2 := {}
-		for i in 400:
-			sol2 = G.solve(_shooter, _target)
-			G._drain()
-			if G._aim_table.has(kk):
-				break
-		var ans2 = G._aim_table.get(kk, {})
-		_say("  %6.0f m %5.1f deg -> %s  x=%5.1f y=%5.2f z=%6.1f  payout %8.0f" % [
-			rr, aa, "AP" if int(ans2.get("ammo", 0)) == 0 else "HE",
-			(ans2.get("offset", Vector3.ZERO) as Vector3).x,
-			(ans2.get("offset", Vector3.ZERO) as Vector3).y,
-			(ans2.get("offset", Vector3.ZERO) as Vector3).z,
-			float(ans2.get("payout", 0.0))])
+		var s2 := _drive(G, G.KIND_MAIN, 2000)
+		_say("  %6.0f m %5.1f deg -> %s  x=%5.1f y=%5.2f z=%6.1f  probed=%s  walks=%d in %.1f ms" % [
+			float(pr[0]), float(pr[1]), "AP" if int(s2.get("ammo", 0)) == 0 else "HE",
+			(s2.get("offset", Vector3.ZERO) as Vector3).x,
+			(s2.get("offset", Vector3.ZERO) as Vector3).y,
+			(s2.get("offset", Vector3.ZERO) as Vector3).z,
+			s2.get("probed", false), _last_walks, _last_ms])
 
+	_say("")
+	var gp: GunParams = _shooter.artillery_controller.get_params()
+	_remap_report(G, G.KIND_MAIN, [gp.shell1, gp.shell2])
+	_say("")
+	_dump_lattices(G)
+	_say("cache files:")
+	for id in G._slabs:
+		var path: String = G.CACHE_DIR + id + ".bin"
+		G._save_slab(G._slabs[id])
+		_say("  %s  %d bytes  %d buckets" % [path, FileAccess.get_file_as_bytes(path).size(),
+			(G._slabs[id]["buckets"] as Dictionary).size()])
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()
+
+
+const CELL_GLYPH := {0: "P", 1: "p", 2: "r", 3: "o", 4: "s", 5: "C", 6: "c", 7: "~", 8: "#"}
+
+## Every finished lattice as text: rows top-down, one glyph per cell.
+func _dump_lattices(G) -> void:
+	for id in G._slabs:
+		var slab: Dictionary = G._slabs[id]
+		for bk in slab["buckets"]:
+			var b: Dictionary = slab["buckets"][bk]
+			if int(b["nx"]) == 0:
+				continue
+			var r: Vector4 = b["rect"]
+			_say("%s  aspect %.1f  range %.0f  %dx%d  u[%.0f,%.0f] v[%.0f,%.0f]  walked %d/%d" % [
+				id, G._aspect_center(b["aspect"]), G._range_center(b["kind"], b["range"]),
+				b["nx"], b["ny"], r.x, r.z, r.y, r.w, b["walked"], int(b["nx"]) * int(b["ny"])])
+			var cells: PackedByteArray = b["cells"]
+			for iy in range(int(b["ny"]) - 1, -1, -1):
+				var line := ""
+				for ix in int(b["nx"]):
+					var c: int = cells[iy * int(b["nx"]) + ix]
+					if c == G.CELL_MISS:
+						line += "."
+					elif c == G.CELL_UNWALKED:
+						line += " "
+					else:
+						var g: String = CELL_GLYPH.get(c & G.CELL_CODE_MASK, "?")
+						line += g.to_upper() if (c & G.CELL_TURRET) == 0 else "T"
+				_say("   |" + line + "|")
 
 
 func _run() -> void:

@@ -69,7 +69,7 @@ const HALF_CYCLE_RUDDER_FACTOR: float = 2.2
 ## Speed scalars for displacement mode.  Kept well above zero: the point is to
 ## be unpredictable, not slow, and a bot that bleeds speed under fire dies to
 ## the next salvo rather than this one.
-const SPEED_MULT_MIN: float = 0.55
+const SPEED_MULT_MIN: float = 0.76
 const SPEED_MULT_MAX: float = 1.0
 
 ## A hull whose engine spool exceeds this multiple of the enemy flight time

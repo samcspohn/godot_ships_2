@@ -1,5 +1,5 @@
 use godot::prelude::*;
-use godot::classes::{Camera3D, Node, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource, INode};
+use godot::classes::{Camera3D, Node, Node3D, PhysicsDirectSpaceState3D, PhysicsRayQueryParameters3D, Resource, INode};
 use std::collections::BTreeMap;
 
 use crate::nav::map::NavigationMap;
@@ -8,6 +8,7 @@ use crate::projectile::data::ProjectileData;
 
 mod fire;
 mod lifecycle;
+mod survey;
 mod util;
 
 /// Matches GDScript HitResult.
@@ -286,5 +287,19 @@ impl ProjectileManager {
             prev_pos: Vector3, t: f64, space_state: Option<Gd<PhysicsDirectSpaceState3D>>,
             #[opt(default = false)] log_armor: bool) -> VarDictionary {
         self.sim_process_travel_impl(projectile, prev_pos, t, space_state, log_armor)
+    }
+
+    /// Batch survey walk for BotGunnery; see `survey_walk_impl`.
+    #[func] pub(crate) fn survey_walk(&mut self, target: Gd<Node3D>, owner: Gd<Object>, shell: Gd<Resource>,
+            from: Vector3, points: PackedVector3Array,
+            space_state: Option<Gd<PhysicsDirectSpaceState3D>>) -> PackedByteArray {
+        self.survey_walk_impl(target, owner, shell, from, points, space_state)
+    }
+
+    /// Dispersion-kernel scoring of a survey lattice; see `lattice_score_impl`.
+    #[func] pub(crate) fn lattice_score(cells: PackedByteArray, nx: i32, ny: i32, rect: Vector4,
+            aims: PackedVector2Array, half_disp: Vector2, sigma: f64, guarantee: f64, ellipse: Vector2,
+            payouts: PackedFloat64Array, turret_cap: f64) -> PackedFloat64Array {
+        Self::lattice_score_impl(&cells, nx, ny, rect, &aims, half_disp, sigma, guarantee, ellipse, &payouts, turret_cap)
     }
 }
