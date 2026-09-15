@@ -6,10 +6,6 @@
 
 [resource]
 script = ExtResource("1_disp")
-sigma = 1.8
-h_curve = ExtResource("2_hcrv")
-v_curve = ExtResource("3_vcrv")
-reference_range = 20000.0
 h_disp = 270.0
 v_disp = 135.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"

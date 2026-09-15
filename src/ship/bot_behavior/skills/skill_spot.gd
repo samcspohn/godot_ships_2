@@ -1,419 +1,111 @@
 class_name SkillSpot
 extends BotSkill
 
-## Reveal enemies for teammates while staying concealed.
-##
-## Phase 1 — Spotted enemies exist:
-##   Generate a ring of candidate positions around the spotted-enemy centroid.
-##   Score each candidate by how many enemies it keeps detected, how well it
-##   preserves our own concealment, and how close it is to our current position.
-##
-## Phase 2 — Nothing is spotted:
-##   Approach the nearest unspotted enemy (within pursuit range) to the
-##   sweet-spot distance so we can light them up.
-
-const CANDIDATE_COUNT := 16
-
-## True when the last execute() found a standoff that spots the enemy without
-## exposing us, false when it had to accept being seen to make vision. Read by
-## the behavior to decide whether stealth routing is even achievable — asking
-## the navigator to avoid detection zones while sending it to a destination
-## inside one produces an unreachable goal.  Mirrors SkillFindCover.can_shoot.
-var stealth_corridor: bool = true
-
-## Fraction of enemy concealment radius to stay inside (detection margin).
 const SPOT_MARGIN            := 1.0
-## How far outside our own concealment radius to sit, as a multiple of it.
-## Since the ring is placed at exactly this distance, this constant IS the
-## spotting standoff: 1.0 would ride the detection boundary itself, and the
-## margin above 1.0 is the cushion that absorbs a contact closing on us, our
-## own bloom, and the error in a presumed contact's position.  Keep it small —
-## every metre of cushion is a metre further from the enemy than we need to be.
 const SAFE_MARGIN            := 1.15
 
-## How far across the gap between the fleets a scout will go on presumption
-## alone, as a fraction of the current separation (FleetFrame.depth_of).
-##
-## A budget rather than a distance so it stays meaningful as the fight closes:
-## the fleets converge, the gap shrinks, and the same fraction keeps a scout
-## ahead of its own line without ever putting it on the far side of the middle.
-## It also frees up on its own - as our fleet advances the friendly pole moves
-## up with it, so a ship that has spent its budget gets more without deciding
-## anything.
-const STAGING_MAX_DEPTH: float = 0.35
+## Probe spacing along the escape bearing, as a fraction of the router's own
+## detection radius, and how many probes the walk may take.  Together they cap
+## the walk at 2x that radius: enough to leave a bubble entered at its centre
+## plus an overlapping one, and short enough that running out still leaves the
+## station on our side of the contacts rather than past them.
+const PUSH_STEP_RATIO := 0.25
+const MAX_PUSH_PASSES := 8
 
-## The same budget once there is something real to go and look at. Looser than
-## STAGING_MAX_DEPTH because the errand is no longer speculative - but still
-## short of 1.0, which is the enemy fleet's own centre. A spotting station past
-## that is not a station, it is a boat that has driven through them.
-const COMMITTED_MAX_DEPTH: float = 0.75
+## True when the station ended up outside the router's threat picture, false
+## when the walk ran out of passes with the station still inside it.  Read by
+## DDBehavior to decide whether stealth routing is achievable at all - asking
+## the navigator to avoid detection zones while sending it to a goal inside one
+## produces an unreachable destination.
+var stealth_corridor: bool = true
 
-## How many times our own concealment radius we're willing to travel to reach
-## an unspotted enemy.  Keeps ships from hunting targets across the whole map.
-## Overridable via params key "max_target_distance".
-const MAX_TARGET_DIST_FACTOR := 5.0
-
-## Scoring weights — must sum to 1.0.
-const W_COVERAGE := 0.45   # how many spotted enemies are kept detected
-const W_STEALTH  := 0.30   # how well we stay hidden from all enemies
-const W_DISTANCE := 0.25   # prefer candidates closer to our current position
-
-# ── Station commitment ──────────────────────────────────────────────────────
-# Re-solving the ring from scratch every tick is unstable in exactly the
-# situation spotting matters most.  With an island between us and a contact the
-# two ways around it score almost identically, the winner alternates on noise,
-# and because the two destinations are on opposite sides of the island the
-# ship splits the difference and drives straight down the middle at the enemy.
-# The threat push-out then amplifies it, since it shoves each side further out.
-#
-# So the station is COMMITTED and then tracked, rather than re-chosen.  It is
-# stored as an angle around the enemy centroid rather than as a world point,
-# which means it follows the enemy for free: they sail away, the centroid moves
-# with them, and the station moves forward without any decision being taken.
-# A decision is only needed when the shape of the problem changes, and then it
-# has to clear a margin before the ship is allowed to swap sides of an island.
-
-## Held station, as a world angle around the enemy centroid.
-var _station_valid: bool = false
-var _station_angle: float = 0.0
-
-## How much better a different station must score before we abandon the held
-## one.  This is what stops the two sides of an island trading places.
-const SWITCH_MARGIN := 0.12
-
-## How many ring samples away a better station may be and still count as the
-## held one sliding along rather than jumping.  Lets the station track a
-## gradual change in the picture without needing to clear SWITCH_MARGIN.
-const DRIFT_STEPS := 1
-
+var current_pos: Vector3 = Vector3.ZERO
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
-	var ship           := ctx.ship
-	var my_concealment: float = (ship.concealment.params.p() as ConcealmentParams).radius
+	var ship: Ship = ctx.ship
+	var behavior = ctx.behavior
+	var ship_pos = ship.global_position
+	if current_pos == Vector3.ZERO:
+		current_pos = ship_pos
 
-	var spot_margin: float      = params.get("spot_margin",        SPOT_MARGIN)
-	var safe_margin: float      = params.get("safe_margin",        SAFE_MARGIN)
-	# Maximum distance we'll travel to reach any target.  Falls back to a
-	# multiple of our own concealment radius so it scales with ship class.
-	var max_target_dist: float = params.get(
-		"max_target_distance", my_concealment * MAX_TARGET_DIST_FACTOR)
+	# var danger_center: Vector3 = behavior._get_spotted_danger_center()
+	# var dist := NavigationMapManager.get_distance(current_pos)
 
-	var spotted: Array[Ship]  = ctx.server.get_valid_targets(ship.team.team_id)
-	var unspotted: Dictionary = ctx.server.get_unspotted_enemies(ship.team.team_id)
+	# return NavIntent.create(current_pos, ship.global_transform.basis.get_euler().y)
+	var danger_center: Vector3 = behavior._get_spotted_danger_center()
 
-	# ── Build target list ────────────────────────────────────────────────────
-	# Each entry: { pos: Vector3, concealment: float, dist: float }
-	var targets: Array[Dictionary] = []
-
-	if spotted.size() > 0:
-		# Only include spotted enemies within pursuit range so distant contacts
-		# don't drag the centroid (and therefore the ring) far across the map.
-		for s: Ship in spotted:
-			if not is_instance_valid(s):
-				continue
-			var d := s.global_position.distance_to(ship.global_position)
-			if d > max_target_dist:
-				continue
-			# Below COMMIT_COVERAGE a sighting on the far flank says nothing
-			# about where the rest of them are, and chasing it is how a screen
-			# abandons the flank it was holding. The gate lifts on its own once
-			# the picture is good enough to read. See BotBehavior.flank_permits.
-			if not ctx.behavior.flank_permits(s.global_position):
-				continue
-			targets.append({
-				pos         = s.global_position,
-				concealment = (s.concealment.params.p() as ConcealmentParams).radius,
-				dist        = d,
-			})
-		# If every spotted enemy was out of range, fall through to Phase 2 so
-		# we don't try to navigate across the map to maintain contact.
-
-	if targets.is_empty():
-		# Phase 2: approach the nearest unspotted enemy that is within range.
-		var best_dist := INF
-		var best_entry: Dictionary = {}
-		for s in unspotted.keys():
-			var pos: Vector3 = unspotted[s]
-			var d := pos.distance_to(ship.global_position)
-			if d >= best_dist or d > max_target_dist:
-				continue
-			if not ctx.behavior.flank_permits(pos):
-				continue
-			best_dist = d
-			var ec: float = (s.concealment.params.p() as ConcealmentParams).radius \
-				if is_instance_valid(s) else my_concealment * 2.0
-			best_entry = { pos = pos, concealment = ec, dist = d }
-		if not best_entry.is_empty():
-			targets.append(best_entry)
-
-	if targets.is_empty():
-		# STAGING. Nothing is lit and nothing is held, so there is no station to
-		# compute - a ring around a contact nobody has seen is a ring around a
-		# rumour, and placing one puts the destination wherever the rumour is,
-		# which is how a scout ends up alone in enemy water.
-		#
-		# The honest question at this intel level is not "where do I stand to
-		# see X" but "which way do I go to find out", so take ground along the
-		# bearing to the nearest thing believed to be on our flank and stop
-		# where the budget runs out.
-		_station_valid = false
-		return _staging_intent(ctx, my_concealment, safe_margin)
-
-	# ── Compute distance-weighted centroid and sweet-spot ring radius ─────────
-	# Inverse-distance weighting ensures nearby enemies dominate the centroid
-	# instead of being averaged equally with far-away contacts.
-	var centroid              := Vector3.ZERO
-	var avg_enemy_concealment := 0.0
-	var total_weight          := 0.0
-	for t: Dictionary in targets:
-		var w := 1.0 / maxf(t.dist as float, 1.0)
-		centroid              += (t.pos as Vector3) * w
-		avg_enemy_concealment += (t.concealment as float) * w
-		total_weight          += w
-	centroid              /= total_weight
-	avg_enemy_concealment /= total_weight
-
-	var outer_edge := avg_enemy_concealment * spot_margin
-	var inner_edge := my_concealment        * safe_margin
-
-	var ring_radius: float
-	if outer_edge > inner_edge:
-		# A stealth corridor exists: anywhere between inner_edge and outer_edge
-		# spots them without showing us.  Sit at the INNER edge, not in the
-		# middle of it.  Detection is symmetric-ish and one-sided in our favour
-		# here — an enemy must come inside OUR concealment radius to see us, so
-		# the closest safe standoff is just outside that radius, and everything
-		# a spotter wants is better there: shorter torpedo flight times, a
-		# tighter reaction loop, and contacts held at the near edge of their
-		# detection ring rather than the far one where they slip in and out.
-		ring_radius = inner_edge
-		stealth_corridor = true
-	else:
-		# They conceal better than we do, so no standoff both spots them and
-		# hides us.  Accept exposure at the farthest range that still spots.
-		ring_radius = outer_edge
-		stealth_corridor = false
-
-	# ── Generate and score candidates ────────────────────────────────────────
-	var ship_2d     := Vector2(ship.global_position.x, ship.global_position.z)
-	var centroid_2d := Vector2(centroid.x, centroid.z)
-
-	# Span used to normalise the proximity term below.
-	var dist_scale := maxf(ship_2d.distance_to(centroid_2d) + ring_radius, 1.0)
-
-	var env := {
-		centroid_2d    = centroid_2d,
-		ring_radius    = ring_radius,
-		ship_2d        = ship_2d,
-		dist_scale     = dist_scale,
-		targets        = targets,
-		my_concealment = my_concealment,
-		spot_margin    = spot_margin,
-		safe_margin    = safe_margin,
-	}
-
-	# Sample a 180° arc on the side of the centroid facing our ship so the
-	# chosen position is always between us and the enemy, not behind them.
-	# Note this arc is anchored on OUR position, so it rotates as we move —
-	# another reason the choice has to be committed rather than re-taken every
-	# tick, since the candidate set itself is not stable.
-	var to_ship_dir := ship_2d - centroid_2d
-	var base_angle: float = atan2(to_ship_dir.y, to_ship_dir.x) if to_ship_dir.length_squared() > 1.0 else 0.0
-	var arc_step: float = PI / float(CANDIDATE_COUNT - 1) if CANDIDATE_COUNT > 1 else PI
-
-	var best: Dictionary = {}
-	var best_angle: float = base_angle
-	for i in CANDIDATE_COUNT:
-		var t_frac := float(i) / (CANDIDATE_COUNT - 1) if CANDIDATE_COUNT > 1 else 0.5
-		var angle := base_angle - PI * 0.5 + PI * t_frac
-		var cand := _score_station(ctx, angle, env)
-		if best.is_empty() or float(cand.score) > float(best.score):
-			best = cand
-			best_angle = angle
-
-	if best.is_empty() or (best.pos as Vector3) == Vector3.ZERO:
-		_station_valid = false
+	var reach: float = behavior.threat_effective_radius()
+	if reach <= 0.0:
 		return null
 
-	var chosen: Dictionary = best
-	var chosen_angle: float = best_angle
+	var fpfc = SkillFlank.flank_position(ctx, ship_pos, 60.0)
+	var flank_pos: Vector3 = fpfc[0]
+	var friendly_center: Vector3 = fpfc[1]
+	if flank_pos == Vector3.ZERO:
+		return null
 
-	if _station_valid:
-		# The held station, re-scored against the picture as it is NOW.  It has
-		# already tracked the enemy since last tick — the angle is theirs, not
-		# the world's — so this is asking whether it is still a good station,
-		# not whether the enemy moved.
-		var held := _score_station(ctx, _station_angle, env)
+	if flank_pos.distance_to(friendly_center) > flank_pos.distance_to(danger_center) * 0.75:
+		var friendly_to_danger = (friendly_center - danger_center)
+		var flank_to_friendly = (flank_pos - friendly_center).normalized()
+		flank_pos = flank_to_friendly * friendly_to_danger.length() * 0.75 + friendly_center
 
-		# Give it up without argument when it has stopped being a station at
-		# all: the enemy has sailed past it, or it now sees nothing.
-		var behind: bool = absf(angle_difference(_station_angle, base_angle)) > PI * 0.5
-		var blind: bool = int(held.covered) == 0 and int(best.covered) > 0
 
-		# Otherwise it takes either a small slide along the ring, or a clearly
-		# better station elsewhere, to move us.  Both require an improvement:
-		# the held station is not necessarily one of the sampled candidates, so
-		# it can outscore every one of them and must be allowed to.
-		var better: bool = float(best.score) > float(held.score)
-		var slide: bool = better \
-			and absf(angle_difference(best_angle, _station_angle)) <= arc_step * float(DRIFT_STEPS) + 0.001
-		var decisive: bool = float(best.score) > float(held.score) + SWITCH_MARGIN
-
-		if not (behind or blind or slide or decisive):
-			chosen = held
-			chosen_angle = _station_angle
-
-	_station_angle = chosen_angle
-	_station_valid = true
-	var best_pos: Vector3 = ctx.behavior._get_valid_nav_point(
-		_clamp_to_budget(ctx.behavior, ship.global_position, chosen.pos, COMMITTED_MAX_DEPTH))
-
-	# ── Build NavIntent ──────────────────────────────────────────────────────
-	var to_dest := best_pos - ship.global_position
-	to_dest.y = 0.0
-	var heading := atan2(to_dest.x, to_dest.z) \
-		if to_dest.length_squared() > 1.0 \
-		else ctx.behavior._get_ship_heading()
-
-	var intent := NavIntent.create(best_pos, heading)
-	# With no corridor the destination is inside enemy detection by definition.
-	# Let it stand rather than have the threat BFS walk it out to some cell on
-	# the far side of the contact we are trying to spot.
-	intent.skip_threat_adjustment = not stealth_corridor
+	flank_pos = _push_clear_of_threats(ctx, danger_center, flank_pos, reach)
+	var away_dir = (flank_pos - danger_center).normalized()
+	var away_heading: float = atan2(away_dir.x, away_dir.z)
+	var intent := NavIntent.create(flank_pos, away_heading)
+	# BotControllerV4._adjust_destination_for_threats() would otherwise run the
+	# station back through ShipNavigator.adjust_destination_for_threats() on
+	# every stealth tick, and that is the function the walk above exists to
+	# avoid - it would shove a point we just verified off its bearing, possibly
+	# onto land or past the contacts. Either outcome of the walk is final: a
+	# clear probe is already the nearest usable station on the bearing, and a
+	# walk that ran out of budget has proved there is no better one on it.
+	intent.skip_threat_adjustment = true
 	return intent
 
-
-## Score one candidate station sitting at `angle` around the enemy centroid.
-## Factored out of the candidate sweep so the held station can be re-scored by
-## exactly the same rules as its challengers — scoring them differently is how
-## a commitment scheme ends up either never moving or never holding.
+## Slide `pos` straight out along the bearing that already points away from the
+## danger centre until it lands somewhere the stealth router can actually use.
 ##
-## Returns { pos: Vector3, score: float, covered: int }.
-func _score_station(ctx: SkillContext, angle: float, env: Dictionary) -> Dictionary:
-	var targets: Array = env.targets
-	var my_concealment: float = env.my_concealment
-	var spot_margin: float = env.spot_margin
-	var safe_margin: float = env.safe_margin
-
-	var dir := Vector2(cos(angle), sin(angle))
-	var c2d: Vector2 = (env.centroid_2d as Vector2) + dir * float(env.ring_radius)
-	var c3d: Vector3 = ctx.behavior._get_valid_nav_point(Vector3(c2d.x, 0.0, c2d.y))
-	c2d = Vector2(c3d.x, c3d.z)
-
-	# Coverage and stealth in one pass over the contacts.
-	var covered := 0
-	var stealth := 1.0
-	for t: Dictionary in targets:
-		var t2d := Vector2((t.pos as Vector3).x, (t.pos as Vector3).z)
-		var dist := c2d.distance_to(t2d)
-		var los_blocked := NavigationMapManager.is_los_blocked_2d(c2d, t2d)
-		if dist <= (t.concealment as float) * spot_margin and not los_blocked:
-			covered += 1
-		if dist < my_concealment * safe_margin and not los_blocked:
-			stealth -= 1.0 / targets.size()
-
-	var score := W_COVERAGE * (float(covered) / targets.size())
-	score += W_STEALTH * clampf(stealth, 0.0, 1.0)
-
-	# Proximity: prefer candidates close to our current position.  Normalised
-	# against the full span a candidate can sit at (our distance to the
-	# centroid, plus the ring we are placing them on).  Normalising against
-	# ring_radius alone saturates to zero for every candidate as soon as we are
-	# further out than one ring, which silently removes this term exactly when
-	# it matters most.
-	var dist_to_us := c2d.distance_to(env.ship_2d as Vector2)
-	score += W_DISTANCE * clampf(1.0 - dist_to_us / float(env.dist_scale), 0.0, 1.0)
-
-	return { pos = c3d, score = score, covered = covered }
-
-
-## Ground worth taking when nothing at all has been seen. See STAGING_MAX_DEPTH.
+## The walk is done here rather than through
+## ShipNavigator.adjust_destination_for_threats() because that function solves a
+## different problem: it pushes a point out of each circle that contains it
+## radially away from THAT circle's origin, so with a contact sitting out along
+## our escape bearing the escape hatch it finds is the far side of that contact.
+## It also never looks at terrain, and it tests the exact point against the
+## circles while the router blocks whole clusters - so a point it calls clear can
+## still be a goal inside the planner's own wall.
 ##
-## Returns a hold rather than null once the budget is spent: the alternative in
-## the destroyer ladder is Chase, which runs at the nearest last-known position
-## at flank speed, and arriving lit up and alone somewhere the contact has
-## already left is worse than holding the ground we came for.
-##
-## Null only when this bot believes in nothing on its own flank - which for a
-## low-aptitude bot is the normal case, since it does not credit ships nobody
-## has seen at all (EnemyPresumption.use_spawn_line). Those fall through to Hunt
-## as they always did.
-func _staging_intent(ctx: SkillContext, my_concealment: float, safe_margin: float) -> NavIntent:
-	var behavior = ctx.behavior
-	var ship: Ship = ctx.ship
-	var here: Vector3 = ship.global_position
-
-	var best: Dictionary = {}
-	var best_dist: float = INF
-	for guess in behavior.get_presumed_contacts():
-		var gp: Vector3 = guess.position
-		# The flank gate, not a distance gate. Below COMMIT_COVERAGE this is
-		# what stops the whole screen sliding across the map onto one flank.
-		if not behavior.flank_permits(gp):
-			continue
-		var d: float = gp.distance_to(here)
-		if d < best_dist:
-			best_dist = d
-			best = guess
-	if best.is_empty():
-		return null
-
-	var bearing: Vector3 = (best.position as Vector3) - here
-	bearing.y = 0.0
-	if bearing.length_squared() < 1.0:
-		return null
-	bearing = bearing.normalized()
-
-	# Stop short by our own detection radius: the errand is to see it, not to
-	# meet it, and the contact is a disc rather than a point anyway.
-	var travel: float = maxf(best_dist - my_concealment * safe_margin, 0.0)
-
-	# Spend no more of the gap than the budget allows.
-	var dest: Vector3 = _clamp_to_budget(behavior, here, here + bearing * maxf(travel, 0.0),
-		STAGING_MAX_DEPTH)
-	dest.y = 0.0
-	dest = behavior._get_valid_nav_point(dest)
-
-	var to_dest: Vector3 = dest - here
-	to_dest.y = 0.0
-	var heading: float = atan2(to_dest.x, to_dest.z) \
-		if to_dest.length_squared() > 1.0 else behavior._get_ship_heading()
-
-	# Staging never accepts exposure to make vision - that is a decision for a
-	# contact we have actually found.
+## Walking outward and stopping at the FIRST clear probe gives the station
+## closest to the enemy that still routes, and can never return a point behind
+## the contacts: every probe is further from the danger centre than the last, and
+## the walk gives up instead of stepping past its budget.
+func _push_clear_of_threats(ctx: SkillContext, danger_center: Vector3,
+		pos: Vector3, reach: float) -> Vector3:
 	stealth_corridor = true
-	return NavIntent.create(dest, heading)
 
+	var nav: ShipNavigator = ctx.navigator
+	if nav == null or nav.get_threat_circle_count() == 0:
+		return pos
 
-## Pull `dest` back along the line from `here` until it is no deeper into the
-## enemy half than `budget` allows. See FleetFrame.depth_of.
-##
-## Applied to every destination this skill produces, not just the speculative
-## ones. The ring that Phase 1 and Phase 2 place has no opinion about depth at
-## all: it sits at a fixed radius around an inverse-distance-weighted centroid,
-## and a centroid is not the front of the enemy line. With contacts spread
-## through their half, the centroid can be kilometres behind the leading ship,
-## so a ring around it puts the station past that ship even though the arc is
-## sampled on the hemisphere facing us. That is how a spotting destination ends
-## up behind their line while every individual step looks reasonable.
-##
-## A clamp rather than a rejection: the bearing was still the right idea, it was
-## only followed too far.
-func _clamp_to_budget(behavior, here: Vector3, dest: Vector3, budget: float) -> Vector3:
-	var frame: FleetFrame = behavior.fleet_frame()
-	if frame.separation <= FleetFrame.MIN_SEPARATION:
-		return dest
-	var span: Vector3 = dest - here
-	span.y = 0.0
-	if span.length_squared() < 1.0:
-		return dest
-	var here_depth: float = frame.depth_of(here)
-	var dest_depth: float = frame.depth_of(dest)
-	if dest_depth <= budget or dest_depth - here_depth <= 0.001:
-		return dest
-	# Already past the budget before moving: do not advance at all, but do not
-	# reverse either - backing out is a retreat decision, not a spotting one.
-	var scale: float = clampf((budget - here_depth) / (dest_depth - here_depth), 0.0, 1.0)
-	var out: Vector3 = here + span * scale
-	out.y = 0.0
-	return out
+	var center_2d := Vector2(danger_center.x, danger_center.z)
+	var away := Vector2(pos.x, pos.z) - center_2d
+	if danger_center == Vector3.ZERO or away.length_squared() < 1.0:
+		return pos
+
+	var dir := away.normalized()
+	var dist := away.length()
+	var step: float = maxf(reach * PUSH_STEP_RATIO, SPOT_MARGIN)
+
+	for _pass in MAX_PUSH_PASSES + 1:
+		var probe := center_2d + dir * dist
+		if not nav.is_point_blocked(probe):
+			return Vector3(probe.x, pos.y, probe.y)
+		dist += step
+
+	# Out of budget with every probe blocked: the bearing runs through a contact
+	# that sits along it, or into land, and the only clear water left on it is
+	# behind one of them.  Hand back the unshifted station and tell DDBehavior
+	# there is no stealth corridor to ask the router for.
+	stealth_corridor = false
+	return pos

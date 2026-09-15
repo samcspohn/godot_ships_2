@@ -1595,9 +1595,38 @@ func _get_ship_clearance() -> float:
 	return 100.0
 
 func _get_turning_radius() -> float:
+	# Through _p(), not off the controller: ShipMovementV4 keeps its geometry in
+	# the moddable params and has no turning_circle_radius property of its own,
+	# so the direct read resolved to nothing on every V4 hull - which is every
+	# hull. Reading _p() also picks up rudder upgrades, which is what a caller
+	# asking "how much water does a turn cost me" wants anyway.
 	if _ship and _ship.movement_controller:
-		return _ship.movement_controller.turning_circle_radius
+		return _ship.movement_controller._p().turning_circle_radius
 	return 300.0
+
+
+## The radius at which THIS ship becomes visible to an enemy, as the threat
+## layer models it: our own concealment plus the water a turn costs us.
+##
+## The single source of truth for the detection bubble.  BotControllerV4 hands
+## it to ShipNavigator.set_threat_source(), which is what sizes every circle
+## ThreatRegistry stamps into the HPA graph, and SkillSpot gates its advance on
+## the same number - a skill that stood at a different radius from the one the
+## router refuses to path through would hand the router a goal inside its own
+## blocked cells, which is the bug that used to strand destroyers.
+##
+## Zero when concealment is not initialised yet (upgrades are applied deferred,
+## see GameServer._add_player); callers treat that as "no threat picture".
+func threat_effective_radius() -> float:
+	if _ship == null or _ship.concealment == null or _ship.concealment.params == null:
+		return 0.0
+	var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
+	if conceal <= 0.0:
+		return 0.0
+	var turn: float = 0.0
+	if _ship.movement_controller != null:
+		turn = _ship.movement_controller._p().turning_circle_radius
+	return conceal + turn * 2.0
 
 func _safe_validate(ship: Ship, pos: Vector3) -> Vector3:
 	"""Push a position through safe_nav_point + validate_destination."""

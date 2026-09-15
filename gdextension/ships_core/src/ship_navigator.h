@@ -554,6 +554,20 @@ public:
 	// dest is already outside all threat circles.
 	Dictionary adjust_destination_for_threats(Vector2 ship_pos, Vector2 dest) const;
 
+	// Is |point| usable as a destination at all?  true when it is inside
+	// terrain at |clearance| (this ship's hull clearance when <= 0, and points
+	// off the edge of the map count as terrain), or inside a cluster this
+	// navigator's own threat circles block.
+	//
+	// The question adjust_destination_for_threats() cannot answer: that one
+	// tests the exact point against each circle and pushes it out radially
+	// away from that circle's own origin, which says nothing about terrain and
+	// nothing about the cluster the router actually blocks.  A caller that
+	// wants to walk its own escape bearing wants this instead.
+	bool is_point_blocked(Vector2 point, float clearance = 0.0f) const;
+	// Same test with the reason kept apart: { in_terrain, threatened, blocked }.
+	Dictionary get_point_blocking(Vector2 point, float clearance = 0.0f) const;
+
 	// --- Timing (microseconds) ---
 	float get_timing_update_us() const { return timing_update_us; }
 	float get_timing_avoidance_us() const { return timing_avoidance_us; }

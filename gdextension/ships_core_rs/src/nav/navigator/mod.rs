@@ -714,6 +714,31 @@ impl ShipNavigator {
         self.adjust_destination_for_threats_impl(ship_pos, dest)
     }
 
+    /// True when `point` is unusable as a destination: inside terrain at
+    /// `clearance` (the hull clearance when 0), or inside a cluster this
+    /// navigator's threat layer blocks. Off-map points read as terrain.
+    #[func]
+    fn is_point_blocked(&self, point: Vector2, #[opt(default = 0.0)] clearance: f32) -> bool {
+        let (in_terrain, threatened) = self.point_blocking_impl(point, clearance);
+        in_terrain || threatened
+    }
+
+    /// is_point_blocked with the reason kept apart:
+    /// `{in_terrain, threatened, blocked}`.
+    #[func]
+    fn get_point_blocking(
+        &self,
+        point: Vector2,
+        #[opt(default = 0.0)] clearance: f32,
+    ) -> VarDictionary {
+        let (in_terrain, threatened) = self.point_blocking_impl(point, clearance);
+        let mut d = VarDictionary::new();
+        d.set("in_terrain", in_terrain);
+        d.set("threatened", threatened);
+        d.set("blocked", in_terrain || threatened);
+        d
+    }
+
     #[func]
     fn get_perf_metrics(&self) -> VarDictionary {
         self.get_perf_metrics_impl()

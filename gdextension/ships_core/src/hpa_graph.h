@@ -427,6 +427,17 @@ private:
 public:
 	void stamp_threats(const std::vector<ThreatCircle>& threats);
 	void clear_threats();
+
+	// point_in_threatened_cluster() is the pure single-cluster form of
+	// stamp_threats: true when the macro cluster containing `point` would be
+	// marked blocked by `threats`.  It never reads or writes
+	// cluster_threat_blocked_, which belongs to whichever ship stamped last
+	// rather than to the caller.  Cluster granularity is the point — the
+	// cluster is the unit the router blocks, so a goal whose cluster is
+	// blocked is a goal inside the planner's own wall even when the exact
+	// point has no line of sight to any threat.
+	bool point_in_threatened_cluster(
+			godot::Vector2 point, const std::vector<ThreatCircle>& threats) const;
 private:
 
 	// ------------------------------------------------------------------

@@ -128,6 +128,11 @@ const PRESUMED_THREAT_WEIGHT_MAX: float = 0.6
 const PRESUMED_THREAT_WEIGHT_MIN: float = 0.15
 const THREAT_UPDATE_INTERVAL: int = 4
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
+## Fraction of a carried-but-inactive radar / hydro range that still gets
+## stamped as a threat circle. Below 1.0 because the bubble is conditional -
+## approaching one should cost a spotter something, but not as much as a
+## consumable that is already lit. See _force_spot_reach.
+const LATENT_FORCE_SPOT_FACTOR: float = 0.9
 
 # Match state
 var match_active: bool = false
@@ -1595,6 +1600,20 @@ func _publish_team_threats(team_id: int) -> void:
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
 			continue
+		# A last-known position may never displace a live sighting. The registry
+		# matches entries by ship id, so a second append for a ship already
+		# published above does not add a contact - it OVERWRITES the real one with
+		# a frozen position and a decaying radius, and the ship sails out of its
+		# own threat circle while everyone can see it.
+		#
+		# Several paths can leave an LKP on a ship that is currently visible - a
+		# sensor ping (see _check_sensor_range), a carrier launching aircraft, a
+		# salvo flash recorded at its muzzle position. Each is legitimate intel in
+		# its own table; none of them is news about where the ship is, when the
+		# team is looking straight at it. This is the same rule EnemyPresumption
+		# already applies to guesses, applied to observations that have aged.
+		if published.has(enemy_ship):
+			continue
 		var last_time: float = unspotted_times.get(enemy_ship, now)
 		var decay: float = 1.0 - clamp((now - last_time) / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
 		if decay <= 0.0:
@@ -1620,17 +1639,18 @@ func _publish_team_threats(team_id: int) -> void:
 		var at: Vector3 = guess.position
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(at.x, at.z, weight))
-		# No force-spot reach for a pure presumption. A guess about a ship
-		# nobody has ever seen carries no claim about what that ship has
-		# running, and inventing one would let a bot route around a radar
-		# nobody has any evidence of.
+		# No force-spot reach for a pure presumption, latent or lit. A guess
+		# about a ship nobody has ever seen carries no claim about what that
+		# ship is running or even carrying, and inventing one would let a bot
+		# route around a radar nobody has any evidence of - anchored, at that,
+		# to a position that is itself only a guess.
 		force_spots.append(0.0)
 
 	threat_registry.update_team(team_id, ids, data, force_spots)
 
 
 ## How far `enemy` can force-spot regardless of anyone's concealment: radar or
-## hydroacoustic search, whichever is further, and zero when neither is running.
+## hydroacoustic search, whichever is further.
 ##
 ## This is the half of a threat circle that concealment cannot answer. A
 ## destroyer sizes its standoff on its own concealment radius and is right to,
@@ -1638,6 +1658,15 @@ func _publish_team_threats(team_id: int) -> void:
 ## whole calculation is void and the only number that matters is the cruiser's.
 ## Routing that models only concealment sends that destroyer confidently into a
 ## bubble it cannot hide in.
+##
+## A consumable that is merely CARRIED counts too, at
+## LATENT_FORCE_SPOT_FACTOR of its reach (see _latent_force_spot_reach). A
+## spotter that only respects a radar once the button is pressed has already
+## lost: by then it is deep inside the bubble with a turn and several kilometres
+## of run between it and the edge, which is exactly the water a radar cruiser is
+## carrying the consumable to catch it in. Discounting the latent bubble rather
+## than stamping it full-size keeps the standoff honest - the danger is real but
+## conditional, so it should cost less to approach than a radar already lit.
 ##
 ## Read live, and only for ships the team has a real position for (see the
 ## caller). Whether a consumable is RUNNING is arguably not something an
@@ -1650,7 +1679,35 @@ func _force_spot_reach(enemy: Ship) -> float:
 	var cp := enemy.concealment.params.p() as ConcealmentParams
 	if cp == null:
 		return 0.0
-	return maxf(maxf(cp.spotting_range_override, cp.radar_spotting_range_override), 0.0)
+	var active: float = maxf(maxf(cp.spotting_range_override, cp.radar_spotting_range_override), 0.0)
+	return maxf(active, _latent_force_spot_reach(enemy) * LATENT_FORCE_SPOT_FACTOR)
+
+
+## The reach of the radar / hydroacoustic search `enemy` is carrying but has not
+## turned on, undiscounted; zero when it carries neither.
+##
+## Charges are checked: a consumable with none left is never coming on again, so
+## its bubble stops existing rather than haunting the threat picture for the
+## rest of the match. Ranges come off p() so upgrades and skills that extend
+## radar are included, same as every other consumable read.
+func _latent_force_spot_reach(enemy: Ship) -> float:
+	var mgr: ConsumableManager = enemy.consumable_manager
+	if mgr == null:
+		return 0.0
+	var best: float = 0.0
+	for item in mgr.equipped_consumables:
+		var reach: float = 0.0
+		if item is Radar:
+			reach = (item.p() as Radar).spotting_range
+		elif item is HydroacousticSearch:
+			reach = (item.p() as HydroacousticSearch).spotting_range
+		else:
+			continue
+		var ip := item.p() as ConsumableItem
+		if ip.max_stack != -1 and ip.max_stack - item.used <= 0:
+			continue
+		best = maxf(best, reach)
+	return best
 
 
 func _refresh_hydro_lkp(team_id: int, ship: Ship) -> void:
@@ -1875,12 +1932,29 @@ func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: b
 	target.concealment.propose_spotter(detector, src, dist)
 	detector.concealment.propose_spotter(target, src, dist)
 
+	# Each side's last-known-position is gated on ITS OWN visibility, not the
+	# other's. The ping tells the detector's team where the target is AND the
+	# target's team where the pinger is, but neither half is worth recording
+	# about a ship the receiving team is already holding in sight.
+	#
+	# Recording it anyway is not merely redundant, it is destructive. The only
+	# thing that clears an LKP is the visibility-transition sweep in
+	# _physics_process, which fires on a CHANGE - so an entry written for a ship
+	# that was already visible is never cleared, outlives the ping by minutes,
+	# and displaces the live contact in _publish_team_threats. A battleship whose
+	# own hydro ping wrote it into the enemy's LKP table ends up with its threat
+	# circle pinned to the water it pinged from, shrinking, while the ship itself
+	# steams clear of it - which is exactly a spotter's router deciding a
+	# battleship in plain sight is not there.
 	if not target.visible_to_enemy:
 		if is_hydro:
 			_refresh_hydro_lkp(detector.team.team_id, target)
-			_refresh_hydro_lkp(target.team.team_id, detector)
 		else:
 			_refresh_radar_lkp(detector.team.team_id, target)
+	if not detector.visible_to_enemy:
+		if is_hydro:
+			_refresh_hydro_lkp(target.team.team_id, detector)
+		else:
 			_refresh_radar_lkp(target.team.team_id, detector)
 
 

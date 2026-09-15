@@ -536,8 +536,8 @@ func _calculate_target_info():
 			var plane_dist: float = INF
 			var ship_dist: float = INF
 			var water_dist: float = INF
-			if plane_hit != null:
-				plane_dist = ((plane_hit as Vector3) - ray_origin).length()
+			# if plane_hit != null:
+			# 	plane_dist = ((plane_hit as Vector3) - ray_origin).length()
 			if ship_hit != null:
 				ship_dist = ((ship_hit as Vector3) - ray_origin).length()
 			if water_hit != null:

@@ -79,6 +79,77 @@ impl HpaGraph {
         self.threat_blocked_count = self.threat_blocked_cids.len() as i32;
     }
 
+    /// True when the macro cluster containing `point` would be marked blocked
+    /// by `threats`.
+    ///
+    /// Pure query, like compute_debug_threat_clusters: it runs stamp_threats'
+    /// per-cluster test for the one cluster the point falls in, against the
+    /// caller's own threat list, and never reads or writes the shared
+    /// `cluster_threat_blocked` array — which belongs to whichever ship stamped
+    /// last, not necessarily the one asking.
+    ///
+    /// Cluster granularity, not a bare point-in-circle test, is deliberate:
+    /// the cluster is the unit the router blocks, so a destination whose
+    /// cluster is blocked is a goal inside the planner's own wall, and the
+    /// strict pass fails there even when the exact point has no line of sight
+    /// to any threat.
+    pub(crate) fn point_in_threatened_cluster(
+        &self,
+        point: Vector2,
+        threats: &[ThreatCircle],
+    ) -> bool {
+        if !self.built || threats.is_empty() || self.nav_map.is_none() {
+            return false;
+        }
+
+        let gx = self.world_to_gx(point.x);
+        let gz = self.world_to_gz(point.y);
+        let cid = self.cluster_id(self.cell_cx(gx), self.cell_cz(gz));
+        if cid < 0 || cid >= self.clusters.len() as i32 {
+            return false;
+        }
+        let c = self.clusters[cid as usize];
+        // Mirrors stamp_threats: an unnavigable cluster is never stamped, its
+        // terrain is the thing keeping the ship out. The caller tests terrain
+        // separately.
+        if !c.navigable {
+            return false;
+        }
+
+        let map = self.nav_map.as_ref().unwrap().bind();
+
+        // Grid coords of the 4 cluster corner cells (mirrors stamp_threats).
+        let corner_gx = [c.x0, c.x1, c.x0, c.x1];
+        let corner_gz = [c.z0, c.z0, c.z1, c.z1];
+
+        for t in threats {
+            if t.radius <= 0.0 {
+                continue;
+            }
+
+            let mut gx_t = ((t.origin.x - self.min_x) / self.cell_size) as i32;
+            let mut gz_t = ((t.origin.y - self.min_z) / self.cell_size) as i32;
+            gx_t = gx_t.max(0).min(self.grid_w - 1);
+            gz_t = gz_t.max(0).min(self.grid_h - 1);
+
+            let r2 = t.radius * t.radius;
+
+            for i in 0..4 {
+                let (wx, wz) = self.grid_to_world(corner_gx[i], corner_gz[i]);
+                let dx = wx - t.origin.x;
+                let dz = wz - t.origin.y;
+                if dx * dx + dz * dz > r2 {
+                    continue;
+                }
+                if map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn clear_threats(&mut self) {
         for b in self.cluster_threat_blocked.iter_mut() {
             *b = 0;

@@ -427,6 +427,42 @@ impl ShipNavigator {
         out
     }
 
+    /// Terrain and threat verdict for one point, as a pair
+    /// `(in_terrain, threatened)`.
+    ///
+    /// `in_terrain` is the hull test the destination has to pass anyway — the
+    /// SDF at `clearance` (the ship's own hull clearance when `clearance <=
+    /// 0`), which also reports points off the edge of the map as blocked.
+    /// `threatened` is HpaGraph's cluster-level verdict for THIS navigator's
+    /// threat circles.
+    ///
+    /// This is the query adjust_destination_for_threats cannot answer: that one
+    /// tests the exact point against each circle and pushes it out radially,
+    /// which says nothing about terrain and nothing about the cluster the
+    /// router actually blocks.
+    pub(crate) fn point_blocking_impl(&self, point: Vector2, clearance: f32) -> (bool, bool) {
+        let cl = if clearance > 0.0 { clearance } else { self.get_ship_clearance() };
+
+        let mut in_terrain = false;
+        if let Some(m) = self.map.as_ref() {
+            let mb = m.bind();
+            if mb.is_built() {
+                in_terrain = !mb.is_navigable_impl(point.x, point.y, cl);
+            }
+        }
+
+        let mut threatened = false;
+        self.refresh_threats();
+        let threats = self.threats.borrow();
+        if !threats.is_empty() {
+            if let Some(g) = self.hpa_graph.as_ref() {
+                threatened = g.bind().point_in_threatened_cluster(point, &threats);
+            }
+        }
+
+        (in_terrain, threatened)
+    }
+
     pub(crate) fn get_perf_metrics_impl(&self) -> VarDictionary {
         let mut d = VarDictionary::new();
         d.set("tracking_enabled", self.perf_tracking_enabled);

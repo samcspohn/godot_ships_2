@@ -393,8 +393,14 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 ## engagement range is the closest standoff that keeps us dark, and tube range
 ## only ever acts as a cap.
 ##
-## Shares SkillSpot.SAFE_MARGIN so that closing to engage and holding station to
-## spot put the ship at the same distance rather than fighting each other.
+## Held at SkillSpot.SAFE_MARGIN so closing to engage and holding station to
+## spot land in the same band rather than pulling against each other. Not the
+## identical number any more - Spot now stops on the router's own detection
+## radius (BotBehavior.threat_effective_radius, a concealment radius plus two
+## turning circles) rather than on this multiple of concealment - but the two
+## are within a few hundred metres for any destroyer hull, and this one has to
+## stay a pure function of concealment because _is_gunboat() below classifies on
+## it before the navigator exists.
 ##
 ## The cap is held short of nominal tube range because update_torpedo_aim()
 ## rejects an intercept solved beyond 0.9x of it, so sitting at the nominal

@@ -5,7 +5,7 @@
 
 [sub_resource type="Gradient" id="Gradient_sparks"]
 offsets = PackedFloat32Array(0, 0.7959866, 1)
-colors = PackedColorArray(1, 0.93333334, 0.65882355, 1, 1, 0.93766665, 0.65999997, 1, 1, 1, 1, 0)
+colors = PackedColorArray(1.8247963, 1.7060097, 1.2168889, 1, 1.353256, 1.2695014, 0.89784014, 1, 1, 1, 1, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_sparks"]
 gradient = SubResource("Gradient_sparks")

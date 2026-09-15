@@ -180,11 +180,11 @@ impl HpaGraph {
         r
     }
 
-    fn world_to_gx(&self, wx: f32) -> i32 {
+    pub(crate) fn world_to_gx(&self, wx: f32) -> i32 {
         0.max((((wx - self.min_x) / self.cell_size) as i32).min(self.grid_w - 1))
     }
 
-    fn world_to_gz(&self, wz: f32) -> i32 {
+    pub(crate) fn world_to_gz(&self, wz: f32) -> i32 {
         0.max((((wz - self.min_z) / self.cell_size) as i32).min(self.grid_h - 1))
     }
 

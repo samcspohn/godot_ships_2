@@ -76,6 +76,13 @@ bloom_duration = 20.0
 unspotted_bloom_duration = 5.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 
+[sub_resource type="Resource" id="Resource_disp_jppql"]
+script = ExtResource("disp_script")
+sigma = 2.0
+h_disp = 220.0
+v_disp = 110.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
+
 [sub_resource type="Resource" id="Resource_pue0t"]
 script = ExtResource("5_oixol")
 speed = 780.0
@@ -104,14 +111,6 @@ ricochet_angle = 0.0
 overmatch = 76
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_disp_jppql"]
-script = ExtResource("disp_script")
-sigma = 2.0
-reference_range = 20000.0
-h_disp = 238.722
-v_disp = 113.81
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
-
 [sub_resource type="Resource" id="Resource_jppql"]
 script = ExtResource("4_swscg")
 elevation_speed = 8.0
@@ -122,6 +121,15 @@ reload_time = 27.0
 traverse_speed = 2.0
 _range = 21000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
+
+[sub_resource type="Resource" id="Resource_disp_g7l6b"]
+script = ExtResource("disp_script")
+sigma = 1.0
+v_curve = ExtResource("12_kv3r5")
+reference_range = 5000.0
+h_disp = 90.0
+v_disp = 63.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_uq1it"]
 script = ExtResource("5_oixol")
@@ -151,15 +159,6 @@ ricochet_angle = 0.0
 overmatch = 25
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
 
-[sub_resource type="Resource" id="Resource_disp_g7l6b"]
-script = ExtResource("disp_script")
-sigma = 1.0
-v_curve = ExtResource("12_kv3r5")
-reference_range = 5000.0
-h_disp = 90.0
-v_disp = 63.0
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
-
 [sub_resource type="Resource" id="Resource_g7l6b"]
 script = ExtResource("4_swscg")
 elevation_speed = 10.0
@@ -170,6 +169,15 @@ reload_time = 11.0
 traverse_speed = 20.0
 _range = 5000.0
 metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
+
+[sub_resource type="Resource" id="Resource_disp_k4jny"]
+script = ExtResource("disp_script")
+sigma = 1.0
+v_curve = ExtResource("12_kv3r5")
+reference_range = 5000.0
+h_disp = 140.709
+v_disp = 97.33
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_5nevt"]
 script = ExtResource("5_oixol")
@@ -182,15 +190,6 @@ mass = 34.32
 overmatch = 9
 arming_threshold = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
-
-[sub_resource type="Resource" id="Resource_disp_k4jny"]
-script = ExtResource("disp_script")
-sigma = 1.0
-v_curve = ExtResource("12_kv3r5")
-reference_range = 5000.0
-h_disp = 140.709
-v_disp = 97.33
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_k4jny"]
 script = ExtResource("4_swscg")

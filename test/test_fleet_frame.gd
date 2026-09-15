@@ -140,7 +140,10 @@ func _process(_delta: float) -> bool:
 	if FleetFrame.locality_weight(24000.0, 8000.0) <= 0.0:
 		fails += 1; print("   FAIL distant ships fall out of the frame entirely")
 
-	# ---- 8. The staging depth clamp, arithmetic as SkillSpot runs it.
+	# ---- 8. Depth budgeting arithmetic on top of depth_of().  SkillSpot no
+	# longer runs this - its advance is gated on the detection circles instead
+	# (section 9) - but depth_of() is still what tells a skill how far across
+	# the gap a destination sits, so the arithmetic stays under test.
 	var srv8 := StubServer.new()
 	srv8.mine = mk([Vector3(-4000,0,10000), Vector3(0,0,10000), Vector3(4000,0,10000)])
 	var f8 := FleetFrame.build(0, srv8, presume(
@@ -170,48 +173,108 @@ func _process(_delta: float) -> bool:
 	if bearing8.dot(dest8 - here8) <= 0.0:
 		fails += 1; print("   FAIL advanced backwards")
 
-	# ---- 9. SkillSpot._clamp_to_budget, the real function.
-	var srv9 := StubServer.new()
-	srv9.mine = mk([Vector3(-4000,0,10000), Vector3(0,0,10000), Vector3(4000,0,10000)])
-	var f9 := FleetFrame.build(0, srv9, presume(
-		[Vector3(-4000,0,-10000), Vector3(0,0,-10000), Vector3(4000,0,-10000)], 1500.0), spawn_fwd)
-	var beh := StubBehavior.new(f9)
+	# ---- 9. SkillSpot's detection-circle gate, the real functions.
+	#
+	# The circles are the ones ThreatRegistry stamps for the router: one per
+	# believed enemy, each sized to the range at which THIS ship becomes
+	# visible.  _advance_limit() says how far down a bearing the ship may run
+	# before it enters one; _push_out() walks a point that is already inside
+	# back out.  Both are pure geometry, so they are tested directly.
 	var spot_script: GDScript = load("res://src/ship/bot_behavior/skills/skill_spot.gd")
 	var spot: Object = spot_script.new()
-	var budget: float = spot_script.get_script_constant_map()["COMMITTED_MAX_DEPTH"]
+	var margin: float = spot_script.get_script_constant_map()["FRONTIER_MARGIN"]
 
-	# 9a: a ring station behind their line.
-	var here9 := Vector3(0,0,8000)
-	var deep := Vector3(0,0,-16000)
-	var c9: Vector3 = spot._clamp_to_budget(beh, here9, deep, budget)
-	print("9a behind-the-line station")
-	print("   raw depth=%.3f -> clamped %s depth=%.3f"
-		% [f9.depth_of(deep), fmt(c9), f9.depth_of(c9)])
-	if f9.depth_of(deep) <= 1.0:
-		fails += 1; print("   FAIL test case is not actually behind their line")
-	if absf(f9.depth_of(c9) - budget) > 0.01:
-		fails += 1; print("   FAIL not pulled back to the budget")
+	var here2 := Vector2(0.0, 10000.0)
+	var north := Vector2(0.0, -1.0)   # straight at a contact sitting on the origin
 
-	# 9b: ship already deeper than the budget - hold, never reverse.
-	var deep_here := Vector3(0,0,-8000)
-	var deeper := Vector3(0,0,-14000)
-	var c9b: Vector3 = spot._clamp_to_budget(beh, deep_here, deeper, budget)
-	print("9b already past the budget")
-	print("   here depth=%.3f dest depth=%.3f -> clamped %s depth=%.3f"
-		% [f9.depth_of(deep_here), f9.depth_of(deeper), fmt(c9b), f9.depth_of(c9b)])
-	if f9.depth_of(deep_here) <= budget:
-		fails += 1; print("   FAIL test case does not start past the budget")
-	if c9b.distance_to(deep_here) > 1.0:
-		fails += 1; print("   FAIL did not hold")
-	if f9.depth_of(c9b) < f9.depth_of(deep_here) - 0.001:
-		fails += 1; print("   FAIL reversed out")
+	# 9a: the advance stops on the boundary, not on the contact.
+	var one: Array[Dictionary] = [{ pos = Vector2(0.0, 0.0), radius = 5000.0 }]
+	var g9a: Dictionary = spot._advance_limit(here2, north, 10000.0, one)
+	print("9a advance clipped at the boundary: room=%.0f (expect 5000)" % float(g9a.distance))
+	if absf(float(g9a.distance) - 5000.0) > 1.0:
+		fails += 1; print("   FAIL did not stop on the circle")
+	if (g9a.blocker as Dictionary).is_empty():
+		fails += 1; print("   FAIL no blocker reported")
 
-	# 9c: a station inside the budget must pass through untouched.
-	var near9 := Vector3(0,0,2000)
-	var c9c: Vector3 = spot._clamp_to_budget(beh, here9, near9, budget)
-	print("9c within budget: depth=%.3f untouched=%s" % [f9.depth_of(near9), c9c == near9])
-	if c9c != near9:
-		fails += 1; print("   FAIL clamped a destination that was already legal")
+	# 9b: a contact the run passes wide of has no opinion about how far it goes.
+	var wide: Array[Dictionary] = [{ pos = Vector2(20000.0, 0.0), radius = 5000.0 }]
+	var g9b: Dictionary = spot._advance_limit(here2, north, 10000.0, wide)
+	print("9b wide contact: room=%.0f (expect the full 10000)" % float(g9b.distance))
+	if absf(float(g9b.distance) - 10000.0) > 1.0:
+		fails += 1; print("   FAIL a contact off the bearing constrained the run")
+
+	# 9c: a contact astern is behind us and equally irrelevant.
+	var astern: Array[Dictionary] = [{ pos = Vector2(0.0, 20000.0), radius = 5000.0 }]
+	var g9c: Dictionary = spot._advance_limit(here2, north, 10000.0, astern)
+	print("9c contact astern: room=%.0f (expect the full 10000)" % float(g9c.distance))
+	if absf(float(g9c.distance) - 10000.0) > 1.0:
+		fails += 1; print("   FAIL a contact behind us constrained the run")
+
+	# 9d: nearest circle on the bearing wins.
+	var two: Array[Dictionary] = [
+		{ pos = Vector2(0.0, 0.0), radius = 5000.0 },
+		{ pos = Vector2(0.0, 4000.0), radius = 2000.0 },
+	]
+	var g9d: Dictionary = spot._advance_limit(here2, north, 10000.0, two)
+	print("9d nearest circle binds: room=%.0f (expect 4000)" % float(g9d.distance))
+	if absf(float(g9d.distance) - 4000.0) > 1.0:
+		fails += 1; print("   FAIL the far circle won")
+
+	# 9e: already inside one - no room at all, and the circle is named so the
+	# caller can slide around it instead.
+	var inside: Array[Dictionary] = [{ pos = Vector2(0.0, 9000.0), radius = 5000.0 }]
+	var g9e: Dictionary = spot._advance_limit(here2, north, 10000.0, inside)
+	print("9e starting inside: room=%.0f (expect 0)" % float(g9e.distance))
+	if float(g9e.distance) > 0.001:
+		fails += 1; print("   FAIL advanced further into a circle we are already in")
+	if (g9e.blocker as Dictionary).is_empty():
+		fails += 1; print("   FAIL no circle to slide around")
+
+	# 9f: push-out lands just outside, by the same margin the navigator uses.
+	var p9f: Vector2 = spot._push_out(Vector2(0.0, 1000.0), one)
+	print("9f push-out: %.0f from centre (expect %.0f)"
+		% [p9f.length(), 5000.0 + margin])
+	if absf(p9f.length() - (5000.0 + margin)) > 1.0:
+		fails += 1; print("   FAIL not pushed to the boundary plus margin")
+	if p9f.y <= 0.0:
+		fails += 1; print("   FAIL pushed out through the far side")
+
+	# 9g: a point that was already clear passes through untouched.
+	var clear9 := Vector2(0.0, 9000.0)
+	var p9g: Vector2 = spot._push_out(clear9, one)
+	print("9g already clear: untouched=%s" % [p9g == clear9])
+	if p9g != clear9:
+		fails += 1; print("   FAIL moved a destination that was already outside")
+
+	# 9h: overlapping circles - one pass pushes into the next, so the result
+	# has to be outside BOTH.
+	var overlap: Array[Dictionary] = [
+		{ pos = Vector2(0.0, 0.0), radius = 5000.0 },
+		{ pos = Vector2(6000.0, 0.0), radius = 5000.0 },
+	]
+	var p9h: Vector2 = spot._push_out(Vector2(3000.0, 200.0), overlap)
+	var d0: float = p9h.distance_to(Vector2(0.0, 0.0))
+	var d1: float = p9h.distance_to(Vector2(6000.0, 0.0))
+	print("9h overlap: %.0f from A, %.0f from B (both must clear 5000)" % [d0, d1])
+	if d0 < 5000.0 - 1.0 or d1 < 5000.0 - 1.0:
+		fails += 1; print("   FAIL settled inside one of the pair")
+
+	# 9i: the slide works AWAY from our own fleet, so a screen fans out across
+	# the enemy's bearing instead of every boat piling onto the same arc.
+	# Contact on the origin, us due north of it, the fleet off to the north-east:
+	# the step has to carry us west.
+	var contact9 := Vector2(0.0, 0.0)
+	var us9 := Vector2(0.0, 10000.0)
+	var side9: float = spot._pick_side(contact9, us9, Vector2(5000.0, 15000.0))
+	var step9: float = deg_to_rad(spot_script.get_script_constant_map()["SLIDE_ANGLE_DEG"])
+	var arm9: Vector2 = us9 - contact9
+	var a9: float = atan2(arm9.y, arm9.x) + step9 * side9
+	var slid: Vector2 = contact9 + Vector2(cos(a9), sin(a9)) * arm9.length()
+	print("9i slide side=%.0f -> %s (fleet is east; must go west)" % [side9, fmt(Vector3(slid.x, 0.0, slid.y))])
+	if slid.x >= 0.0:
+		fails += 1; print("   FAIL slid toward our own fleet")
+	if absf(slid.length() - arm9.length()) > 1.0:
+		fails += 1; print("   FAIL slide did not hold the standoff")
 
 	print("")
 	print("FAILURES: %d" % fails)

@@ -2008,6 +2008,53 @@ void HpaGraph::stamp_threats(const std::vector<ThreatCircle> &threats) {
 	threat_blocked_count_ = static_cast<int>(threat_blocked_cids_.size());
 }
 
+bool HpaGraph::point_in_threatened_cluster(
+		Vector2 point, const std::vector<ThreatCircle> &threats) const {
+	if (!built_ || threats.empty() || !nav_map_.is_valid()) return false;
+
+	int gx = static_cast<int>((point.x - min_x_) / cell_size_);
+	int gz = static_cast<int>((point.y - min_z_) / cell_size_);
+	gx = std::max(0, std::min(gx, grid_w_ - 1));
+	gz = std::max(0, std::min(gz, grid_h_ - 1));
+
+	int cid = cluster_id(cell_cx(gx), cell_cz(gz));
+	if (cid < 0 || cid >= static_cast<int>(clusters_.size())) return false;
+	const Cluster &c = clusters_[cid];
+	// Mirrors stamp_threats: an unnavigable cluster is never stamped, its
+	// terrain is the thing keeping the ship out.  The caller tests terrain
+	// separately.
+	if (!c.navigable) return false;
+
+	// Grid coords of the 4 cluster corner cells (mirrors stamp_threats).
+	const int corner_gx[4] = { c.x0, c.x1, c.x0, c.x1 };
+	const int corner_gz[4] = { c.z0, c.z0, c.z1, c.z1 };
+
+	for (const ThreatCircle &t : threats) {
+		if (t.radius <= 0.0f) continue;
+
+		int gx_t = static_cast<int>((t.origin.x - min_x_) / cell_size_);
+		int gz_t = static_cast<int>((t.origin.y - min_z_) / cell_size_);
+		gx_t = std::max(0, std::min(gx_t, grid_w_ - 1));
+		gz_t = std::max(0, std::min(gz_t, grid_h_ - 1));
+
+		const float r2 = t.radius * t.radius;
+
+		for (int i = 0; i < 4; ++i) {
+			float wx, wz;
+			grid_to_world(corner_gx[i], corner_gz[i], wx, wz);
+			float dx = wx - t.origin.x;
+			float dz = wz - t.origin.y;
+			if (dx * dx + dz * dz > r2) continue;
+
+			if (nav_map_->line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0f)) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 void HpaGraph::clear_threats() {
 	std::fill(cluster_threat_blocked_.begin(), cluster_threat_blocked_.end(), 0);
 	threat_blocked_cids_.clear();

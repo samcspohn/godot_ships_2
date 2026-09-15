@@ -802,15 +802,11 @@ func _sync_threat_subscription() -> void:
 
 
 func _compute_threat_effective_radius() -> float:
-	if _ship == null or _ship.concealment == null or _ship.concealment.params == null:
+	# BotBehavior owns the number so the skills that reason about the detection
+	# bubble and the router that refuses to path through it agree exactly.
+	if behavior == null:
 		return 0.0
-	var conceal: float = (_ship.concealment.params.p() as ConcealmentParams).radius
-	if conceal <= 0.0:
-		return 0.0
-	var turn: float = 0.0
-	if _ship.movement_controller != null:
-		turn = _ship.movement_controller._p().turning_circle_radius
-	return conceal + turn * 2.0
+	return behavior.threat_effective_radius()
 
 
 # ===========================================================================

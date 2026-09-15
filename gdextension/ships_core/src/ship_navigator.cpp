@@ -101,6 +101,10 @@ void ShipNavigator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_debug_threat_clusters"), &ShipNavigator::get_debug_threat_clusters);
 	ClassDB::bind_method(D_METHOD("adjust_destination_for_threats", "ship_pos", "dest"),
 		&ShipNavigator::adjust_destination_for_threats);
+	ClassDB::bind_method(D_METHOD("is_point_blocked", "point", "clearance"),
+		&ShipNavigator::is_point_blocked, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_point_blocking", "point", "clearance"),
+		&ShipNavigator::get_point_blocking, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_threat_circle_count"),
 		&ShipNavigator::get_threat_circle_count);
 	ClassDB::bind_method(D_METHOD("debug_stamp_threats"),
@@ -728,6 +732,32 @@ Dictionary ShipNavigator::adjust_destination_for_threats(Vector2 ship_pos, Vecto
 		out["adjusted"] = true;
 	}
 	(void)ship_pos;
+	return out;
+}
+
+bool ShipNavigator::is_point_blocked(Vector2 point, float clearance) const {
+	Dictionary d = get_point_blocking(point, clearance);
+	return static_cast<bool>(d["blocked"]);
+}
+
+Dictionary ShipNavigator::get_point_blocking(Vector2 point, float clearance) const {
+	const float cl = (clearance > 0.0f) ? clearance : get_ship_clearance();
+
+	bool in_terrain = false;
+	if (map.is_valid() && map->is_built()) {
+		in_terrain = !map->is_navigable(point.x, point.y, cl);
+	}
+
+	bool threatened = false;
+	refresh_threats();
+	if (!threats_.empty() && hpa_graph_.is_valid()) {
+		threatened = hpa_graph_->point_in_threatened_cluster(point, threats_);
+	}
+
+	Dictionary out;
+	out["in_terrain"] = in_terrain;
+	out["threatened"] = threatened;
+	out["blocked"] = in_terrain || threatened;
 	return out;
 }
 
