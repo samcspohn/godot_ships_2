@@ -35,3 +35,7 @@ compile_commands.json
 .cache/
 
 *_armor.json
+
+# Baked bot gunnery tables: a build artifact, regenerated wholesale on any
+# SOLVER_VERSION bump. `make bake`, or fetch a prebuilt db.
+assets/gunnery.db
