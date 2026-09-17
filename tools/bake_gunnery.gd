@@ -1,13 +1,18 @@
 class_name GunneryBake
 extends Node3D
 
-## Offline bake of BotGunnery lattices, one file per hull scene next to it:
+## Offline bake of BotGunnery lattices:
 ##   make bake                       (all hulls under assets/Ships, skipping up-to-date)
 ##   make bake ARGS="--force res://assets/Ships/Yamato/Yamato.tscn"
+##
+## Each hull bakes in its own process to a staging file, then `--merge` packs the
+## staging dir into one `gunnery.db`; a shared output file cannot be written by
+## the parallel bakers directly.
 ##
 ## Runs inside one physics frame: headless boots get exactly one.
 
 const SHIPS_DIR := "res://assets/Ships"
+const STAGE_DIR := "user://gunnery_stage"
 const COARSE_PENS := [30, 60, 100, 150, 200, 260, 330, 420, 520, 650, 800, 1000, 1300, 1700]
 const BISECT_MM: float = 2.0
 const HULL_SPACING_M: float = 3000.0
@@ -31,6 +36,11 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--force":
 			_force = true
+		elif a == "--merge":
+			_done = true
+			merge()
+			get_tree().quit()
+			return
 		elif String(a).ends_with(".tscn"):
 			paths.append(String(a))
 	# Every hull is loaded so the reference shell and speeds do not depend on
@@ -198,20 +208,70 @@ static func _reference_speeds(shells: Array) -> PackedFloat32Array:
 	return out
 
 
-static func _up_to_date(path: String, md5: String) -> bool:
-	var f := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+static func stage_path(scene_path: String) -> String:
+	return "%s/%s.bin" % [STAGE_DIR, scene_path.md5_text()]
+
+
+## A stage file holds the hull's blob ALREADY compressed, so merging never
+## recompresses an unchanged hull: `store_var(header) | compressed blob`.
+static func _read_stage(path: String) -> Dictionary:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var h = f.get_var()
+	if not (h is Dictionary) or int(h.get("version", -1)) != BotGunnery.SOLVER_VERSION:
+		return {}
+	h["data"] = f.get_buffer(f.get_length() - f.get_position())
+	return h if h["data"].size() == int(h.get("csize", -1)) else {}
+
+
+static func _write_stage(path: String, table: Dictionary) -> bool:
+	var e := GunneryDb.pack(table)
+	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return false
-	var d = f.get_var()
-	return d is Dictionary and int(d.get("version", -1)) == BotGunnery.SOLVER_VERSION \
-		and String(d.get("glb_md5", "")) == md5
+	f.store_var({"version": BotGunnery.SOLVER_VERSION, "hull": String(table["hull"]),
+		"md5": String(e["md5"]), "rsize": int(e["rsize"]), "csize": (e["data"] as PackedByteArray).size()})
+	f.store_buffer(e["data"])
+	f.close()
+	return true
+
+
+static func _up_to_date(path: String, md5: String) -> bool:
+	var h := _read_stage(path)
+	return not h.is_empty() and String(h.get("md5", "")) == md5
+
+
+## Pack every staged hull into the single db. Stale-version stages are dropped.
+static func merge() -> void:
+	DirAccess.make_dir_recursive_absolute(STAGE_DIR)
+	var dir := DirAccess.open(STAGE_DIR)
+	var entries := {}
+	if dir != null:
+		var files := dir.get_files()
+		files.sort()
+		for f in files:
+			if not f.ends_with(".bin"):
+				continue
+			var h := _read_stage("%s/%s" % [STAGE_DIR, f])
+			if not h.is_empty():
+				entries[String(h["hull"])] = h
+	if entries.is_empty():
+		print("bake: nothing staged, db not written")
+		return
+	if not GunneryDb.write_blobs(entries, BotGunnery.SOLVER_VERSION):
+		print("bake: cannot write %s" % GunneryDb.SHIPPED)
+		return
+	var n := FileAccess.open(GunneryDb.SHIPPED, FileAccess.READ).get_length()
+	print("bake: %s  %d hulls  %d bytes" % [GunneryDb.SHIPPED, entries.size(), n])
 
 
 func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: float) -> void:
-	var path := BotGunnery.table_path(hull)
+	var path := stage_path(hull.scene_file_path)
 	var md5 := BotGunnery.hull_md5(hull)
+	DirAccess.make_dir_recursive_absolute(STAGE_DIR)
 	if not _force and _up_to_date(path, md5):
-		print("bake: %s up to date" % path)
+		print("bake: %s up to date" % hull.scene_file_path)
 		return
 	var pm = ProjectileManager.get_raw()
 	if pm.armor_part_count(hull) == 0:
@@ -239,30 +299,21 @@ func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: floa
 			if geo.is_empty():
 				continue
 			var res: Dictionary = pm.survey_sweep(hull, ref, geo["dir"], v_ref[di],
-				geo["points"], PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
+				geo["points"], geo["nx"], geo["ny"], geo["rect"],
+				PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
 			if res.is_empty():
 				continue
 			walks += int(res["walks"])
-			table["buckets"][BotGunnery.bucket_id(ai, di)] = {
-				"nx": geo["nx"], "ny": geo["ny"], "rect": geo["rect"], "dir": geo["dir"],
-				"cells": res["cells"], "prof_off": res["prof_off"], "bp_mm": res["bp_mm"],
-				"bp_code": res["bp_code"], "prof_off_om": res["prof_off_om"],
-				"bp_mm_om": res["bp_mm_om"], "bp_code_om": res["bp_code_om"],
-				"first_mm": res["first_mm"],
-				"first_flags": res["first_flags"],
-			}
+			table["buckets"][BotGunnery.bucket_id(ai, di)] = res["blob"]
 		print("  %s aspect %2d/%d  %.1f s  %d walks" % [hull.scene_file_path.get_file(),
 			ai + 1, aspects, (Time.get_ticks_msec() - t0) / 1000.0, walks])
 	if (table["buckets"] as Dictionary).is_empty():
 		print("bake: %s produced no lattices (no armour or AABB?); not written" % path)
 		return
-	var f := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
-	if f == null:
+	if not _write_stage(path, table):
 		print("bake: cannot write %s" % path)
 		return
-	f.store_var(table)
-	f.close()
-	print("bake: %s  %d buckets  %d walks  %.1f s  %d bytes" % [path,
+	print("bake: %s  %d buckets  %d walks  %.1f s  %d bytes" % [hull.scene_file_path,
 		(table["buckets"] as Dictionary).size(), walks,
 		(Time.get_ticks_msec() - t0) / 1000.0, FileAccess.get_file_as_bytes(path).size()])
 

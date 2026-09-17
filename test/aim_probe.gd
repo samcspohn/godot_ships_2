@@ -132,6 +132,8 @@ func _physics_process(_delta: float) -> void:
 		_turret_test()
 	elif OS.get_cmdline_user_args().has("--validate"):
 		_validate()
+	elif OS.get_cmdline_user_args().has("--saturation"):
+		_saturation_test()
 
 	else:
 		_run()
@@ -192,7 +194,7 @@ func _table_test() -> void:
 		_out.close()
 		get_tree().quit()
 		return
-	_say("table %s: %d buckets, ref %.0fmm" % [G.table_path(_target),
+	_say("table %s: %d buckets, ref %.0fmm" % [String(table.get("hull", "?")),
 		(table["buckets"] as Dictionary).size(), float(table["ref_caliber"])])
 	_say("")
 	_say("solver answers (cold us / cached us):")
@@ -211,7 +213,165 @@ func _table_test() -> void:
 	get_tree().quit()
 
 
+const SECTION_NAME := ["module", "citadel", "casemate", "bow", "stern", "super"]
+
+
+## Where the solver aims as a section drains, which is the whole point of the
+## saturation modifier: a wrecked bow should stop being worth shooting at.
+func _saturation_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	if G._table(_target) == null:
+		_say("no gunnery table for %s; run `make bake`" % _target.scene_file_path)
+		_out.close()
+		get_tree().quit()
+		return
+	var hp: HPManager = _target.health_controller
+	var gp: GunParams = _shooter.artillery_controller.get_params()
+	var ap: ShellParams = gp.shell1
+	_say("")
+	_say("%s vs %s, %.0fmm AP %.0f dmg" % [_shooter.scene_file_path.get_file(),
+		_target.scene_file_path.get_file(), ap.caliber, ap.damage])
+	_say("section pools: bow %.0f+%.0f  casemate %.0f+%.0f  super %.0f+%.0f  (max hp %.0f)" % [
+		hp.bow.pool1, hp.bow.pool2, hp.casemate.pool1, hp.casemate.pool2,
+		hp.superstructure.pool1, hp.superstructure.pool2, hp.max_hp])
+
+	var stages := [
+		["fresh", []],
+		["bow pool1 spent (saturated)", [["bow", 1]]],
+		["bow spent (destroyed)", [["bow", 1], ["bow", 2]]],
+		["bow + casemate spent", [["bow", 1], ["bow", 2], ["casemate", 1], ["casemate", 2]]],
+	]
+	# Scan for the geometries this pair actually aims at the bow from, so the
+	# stages below exercise the case the modifier exists for.
+	var geoms: Array = []
+	_restore_pools(hp)
+	var scanned: PackedStringArray = []
+	for range_m in [3000.0, 6000.0, 9000.0, 12000.0, 16000.0]:
+		for aspect in [5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0]:
+			G.clear_all()
+			_place(range_m, aspect)
+			var sol: Dictionary = G.solve(_shooter, _target)
+			var shell: ShellParams = gp.shell1 if int(sol.get("ammo", 0)) == 0 else gp.shell2
+			var sec := _section_at(G, shell, range_m, aspect, sol.get("offset", Vector3.ZERO))
+			scanned.append("%.0fm/%.0fdeg:%s" % [range_m, aspect, sec.split(" ")[0]])
+			if sec.begins_with("bow"):
+				geoms.append([range_m, aspect])
+	_say("")
+	_say("fresh aim section by geometry:")
+	_say("  " + " ".join(scanned))
+	if geoms.is_empty():
+		_say("  (no geometry aims at the bow; falling back to a fixed set)")
+		geoms = [[9000.0, 20.0], [6000.0, 90.0]]
+	for pr in geoms:
+		_say("")
+		_say("=== %.0f m, %.0f deg aspect ===" % [pr[0], pr[1]])
+		_say("  %-30s | %-22s | %s" % ["state", "aim (x, y, z)", "ammo  section under aim"])
+		for stage in stages:
+			_restore_pools(hp)
+			for drain in (stage[1] as Array):
+				_drain_pool(hp, String(drain[0]), int(drain[1]))
+			G.clear_all()
+			_place(pr[0], pr[1])
+			var sol: Dictionary = G.solve(_shooter, _target)
+			var off: Vector3 = sol.get("offset", Vector3.ZERO)
+			var shell: ShellParams = gp.shell1 if int(sol.get("ammo", 0)) == 0 else gp.shell2
+			_say("  %-30s | %6.1f %5.2f %6.1f | %s    %s" % [stage[0], off.x, off.y, off.z,
+				"AP" if int(sol.get("ammo", 0)) == 0 else "HE",
+				_section_at(G, shell, pr[0], pr[1], off)])
+		_restore_pools(hp)
+
+	_say("")
+	_say("AP payout by section, fresh vs bow destroyed (fraction of shell damage):")
+	_restore_pools(hp)
+	var fresh: PackedFloat64Array = G._payouts(_target, ap.damage)
+	_drain_pool(hp, "bow", 1)
+	_drain_pool(hp, "bow", 2)
+	var spent: PackedFloat64Array = G._payouts(_target, ap.damage)
+	_restore_pools(hp)
+	_say("  %-14s %-8s %-8s %-8s" % ["section", "pen", "citadel", "overpen"])
+	for sec in G.SECTION_COUNT:
+		_say("  %-14s %.3f->%.3f  %.3f->%.3f  %.3f->%.3f" % [SECTION_NAME[sec],
+			fresh[sec * 16 + NativeArmorInteraction.PENETRATION],
+			spent[sec * 16 + NativeArmorInteraction.PENETRATION],
+			fresh[sec * 16 + NativeArmorInteraction.CITADEL],
+			spent[sec * 16 + NativeArmorInteraction.CITADEL],
+			fresh[sec * 16 + NativeArmorInteraction.OVERPENETRATION],
+			spent[sec * 16 + NativeArmorInteraction.OVERPENETRATION]])
+	_say("[%d ms] quitting" % _ms())
+	_out.close()
+	get_tree().quit()
+
+
+func _restore_pools(hp: HPManager) -> void:
+	for part in [hp.bow, hp.stern, hp.casemate, hp.superstructure, hp.citadel]:
+		if part != null:
+			part.current_pool1 = part.pool1
+			part.current_pool2 = part.pool2
+
+
+func _drain_pool(hp: HPManager, name: String, pool: int) -> void:
+	var part: HpPartMod = hp.get(name)
+	if part == null:
+		return
+	if pool == 1:
+		part.current_pool1 = 0.0
+	else:
+		part.current_pool2 = 0.0
+
+
+## The section and result the solver's chosen aim point actually lands on, read
+## back out of the same lattice the answer came from.
+func _section_at(G, shell: ShellParams, range_m: float, aspect_deg: float, offset: Vector3) -> String:
+	var a := deg_to_rad(aspect_deg)
+	var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
+	var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
+	var at: Array = G._shell_at(G._shell_table(shell), range_m)
+	if at.is_empty():
+		return "?"
+	var di: int = G._descent_index(at[0])
+	if di < 0:
+		return "?"
+	var bid: int = G.bucket_id(aspect_i, di)
+	var b = (G._table(_target) as Dictionary)["buckets"].get(bid)
+	if b == null:
+		return "?"
+	var codes: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2],
+		shell.overmatch, shell.type == ShellParams.ShellType.HE)
+	var frame: Array = G.lattice_frame(aspect_i)
+	var aim: Vector2 = G._to_plane(offset, G.bucket_dir(b), frame)
+	var r: Vector4 = G.bucket_rect(b)
+	var nx: int = G.bucket_nx(b)
+	var ny: int = G.bucket_ny(b)
+	var ix: int = clampi(int((aim.x - r.x) / ((r.z - r.x) / nx)), 0, nx - 1)
+	var iy: int = clampi(int((aim.y - r.y) / ((r.w - r.y) / ny)), 0, ny - 1)
+	var c: int = codes[iy * nx + ix]
+	if c == BotGunnery.CELL_MISS:
+		return "miss"
+	var sec: int = (c & BotGunnery.CELL_SECTION_MASK) >> BotGunnery.CELL_SECTION_SHIFT
+	return "%s %s" % [SECTION_NAME[sec] if sec < SECTION_NAME.size() else "?",
+		NativeArmorInteraction.result_name(c & BotGunnery.CELL_CODE_MASK)]
+
+
 const CELL_GLYPH := {0: "P", 1: "p", 2: "R", 3: "O", 4: "S", 5: "C", 6: "c", 7: "~", 8: "#"}
+const BLOB_HDR: int = 32
+const MM_MISS: int = 0xFFFF
+
+
+## Decode one profile out of a baked bucket blob; mirrors survey.rs BLOB_HDR.
+func _profile(b: PackedByteArray, pi: int) -> Dictionary:
+	var np: int = b.decode_u16(2)
+	var a: int = BLOB_HDR + b.decode_u8(0) * b.decode_u8(1)
+	var cnt_o := a + 3 * np
+	var bp_o := a + 5 * np
+	var off := bp_o
+	for k in pi:
+		off += 3 * b.decode_u8(cnt_o + k)
+	var n: int = b.decode_u8(cnt_o + pi)
+	var bps: PackedStringArray = []
+	for k in n:
+		bps.append("%d:%s" % [b.decode_u16(off + 3 * k), _glyph(b.decode_u8(off + 3 * k + 2))])
+	var mm: int = b.decode_u16(a + 2 * pi)
+	return {"first_mm": -1.0 if mm == MM_MISS else float(mm), "bps": bps}
 
 
 ## The range at which `shell` arrives at `descent_deg`, off its range table.
@@ -259,6 +419,7 @@ func _validate() -> void:
 		var label := "%.0fmm %s" % [shell.caliber, "AP" if shell.type == ShellParams.ShellType.AP else "HE"]
 		var agree_all := 0
 		var agree_c_all := 0
+		var agree_r_all := 0
 		var count_all := 0
 		for pr in GEOMETRIES:
 			var range_m: float = pr[0]
@@ -276,7 +437,7 @@ func _validate() -> void:
 				_say("%s %6.0f m %5.1f deg: no bucket %d" % [label, range_m, pr[1], bid])
 				continue
 			var frame: Array = G.lattice_frame(aspect_i)
-			var pts: PackedVector3Array = G.lattice_points(frame, b["rect"], b["nx"], b["ny"])
+			var pts: PackedVector3Array = G.lattice_points(frame, G.bucket_rect(b), G.bucket_nx(b), G.bucket_ny(b))
 			var baked: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2],
 				shell.overmatch, shell.type == ShellParams.ShellType.HE)
 			var from: Vector3 = _target.global_position + (_target.global_basis * g) 				+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
@@ -309,30 +470,31 @@ func _validate() -> void:
 					agree += 1
 				if baked_c[i] == live_c[i]:
 					agree_c += 1
+				# Result alone, ignoring which section the shell ended in: tells a
+				# real disagreement apart from one about the damage-taking part.
+				if (baked_c[i] & ~BotGunnery.CELL_SECTION_MASK) == (live_c[i] & ~BotGunnery.CELL_SECTION_MASK):
+					agree_r_all += 1
 			agree_all += agree
 			agree_c_all += agree_c
 			count_all += count
 			_say("")
 			_say("%s  %6.0f m %5.1f deg  bucket aspect %.1f descent %.1f  pen %.0f mm  v %.0f  desc %.1f  %dx%d  agree asked %d/%d  centre %d/%d (at %.0f m)" % [
 				label, range_m, pr[1], G._aspect_center(aspect_i), G._descent_center(di),
-				at[2], at[1], at[0], b["nx"], b["ny"], agree, count, agree_c, count, rc])
+				at[2], at[1], at[0], G.bucket_nx(b), G.bucket_ny(b), agree, count, agree_c, count, rc])
 			_say("   baked | live at asked geometry | live at bucket centre")
-			var nx: int = b["nx"]
+			var nx: int = G.bucket_nx(b)
 			if shell.type == ShellParams.ShellType.AP:
 				var shown := 0
 				for i in pts.size():
 					if baked_c[i] == live_c[i] or shown >= 3:
 						continue
 					shown += 1
-					var pi: int = (b["cells"] as PackedInt32Array)[i]
-					var bps: PackedStringArray = []
-					for k in range((b["prof_off"] as PackedInt32Array)[pi], (b["prof_off"] as PackedInt32Array)[pi + 1]):
-						bps.append("%.0f:%s" % [(b["bp_mm"] as PackedFloat32Array)[k], _glyph((b["bp_code"] as PackedByteArray)[k])])
+					var prof := _profile(b, b.decode_u8(BLOB_HDR + i))
 					_say("   cell %d (%d,%d): baked %s  live %s  first plate %.0fmm  breakpoints [%s]  live walk: %s" % [
 						i, i % nx, i / nx, _glyph(baked_c[i]), _glyph(live_c[i]),
-						(b["first_mm"] as PackedFloat32Array)[pi], " ".join(bps),
+						prof["first_mm"], " ".join(prof["bps"]),
 						_detail(shell, pts[i], G._aspect_center(aspect_i), rc)])
-			for iy in range(int(b["ny"]) - 1, -1, -1):
+			for iy in range(G.bucket_ny(b) - 1, -1, -1):
 				var lb := ""
 				var ll := ""
 				var lc := ""
@@ -341,13 +503,14 @@ func _validate() -> void:
 					ll += _glyph(live[iy * nx + ix])
 					lc += _glyph(live_c[iy * nx + ix])
 				_say("   |%s|  |%s|  |%s|" % [lb, ll, lc])
-		totals[label] = [agree_all, agree_c_all, count_all]
+		totals[label] = [agree_all, agree_c_all, count_all, agree_r_all]
 	_say("")
 	for label in totals:
 		var t: Array = totals[label]
-		_say("agreement %s: asked geometry %d/%d = %.1f%%   bucket centre %d/%d = %.1f%%" % [
+		_say("agreement %s: asked geometry %d/%d = %.1f%%   bucket centre %d/%d = %.1f%%   centre, result only %d/%d = %.1f%%" % [
 			label, t[0], t[2], 100.0 * t[0] / maxf(t[2], 1.0),
-			t[1], t[2], 100.0 * t[1] / maxf(t[2], 1.0)])
+			t[1], t[2], 100.0 * t[1] / maxf(t[2], 1.0),
+			t[3], t[2], 100.0 * t[3] / maxf(t[2], 1.0)])
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()

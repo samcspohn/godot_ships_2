@@ -20,15 +20,33 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_VALUE_PER_FIRE: float = 0.06
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 5
-const TABLE_SUFFIX: String = ".gunnery.bin"
+const SOLVER_VERSION: int = 7
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
 const CELL_TURRET: int = 0x10
 const CELL_CODE_MASK: int = 0x0F
+const CELL_SECTION_SHIFT: int = 5
+const CELL_SECTION_MASK: int = 0xE0
 const FLAG_CITADEL: int = 0x01
 const FLAG_TURRET: int = 0x02
+
+## HP sections, indexed by ArmorPart.Type: which of HPManager's pool pairs a
+## hit's damage is drawn from. A cell's byte carries the section of the part the
+## shell ends in, which is the part HPManager.apply_damage is handed.
+const SECTION_COUNT: int = 6
+const SEC_MODULE: int = 0
+const SEC_CITADEL: int = 1
+
+## What a penetration still does once its section's pools are spent:
+## HPManager's `max(_dmg, base_dmg * 0.1)` floor.
+const SATURATED_FLOOR: float = 0.1
+
+## How many quantisation steps a pool is tracked in when deciding whether a
+## cached answer has gone stale. Eight is fine enough to catch a section
+## crossing half-drained or empty within a salvo or two.
+const SATURATION_STEPS: int = 8
+const ANSWER_CACHE_MAX: int = 4096
 
 ## Aspect buckets: geometric from bow-on, capped, mirrored about the beam.
 const ASPECT_BUCKET_DEG: float = 10.0
@@ -81,6 +99,8 @@ const CITADEL_ELLIPSE := Vector2(0.4, 0.1)
 
 ## scene path -> table Dictionary, or null when missing or stale.
 static var _tables: Dictionary = {}
+## gunnery.db head, read once.
+static var _index: Dictionary = {}
 ## shell instance id -> {"r","desc","v","pen"} PackedFloat32Arrays over range.
 static var _shell_tables: Dictionary = {}
 ## answer key -> {"frame", "ans"}
@@ -140,7 +160,9 @@ static func _projectile_native() -> Object:
 	return _native_pm
 
 
-static func _payouts() -> PackedFloat64Array:
+## What each result is worth against a fresh section, as a fraction of the
+## shell's damage. Mirrors the result switch in ProjectileManager.
+static func _base_payouts() -> PackedFloat64Array:
 	if _payout_table.is_empty():
 		_payout_table.resize(16)
 		_payout_table[NativeArmorInteraction.CITADEL] = DMG_CITADEL
@@ -149,6 +171,91 @@ static func _payouts() -> PackedFloat64Array:
 		_payout_table[NativeArmorInteraction.PARTIAL_PEN] = DMG_PARTIAL_PEN
 		_payout_table[NativeArmorInteraction.OVERPENETRATION] = DMG_OVERPENETRATION
 	return _payout_table
+
+
+## True for the results HPManager treats as penetrations. Only these draw on a
+## section's pools, so only these saturate, and only these get the 10% floor.
+static func _is_pen_result(code: int) -> bool:
+	return code == NativeArmorInteraction.PENETRATION \
+		or code == NativeArmorInteraction.PARTIAL_PEN \
+		or code == NativeArmorInteraction.CITADEL \
+		or code == NativeArmorInteraction.CITADEL_OVERPEN
+
+
+## What a section can still absorb: (pool1, pool2) remaining.
+##
+## A section is a 1/3 + 2/3 pool pair that every hit splits evenly across
+## (HpPartMod.apply_damage), so the small pool empties first and the section
+## then absorbs half of what it used to - the "saturated" state - before
+## running out entirely.
+##
+## MODULE hits never reach a pool: HPManager caps them at 10% of base and routes
+## them to the ship-wide light pool. The citadel is treated as bottomless, since
+## a citadel is always worth full damage.
+static func _section_pools(target: Ship, section: int) -> Vector2:
+	var hp = target.health_controller
+	if hp == null or section == SEC_MODULE or section == SEC_CITADEL:
+		return Vector2(INF, INF)
+	var part: HpPartMod = null
+	match section:
+		int(ArmorPart.Type.CASEMATE): part = hp.casemate
+		int(ArmorPart.Type.BOW): part = hp.bow
+		int(ArmorPart.Type.STERN): part = hp.stern
+		int(ArmorPart.Type.SUPERSTRUCTURE): part = hp.superstructure
+	if part == null:
+		return Vector2(INF, INF)
+	return Vector2(maxf(part.current_pool1, 0.0), maxf(part.current_pool2, 0.0))
+
+
+## Payout per (section, result), section-major, as the native kernel indexes it.
+##
+## This is where damage saturation enters the bot's reward: a shell landing in a
+## section whose pools are drawn down is worth what that section can still
+## absorb, floored at SATURATED_FLOOR. It is what moves a bot off a bow it has
+## already wrecked and onto the upper belt or the superstructure, without
+## anything having to say so.
+##
+## Overpenetrations are deliberately not saturated: HPManager only applies the
+## pools to penetrations (`is_pen`), so an overpen pays its 10% wherever it
+## lands.
+static func _payouts(target: Ship, shell_damage: float) -> PackedFloat64Array:
+	var base := _base_payouts()
+	var out := PackedFloat64Array()
+	out.resize(SECTION_COUNT * 16)
+	for section in SECTION_COUNT:
+		var pools := _section_pools(target, section)
+		for code in base.size():
+			var frac: float = base[code]
+			if frac <= 0.0:
+				continue
+			var value: float = frac
+			if section == SEC_MODULE:
+				# Capped at 10% of base going in and floored at it coming out.
+				value = SATURATED_FLOOR
+			elif _is_pen_result(code) and shell_damage > 0.0:
+				var d: float = frac * shell_damage
+				var absorbed: float = minf(pools.x, d * 0.5) + minf(pools.y, d * 0.5)
+				value = maxf(absorbed / shell_damage, SATURATED_FLOOR)
+			out[section * 16 + code] = value
+	return out
+
+
+## How drawn-down the saturating sections are, quantised. An answer is recomputed
+## when this moves, so a section emptying retargets the guns on the next tick
+## instead of at the end of the answer's lifetime.
+static func _saturation_sig(target: Ship) -> int:
+	var hp = target.health_controller
+	if hp == null:
+		return 0
+	var sig: int = 0
+	for part in [hp.casemate, hp.bow, hp.stern, hp.superstructure]:
+		if part == null:
+			continue
+		sig = sig * (SATURATION_STEPS + 1) + clampi(
+			int(SATURATION_STEPS * part.current_pool1 / maxf(part.pool1, 1.0)), 0, SATURATION_STEPS)
+		sig = sig * (SATURATION_STEPS + 1) + clampi(
+			int(SATURATION_STEPS * part.current_pool2 / maxf(part.pool2, 1.0)), 0, SATURATION_STEPS)
+	return sig
 
 
 static func _loaded_shell(shooter: Ship, kind: int) -> int:
@@ -280,7 +387,9 @@ static func _bucket_key(shooter: Ship, target: Ship, kind: int = KIND_MAIN) -> A
 	return [
 		kind,
 		shooter.scene_file_path,
-		target.scene_file_path,
+		# The INSTANCE, not the hull: two ships off one scene have taken
+		# different damage, so they no longer share an answer.
+		target.get_instance_id(),
 		_aspect_index(aspect),
 		_range_index(kind, disp.length()),
 	]
@@ -353,14 +462,18 @@ static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictio
 
 # ------------------------------------------------------------------ tables
 
-static func table_path(target: Ship) -> String:
-	return target.scene_file_path.get_basename() + TABLE_SUFFIX
-
-
 static func hull_md5(ship: Ship) -> String:
 	var glb: String = ship.resolve_glb_path(ship.ship_model_glb_path) \
 		if ship.has_method("resolve_glb_path") else ""
 	return FileAccess.get_md5(glb) if not glb.is_empty() else ""
+
+
+static func _db_index() -> Dictionary:
+	if _index.is_empty():
+		_index = GunneryDb.read_index()
+		if _index.is_empty():
+			push_warning("BotGunnery: no %s, run `make bake`" % GunneryDb.read_path())
+	return _index
 
 
 static func _table(target: Ship) -> Variant:
@@ -368,17 +481,17 @@ static func _table(target: Ship) -> Variant:
 	if _tables.has(path):
 		return _tables[path]
 	var t = null
-	var f := FileAccess.open_compressed(table_path(target), FileAccess.READ,
-		FileAccess.COMPRESSION_ZSTD)
-	if f != null:
-		var d = f.get_var()
-		if d is Dictionary and int(d.get("version", -1)) == SOLVER_VERSION \
-				and String(d.get("glb_md5", "")) == hull_md5(target):
+	var idx := _db_index()
+	if int(idx.get("version", -1)) != SOLVER_VERSION:
+		if not idx.is_empty():
+			push_warning("BotGunnery: gunnery.db is version %s, want %d; run `make bake`"
+				% [idx.get("version", -1), SOLVER_VERSION])
+	else:
+		var d = GunneryDb.read_hull(path, idx)
+		if d is Dictionary and String(d.get("glb_md5", "")) == hull_md5(target):
 			t = d
 		else:
 			push_warning("BotGunnery: stale gunnery table for %s, run `make bake`" % path)
-	else:
-		push_warning("BotGunnery: no gunnery table for %s, run `make bake`" % path)
 	_tables[path] = t
 	return t
 
@@ -423,7 +536,7 @@ static func _shell_at(t: Dictionary, range_m: float) -> Array:
 	]
 
 
-static func _resolve(path: String, bid: int, b: Dictionary, pen: float,
+static func _resolve(path: String, bid: int, blob: PackedByteArray, pen: float,
 		overmatch: float, is_he: bool) -> PackedByteArray:
 	var key := [path, bid, roundi(pen / PEN_QUANTUM_MM), roundi(overmatch), is_he]
 	var cached = _resolved.get(key)
@@ -432,11 +545,29 @@ static func _resolve(path: String, bid: int, b: Dictionary, pen: float,
 	if _resolved.size() >= RESOLVE_CACHE_MAX:
 		_resolved.clear()
 	var pm := _projectile_native()
-	var codes: PackedByteArray = pm.lattice_resolve(b["cells"], b["prof_off"], b["bp_mm"],
-		b["bp_code"], b["prof_off_om"], b["bp_mm_om"], b["bp_code_om"], b["first_mm"],
-		b["first_flags"], pen, overmatch, is_he)
+	var codes: PackedByteArray = pm.lattice_resolve(blob, pen, overmatch, is_he)
 	_resolved[key] = codes
 	return codes
+
+
+## nx, ny, rect, dir from a baked bucket blob header (see survey.rs BLOB_HDR).
+const BLOB_HDR: int = 32
+
+
+static func bucket_nx(b: PackedByteArray) -> int:
+	return b.decode_u8(0)
+
+
+static func bucket_ny(b: PackedByteArray) -> int:
+	return b.decode_u8(1)
+
+
+static func bucket_rect(b: PackedByteArray) -> Vector4:
+	return Vector4(b.decode_float(4), b.decode_float(8), b.decode_float(12), b.decode_float(16))
+
+
+static func bucket_dir(b: PackedByteArray) -> Vector3:
+	return Vector3(b.decode_float(20), b.decode_float(24), b.decode_float(28))
 
 
 # ----------------------------------------------------------------- answers
@@ -446,8 +577,10 @@ func _answer(key: Array, shooter: Ship, target: Ship) -> Dictionary:
 	if table == null:
 		return {}
 	var frame: int = Engine.get_physics_frames()
+	var sig := _saturation_sig(target)
 	var st: Dictionary = _answers.get(key, {})
-	if not st.is_empty() and frame - int(st["frame"]) < ANSWER_TTL_FRAMES:
+	if not st.is_empty() and int(st["sig"]) == sig \
+			and frame - int(st["frame"]) < ANSWER_TTL_FRAMES:
 		return st["ans"]
 	var kind: int = key[KEY_KIND]
 	var range_c: float = (shooter.global_position - target.global_position).length()
@@ -455,7 +588,11 @@ func _answer(key: Array, shooter: Ship, target: Ship) -> Dictionary:
 	var ans := {}
 	if not mounts.is_empty():
 		ans = _score(mounts, shooter, target, table)
-	_answers[key] = {"frame": frame, "ans": ans}
+	# Keyed by target instance, so the working set is bounded by the ships alive
+	# rather than by the hulls in the game. Dropped wholesale when it grows.
+	if _answers.size() >= ANSWER_CACHE_MAX:
+		_answers.clear()
+	_answers[key] = {"frame": frame, "sig": sig, "ans": ans}
 	return ans
 
 
@@ -491,8 +628,8 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	var b0 = buckets.get(bucket_id(aspect_c, desc_c))
 	if b0 == null:
 		return {}
-	var cands := lattice_points(lattice_frame(aspect_c), b0["rect"], b0["nx"], b0["ny"],
-		CANDIDATE_STRIDE)
+	var cands := lattice_points(lattice_frame(aspect_c), bucket_rect(b0), bucket_nx(b0),
+		bucket_ny(b0), CANDIDATE_STRIDE)
 	var n := cands.size()
 	var cand_aspect := PackedInt32Array()
 	var cand_range := PackedFloat64Array()
@@ -510,7 +647,6 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	var value: Array = [_zeros(n), _zeros(n)]
 	var landed: Array = [_zeros(n), _zeros(n)]
 	var fire := _zeros(n)
-	var payouts := _payouts()
 
 	for m in mounts:
 		var rate: float = m["rate"]
@@ -518,6 +654,9 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 			var shell: ShellParams = m["shells"][ammo]
 			if shell == null:
 				continue
+			# Saturation is measured against THIS shell's damage: what a section
+			# can still absorb only means something next to the hit it absorbs.
+			var payouts := _payouts(target, shell.damage)
 			var st := _shell_table(shell)
 			var is_he: bool = shell.type == ShellParams.ShellType.HE
 			var groups: Dictionary = {}
@@ -546,13 +685,14 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 					continue
 				var codes := _resolve(path, gk, b, s[2], shell.overmatch, is_he)
 				var frame := lattice_frame(int(gk) / 64)
+				var b_dir := bucket_dir(b)
 				var aims := PackedVector2Array()
 				aims.resize(idx.size())
 				for k in idx.size():
-					aims[k] = _to_plane(cands[idx[k]], b["dir"], frame)
-				var res: PackedFloat64Array = pm.lattice_score(codes, b["nx"], b["ny"], b["rect"],
-					aims, _half_disp(m, mean_r), m["sigma"], m["guarantee"], CITADEL_ELLIPSE,
-					payouts, DMG_TURRET)
+					aims[k] = _to_plane(cands[idx[k]], b_dir, frame)
+				var res: PackedFloat64Array = pm.lattice_score(codes, bucket_nx(b), bucket_ny(b),
+					bucket_rect(b), aims, _half_disp(m, mean_r), m["sigma"], m["guarantee"],
+					CITADEL_ELLIPSE, payouts, DMG_TURRET)
 				var vals: PackedFloat64Array = value[ammo]
 				var lands: PackedFloat64Array = landed[ammo]
 				for k in idx.size():

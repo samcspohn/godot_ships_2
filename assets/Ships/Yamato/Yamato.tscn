@@ -55,13 +55,13 @@ pool2 = 52853.333333333336
 
 [sub_resource type="Resource" id="Resource_kv3r5"]
 script = ExtResource("5_p50sc")
-pool1 = 2312.3333333333335
-pool2 = 4624.666666666667
+pool1 = 3303.3333333333335
+pool2 = 6606.666666666667
 
 [sub_resource type="Resource" id="Resource_euctv"]
 script = ExtResource("5_p50sc")
-pool1 = 2312.3333333333335
-pool2 = 4624.666666666667
+pool1 = 3303.3333333333335
+pool2 = 6606.666666666667
 
 [sub_resource type="Resource" id="Resource_hcnip"]
 script = ExtResource("5_p50sc")

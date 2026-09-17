@@ -1,6 +1,7 @@
 extends Node
 class_name _WaveManager
 
+const FOAM_TEX := "res://src/Maps/ocean_foam_array.png"
 const TILE_RES := 128
 const TILE_WORLD := 500.0
 const POOL := 256
@@ -99,6 +100,10 @@ func _ready() -> void:
 	_ships_bytes.resize(MAX_SHIPS * 48)
 	_impulses_bytes.resize(MAX_IMPULSES * 32)
 	if ocean_material:
+		# Loaded here rather than as a scene ext_resource: this autoload is
+		# instantiated on the headless server too, and the foam array is an 89 MB
+		# text resource that costs 7 s to parse whether or not anything renders.
+		ocean_material.set_shader_parameter("foam_tex", load(FOAM_TEX))
 		ocean_material.set_shader_parameter("index_tex", _index_tex)
 		ocean_material.set_shader_parameter("tile_world", TILE_WORLD)
 		ocean_material.set_shader_parameter("grid_origin", GRID_ORIGIN)

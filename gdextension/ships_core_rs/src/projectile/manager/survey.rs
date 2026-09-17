@@ -16,8 +16,57 @@ pub const CELL_MISS: u8 = 0xFF;
 pub const CELL_UNWALKED: u8 = 0xFE;
 pub const CELL_TURRET: u8 = 0x10;
 pub const CELL_CODE_MASK: u8 = 0x0F;
+/// The ArmorPart.Type of the part that takes the damage, which is also the HP
+/// section its pools are drawn from, so the payout can be saturation-aware.
+pub const CELL_SECTION_SHIFT: u8 = 5;
+pub const CELL_SECTION_MASK: u8 = 0xE0;
+pub const SECTION_MAX: i32 = 5;
 pub const FLAG_CITADEL: u8 = 0x01;
 pub const FLAG_TURRET: u8 = 0x02;
+
+/// A baked bucket is one flat blob, not a dictionary of arrays: at ~9000
+/// buckets a fleet the per-key Variant framing cost more than the payload.
+///
+/// ```text
+///  0 u8  nx          20 f32x3 dir
+///  1 u8  ny          32 u8[nx*ny]  cells (profile index)
+///  2 u16 np        A=32+nx*ny
+///  4 f32x4 rect      A       u16[np] first_mm (MM_MISS = no hit)
+///                    A+2np   u8[np]  first_flags
+///                    A+3np   u8[np]  bp_cnt
+///                    A+4np   u8[np]  bp_cnt_om
+///                  B=A+5np   (u16 mm, u8 code)[sum bp_cnt]
+///                  C=B+3*sum (u16 mm, u8 code)[sum bp_cnt_om]
+/// ```
+pub const BLOB_HDR: usize = 32;
+pub const MM_MISS: u16 = 0xFFFF;
+/// Breakpoint counts are u8; the sweep can emit at most `coarse + budget`.
+const BP_MAX: usize = 255;
+
+#[inline]
+fn rd_u16(b: &[u8], off: usize) -> u16 {
+    u16::from_le_bytes([b[off], b[off + 1]])
+}
+
+#[inline]
+fn rd_f32(b: &[u8], off: usize) -> f32 {
+    f32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
+}
+
+/// Header of a baked bucket blob: (nx, ny, np, rect, dir).
+pub fn blob_header(b: &[u8]) -> Option<(usize, usize, usize, Vector4, Vector3)> {
+    if b.len() < BLOB_HDR {
+        return None;
+    }
+    let (nx, ny) = (b[0] as usize, b[1] as usize);
+    let np = rd_u16(b, 2) as usize;
+    let rect = Vector4::new(rd_f32(b, 4), rd_f32(b, 8), rd_f32(b, 12), rd_f32(b, 16));
+    let dir = Vector3::new(rd_f32(b, 20), rd_f32(b, 24), rd_f32(b, 28));
+    if b.len() < BLOB_HDR + nx * ny + 5 * np {
+        return None;
+    }
+    Some((nx, ny, np, rect, dir))
+}
 
 const WALK_MARGIN_M: f32 = 15.0;
 const WALK_ENTRY_MIN_M: f32 = 60.0;
@@ -119,6 +168,7 @@ fn walk_cell(
     if mesh.is_dynamic(part) {
         code |= CELL_TURRET;
     }
+    code |= (mesh.armor_type(part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
     (code, out.first_part, out.steps)
 }
 
@@ -239,14 +289,15 @@ impl ProjectileManager {
                 _ => continue,
             }
             let mut code = (res.result_type.clamp(0, 15) as u8) & CELL_CODE_MASK;
-            let turret = res.armor_part.as_ref().and_then(|part| {
+            let (turret, section) = res.armor_part.as_ref().and_then(|part| {
                 let sa = self.armor.get(target_id)?;
                 let idx = sa.parts.iter().position(|p| p == part)?;
-                Some(sa.mesh.is_dynamic(idx))
-            }).unwrap_or(false);
+                Some((sa.mesh.is_dynamic(idx), sa.mesh.armor_type(idx)))
+            }).unwrap_or((false, 0));
             if turret {
                 code |= CELL_TURRET;
             }
+            code |= (section.clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
             out[i] = code;
         }
         out
@@ -266,6 +317,9 @@ impl ProjectileManager {
         dir: Vector3,
         v_ref: f64,
         points: PackedVector3Array,
+        nx: i32,
+        ny: i32,
+        rect: Vector4,
         coarse_pens: PackedFloat32Array,
         bisect_mm: f64,
         om_max: f64,
@@ -304,7 +358,7 @@ impl ProjectileManager {
                 }
                 sig.push_str(&format!("={}", code));
                 let first_mm = steps.first().map(|s| s.armor_mm as f32).unwrap_or(-1.0);
-                let mut flags = 0u8;
+                let mut flags = (mesh.armor_type(first_part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
                 if mesh.is_citadel(first_part) {
                     flags |= FLAG_CITADEL;
                 }
@@ -322,14 +376,15 @@ impl ProjectileManager {
         }
         let mut profiles: Vec<Profile> = Vec::new();
         let mut sig_index: BTreeMap<String, usize> = BTreeMap::new();
-        let mut cells = PackedInt32Array::new();
-        cells.resize(pts.len());
+        // A bucket cannot hold more profiles than it has points, and a lattice is
+        // capped well under 256, so a profile index is a byte.
+        let mut cells: Vec<u8> = vec![0; pts.len()];
         for (i, (_, sig, first_mm, flags)) in classified.iter().enumerate() {
             let idx = *sig_index.entry(sig.clone()).or_insert_with(|| {
                 profiles.push(Profile { rep: i, first_mm: *first_mm, flags: *flags });
                 profiles.len() - 1
             });
-            cells[i] = idx as i32;
+            cells[i] = idx.min(255) as u8;
         }
 
         let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
@@ -350,40 +405,52 @@ impl ProjectileManager {
             .collect();
 
         let mut walks: i64 = pts.len() as i64;
-        let mut prof_off = PackedInt32Array::new();
-        let mut bp_mm = PackedFloat32Array::new();
-        let mut bp_code = PackedByteArray::new();
-        let mut prof_off_om = PackedInt32Array::new();
-        let mut bp_mm_om = PackedFloat32Array::new();
-        let mut bp_code_om = PackedByteArray::new();
-        let mut first_mm = PackedFloat32Array::new();
-        let mut first_flags = PackedByteArray::new();
+        let np = profiles.len();
+        let mut fm: Vec<u8> = Vec::with_capacity(2 * np);
+        let mut flags: Vec<u8> = Vec::with_capacity(np);
+        let mut cnt: Vec<u8> = Vec::with_capacity(np);
+        let mut cnt_om: Vec<u8> = Vec::with_capacity(np);
+        let mut bps_buf: Vec<u8> = Vec::new();
+        let mut bps_om_buf: Vec<u8> = Vec::new();
+        let enc = |buf: &mut Vec<u8>, bps: &[(f32, u8)]| -> u8 {
+            let n = bps.len().min(BP_MAX);
+            for (mm, code) in &bps[..n] {
+                // 1 mm quantisation, under the bake's own BISECT_MM.
+                buf.extend_from_slice(&(mm.round().clamp(0.0, 65535.0) as u16).to_le_bytes());
+                buf.push(*code);
+            }
+            n as u8
+        };
         for (prof, (bps, bps_om, w)) in profiles.iter().zip(sweeps.iter()) {
             walks += *w as i64;
-            prof_off.push(bp_mm.len() as i32);
-            for (mm, code) in bps {
-                bp_mm.push(*mm);
-                bp_code.push(*code);
-            }
-            prof_off_om.push(bp_mm_om.len() as i32);
-            for (mm, code) in bps_om {
-                bp_mm_om.push(*mm);
-                bp_code_om.push(*code);
-            }
-            first_mm.push(prof.first_mm);
-            first_flags.push(prof.flags);
+            let mm = if prof.first_mm < 0.0 {
+                MM_MISS
+            } else {
+                (prof.first_mm.round().clamp(0.0, 65534.0)) as u16
+            };
+            fm.extend_from_slice(&mm.to_le_bytes());
+            flags.push(prof.flags);
+            cnt.push(enc(&mut bps_buf, bps));
+            cnt_om.push(enc(&mut bps_om_buf, bps_om));
         }
-        prof_off.push(bp_mm.len() as i32);
-        prof_off_om.push(bp_mm_om.len() as i32);
-        out.set("cells", &cells);
-        out.set("prof_off", &prof_off);
-        out.set("bp_mm", &bp_mm);
-        out.set("bp_code", &bp_code);
-        out.set("prof_off_om", &prof_off_om);
-        out.set("bp_mm_om", &bp_mm_om);
-        out.set("bp_code_om", &bp_code_om);
-        out.set("first_mm", &first_mm);
-        out.set("first_flags", &first_flags);
+
+        let mut blob: Vec<u8> = Vec::with_capacity(
+            BLOB_HDR + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
+        blob.push(nx.clamp(0, 255) as u8);
+        blob.push(ny.clamp(0, 255) as u8);
+        blob.extend_from_slice(&(np.min(u16::MAX as usize) as u16).to_le_bytes());
+        for v in [rect.x, rect.y, rect.z, rect.w, dir.x, dir.y, dir.z] {
+            blob.extend_from_slice(&v.to_le_bytes());
+        }
+        blob.extend_from_slice(&cells);
+        blob.extend_from_slice(&fm);
+        blob.extend_from_slice(&flags);
+        blob.extend_from_slice(&cnt);
+        blob.extend_from_slice(&cnt_om);
+        blob.extend_from_slice(&bps_buf);
+        blob.extend_from_slice(&bps_om_buf);
+
+        out.set("blob", &PackedByteArray::from(blob.as_slice()));
         out.set("walks", walks);
         out
     }
@@ -392,72 +459,76 @@ impl ProjectileManager {
     /// `overmatch` (mm). HE resolves off the first plate alone, as the walk does.
     /// AP reads the swept breakpoints, from the overmatched sweep when the shell
     /// overmatches the first plate.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn lattice_resolve_impl(
-        cells: &PackedInt32Array,
-        prof_off: &PackedInt32Array,
-        bp_mm: &PackedFloat32Array,
-        bp_code: &PackedByteArray,
-        prof_off_om: &PackedInt32Array,
-        bp_mm_om: &PackedFloat32Array,
-        bp_code_om: &PackedByteArray,
-        first_mm: &PackedFloat32Array,
-        first_flags: &PackedByteArray,
-        pen: f64,
-        overmatch: f64,
-        is_he: bool,
+        blob: &PackedByteArray, pen: f64, overmatch: f64, is_he: bool,
     ) -> PackedByteArray {
-        let np = first_mm.len();
+        let b = blob.as_slice();
         let mut out = PackedByteArray::new();
-        out.resize(cells.len());
+        let Some((nx, ny, np, _, _)) = blob_header(b) else { return out };
+        let ncell = nx * ny;
+        out.resize(ncell);
         out.fill(CELL_MISS);
-        if np == 0 || prof_off.len() != np + 1 {
+        if np == 0 {
             return out;
         }
+        let a = BLOB_HDR + ncell;
+        let (fm_o, fl_o, cnt_o, cnt_om_o) = (a, a + 2 * np, a + 3 * np, a + 4 * np);
+        let bp_o = a + 5 * np;
+        let total: usize = b[cnt_o..cnt_o + np].iter().map(|&c| c as usize).sum();
+        let bp_om_o = bp_o + 3 * total;
+
+        // Per-profile breakpoint runs are stored as counts, so the offsets are a
+        // running sum taken alongside the resolve.
+        let mut off = bp_o;
+        let mut off_om = bp_om_o;
         let mut codes: Vec<u8> = Vec::with_capacity(np);
         for pi in 0..np {
-            let fm = first_mm[pi] as f64;
-            if fm < 0.0 {
+            let raw = rd_u16(b, fm_o + 2 * pi);
+            let n = b[cnt_o + pi] as usize;
+            let n_om = b[cnt_om_o + pi] as usize;
+            let (a_bp, a_om) = (off, off_om);
+            off += 3 * n;
+            off_om += 3 * n_om;
+            if raw == MM_MISS {
                 codes.push(CELL_MISS);
                 continue;
             }
-            let flags = first_flags[pi];
+            let fm = raw as f64;
+            let flags = b[fl_o + pi];
             let turret = if flags & FLAG_TURRET != 0 { CELL_TURRET } else { 0 };
+            // HE resolves against the first plate alone, so its section is that
+            // plate's; an AP breakpoint already carries the section it ends in.
+            let section = flags & CELL_SECTION_MASK;
             if is_he {
                 let c = if overmatch >= fm {
                     if flags & FLAG_CITADEL != 0 { hit_result::CITADEL } else { hit_result::PENETRATION }
                 } else {
                     hit_result::SHATTER
                 };
-                codes.push((c as u8) | turret);
+                codes.push((c as u8) | turret | section);
                 continue;
             }
-            let om = overmatch >= fm && prof_off_om.len() == np + 1
-                && prof_off_om[pi + 1] > prof_off_om[pi];
-            let (offs, mms, cds) = if om {
-                (prof_off_om, bp_mm_om, bp_code_om)
-            } else {
-                (prof_off, bp_mm, bp_code)
-            };
-            let (a, b) = (offs[pi] as usize, offs[pi + 1] as usize);
-            if a >= b {
+            let om = overmatch >= fm && n_om > 0;
+            let (start, count) = if om { (a_om, n_om) } else { (a_bp, n) };
+            if count == 0 || start + 3 * count > b.len() {
                 codes.push(CELL_MISS);
                 continue;
             }
-            let mut code = cds[a];
-            for k in a..b {
-                if mms[k] as f64 <= pen {
-                    code = cds[k];
+            let mut code = b[start + 2];
+            for k in 0..count {
+                let e = start + 3 * k;
+                if rd_u16(b, e) as f64 <= pen {
+                    code = b[e + 2];
                 } else {
                     break;
                 }
             }
             codes.push(code);
         }
-        for i in 0..cells.len() {
-            let pi = cells[i];
-            if pi >= 0 && (pi as usize) < np {
-                out[i] = codes[pi as usize];
+        for i in 0..ncell {
+            let pi = b[BLOB_HDR + i] as usize;
+            if pi < np {
+                out[i] = codes[pi];
             }
         }
         out
@@ -502,9 +573,13 @@ impl ProjectileManager {
         let p_in_v = trunc_gauss_cdf(eb, s, erf_bound) - trunc_gauss_cdf(-eb, s, erf_bound);
         let g = if guarantee > 0.0 { guarantee * (1.0 - p_in_h * p_in_v).powi(3) } else { 0.0 };
 
+        // `payouts` is section-major, 16 result codes per section: what one
+        // shell of this type is worth where it lands, already carrying the
+        // target's damage saturation (see BotGunnery._payouts).
         let payout = |c: u8| -> f64 {
-            let code = (c & CELL_CODE_MASK) as usize;
-            let mut v = if code < payouts.len() { payouts[code] } else { 0.0 };
+            let idx = (((c & CELL_SECTION_MASK) >> CELL_SECTION_SHIFT) as usize) * 16
+                + (c & CELL_CODE_MASK) as usize;
+            let mut v = if idx < payouts.len() { payouts[idx] } else { 0.0 };
             if c & CELL_TURRET != 0 {
                 v = v.min(turret_cap);
             }

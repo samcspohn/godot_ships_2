@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" uid="uid://rp50s3dymrgx" path="res://src/Maps/WaveManager.gd" id="1_k688f"]
 [ext_resource type="Shader" uid="uid://cwd4qc5si06ya" path="res://src/Maps/ocean.gdshader" id="2_b66nd"]
-[ext_resource type="Texture2DArray" uid="uid://csne556as7fbw" path="res://src/Maps/ocean_foam.tres" id="3_fq0hd"]
 [ext_resource type="Script" uid="uid://c2annbqth63wg" path="res://src/Maps/OceanFFT.gd" id="3_uhea1"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_uhea1"]
@@ -25,7 +24,6 @@ shader_parameter/calm_drift = 0.0003
 shader_parameter/calm_roughness = 0.03
 shader_parameter/warp_scale = 1500.0
 shader_parameter/warp_strength = 1.5
-shader_parameter/foam_tex = ExtResource("3_fq0hd")
 shader_parameter/foam_tex_scale = 14.0
 shader_parameter/foam_tex_strength = 0.8
 shader_parameter/foam_amount = 0.5

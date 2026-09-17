@@ -14,6 +14,7 @@ script = ExtResource("2_1vrru")
 [node name="Plane_002" parent="." index="2" unique_id=196525193 groups=["island"]]
 
 [node name="Plane_003" parent="." index="3" unique_id=1414571263 groups=["island"]]
+transform = Transform3D(1.971, 0, 0, 0, 3.104, 0, 0, 0, 1.971, 2879.8142, 30.385086, 96.36956)
 
 [node name="Plane_004" parent="." index="4" unique_id=603616684 groups=["island"]]
 
@@ -23,7 +24,7 @@ script = ExtResource("2_1vrru")
 transform = Transform3D(0.4811355, 0, -0.8766463, 0, 1, 0, 0.8766463, 0, 0.4811355, 8406.382, 30.38504, 2250.0874)
 
 [node name="Plane_007" parent="." index="7" unique_id=2125150509 groups=["island"]]
-transform = Transform3D(-1.7059923, 0, 0.041112166, 0, 1.7064877, 0, -0.041112166, 0, -1.7059923, -2696.7393, 30.385002, -43.584515)
+transform = Transform3D(-1.9704279, 0, 0.047484715, 0, 3.104, 0, -0.047484715, 0, -1.9704279, -2354.1094, 30.385002, -35.327587)
 
 [node name="Plane_008" parent="." index="8" unique_id=1395396534 groups=["island"]]
 
@@ -37,6 +38,7 @@ transform = Transform3D(-1, 0, -3.8941437e-07, 0, 1, 0, 3.8941437e-07, 0, -1, -4
 transform = Transform3D(-1, 0, -3.8941437e-07, 0, 1, 0, 3.8941437e-07, 0, -1, 5826.1245, 13.383293, 4946.8135)
 
 [node name="Plane_012" parent="." index="12" unique_id=1987343261 groups=["island"]]
+transform = Transform3D(-0.9999908, 0, 0.0042797513, 0, 1, 0, -0.0042797513, 0, -0.9999908, 299.05225, 6.5507584, 4360.2427)
 
 [node name="Plane_013" parent="." index="13" unique_id=2138411067 groups=["island"]]
 transform = Transform3D(0.12628594, 0, 0.99199384, 0, 1, 0, -0.99199384, 0, 0.12628594, 13780.61, 6.5507584, 5052.633)
