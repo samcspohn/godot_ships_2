@@ -55,14 +55,14 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_slang"]
 script = ExtResource("3_seiyl")
-pool1 = 1122.3333333333337
-pool2 = 2244.666666666667
+pool1 = 1603.3333333333333
+pool2 = 3206.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_jbscf"]
 script = ExtResource("3_seiyl")
-pool1 = 1122.3333333333337
-pool2 = 2244.666666666667
+pool1 = 1603.3333333333333
+pool2 = 3206.6666666666665
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kqusw"]
@@ -78,6 +78,12 @@ air_radius = 4750.0
 bloom_duration = 16.0
 unspotted_bloom_duration = 2.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
+
+[sub_resource type="Resource" id="Resource_disp_61716"]
+script = ExtResource("disp_script")
+sigma = 2.25
+h_disp = 180.0
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_4y4a3"]
 script = ExtResource("6_in36t")
@@ -108,14 +114,6 @@ auto_bounce = 1.5708
 ricochet_angle = 1.5708
 overmatch = 34
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
-
-[sub_resource type="Resource" id="Resource_disp_61716"]
-script = ExtResource("disp_script")
-sigma = 2.25
-reference_range = 20000.0
-h_disp = 171.076
-v_disp = 89.203
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_61716"]
 script = ExtResource("5_jjc8t")

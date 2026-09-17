@@ -1,11 +1,24 @@
-[98 ms] probe: Bismarck3.tscn  <-  H44.tscn  (instance 128949684138)
-table res://assets/Ships/Bismarck/Bismarck3.tscn: 756 buckets, ref 406mm
+[76 ms] probe: Bismarck3.tscn  <-  H44.tscn  (instance 128932906922)
 
-solver answers (cold us / cached us):
-    6000 m  90.0 deg -> AP  x=  -0.1 y= 1.90 z=   0.9  probed=true  (3110 / 24 us)
-   12000 m  90.0 deg -> AP  x=  -0.7 y= 0.26 z=   8.1  probed=true  (2917 / 20 us)
-    8000 m  22.5 deg -> HE  x=   4.2 y= 6.17 z=   1.6  probed=true  (2678 / 20 us)
-   15000 m  22.5 deg -> AP  x=   5.3 y=-16.47 z=   2.1  probed=true  (2864 / 21 us)
-    3000 m   5.0 deg -> HE  x=  -0.2 y= 4.91 z=  -0.0  probed=true  (2831 / 20 us)
-    1200 m  45.0 deg -> AP  x=   0.9 y= 1.23 z=   0.9  probed=true  (2652 / 21 us)
-[120 ms] quitting
+H44.tscn vs Bismarck3.tscn, 500mm AP 18300 dmg
+section pools: bow 9217+18433  casemate 21067+42133  super 13167+26333  (max hp 79000)
+
+fresh aim section by geometry:
+  3000m/5deg:bow 3000m/10deg:super 3000m/20deg:super 3000m/30deg:casemate 3000m/45deg:casemate 3000m/60deg:casemate 3000m/90deg:casemate 6000m/5deg:module 6000m/10deg:super 6000m/20deg:super 6000m/30deg:casemate 6000m/45deg:casemate 6000m/60deg:casemate 6000m/90deg:casemate 9000m/5deg:super 9000m/10deg:super 9000m/20deg:super 9000m/30deg:casemate 9000m/45deg:casemate 9000m/60deg:casemate 9000m/90deg:casemate 12000m/5deg:super 12000m/10deg:super 12000m/20deg:super 12000m/30deg:super 12000m/45deg:casemate 12000m/60deg:casemate 12000m/90deg:casemate 16000m/5deg:module 16000m/10deg:super 16000m/20deg:super 16000m/30deg:super 16000m/45deg:super 16000m/60deg:super 16000m/90deg:super
+
+=== 3000 m, 5 deg aspect ===
+  state                          | aim (x, y, z)          | ammo  section under aim
+  fresh                          |   -1.9  3.05   -0.1 | AP    bow PENETRATION
+  bow pool1 spent (saturated)    |   -1.9  5.54   -0.1 | HE    module SHATTER
+  bow spent (destroyed)          |   -1.9  5.54   -0.1 | HE    module SHATTER
+  bow + casemate spent           |   -1.9  9.04   -0.1 | HE    module SHATTER
+
+AP payout by section, fresh vs bow destroyed (fraction of shell damage):
+  section        pen      citadel  overpen 
+  module         0.100->0.100  0.100->0.100  0.100->0.100
+  citadel        0.333->0.333  1.000->1.000  0.100->0.100
+  casemate       0.333->0.333  1.000->1.000  0.100->0.100
+  bow            0.333->0.100  1.000->0.100  0.100->0.100
+  stern          0.333->0.333  1.000->1.000  0.100->0.100
+  super          0.333->0.333  1.000->1.000  0.100->0.100
+[183 ms] quitting

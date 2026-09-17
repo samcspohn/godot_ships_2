@@ -134,6 +134,10 @@ func _physics_process(_delta: float) -> void:
 		_validate()
 	elif OS.get_cmdline_user_args().has("--saturation"):
 		_saturation_test()
+	elif OS.get_cmdline_user_args().has("--citadel"):
+		_citadel_test()
+	elif OS.get_cmdline_user_args().has("--column"):
+		_column_test()
 
 	else:
 		_run()
@@ -341,9 +345,8 @@ func _section_at(G, shell: ShellParams, range_m: float, aspect_deg: float, offse
 	var aim: Vector2 = G._to_plane(offset, G.bucket_dir(b), frame)
 	var r: Vector4 = G.bucket_rect(b)
 	var nx: int = G.bucket_nx(b)
-	var ny: int = G.bucket_ny(b)
 	var ix: int = clampi(int((aim.x - r.x) / ((r.z - r.x) / nx)), 0, nx - 1)
-	var iy: int = clampi(int((aim.y - r.y) / ((r.w - r.y) / ny)), 0, ny - 1)
+	var iy: int = _row_of(G.bucket_edges(b), aim.y)
 	var c: int = codes[iy * nx + ix]
 	if c == BotGunnery.CELL_MISS:
 		return "miss"
@@ -360,7 +363,7 @@ const MM_MISS: int = 0xFFFF
 ## Decode one profile out of a baked bucket blob; mirrors survey.rs BLOB_HDR.
 func _profile(b: PackedByteArray, pi: int) -> Dictionary:
 	var np: int = b.decode_u16(2)
-	var a: int = BLOB_HDR + b.decode_u8(0) * b.decode_u8(1)
+	var a: int = BotGunnery.bucket_prof_off(b)
 	var cnt_o := a + 3 * np
 	var bp_o := a + 5 * np
 	var off := bp_o
@@ -384,6 +387,13 @@ func _range_for_descent(G, shell: ShellParams, descent_deg: float) -> float:
 			var f: float = clampf((descent_deg - ds[i - 1]) / maxf(ds[i] - ds[i - 1], 1e-6), 0.0, 1.0)
 			return lerpf(rs[i - 1], rs[i], f)
 	return rs[rs.size() - 1] if not rs.is_empty() else 1000.0
+
+func _row_of(edges: PackedFloat32Array, v: float) -> int:
+	for i in edges.size() - 1:
+		if v < edges[i + 1]:
+			return i
+	return edges.size() - 2
+
 
 func _glyph(c: int) -> String:
 	if c == BotGunnery.CELL_MISS:
@@ -421,6 +431,9 @@ func _validate() -> void:
 		var agree_c_all := 0
 		var agree_r_all := 0
 		var count_all := 0
+		var below_count := 0
+		var below_agree := 0
+		var below_pairs := {}
 		for pr in GEOMETRIES:
 			var range_m: float = pr[0]
 			var a := deg_to_rad(float(pr[1]))
@@ -437,7 +450,7 @@ func _validate() -> void:
 				_say("%s %6.0f m %5.1f deg: no bucket %d" % [label, range_m, pr[1], bid])
 				continue
 			var frame: Array = G.lattice_frame(aspect_i)
-			var pts: PackedVector3Array = G.lattice_points(frame, G.bucket_rect(b), G.bucket_nx(b), G.bucket_ny(b))
+			var pts: PackedVector3Array = G.lattice_points(frame, G.bucket_rect(b), G.bucket_nx(b), G.bucket_edges(b))
 			var baked: PackedByteArray = G._resolve(_target.scene_file_path, bid, b, at[2],
 				shell.overmatch, shell.type == ShellParams.ShellType.HE)
 			var from: Vector3 = _target.global_position + (_target.global_basis * g) 				+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
@@ -466,10 +479,19 @@ func _validate() -> void:
 						and live_c[i] == BotGunnery.CELL_MISS:
 					continue
 				count += 1
+				# Below the waterline the bake has no water model; keep the tally apart.
+				var below: bool = pts[i].y < 0.0
+				if below:
+					below_count += 1
 				if baked[i] == live[i]:
 					agree += 1
 				if baked_c[i] == live_c[i]:
 					agree_c += 1
+					if below:
+						below_agree += 1
+				elif below:
+					var pk := "%s->%s" % [_glyph(baked_c[i]), _glyph(live_c[i])]
+					below_pairs[pk] = int(below_pairs.get(pk, 0)) + 1
 				# Result alone, ignoring which section the shell ended in: tells a
 				# real disagreement apart from one about the damage-taking part.
 				if (baked_c[i] & ~BotGunnery.CELL_SECTION_MASK) == (live_c[i] & ~BotGunnery.CELL_SECTION_MASK):
@@ -483,13 +505,35 @@ func _validate() -> void:
 				at[2], at[1], at[0], G.bucket_nx(b), G.bucket_ny(b), agree, count, agree_c, count, rc])
 			_say("   baked | live at asked geometry | live at bucket centre")
 			var nx: int = G.bucket_nx(b)
+			if shell.type == ShellParams.ShellType.HE:
+				var shown_he := 0
+				for i in pts.size():
+					if baked_c[i] == live_c[i] or pts[i].y >= 0.0 or shown_he >= 4:
+						continue
+					shown_he += 1
+					var pi_he: int = BotGunnery.bucket_cell(b, i)
+					var prof_he := _profile(b, pi_he)
+					_say("   HE cell %d (%d,%d) plane y=%.2f x=%.1f: baked %s  live %s  profile first %.0fmm flags 0x%02X  live walk: %s" % [
+						i, i % nx, i / nx, pts[i].y, pts[i].x, _glyph(baked_c[i]), _glyph(live_c[i]),
+						prof_he["first_mm"], b.decode_u8(BotGunnery.bucket_prof_off(b) + 2 * b.decode_u16(2) + pi_he),
+						_detail(shell, pts[i], G._aspect_center(aspect_i), rc)])
+					# The bake's own crossing test, redone on the same ray.
+					var bd: Vector3 = G.bucket_dir(b)
+					var hitd: Dictionary = pm.armor_raycast(_target, pts[i] - bd * 90.0, pts[i] + bd * 90.0)
+					if not hitd.is_empty():
+						var hp: Vector3 = hitd["position"]
+						var s_h: float = (hp - pts[i]).dot(bd)
+						var s_w: float = -pts[i].y / bd.y
+						_say("      bake ray: dir=(%.3f,%.3f,%.3f) p=(%.1f,%.2f,%.1f) hit=(%.1f,%.2f,%.1f) s_h=%.1f s_w=%.1f -> %s" % [
+							bd.x, bd.y, bd.z, pts[i].x, pts[i].y, pts[i].z, hp.x, hp.y, hp.z, s_h, s_w,
+							"WATER FIRST" if s_w < s_h else "dry"])
 			if shell.type == ShellParams.ShellType.AP:
 				var shown := 0
 				for i in pts.size():
 					if baked_c[i] == live_c[i] or shown >= 3:
 						continue
 					shown += 1
-					var prof := _profile(b, b.decode_u8(BLOB_HDR + i))
+					var prof := _profile(b, BotGunnery.bucket_cell(b, i))
 					_say("   cell %d (%d,%d): baked %s  live %s  first plate %.0fmm  breakpoints [%s]  live walk: %s" % [
 						i, i % nx, i / nx, _glyph(baked_c[i]), _glyph(live_c[i]),
 						prof["first_mm"], " ".join(prof["bps"]),
@@ -504,6 +548,19 @@ func _validate() -> void:
 					lc += _glyph(live_c[iy * nx + ix])
 				_say("   |%s|  |%s|  |%s|" % [lb, ll, lc])
 		totals[label] = [agree_all, agree_c_all, count_all, agree_r_all]
+		_say("   %s below waterline (y<0): centre agreement %d/%d = %.1f%%   above: %d/%d = %.1f%%" % [
+			label, below_agree, below_count, 100.0 * below_agree / maxi(below_count, 1),
+			agree_c_all - below_agree, count_all - below_count,
+			100.0 * (agree_c_all - below_agree) / maxi(count_all - below_count, 1)])
+		var pr_rows := []
+		for k in below_pairs:
+			pr_rows.append([below_pairs[k], k])
+		pr_rows.sort()
+		pr_rows.reverse()
+		var pr_txt := ""
+		for r in pr_rows.slice(0, 6):
+			pr_txt += "  %s:%d" % [r[1], r[0]]
+		_say("   %s below-waterline disagreements (baked->live):%s" % [label, pr_txt])
 	_say("")
 	for label in totals:
 		var t: Array = totals[label]
@@ -861,3 +918,220 @@ func lateral_max(pts: Array, ss: AABB) -> float:
 		if ss.size.y <= 0.0 or (p as Vector3).y < ss.position.y:
 			v = maxf(v, absf((p as Vector3).x))
 	return v
+
+
+## Vertical aliasing: can the lattice see a short waterline citadel? Each
+## geometry is walked live at the bucket centre on the native grid and on one
+## with DENSE_ROWS times the rows, then the same aim points are scored against
+## both. A gap between the two columns is value the coarse grid cannot see.
+const DENSE_ROWS := 8
+const CIT_GEOMETRIES := [[6000.0, 90.0], [12000.0, 90.0], [18000.0, 90.0], [8000.0, 22.5],
+	[3000.0, 5.0]]
+
+
+func _is_cit(c: int) -> bool:
+	var r := c & BotGunnery.CELL_CODE_MASK
+	return c != BotGunnery.CELL_MISS and (r == 5 or r == 6)
+
+
+func _citadel_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var table = G._table(_target)
+	if table == null:
+		_say("no gunnery table for %s; run `make bake`" % _target.scene_file_path)
+		_out.close()
+		get_tree().quit()
+		return
+	var pm = ProjectileManager.get_raw()
+	var gp: GunParams = _shooter.artillery_controller.get_params()
+	var shell: ShellParams = gp.shell1 if gp.shell1.type == ShellParams.ShellType.AP else gp.shell2
+	GunneryBake._force_turrets(_target)
+	var space := GunneryBake.survey_space_state(_target)
+	space = GunneryBake.survey_space_state(_target)
+	var box: AABB = _target.aabb
+	_say("target %s  aabb y %.1f..%.1f  shell %.0fmm AP" % [_target.scene_file_path.get_file(),
+		box.position.y, box.position.y + box.size.y, shell.caliber])
+	_say("")
+	_say("geometry           grid  min row m | native: cit cells / hit  rows w/ cit | dense: cit frac  band y m       | best aim y (val)  native -> dense  | native's pick valued dense")
+	for pr in CIT_GEOMETRIES:
+		var range_m: float = pr[0]
+		var a := deg_to_rad(float(pr[1]))
+		var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
+		var aspect_i: int = G._aspect_of(g, Vector3.ZERO)
+		var at: Array = G._shell_at(G._shell_table(shell), range_m)
+		if at.is_empty():
+			_say("%6.0f m %5.1f deg: out of range" % [range_m, pr[1]])
+			continue
+		var di: int = G._descent_index(at[0])
+		var bid: int = G.bucket_id(aspect_i, di)
+		var b = table["buckets"].get(bid)
+		if b == null:
+			_say("%6.0f m %5.1f deg: no bucket" % [range_m, pr[1]])
+			continue
+		var frame: Array = G.lattice_frame(aspect_i)
+		var nx: int = G.bucket_nx(b)
+		var ny: int = G.bucket_ny(b)
+		var ny_d: int = ny * DENSE_ROWS
+		var rect: Vector4 = G.bucket_rect(b)
+		var dir: Vector3 = G.bucket_dir(b)
+		var edges: PackedFloat32Array = G.bucket_edges(b)
+		var edges_d: PackedFloat32Array = G.uniform_edges(rect.y, rect.w, ny_d)
+		var pts_n: PackedVector3Array = G.lattice_points(frame, rect, nx, edges)
+		var pts_d: PackedVector3Array = G.lattice_points(frame, rect, nx, edges_d)
+		var ac := deg_to_rad(G._aspect_center(aspect_i))
+		var rc := _range_for_descent(G, shell, G._descent_center(di))
+		var gc := Vector3(sin(ac), 0.0, -cos(ac)) * rc
+		var from_c: Vector3 = _target.global_position + (_target.global_basis * gc) \
+			+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+		_shooter.global_position = Vector3(from_c.x, 0.0, from_c.z)
+		_shooter.force_update_transform()
+		var live_n: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from_c, pts_n, space)
+		var live_d: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from_c, pts_d, space)
+
+		var cit_n := 0
+		var hit_n := 0
+		var rows_cit := {}
+		for i in pts_n.size():
+			if live_n[i] != BotGunnery.CELL_MISS:
+				hit_n += 1
+			if _is_cit(live_n[i]):
+				cit_n += 1
+				rows_cit[i / nx] = true
+		var cit_d := 0
+		var hit_d := 0
+		var band_lo := INF
+		var band_hi := -INF
+		for i in pts_d.size():
+			if live_d[i] != BotGunnery.CELL_MISS:
+				hit_d += 1
+			if _is_cit(live_d[i]):
+				cit_d += 1
+				band_lo = minf(band_lo, pts_d[i].y)
+				band_hi = maxf(band_hi, pts_d[i].y)
+
+		var mounts: Array = G._batteries(_shooter, BotGunnery.KIND_MAIN, rc)
+		if mounts.is_empty():
+			_say("%6.0f m %5.1f deg: no battery in range" % [range_m, pr[1]])
+			continue
+		var m: Dictionary = mounts[0]
+		var aims := PackedVector2Array()
+		aims.resize(pts_n.size())
+		for i in pts_n.size():
+			aims[i] = G._to_plane(pts_n[i], dir, frame)
+		var payouts: PackedFloat64Array = G._payouts(_target, shell.damage)
+		var hd: Vector2 = G._half_disp(m, rc)
+		var res_n: PackedFloat64Array = pm.lattice_score(live_n, nx, ny, rect, edges, aims, hd,
+			m["sigma"], m["guarantee"], BotGunnery.CITADEL_ELLIPSE, payouts, BotGunnery.DMG_TURRET)
+		var res_d: PackedFloat64Array = pm.lattice_score(live_d, nx, ny_d, rect, edges_d, aims, hd,
+			m["sigma"], m["guarantee"], BotGunnery.CITADEL_ELLIPSE, payouts, BotGunnery.DMG_TURRET)
+		var best_n := -1
+		var best_d := -1
+		for i in pts_n.size():
+			if res_n[2 * i] > (res_n[2 * best_n] if best_n >= 0 else -INF):
+				best_n = i
+			if res_d[2 * i] > (res_d[2 * best_d] if best_d >= 0 else -INF):
+				best_d = i
+		var row_m: float = INF
+		for i in ny:
+			row_m = minf(row_m, edges[i + 1] - edges[i])
+		var band := "%.1f..%.1f" % [band_lo, band_hi] if cit_d > 0 else "none"
+		_say("%6.0f m %5.1f deg  %2dx%-2d  %4.1f  | %4d / %4d  %d of %d          | %5.1f%%    %-14s | y=%5.1f (%.3f) -> y=%5.1f (%.3f) | %.3f  (%.0f%% of dense best)" % [
+			range_m, pr[1], nx, ny, row_m, cit_n, hit_n, rows_cit.size(), ny,
+			100.0 * cit_d / maxi(hit_d, 1), band,
+			pts_n[best_n].y, res_n[2 * best_n], pts_n[best_d].y, res_d[2 * best_d],
+			res_d[2 * best_n], 100.0 * res_d[2 * best_n] / maxf(res_d[2 * best_d], 1e-9)])
+		_say("   half-disp %.1f x %.1f m   native cit frac %.1f%%" % [hd.x, hd.y,
+			100.0 * cit_n / maxi(hit_n, 1)])
+		var per_row := ""
+		for iy in range(ny - 1, -1, -1):
+			var line := ""
+			for ix in nx:
+				line += _glyph(live_n[iy * nx + ix])
+			_say("   |%s|  y=%5.1f" % [line, pts_n[iy * nx].y])
+	_out.close()
+	get_tree().quit()
+
+
+## A vertical column of live rays amidships at broadside: which plate each
+## height meets first, and what the walk makes of it. Ground truth for where
+## the belt and the citadel actually are in the armour model.
+const COLUMN_GEOMETRIES := [[6000.0, 90.0], [12000.0, 90.0]]
+const COLUMN_Y_LO := -4.0
+const COLUMN_Y_HI := 10.0
+const COLUMN_STEP := 0.25
+
+
+func _column_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var pm = ProjectileManager.get_raw()
+	var gp: GunParams = _shooter.artillery_controller.get_params()
+	var shell: ShellParams = gp.shell1 if gp.shell1.type == ShellParams.ShellType.AP else gp.shell2
+	GunneryBake._force_turrets(_target)
+	var space := GunneryBake.survey_space_state(_target)
+	space = GunneryBake.survey_space_state(_target)
+	var box: AABB = _target.aabb
+	_say("target %s  aabb x %.1f..%.1f y %.1f..%.1f  shell %.0fmm AP overmatch %.0f" % [
+		_target.scene_file_path.get_file(), box.position.x, box.position.x + box.size.x,
+		box.position.y, box.position.y + box.size.y, shell.caliber, shell.overmatch])
+	for pr in COLUMN_GEOMETRIES:
+		var range_m: float = pr[0]
+		var at: Array = G._shell_at(G._shell_table(shell), range_m)
+		if at.is_empty():
+			continue
+		_say("")
+		_say("=== %.0f m broadside  descent %.1f deg  pen %.0f mm ===" % [range_m, at[0], at[2]])
+		_say("    y m | first plate                                   | result (section)")
+		var a := deg_to_rad(float(pr[1]))
+		var g := Vector3(sin(a), 0.0, -cos(a)) * range_m
+		var from: Vector3 = _target.global_position + (_target.global_basis * g) \
+			+ Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+		_shooter.global_position = Vector3(from.x, 0.0, from.z)
+		_shooter.force_update_transform()
+		var pts := PackedVector3Array()
+		var y := COLUMN_Y_LO
+		while y <= COLUMN_Y_HI + 1e-6:
+			pts.append(Vector3(0.0, y, 0.0))
+			y += COLUMN_STEP
+		var codes: PackedByteArray = pm.survey_walk(_target, _shooter, shell, from, pts, space)
+		for i in pts.size():
+			var c: int = codes[i]
+			var res := "miss"
+			if c != BotGunnery.CELL_MISS:
+				var sec: int = (c & BotGunnery.CELL_SECTION_MASK) >> BotGunnery.CELL_SECTION_SHIFT
+				res = "%s (%s)" % [NativeArmorInteraction.result_name(c & BotGunnery.CELL_CODE_MASK),
+					SECTION_NAME[sec] if sec < SECTION_NAME.size() else "?"]
+			_say("  %5.2f | %-45s | %s" % [pts[i].y, _first_plate(shell, pts[i], pr[1], range_m), res])
+	_out.close()
+	get_tree().quit()
+
+
+func _first_plate(shell: ShellParams, local_aim: Vector3, asp: float, rng: float) -> String:
+	var a := deg_to_rad(asp)
+	var bearing: Vector3 = _target.global_basis * Vector3(sin(a), 0.0, -cos(a))
+	var from: Vector3 = _target.global_position + bearing * rng + Vector3(0.0, BotGunnery.GUN_HEIGHT_M, 0.0)
+	var to: Vector3 = _target.to_global(local_aim)
+	var launch: Array = ProjectilePhysicsWithDragV2.calculate_launch_vector(from, to, shell)
+	if launch.is_empty() or not launch[0]:
+		return "no-solution"
+	var vel: Vector3 = ProjectilePhysicsWithDragV2.calculate_velocity_at_time(launch[0], launch[1], shell)
+	var dir: Vector3 = vel.normalized()
+	var prev: Vector3 = to - dir * 60.0
+	var proj := ProjectileData.new()
+	proj.initialize(to + dir * 80.0, launch[0], 0.0, shell, _shooter, [])
+	proj.set_frame_count(1)
+	var res: Dictionary = ProjectileManager.get_raw().sim_process_travel(proj, prev, launch[1],
+		GunneryBake.survey_space_state(_target), true)
+	if not bool(res.get("hit", false)):
+		return "water" if prev.y <= 1.0 else "-"
+	var steps: Array = res.get("log_steps", [])
+	if steps.is_empty():
+		return "(no plates)"
+	var out := ""
+	for k in mini(steps.size(), 3):
+		var st: Dictionary = steps[k]
+		out += "%s%.0fmm%s@%.0f\u00b0%s" % ["" if k == 0 else " > ", float(st["armor_mm"]),
+			"C" if bool(st.get("is_citadel", false)) else "", rad_to_deg(float(st["impact_angle"])),
+			["r", "o", "p", "pp", "s"][int(st["result"])]]
+	if steps.size() > 3:
+		out += " +%d" % (steps.size() - 3)
+	return out

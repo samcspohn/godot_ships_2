@@ -20,7 +20,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_VALUE_PER_FIRE: float = 0.06
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 7
+const SOLVER_VERSION: int = 9
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -85,6 +85,16 @@ const GUN_HEIGHT_M: float = 5.0
 
 ## Candidate aim points are every CANDIDATE_STRIDE-th cell of the centre lattice.
 const CANDIDATE_STRIDE: int = 2
+const CANDIDATE_MIN_V_M: float = 2.0
+
+## Rows are fine across the waterline band so a 2-3 m citadel is sampled, not
+## aliased by one ray per 7 m row; coarse rows above. Off at steep descent,
+## where the citadel is entered through the deck and the band is wide anyway.
+const FINE_Y_LO_M: float = -4.0
+const FINE_Y_HI_M: float = 4.0
+const FINE_ROW_M: float = 0.8
+const FINE_ROWS_MAX: int = 12
+const FINE_DESCENT_MAX_DEG: float = 20.0
 ## A candidate within this fraction of the best value wins if nearer the centre.
 const CENTER_PULL: float = 0.03
 
@@ -424,14 +434,57 @@ static func _to_plane(p: Vector3, dir: Vector3, frame: Array) -> Vector2:
 	return Vector2(q.dot(frame[1]), q.dot(frame[2]))
 
 
-static func lattice_points(frame: Array, rect: Vector4, nx: int, ny: int,
+## With `stride` > 1 (candidate aim points) fine rows are also thinned so
+## candidates sit at least CANDIDATE_MIN_V_M apart: dispersion is metres, so
+## aims 0.9 m apart score alike and only cost solve time.
+static func lattice_points(frame: Array, rect: Vector4, nx: int, edges: PackedFloat32Array,
 		stride: int = 1) -> PackedVector3Array:
 	var du: float = (rect.z - rect.x) / nx
-	var dv: float = (rect.w - rect.y) / ny
 	var out := PackedVector3Array()
-	for iy in range(0, ny, stride):
+	var last_v: float = -INF
+	for iy in range(0, edges.size() - 1, stride):
+		var v: float = 0.5 * (edges[iy] + edges[iy + 1])
+		if stride > 1 and v - last_v < CANDIDATE_MIN_V_M:
+			continue
+		last_v = v
 		for ix in range(0, nx, stride):
-			out.append(frame[1] * (rect.x + (ix + 0.5) * du) + frame[2] * (rect.y + (iy + 0.5) * dv))
+			out.append(frame[1] * (rect.x + (ix + 0.5) * du) + frame[2] * v)
+	return out
+
+
+static func uniform_edges(lo: float, hi: float, n: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(n + 1)
+	for i in n + 1:
+		out[i] = lo + (hi - lo) * i / n
+	return out
+
+
+## Row boundaries: `n_u` uniform rows over [lo, hi], with the rows overlapping
+## [band_lo, band_hi] replaced by up to FINE_ROWS_MAX rows of ~FINE_ROW_M.
+static func _row_edges(lo: float, hi: float, n_u: int, band_lo: float, band_hi: float,
+		fine: bool) -> PackedFloat32Array:
+	if not fine or band_hi <= band_lo:
+		return uniform_edges(lo, hi, n_u)
+	var dv: float = (hi - lo) / n_u
+	var b_lo: float = maxf(band_lo, lo)
+	var b_hi: float = minf(band_hi, hi)
+	var out := PackedFloat32Array()
+	var n_below: int = roundi((b_lo - lo) / dv)
+	if n_below <= 0:
+		b_lo = lo
+	else:
+		out.append_array(uniform_edges(lo, b_lo, n_below))
+		out.resize(out.size() - 1)
+	var n_fine: int = clampi(roundi((b_hi - b_lo) / FINE_ROW_M), 2, FINE_ROWS_MAX)
+	out.append_array(uniform_edges(b_lo, b_hi, n_fine))
+	var n_above: int = roundi((hi - b_hi) / dv)
+	if n_above <= 0:
+		out[out.size() - 1] = hi
+	else:
+		var above := uniform_edges(b_hi, hi, n_above)
+		above.remove_at(0)
+		out.append_array(above)
 	return out
 
 
@@ -445,19 +498,29 @@ static func build_lattice(target: Ship, aspect_i: int, descent_i: int) -> Dictio
 		return {}
 	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
+	# The band's plane extent: a horizontal slab slides along `dir` onto the
+	# plane, so it spans more v the steeper the descent and the longer the hull.
+	var band_lo: float = INF
+	var band_hi: float = -INF
 	for i in 8:
 		var c: Vector3 = box.get_endpoint(i)
-		c.y = maxf(c.y, 0.0)
+		c.y = maxf(c.y, FINE_Y_LO_M)
 		var q := _to_plane(c, dir, frame)
 		lo = lo.min(q)
 		hi = hi.max(q)
+		c.y = clampf(c.y, FINE_Y_LO_M, FINE_Y_HI_M)
+		var qb := _to_plane(c, dir, frame).y
+		band_lo = minf(band_lo, qb)
+		band_hi = maxf(band_hi, qb)
 	var w: float = maxf(hi.x - lo.x, 1.0)
 	var h: float = maxf(hi.y - lo.y, 1.0)
 	var nx: int = clampi(roundi(sqrt(LATTICE_CELLS * w / h)), LATTICE_MIN, LATTICE_MAX)
-	var ny: int = clampi(roundi(float(LATTICE_CELLS) / nx), 3, LATTICE_MAX)
+	var ny_u: int = clampi(roundi(float(LATTICE_CELLS) / nx), 3, LATTICE_MAX)
 	var rect := Vector4(lo.x, lo.y, lo.x + w, lo.y + h)
-	return {"nx": nx, "ny": ny, "rect": rect, "dir": dir,
-		"points": lattice_points(frame, rect, nx, ny)}
+	var edges := _row_edges(rect.y, rect.w, ny_u, band_lo, band_hi,
+		_descent_center(descent_i) < FINE_DESCENT_MAX_DEG)
+	return {"nx": nx, "ny": edges.size() - 1, "rect": rect, "dir": dir, "edges": edges,
+		"points": lattice_points(frame, rect, nx, edges)}
 
 
 # ------------------------------------------------------------------ tables
@@ -470,9 +533,9 @@ static func hull_md5(ship: Ship) -> String:
 
 static func _db_index() -> Dictionary:
 	if _index.is_empty():
-		_index = GunneryDb.read_index()
+		_index = GunneryDb.read_index(SOLVER_VERSION)
 		if _index.is_empty():
-			push_warning("BotGunnery: no %s, run `make bake`" % GunneryDb.read_path())
+			push_warning("BotGunnery: no gunnery.db, run `make bake`")
 	return _index
 
 
@@ -570,6 +633,29 @@ static func bucket_dir(b: PackedByteArray) -> Vector3:
 	return Vector3(b.decode_float(20), b.decode_float(24), b.decode_float(28))
 
 
+static func bucket_edges(b: PackedByteArray) -> PackedFloat32Array:
+	var ny: int = b.decode_u8(1)
+	return b.slice(BLOB_HDR, BLOB_HDR + 4 * (ny + 1)).to_float32_array()
+
+
+## Cell indices are a byte, or two once a bucket has more than 255 profiles.
+static func bucket_cell_width(b: PackedByteArray) -> int:
+	return 2 if b.decode_u16(2) > 255 else 1
+
+
+static func bucket_cells_off(b: PackedByteArray) -> int:
+	return BLOB_HDR + 4 * (b.decode_u8(1) + 1)
+
+
+static func bucket_prof_off(b: PackedByteArray) -> int:
+	return bucket_cells_off(b) + b.decode_u8(0) * b.decode_u8(1) * bucket_cell_width(b)
+
+
+static func bucket_cell(b: PackedByteArray, i: int) -> int:
+	var off := bucket_cells_off(b)
+	return b.decode_u16(off + 2 * i) if bucket_cell_width(b) == 2 else b.decode_u8(off + i)
+
+
 # ----------------------------------------------------------------- answers
 
 func _answer(key: Array, shooter: Ship, target: Ship) -> Dictionary:
@@ -629,7 +715,7 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	if b0 == null:
 		return {}
 	var cands := lattice_points(lattice_frame(aspect_c), bucket_rect(b0), bucket_nx(b0),
-		bucket_ny(b0), CANDIDATE_STRIDE)
+		bucket_edges(b0), CANDIDATE_STRIDE)
 	var n := cands.size()
 	var cand_aspect := PackedInt32Array()
 	var cand_range := PackedFloat64Array()
@@ -691,8 +777,8 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 				for k in idx.size():
 					aims[k] = _to_plane(cands[idx[k]], b_dir, frame)
 				var res: PackedFloat64Array = pm.lattice_score(codes, bucket_nx(b), bucket_ny(b),
-					bucket_rect(b), aims, _half_disp(m, mean_r), m["sigma"], m["guarantee"],
-					CITADEL_ELLIPSE, payouts, DMG_TURRET)
+					bucket_rect(b), bucket_edges(b), aims, _half_disp(m, mean_r), m["sigma"],
+					m["guarantee"], CITADEL_ELLIPSE, payouts, DMG_TURRET)
 				var vals: PackedFloat64Array = value[ammo]
 				var lands: PackedFloat64Array = landed[ammo]
 				for k in idx.size():

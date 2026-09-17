@@ -320,9 +320,10 @@ impl ProjectileManager {
     /// Offline bake of one lattice; see `survey_sweep_impl`.
     #[func] pub(crate) fn survey_sweep(&mut self, target: Gd<Node3D>, ref_shell: Gd<Resource>,
             dir: Vector3, v_ref: f64, points: PackedVector3Array, nx: i32, ny: i32, rect: Vector4,
-            coarse_pens: PackedFloat32Array, bisect_mm: f64, om_max: f64) -> VarDictionary {
-        self.survey_sweep_impl(target, ref_shell, dir, v_ref, points, nx, ny, rect, coarse_pens,
-            bisect_mm, om_max)
+            v_edges: PackedFloat32Array, coarse_pens: PackedFloat32Array, bisect_mm: f64,
+            om_max: f64) -> VarDictionary {
+        self.survey_sweep_impl(target, ref_shell, dir, v_ref, points, nx, ny, rect, v_edges,
+            coarse_pens, bisect_mm, om_max)
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.
@@ -339,19 +340,21 @@ impl ProjectileManager {
     /// `nx`, `ny`, `rect` and `dir` of a baked bucket blob; empty if malformed.
     #[func] pub(crate) fn lattice_header(blob: PackedByteArray) -> VarDictionary {
         let mut d = VarDictionary::new();
-        if let Some((nx, ny, _, rect, dir)) = survey::blob_header(blob.as_slice()) {
-            d.set("nx", nx as i32);
-            d.set("ny", ny as i32);
-            d.set("rect", rect);
-            d.set("dir", dir);
+        if let Some(h) = survey::blob_header(blob.as_slice()) {
+            d.set("nx", h.nx as i32);
+            d.set("ny", h.ny as i32);
+            d.set("rect", h.rect);
+            d.set("dir", h.dir);
+            d.set("edges", &survey::blob_v_edges(blob.as_slice(), &h));
         }
         d
     }
 
     /// Dispersion-kernel scoring of a survey lattice; see `lattice_score_impl`.
     #[func] pub(crate) fn lattice_score(cells: PackedByteArray, nx: i32, ny: i32, rect: Vector4,
-            aims: PackedVector2Array, half_disp: Vector2, sigma: f64, guarantee: f64, ellipse: Vector2,
-            payouts: PackedFloat64Array, turret_cap: f64) -> PackedFloat64Array {
-        Self::lattice_score_impl(&cells, nx, ny, rect, &aims, half_disp, sigma, guarantee, ellipse, &payouts, turret_cap)
+            v_edges: PackedFloat32Array, aims: PackedVector2Array, half_disp: Vector2, sigma: f64,
+            guarantee: f64, ellipse: Vector2, payouts: PackedFloat64Array, turret_cap: f64) -> PackedFloat64Array {
+        Self::lattice_score_impl(&cells, nx, ny, rect, &v_edges, &aims, half_disp, sigma, guarantee,
+            ellipse, &payouts, turret_cap)
     }
 }

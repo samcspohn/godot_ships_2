@@ -10,32 +10,48 @@ extends RefCounted
 ## index = {"version": int, "hulls": {scene_path: {"md5", "off", "csize", "rsize"}}}
 
 ## A downloaded db wins over the one in the tree, so a client can be updated
-## without a rebuild. `make bake` writes SHIPPED; only a fetch writes PATH.
+## without a rebuild - but only if it is the version the solver wants. A stale
+## user copy must not shadow a fresh shipped one. `make bake` writes SHIPPED;
+## only a fetch writes PATH.
 const PATH: String = "user://gunnery.db"
 const SHIPPED: String = "res://assets/gunnery.db"
 const MAGIC: int = 0x594E5547  # "GUNY"
 
 
-static func read_path() -> String:
-	return PATH if FileAccess.file_exists(PATH) else SHIPPED
-
-
-## {"version", "hulls"} or empty. Cheap: reads only the head of the file.
-static func read_index(path: String = "") -> Dictionary:
-	var f := FileAccess.open(read_path() if path.is_empty() else path, FileAccess.READ)
+static func _read_head(path: String) -> Dictionary:
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null or f.get_length() < 12 or f.get_32() != MAGIC:
 		return {}
 	var n := f.get_32()
 	if n == 0 or n > f.get_length():
 		return {}
 	var d = bytes_to_var(f.get_buffer(n))
-	return d if d is Dictionary else {}
+	if not (d is Dictionary):
+		return {}
+	d["_path"] = path
+	return d
 
 
-## The table for one hull, or null. `index` avoids re-reading the head.
-static func read_hull(key: String, index: Dictionary = {}, path: String = "") -> Variant:
-	var p := read_path() if path.is_empty() else path
-	var idx := index if not index.is_empty() else read_index(p)
+## {"version", "hulls", "_path"} of the first db whose version is `want`
+## (user copy first), else whichever was found so the caller can say which
+## version it was. Cheap: reads only the heads.
+static func read_index(want: int = -1) -> Dictionary:
+	var found := {}
+	for p in [PATH, SHIPPED]:
+		var d := _read_head(p)
+		if d.is_empty():
+			continue
+		if want < 0 or int(d.get("version", -1)) == want:
+			return d
+		if found.is_empty():
+			found = d
+	return found
+
+
+## The table for one hull, or null, from the db `index` was read from.
+static func read_hull(key: String, index: Dictionary) -> Variant:
+	var p: String = String(index.get("_path", SHIPPED))
+	var idx := index
 	var hulls = idx.get("hulls")
 	if not (hulls is Dictionary) or not hulls.has(key):
 		return null

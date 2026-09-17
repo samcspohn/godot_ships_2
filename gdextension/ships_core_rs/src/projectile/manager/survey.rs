@@ -9,7 +9,8 @@ use super::ProjectileManager;
 use crate::ballistics::drag_v2::ProjectilePhysicsWithDragV2;
 use crate::projectile::armor::mesh::{ArmorMesh, V3};
 use crate::projectile::armor::walk::{walk_plates, ShellSpec, StepLog};
-use crate::projectile::armor::{hit_result, NativeArmorInteraction, K_NOSE_APC};
+use crate::projectile::armor::{hit_result, NativeArmorInteraction, K_NOSE_APC, WATER_DRAG};
+use crate::ballistics::drag_v2::GRAVITY;
 use crate::projectile::data::ProjectileData;
 
 pub const CELL_MISS: u8 = 0xFF;
@@ -23,15 +24,19 @@ pub const CELL_SECTION_MASK: u8 = 0xE0;
 pub const SECTION_MAX: i32 = 5;
 pub const FLAG_CITADEL: u8 = 0x01;
 pub const FLAG_TURRET: u8 = 0x02;
+/// The ray met the water before the hull: AP arrived through it, HE would not.
+pub const FLAG_WATER: u8 = 0x04;
 
 /// A baked bucket is one flat blob, not a dictionary of arrays: at ~9000
 /// buckets a fleet the per-key Variant framing cost more than the payload.
 ///
 /// ```text
 ///  0 u8  nx          20 f32x3 dir
-///  1 u8  ny          32 u8[nx*ny]  cells (profile index)
-///  2 u16 np        A=32+nx*ny
-///  4 f32x4 rect      A       u16[np] first_mm (MM_MISS = no hit)
+///  1 u8  ny          32 f32[ny+1] v_edges: plane v of the row boundaries.
+///  2 u16 np             Rows are not uniform: fine at the waterline so a
+///  4 f32x4 rect         short citadel band is sampled, coarse above.
+///                  E=32+4(ny+1)  cells (profile index): u8, or u16 when np > 255
+///                  A=E+nx*ny*cw  u16[np] first_mm (MM_MISS = no hit)
 ///                    A+2np   u8[np]  first_flags
 ///                    A+3np   u8[np]  bp_cnt
 ///                    A+4np   u8[np]  bp_cnt_om
@@ -53,8 +58,27 @@ fn rd_f32(b: &[u8], off: usize) -> f32 {
     f32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
 }
 
-/// Header of a baked bucket blob: (nx, ny, np, rect, dir).
-pub fn blob_header(b: &[u8]) -> Option<(usize, usize, usize, Vector4, Vector3)> {
+pub struct BlobHdr {
+    pub nx: usize,
+    pub ny: usize,
+    pub np: usize,
+    pub rect: Vector4,
+    pub dir: Vector3,
+    /// Byte offsets of the v_edges, cells and profile sections.
+    pub edges: usize,
+    pub cells: usize,
+    /// Bytes per cell index: 1, or 2 once a bucket has more than 255 profiles.
+    pub cw: usize,
+    pub prof: usize,
+}
+
+impl BlobHdr {
+    pub fn cell(&self, b: &[u8], i: usize) -> usize {
+        if self.cw == 2 { rd_u16(b, self.cells + 2 * i) as usize } else { b[self.cells + i] as usize }
+    }
+}
+
+pub fn blob_header(b: &[u8]) -> Option<BlobHdr> {
     if b.len() < BLOB_HDR {
         return None;
     }
@@ -62,10 +86,23 @@ pub fn blob_header(b: &[u8]) -> Option<(usize, usize, usize, Vector4, Vector3)> 
     let np = rd_u16(b, 2) as usize;
     let rect = Vector4::new(rd_f32(b, 4), rd_f32(b, 8), rd_f32(b, 12), rd_f32(b, 16));
     let dir = Vector3::new(rd_f32(b, 20), rd_f32(b, 24), rd_f32(b, 28));
-    if b.len() < BLOB_HDR + nx * ny + 5 * np {
+    let edges = BLOB_HDR;
+    let cells = edges + 4 * (ny + 1);
+    let cw = if np > 255 { 2 } else { 1 };
+    let prof = cells + nx * ny * cw;
+    if b.len() < prof + 5 * np {
         return None;
     }
-    Some((nx, ny, np, rect, dir))
+    Some(BlobHdr { nx, ny, np, rect, dir, edges, cells, cw, prof })
+}
+
+pub fn blob_v_edges(b: &[u8], h: &BlobHdr) -> PackedFloat32Array {
+    let mut out = PackedFloat32Array::new();
+    out.resize(h.ny + 1);
+    for i in 0..=h.ny {
+        out[i] = rd_f32(b, h.edges + 4 * i);
+    }
+    out
 }
 
 const WALK_MARGIN_M: f32 = 15.0;
@@ -125,18 +162,23 @@ fn trunc_gauss_cdf(x: f64, s: f64, erf_bound: f64) -> f64 {
     0.5 + 0.5 * erf(x * s / std::f64::consts::SQRT_2) / erf_bound
 }
 
+/// Kernel mass per cell along one axis, cells bounded by `edges` (n+1 of them).
 fn axis_weights(
-    n: usize, lo: f64, step: f64, aim: f64, half_disp: f64, s: f64, erf_bound: f64,
+    edges: &[f64], aim: f64, half_disp: f64, s: f64, erf_bound: f64,
     guar_cdf: &dyn Fn(f64) -> f64,
 ) -> (Vec<f64>, Vec<f64>) {
+    let n = edges.len().saturating_sub(1);
     let hd = half_disp.max(1e-3);
     let mut g = Vec::with_capacity(n);
     let mut q = Vec::with_capacity(n);
-    let x0 = (lo - aim) / hd;
+    if n == 0 {
+        return (g, q);
+    }
+    let x0 = (edges[0] - aim) / hd;
     let mut prev_g = trunc_gauss_cdf(x0, s, erf_bound);
     let mut prev_q = guar_cdf(x0);
     for i in 0..n {
-        let x = (lo + step * (i as f64 + 1.0) - aim) / hd;
+        let x = (edges[i + 1] - aim) / hd;
         let cg = trunc_gauss_cdf(x, s, erf_bound);
         let cq = guar_cdf(x);
         g.push(cg - prev_g);
@@ -147,29 +189,73 @@ fn axis_weights(
     (g, q)
 }
 
+/// The game's underwater run, as `process_travel` does it: the fuze arms at the
+/// surface and the shell is projected `fuze_delay` seconds under WATER_DRAG,
+/// ShellParams re-deriving vt/tau from the scaled drag. Returns the run's
+/// length and the velocity `under` metres in, or None if the hull is beyond it.
+/// Time is apportioned linearly by distance, as the live path does.
+fn water_run(spec: &ShellSpec, dir: Vector3, speed: f64, under: f64) -> Option<(f64, Vector3)> {
+    use crate::ballistics::drag_v2::ProjectilePhysicsWithDragV2 as P;
+    let beta = spec.beta * WATER_DRAG;
+    if beta <= 0.0 || spec.fuze_delay <= 0.0 {
+        return None;
+    }
+    let vt = (GRAVITY / beta).sqrt();
+    let tau = vt / GRAVITY;
+    let (dx, dy, dz) = (dir.x as f64, dir.y as f64, dir.z as f64);
+    let h = (dx * dx + dz * dz).sqrt();
+    let (cos_t, sin_t) = (h, dy);
+    let t = spec.fuze_delay;
+    let x = P::horizontal_position(cos_t, t, speed, beta);
+    let y = P::vertical_position(sin_t, t, speed, vt, tau);
+    let run = (x * x + y * y).sqrt();
+    if !(under <= run) || run <= 0.0 {
+        return None;
+    }
+    let ti = t * under / run;
+    let vh = P::horizontal_velocity(cos_t, ti, speed, beta);
+    let vy = P::vertical_velocity(sin_t, ti, speed, vt, tau);
+    let hs = if h > 1e-9 { vh / h } else { 0.0 };
+    Some((ti, Vector3::new((dx * hs) as f32, vy as f32, (dz * hs) as f32)))
+}
+
 /// One shell through plane point `p` (ship-local) arriving along `dir` at
-/// `speed`, straddling the hull: (result byte, first part, plates met).
+/// `speed`, straddling the hull: (result byte, first part, plates met, met
+/// water first). A ray that meets the surface before the hull is walked on
+/// through the water only as far as the game would carry it.
 fn walk_cell(
     mesh: &ArmorMesh, aabb: Aabb, spec: &ShellSpec, p: Vector3, dir: Vector3, speed: f64, log: bool,
-) -> (u8, usize, Vec<StepLog>) {
+) -> (u8, usize, Vec<StepLog>, bool) {
     let (entry, exit) = walk_span(aabb, p, dir);
     let prev = p - dir * entry;
-    if prev.y <= 1.0 {
-        return (CELL_MISS, 0, Vec::new());
-    }
     let from = prev - dir * 10.0;
     let to = p + dir * exit;
     let Some(hit) = mesh.raycast(V3::from_godot(from), V3::from_godot(to)) else {
-        return (CELL_MISS, 0, Vec::new());
+        return (CELL_MISS, 0, Vec::new(), false);
     };
-    let out = walk_plates(mesh, spec, &hit, dir * (speed as f32), -1.0, false, log);
+    let mut vel = dir * (speed as f32);
+    let mut fuze = -1.0;
+    let mut hit_water = false;
+    if dir.y < 0.0 {
+        let s_w = -p.y / dir.y;
+        let s_h = (hit.pos.to_godot() - p).dot(dir);
+        if s_w < s_h {
+            hit_water = true;
+            let Some((ti, v)) = water_run(spec, dir, speed, (s_h - s_w) as f64) else {
+                return (CELL_MISS, 0, Vec::new(), true);
+            };
+            vel = v;
+            fuze = ti;
+        }
+    }
+    let out = walk_plates(mesh, spec, &hit, vel, fuze, hit_water, log);
     let part = out.final_part.unwrap_or(out.first_part);
     let mut code = (out.damage_result.clamp(0, 15) as u8) & CELL_CODE_MASK;
     if mesh.is_dynamic(part) {
         code |= CELL_TURRET;
     }
     code |= (mesh.armor_type(part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
-    (code, out.first_part, out.steps)
+    (code, out.first_part, out.steps, hit_water)
 }
 
 /// Breakpoints of the result over penetration at one point: coarse samples,
@@ -268,9 +354,11 @@ impl ProjectileManager {
             let dir = impact.normalized();
             let ld = (basis_inv * dir).normalized();
             let (entry, exit) = walk_span(aabb, p, ld);
-            let prev = to - dir * entry;
-            if prev.y <= 1.0 {
-                continue;
+            let mut prev = to - dir * entry;
+            // Start above the surface: the survey space carries the water
+            // plane, so process_travel simulates the crossing as a fired shell.
+            if prev.y <= 1.0 && dir.y < 0.0 {
+                prev -= dir * ((1.5 - prev.y) / -dir.y);
             }
             {
                 let mut pd = proj.bind_mut();
@@ -287,6 +375,10 @@ impl ProjectileManager {
             match &res.ship {
                 Some(s) if *s == target_obj => {}
                 _ => continue,
+            }
+            // A shell the water took (HE at the surface) is not a hit to score.
+            if res.result_type == hit_result::WATER {
+                continue;
             }
             let mut code = (res.result_type.clamp(0, 15) as u8) & CELL_CODE_MASK;
             let (turret, section) = res.armor_part.as_ref().and_then(|part| {
@@ -320,6 +412,7 @@ impl ProjectileManager {
         nx: i32,
         ny: i32,
         rect: Vector4,
+        v_edges: PackedFloat32Array,
         coarse_pens: PackedFloat32Array,
         bisect_mm: f64,
         om_max: f64,
@@ -348,7 +441,7 @@ impl ProjectileManager {
         let classified: Vec<(u8, String, f32, u8)> = pts
             .par_iter()
             .map(|&p| {
-                let (code, first_part, steps) = walk_cell(mesh, aabb, &spec_mid, p, dir, v_ref, true);
+                let (code, first_part, steps, water) = walk_cell(mesh, aabb, &spec_mid, p, dir, v_ref, true);
                 if code == CELL_MISS {
                     return (code, String::from("miss"), -1.0, 0);
                 }
@@ -356,7 +449,10 @@ impl ProjectileManager {
                 for st in &steps {
                     sig.push_str(&format!("{}|{:.0}|{:.2}|{};", st.part, st.armor_mm, st.impact_angle, st.is_citadel));
                 }
-                sig.push_str(&format!("={}", code));
+                // Water is part of the identity: a cell that arrived through the
+                // surface must not share a profile (and its HE verdict) with a
+                // dry one that happened to meet the same plates.
+                sig.push_str(&format!("={}{}", code, if water { "~w" } else { "" }));
                 let first_mm = steps.first().map(|s| s.armor_mm as f32).unwrap_or(-1.0);
                 let mut flags = (mesh.armor_type(first_part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
                 if mesh.is_citadel(first_part) {
@@ -364,6 +460,9 @@ impl ProjectileManager {
                 }
                 if mesh.is_dynamic(first_part) {
                     flags |= FLAG_TURRET;
+                }
+                if water {
+                    flags |= FLAG_WATER;
                 }
                 (code, sig, first_mm, flags)
             })
@@ -376,16 +475,20 @@ impl ProjectileManager {
         }
         let mut profiles: Vec<Profile> = Vec::new();
         let mut sig_index: BTreeMap<String, usize> = BTreeMap::new();
-        // A bucket cannot hold more profiles than it has points, and a lattice is
-        // capped well under 256, so a profile index is a byte.
-        let mut cells: Vec<u8> = vec![0; pts.len()];
+        let mut cell_idx: Vec<usize> = vec![0; pts.len()];
         for (i, (_, sig, first_mm, flags)) in classified.iter().enumerate() {
-            let idx = *sig_index.entry(sig.clone()).or_insert_with(|| {
+            cell_idx[i] = *sig_index.entry(sig.clone()).or_insert_with(|| {
                 profiles.push(Profile { rep: i, first_mm: *first_mm, flags: *flags });
                 profiles.len() - 1
             });
-            cells[i] = idx.min(255) as u8;
         }
+        // A byte per cell unless this bucket needs more: bow-on rays run the
+        // hull's length and nearly every one is its own profile.
+        let cells: Vec<u8> = if profiles.len() > 255 {
+            cell_idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect()
+        } else {
+            cell_idx.iter().map(|&i| i as u8).collect()
+        };
 
         let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
             .par_iter()
@@ -406,6 +509,14 @@ impl ProjectileManager {
 
         let mut walks: i64 = pts.len() as i64;
         let np = profiles.len();
+        if np > u16::MAX as usize {
+            godot_error!("survey_sweep: {} profiles in one bucket", np);
+            return out;
+        }
+        if v_edges.len() != ny.max(0) as usize + 1 {
+            godot_error!("survey_sweep: {} v_edges for ny={}", v_edges.len(), ny);
+            return out;
+        }
         let mut fm: Vec<u8> = Vec::with_capacity(2 * np);
         let mut flags: Vec<u8> = Vec::with_capacity(np);
         let mut cnt: Vec<u8> = Vec::with_capacity(np);
@@ -435,12 +546,15 @@ impl ProjectileManager {
         }
 
         let mut blob: Vec<u8> = Vec::with_capacity(
-            BLOB_HDR + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
+            BLOB_HDR + 4 * v_edges.len() + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
         blob.push(nx.clamp(0, 255) as u8);
         blob.push(ny.clamp(0, 255) as u8);
         blob.extend_from_slice(&(np.min(u16::MAX as usize) as u16).to_le_bytes());
         for v in [rect.x, rect.y, rect.z, rect.w, dir.x, dir.y, dir.z] {
             blob.extend_from_slice(&v.to_le_bytes());
+        }
+        for i in 0..v_edges.len() {
+            blob.extend_from_slice(&v_edges[i].to_le_bytes());
         }
         blob.extend_from_slice(&cells);
         blob.extend_from_slice(&fm);
@@ -464,14 +578,14 @@ impl ProjectileManager {
     ) -> PackedByteArray {
         let b = blob.as_slice();
         let mut out = PackedByteArray::new();
-        let Some((nx, ny, np, _, _)) = blob_header(b) else { return out };
-        let ncell = nx * ny;
+        let Some(h) = blob_header(b) else { return out };
+        let (np, ncell) = (h.np, h.nx * h.ny);
         out.resize(ncell);
         out.fill(CELL_MISS);
         if np == 0 {
             return out;
         }
-        let a = BLOB_HDR + ncell;
+        let a = h.prof;
         let (fm_o, fl_o, cnt_o, cnt_om_o) = (a, a + 2 * np, a + 3 * np, a + 4 * np);
         let bp_o = a + 5 * np;
         let total: usize = b[cnt_o..cnt_o + np].iter().map(|&c| c as usize).sum();
@@ -500,6 +614,10 @@ impl ProjectileManager {
             // plate's; an AP breakpoint already carries the section it ends in.
             let section = flags & CELL_SECTION_MASK;
             if is_he {
+                if flags & FLAG_WATER != 0 {
+                    codes.push(CELL_MISS);
+                    continue;
+                }
                 let c = if overmatch >= fm {
                     if flags & FLAG_CITADEL != 0 { hit_result::CITADEL } else { hit_result::PENETRATION }
                 } else {
@@ -526,7 +644,7 @@ impl ProjectileManager {
             codes.push(code);
         }
         for i in 0..ncell {
-            let pi = b[BLOB_HDR + i] as usize;
+            let pi = h.cell(b, i);
             if pi < np {
                 out[i] = codes[pi];
             }
@@ -544,6 +662,7 @@ impl ProjectileManager {
         nx: i32,
         ny: i32,
         rect: Vector4,
+        v_edges: &PackedFloat32Array,
         aims: &PackedVector2Array,
         half_disp: Vector2,
         sigma: f64,
@@ -564,7 +683,13 @@ impl ProjectileManager {
         let erf_bound = erf(s / std::f64::consts::SQRT_2);
         let (u0, v0, u1, v1) = (rect.x as f64, rect.y as f64, rect.z as f64, rect.w as f64);
         let du = (u1 - u0) / nx as f64;
-        let dv = (v1 - v0) / ny as f64;
+        let ue: Vec<f64> = (0..=nx).map(|i| u0 + du * i as f64).collect();
+        let ve: Vec<f64> = if v_edges.len() == ny + 1 {
+            (0..=ny).map(|i| v_edges[i] as f64).collect()
+        } else {
+            let dv = (v1 - v0) / ny as f64;
+            (0..=ny).map(|i| v0 + dv * i as f64).collect()
+        };
         let ea = (ellipse.x as f64).max(0.01);
         let eb = (ellipse.y as f64).max(0.01) * 0.785;
         let guar_h = |x: f64| ((x + ea) / (2.0 * ea)).clamp(0.0, 1.0);
@@ -588,8 +713,8 @@ impl ProjectileManager {
 
         for ai in 0..na {
             let aim = aims[ai];
-            let (wh, qh) = axis_weights(nx, u0, du, aim.x as f64, half_disp.x as f64, s, erf_bound, &guar_h);
-            let (wv, qv) = axis_weights(ny, v0, dv, aim.y as f64, half_disp.y as f64, s, erf_bound, &guar_v);
+            let (wh, qh) = axis_weights(&ue, aim.x as f64, half_disp.x as f64, s, erf_bound, &guar_h);
+            let (wv, qv) = axis_weights(&ve, aim.y as f64, half_disp.y as f64, s, erf_bound, &guar_v);
             let mut in_mass = 0.0;
             let mut walked_mass = 0.0;
             let mut val = 0.0;

@@ -299,7 +299,7 @@ func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: floa
 			if geo.is_empty():
 				continue
 			var res: Dictionary = pm.survey_sweep(hull, ref, geo["dir"], v_ref[di],
-				geo["points"], geo["nx"], geo["ny"], geo["rect"],
+				geo["points"], geo["nx"], geo["ny"], geo["rect"], geo["edges"],
 				PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
 			if res.is_empty():
 				continue
@@ -327,6 +327,7 @@ static func survey_space_state(target: Ship) -> PhysicsDirectSpaceState3D:
 	if not _survey_space.is_valid():
 		_survey_space = PhysicsServer3D.space_create()
 		PhysicsServer3D.space_set_active(_survey_space, true)
+		_add_water()
 		return null
 	var sid: int = target.get_instance_id()
 	var body: RID = _survey_obbs.get(sid, RID())
@@ -365,6 +366,25 @@ static func _mirror_obb(target: Ship) -> RID:
 	return body
 
 
+## The map's water: a plane at y = 0 on the layer the shell's water ray masks,
+## so a survey walk crosses the surface exactly as a fired shell does.
+const WATER_LAYER: int = 1 << 3
+
+
+static func _add_water() -> void:
+	var shape := PhysicsServer3D.world_boundary_shape_create()
+	PhysicsServer3D.shape_set_data(shape, Plane(Vector3.UP, 0.0))
+	var body := PhysicsServer3D.body_create()
+	PhysicsServer3D.body_set_mode(body, PhysicsServer3D.BODY_MODE_STATIC)
+	PhysicsServer3D.body_set_space(body, _survey_space)
+	PhysicsServer3D.body_set_collision_layer(body, WATER_LAYER)
+	PhysicsServer3D.body_set_collision_mask(body, 0)
+	PhysicsServer3D.body_add_shape(body, shape)
+	PhysicsServer3D.body_set_state(body, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D())
+	_survey_obbs[-1] = body
+	_survey_shapes.append(shape)
+
+
 static func _free_survey_space() -> void:
 	for body in _survey_obbs.values():
 		PhysicsServer3D.free_rid(body)
@@ -372,4 +392,7 @@ static func _free_survey_space() -> void:
 	if _survey_space.is_valid():
 		PhysicsServer3D.free_rid(_survey_space)
 		_survey_space = RID()
+	for sh in _survey_shapes:
+		if sh is RID:
+			PhysicsServer3D.free_rid(sh)
 	_survey_shapes.clear()

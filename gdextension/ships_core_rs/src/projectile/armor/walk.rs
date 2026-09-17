@@ -32,6 +32,11 @@ pub struct ShellSpec {
     pub overmatch: f64,
     pub is_he: bool,
     pub k_nose: f64,
+    /// Drag-v2 terms, for the underwater run: horizontal `beta`, and the
+    /// vertical terminal velocity / time constant ShellParams derives from it.
+    pub beta: f64,
+    pub vt: f64,
+    pub tau: f64,
 }
 
 impl ShellSpec {
@@ -47,6 +52,9 @@ impl ShellSpec {
             overmatch: p.get("overmatch").to_f64(),
             is_he,
             k_nose: if is_he { K_NOSE_COMMON } else { K_NOSE_APC },
+            beta: p.get("drag").to_f64(),
+            vt: p.get("vt").to_f64(),
+            tau: p.get("tau").to_f64(),
         }
     }
 }
