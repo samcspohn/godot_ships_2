@@ -70,7 +70,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if sit.threat < d.cover_max_threat:
 		return _run_skill(&"FindCover", ctx)
 
-	var cover_intent := _skill_cover.execute(ctx, {}, false)
+	var cover_intent := _skill_cover.execute(ctx, {"prefer_on_the_way": true}, false)
 	var cover_usable: bool = cover_intent != null \
 		and (_skill_cover.is_cover_on_the_way(ctx)
 			or not ctx.ship.is_detected()

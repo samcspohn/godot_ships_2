@@ -4308,7 +4308,8 @@ func _get_ship_heading() -> float:
 func _try_cover_on_the_way(ctx: SkillContext, nearest: Ship, cover_skill: SkillFindCover, cover_params: Dictionary) -> NavIntent:
 	if nearest == null:
 		return null
-	var cover_intent := cover_skill.execute(ctx, cover_params, false)
+	var cover_intent := cover_skill.execute(ctx,
+		cover_params.merged({"prefer_on_the_way": true}, true), false)
 	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx):
 		_active_skill_name = &"FindCover"
 		return cover_intent

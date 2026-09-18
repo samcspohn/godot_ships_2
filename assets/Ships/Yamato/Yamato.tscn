@@ -50,8 +50,8 @@ pool2 = 297300.0
 
 [sub_resource type="Resource" id="Resource_u3en7"]
 script = ExtResource("5_p50sc")
-pool1 = 26426.666666666668
-pool2 = 52853.333333333336
+pool1 = 19820.0
+pool2 = 39640.0
 
 [sub_resource type="Resource" id="Resource_kv3r5"]
 script = ExtResource("5_p50sc")
@@ -65,8 +65,8 @@ pool2 = 6606.666666666667
 
 [sub_resource type="Resource" id="Resource_hcnip"]
 script = ExtResource("5_p50sc")
-pool1 = 16516.666666666668
-pool2 = 33033.333333333336
+pool1 = 13213.333333333334
+pool2 = 26426.666666666668
 
 [sub_resource type="Resource" id="Resource_eppy3"]
 script = ExtResource("6_p50sc")
@@ -79,7 +79,7 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 [sub_resource type="Resource" id="Resource_disp_jppql"]
 script = ExtResource("disp_script")
 sigma = 2.0
-h_disp = 220.0
+h_disp = 200.0
 v_disp = 110.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
@@ -273,6 +273,8 @@ ship_model_glb_path = "uid://cuxnkbgacr6mr"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_y3atb")
 _max_hp = 99100.0
+superstructure_percent = 0.4
+casemate_percent = 0.6
 citadel = SubResource("Resource_wckrl")
 casemate = SubResource("Resource_u3en7")
 bow = SubResource("Resource_kv3r5")

@@ -22,9 +22,6 @@ const _TEAM_COVER_MIN_SEPARATION_MULT: float = 3.0
 # How long a validated cover destination is reused before the island search is
 # re-run. Without this the skill holds its first pick for the whole engagement.
 const _COVER_RESEARCH_INTERVAL_MS: int = 3000
-# Half-width of the abeam window, measured off dead abeam of the danger vector.
-# Cover inside it is a broadside transit across the fight, never "on the way" —
-# see is_cover_on_the_way.
 # A freshly found destination must be at least this much closer than the one we
 # already hold before we abandon it — hysteresis against island thrashing.
 const _COVER_SWITCH_MARGIN: float = 0.7
@@ -371,6 +368,53 @@ func _committed_anchor_heading(ctx: SkillContext, isl_pos: Vector3, isl_radius: 
 	return atan2(to_pos.x, to_pos.z)
 
 
+## Heading around an island at which to START the candidate sweep, so the station
+## picked is the one costing the least detour off the threat axis.
+##
+## The axis is the line through the ship and the danger centre — a line and not a
+## ray, for the same reason is_cover_on_the_way reads it as one: ground on the
+## way out is as free as ground on the way in. The circle points nearest that
+## line are the two intersections where it cuts the island and the single
+## perpendicular point where it misses.
+##
+## The tie between the two intersections goes to whichever lies nearer the hidden
+## face. Both are zero deviation, so this costs nothing and the sweep — which
+## widens from the anchor back toward hide_h — reaches a concealed point in its
+## first steps instead of its last.
+##
+## Returns NAN when there is no axis worth reading; the caller then sweeps the
+## hide window as usual.
+func _on_the_way_anchor(ctx: SkillContext, isl_pos: Vector3, isl_radius: float,
+		danger_center: Vector3, hide_h: float) -> float:
+	var my_pos: Vector3 = ctx.ship.global_position
+	var axis := danger_center - my_pos
+	axis.y = 0.0
+	if axis.length_squared() < 1.0:
+		return NAN
+	var to_isl := isl_pos - my_pos
+	to_isl.y = 0.0
+	# Alongside the island already: every bearing off it is equally on the way.
+	if to_isl.length() < isl_radius + ctx.behavior._get_ship_clearance() * 2.0:
+		return NAN
+
+	var u := axis.normalized()
+	var foot: Vector3 = my_pos + u * to_isl.dot(u)
+	var perp := foot - isl_pos
+	perp.y = 0.0
+	var perp_len := perp.length()
+	if perp_len >= isl_radius:
+		return atan2(perp.x, perp.z)
+
+	var half := sqrt(maxf(isl_radius * isl_radius - perp_len * perp_len, 0.0))
+	var hit_a: Vector3 = foot - u * half
+	var hit_b: Vector3 = foot + u * half
+	var h_a := atan2(hit_a.x - isl_pos.x, hit_a.z - isl_pos.z)
+	var h_b := atan2(hit_b.x - isl_pos.x, hit_b.z - isl_pos.z)
+	if absf(angle_difference(h_a, hide_h)) <= absf(angle_difference(h_b, hide_h)):
+		return h_a
+	return h_b
+
+
 func _resolve_min_cover_separation(ctx: SkillContext, params: Dictionary) -> float:
 	var default_sep = ctx.behavior._get_ship_clearance() * _TEAM_COVER_MIN_SEPARATION_MULT
 	return params.get("min_cover_separation", default_sep)
@@ -644,6 +688,9 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 	# every hull. The parameter is kept because doctrine is the natural place to
 	# set it per bot.
 	var max_desired_range = gun_range * params.get("max_range", _STAGE_REACH_RATIO)
+	# Only the callers that go on to consult is_cover_on_the_way ask for this;
+	# for everyone else the sweep keeps starting from the hidden face.
+	var prefer_on_the_way: bool = params.get("prefer_on_the_way", false)
 
 	if ctx.server == null:
 		return {}
@@ -821,6 +868,12 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 		# it, not from a fresh sweep of the hide window - see
 		# _committed_anchor_heading. Priority targets are passed as empty: selection
 		# never runs the ballistic solver.
+		var anchor: float = NAN
+		if is_committed:
+			anchor = _committed_anchor_heading(ctx, isl_pos, isl_radius)
+		elif prefer_on_the_way and _use_danger_center:
+			anchor = _on_the_way_anchor(ctx, isl_pos, isl_radius, _danger_center, hide_h)
+
 		var cover_result = ctx.behavior._find_cover_position_on_island(
 			isl_pos,
 			isl_radius,
@@ -831,7 +884,7 @@ func _get_cover_position(ctx: SkillContext, params: Dictionary) -> Dictionary:
 			other_claim_positions,
 			min_cover_separation,
 			[],
-			_committed_anchor_heading(ctx, isl_pos, isl_radius) if is_committed else NAN,
+			anchor,
 			isl_lead,
 			isl_reach,
 			false
@@ -1058,29 +1111,18 @@ func reset() -> void:
 
 
 # ---------------------------------------------------------------------------
-# Returns true if the current cover destination is reasonably "on the way" —
-# that is, whether reaching it costs a detour, rather than whether it happens
-# to lie toward the enemy.  Two courses count as "the way":
+# Whether the current cover destination costs a detour, rather than whether it
+# happens to lie toward the enemy.
 #
-#   * the course made good — where the hull is travelling RIGHT NOW.  Cover the
-#     ship is already closing on is not a detour whichever compass point it sits
-#     on, and abandoning it the instant the ship is spotted throws away every
-#     metre already spent getting there.  Taken from velocity rather than from
-#     the bow so that a ship backing down reads as travelling astern.
-#   * the retreat course SkillKite would run, away from the danger centre.  If
-#     the ship is about to disengage, cover along the way out is free.
+# "The way" is the line through the ship and the danger centre — a line and not a
+# ray, because ground on the way out is as free as ground on the way in. This is
+# the same axis _on_the_way_anchor seeds the candidate sweep from, so what this
+# tests is what the search was aiming at; read against a different axis it is a
+# gate on a decision that never saw it.
 #
-# Either one passing is enough.  Cover on neither course — off the beam of a
-# ship that is neither approaching it nor withdrawing past it — is a genuine
-# detour and does not count.
-#
-# Both courses are read against the danger vector first: cover lying abeam of
-# it is a transit across the fight and is rejected outright, whatever the hull
-# is doing at this instant.
-#
-# Angle tolerance scales with distance to cover:
-#   60° when cover is <= 1000 m away  (almost there — accept wide detours)
-#   15° when cover is >= 6000 m away  (far detour is too costly)
+# Tolerance scales with distance to cover:
+#   37.5° at 0 m      (almost there — accept a wide detour)
+#   17.5° at 5000 m+  (a far detour is too costly)
 #
 # Call this AFTER execute() so that _nav_destination is up to date.
 # ---------------------------------------------------------------------------
@@ -1088,20 +1130,18 @@ func is_cover_on_the_way(ctx: SkillContext) -> bool:
 	if not _nav_destination_valid:
 		return false
 	var ship = ctx.ship
-	var to_cover = _nav_destination - ship.global_position
+	var to_cover: Vector3 = _nav_destination - ship.global_position
 	to_cover.y = 0.0
-	var dist_to_cover = to_cover.length()
-	if dist_to_cover < 0.0:
+	var dist_to_cover: float = to_cover.length()
+	if dist_to_cover < 1.0:
 		return true
 
-	var t = clampf((dist_to_cover - 0.0) / 5000.0, 0.0, 1.0)
-	var angle_tol = lerpf(deg_to_rad(37.5), deg_to_rad(17.5), t)
-	var cover_bearing = atan2(to_cover.x, to_cover.z)
-
-	var retreat_heading = wrapf(SkillAngle.calc_heading(ctx, {}), -PI, PI)
-	var to_retreat: Vector2 = Vector2(sin(retreat_heading), cos(retreat_heading))
-	var to_cover_2d: Vector2 = Vector2(sin(cover_bearing), cos(cover_bearing))
-	if absf(to_retreat.dot(to_cover_2d)) >= cos(angle_tol):
+	var axis: Vector3 = ctx.behavior._get_positioning_danger_center() - ship.global_position
+	axis.y = 0.0
+	# No axis to be off: nothing to detour away from.
+	if axis.length_squared() < 1.0:
 		return true
 
-	return false
+	var t := clampf(dist_to_cover / 5000.0, 0.0, 1.0)
+	var angle_tol := lerpf(deg_to_rad(37.5), deg_to_rad(17.5), t)
+	return absf(axis.normalized().dot(to_cover / dist_to_cover)) >= cos(angle_tol)

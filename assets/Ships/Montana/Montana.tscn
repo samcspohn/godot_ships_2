@@ -188,6 +188,7 @@ use_hull_collision = true
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_1a04s")
 _max_hp = 99600.0
+superstructure_percent = 0.4
 casemate_percent = 0.6
 citadel = SubResource("Resource_clwxc")
 casemate = SubResource("Resource_b66t4")

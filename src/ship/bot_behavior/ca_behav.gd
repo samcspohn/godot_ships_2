@@ -122,7 +122,8 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 			return hide
 		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
-	var cover_intent := _skill_cover.execute(ctx, cover_params, false)
+	var cover_intent := _skill_cover.execute(ctx,
+		cover_params.merged({"prefer_on_the_way": true}, true), false)
 	if cover_intent == null:
 		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
