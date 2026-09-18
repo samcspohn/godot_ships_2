@@ -322,6 +322,20 @@ impl ShipNavigator {
         self.threats.borrow().len() as i32
     }
 
+    /// Every circle in this navigator's threat picture as (x, z, radius).
+    pub(crate) fn get_threat_circles_impl(&self) -> PackedVector3Array {
+        self.refresh_threats();
+        let threats = self.threats.borrow();
+        let mut out = PackedVector3Array::new();
+        for t in threats.iter() {
+            if t.radius <= 0.0 {
+                continue;
+            }
+            out.push(Vector3::new(t.origin.x, t.origin.y, t.radius));
+        }
+        out
+    }
+
     pub(crate) fn debug_stamp_threats_impl(&mut self) {
         self.refresh_threats();
         let built = self.hpa_graph.as_ref().map_or(false, |g| g.bind().built);

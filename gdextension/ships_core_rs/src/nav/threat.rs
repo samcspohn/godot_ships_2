@@ -92,9 +92,9 @@ impl ThreatRegistry {
         for es in team.enemies.values() {
             // The larger of "how far away this ship can see me by my own
             // concealment" and "how far it can see me whatever my concealment".
-            // Decay applies to both: a contact nobody has looked at for a while
-            // is a fading claim about where the danger is, not a fading sensor.
-            let radius = observer_radius.max(es.force_spot) * es.decay;
+            // Only the concealment term decays: a radar bubble is as wide as
+            // ever until the contact drops out of the picture entirely.
+            let radius = (observer_radius * es.decay).max(es.force_spot);
             if radius <= 0.0 {
                 continue;
             }

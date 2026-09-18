@@ -40,7 +40,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	# is a passing accident for it, not the setup for a torpedo run, and picking
 	# a target it means to hit with tubes it does not really have leaves it
 	# tracking the wrong ship the moment it is seen again.
-	var is_torpedo_boat: bool = not _is_gunboat(_ship)
+	var is_torpedo_boat: bool = not _is_gunboat(_ship) or _gb_defensive
 	var torpedo_range: float = -1.0
 	var proximity_override_dist: float = 2500.0  # DDs are fast, smaller threshold
 	var overextension_weight: float = 0.3
@@ -322,6 +322,36 @@ func _open_water_kiting(sit: Dictionary) -> bool:
 	return _ow_kiting
 
 
+## Minimum seconds a gunboat stays defensive before it may return to open water,
+## so cover breaking the shooters' LOS does not immediately send it back out.
+const GUNBOAT_DEFENSIVE_DWELL: float = 10.0
+
+var _gb_defensive: bool = false
+var _gb_defensive_since: float = 0.0
+
+func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	_update_gunboat_defensive(sit)
+	return super(ctx, sit)
+
+func _update_gunboat_defensive(sit: Dictionary) -> void:
+	var d := _doc()
+	if d.trades_on_concealment:
+		_gb_defensive = false
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var hurt: bool = sit.hp_ratio < d.gunboat_cover_hp
+	if _gb_defensive:
+		if not hurt and sit.threat <= d.push_threat \
+				and now - _gb_defensive_since >= GUNBOAT_DEFENSIVE_DWELL:
+			_gb_defensive = false
+	elif hurt or sit.threat >= d.gunboat_cover_threat:
+		_gb_defensive = true
+		_gb_defensive_since = now
+
+func _gunboat_in_cover() -> bool:
+	return _active_skill_name == &"FindCover" and _skill_cover._arrived
+
+
 ## The engaged arm for a boat that fights in the open with its guns.
 ##
 ## A gunboat has no dark water to shoot from, so it trades on manoeuvre instead
@@ -348,7 +378,11 @@ func _open_water_kiting(sit: Dictionary) -> bool:
 func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var intent: NavIntent = null
 
-	if sit.has_spotted:
+	if _gb_defensive:
+		_ow_kiting = false
+		if sit.has_spotted:
+			intent = _run_skill(&"FindCover", ctx, _cover_params())
+	elif sit.has_spotted:
 		if _open_water_kiting(sit):
 			intent = _run_skill(&"FindCover", ctx, _cover_params())
 			if intent == null:
@@ -434,6 +468,17 @@ func engagement_range(ship: Ship, threat: float) -> float:
 ## costs it gun time, and it has no dark water to spend that time reaching.
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	var d := _doc()
+	if not d.trades_on_concealment and _gb_defensive:
+		if _gunboat_in_cover():
+			if not _cornered:
+				wants_stealth = false
+				wants_to_be_concealed = false
+			_suppress_guns = false
+		else:
+			wants_stealth = _skill_spot.stealth_corridor
+			wants_to_be_concealed = true
+			_suppress_guns = true
+		return
 	if not d.trades_on_concealment:
 		# One exception, and it is not this arm's to make: the cornered rule in
 		# _nav_core() has already fired by the time we get here, and it applies
@@ -495,7 +540,8 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done),
 	# including on a ping or by aircraft, not just LOS.
-	if _ship.is_detected() or (not _suppress_guns and can_fire_guns()):
+	var gunboat_hold: bool = _gb_defensive and _suppress_guns
+	if not gunboat_hold and (_ship.is_detected() or (not _suppress_guns and can_fire_guns())):
 		super.engage_target(target)
 		_ship.secondary_controller.enabled = true
 	else:

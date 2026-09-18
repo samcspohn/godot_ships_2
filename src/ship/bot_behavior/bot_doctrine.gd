@@ -88,6 +88,11 @@ var cover_max_threat: float = 0.7
 ## tick while threat sat on it. See DDBehavior._open_water_kiting().
 var kite_threat: float = 0.6
 
+## Past either edge a gun boat stops fighting in open water: guns only from a
+## cover station, otherwise spot and torpedo. Exit is back below push_threat.
+var gunboat_cover_threat: float = 0.8
+var gunboat_cover_hp: float = 0.2
+
 ## Minimum distance to the nearest non-DD threat before cover is preferred to
 ## kiting at high threat.
 var cover_min_threat_dist: float = 10000.0

@@ -705,6 +705,11 @@ impl ShipNavigator {
     }
 
     #[func]
+    fn get_threat_circles(&self) -> PackedVector3Array {
+        self.get_threat_circles_impl()
+    }
+
+    #[func]
     fn debug_stamp_threats(&mut self) {
         self.debug_stamp_threats_impl();
     }
