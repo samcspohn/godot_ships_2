@@ -127,6 +127,16 @@ var _team_presumption: Array[EnemyPresumption] = [
 const PRESUMED_THREAT_WEIGHT_MAX: float = 0.6
 const PRESUMED_THREAT_WEIGHT_MIN: float = 0.15
 const THREAT_UPDATE_INTERVAL: int = 4
+const REACH_SWEEP_INTERVAL: int = 12
+const REACH_REPORT_SECONDS: float = 5.0
+## An enemy is re-swept once it has moved this far: one field cell.
+const REACH_MOVE_THRESHOLD_M: float = 100.0
+var _reach_report_at: float = 0.0
+var _reach_ticks: int = 0
+var _reach_us: float = 0.0
+var _reach_max_us: float = 0.0
+var _reach_resweeps: int = 0
+var _reach_jobs: int = 0
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
 ## Fraction of a carried-but-inactive radar / hydro range that still gets
 ## stamped as a threat circle. Below 1.0 because the bubble is conditional -
@@ -1572,6 +1582,81 @@ func _physics_process(_delta: float) -> void:
 
 	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
 		_update_threat_registry()
+	if Engine.get_physics_frames() % REACH_SWEEP_INTERVAL == 0:
+		_sweep_reach_fields()
+
+
+## Per-team fire exposure and reach planes. Only enemies that moved a cell
+## since their last sweep are redone, so the steady-state cost is the print.
+func _sweep_reach_fields() -> void:
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	if field == null or not field.is_built():
+		return
+	var teams := [team_0_ships, team_1_ships]
+	var us := 0.0
+	var resweeps := 0
+	var jobs := 0
+	for team_id in range(2):
+		var hull_keys := PackedInt64Array()
+		var hull_speeds := PackedFloat32Array()
+		var hull_drags := PackedFloat32Array()
+		var hull_ranges := PackedFloat32Array()
+		var hull_heights := PackedFloat32Array()
+		var seen: Dictionary = {}
+		for ship in teams[team_id]:
+			var g: Dictionary = NavigationMapManager.reach_gun(ship)
+			if g.is_empty():
+				continue
+			var key: int = NavigationMapManager.reach_hull_key(g)
+			if seen.has(key):
+				continue
+			seen[key] = true
+			hull_keys.append(key)
+			hull_speeds.append(g.speed)
+			hull_drags.append(g.drag)
+			hull_ranges.append(g.range)
+			hull_heights.append(g.gun_h)
+		field.set_team_hulls(team_id, hull_keys, hull_speeds, hull_drags, hull_ranges, hull_heights)
+		var ids := PackedInt64Array()
+		var origins := PackedVector2Array()
+		var speeds := PackedFloat32Array()
+		var drags := PackedFloat32Array()
+		var ranges := PackedFloat32Array()
+		var heights := PackedFloat32Array()
+		for enemy in teams[1 - team_id]:
+			var g: Dictionary = NavigationMapManager.reach_gun(enemy)
+			if g.is_empty():
+				continue
+			ids.append(enemy.get_instance_id())
+			origins.append(Vector2(enemy.global_position.x, enemy.global_position.z))
+			speeds.append(g.speed)
+			drags.append(g.drag)
+			ranges.append(g.range)
+			heights.append(g.gun_h)
+		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges,
+			heights, 0.0, REACH_MOVE_THRESHOLD_M)
+		us += float(st.get("total_us", 0.0))
+		resweeps += int(st.get("resweeps", 0))
+		jobs += int(st.get("jobs", 0))
+	_reach_ticks += 1
+	_reach_us += us
+	_reach_max_us = maxf(_reach_max_us, us)
+	_reach_resweeps += resweeps
+	_reach_jobs += jobs
+	if current_time < _reach_report_at:
+		return
+	_reach_report_at = current_time + REACH_REPORT_SECONDS
+	var n := float(maxi(_reach_ticks, 1))
+	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | tables cached %d" % [
+		_reach_ticks, _reach_us / n / 1000.0, _reach_max_us / 1000.0,
+		_reach_resweeps / n, _reach_jobs / n, int(field.get_last_stats().get("tables_cached", 0))])
+	_reach_ticks = 0
+	_reach_us = 0.0
+	_reach_max_us = 0.0
+	_reach_resweeps = 0
+	_reach_jobs = 0
+
+
 
 
 

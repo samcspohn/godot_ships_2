@@ -11,11 +11,14 @@ extends Node
 
 var _map: NavigationMap = null
 var _hpa_graph: HpaGraph = null
+var _reach_field: ReachField = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
 
 ## Default minimum ship radius for waypoint graph generation (smallest ship beam / 2).
 const DEFAULT_MIN_SHIP_RADIUS := 25.0
+## Reach field cells per SDF cell per axis (2 -> 100 m cells on a 50 m grid).
+const REACH_FIELD_CELL_MULT := 2
 
 ## Build the navigation map from island collision shapes.
 ## island_bodies: Array of StaticBody3D nodes representing islands (with CollisionShape3D children)
@@ -116,6 +119,8 @@ func _build_hpa_graph() -> void:
 		_hpa_graph.get_node_count(),
 		_hpa_graph.get_cluster_count()
 	])
+	_reach_field = ReachField.new()
+	_reach_field.build(_map, REACH_FIELD_CELL_MULT)
 
 ## Returns the shared NavigationMap instance, or null if not yet built.
 func get_map() -> NavigationMap:
@@ -124,6 +129,34 @@ func get_map() -> NavigationMap:
 ## Returns the shared HpaGraph instance, or null if not yet built.
 func get_hpa_graph() -> HpaGraph:
 	return _hpa_graph
+
+func get_reach_field() -> ReachField:
+	return _reach_field
+
+## One key per distinct shell/range/gun-height combination; the reach field
+## keeps one plane per key per enemy, so ships sharing a gun share the work.
+static func reach_hull_key(g: Dictionary) -> int:
+	return hash([snappedf(g.speed, 0.01), snappedf(g.drag, 1e-8), snappedf(g.range, 1.0), g.gun_h])
+
+## What the reach field needs to know about a ship's main battery, or {} when
+## it has none. gun_h is the mean muzzle height above the water, snapped to a
+## metre so the wave motion does not spawn a table per frame.
+static func reach_gun(ship) -> Dictionary:
+	if not is_instance_valid(ship) or not ship.is_alive() or ship.artillery_controller == null:
+		return {}
+	var ac = ship.artillery_controller
+	var shell: ShellParams = ac.get_shell_params()
+	var gp = ac.get_params()
+	if shell == null or gp == null or shell.speed <= 0.0 or shell.drag <= 0.0:
+		return {}
+	var gun_h := 0.0
+	var n := 0
+	for gun in ac.guns:
+		if is_instance_valid(gun) and gun.muzzles.size() > 0:
+			gun_h += gun.get_muzzles_position().y
+			n += 1
+	gun_h = snappedf(gun_h / n, 1.0) if n > 0 else 5.0
+	return {"speed": shell.speed, "drag": shell.drag, "range": gp._range, "gun_h": maxf(gun_h, 1.0)}
 
 ## Returns true if the map has been built and is ready for use.
 func is_map_ready() -> bool:

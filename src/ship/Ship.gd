@@ -39,6 +39,9 @@ var stats: Stats
 var control
 var team: TeamEntity
 var visible_to_enemy: bool = false
+## Client only: the server has placed this ship at least once (live sync or
+## LKP). Until then it sits at the origin and must not be reasoned about.
+var client_positioned: bool = false
 var det_los: bool = false
 var det_hydro: bool = false
 var det_radar: bool = false
@@ -472,6 +475,7 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 		aviation_controller.from_bytes(reader.get_var())
 	visible_to_enemy = reader.get_u8() == 1
 	visible = true
+	client_positioned = true
 
 # Aviation-only sync for unspotted ships: the hull stays hidden (concealment)
 # but its squadrons are children of the game world, not the ship, so they stay
@@ -619,6 +623,7 @@ func sync2(b: PackedByteArray, friendly: bool):
 	# stats.from_bytes(stats_bytes)
 	self.visible_to_enemy = reader.get_u8() == 1
 	self.visible = true
+	client_positioned = true
 	if friendly:
 		_set_det_flags(reader.get_u8())  # For minimap detection aura
 
@@ -800,6 +805,7 @@ func sync_player(b: PackedByteArray):
 	self.visible_to_enemy = reader.get_u8() == 1
 	_set_det_flags(reader.get_u8())  # For own detection indicator color
 	self.visible = true
+	client_positioned = true
 
 
 ## Held by the enemy through any channel: LOS, a hydro/radar ping, or aircraft
@@ -864,6 +870,7 @@ func sync_unspotted(b: PackedByteArray) -> void:
 	if not visible_to_enemy:
 		global_position.x = lkp_x
 		global_position.z = lkp_z
+	client_positioned = true
 
 @rpc("any_peer", "reliable")
 func _hide():

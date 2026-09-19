@@ -32,6 +32,11 @@ pub struct NavigationMap {
     /// the shell-arc terrain test, which a lowered ridge would let shells
     /// through.
     pub(crate) shadow_height_grid: Vec<f32>,
+    /// Terrain height sampled at each cell centre, not the max of every
+    /// triangle touching the cell. `height_grid` is an envelope and reads a
+    /// coarse island mesh as its tallest vertex everywhere; this is what a
+    /// shell-arc model should be tested against.
+    pub(crate) height_mid_grid: Vec<f32>,
     /// Tallest cell in `height_grid`; bounds the shadow march.
     pub(crate) max_terrain_height: f32,
     pub(crate) grid_width: i32,
@@ -66,6 +71,7 @@ impl IRefCounted for NavigationMap {
             sdf_grid: Vec::new(),
             height_grid: Vec::new(),
             shadow_height_grid: Vec::new(),
+            height_mid_grid: Vec::new(),
             max_terrain_height: 0.0,
             grid_width: 0,
             grid_height: 0,

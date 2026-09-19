@@ -211,7 +211,7 @@ pub fn walk_plates(
             }
             if shell.fuze < 0.0
                 && e_armor >= spec.arming_threshold
-                && armor_mm >= spec.arming_threshold * 0.38
+                && armor_mm >= spec.arming_threshold * 0.325
             {
                 shell.fuze = 0.0;
             }

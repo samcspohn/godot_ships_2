@@ -199,6 +199,7 @@ func _process(_delta: float) -> void:
 
 		_poll_connection_state()
 		_update_mesh_pool()
+		_update_reach_overlay()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if _Utils.authority():
@@ -220,6 +221,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				if not _following:
 					_register_debug_receiver.rpc_id(1, false)
 					_debug_registered = false
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_R and event.ctrl_pressed:
+			reach_mode = (reach_mode + 1) % ReachMode.size()
+			print("[Debug] Reach overlay: %s" % ReachMode.keys()[reach_mode])
+			_clear_reach_overlay()
 			get_viewport().set_input_as_handled()
 
 func _physics_process(_delta: float) -> void:
@@ -1370,3 +1376,190 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 	t.autostart = true
 	t.timeout.connect(func(): node.queue_free())
 	node.add_child(t)
+
+# ============================================================================
+# Client: reach overlay (Ctrl+R cycles). Swept locally on the client's own
+# NavigationMap for the camera's ship (the player, or the spectated bot).
+#   REACH          where that ship's shells can land
+#   EXPOSURE       per cell, how many enemies can land shells there
+#   REACH_ENEMIES  per cell, how many enemies that ship's guns could hit from there
+# Enemy positions come from the client's ship nodes: live when spotted, the
+# last known position otherwise. Ships never placed yet are skipped. The
+# server's copy is the authoritative one.
+# ============================================================================
+
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES }
+
+const REACH_REFRESH_SECONDS: float = 0.5
+const REACH_MOVE_THRESHOLD_M: float = 100.0
+const REACH_DRAW_Y: float = 2.5
+const REACH_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, cull_disabled, depth_draw_never, depth_test_disabled;
+uniform sampler2D mask : filter_nearest, repeat_disable;
+uniform int mode = 1;
+void fragment() {
+	int c = int(round(texture(mask, UV).r * 255.0));
+	if (c == 0) {
+		discard;
+	}
+	vec3 col;
+	if (mode == 1) {
+		col = vec3(0.15, 1.0, 0.45);
+	} else if (mode == 2) {
+		col = c == 1 ? vec3(1.0, 0.9, 0.2) : (c == 2 ? vec3(1.0, 0.5, 0.1) : vec3(1.0, 0.1, 0.1));
+	} else {
+		col = c == 1 ? vec3(0.3, 0.9, 1.0) : (c == 2 ? vec3(0.3, 0.4, 1.0) : vec3(0.9, 0.3, 1.0));
+	}
+	ALBEDO = col;
+	ALPHA = 0.35;
+}
+"""
+
+var reach_mode: int = ReachMode.OFF
+var _reach_mesh: MeshInstance3D = null
+var _reach_material: ShaderMaterial = null
+var _reach_texture: ImageTexture = null
+var _reach_last_refresh: float = -INF
+var _reach_last_ship: Ship = null
+var _reach_refreshes: int = 0
+
+func _reach_target_ship() -> Ship:
+	if battle_camera == null or not is_instance_valid(battle_camera):
+		return null
+	var ship: Ship = battle_camera.follow_ship
+	if ship == null or not is_instance_valid(ship):
+		return null
+	return ship
+
+func _update_reach_overlay() -> void:
+	if reach_mode == ReachMode.OFF:
+		return
+	if NavigationMapManager == null or not NavigationMapManager.is_map_ready():
+		return
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var ship := _reach_target_ship()
+	if field == null or not field.is_built() or ship == null:
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if ship == _reach_last_ship and now - _reach_last_refresh < REACH_REFRESH_SECONDS:
+		return
+	_reach_last_refresh = now
+	_reach_last_ship = ship
+	var g: Dictionary = NavigationMapManager.reach_gun(ship)
+	if g.is_empty():
+		return
+	var pos: Vector3 = ship.global_position
+	var id: int = ship.get_instance_id()
+	var bytes := PackedByteArray()
+	var note := ""
+	if reach_mode == ReachMode.REACH:
+		var us: float = field.sweep(id, Vector2(pos.x, pos.z), g.gun_h, 0.0,
+			g.speed, g.drag, g.range)
+		bytes = field.get_reach_bytes(id)
+		note = "sweep %.2f ms, gun height %.0f m" % [us / 1000.0, g.gun_h]
+	else:
+		var team_id: int = ship.team.team_id
+		var key: int = NavigationMapManager.reach_hull_key(g)
+		field.set_team_hulls(team_id, PackedInt64Array([key]), PackedFloat32Array([g.speed]),
+			PackedFloat32Array([g.drag]), PackedFloat32Array([g.range]), PackedFloat32Array([g.gun_h]))
+		var ids := PackedInt64Array()
+		var origins := PackedVector2Array()
+		var speeds := PackedFloat32Array()
+		var drags := PackedFloat32Array()
+		var ranges := PackedFloat32Array()
+		var heights := PackedFloat32Array()
+		var server = get_node_or_null("/root/Server")
+		if server != null:
+			for enemy in server.get_all_ships():
+				if enemy.team == null or enemy.team.team_id == team_id:
+					continue
+				if not enemy.client_positioned:
+					continue
+				var eg: Dictionary = NavigationMapManager.reach_gun(enemy)
+				if eg.is_empty():
+					continue
+				ids.append(enemy.get_instance_id())
+				origins.append(Vector2(enemy.global_position.x, enemy.global_position.z))
+				speeds.append(eg.speed)
+				drags.append(eg.drag)
+				ranges.append(eg.range)
+				heights.append(eg.gun_h)
+		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges,
+			heights, 0.0, REACH_MOVE_THRESHOLD_M)
+		if reach_mode == ReachMode.EXPOSURE:
+			bytes = field.get_exposure_count_bytes(team_id)
+		else:
+			bytes = field.get_reach_count_bytes(team_id, key)
+		var here := Vector2(pos.x, pos.z)
+		note = "%d enemies, %d resweeps, %.2f ms, here: exposed by %d, can hit %d" % [
+			ids.size(), int(st.get("resweeps", 0)), float(st.get("total_us", 0.0)) / 1000.0,
+			_popcount(field.exposure_mask(team_id, here)), _popcount(field.reach_mask(team_id, key, here))]
+	var info: Dictionary = field.get_field_info()
+	if info.is_empty() or bytes.is_empty():
+		return
+	var img := Image.create_from_data(int(info.w), int(info.h), false, Image.FORMAT_L8, bytes)
+	if _reach_texture == null or _reach_texture.get_width() != int(info.w) \
+			or _reach_texture.get_height() != int(info.h):
+		_reach_texture = ImageTexture.create_from_image(img)
+		if _reach_mesh != null and is_instance_valid(_reach_mesh):
+			_reach_mesh.queue_free()
+		_reach_mesh = null
+	else:
+		_reach_texture.update(img)
+	if _reach_mesh == null:
+		_reach_mesh = _build_reach_mesh(info)
+		get_tree().root.add_child(_reach_mesh)
+	_reach_material.set_shader_parameter("mode", reach_mode)
+	_reach_refreshes += 1
+	if _reach_refreshes % 10 == 1:
+		print("[ReachOverlay] %s %s: %s" % [ReachMode.keys()[reach_mode], ship.name, note])
+
+static func _popcount(mask: int) -> int:
+	var n := 0
+	while mask != 0:
+		mask &= mask - 1
+		n += 1
+	return n
+
+func _build_reach_mesh(info: Dictionary) -> MeshInstance3D:
+	var x0: float = info.min_x
+	var z0: float = info.min_z
+	var x1: float = x0 + float(info.w) * float(info.cell)
+	var z1: float = z0 + float(info.h) * float(info.cell)
+	var y := REACH_DRAW_Y
+	var verts := PackedVector3Array([
+		Vector3(x0, y, z0), Vector3(x1, y, z0), Vector3(x1, y, z1),
+		Vector3(x0, y, z0), Vector3(x1, y, z1), Vector3(x0, y, z1),
+	])
+	var uvs := PackedVector2Array([
+		Vector2(0, 0), Vector2(1, 0), Vector2(1, 1),
+		Vector2(0, 0), Vector2(1, 1), Vector2(0, 1),
+	])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var shader := Shader.new()
+	shader.code = REACH_SHADER
+	_reach_material = ShaderMaterial.new()
+	_reach_material.shader = shader
+	_reach_material.set_shader_parameter("mask", _reach_texture)
+	_reach_material.set_shader_parameter("mode", reach_mode)
+	var node := MeshInstance3D.new()
+	node.name = "DebugReachOverlay"
+	node.mesh = mesh
+	node.material_override = _reach_material
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+func _clear_reach_overlay() -> void:
+	if _reach_mesh != null and is_instance_valid(_reach_mesh):
+		_reach_mesh.queue_free()
+	_reach_mesh = null
+	_reach_material = null
+	_reach_texture = null
+	_reach_last_ship = null
+	_reach_last_refresh = -INF

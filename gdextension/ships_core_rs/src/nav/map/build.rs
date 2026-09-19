@@ -29,6 +29,7 @@ impl NavigationMap {
         // inflating island footprints in the SDF.
         let mut land_mask = vec![false; total_usize];
         let mut height_grid = vec![0.0f32; total_usize];
+        let mut height_mid = vec![0.0f32; total_usize];
 
         let island_count = island_bodies.len();
         godot_print!("[NavigationMap] Processing {} island bodies...", island_count);
@@ -64,7 +65,7 @@ impl NavigationMap {
                             if v0.y.max(v1.y).max(v2.y) > 0.0 {
                                 above_water_tris += 1;
                             }
-                            self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid);
+                            self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid, &mut height_mid);
                         }
                         godot_print!(
                             "[NavigationMap]     ConcavePolygon: {} tris, {} above waterline",
@@ -88,7 +89,7 @@ impl NavigationMap {
                                 let v0 = shape_transform * points[0];
                                 let v1 = shape_transform * points[p];
                                 let v2 = shape_transform * points[p + 1];
-                                self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid);
+                                self.rasterize_triangle(v0, v1, v2, &mut land_mask, &mut height_grid, &mut height_mid);
                             }
                         }
                         shapes_processed += 1;
@@ -183,6 +184,12 @@ impl NavigationMap {
         // Step 5: Allocate reusable A* buffers
         self.allocate_search_buffers();
 
+        for (m, &h) in height_mid.iter_mut().zip(height_grid.iter()) {
+            if *m <= 0.0 {
+                *m = h;
+            }
+        }
+        self.height_mid_grid = height_mid;
         self.height_grid = height_grid;
         let mut max_terrain_height = 0.0f32;
         for h in &self.height_grid {
@@ -373,6 +380,7 @@ impl NavigationMap {
         // Allocate reusable A* buffers
         self.allocate_search_buffers();
 
+        self.height_mid_grid = height_grid.clone();
         self.height_grid = height_grid;
         let mut max_terrain_height = 0.0f32;
         for h in &self.height_grid {
@@ -395,6 +403,7 @@ impl NavigationMap {
         v2: Vector3,
         land_mask: &mut [bool],
         height_grid: &mut [f32],
+        height_mid: &mut [f32],
     ) {
         // Project triangle to XZ plane and rasterize onto the grid.
         // AGGRESSIVE rasterization: mark ANY cell that the triangle touches, even partially.
@@ -563,7 +572,24 @@ impl NavigationMap {
                     if all_above {
                         let idx = (iz * self.grid_width + ix) as usize;
                         land_mask[idx] = true;
+                        // Envelope for the terrain-skip tests; a surface sample
+                        // for anything that models a shell arc against the grid.
                         height_grid[idx] = height_grid[idx].max(max_y);
+                        let px = ix as f32 + 0.5;
+                        let pz = iz as f32 + 0.5;
+                        let mut w0 = edge_func(gx1, gz1, gx2, gz2, px, pz) * inv_area;
+                        let mut w1 = edge_func(gx2, gz2, gx0, gz0, px, pz) * inv_area;
+                        let mut w2 = edge_func(gx0, gz0, gx1, gz1, px, pz) * inv_area;
+                        w0 = w0.max(0.0);
+                        w1 = w1.max(0.0);
+                        w2 = w2.max(0.0);
+                        let wsum = w0 + w1 + w2;
+                        let y_mid = if wsum > 0.0 {
+                            (w0 * v0.y + w1 * v1.y + w2 * v2.y) / wsum
+                        } else {
+                            (v0.y + v1.y + v2.y) / 3.0
+                        };
+                        height_mid[idx] = height_mid[idx].max(y_mid);
                     } else {
                         // Mixed triangle: interpolate Y at cell center using barycentric coords.
                         // If center is outside triangle, use nearest-point clamping to be aggressive:
