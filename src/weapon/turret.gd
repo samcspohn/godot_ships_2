@@ -410,11 +410,12 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
 		turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
 
 	# Apply rotation
-	rotate(Vector3.UP, turret_angle_delta)
+	if abs(turret_angle_delta) > 0.001:
+		rotate(Vector3.UP, turret_angle_delta)
 
-	# Ensure rotation is within limits
-	# if not _return_to_base:
-	clamp_to_rotation_limits()
+		# Ensure rotation is within limits
+		# if not _return_to_base:
+		clamp_to_rotation_limits()
 	return desired_local_angle_delta
 
 func initialize_armor_system() -> void:

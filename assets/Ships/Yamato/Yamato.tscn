@@ -79,7 +79,7 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 [sub_resource type="Resource" id="Resource_disp_jppql"]
 script = ExtResource("disp_script")
 sigma = 2.0
-h_disp = 200.0
+h_disp = 220.0
 v_disp = 110.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
@@ -87,7 +87,7 @@ metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 script = ExtResource("5_oixol")
 speed = 780.0
 drag = 1.799999999999995e-05
-damage = 14500.0
+damage = 15100.0
 size = 2.76
 caliber = 460.0
 mass = 1460.0
@@ -99,7 +99,7 @@ metadata/_custom_type_script = "uid://d0r4vucnli08f"
 script = ExtResource("5_oixol")
 speed = 805.0
 drag = 2e-05
-damage = 8700.0
+damage = 7300.0
 size = 2.76
 caliber = 460.0
 mass = 1360.0

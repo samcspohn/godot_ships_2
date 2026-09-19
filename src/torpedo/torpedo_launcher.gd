@@ -21,7 +21,10 @@ func to_bytes(full: bool) -> PackedByteArray:
 func from_bytes(b: PackedByteArray, full: bool) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
-	rotation.y = reader.get_float()
+	var rot_y = reader.get_float()
+	if rot_y != rotation.y:
+		rotation.y = rot_y
+	# rotation.y = reader.get_float()
 	if full:
 		can_fire = reader.get_u8() == 1
 		_valid_target = reader.get_u8() == 1

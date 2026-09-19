@@ -133,6 +133,10 @@ const THREAT_STALE_DECAY_SECONDS: float = 100.0
 ## approaching one should cost a spotter something, but not as much as a
 ## consumable that is already lit. See _force_spot_reach.
 const LATENT_FORCE_SPOT_FACTOR: float = 0.9
+## A last-known contact's radar/hydro bubble outlives its concealment circle:
+## it shrinks over RADAR_DECAY_SECONDS to RADAR_DECAY_FLOOR and holds there.
+const RADAR_DECAY_SECONDS: float = 200.0
+const RADAR_DECAY_FLOOR: float = 0.6
 
 # Match state
 var match_active: bool = false
@@ -1615,14 +1619,17 @@ func _publish_team_threats(team_id: int) -> void:
 		if published.has(enemy_ship):
 			continue
 		var last_time: float = unspotted_times.get(enemy_ship, now)
-		var decay: float = 1.0 - clamp((now - last_time) / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
-		if decay <= 0.0:
+		var age: float = now - last_time
+		var decay: float = 1.0 - clamp(age / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
+		var force_spot: float = _force_spot_reach(enemy_ship) \
+			* lerpf(1.0, RADAR_DECAY_FLOOR, clampf(age / RADAR_DECAY_SECONDS, 0.0, 1.0))
+		if decay <= 0.0 and force_spot <= 0.0:
 			continue
 		published[enemy_ship] = true
 		var lp: Vector3 = unspotted[enemy_ship]
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(lp.x, lp.z, decay))
-		force_spots.append(_force_spot_reach(enemy_ship))
+		force_spots.append(force_spot)
 
 	# Everything left: ships never seen at all, and ships whose last known
 	# position has decayed away to nothing. Routing that avoids only the enemies

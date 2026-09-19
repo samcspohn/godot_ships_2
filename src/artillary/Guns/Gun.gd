@@ -106,9 +106,15 @@ func from_bytes(b: PackedByteArray, full: bool) -> void:
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 
-	rotation.y = reader.get_float()
+	var rot_y = reader.get_float()
 
-	barrel.rotation.x = reader.get_float()
+	if rot_y != rotation.y:
+		rotation.y = rot_y
+	# rotation.y = reader.get_float()
+
+	var rot_x = reader.get_float()
+	if rot_x != barrel.rotation.x:
+		barrel.rotation.x = rot_x
 
 	if not full:
 		return
@@ -289,15 +295,15 @@ func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false, clamp
 
 		elevation_delta = - max_elev_angle
 
-	if !is_nan(elevation_delta):
+	if !is_nan(elevation_delta) and abs(elevation_delta) > 0.0001:
 		barrel.rotate(Vector3.RIGHT, elevation_delta)
 
-	# Clamp depression at the physical hard-stop only. Elevation is intentionally
-	# NOT capped: in-range targets always resolve to an elevation at or below the
-	# max-range angle (aim_point is clamped to within range above), so a separate
-	# max-elevation clamp is redundant. What matters at max range is whether the
-	# target is in range — not the visual barrel angle.
-	barrel.rotation.x = max(barrel.rotation.x, MIN_ELEVATION_ANGLE)
+		# Clamp depression at the physical hard-stop only. Elevation is intentionally
+		# NOT capped: in-range targets always resolve to an elevation at or below the
+		# max-range angle (aim_point is clamped to within range above), so a separate
+		# max-elevation clamp is redundant. What matters at max range is whether the
+		# target is in range — not the visual barrel angle.
+		barrel.rotation.x = max(barrel.rotation.x, MIN_ELEVATION_ANGLE)
 
 	# Recompute elevation error against the barrel's post-rotation state so the
 	# grace window is checked against the remaining error after this frame's movement.

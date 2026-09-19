@@ -40,7 +40,7 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 	# is a passing accident for it, not the setup for a torpedo run, and picking
 	# a target it means to hit with tubes it does not really have leaves it
 	# tracking the wrong ship the moment it is seen again.
-	var is_torpedo_boat: bool = not _is_gunboat(_ship) or _gb_defensive
+	var is_torpedo_boat: bool = not _is_gunboat(_ship) or _gb_stealth
 	var torpedo_range: float = -1.0
 	var proximity_override_dist: float = 2500.0  # DDs are fast, smaller threshold
 	var overextension_weight: float = 0.3
@@ -328,6 +328,8 @@ const GUNBOAT_DEFENSIVE_DWELL: float = 10.0
 
 var _gb_defensive: bool = false
 var _gb_defensive_since: float = 0.0
+## Defensive, or nothing spotted: spot and torpedo rather than gunboat.
+var _gb_stealth: bool = false
 
 func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	_update_gunboat_defensive(sit)
@@ -468,7 +470,8 @@ func engagement_range(ship: Ship, threat: float) -> float:
 ## costs it gun time, and it has no dark water to spend that time reaching.
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	var d := _doc()
-	if not d.trades_on_concealment and _gb_defensive:
+	_gb_stealth = not d.trades_on_concealment and (_gb_defensive or not sit.has_spotted)
+	if _gb_stealth:
 		if _gunboat_in_cover():
 			if not _cornered:
 				wants_stealth = false
@@ -476,8 +479,8 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 			_suppress_guns = false
 		else:
 			wants_stealth = _skill_spot.stealth_corridor
-			wants_to_be_concealed = true
-			_suppress_guns = true
+			wants_to_be_concealed = _probe_concealment(ctx.server)
+			_suppress_guns = wants_to_be_concealed
 		return
 	if not d.trades_on_concealment:
 		# One exception, and it is not this arm's to make: the cornered rule in
@@ -540,7 +543,7 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 func engage_target(target: Ship):
 	# Guns only when already spotted (revealing position is already done),
 	# including on a ping or by aircraft, not just LOS.
-	var gunboat_hold: bool = _gb_defensive and _suppress_guns
+	var gunboat_hold: bool = _gb_stealth and _suppress_guns
 	if not gunboat_hold and (_ship.is_detected() or (not _suppress_guns and can_fire_guns())):
 		super.engage_target(target)
 		_ship.secondary_controller.enabled = true

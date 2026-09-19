@@ -27,11 +27,17 @@ const RESOLVE_INTERVAL := 2.0
 var stealth_corridor: bool = true
 
 var _station: Vector3 = Vector3.ZERO
+## March cursor that produced _station, so later resolves continue the walk.
+var _cursor: Dictionary = {}
 var _next_resolve: float = 0.0
 
 func reset() -> void:
-	_station = Vector3.ZERO
+	_clear_station()
 	_next_resolve = 0.0
+
+func _clear_station() -> void:
+	_station = Vector3.ZERO
+	_cursor = {}
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship: Ship = ctx.ship
@@ -71,7 +77,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 
 ## Walk from the ship to the stamped perimeter, then along it both ways until
-## a cursor spots a target. Held while it still spots and stays clear.
+## a cursor spots a target. A held station keeps marching on later resolves to
+## pick up more contacts without dropping any it already sees.
 func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vector3,
 		reach: float) -> Vector3:
 	var now: float = Time.get_ticks_msec() / 1000.0
@@ -80,23 +87,22 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 	_next_resolve = now + RESOLVE_INTERVAL
 
 	var nav: ShipNavigator = ctx.navigator
-	var targets := _spot_targets(ctx)
+	var contacts := _contacts(ctx)
+	var targets := _spot_targets(ctx, contacts)
 	if nav == null or targets.is_empty() or danger_center == Vector3.ZERO:
-		_station = Vector3.ZERO
+		_clear_station()
 		return Vector3.ZERO
 	var circles: PackedVector3Array = nav.get_threat_circles()
 	if _station != Vector3.ZERO and not _blocked(nav, circles, _station) \
 			and _spots(_station, targets):
+		_extend(nav, circles, _free(contacts))
 		return _station
 
 	var ship_pos: Vector3 = ctx.ship.global_position
 	var entry := _perimeter_entry(nav, circles, ship_pos, danger_center)
 	if entry == Vector2.INF:
-		_station = Vector3.ZERO
+		_clear_station()
 		return Vector3.ZERO
-	if _spots(Vector3(entry.x, 0.0, entry.y), targets):
-		_station = Vector3(entry.x, 0.0, entry.y)
-		return _station
 
 	var toward := (Vector2(danger_center.x, danger_center.z) - entry).normalized()
 	var perp := Vector2(-toward.y, toward.x)
@@ -107,6 +113,11 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 		{"pos": entry, "dir": perp, "wall": signf(perp.cross(toward)), "done": false},
 		{"pos": entry, "dir": -perp, "wall": signf((-perp).cross(toward)), "done": false},
 	]
+	if _spots(Vector3(entry.x, 0.0, entry.y), targets):
+		_station = Vector3(entry.x, 0.0, entry.y)
+		_cursor = cursors[0].duplicate()
+		return _station
+
 	for _i in MAX_MARCH_STEPS:
 		for cur in cursors:
 			if cur.done:
@@ -117,11 +128,33 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 			var p := Vector3(cur.pos.x, 0.0, cur.pos.y)
 			if _spots(p, targets):
 				_station = p
+				_cursor = cur.duplicate()
 				return p
 		if cursors[0].done and cursors[1].done:
 			break
-	_station = Vector3.ZERO
+	_clear_station()
 	return Vector3.ZERO
+
+
+## Continue the saved cursor's march. Adopt the first step that sees everything
+## the station sees plus one more; stop at the first step that loses one.
+func _extend(nav: ShipNavigator, circles: PackedVector3Array, pool: Array) -> void:
+	if _cursor.is_empty():
+		return
+	var base := _seen(_station, pool)
+	var cur := _cursor.duplicate()
+	for _i in MAX_MARCH_STEPS:
+		if not _march(cur, nav, circles):
+			return
+		var p := Vector3(cur.pos.x, 0.0, cur.pos.y)
+		var seen := _seen(p, pool)
+		for e in base:
+			if not seen.has(e):
+				return
+		if seen.size() > base.size():
+			_station = p
+			_cursor = cur
+			return
 
 
 ## Last clear probe on the ship-to-danger line before the perimeter, or the
@@ -176,36 +209,63 @@ static func _blocked(nav: ShipNavigator, circles: PackedVector3Array, p: Vector3
 	return nav.is_point_blocked(p2)
 
 
+static func _sees(p: Vector3, c: Dictionary) -> bool:
+	return p.distance_to(c.pos) <= c.spot_range \
+		and not NavigationMapManager.is_los_blocked(p, c.pos)
+
+
 func _spots(p: Vector3, targets: Array) -> bool:
 	for t in targets:
-		if p.distance_to(t.pos) <= t.spot_range \
-				and not NavigationMapManager.is_los_blocked(p, t.pos):
+		if _sees(p, t):
 			return true
 	return false
 
 
-## Contacts worth eyes: the nearest contact to each of our nearest teammates,
-## weighted by how close it sits to them. Entries: {pos, weight, spot_range}.
-func _spot_targets(ctx: SkillContext) -> Array:
-	var ship: Ship = ctx.ship
-	var ship_pos: Vector3 = ship.global_position
-	var team_id: int = ship.team.team_id
+func _seen(p: Vector3, pool: Array) -> Array:
+	var out: Array = []
+	for c in pool:
+		if _sees(p, c):
+			out.append(c.ship)
+	return out
 
+
+## Every live contact, spotted or last-known. Entries: {ship, pos, spot_range,
+## spotted, held}; held means a teammate other than us is lighting it.
+func _contacts(ctx: SkillContext) -> Array:
+	var ship: Ship = ctx.ship
+	var team_id: int = ship.team.team_id
 	var contacts: Array = []
 	for e in ctx.server.get_valid_targets(team_id):
 		if is_instance_valid(e) and e.is_alive():
 			var holder: Ship = e.concealment.spotted_by if e.concealment != null else null
 			var held: bool = holder != null and holder != ship and holder.team.team_id == team_id
-			contacts.append({"ship": e, "pos": e.global_position, "spotted": true, "held": held})
+			contacts.append({"ship": e, "pos": e.global_position, "spot_range": _spot_range(e),
+				"spotted": true, "held": held})
 	var unspotted: Dictionary = ctx.server.get_unspotted_enemies(team_id)
 	for e in unspotted.keys():
 		if is_instance_valid(e) and e.is_alive():
-			contacts.append({"ship": e, "pos": unspotted[e], "spotted": false, "held": false})
-	if contacts.is_empty():
+			contacts.append({"ship": e, "pos": unspotted[e], "spot_range": _spot_range(e),
+				"spotted": false, "held": false})
+	return contacts
+
+
+## Contacts a teammate is not already lighting; all of them when every one is.
+static func _free(contacts: Array) -> Array:
+	var out: Array = contacts.filter(func(c): return not c.held)
+	return out if not out.is_empty() else contacts
+
+
+## The nearest free contact to each of our nearest teammates, weighted by how
+## close it sits to them.
+func _spot_targets(ctx: SkillContext, contacts: Array) -> Array:
+	var ship: Ship = ctx.ship
+	var ship_pos: Vector3 = ship.global_position
+	var pool := _free(contacts)
+	if pool.is_empty():
 		return []
 
 	var friendlies: Array = []
-	for f in ctx.server.get_team_ships(team_id):
+	for f in ctx.server.get_team_ships(ship.team.team_id):
 		if f != ship and is_instance_valid(f) and f.is_alive():
 			friendlies.append(f.global_position)
 	friendlies.sort_custom(func(a, b): return a.distance_squared_to(ship_pos) < b.distance_squared_to(ship_pos))
@@ -213,33 +273,25 @@ func _spot_targets(ctx: SkillContext) -> Array:
 	if friendlies.is_empty():
 		friendlies.append(ship_pos)
 
-	# A contact a teammate already holds needs no second pair of eyes.
-	var any_free: bool = false
-	for c in contacts:
-		if not c.held:
-			any_free = true
-			break
-
 	var weights: Dictionary = {}
 	for fpos in friendlies:
 		var best_i: int = -1
 		var best_d: float = INF
-		for i in contacts.size():
-			if any_free and contacts[i].held:
-				continue
-			var d: float = fpos.distance_to(contacts[i].pos)
+		for i in pool.size():
+			var d: float = fpos.distance_to(pool[i].pos)
 			if d < best_d:
 				best_d = d
 				best_i = i
 		var w: float = 1.0 / (1.0 + best_d / TEAMMATE_DIST_SCALE)
-		if not contacts[best_i].spotted:
+		if not pool[best_i].spotted:
 			w *= UNSPOTTED_BONUS
 		weights[best_i] = weights.get(best_i, 0.0) + w
 
 	var targets: Array = []
 	for i in weights.keys():
-		var c: Dictionary = contacts[i]
-		targets.append({"pos": c.pos, "weight": weights[i], "spot_range": _spot_range(c.ship)})
+		var t: Dictionary = pool[i].duplicate()
+		t.weight = weights[i]
+		targets.append(t)
 	targets.sort_custom(func(a, b): return a.weight > b.weight)
 	return targets.slice(0, MAX_SPOT_TARGETS)
 

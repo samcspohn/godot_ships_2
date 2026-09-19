@@ -92,8 +92,8 @@ impl ThreatRegistry {
         for es in team.enemies.values() {
             // The larger of "how far away this ship can see me by my own
             // concealment" and "how far it can see me whatever my concealment".
-            // Only the concealment term decays: a radar bubble is as wide as
-            // ever until the contact drops out of the picture entirely.
+            // force_spot arrives pre-decayed on its own slower clock (see
+            // GameServer.RADAR_DECAY_SECONDS), so only concealment decays here.
             let radius = (observer_radius * es.decay).max(es.force_spot);
             if radius <= 0.0 {
                 continue;
@@ -122,7 +122,7 @@ impl ThreatRegistry {
 impl ThreatRegistry {
     /// Replace the per-team enemy list. The three arrays are parallel:
     ///   ids                  — ship instance IDs
-    ///   positions_with_decay — (world.x, world.z, decay); decay <= 0 is dropped
+    ///   positions_with_decay — (world.x, world.z, decay); dropped when decay and force_spot are both <= 0
     ///   force_spot_ranges    — metres of radar/hydro reach, 0 for none
     /// Entries are matched by id across calls; vanished ids are pruned.
     #[func]
@@ -145,15 +145,15 @@ impl ThreatRegistry {
         for i in 0..n {
             let eid = ids[i];
             let pwd = positions_with_decay[i];
-            let decay = pwd.z;
-            if decay <= 0.0 {
-                continue;
-            }
+            let decay = pwd.z.max(0.0);
             let force_spot = if i < force_spot_ranges.len() {
                 0.0f32.max(force_spot_ranges[i])
             } else {
                 0.0
             };
+            if decay <= 0.0 && force_spot <= 0.0 {
+                continue;
+            }
 
             match team.enemies.get_mut(&eid) {
                 None => {

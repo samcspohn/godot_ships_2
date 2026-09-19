@@ -43,6 +43,15 @@ var _osc_timer: float = 0.0
 ## How many radians we sample when searching for all-guns headings.
 const SAMPLE_STEP: float = deg_to_rad(2.0)
 
+## Threat must sit this far past the bow/stern line before the committed
+## broadside side is abandoned.
+const SEAM_MARGIN: float = deg_to_rad(15.0)
+const SIDE_MEMORY_MSEC: int = 2000
+
+var _side: int = 0
+var _side_target_id: int = 0
+var _side_msec: int = -1
+
 ## ---------------------------------------------------------------------------
 ## Public API
 ## ---------------------------------------------------------------------------
@@ -123,7 +132,9 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	# right starting point even for a torpedo boat.
 	var weapons: Array = guns
 	var aim_bearing: float = threat_bearing
-	var broadside_heading: float = _find_best_all_guns_heading(guns, threat_bearing, desired_heading)
+	var broadside_heading: float = _find_best_all_guns_heading(
+		guns, threat_bearing, desired_heading,
+		ctx.behavior._get_ship_heading(), target.get_instance_id())
 
 	# Then let loaded tubes refine it, but only if their arcs actually exclude
 	# the heading the guns picked.  Refining rather than replacing matters: a
@@ -296,61 +307,91 @@ func _torpedo_bearing(ctx: SkillContext, fallback_bearing: float) -> float:
 ## port limit (their `min`).  We pick the most-restrictive such gun and rotate
 ## the ship just enough to place the threat at that limit — or, if the threat
 ## is already inside every gun's arc, return `preferred_heading` unchanged.
-func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_heading: float) -> float:
+##
+## The port/starboard choice is sticky: the two mirror solutions are ~2x the
+## turret dead zone apart, so flipping on the sign of a near-zero `diff` while
+## the waypoint bearing sweeps across the threat bearing swings the hull back
+## and forth.  Near the bow/stern seam the side is chosen by the smaller turn
+## from the current hull heading, then held until the threat moves
+## SEAM_MARGIN past the seam.
+func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_heading: float,
+		ship_heading: float, target_id: int) -> float:
 	# `diff` is the threat's local angle relative to the ship at preferred_heading.
 	# Convention: 0 = forward, +π/2 = port, ±π = back, -π/2 = starboard.
 	var diff: float = angle_difference(preferred_heading, threat_bearing)
+	var side: int = _pick_side(guns, threat_bearing, preferred_heading, diff, ship_heading, target_id)
+	return _solve_side(guns, threat_bearing, preferred_heading, diff, side)
+
+
+func _pick_side(guns: Array, threat_bearing: float, preferred_heading: float, diff: float,
+		ship_heading: float, target_id: int) -> int:
+	var now: int = Time.get_ticks_msec()
+	if target_id != _side_target_id or now - _side_msec > SIDE_MEMORY_MSEC:
+		_side = 0
+	_side_target_id = target_id
+	_side_msec = now
+
+	# sin(diff) is continuous across both seams; sign = side, magnitude = distance from a seam.
+	var s: float = sin(diff)
+	var margin: float = sin(SEAM_MARGIN)
+	if _side != 0:
+		if s * -float(_side) > margin:
+			_side = -_side
+		return _side
+	if absf(s) >= margin:
+		_side = 1 if diff >= 0.0 else -1
+		return _side
+	var port: float = _solve_side(guns, threat_bearing, preferred_heading, diff, 1)
+	var stbd: float = _solve_side(guns, threat_bearing, preferred_heading, diff, -1)
+	var port_turn: float = absf(angle_difference(ship_heading, port))
+	var stbd_turn: float = absf(angle_difference(ship_heading, stbd))
+	_side = 1 if port_turn <= stbd_turn else -1
+	return _side
+
+
+func _solve_side(guns: Array, threat_bearing: float, preferred_heading: float, diff: float, side: int) -> float:
+	var front: bool = cos(diff) >= 0.0
 	var candidate: float
 	var preferred_ok: bool
 
-	if diff >= 0.0:
-		# Threat to port. Same-side broadside ≈ +π/2.
-		if diff < PI * 0.5:
+	if side > 0:
+		if front:
 			# Port-front quadrant: bound by back guns' port limit (their min).
-			# Pick the largest min — the most restrictive port reach.
 			var worst: float = 0.0
 			for gun: Turret in guns:
 				if gun.position.z > 0.0 and gun.slew_min_angle > worst:
 					worst = gun.slew_min_angle
 			candidate = worst
-			# Preferred works iff threat is already past every back gun's min.
 			preferred_ok = diff >= candidate
 		else:
 			# Port-back quadrant: bound by front guns' port limit (their max).
-			# Pick the smallest max — the most restrictive port reach.
 			var worst: float = PI
 			for gun: Turret in guns:
 				if gun.position.z < 0.0 and gun.slew_max_angle < worst:
 					worst = gun.slew_max_angle
 			candidate = worst
-			preferred_ok = diff <= candidate
+			preferred_ok = diff >= 0.0 and diff <= candidate
 	else:
-		# Threat to starboard. Same-side broadside ≈ -π/2.
-		if diff > -PI * 0.5:
+		if front:
 			# Starboard-front quadrant: bound by back guns' starboard limit (their max).
-			# Pick the smallest max in [0, TAU] — most restrictive starboard reach.
 			var worst: float = TAU
 			for gun: Turret in guns:
 				if gun.position.z > 0.0 and gun.slew_max_angle < worst:
 					worst = gun.slew_max_angle
-			candidate = worst - TAU  # convert to signed [-π, π]
+			candidate = worst - TAU
 			preferred_ok = diff <= candidate
 		else:
 			# Starboard-back quadrant: bound by front guns' starboard limit (their min).
-			# Pick the largest min in [0, TAU] — most restrictive starboard reach.
 			var worst: float = PI
 			for gun: Turret in guns:
 				if gun.position.z < 0.0 and gun.slew_min_angle > worst:
 					worst = gun.slew_min_angle
-			candidate = worst - TAU  # convert to signed
-			preferred_ok = diff >= candidate
+			candidate = worst - TAU
+			preferred_ok = diff <= 0.0 and diff >= candidate
 
 	if preferred_ok:
 		return preferred_heading
-
-	# Rotate the ship so the threat lands exactly at the binding gun's limit.
 	return wrapf(threat_bearing - candidate, -PI, PI)
-	# return preferred_heading + angle_difference(preferred_heading, threat_bearing + candidate)
 
 
 ## Returns a 0..1 value representing how close the bearing guns already are
@@ -437,3 +478,6 @@ func _normalize_0_tau(a: float) -> float:
 
 func reset() -> void:
 	_osc_timer = 0.0
+	_side = 0
+	_side_target_id = 0
+	_side_msec = -1
