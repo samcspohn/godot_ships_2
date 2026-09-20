@@ -60,10 +60,14 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		if sit.threat < d.push_threat:
 			return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
-	if sit.threat < d.camp_max_threat and active_shooters_at_me.is_empty():
+	# Station reads exposure off the field itself, so unlike Camp it is not
+	# gated on nobody shooting at us.
+	if sit.threat < d.station_max_threat:
 		var station := _run_skill(&"Station", ctx)
 		if station != null:
 			return station
+
+	if sit.threat < d.camp_max_threat and active_shooters_at_me.is_empty():
 		var camp := _run_skill(&"Camp", ctx, {"here": true})
 		# Probe cover so its team-wide claim bookkeeping stays warm; _finish_nav
 		# releases the claim again because Camp is what actually got adopted.

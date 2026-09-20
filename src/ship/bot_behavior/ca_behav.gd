@@ -113,6 +113,13 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var d := _doc()
 	var cover_params := _cover_params()
 
+	if sit.threat < d.station_max_threat:
+		var station := _run_skill(&"Station", ctx)
+		if station != null:
+			if not ctx.ship.is_detected():
+				_suppress_guns = _has_open_line_of_sight(ctx, sit)
+			return station
+
 	if not ctx.ship.is_detected():
 		var hide := _run_skill(&"FindCover", ctx, cover_params)
 		if hide != null:

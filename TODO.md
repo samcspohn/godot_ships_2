@@ -24,6 +24,7 @@ The following skills from the design list require engine/system work before they
 - [ ] map view + autopilot
 
 # bot
+- [ ] threat scoring should read the reach field: an enemy in range whose fire plane does not cover the ship's cell (`ReachField.exposure_mask` bit clear) is little or no threat, so a ship masked from half its attackers scores half the threat
 - [ ] need to angle when engaging
 - [ ] angle when kiting + turn to shoot front guns when reloaded and turn back
 - [ ] use torpedos with angle offsets to increase spread

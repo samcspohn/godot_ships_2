@@ -1284,12 +1284,19 @@ func _emit_debug_draws() -> void:
 					Debug.draw_circle(Vector3(threat_pos.x, 25.0, threat_pos.z), spread,
 						Color(1.0, 0.6, 0.0, 0.35), 24)
 
-	# --- m2) Station: the held cell and its score breakdown ---
-	if behavior != null and behavior._active_skill_name == &"Station" and behavior._skill_station.has_station():
-		var st_pos: Vector3 = behavior._skill_station.station_position()
-		Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(0.2, 1.0, 0.9, 0.8), 32)
-		Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, Color(0.2, 1.0, 0.9))
-		Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), behavior._skill_station.debug_text(), Color(0.7, 1.0, 1.0), 14)
+	# --- m2) Station / Cover: the held cell and its score breakdown ---
+	if behavior != null:
+		var st_skill: SkillStation = null
+		if behavior._active_skill_name == &"Station":
+			st_skill = behavior._skill_station
+		elif behavior._active_skill_name == &"FindCover":
+			st_skill = behavior._skill_cover
+		if st_skill != null and st_skill.has_station():
+			var st_pos: Vector3 = st_skill.station_position()
+			var st_col := Color(0.2, 1.0, 0.9) if st_skill == behavior._skill_station else Color(0.3, 1.0, 0.3)
+			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
+			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
+			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)
 
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:

@@ -269,6 +269,10 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# boat survives, and launch_range prefers a station the tubes reach from.
 	if intent == null:
 		intent = _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ship)})
+	# With contacts lit and nothing to spot from, a dark cell with the guns on
+	# something beats running: Station is priced on detection for this hull.
+	if intent == null and sit.has_spotted and sit.threat < d.station_max_threat:
+		intent = _run_skill(&"Station", ctx)
 	# Chase is a way of finding an enemy, not of fighting one. With contacts lit
 	# and the push arm above declined on threat, the boat is already inside the
 	# band it launches from: break off rather than run at them.

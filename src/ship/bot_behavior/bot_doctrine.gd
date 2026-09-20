@@ -86,6 +86,18 @@ var station_range_ratio: float = 0.65
 ## A new best cell must beat the held station by this much before it is taken.
 var station_switch_margin: float = 0.15
 
+## The same search as FindCover: exposure and (for hulls that hide) detection
+## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
+## for every degree off the line to the enemy.
+var cover_w_reach: float = 0.5
+var cover_w_exposed: float = 1.0
+var cover_w_cone: float = 0.3
+var cover_w_detect: float = 0.3
+var cover_w_travel: float = 0.5
+var cover_w_range: float = 0.3
+var cover_w_escape: float = 0.2
+var cover_w_detour: float = 0.6
+
 # ---------------------------------------------------------------------------
 # Threat thresholds — where the ladder switches between skills
 # ---------------------------------------------------------------------------
@@ -101,6 +113,7 @@ var force_above: float = 0.75
 ## Engaged-ladder thresholds. Only read by behaviours whose engaged arm uses
 ## them (BB); CA and DD override _select_engaged_skill entirely.
 var flank_max_threat: float = 0.4
+var station_max_threat: float = 0.75
 var camp_max_threat: float = 0.6
 var cover_max_threat: float = 0.7
 
@@ -230,6 +243,7 @@ static func for_battleship() -> BotDoctrine:
 	d.force_below = 0.25
 	d.force_above = 0.75
 	d.flank_max_threat = 0.4
+	d.station_max_threat = 0.75
 	d.camp_max_threat = 0.6
 	d.cover_max_threat = 0.7
 	d.cover_min_threat_dist = 10000.0
@@ -241,6 +255,7 @@ static func for_battleship() -> BotDoctrine:
 	d.station_w_cone = 0.6
 	d.station_w_travel = 0.5
 	d.station_w_range = 0.4
+	d.cover_w_detect = 0.1
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
 	d.push_equalize_threat = d.push_threat
@@ -279,6 +294,17 @@ static func for_cruiser() -> BotDoctrine:
 	d.cover_abandon_threat = 0.85
 	# The idle and dark arms returned before the post-processors ran.
 	d.post_process_idle_arms = false
+	# A cruiser stations where it is unseen and unanswered; being spotted is
+	# what turns its engaged arm into a kite.
+	d.station_max_threat = 0.75
+	d.station_w_reach = 0.8
+	d.station_w_exposed = 0.7
+	d.station_w_cone = 0.4
+	d.station_w_detect = 0.6
+	d.station_w_travel = 0.5
+	d.station_w_range = 0.3
+	d.station_w_escape = 0.2
+	d.cover_w_detect = 0.8
 	return d
 
 
@@ -322,6 +348,18 @@ static func for_destroyer() -> BotDoctrine:
 	d.chase_when_unshootable = false
 	d.trades_on_concealment = true
 	d.stealth_threat = 0.5
+	# A torpedo boat's station is dark first and everything else second; the
+	# guns are a tie-breaker and the way back into the dark counts.
+	d.station_max_threat = 0.75
+	d.station_w_reach = 0.4
+	d.station_w_exposed = 0.6
+	d.station_w_cone = 0.2
+	d.station_w_detect = 1.0
+	d.station_w_travel = 0.5
+	d.station_w_range = 0.3
+	d.station_w_escape = 0.5
+	d.cover_w_detect = 1.0
+	d.cover_w_escape = 0.5
 	return d
 
 
