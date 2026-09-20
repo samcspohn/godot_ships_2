@@ -1,6 +1,7 @@
 use godot::prelude::*;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -262,6 +263,8 @@ struct Field {
     mult: i32,
     /// 1 where the cell centre is water; averages ignore land cells.
     water: Vec<u8>,
+    /// SDF at the cell centre; passable for a hull when >= its clearance.
+    sdf: Vec<f32>,
 }
 
 impl Field {
@@ -501,6 +504,112 @@ struct TeamLayers {
     /// Min effective distance per cell, INFINITY where no enemy has LOS.
     detect: Vec<f32>,
     detect_version: u64,
+    /// Half-width of the narrowest bearing cone holding every enemy that can
+    /// hit the cell (-1 where none can) and that cone's centre bearing.
+    cone_half: Vec<f32>,
+    cone_dir: Vec<f32>,
+    cone_version: u64,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct PlanKey {
+    team: i32,
+    cell: usize,
+    radius_q: i32,
+    gain_bits: u32,
+    clearance_q: i32,
+    box_cells: i32,
+    mode: i32,
+    version: u64,
+}
+
+/// One ship's two Dijkstra layers over the field: priced cost to reach each
+/// cell from where it stands, and plain distance from each cell to the
+/// nearest cell nobody prices.
+struct ShipPlan {
+    key: PlanKey,
+    bx: BoxR,
+    safe: Vec<f32>,
+    escape: Vec<f32>,
+    price: Vec<f32>,
+    pass: Vec<bool>,
+    walls_muted: bool,
+    max_safe: f32,
+    max_escape: f32,
+    us: f32,
+}
+
+#[derive(Clone, Copy)]
+struct BoxR {
+    x0: i32,
+    z0: i32,
+    x1: i32,
+    z1: i32,
+}
+
+#[derive(PartialEq)]
+struct QItem {
+    cost: f32,
+    idx: u32,
+}
+impl Eq for QItem {}
+impl PartialOrd for QItem {
+    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for QItem {
+    fn cmp(&self, o: &Self) -> Ordering {
+        o.cost.total_cmp(&self.cost).then_with(|| o.idx.cmp(&self.idx))
+    }
+}
+
+/// 8-connected Dijkstra inside `bx`; a step costs its length times
+/// 1 + gain * mean price of its two ends. Diagonals need both orthogonal
+/// neighbours open so no corner is cut through land.
+fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], gain: f32, sources: &[usize], out: &mut [f32]) {
+    let mut heap = BinaryHeap::new();
+    for &s in sources {
+        out[s] = 0.0;
+        heap.push(QItem { cost: 0.0, idx: s as u32 });
+    }
+    let w = f.w;
+    let diag = f.cell * std::f32::consts::SQRT_2;
+    while let Some(QItem { cost, idx }) = heap.pop() {
+        let idx = idx as usize;
+        if cost > out[idx] {
+            continue;
+        }
+        let (ix, iz) = (idx as i32 % w, idx as i32 / w);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                let (nx, nz) = (ix + dx, iz + dz);
+                if nx < bx.x0 || nx > bx.x1 || nz < bx.z0 || nz > bx.z1 {
+                    continue;
+                }
+                let n = (nz * w + nx) as usize;
+                if !pass[n] {
+                    continue;
+                }
+                let len = if dx != 0 && dz != 0 {
+                    if !pass[(iz * w + nx) as usize] || !pass[(nz * w + ix) as usize] {
+                        continue;
+                    }
+                    diag
+                } else {
+                    f.cell
+                };
+                let c = cost + len * (1.0 + gain * 0.5 * (price[idx] + price[n]));
+                if c < out[n] {
+                    out[n] = c;
+                    heap.push(QItem { cost: c, idx: n as u32 });
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -569,6 +678,7 @@ pub struct ReachField {
     /// max, mean). Every navigator on a team with the same concealment reads
     /// the same vectors instead of rebuilding them from 123k cells each.
     exposure_cache: HashMap<(i32, i32, i32, i32, i32), (u64, Arc<Vec<f32>>, Arc<Vec<f32>>)>,
+    plans: HashMap<i64, ShipPlan>,
     last: Stats,
 }
 
@@ -589,6 +699,7 @@ impl IRefCounted for ReachField {
             ships: HashMap::new(),
             teams: HashMap::new(),
             exposure_cache: HashMap::new(),
+            plans: HashMap::new(),
             last: Stats::default(),
         }
     }
@@ -754,11 +865,17 @@ impl ReachField {
         let (fw, fh) = ((m.grid_width + mult - 1) / mult, (m.grid_height + mult - 1) / mult);
         let fcell = m.cell_size * mult as f32;
         let mut water = vec![0u8; (fw * fh) as usize];
+        let mut sdf = vec![f32::NEG_INFINITY; (fw * fh) as usize];
         for iz in 0..fh {
             for ix in 0..fw {
                 let x = m.min_x + (ix as f32 + 0.5) * fcell;
                 let z = m.min_z + (iz as f32 + 0.5) * fcell;
-                if terrain.in_bounds(x, z) && terrain.bilinear(&terrain.sdf, x, z) > 0.0 {
+                if !terrain.in_bounds(x, z) {
+                    continue;
+                }
+                let d = terrain.bilinear(&terrain.sdf, x, z);
+                sdf[(iz * fw + ix) as usize] = d;
+                if d > 0.0 {
                     water[(iz * fw + ix) as usize] = 1;
                 }
             }
@@ -771,12 +888,14 @@ impl ReachField {
             min_z: m.min_z,
             mult,
             water,
+            sdf,
         }));
         self.terrain = Some(Arc::new(terrain));
         self.tables.clear();
         self.ships.clear();
         self.teams.clear();
         self.exposure_cache.clear();
+        self.plans.clear();
     }
 
     #[func]
@@ -1175,12 +1294,310 @@ impl ReachField {
     #[func]
     fn forget(&mut self, id: i64) {
         self.ships.remove(&id);
+        self.plans.remove(&id);
     }
 
     #[func]
     fn clear(&mut self) {
         self.ships.clear();
         self.teams.clear();
+        self.plans.clear();
+    }
+
+    /// Certainty-weighted mean of where `team` believes its enemies are.
+    #[func]
+    fn get_team_danger_centre(&self, team: i32) -> Vector2 {
+        let Some(tl) = self.teams.get(&team) else { return Vector2::ZERO };
+        let (mut sum, mut wsum) = (Vector2::ZERO, 0.0f32);
+        for e in tl.enemies.values() {
+            let w = e.weight.max(WEIGHT_FLOOR);
+            sum += e.origin * w;
+            wsum += w;
+        }
+        if wsum > 0.0 { sum / wsum } else { Vector2::ZERO }
+    }
+
+    /// Per cell: 0 where no enemy can hit it, else 1..255 rising with the
+    /// half-width of the bearing cone all shooters fit in (255 = they
+    /// surround the cell).
+    #[func]
+    fn get_cone_bytes(&mut self, team: i32) -> PackedByteArray {
+        self.ensure_cone(team);
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(tl) = self.teams.get(&team) {
+            for (o, &h) in out.iter_mut().zip(tl.cone_half.iter()) {
+                if h >= 0.0 {
+                    *o = 1 + (254.0 * (h / std::f32::consts::PI).clamp(0.0, 1.0)).round() as u8;
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// {half, heading, count} at `point`: the bearing that keeps every
+    /// shooter within `half` radians of the bow or stern. half = -1 when
+    /// nobody can hit the point.
+    #[func]
+    fn cone_at(&mut self, team: i32, point: Vector2) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("half", -1.0f32);
+        d.set("heading", 0.0f32);
+        d.set("count", 0i64);
+        let Some(idx) = self.field.as_ref().and_then(|f| f.index(point.x, point.y)) else { return d };
+        self.ensure_cone(team);
+        let Some(tl) = self.teams.get(&team) else { return d };
+        if tl.cone_half.len() <= idx {
+            return d;
+        }
+        d.set("half", tl.cone_half[idx]);
+        d.set("heading", tl.cone_dir[idx]);
+        d.set("count", tl.enemies.values().filter(|e| bit_at(&e.fire, idx)).count() as i64);
+        d
+    }
+
+    /// Build (or reuse) the safe-cost and escape layers for ship `id` of
+    /// concealment `radius` standing at `pos`, priced like its router:
+    /// `price_mode` 0 = detection exposure, 1 = number of enemies that can
+    /// land shells; `gain` 0/INF makes any price a wall. Layers cover a box
+    /// of `box_radius` around the ship. Returns stats plus `marker`: the
+    /// unpriced cell reachable at finite cost that lies nearest `toward`.
+    #[func]
+    fn plan_ship(
+        &mut self,
+        team: i32,
+        id: i64,
+        pos: Vector2,
+        radius: f32,
+        gain: f32,
+        clearance: f32,
+        box_radius: f32,
+        price_mode: i32,
+        toward: Vector2,
+    ) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let Some(f) = self.field.clone() else { return d };
+        let Some(cell) = f.index(pos.x, pos.y) else { return d };
+        self.ensure_detect(team);
+        let version = self.teams.get(&team).map_or(0, |t| t.version);
+        let key = PlanKey {
+            team,
+            cell,
+            radius_q: radius.round() as i32,
+            gain_bits: gain.to_bits(),
+            clearance_q: clearance.round() as i32,
+            box_cells: (box_radius / f.cell).ceil().max(1.0) as i32,
+            mode: price_mode,
+            version,
+        };
+        let cached = self.plans.get(&id).is_some_and(|p| p.key == key);
+        if !cached {
+            let plan = self.build_plan(&f, key, radius, gain, clearance);
+            self.plans.insert(id, plan);
+        }
+        let p = &self.plans[&id];
+        let mut best: Option<(f32, usize)> = None;
+        for iz in p.bx.z0..=p.bx.z1 {
+            for ix in p.bx.x0..=p.bx.x1 {
+                let i = (iz * f.w + ix) as usize;
+                if !p.pass[i] || p.price[i] > 0.0 || !p.safe[i].is_finite() {
+                    continue;
+                }
+                let c = f.centre(i);
+                let dist = c.distance_squared_to(toward);
+                if best.is_none_or(|(b, _)| dist < b) {
+                    best = Some((dist, i));
+                }
+            }
+        }
+        d.set("cached", cached);
+        d.set("us", p.us);
+        d.set("walls_muted", p.walls_muted);
+        d.set("escape_here", p.escape[cell]);
+        d.set("max_safe", p.max_safe);
+        d.set("max_escape", p.max_escape);
+        d.set("has_marker", best.is_some());
+        d.set("marker", best.map_or(Vector2::ZERO, |(_, i)| f.centre(i)));
+        d.set("marker_cost", best.map_or(f32::INFINITY, |(_, i)| p.safe[i]));
+        d
+    }
+
+    /// 0 outside the plan or unreachable, else 1..255 by cost over the
+    /// costliest reachable cell.
+    #[func]
+    fn get_safe_cost_bytes(&self, id: i64) -> PackedByteArray {
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(p) = self.plans.get(&id) {
+            let scale = p.max_safe.max(1.0);
+            for (o, &c) in out.iter_mut().zip(p.safe.iter()) {
+                if c.is_finite() {
+                    *o = 1 + (254.0 * (c / scale).clamp(0.0, 1.0)).round() as u8;
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// 0 outside the plan, 1 where nobody prices the cell, else 2..255 by
+    /// distance to the nearest such cell.
+    #[func]
+    fn get_escape_bytes(&self, id: i64) -> PackedByteArray {
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(p) = self.plans.get(&id) {
+            let scale = p.max_escape.max(1.0);
+            for (o, &c) in out.iter_mut().zip(p.escape.iter()) {
+                if c.is_finite() {
+                    *o = if c <= 0.0 { 1 } else { 2 + (253.0 * (c / scale).clamp(0.0, 1.0)).round() as u8 };
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    #[func]
+    fn safe_cost_at(&self, id: i64, point: Vector2) -> f32 {
+        self.plan_value(id, point, true)
+    }
+
+    #[func]
+    fn escape_dist_at(&self, id: i64, point: Vector2) -> f32 {
+        self.plan_value(id, point, false)
+    }
+}
+
+impl Field {
+    fn centre(&self, idx: usize) -> Vector2 {
+        Vector2::new(
+            self.min_x + ((idx as i32 % self.w) as f32 + 0.5) * self.cell,
+            self.min_z + ((idx as i32 / self.w) as f32 + 0.5) * self.cell,
+        )
+    }
+}
+
+impl ReachField {
+    fn plan_value(&self, id: i64, point: Vector2, safe: bool) -> f32 {
+        let (Some(f), Some(p)) = (&self.field, self.plans.get(&id)) else { return f32::INFINITY };
+        match f.index(point.x, point.y) {
+            Some(i) => if safe { p.safe[i] } else { p.escape[i] },
+            None => f32::INFINITY,
+        }
+    }
+
+    fn ensure_cone(&mut self, team: i32) {
+        let Some(f) = self.field.clone() else { return };
+        let cells = (f.w * f.h) as usize;
+        let Some(tl) = self.teams.get(&team) else { return };
+        if tl.cone_version == tl.version && tl.cone_half.len() == cells {
+            return;
+        }
+        let enemies: Vec<(Vector2, &[u64])> =
+            tl.order.iter().map(|id| (tl.enemies[id].origin, tl.enemies[id].fire.as_slice())).collect();
+        let mut half = vec![-1.0f32; cells];
+        let mut dir = vec![0.0f32; cells];
+        let w = f.w as usize;
+        half.par_chunks_mut(w).zip(dir.par_chunks_mut(w)).enumerate().for_each(|(iz, (hrow, drow))| {
+            let mut b: Vec<f32> = Vec::with_capacity(enemies.len());
+            for ix in 0..w {
+                let idx = iz * w + ix;
+                if f.water[idx] == 0 {
+                    continue;
+                }
+                b.clear();
+                let c = f.centre(idx);
+                for (o, plane) in &enemies {
+                    if bit_at(plane, idx) {
+                        b.push((o.x - c.x).atan2(o.y - c.y));
+                    }
+                }
+                if b.is_empty() {
+                    continue;
+                }
+                b.sort_by(|p, q| p.total_cmp(q));
+                let n = b.len();
+                let mut gap = b[0] + std::f32::consts::TAU - b[n - 1];
+                let mut start = b[0];
+                for i in 0..n - 1 {
+                    if b[i + 1] - b[i] > gap {
+                        gap = b[i + 1] - b[i];
+                        start = b[i + 1];
+                    }
+                }
+                let cone = std::f32::consts::TAU - gap;
+                hrow[ix] = 0.5 * cone;
+                let mut mid = start + 0.5 * cone;
+                if mid > std::f32::consts::PI {
+                    mid -= std::f32::consts::TAU;
+                }
+                drow[ix] = mid;
+            }
+        });
+        let tl = self.teams.get_mut(&team).unwrap();
+        tl.cone_half = half;
+        tl.cone_dir = dir;
+        tl.cone_version = tl.version;
+    }
+
+    fn build_plan(&mut self, f: &Arc<Field>, key: PlanKey, radius: f32, gain: f32, clearance: f32) -> ShipPlan {
+        let t0 = Instant::now();
+        let cells = (f.w * f.h) as usize;
+        let (ix0, iz0) = (key.cell as i32 % f.w, key.cell as i32 / f.w);
+        let b = key.box_cells;
+        let bx = BoxR {
+            x0: (ix0 - b).max(0),
+            z0: (iz0 - b).max(0),
+            x1: (ix0 + b).min(f.w - 1),
+            z1: (iz0 + b).min(f.h - 1),
+        };
+        let cost_mode = gain.is_finite() && gain > 0.0;
+        let wall_at = if cost_mode { crate::nav::hpa::threats::COST_MODE_WALL_EXPOSURE } else { 0.0 };
+        let mut price = vec![0.0f32; cells];
+        let mut terrain_ok = vec![false; cells];
+        if let Some(tl) = self.teams.get(&key.team) {
+            let fire: Vec<&[u64]> = tl.enemies.values().map(|e| e.fire.as_slice()).collect();
+            for iz in bx.z0..=bx.z1 {
+                for ix in bx.x0..=bx.x1 {
+                    let i = (iz * f.w + ix) as usize;
+                    if f.water[i] == 0 || f.sdf[i] < clearance {
+                        continue;
+                    }
+                    terrain_ok[i] = true;
+                    price[i] = match key.mode {
+                        0 => {
+                            let d = tl.detect.get(i).copied().unwrap_or(f32::INFINITY);
+                            if radius > 0.0 && d < radius { ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX) } else { 0.0 }
+                        }
+                        _ => fire.iter().filter(|p| bit_at(p, i)).count() as f32,
+                    };
+                }
+            }
+        }
+        // Fire counts have no wall threshold in cost mode: three shooters
+        // is a price, not a barrier.
+        let wall = |i: usize| -> bool {
+            if !cost_mode { price[i] > 0.0 } else if key.mode == 0 { price[i] > wall_at } else { false }
+        };
+        let walls_muted = wall(key.cell);
+        let pass: Vec<bool> = (0..cells).map(|i| terrain_ok[i] && (walls_muted || !wall(i))).collect();
+        let mut safe = vec![f32::INFINITY; cells];
+        let g = if cost_mode { gain } else { 0.0 };
+        if pass[key.cell] {
+            dijkstra(f, bx, &pass, &price, g, &[key.cell], &mut safe);
+        }
+        let dark: Vec<usize> = (0..cells).filter(|&i| terrain_ok[i] && price[i] <= 0.0).collect();
+        let mut escape = vec![f32::INFINITY; cells];
+        dijkstra(f, bx, &terrain_ok, &price, 0.0, &dark, &mut escape);
+        let max_of = |v: &[f32]| v.iter().copied().filter(|c| c.is_finite()).fold(0.0f32, f32::max);
+        ShipPlan {
+            key,
+            bx,
+            max_safe: max_of(&safe),
+            max_escape: max_of(&escape),
+            safe,
+            escape,
+            price,
+            pass,
+            walls_muted,
+            us: t0.elapsed().as_secs_f32() * 1e6,
+        }
     }
 }
 

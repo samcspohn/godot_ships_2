@@ -172,6 +172,12 @@ static func reach_gun(ship) -> Dictionary:
 	gun_h = snappedf(gun_h / n, 1.0) if n > 0 else 5.0
 	return {"speed": shell.speed, "drag": shell.drag, "range": gp._range, "gun_h": maxf(gun_h, 1.0)}
 
+## The hull clearance the ship's navigator plans with (half length plus a beam).
+static func reach_clearance(ship) -> float:
+	if not is_instance_valid(ship) or ship.movement_controller == null:
+		return 100.0
+	return ship.movement_controller.ship_length * 0.5 + ship.movement_controller.ship_beam
+
 ## Returns true if the map has been built and is ready for use.
 func is_map_ready() -> bool:
 	return _is_built and _map != null and _map.is_built()

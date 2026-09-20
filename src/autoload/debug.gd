@@ -1389,9 +1389,15 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 #   REACH_ENEMIES  per cell, how many enemies that ship's guns could hit from there
 #   DETECTION      cells where a ship of that concealment would be spotted,
 #                  brighter the deeper inside; presumed contacts count faintly
+#   CONE           how wide a bearing cone the shooters of each cell span:
+#                  green tankable, red surrounded
+#   SAFE_COST      what that ship's router would pay to reach each cell
+#   ESCAPE         distance from each cell to one nobody can see; the marker
+#                  is the unseen cell nearest the enemy it can reach
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, DETECTION }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, DETECTION, CONE, SAFE_COST, ESCAPE }
+const REACH_PLAN_BOX_M: float = 12000.0
 
 const REACH_REFRESH_SECONDS: float = 0.5
 const REACH_DRAW_Y: float = 2.5
@@ -1412,8 +1418,15 @@ void fragment() {
 		col = c == 1 ? vec3(1.0, 0.9, 0.2) : (c == 2 ? vec3(1.0, 0.5, 0.1) : vec3(1.0, 0.1, 0.1));
 	} else if (mode == 3) {
 		col = c == 1 ? vec3(0.3, 0.9, 1.0) : (c == 2 ? vec3(0.3, 0.4, 1.0) : vec3(0.9, 0.3, 1.0));
-	} else {
+	} else if (mode == 4) {
 		col = mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c) / 255.0);
+	} else if (mode == 5) {
+		float half_deg = float(c - 1) / 254.0 * 180.0;
+		col = half_deg <= 30.0 ? vec3(0.2, 1.0, 0.3) : (half_deg <= 60.0 ? vec3(1.0, 0.9, 0.2) : vec3(1.0, 0.1, 0.1));
+	} else if (mode == 6) {
+		col = mix(vec3(0.6, 0.9, 1.0), vec3(0.05, 0.05, 0.6), float(c - 1) / 254.0);
+	} else {
+		col = c == 1 ? vec3(0.1, 0.6, 0.2) : mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c - 2) / 253.0);
 	}
 	ALBEDO = col;
 	ALPHA = 0.35;
@@ -1426,6 +1439,7 @@ var _reach_material: ShaderMaterial = null
 var _reach_texture: ImageTexture = null
 var _reach_sent_path: NodePath = NodePath("")
 var _reach_refreshes: int = 0
+var _reach_marker: MeshInstance3D = null
 # Server side.
 var _reach_peer_id: int = 0
 var _reach_srv_mode: int = ReachMode.OFF
@@ -1482,6 +1496,7 @@ func _reach_server_tick() -> void:
 	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	var bytes := PackedByteArray()
 	var note := ""
+	var marker: Variant = null
 	match _reach_srv_mode:
 		ReachMode.REACH:
 			if g.is_empty():
@@ -1505,15 +1520,47 @@ func _reach_server_tick() -> void:
 			bytes = field.get_detect_bytes(team_id, radius)
 			note = "conceal radius %.0f m, here effective distance %.0f m" % [
 				radius, field.detect_dist_at(team_id, here)]
+		ReachMode.CONE:
+			bytes = field.get_cone_bytes(team_id)
+			var c: Dictionary = field.cone_at(team_id, here)
+			note = "here %d shooters span +-%.0f deg about heading %.0f deg" % [
+				int(c.count), rad_to_deg(float(c.half)), rad_to_deg(float(c.heading))]
+		ReachMode.SAFE_COST, ReachMode.ESCAPE:
+			var st: Dictionary = _reach_plan(field, ship, team_id, here)
+			if st.is_empty():
+				return
+			if _reach_srv_mode == ReachMode.SAFE_COST:
+				bytes = field.get_safe_cost_bytes(ship.get_instance_id())
+				note = "plan %.1f ms%s, costliest cell %.0f m%s" % [
+					float(st.us) / 1000.0, " (cached)" if st.cached else "", float(st.max_safe),
+					", walls muted (standing in one)" if st.walls_muted else ""]
+			else:
+				bytes = field.get_escape_bytes(ship.get_instance_id())
+				note = "plan %.1f ms%s, escape from here %.0f m, marker %s at cost %.0f" % [
+					float(st.us) / 1000.0, " (cached)" if st.cached else "", float(st.escape_here),
+					str(st.marker) if st.has_marker else "none", float(st.marker_cost)]
+			if st.has_marker:
+				marker = st.marker
 	if bytes.is_empty():
 		return
 	var info: Dictionary = field.get_field_info()
 	var payload := {
 		"mode": _reach_srv_mode, "w": int(info.w), "h": int(info.h), "cell": float(info.cell),
 		"min_x": float(info.min_x), "min_z": float(info.min_z), "raw": bytes.size(),
-		"data": bytes.compress(FileAccess.COMPRESSION_ZSTD), "note": note,
+		"data": bytes.compress(FileAccess.COMPRESSION_ZSTD), "note": note, "marker": marker,
 	}
 	_receive_reach_field.rpc_id(_reach_peer_id, payload)
+
+## Same price the ship's router pays: detection exposure at its concealment
+## radius, its doctrine's gain when it is a bot, a wall otherwise.
+func _reach_plan(field: ReachField, ship: Ship, team_id: int, here: Vector2) -> Dictionary:
+	var gain := 0.0
+	var controller = ship.get_node_or_null("Modules/BotController")
+	if controller != null and controller.get("behavior") != null and controller.behavior.has_method("doctrine"):
+		gain = controller.behavior.doctrine().detection_cost_gain
+	return field.plan_ship(team_id, ship.get_instance_id(), here,
+		NavigationMapManager.reach_conceal_radius(ship), gain, NavigationMapManager.reach_clearance(ship),
+		REACH_PLAN_BOX_M, 0, field.get_team_danger_centre(team_id))
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_reach_field(payload: Dictionary) -> void:
@@ -1536,6 +1583,7 @@ func _receive_reach_field(payload: Dictionary) -> void:
 		_reach_mesh = _build_reach_mesh(payload)
 		get_tree().root.add_child(_reach_mesh)
 	_reach_material.set_shader_parameter("mode", reach_mode)
+	_update_reach_marker(payload.get("marker"))
 	_reach_refreshes += 1
 	if _reach_refreshes % 10 == 1:
 		print("[ReachOverlay] %s: %s" % [ReachMode.keys()[reach_mode], payload.note])
@@ -1580,10 +1628,35 @@ func _build_reach_mesh(info: Dictionary) -> MeshInstance3D:
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return node
 
+func _update_reach_marker(at: Variant) -> void:
+	if at == null or not (at is Vector2):
+		if _reach_marker != null:
+			_reach_marker.visible = false
+		return
+	if _reach_marker == null or not is_instance_valid(_reach_marker):
+		var mesh := CylinderMesh.new()
+		mesh.top_radius = 60.0
+		mesh.bottom_radius = 60.0
+		mesh.height = 120.0
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1.0, 0.2, 1.0, 0.8)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mesh.material = mat
+		_reach_marker = MeshInstance3D.new()
+		_reach_marker.name = "DebugReachMarker"
+		_reach_marker.mesh = mesh
+		get_tree().root.add_child(_reach_marker)
+	_reach_marker.visible = true
+	_reach_marker.global_position = Vector3((at as Vector2).x, 60.0, (at as Vector2).y)
+
 func _clear_reach_overlay() -> void:
 	if _reach_mesh != null and is_instance_valid(_reach_mesh):
 		_reach_mesh.queue_free()
 	_reach_mesh = null
+	if _reach_marker != null and is_instance_valid(_reach_marker):
+		_reach_marker.queue_free()
+	_reach_marker = null
 	_reach_material = null
 	_reach_texture = null
 	_reach_sent_path = NodePath("")

@@ -9,7 +9,7 @@ mod astar;
 mod build;
 mod geom;
 mod query;
-mod threats;
+pub(crate) mod threats;
 
 pub const DEFAULT_CLUSTER_SIZE: i32 = 16;
 pub const DEFAULT_SUB_SIZE: i32 = 4;
