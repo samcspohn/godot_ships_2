@@ -1,43 +1,53 @@
 class_name SkillKite
-extends BotSkill
-## Fighting retreat — maintain guns on target while pulling away.
-## Heading uses SkillAngle.calc_heading with the away-bearing so the angle
-## is always directed away from the danger center.
+extends SkillStation
+
+## Fighting retreat as a station search: the best cell at least kite_open_m
+## further from the danger centre than the ship, with something still in
+## reach, ranked on who can shoot it and how wide the shooters sit. Each
+## arrival invalidates the held cell (it no longer opens range), so the next
+## rescore steps back again for as long as the ladder keeps kiting. Falls
+## back to the directional kite when no cell in the box has a target in reach.
+
+func _label() -> String:
+	return "Kite"
+
+func _weights(d: BotDoctrine) -> PackedFloat32Array:
+	return PackedFloat32Array([d.kite_w_reach, d.kite_w_exposed, d.kite_w_cone,
+		d.kite_w_detect, d.kite_w_travel, d.kite_w_range, d.kite_w_escape])
+
+func _max_exposed(_d: BotDoctrine) -> float:
+	return INF
+
+func _require_unseen(_d: BotDoctrine) -> bool:
+	return false
+
+func _range_band(ctx: SkillContext, d: BotDoctrine, _params: Dictionary) -> Array:
+	var danger: Vector3 = ctx.behavior._get_positioning_danger_center()
+	if danger == Vector3.ZERO:
+		return [0.0, INF]
+	var here: Vector3 = ctx.ship.global_position
+	danger.y = 0.0
+	here.y = 0.0
+	return [here.distance_to(danger) + d.kite_open_m, INF]
+
+func _pref_range(_d: BotDoctrine, _gun_range: float, band: Array) -> float:
+	return float(band[0]) + 1500.0
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
-	var ship = ctx.ship
+	var intent: NavIntent = super.execute(ctx, params)
+	if intent != null:
+		return intent
+	return _directional_kite(ctx, params)
 
-	# var spotted_center = ctx.behavior._get_spotted_danger_center()
-	# var danger_center = spotted_center if spotted_center != Vector3.ZERO else ctx.behavior._get_danger_center()
-	# if danger_center == Vector3.ZERO:
-	# 	return null
-
-	# var to_danger = danger_center - ship.global_position
-	# to_danger.y = 0.0
-	# if to_danger.length_squared() < 1.0:
-	# 	return null
-
-	# var danger_bearing = atan2(to_danger.x, to_danger.z)
-	# var away_bearing = ctx.behavior._normalize_angle(danger_bearing + PI)
-	# var can_reverse = params.get("can_reverse", false)
-
-	var heading = SkillAngle.calc_heading(ctx, params)
-
-
-	# # var heading = SkillAngle.calc_heading(enemy_bearing, ctx, params)
-	# if absf(angle_difference(heading, danger_bearing + PI)) > PI * 0.5:
-	heading = wrapf(heading + PI, -PI, PI)
-
-
-	var fwd = Vector3(sin(heading), 0.0, cos(heading))
-	var dest
-	# if can_reverse:
-	# 	dest = ship.global_position + fwd * ship.movement_controller.turning_circle_radius * 2.0
-	# else:
-	dest = ship.global_position + fwd * max(3000.0, ship.movement_controller._p().turning_circle_radius * 8.0)
+## Open range along the angled away-bearing; the navigator reprojects the
+## point every tick so it never goes stale.
+func _directional_kite(ctx: SkillContext, params: Dictionary) -> NavIntent:
+	var ship: Ship = ctx.ship
+	var heading: float = wrapf(SkillAngle.calc_heading(ctx, params) + PI, -PI, PI)
+	var fwd := Vector3(sin(heading), 0.0, cos(heading))
+	var dest: Vector3 = ship.global_position + fwd * maxf(3000.0, ship.movement_controller._p().turning_circle_radius * 8.0)
 	dest.y = 0.0
 	dest = ctx.behavior._get_valid_nav_point(dest)
-
 	var intent := NavIntent.create(dest, heading)
 	intent.directional = true
 	return intent

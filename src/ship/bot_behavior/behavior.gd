@@ -2462,6 +2462,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_camp.reset()
 	if prev_skill == &"Station" and _active_skill_name != &"Station":
 		_skill_station.reset()
+	if prev_skill == &"Kite" and _active_skill_name != &"Kite":
+		_skill_kite.reset()
 
 	# One shared reading of the enemy's firing cycle, taken before anything that
 	# steers off it and before any early return -- get_speed_multiplier() is read

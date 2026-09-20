@@ -85,6 +85,29 @@ var station_w_escape: float = 0.0
 var station_range_ratio: float = 0.65
 ## A new best cell must beat the held station by this much before it is taken.
 var station_switch_margin: float = 0.15
+## Hard gates, not weights. Exposure is the sum over enemies able to land
+## shells on the cell of belief certainty times get_threat_class_weight(), so
+## 1.0 for a cruiser reads "one cruiser, or a few destroyers, never a
+## battleship". require_unseen rejects any cell an enemy has line of sight to
+## at the radius the guns bloom to.
+var station_max_exposed: float = 3.0
+var station_require_unseen: bool = false
+var cover_max_exposed: float = 2.0
+var cover_require_unseen: bool = false
+
+## Kite is the same search opening range: candidates lie at least kite_open_m
+## further from the danger centre than the ship, keep something in reach, and
+## are ranked on who can shoot them and how wide the shooters sit. No cap, so
+## a kite always has somewhere to go; the directional kite is the fallback
+## when nothing in the box has a target in reach.
+var kite_w_reach: float = 0.6
+var kite_w_exposed: float = 1.0
+var kite_w_cone: float = 0.6
+var kite_w_detect: float = 0.2
+var kite_w_travel: float = 0.6
+var kite_w_range: float = 0.3
+var kite_w_escape: float = 0.2
+var kite_open_m: float = 1000.0
 
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
@@ -305,6 +328,12 @@ static func for_cruiser() -> BotDoctrine:
 	d.station_w_range = 0.3
 	d.station_w_escape = 0.2
 	d.cover_w_detect = 0.8
+	# A cruiser trades in a 1v1 and hides from anything more. Cover is judged
+	# on fire: a cell nobody can land shells on is cover even when it is seen,
+	# and cover_w_detect prices being lit rather than forbidding it.
+	d.station_max_exposed = 1.0
+	d.cover_max_exposed = 1.0
+	d.cover_require_unseen = false
 	return d
 
 
@@ -360,6 +389,10 @@ static func for_destroyer() -> BotDoctrine:
 	d.station_w_escape = 0.5
 	d.cover_w_detect = 1.0
 	d.cover_w_escape = 0.5
+	d.station_max_exposed = 0.0
+	d.station_require_unseen = true
+	d.cover_max_exposed = 0.0
+	d.cover_require_unseen = true
 	return d
 
 
@@ -393,4 +426,9 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	# boat's push and kite are the two halves of one swing, so the standoff it
 	# is pushing to should be full only where the next kite leg breaks off.
 	d.push_equalize_threat = d.kite_threat
+	# The gunboat fights lit; it still takes no more than a 1v1 on a station.
+	d.station_max_exposed = 1.0
+	d.station_require_unseen = false
+	d.cover_max_exposed = 1.0
+	d.cover_require_unseen = false
 	return d

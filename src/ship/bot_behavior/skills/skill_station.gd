@@ -82,8 +82,30 @@ func _weights(d: BotDoctrine) -> PackedFloat32Array:
 func _accepts_no_reach(_params: Dictionary) -> bool:
 	return false
 
+## [min, max] distance from the danger centre a candidate must lie in.
+func _range_band(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary) -> Array:
+	return [0.0, INF]
+
+func _pref_range(d: BotDoctrine, gun_range: float, band: Array) -> float:
+	return maxf(gun_range * d.station_range_ratio, float(band[0]))
+
 func _detour_weight(_d: BotDoctrine, _params: Dictionary) -> float:
 	return 0.0
+
+## Most class-weighted enemy fire a cell may be under and still be a candidate.
+func _max_exposed(d: BotDoctrine) -> float:
+	return d.station_max_exposed
+
+func _require_unseen(d: BotDoctrine) -> bool:
+	return d.station_require_unseen
+
+## How dangerous each believed enemy's class is to this hull, by field id.
+static func _enemy_weights(ctx: SkillContext, field: ReachField, team_id: int) -> Dictionary:
+	var out := {}
+	for id in field.get_team_enemy_ids(team_id):
+		var e = instance_from_id(id)
+		out[id] = ctx.behavior.get_threat_class_weight(e.ship_class) if e is Ship else 1.0
+	return out
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var field: ReachField = NavigationMapManager.get_reach_field()
@@ -117,10 +139,13 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var key: int = NavigationMapManager.reach_hull_key(g)
 	var gun_range: float = g.range
+	var band: Array = _range_band(ctx, d, params)
 	var opts := {
 		"weights": _weights(d),
 		"gun_range": gun_range,
-		"pref_range": gun_range * d.station_range_ratio,
+		"pref_range": _pref_range(d, gun_range, band),
+		"min_range": float(band[0]),
+		"max_range": float(band[1]),
 		"radius": radius,
 		"fire_radius": maxf(radius, gun_range),
 		"toward": danger,
@@ -129,6 +154,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"avoid_radius": clearance * CLAIM_SEPARATION_CLEARANCES,
 		"axis_from": here,
 		"w_detour": _detour_weight(d, params),
+		"enemy_weights": _enemy_weights(ctx, field, team_id),
+		"max_exposed": _max_exposed(d),
+		"require_unseen": _require_unseen(d),
 	}
 	var sc: Dictionary = field.score_station(team_id, ship.get_instance_id(), key, opts)
 	_score_us = float(sc.get("us", 0.0))

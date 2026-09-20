@@ -38,6 +38,12 @@ func _accepts_no_reach(params: Dictionary) -> bool:
 func _detour_weight(d: BotDoctrine, params: Dictionary) -> float:
 	return d.cover_w_detour if bool(params.get("prefer_on_the_way", false)) else 0.0
 
+func _max_exposed(d: BotDoctrine) -> float:
+	return d.cover_max_exposed
+
+func _require_unseen(d: BotDoctrine) -> bool:
+	return d.cover_require_unseen
+
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
 	var p := params
 	if prioritize_cover and not params.get("prioritize_cover", false):

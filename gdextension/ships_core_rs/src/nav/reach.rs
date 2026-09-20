@@ -1538,6 +1538,17 @@ struct StationArgs {
     avoid_r2: f32,
     axis_from: Vector2,
     w_detour: f32,
+    /// Per enemy id, how dangerous its class is to this hull (1 default).
+    enemy_weights: HashMap<i64, f32>,
+    /// Hard gates: cells whose class-and-certainty weighted exposure exceeds
+    /// max_exposed, or that are seen when require_unseen, are not candidates.
+    max_exposed: f32,
+    require_unseen: bool,
+    /// Distance-to-`toward` band a candidate must lie in: a kite opens range
+    /// with min_range above where the ship stands, a push closes with
+    /// max_range below it.
+    min_range: f32,
+    max_range: f32,
 }
 
 fn opt<T: FromGodot>(d: &VarDictionary, key: &str, default: T) -> T {
@@ -1568,6 +1579,14 @@ impl StationArgs {
             avoid_r2: avoid_radius * avoid_radius,
             axis_from: opt(d, "axis_from", Vector2::ZERO),
             w_detour: opt(d, "w_detour", 0.0f32),
+            enemy_weights: opt(d, "enemy_weights", VarDictionary::new())
+                .iter_shared()
+                .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()?, v.try_to::<f32>().ok()?)))
+                .collect(),
+            max_exposed: opt(d, "max_exposed", f32::INFINITY),
+            require_unseen: opt(d, "require_unseen", false),
+            min_range: opt(d, "min_range", 0.0f32),
+            max_range: opt(d, "max_range", f32::INFINITY),
         }
     }
 }
@@ -1616,19 +1635,27 @@ fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx:
     if a.avoid_r2 > 0.0 && a.avoid.iter().any(|q| q.distance_squared_to(c) < a.avoid_r2) {
         return None;
     }
+    let range = c.distance_to(a.toward);
+    if range < a.min_range || range > a.max_range {
+        return None;
+    }
     let mut t = StationTerms::default();
     let mut armed = 0.0f32;
-    for e in tl.enemies.values() {
+    for (id, e) in &tl.enemies {
         let w = e.weight.max(WEIGHT_FLOOR);
         if e.reach.get(&a.hull_key).is_some_and(|pl| bit_at(pl, idx)) {
             t.reach += w;
         }
+        let cw = w * a.enemy_weights.get(id).copied().unwrap_or(1.0);
         if e.shell.has_guns() {
-            armed += w;
+            armed += cw;
         }
         if bit_at(&e.fire, idx) {
-            t.exposed += w;
+            t.exposed += cw;
         }
+    }
+    if t.exposed > a.max_exposed {
+        return None;
     }
     let exposed_frac = if armed > 0.0 { t.exposed / armed } else { 0.0 };
     t.cone = tl.cone_half.get(idx).copied().unwrap_or(-1.0).max(0.0) / std::f32::consts::PI;
@@ -1641,9 +1668,12 @@ fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx:
     } else {
         0.0
     };
+    if a.require_unseen && t.detect > 0.0 {
+        return None;
+    }
     let gr = a.gun_range.max(1.0);
     t.travel = p.safe[idx] / gr;
-    t.range_err = (c.distance_to(a.toward) - a.pref_range).abs() / gr;
+    t.range_err = (range - a.pref_range).abs() / gr;
     let esc = p.escape[idx];
     t.escape = if a.radius > 0.0 && esc.is_finite() { 1.0 - (esc / a.radius).min(1.0) } else { 0.0 };
     if a.w_detour > 0.0 {
