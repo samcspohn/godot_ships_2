@@ -2430,6 +2430,27 @@ func _shape_close_intent(_intent: NavIntent, _ctx: SkillContext, _sit: Dictionar
 func _apply_gun_policy(_ctx: SkillContext, _sit: Dictionary) -> void:
 	pass
 
+## Past this much waypoint offset the hull is mid-turn, not in transit, and the
+## post-processors are shaping a heading the navigator is about to abandon.
+const POST_PROCESS_MAX_WAYPOINT_OFFSET: float = deg_to_rad(60.0)
+
+## Whether broadside/evade/spread may touch this intent.
+##
+## Reads the waypoint the same way SkillBroadside does -- live path waypoint,
+## only while the navigator is still following the path and the intent has not
+## already handed heading authority to a skill (heading_weight > 0).
+func _post_process_allowed(ctx: SkillContext, intent: NavIntent) -> bool:
+	if ctx.navigator == null or ctx.navigator.is_arrived():
+		return true
+	if intent.heading_weight > 0.0:
+		return true
+	var to_wp: Vector3 = ctx.navigator.get_current_waypoint() - ctx.ship.global_position
+	to_wp.y = 0.0
+	if to_wp.length_squared() < 1.0:
+		return true
+	var off: float = absf(_normalize_angle(atan2(to_wp.x, to_wp.z) - _get_ship_heading()))
+	return off <= POST_PROCESS_MAX_WAYPOINT_OFFSET
+
 ## Common tail. Releases skill state that was claimed but not adopted, then runs
 ## the heading and anti-clump post-processors.
 func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_skill: StringName) -> NavIntent:
@@ -2454,6 +2475,9 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		return null
 	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
 			and not d.post_process_idle_arms:
+		_skill_evade.reset()
+		return intent
+	if not _post_process_allowed(ctx, intent):
 		_skill_evade.reset()
 		return intent
 
