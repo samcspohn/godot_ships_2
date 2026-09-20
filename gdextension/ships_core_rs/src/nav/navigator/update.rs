@@ -816,6 +816,27 @@ impl ShipNavigator {
     // Plan management
     // ========================================================================
 
+    /// Stamp the HPA graph from the subscribed detection field. False when
+    /// there is no subscription, so the circle stamp runs instead.
+    fn stamp_detection_field(&mut self) -> bool {
+        let Some(mut field) = self.detect_field.clone() else { return false };
+        if self.detect_team < 0 || self.detect_radius <= 0.0 {
+            return false;
+        }
+        let (cluster_size, ncx, ncz) = {
+            let g = self.hpa_graph.as_ref().unwrap().bind();
+            (g.cluster_size, g.ncx, g.ncz)
+        };
+        let version = field.bind().get_team_version(self.detect_team);
+        if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
+            self.detect_exposure = field.bind_mut().cluster_exposure_vec(
+                self.detect_team, self.detect_radius, cluster_size, ncx, ncz);
+            self.detect_synced_version = version;
+        }
+        self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threat_costs(&self.detect_exposure, self.detect_gain);
+        true
+    }
+
     /// Synchronous HPA* planning, called from navigate_to().
     pub(crate) fn run_plan_sync(&mut self) {
         // Search at the hull's true minimum; buy sea room through the hug stand-off
@@ -840,8 +861,9 @@ impl ShipNavigator {
         if planner_ready {
             self.refresh_threats();
 
-            let threats_empty = self.threats.borrow().is_empty();
-            if !threats_empty {
+            if self.stamp_detection_field() {
+                // stamped from the detection field
+            } else if !self.threats.borrow().is_empty() {
                 let circles = self.threats.borrow().clone();
                 self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threats(&circles);
             } else {

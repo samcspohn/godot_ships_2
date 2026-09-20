@@ -10,6 +10,7 @@ impl HpaGraph {
         self.sub_clusters.clear();
         self.cluster_block_count.clear();
         self.cluster_threat_blocked.clear();
+        self.cluster_threat_cost.clear();
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
         self.obstacles.clear();
@@ -100,6 +101,7 @@ impl HpaGraph {
         self.clusters = vec![Cluster::default(); total];
         self.cluster_block_count = vec![0; total];
         self.cluster_threat_blocked = vec![0; total];
+        self.cluster_threat_cost = vec![0.0; total];
 
         const NEG_INF: f32 = f32::NEG_INFINITY;
         const POS_INF: f32 = f32::INFINITY;

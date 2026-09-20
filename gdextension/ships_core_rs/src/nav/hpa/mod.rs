@@ -241,6 +241,11 @@ pub struct HpaGraph {
     /// `cluster_threat_blocked` so clearing iterates only the small subset.
     pub(crate) threat_blocked_cids: Vec<i32>,
     pub(crate) threat_blocked_count: i32,
+    /// Extra step-cost per cluster from the detection field (gain x exposure).
+    /// When `threat_cost_mode` is set, threat-blocked clusters are priced, not
+    /// walled; the blocked flags still steer the string-puller and LOS tests.
+    pub(crate) cluster_threat_cost: Vec<f32>,
+    pub(crate) threat_cost_mode: Cell<bool>,
 
     pub(crate) cardinal_step_cost: f32,
     pub(crate) diagonal_step_cost: f32,
@@ -285,6 +290,8 @@ impl IRefCounted for HpaGraph {
             cluster_threat_blocked: Vec::new(),
             threat_blocked_cids: Vec::new(),
             threat_blocked_count: 0,
+            cluster_threat_cost: Vec::new(),
+            threat_cost_mode: Cell::new(false),
             cardinal_step_cost: 0.0,
             diagonal_step_cost: 0.0,
             obstacles: HashMap::new(),
@@ -335,11 +342,31 @@ impl HpaGraph {
     /// Step-cost multiplier for a node, from how much of it is actually water.
     /// Always >= 1, so the Euclidean heuristic stays a lower bound.
     pub(crate) fn cluster_cost_mul(&self, cid: i32) -> f32 {
-        1.0 + CONGESTION_GAIN * (1.0 - self.clusters[cid as usize].nav_frac)
+        1.0 + CONGESTION_GAIN * (1.0 - self.clusters[cid as usize].nav_frac) + self.threat_cost(cid)
     }
 
     pub(crate) fn sub_cost_mul(&self, sid: i32) -> f32 {
-        1.0 + CONGESTION_GAIN * (1.0 - self.sub_clusters[sid as usize].nav_frac)
+        let sub = &self.sub_clusters[sid as usize];
+        1.0 + CONGESTION_GAIN * (1.0 - sub.nav_frac) + self.threat_cost(sub.parent_cid)
+    }
+
+    fn threat_cost(&self, cid: i32) -> f32 {
+        if self.threats_muted.get() || cid < 0 || cid as usize >= self.cluster_threat_cost.len() {
+            return 0.0;
+        }
+        self.cluster_threat_cost[cid as usize]
+    }
+
+    /// A wall for the search: an obstacle, or a threat when threats are walls
+    /// rather than costs. `cluster_blocked` stays the wider "threatened" test.
+    pub(crate) fn cluster_impassable(&self, cid: i32) -> bool {
+        if cid < 0 || cid >= self.cluster_block_count.len() as i32 {
+            return false;
+        }
+        if self.cluster_block_count[cid as usize] > 0 {
+            return true;
+        }
+        !self.threats_muted.get() && !self.threat_cost_mode.get() && self.cluster_threat_blocked[cid as usize] != 0
     }
 
     pub(crate) fn cluster_blocked(&self, cid: i32) -> bool {

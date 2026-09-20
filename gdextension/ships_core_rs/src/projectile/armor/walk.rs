@@ -212,6 +212,7 @@ pub fn walk_plates(
             if shell.fuze < 0.0
                 && e_armor >= spec.arming_threshold
                 && armor_mm >= spec.arming_threshold * 0.325
+            // <= 350mm arms on angled 19mm armor. 500mm arms on angled 27mm
             {
                 shell.fuze = 0.0;
             }

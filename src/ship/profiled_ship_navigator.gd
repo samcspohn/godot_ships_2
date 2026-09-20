@@ -137,6 +137,12 @@ func set_threat_source(threat_registry: Variant, team_id: int, effective_radius:
 func clear_threat_source() -> void:
 	_impl.clear_threat_source()
 
+func set_detection_source(field: Variant, team_id: int, radius: float, gain: float) -> void:
+	_impl.set_detection_source(field, team_id, radius, gain)
+
+func clear_detection_source() -> void:
+	_impl.clear_detection_source()
+
 
 func get_rudder() -> float:
 	return _impl.get_rudder()

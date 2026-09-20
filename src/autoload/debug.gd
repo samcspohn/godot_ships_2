@@ -199,7 +199,7 @@ func _process(_delta: float) -> void:
 
 		_poll_connection_state()
 		_update_mesh_pool()
-		_update_reach_overlay()
+		_reach_client_tick()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if _Utils.authority():
@@ -226,10 +226,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reach_mode = (reach_mode + 1) % ReachMode.size()
 			print("[Debug] Reach overlay: %s" % ReachMode.keys()[reach_mode])
 			_clear_reach_overlay()
+			if reach_mode == ReachMode.OFF:
+				_set_reach_overlay.rpc_id(1, ReachMode.OFF, NodePath(""))
 			get_viewport().set_input_as_handled()
 
 func _physics_process(_delta: float) -> void:
 	if _Utils.authority():
+		_reach_server_tick()
 		_server_flush()
 
 # ============================================================================
@@ -1378,20 +1381,19 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 	node.add_child(t)
 
 # ============================================================================
-# Client: reach overlay (Ctrl+R cycles). Swept locally on the client's own
-# NavigationMap for the camera's ship (the player, or the spectated bot).
+# Reach overlay (Ctrl+R cycles). The client names a mode and the ship the
+# camera is on; the server answers with that ship's field every half second,
+# so the picture is exactly what the bots route and position on.
 #   REACH          where that ship's shells can land
-#   EXPOSURE       per cell, how many enemies can land shells there
+#   EXPOSURE       per cell, how many believed enemies can land shells there
 #   REACH_ENEMIES  per cell, how many enemies that ship's guns could hit from there
-# Enemy positions come from the client's ship nodes: live when spotted, the
-# last known position otherwise. Ships never placed yet are skipped. The
-# server's copy is the authoritative one.
+#   DETECTION      cells where a ship of that concealment would be spotted,
+#                  brighter the deeper inside; presumed contacts count faintly
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, DETECTION }
 
 const REACH_REFRESH_SECONDS: float = 0.5
-const REACH_MOVE_THRESHOLD_M: float = 100.0
 const REACH_DRAW_Y: float = 2.5
 const REACH_SHADER := """
 shader_type spatial;
@@ -1408,8 +1410,10 @@ void fragment() {
 		col = vec3(0.15, 1.0, 0.45);
 	} else if (mode == 2) {
 		col = c == 1 ? vec3(1.0, 0.9, 0.2) : (c == 2 ? vec3(1.0, 0.5, 0.1) : vec3(1.0, 0.1, 0.1));
-	} else {
+	} else if (mode == 3) {
 		col = c == 1 ? vec3(0.3, 0.9, 1.0) : (c == 2 ? vec3(0.3, 0.4, 1.0) : vec3(0.9, 0.3, 1.0));
+	} else {
+		col = mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c) / 255.0);
 	}
 	ALBEDO = col;
 	ALPHA = 0.35;
@@ -1420,9 +1424,13 @@ var reach_mode: int = ReachMode.OFF
 var _reach_mesh: MeshInstance3D = null
 var _reach_material: ShaderMaterial = null
 var _reach_texture: ImageTexture = null
-var _reach_last_refresh: float = -INF
-var _reach_last_ship: Ship = null
+var _reach_sent_path: NodePath = NodePath("")
 var _reach_refreshes: int = 0
+# Server side.
+var _reach_peer_id: int = 0
+var _reach_srv_mode: int = ReachMode.OFF
+var _reach_srv_ship: Ship = null
+var _reach_srv_next: float = 0.0
 
 func _reach_target_ship() -> Ship:
 	if battle_camera == null or not is_instance_valid(battle_camera):
@@ -1432,75 +1440,92 @@ func _reach_target_ship() -> Ship:
 		return null
 	return ship
 
-func _update_reach_overlay() -> void:
+func _reach_client_tick() -> void:
 	if reach_mode == ReachMode.OFF:
+		return
+	var ship := _reach_target_ship()
+	var path: NodePath = ship.get_path() if ship != null else NodePath("")
+	if path == _reach_sent_path:
+		return
+	_reach_sent_path = path
+	_set_reach_overlay.rpc_id(1, reach_mode, path)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _set_reach_overlay(mode: int, ship_path: NodePath) -> void:
+	_reach_peer_id = multiplayer.get_remote_sender_id()
+	_reach_srv_mode = mode
+	_reach_srv_ship = get_node_or_null(ship_path) as Ship if ship_path != NodePath("") else null
+	_reach_srv_next = 0.0
+
+func _reach_server_tick() -> void:
+	if _reach_srv_mode == ReachMode.OFF or _reach_peer_id <= 0:
+		return
+	if _reach_peer_id not in multiplayer.get_peers():
+		_reach_srv_mode = ReachMode.OFF
+		_reach_peer_id = 0
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now < _reach_srv_next:
+		return
+	_reach_srv_next = now + REACH_REFRESH_SECONDS
+	var ship := _reach_srv_ship
+	if ship == null or not is_instance_valid(ship) or not ship.is_alive() or ship.team == null:
 		return
 	if NavigationMapManager == null or not NavigationMapManager.is_map_ready():
 		return
 	var field: ReachField = NavigationMapManager.get_reach_field()
-	var ship := _reach_target_ship()
-	if field == null or not field.is_built() or ship == null:
+	if field == null or not field.is_built():
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
-	if ship == _reach_last_ship and now - _reach_last_refresh < REACH_REFRESH_SECONDS:
-		return
-	_reach_last_refresh = now
-	_reach_last_ship = ship
-	var g: Dictionary = NavigationMapManager.reach_gun(ship)
-	if g.is_empty():
-		return
+	var team_id: int = ship.team.team_id
 	var pos: Vector3 = ship.global_position
-	var id: int = ship.get_instance_id()
+	var here := Vector2(pos.x, pos.z)
+	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	var bytes := PackedByteArray()
 	var note := ""
-	if reach_mode == ReachMode.REACH:
-		var us: float = field.sweep(id, Vector2(pos.x, pos.z), g.gun_h, 0.0,
-			g.speed, g.drag, g.range)
-		bytes = field.get_reach_bytes(id)
-		note = "sweep %.2f ms, gun height %.0f m" % [us / 1000.0, g.gun_h]
-	else:
-		var team_id: int = ship.team.team_id
-		var key: int = NavigationMapManager.reach_hull_key(g)
-		field.set_team_hulls(team_id, PackedInt64Array([key]), PackedFloat32Array([g.speed]),
-			PackedFloat32Array([g.drag]), PackedFloat32Array([g.range]), PackedFloat32Array([g.gun_h]))
-		var ids := PackedInt64Array()
-		var origins := PackedVector2Array()
-		var speeds := PackedFloat32Array()
-		var drags := PackedFloat32Array()
-		var ranges := PackedFloat32Array()
-		var heights := PackedFloat32Array()
-		var server = get_node_or_null("/root/Server")
-		if server != null:
-			for enemy in server.get_all_ships():
-				if enemy.team == null or enemy.team.team_id == team_id:
-					continue
-				if not enemy.client_positioned:
-					continue
-				var eg: Dictionary = NavigationMapManager.reach_gun(enemy)
-				if eg.is_empty():
-					continue
-				ids.append(enemy.get_instance_id())
-				origins.append(Vector2(enemy.global_position.x, enemy.global_position.z))
-				speeds.append(eg.speed)
-				drags.append(eg.drag)
-				ranges.append(eg.range)
-				heights.append(eg.gun_h)
-		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges,
-			heights, 0.0, REACH_MOVE_THRESHOLD_M)
-		if reach_mode == ReachMode.EXPOSURE:
+	match _reach_srv_mode:
+		ReachMode.REACH:
+			if g.is_empty():
+				return
+			var us: float = field.sweep(ship.get_instance_id(), here, g.gun_h, 0.0, g.speed, g.drag, g.range)
+			bytes = field.get_reach_bytes(ship.get_instance_id())
+			note = "sweep %.2f ms, gun height %.0f m" % [us / 1000.0, g.gun_h]
+		ReachMode.EXPOSURE:
 			bytes = field.get_exposure_count_bytes(team_id)
-		else:
+			note = "%d believed enemies, here exposed by %d" % [
+				field.get_team_enemy_ids(team_id).size(), _popcount(field.exposure_mask(team_id, here))]
+		ReachMode.REACH_ENEMIES:
+			if g.is_empty():
+				return
+			var key: int = NavigationMapManager.reach_hull_key(g)
 			bytes = field.get_reach_count_bytes(team_id, key)
-		var here := Vector2(pos.x, pos.z)
-		note = "%d enemies, %d resweeps, %.2f ms, here: exposed by %d, can hit %d" % [
-			ids.size(), int(st.get("resweeps", 0)), float(st.get("total_us", 0.0)) / 1000.0,
-			_popcount(field.exposure_mask(team_id, here)), _popcount(field.reach_mask(team_id, key, here))]
-	var info: Dictionary = field.get_field_info()
-	if info.is_empty() or bytes.is_empty():
+			note = "here can hit %d of %d" % [
+				_popcount(field.reach_mask(team_id, key, here)), field.get_team_enemy_ids(team_id).size()]
+		ReachMode.DETECTION:
+			var radius: float = NavigationMapManager.reach_conceal_radius(ship)
+			bytes = field.get_detect_bytes(team_id, radius)
+			note = "conceal radius %.0f m, here effective distance %.0f m" % [
+				radius, field.detect_dist_at(team_id, here)]
+	if bytes.is_empty():
 		return
-	var img := Image.create_from_data(int(info.w), int(info.h), false, Image.FORMAT_L8, bytes)
-	if _reach_texture == null or _reach_texture.get_width() != int(info.w) \
-			or _reach_texture.get_height() != int(info.h):
+	var info: Dictionary = field.get_field_info()
+	var payload := {
+		"mode": _reach_srv_mode, "w": int(info.w), "h": int(info.h), "cell": float(info.cell),
+		"min_x": float(info.min_x), "min_z": float(info.min_z), "raw": bytes.size(),
+		"data": bytes.compress(FileAccess.COMPRESSION_ZSTD), "note": note,
+	}
+	_receive_reach_field.rpc_id(_reach_peer_id, payload)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_reach_field(payload: Dictionary) -> void:
+	if reach_mode == ReachMode.OFF or int(payload.mode) != reach_mode:
+		return
+	var w: int = payload.w
+	var h: int = payload.h
+	var bytes: PackedByteArray = (payload.data as PackedByteArray).decompress(int(payload.raw), FileAccess.COMPRESSION_ZSTD)
+	if bytes.size() != w * h:
+		return
+	var img := Image.create_from_data(w, h, false, Image.FORMAT_L8, bytes)
+	if _reach_texture == null or _reach_texture.get_width() != w or _reach_texture.get_height() != h:
 		_reach_texture = ImageTexture.create_from_image(img)
 		if _reach_mesh != null and is_instance_valid(_reach_mesh):
 			_reach_mesh.queue_free()
@@ -1508,12 +1533,12 @@ func _update_reach_overlay() -> void:
 	else:
 		_reach_texture.update(img)
 	if _reach_mesh == null:
-		_reach_mesh = _build_reach_mesh(info)
+		_reach_mesh = _build_reach_mesh(payload)
 		get_tree().root.add_child(_reach_mesh)
 	_reach_material.set_shader_parameter("mode", reach_mode)
 	_reach_refreshes += 1
 	if _reach_refreshes % 10 == 1:
-		print("[ReachOverlay] %s %s: %s" % [ReachMode.keys()[reach_mode], ship.name, note])
+		print("[ReachOverlay] %s: %s" % [ReachMode.keys()[reach_mode], payload.note])
 
 static func _popcount(mask: int) -> int:
 	var n := 0
@@ -1561,5 +1586,4 @@ func _clear_reach_overlay() -> void:
 	_reach_mesh = null
 	_reach_material = null
 	_reach_texture = null
-	_reach_last_ship = null
-	_reach_last_refresh = -INF
+	_reach_sent_path = NodePath("")

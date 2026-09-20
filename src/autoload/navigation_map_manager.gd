@@ -138,6 +138,20 @@ func get_reach_field() -> ReachField:
 static func reach_hull_key(g: Dictionary) -> int:
 	return hash([snappedf(g.speed, 0.01), snappedf(g.drag, 1e-8), snappedf(g.range, 1.0), g.gun_h])
 
+## How far away `ship` can be seen from, as the router and the detection
+## field both read it: concealment plus two turning circles of margin. Mirrors
+## BotBehavior.threat_effective_radius so both sides agree exactly.
+static func reach_conceal_radius(ship) -> float:
+	if not is_instance_valid(ship) or ship.concealment == null or ship.concealment.params == null:
+		return 0.0
+	var cp := ship.concealment.params.p() as ConcealmentParams
+	if cp == null or cp.radius <= 0.0:
+		return 0.0
+	var turn := 0.0
+	if ship.movement_controller != null:
+		turn = ship.movement_controller._p().turning_circle_radius
+	return cp.radius + turn * 2.0
+
 ## What the reach field needs to know about a ship's main battery, or {} when
 ## it has none. gun_h is the mean muzzle height above the water, snapped to a
 ## metre so the wave motion does not spawn a table per frame.

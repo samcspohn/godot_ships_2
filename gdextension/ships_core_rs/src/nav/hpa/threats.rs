@@ -13,6 +13,10 @@ impl HpaGraph {
         for b in self.cluster_threat_blocked.iter_mut() {
             *b = 0;
         }
+        for c in self.cluster_threat_cost.iter_mut() {
+            *c = 0.0;
+        }
+        self.threat_cost_mode.set(false);
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
         if threats.is_empty() || self.clusters.is_empty() || self.nav_map.is_none() {
@@ -154,8 +158,35 @@ impl HpaGraph {
         for b in self.cluster_threat_blocked.iter_mut() {
             *b = 0;
         }
+        for c in self.cluster_threat_cost.iter_mut() {
+            *c = 0.0;
+        }
+        self.threat_cost_mode.set(false);
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
+    }
+
+    /// Stamp from a per-cluster exposure vector (0..1, see
+    /// ReachField::cluster_exposure_vec). A finite positive `gain` prices a
+    /// threatened cluster at `gain * exposure` extra per step; anything else
+    /// walls it exactly as stamp_threats does.
+    pub(crate) fn stamp_threat_costs(&mut self, exposure: &[f32], gain: f32) {
+        self.clear_threats();
+        let cost_mode = gain.is_finite() && gain > 0.0;
+        self.threat_cost_mode.set(cost_mode);
+        let n = self.clusters.len().min(exposure.len());
+        for cid in 0..n {
+            let e = exposure[cid];
+            if e <= 0.0 || !self.clusters[cid].navigable {
+                continue;
+            }
+            self.cluster_threat_blocked[cid] = 1;
+            self.threat_blocked_cids.push(cid as i32);
+            if cost_mode {
+                self.cluster_threat_cost[cid] = gain * e.min(1.0);
+            }
+        }
+        self.threat_blocked_count = self.threat_blocked_cids.len() as i32;
     }
 
     /// Reads the currently-stamped global blocked state.

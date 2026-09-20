@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::nav::hpa::HpaGraph;
 use crate::nav::map::NavigationMap;
+use crate::nav::reach::ReachField;
 use crate::nav::threat::ThreatRegistry;
 use crate::nav::types::{
     ArcPoint, DynamicObstacle, IncomingShell, NavState, NavTarget, PathResult, ShipParams,
@@ -263,6 +264,14 @@ pub struct ShipNavigator {
     pub(crate) threats: RefCell<Vec<ThreatCircle>>,
     /// 0 = never synced.
     pub(crate) threat_synced_version: Cell<u64>,
+    /// Detection field subscription: routes are priced by the team's
+    /// detection distance against this ship's concealment radius.
+    pub(crate) detect_field: Option<Gd<ReachField>>,
+    pub(crate) detect_team: i32,
+    pub(crate) detect_radius: f32,
+    pub(crate) detect_gain: f32,
+    pub(crate) detect_exposure: Vec<f32>,
+    pub(crate) detect_synced_version: i64,
 
     // --- Path stickiness instrumentation ---
     pub(crate) path_switch_count: i32,
@@ -357,6 +366,12 @@ impl IRefCounted for ShipNavigator {
             threat_radius: 0.0,
             threats: RefCell::new(Vec::new()),
             threat_synced_version: Cell::new(0),
+            detect_field: None,
+            detect_team: -1,
+            detect_radius: 0.0,
+            detect_gain: 0.0,
+            detect_exposure: Vec::new(),
+            detect_synced_version: -1,
             path_switch_count: 0,
             path_switch_rejected: 0,
             path_last_divergence: 0.0,
@@ -657,6 +672,25 @@ impl ShipNavigator {
     #[func]
     fn clear_threat_source(&mut self) {
         self.clear_threat_source_impl();
+    }
+
+    /// Route against `field`'s detection grid for `team_id`, spotted below
+    /// `radius`. `gain` prices a threatened cluster step (0 or INF walls it).
+    #[func]
+    fn set_detection_source(&mut self, field: Option<Gd<ReachField>>, team_id: i32, radius: f32, gain: f32) {
+        self.detect_field = field;
+        self.detect_team = team_id;
+        self.detect_radius = radius;
+        self.detect_gain = gain;
+        self.detect_synced_version = -1;
+    }
+
+    #[func]
+    fn clear_detection_source(&mut self) {
+        self.detect_field = None;
+        self.detect_team = -1;
+        self.detect_synced_version = -1;
+        self.detect_exposure.clear();
     }
 
     #[func]

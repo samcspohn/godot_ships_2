@@ -126,7 +126,7 @@ impl HpaGraph {
                     }
 
                     // Blocked by obstacle / threat (allow reaching the goal cluster).
-                    if ncid != to_cid && self.cluster_blocked(ncid) {
+                    if ncid != to_cid && self.cluster_impassable(ncid) {
                         continue;
                     }
 
@@ -254,7 +254,7 @@ impl HpaGraph {
             // Re-use macro-level obstacle/threat blocking. A sub inside a blocked
             // macro is blocked too — except when it's the goal sub (mirror of the
             // macro A* rule that lets the path reach a blocked goal).
-            if self.cluster_blocked(s.parent_cid) {
+            if self.cluster_impassable(s.parent_cid) {
                 return false;
             }
             true
@@ -409,7 +409,7 @@ impl HpaGraph {
                 if !macro_allowed(cid) {
                     return false;
                 }
-                if self.cluster_blocked(cid) {
+                if self.cluster_impassable(cid) {
                     return false;
                 }
             }

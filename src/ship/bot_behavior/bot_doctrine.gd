@@ -59,6 +59,11 @@ var low_threat_arm_first: bool = false
 ## previous destination".
 var universal_sail_forward_fallback: bool = false
 
+## Extra HPA step cost per unit of detection exposure while routing under
+## wants_stealth. Finite: detection is priced, not walled, and the router
+## crosses it when the detour would cost more. 0 or INF restores the wall.
+var detection_cost_gain: float = 4.0
+
 ## Whether the idle and dark arms get the broadside/spread post-processors. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true

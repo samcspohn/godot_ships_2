@@ -259,6 +259,7 @@ struct Field {
     cell: f32,
     min_x: f32,
     min_z: f32,
+    mult: i32,
 }
 
 impl Field {
@@ -277,7 +278,8 @@ struct SweepInput {
     origin: Vector2,
     gun_h: f32,
     range: f32,
-    table: Arc<RBlockTable>,
+    /// None sweeps plain line of sight: the first land sample ends the ray.
+    table: Option<Arc<RBlockTable>>,
 }
 
 struct SweepOutput {
@@ -384,8 +386,12 @@ impl Sweep<'_> {
             }
             if d <= 0.0 {
                 self.samples += 1;
+                let Some(table) = &self.inp.table else {
+                    st.dead = true;
+                    break;
+                };
                 let h = t.bilinear(&t.height, px, pz) - self.inp.gun_h;
-                let rb = self.inp.table.lookup(st.s, h);
+                let rb = table.lookup(st.s, h);
                 if rb == f32::INFINITY {
                     st.dead = true;
                     break;
@@ -404,7 +410,10 @@ impl Sweep<'_> {
 /// Rays start MIN_RAYS wide and double every time their spacing would exceed
 /// RAY_SPACING_MULT field cells; a child inherits its parent's running block.
 fn sweep_one(t: &Terrain, f: &Field, inp: &SweepInput) -> SweepOutput {
-    let range = inp.range.min(inp.table.cap);
+    let range = match &inp.table {
+        Some(t) => inp.range.min(t.cap),
+        None => inp.range,
+    };
     let mut sw = Sweep {
         t,
         f,
@@ -453,11 +462,26 @@ struct Shell {
     gun_h: f32,
 }
 
+impl Shell {
+    fn has_guns(&self) -> bool {
+        self.speed > 0.0 && self.drag > 0.0 && self.range > 0.0
+    }
+}
+
 struct EnemyState {
     origin: Vector2,
     shell: Shell,
+    /// Lateral error bar of the believed position; wide ones sweep 3 origins.
+    spread: f32,
+    /// Certainty 0..1: 1 in sight, decaying for a last-known position, low
+    /// for a presumption. Divides distance in the detection field.
+    weight: f32,
+    force_spot: f32,
     /// Cells this enemy can land shells on (its own forward table).
     fire: Vec<u64>,
+    /// Cells with terrain line of sight to this enemy, out to the team's
+    /// largest concealment radius.
+    los: Vec<u64>,
     /// Per friendly hull key: cells a hull of that kind can hit THIS enemy
     /// from (the hull's mirrored table, swept outward from the enemy).
     reach: HashMap<i64, Vec<u64>>,
@@ -469,11 +493,34 @@ struct TeamLayers {
     enemies: HashMap<i64, EnemyState>,
     /// Sorted enemy ids; position = bit index in the masks handed out.
     order: Vec<i64>,
+    los_range: f32,
+    /// Bumped whenever any plane changes; consumers cache off it.
+    version: u64,
+    /// Min effective distance per cell, INFINITY where no enemy has LOS.
+    detect: Vec<f32>,
+    detect_version: u64,
 }
 
-enum Job {
-    Fire(i64),
-    Reach(i64, i64),
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Layer {
+    Fire,
+    Los,
+    Reach(i64),
+}
+
+const SPREAD_MIN: f32 = 150.0;
+const WEIGHT_FLOOR: f32 = 0.05;
+
+fn origins_for(origin: Vector2, spread: f32) -> Vec<Vector2> {
+    if spread < SPREAD_MIN {
+        return vec![origin];
+    }
+    (0..3)
+        .map(|k| {
+            let a = k as f32 * std::f32::consts::TAU / 3.0;
+            origin + Vector2::new(a.sin(), a.cos()) * spread
+        })
+        .collect()
 }
 
 fn count_plane(plane: &[u64], counts: &mut [u8]) {
@@ -578,6 +625,67 @@ impl ReachField {
     fn cell_count(&self) -> usize {
         self.field.as_ref().map_or(0, |f| (f.w * f.h) as usize)
     }
+
+    fn ensure_detect(&mut self, team: i32) {
+        let Some(f) = self.field.clone() else { return };
+        let Some(tl) = self.teams.get_mut(&team) else { return };
+        if tl.detect_version == tl.version && tl.detect.len() == (f.w * f.h) as usize {
+            return;
+        }
+        let cells = (f.w * f.h) as usize;
+        let mut grid = vec![f32::INFINITY; cells];
+        for e in tl.enemies.values() {
+            let inv_w = 1.0 / e.weight.max(WEIGHT_FLOOR);
+            for (w, &word) in e.los.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let b = bits.trailing_zeros() as usize;
+                    let idx = w * 64 + b;
+                    bits &= bits - 1;
+                    if idx >= cells {
+                        continue;
+                    }
+                    let cx = f.min_x + ((idx as i32 % f.w) as f32 + 0.5) * f.cell;
+                    let cz = f.min_z + ((idx as i32 / f.w) as f32 + 0.5) * f.cell;
+                    let d = Vector2::new(cx, cz).distance_to(e.origin);
+                    let eff = if d < e.force_spot { 0.0 } else { d * inv_w };
+                    if eff < grid[idx] {
+                        grid[idx] = eff;
+                    }
+                }
+            }
+        }
+        tl.detect = grid;
+        tl.detect_version = tl.version;
+    }
+
+    pub(crate) fn cluster_exposure_vec(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> Vec<f32> {
+        let mut out = vec![0.0f32; (ncx.max(0) * ncz.max(0)) as usize];
+        let Some(f) = self.field.clone() else { return out };
+        if radius <= 0.0 || cluster_cells <= 0 {
+            return out;
+        }
+        self.ensure_detect(team);
+        let Some(tl) = self.teams.get(&team) else { return out };
+        for (idx, &d) in tl.detect.iter().enumerate() {
+            if d >= radius {
+                continue;
+            }
+            let ix = idx as i32 % f.w;
+            let iz = idx as i32 / f.w;
+            let cx = ix * f.mult / cluster_cells;
+            let cz = iz * f.mult / cluster_cells;
+            if cx < 0 || cz < 0 || cx >= ncx || cz >= ncz {
+                continue;
+            }
+            let e = ((radius - d) / radius).clamp(0.0, 1.0);
+            let c = &mut out[(cz * ncx + cx) as usize];
+            if e > *c {
+                *c = e;
+            }
+        }
+        out
+    }
 }
 
 #[godot_api]
@@ -597,6 +705,7 @@ impl ReachField {
             cell: m.cell_size * mult as f32,
             min_x: m.min_x,
             min_z: m.min_z,
+            mult,
         }));
         self.terrain = Some(Arc::new(Terrain::from_map(&m)));
         self.tables.clear();
@@ -624,7 +733,7 @@ impl ReachField {
         if self.field.is_none() || speed <= 0.0 || drag <= 0.0 || range <= 0.0 {
             return 0.0;
         }
-        let table = self.table(speed, drag, gun_h, target_h, range, false);
+        let table = Some(self.table(speed, drag, gun_h, target_h, range, false));
         self.run(vec![SweepInput { id, origin, gun_h, range, table }]);
         self.last.total_us
     }
@@ -650,7 +759,7 @@ impl ReachField {
                 if speed <= 0.0 || drag <= 0.0 || range <= 0.0 {
                     continue;
                 }
-                let table = self.table(speed, drag, gun_heights[i], target_h, range, false);
+                let table = Some(self.table(speed, drag, gun_heights[i], target_h, range, false));
                 inputs.push(SweepInput { id: ids[i], origin: origins[i], gun_h: gun_heights[i], range, table });
             }
             self.run(inputs);
@@ -738,9 +847,11 @@ impl ReachField {
         tl.hulls = hulls;
     }
 
-    /// Enemies as `team` sees them. An enemy is re-swept only when it is new,
-    /// has moved more than `move_threshold`, or changed shell; a hull kind
-    /// added since is swept for every enemy that lacks it.
+    /// Enemies as `team` believes them: position, shell, lateral `spread`,
+    /// certainty `weight`, radar/hydro `force_spot`. `los_range` is the
+    /// furthest any ship on the team can be seen from. An enemy is re-swept
+    /// only when new, moved more than `move_threshold`, or changed shell or
+    /// spread; a hull added since is swept for every enemy lacking it.
     #[func]
     fn update_team(
         &mut self,
@@ -751,78 +862,122 @@ impl ReachField {
         drags: PackedFloat32Array,
         ranges: PackedFloat32Array,
         gun_heights: PackedFloat32Array,
+        spreads: PackedFloat32Array,
+        weights: PackedFloat32Array,
+        force_spots: PackedFloat32Array,
+        los_range: f32,
         target_h: f32,
         move_threshold: f32,
     ) -> VarDictionary {
         self.last = Stats::default();
         let cells = self.cell_count();
         let words = (cells + 63) / 64;
-        let n = ids.len().min(origins.len()).min(speeds.len()).min(drags.len()).min(ranges.len()).min(gun_heights.len());
-        let mut plan: Vec<(Job, Shell, Vector2)> = Vec::new();
+        let n = [ids.len(), origins.len(), speeds.len(), drags.len(), ranges.len(),
+            gun_heights.len(), spreads.len(), weights.len(), force_spots.len()]
+            .into_iter().min().unwrap();
+        // One entry per (enemy, layer, origin); planes are zeroed per (enemy,
+        // layer) and the origins ORed in.
+        let mut plan: Vec<(i64, Layer, Shell, Vector2)> = Vec::new();
         let mut resweeps = 0u32;
         {
             let tl = self.teams.entry(team).or_default();
+            let los_changed = (tl.los_range - los_range).abs() > 1.0;
+            tl.los_range = los_range;
             let live: std::collections::HashSet<i64> = (0..n).map(|i| ids[i]).collect();
+            let before = tl.enemies.len();
             tl.enemies.retain(|id, _| live.contains(id));
+            if tl.enemies.len() != before {
+                tl.version += 1;
+            }
             for i in 0..n {
                 let (id, origin) = (ids[i], origins[i]);
                 let shell = Shell { speed: speeds[i], drag: drags[i], range: ranges[i], gun_h: gun_heights[i] };
-                if shell.speed <= 0.0 || shell.drag <= 0.0 || shell.range <= 0.0 {
-                    continue;
-                }
+                let spread = spreads[i].max(0.0);
                 let full = match tl.enemies.get_mut(&id) {
                     Some(e) => {
                         let moved = e.origin.distance_to(origin) > move_threshold;
-                        let changed = e.shell != shell;
+                        let changed = e.shell != shell || (e.spread - spread).abs() > move_threshold;
                         e.origin = origin;
                         e.shell = shell;
+                        e.spread = spread;
+                        e.weight = weights[i];
+                        e.force_spot = force_spots[i];
                         moved || changed
                     }
                     None => {
                         tl.enemies.insert(id, EnemyState {
                             origin,
                             shell,
+                            spread,
+                            weight: weights[i],
+                            force_spot: force_spots[i],
                             fire: vec![0u64; words],
+                            los: vec![0u64; words],
                             reach: HashMap::new(),
                         });
                         true
                     }
                 };
                 let e = &tl.enemies[&id];
+                let origins = origins_for(origin, spread);
                 if full {
                     resweeps += 1;
-                    plan.push((Job::Fire(id), shell, origin));
                 }
-                for (&hk, hull) in &tl.hulls {
-                    if full || !e.reach.contains_key(&hk) {
-                        plan.push((Job::Reach(id, hk), *hull, origin));
+                if full || los_changed {
+                    for &o in &origins {
+                        plan.push((id, Layer::Los, shell, o));
+                    }
+                }
+                if shell.has_guns() {
+                    if full {
+                        for &o in &origins {
+                            plan.push((id, Layer::Fire, shell, o));
+                        }
+                    }
+                    for (&hk, hull) in &tl.hulls {
+                        if full || !e.reach.contains_key(&hk) {
+                            for &o in &origins {
+                                plan.push((id, Layer::Reach(hk), *hull, o));
+                            }
+                        }
                     }
                 }
             }
             tl.order = tl.enemies.keys().copied().collect();
             tl.order.sort_unstable();
+            // Detection depends on weight and force_spot even when nothing is
+            // re-swept.
+            tl.detect_version = u64::MAX;
         }
         let mut inputs = Vec::with_capacity(plan.len());
-        for (j, (job, shell, origin)) in plan.iter().enumerate() {
-            let mirrored = matches!(job, Job::Reach(..));
-            let table = self.table(shell.speed, shell.drag, shell.gun_h, target_h, shell.range, mirrored);
-            inputs.push(SweepInput { id: j as i64, origin: *origin, gun_h: shell.gun_h, range: shell.range, table });
+        for (j, (_, layer, shell, origin)) in plan.iter().enumerate() {
+            let (table, range) = match layer {
+                Layer::Fire => (Some(self.table(shell.speed, shell.drag, shell.gun_h, target_h, shell.range, false)), shell.range),
+                Layer::Reach(_) => (Some(self.table(shell.speed, shell.drag, shell.gun_h, target_h, shell.range, true)), shell.range),
+                Layer::Los => (None, los_range),
+            };
+            inputs.push(SweepInput { id: j as i64, origin: *origin, gun_h: shell.gun_h, range, table });
         }
         let outs = self.run_jobs(&inputs);
         let tl = self.teams.get_mut(&team).unwrap();
+        let mut zeroed: std::collections::HashSet<(i64, Layer)> = std::collections::HashSet::new();
         for o in outs {
-            match plan[o.id as usize].0 {
-                Job::Fire(id) => {
-                    if let Some(e) = tl.enemies.get_mut(&id) {
-                        e.fire = o.bits;
-                    }
-                }
-                Job::Reach(id, hk) => {
-                    if let Some(e) = tl.enemies.get_mut(&id) {
-                        e.reach.insert(hk, o.bits);
-                    }
-                }
+            let (id, layer, _, _) = plan[o.id as usize];
+            let Some(e) = tl.enemies.get_mut(&id) else { continue };
+            let plane = match layer {
+                Layer::Fire => &mut e.fire,
+                Layer::Los => &mut e.los,
+                Layer::Reach(hk) => e.reach.entry(hk).or_insert_with(|| vec![0u64; words]),
+            };
+            if zeroed.insert((id, layer)) {
+                plane.iter_mut().for_each(|w| *w = 0);
             }
+            for (d, s) in plane.iter_mut().zip(o.bits.iter()) {
+                *d |= s;
+            }
+        }
+        if !plan.is_empty() {
+            tl.version += 1;
         }
         let (n_enemies, n_hulls) = (tl.order.len(), tl.hulls.len());
         let mut d = self.get_last_stats();
@@ -840,6 +995,11 @@ impl ReachField {
             Some(tl) => PackedInt64Array::from(tl.order.as_slice()),
             None => PackedInt64Array::new(),
         }
+    }
+
+    #[func]
+    pub(crate) fn get_team_version(&self, team: i32) -> i64 {
+        self.teams.get(&team).map_or(0, |tl| tl.version as i64)
     }
 
     /// Per cell, how many enemies can land shells there.
@@ -894,6 +1054,54 @@ impl ReachField {
             }
         }
         m
+    }
+
+    /// Effective distance to the nearest enemy with line of sight to `point`:
+    /// zero inside a radar or hydro reach, distance over certainty otherwise,
+    /// INFINITY when nobody can see it. Spotted here iff below the ship's
+    /// own concealment radius.
+    #[func]
+    fn detect_dist_at(&mut self, team: i32, point: Vector2) -> f32 {
+        let Some(idx) = self.field.as_ref().and_then(|f| f.index(point.x, point.y)) else {
+            return f32::INFINITY;
+        };
+        self.ensure_detect(team);
+        self.teams.get(&team).map_or(f32::INFINITY, |tl| tl.detect[idx])
+    }
+
+    #[func]
+    fn get_detect_grid(&mut self, team: i32) -> PackedFloat32Array {
+        self.ensure_detect(team);
+        match self.teams.get(&team) {
+            Some(tl) => PackedFloat32Array::from(tl.detect.as_slice()),
+            None => PackedFloat32Array::new(),
+        }
+    }
+
+    /// Per cell for a ship of concealment `radius`: 0 unseen, else 1..255
+    /// rising as the effective distance closes to zero.
+    #[func]
+    fn get_detect_bytes(&mut self, team: i32, radius: f32) -> PackedByteArray {
+        self.ensure_detect(team);
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(tl) = self.teams.get(&team) {
+            if radius > 0.0 {
+                for (o, &d) in out.iter_mut().zip(tl.detect.iter()) {
+                    if d < radius {
+                        *o = 1 + (254.0 * (1.0 - d / radius)).round() as u8;
+                    }
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// Per HPA cluster (`cluster_cells` SDF cells wide, `ncx` by `ncz`): the
+    /// deepest exposure of any field cell in it, 0 outside detection to 1 at
+    /// effective distance zero, for a ship of concealment `radius`.
+    #[func]
+    fn get_cluster_exposure(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> PackedFloat32Array {
+        PackedFloat32Array::from(self.cluster_exposure_vec(team, radius, cluster_cells, ncx, ncz).as_slice())
     }
 
     #[func]

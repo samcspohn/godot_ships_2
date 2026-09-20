@@ -137,6 +137,7 @@ var _reach_us: float = 0.0
 var _reach_max_us: float = 0.0
 var _reach_resweeps: int = 0
 var _reach_jobs: int = 0
+var _reach_sources: Array[int] = [0, 0, 0]
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
 ## Fraction of a carried-but-inactive radar / hydro range that still gets
 ## stamped as a threat circle. Below 1.0 because the bubble is conditional -
@@ -1586,8 +1587,9 @@ func _physics_process(_delta: float) -> void:
 		_sweep_reach_fields()
 
 
-## Per-team fire exposure and reach planes. Only enemies that moved a cell
-## since their last sweep are redone, so the steady-state cost is the print.
+## Per-team fire, line-of-sight and reach planes, built from what each team
+## BELIEVES: live contacts, decayed last-known positions, presumed contacts.
+## Only enemies that moved a cell since their last sweep are redone.
 func _sweep_reach_fields() -> void:
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	if field == null or not field.is_built():
@@ -1603,7 +1605,9 @@ func _sweep_reach_fields() -> void:
 		var hull_ranges := PackedFloat32Array()
 		var hull_heights := PackedFloat32Array()
 		var seen: Dictionary = {}
+		var los_range := 0.0
 		for ship in teams[team_id]:
+			los_range = maxf(los_range, NavigationMapManager.reach_conceal_radius(ship))
 			var g: Dictionary = NavigationMapManager.reach_gun(ship)
 			if g.is_empty():
 				continue
@@ -1623,18 +1627,25 @@ func _sweep_reach_fields() -> void:
 		var drags := PackedFloat32Array()
 		var ranges := PackedFloat32Array()
 		var heights := PackedFloat32Array()
-		for enemy in teams[1 - team_id]:
+		var spreads := PackedFloat32Array()
+		var weights := PackedFloat32Array()
+		var force_spots := PackedFloat32Array()
+		for c in _team_belief(team_id):
+			var enemy: Ship = c.ship
 			var g: Dictionary = NavigationMapManager.reach_gun(enemy)
-			if g.is_empty():
-				continue
 			ids.append(enemy.get_instance_id())
-			origins.append(Vector2(enemy.global_position.x, enemy.global_position.z))
-			speeds.append(g.speed)
-			drags.append(g.drag)
-			ranges.append(g.range)
-			heights.append(g.gun_h)
-		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges,
-			heights, 0.0, REACH_MOVE_THRESHOLD_M)
+			origins.append(c.pos)
+			speeds.append(g.get("speed", 0.0))
+			drags.append(g.get("drag", 0.0))
+			ranges.append(g.get("range", 0.0))
+			heights.append(g.get("gun_h", 0.0))
+			spreads.append(c.spread)
+			weights.append(c.weight)
+			force_spots.append(c.force_spot)
+			los_range = maxf(los_range, c.force_spot)
+			_reach_sources[c.source] += 1
+		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
+			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)
 		us += float(st.get("total_us", 0.0))
 		resweeps += int(st.get("resweeps", 0))
 		jobs += int(st.get("jobs", 0))
@@ -1647,17 +1658,58 @@ func _sweep_reach_fields() -> void:
 		return
 	_reach_report_at = current_time + REACH_REPORT_SECONDS
 	var n := float(maxi(_reach_ticks, 1))
-	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | tables cached %d" % [
+	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed | tables cached %d" % [
 		_reach_ticks, _reach_us / n / 1000.0, _reach_max_us / 1000.0,
-		_reach_resweeps / n, _reach_jobs / n, int(field.get_last_stats().get("tables_cached", 0))])
+		_reach_resweeps / n, _reach_jobs / n,
+		_reach_sources[0] / n, _reach_sources[1] / n, _reach_sources[2] / n,
+		int(field.get_last_stats().get("tables_cached", 0))])
 	_reach_ticks = 0
 	_reach_us = 0.0
 	_reach_max_us = 0.0
 	_reach_resweeps = 0
 	_reach_jobs = 0
+	_reach_sources = [0, 0, 0]
 
 
-
+## What `team_id` believes about the enemy, one entry per hull it has any
+## opinion on: {ship, pos: Vector2, weight, spread, force_spot, source}.
+## source: 0 in sight, 1 last-known position, 2 presumption. Same tables and
+## weights as _publish_team_threats.
+func _team_belief(team_id: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var published: Dictionary = {}
+	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
+	for enemy in valid_targets:
+		if is_instance_valid(enemy) and enemy.is_alive():
+			published[enemy] = true
+			out.append({"ship": enemy, "pos": Vector2(enemy.global_position.x, enemy.global_position.z),
+				"weight": 1.0, "spread": 0.0, "force_spot": _force_spot_reach(enemy), "source": 0})
+	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
+	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
+	var now: float = Time.get_ticks_msec() / 1000.0
+	for enemy_ship in unspotted.keys():
+		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
+			continue
+		var age: float = now - float(unspotted_times.get(enemy_ship, now))
+		var decay: float = 1.0 - clampf(age / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
+		var force_spot: float = _force_spot_reach(enemy_ship) \
+			* lerpf(1.0, RADAR_DECAY_FLOOR, clampf(age / RADAR_DECAY_SECONDS, 0.0, 1.0))
+		if decay <= 0.0 and force_spot <= 0.0:
+			continue
+		published[enemy_ship] = true
+		var lp: Vector3 = unspotted[enemy_ship]
+		out.append({"ship": enemy_ship, "pos": Vector2(lp.x, lp.z), "weight": maxf(decay, 0.05),
+			"spread": EnemyPresumption.lead_spread(age), "force_spot": force_spot, "source": 1})
+	for guess in _team_presumption[team_id].contacts(team_id, self):
+		var enemy_ship: Ship = guess.ship
+		if not is_instance_valid(enemy_ship) or published.has(enemy_ship):
+			continue
+		var weight: float = lerpf(PRESUMED_THREAT_WEIGHT_MIN, PRESUMED_THREAT_WEIGHT_MAX,
+			EnemyPresumption.certainty(guess))
+		var at: Vector3 = guess.position
+		out.append({"ship": enemy_ship, "pos": Vector2(at.x, at.z), "weight": weight,
+			"spread": EnemyPresumption.guess_spread(guess), "force_spot": 0.0, "source": 2})
+	return out
 
 
 ## Publish the latest per-team enemy position + decay lists to the shared

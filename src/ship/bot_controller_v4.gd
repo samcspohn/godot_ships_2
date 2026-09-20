@@ -779,12 +779,14 @@ func _sync_threat_subscription() -> void:
 	if behavior == null or server_node == null or server_node.threat_registry == null:
 		if _threat_subscribed:
 			navigator.clear_threat_source()
+			navigator.clear_detection_source()
 			_threat_subscribed = false
 		return
 
 	if not behavior.wants_stealth:
 		if _threat_subscribed:
 			navigator.clear_threat_source()
+			navigator.clear_detection_source()
 			_threat_subscribed = false
 		return
 
@@ -798,6 +800,10 @@ func _sync_threat_subscription() -> void:
 			return
 
 	navigator.set_threat_source(server_node.threat_registry, _ship.team.team_id, _threat_effective_radius)
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	if field != null and field.is_built():
+		navigator.set_detection_source(field, _ship.team.team_id, _threat_effective_radius,
+			behavior.doctrine().detection_cost_gain)
 	_threat_subscribed = true
 
 
@@ -1200,16 +1206,7 @@ func _emit_debug_draws() -> void:
 		if clearance_r > 0.0:
 			_emit_sdf_tiles(clearance_r)
 
-		# --- o) Threat-blocked HPA clusters (circles with LOS to a detection source) ---
-		var threat_clusters = navigator.get_debug_threat_clusters()
-		var cluster_color := Color(1.0, 0.0, 0.0, 0.4)
-		for tc in threat_clusters:
-			var cx: float = (tc["x0"] + tc["x1"]) * 0.5
-			var cz: float = (tc["z0"] + tc["z1"]) * 0.5
-			var w: float = tc["x1"] - tc["x0"]
-			var h: float = tc["z1"] - tc["z0"]
-			var margin := 50.0
-			Debug.draw_square(Vector3(cx, 5.0, cz), w - margin, h - margin, cluster_color, true)
+		# --- o) Detection is drawn by the Ctrl+R DETECTION overlay (Debug autoload) ---
 
 
 		# --- p) Torpedo & shell threat lines ---
