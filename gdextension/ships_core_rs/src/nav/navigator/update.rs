@@ -823,17 +823,21 @@ impl ShipNavigator {
         if self.detect_team < 0 || self.detect_radius <= 0.0 {
             return false;
         }
-        let (cluster_size, ncx, ncz) = {
+        let (cluster_size, ncx, ncz, sub_size, nsubx, nsubz) = {
             let g = self.hpa_graph.as_ref().unwrap().bind();
-            (g.cluster_size, g.ncx, g.ncz)
+            (g.cluster_size, g.ncx, g.ncz, g.sub_size, g.nsubx, g.nsubz)
         };
         let version = field.bind().get_team_version(self.detect_team);
         if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
-            self.detect_exposure = field.bind_mut().cluster_exposure_vec(
-                self.detect_team, self.detect_radius, cluster_size, ncx, ncz);
+            let mut f = field.bind_mut();
+            let (max, mean) = f.cluster_exposure_stats(self.detect_team, self.detect_radius, cluster_size, ncx, ncz);
+            self.detect_exposure = max;
+            self.detect_exposure_mean = mean;
+            self.detect_sub_exposure = f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz).0;
             self.detect_synced_version = version;
         }
-        self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threat_costs(&self.detect_exposure, self.detect_gain);
+        self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threat_costs(
+            &self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain);
         true
     }
 

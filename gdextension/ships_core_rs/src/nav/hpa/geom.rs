@@ -86,18 +86,69 @@ impl HpaGraph {
         los_clear_raw(&map, self.cell_size, a, b, cl)
     }
 
-    /// True when segment a-b clips no threat-blocked cluster AABB. `active`
-    /// short-circuits to true when no threat layer is in play.
+    /// True when segment a-b crosses no threat-blocked node. Walks the node
+    /// grid along the segment (sub-clusters when the detection field is
+    /// stamped, clusters otherwise), so the cost is the segment length in
+    /// nodes and not the size of the blocked set. `active` short-circuits to
+    /// true when no threat layer is in play.
     pub(crate) fn segment_threat_clear(&self, a: Vector2, b: Vector2, active: bool) -> bool {
         if !active {
             return true;
         }
-        let hc = self.cell_size * 0.5;
-        for &cid in &self.threat_blocked_cids {
-            let cl = &self.clusters[cid as usize];
-            let (wx0, wz0) = self.grid_to_world(cl.x0, cl.z0);
-            let (wx1, wz1) = self.grid_to_world(cl.x1, cl.z1);
-            if segment_clips_aabb(a.x, a.y, b.x, b.y, wx0 - hc, wz0 - hc, wx1 + hc, wz1 + hc) {
+        let sub = self.sub_layer_active.get();
+        let node_cells = if sub { self.sub_size } else { self.cluster_size };
+        let (nx, nz) = if sub { (self.nsubx, self.nsubz) } else { (self.ncx, self.ncz) };
+        let blocked = |ix: i32, iz: i32| -> bool {
+            if ix < 0 || iz < 0 || ix >= nx || iz >= nz {
+                return false;
+            }
+            let id = (iz * nx + ix) as usize;
+            if sub { self.sub_threat_blocked[id] != 0 } else { self.cluster_threat_blocked[id] != 0 }
+        };
+        // Node-grid coordinates; the half-cell offset matches the AABBs the
+        // list scan used to test (cell x0 spans [x0 - 0.5, x0 + 0.5] cells).
+        let node_w = node_cells as f32 * self.cell_size;
+        let to_node = |p: Vector2| -> (f32, f32) {
+            ((p.x - self.min_x + self.cell_size * 0.5) / node_w, (p.y - self.min_z + self.cell_size * 0.5) / node_w)
+        };
+        let (x0, z0) = to_node(a);
+        let (x1, z1) = to_node(b);
+        let (mut ix, mut iz) = (x0.floor() as i32, z0.floor() as i32);
+        let (ex, ez) = (x1.floor() as i32, z1.floor() as i32);
+        // The nodes holding the endpoints are exempt, as they are for the
+        // search: a leg may start or finish inside a wall, it may not cross one.
+        let (sx, sz) = (ix, iz);
+        let blocked = |x: i32, z: i32| -> bool {
+            if (x == sx && z == sz) || (x == ex && z == ez) {
+                return false;
+            }
+            blocked(x, z)
+        };
+        let dx = x1 - x0;
+        let dz = z1 - z0;
+        let step_x: i32 = if dx > 0.0 { 1 } else { -1 };
+        let step_z: i32 = if dz > 0.0 { 1 } else { -1 };
+        let mut t_max_x = if dx.abs() < 1e-9 { f32::INFINITY } else if dx > 0.0 { (ix as f32 + 1.0 - x0) / dx } else { (x0 - ix as f32) / -dx };
+        let mut t_max_z = if dz.abs() < 1e-9 { f32::INFINITY } else if dz > 0.0 { (iz as f32 + 1.0 - z0) / dz } else { (z0 - iz as f32) / -dz };
+        let t_delta_x = if dx.abs() < 1e-9 { f32::INFINITY } else { 1.0 / dx.abs() };
+        let t_delta_z = if dz.abs() < 1e-9 { f32::INFINITY } else { 1.0 / dz.abs() };
+        let mut guard = 0;
+        while (ix != ex || iz != ez) && guard < 100000 {
+            guard += 1;
+            if t_max_x < t_max_z {
+                if t_max_x > 1.0 {
+                    break;
+                }
+                ix += step_x;
+                t_max_x += t_delta_x;
+            } else {
+                if t_max_z > 1.0 {
+                    break;
+                }
+                iz += step_z;
+                t_max_z += t_delta_z;
+            }
+            if blocked(ix, iz) {
                 return false;
             }
         }

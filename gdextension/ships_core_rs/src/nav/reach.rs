@@ -260,6 +260,8 @@ struct Field {
     min_x: f32,
     min_z: f32,
     mult: i32,
+    /// 1 where the cell centre is water; averages ignore land cells.
+    water: Vec<u8>,
 }
 
 impl Field {
@@ -563,8 +565,18 @@ pub struct ReachField {
     tables: HashMap<TableKey, Arc<RBlockTable>>,
     ships: HashMap<i64, ShipReach>,
     teams: HashMap<i32, TeamLayers>,
+    /// (team, radius / EXPOSURE_RADIUS_Q, node cells, ncx, ncz) -> (version,
+    /// max, mean). Every navigator on a team with the same concealment reads
+    /// the same vectors instead of rebuilding them from 123k cells each.
+    exposure_cache: HashMap<(i32, i32, i32, i32, i32), (u64, Arc<Vec<f32>>, Arc<Vec<f32>>)>,
     last: Stats,
 }
+
+const EXPOSURE_RADIUS_Q: f32 = 250.0;
+/// Exposure is 1 at effective distance zero and keeps rising inside a
+/// force-spot disc (negative distance); capped so a radar centre prices at
+/// most this many times the concealment edge.
+const EXPOSURE_MAX: f32 = 3.0;
 
 #[godot_api]
 impl IRefCounted for ReachField {
@@ -576,6 +588,7 @@ impl IRefCounted for ReachField {
             tables: HashMap::new(),
             ships: HashMap::new(),
             teams: HashMap::new(),
+            exposure_cache: HashMap::new(),
             last: Stats::default(),
         }
     }
@@ -648,7 +661,10 @@ impl ReachField {
                     let cx = f.min_x + ((idx as i32 % f.w) as f32 + 0.5) * f.cell;
                     let cz = f.min_z + ((idx as i32 / f.w) as f32 + 0.5) * f.cell;
                     let d = Vector2::new(cx, cz).distance_to(e.origin);
-                    let eff = if d < e.force_spot { 0.0 } else { d * inv_w };
+                    // Inside a radar/hydro reach the value runs NEGATIVE toward
+                    // the emitter, so a ship already inside still sees which
+                    // way is out; outside it is distance over certainty.
+                    let eff = if d < e.force_spot { d - e.force_spot } else { d * inv_w };
                     if eff < grid[idx] {
                         grid[idx] = eff;
                     }
@@ -660,15 +676,40 @@ impl ReachField {
     }
 
     pub(crate) fn cluster_exposure_vec(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> Vec<f32> {
-        let mut out = vec![0.0f32; (ncx.max(0) * ncz.max(0)) as usize];
-        let Some(f) = self.field.clone() else { return out };
+        self.cluster_exposure_stats(team, radius, cluster_cells, ncx, ncz).0.as_ref().clone()
+    }
+
+    /// Per node of `cluster_cells` SDF cells: (max, mean over water cells) of
+    /// exposure, 0 outside detection to 1 at effective distance zero. Cached
+    /// per (team, quantised radius, node size) against the team version.
+    pub(crate) fn cluster_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
+        let radius = (radius / EXPOSURE_RADIUS_Q).ceil() * EXPOSURE_RADIUS_Q;
+        let key = (team, (radius / EXPOSURE_RADIUS_Q) as i32, cluster_cells, ncx, ncz);
+        let version = self.teams.get(&team).map_or(0, |tl| tl.version);
+        if let Some((v, max, mean)) = self.exposure_cache.get(&key) {
+            if *v == version {
+                return (max.clone(), mean.clone());
+            }
+        }
+        let (max, mean) = self.build_exposure_stats(team, radius, cluster_cells, ncx, ncz);
+        let out = (Arc::new(max), Arc::new(mean));
+        self.exposure_cache.insert(key, (version, out.0.clone(), out.1.clone()));
+        out
+    }
+
+    fn build_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
+        let n = (ncx.max(0) * ncz.max(0)) as usize;
+        let mut max = vec![0.0f32; n];
+        let mut mean = vec![0.0f32; n];
+        let Some(f) = self.field.clone() else { return (max, mean) };
         if radius <= 0.0 || cluster_cells <= 0 {
-            return out;
+            return (max, mean);
         }
         self.ensure_detect(team);
-        let Some(tl) = self.teams.get(&team) else { return out };
+        let Some(tl) = self.teams.get(&team) else { return (max, mean) };
+        let mut count = vec![0u32; n];
         for (idx, &d) in tl.detect.iter().enumerate() {
-            if d >= radius {
+            if f.water[idx] == 0 {
                 continue;
             }
             let ix = idx as i32 % f.w;
@@ -678,13 +719,23 @@ impl ReachField {
             if cx < 0 || cz < 0 || cx >= ncx || cz >= ncz {
                 continue;
             }
-            let e = ((radius - d) / radius).clamp(0.0, 1.0);
-            let c = &mut out[(cz * ncx + cx) as usize];
-            if e > *c {
-                *c = e;
+            let c = (cz * ncx + cx) as usize;
+            count[c] += 1;
+            if d >= radius {
+                continue;
+            }
+            let e = ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX);
+            mean[c] += e;
+            if e > max[c] {
+                max[c] = e;
             }
         }
-        out
+        for c in 0..n {
+            if count[c] > 0 {
+                mean[c] /= count[c] as f32;
+            }
+        }
+        (max, mean)
     }
 }
 
@@ -699,17 +750,33 @@ impl ReachField {
             return;
         }
         let mult = cell_mult.max(1);
+        let terrain = Terrain::from_map(&m);
+        let (fw, fh) = ((m.grid_width + mult - 1) / mult, (m.grid_height + mult - 1) / mult);
+        let fcell = m.cell_size * mult as f32;
+        let mut water = vec![0u8; (fw * fh) as usize];
+        for iz in 0..fh {
+            for ix in 0..fw {
+                let x = m.min_x + (ix as f32 + 0.5) * fcell;
+                let z = m.min_z + (iz as f32 + 0.5) * fcell;
+                if terrain.in_bounds(x, z) && terrain.bilinear(&terrain.sdf, x, z) > 0.0 {
+                    water[(iz * fw + ix) as usize] = 1;
+                }
+            }
+        }
         self.field = Some(Arc::new(Field {
-            w: (m.grid_width + mult - 1) / mult,
-            h: (m.grid_height + mult - 1) / mult,
-            cell: m.cell_size * mult as f32,
+            w: fw,
+            h: fh,
+            cell: fcell,
             min_x: m.min_x,
             min_z: m.min_z,
             mult,
+            water,
         }));
-        self.terrain = Some(Arc::new(Terrain::from_map(&m)));
+        self.terrain = Some(Arc::new(terrain));
         self.tables.clear();
         self.ships.clear();
+        self.teams.clear();
+        self.exposure_cache.clear();
     }
 
     #[func]
@@ -979,6 +1046,7 @@ impl ReachField {
         if !plan.is_empty() {
             tl.version += 1;
         }
+        self.exposure_cache.retain(|k, _| k.0 != team);
         let (n_enemies, n_hulls) = (tl.order.len(), tl.hulls.len());
         let mut d = self.get_last_stats();
         d.set("resweeps", resweeps as i64);
@@ -1088,7 +1156,7 @@ impl ReachField {
             if radius > 0.0 {
                 for (o, &d) in out.iter_mut().zip(tl.detect.iter()) {
                     if d < radius {
-                        *o = 1 + (254.0 * (1.0 - d / radius)).round() as u8;
+                        *o = 1 + (254.0 * (1.0 - d / radius).clamp(0.0, 1.0)).round() as u8;
                     }
                 }
             }

@@ -266,13 +266,14 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# Chase drives at the nearest last-known position at flank speed and arrives
 	# lit up, alone, at a place the contact has already left. Spot goes to where
 	# the contact can be SEEN from, which is the same errand done in a way the
-	# boat survives. Chase stays as the fallback for when there is a position to
-	# run down but no station worth holding, and Hunt below it for when the boat
-	# does not believe in anything at all.
+	# boat survives, and launch_range prefers a station the tubes reach from.
 	if intent == null:
-		intent = _run_skill(&"Spot", ctx)
+		intent = _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ship)})
+	# Chase is a way of finding an enemy, not of fighting one. With contacts lit
+	# and the push arm above declined on threat, the boat is already inside the
+	# band it launches from: break off rather than run at them.
 	if intent == null:
-		intent = _run_skill(&"Chase", ctx)
+		intent = _run_skill(&"Kite" if sit.has_spotted else &"Chase", ctx)
 	if intent == null:
 		intent = _run_skill(&"Hunt", ctx)
 
@@ -448,6 +449,14 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 ## where it launches undetected, not less.  With no tubes the boat is a gunboat
 ## and takes the shared answer.
 const TORPEDO_ENGAGE_RATIO: float = 0.8
+
+## The band the tubes solve in; 0 without tubes, which SkillSpot reads as "no
+## preference" rather than "nothing reaches".
+func _torpedo_reach(ship: Ship) -> float:
+	if ship.torpedo_controller == null:
+		return 0.0
+	return ship.torpedo_controller.get_params()._range * TORPEDO_ENGAGE_RATIO
+
 
 func engagement_range(ship: Ship, threat: float) -> float:
 	# Tubes alone are not the test - the band they can be fired from is. Without

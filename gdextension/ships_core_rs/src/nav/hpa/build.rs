@@ -183,6 +183,10 @@ impl HpaGraph {
     pub(crate) fn build_sub_clusters(&mut self) {
         let total = (self.nsubx * self.nsubz) as usize;
         self.sub_clusters = vec![SubCluster::default(); total];
+        self.sub_threat_cost = vec![0.0; total];
+        self.sub_threat_blocked = vec![0; total];
+        self.threat_blocked_sids.clear();
+        self.sub_layer_active.set(false);
 
         const NEG_INF: f32 = f32::NEG_INFINITY;
         const POS_INF: f32 = f32::INFINITY;

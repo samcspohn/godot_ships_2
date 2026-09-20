@@ -251,10 +251,10 @@ impl HpaGraph {
             if !macro_allowed(s.parent_cid) {
                 return false;
             }
-            // Re-use macro-level obstacle/threat blocking. A sub inside a blocked
-            // macro is blocked too — except when it's the goal sub (mirror of the
-            // macro A* rule that lets the path reach a blocked goal).
-            if self.cluster_impassable(s.parent_cid) {
+            // Obstacle/threat walls at sub resolution when the field is stamped,
+            // else the parent's — except for the goal sub (mirror of the macro
+            // A* rule that lets the path reach a blocked goal).
+            if self.sub_impassable(sid) {
                 return false;
             }
             true
@@ -409,7 +409,16 @@ impl HpaGraph {
                 if !macro_allowed(cid) {
                     return false;
                 }
-                if self.cluster_impassable(cid) {
+                // This search is the last resort after the priced layers gave
+                // up on the leg, so when exposure is a price rather than a wall
+                // it only respects obstacles; a threat wall here just sends the
+                // leg to the full-grid search.
+                let blocked = if self.threat_cost_mode.get() {
+                    cid >= 0 && (cid as usize) < self.cluster_block_count.len() && self.cluster_block_count[cid as usize] > 0
+                } else {
+                    self.sub_impassable(self.sub_id(self.cell_scx(gx), self.cell_scz(gz)))
+                };
+                if blocked {
                     return false;
                 }
             }

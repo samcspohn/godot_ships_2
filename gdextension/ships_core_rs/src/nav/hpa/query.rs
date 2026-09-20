@@ -17,8 +17,12 @@ struct QueryMetrics {
     los_attempts: i32,
     los_hits: i32,
     local_search_runs: i32,
-    local_expansions: i32,  // unused, kept for metric compat
-    portal_candidates: i32, // unused, kept for metric compat
+    /// Legs whose sub A* found nothing even with threats muted.
+    local_expansions: i32,
+    /// Legs whose sub chain had no open sub or failed terrain LOS.
+    portal_candidates: i32,
+    /// Legs that went to the full-grid search.
+    grid_fallbacks: i32,
 }
 
 /// Everything `restore_endpoints` captured in the C++ closure.
@@ -57,11 +61,22 @@ impl HpaGraph {
             return r;
         }
 
-        // Strict pass failed with a threat layer stamped. Threat circles are a
-        // routing preference, not terrain: a ship sitting inside enemy
-        // detection coverage would otherwise be walled in by its own threat
-        // bubble and keep following a stale path. Retry with threats muted so
-        // it can at least move; the caller can inspect
+        // Strict pass failed with a threat layer stamped: the ship is walled
+        // in by its own detection bubble. With exposure priced, drop the walls
+        // and keep the prices, so the route climbs out along the gradient
+        // rather than sitting still or, worse, pretending the layer is not
+        // there.
+        if self.threat_cost_mode.get() {
+            self.walls_muted.set(true);
+            let r = self.find_path_query(from, to, query_clearance, hug_clearance, &bias);
+            self.walls_muted.set(false);
+            if r.valid {
+                return r;
+            }
+        }
+
+        // Threat circles are a routing preference, not terrain: retry with
+        // threats muted so it can at least move; the caller can inspect
         // did_last_query_ignore_threats().
         self.threats_muted.set(true);
         let r = self.find_path_query(from, to, query_clearance, hug_clearance, &bias);
@@ -98,6 +113,7 @@ impl HpaGraph {
         perf.last_connector_local_search_runs = m.local_search_runs;
         perf.last_connector_local_expansions = m.local_expansions;
         perf.last_connector_portal_candidates = m.portal_candidates;
+        perf.grid_fallbacks += m.grid_fallbacks;
 
         let first = perf.query_count <= 1;
         let ema = |ema: f32, sample: f32| if first { sample } else { ema * 0.9 + sample * 0.1 };
@@ -374,7 +390,7 @@ impl HpaGraph {
         // threats_muted is set by the relaxed retry in find_path(); it has to
         // disable LOS rejection too, not just cluster blocking, or the retry
         // would still be walled in by the same threat circles.
-        let threat_layer_active = self.threat_blocked_count > 0 && !self.threats_muted.get();
+        let threat_layer_active = self.threat_blocked_count > 0 && !self.threats_muted.get() && !self.walls_muted.get();
 
         let rctx = RestoreCtx {
             true_from,
@@ -570,7 +586,8 @@ impl HpaGraph {
             let bz = self.world_to_gz(b.y);
 
             m.los_attempts += 1;
-            let mut los_ok = self.los_clear(a, b, q_cl);
+            let terrain_ok = self.los_clear(a, b, q_cl);
+            let mut los_ok = terrain_ok;
             if los_ok && threat_layer_active {
                 los_ok = self.segment_threat_clear(a, b, threat_layer_active);
             }
@@ -587,7 +604,7 @@ impl HpaGraph {
             let mut sub_helped = false;
 
             if a_sid != b_sid {
-                let sub_path = self.sub_cluster_astar(
+                let mut sub_path = self.sub_cluster_astar(
                     a_sid,
                     b_sid,
                     q_cl,
@@ -595,7 +612,27 @@ impl HpaGraph {
                     sub_bias,
                     PATH_BIAS_FACTOR,
                 );
+                // Threat walls can sever the corridor the abstract pass chose.
+                // A leg is a local matter: retry it with threats muted rather
+                // than hand it to the cell A*, which honours the same walls and
+                // ends in a full-grid search.
+                if sub_path.is_empty() && threat_layer_active {
+                    let flag = if self.threat_cost_mode.get() { &self.walls_muted } else { &self.threats_muted };
+                    flag.set(true);
+                    sub_path = self.sub_cluster_astar(
+                        a_sid,
+                        b_sid,
+                        q_cl,
+                        Some(&allowed_macros),
+                        sub_bias,
+                        PATH_BIAS_FACTOR,
+                    );
+                    flag.set(false);
+                }
 
+                if sub_path.is_empty() {
+                    m.local_expansions += 1;
+                }
                 // Only worth using if the sub layer produced at least one open
                 // detour point; otherwise the route is genuinely
                 // terrain-threading and cell A* is the right tool.
@@ -633,13 +670,14 @@ impl HpaGraph {
                     // the route would simply cross the island. Verify every
                     // link before committing; one failure drops the whole chain
                     // to the cell A* below, which is exact.
+                    // Terrain only: the sub search already kept the chain off
+                    // threat walls, and a link clipping one at a corner is not
+                    // a reason to throw the chain away for the cell A*.
                     let mut chain_ok = true;
                     let mut prev = a;
                     for &p in &chain {
                         m.los_attempts += 1;
-                        if !self.los_clear(prev, p, q_cl)
-                            || !self.segment_threat_clear(prev, p, threat_layer_active)
-                        {
+                        if !self.los_clear(prev, p, q_cl) {
                             chain_ok = false;
                             break;
                         }
@@ -652,11 +690,24 @@ impl HpaGraph {
                             waypoints.push(p);
                         }
                         sub_helped = true;
+                    } else {
+                        m.portal_candidates += 1;
                     }
+                } else if !sub_path.is_empty() {
+                    m.portal_candidates += 1;
                 }
             }
 
             if sub_helped {
+                continue;
+            }
+
+            // Terrain is clear and only a threat wall stood in the way, with no
+            // priced detour on offer: take the exposure. The abstract pass
+            // already steered round what could be avoided; the cell A* below
+            // honours the same walls and would only fail slowly.
+            if terrain_ok {
+                waypoints.push(b);
                 continue;
             }
 
@@ -677,6 +728,7 @@ impl HpaGraph {
                 segment_reachable = map.is_reachable_impl(a, b, q_cl);
                 if segment_reachable {
                     m.local_search_runs += 1;
+                    m.grid_fallbacks += 1;
                     local = map.find_path_internal(a, b, q_cl, 0.0);
                 }
             }

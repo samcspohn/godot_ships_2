@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use crate::nav::map::NavigationMap;
+use crate::nav::reach::ReachField;
 
 mod astar;
 mod build;
@@ -142,6 +143,7 @@ pub struct PerfStats {
     pub avg_connector_los_attempts: f32,
     pub avg_connector_los_hits: f32,
     pub avg_connector_local_search_runs: f32,
+    pub grid_fallbacks: i32,
     pub avg_connector_local_expansions: f32,
     pub avg_connector_portal_candidates: f32,
 
@@ -186,6 +188,7 @@ impl Default for PerfStats {
             avg_connector_los_attempts: 0.0,
             avg_connector_los_hits: 0.0,
             avg_connector_local_search_runs: 0.0,
+            grid_fallbacks: 0,
             avg_connector_local_expansions: 0.0,
             avg_connector_portal_candidates: 0.0,
             spike_threshold_us: 2500.0,
@@ -246,6 +249,13 @@ pub struct HpaGraph {
     /// walled; the blocked flags still steer the string-puller and LOS tests.
     pub(crate) cluster_threat_cost: Vec<f32>,
     pub(crate) threat_cost_mode: Cell<bool>,
+    /// Sub-cluster resolution of the same layer, filled only by the detection
+    /// field stamp. When `sub_layer_active`, the refinement search and the
+    /// string-puller read these instead of the parent cluster.
+    pub(crate) sub_threat_cost: Vec<f32>,
+    pub(crate) sub_threat_blocked: Vec<u8>,
+    pub(crate) threat_blocked_sids: Vec<i32>,
+    pub(crate) sub_layer_active: Cell<bool>,
 
     pub(crate) cardinal_step_cost: f32,
     pub(crate) diagonal_step_cost: f32,
@@ -261,6 +271,10 @@ pub struct HpaGraph {
 
     // Per-query state (single-threaded; the graph is stamped per query).
     pub(crate) threats_muted: Cell<bool>,
+    /// Walls off, prices on: the retry for a ship boxed in by its own
+    /// detection bubble, so it climbs out along the cost gradient instead of
+    /// ignoring the layer altogether.
+    pub(crate) walls_muted: Cell<bool>,
     pub(crate) last_query_ignored_threats: Cell<bool>,
     pub(crate) last_fail_stage: Cell<i32>,
 }
@@ -292,6 +306,10 @@ impl IRefCounted for HpaGraph {
             threat_blocked_count: 0,
             cluster_threat_cost: Vec::new(),
             threat_cost_mode: Cell::new(false),
+            sub_threat_cost: Vec::new(),
+            sub_threat_blocked: Vec::new(),
+            threat_blocked_sids: Vec::new(),
+            sub_layer_active: Cell::new(false),
             cardinal_step_cost: 0.0,
             diagonal_step_cost: 0.0,
             obstacles: HashMap::new(),
@@ -299,6 +317,7 @@ impl IRefCounted for HpaGraph {
             perf: RefCell::new(PerfStats::default()),
             perf_tracking_enabled: false,
             threats_muted: Cell::new(false),
+            walls_muted: Cell::new(false),
             last_query_ignored_threats: Cell::new(false),
             last_fail_stage: Cell::new(fail_stage::FAIL_NONE),
         }
@@ -347,7 +366,34 @@ impl HpaGraph {
 
     pub(crate) fn sub_cost_mul(&self, sid: i32) -> f32 {
         let sub = &self.sub_clusters[sid as usize];
-        1.0 + CONGESTION_GAIN * (1.0 - sub.nav_frac) + self.threat_cost(sub.parent_cid)
+        let threat = if self.sub_layer_active.get() {
+            if self.threats_muted.get() { 0.0 } else { self.sub_threat_cost[sid as usize] }
+        } else {
+            self.threat_cost(sub.parent_cid)
+        };
+        1.0 + CONGESTION_GAIN * (1.0 - sub.nav_frac) + threat
+    }
+
+    /// Sub-level wall test: the parent's obstacles, plus the threat flag at
+    /// whichever resolution is stamped, when threats are walls.
+    pub(crate) fn sub_impassable(&self, sid: i32) -> bool {
+        if sid < 0 || sid as usize >= self.sub_clusters.len() {
+            return false;
+        }
+        let parent = self.sub_clusters[sid as usize].parent_cid;
+        if parent >= 0 && (parent as usize) < self.cluster_block_count.len()
+            && self.cluster_block_count[parent as usize] > 0
+        {
+            return true;
+        }
+        if self.threats_muted.get() || self.walls_muted.get() {
+            return false;
+        }
+        if self.sub_layer_active.get() {
+            self.sub_threat_blocked[sid as usize] != 0
+        } else {
+            parent >= 0 && self.cluster_threat_blocked[parent as usize] != 0
+        }
     }
 
     fn threat_cost(&self, cid: i32) -> f32 {
@@ -357,8 +403,9 @@ impl HpaGraph {
         self.cluster_threat_cost[cid as usize]
     }
 
-    /// A wall for the search: an obstacle, or a threat when threats are walls
-    /// rather than costs. `cluster_blocked` stays the wider "threatened" test.
+    /// A wall for the search: an obstacle, or a threat wall flag. The flag
+    /// already encodes the mode (every exposed node, or only deep ones when
+    /// exposure is priced), so this is the same test the segment walk uses.
     pub(crate) fn cluster_impassable(&self, cid: i32) -> bool {
         if cid < 0 || cid >= self.cluster_block_count.len() as i32 {
             return false;
@@ -366,7 +413,7 @@ impl HpaGraph {
         if self.cluster_block_count[cid as usize] > 0 {
             return true;
         }
-        !self.threats_muted.get() && !self.threat_cost_mode.get() && self.cluster_threat_blocked[cid as usize] != 0
+        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_threat_blocked[cid as usize] != 0
     }
 
     pub(crate) fn cluster_blocked(&self, cid: i32) -> bool {
@@ -377,7 +424,7 @@ impl HpaGraph {
             return true;
         }
         // threats_muted is set for the relaxed retry in find_path().
-        !self.threats_muted.get() && self.cluster_threat_blocked[cid as usize] != 0
+        !self.threats_muted.get() && !self.walls_muted.get() && self.cluster_threat_blocked[cid as usize] != 0
     }
 
     pub(crate) fn fail_stage_name(stage: i32) -> &'static str {
@@ -417,6 +464,22 @@ impl HpaGraph {
     #[func]
     pub(crate) fn is_built(&self) -> bool {
         self.built
+    }
+
+    /// Debug: stamp the graph from a detection field exactly as a navigator
+    /// subscribed with (team, radius, gain) would, so a probe can run
+    /// find_path_packed against it. Stays until the next stamp or clear.
+    #[func]
+    fn debug_stamp_detection(&mut self, field: Option<Gd<ReachField>>, team_id: i32, radius: f32, gain: f32) {
+        let Some(mut field) = field else { return };
+        let (max, mean) = field.bind_mut().cluster_exposure_stats(team_id, radius, self.cluster_size, self.ncx, self.ncz);
+        let sub = field.bind_mut().cluster_exposure_stats(team_id, radius, self.sub_size, self.nsubx, self.nsubz).0;
+        self.stamp_threat_costs(&max, &mean, &sub, gain);
+    }
+
+    #[func]
+    fn debug_clear_threats(&mut self) {
+        self.clear_threats();
     }
 
     #[func]

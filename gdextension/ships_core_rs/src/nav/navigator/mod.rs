@@ -270,7 +270,9 @@ pub struct ShipNavigator {
     pub(crate) detect_team: i32,
     pub(crate) detect_radius: f32,
     pub(crate) detect_gain: f32,
-    pub(crate) detect_exposure: Vec<f32>,
+    pub(crate) detect_exposure: std::sync::Arc<Vec<f32>>,
+    pub(crate) detect_exposure_mean: std::sync::Arc<Vec<f32>>,
+    pub(crate) detect_sub_exposure: std::sync::Arc<Vec<f32>>,
     pub(crate) detect_synced_version: i64,
 
     // --- Path stickiness instrumentation ---
@@ -370,7 +372,9 @@ impl IRefCounted for ShipNavigator {
             detect_team: -1,
             detect_radius: 0.0,
             detect_gain: 0.0,
-            detect_exposure: Vec::new(),
+            detect_exposure: std::sync::Arc::new(Vec::new()),
+            detect_exposure_mean: std::sync::Arc::new(Vec::new()),
+            detect_sub_exposure: std::sync::Arc::new(Vec::new()),
             detect_synced_version: -1,
             path_switch_count: 0,
             path_switch_rejected: 0,
@@ -690,7 +694,9 @@ impl ShipNavigator {
         self.detect_field = None;
         self.detect_team = -1;
         self.detect_synced_version = -1;
-        self.detect_exposure.clear();
+        self.detect_exposure = std::sync::Arc::new(Vec::new());
+        self.detect_exposure_mean = std::sync::Arc::new(Vec::new());
+        self.detect_sub_exposure = std::sync::Arc::new(Vec::new());
     }
 
     #[func]

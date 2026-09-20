@@ -16,7 +16,10 @@ const MIN_RADIUS: float = 2000.0  # Prevent radius collapsing to zero near the b
 ## already in the fight should be doing.
 const NO_FLANK_RANGE_RATIO: float = 0.5
 
-static func flank_position(ctx: SkillContext, base_pos: Vector3, theta: float) -> Array[Vector3]:
+## allow_close skips the NO_FLANK_RANGE_RATIO veto, for callers that want the
+## arc geometry rather than a decision about whether to flank.
+static func flank_position(ctx: SkillContext, base_pos: Vector3, theta: float,
+		allow_close: bool = false) -> Array[Vector3]:
 	var ship = ctx.ship
 	# var ship_pos = ship.global_position
 	var ship_pos = base_pos
@@ -71,7 +74,7 @@ static func flank_position(ctx: SkillContext, base_pos: Vector3, theta: float) -
 	# Too close to be flanking anything.  ZERO is not a position — it is the
 	# danger centre's way of saying nothing is confirmed — so it is not measured
 	# against, and the idle arm keeps its flank.
-	if battle_center != Vector3.ZERO \
+	if not allow_close and battle_center != Vector3.ZERO \
 			and ship_pos.distance_to(battle_center) < gun_range * NO_FLANK_RANGE_RATIO:
 		return [Vector3.ZERO, Vector3.ZERO]
 

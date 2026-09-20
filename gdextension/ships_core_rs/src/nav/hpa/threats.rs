@@ -3,6 +3,10 @@ use godot::prelude::*;
 use super::{HpaGraph, PerfStats};
 use crate::nav::types::ThreatCircle;
 
+/// In cost mode, exposure above this (effective distance under half the
+/// concealment radius) is a wall; below it is only priced.
+pub(crate) const COST_MODE_WALL_EXPOSURE: f32 = 0.5;
+
 // stamp_threats / clear_threats / compute_debug_threat_clusters have no caller
 // until ship_navigator lands (M3); it drives all three.
 #[allow(dead_code)]
@@ -164,29 +168,72 @@ impl HpaGraph {
         self.threat_cost_mode.set(false);
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
+        if self.sub_layer_active.get() {
+            for b in self.sub_threat_blocked.iter_mut() {
+                *b = 0;
+            }
+            for c in self.sub_threat_cost.iter_mut() {
+                *c = 0.0;
+            }
+            self.threat_blocked_sids.clear();
+            self.sub_layer_active.set(false);
+        }
     }
 
-    /// Stamp from a per-cluster exposure vector (0..1, see
-    /// ReachField::cluster_exposure_vec). A finite positive `gain` prices a
-    /// threatened cluster at `gain * exposure` extra per step; anything else
-    /// walls it exactly as stamp_threats does.
-    pub(crate) fn stamp_threat_costs(&mut self, exposure: &[f32], gain: f32) {
+    /// Stamp from the detection field. A finite positive `gain` prices
+    /// exposure at `gain * exposure` per step and walls only nodes deeper than
+    /// COST_MODE_WALL_EXPOSURE; anything else walls every exposed node as
+    /// stamp_threats does. The wall flags are the one thing the search, the
+    /// refine legs and the string-puller all read, so they must agree here:
+    /// a priced node that the segment test vetoed used to send every leg
+    /// through the cell-level A*.
+    ///
+    /// `macro_mean` prices the abstract search and sets its wall; `sub_max`
+    /// does both at sub-cluster resolution for refinement and string-pulling.
+    pub(crate) fn stamp_threat_costs(&mut self, macro_max: &[f32], macro_mean: &[f32], sub_max: &[f32], gain: f32) {
         self.clear_threats();
         let cost_mode = gain.is_finite() && gain > 0.0;
         self.threat_cost_mode.set(cost_mode);
-        let n = self.clusters.len().min(exposure.len());
+        let wall_at = if cost_mode { COST_MODE_WALL_EXPOSURE } else { 0.0 };
+        let n = self.clusters.len().min(macro_max.len()).min(macro_mean.len());
         for cid in 0..n {
-            let e = exposure[cid];
-            if e <= 0.0 || !self.clusters[cid].navigable {
+            let (mx, mean) = (macro_max[cid], macro_mean[cid]);
+            if mx <= 0.0 || !self.clusters[cid].navigable {
                 continue;
             }
-            self.cluster_threat_blocked[cid] = 1;
-            self.threat_blocked_cids.push(cid as i32);
+            let wall = if cost_mode { mean > wall_at } else { true };
+            if wall {
+                self.cluster_threat_blocked[cid] = 1;
+                self.threat_blocked_cids.push(cid as i32);
+            }
             if cost_mode {
-                self.cluster_threat_cost[cid] = gain * e.min(1.0);
+                self.cluster_threat_cost[cid] = gain * mean;
             }
         }
-        self.threat_blocked_count = self.threat_blocked_cids.len() as i32;
+        let ns = self.sub_clusters.len().min(sub_max.len());
+        if ns > 0 {
+            for sid in 0..ns {
+                let e = sub_max[sid];
+                if e <= 0.0 || !self.sub_clusters[sid].navigable {
+                    continue;
+                }
+                if e > wall_at {
+                    self.sub_threat_blocked[sid] = 1;
+                    self.threat_blocked_sids.push(sid as i32);
+                }
+                if cost_mode {
+                    self.sub_threat_cost[sid] = gain * e;
+                }
+            }
+            self.sub_layer_active.set(true);
+        }
+        // threat_layer_active keys off this; with the sub layer it is the sub
+        // walls that matter.
+        self.threat_blocked_count = if ns > 0 {
+            self.threat_blocked_sids.len() as i32
+        } else {
+            self.threat_blocked_cids.len() as i32
+        };
     }
 
     /// Reads the currently-stamped global blocked state.
@@ -339,6 +386,7 @@ impl HpaGraph {
             perf.avg_connector_portal_candidates,
         );
 
+        d.set("grid_fallbacks", perf.grid_fallbacks as i64);
         d.set("spike_threshold_us", perf.spike_threshold_us);
         d.set("spike_count", perf.spike_count as i64);
         d.set("worst_spike_us", perf.worst_spike_us);

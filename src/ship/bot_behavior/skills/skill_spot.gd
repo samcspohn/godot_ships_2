@@ -49,7 +49,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if reach <= 0.0:
 		return null
 
-	var fpfc = SkillFlank.flank_position(ctx, ship_pos, 60.0)
+	# allow_close: the flank veto fires inside half our gun range of the fight,
+	# which is where a destroyer spots from. Spotting is not flanking.
+	var fpfc = SkillFlank.flank_position(ctx, ship_pos, 60.0, true)
 	var flank_pos: Vector3 = fpfc[0]
 	var friendly_center: Vector3 = fpfc[1]
 	if flank_pos == Vector3.ZERO:
@@ -61,7 +63,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		var flank_to_friendly = (flank_pos - friendly_center).normalized()
 		flank_pos = flank_to_friendly * friendly_to_danger.length() * 0.75 + friendly_center
 
-	var station := _resolve_station(ctx, danger_center, flank_pos, reach)
+	var launch_range: float = float(params.get("launch_range", 0.0))
+	var station := _resolve_station(ctx, danger_center, flank_pos, reach, launch_range)
 	if station == Vector3.ZERO:
 		station = _push_clear_of_threats(ctx, danger_center, flank_pos, reach)
 	else:
@@ -80,7 +83,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 ## a cursor spots a target. A held station keeps marching on later resolves to
 ## pick up more contacts without dropping any it already sees.
 func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vector3,
-		reach: float) -> Vector3:
+		reach: float, launch_range: float) -> Vector3:
 	var now: float = Time.get_ticks_msec() / 1000.0
 	if now < _next_resolve:
 		return _station
@@ -93,14 +96,17 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 		_clear_station()
 		return Vector3.ZERO
 	var circles: PackedVector3Array = nav.get_threat_circles()
-	if _station != Vector3.ZERO and not _blocked(nav, circles, _station) \
-			and _spots(_station, targets):
-		_extend(nav, circles, _free(contacts))
+	var held_ok: bool = _station != Vector3.ZERO and not _blocked(nav, circles, _station) \
+			and _spots(_station, targets)
+	if held_ok and _in_launch(_station, targets, launch_range):
+		_extend(nav, circles, _free(contacts), targets, launch_range)
 		return _station
 
 	var ship_pos: Vector3 = ctx.ship.global_position
 	var entry := _perimeter_entry(nav, circles, ship_pos, danger_center)
 	if entry == Vector2.INF:
+		if held_ok:
+			return _station
 		_clear_station()
 		return Vector3.ZERO
 
@@ -113,10 +119,19 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 		{"pos": entry, "dir": perp, "wall": signf(perp.cross(toward)), "done": false},
 		{"pos": entry, "dir": -perp, "wall": signf((-perp).cross(toward)), "done": false},
 	]
-	if _spots(Vector3(entry.x, 0.0, entry.y), targets):
-		_station = Vector3(entry.x, 0.0, entry.y)
-		_cursor = cursors[0].duplicate()
-		return _station
+	# A point inside launch_range is preferred but not required, so the march
+	# walks past the first merely-visible one and keeps it only as a fallback.
+	var fallback := Vector3.ZERO
+	var fallback_cursor: Dictionary = {}
+
+	var entry3 := Vector3(entry.x, 0.0, entry.y)
+	if _spots(entry3, targets):
+		if _in_launch(entry3, targets, launch_range):
+			_station = entry3
+			_cursor = cursors[0].duplicate()
+			return _station
+		fallback = entry3
+		fallback_cursor = cursors[0].duplicate()
 
 	for _i in MAX_MARCH_STEPS:
 		for cur in cursors:
@@ -126,19 +141,32 @@ func _resolve_station(ctx: SkillContext, danger_center: Vector3, flank_pos: Vect
 				cur.done = true
 				continue
 			var p := Vector3(cur.pos.x, 0.0, cur.pos.y)
-			if _spots(p, targets):
+			if not _spots(p, targets):
+				continue
+			if _in_launch(p, targets, launch_range):
 				_station = p
 				_cursor = cur.duplicate()
 				return p
+			if fallback == Vector3.ZERO:
+				fallback = p
+				fallback_cursor = cur.duplicate()
 		if cursors[0].done and cursors[1].done:
 			break
+	# Holding a working station beats swapping to an equivalent one every resolve.
+	if held_ok:
+		return _station
+	if fallback != Vector3.ZERO:
+		_station = fallback
+		_cursor = fallback_cursor
+		return fallback
 	_clear_station()
 	return Vector3.ZERO
 
 
 ## Continue the saved cursor's march. Adopt the first step that sees everything
 ## the station sees plus one more; stop at the first step that loses one.
-func _extend(nav: ShipNavigator, circles: PackedVector3Array, pool: Array) -> void:
+func _extend(nav: ShipNavigator, circles: PackedVector3Array, pool: Array,
+		targets: Array, launch_range: float) -> void:
 	if _cursor.is_empty():
 		return
 	var base := _seen(_station, pool)
@@ -151,6 +179,9 @@ func _extend(nav: ShipNavigator, circles: PackedVector3Array, pool: Array) -> vo
 		for e in base:
 			if not seen.has(e):
 				return
+		# One more contact is not worth leaving our own weapon reach.
+		if not _in_launch(p, targets, launch_range):
+			return
 		if seen.size() > base.size():
 			_station = p
 			_cursor = cur
@@ -217,6 +248,16 @@ static func _sees(p: Vector3, c: Dictionary) -> bool:
 func _spots(p: Vector3, targets: Array) -> bool:
 	for t in targets:
 		if _sees(p, t):
+			return true
+	return false
+
+
+## Whether a station can put a weapon on something it can see. 0 = no preference.
+func _in_launch(p: Vector3, targets: Array, launch_range: float) -> bool:
+	if launch_range <= 0.0:
+		return true
+	for t in targets:
+		if _sees(p, t) and p.distance_to(t.pos) <= launch_range:
 			return true
 	return false
 
