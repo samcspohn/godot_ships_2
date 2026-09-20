@@ -85,6 +85,7 @@ var _skill_cover: SkillFindCover = SkillFindCover.new()
 var _skill_kite: SkillKite = SkillKite.new()
 var _skill_push: SkillPush = SkillPush.new()
 var _skill_camp: SkillCamp = SkillCamp.new()
+var _skill_station: SkillStation = SkillStation.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
@@ -2214,6 +2215,7 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 		&"Kite":        intent = _skill_kite.execute(ctx, params)
 		&"Push":        intent = _skill_push.execute(ctx, params)
 		&"Camp":        intent = _skill_camp.execute(ctx, params)
+		&"Station":     intent = _skill_station.execute(ctx, params)
 		&"Flank":       intent = _skill_flank.execute(ctx, params)
 		&"Spot":        intent = _skill_spot.execute(ctx, params)
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
@@ -2437,6 +2439,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	# activation reuses a stale spot.
 	if prev_skill == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
+	if prev_skill == &"Station" and _active_skill_name != &"Station":
+		_skill_station.reset()
 
 	# One shared reading of the enemy's firing cycle, taken before anything that
 	# steers off it and before any early return -- get_speed_multiplier() is read

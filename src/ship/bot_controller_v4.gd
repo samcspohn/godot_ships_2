@@ -1284,6 +1284,13 @@ func _emit_debug_draws() -> void:
 					Debug.draw_circle(Vector3(threat_pos.x, 25.0, threat_pos.z), spread,
 						Color(1.0, 0.6, 0.0, 0.35), 24)
 
+	# --- m2) Station: the held cell and its score breakdown ---
+	if behavior != null and behavior._active_skill_name == &"Station" and behavior._skill_station.has_station():
+		var st_pos: Vector3 = behavior._skill_station.station_position()
+		Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(0.2, 1.0, 0.9, 0.8), 32)
+		Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, Color(0.2, 1.0, 0.9))
+		Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), behavior._skill_station.debug_text(), Color(0.7, 1.0, 1.0), 14)
+
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:
 		var my_team_id: int = _ship.team.team_id if _ship.team else -1

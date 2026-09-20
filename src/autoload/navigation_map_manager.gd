@@ -172,6 +172,26 @@ static func reach_gun(ship) -> Dictionary:
 	gun_h = snappedf(gun_h / n, 1.0) if n > 0 else 5.0
 	return {"speed": shell.speed, "drag": shell.drag, "range": gp._range, "gun_h": maxf(gun_h, 1.0)}
 
+## Sphere-traces from just inside an island's bounding radius along `direction`
+## to the first point with `clearance` of water. Vector3.ZERO when none within
+## a few clearances of the shore.
+func reach_shore_point(island_center: Vector3, direction: Vector3, island_radius: float, clearance: float) -> Vector3:
+	if not is_map_ready():
+		return Vector3.ZERO
+	var dist := maxf(island_radius - clearance, 0.0)
+	var min_step := maxf(clearance * 0.25, 8.0)
+	var max_dist := island_radius + maxf(clearance * 6.0, 600.0)
+	for _i in range(24):
+		if dist > max_dist:
+			break
+		var test := island_center + direction * dist
+		test.y = 0.0
+		var err := clearance - get_distance(test)
+		if err <= 0.0:
+			return test
+		dist += maxf(err, min_step)
+	return Vector3.ZERO
+
 ## The hull clearance the ship's navigator plans with (half length plus a beam).
 static func reach_clearance(ship) -> float:
 	if not is_instance_valid(ship) or ship.movement_controller == null:

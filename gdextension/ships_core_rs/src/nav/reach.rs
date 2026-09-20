@@ -1453,6 +1453,84 @@ impl ReachField {
         PackedByteArray::from(out.as_slice())
     }
 
+    /// Argmax of the station score over the cells of ship `id`'s plan (see
+    /// plan_ship). `weights` = [reach, exposed, cone, detect, travel, range,
+    /// escape]; `held` is scored too so the caller can apply hysteresis.
+    #[func]
+    fn score_station(
+        &mut self,
+        team: i32,
+        id: i64,
+        hull_key: i64,
+        weights: PackedFloat32Array,
+        gun_range: f32,
+        pref_range: f32,
+        radius: f32,
+        toward: Vector2,
+        held: Vector2,
+    ) -> VarDictionary {
+        let t0 = Instant::now();
+        let mut d = VarDictionary::new();
+        d.set("has_best", false);
+        d.set("held_score", f32::NEG_INFINITY);
+        self.ensure_cone(team);
+        let (Some(f), Some(tl), Some(p)) = (self.field.as_ref(), self.teams.get(&team), self.plans.get(&id)) else {
+            return d;
+        };
+        let a = station_args(hull_key, &weights, gun_range, pref_range, radius, toward);
+        let mut best: Option<(usize, StationTerms)> = None;
+        let mut cells = 0u32;
+        for iz in p.bx.z0..=p.bx.z1 {
+            for ix in p.bx.x0..=p.bx.x1 {
+                let idx = (iz * f.w + ix) as usize;
+                let Some(t) = station_terms(f, tl, p, &a, idx) else { continue };
+                cells += 1;
+                if best.is_none_or(|(_, b)| t.score > b.score) {
+                    best = Some((idx, t));
+                }
+            }
+        }
+        if let Some((idx, t)) = best {
+            d.set("has_best", true);
+            d.set("best", f.centre(idx));
+            d.set("best_score", t.score);
+            d.set("best_terms", &t.to_dict());
+        }
+        if let Some(t) = f.index(held.x, held.y).and_then(|i| station_terms(f, tl, p, &a, i)) {
+            d.set("held_score", t.score);
+            d.set("held_terms", &t.to_dict());
+        }
+        d.set("cells", cells as i64);
+        d.set("us", t0.elapsed().as_secs_f32() * 1e6);
+        d
+    }
+
+    /// The station score of one point, or an empty dictionary when it is
+    /// outside the plan or unreachable.
+    #[func]
+    fn station_score_at(
+        &mut self,
+        team: i32,
+        id: i64,
+        hull_key: i64,
+        weights: PackedFloat32Array,
+        gun_range: f32,
+        pref_range: f32,
+        radius: f32,
+        toward: Vector2,
+        point: Vector2,
+    ) -> VarDictionary {
+        self.ensure_cone(team);
+        let (Some(f), Some(tl), Some(p)) = (self.field.as_ref(), self.teams.get(&team), self.plans.get(&id)) else {
+            return VarDictionary::new();
+        };
+        let a = station_args(hull_key, &weights, gun_range, pref_range, radius, toward);
+        match f.index(point.x, point.y).and_then(|i| station_terms(f, tl, p, &a, i)) {
+            Some(t) => t.to_dict(),
+            None => VarDictionary::new(),
+        }
+    }
+
     #[func]
     fn safe_cost_at(&self, id: i64, point: Vector2) -> f32 {
         self.plan_value(id, point, true)
@@ -1462,6 +1540,95 @@ impl ReachField {
     fn escape_dist_at(&self, id: i64, point: Vector2) -> f32 {
         self.plan_value(id, point, false)
     }
+}
+
+struct StationArgs {
+    hull_key: i64,
+    w: [f32; 7],
+    gun_range: f32,
+    pref_range: f32,
+    radius: f32,
+    toward: Vector2,
+}
+
+const STATION_COUNT_CAP: f32 = 3.0;
+
+#[derive(Clone, Copy, Default)]
+struct StationTerms {
+    reach: f32,
+    exposed: f32,
+    cone: f32,
+    detect: f32,
+    travel: f32,
+    range_err: f32,
+    escape: f32,
+    score: f32,
+}
+
+impl StationTerms {
+    fn to_dict(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("reach", self.reach);
+        d.set("exposed", self.exposed);
+        d.set("cone_deg", self.cone * 180.0);
+        d.set("detect", self.detect);
+        d.set("travel", self.travel);
+        d.set("range_err", self.range_err);
+        d.set("escape", self.escape);
+        d.set("score", self.score);
+        d
+    }
+}
+
+/// Every term is normalised to about 0..1 before its weight: reach over
+/// STATION_COUNT_CAP (a ship shoots one target at a time), exposure as the
+/// fraction of the armed enemy team, cone half-width over pi, distances over
+/// gun range or the concealment radius.
+fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx: usize) -> Option<StationTerms> {
+    if idx >= p.pass.len() || !p.pass[idx] || !p.safe[idx].is_finite() {
+        return None;
+    }
+    let mut t = StationTerms::default();
+    let mut armed = 0.0f32;
+    for e in tl.enemies.values() {
+        if e.reach.get(&a.hull_key).is_some_and(|pl| bit_at(pl, idx)) {
+            t.reach += 1.0;
+        }
+        if e.shell.has_guns() {
+            armed += 1.0;
+        }
+        if bit_at(&e.fire, idx) {
+            t.exposed += 1.0;
+        }
+    }
+    let exposed_frac = if armed > 0.0 { t.exposed / armed } else { 0.0 };
+    t.cone = tl.cone_half.get(idx).copied().unwrap_or(-1.0).max(0.0) / std::f32::consts::PI;
+    let d = tl.detect.get(idx).copied().unwrap_or(f32::INFINITY);
+    t.detect = if a.radius > 0.0 && d < a.radius { ((a.radius - d) / a.radius).clamp(0.0, EXPOSURE_MAX) } else { 0.0 };
+    let gr = a.gun_range.max(1.0);
+    t.travel = p.safe[idx] / gr;
+    t.range_err = (f.centre(idx).distance_to(a.toward) - a.pref_range).abs() / gr;
+    let esc = p.escape[idx];
+    t.escape = if a.radius > 0.0 && esc.is_finite() { 1.0 - (esc / a.radius).min(1.0) } else { 0.0 };
+    let w = a.w;
+    t.score = w[0] * (t.reach.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
+        - w[1] * exposed_frac
+        - w[2] * t.cone
+        - w[3] * t.detect.min(1.0)
+        - w[4] * t.travel
+        - w[5] * t.range_err
+        + w[6] * t.escape;
+    Some(t)
+}
+
+fn station_args(hull_key: i64, weights: &PackedFloat32Array, gun_range: f32, pref_range: f32, radius: f32, toward: Vector2) -> StationArgs {
+    let mut w = [0.0f32; 7];
+    for (i, v) in w.iter_mut().enumerate() {
+        if i < weights.len() {
+            *v = weights[i];
+        }
+    }
+    StationArgs { hull_key, w, gun_range, pref_range, radius, toward }
 }
 
 impl Field {

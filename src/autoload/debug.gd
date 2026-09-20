@@ -1551,16 +1551,18 @@ func _reach_server_tick() -> void:
 	}
 	_receive_reach_field.rpc_id(_reach_peer_id, payload)
 
-## Same price the ship's router pays: detection exposure at its concealment
-## radius, its doctrine's gain when it is a bot, a wall otherwise.
+## The same plan SkillStation builds for a bot of this doctrine (so the two
+## share the cache); a human's ship is priced on detection as a wall.
 func _reach_plan(field: ReachField, ship: Ship, team_id: int, here: Vector2) -> Dictionary:
-	var gain := 0.0
+	var price: Array = [0.0, 0]
+	var box: float = REACH_PLAN_BOX_M
 	var controller = ship.get_node_or_null("Modules/BotController")
 	if controller != null and controller.get("behavior") != null and controller.behavior.has_method("doctrine"):
-		gain = controller.behavior.doctrine().detection_cost_gain
+		price = SkillStation.price_for(controller.behavior.doctrine())
+		box = SkillStation.PLAN_BOX_M
 	return field.plan_ship(team_id, ship.get_instance_id(), here,
-		NavigationMapManager.reach_conceal_radius(ship), gain, NavigationMapManager.reach_clearance(ship),
-		REACH_PLAN_BOX_M, 0, field.get_team_danger_centre(team_id))
+		NavigationMapManager.reach_conceal_radius(ship), price[0], NavigationMapManager.reach_clearance(ship),
+		box, price[1], field.get_team_danger_centre(team_id))
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_reach_field(payload: Dictionary) -> void:

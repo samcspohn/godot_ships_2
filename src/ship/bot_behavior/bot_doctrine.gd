@@ -69,6 +69,24 @@ var detection_cost_gain: float = 4.0
 var post_process_idle_arms: bool = true
 
 # ---------------------------------------------------------------------------
+# Station — how SkillStation scores a cell of the reach field. Each term is
+# normalised to about 0..1 (shooter counts cap at 3, cone half-width over
+# 180 deg, distances over gun range or concealment radius) before its weight.
+# ---------------------------------------------------------------------------
+
+var station_w_reach: float = 1.0
+var station_w_exposed: float = 0.4
+var station_w_cone: float = 0.5
+var station_w_detect: float = 0.0
+var station_w_travel: float = 0.5
+var station_w_range: float = 0.4
+var station_w_escape: float = 0.0
+## Preferred distance to the danger centre, as a fraction of gun range.
+var station_range_ratio: float = 0.65
+## A new best cell must beat the held station by this much before it is taken.
+var station_switch_margin: float = 0.15
+
+# ---------------------------------------------------------------------------
 # Threat thresholds — where the ladder switches between skills
 # ---------------------------------------------------------------------------
 
@@ -216,6 +234,13 @@ static func for_battleship() -> BotDoctrine:
 	d.cover_max_threat = 0.7
 	d.cover_min_threat_dist = 10000.0
 	d.gun_engage_ratio = 0.60
+	# A battleship stations on what it can shoot and how many can shoot back;
+	# being seen costs it nothing it was not already paying.
+	d.station_w_reach = 1.0
+	d.station_w_exposed = 0.5
+	d.station_w_cone = 0.6
+	d.station_w_travel = 0.5
+	d.station_w_range = 0.4
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
 	d.push_equalize_threat = d.push_threat
@@ -223,7 +248,7 @@ static func for_battleship() -> BotDoctrine:
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
 	d.broadside_params = {"oscillation_bias": 0.5}
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station"]
 	# A battleship's evasion IS its angling, so it is never worth suppressing:
 	# the presentation weave costs it nothing it was going to use anyway.
 	d.evade_override_threat = 0.6
