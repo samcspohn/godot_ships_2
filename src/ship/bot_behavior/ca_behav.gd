@@ -93,18 +93,18 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 			return chase
 	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
-## Cover navigates to a hide position, so its heading belongs to the navigator.
-## Every other close-arm skill wants a say in where the hull points, and near
-## terrain it wants the whole say — otherwise the ship routes around an island
-## showing its broadside the entire way.
-func _shape_close_intent(intent: NavIntent, ctx: SkillContext, _sit: Dictionary) -> void:
-	if _active_skill_name == &"FindCover":
-		return
-	intent.heading_weight = 0.5
-	# TODO: improve by checking whether the desired heading points into terrain.
-	var turn_radius: float = ctx.ship.movement_controller._p().turning_circle_radius
-	if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
-		intent.heading_weight = 1.0
+# ## Cover navigates to a hide position, so its heading belongs to the navigator.
+# ## Every other close-arm skill wants a say in where the hull points, and near
+# ## terrain it wants the whole say — otherwise the ship routes around an island
+# ## showing its broadside the entire way.
+# func _shape_close_intent(intent: NavIntent, ctx: SkillContext, _sit: Dictionary) -> void:
+# 	if _active_skill_name == &"FindCover":
+# 		return
+# 	# intent.heading_weight = 0.0
+# 	# TODO: improve by checking whether the desired heading points into terrain.
+# 	# var turn_radius: float = ctx.ship.movement_controller._p().turning_circle_radius
+# 	# if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
+# 	# 	intent.heading_weight = 1.0
 
 ## The engaged arm: high enough threat to stop pushing, but nothing close aboard.
 ## The cruiser splits on its own detection state — unseen, it goes and hides;

@@ -604,30 +604,22 @@ impl ShipNavigator {
                     continue;
                 }
 
-                // Nav score: arrival or alignment time + estimated travel
-                let mut nav_score;
-                if arrival_time >= 0.0 {
-                    nav_score = arrival_time;
-                } else {
-                    let alignment_time = arc.last().unwrap().time;
-                    // Closest approach to waypoint across the full arc (prevents tie on overshoot)
-                    let mut endpoint_dist = arc.last().unwrap().position.distance_to(wp_target);
-                    for pt in &arc {
-                        let d = pt.position.distance_to(wp_target);
-                        if d < endpoint_dist {
-                            endpoint_dist = d;
-                        }
+                // Time for the bow to come onto the waypoint bearing.  Distance
+                // to the waypoint is deliberately absent: scoring how closely the
+                // arc passes it rewarded lazy rudders that sweep across over hard
+                // turns that swing the bow onto it now.
+                let arc_end = *arc.last().unwrap();
+                let mut nav_score = arc_end.time;
+                let to_wp = wp_target - arc_end.position;
+                if to_wp.length() > 1.0 {
+                    let mut wp_heading = to_wp.x.atan2(to_wp.y);
+                    if rev_align {
+                        wp_heading = normalize_angle(wp_heading + (PI as f32));
                     }
-                    // prefer_reverse arcs stay in reverse all the way to the waypoint;
-                    // non-prefer_reverse reverse fallbacks do a U-turn then go forward.
-                    let endpoint_speed = if self.target.prefer_reverse && cand_throttle < 0 {
-                        self.throttle_to_speed(-1).abs()
-                    } else if cand_throttle < 0 {
-                        self.throttle_to_speed(3)
-                    } else {
-                        arc.last().unwrap().speed.abs()
-                    };
-                    nav_score = alignment_time + endpoint_dist / endpoint_speed.max(1.0);
+                    let h_err = angle_difference(arc_end.heading, wp_heading).abs();
+                    if h_err >= HEADING_ALIGN_THRESH {
+                        nav_score += (h_err / (PI as f32)) * 60.0;
+                    }
                 }
 
                 // Heading-weight blend

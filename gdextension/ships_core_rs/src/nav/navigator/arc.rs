@@ -4,8 +4,7 @@ use godot::prelude::*;
 
 use super::{DesiredDirection, ShipNavigator};
 use crate::nav::types::{
-    angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint,
-    ObstacleCollisionInfo,
+    angle_difference, clamp_f, move_toward_f, normalize_angle, ArcPoint, ObstacleCollisionInfo,
 };
 
 impl ShipNavigator {
@@ -88,7 +87,8 @@ impl ShipNavigator {
             let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
             sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
 
-            let effective_speed = sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
+            let effective_speed =
+                sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
 
             let mut omega: f32 = 0.0;
             if self.params.turning_circle_radius > 0.001 {
@@ -229,7 +229,8 @@ impl ShipNavigator {
             let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
             sim_speed = move_toward_f(sim_speed, target_speed_val, dt * speed_rate);
 
-            let effective_speed = sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
+            let effective_speed =
+                sim_speed * (1.0 - self.params.turn_speed_loss * sim_rudder.abs());
 
             let mut omega: f32 = 0.0;
             if self.params.turning_circle_radius > 0.001 {
@@ -440,7 +441,8 @@ impl ShipNavigator {
 
                         let to_obs = obs_pos - self.state.position;
                         let bearing_to_obs = to_obs.x.atan2(to_obs.y);
-                        result.relative_bearing = angle_difference(self.state.heading, bearing_to_obs);
+                        result.relative_bearing =
+                            angle_difference(self.state.heading, bearing_to_obs);
                     }
                     break;
                 }
@@ -480,12 +482,11 @@ impl ShipNavigator {
 
         let mut rudder;
 
-        // Math::PI / 6.0: double / double, cast to float on assignment.
-        let full_rudder_threshold: f32 = (PI / 6.0) as f32;
+        let near_pi_threshold: f32 = (PI * 0.85) as f32;
 
         if abs_effective_diff < 0.02 {
             rudder = 0.0;
-        } else if abs_effective_diff > full_rudder_threshold {
+        } else if abs_effective_diff > near_pi_threshold {
             // --- Near-180° stability fix ---
             // When abs_effective_diff is near ±π the sign of effective_diff is
             // unreliable: a sub-ULP perturbation in the ship's position flips
@@ -495,25 +496,23 @@ impl ShipNavigator {
             // Use state continuity as tiebreaker: current_rudder → angular
             // velocity → deterministic default.
             // Convention: negative rudder = right turn = positive angular_velocity_y.
-            let near_pi_threshold: f32 = (PI * 0.85) as f32;
-            if abs_effective_diff > near_pi_threshold {
-                if self.state.current_rudder.abs() > 0.05 {
-                    rudder = if self.state.current_rudder < 0.0 { -1.0 } else { 1.0 };
-                } else if self.state.angular_velocity_y.abs() > 0.001 {
-                    rudder = if self.state.angular_velocity_y > 0.0 { -1.0 } else { 1.0 };
+            if self.state.current_rudder.abs() > 0.05 {
+                rudder = if self.state.current_rudder < 0.0 {
+                    -1.0
                 } else {
-                    rudder = -1.0; // deterministic default: start a right turn
-                }
+                    1.0
+                };
+            } else if self.state.angular_velocity_y.abs() > 0.001 {
+                rudder = if self.state.angular_velocity_y > 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
             } else {
-                rudder = if effective_diff > 0.0 { -1.0 } else { 1.0 };
+                rudder = -1.0; // deterministic default: start a right turn
             }
         } else {
-            let t = (abs_effective_diff - 0.02) / (full_rudder_threshold - 0.02);
-            rudder = lerp_f(0.1, 1.0, t);
-            if effective_diff < 0.0 {
-                rudder = -rudder;
-            }
-            rudder = -rudder;
+            rudder = if effective_diff > 0.0 { -1.0 } else { 1.0 };
         }
 
         let lead_threshold =
