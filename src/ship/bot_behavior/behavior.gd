@@ -218,52 +218,55 @@ func can_fire_guns() -> bool:
 	## Each ship class gates firing in its own engage_target override.
 	return true
 
+## True when quiet guns would let us go, or stay, dark. Radar, hydro and
+## aircraft do not read bloom, and neither does a spotter already inside our
+## base radius: against those there is nothing to protect, so shoot.
 func _probe_concealment(server: GameServer) -> bool:
-	## True when guns should be suppressed to protect or achieve concealment.
-	## No top-level visible_to_enemy guard: suppresses proactively in open water
-	## before detection, so bloom never builds up in the first place.
-	var concealment_node = _ship.concealment
-	if concealment_node == null:
+	var cn: Concealment = _ship.concealment
+	if cn == null:
 		return false
-
-	var base_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
-
-	var spotted = server.get_valid_targets(_ship.team.team_id)
-
-	# No spotted enemies at all
-	if spotted.is_empty():
-		# visible_to_enemy, not is_detected(): a ping alone isn't evidence of LOS.
-		if _ship.visible_to_enemy and concealment_node.bloom_value > 0.0:
-			_infer_concealed_spotter(server)
-			return true
+	if _ship.det_radar or _ship.det_hydro or _ship.det_air:
 		return false
-
-	var all_los_blocked: bool = true
-	var suppress_useful: bool = false
-
-	for enemy in spotted:
-		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
-			continue
-		var d = enemy.global_position.distance_to(_ship.global_position)
-		var los_blocked = _is_los_blocked_with_clearance(_ship.global_position, enemy.global_position)
-
-		if not los_blocked:
-			all_los_blocked = false
-			if _ship.is_detected() and d < base_radius:
-				# Already detected + LOS + inside radius: suppressing won't lose them.
+	var cp := cn.params.p() as ConcealmentParams
+	if _ship.visible_to_enemy:
+		if cn.bloom_value <= 0.0:
+			return false
+		var spotter: Ship = cn.spotted_by
+		if cn.spot_source == Concealment.SpotSource.LOS and is_instance_valid(spotter):
+			var sp := spotter.concealment.params.p() as ConcealmentParams
+			var reach: float = maxf(cp.radius, maxf(sp.spotting_range_override, sp.radar_spotting_range_override))
+			if spotter.global_position.distance_to(_ship.global_position) < reach:
 				return false
-			# Open-water enemy: firing creates or sustains bloom that exposes us.
-			suppress_useful = true
-
-	if all_los_blocked:
-		if _ship.visible_to_enemy:
-			# Still detected despite terrain cover: a hidden spotter must have LOS.
 			_infer_concealed_spotter(server)
-			return true
-		# Not detected and all enemies behind terrain — safe to fire.
-		return false
+		return true
+	return _firing_lights_us(server)
 
-	return suppress_useful
+## Unseen now: would a salvo's bloom (gun range) put us under someone's eyes?
+## The reach field folds in believed positions and their spread; without it,
+## sweep line of sight to every known contact inside that bloom.
+func _firing_lights_us(server: GameServer) -> bool:
+	var ac = _ship.artillery_controller
+	var gun_range: float = ac.get_params()._range if ac != null and ac.get_params() != null else 0.0
+	var bloom: float = maxf(NavigationMapManager.reach_conceal_radius(_ship), gun_range)
+	if _ship.team == null:
+		return false
+	var my_team: int = _ship.team.team_id
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	if field != null and field.is_built():
+		var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+		return field.detect_dist_at(my_team, here) < bloom
+	var my_pos: Vector3 = _ship.global_position
+	for enemy in server.get_valid_targets(my_team):
+		if is_instance_valid(enemy) and enemy.health_controller.is_alive() \
+				and my_pos.distance_to(enemy.global_position) < bloom \
+				and not _is_los_blocked_with_clearance(my_pos, enemy.global_position):
+			return true
+	var unspotted: Dictionary = server.get_unspotted_enemies(my_team)
+	for enemy in unspotted:
+		var pos: Vector3 = unspotted[enemy]
+		if my_pos.distance_to(pos) < bloom and not _is_los_blocked_with_clearance(my_pos, pos):
+			return true
+	return false
 
 
 func _infer_concealed_spotter(server: GameServer) -> void:
@@ -1788,6 +1791,20 @@ func _is_masked_from_threat(pos: Vector3, threat: Dictionary) -> bool:
 	return _is_los_blocked_with_clearance(pos, threat_pos + lateral) \
 		and _is_los_blocked_with_clearance(pos, threat_pos - lateral)
 
+## Hold fire only when quiet guns keep us dark, someone can hit this cell,
+## and the bot does not fancy the trade (duel_threat, as in the station search).
+func _hold_fire_hidden(ctx: SkillContext, sit: Dictionary) -> bool:
+	if not _probe_concealment(ctx.server):
+		return false
+	if sit.threat < _doc().duel_threat:
+		return false
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var ship := ctx.ship
+	if field == null or not field.is_built() or ship.team == null:
+		return true
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	return field.exposure_mask(ship.team.team_id, here) != 0
+
 # COVER PRIORITY TARGETS
 ## How many enemies a cover search will try to build a position around before
 ## settling for any-target. Costs another sweep per candidate, so it only runs
@@ -2399,7 +2416,7 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	else:
 		# High threat. If concealing cover lies along the way, hide behind it;
 		# otherwise kite away with the guns still on the target.
-		if d.close_arm_uses_cover:
+		if d.close_arm_uses_cover and _cover_allowed(ctx, sit):
 			intent = _try_cover_on_the_way(ctx, sit.nearest, _skill_cover, _cover_params())
 		if intent == null:
 			intent = _run_skill(&"Kite", ctx)
@@ -2411,6 +2428,10 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if sit.threat < d.force_below or sit.threat >= d.force_above:
 		sit["forced"] = true
 	return intent
+
+## Per-class hook: veto the close arm's cover.
+func _cover_allowed(_ctx: SkillContext, _sit: Dictionary) -> bool:
+	return true
 
 ## What to do when the odds look good. Base pushes; CA prefers to run down a
 ## closer unseen contact rather than cross the map to a distant visible one.

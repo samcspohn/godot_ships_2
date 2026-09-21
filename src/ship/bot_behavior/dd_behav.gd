@@ -355,6 +355,23 @@ func _update_gunboat_defensive(sit: Dictionary) -> void:
 		_gb_defensive = true
 		_gb_defensive_since = now
 
+## A gunboat in cover sees nothing, so cover is only worth it while a teammate
+## holds a contact inside our guns.
+func _cover_allowed(ctx: SkillContext, sit: Dictionary) -> bool:
+	if _doc().trades_on_concealment:
+		return true
+	var ship := ctx.ship
+	for e in sit.spotted:
+		if not is_instance_valid(e) or e.concealment == null:
+			continue
+		var holder: Ship = e.concealment.spotted_by
+		if holder == null or holder == ship or not is_instance_valid(holder) \
+				or holder.team.team_id != ship.team.team_id:
+			continue
+		if ship.global_position.distance_to(e.global_position) <= sit.gun_range:
+			return true
+	return false
+
 func _gunboat_in_cover() -> bool:
 	return _active_skill_name == &"FindCover" and _skill_cover._arrived
 
@@ -387,11 +404,12 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 
 	if _gb_defensive:
 		_ow_kiting = false
-		if sit.has_spotted:
+		if _cover_allowed(ctx, sit):
 			intent = _run_skill(&"FindCover", ctx, _cover_params())
 	elif sit.has_spotted:
 		if _open_water_kiting(sit):
-			intent = _run_skill(&"FindCover", ctx, _cover_params())
+			if _cover_allowed(ctx, sit):
+				intent = _run_skill(&"FindCover", ctx, _cover_params())
 			if intent == null:
 				intent = _run_skill(&"Kite", ctx)
 		else:
@@ -492,8 +510,8 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 			_suppress_guns = false
 		else:
 			wants_stealth = _skill_spot.stealth_corridor
-			wants_to_be_concealed = _probe_concealment(ctx.server)
-			_suppress_guns = wants_to_be_concealed
+			_suppress_guns = _hold_fire_hidden(ctx, sit)
+			wants_to_be_concealed = _suppress_guns
 		return
 	if not d.trades_on_concealment:
 		# One exception, and it is not this arm's to make: the cornered rule in
@@ -516,9 +534,8 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 		# hands the pathfinder a goal inside its own blocked cells — which is
 		# how a destroyer ends up circling the map instead of spotting.
 		wants_stealth = _skill_spot.stealth_corridor
-		_suppress_guns = true
-	else:
-		_suppress_guns = false
+	# Never opens up from the dark: the guns join once something has us lit.
+	_suppress_guns = true
 	# Suppress guns when detected with bloom up and the nearest enemy far enough
 	# that going dark would actually drop us. DDs always take that chance.
 	wants_to_be_concealed = _probe_concealment(ctx.server)

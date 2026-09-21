@@ -117,15 +117,13 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		var station := _run_skill(&"Station", ctx)
 		if station != null:
 			if not ctx.ship.is_detected():
-				_suppress_guns = _has_open_line_of_sight(ctx, sit)
+				_suppress_guns = _hold_fire_hidden(ctx, sit)
 			return station
 
 	if not ctx.ship.is_detected():
 		var hide := _run_skill(&"FindCover", ctx, cover_params)
 		if hide != null:
-			# Only worth holding fire if something out there actually has eyes on
-			# us; if terrain covers every contact, shoot.
-			_suppress_guns = _has_open_line_of_sight(ctx, sit)
+			_suppress_guns = _hold_fire_hidden(ctx, sit)
 			return hide
 		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 
@@ -150,20 +148,6 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if intent != null:
 		intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.1)
 	return intent
-
-## True when any contact inside gun range has a clear line to us.
-func _has_open_line_of_sight(ctx: SkillContext, sit: Dictionary) -> bool:
-	var from_pos: Vector3 = ctx.ship.global_position
-	var gun_range: float = sit.gun_range
-	for enemy in sit.spotted:
-		if from_pos.distance_to(enemy.global_position) < gun_range \
-				and not _is_los_blocked_with_clearance(from_pos, enemy.global_position):
-			return true
-	for pos in sit.unspotted.values():
-		if from_pos.distance_to(pos) < gun_range \
-				and not _is_los_blocked_with_clearance(from_pos, pos):
-			return true
-	return false
 
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	# Only when something is actually spotted, matching the arms this used to sit
