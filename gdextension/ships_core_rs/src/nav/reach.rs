@@ -1512,6 +1512,39 @@ impl ReachField {
         }
     }
 
+    /// Mean station score along each ray from `origin` (bearing = atan2(x, z),
+    /// `length` metres) under `opts`, over ship `id`'s plan. A ray that runs
+    /// into land or out of the plan is padded with the worst score for the
+    /// samples it lost, so a short ray never beats a long clean one. `ends`
+    /// is each ray's last open sample.
+    #[func]
+    fn score_rays(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, origin: Vector2, bearings: PackedFloat32Array, length: f32) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let mut scores = PackedFloat32Array::new();
+        let mut ends = PackedVector2Array::new();
+        self.ensure_cone(team);
+        if let (Some(f), Some(tl), Some(p)) = (self.field.as_ref(), self.teams.get(&team), self.plans.get(&id)) {
+            let a = StationArgs::from_dict(hull_key, &opts);
+            let steps = (length / f.cell).ceil().max(1.0) as i32;
+            for &b in bearings.as_slice() {
+                let dir = Vector2::new(b.sin(), b.cos());
+                let (mut sum, mut n, mut end) = (0.0f32, 0i32, origin);
+                for k in 1..=steps {
+                    let pt = origin + dir * (k as f32 * f.cell);
+                    let Some(t) = f.index(pt.x, pt.y).and_then(|i| station_terms(f, tl, p, &a, i)) else { break };
+                    sum += t.score;
+                    n += 1;
+                    end = pt;
+                }
+                scores.push(if n == 0 { f32::NEG_INFINITY } else { (sum - (steps - n) as f32) / steps as f32 });
+                ends.push(end);
+            }
+        }
+        d.set("scores", &scores);
+        d.set("ends", &ends);
+        d
+    }
+
     #[func]
     fn safe_cost_at(&self, id: i64, point: Vector2) -> f32 {
         self.plan_value(id, point, true)
@@ -1544,6 +1577,9 @@ struct StationArgs {
     /// max_exposed, or that are seen when require_unseen, are not candidates.
     max_exposed: f32,
     require_unseen: bool,
+    /// Covered means nobody can land shells on the cell OR nobody can see
+    /// it; a cell that is both seen and under fire is not a candidate.
+    covered_only: bool,
     /// Distance-to-`toward` band a candidate must lie in: a kite opens range
     /// with min_range above where the ship stands, a push closes with
     /// max_range below it.
@@ -1585,6 +1621,7 @@ impl StationArgs {
                 .collect(),
             max_exposed: opt(d, "max_exposed", f32::INFINITY),
             require_unseen: opt(d, "require_unseen", false),
+            covered_only: opt(d, "covered_only", false),
             min_range: opt(d, "min_range", 0.0f32),
             max_range: opt(d, "max_range", f32::INFINITY),
         }
@@ -1669,6 +1706,9 @@ fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx:
         0.0
     };
     if a.require_unseen && t.detect > 0.0 {
+        return None;
+    }
+    if a.covered_only && t.exposed > 0.0 && t.detect > 0.0 {
         return None;
     }
     let gr = a.gun_range.max(1.0);

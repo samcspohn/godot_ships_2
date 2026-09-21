@@ -79,8 +79,16 @@ func _weights(d: BotDoctrine) -> PackedFloat32Array:
 		d.station_w_detect, d.station_w_travel, d.station_w_range, d.station_w_escape])
 
 ## Whether a best cell nothing can be shot from is still worth holding.
-func _accepts_no_reach(_params: Dictionary) -> bool:
+func _accepts_no_reach(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary) -> bool:
 	return false
+
+## Covered-only is waived while the bot reads the fight as its own: below
+## duel_threat it will hold a cell one enemy (the exposure cap) can hit.
+func _covered_only(ctx: SkillContext, d: BotDoctrine) -> bool:
+	return d.station_covered_only and not _has_advantage(ctx, d)
+
+func _has_advantage(ctx: SkillContext, d: BotDoctrine) -> bool:
+	return ctx.behavior.get_threat_score(ctx) < d.duel_threat
 
 ## [min, max] distance from the danger centre a candidate must lie in.
 func _range_band(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary) -> Array:
@@ -157,6 +165,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"enemy_weights": _enemy_weights(ctx, field, team_id),
 		"max_exposed": _max_exposed(d),
 		"require_unseen": _require_unseen(d),
+		"covered_only": _covered_only(ctx, d),
 	}
 	var sc: Dictionary = field.score_station(team_id, ship.get_instance_id(), key, opts)
 	_score_us = float(sc.get("us", 0.0))
@@ -168,7 +177,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return null
 	var best_terms: Dictionary = sc.best_terms
 	var best_score: float = sc.best_score
-	if float(best_terms.get("reach", 0.0)) <= 0.0 and not _accepts_no_reach(params):
+	if float(best_terms.get("reach", 0.0)) <= 0.0 and not _accepts_no_reach(ctx, d, params):
 		_drop()
 		return null
 

@@ -94,20 +94,24 @@ var station_max_exposed: float = 3.0
 var station_require_unseen: bool = false
 var cover_max_exposed: float = 2.0
 var cover_require_unseen: bool = false
+## Covered: nobody can land shells on the cell OR nobody can see it. Looser
+## than require_unseen, stricter than the cap alone (seen and under fire by
+## one is out).
+var station_covered_only: bool = false
+var cover_covered_only: bool = false
+## Below this threat the bot reads the fight as its own and the covered rule
+## is waived: it will hold a cell that up to the exposure cap can hit (a
+## 1-v-x, x being the cap in class-weighted enemies). Threat already folds in
+## hull points on both sides, so a hurt ship stops taking the trade first.
+var duel_threat: float = 0.5
 
-## Kite is the same search opening range: candidates lie at least kite_open_m
-## further from the danger centre than the ship, keep something in reach, and
-## are ranked on who can shoot them and how wide the shooters sit. No cap, so
-## a kite always has somewhere to go; the directional kite is the fallback
-## when nothing in the box has a target in reach.
+## Kite scores headings, not cells: each ray in the angled away-fan is the
+## station terms integrated over the next RAY_LENGTH_M, with these weights.
 var kite_w_reach: float = 0.6
 var kite_w_exposed: float = 1.0
 var kite_w_cone: float = 0.6
 var kite_w_detect: float = 0.2
-var kite_w_travel: float = 0.6
-var kite_w_range: float = 0.3
 var kite_w_escape: float = 0.2
-var kite_open_m: float = 1000.0
 
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
@@ -328,12 +332,14 @@ static func for_cruiser() -> BotDoctrine:
 	d.station_w_range = 0.3
 	d.station_w_escape = 0.2
 	d.cover_w_detect = 0.8
-	# A cruiser trades in a 1v1 and hides from anything more. Cover is judged
-	# on fire: a cell nobody can land shells on is cover even when it is seen,
-	# and cover_w_detect prices being lit rather than forbidding it.
+	# A cruiser's position is covered or it is not held: nobody can shoot it,
+	# or nobody can see it. The 1.0 cap on top keeps a battleship out of even
+	# the unseen case until the 1-v-x rule reads threat and hull points.
 	d.station_max_exposed = 1.0
+	d.station_covered_only = true
 	d.cover_max_exposed = 1.0
 	d.cover_require_unseen = false
+	d.cover_covered_only = true
 	return d
 
 

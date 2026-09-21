@@ -30,10 +30,16 @@ func _weights(d: BotDoctrine) -> PackedFloat32Array:
 	return PackedFloat32Array([d.cover_w_reach, d.cover_w_exposed, d.cover_w_cone,
 		d.cover_w_detect, d.cover_w_travel, d.cover_w_range, d.cover_w_escape])
 
-## The dark arm asks for cover with nothing to shoot at; everyone else wants a
-## firing position.
-func _accepts_no_reach(params: Dictionary) -> bool:
-	return bool(params.get("prioritize_cover", false))
+## The dark arm asks for cover with nothing to shoot at. Otherwise a covered
+## cell with nothing in reach is still taken once the ladder has stopped
+## pushing: hiding beats the open water the ladder would send us into.
+func _accepts_no_reach(ctx: SkillContext, d: BotDoctrine, params: Dictionary) -> bool:
+	if bool(params.get("prioritize_cover", false)):
+		return true
+	return ctx.behavior.get_threat_score(ctx) >= d.push_threat
+
+func _covered_only(ctx: SkillContext, d: BotDoctrine) -> bool:
+	return d.cover_covered_only and not _has_advantage(ctx, d)
 
 func _detour_weight(d: BotDoctrine, params: Dictionary) -> float:
 	return d.cover_w_detour if bool(params.get("prefer_on_the_way", false)) else 0.0
