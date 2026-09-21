@@ -831,20 +831,29 @@ impl ShipNavigator {
         let version = field.bind().get_team_version(self.detect_team);
         if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
             let mut f = field.bind_mut();
-            let (max, mean, sub) = if fire {
-                let (max, mean) = f.cluster_fire_stats(self.detect_team, cluster_size, ncx, ncz);
-                (max, mean, f.cluster_fire_stats(self.detect_team, sub_size, nsubx, nsubz).0)
+            if fire {
+                let st = f.cluster_fire_stats(self.detect_team, cluster_size, ncx, ncz);
+                let sub = f.cluster_fire_stats(self.detect_team, sub_size, nsubx, nsubz);
+                self.detect_exposure = st.max;
+                self.detect_exposure_mean = st.mean;
+                self.detect_sub_exposure = sub.max;
+                self.detect_dir = st.dir;
+                self.detect_sub_dir = sub.dir;
             } else {
                 let (max, mean) = f.cluster_exposure_stats(self.detect_team, self.detect_radius, cluster_size, ncx, ncz);
-                (max, mean, f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz).0)
-            };
-            self.detect_exposure = max;
-            self.detect_exposure_mean = mean;
-            self.detect_sub_exposure = sub;
+                self.detect_exposure = max;
+                self.detect_exposure_mean = mean;
+                self.detect_sub_exposure = f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz).0;
+                self.detect_dir = std::sync::Arc::new(Vec::new());
+                self.detect_sub_dir = std::sync::Arc::new(Vec::new());
+            }
             self.detect_synced_version = version;
         }
-        self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threat_costs(
-            &self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain, !fire);
+        let mut g = self.hpa_graph.as_mut().unwrap().bind_mut();
+        g.stamp_threat_costs(&self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain, !fire);
+        if fire {
+            g.stamp_threat_dirs(&self.detect_dir, &self.detect_sub_dir, self.detect_gain);
+        }
         true
     }
 

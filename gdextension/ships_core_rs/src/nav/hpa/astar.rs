@@ -146,12 +146,13 @@ impl HpaGraph {
 
                     // Congestion averaged over the two endpoints: how much water
                     // this step actually crosses, not merely whether it may.
+                    let k = crate::nav::reach::fire_heading_bucket(dx as f32, dz as f32);
                     let mut step_cost = (if is_diag {
                         self.diagonal_step_cost
                     } else {
                         self.cardinal_step_cost
                     }) * 0.5
-                        * (self.cluster_cost_mul(cur) + self.cluster_cost_mul(ncid));
+                        * (self.cluster_cost_mul(cur, k) + self.cluster_cost_mul(ncid, k));
                     if biased && bias_mask.unwrap()[ncidu] != 0 {
                         step_cost *= bias_factor;
                     }
@@ -324,9 +325,10 @@ impl HpaGraph {
                     // Same shaping as the macro layer, at sub granularity: a sub
                     // passable only through one of its sixteen cells should not
                     // price like open water.
+                    let k = crate::nav::reach::fire_heading_bucket(dx as f32, dz as f32);
                     let mut step_cost = (if is_diag { sub_diag } else { sub_card })
                         * 0.5
-                        * (self.sub_cost_mul(cur) + self.sub_cost_mul(nsid));
+                        * (self.sub_cost_mul(cur, k) + self.sub_cost_mul(nsid, k));
                     if biased && bias_mask.unwrap()[nsidu] != 0 {
                         step_cost *= bias_factor;
                     }

@@ -276,6 +276,8 @@ pub struct ShipNavigator {
     pub(crate) detect_exposure: std::sync::Arc<Vec<f32>>,
     pub(crate) detect_exposure_mean: std::sync::Arc<Vec<f32>>,
     pub(crate) detect_sub_exposure: std::sync::Arc<Vec<f32>>,
+    pub(crate) detect_dir: std::sync::Arc<Vec<[f32; 4]>>,
+    pub(crate) detect_sub_dir: std::sync::Arc<Vec<[f32; 4]>>,
     pub(crate) detect_synced_version: i64,
 
     // --- Path stickiness instrumentation ---
@@ -379,6 +381,8 @@ impl IRefCounted for ShipNavigator {
             detect_exposure: std::sync::Arc::new(Vec::new()),
             detect_exposure_mean: std::sync::Arc::new(Vec::new()),
             detect_sub_exposure: std::sync::Arc::new(Vec::new()),
+            detect_dir: std::sync::Arc::new(Vec::new()),
+            detect_sub_dir: std::sync::Arc::new(Vec::new()),
             detect_synced_version: -1,
             path_switch_count: 0,
             path_switch_rejected: 0,
@@ -715,6 +719,8 @@ impl ShipNavigator {
         self.detect_exposure = std::sync::Arc::new(Vec::new());
         self.detect_exposure_mean = std::sync::Arc::new(Vec::new());
         self.detect_sub_exposure = std::sync::Arc::new(Vec::new());
+        self.detect_dir = std::sync::Arc::new(Vec::new());
+        self.detect_sub_dir = std::sync::Arc::new(Vec::new());
     }
 
     #[func]

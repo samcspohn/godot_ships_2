@@ -511,6 +511,13 @@ struct TeamLayers {
     cone_version: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct FireStats {
+    pub(crate) max: Arc<Vec<f32>>,
+    pub(crate) mean: Arc<Vec<f32>>,
+    pub(crate) dir: Arc<Vec<[f32; 4]>>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct PlanKey {
     team: i32,
@@ -567,7 +574,38 @@ impl Ord for QItem {
 /// 8-connected Dijkstra inside `bx`; a step costs its length times
 /// 1 + gain * mean price of its two ends. Diagonals need both orthogonal
 /// neighbours open so no corner is cut through land.
-fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], gain: f32, sources: &[usize], out: &mut [f32]) {
+/// Headings the fire price is tabulated for (atan2(x, z) degrees, mod 180:
+/// bow-on and stern-on read the same).
+pub(crate) const FIRE_HEADINGS: [f32; 4] = [0.0, 45.0, 90.0, 135.0];
+/// Share of a shooter's price a hull still pays steaming straight at or
+/// away from it; the rest scales with sin^2 of the presentation angle.
+const FIRE_BOW_FACTOR: f32 = 0.35;
+
+pub(crate) fn fire_heading_bucket(dx: f32, dz: f32) -> usize {
+    let deg = dx.atan2(dz).to_degrees().rem_euclid(180.0);
+    ((deg / 45.0).round() as usize) % 4
+}
+
+/// (shooter count, presentation-weighted count per FIRE_HEADINGS) at cell `idx`.
+fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], idx: usize) -> (f32, [f32; 4]) {
+    let c = f.centre(idx);
+    let mut n = 0.0f32;
+    let mut d = [0.0f32; 4];
+    for (plane, origin) in shooters {
+        if !bit_at(plane, idx) {
+            continue;
+        }
+        n += 1.0;
+        let bearing = (origin.x - c.x).atan2(origin.y - c.y);
+        for (k, h) in FIRE_HEADINGS.iter().enumerate() {
+            let s = (h.to_radians() - bearing).sin();
+            d[k] += FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s;
+        }
+    }
+    (n, d)
+}
+
+fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], dir_price: Option<&[[f32; 4]]>, gain: f32, sources: &[usize], out: &mut [f32]) {
     let mut heap = BinaryHeap::new();
     for &s in sources {
         out[s] = 0.0;
@@ -602,7 +640,14 @@ fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], gain: f32, source
                 } else {
                     f.cell
                 };
-                let c = cost + len * (1.0 + gain * 0.5 * (price[idx] + price[n]));
+                let (pa, pb) = match dir_price {
+                    Some(dp) => {
+                        let k = fire_heading_bucket(dx as f32, dz as f32);
+                        (dp[idx][k], dp[n][k])
+                    }
+                    None => (price[idx], price[n]),
+                };
+                let c = cost + len * (1.0 + gain * 0.5 * (pa + pb));
                 if c < out[n] {
                     out[n] = c;
                     heap.push(QItem { cost: c, idx: n as u32 });
@@ -678,6 +723,8 @@ pub struct ReachField {
     /// max, mean). Every navigator on a team with the same concealment reads
     /// the same vectors instead of rebuilding them from 123k cells each.
     exposure_cache: HashMap<(i32, i32, i32, i32, i32), (u64, Arc<Vec<f32>>, Arc<Vec<f32>>)>,
+    /// (team, node cells, ncx, ncz) -> (version, max, mean, per-heading mean).
+    fire_cache: HashMap<(i32, i32, i32, i32), (u64, FireStats)>,
     plans: HashMap<i64, ShipPlan>,
     last: Stats,
 }
@@ -699,6 +746,7 @@ impl IRefCounted for ReachField {
             ships: HashMap::new(),
             teams: HashMap::new(),
             exposure_cache: HashMap::new(),
+            fire_cache: HashMap::new(),
             plans: HashMap::new(),
             last: Stats::default(),
         }
@@ -799,11 +847,20 @@ impl ReachField {
         self.cached_stats(key, |me| me.build_exposure_stats(team, radius, cluster_cells, ncx, ncz))
     }
 
-    /// Per node: (max, mean over water cells) of the number of enemies able
-    /// to land shells on the cell. The router's fire price; never a wall.
-    pub(crate) fn cluster_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
-        let key = (team, -1, cluster_cells, ncx, ncz);
-        self.cached_stats(key, |me| me.build_fire_stats(team, cluster_cells, ncx, ncz))
+    /// Per node: max and mean shooter count over water cells, and the mean
+    /// presentation-weighted count for a hull steaming on each of the four
+    /// FIRE_HEADINGS. The router's fire price; never a wall.
+    pub(crate) fn cluster_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> FireStats {
+        let key = (team, cluster_cells, ncx, ncz);
+        let version = self.teams.get(&team).map_or(0, |tl| tl.version);
+        if let Some((v, st)) = self.fire_cache.get(&key) {
+            if *v == version {
+                return st.clone();
+            }
+        }
+        let st = self.build_fire_stats(team, cluster_cells, ncx, ncz);
+        self.fire_cache.insert(key, (version, st.clone()));
+        st
     }
 
     fn cached_stats(
@@ -823,16 +880,18 @@ impl ReachField {
         out
     }
 
-    fn build_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
+    fn build_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> FireStats {
         let n = (ncx.max(0) * ncz.max(0)) as usize;
         let mut max = vec![0.0f32; n];
         let mut mean = vec![0.0f32; n];
-        let Some(f) = self.field.clone() else { return (max, mean) };
+        let mut dir = vec![[0.0f32; 4]; n];
+        let done = |max, mean, dir| FireStats { max: Arc::new(max), mean: Arc::new(mean), dir: Arc::new(dir) };
+        let Some(f) = self.field.clone() else { return done(max, mean, dir) };
         if cluster_cells <= 0 {
-            return (max, mean);
+            return done(max, mean, dir);
         }
-        let Some(tl) = self.teams.get(&team) else { return (max, mean) };
-        let fire: Vec<&[u64]> = tl.enemies.values().map(|e| e.fire.as_slice()).collect();
+        let Some(tl) = self.teams.get(&team) else { return done(max, mean, dir) };
+        let shooters: Vec<(&[u64], Vector2)> = tl.enemies.values().map(|e| (e.fire.as_slice(), e.origin)).collect();
         let mut count = vec![0u32; n];
         for idx in 0..f.water.len() {
             if f.water[idx] == 0 {
@@ -847,18 +906,25 @@ impl ReachField {
             }
             let c = (cz * ncx + cx) as usize;
             count[c] += 1;
-            let e = fire.iter().filter(|p| bit_at(p, idx)).count() as f32;
+            let (e, d) = fire_at(&f, &shooters, idx);
             mean[c] += e;
+            for k in 0..4 {
+                dir[c][k] += d[k];
+            }
             if e > max[c] {
                 max[c] = e;
             }
         }
         for c in 0..n {
             if count[c] > 0 {
-                mean[c] /= count[c] as f32;
+                let inv = 1.0 / count[c] as f32;
+                mean[c] *= inv;
+                for k in 0..4 {
+                    dir[c][k] *= inv;
+                }
             }
         }
-        (max, mean)
+        done(max, mean, dir)
     }
 
     fn build_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
@@ -948,6 +1014,7 @@ impl ReachField {
         self.ships.clear();
         self.teams.clear();
         self.exposure_cache.clear();
+        self.fire_cache.clear();
         self.plans.clear();
     }
 
@@ -1219,6 +1286,7 @@ impl ReachField {
             tl.version += 1;
         }
         self.exposure_cache.retain(|k, _| k.0 != team);
+        self.fire_cache.retain(|k, _| k.0 != team);
         let (n_enemies, n_hulls) = (tl.order.len(), tl.hulls.len());
         let mut d = self.get_last_stats();
         d.set("resweeps", resweeps as i64);
@@ -1892,9 +1960,10 @@ impl ReachField {
         let cost_mode = gain.is_finite() && gain > 0.0;
         let wall_at = if cost_mode { crate::nav::hpa::threats::COST_MODE_WALL_EXPOSURE } else { 0.0 };
         let mut price = vec![0.0f32; cells];
+        let mut price_dir: Vec<[f32; 4]> = if key.mode == 0 { Vec::new() } else { vec![[0.0; 4]; cells] };
         let mut terrain_ok = vec![false; cells];
         if let Some(tl) = self.teams.get(&key.team) {
-            let fire: Vec<&[u64]> = tl.enemies.values().map(|e| e.fire.as_slice()).collect();
+            let shooters: Vec<(&[u64], Vector2)> = tl.enemies.values().map(|e| (e.fire.as_slice(), e.origin)).collect();
             for iz in bx.z0..=bx.z1 {
                 for ix in bx.x0..=bx.x1 {
                     let i = (iz * f.w + ix) as usize;
@@ -1907,7 +1976,11 @@ impl ReachField {
                             let d = tl.detect.get(i).copied().unwrap_or(f32::INFINITY);
                             if radius > 0.0 && d < radius { ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX) } else { 0.0 }
                         }
-                        _ => fire.iter().filter(|p| bit_at(p, i)).count() as f32,
+                        _ => {
+                            let (e, d) = fire_at(f, &shooters, i);
+                            price_dir[i] = d;
+                            e
+                        }
                     };
                 }
             }
@@ -1921,12 +1994,13 @@ impl ReachField {
         let pass: Vec<bool> = (0..cells).map(|i| terrain_ok[i] && (walls_muted || !wall(i))).collect();
         let mut safe = vec![f32::INFINITY; cells];
         let g = if cost_mode { gain } else { 0.0 };
+        let dir_price = if price_dir.is_empty() { None } else { Some(price_dir.as_slice()) };
         if pass[key.cell] {
-            dijkstra(f, bx, &pass, &price, g, &[key.cell], &mut safe);
+            dijkstra(f, bx, &pass, &price, dir_price, g, &[key.cell], &mut safe);
         }
         let dark: Vec<usize> = (0..cells).filter(|&i| terrain_ok[i] && price[i] <= 0.0).collect();
         let mut escape = vec![f32::INFINITY; cells];
-        dijkstra(f, bx, &terrain_ok, &price, 0.0, &dark, &mut escape);
+        dijkstra(f, bx, &terrain_ok, &price, None, 0.0, &dark, &mut escape);
         let max_of = |v: &[f32]| v.iter().copied().filter(|c| c.is_finite()).fold(0.0f32, f32::max);
         ShipPlan {
             key,

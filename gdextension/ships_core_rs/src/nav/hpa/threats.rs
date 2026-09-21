@@ -168,6 +168,8 @@ impl HpaGraph {
         self.threat_cost_mode.set(false);
         self.threat_blocked_cids.clear();
         self.threat_blocked_count = 0;
+        self.cluster_threat_dir.clear();
+        self.sub_threat_dir.clear();
         if self.sub_layer_active.get() {
             for b in self.sub_threat_blocked.iter_mut() {
                 *b = 0;
@@ -236,6 +238,19 @@ impl HpaGraph {
         } else {
             self.threat_blocked_cids.len() as i32
         };
+    }
+
+    /// Per-heading prices on top of stamp_threat_costs: gain x the
+    /// presentation-weighted shooter count for a step on each FIRE_HEADINGS.
+    pub(crate) fn stamp_threat_dirs(&mut self, macro_dir: &[[f32; 4]], sub_dir: &[[f32; 4]], gain: f32) {
+        if !self.threat_cost_mode.get() {
+            return;
+        }
+        let scale = |d: &[f32; 4]| [d[0] * gain, d[1] * gain, d[2] * gain, d[3] * gain];
+        let n = self.clusters.len().min(macro_dir.len());
+        self.cluster_threat_dir = macro_dir[..n].iter().map(scale).collect();
+        let ns = self.sub_clusters.len().min(sub_dir.len());
+        self.sub_threat_dir = if self.sub_layer_active.get() { sub_dir[..ns].iter().map(scale).collect() } else { Vec::new() };
     }
 
     /// Reads the currently-stamped global blocked state.
