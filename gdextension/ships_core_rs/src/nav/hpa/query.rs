@@ -407,7 +407,9 @@ impl HpaGraph {
 
         // Step 1: direct LOS shortcut.
         m.los_attempts += 1;
+        // A priced straight line is the search's call, not a shortcut.
         if self.los_clear(from, to, q_cl) && self.segment_threat_clear(from, to, threat_layer_active)
+            && self.segment_price(from, to) <= 0.0
         {
             m.los_hits += 1;
             let mut r = PathResult::default();

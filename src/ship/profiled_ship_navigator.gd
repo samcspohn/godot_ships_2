@@ -140,6 +140,9 @@ func clear_threat_source() -> void:
 func set_detection_source(field: Variant, team_id: int, radius: float, gain: float) -> void:
 	_impl.set_detection_source(field, team_id, radius, gain)
 
+func set_fire_source(field: Variant, team_id: int, gain: float) -> void:
+	_impl.set_fire_source(field, team_id, gain)
+
 func clear_detection_source() -> void:
 	_impl.clear_detection_source()
 

@@ -13,8 +13,6 @@ const PLAN_BOX_M: float = 8000.0
 const SHORE_REACH_CLEARANCES: float = 3.0
 ## A shore point may lose this much score against the cell it refines.
 const SHORE_SCORE_SLACK: float = 0.05
-## Each enemy able to land shells on a step adds this much to its length.
-const FIRE_PRICE_GAIN: float = 0.25
 const CLAIM_TTL_MS: int = 6000
 ## Team-mates' stations are kept this many clearances apart.
 const CLAIM_SEPARATION_CLEARANCES: float = 3.0
@@ -39,7 +37,7 @@ var _claim_ship: int = -1
 static func price_for(d: BotDoctrine) -> Array:
 	if d.trades_on_concealment:
 		return [d.detection_cost_gain, 0]
-	return [FIRE_PRICE_GAIN, 1]
+	return [d.fire_cost_gain, 1]
 
 func reset() -> void:
 	release_claim()
@@ -64,11 +62,12 @@ func terms() -> Dictionary:
 func debug_text() -> String:
 	if not _has_station:
 		return "%s: none" % _label()
-	return "%s %.2f%s | reach %.1f exposed %.1f cone %.0f deg det %.2f travel %.2f range %.2f esc %.2f detour %.2f | plan %.1f ms score %.1f ms" % [
+	return "%s %.2f%s | reach %.1f exposed %.1f cone %.0f deg det %.2f travel %.2f range %.2f esc %.2f detour %.2f flank %.2f | plan %.1f ms score %.1f ms" % [
 		_label(), _station_score, " shore" if _refined else "",
 		float(_terms.get("reach", 0)), float(_terms.get("exposed", 0)), float(_terms.get("cone_deg", 0.0)),
 		float(_terms.get("detect", 0.0)), float(_terms.get("travel", 0.0)), float(_terms.get("range_err", 0.0)),
-		float(_terms.get("escape", 0.0)), float(_terms.get("detour", 0.0)), _plan_us / 1000.0, _score_us / 1000.0]
+		float(_terms.get("escape", 0.0)), float(_terms.get("detour", 0.0)), float(_terms.get("flank", 0.0)),
+		_plan_us / 1000.0, _score_us / 1000.0]
 
 func _label() -> String:
 	return "Station"
@@ -90,15 +89,23 @@ func _covered_only(ctx: SkillContext, d: BotDoctrine) -> bool:
 func _has_advantage(ctx: SkillContext, d: BotDoctrine) -> bool:
 	return ctx.behavior.get_threat_score(ctx) < d.duel_threat
 
-## [min, max] distance from the danger centre a candidate must lie in.
-func _range_band(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary) -> Array:
+## [min, max] distance from the danger centre a candidate must lie in;
+## `here_dist` is the ship's own distance to it.
+func _range_band(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary, _here_dist: float) -> Array:
 	return [0.0, INF]
 
-func _pref_range(d: BotDoctrine, gun_range: float, band: Array) -> float:
+func _pref_range(_ctx: SkillContext, d: BotDoctrine, _params: Dictionary, gun_range: float, band: Array) -> float:
 	return maxf(gun_range * d.station_range_ratio, float(band[0]))
 
 func _detour_weight(_d: BotDoctrine, _params: Dictionary) -> float:
 	return 0.0
+
+## Weight on lying along the axis from the danger centre to `_flank_from`.
+func _flank_weight(_d: BotDoctrine) -> float:
+	return 0.0
+
+func _flank_from(_ctx: SkillContext) -> Vector2:
+	return Vector2.ZERO
 
 ## Most class-weighted enemy fire a cell may be under and still be a candidate.
 func _max_exposed(d: BotDoctrine) -> float:
@@ -147,11 +154,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var key: int = NavigationMapManager.reach_hull_key(g)
 	var gun_range: float = g.range
-	var band: Array = _range_band(ctx, d, params)
+	var band: Array = _range_band(ctx, d, params, here.distance_to(danger))
+	if float(band[1]) < float(band[0]):
+		_drop()
+		return null
 	var opts := {
 		"weights": _weights(d),
 		"gun_range": gun_range,
-		"pref_range": _pref_range(d, gun_range, band),
+		"pref_range": _pref_range(ctx, d, params, gun_range, band),
 		"min_range": float(band[0]),
 		"max_range": float(band[1]),
 		"radius": radius,
@@ -166,6 +176,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"max_exposed": _max_exposed(d),
 		"require_unseen": _require_unseen(d),
 		"covered_only": _covered_only(ctx, d),
+		"flank_from": _flank_from(ctx),
+		"w_flank": _flank_weight(d),
 	}
 	var sc: Dictionary = field.score_station(team_id, ship.get_instance_id(), key, opts)
 	_score_us = float(sc.get("us", 0.0))

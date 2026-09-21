@@ -796,16 +796,69 @@ impl ReachField {
     pub(crate) fn cluster_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
         let radius = (radius / EXPOSURE_RADIUS_Q).ceil() * EXPOSURE_RADIUS_Q;
         let key = (team, (radius / EXPOSURE_RADIUS_Q) as i32, cluster_cells, ncx, ncz);
-        let version = self.teams.get(&team).map_or(0, |tl| tl.version);
+        self.cached_stats(key, |me| me.build_exposure_stats(team, radius, cluster_cells, ncx, ncz))
+    }
+
+    /// Per node: (max, mean over water cells) of the number of enemies able
+    /// to land shells on the cell. The router's fire price; never a wall.
+    pub(crate) fn cluster_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
+        let key = (team, -1, cluster_cells, ncx, ncz);
+        self.cached_stats(key, |me| me.build_fire_stats(team, cluster_cells, ncx, ncz))
+    }
+
+    fn cached_stats(
+        &mut self,
+        key: (i32, i32, i32, i32, i32),
+        build: impl FnOnce(&mut Self) -> (Vec<f32>, Vec<f32>),
+    ) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
+        let version = self.teams.get(&key.0).map_or(0, |tl| tl.version);
         if let Some((v, max, mean)) = self.exposure_cache.get(&key) {
             if *v == version {
                 return (max.clone(), mean.clone());
             }
         }
-        let (max, mean) = self.build_exposure_stats(team, radius, cluster_cells, ncx, ncz);
+        let (max, mean) = build(self);
         let out = (Arc::new(max), Arc::new(mean));
         self.exposure_cache.insert(key, (version, out.0.clone(), out.1.clone()));
         out
+    }
+
+    fn build_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
+        let n = (ncx.max(0) * ncz.max(0)) as usize;
+        let mut max = vec![0.0f32; n];
+        let mut mean = vec![0.0f32; n];
+        let Some(f) = self.field.clone() else { return (max, mean) };
+        if cluster_cells <= 0 {
+            return (max, mean);
+        }
+        let Some(tl) = self.teams.get(&team) else { return (max, mean) };
+        let fire: Vec<&[u64]> = tl.enemies.values().map(|e| e.fire.as_slice()).collect();
+        let mut count = vec![0u32; n];
+        for idx in 0..f.water.len() {
+            if f.water[idx] == 0 {
+                continue;
+            }
+            let ix = idx as i32 % f.w;
+            let iz = idx as i32 / f.w;
+            let cx = ix * f.mult / cluster_cells;
+            let cz = iz * f.mult / cluster_cells;
+            if cx < 0 || cz < 0 || cx >= ncx || cz >= ncz {
+                continue;
+            }
+            let c = (cz * ncx + cx) as usize;
+            count[c] += 1;
+            let e = fire.iter().filter(|p| bit_at(p, idx)).count() as f32;
+            mean[c] += e;
+            if e > max[c] {
+                max[c] = e;
+            }
+        }
+        for c in 0..n {
+            if count[c] > 0 {
+                mean[c] /= count[c] as f32;
+            }
+        }
+        (max, mean)
     }
 
     fn build_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
@@ -1585,6 +1638,10 @@ struct StationArgs {
     /// max_range below it.
     min_range: f32,
     max_range: f32,
+    /// Flank: penalise cells on the friendly side of `toward`, along the
+    /// axis from `toward` to `flank_from`.
+    flank_from: Vector2,
+    w_flank: f32,
 }
 
 fn opt<T: FromGodot>(d: &VarDictionary, key: &str, default: T) -> T {
@@ -1624,6 +1681,8 @@ impl StationArgs {
             covered_only: opt(d, "covered_only", false),
             min_range: opt(d, "min_range", 0.0f32),
             max_range: opt(d, "max_range", f32::INFINITY),
+            flank_from: opt(d, "flank_from", Vector2::ZERO),
+            w_flank: opt(d, "w_flank", 0.0f32),
         }
     }
 }
@@ -1640,6 +1699,7 @@ struct StationTerms {
     range_err: f32,
     escape: f32,
     detour: f32,
+    flank: f32,
     score: f32,
 }
 
@@ -1654,6 +1714,7 @@ impl StationTerms {
         d.set("range_err", self.range_err);
         d.set("escape", self.escape);
         d.set("detour", self.detour);
+        d.set("flank", self.flank);
         d.set("score", self.score);
         d
     }
@@ -1723,6 +1784,15 @@ fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx:
             t.detour = 1.0 - axis.normalized().dot(to_cell.normalized()).abs();
         }
     }
+    if a.w_flank > 0.0 {
+        let axis = a.flank_from - a.toward;
+        let to_cell = c - a.toward;
+        if axis.length_squared() > 1.0 && to_cell.length_squared() > 1.0 {
+            // Angle, not cosine: cosine is flat near the axis, where the slide starts.
+            let dot = axis.normalized().dot(to_cell.normalized()).clamp(-1.0, 1.0);
+            t.flank = (1.0 - dot.acos() / std::f32::consts::FRAC_PI_2).max(0.0);
+        }
+    }
     let w = a.w;
     t.score = w[0] * (t.reach.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
         - w[1] * exposed_frac
@@ -1731,7 +1801,8 @@ fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, idx:
         - w[4] * t.travel
         - w[5] * t.range_err
         + w[6] * t.escape
-        - a.w_detour * t.detour;
+        - a.w_detour * t.detour
+        - a.w_flank * t.flank;
     Some(t)
 }
 

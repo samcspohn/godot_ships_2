@@ -155,6 +155,42 @@ impl HpaGraph {
         true
     }
 
+    /// Metres of threat price along a-b: the stamped node cost (gain x
+    /// exposure or shooters) integrated over the segment, at the stamped
+    /// resolution. Zero unless exposure is priced.
+    pub(crate) fn segment_price(&self, a: Vector2, b: Vector2) -> f32 {
+        if !self.threat_cost_mode.get() || self.threats_muted.get() {
+            return 0.0;
+        }
+        let sub = self.sub_layer_active.get();
+        let node_w = (if sub { self.sub_size } else { self.cluster_size }) as f32 * self.cell_size;
+        let len = a.distance_to(b);
+        if !(len > 0.0) {
+            return 0.0;
+        }
+        let n = ((len / (node_w * 0.5)).ceil() as usize).clamp(1, 4096);
+        let ds = len / n as f32;
+        let mut total = 0.0f32;
+        for k in 0..n {
+            let p = a.lerp(b, (k as f32 + 0.5) / n as f32);
+            let gx = self.world_to_gx(p.x);
+            let gz = self.world_to_gz(p.y);
+            let cost = if sub {
+                let sid = self.sub_id(self.cell_scx(gx), self.cell_scz(gz));
+                if sid >= 0 && (sid as usize) < self.sub_threat_cost.len() { self.sub_threat_cost[sid as usize] } else { 0.0 }
+            } else {
+                let cid = self.cluster_id(self.cell_cx(gx), self.cell_cz(gz));
+                if cid >= 0 && (cid as usize) < self.cluster_threat_cost.len() { self.cluster_threat_cost[cid as usize] } else { 0.0 }
+            };
+            total += cost * ds;
+        }
+        total
+    }
+
+    fn priced_len(&self, a: Vector2, b: Vector2) -> f32 {
+        a.distance_to(b) + self.segment_price(a, b)
+    }
+
     /// Coastline-hugging string pull. `hard_cl` is the passability floor the
     /// input already satisfies and the output may never breach; `hug_cl` is the
     /// preferred stand-off the pull aims for and falls back from.
@@ -194,6 +230,23 @@ impl HpaGraph {
 
         let merge_eps = self.cell_size * 0.1;
 
+        // With exposure priced, a shortcut may not cost more than the
+        // corridor it replaces: a -> pts... -> end against a -> end.
+        let priced = self.threat_cost_mode.get() && !self.threats_muted.get();
+        let corridor_ok = |a: Vector2, pts: &[Vector2], end: Vector2| -> bool {
+            if !priced {
+                return true;
+            }
+            let mut prev = a;
+            let mut total = 0.0f32;
+            for &q in pts {
+                total += self.priced_len(prev, q);
+                prev = q;
+            }
+            total += self.priced_len(prev, end);
+            self.priced_len(a, end) <= total + merge_eps
+        };
+
         // -- Steps 1 & 4: tangent sweep --
         let sweep_pass = |src: &[Vector2]| -> Vec<Vector2> {
             let n = src.len() as i32;
@@ -211,8 +264,12 @@ impl HpaGraph {
                 // hard_cl throughout, so t = i + 1 is always reachable.
                 let mut j: i32 = -1;
                 let mut use_cl = hug_cl;
+                let sees = |t: i32, cl: f32| -> bool {
+                    clear(a_anchor, src[t as usize], cl)
+                        && corridor_ok(a_anchor, &src[(i + 1) as usize..t as usize], src[t as usize])
+                };
                 for t in (i + 1..n).rev() {
-                    if clear(a_anchor, src[t as usize], hug_cl) {
+                    if sees(t, hug_cl) {
                         j = t;
                         break;
                     }
@@ -220,7 +277,7 @@ impl HpaGraph {
                 if j < 0 && hug_cl > hard_cl {
                     use_cl = hard_cl;
                     for t in (i + 1..n).rev() {
-                        if clear(a_anchor, src[t as usize], hard_cl) {
+                        if sees(t, hard_cl) {
                             j = t;
                             break;
                         }
@@ -245,7 +302,8 @@ impl HpaGraph {
                 let mut hi = 1.0f32;
                 for _ in 0..PULL_BISECT_STEPS {
                     let mid = (lo + hi) * 0.5;
-                    if clear(a_anchor, src[j as usize].lerp(src[(j + 1) as usize], mid), use_cl) {
+                    let q = src[j as usize].lerp(src[(j + 1) as usize], mid);
+                    if clear(a_anchor, q, use_cl) && corridor_ok(a_anchor, &src[(i + 1) as usize..=j as usize], q) {
                         lo = mid;
                     } else {
                         hi = mid;
@@ -332,15 +390,20 @@ impl HpaGraph {
                     hard_cl
                 };
 
+                let via_ok = |c: Vector2| -> bool {
+                    clear(u, c, v_cl) && clear(c, w, v_cl)
+                        && (!priced
+                            || self.priced_len(u, c) + self.priced_len(c, w)
+                                <= self.priced_len(u, v) + self.priced_len(v, w) + merge_eps)
+                };
                 let mut lo = 0.0f32;
-                if clear(u, v + delta, v_cl) && clear(v + delta, w, v_cl) {
+                if via_ok(v + delta) {
                     lo = 1.0; // whole detour was unnecessary
                 } else {
                     let mut hi = 1.0f32;
                     for _ in 0..PULL_BISECT_STEPS {
                         let mid = (lo + hi) * 0.5;
-                        let c = v + delta * mid;
-                        if clear(u, c, v_cl) && clear(c, w, v_cl) {
+                        if via_ok(v + delta * mid) {
                             lo = mid;
                         } else {
                             hi = mid;

@@ -2483,6 +2483,10 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_camp.reset()
 	if prev_skill == &"Station" and _active_skill_name != &"Station":
 		_skill_station.reset()
+	if prev_skill == &"Push" and _active_skill_name != &"Push":
+		_skill_push.reset()
+	if prev_skill == &"Flank" and _active_skill_name != &"Flank":
+		_skill_flank.reset()
 	if prev_skill == &"Kite" and _active_skill_name != &"Kite":
 		_skill_kite.reset()
 

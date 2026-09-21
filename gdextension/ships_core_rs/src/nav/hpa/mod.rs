@@ -474,7 +474,17 @@ impl HpaGraph {
         let Some(mut field) = field else { return };
         let (max, mean) = field.bind_mut().cluster_exposure_stats(team_id, radius, self.cluster_size, self.ncx, self.ncz);
         let sub = field.bind_mut().cluster_exposure_stats(team_id, radius, self.sub_size, self.nsubx, self.nsubz).0;
-        self.stamp_threat_costs(&max, &mean, &sub, gain);
+        self.stamp_threat_costs(&max, &mean, &sub, gain, true);
+    }
+
+    /// Debug: stamp the fire price (shooter count per node) as a navigator
+    /// subscribed with set_fire_source would.
+    #[func]
+    fn debug_stamp_fire(&mut self, field: Option<Gd<ReachField>>, team_id: i32, gain: f32) {
+        let Some(mut field) = field else { return };
+        let (max, mean) = field.bind_mut().cluster_fire_stats(team_id, self.cluster_size, self.ncx, self.ncz);
+        let sub = field.bind_mut().cluster_fire_stats(team_id, self.sub_size, self.nsubx, self.nsubz).0;
+        self.stamp_threat_costs(&max, &mean, &sub, gain, false);
     }
 
     #[func]

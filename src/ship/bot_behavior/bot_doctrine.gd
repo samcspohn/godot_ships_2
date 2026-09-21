@@ -64,6 +64,10 @@ var universal_sail_forward_fallback: bool = false
 ## crosses it when the detour would cost more. 0 or INF restores the wall.
 var detection_cost_gain: float = 4.0
 
+## Extra HPA step cost per enemy able to land shells on the node, for any
+## hull not routing under wants_stealth. Also prices Station transit. 0 = off.
+var fire_cost_gain: float = 0.25
+
 ## Whether the idle and dark arms get the broadside/spread post-processors. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true
@@ -112,6 +116,34 @@ var kite_w_exposed: float = 1.0
 var kite_w_cone: float = 0.6
 var kite_w_detect: float = 0.2
 var kite_w_escape: float = 0.2
+
+## Push is the station search with a must-close band: only cells nearer the
+## danger centre than the hull stands, never inside the engagement range.
+var push_w_reach: float = 1.0
+var push_w_exposed: float = 0.5
+var push_w_cone: float = 0.5
+var push_w_detect: float = 0.0
+var push_w_travel: float = 0.5
+var push_w_range: float = 0.6
+var push_w_escape: float = 0.0
+var push_max_exposed: float = INF
+## Closing step per rescore, in turning circles: the band's far edge sits
+## this much nearer the danger centre than the hull.
+var push_step_turns: float = 2.0
+
+## Flank is the band at the engagement range (out to where the hull stands)
+## plus a penalty for sitting on the axis from the enemy to the friendly
+## centre, so it slides round to a bearing the line is not facing.
+var flank_w_reach: float = 0.8
+var flank_w_exposed: float = 0.7
+var flank_w_cone: float = 0.7
+var flank_w_detect: float = 0.0
+var flank_w_travel: float = 0.2
+var flank_w_range: float = 0.3
+var flank_w_escape: float = 0.0
+var flank_w_axis: float = 1.0
+var flank_max_exposed: float = INF
+var flank_band_ratio: float = 1.15
 
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
@@ -332,6 +364,10 @@ static func for_cruiser() -> BotDoctrine:
 	d.station_w_range = 0.3
 	d.station_w_escape = 0.2
 	d.cover_w_detect = 0.8
+	d.push_w_detect = 0.3
+	d.flank_w_detect = 0.3
+	d.push_max_exposed = 2.0
+	d.flank_max_exposed = 2.0
 	# A cruiser's position is covered or it is not held: nobody can shoot it,
 	# or nobody can see it. The 1.0 cap on top keeps a battleship out of even
 	# the unseen case until the 1-v-x rule reads threat and hull points.
@@ -395,6 +431,11 @@ static func for_destroyer() -> BotDoctrine:
 	d.station_w_escape = 0.5
 	d.cover_w_detect = 1.0
 	d.cover_w_escape = 0.5
+	# A torpedo boat pushes to its launch band in the dark.
+	d.push_w_detect = 1.0
+	d.push_w_reach = 0.3
+	d.push_max_exposed = 1.0
+	d.flank_w_detect = 1.0
 	d.station_max_exposed = 0.0
 	d.station_require_unseen = true
 	d.cover_max_exposed = 0.0
@@ -437,4 +478,7 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	d.station_require_unseen = false
 	d.cover_max_exposed = 1.0
 	d.cover_require_unseen = false
+	d.push_w_detect = 0.0
+	d.push_w_reach = 1.0
+	d.push_max_exposed = 2.0
 	return d

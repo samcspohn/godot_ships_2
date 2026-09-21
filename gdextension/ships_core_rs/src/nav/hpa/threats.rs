@@ -190,18 +190,20 @@ impl HpaGraph {
     ///
     /// `macro_mean` prices the abstract search and sets its wall; `sub_max`
     /// does both at sub-cluster resolution for refinement and string-pulling.
-    pub(crate) fn stamp_threat_costs(&mut self, macro_max: &[f32], macro_mean: &[f32], sub_max: &[f32], gain: f32) {
+    /// `walled` false (the fire price) never flags a node: a shooter count
+    /// is a price at any depth.
+    pub(crate) fn stamp_threat_costs(&mut self, macro_max: &[f32], macro_mean: &[f32], sub_max: &[f32], gain: f32, walled: bool) {
         self.clear_threats();
         let cost_mode = gain.is_finite() && gain > 0.0;
         self.threat_cost_mode.set(cost_mode);
-        let wall_at = if cost_mode { COST_MODE_WALL_EXPOSURE } else { 0.0 };
+        let wall_at = if !walled { f32::INFINITY } else if cost_mode { COST_MODE_WALL_EXPOSURE } else { 0.0 };
         let n = self.clusters.len().min(macro_max.len()).min(macro_mean.len());
         for cid in 0..n {
             let (mx, mean) = (macro_max[cid], macro_mean[cid]);
             if mx <= 0.0 || !self.clusters[cid].navigable {
                 continue;
             }
-            let wall = if cost_mode { mean > wall_at } else { true };
+            let wall = if !walled { false } else if cost_mode { mean > wall_at } else { true };
             if wall {
                 self.cluster_threat_blocked[cid] = 1;
                 self.threat_blocked_cids.push(cid as i32);

@@ -172,9 +172,9 @@ var should_query_behavior: bool = false
 ## shared bin. Constant for the ship's lifetime once ship + concealment are
 ## ready; 0 means "not yet computable, retry lazily".
 var _threat_effective_radius: float = 0.0
-## Whether the navigator is currently subscribed to the shared ThreatRegistry.
-## Avoids redundant set_threat_source churn when wants_stealth is stable.
-var _threat_subscribed: bool = false
+## What the navigator is routing against: 0 nothing, 1 the fire price
+## (shooter count, any hull), 2 the stealth layer (registry + detection).
+var _route_price: int = 0
 
 
 # ===========================================================================
@@ -776,35 +776,36 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 ## transitions (spotted <-> hidden) flip subscription at most once per
 ## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
 func _sync_threat_subscription() -> void:
-	if behavior == null or server_node == null or server_node.threat_registry == null:
-		if _threat_subscribed:
-			navigator.clear_threat_source()
-			navigator.clear_detection_source()
-			_threat_subscribed = false
+	var want := 0
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	var field_ok: bool = field != null and field.is_built()
+	if behavior != null and server_node != null:
+		if behavior.wants_stealth and server_node.threat_registry != null:
+			want = 2
+		elif field_ok and behavior.doctrine().fire_cost_gain > 0.0:
+			want = 1
+	if want == _route_price:
 		return
-
-	if not behavior.wants_stealth:
-		if _threat_subscribed:
-			navigator.clear_threat_source()
-			navigator.clear_detection_source()
-			_threat_subscribed = false
+	if _route_price != 0:
+		navigator.clear_threat_source()
+		navigator.clear_detection_source()
+		_route_price = 0
+	if want == 0:
 		return
-
-	if _threat_subscribed:
+	if want == 1:
+		navigator.set_fire_source(field, _ship.team.team_id, behavior.doctrine().fire_cost_gain)
+		_route_price = 1
 		return
-
 	if _threat_effective_radius <= 0.0:
-		# Retry lazily — concealment params may not be initialized at _ready.
+		# Retry lazily: concealment params may not be initialized at _ready.
 		_threat_effective_radius = _compute_threat_effective_radius()
 		if _threat_effective_radius <= 0.0:
 			return
-
 	navigator.set_threat_source(server_node.threat_registry, _ship.team.team_id, _threat_effective_radius)
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	if field != null and field.is_built():
+	if field_ok:
 		navigator.set_detection_source(field, _ship.team.team_id, _threat_effective_radius,
 			behavior.doctrine().detection_cost_gain)
-	_threat_subscribed = true
+	_route_price = 2
 
 
 func _compute_threat_effective_radius() -> float:
@@ -1287,17 +1288,24 @@ func _emit_debug_draws() -> void:
 	# --- m2) Station / Cover: the held cell and its score breakdown ---
 	if behavior != null:
 		var st_skill: SkillStation = null
-		if behavior._active_skill_name == &"Station":
-			st_skill = behavior._skill_station
-		elif behavior._active_skill_name == &"FindCover":
-			st_skill = behavior._skill_cover
+		match behavior._active_skill_name:
+			&"Station": st_skill = behavior._skill_station
+			&"FindCover": st_skill = behavior._skill_cover
+			&"Push": st_skill = behavior._skill_push
+			&"Flank": st_skill = behavior._skill_flank
 		if behavior._active_skill_name == &"Kite" and behavior._skill_kite.has_ray():
 			var ke: Vector3 = behavior._skill_kite.ray_end()
 			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
 			Debug.draw_label(Vector3(ke.x, 60.0, ke.z), behavior._skill_kite.debug_text(), Color(1.0, 0.8, 1.0), 14)
 		if st_skill != null and st_skill.has_station():
 			var st_pos: Vector3 = st_skill.station_position()
-			var st_col := Color(0.2, 1.0, 0.9) if st_skill == behavior._skill_station else Color(0.3, 1.0, 0.3)
+			var st_col := Color(0.2, 1.0, 0.9)
+			if st_skill == behavior._skill_cover:
+				st_col = Color(0.3, 1.0, 0.3)
+			elif st_skill == behavior._skill_push:
+				st_col = Color(1.0, 0.5, 0.1)
+			elif st_skill == behavior._skill_flank:
+				st_col = Color(1.0, 0.9, 0.2)
 			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
 			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
 			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)
