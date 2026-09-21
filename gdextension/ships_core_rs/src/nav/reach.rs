@@ -1592,12 +1592,17 @@ impl ReachField {
         let mut threat = vec![f32::NAN; cells];
         let mut utility = vec![f32::NAN; cells];
         let mut best: Option<(usize, UtilityTerms)> = None;
+        // Nothing under the cap: the way out is the least-threatened cell.
+        let mut calmest: Option<(usize, UtilityTerms)> = None;
         let mut range = (f32::INFINITY, f32::NEG_INFINITY);
         for iz in p.bx.z0..=p.bx.z1 {
             for ix in p.bx.x0..=p.bx.x1 {
                 let idx = (iz * f.w + ix) as usize;
                 let Some(t) = utility_terms(&f, tl, p, hull_key, &a, idx) else { continue };
                 threat[idx] = t.threat;
+                if calmest.is_none_or(|(_, b)| t.threat < b.threat || (t.threat == b.threat && t.risk < b.risk)) {
+                    calmest = Some((idx, t));
+                }
                 if t.threat > a.max_threat {
                     continue;
                 }
@@ -1609,7 +1614,9 @@ impl ReachField {
                 }
             }
         }
-        if let Some((idx, t)) = best {
+        let escaping = best.is_none();
+        d.set("escaping", escaping);
+        if let Some((idx, t)) = best.or(calmest) {
             d.set("has_best", true);
             d.set("best", f.centre(idx));
             d.set("best_score", t.utility);
@@ -1619,7 +1626,7 @@ impl ReachField {
             d.set("here_terms", &t.to_dict());
         }
         if let Some(t) = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, p, hull_key, &a, i)) {
-            if t.threat <= a.max_threat {
+            if escaping || t.threat <= a.max_threat {
                 d.set("held_score", t.utility);
                 d.set("held_terms", &t.to_dict());
             }

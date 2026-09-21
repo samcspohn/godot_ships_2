@@ -158,8 +158,10 @@ var utility_w_close: float = 0.3
 ## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
 var utility_w_threat: float = 1.0
 var utility_hp_aversion: float = 2.0
-var utility_w_path: float = 0.5
-var utility_max_threat: float = 1.0
+var utility_w_path: float = 0.2
+## Cells over this threat are never candidates: the search maximises
+## utility over the water at or under it.
+var utility_max_threat: float = 0.5
 
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
@@ -385,7 +387,6 @@ static func for_cruiser() -> BotDoctrine:
 	d.push_w_detect = 0.3
 	d.flank_w_detect = 0.3
 	d.utility_w_threat = 1.2
-	d.utility_max_threat = 0.8
 	d.push_max_exposed = 2.0
 	d.flank_max_exposed = 2.0
 	# A cruiser's position is covered or it is not held: nobody can shoot it,
@@ -454,7 +455,6 @@ static func for_destroyer() -> BotDoctrine:
 	d.utility_w_reach = 0.4
 	d.utility_w_reveal = 1.0
 	d.utility_w_close = 0.2
-	d.utility_max_threat = 0.5
 	# A torpedo boat pushes to its launch band in the dark.
 	d.push_w_detect = 1.0
 	d.push_w_reach = 0.3
@@ -507,5 +507,4 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	d.push_max_exposed = 2.0
 	d.utility_w_reach = 0.8
 	d.utility_w_reveal = 0.8
-	d.utility_max_threat = 0.85
 	return d
