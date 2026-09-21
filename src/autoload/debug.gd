@@ -1396,7 +1396,7 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 #                  is the unseen cell nearest the enemy it can reach
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, DETECTION, CONE, SAFE_COST, ESCAPE }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, DETECTION, CONE, SAFE_COST, ESCAPE, THREAT, UTILITY, PATH_RISK }
 const REACH_PLAN_BOX_M: float = 12000.0
 
 const REACH_REFRESH_SECONDS: float = 0.5
@@ -1425,6 +1425,12 @@ void fragment() {
 		col = half_deg <= 30.0 ? vec3(0.2, 1.0, 0.3) : (half_deg <= 60.0 ? vec3(1.0, 0.9, 0.2) : vec3(1.0, 0.1, 0.1));
 	} else if (mode == 6) {
 		col = mix(vec3(0.6, 0.9, 1.0), vec3(0.05, 0.05, 0.6), float(c - 1) / 254.0);
+	} else if (mode == 8) {
+		col = mix(vec3(0.2, 1.0, 0.3), vec3(1.0, 0.05, 0.05), float(c - 1) / 254.0);
+	} else if (mode == 9) {
+		col = c == 1 ? vec3(0.35, 0.0, 0.0) : mix(vec3(0.1, 0.1, 0.7), vec3(0.2, 1.0, 0.3), float(c - 2) / 253.0);
+	} else if (mode == 10) {
+		col = mix(vec3(0.9, 0.9, 0.9), vec3(0.6, 0.0, 0.7), float(c - 1) / 254.0);
 	} else {
 		col = c == 1 ? vec3(0.1, 0.6, 0.2) : mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c - 2) / 253.0);
 	}
@@ -1541,6 +1547,35 @@ func _reach_server_tick() -> void:
 					str(st.marker) if st.has_marker else "none", float(st.marker_cost)]
 			if st.has_marker:
 				marker = st.marker
+		ReachMode.THREAT, ReachMode.UTILITY, ReachMode.PATH_RISK:
+			var st: Dictionary = _reach_plan(field, ship, team_id, here)
+			if st.is_empty():
+				return
+			var id: int = ship.get_instance_id()
+			if _reach_srv_mode == ReachMode.PATH_RISK:
+				bytes = field.get_path_risk_bytes(id)
+				note = "plan %.1f ms%s, riskiest cell %.0f shooter-metres" % [
+					float(st.us) / 1000.0, " (cached)" if st.cached else "", float(st.get("max_risk", 0.0))]
+			else:
+				var controller = ship.get_node_or_null("Modules/BotController")
+				if g.is_empty() or controller == null or controller.get("behavior") == null:
+					return
+				var opts: Dictionary = controller.behavior.reach_utility_opts(field, team_id, g)
+				var u: Dictionary = field.score_utility(team_id, id, NavigationMapManager.reach_hull_key(g), opts)
+				var ht: Dictionary = u.get("here_terms", {})
+				note = "score %.1f ms | here threat %.2f (%d shooters) reach %.1f reveal %.1f risk %.0f utility %.2f" % [
+					float(u.get("us", 0.0)) / 1000.0, float(ht.get("threat", 0.0)), int(ht.get("shooters", 0)),
+					float(ht.get("reach", 0.0)), float(ht.get("reveal", 0.0)), float(ht.get("risk", 0.0)),
+					float(ht.get("utility", 0.0))]
+				if _reach_srv_mode == ReachMode.THREAT:
+					bytes = field.get_threat_bytes(id)
+				else:
+					bytes = field.get_utility_bytes(id)
+					if bool(u.get("has_best", false)):
+						var bt: Dictionary = u.best_terms
+						marker = u.best
+						note += " | best threat %.2f reach %.1f reveal %.1f risk %.0f utility %.2f" % [
+							float(bt.threat), float(bt.reach), float(bt.reveal), float(bt.risk), float(bt.utility)]
 	if bytes.is_empty():
 		return
 	var info: Dictionary = field.get_field_info()

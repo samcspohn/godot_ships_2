@@ -145,6 +145,22 @@ var flank_w_axis: float = 1.0
 var flank_max_exposed: float = INF
 var flank_band_ratio: float = 1.15
 
+## Prototype single objective (ReachField.score_utility, Ctrl+R THREAT /
+## UTILITY / PATH_RISK): value from reach and reveal against the cell's
+## threat score and the transit's risk integral. Not yet driving any skill.
+var utility_first: bool = true
+var utility_w_reach: float = 1.0
+var utility_w_reveal: float = 0.5
+## Cells nearer the danger centre score higher, so a hull with nothing in
+## reach keeps coming until threat or transit risk outweighs it.
+var utility_w_close: float = 0.3
+## Per unit of pressure at the cell (threat 0.5 = 1 unit, 0.9 = 3.3, 0.97 = 5),
+## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
+var utility_w_threat: float = 1.0
+var utility_hp_aversion: float = 2.0
+var utility_w_path: float = 0.5
+var utility_max_threat: float = 1.0
+
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
 ## for every degree off the line to the enemy.
@@ -281,7 +297,7 @@ var evade_override_threat: float = 0.75
 var evade_exclude: Array[StringName] = [&"SailForward"]
 var evade_params: Dictionary = {}
 
-var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite"]
+var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite", &"Utility"]
 var spread_distance: float = 1000.0
 var spread_multiplier: float = 1.0
 
@@ -315,6 +331,8 @@ static func for_battleship() -> BotDoctrine:
 	d.station_w_travel = 0.5
 	d.station_w_range = 0.4
 	d.cover_w_detect = 0.1
+	d.utility_w_threat = 0.6
+	d.utility_w_close = 0.5
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
 	d.push_equalize_threat = d.push_threat
@@ -322,7 +340,7 @@ static func for_battleship() -> BotDoctrine:
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
 	d.broadside_params = {"oscillation_bias": 0.5}
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station", &"Utility"]
 	# A battleship's evasion IS its angling, so it is never worth suppressing:
 	# the presentation weave costs it nothing it was going to use anyway.
 	d.evade_override_threat = 0.6
@@ -344,7 +362,7 @@ static func for_cruiser() -> BotDoctrine:
 	# not in the same position -- with broadside off there is nothing for it to
 	# contend with, and a cruiser under fire has the rudder to make weaving pay.
 	d.use_broadside = false
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Utility"]
 	d.low_threat_arm_first = true
 	# CA forces the post-processors off for its whole high-threat close arm,
 	# rather than only at the extremes the way BB does.
@@ -366,6 +384,8 @@ static func for_cruiser() -> BotDoctrine:
 	d.cover_w_detect = 0.8
 	d.push_w_detect = 0.3
 	d.flank_w_detect = 0.3
+	d.utility_w_threat = 1.2
+	d.utility_max_threat = 0.8
 	d.push_max_exposed = 2.0
 	d.flank_max_exposed = 2.0
 	# A cruiser's position is covered or it is not held: nobody can shoot it,
@@ -405,7 +425,7 @@ static func for_destroyer() -> BotDoctrine:
 	d.push_equalize_threat = 0.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Retreat", &"Spot"]
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Utility"]
 	d.spread_overrides = {
 		&"Spot": {"spread_distance": 5000.0, "spread_multiplier": 1.0},
 	}
@@ -431,6 +451,10 @@ static func for_destroyer() -> BotDoctrine:
 	d.station_w_escape = 0.5
 	d.cover_w_detect = 1.0
 	d.cover_w_escape = 0.5
+	d.utility_w_reach = 0.4
+	d.utility_w_reveal = 1.0
+	d.utility_w_close = 0.2
+	d.utility_max_threat = 0.5
 	# A torpedo boat pushes to its launch band in the dark.
 	d.push_w_detect = 1.0
 	d.push_w_reach = 0.3
@@ -481,4 +505,7 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	d.push_w_detect = 0.0
 	d.push_w_reach = 1.0
 	d.push_max_exposed = 2.0
+	d.utility_w_reach = 0.8
+	d.utility_w_reveal = 0.8
+	d.utility_max_threat = 0.85
 	return d

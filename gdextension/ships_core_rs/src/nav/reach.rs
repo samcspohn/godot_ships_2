@@ -538,12 +538,19 @@ struct ShipPlan {
     bx: BoxR,
     safe: Vec<f32>,
     escape: Vec<f32>,
+    /// Price integrated along the safe path to each cell (metres x price).
+    risk: Vec<f32>,
     price: Vec<f32>,
     pass: Vec<bool>,
     walls_muted: bool,
     max_safe: f32,
     max_escape: f32,
+    max_risk: f32,
     us: f32,
+    /// Filled by score_utility; NaN where the cell was rejected.
+    threat: Vec<f32>,
+    utility: Vec<f32>,
+    utility_range: (f32, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -605,10 +612,23 @@ fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], idx: usize) -> (f32, [f32;
     (n, d)
 }
 
-fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], dir_price: Option<&[[f32; 4]]>, gain: f32, sources: &[usize], out: &mut [f32]) {
+fn dijkstra(
+    f: &Field,
+    bx: BoxR,
+    pass: &[bool],
+    price: &[f32],
+    dir_price: Option<&[[f32; 4]]>,
+    gain: f32,
+    sources: &[usize],
+    out: &mut [f32],
+    mut risk: Option<&mut [f32]>,
+) {
     let mut heap = BinaryHeap::new();
     for &s in sources {
         out[s] = 0.0;
+        if let Some(r) = risk.as_deref_mut() {
+            r[s] = 0.0;
+        }
         heap.push(QItem { cost: 0.0, idx: s as u32 });
     }
     let w = f.w;
@@ -647,9 +667,13 @@ fn dijkstra(f: &Field, bx: BoxR, pass: &[bool], price: &[f32], dir_price: Option
                     }
                     None => (price[idx], price[n]),
                 };
-                let c = cost + len * (1.0 + gain * 0.5 * (pa + pb));
+                let step_risk = len * 0.5 * (pa + pb);
+                let c = cost + len + gain * step_risk;
                 if c < out[n] {
                     out[n] = c;
+                    if let Some(r) = risk.as_deref_mut() {
+                        r[n] = r[idx] + step_risk;
+                    }
                     heap.push(QItem { cost: c, idx: n as u32 });
                 }
             }
@@ -1536,6 +1560,7 @@ impl ReachField {
         d.set("escape_here", p.escape[cell]);
         d.set("max_safe", p.max_safe);
         d.set("max_escape", p.max_escape);
+        d.set("max_risk", p.max_risk);
         d.set("has_marker", best.is_some());
         d.set("marker", best.map_or(Vector2::ZERO, |(_, i)| f.centre(i)));
         d.set("marker_cost", best.map_or(f32::INFINITY, |(_, i)| p.safe[i]));
@@ -1544,6 +1569,134 @@ impl ReachField {
 
     /// 0 outside the plan or unreachable, else 1..255 by cost over the
     /// costliest reachable cell.
+    /// Prototype of the single positioning objective over ship `id`'s plan:
+    /// per cell, the ladder's threat score as it would read standing there
+    /// (shooters whose fire plane covers the cell, by range pressure and
+    /// presentation against the cone heading, halved where nobody could see
+    /// the hull), value from reach and reveal, and the transit's risk
+    /// integral. utility = value - w_threat x threat - w_path x risk /
+    /// gun_range; cells over max_threat are rejected. Layers are kept for the
+    /// byte getters. Returns the best cell and the terms here and there.
+    #[func]
+    fn score_utility(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary) -> VarDictionary {
+        let t0 = Instant::now();
+        let mut d = VarDictionary::new();
+        d.set("has_best", false);
+        d.set("held_score", f32::NEG_INFINITY);
+        self.ensure_cone(team);
+        self.ensure_detect(team);
+        let (Some(f), Some(tl)) = (self.field.clone(), self.teams.get(&team)) else { return d };
+        let Some(p) = self.plans.get(&id) else { return d };
+        let a = UtilityArgs::from_dict(&opts);
+        let cells = p.pass.len();
+        let mut threat = vec![f32::NAN; cells];
+        let mut utility = vec![f32::NAN; cells];
+        let mut best: Option<(usize, UtilityTerms)> = None;
+        let mut range = (f32::INFINITY, f32::NEG_INFINITY);
+        for iz in p.bx.z0..=p.bx.z1 {
+            for ix in p.bx.x0..=p.bx.x1 {
+                let idx = (iz * f.w + ix) as usize;
+                let Some(t) = utility_terms(&f, tl, p, hull_key, &a, idx) else { continue };
+                threat[idx] = t.threat;
+                if t.threat > a.max_threat {
+                    continue;
+                }
+                utility[idx] = t.utility;
+                range.0 = range.0.min(t.utility);
+                range.1 = range.1.max(t.utility);
+                if best.is_none_or(|(_, b)| t.utility > b.utility) {
+                    best = Some((idx, t));
+                }
+            }
+        }
+        if let Some((idx, t)) = best {
+            d.set("has_best", true);
+            d.set("best", f.centre(idx));
+            d.set("best_score", t.utility);
+            d.set("best_terms", &t.to_dict());
+        }
+        if let Some(t) = utility_terms(&f, tl, p, hull_key, &a, p.key.cell) {
+            d.set("here_terms", &t.to_dict());
+        }
+        if let Some(t) = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, p, hull_key, &a, i)) {
+            if t.threat <= a.max_threat {
+                d.set("held_score", t.utility);
+                d.set("held_terms", &t.to_dict());
+            }
+        }
+        d.set("us", t0.elapsed().as_secs_f32() * 1e6);
+        let p = self.plans.get_mut(&id).unwrap();
+        p.threat = threat;
+        p.utility = utility;
+        p.utility_range = range;
+        d
+    }
+
+    /// One point under the same `opts`, or an empty dictionary when it is
+    /// outside the plan, unreachable, claimed or over max_threat.
+    #[func]
+    fn utility_score_at(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, point: Vector2) -> VarDictionary {
+        self.ensure_cone(team);
+        self.ensure_detect(team);
+        let (Some(f), Some(tl), Some(p)) = (self.field.as_ref(), self.teams.get(&team), self.plans.get(&id)) else {
+            return VarDictionary::new();
+        };
+        let a = UtilityArgs::from_dict(&opts);
+        match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, hull_key, &a, i)) {
+            Some(t) if t.threat <= a.max_threat => t.to_dict(),
+            _ => VarDictionary::new(),
+        }
+    }
+
+    /// 0 outside the plan, else 1..255 by threat 0..1.
+    #[func]
+    fn get_threat_bytes(&self, id: i64) -> PackedByteArray {
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(p) = self.plans.get(&id) {
+            for (o, &t) in out.iter_mut().zip(p.threat.iter()) {
+                if t.is_finite() {
+                    *o = 1 + (254.0 * t.clamp(0.0, 1.0)).round() as u8;
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// 0 outside the plan, 1 rejected (over max_threat), else 2..255 from
+    /// the worst to the best utility scored.
+    #[func]
+    fn get_utility_bytes(&self, id: i64) -> PackedByteArray {
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(p) = self.plans.get(&id) {
+            let (lo, hi) = p.utility_range;
+            let span = (hi - lo).max(1e-6);
+            for (i, o) in out.iter_mut().enumerate() {
+                let t = p.threat.get(i).copied().unwrap_or(f32::NAN);
+                if !t.is_finite() {
+                    continue;
+                }
+                let u = p.utility.get(i).copied().unwrap_or(f32::NAN);
+                *o = if u.is_finite() { 2 + (253.0 * ((u - lo) / span).clamp(0.0, 1.0)).round() as u8 } else { 1 };
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// 0 outside the plan, else 1..255 by the risk integral of the safe path.
+    #[func]
+    fn get_path_risk_bytes(&self, id: i64) -> PackedByteArray {
+        let mut out = vec![0u8; self.cell_count()];
+        if let Some(p) = self.plans.get(&id) {
+            let scale = p.max_risk.max(1.0);
+            for (o, &r) in out.iter_mut().zip(p.risk.iter()) {
+                if r.is_finite() {
+                    *o = 1 + (254.0 * (r / scale).clamp(0.0, 1.0)).round() as u8;
+                }
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
     #[func]
     fn get_safe_cost_bytes(&self, id: i64) -> PackedByteArray {
         let mut out = vec![0u8; self.cell_count()];
@@ -1753,6 +1906,158 @@ impl StationArgs {
             w_flank: opt(d, "w_flank", 0.0f32),
         }
     }
+}
+
+/// A shooter's threat share when it would see the hull only once the guns
+/// bloom, and when it could not see it at all (planes, radar, belief error).
+const UNSEEN_FIRING_FACTOR: f32 = 0.5;
+const UNSEEN_FACTOR: f32 = 0.15;
+
+struct UtilityArgs {
+    /// Per enemy id: matchup x condition x class weight, as get_threat_score
+    /// computes them for the hull asking.
+    danger: HashMap<i64, f32>,
+    /// Per enemy id: its concealment radius, for the reveal term.
+    spot: HashMap<i64, f32>,
+    threat_sat: f32,
+    gun_range: f32,
+    /// Own concealment radius, and the radius the guns bloom it to.
+    radius: f32,
+    fire_radius: f32,
+    toward: Vector2,
+    w_reach: f32,
+    w_reveal: f32,
+    w_close: f32,
+    w_threat: f32,
+    /// Multiplies the threat cost: 1 at full health, rising with damage.
+    aversion: f32,
+    w_path: f32,
+    max_threat: f32,
+    held: Vector2,
+    avoid: Vec<Vector2>,
+    avoid_r2: f32,
+}
+
+impl UtilityArgs {
+    fn from_dict(d: &VarDictionary) -> Self {
+        let map = |key: &str| -> HashMap<i64, f32> {
+            opt(d, key, VarDictionary::new())
+                .iter_shared()
+                .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()?, v.try_to::<f32>().ok()?)))
+                .collect()
+        };
+        Self {
+            danger: map("enemy_danger"),
+            spot: map("enemy_spot"),
+            threat_sat: opt(d, "threat_sat", std::f32::consts::LN_2),
+            gun_range: opt(d, "gun_range", 1.0f32).max(1.0),
+            radius: opt(d, "radius", 0.0f32),
+            fire_radius: opt(d, "fire_radius", 0.0f32),
+            toward: opt(d, "toward", Vector2::ZERO),
+            w_reach: opt(d, "w_reach", 1.0f32),
+            w_reveal: opt(d, "w_reveal", 0.5f32),
+            w_close: opt(d, "w_close", 0.0f32),
+            w_threat: opt(d, "w_threat", 1.0f32),
+            aversion: opt(d, "aversion", 1.0f32),
+            w_path: opt(d, "w_path", 0.5f32),
+            max_threat: opt(d, "max_threat", 1.0f32),
+            held: opt(d, "held", Vector2::new(f32::INFINITY, f32::INFINITY)),
+            avoid: opt(d, "avoid", PackedVector2Array::new()).to_vec(),
+            avoid_r2: opt(d, "avoid_radius", 0.0f32).powi(2),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct UtilityTerms {
+    threat: f32,
+    /// Threat as units of pressure (-log2(1 - threat)): linear in what is
+    /// pointed at the cell where threat itself saturates, so the cost of a
+    /// bad cell keeps growing past anything the value column can pay.
+    pressure: f32,
+    shooters: f32,
+    reach: f32,
+    reveal: f32,
+    close: f32,
+    value: f32,
+    risk: f32,
+    utility: f32,
+}
+
+impl UtilityTerms {
+    fn to_dict(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("threat", self.threat);
+        d.set("pressure", self.pressure);
+        d.set("shooters", self.shooters);
+        d.set("reach", self.reach);
+        d.set("reveal", self.reveal);
+        d.set("close", self.close);
+        d.set("value", self.value);
+        d.set("risk", self.risk);
+        d.set("utility", self.utility);
+        d.set("score", self.utility);
+        d
+    }
+}
+
+fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &UtilityArgs, idx: usize) -> Option<UtilityTerms> {
+    if idx >= p.pass.len() || !p.pass[idx] || !p.safe[idx].is_finite() {
+        return None;
+    }
+    let c = f.centre(idx);
+    if a.avoid_r2 > 0.0 && a.avoid.iter().any(|q| q.distance_squared_to(c) < a.avoid_r2) {
+        return None;
+    }
+    let heading = tl.cone_dir.get(idx).copied().unwrap_or(0.0);
+    let mut t = UtilityTerms::default();
+    let mut safe = 1.0f32;
+    for (id, e) in &tl.enemies {
+        let w = e.weight.max(WEIGHT_FLOOR);
+        if e.reach.get(&hull_key).is_some_and(|pl| bit_at(pl, idx)) {
+            t.reach += w;
+        }
+        let dist = c.distance_to(e.origin);
+        if bit_at(&e.los, idx) && dist <= a.spot.get(id).copied().unwrap_or(0.0) {
+            t.reveal += w;
+        }
+        if !bit_at(&e.fire, idx) || e.shell.range <= 0.0 {
+            continue;
+        }
+        t.shooters += 1.0;
+        let pressure = (1.0 - (dist / e.shell.range).powi(3)).clamp(0.0, 1.0);
+        let s = (heading - (e.origin.x - c.x).atan2(e.origin.y - c.y)).sin();
+        // Normalised to a mean of 1 over headings, so a cell reads the
+        // ladder's threat on average: bow-on about half, beam-on 1.5x.
+        let presentation = (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s) / (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * 0.5);
+        let danger = a.danger.get(id).copied().unwrap_or(1.0);
+        // Shells need eyes: this shooter's own line of sight and true
+        // distance, not the team grid, whose certainty division inflates a
+        // vague contact's bubble.
+        let eyes = bit_at(&e.los, idx) || dist <= e.force_spot;
+        let seen = if eyes && dist <= a.radius.max(e.force_spot) {
+            1.0
+        } else if eyes && dist <= a.fire_radius {
+            UNSEEN_FIRING_FACTOR
+        } else {
+            UNSEEN_FACTOR
+        };
+        let raw = danger * pressure * presentation * seen;
+        let this = (1.0 - (-a.threat_sat * raw).exp()) * w;
+        safe *= 1.0 - this;
+    }
+    t.threat = (1.0 - safe).clamp(0.0, 1.0);
+    t.pressure = -(1.0 - t.threat).max(1e-3).ln() / a.threat_sat;
+    t.close = 1.0 - (c.distance_to(a.toward) / (2.0 * a.gun_range)).clamp(0.0, 1.0);
+    t.value = a.w_reach * (t.reach.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
+        + a.w_reveal * (t.reveal.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
+        + a.w_close * t.close;
+    t.risk = p.risk.get(idx).copied().unwrap_or(f32::INFINITY);
+    if !t.risk.is_finite() {
+        return None;
+    }
+    t.utility = t.value - a.w_threat * a.aversion * t.pressure - a.w_path * t.risk / a.gun_range;
+    Some(t)
 }
 
 const STATION_COUNT_CAP: f32 = 3.0;
@@ -1993,26 +2298,32 @@ impl ReachField {
         let walls_muted = wall(key.cell);
         let pass: Vec<bool> = (0..cells).map(|i| terrain_ok[i] && (walls_muted || !wall(i))).collect();
         let mut safe = vec![f32::INFINITY; cells];
+        let mut risk = vec![f32::INFINITY; cells];
         let g = if cost_mode { gain } else { 0.0 };
         let dir_price = if price_dir.is_empty() { None } else { Some(price_dir.as_slice()) };
         if pass[key.cell] {
-            dijkstra(f, bx, &pass, &price, dir_price, g, &[key.cell], &mut safe);
+            dijkstra(f, bx, &pass, &price, dir_price, g, &[key.cell], &mut safe, Some(&mut risk));
         }
         let dark: Vec<usize> = (0..cells).filter(|&i| terrain_ok[i] && price[i] <= 0.0).collect();
         let mut escape = vec![f32::INFINITY; cells];
-        dijkstra(f, bx, &terrain_ok, &price, None, 0.0, &dark, &mut escape);
+        dijkstra(f, bx, &terrain_ok, &price, None, 0.0, &dark, &mut escape, None);
         let max_of = |v: &[f32]| v.iter().copied().filter(|c| c.is_finite()).fold(0.0f32, f32::max);
         ShipPlan {
             key,
             bx,
             max_safe: max_of(&safe),
             max_escape: max_of(&escape),
+            max_risk: max_of(&risk),
             safe,
             escape,
+            risk,
             price,
             pass,
             walls_muted,
             us: t0.elapsed().as_secs_f32() * 1e6,
+            threat: Vec::new(),
+            utility: Vec::new(),
+            utility_range: (0.0, 0.0),
         }
     }
 }

@@ -107,6 +107,16 @@ func _flank_weight(_d: BotDoctrine) -> float:
 func _flank_from(_ctx: SkillContext) -> Vector2:
 	return Vector2.ZERO
 
+## Extra keys merged into the search opts (SkillUtility feeds its own).
+func _extra_opts(_ctx: SkillContext, _field: ReachField, _team_id: int, _g: Dictionary) -> Dictionary:
+	return {}
+
+func _search(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary) -> Dictionary:
+	return field.score_station(team_id, id, key, opts)
+
+func _score_at(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary, point: Vector2) -> Dictionary:
+	return field.station_score_at(team_id, id, key, opts, point)
+
 ## Most class-weighted enemy fire a cell may be under and still be a candidate.
 func _max_exposed(d: BotDoctrine) -> float:
 	return d.station_max_exposed
@@ -179,7 +189,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"flank_from": _flank_from(ctx),
 		"w_flank": _flank_weight(d),
 	}
-	var sc: Dictionary = field.score_station(team_id, ship.get_instance_id(), key, opts)
+	opts.merge(_extra_opts(ctx, field, team_id, g), true)
+	var sc: Dictionary = _search(field, team_id, ship.get_instance_id(), key, opts)
 	_score_us = float(sc.get("us", 0.0))
 	var held_score: float = float(sc.get("held_score", -INF))
 	if not bool(sc.get("has_best", false)):
@@ -205,7 +216,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_refined = false
 	var shore: Vector3 = _refine_to_shore(dest, clearance)
 	if shore != Vector3.ZERO:
-		var probe: Dictionary = field.station_score_at(team_id, ship.get_instance_id(), key, opts, Vector2(shore.x, shore.z))
+		var probe: Dictionary = _score_at(field, team_id, ship.get_instance_id(), key, opts, Vector2(shore.x, shore.z))
 		if not probe.is_empty() and float(probe.score) >= best_score - SHORE_SCORE_SLACK:
 			dest = shore
 			best_terms = probe

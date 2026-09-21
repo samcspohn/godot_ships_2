@@ -1293,6 +1293,7 @@ func _emit_debug_draws() -> void:
 			&"FindCover": st_skill = behavior._skill_cover
 			&"Push": st_skill = behavior._skill_push
 			&"Flank": st_skill = behavior._skill_flank
+			&"Utility": st_skill = behavior._skill_utility
 		if behavior._active_skill_name == &"Kite" and behavior._skill_kite.has_ray():
 			var ke: Vector3 = behavior._skill_kite.ray_end()
 			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
@@ -1306,6 +1307,8 @@ func _emit_debug_draws() -> void:
 				st_col = Color(1.0, 0.5, 0.1)
 			elif st_skill == behavior._skill_flank:
 				st_col = Color(1.0, 0.9, 0.2)
+			elif st_skill == behavior._skill_utility:
+				st_col = Color(0.9, 0.5, 1.0)
 			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
 			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
 			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)

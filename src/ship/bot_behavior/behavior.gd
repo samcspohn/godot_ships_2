@@ -86,6 +86,7 @@ var _skill_kite: SkillKite = SkillKite.new()
 var _skill_push: SkillPush = SkillPush.new()
 var _skill_camp: SkillCamp = SkillCamp.new()
 var _skill_station: SkillStation = SkillStation.new()
+var _skill_utility: SkillUtility = SkillUtility.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
@@ -2233,6 +2234,7 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 		&"Push":        intent = _skill_push.execute(ctx, params)
 		&"Camp":        intent = _skill_camp.execute(ctx, params)
 		&"Station":     intent = _skill_station.execute(ctx, params)
+		&"Utility":     intent = _skill_utility.execute(ctx, params)
 		&"Flank":       intent = _skill_flank.execute(ctx, params)
 		&"Spot":        intent = _skill_spot.execute(ctx, params)
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
@@ -2343,6 +2345,17 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	if _cornered:
 		wants_stealth = true
 		wants_to_be_concealed = true
+
+	# The single objective first: when it finds a cell under the threat
+	# tolerance the ladder below is not consulted.
+	if d.utility_first and sit.has_enemies:
+		intent = _run_skill(&"Utility", ctx)
+		if intent != null:
+			sit["arm"] = &"utility"
+			if not ctx.ship.is_detected():
+				_suppress_guns = _hold_fire_hidden(ctx, sit)
+			_apply_gun_policy(ctx, sit)
+			return _finish_nav(intent, ctx, sit, prev_skill)
 
 	if not sit.has_enemies:
 		sit["arm"] = &"idle"
@@ -2483,6 +2496,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_camp.reset()
 	if prev_skill == &"Station" and _active_skill_name != &"Station":
 		_skill_station.reset()
+	if prev_skill == &"Utility" and _active_skill_name != &"Utility":
+		_skill_utility.reset()
 	if prev_skill == &"Push" and _active_skill_name != &"Push":
 		_skill_push.reset()
 	if prev_skill == &"Flank" and _active_skill_name != &"Flank":
@@ -2501,7 +2516,7 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_evade.reset()
 		return null
 	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
-			and not d.post_process_idle_arms:
+			and sit.arm != &"utility" and not d.post_process_idle_arms:
 		_skill_evade.reset()
 		return intent
 	if not _post_process_allowed(ctx, intent):
@@ -2562,6 +2577,34 @@ const THREAT_SATURATION: float = log(2.0)                        # one unit of p
 ## the reference, never where the reference sits.
 func _threat_sat(x: float, falloff: float) -> float:
 	return (1.0 - exp(-falloff * x)) / (1.0 - exp(-falloff))
+
+## Inputs for ReachField.score_utility as this hull reads the fight: per
+## enemy the matchup x condition x class weight get_threat_score would use,
+## and its concealment radius for the reveal term.
+func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dictionary:
+	var d := _doc()
+	var max_hp: float = maxf(_ship.health_controller.max_hp, 1.0)
+	var hp_ratio: float = _ship.health_controller.current_hp / max_hp
+	var condition: float = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
+	var danger := {}
+	var spot := {}
+	for id in field.get_team_enemy_ids(team_id):
+		var e = instance_from_id(id)
+		if not (e is Ship) or not is_instance_valid(e):
+			continue
+		var matchup: float = _threat_sat(e.health_controller.current_hp / max_hp, THREAT_HP_FALLOFF)
+		danger[id] = matchup * condition * get_threat_class_weight(e.ship_class)
+		if e.concealment != null and e.concealment.params != null:
+			spot[id] = (e.concealment.params.p() as ConcealmentParams).radius
+	var radius: float = NavigationMapManager.reach_conceal_radius(_ship)
+	var gun_range: float = float(g.get("range", 0.0))
+	return {
+		"enemy_danger": danger, "enemy_spot": spot, "threat_sat": THREAT_SATURATION,
+		"gun_range": maxf(gun_range, 1.0), "fire_radius": maxf(radius, gun_range),
+		"w_reach": d.utility_w_reach, "w_reveal": d.utility_w_reveal, "w_close": d.utility_w_close,
+		"w_threat": d.utility_w_threat, "aversion": 1.0 + d.utility_hp_aversion * clampf(1.0 - hp_ratio, 0.0, 1.0),
+		"w_path": d.utility_w_path, "max_threat": d.utility_max_threat,
+	}
 
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
