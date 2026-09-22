@@ -1563,10 +1563,10 @@ func _reach_server_tick() -> void:
 				var opts: Dictionary = controller.behavior.reach_utility_opts(field, team_id, g)
 				var u: Dictionary = field.score_utility(team_id, id, NavigationMapManager.reach_hull_key(g), opts)
 				var ht: Dictionary = u.get("here_terms", {})
-				note = "score %.1f ms | here threat %.2f (%d shooters) reach %.1f reveal %.1f risk %.0f utility %.2f" % [
+				note = "score %.1f ms | here threat %.2f (%d shooters) reach %.1f reveal %.1f close %.1f value %.2f risk %.0f utility %.2f" % [
 					float(u.get("us", 0.0)) / 1000.0, float(ht.get("threat", 0.0)), int(ht.get("shooters", 0)),
-					float(ht.get("reach", 0.0)), float(ht.get("reveal", 0.0)), float(ht.get("risk", 0.0)),
-					float(ht.get("utility", 0.0))]
+					float(ht.get("reach", 0.0)), float(ht.get("reveal", 0.0)), float(ht.get("close", 0.0)),
+					float(ht.get("value", 0.0)), float(ht.get("risk", 0.0)), float(ht.get("utility", 0.0))]
 				if _reach_srv_mode == ReachMode.THREAT:
 					bytes = field.get_threat_bytes(id)
 				else:
@@ -1575,8 +1575,9 @@ func _reach_server_tick() -> void:
 						var bt: Dictionary = u.best_terms
 						marker = u.best
 						note += " | ESCAPING, calmest cell" if bool(u.get("escaping", false)) else ""
-						note += " | best threat %.2f reach %.1f reveal %.1f risk %.0f utility %.2f" % [
-							float(bt.threat), float(bt.reach), float(bt.reveal), float(bt.risk), float(bt.utility)]
+						note += " | best threat %.2f reach %.1f reveal %.1f close %.1f value %.2f risk %.0f utility %.2f" % [
+							float(bt.threat), float(bt.reach), float(bt.reveal), float(bt.close), float(bt.value),
+							float(bt.risk), float(bt.utility)]
 	if bytes.is_empty():
 		return
 	var info: Dictionary = field.get_field_info()

@@ -42,6 +42,23 @@ var current_hp:
 
 var healable_damage: float = 0.0
 var light_damage: float = 0.0
+## Who has been hurting this hull lately: Ship -> [decayed damage, time_sec].
+var damage_from: Dictionary = {}
+const DAMAGE_MEMORY_SEC: float = 60.0
+
+func _note_damage(owner: Ship, dmg: float) -> void:
+	if owner == null or owner == ship or dmg <= 0.0:
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	var rec: Array = damage_from.get(owner, [0.0, now])
+	damage_from[owner] = [rec[0] * exp(-(now - rec[1]) / DAMAGE_MEMORY_SEC) + dmg, now]
+
+## Damage `owner` has done here, decayed with DAMAGE_MEMORY_SEC.
+func recent_damage_from(owner: Ship) -> float:
+	var rec: Array = damage_from.get(owner, [])
+	if rec.is_empty():
+		return 0.0
+	return rec[0] * exp(-(Time.get_ticks_msec() / 1000.0 - rec[1]) / DAMAGE_MEMORY_SEC)
 # const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
 
 func _recalculate_healable_damage() -> void:
@@ -155,6 +172,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 
 	if armor_part == null:
 		_current_hp -= dmg
+		_note_damage(owner, dmg * params.p().mult)
 		light_damage += dmg * params.p().light_repair
 		_recalculate_healable_damage()
 		if _current_hp <= 0 && !sunk:
@@ -203,6 +221,7 @@ func apply_damage(dmg: float, base_dmg:float, armor_part: ArmorPart, is_pen: boo
 
 
 	_current_hp -= dmg
+	_note_damage(owner, dmg * params.p().mult)
 	if _current_hp <= 0 && !sunk:
 		dmg += _current_hp
 		_current_hp = 0

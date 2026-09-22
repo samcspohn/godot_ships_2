@@ -770,13 +770,38 @@ impl ShipNavigator {
         // pattern across salvos instead of re-deciding every frame.
         //
         // Two regimes remain:
-        //   * no torpedo threatens any arc  -> pure navigation.
-        //   * a torpedo threatens some arc  -> torpedo avoidance HARD OVERRIDES
-        //     navigation, ranked lexicographically.
-        let torpedoes_threaten = pass_data.iter().any(|p| p.threats.torpedo_score > 0.0);
+        //   * the arc navigation would have taken eats no torpedo -> pure
+        //     navigation, and SkillEvade keeps working the guns problem.
+        //   * it eats one -> torpedo avoidance HARD OVERRIDES navigation,
+        //     ranked lexicographically.
+        //
+        // Navigation's own answer is computed first because it is also the gate.
+        // Entering the override off "any candidate is hit" armed it for torpedoes
+        // the ship was never going to steer into -- every torpedo inside the
+        // envelope put the ship in dodge mode and stood SkillEvade down, whether
+        // or not the route was ever in the water.
+        let mut nav_best_idx: usize = 0;
+        let mut best_nav = f32::INFINITY;
+        for i in 0..pass_data.len() {
+            if pass_data[i].any_obs_collision {
+                any_collision = true;
+            }
+            if pass_data[i].nav_score < best_nav {
+                best_nav = pass_data[i].nav_score;
+                nav_best_idx = i;
+            }
+        }
+
+        let nav_best_hit = pass_data[nav_best_idx].threats.torpedo_score > 0.0;
+
+        // Latch through the commitment window.  Mid-dodge, the nav arc goes clean
+        // the instant the turn clears the torpedo, and the hit test carries no
+        // clearance margin -- releasing there steers back across a torpedo that
+        // is now much closer, which re-arms the override, which turns away again.
+        let torpedoes_threaten = nav_best_hit || self.dodge_commitment_timer > 0.0;
         self.torpedo_override_active = torpedoes_threaten;
 
-        let mut best_idx: i32 = -1;
+        let mut best_idx: i32 = nav_best_idx as i32;
 
         if torpedoes_threaten {
             // Lexicographic ranking.  Each key is only consulted when every key
@@ -790,9 +815,6 @@ impl ShipNavigator {
             let mut best: Option<(f32, f32, f32, f32)> = None;
             for i in 0..pass_data.len() {
                 let p = &pass_data[i];
-                if p.any_obs_collision {
-                    any_collision = true;
-                }
 
                 // Commitment: a candidate that reverses an in-progress dodge is
                 // ranked as if it ate one more torpedo.  Half a second of
@@ -824,25 +846,6 @@ impl ShipNavigator {
                     best_idx = i as i32;
                 }
             }
-        } else {
-            // Pure navigation.  The obstacle-collision penalty is already folded
-            // into nav_score, so this is the whole decision.
-            let mut best_nav = f32::INFINITY;
-            for i in 0..pass_data.len() {
-                if pass_data[i].any_obs_collision {
-                    any_collision = true;
-                }
-                if pass_data[i].nav_score < best_nav {
-                    best_nav = pass_data[i].nav_score;
-                    best_idx = i as i32;
-                }
-            }
-        }
-
-        // pass_data is non-empty here (the empty case returned above), so this
-        // guard should be unreachable.  Kept because best_idx indexes below.
-        if best_idx == -1 {
-            best_idx = 0;
         }
 
         result.rudder = pass_data[best_idx as usize].rudder;
@@ -865,7 +868,7 @@ impl ShipNavigator {
         // shell threat too, which meant the ship latched a rudder direction in
         // response to gunfire and then spent the next half second refusing the
         // opposite turn -- part of what made bots freeze under fire.
-        if torpedoes_threaten && (result.rudder - desired_rudder).abs() > 0.1 {
+        if nav_best_hit && (result.rudder - desired_rudder).abs() > 0.1 {
             let rudder_sign = if result.rudder > 0.0 { 1.0 } else { -1.0 };
             if self.dodge_committed_rudder == 0.0 || rudder_sign == self.dodge_committed_rudder {
                 self.dodge_committed_rudder = rudder_sign;

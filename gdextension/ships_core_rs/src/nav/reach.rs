@@ -1588,6 +1588,7 @@ impl ReachField {
         let (Some(f), Some(tl)) = (self.field.clone(), self.teams.get(&team)) else { return d };
         let Some(p) = self.plans.get(&id) else { return d };
         let a = UtilityArgs::from_dict(&opts);
+        let (ev, norm) = enemy_evals(tl, &a, f.centre(p.key.cell));
         let cells = p.pass.len();
         let mut threat = vec![f32::NAN; cells];
         let mut utility = vec![f32::NAN; cells];
@@ -1598,7 +1599,7 @@ impl ReachField {
         for iz in p.bx.z0..=p.bx.z1 {
             for ix in p.bx.x0..=p.bx.x1 {
                 let idx = (iz * f.w + ix) as usize;
-                let Some(t) = utility_terms(&f, tl, p, hull_key, &a, idx) else { continue };
+                let Some(t) = utility_terms(&f, tl, p, hull_key, &a, &ev, norm, idx) else { continue };
                 threat[idx] = t.threat;
                 if calmest.is_none_or(|(_, b)| t.threat < b.threat || (t.threat == b.threat && t.risk < b.risk)) {
                     calmest = Some((idx, t));
@@ -1622,10 +1623,10 @@ impl ReachField {
             d.set("best_score", t.utility);
             d.set("best_terms", &t.to_dict());
         }
-        if let Some(t) = utility_terms(&f, tl, p, hull_key, &a, p.key.cell) {
+        if let Some(t) = utility_terms(&f, tl, p, hull_key, &a, &ev, norm, p.key.cell) {
             d.set("here_terms", &t.to_dict());
         }
-        if let Some(t) = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, p, hull_key, &a, i)) {
+        if let Some(t) = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, p, hull_key, &a, &ev, norm, i)) {
             if escaping || t.threat <= a.max_threat {
                 d.set("held_score", t.utility);
                 d.set("held_terms", &t.to_dict());
@@ -1649,7 +1650,8 @@ impl ReachField {
             return VarDictionary::new();
         };
         let a = UtilityArgs::from_dict(&opts);
-        match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, hull_key, &a, i)) {
+        let (ev, norm) = enemy_evals(tl, &a, f.centre(p.key.cell));
+        match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, hull_key, &a, &ev, norm, i)) {
             Some(t) if t.threat <= a.max_threat => t.to_dict(),
             _ => VarDictionary::new(),
         }
@@ -1926,12 +1928,17 @@ struct UtilityArgs {
     danger: HashMap<i64, f32>,
     /// Per enemy id: its concealment radius, for the reveal term.
     spot: HashMap<i64, f32>,
+    /// Per enemy id: how much it matters to the team (damage it is doing,
+    /// how hurt it is), and a reveal multiplier (more when nobody has it lit).
+    value: HashMap<i64, f32>,
+    reveal: HashMap<i64, f32>,
+    target_near: f32,
+    target_alone: f32,
     threat_sat: f32,
     gun_range: f32,
     /// Own concealment radius, and the radius the guns bloom it to.
     radius: f32,
     fire_radius: f32,
-    toward: Vector2,
     w_reach: f32,
     w_reveal: f32,
     w_close: f32,
@@ -1956,11 +1963,14 @@ impl UtilityArgs {
         Self {
             danger: map("enemy_danger"),
             spot: map("enemy_spot"),
+            value: map("enemy_value"),
+            reveal: map("enemy_reveal"),
+            target_near: opt(d, "target_near", 0.0f32),
+            target_alone: opt(d, "target_alone", 0.0f32),
             threat_sat: opt(d, "threat_sat", std::f32::consts::LN_2),
             gun_range: opt(d, "gun_range", 1.0f32).max(1.0),
             radius: opt(d, "radius", 0.0f32),
             fire_radius: opt(d, "fire_radius", 0.0f32),
-            toward: opt(d, "toward", Vector2::ZERO),
             w_reach: opt(d, "w_reach", 1.0f32),
             w_reveal: opt(d, "w_reveal", 0.5f32),
             w_close: opt(d, "w_close", 0.0f32),
@@ -2008,7 +2018,44 @@ impl UtilityTerms {
     }
 }
 
-fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &UtilityArgs, idx: usize) -> Option<UtilityTerms> {
+/// One enemy as the value column sees it for this call: its worth `w`
+/// (belief certainty x value x nearness x isolation), the reveal weight,
+/// and the threat inputs looked up once instead of per cell.
+struct EnemyEval<'a> {
+    e: &'a EnemyState,
+    w: f32,
+    reveal: f32,
+    danger: f32,
+    spot: f32,
+}
+
+/// Evaluates every believed enemy from `here`, and the value normaliser:
+/// the three heaviest worths, so covering the targets that matter most
+/// scores 1 whatever the team size.
+fn enemy_evals<'a>(tl: &'a TeamLayers, a: &UtilityArgs, here: Vector2) -> (Vec<EnemyEval<'a>>, f32) {
+    let mut out = Vec::with_capacity(tl.enemies.len());
+    for (id, e) in &tl.enemies {
+        let near = 1.0 - (here.distance_to(e.origin) / (2.0 * a.gun_range)).clamp(0.0, 1.0);
+        let alone = !tl.enemies.iter().any(|(j, o)| j != id && o.origin.distance_to(e.origin) <= a.gun_range);
+        let w = e.weight.max(WEIGHT_FLOOR)
+            * a.value.get(id).copied().unwrap_or(1.0)
+            * (1.0 + a.target_near * near)
+            * (1.0 + if alone { a.target_alone } else { 0.0 });
+        out.push(EnemyEval {
+            e,
+            w,
+            reveal: w * a.reveal.get(id).copied().unwrap_or(1.0),
+            danger: a.danger.get(id).copied().unwrap_or(1.0),
+            spot: a.spot.get(id).copied().unwrap_or(0.0),
+        });
+    }
+    let mut ws: Vec<f32> = out.iter().map(|v| v.w).collect();
+    ws.sort_by(|x, y| y.total_cmp(x));
+    let norm = ws.iter().take(STATION_COUNT_CAP as usize).sum::<f32>().max(1e-3);
+    (out, norm)
+}
+
+fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &UtilityArgs, ev: &[EnemyEval], norm: f32, idx: usize) -> Option<UtilityTerms> {
     if idx >= p.pass.len() || !p.pass[idx] || !p.safe[idx].is_finite() {
         return None;
     }
@@ -2019,15 +2066,19 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
     let heading = tl.cone_dir.get(idx).copied().unwrap_or(0.0);
     let mut t = UtilityTerms::default();
     let mut safe = 1.0f32;
-    for (id, e) in &tl.enemies {
+    for v in ev {
+        let e = v.e;
         let w = e.weight.max(WEIGHT_FLOOR);
         if e.reach.get(&hull_key).is_some_and(|pl| bit_at(pl, idx)) {
-            t.reach += w;
+            t.reach += v.w;
         }
         let dist = c.distance_to(e.origin);
-        if bit_at(&e.los, idx) && dist <= a.spot.get(id).copied().unwrap_or(0.0) {
-            t.reveal += w;
+        if bit_at(&e.los, idx) && dist <= v.spot {
+            t.reveal += v.reveal;
         }
+        // Progress toward gun range on this one: full inside it, nothing
+        // past twice it, so nothing pulls a hull past where it can shoot.
+        t.close += v.w * (1.0 - ((dist - a.gun_range) / a.gun_range).clamp(0.0, 1.0));
         if !bit_at(&e.fire, idx) || e.shell.range <= 0.0 {
             continue;
         }
@@ -2037,7 +2088,6 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
         // Normalised to a mean of 1 over headings, so a cell reads the
         // ladder's threat on average: bow-on about half, beam-on 1.5x.
         let presentation = (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s) / (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * 0.5);
-        let danger = a.danger.get(id).copied().unwrap_or(1.0);
         // Shells need eyes: this shooter's own line of sight and true
         // distance, not the team grid, whose certainty division inflates a
         // vague contact's bubble.
@@ -2049,16 +2099,13 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
         } else {
             UNSEEN_FACTOR
         };
-        let raw = danger * pressure * presentation * seen;
+        let raw = v.danger * pressure * presentation * seen;
         let this = (1.0 - (-a.threat_sat * raw).exp()) * w;
         safe *= 1.0 - this;
     }
     t.threat = (1.0 - safe).clamp(0.0, 1.0);
     t.pressure = -(1.0 - t.threat).max(1e-3).ln() / a.threat_sat;
-    t.close = 1.0 - (c.distance_to(a.toward) / (2.0 * a.gun_range)).clamp(0.0, 1.0);
-    t.value = a.w_reach * (t.reach.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
-        + a.w_reveal * (t.reveal.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
-        + a.w_close * t.close;
+    t.value = (a.w_reach * t.reach + a.w_reveal * t.reveal + a.w_close * t.close) / norm;
     t.risk = p.risk.get(idx).copied().unwrap_or(f32::INFINITY);
     if !t.risk.is_finite() {
         return None;

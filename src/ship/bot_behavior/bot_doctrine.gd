@@ -151,9 +151,18 @@ var flank_band_ratio: float = 1.15
 var utility_first: bool = true
 var utility_w_reach: float = 1.0
 var utility_w_reveal: float = 0.5
-## Cells nearer the danger centre score higher, so a hull with nothing in
-## reach keeps coming until threat or transit risk outweighs it.
+## Progress toward gun range on each enemy, by its worth, so a hull with
+## nothing in reach keeps coming until threat or transit risk outweighs it.
 var utility_w_close: float = 0.3
+## An enemy's worth as a target: 1 + damage x its recent damage to me
+## (twice) and my team in hull fractions, x 1 + hurt x its missing hp,
+## x 1 + near x closeness to me, x 1 + alone when no enemy is within gun
+## range of it. Reveal pays 1 + unlit extra while nobody has it lit.
+var utility_target_damage: float = 2.0
+var utility_target_hurt: float = 0.5
+var utility_target_near: float = 0.5
+var utility_target_alone: float = 0.5
+var utility_target_unlit: float = 1.0
 ## Per unit of pressure at the cell (threat 0.5 = 1 unit, 0.9 = 3.3, 0.97 = 5),
 ## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
 var utility_w_threat: float = 1.0

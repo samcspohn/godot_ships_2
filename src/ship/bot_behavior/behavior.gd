@@ -2580,26 +2580,43 @@ func _threat_sat(x: float, falloff: float) -> float:
 
 ## Inputs for ReachField.score_utility as this hull reads the fight: per
 ## enemy the matchup x condition x class weight get_threat_score would use,
-## and its concealment radius for the reveal term.
+## its concealment radius for the reveal term, and its worth as a target:
+## the damage it has been doing to me and my team lately, how hurt it is,
+## and a reveal bonus while nobody has it lit.
 func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dictionary:
 	var d := _doc()
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
 	var max_hp: float = maxf(_ship.health_controller.max_hp, 1.0)
 	var hp_ratio: float = _ship.health_controller.current_hp / max_hp
 	var condition: float = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
+	var friends: Array = server.get_team_ships(team_id) if server != null else []
+	var lit: Array = server.get_valid_targets(team_id) if server != null else []
 	var danger := {}
 	var spot := {}
+	var value := {}
+	var reveal := {}
 	for id in field.get_team_enemy_ids(team_id):
 		var e = instance_from_id(id)
 		if not (e is Ship) or not is_instance_valid(e):
 			continue
+		var e_max: float = maxf(e.health_controller.max_hp, 1.0)
 		var matchup: float = _threat_sat(e.health_controller.current_hp / max_hp, THREAT_HP_FALLOFF)
 		danger[id] = matchup * condition * get_threat_class_weight(e.ship_class)
 		if e.concealment != null and e.concealment.params != null:
 			spot[id] = (e.concealment.params.p() as ConcealmentParams).radius
+		var dmg: float = 2.0 * _ship.health_controller.recent_damage_from(e) / max_hp
+		for f in friends:
+			if f != _ship and is_instance_valid(f) and f.health_controller != null:
+				dmg += f.health_controller.recent_damage_from(e) / maxf(f.health_controller.max_hp, 1.0)
+		var hurt: float = clampf(1.0 - e.health_controller.current_hp / e_max, 0.0, 1.0)
+		value[id] = (1.0 + d.utility_target_damage * dmg) * (1.0 + d.utility_target_hurt * hurt)
+		reveal[id] = 1.0 if lit.has(e) else 1.0 + d.utility_target_unlit
 	var radius: float = NavigationMapManager.reach_conceal_radius(_ship)
 	var gun_range: float = float(g.get("range", 0.0))
 	return {
-		"enemy_danger": danger, "enemy_spot": spot, "threat_sat": THREAT_SATURATION,
+		"enemy_danger": danger, "enemy_spot": spot, "enemy_value": value, "enemy_reveal": reveal,
+		"target_near": d.utility_target_near, "target_alone": d.utility_target_alone,
+		"threat_sat": THREAT_SATURATION,
 		"gun_range": maxf(gun_range, 1.0), "fire_radius": maxf(radius, gun_range),
 		"w_reach": d.utility_w_reach, "w_reveal": d.utility_w_reveal, "w_close": d.utility_w_close,
 		"w_threat": d.utility_w_threat, "aversion": 1.0 + d.utility_hp_aversion * clampf(1.0 - hp_ratio, 0.0, 1.0),
