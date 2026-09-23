@@ -2349,7 +2349,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	# The single objective first: when it finds a cell under the threat
 	# tolerance the ladder below is not consulted.
 	if d.utility_first and sit.has_enemies:
-		intent = _run_skill(&"Utility", ctx)
+		intent = _utility_arm(ctx, sit)
 		if intent != null:
 			sit["arm"] = &"utility"
 			if not ctx.ship.is_detected():
@@ -2395,6 +2395,11 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
+
+## Per-class hook: the single-objective arm. Base runs Utility on the
+## doctrine's weights.
+func _utility_arm(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _run_skill(&"Utility", ctx)
 
 ## Whether this ship currently has anything it can actually put a shell into.
 ##
@@ -2498,6 +2503,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_station.reset()
 	if prev_skill == &"Utility" and _active_skill_name != &"Utility":
 		_skill_utility.reset()
+	if prev_skill == &"Spot" and _active_skill_name != &"Spot":
+		_skill_spot.reset()
 	if prev_skill == &"Push" and _active_skill_name != &"Push":
 		_skill_push.reset()
 	if prev_skill == &"Flank" and _active_skill_name != &"Flank":
@@ -2627,7 +2634,7 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 		"gun_range": maxf(gun_range, 1.0), "fire_radius": maxf(radius, gun_range),
 		"w_reach": d.utility_w_reach, "w_reveal": d.utility_w_reveal, "w_close": d.utility_w_close,
 		"w_threat": d.utility_w_threat, "aversion": 1.0 + d.utility_hp_aversion * clampf(1.0 - hp_ratio, 0.0, 1.0),
-		"w_path": d.utility_w_path, "max_threat": d.utility_max_threat,
+		"w_path": d.utility_w_path,
 	}
 
 func get_threat_score(ctx: SkillContext) -> float:

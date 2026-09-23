@@ -1583,9 +1583,9 @@ impl ReachField {
     /// (shooters whose fire plane covers the cell, by range pressure and
     /// presentation against the cone heading, halved where nobody could see
     /// the hull), value from reach and reveal, and the transit's risk
-    /// integral. utility = value - w_threat x threat - w_path x risk /
-    /// gun_range; cells over max_threat are rejected. Layers are kept for the
-    /// byte getters. Returns the best cell and the terms here and there.
+    /// integral. utility = value - w_threat x pressure - w_path x risk /
+    /// gun_range, maximised over every reachable cell. Layers are kept for
+    /// the byte getters. Returns the best cell and the terms here and there.
     #[func]
     fn score_utility(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary) -> VarDictionary {
         let t0 = Instant::now();
@@ -1602,20 +1602,12 @@ impl ReachField {
         let mut threat = vec![f32::NAN; cells];
         let mut utility = vec![f32::NAN; cells];
         let mut best: Option<(usize, UtilityTerms)> = None;
-        // Nothing under the cap: the way out is the least-threatened cell.
-        let mut calmest: Option<(usize, UtilityTerms)> = None;
         let mut range = (f32::INFINITY, f32::NEG_INFINITY);
         for iz in p.bx.z0..=p.bx.z1 {
             for ix in p.bx.x0..=p.bx.x1 {
                 let idx = (iz * f.w + ix) as usize;
                 let Some(t) = utility_terms(&f, tl, p, hull_key, &a, &ev, norm, idx) else { continue };
                 threat[idx] = t.threat;
-                if calmest.is_none_or(|(_, b)| t.threat < b.threat || (t.threat == b.threat && t.risk < b.risk)) {
-                    calmest = Some((idx, t));
-                }
-                if t.threat > a.max_threat {
-                    continue;
-                }
                 utility[idx] = t.utility;
                 range.0 = range.0.min(t.utility);
                 range.1 = range.1.max(t.utility);
@@ -1624,9 +1616,7 @@ impl ReachField {
                 }
             }
         }
-        let escaping = best.is_none();
-        d.set("escaping", escaping);
-        if let Some((idx, t)) = best.or(calmest) {
+        if let Some((idx, t)) = best {
             d.set("has_best", true);
             d.set("best", f.centre(idx));
             d.set("best_score", t.utility);
@@ -1636,10 +1626,8 @@ impl ReachField {
             d.set("here_terms", &t.to_dict());
         }
         if let Some(t) = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, p, hull_key, &a, &ev, norm, i)) {
-            if escaping || t.threat <= a.max_threat {
-                d.set("held_score", t.utility);
-                d.set("held_terms", &t.to_dict());
-            }
+            d.set("held_score", t.utility);
+            d.set("held_terms", &t.to_dict());
         }
         d.set("us", t0.elapsed().as_secs_f32() * 1e6);
         let p = self.plans.get_mut(&id).unwrap();
@@ -1650,7 +1638,7 @@ impl ReachField {
     }
 
     /// One point under the same `opts`, or an empty dictionary when it is
-    /// outside the plan, unreachable, claimed or over max_threat.
+    /// outside the plan, unreachable or claimed.
     #[func]
     fn utility_score_at(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, point: Vector2) -> VarDictionary {
         self.ensure_cone(team);
@@ -1661,8 +1649,8 @@ impl ReachField {
         let a = UtilityArgs::from_dict(&opts);
         let (ev, norm) = enemy_evals(&f, tl, &a, f.centre(p.key.cell));
         match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, hull_key, &a, &ev, norm, i)) {
-            Some(t) if t.threat <= a.max_threat => t.to_dict(),
-            _ => VarDictionary::new(),
+            Some(t) => t.to_dict(),
+            None => VarDictionary::new(),
         }
     }
 
@@ -1680,8 +1668,8 @@ impl ReachField {
         PackedByteArray::from(out.as_slice())
     }
 
-    /// 0 outside the plan, 1 rejected (over max_threat), else 2..255 from
-    /// the worst to the best utility scored.
+    /// 0 outside the plan, else 2..255 from the worst to the best utility
+    /// scored.
     #[func]
     fn get_utility_bytes(&self, id: i64) -> PackedByteArray {
         let mut out = vec![0u8; self.cell_count()];
@@ -1954,6 +1942,9 @@ struct UtilityArgs {
     cover_split: f32,
     threat_sat: f32,
     gun_range: f32,
+    /// Where the close term saturates: gun_range unless the caller wants a
+    /// launch band or a preferred fighting range instead.
+    close_range: f32,
     /// Own concealment radius, and the radius the guns bloom it to.
     radius: f32,
     fire_radius: f32,
@@ -1964,7 +1955,6 @@ struct UtilityArgs {
     /// Multiplies the threat cost: 1 at full health, rising with damage.
     aversion: f32,
     w_path: f32,
-    max_threat: f32,
     held: Vector2,
     avoid: Vec<Vector2>,
     avoid_r2: f32,
@@ -1972,6 +1962,7 @@ struct UtilityArgs {
 
 impl UtilityArgs {
     fn from_dict(d: &VarDictionary) -> Self {
+        let gun_range = opt(d, "gun_range", 1.0f32).max(1.0);
         let map = |key: &str| -> HashMap<i64, f32> {
             opt(d, key, VarDictionary::new())
                 .iter_shared()
@@ -1991,7 +1982,8 @@ impl UtilityArgs {
             claim_keys: opt(d, "claim_keys", PackedInt64Array::new()).to_vec(),
             cover_split: opt(d, "cover_split", 0.0f32),
             threat_sat: opt(d, "threat_sat", std::f32::consts::LN_2),
-            gun_range: opt(d, "gun_range", 1.0f32).max(1.0),
+            gun_range,
+            close_range: opt(d, "close_range", gun_range).max(1.0),
             radius: opt(d, "radius", 0.0f32),
             fire_radius: opt(d, "fire_radius", 0.0f32),
             w_reach: opt(d, "w_reach", 1.0f32),
@@ -2000,7 +1992,6 @@ impl UtilityArgs {
             w_threat: opt(d, "w_threat", 1.0f32),
             aversion: opt(d, "aversion", 1.0f32),
             w_path: opt(d, "w_path", 0.5f32),
-            max_threat: opt(d, "max_threat", 1.0f32),
             held: opt(d, "held", Vector2::new(f32::INFINITY, f32::INFINITY)),
             avoid: opt(d, "avoid", PackedVector2Array::new()).to_vec(),
             avoid_r2: opt(d, "avoid_radius", 0.0f32).powi(2),
@@ -2116,7 +2107,7 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
         }
         // Progress toward gun range on this one: full inside it, nothing
         // past twice it, so nothing pulls a hull past where it can shoot.
-        t.close += v.w * (1.0 - ((dist - a.gun_range) / a.gun_range).clamp(0.0, 1.0));
+        t.close += v.reach_w * (1.0 - ((dist - a.close_range) / a.close_range).clamp(0.0, 1.0));
         if !bit_at(&e.fire, idx) || e.shell.range <= 0.0 {
             continue;
         }

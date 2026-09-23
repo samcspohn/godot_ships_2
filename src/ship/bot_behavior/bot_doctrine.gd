@@ -148,7 +148,7 @@ var flank_band_ratio: float = 1.15
 ## Prototype single objective (ReachField.score_utility, Ctrl+R THREAT /
 ## UTILITY / PATH_RISK): value from reach and reveal against the cell's
 ## threat score and the transit's risk integral. Not yet driving any skill.
-var utility_first: bool = true
+var utility_first: bool = false
 var utility_w_reach: float = 1.0
 var utility_w_reveal: float = 0.5
 ## Progress toward gun range on each enemy, by its worth, so a hull with
@@ -164,18 +164,15 @@ var utility_target_near: float = 0.5
 var utility_target_alone: float = 0.5
 var utility_target_unlit: float = 1.0
 ## An enemy that can already shoot n team-mates splits its fire: danger / (1 + split x n).
-var utility_focus_split: float = 1.0
+var utility_focus_split: float = 0.0
 ## An enemy already reached or lit from n claimed stations: worth / (1 + split x n).
-var utility_cover_split: float = 1.0
+var utility_cover_split: float = 0.0
 var utility_claim_separation: float = 1500.0
 ## Per unit of pressure at the cell (threat 0.5 = 1 unit, 0.9 = 3.3, 0.97 = 5),
 ## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
 var utility_w_threat: float = 1.0
 var utility_hp_aversion: float = 2.0
 var utility_w_path: float = 0.2
-## Cells over this threat are never candidates: the search maximises
-## utility over the water at or under it.
-var utility_max_threat: float = 0.5
 
 ## The same search as FindCover: exposure and (for hulls that hide) detection
 ## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
@@ -214,6 +211,17 @@ var cover_max_threat: float = 0.7
 ## chatter: one threshold would leave the boat alternating destinations every
 ## tick while threat sat on it. See DDBehavior._open_water_kiting().
 var kite_threat: float = 0.6
+
+## Spot: the utility search with eyes first; close pulls toward the launch
+## band when the hull has one.
+var spot_w_reach: float = 0.2
+var spot_w_reveal: float = 1.5
+var spot_w_close: float = 0.5
+
+## Open-water gunboat: the utility search, guns and eyes alike.
+var gunboat_w_reach: float = 0.8
+var gunboat_w_reveal: float = 0.8
+var gunboat_w_close: float = 0.2
 
 ## Past either edge a gun boat stops fighting in open water: guns only from a
 ## cover station, otherwise spot and torpedo. Exit is back below push_threat.
@@ -453,6 +461,8 @@ static func for_destroyer() -> BotDoctrine:
 	# there is no station worth holding.
 	d.chase_when_unshootable = false
 	d.trades_on_concealment = true
+	# The search is the whole nav for a destroyer (DDBehavior._utility_arm).
+	d.utility_first = true
 	d.stealth_threat = 0.5
 	# A torpedo boat's station is dark first and everything else second; the
 	# guns are a tie-breaker and the way back into the dark counts.

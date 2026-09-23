@@ -400,12 +400,20 @@ func _gunboat_in_cover() -> bool:
 ## boat runs - go and make vision - because a destroyer that cannot see anything
 ## still has the fleet's eyes whatever it is armed with.
 func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var d := _doc()
 	var intent: NavIntent = null
 
 	if _gb_defensive:
 		_ow_kiting = false
 		if _cover_allowed(ctx, sit):
 			intent = _run_skill(&"FindCover", ctx, _cover_params())
+	if intent == null and not _gb_defensive:
+		# Open water on the utility search: cells that shoot and see under the
+		# cap, pulled to the fighting range. The swing below is the fallback.
+		_ow_kiting = false
+		intent = _run_skill(&"Utility", ctx, _gunboat_utility_params())
+	if intent != null:
+		pass
 	elif sit.has_spotted:
 		if _open_water_kiting(sit):
 			if _cover_allowed(ctx, sit):
@@ -441,6 +449,17 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 
 	return intent
 
+
+func _gunboat_utility_params() -> Dictionary:
+	var d := _doc()
+	return {"w_reach": d.gunboat_w_reach, "w_reveal": d.gunboat_w_reveal, "w_close": d.gunboat_w_close}
+
+## A destroyer lives on the search alone: a torpedo boat spots from its
+## launch band, a gunboat fights in the open on its own weights.
+func _utility_arm(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if _doc().trades_on_concealment:
+		return _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ctx.ship)})
+	return _run_skill(&"Utility", ctx, _gunboat_utility_params())
 
 ## The distance this destroyer wants to fight at.
 ##
@@ -495,6 +514,13 @@ func engagement_range(ship: Ship, threat: float) -> float:
 	return super(ship, threat)
 
 
+## Whether the active station skill found a cell the router can reach dark.
+func _stealth_corridor() -> bool:
+	match _active_skill_name:
+		&"Spot": return _skill_spot.stealth_corridor
+		&"Utility": return _skill_utility.has_station()
+	return _skill_spot.stealth_corridor
+
 ## A torpedo boat routes stealth-aware: undetected it keeps out of enemy
 ## detection zones in transit, detected it routes back toward cover so it sheds
 ## detection as fast as possible. A gunboat does none of it - every branch here
@@ -509,7 +535,7 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 				wants_to_be_concealed = false
 			_suppress_guns = false
 		else:
-			wants_stealth = _skill_spot.stealth_corridor
+			wants_stealth = _stealth_corridor()
 			_suppress_guns = _hold_fire_hidden(ctx, sit)
 			wants_to_be_concealed = _suppress_guns
 		return
@@ -533,7 +559,7 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 		# better than we do there is no such route, and subscribing anyway
 		# hands the pathfinder a goal inside its own blocked cells — which is
 		# how a destroyer ends up circling the map instead of spotting.
-		wants_stealth = _skill_spot.stealth_corridor
+		wants_stealth = _stealth_corridor()
 	# Never opens up from the dark: the guns join once something has us lit.
 	_suppress_guns = true
 	# Suppress guns when detected with bloom up and the nearest enemy far enough

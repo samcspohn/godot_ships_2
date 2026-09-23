@@ -1574,7 +1574,6 @@ func _reach_server_tick() -> void:
 					if bool(u.get("has_best", false)):
 						var bt: Dictionary = u.best_terms
 						marker = u.best
-						note += " | ESCAPING, calmest cell" if bool(u.get("escaping", false)) else ""
 						note += " | best threat %.2f reach %.1f reveal %.1f close %.1f value %.2f risk %.0f utility %.2f" % [
 							float(bt.threat), float(bt.reach), float(bt.reveal), float(bt.close), float(bt.value),
 							float(bt.risk), float(bt.utility)]

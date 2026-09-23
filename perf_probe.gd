@@ -29,7 +29,7 @@ func _initialize() -> void:
 		"enemy_danger": danger, "enemy_spot": spot, "enemy_value": value, "enemy_reveal": reveal,
 		"target_near": 0.5, "target_alone": 0.5, "threat_sat": log(2.0),
 		"gun_range": 15000.0, "radius": 13000.0, "fire_radius": 15000.0,
-		"w_reach": 1.0, "w_reveal": 0.5, "w_close": 0.5, "w_threat": 1.0, "aversion": 1.0, "w_path": 0.5, "max_threat": 0.5,
+		"w_reach": 1.0, "w_reveal": 0.5, "w_close": 0.5, "w_threat": 1.0, "aversion": 1.0, "w_path": 0.5,
 		"held": Vector2(INF, INF), "avoid": PackedVector2Array([Vector2(-3000, -5000), Vector2(0, -7000)]), "avoid_radius": 300.0,
 		"weights": PackedFloat32Array([1, 1, 1, 1, 1, 1, 1]), "toward": Vector2(0, 8000),
 	}
@@ -50,10 +50,17 @@ func _initialize() -> void:
 		var sc: Dictionary = field.score_utility(0, 7, key, o)
 		var bt: Dictionary = sc.get("best_terms", {})
 		var ht: Dictionary = sc.get("here_terms", {})
-		print("%s: here threat %.2f value %.2f reach %.2f | best %s dist-to-near %.0f threat %.2f value %.2f reach %.2f util %.2f escaping %s" % [
+		print("%s: here threat %.2f value %.2f reach %.2f | best %s dist-to-near %.0f threat %.2f value %.2f reach %.2f util %.2f" % [
 			variant[0], float(ht.get("threat", 0)), float(ht.get("value", 0)), float(ht.get("reach", 0)),
 			str(sc.get("best")), (sc.get("best") as Vector2).distance_to(origins[near_e]) if sc.has("best") else -1.0,
-			float(bt.get("threat", 0)), float(bt.get("value", 0)), float(bt.get("reach", 0)), float(sc.get("best_score", 0)), str(sc.get("escaping"))])
+			float(bt.get("threat", 0)), float(bt.get("value", 0)), float(bt.get("reach", 0)), float(sc.get("best_score", 0))])
+	for cr in [15000.0, 6000.0, 3000.0]:
+		var o2 := opts.duplicate()
+		o2["close_range"] = cr
+		var sc2: Dictionary = field.score_utility(0, 7, key, o2)
+		var bt2: Dictionary = sc2.get("best_terms", {})
+		print("close_range %.0f: best %s dist-to-near %.0f close %.2f value %.2f threat %.2f" % [cr, str(sc2.get("best")),
+			(sc2.get("best") as Vector2).distance_to(origins[near_e]), float(bt2.get("close", 0)), float(bt2.get("value", 0)), float(bt2.get("threat", 0))])
 	origins[near_e] = Vector2(-9000.0, 6000.0)
 	field.update_team(0, ids, origins, speeds, drags, ranges, gh, spreads, weights, fs, 15000.0, 10.0, 50.0)
 	for mode in [0, 1]:
