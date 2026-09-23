@@ -17,6 +17,9 @@ func is_escaping() -> bool:
 func _accepts_no_reach(_ctx: SkillContext, _d: BotDoctrine, _params: Dictionary) -> bool:
 	return true
 
+func _claim_separation(d: BotDoctrine, _clearance: float) -> float:
+	return d.utility_claim_separation
+
 func _extra_opts(ctx: SkillContext, field: ReachField, team_id: int, g: Dictionary) -> Dictionary:
 	return ctx.behavior.reach_utility_opts(field, team_id, g)
 

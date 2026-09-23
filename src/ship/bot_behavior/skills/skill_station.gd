@@ -30,6 +30,7 @@ var _plan_us: float = 0.0
 var _score_us: float = 0.0
 var _claim_team: int = -1
 var _claim_ship: int = -1
+var _hull_key: int = 0
 
 ## [gain, price_mode] for ReachField.plan_ship: a hull that trades on
 ## concealment prices detection at its router's gain, anyone else prices the
@@ -107,6 +108,9 @@ func _flank_weight(_d: BotDoctrine) -> float:
 func _flank_from(_ctx: SkillContext) -> Vector2:
 	return Vector2.ZERO
 
+func _claim_separation(_d: BotDoctrine, clearance: float) -> float:
+	return clearance * CLAIM_SEPARATION_CLEARANCES
+
 ## Extra keys merged into the search opts (SkillUtility feeds its own).
 func _extra_opts(_ctx: SkillContext, _field: ReachField, _team_id: int, _g: Dictionary) -> Dictionary:
 	return {}
@@ -163,6 +167,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_plan_us = float(st.get("us", 0.0)) if not bool(st.get("cached", false)) else 0.0
 
 	var key: int = NavigationMapManager.reach_hull_key(g)
+	_hull_key = key
 	var gun_range: float = g.range
 	var band: Array = _range_band(ctx, d, params, here.distance_to(danger))
 	if float(band[1]) < float(band[0]):
@@ -179,7 +184,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"toward": danger,
 		"held": Vector2(_station.x, _station.z) if _has_station else Vector2(INF, INF),
 		"avoid": _other_claims(team_id, ship.get_instance_id(), now),
-		"avoid_radius": clearance * CLAIM_SEPARATION_CLEARANCES,
+		"avoid_radius": _claim_separation(d, clearance),
 		"axis_from": here,
 		"w_detour": _detour_weight(d, params),
 		"enemy_weights": _enemy_weights(ctx, field, team_id),
@@ -276,7 +281,7 @@ func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Diction
 func _claim(team_id: int, ship_id: int, now: int) -> void:
 	if not _claims.has(team_id):
 		_claims[team_id] = {}
-	_claims[team_id][ship_id] = {"pos": Vector2(_station.x, _station.z), "ms": now}
+	_claims[team_id][ship_id] = {"pos": Vector2(_station.x, _station.z), "ms": now, "key": _hull_key}
 	_claim_team = team_id
 	_claim_ship = ship_id
 
@@ -287,13 +292,19 @@ func release_claim() -> void:
 	_claim_ship = -1
 
 static func _other_claims(team_id: int, ship_id: int, now: int) -> PackedVector2Array:
-	var out := PackedVector2Array()
+	return _other_claims_keyed(team_id, ship_id, now)[0]
+
+## [positions, hull keys] of team-mates' live claims.
+static func _other_claims_keyed(team_id: int, ship_id: int, now: int) -> Array:
+	var pos := PackedVector2Array()
+	var keys := PackedInt64Array()
 	if not _claims.has(team_id):
-		return out
+		return [pos, keys]
 	var team: Dictionary = _claims[team_id]
 	for sid in team.keys():
 		if now - int(team[sid].ms) > CLAIM_TTL_MS:
 			team.erase(sid)
 		elif sid != ship_id:
-			out.append(team[sid].pos as Vector2)
-	return out
+			pos.append(team[sid].pos as Vector2)
+			keys.append(int(team[sid].get("key", 0)))
+	return [pos, keys]

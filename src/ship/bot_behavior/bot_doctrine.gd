@@ -163,6 +163,11 @@ var utility_target_hurt: float = 0.5
 var utility_target_near: float = 0.5
 var utility_target_alone: float = 0.5
 var utility_target_unlit: float = 1.0
+## An enemy that can already shoot n team-mates splits its fire: danger / (1 + split x n).
+var utility_focus_split: float = 1.0
+## An enemy already reached or lit from n claimed stations: worth / (1 + split x n).
+var utility_cover_split: float = 1.0
+var utility_claim_separation: float = 1500.0
 ## Per unit of pressure at the cell (threat 0.5 = 1 unit, 0.9 = 3.3, 0.97 = 5),
 ## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
 var utility_w_threat: float = 1.0

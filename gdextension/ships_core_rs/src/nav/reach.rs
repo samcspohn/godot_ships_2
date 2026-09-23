@@ -594,7 +594,13 @@ pub(crate) fn fire_heading_bucket(dx: f32, dz: f32) -> usize {
 }
 
 /// (shooter count, presentation-weighted count per FIRE_HEADINGS) at cell `idx`.
-fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], idx: usize) -> (f32, [f32; 4]) {
+/// (sin, cos) of each FIRE_HEADINGS entry, so a shooter's presentation on
+/// every heading is a cross product against its bearing unit vector.
+fn fire_heading_units() -> [(f32, f32); 4] {
+    FIRE_HEADINGS.map(|h| h.to_radians().sin_cos())
+}
+
+fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], units: &[(f32, f32); 4], idx: usize) -> (f32, [f32; 4]) {
     let c = f.centre(idx);
     let mut n = 0.0f32;
     let mut d = [0.0f32; 4];
@@ -603,9 +609,11 @@ fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], idx: usize) -> (f32, [f32;
             continue;
         }
         n += 1.0;
-        let bearing = (origin.x - c.x).atan2(origin.y - c.y);
-        for (k, h) in FIRE_HEADINGS.iter().enumerate() {
-            let s = (h.to_radians() - bearing).sin();
+        let (dx, dz) = (origin.x - c.x, origin.y - c.y);
+        let inv = 1.0 / (dx * dx + dz * dz).sqrt().max(1e-3);
+        let (bx, bz) = (dx * inv, dz * inv);
+        for (k, (sh, ch)) in units.iter().enumerate() {
+            let s = sh * bz - ch * bx;
             d[k] += FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s;
         }
     }
@@ -917,6 +925,7 @@ impl ReachField {
         let Some(tl) = self.teams.get(&team) else { return done(max, mean, dir) };
         let shooters: Vec<(&[u64], Vector2)> = tl.enemies.values().map(|e| (e.fire.as_slice(), e.origin)).collect();
         let mut count = vec![0u32; n];
+        let units = fire_heading_units();
         for idx in 0..f.water.len() {
             if f.water[idx] == 0 {
                 continue;
@@ -930,7 +939,7 @@ impl ReachField {
             }
             let c = (cz * ncx + cx) as usize;
             count[c] += 1;
-            let (e, d) = fire_at(&f, &shooters, idx);
+            let (e, d) = fire_at(&f, &shooters, &units, idx);
             mean[c] += e;
             for k in 0..4 {
                 dir[c][k] += d[k];
@@ -1588,7 +1597,7 @@ impl ReachField {
         let (Some(f), Some(tl)) = (self.field.clone(), self.teams.get(&team)) else { return d };
         let Some(p) = self.plans.get(&id) else { return d };
         let a = UtilityArgs::from_dict(&opts);
-        let (ev, norm) = enemy_evals(tl, &a, f.centre(p.key.cell));
+        let (ev, norm) = enemy_evals(&f, tl, &a, f.centre(p.key.cell));
         let cells = p.pass.len();
         let mut threat = vec![f32::NAN; cells];
         let mut utility = vec![f32::NAN; cells];
@@ -1650,7 +1659,7 @@ impl ReachField {
             return VarDictionary::new();
         };
         let a = UtilityArgs::from_dict(&opts);
-        let (ev, norm) = enemy_evals(tl, &a, f.centre(p.key.cell));
+        let (ev, norm) = enemy_evals(&f, tl, &a, f.centre(p.key.cell));
         match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, hull_key, &a, &ev, norm, i)) {
             Some(t) if t.threat <= a.max_threat => t.to_dict(),
             _ => VarDictionary::new(),
@@ -1934,6 +1943,15 @@ struct UtilityArgs {
     reveal: HashMap<i64, f32>,
     target_near: f32,
     target_alone: f32,
+    /// Team-mates' positions: an enemy that can already shoot `n` of them
+    /// splits its fire, so its danger reads 1 / (1 + focus_split x n).
+    friends: Vec<Vector2>,
+    focus_split: f32,
+    /// Team-mates' claimed stations and their hull keys: an enemy already
+    /// reached (or lit) from `n` of them is worth 1 / (1 + cover_split x n).
+    claims: Vec<Vector2>,
+    claim_keys: Vec<i64>,
+    cover_split: f32,
     threat_sat: f32,
     gun_range: f32,
     /// Own concealment radius, and the radius the guns bloom it to.
@@ -1967,6 +1985,11 @@ impl UtilityArgs {
             reveal: map("enemy_reveal"),
             target_near: opt(d, "target_near", 0.0f32),
             target_alone: opt(d, "target_alone", 0.0f32),
+            friends: opt(d, "friends", PackedVector2Array::new()).to_vec(),
+            focus_split: opt(d, "focus_split", 0.0f32),
+            claims: opt(d, "claims", PackedVector2Array::new()).to_vec(),
+            claim_keys: opt(d, "claim_keys", PackedInt64Array::new()).to_vec(),
+            cover_split: opt(d, "cover_split", 0.0f32),
             threat_sat: opt(d, "threat_sat", std::f32::consts::LN_2),
             gun_range: opt(d, "gun_range", 1.0f32).max(1.0),
             radius: opt(d, "radius", 0.0f32),
@@ -2024,6 +2047,7 @@ impl UtilityTerms {
 struct EnemyEval<'a> {
     e: &'a EnemyState,
     w: f32,
+    reach_w: f32,
     reveal: f32,
     danger: f32,
     spot: f32,
@@ -2032,8 +2056,12 @@ struct EnemyEval<'a> {
 /// Evaluates every believed enemy from `here`, and the value normaliser:
 /// the three heaviest worths, so covering the targets that matter most
 /// scores 1 whatever the team size.
-fn enemy_evals<'a>(tl: &'a TeamLayers, a: &UtilityArgs, here: Vector2) -> (Vec<EnemyEval<'a>>, f32) {
+fn enemy_evals<'a>(f: &Field, tl: &'a TeamLayers, a: &UtilityArgs, here: Vector2) -> (Vec<EnemyEval<'a>>, f32) {
     let mut out = Vec::with_capacity(tl.enemies.len());
+    let friend_cells: Vec<usize> = a.friends.iter().filter_map(|q| f.index(q.x, q.y)).collect();
+    let claim_cells: Vec<(usize, i64)> = a.claims.iter().zip(&a.claim_keys)
+        .filter_map(|(q, &k)| f.index(q.x, q.y).map(|i| (i, k)))
+        .collect();
     for (id, e) in &tl.enemies {
         let near = 1.0 - (here.distance_to(e.origin) / (2.0 * a.gun_range)).clamp(0.0, 1.0);
         let alone = !tl.enemies.iter().any(|(j, o)| j != id && o.origin.distance_to(e.origin) <= a.gun_range);
@@ -2041,12 +2069,21 @@ fn enemy_evals<'a>(tl: &'a TeamLayers, a: &UtilityArgs, here: Vector2) -> (Vec<E
             * a.value.get(id).copied().unwrap_or(1.0)
             * (1.0 + a.target_near * near)
             * (1.0 + if alone { a.target_alone } else { 0.0 });
+        let spot = a.spot.get(id).copied().unwrap_or(0.0);
+        let focused = friend_cells.iter().filter(|&&i| bit_at(&e.fire, i)).count() as f32;
+        let reached = claim_cells.iter()
+            .filter(|(i, k)| e.reach.get(k).is_some_and(|pl| bit_at(pl, *i)))
+            .count() as f32;
+        let lit = claim_cells.iter()
+            .filter(|(i, _)| bit_at(&e.los, *i) && f.centre(*i).distance_to(e.origin) <= spot)
+            .count() as f32;
         out.push(EnemyEval {
             e,
             w,
-            reveal: w * a.reveal.get(id).copied().unwrap_or(1.0),
-            danger: a.danger.get(id).copied().unwrap_or(1.0),
-            spot: a.spot.get(id).copied().unwrap_or(0.0),
+            reach_w: w / (1.0 + a.cover_split * reached),
+            reveal: w * a.reveal.get(id).copied().unwrap_or(1.0) / (1.0 + a.cover_split * lit),
+            danger: a.danger.get(id).copied().unwrap_or(1.0) / (1.0 + a.focus_split * focused),
+            spot,
         });
     }
     let mut ws: Vec<f32> = out.iter().map(|v| v.w).collect();
@@ -2063,16 +2100,17 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
     if a.avoid_r2 > 0.0 && a.avoid.iter().any(|q| q.distance_squared_to(c) < a.avoid_r2) {
         return None;
     }
-    let heading = tl.cone_dir.get(idx).copied().unwrap_or(0.0);
+    let (sh, ch) = tl.cone_dir.get(idx).copied().unwrap_or(0.0).sin_cos();
     let mut t = UtilityTerms::default();
     let mut safe = 1.0f32;
     for v in ev {
         let e = v.e;
         let w = e.weight.max(WEIGHT_FLOOR);
         if e.reach.get(&hull_key).is_some_and(|pl| bit_at(pl, idx)) {
-            t.reach += v.w;
+            t.reach += v.reach_w;
         }
-        let dist = c.distance_to(e.origin);
+        let (dx, dz) = (e.origin.x - c.x, e.origin.y - c.y);
+        let dist = (dx * dx + dz * dz).sqrt();
         if bit_at(&e.los, idx) && dist <= v.spot {
             t.reveal += v.reveal;
         }
@@ -2084,7 +2122,8 @@ fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, hull_key: i64, a: &Ut
         }
         t.shooters += 1.0;
         let pressure = (1.0 - (dist / e.shell.range).powi(3)).clamp(0.0, 1.0);
-        let s = (heading - (e.origin.x - c.x).atan2(e.origin.y - c.y)).sin();
+        // sin(heading - bearing) as a cross product with the bearing unit.
+        let s = (sh * dz - ch * dx) / dist.max(1e-3);
         // Normalised to a mean of 1 over headings, so a cell reads the
         // ladder's threat on average: bow-on about half, beam-on 1.5x.
         let presentation = (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s) / (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * 0.5);
@@ -2323,6 +2362,7 @@ impl ReachField {
         let mut terrain_ok = vec![false; cells];
         if let Some(tl) = self.teams.get(&key.team) {
             let shooters: Vec<(&[u64], Vector2)> = tl.enemies.values().map(|e| (e.fire.as_slice(), e.origin)).collect();
+            let units = fire_heading_units();
             for iz in bx.z0..=bx.z1 {
                 for ix in bx.x0..=bx.x1 {
                     let i = (iz * f.w + ix) as usize;
@@ -2336,7 +2376,7 @@ impl ReachField {
                             if radius > 0.0 && d < radius { ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX) } else { 0.0 }
                         }
                         _ => {
-                            let (e, d) = fire_at(f, &shooters, i);
+                            let (e, d) = fire_at(f, &shooters, &units, i);
                             price_dir[i] = d;
                             e
                         }

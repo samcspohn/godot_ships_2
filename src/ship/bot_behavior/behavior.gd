@@ -398,10 +398,10 @@ func _get_overextension_score(enemy: Ship) -> float:
 # Dead reckoning past this age is fiction; extrapolation stops growing rather
 # than flinging the solution down an unconfirmed heading. Matches the
 # staleness horizon _should_use_radar() already applies to an LKP.
-const LKP_MAX_LEAD_AGE: float = 30.0
+const LKP_MAX_LEAD_AGE: float = 12.0
 # Priority multiplier for a target held only on an LKP — a real option when dark,
 # but should always lose to a ship someone can actually see.
-const LKP_TARGET_PRIORITY_MULT: float = 0.4
+const LKP_TARGET_PRIORITY_MULT: float = 0.85
 ## Fallback for the staleness limit below when a bot somehow has no aptitude.
 ## Equal to BotAptitude REGULAR, which is what this was as a flat constant.
 const LKP_TARGET_MAX_AGE_DEFAULT: float = 5.0
@@ -2595,6 +2595,11 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 	var spot := {}
 	var value := {}
 	var reveal := {}
+	var friend_pos := PackedVector2Array()
+	for f in friends:
+		if f != _ship and is_instance_valid(f) and f.health_controller != null and f.health_controller.is_alive():
+			friend_pos.append(Vector2(f.global_position.x, f.global_position.z))
+	var claims: Array = SkillStation._other_claims_keyed(team_id, _ship.get_instance_id(), Time.get_ticks_msec())
 	for id in field.get_team_enemy_ids(team_id):
 		var e = instance_from_id(id)
 		if not (e is Ship) or not is_instance_valid(e):
@@ -2616,6 +2621,8 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 	return {
 		"enemy_danger": danger, "enemy_spot": spot, "enemy_value": value, "enemy_reveal": reveal,
 		"target_near": d.utility_target_near, "target_alone": d.utility_target_alone,
+		"friends": friend_pos, "focus_split": d.utility_focus_split,
+		"claims": claims[0], "claim_keys": claims[1], "cover_split": d.utility_cover_split,
 		"threat_sat": THREAT_SATURATION,
 		"gun_range": maxf(gun_range, 1.0), "fire_radius": maxf(radius, gun_range),
 		"w_reach": d.utility_w_reach, "w_reveal": d.utility_w_reveal, "w_close": d.utility_w_close,
