@@ -145,6 +145,7 @@ const AVOIDANCE_THROTTLE_COOLDOWN_DURATION: float = 3.0
 ## When true, the next physics frame will force an immediate intent update
 ## regardless of the stagger timer.
 var _force_intent_next_frame: bool = false
+var _was_detected: bool = false
 ## When true, the next _tick_behavior call will force a target rescan
 ## regardless of the scan timer.
 var _force_target_rescan: bool = false
@@ -334,6 +335,14 @@ func _physics_process(delta: float) -> void:
 			should_query_behavior = false
 			_behavior_timer = 0.0
 			_update_nav_intent()
+
+	# Gun suppression is decided at intent cadence but the guns fire every frame;
+	# a policy cached while lit would fire the first salvo after going dark.
+	var detected: bool = _ship.is_detected()
+	if _was_detected and not detected and _behavior_timer > 0.0:
+		_behavior_timer = 0.0
+		_update_nav_intent()
+	_was_detected = detected
 
 	# =========================================================================
 	# TIER 3 — path update (every PATH_UPDATE_INTERVAL frames, or immediately
