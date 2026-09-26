@@ -62,7 +62,7 @@ func _equalized_range(ctx: SkillContext, params: Dictionary, desired_range: floa
 		return desired_range
 	var floor_ratio: float = clampf(float(params.get("equalize_floor", d.push_equalize_floor)), 0.0, 1.0)
 	var wanted: float = clampf(ctx.behavior.get_threat_score(ctx) / equalize, floor_ratio, 1.0)
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	if _ratio_time < 0.0 or now - _ratio_time > EQUALIZE_RESUME_GAP:
 		_range_ratio = wanted
 	else:

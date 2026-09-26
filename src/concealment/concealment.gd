@@ -51,7 +51,7 @@ func _physics_process(delta: float) -> void:
 		bloom_value = 0.0
 		bloom_radius = params.p().radius
 		if _ship.visible_to_enemy:
-			last_spotted_time = Time.get_ticks_msec() / 1000.0
+			last_spotted_time = SimClock.now()
 		prev_visible = _ship.visible_to_enemy
 		return
 
@@ -59,7 +59,7 @@ func _physics_process(delta: float) -> void:
 	if !_ship.visible_to_enemy:
 		if prev_visible: # ship was visible now isn't
 			bloom_while_not_visible = 1.0
-			last_spotted_time = Time.get_ticks_msec() / 1000.0
+			last_spotted_time = SimClock.now()
 		bloom_while_not_visible -= delta / params.p().unspotted_bloom_duration
 		if bloom_while_not_visible <= 0.0:
 			blooms.clear()
@@ -67,7 +67,7 @@ func _physics_process(delta: float) -> void:
 			bloom_radius = params.p().radius
 	else:
 		bloom_while_not_visible = 0.0
-		last_spotted_time = Time.get_ticks_msec() / 1000.0
+		last_spotted_time = SimClock.now()
 
 	# update bloom values
 	var to_remove: Array[float] = []

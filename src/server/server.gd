@@ -19,7 +19,7 @@ var team_1_ships: Array[Ship] = []
 # Unspotted enemies with their last known positions (Ship -> Vector3)
 var team_0_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 0 (i.e., team 1 ships that went dark)
 var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.e., team 0 ships that went dark)
-# Timestamps (seconds, from Time.get_ticks_msec()/1000) of when each ship went unspotted
+# Timestamps (seconds, SimClock.now()) of when each ship went unspotted
 var team_0_unspotted_times: Dictionary = {}  # Ship -> float
 var team_1_unspotted_times: Dictionary = {}  # Ship -> float
 # Motion frozen at the instant of last observation, parallel to the position and
@@ -163,6 +163,9 @@ var all_players_spawned: bool = false
 # When running the server from the editor, don't end/reset the match on disconnect
 # so a single debugged client leaving doesn't tear everything down.
 var _debug_keep_alive: bool = OS.has_feature("editor")
+var spectators: Dictionary[int, bool] = {}
+var bot_match: bool = CmdArgs.has("--botmatch")
+var _sunk_at: Dictionary[Ship, float] = {}
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
 var matchmaker_heartbeat_timer: float = 0.0
 
@@ -207,6 +210,90 @@ func _ready():
 	# a freed instance.
 	BotGunnery.clear_all()
 
+	if bot_match and _Utils.authority():
+		_start_bot_match.call_deferred()
+
+func _start_bot_match() -> void:
+	var path := CmdArgs.value("--botmatch", "user://team_info.json")
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_error("botmatch: cannot open lineup " + path)
+		get_tree().quit(1)
+		return
+	team_info = JSON.parse_string(file.get_as_text())
+	if not team_info is Dictionary or not team_info.has("team"):
+		push_error("botmatch: lineup has no \"team\" key: " + path)
+		get_tree().quit(1)
+		return
+	var seed_arg := CmdArgs.value("--seed")
+	if seed_arg != "":
+		seed(int(seed_arg))
+	_assign_matchmaker_spawns(team_info["team"])
+	for p_name in team_info["team"]:
+		team_info["team"][p_name]["is_bot"] = true
+		spawn_player(ship_id, p_name)
+	players_spawned_bots = true
+	_begin_replay()
+	print("botmatch: %d bots from %s" % [players.size(), path])
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		print("botmatch: spawn %s %s %s team %d slot %d" % [p_name, p.ship_name, Ship.ShipClass.keys()[p.ship_class],
+			p.team.team_id, team_info["team"][p_name].get("spawn_position", -1)])
+
+## Same deal as matchmaker.create_balanced_single_player_teams: shuffle within
+## each class, shuffle the class order, then deal round-robin. One seed for both
+## teams so a mirrored lineup spawns mirrored.
+func _assign_matchmaker_spawns(roster: Dictionary) -> void:
+	var by_team: Dictionary = {}
+	for p_name in roster:
+		if roster[p_name].has("spawn_position"):
+			return
+		by_team.get_or_add(str(roster[p_name]["team"]), []).append(p_name)
+	var shuffle_seed := randi()
+	for t in by_team:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = shuffle_seed
+		var classes: Array = [[], [], [], []]
+		for p_name in by_team[t]:
+			classes[_scene_ship_class(roster[p_name]["ship"])].append(p_name)
+		for c in classes:
+			_rng_shuffle(c, rng)
+		_rng_shuffle(classes, rng)
+		var slot := 0
+		for i in range(by_team[t].size()):
+			for c in classes:
+				if i < c.size():
+					roster[c[i]]["spawn_position"] = slot
+					slot += 1
+
+static func _rng_shuffle(a: Array, rng: RandomNumberGenerator) -> void:
+	for i in range(a.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp = a[i]
+		a[i] = a[j]
+		a[j] = tmp
+
+static func _scene_ship_class(path: String) -> int:
+	var scene: PackedScene = load(path)
+	while scene != null:
+		var state := scene.get_state()
+		for i in state.get_node_property_count(0):
+			if state.get_node_property_name(0, i) == &"ship_class":
+				return state.get_node_property_value(0, i)
+		scene = state.get_node_instance(0)
+	return Ship.ShipClass.CA
+
+@rpc("any_peer", "call_remote", "reliable")
+func request_spectate() -> void:
+	var id := multiplayer.get_remote_sender_id()
+	spectators[id] = true
+	for p_name in players:
+		var p: Ship = players[p_name][0]
+		spawn_players_client.rpc_id(id, players[p_name][2], p.name, p.global_position,
+			p.global_rotation.y, p.team.team_id, players[p_name][1], true)
+	_sync_match_timer.rpc_id(id, match_elapsed)
+	print("Spectator joined: ", id)
+
 func _on_peer_connected(id):
 	print("Peer connected: ", id)
 
@@ -216,6 +303,8 @@ func _on_peer_connected(id):
 
 func _on_peer_disconnected(id):
 	print("Peer disconnected: ", id)
+	if spectators.erase(id):
+		return
 	if _debug_keep_alive:
 		print("Editor/debug build: keeping match alive despite disconnect")
 		return
@@ -482,13 +571,18 @@ func spawn_player(id, player_name):
 	# Guard with players_spawned_bots so the hook only fires in the human
 	# player's spawn_player call AFTER the bot-spawning loop completes,
 	# not in each individual bot's spawn_player call.
-	if _Utils.authority() and players_spawned_bots:
-		var _rr = get_node_or_null("/root/ReplayRecorder")
-		if _rr != null and not _rr._match_active:
-			var _all_ships: Array = []
-			for _p_name in players:
-				_all_ships.append(players[_p_name][0])
-			_rr.begin_match(_all_ships, 0)  # map_id 0 = default map
+	if players_spawned_bots:
+		_begin_replay()
+
+func _begin_replay() -> void:
+	if not _Utils.authority() or CmdArgs.has("--no-replay"):
+		return
+	var _rr = get_node_or_null("/root/ReplayRecorder")
+	if _rr != null and not _rr._match_active:
+		var _all_ships: Array = []
+		for _p_name in players:
+			_all_ships.append(players[_p_name][0])
+		_rr.begin_match(_all_ships, 0)  # map_id 0 = default map
 
 @rpc("call_remote", "reliable")
 func spawn_players_client(id, _player_name, _pos, rot_y, team_id, ship, is_bot):
@@ -708,7 +802,7 @@ func get_unspotted_enemies(team_id: int) -> Dictionary:
 
 func get_unspotted_enemy_times(team_id: int) -> Dictionary:
 	"""Returns a dictionary mapping unspotted enemy ships to the timestamp (seconds)
-	when they were last spotted. Key: Ship, Value: float (Time.get_ticks_msec()/1000)."""
+	when they were last spotted. Key: Ship, Value: float (SimClock.now_ms()/1000)."""
 	if team_id == 0:
 		return team_0_unspotted_times
 	else:
@@ -789,7 +883,7 @@ func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, obs
 const INFERRED_CONTACT_MAX_AGE: float = 60.0
 
 func _prune_inferred_contacts(inferred: Dictionary) -> void:
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	for ship in inferred.keys():
 		if not is_instance_valid(ship) or ship.health_controller.is_dead():
 			inferred.erase(ship)
@@ -1050,6 +1144,7 @@ func _on_consumable_changed(_item: ConsumableItem, ship: Ship) -> void:
 # a full update (sinking animation, kill feed, etc.) even if off-screen.
 func _on_ship_sunk(ship: Ship) -> void:
 	sunk_toggled[ship] = true
+	_sunk_at[ship] = match_elapsed
 
 # Connect after @onready vars are initialized (called via call_deferred)
 func _connect_consumable_signals(player: Ship) -> void:
@@ -1179,6 +1274,9 @@ func _broadcast_match_end():
 			var peer_id = p[2]
 			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
 
+	if bot_match or CmdArgs.has("--metrics"):
+		_write_match_metrics(winning_team, leaderboard)
+
 	# Finalize the replay file server-side.
 	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
 	# so we must call end_match() directly here on the server.
@@ -1186,6 +1284,41 @@ func _broadcast_match_end():
 		var _rr = get_node_or_null("/root/ReplayRecorder")
 		if _rr != null and _rr._match_active:
 			_rr.end_match(winning_team)
+
+func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> void:
+	var taken: Dictionary[Ship, float] = {}
+	for p_name in players:
+		var attacker: Ship = players[p_name][0]
+		for victim: Ship in attacker.stats._ships_damaged:
+			taken[victim] = taken.get(victim, 0.0) + attacker.stats._ships_damaged[victim]
+	var ships: Array[Dictionary] = []
+	for entry in leaderboard:
+		var ship: Ship = players[entry["player_name"]][0]
+		var hc := ship.health_controller
+		var row := entry.duplicate()
+		row["ship_class"] = Ship.ShipClass.keys()[ship.ship_class]
+		row["max_hp"] = hc.max_hp
+		row["hp_frac"] = maxf(hc.current_hp, 0.0) / hc.max_hp
+		row["damage_taken"] = taken.get(ship, 0.0)
+		row["survival_time"] = _sunk_at.get(ship, match_elapsed)
+		row["won"] = ship.team.team_id == winning_team
+		ships.append(row)
+	var out := {
+		"winning_team": winning_team,
+		"duration": match_elapsed,
+		"time_limit": match_elapsed >= MATCH_DURATION,
+		"lineup": CmdArgs.value("--botmatch", team_file_path),
+		"seed": CmdArgs.value("--seed"),
+		"ships": ships,
+	}
+	var path := CmdArgs.value("--metrics", "user://metrics/%d_%d.json" % [int(Time.get_unix_time_from_system()), OS.get_process_id()])
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		push_error("metrics: cannot write " + path)
+		return
+	f.store_string(JSON.stringify(out, "\t"))
+	print("metrics: wrote ", ProjectSettings.globalize_path(path))
 
 func _notify_matchmaker_available():
 	"""Send UDP notification to the matchmaker that this server is available."""
@@ -1288,7 +1421,7 @@ func _physics_process(_delta: float) -> void:
 			_notify_matchmaker_available()
 			matchmaker_heartbeat_timer = MATCHMAKER_HEARTBEAT_INTERVAL
 
-	current_time = Time.get_ticks_msec() / 1000.0
+	current_time = SimClock.now()
 	team_0_ships = _get_team(0)
 	team_1_ships = _get_team(1)
 
@@ -1325,6 +1458,9 @@ func _physics_process(_delta: float) -> void:
 		if match_end_timer <= 0:
 			_broadcast_match_end()
 			match_complete = true
+			if bot_match:
+				get_tree().quit()
+				return
 			_reset_server()
 
 	if !_Utils.authority():
@@ -1400,7 +1536,7 @@ func _physics_process(_delta: float) -> void:
 				# the last moment anyone actually observed them)
 				# Only add if ship has been spotted before (last_spotted_time > 0 means it was spotted at some point)
 				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
-					_write_unspotted_lkp(enemy_team_id, p, Time.get_ticks_msec() / 1000.0)
+					_write_unspotted_lkp(enemy_team_id, p, SimClock.now())
 
 	# Clean up dead ships from unspotted lists
 	for ship in team_0_unspotted_enemies.keys():
@@ -1460,6 +1596,7 @@ func _physics_process(_delta: float) -> void:
 	var team_0_bytes_list: Array = []
 	var team_1_bytes_list: Array = []
 	var partial_bytes_list: Array = []
+	var spectator_bytes := PackedByteArray()
 	var writer = StreamPeerBuffer.new()
 
 	for p_name: String in players:
@@ -1485,6 +1622,13 @@ func _physics_process(_delta: float) -> void:
 			dt_enemy = writer.data_array
 			writer.clear()
 		partial_bytes_list.push_back([p, dt_friendly, dt_enemy])
+
+		if not spectators.is_empty():
+			writer.put_u8(1)
+			writer.put_var(p_name)
+			writer.put_var(d0)
+			spectator_bytes += writer.data_array
+			writer.clear()
 
 		if team_id == 0:
 			# friendly
@@ -1538,6 +1682,12 @@ func _physics_process(_delta: float) -> void:
 	# var team_0_bytes = team_0_writer.data_array
 	# var team_1_bytes = team_1_writer.data_array
 
+	for spectator_id in spectators:
+		if sunk_toggled.is_empty():
+			sync_game_state.rpc_id(spectator_id, spectator_bytes)
+		else:
+			sync_game_state_reliable.rpc_id(spectator_id, spectator_bytes)
+
 	for p_name in players:
 		var p: Ship = players[p_name][0]
 		var _p_id = players[p_name][2]
@@ -1567,6 +1717,8 @@ func _physics_process(_delta: float) -> void:
 
 			consumable_toggled.clear()
 			sunk_toggled.clear()
+	consumable_toggled.clear()
+	sunk_toggled.clear()
 
 	# Sync individual player data
 	for p_name in players:
@@ -1686,7 +1838,7 @@ func _team_belief(team_id: int) -> Array[Dictionary]:
 				"weight": 1.0, "spread": 0.0, "force_spot": _force_spot_reach(enemy), "source": 0})
 	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
 	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
 			continue
@@ -1737,7 +1889,7 @@ func _publish_team_threats(team_id: int) -> void:
 
 	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
 	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
 			continue

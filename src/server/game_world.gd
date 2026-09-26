@@ -11,6 +11,10 @@ func _ready():
 
 		get_node("Camera3D").queue_free()
 		
+		if CmdArgs.has("--spectate"):
+			get_parent().request_spectate.rpc_id(1)
+			get_tree().root.add_child.call_deferred(SpectatorCamera.new())
+			return
 		# Request to spawn our player - no need to send client_id, server will use the sender ID
 		NetworkManager.request_spawn.rpc_id(1, multiplayer.get_unique_id(), GameSettings.player_name)
 		

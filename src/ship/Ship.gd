@@ -348,11 +348,11 @@ var registered = false
 func _process(delta: float) -> void:
 	_update_radar_ghost()
 	if !visible:
-		if registered:
+		if registered and is_instance_valid(WaveManager):
 			WaveManager.unregister_ship(self)
 			registered = false
 		return
-	if !registered:
+	if !registered and is_instance_valid(WaveManager):
 		WaveManager.register_ship(self, movement_controller.ship_length * 0.45, movement_controller.ship_beam * 0.5, movement_controller.ship_draft)
 		registered = true
 	var cam = get_viewport().get_camera_3d()

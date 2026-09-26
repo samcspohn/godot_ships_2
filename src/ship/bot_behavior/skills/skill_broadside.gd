@@ -325,7 +325,7 @@ func _find_best_all_guns_heading(guns: Array, threat_bearing: float, preferred_h
 
 func _pick_side(guns: Array, threat_bearing: float, preferred_heading: float, diff: float,
 		ship_heading: float, target_id: int) -> int:
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	if target_id != _side_target_id or now - _side_msec > SIDE_MEMORY_MSEC:
 		_side = 0
 	_side_target_id = target_id

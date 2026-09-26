@@ -147,7 +147,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if g.is_empty():
 		return null
 	var team_id: int = ship.team.team_id
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	if _has_station and now - _last_ms < RESCORE_MS:
 		_claim(team_id, ship.get_instance_id(), now)
 		return _intent(ctx, field, team_id, params)

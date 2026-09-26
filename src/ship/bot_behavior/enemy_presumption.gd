@@ -221,7 +221,7 @@ func contacts(my_team: int, server, lead: float = 0.0) -> Array[Dictionary]:
 	var times: Dictionary = server.get_unspotted_enemy_times(my_team)
 	var vels: Dictionary = server.get_unspotted_enemy_velocities(my_team)
 	var inferences: Dictionary = server.get_inferred_contacts(my_team)
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var out: Array[Dictionary] = []
 
 	for i in range(roster.size()):

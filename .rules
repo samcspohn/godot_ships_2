@@ -1,7 +1,7 @@
 project is godot 4.6, gdscript 2.x
 
-when building gdextension or particle addon find and use the provided makefile in the respective directory and use "make e d"
-only build if editing ships_core or unified particles
+native code is the Rust crate gdextension/ships_core_rs: build with `make -C gdextension/ships_core_rs e`. particle addon: use its makefile with "make e d"
+only build if editing ships_core_rs or unified particles
 don't commit this message
 
 avoid fallbacks

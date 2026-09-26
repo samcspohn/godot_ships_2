@@ -446,7 +446,7 @@ func _update_screen(report: Dictionary) -> bool:
 	## Watches report.nearby rather than report.strength: the question here is
 	## whether anything HAPPENED, and only the position-independent tally can
 	## answer it. See _screen_report.
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	var strength: float = float(report.nearby)
 	_screen_strength = float(report.strength)
 	_screen_nearby = strength
@@ -619,9 +619,9 @@ func _update_exposure(ship: Ship) -> bool:
 	## triggers must not, or the carrier ends up oscillating on the spot instead
 	## of actually opening the range.
 	if ship.is_detected() or not active_shooters_at_me.is_empty():
-		_exposed_until_ms = Time.get_ticks_msec() + EXPOSURE_MEMORY_MS
+		_exposed_until_ms = SimClock.now_ms() + EXPOSURE_MEMORY_MS
 		return true
-	return Time.get_ticks_msec() < _exposed_until_ms
+	return SimClock.now_ms() < _exposed_until_ms
 
 
 # ============================================================================
@@ -901,6 +901,6 @@ func get_debug_skill_info() -> Dictionary:
 	var info: Dictionary = super()
 	info["screen"] = "%.1f in front, %.1f/%.1f near" % [
 		_screen_strength, _screen_nearby, maxf(_screen_reference, 0.0)]
-	if Time.get_ticks_msec() < _screen_shock_until_ms:
+	if SimClock.now_ms() < _screen_shock_until_ms:
 		info["screen"] = String(info["screen"]) + " broken"
 	return info

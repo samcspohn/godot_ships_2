@@ -200,7 +200,7 @@ func _may_change_ammo() -> bool:
 	var ac = _ship.artillery_controller
 	if ac == null:
 		return true
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var all_loaded: bool = true
 	for gun in ac.guns:
 		if not is_instance_valid(gun):
@@ -333,7 +333,7 @@ func _infer_concealed_spotter(server: GameServer) -> void:
 		my_team,
 		spotter,
 		anchor,
-		Time.get_ticks_msec() / 1000.0,
+		SimClock.now(),
 		detect_radius,
 		"bloom")
 
@@ -450,7 +450,7 @@ func get_contact_solution(target: Ship) -> Dictionary:
 	var times := server_node.get_unspotted_enemy_times(team_id)
 	if not unspotted.has(target) or not times.has(target):
 		return {valid = false}
-	var age: float = Time.get_ticks_msec() / 1000.0 - float(times[target])
+	var age: float = SimClock.now() - float(times[target])
 	var frozen_vel: Vector3 = server_node.get_unspotted_enemy_velocities(team_id).get(target, Vector3.ZERO)
 	var frozen_rot: float = float(server_node.get_unspotted_enemy_rotations(team_id).get(target, 0.0))
 	var lkp: Vector3 = unspotted[target]
@@ -491,7 +491,7 @@ var _aim_rng := RandomNumberGenerator.new()
 ## AIM_ERROR_HOLD_MS, then re-rolled - so a bot's shots stay coherently wrong for
 ## a while rather than jittering around the right answer.
 func _target_aim_error(target: Ship) -> Dictionary:
-	var now_ms: int = Time.get_ticks_msec()
+	var now_ms: int = SimClock.now_ms()
 	var held: Dictionary = _aim_error.get(target, {})
 	if not held.is_empty() and now_ms < int(held.get("until_ms", 0)):
 		return held
@@ -1436,7 +1436,7 @@ func _refresh_intuition(server_node: GameServer) -> void:
 		if not _intuition.is_empty():
 			_intuition.clear()
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	if now - _intuition_last_refresh < interval:
 		# Drop anyone who died since the last fix so a sunk ship cannot go on
 		# steering this bot around a patch of empty water.
@@ -1698,7 +1698,7 @@ const SAFE_DIR_REFRESH_MS: int = 2000
 var _safe_dir_next_refresh_ms: int = -1
 
 func _ensure_safe_dir(ship: Ship, server: GameServer) -> void:
-	var now_ms: int = Time.get_ticks_msec()
+	var now_ms: int = SimClock.now_ms()
 	if _safe_dir_initialized and now_ms < _safe_dir_next_refresh_ms:
 		return
 	var fresh := _compute_safe_direction(ship, server)
@@ -2606,7 +2606,7 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 	for f in friends:
 		if f != _ship and is_instance_valid(f) and f.health_controller != null and f.health_controller.is_alive():
 			friend_pos.append(Vector2(f.global_position.x, f.global_position.z))
-	var claims: Array = SkillStation._other_claims_keyed(team_id, _ship.get_instance_id(), Time.get_ticks_msec())
+	var claims: Array = SkillStation._other_claims_keyed(team_id, _ship.get_instance_id(), SimClock.now_ms())
 	for id in field.get_team_enemy_ids(team_id):
 		var e = instance_from_id(id)
 		if not (e is Ship) or not is_instance_valid(e):
@@ -2846,7 +2846,7 @@ func engage_target(target: Ship):
 	var ammo = pick_ammo(target)
 	if _ship.artillery_controller.shell_index != ammo and _may_change_ammo():
 		_ship.artillery_controller.select_shell(ammo)
-		_ammo_changed_at = Time.get_ticks_msec() / 1000.0
+		_ammo_changed_at = SimClock.now()
 
 	# Only fire guns whose actual aim point is near the intended target AND
 	# whose shell arc clears terrain. This prevents two bugs:
@@ -3377,7 +3377,7 @@ func _sample_loiter_damage(index: int, squad: Squadron) -> void:
 ## accumulating one per tick - and letting that record drift toward the new
 ## damage, so it follows the ship that is doing it.
 func _mark_hot_spot(pos: Vector2) -> void:
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	for spot in _aviation_hot_spots:
 		var at: Vector2 = spot.position
 		if at.distance_to(pos) < AVIATION_HOT_SPOT_RADIUS:
@@ -3387,7 +3387,7 @@ func _mark_hot_spot(pos: Vector2) -> void:
 	_aviation_hot_spots.append({position = pos, until_ms = now + AVIATION_HOT_SPOT_MEMORY_MS})
 
 func _live_hot_spots() -> Array[Dictionary]:
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	var live: Array[Dictionary] = []
 	for spot in _aviation_hot_spots:
 		if int(spot.until_ms) > now:
@@ -4255,7 +4255,7 @@ func _should_launch_spotter(squad: Squadron, server: GameServer) -> bool:
 			return true
 	var unspotted := server.get_unspotted_enemies(my_team)
 	var times := server.get_unspotted_enemy_times(my_team)
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	for enemy in unspotted.keys():
 		if not is_instance_valid(enemy):
 			continue
@@ -4641,7 +4641,7 @@ func _should_use_hydro() -> bool:
 				break
 	var unspotted := server_node.get_unspotted_enemies(my_team)
 	var unspotted_times := server_node.get_unspotted_enemy_times(my_team)
-	var current_time := Time.get_ticks_msec() / 1000.0
+	var current_time := SimClock.now()
 	for enemy in unspotted.keys():
 		if not is_instance_valid(enemy):
 			continue
@@ -4691,7 +4691,7 @@ func _should_use_radar() -> bool:
 	# --- Trigger 2: recent unspotted LKP within radar range ---
 	var unspotted       := server_node.get_unspotted_enemies(my_team)
 	var unspotted_times := server_node.get_unspotted_enemy_times(my_team)
-	var current_time    := Time.get_ticks_msec() / 1000.0
+	var current_time    := SimClock.now()
 	for enemy in unspotted.keys():
 		if not is_instance_valid(enemy):
 			continue

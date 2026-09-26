@@ -39,7 +39,7 @@ func debug_text() -> String:
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var ship: Ship = ctx.ship
 	var angled: float = wrapf(SkillAngle.calc_heading(ctx, params) + PI, -PI, PI)
-	var now: int = Time.get_ticks_msec()
+	var now: int = SimClock.now_ms()
 	if not _has_bearing or now - _last_ms >= RESCORE_MS:
 		_last_ms = now
 		_pick_bearing(ctx, params, angled)

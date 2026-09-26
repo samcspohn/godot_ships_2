@@ -31,6 +31,7 @@ driver/driver="ALSA"
 
 [autoload]
 
+SimClock="*res://src/autoload/sim_clock.gd"
 Debug="*res://src/autoload/debug.gd"
 GameSettings="*res://src/autoload/game_settings.gd"
 NetworkManager="*res://src/autoload/network_manager.gd"

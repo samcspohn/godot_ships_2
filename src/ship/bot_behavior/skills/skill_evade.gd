@@ -129,7 +129,7 @@ func apply(intent: NavIntent, ctx: SkillContext, params: Dictionary) -> NavInten
 	if mp == null:
 		return intent
 
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var tof: float = maxf(clock.dominant_tof, 1.0)
 
 	_mode = _select_mode(ship, mp, clock, tof)

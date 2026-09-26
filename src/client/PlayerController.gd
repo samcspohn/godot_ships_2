@@ -8,6 +8,9 @@ var ship: Ship
 var _cameraInput: Vector2
 @export var playerName: Label
 var cam: BattleCamera
+var spectator: SpectatorCamera = null
+var _dead_for: float = 0.0
+const SPECTATE_AFTER_DEATH: float = 4.0
 var ray: RayCast3D
 var guns: Array[Gun] = []
 var selected_weapon: int = 0 # 0 = shell1, 1 = shell2, 2 = torpedo
@@ -480,6 +483,10 @@ func _physics_process(_delta: float) -> void:
 		_pending_target_selection = null
 
 func _process(dt: float) -> void:
+	if spectator == null and ship.health_controller.is_dead():
+		_dead_for += dt
+		if _dead_for >= SPECTATE_AFTER_DEATH:
+			_start_spectating()
 	# # Check if we need to initialize guns - do it only once
 	# if needs_initialization:
 	# 	needs_initialization = false
@@ -697,3 +704,19 @@ func select_weapon(idx: int) -> void:
 		ship.secondary_controller.select_shell.rpc_id(1, idx - 3)
 		current_weapon_controller = ship.secondary_controller
 	print("Selected weapon: %d" % idx)
+
+
+func _start_spectating() -> void:
+	spectator = SpectatorCamera.new()
+	spectator.team_filter = ship.team.team_id
+	spectator.owner_ship = ship
+	if cam != null:
+		cam.set_process(false)
+		cam.set_process_input(false)
+		cam.set_physics_process(false)
+		if cam.ui != null:
+			cam.ui.crosshair_container.visible = false
+			if cam.ui.sniper_reticle != null:
+				cam.ui.sniper_reticle.visible = false
+		spectator.transform = cam.global_transform
+	get_tree().root.add_child(spectator)

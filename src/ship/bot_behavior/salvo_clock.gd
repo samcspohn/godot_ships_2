@@ -84,7 +84,7 @@ var _solution_at: float = -INF
 func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 	if ship == null or not is_instance_valid(ship):
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var my_team: int = ship.team.team_id if ship.team else -1
 
 	# --- Track shells aimed near us, and notice when they stop existing ---

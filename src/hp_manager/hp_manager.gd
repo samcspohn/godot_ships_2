@@ -49,7 +49,7 @@ const DAMAGE_MEMORY_SEC: float = 60.0
 func _note_damage(owner: Ship, dmg: float) -> void:
 	if owner == null or owner == ship or dmg <= 0.0:
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var rec: Array = damage_from.get(owner, [0.0, now])
 	damage_from[owner] = [rec[0] * exp(-(now - rec[1]) / DAMAGE_MEMORY_SEC) + dmg, now]
 
@@ -58,7 +58,7 @@ func recent_damage_from(owner: Ship) -> float:
 	var rec: Array = damage_from.get(owner, [])
 	if rec.is_empty():
 		return 0.0
-	return rec[0] * exp(-(Time.get_ticks_msec() / 1000.0 - rec[1]) / DAMAGE_MEMORY_SEC)
+	return rec[0] * exp(-(SimClock.now() - rec[1]) / DAMAGE_MEMORY_SEC)
 # const SHELL_DAMAGE_RADIUS_MOD: float = 14.0
 
 func _recalculate_healable_damage() -> void:
@@ -286,7 +286,7 @@ func sink(damage_type: DAMAGE_TYPE, sinker: Ship):
 	#ship.set_physics_process(false)
 	if _Utils.authority():
 		sinking = true
-		sunk_time = Time.get_ticks_msec() / 1000.0
+		sunk_time = SimClock.now()
 		# sinking_rotation_axis = Vector3(randf() * TAU, randf() * TAU, randf() * TAU)
 		# sinking_basis = Basis.from_euler(Vector3(randf() * TAU, randf() * TAU, randf() * TAU))
 		current_sinking_basis = ship.global_basis
@@ -298,7 +298,7 @@ func sink(damage_type: DAMAGE_TYPE, sinker: Ship):
 		var random_roll = (randf() - 0.5) * PI * 0.8   # Random roll between -72 and 72 degrees
 		# Build the sinking basis with preserved yaw and new pitch/roll
 		sinking_basis = Basis.from_euler(Vector3(random_pitch, preserved_yaw, random_roll))
-		sinking_time = Time.get_ticks_msec() / 1000.0
+		sinking_time = SimClock.now()
 		ship.freeze = true
 		ship.linear_velocity = Vector3.ZERO
 		sink_c.rpc(sinking_basis, damage_type, sinker.name, sinker.team.team_id, sinker.ship_name, ship.ship_name, ship.team.team_id, ship.name)
@@ -309,7 +309,7 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 	if !(_Utils.authority()):
 		sinking_basis = sink_basis
 		current_sinking_basis = ship.global_basis
-		sinking_time = Time.get_ticks_msec() / 1000.0
+		sinking_time = SimClock.now()
 		ship.freeze = true
 		ship.linear_velocity = Vector3.ZERO
 		sinking = true
@@ -340,7 +340,7 @@ func sink_c(sink_basis: Basis, damage_type: DAMAGE_TYPE, sinker: String, team: i
 
 func _physics_process(delta: float) -> void:
 	if sinking and ship.global_position.y > -400.0:
-		var elapsed = Time.get_ticks_msec() / 1000.0 - sinking_time
+		var elapsed = SimClock.now() - sinking_time
 		ship.global_position -= Vector3(0, delta * pow(elapsed, 0.6) * 0.06, 0)
 		current_sinking_basis = current_sinking_basis.orthonormalized().slerp(sinking_basis.orthonormalized(), pow(elapsed, 0.3)*0.0002)
 		ship.global_basis = current_sinking_basis
@@ -354,4 +354,4 @@ func is_dead() -> bool:
 	return _current_hp <= 0
 
 func been_dead() -> bool:
-	return is_dead() and sunk_time < Time.get_ticks_msec() / 1000.0 - 120.0
+	return is_dead() and sunk_time < SimClock.now() - 120.0

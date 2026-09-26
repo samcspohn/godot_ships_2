@@ -302,7 +302,7 @@ impl ShipNavigator {
                 self.path_switch_rejected += 1;
             }
         } else {
-            // Path planning came back invalid (no route found or D* Lite not yet
+            // Path planning came back invalid (no route found or HPA* not yet
             // converged to a solution).  Prefer keeping the previous path — the
             // ship can continue following a stale-but-valid route while the search
             // retries next frame.  Only fall back to the direct destination line

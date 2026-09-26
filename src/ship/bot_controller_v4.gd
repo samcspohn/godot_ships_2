@@ -347,7 +347,7 @@ func _physics_process(delta: float) -> void:
 	# =========================================================================
 	# TIER 3 — path update (every PATH_UPDATE_INTERVAL frames, or immediately
 	# when the intent destination moves significantly)
-	# Calls navigate_to() which sets the D* Lite goal. The C++ navigator will
+	# Calls navigate_to() which sets the navigator goal. The Rust navigator will
 	# only trigger a full replan when the destination has actually changed
 	# (built-in threshold: turning_circle_radius * 0.5). The GDScript-side
 	# PATH_SIGNIFICANT_MOVE guard ensures a brand-new waypoint is pushed
@@ -604,7 +604,7 @@ func _update_shell_threats() -> void:
 	_debug_shell_obstacles = shells
 
 	# Prune stale or invalid entries from the active-shooters dict.
-	var now_sec: float = Time.get_ticks_msec() / 1000.0
+	var now_sec: float = SimClock.now()
 	var expired_keys: Array = []
 	for shooter_ship in behavior.active_shooters_at_me:
 		if not is_instance_valid(shooter_ship) \
@@ -696,7 +696,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 		# meant "a destroyer shot at me once" stayed true for a full minute.
 		# The salvo clock and both post-processing skills key off this flag, so
 		# it has to mean what it says.
-		var expiry: float = Time.get_ticks_msec() / 1000.0 + reload_sec * 1.5
+		var expiry: float = SimClock.now() + reload_sec * 1.5
 		# Only extend the expiry, never shorten an existing window.
 		if expiry > behavior.active_shooters_at_me.get(s, -INF):
 			behavior.active_shooters_at_me[s] = expiry
@@ -720,7 +720,7 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 		# observation would let the guns shell a launch point the DD left before
 		# the torpedoes were even halfway here - so it goes in as a deduction,
 		# with an error bar that grows with however far the run has come.
-		var run_time: float = maxf(Time.get_ticks_msec() / 1000.0 - observed_time, 0.0)
+		var run_time: float = maxf(SimClock.now() - observed_time, 0.0)
 		server_node.record_inferred_contact(
 			my_team_id,
 			s,
@@ -741,11 +741,11 @@ func _update_lkp_from_shooter(shooter: Object, launch_pos: Vector3, launch_time:
 
 
 ## Convert a ProjectileManager accumulated time value to its wall-clock equivalent
-## (seconds from Time.get_ticks_msec baseline).  PM time is now raw seconds so
+## (SimClock seconds).  PM time is now raw seconds so
 ## this is a simple base-offset shift — no multiplier division needed.
 func _pm_time_to_wall_time(pm_time: float) -> float:
 	var pm_now: float   = ProjectileManager.get_current_time()
-	var wall_now: float = Time.get_ticks_msec() / 1000.0
+	var wall_now: float = SimClock.now()
 	return wall_now - (pm_now - pm_time)
 
 
@@ -1328,7 +1328,7 @@ func _emit_debug_draws() -> void:
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:
 		var my_team_id: int = _ship.team.team_id if _ship.team else -1
-		var now_sec: float = Time.get_ticks_msec() / 1000.0
+		var now_sec: float = SimClock.now()
 		const STALE_MAX: float = 120.0  # seconds until fully faded
 
 		# Spotted enemies — bright red circle + sphere at their live position

@@ -1,0 +1,46 @@
+{
+ "team": {
+  "bot00": {
+   "team": "0",
+   "player_id": "bot00",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  },
+  "bot01": {
+   "team": "0",
+   "player_id": "bot01",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  },
+  "bot02": {
+   "team": "0",
+   "player_id": "bot02",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  },
+  "bot10": {
+   "team": "1",
+   "player_id": "bot10",
+   "ship": "res://assets/Ships/Yamato/Yamato.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  },
+  "bot11": {
+   "team": "1",
+   "player_id": "bot11",
+   "ship": "res://assets/Ships/DesMoines/DesMoines.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  },
+  "bot12": {
+   "team": "1",
+   "player_id": "bot12",
+   "ship": "res://assets/Ships/Shimakaze/Shimakaze.tscn",
+   "is_bot": true,
+   "aptitude": 1
+  }
+ }
+}

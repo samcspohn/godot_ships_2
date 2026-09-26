@@ -316,7 +316,7 @@ var _ow_leg_started: float = 0.0
 ## sailed before it can end.
 func _open_water_kiting(sit: Dictionary) -> bool:
 	var d := _doc()
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	if _ow_kiting:
 		if sit.threat <= d.push_threat and now - _ow_leg_started >= OPEN_WATER_KITE_DWELL:
 			_ow_kiting = false
@@ -345,7 +345,7 @@ func _update_gunboat_defensive(sit: Dictionary) -> void:
 	if d.trades_on_concealment:
 		_gb_defensive = false
 		return
-	var now: float = Time.get_ticks_msec() / 1000.0
+	var now: float = SimClock.now()
 	var hurt: bool = sit.hp_ratio < d.gunboat_cover_hp
 	if _gb_defensive:
 		if not hurt and sit.threat <= d.push_threat \

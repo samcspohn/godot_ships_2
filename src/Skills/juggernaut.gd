@@ -58,9 +58,9 @@ func _proc(_delta: float) -> void:
 	var curr_potential_dmg: float = _ship.stats.potential_damage
 	if curr_potential_dmg != last_potential_dmg:
 		last_potential_dmg = curr_potential_dmg
-		last_potential_dmg_time = Time.get_ticks_msec() / 1000.0
+		last_potential_dmg_time = SimClock.now()
 
-	if Time.get_ticks_msec() / 1000.0 - last_potential_dmg_time > REGEN_TIMEOUT:
+	if SimClock.now() - last_potential_dmg_time > REGEN_TIMEOUT:
 		hp_regen_per_sec = 0.0
 		return
 

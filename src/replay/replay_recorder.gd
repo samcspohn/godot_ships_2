@@ -141,7 +141,7 @@ func begin_match(ships: Array, map_id: int) -> void:
 	_file.store_8(ReplayEvent.MATCH_START)
 
 	# --- activate recorder ------------------------------------------------
-	_match_start_time = Time.get_ticks_msec() / 1000.0
+	_match_start_time = SimClock.now()
 	_match_active     = true
 	_snapshot_timer   = 0.0
 	_snapshot_index   = []
@@ -172,7 +172,7 @@ func begin_match(ships: Array, map_id: int) -> void:
 # Time helpers
 # ---------------------------------------------------------------------------
 func _current_time() -> float:
-	return Time.get_ticks_msec() / 1000.0 - _match_start_time
+	return SimClock.now() - _match_start_time
 
 ## Write the 5-byte event preamble: [f32 timestamp][u8 event_type]
 func _write_preamble(event_type: int) -> void:

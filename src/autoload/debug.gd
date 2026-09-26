@@ -85,7 +85,7 @@ var _is_debug_receiver: bool = false
 # ============================================================================
 
 # Reference to the player's camera (set by BattleCamera).
-var battle_camera: BattleCamera = null
+var battle_camera: Camera3D = null
 
 # Mesh pool keyed by "type:index_within_type" → Node3D.
 # This means adding/removing squares won't invalidate arrow meshes, etc.
@@ -239,7 +239,7 @@ func _physics_process(_delta: float) -> void:
 # Camera / follow registration (called by BattleCamera)
 # ============================================================================
 
-func register_camera(camera: BattleCamera) -> void:
+func register_camera(camera: Camera3D) -> void:
 	battle_camera = camera
 
 ## Called by BattleCamera each frame to update which ship we're following.
@@ -1455,7 +1455,7 @@ var _reach_srv_next: float = 0.0
 func _reach_target_ship() -> Ship:
 	if battle_camera == null or not is_instance_valid(battle_camera):
 		return null
-	var ship: Ship = battle_camera.follow_ship
+	var ship: Ship = battle_camera.get("follow_ship")
 	if ship == null or not is_instance_valid(ship):
 		return null
 	return ship
