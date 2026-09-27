@@ -68,11 +68,12 @@ impl HpaGraph {
                     let (wx, wz) = self.grid_to_world(corner_gx[i], corner_gz[i]);
                     let dx = wx - t.origin.x;
                     let dz = wz - t.origin.y;
-                    if dx * dx + dz * dz > r2 {
+                    let d2 = dx * dx + dz * dz;
+                    if d2 > r2 {
                         continue;
                     }
 
-                    if map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
+                    if d2 < t.force_spot * t.force_spot || map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
                         threatened = true;
                     }
                 }
@@ -146,10 +147,11 @@ impl HpaGraph {
                 let (wx, wz) = self.grid_to_world(corner_gx[i], corner_gz[i]);
                 let dx = wx - t.origin.x;
                 let dz = wz - t.origin.y;
-                if dx * dx + dz * dz > r2 {
+                let d2 = dx * dx + dz * dz;
+                if d2 > r2 {
                     continue;
                 }
-                if map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
+                if d2 < t.force_spot * t.force_spot || map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
                     return true;
                 }
             }
@@ -319,11 +321,12 @@ impl HpaGraph {
                     let (wx, wz) = self.grid_to_world(corner_gx[i], corner_gz[i]);
                     let dx = wx - t.origin.x;
                     let dz = wz - t.origin.y;
-                    if dx * dx + dz * dz > r2 {
+                    let d2 = dx * dx + dz * dz;
+                    if d2 > r2 {
                         continue;
                     }
 
-                    if map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
+                    if d2 < t.force_spot * t.force_spot || map.line_of_sight(corner_gx[i], corner_gz[i], gx_t, gz_t, 0.0) {
                         blocked = true;
                     }
                 }

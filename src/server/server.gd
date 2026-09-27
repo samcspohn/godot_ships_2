@@ -188,6 +188,8 @@ func _ready():
 			map.islands,
 			Rect2(-17500, -17500, 35000, 35000)
 		)
+		if _Utils.authority():
+			NavigationMapManager.build_visibility()
 	else:
 		push_warning("Server: No islands found on map — NavigationMap not built")
 
@@ -1750,6 +1752,8 @@ func _sweep_reach_fields() -> void:
 	var us := 0.0
 	var resweeps := 0
 	var jobs := 0
+	var smoke: Dictionary = SmokeManager.get_smoke_discs()
+	field.set_smoke(smoke.centres, smoke.radii)
 	for team_id in range(2):
 		var hull_keys := PackedInt64Array()
 		var hull_speeds := PackedFloat32Array()
@@ -1794,7 +1798,6 @@ func _sweep_reach_fields() -> void:
 			spreads.append(c.spread)
 			weights.append(c.weight)
 			force_spots.append(c.force_spot)
-			los_range = maxf(los_range, c.force_spot)
 			_reach_sources[c.source] += 1
 		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
 			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)

@@ -357,8 +357,9 @@ func _on_canvas_draw() -> void:
 	ship_markers_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(minimap_sizes[mm_idx], minimap_sizes[mm_idx])), Color(1, 1, 1, 0.5), false, 2.0)
 
 	var ship = player_ship as Ship
-	# Draw camera FOV arc
-	draw_camera_fov_arc(ship.artillery_controller.get_params()._range)
+	var bc := battle_camera as BattleCamera
+	var arc_ship: Ship = bc.follow_ship if bc != null and is_instance_valid(bc.follow_ship) else ship
+	draw_camera_fov_arc(arc_ship.artillery_controller.get_params()._range)
 
 	var ships_to_draw: Array = []
 	var ship_auras_to_draw: Array = []
@@ -549,6 +550,8 @@ func _on_canvas_draw() -> void:
 	# Draw torpedo indicators
 	draw_torpedoes_on_minimap()
 
+	if bc != null and bc.spectating:
+		return
 	var player_controller: PlayerController = ship.get_node("Modules/PlayerControl")
 
 	var _aim_point
@@ -855,6 +858,9 @@ func draw_camera_fov_arc(range: float) -> void:
 
 	if not is_instance_valid(battle_camera) or not is_instance_valid(player_ship):
 		return
+	var bc := battle_camera as BattleCamera
+	if bc == null or not (bc.spectate_free or is_instance_valid(bc.follow_ship)):
+		return
 
 	# Get camera properties
 	var camera_fov_vertical = battle_camera.fov # Vertical FOV in degrees
@@ -867,7 +873,7 @@ func draw_camera_fov_arc(range: float) -> void:
 	var fov_horizontal_rad = 2.0 * atan(tan(fov_vertical_rad / 2.0) * aspect_ratio)
 
 	# Get player position on minimap (camera follows player ship)
-	var minimap_center = world_to_minimap_position((battle_camera as BattleCamera).follow_ship.global_position)
+	var minimap_center = world_to_minimap_position(bc.global_position if bc.spectate_free else bc.follow_ship.global_position)
 
 	# Calculate arc radius on minimap
 	var arc_radius = range * scale_factor.x

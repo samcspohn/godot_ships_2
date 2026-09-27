@@ -412,8 +412,7 @@ impl ShipNavigator {
                     continue;
                 }
                 // If terrain blocks LOS to this threat, the position is already hidden.
-                let ray = map.bind().raycast_internal(adjusted, t.origin, 0.0);
-                if ray.hit {
+                if dist_sq >= t.force_spot * t.force_spot && map.bind().raycast_internal(adjusted, t.origin, 0.0).hit {
                     continue;
                 }
                 // Push the destination to just outside this threat circle.

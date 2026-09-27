@@ -321,7 +321,7 @@ var evade_override_threat: float = 0.75
 var evade_exclude: Array[StringName] = [&"SailForward"]
 var evade_params: Dictionary = {}
 
-var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite", &"Utility"]
+var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite", &"Utility", &"Spot"]
 var spread_distance: float = 1000.0
 var spread_multiplier: float = 1.0
 
@@ -364,7 +364,7 @@ static func for_battleship() -> BotDoctrine:
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
 	d.broadside_params = {"oscillation_bias": 0.5}
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station", &"Utility"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station", &"Utility", &"Spot"]
 	# A battleship's evasion IS its angling, so it is never worth suppressing:
 	# the presentation weave costs it nothing it was going to use anyway.
 	d.evade_override_threat = 0.6
@@ -386,7 +386,7 @@ static func for_cruiser() -> BotDoctrine:
 	# not in the same position -- with broadside off there is nothing for it to
 	# contend with, and a cruiser under fire has the rudder to make weaving pay.
 	d.use_broadside = false
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Utility"]
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Utility", &"Spot"]
 	d.low_threat_arm_first = true
 	# CA forces the post-processors off for its whole high-threat close arm,
 	# rather than only at the extremes the way BB does.
@@ -448,10 +448,7 @@ static func for_destroyer() -> BotDoctrine:
 	d.push_equalize_threat = 0.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Retreat", &"Spot"]
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Utility"]
-	d.spread_overrides = {
-		&"Spot": {"spread_distance": 5000.0, "spread_multiplier": 1.0},
-	}
+	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Utility", &"Spot"]
 	# The DD never marks an intent forced, so nothing is ever skipped for it.
 	d.force_below = -1.0
 	d.force_above = INF
@@ -461,8 +458,6 @@ static func for_destroyer() -> BotDoctrine:
 	# there is no station worth holding.
 	d.chase_when_unshootable = false
 	d.trades_on_concealment = true
-	# The search is the whole nav for a destroyer (DDBehavior._utility_arm).
-	d.utility_first = true
 	d.stealth_threat = 0.5
 	# A torpedo boat's station is dark first and everything else second; the
 	# guns are a tie-breaker and the way back into the dark counts.

@@ -16,6 +16,7 @@ func spawn_smoke(ship: Ship, size: float, duration: float) -> void:
 	# smoke_puff.team_id = team_id
 	# get_tree().root.add_child(smoke_puff)
 	add_child(smoke_puff)
+	smoke_puffs.append(smoke_puff)
 	get_tree().create_timer(duration).timeout.connect(smoke_puff.queue_free)
 	smoke_puff.global_position = ship.global_position
 	smoke_puff.scale = Vector3(size, size, size)
@@ -31,6 +32,16 @@ func spawn_smoke(ship: Ship, size: float, duration: float) -> void:
 	# for result in results:
 	# 	var body = result.collider
 	spawn_smoke_c.rpc(ship.global_position, ship.team.team_id, size, duration)
+
+## Server-side puffs as {centres: PackedVector2Array (XZ), radii: PackedFloat32Array}.
+func get_smoke_discs() -> Dictionary:
+	smoke_puffs.assign(smoke_puffs.filter(func(p): return is_instance_valid(p) and not p.is_queued_for_deletion()))
+	var centres := PackedVector2Array()
+	var radii := PackedFloat32Array()
+	for p in smoke_puffs:
+		centres.append(Vector2(p.global_position.x, p.global_position.z))
+		radii.append(p.scale.x)
+	return {centres = centres, radii = radii}
 
 @rpc("call_remote", "reliable")
 func spawn_smoke_c(pos: Vector3, team_id: int, size: float, duration: float):

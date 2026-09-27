@@ -442,6 +442,7 @@ func _update_nav_intent() -> void:
 		_last_intent.target_heading = new_intent.target_heading
 		_last_intent.target_position = new_intent.target_position
 		_last_intent.heading_weight = new_intent.heading_weight
+		destination = _last_intent.target_position
 		return
 
 	# Store the raw behavior intent BEFORE validation modifies it.
@@ -1308,6 +1309,11 @@ func _emit_debug_draws() -> void:
 			var ke: Vector3 = behavior._skill_kite.ray_end()
 			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
 			Debug.draw_label(Vector3(ke.x, 60.0, ke.z), behavior._skill_kite.debug_text(), Color(1.0, 0.8, 1.0), 14)
+		if st_skill == behavior._skill_spot:
+			for trail in behavior._skill_spot.trails():
+				for i in range(1, trail.size()):
+					Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
+						Color(0.4, 0.8, 1.0, 0.6))
 		if st_skill != null and st_skill.has_station():
 			var st_pos: Vector3 = st_skill.station_position()
 			var st_col := Color(0.2, 1.0, 0.9)

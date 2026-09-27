@@ -12,6 +12,7 @@ extends Node
 var _map: NavigationMap = null
 var _hpa_graph: HpaGraph = null
 var _reach_field: ReachField = null
+var _visibility: VisibilityGrid = null
 var _build_time_ms: float = 0.0
 var _is_built: bool = false
 
@@ -19,6 +20,8 @@ var _is_built: bool = false
 const DEFAULT_MIN_SHIP_RADIUS := 25.0
 ## Reach field cells per SDF cell per axis (2 -> 100 m cells on a 50 m grid).
 const REACH_FIELD_CELL_MULT := 2
+const VISIBILITY_CELL_M := 300.0
+const VISIBILITY_CACHE_DIR := "user://visibility"
 
 ## Build the navigation map from island collision shapes.
 ## island_bodies: Array of StaticBody3D nodes representing islands (with CollisionShape3D children)
@@ -132,6 +135,30 @@ func get_hpa_graph() -> HpaGraph:
 
 func get_reach_field() -> ReachField:
 	return _reach_field
+
+## Island line of sight between every pair of 300 m water cells; null until build_visibility().
+func get_visibility() -> VisibilityGrid:
+	return _visibility
+
+## Loads the cached grid for this map, or builds and caches it (~2 s).
+func build_visibility() -> void:
+	if not is_map_ready():
+		return
+	var t0 := Time.get_ticks_msec()
+	var vis := VisibilityGrid.new()
+	var path := "%s/%016x.bin" % [VISIBILITY_CACHE_DIR, vis.signature(_map, VISIBILITY_CELL_M)]
+	var f := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+	var loaded := f != null and vis.from_bytes(_map, VISIBILITY_CELL_M, f.get_buffer(f.get_length()))
+	if not loaded:
+		vis.build(_map, VISIBILITY_CELL_M)
+		DirAccess.make_dir_recursive_absolute(VISIBILITY_CACHE_DIR)
+		var w := FileAccess.open_compressed(path, FileAccess.WRITE, FileAccess.COMPRESSION_ZSTD)
+		if w != null:
+			w.store_buffer(vis.to_bytes())
+	_visibility = vis
+	var info := vis.get_info()
+	print("[NavigationMapManager] Visibility %s in %d ms: %d cells, %.1f MB" % [
+		"loaded" if loaded else "built", Time.get_ticks_msec() - t0, info.cells, info.bytes / 1048576.0])
 
 ## One key per distinct shell/range/gun-height combination; the reach field
 ## keeps one plane per key per enemy, so ships sharing a gun share the work.

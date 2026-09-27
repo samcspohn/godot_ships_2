@@ -27,7 +27,7 @@ const MIN_RAYS: usize = 64;
 /// waking threads across NUMA nodes than working, with 20 ms tails.
 const NAV_THREADS: usize = 16;
 
-fn nav_pool() -> &'static rayon::ThreadPool {
+pub(crate) fn nav_pool() -> &'static rayon::ThreadPool {
     static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         let n = std::thread::available_parallelism().map_or(4, |n| n.get()).min(NAV_THREADS);
@@ -216,18 +216,18 @@ impl RBlockTable {
 }
 
 /// Plain copy of the grids the sweep reads, so rayon workers never touch a Gd.
-struct Terrain {
-    w: i32,
-    h: i32,
-    cell: f32,
-    min_x: f32,
-    min_z: f32,
-    sdf: Vec<f32>,
-    height: Vec<f32>,
+pub(crate) struct Terrain {
+    pub(crate) w: i32,
+    pub(crate) h: i32,
+    pub(crate) cell: f32,
+    pub(crate) min_x: f32,
+    pub(crate) min_z: f32,
+    pub(crate) sdf: Vec<f32>,
+    pub(crate) height: Vec<f32>,
 }
 
 impl Terrain {
-    fn from_map(m: &NavigationMap) -> Self {
+    pub(crate) fn from_map(m: &NavigationMap) -> Self {
         Self {
             w: m.grid_width,
             h: m.grid_height,
@@ -243,13 +243,13 @@ impl Terrain {
         }
     }
 
-    fn in_bounds(&self, x: f32, z: f32) -> bool {
+    pub(crate) fn in_bounds(&self, x: f32, z: f32) -> bool {
         let gx = (x - self.min_x) / self.cell;
         let gz = (z - self.min_z) / self.cell;
         gx >= 0.0 && gz >= 0.0 && gx < self.w as f32 && gz < self.h as f32
     }
 
-    fn bilinear(&self, grid: &[f32], x: f32, z: f32) -> f32 {
+    pub(crate) fn bilinear(&self, grid: &[f32], x: f32, z: f32) -> f32 {
         let gx = ((x - self.min_x) / self.cell).clamp(0.0, self.w as f32 - 1.0);
         let gz = ((z - self.min_z) / self.cell).clamp(0.0, self.h as f32 - 1.0);
         let x0 = gx.floor() as i32;
@@ -294,9 +294,11 @@ struct SweepInput {
     origin: Vector2,
     gun_h: f32,
     range: f32,
-    /// None sweeps plain line of sight: the first land sample ends the ray.
+    /// None sweeps plain line of sight: the first land sample or smoke disc ends the ray.
     table: Option<Arc<RBlockTable>>,
 }
+
+type Disc = (Vector2, f32);
 
 struct SweepOutput {
     id: i64,
@@ -317,6 +319,7 @@ struct Sweep<'a> {
     t: &'a Terrain,
     f: &'a Field,
     inp: &'a SweepInput,
+    smoke: Vec<Disc>,
     bits: Vec<u64>,
     samples: u32,
     marks: u32,
@@ -377,8 +380,27 @@ impl Sweep<'_> {
         }
     }
 
+    fn smoke_stop(&self, dx: f32, dz: f32) -> f32 {
+        let mut stop = f32::INFINITY;
+        for &(c, r) in &self.smoke {
+            let (mx, mz) = (self.inp.origin.x - c.x, self.inp.origin.y - c.y);
+            let b = mx * dx + mz * dz;
+            let cc = mx * mx + mz * mz - r * r;
+            if cc <= 0.0 {
+                return 0.0;
+            }
+            let disc = b * b - cc;
+            if b < 0.0 && disc >= 0.0 {
+                stop = stop.min(-b - disc.sqrt());
+            }
+        }
+        stop
+    }
+
     fn walk(&mut self, ang: f32, st: &mut RayState, s_end: f32) {
         let (dx, dz) = (ang.sin(), ang.cos());
+        let stop = self.smoke_stop(dx, dz);
+        let s_end = s_end.min(stop);
         let t = self.t;
         let step = t.cell * SWEEP_STEP_MULT;
         let leap_margin = t.cell;
@@ -420,6 +442,9 @@ impl Sweep<'_> {
             }
             st.s += step;
         }
+        if st.s >= stop {
+            st.dead = true;
+        }
     }
 }
 
@@ -458,15 +483,20 @@ fn segment_clear(t: &Terrain, table: &RBlockTable, origin: Vector2, dx: f32, dz:
 
 /// Rays start MIN_RAYS wide and double every time their spacing would exceed
 /// RAY_SPACING_MULT field cells; a child inherits its parent's running block.
-fn sweep_one(t: &Terrain, f: &Field, inp: &SweepInput) -> SweepOutput {
+fn sweep_one(t: &Terrain, f: &Field, inp: &SweepInput, smoke: &[Disc]) -> SweepOutput {
     let range = match &inp.table {
         Some(t) => inp.range.min(t.cap),
         None => inp.range,
+    };
+    let smoke = match inp.table {
+        Some(_) => Vec::new(),
+        None => smoke.iter().copied().filter(|&(c, r)| c.distance_to(inp.origin) <= range + r).collect(),
     };
     let mut sw = Sweep {
         t,
         f,
         inp,
+        smoke,
         bits: vec![0u64; ((f.w * f.h) as usize + 63) / 64],
         samples: 0,
         marks: 0,
@@ -528,8 +558,8 @@ struct EnemyState {
     force_spot: f32,
     /// Cells this enemy can land shells on (its own forward table).
     fire: Vec<u64>,
-    /// Cells with terrain line of sight to this enemy, out to the team's
-    /// largest concealment radius.
+    /// Cells with line of sight past terrain and smoke to this enemy, out to
+    /// the team's largest concealment radius.
     los: Vec<u64>,
     /// Per friendly hull key: cells a hull of that kind can hit THIS enemy
     /// from (the hull's mirrored table, swept outward from the enemy).
@@ -543,9 +573,11 @@ struct TeamLayers {
     /// Sorted enemy ids; position = bit index in the masks handed out.
     order: Vec<i64>,
     los_range: f32,
+    /// Smoke discs added or removed since this team's last update_team.
+    smoke_pending: Vec<Disc>,
     /// Bumped whenever any plane changes; consumers cache off it.
     version: u64,
-    /// Min effective distance per cell, INFINITY where no enemy has LOS.
+    /// Min effective distance per cell, INFINITY where no enemy sees it.
     detect: Vec<f32>,
     detect_version: u64,
     /// Half-width of the narrowest bearing cone holding every enemy that can
@@ -799,6 +831,7 @@ pub struct ReachField {
     tables: HashMap<TableKey, Arc<RBlockTable>>,
     ships: HashMap<i64, ShipReach>,
     teams: HashMap<i32, TeamLayers>,
+    smoke: Arc<Vec<Disc>>,
     /// (team, radius / EXPOSURE_RADIUS_Q, node cells, ncx, ncz) -> (version,
     /// max, mean). Every navigator on a team with the same concealment reads
     /// the same vectors instead of rebuilding them from 123k cells each.
@@ -825,6 +858,7 @@ impl IRefCounted for ReachField {
             tables: HashMap::new(),
             ships: HashMap::new(),
             teams: HashMap::new(),
+            smoke: Arc::new(Vec::new()),
             exposure_cache: HashMap::new(),
             fire_cache: HashMap::new(),
             plans: HashMap::new(),
@@ -853,10 +887,11 @@ impl ReachField {
         let (Some(terrain), Some(field)) = (self.terrain.clone(), self.field.clone()) else {
             return Vec::new();
         };
+        let smoke = self.smoke.clone();
         let t0 = Instant::now();
         let outs: Vec<SweepOutput> = nav_pool().install(|| inputs
             .par_iter()
-            .map(|inp| sweep_one(&terrain, &field, inp))
+            .map(|inp| sweep_one(&terrain, &field, inp, &smoke))
             .collect());
         for o in &outs {
             self.last.rays += o.rays;
@@ -895,14 +930,17 @@ impl ReachField {
                 let idx = iz * w + ix;
                 let c = f.centre(idx);
                 for &(los, origin, inv_w, force_spot) in &eyes {
-                    if !bit_at(los, idx) {
-                        continue;
-                    }
                     let d = c.distance_to(origin);
                     // Inside a radar/hydro reach the value runs NEGATIVE toward
                     // the emitter, so a ship already inside still sees which
                     // way is out; outside it is distance over certainty.
-                    let eff = if d < force_spot { d - force_spot } else { d * inv_w };
+                    let eff = if d < force_spot {
+                        d - force_spot
+                    } else if bit_at(los, idx) {
+                        d * inv_w
+                    } else {
+                        continue;
+                    };
                     if eff < *g {
                         *g = eff;
                     }
@@ -1240,6 +1278,28 @@ impl ReachField {
         segment_clear(&terrain, &table, start, delta.x / dist, delta.y / dist, dist, gun_h)
     }
 
+    /// Smoke discs (world XZ centre, radius) that end line of sight. Only
+    /// enemies near a disc that appeared or vanished get their LOS re-swept.
+    #[func]
+    fn set_smoke(&mut self, centres: PackedVector2Array, radii: PackedFloat32Array) {
+        let n = centres.len().min(radii.len());
+        let next: Vec<Disc> = (0..n).map(|i| (centres[i], radii[i])).collect();
+        let key = |&(c, r): &Disc| (c.x.to_bits(), c.y.to_bits(), r.to_bits());
+        let old: std::collections::HashSet<_> = self.smoke.iter().map(key).collect();
+        let new: std::collections::HashSet<_> = next.iter().map(key).collect();
+        let changed: Vec<Disc> = self.smoke.iter().filter(|d| !new.contains(&key(d)))
+            .chain(next.iter().filter(|d| !old.contains(&key(d))))
+            .copied()
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        for tl in self.teams.values_mut() {
+            tl.smoke_pending.extend_from_slice(&changed);
+        }
+        self.smoke = Arc::new(next);
+    }
+
     /// The friendly hull kinds a team wants reach planes for. Replaces the set;
     /// planes for hulls no longer listed are dropped.
     #[func]
@@ -1301,6 +1361,7 @@ impl ReachField {
             let tl = self.teams.entry(team).or_default();
             let los_changed = (tl.los_range - los_range).abs() > 1.0;
             tl.los_range = los_range;
+            let smoke_pending = std::mem::take(&mut tl.smoke_pending);
             let live: std::collections::HashSet<i64> = (0..n).map(|i| ids[i]).collect();
             let before = tl.enemies.len();
             tl.enemies.retain(|id, _| live.contains(id));
@@ -1342,7 +1403,8 @@ impl ReachField {
                 if full {
                     resweeps += 1;
                 }
-                if full || los_changed {
+                let smoked = smoke_pending.iter().any(|&(c, r)| c.distance_to(origin) <= los_range + spread + r);
+                if full || los_changed || smoked {
                     for &o in &origins {
                         plan.push((id, Layer::Los, shell, o));
                     }

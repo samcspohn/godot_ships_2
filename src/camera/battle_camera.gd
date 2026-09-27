@@ -91,6 +91,15 @@ var zoom_smoothing: float = 1.0 # Adjust this value to control smoothing
 
 var audio_listener: AudioListener3D
 
+const SPECTATE_LOST_DELAY: float = 3.0
+var spectating: bool = false
+var _spectate_team: int = -1
+var _spectate_lost_timer: float = 0.0
+const FREE_SPEED: float = 400.0
+var spectate_free: bool = false
+var _free_rot: Vector2
+var _free_vel: Vector3
+
 func set_angle(angle: float):
 	current_view.rot_h = angle
 
@@ -198,6 +207,8 @@ func _ready():
 	#Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _input(event):
+	if spectating and _spectate_input(event):
+		return
 	# Handle mouse movement for rotation
 	if event is InputEventMouseMotion:
 		_handle_mouse_motion(event)
@@ -252,6 +263,13 @@ func _input(event):
 var transition_time := 0.0
 const TRANSITION_DURATION = 0.1
 func _process(delta):
+	if spectating:
+		_spectate_tick(delta)
+		if spectate_free:
+			_spectate_free_tick(delta)
+			return
+		if not is_instance_valid(follow_ship):
+			return
 
 	var cam_to_ship = self.global_transform.origin - follow_ship.global_transform.origin
 	var cam_to_ship_normalized = cam_to_ship.normalized()
@@ -266,9 +284,10 @@ func _process(delta):
 		_zoom_camera(zoom_delta)
 		zoom_accumulator -= zoom_delta
 	# Update camera position and rotation
-	_update_target_lock()
-	_auto_update_target_lock(delta)
-	_sync_sniper_view_for_weapon()
+	if not spectating:
+		_update_target_lock()
+		_auto_update_target_lock(delta)
+		_sync_sniper_view_for_weapon()
 
 	# Update Debug autoload with current follow ship
 	if has_node("/root/Debug"):
@@ -337,7 +356,8 @@ func _process(delta):
 	processed.emit(delta)
 
 func _physics_process(delta):
-	_calculate_target_info()
+	if not spectating:
+		_calculate_target_info()
 
 func _zoom_camera(zoom_amount):
 	current_view.zoom_camera(zoom_amount)
@@ -483,6 +503,89 @@ func set_camera_mode(mode):
 
 	transition_time = TRANSITION_DURATION
 	_Debug.sphere.call_deferred(aim_position, 5, Color.GREEN)
+
+
+func start_spectating(team_id: int) -> void:
+	spectating = true
+	_spectate_team = team_id
+	if target_lock_enabled:
+		_unlock_target()
+	set_camera_mode(CameraMode.THIRD_PERSON)
+	if ui != null:
+		ui.crosshair_container.visible = false
+		if ui.sniper_reticle != null:
+			ui.sniper_reticle.visible = false
+	spectate_cycle(1)
+
+
+func spectate_candidates() -> Array[Ship]:
+	var out: Array[Ship] = []
+	for s in get_node("/root/Server/GameWorld/Players").get_children():
+		if s is Ship and s.is_alive() and (_spectate_team < 0 or s.team.team_id == _spectate_team):
+			out.append(s)
+	out.sort_custom(func(a: Ship, b: Ship) -> bool: return String(a.name) < String(b.name))
+	return out
+
+
+func spectate_cycle(step: int) -> void:
+	var list := spectate_candidates()
+	if list.is_empty():
+		return
+	var i := list.find(follow_ship)
+	i = 0 if i < 0 and step > 0 else posmod(i + step, list.size())
+	follow_ship = list[i]
+	_spectate_lost_timer = 0.0
+	spectate_free = false
+
+
+func _spectate_tick(delta: float) -> void:
+	if spectate_free or (is_instance_valid(follow_ship) and follow_ship.is_alive()):
+		return
+	_spectate_lost_timer += delta
+	if _spectate_lost_timer >= SPECTATE_LOST_DELAY or not is_instance_valid(follow_ship):
+		spectate_cycle(1)
+
+
+# True = consumed; blocks sniper/lock/aim-mode input that needs a live own ship.
+func _spectate_input(event: InputEvent) -> bool:
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_TAB:
+				spectate_cycle(-1 if event.shift_pressed else 1)
+			KEY_SPACE:
+				var s = find_ship_closest_to_screen_center()
+				if s != null and (_spectate_team < 0 or s.team.team_id == _spectate_team):
+					follow_ship = s
+					_spectate_lost_timer = 0.0
+					spectate_free = false
+			KEY_F:
+				spectate_free = not spectate_free
+				_free_rot = Vector2(rotation.x, rotation.y)
+				_free_vel = Vector3.ZERO
+		return true
+	if not spectate_free:
+		return event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE
+	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		_free_rot.y -= event.screen_relative.x * 0.003
+		_free_rot.x = clampf(_free_rot.x - event.screen_relative.y * 0.003, -1.5, 1.5)
+	return true
+
+
+func _spectate_free_tick(delta: float) -> void:
+	rotation = Vector3(_free_rot.x, _free_rot.y, 0.0)
+	fov = default_fov
+	var input := Vector3(
+		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
+		float(Input.is_key_pressed(KEY_E)) - float(Input.is_key_pressed(KEY_Q)),
+		float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W)))
+	var speed := FREE_SPEED * maxf(global_position.y / 200.0, 1.0)
+	if Input.is_key_pressed(KEY_SHIFT):
+		speed *= 4.0
+	_free_vel = _free_vel.lerp(global_basis * input.limit_length(1.0) * speed, clampf(delta * 6.0, 0.0, 1.0))
+	global_position += _free_vel * delta
+	global_position.y = maxf(global_position.y, 5.0)
+	audio_listener.global_position = global_position
+	processed.emit(delta)
 
 
 func toggle_camera_mode():

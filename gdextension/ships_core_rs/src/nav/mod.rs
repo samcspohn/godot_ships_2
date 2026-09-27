@@ -2,5 +2,7 @@ pub mod hpa;
 pub mod map;
 pub mod navigator;
 pub mod reach;
+pub mod spot_walk;
 pub mod threat;
 pub mod types;
+pub mod visibility;

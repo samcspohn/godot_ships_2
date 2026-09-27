@@ -360,17 +360,18 @@ pub struct ThreatCircle {
     pub enemy_id: i32, // ship instance ID; -1 = unidentified
     pub origin: Vector2,
     pub radius: f32,   // effective detection radius in world metres
+    pub force_spot: f32, // radar/hydro reach: seen inside it whatever the terrain
 }
 
 impl Default for ThreatCircle {
     fn default() -> Self {
-        Self { enemy_id: -1, origin: Vector2::ZERO, radius: 0.0 }
+        Self { enemy_id: -1, origin: Vector2::ZERO, radius: 0.0, force_spot: 0.0 }
     }
 }
 
 impl ThreatCircle {
     pub fn new(enemy_id: i32, origin: Vector2, radius: f32) -> Self {
-        Self { enemy_id, origin, radius }
+        Self { enemy_id, origin, radius, force_spot: 0.0 }
     }
 }
 

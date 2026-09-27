@@ -602,7 +602,7 @@ func engage_target(target: Ship):
 	var gunboat_hold: bool = _gb_stealth and _suppress_guns
 	if not gunboat_hold and (_ship.is_detected() or (not _suppress_guns and can_fire_guns())):
 		super.engage_target(target)
-		_ship.secondary_controller.enabled = true
+		_ship.secondary_controller.enabled = not wants_to_be_concealed
 	else:
 		_ship.secondary_controller.enabled = false
 		# Aim turrets but don't fire - at the believed position, so a target that

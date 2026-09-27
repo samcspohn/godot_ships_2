@@ -98,7 +98,7 @@ impl ThreatRegistry {
             if radius <= 0.0 {
                 continue;
             }
-            out.push(ThreatCircle::new(es.enemy_id, es.position, radius));
+            out.push(ThreatCircle { force_spot: es.force_spot, ..ThreatCircle::new(es.enemy_id, es.position, radius) });
         }
         // Deterministic ordering keeps stamp_threats and the destination push
         // from depending on hash iteration order.

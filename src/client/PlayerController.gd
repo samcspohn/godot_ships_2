@@ -8,7 +8,7 @@ var ship: Ship
 var _cameraInput: Vector2
 @export var playerName: Label
 var cam: BattleCamera
-var spectator: SpectatorCamera = null
+var spectating: bool = false
 var _dead_for: float = 0.0
 const SPECTATE_AFTER_DEATH: float = 4.0
 var ray: RayCast3D
@@ -145,6 +145,10 @@ func setName(_name: String):
 	playerName.text = _name
 
 func _input(event: InputEvent) -> void:
+	if spectating:
+		if event is InputEventKey and event.keycode == KEY_CTRL and not event.is_echo():
+			_set_mouse_captured(not event.pressed)
+		return
 	if event is InputEventMouseMotion:
 		if mouse_captured:
 			_cameraInput = event.relative
@@ -192,28 +196,7 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventKey:
 		 # Control key to toggle mouse capture
 		if event.keycode == KEY_CTRL and not event.is_echo():
-			if event.pressed:
-				# When pressing control, release the mouse so the player can
-				# interact with the HUD. ORDER MATTERS:
-				#   1) Switch to VISIBLE first so the GUI subsystem treats the
-				#      mouse as a normal pointer again.
-				#   2) Warp afterwards so the synthetic InputEventMouseMotion the
-				#      warp generates propagates through Viewport._gui_input(),
-				#      refreshing hover state and firing mouse_entered on the
-				#      Control under the cursor. This is what makes built-in
-				#      tooltips and manual hover checks (e.g. hit_stat_counters)
-				#      work immediately after releasing the cursor.
-				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-				_center_mouse()
-				mouse_captured = false
-			else:
-				# When releasing control, capture the mouse again
-				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-				mouse_captured = true
-				if _box_select_dragging:
-					_box_select_dragging = false
-					if cam and cam.ui:
-						cam.ui.hide_box_select()
+			_set_mouse_captured(not event.pressed)
 			# Consumable hotkeys
 	if event.is_action_pressed("consumable_1"):
 		ship.consumable_manager.use_consumable_rpc.rpc_id(1, 0)
@@ -233,6 +216,21 @@ func _input(event: InputEvent) -> void:
 		if current_weapon_controller is AviationController:
 			var append_waypoint: bool = Input.is_key_pressed(KEY_SPACE)
 			current_weapon_controller.set_waypoint_at_aim.rpc_id(1, append_waypoint)
+
+func _set_mouse_captured(on: bool) -> void:
+	if not on:
+		# VISIBLE before warp so the warp's synthetic motion refreshes GUI hover state.
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_center_mouse()
+		mouse_captured = false
+		return
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	mouse_captured = true
+	if _box_select_dragging:
+		_box_select_dragging = false
+		if cam and cam.ui:
+			cam.ui.hide_box_select()
+
 
 # Center the mouse cursor on the screen
 func _center_mouse():
@@ -483,7 +481,7 @@ func _physics_process(_delta: float) -> void:
 		_pending_target_selection = null
 
 func _process(dt: float) -> void:
-	if spectator == null and ship.health_controller.is_dead():
+	if not spectating and ship.health_controller.is_dead():
 		_dead_for += dt
 		if _dead_for >= SPECTATE_AFTER_DEATH:
 			_start_spectating()
@@ -707,16 +705,7 @@ func select_weapon(idx: int) -> void:
 
 
 func _start_spectating() -> void:
-	spectator = SpectatorCamera.new()
-	spectator.team_filter = ship.team.team_id
-	spectator.owner_ship = ship
+	spectating = true
+	is_holding = false
 	if cam != null:
-		cam.set_process(false)
-		cam.set_process_input(false)
-		cam.set_physics_process(false)
-		if cam.ui != null:
-			cam.ui.crosshair_container.visible = false
-			if cam.ui.sniper_reticle != null:
-				cam.ui.sniper_reticle.visible = false
-		spectator.transform = cam.global_transform
-	get_tree().root.add_child(spectator)
+		cam.start_spectating(ship.team.team_id)

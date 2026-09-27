@@ -22,11 +22,17 @@ var _free_vel: Vector3 = Vector3.ZERO
 var _lost_timer: float = 0.0
 var _hud: Label
 var _listener: AudioListener3D
+var _looking: bool = false
+var _look_anchor: Vector2
 
 
 func _ready() -> void:
 	far = 60000.0
 	fov = 60.0
+	var template: Camera3D = load("res://src/camera/player_cam.tscn").instantiate()
+	environment = template.environment
+	near = template.near
+	template.free()
 	current = true
 	_listener = AudioListener3D.new()
 	add_child(_listener)
@@ -82,16 +88,22 @@ func cycle(step: int) -> void:
 	_lost_timer = 0.0
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
-		_yaw -= event.relative.x * 0.005
-		_pitch = clampf(_pitch - event.relative.y * 0.005, -1.45, 1.2)
+# _input, not _unhandled: ship-tag ProgressBars under the followed ship swallow RMB.
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and _looking:
+		_yaw -= event.screen_relative.x * 0.005
+		_pitch = clampf(_pitch - event.screen_relative.y * 0.005, -1.45, 1.2)
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		_set_looking(event.pressed)
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_dist = maxf(_dist / 1.15, MIN_DIST)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_dist = minf(_dist * 1.15, MAX_DIST)
-	elif event is InputEventKey and event.pressed and not event.echo:
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_TAB:
 				cycle(-1 if event.shift_pressed else 1)
@@ -107,7 +119,26 @@ func _unhandled_input(event: InputEvent) -> void:
 					mode = Mode.ORBIT
 
 
+func _set_looking(on: bool) -> void:
+	if on == _looking:
+		return
+	_looking = on
+	if on:
+		_look_anchor = get_viewport().get_mouse_position()
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	else:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		get_viewport().warp_mouse(_look_anchor)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_EXIT_TREE:
+		_set_looking(false)
+
+
 func _process(delta: float) -> void:
+	if _looking and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		_set_looking(false)
 	if follow_ship != null and (not is_instance_valid(follow_ship) or not follow_ship.is_alive()):
 		_lost_timer += delta
 		if _lost_timer >= FOLLOW_LOST_DELAY or not is_instance_valid(follow_ship):
