@@ -317,13 +317,14 @@ impl ProjectileManager {
         self.armor_part_at_impl(ship, local_pos)
     }
 
-    /// Offline bake of one lattice; see `survey_sweep_impl`.
-    #[func] pub(crate) fn survey_sweep(&mut self, target: Gd<Node3D>, ref_shell: Gd<Resource>,
-            dir: Vector3, v_ref: f64, points: PackedVector3Array, nx: i32, ny: i32, rect: Vector4,
-            v_edges: PackedFloat32Array, coarse_pens: PackedFloat32Array, bisect_mm: f64,
-            om_max: f64) -> VarDictionary {
-        self.survey_sweep_impl(target, ref_shell, dir, v_ref, points, nx, ny, rect, v_edges,
-            coarse_pens, bisect_mm, om_max)
+    /// Offline bake of every lattice; see `survey_bake_impl`.
+    #[func] pub(crate) fn survey_bake(&mut self, hulls: Array<Gd<Node3D>>, ref_shell: Gd<Resource>,
+            job_hull: PackedInt32Array, job_dir: PackedVector3Array, job_vref: PackedFloat32Array,
+            job_nxny: PackedInt32Array, job_rect: PackedVector4Array, points: PackedVector3Array,
+            pt_off: PackedInt32Array, edges: PackedFloat32Array, edge_off: PackedInt32Array,
+            opts: VarDictionary) -> VarDictionary {
+        self.survey_bake_impl(hulls, ref_shell, job_hull, job_dir, job_vref, job_nxny, job_rect,
+            points, pt_off, edges, edge_off, opts)
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.

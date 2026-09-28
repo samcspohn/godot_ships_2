@@ -56,6 +56,7 @@ const TIE_EPS: f64 = 1e-9;
 
 /// One armour part: triangles in part space, a bounding-volume tree over them,
 /// and the part's placement in ship space.
+#[derive(Clone)]
 pub struct PartMesh {
     pub tris: Vec<Tri>,
     nodes: Vec<BvhNode>,
@@ -256,7 +257,7 @@ impl PartMesh {
 }
 
 /// Every armour part of one ship, in ship space.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ArmorMesh {
     pub parts: Vec<PartMesh>,
 }

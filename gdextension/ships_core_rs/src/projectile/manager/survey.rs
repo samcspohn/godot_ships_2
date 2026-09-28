@@ -1,7 +1,6 @@
 use crate::variant_cast::VariantCast;
 use godot::prelude::*;
 use godot::classes::{Node3D, PhysicsDirectSpaceState3D, Resource};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 use super::util::armor_rays_for;
@@ -301,6 +300,166 @@ fn sweep(
     (bps, walks)
 }
 
+/// One lattice: parallel rays along ship-local `dir` at `v_ref` against the
+/// hull's armour mesh. Cells are grouped into profiles by the plates they meet,
+/// and each profile is swept in penetration to find where the result changes,
+/// once with overmatch off and once with the first plate overmatched when any
+/// fleet shell could.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sweep_bucket(
+    mesh: &ArmorMesh,
+    aabb: Aabb,
+    ref_spec: &ShellSpec,
+    dir: Vector3,
+    v_ref: f64,
+    pts: &[Vector3],
+    nx: i32,
+    ny: i32,
+    rect: Vector4,
+    v_edges: &[f32],
+    pens: &[f64],
+    bisect_mm: f64,
+    om_max: f64,
+) -> Result<(Vec<u8>, i64), String> {
+    if pens.is_empty() {
+        return Err("no coarse pens".into());
+    }
+    let dir = dir.normalized();
+    let mut base = *ref_spec;
+    base.overmatch = 0.0;
+    base.is_he = false;
+    base.k_nose = K_NOSE_APC;
+    let base_pen = NativeArmorInteraction::calculate_de_marre_penetration(base.mass, v_ref, base.caliber).max(1e-6);
+    let mut spec_mid = base;
+    spec_mid.pen_mod = pens[pens.len() / 2] / base_pen;
+
+    let classified: Vec<(u8, String, f32, u8)> = pts
+        .iter()
+        .map(|&p| {
+            let (code, first_part, steps, water) = walk_cell(mesh, aabb, &spec_mid, p, dir, v_ref, true);
+            if code == CELL_MISS {
+                return (code, String::from("miss"), -1.0, 0);
+            }
+            let mut sig = String::new();
+            for st in &steps {
+                sig.push_str(&format!("{}|{:.0}|{:.2}|{};", st.part, st.armor_mm, st.impact_angle, st.is_citadel));
+            }
+            // Water is part of the identity: a cell that arrived through the
+            // surface must not share a profile (and its HE verdict) with a
+            // dry one that happened to meet the same plates.
+            sig.push_str(&format!("={}{}", code, if water { "~w" } else { "" }));
+            let first_mm = steps.first().map(|s| s.armor_mm as f32).unwrap_or(-1.0);
+            let mut flags = (mesh.armor_type(first_part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
+            if mesh.is_citadel(first_part) {
+                flags |= FLAG_CITADEL;
+            }
+            if mesh.is_dynamic(first_part) {
+                flags |= FLAG_TURRET;
+            }
+            if water {
+                flags |= FLAG_WATER;
+            }
+            (code, sig, first_mm, flags)
+        })
+        .collect();
+
+    struct Profile {
+        rep: usize,
+        first_mm: f32,
+        flags: u8,
+    }
+    let mut profiles: Vec<Profile> = Vec::new();
+    let mut sig_index: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cell_idx: Vec<usize> = vec![0; pts.len()];
+    for (i, (_, sig, first_mm, flags)) in classified.iter().enumerate() {
+        cell_idx[i] = *sig_index.entry(sig.clone()).or_insert_with(|| {
+            profiles.push(Profile { rep: i, first_mm: *first_mm, flags: *flags });
+            profiles.len() - 1
+        });
+    }
+    // A byte per cell unless this bucket needs more: bow-on rays run the
+    // hull's length and nearly every one is its own profile.
+    let cells: Vec<u8> = if profiles.len() > 255 {
+        cell_idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect()
+    } else {
+        cell_idx.iter().map(|&i| i as u8).collect()
+    };
+
+    let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
+        .iter()
+        .map(|prof| {
+            if prof.first_mm < 0.0 {
+                return (vec![(0.0, CELL_MISS)], Vec::new(), 0);
+            }
+            let p = pts[prof.rep];
+            let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0);
+            let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
+                sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64)
+            } else {
+                (Vec::new(), 0)
+            };
+            (bps, bps_om, w1 + w2)
+        })
+        .collect();
+
+    let mut walks: i64 = pts.len() as i64;
+    let np = profiles.len();
+    if np > u16::MAX as usize {
+        return Err(format!("{np} profiles in one bucket"));
+    }
+    if v_edges.len() != ny.max(0) as usize + 1 {
+        return Err(format!("{} v_edges for ny={ny}", v_edges.len()));
+    }
+    let mut fm: Vec<u8> = Vec::with_capacity(2 * np);
+    let mut flags: Vec<u8> = Vec::with_capacity(np);
+    let mut cnt: Vec<u8> = Vec::with_capacity(np);
+    let mut cnt_om: Vec<u8> = Vec::with_capacity(np);
+    let mut bps_buf: Vec<u8> = Vec::new();
+    let mut bps_om_buf: Vec<u8> = Vec::new();
+    let enc = |buf: &mut Vec<u8>, bps: &[(f32, u8)]| -> u8 {
+        let n = bps.len().min(BP_MAX);
+        for (mm, code) in &bps[..n] {
+            // 1 mm quantisation, under the bake's own BISECT_MM.
+            buf.extend_from_slice(&(mm.round().clamp(0.0, 65535.0) as u16).to_le_bytes());
+            buf.push(*code);
+        }
+        n as u8
+    };
+    for (prof, (bps, bps_om, w)) in profiles.iter().zip(sweeps.iter()) {
+        walks += *w as i64;
+        let mm = if prof.first_mm < 0.0 {
+            MM_MISS
+        } else {
+            (prof.first_mm.round().clamp(0.0, 65534.0)) as u16
+        };
+        fm.extend_from_slice(&mm.to_le_bytes());
+        flags.push(prof.flags);
+        cnt.push(enc(&mut bps_buf, bps));
+        cnt_om.push(enc(&mut bps_om_buf, bps_om));
+    }
+
+    let mut blob: Vec<u8> = Vec::with_capacity(
+        BLOB_HDR + 4 * v_edges.len() + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
+    blob.push(nx.clamp(0, 255) as u8);
+    blob.push(ny.clamp(0, 255) as u8);
+    blob.extend_from_slice(&(np.min(u16::MAX as usize) as u16).to_le_bytes());
+    for v in [rect.x, rect.y, rect.z, rect.w, dir.x, dir.y, dir.z] {
+        blob.extend_from_slice(&v.to_le_bytes());
+    }
+    for e in v_edges {
+        blob.extend_from_slice(&e.to_le_bytes());
+    }
+    blob.extend_from_slice(&cells);
+    blob.extend_from_slice(&fm);
+    blob.extend_from_slice(&flags);
+    blob.extend_from_slice(&cnt);
+    blob.extend_from_slice(&cnt_om);
+    blob.extend_from_slice(&bps_buf);
+    blob.extend_from_slice(&bps_om_buf);
+
+    Ok((blob, walks))
+}
+
 impl ProjectileManager {
     /// The penetration the armour walk credits `shell` with at `velocity`:
     /// De Marre times `penetration_modifier`. Not `calculate_penetration_power`,
@@ -395,177 +554,106 @@ impl ProjectileManager {
         out
     }
 
-    /// Bake one lattice: parallel rays along ship-local `dir` at `v_ref`,
-    /// walked on worker threads against the target's armour mesh. Cells are
-    /// grouped into profiles by the plates they meet, and each profile is
-    /// swept in penetration to find where the result changes, once with
-    /// overmatch off and once with the first plate overmatched when any fleet
-    /// shell could.
+    /// Every (hull, bucket) lattice in one call, flattened: job `j` is hull
+    /// `job_hull[j]`, its points `points[pt_off[j]..pt_off[j+1]]` and row edges
+    /// `edges[edge_off[j]..edge_off[j+1]]`. `opts`: coarse_pens, bisect_mm, om_max,
+    /// threads (0 = all), smt. Returns a blob and walk count per job.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn survey_sweep_impl(
+    pub(crate) fn survey_bake_impl(
         &mut self,
-        target: Gd<Node3D>,
+        hulls: Array<Gd<Node3D>>,
         ref_shell: Gd<Resource>,
-        dir: Vector3,
-        v_ref: f64,
+        job_hull: PackedInt32Array,
+        job_dir: PackedVector3Array,
+        job_vref: PackedFloat32Array,
+        job_nxny: PackedInt32Array,
+        job_rect: PackedVector4Array,
         points: PackedVector3Array,
-        nx: i32,
-        ny: i32,
-        rect: Vector4,
-        v_edges: PackedFloat32Array,
-        coarse_pens: PackedFloat32Array,
-        bisect_mm: f64,
-        om_max: f64,
+        pt_off: PackedInt32Array,
+        edges: PackedFloat32Array,
+        edge_off: PackedInt32Array,
+        opts: VarDictionary,
     ) -> VarDictionary {
         let mut out = VarDictionary::new();
-        if coarse_pens.is_empty() {
+        let opt = |k: &str| opts.get(k).unwrap_or_default();
+        let coarse_pens: PackedFloat32Array = opt("coarse_pens").try_to().unwrap_or_default();
+        let (bisect_mm, om_max) = (opt("bisect_mm").to_f64(), opt("om_max").to_f64());
+        let (threads, smt) = (opt("threads").to_i32(), opts.get("smt").is_none_or(|v| v.to_bool()));
+        let n = job_hull.len();
+        if job_dir.len() != n || job_vref.len() != n || job_nxny.len() != 2 * n || job_rect.len() != n
+            || pt_off.len() != n + 1 || edge_off.len() != n + 1 {
+            godot_error!("survey_bake: job arrays disagree on length");
             return out;
         }
-        let id = target.instance_id().to_i64();
-        self.armor_sync(id);
-        let Some(sa) = self.armor.get(id) else { return out };
-        let mesh = &sa.mesh;
-        let aabb: Aabb = target.get("aabb").try_to::<Aabb>().unwrap_or_default();
-        let dir = dir.normalized();
-
-        let mut base = ShellSpec::from_params(&ref_shell);
-        base.overmatch = 0.0;
-        base.is_he = false;
-        base.k_nose = K_NOSE_APC;
-        let base_pen = NativeArmorInteraction::calculate_de_marre_penetration(base.mass, v_ref, base.caliber).max(1e-6);
-        let pts: Vec<Vector3> = (0..points.len()).map(|i| points[i]).collect();
-        let pens: Vec<f64> = (0..coarse_pens.len()).map(|k| coarse_pens[k] as f64).collect();
-        let mut spec_mid = base;
-        spec_mid.pen_mod = pens[pens.len() / 2] / base_pen;
-
-        let classified: Vec<(u8, String, f32, u8)> = pts
-            .par_iter()
-            .map(|&p| {
-                let (code, first_part, steps, water) = walk_cell(mesh, aabb, &spec_mid, p, dir, v_ref, true);
-                if code == CELL_MISS {
-                    return (code, String::from("miss"), -1.0, 0);
-                }
-                let mut sig = String::new();
-                for st in &steps {
-                    sig.push_str(&format!("{}|{:.0}|{:.2}|{};", st.part, st.armor_mm, st.impact_angle, st.is_citadel));
-                }
-                // Water is part of the identity: a cell that arrived through the
-                // surface must not share a profile (and its HE verdict) with a
-                // dry one that happened to meet the same plates.
-                sig.push_str(&format!("={}{}", code, if water { "~w" } else { "" }));
-                let first_mm = steps.first().map(|s| s.armor_mm as f32).unwrap_or(-1.0);
-                let mut flags = (mesh.armor_type(first_part).clamp(0, SECTION_MAX) as u8) << CELL_SECTION_SHIFT;
-                if mesh.is_citadel(first_part) {
-                    flags |= FLAG_CITADEL;
-                }
-                if mesh.is_dynamic(first_part) {
-                    flags |= FLAG_TURRET;
-                }
-                if water {
-                    flags |= FLAG_WATER;
-                }
-                (code, sig, first_mm, flags)
-            })
-            .collect();
-
-        struct Profile {
-            rep: usize,
-            first_mm: f32,
-            flags: u8,
+        let ids: Vec<i64> = hulls.iter_shared().map(|h| h.instance_id().to_i64()).collect();
+        let aabbs: Vec<Aabb> = hulls.iter_shared().map(|h| h.get("aabb").try_to::<Aabb>().unwrap_or_default()).collect();
+        for &id in &ids {
+            self.armor_sync(id);
         }
-        let mut profiles: Vec<Profile> = Vec::new();
-        let mut sig_index: BTreeMap<String, usize> = BTreeMap::new();
-        let mut cell_idx: Vec<usize> = vec![0; pts.len()];
-        for (i, (_, sig, first_mm, flags)) in classified.iter().enumerate() {
-            cell_idx[i] = *sig_index.entry(sig.clone()).or_insert_with(|| {
-                profiles.push(Profile { rep: i, first_mm: *first_mm, flags: *flags });
-                profiles.len() - 1
-            });
-        }
-        // A byte per cell unless this bucket needs more: bow-on rays run the
-        // hull's length and nearly every one is its own profile.
-        let cells: Vec<u8> = if profiles.len() > 255 {
-            cell_idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect()
-        } else {
-            cell_idx.iter().map(|&i| i as u8).collect()
-        };
+        let meshes: Vec<Option<&ArmorMesh>> = ids.iter().map(|&id| self.armor.get(id).map(|sa| &sa.mesh)).collect();
+        let spec = ShellSpec::from_params(&ref_shell);
+        let pens: Vec<f64> = coarse_pens.as_slice().iter().map(|&p| p as f64).collect();
+        let (hull_of, pts, eds, po, eo) =
+            (job_hull.as_slice(), points.as_slice(), edges.as_slice(), pt_off.as_slice(), edge_off.as_slice());
+        let (dirs, vrefs, nxny, rects) = (job_dir.as_slice(), job_vref.as_slice(), job_nxny.as_slice(), job_rect.as_slice());
 
-        let sweeps: Vec<(Vec<(f32, u8)>, Vec<(f32, u8)>, u64)> = profiles
-            .par_iter()
-            .map(|prof| {
-                if prof.first_mm < 0.0 {
-                    return (vec![(0.0, CELL_MISS)], Vec::new(), 0);
-                }
-                let p = pts[prof.rep];
-                let (bps, w1) = sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, 0.0);
-                let (bps_om, w2) = if prof.first_mm as f64 <= om_max {
-                    sweep(mesh, aabb, &base, base_pen, p, dir, v_ref, &pens, bisect_mm, prof.first_mm as f64)
-                } else {
-                    (Vec::new(), 0)
-                };
-                (bps, bps_om, w1 + w2)
-            })
-            .collect();
+        let nodes = crate::sched::cpu_order(smt).iter().map(|c| c.node).max().map_or(1, |m| m + 1);
+        // A copy of each mesh per NUMA node, cloned by the first worker there so
+        // its pages are allocated locally.
+        let copies: Vec<Vec<std::sync::OnceLock<ArmorMesh>>> =
+            meshes.iter().map(|_| (0..nodes).map(|_| std::sync::OnceLock::new()).collect()).collect();
+        let costs: Vec<f64> = (0..n).map(|j| (po[j + 1] - po[j]).max(0) as f64).collect();
 
-        let mut walks: i64 = pts.len() as i64;
-        let np = profiles.len();
-        if np > u16::MAX as usize {
-            godot_error!("survey_sweep: {} profiles in one bucket", np);
-            return out;
-        }
-        if v_edges.len() != ny.max(0) as usize + 1 {
-            godot_error!("survey_sweep: {} v_edges for ny={}", v_edges.len(), ny);
-            return out;
-        }
-        let mut fm: Vec<u8> = Vec::with_capacity(2 * np);
-        let mut flags: Vec<u8> = Vec::with_capacity(np);
-        let mut cnt: Vec<u8> = Vec::with_capacity(np);
-        let mut cnt_om: Vec<u8> = Vec::with_capacity(np);
-        let mut bps_buf: Vec<u8> = Vec::new();
-        let mut bps_om_buf: Vec<u8> = Vec::new();
-        let enc = |buf: &mut Vec<u8>, bps: &[(f32, u8)]| -> u8 {
-            let n = bps.len().min(BP_MAX);
-            for (mm, code) in &bps[..n] {
-                // 1 mm quantisation, under the bake's own BISECT_MM.
-                buf.extend_from_slice(&(mm.round().clamp(0.0, 65535.0) as u16).to_le_bytes());
-                buf.push(*code);
-            }
-            n as u8
-        };
-        for (prof, (bps, bps_om, w)) in profiles.iter().zip(sweeps.iter()) {
-            walks += *w as i64;
-            let mm = if prof.first_mm < 0.0 {
-                MM_MISS
-            } else {
-                (prof.first_mm.round().clamp(0.0, 65534.0)) as u16
+        let (results, stats) = crate::sched::run_balanced(&costs, threads.max(0) as usize, smt, |j, w| {
+            let h = hull_of[j] as usize;
+            let Some(src) = meshes.get(h).copied().flatten() else {
+                return Err(format!("hull {h} has no armour"));
             };
-            fm.extend_from_slice(&mm.to_le_bytes());
-            flags.push(prof.flags);
-            cnt.push(enc(&mut bps_buf, bps));
-            cnt_om.push(enc(&mut bps_om_buf, bps_om));
-        }
+            let mesh = copies[h][w.node.min(nodes - 1)].get_or_init(|| src.clone());
+            sweep_bucket(
+                mesh, aabbs[h], &spec, dirs[j], vrefs[j] as f64,
+                &pts[po[j] as usize..po[j + 1] as usize],
+                nxny[2 * j], nxny[2 * j + 1], rects[j],
+                &eds[eo[j] as usize..eo[j + 1] as usize],
+                &pens, bisect_mm, om_max,
+            )
+        });
 
-        let mut blob: Vec<u8> = Vec::with_capacity(
-            BLOB_HDR + 4 * v_edges.len() + cells.len() + 5 * np + bps_buf.len() + bps_om_buf.len());
-        blob.push(nx.clamp(0, 255) as u8);
-        blob.push(ny.clamp(0, 255) as u8);
-        blob.extend_from_slice(&(np.min(u16::MAX as usize) as u16).to_le_bytes());
-        for v in [rect.x, rect.y, rect.z, rect.w, dir.x, dir.y, dir.z] {
-            blob.extend_from_slice(&v.to_le_bytes());
+        let mut blobs = VarArray::new();
+        let mut walks = PackedInt64Array::new();
+        let mut errors = 0;
+        for (j, r) in results.into_iter().enumerate() {
+            match r {
+                Ok((blob, w)) => {
+                    blobs.push(&PackedByteArray::from(blob.as_slice()).to_variant());
+                    walks.push(w);
+                }
+                Err(e) => {
+                    if errors < 8 {
+                        godot_error!("survey_bake: job {j}: {e}");
+                    }
+                    errors += 1;
+                    blobs.push(&Variant::nil());
+                    walks.push(0);
+                }
+            }
         }
-        for i in 0..v_edges.len() {
-            blob.extend_from_slice(&v_edges[i].to_le_bytes());
-        }
-        blob.extend_from_slice(&cells);
-        blob.extend_from_slice(&fm);
-        blob.extend_from_slice(&flags);
-        blob.extend_from_slice(&cnt);
-        blob.extend_from_slice(&cnt_om);
-        blob.extend_from_slice(&bps_buf);
-        blob.extend_from_slice(&bps_om_buf);
-
-        out.set("blob", &PackedByteArray::from(blob.as_slice()));
-        out.set("walks", walks);
+        let busy = &stats.busy_ms;
+        let mean = busy.iter().sum::<f64>() / busy.len().max(1) as f64;
+        let mut st = VarDictionary::new();
+        st.set("threads", stats.threads as i64);
+        st.set("nodes", stats.nodes as i64);
+        st.set("wall_ms", stats.wall_ms);
+        st.set("busy_min_ms", busy.iter().cloned().fold(f64::INFINITY, f64::min));
+        st.set("busy_mean_ms", mean);
+        st.set("busy_max_ms", busy.iter().cloned().fold(0.0, f64::max));
+        st.set("items_max", stats.items.iter().copied().max().unwrap_or(0) as i64);
+        st.set("steals", stats.steals as i64);
+        st.set("cross_node_steals", stats.cross_node_steals as i64);
+        out.set("blobs", &blobs);
+        out.set("walks", &walks);
+        out.set("errors", errors as i64);
+        out.set("stats", &st);
         out
     }
 

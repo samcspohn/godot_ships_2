@@ -4,10 +4,10 @@ extends Node3D
 ## Offline bake of BotGunnery lattices:
 ##   make bake                       (all hulls under assets/Ships, skipping up-to-date)
 ##   make bake ARGS="--force res://assets/Ships/Yamato/Yamato.tscn"
+##   ARGS may add --threads=N and --no-smt.
 ##
-## Each hull bakes in its own process to a staging file, then `--merge` packs the
-## staging dir into one `gunnery.db`; a shared output file cannot be written by
-## the parallel bakers directly.
+## One process, one native call for every stale hull's buckets; each hull still
+## gets a staging file so unchanged hulls are merged without re-baking.
 ##
 ## Runs inside one physics frame: headless boots get exactly one.
 
@@ -27,6 +27,9 @@ static var _survey_shapes: Array = []
 var _hulls: Array = []
 var _to_bake: Array = []
 var _force: bool = false
+var _smt: bool = true
+var _threads: int = 0
+var _t_loaded: int = 0
 var _done: bool = false
 var _t0: int = Time.get_ticks_msec()
 
@@ -36,6 +39,10 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--force":
 			_force = true
+		elif a == "--no-smt":
+			_smt = false
+		elif a.begins_with("--threads="):
+			_threads = int(a.get_slice("=", 1))
 		elif a == "--merge":
 			_done = true
 			merge()
@@ -52,6 +59,7 @@ func _ready() -> void:
 			_hulls.append(ship)
 			if paths.is_empty() or paths.has(p):
 				_to_bake.append(ship)
+	_t_loaded = Time.get_ticks_msec()
 	set_physics_process(true)
 
 
@@ -113,8 +121,9 @@ func _physics_process(_delta: float) -> void:
 	for i in v_ref.size():
 		cols.append("%.1fdeg:%.0f" % [BotGunnery._descent_center(i), v_ref[i]])
 	print("bake: reference speeds " + " ".join(cols))
-	for h in _to_bake:
-		_bake(h, ref, v_ref, om_max)
+	print("bake: hulls loaded at %.1f s" % ((_t_loaded - _t0) / 1000.0))
+	_bake_all(_to_bake, ref, v_ref, om_max)
+	merge()
 	print("bake: done in %.1f s" % ((Time.get_ticks_msec() - _t0) / 1000.0))
 	get_tree().quit()
 
@@ -266,56 +275,95 @@ static func merge() -> void:
 	print("bake: %s  %d hulls  %d bytes" % [GunneryDb.SHIPPED, entries.size(), n])
 
 
-func _bake(hull: Ship, ref: ShellParams, v_ref: PackedFloat32Array, om_max: float) -> void:
-	var path := stage_path(hull.scene_file_path)
-	var md5 := BotGunnery.hull_md5(hull)
+func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max: float) -> void:
 	DirAccess.make_dir_recursive_absolute(STAGE_DIR)
-	if not _force and _up_to_date(path, md5):
-		print("bake: %s up to date" % hull.scene_file_path)
-		return
 	var pm = ProjectileManager.get_raw()
-	if pm.armor_part_count(hull) == 0:
-		print("bake: %s has no armour registered" % hull.scene_file_path)
+	var todo: Array[Node3D] = []
+	var md5s: Array = []
+	for hull in hulls:
+		var path := stage_path(hull.scene_file_path)
+		var md5 := BotGunnery.hull_md5(hull)
+		if not _force and _up_to_date(path, md5):
+			print("bake: %s up to date" % hull.scene_file_path)
+		elif pm.armor_part_count(hull) == 0:
+			print("bake: %s has no armour registered" % hull.scene_file_path)
+		else:
+			todo.append(hull)
+			md5s.append(md5)
+	if todo.is_empty():
 		return
-	var aspects := BotGunnery._aspect_edges().size()
-	var descents := BotGunnery.descent_edges().size()
-	var table := {
-		"version": BotGunnery.SOLVER_VERSION,
-		"glb_md5": md5,
-		"hull": hull.scene_file_path,
-		"aspect_edges": BotGunnery._aspect_edges(),
-		"descent_edges": BotGunnery.descent_edges(),
-		"ref_caliber": ref.caliber,
-		"ref_mass": ref.mass,
-		"v_ref": v_ref,
-		"om_max": om_max,
-		"buckets": {},
-	}
+
 	var t0 := Time.get_ticks_msec()
-	var walks: int = 0
-	for ai in aspects:
-		for di in descents:
-			var geo := BotGunnery.build_lattice(hull, ai, di)
-			if geo.is_empty():
-				continue
-			var res: Dictionary = pm.survey_sweep(hull, ref, geo["dir"], v_ref[di],
-				geo["points"], geo["nx"], geo["ny"], geo["rect"], geo["edges"],
-				PackedFloat32Array(COARSE_PENS), BISECT_MM, om_max)
-			if res.is_empty():
-				continue
-			walks += int(res["walks"])
-			table["buckets"][BotGunnery.bucket_id(ai, di)] = res["blob"]
-		print("  %s aspect %2d/%d  %.1f s  %d walks" % [hull.scene_file_path.get_file(),
-			ai + 1, aspects, (Time.get_ticks_msec() - t0) / 1000.0, walks])
-	if (table["buckets"] as Dictionary).is_empty():
-		print("bake: %s produced no lattices (no armour or AABB?); not written" % path)
-		return
-	if not _write_stage(path, table):
-		print("bake: cannot write %s" % path)
-		return
-	print("bake: %s  %d buckets  %d walks  %.1f s  %d bytes" % [hull.scene_file_path,
-		(table["buckets"] as Dictionary).size(), walks,
-		(Time.get_ticks_msec() - t0) / 1000.0, FileAccess.get_file_as_bytes(path).size()])
+	var job_hull := PackedInt32Array()
+	var job_bid := PackedInt32Array()
+	var job_dir := PackedVector3Array()
+	var job_vref := PackedFloat32Array()
+	var job_nxny := PackedInt32Array()
+	var job_rect := PackedVector4Array()
+	var points := PackedVector3Array()
+	var pt_off := PackedInt32Array([0])
+	var edges := PackedFloat32Array()
+	var edge_off := PackedInt32Array([0])
+	for h in todo.size():
+		for ai in BotGunnery._aspect_edges().size():
+			for di in BotGunnery.descent_edges().size():
+				var geo := BotGunnery.build_lattice(todo[h], ai, di)
+				if geo.is_empty():
+					continue
+				job_hull.append(h)
+				job_bid.append(BotGunnery.bucket_id(ai, di))
+				job_dir.append(geo["dir"])
+				job_vref.append(v_ref[di])
+				job_nxny.append_array([geo["nx"], geo["ny"]])
+				job_rect.append(geo["rect"])
+				points.append_array(geo["points"])
+				pt_off.append(points.size())
+				edges.append_array(geo["edges"])
+				edge_off.append(edges.size())
+	var t_geo := Time.get_ticks_msec()
+	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
+		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
+		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt})
+	var st: Dictionary = res.get("stats", {})
+	print("bake: %d buckets  geometry %.1f s  sweep %.1f s  threads %d  busy %.0f/%.0f/%.0f ms (min/mean/max)  steals %d (%d cross-node)" % [
+		job_hull.size(), (t_geo - t0) / 1000.0, float(st.get("wall_ms", 0.0)) / 1000.0,
+		int(st.get("threads", 0)), float(st.get("busy_min_ms", 0.0)), float(st.get("busy_mean_ms", 0.0)),
+		float(st.get("busy_max_ms", 0.0)), int(st.get("steals", 0)), int(st.get("cross_node_steals", 0))])
+
+	var blobs: Array = res.get("blobs", [])
+	var walks: PackedInt64Array = res.get("walks", PackedInt64Array())
+	var tables: Array = []
+	for h in todo.size():
+		tables.append({
+			"version": BotGunnery.SOLVER_VERSION,
+			"glb_md5": md5s[h],
+			"hull": todo[h].scene_file_path,
+			"aspect_edges": BotGunnery._aspect_edges(),
+			"descent_edges": BotGunnery.descent_edges(),
+			"ref_caliber": ref.caliber,
+			"ref_mass": ref.mass,
+			"v_ref": v_ref,
+			"om_max": om_max,
+			"buckets": {},
+			"walks": 0,
+		})
+	for j in blobs.size():
+		if blobs[j] == null:
+			continue
+		var t: Dictionary = tables[job_hull[j]]
+		t["buckets"][job_bid[j]] = blobs[j]
+		t["walks"] += walks[j]
+	for t in tables:
+		var path := stage_path(t["hull"])
+		var n_walks: int = t["walks"]
+		t.erase("walks")
+		if (t["buckets"] as Dictionary).is_empty():
+			print("bake: %s produced no lattices (no armour or AABB?); not written" % t["hull"])
+		elif not _write_stage(path, t):
+			print("bake: cannot write %s" % path)
+		else:
+			print("bake: %s  %d buckets  %d walks  %d bytes" % [t["hull"],
+				(t["buckets"] as Dictionary).size(), n_walks, FileAccess.get_file_as_bytes(path).size()])
 
 
 # ----------------------------------------------------------- survey space
