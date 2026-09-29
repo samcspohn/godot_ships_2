@@ -32,8 +32,11 @@ func _extra_opts(ctx: SkillContext, field: ReachField, team_id: int, g: Dictiona
 			o[k] = float(_params[k])
 	return o
 
-func _search(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary) -> Dictionary:
+func _search(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary) -> int:
 	return field.score_utility(team_id, id, key, opts)
+
+func _score_kind() -> int:
+	return 1
 
 func _score_at(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary, point: Vector2) -> Dictionary:
 	return field.utility_score_at(team_id, id, key, opts, point)

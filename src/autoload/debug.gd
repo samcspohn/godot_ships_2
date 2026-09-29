@@ -1561,7 +1561,8 @@ func _reach_server_tick() -> void:
 				if g.is_empty() or controller == null or controller.get("behavior") == null:
 					return
 				var opts: Dictionary = controller.behavior.reach_utility_opts(field, team_id, g)
-				var u: Dictionary = field.score_utility(team_id, id, NavigationMapManager.reach_hull_key(g), opts)
+				field.score_utility(team_id, id, NavigationMapManager.reach_hull_key(g), opts)
+				var u: Dictionary = field.get_score(id, 1)
 				var ht: Dictionary = u.get("here_terms", {})
 				note = "score %.1f ms | here threat %.2f (%d shooters) reach %.1f reveal %.1f close %.1f value %.2f risk %.0f utility %.2f" % [
 					float(u.get("us", 0.0)) / 1000.0, float(ht.get("threat", 0.0)), int(ht.get("shooters", 0)),

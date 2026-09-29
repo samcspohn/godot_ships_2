@@ -128,10 +128,13 @@ const PRESUMED_THREAT_WEIGHT_MAX: float = 0.6
 const PRESUMED_THREAT_WEIGHT_MIN: float = 0.15
 const THREAT_UPDATE_INTERVAL: int = 4
 const REACH_SWEEP_INTERVAL: int = 12
+## Ticks between handing the field worker a batch and reading its result.
+const REACH_FIELD_LAG_TICKS: int = 2
 const REACH_REPORT_SECONDS: float = 5.0
 ## An enemy is re-swept once it has moved this far: one field cell.
 const REACH_MOVE_THRESHOLD_M: float = 100.0
 var _reach_report_at: float = 0.0
+var _reach_prebuilt: bool = false
 var _reach_ticks: int = 0
 var _reach_us: float = 0.0
 var _reach_max_us: float = 0.0
@@ -190,6 +193,9 @@ func _ready():
 		)
 		if _Utils.authority():
 			NavigationMapManager.build_visibility()
+			var field: ReachField = NavigationMapManager.get_reach_field()
+			if field != null and not CmdArgs.has("--field-sync"):
+				field.start_worker(int(CmdArgs.value("--field-lag", str(REACH_FIELD_LAG_TICKS))))
 	else:
 		push_warning("Server: No islands found on map — NavigationMap not built")
 
@@ -1415,6 +1421,9 @@ var _players_quit: Array = []  # Player names who explicitly quit or disconnecte
 func _physics_process(_delta: float) -> void:
 	if match_complete:
 		return
+	var reach_field: ReachField = NavigationMapManager.get_reach_field()
+	if reach_field != null:
+		reach_field.tick()
 
 	# Periodically re-register with matchmaker while idle (no match running)
 	if not match_active and not match_ended:
@@ -1752,6 +1761,9 @@ func _sweep_reach_fields() -> void:
 	var us := 0.0
 	var resweeps := 0
 	var jobs := 0
+	if not _reach_prebuilt:
+		_reach_prebuilt = true
+		_prebuild_reach_tables(field, teams)
 	var smoke: Dictionary = SmokeManager.get_smoke_discs()
 	field.set_smoke(smoke.centres, smoke.radii)
 	for team_id in range(2):
@@ -1813,17 +1825,36 @@ func _sweep_reach_fields() -> void:
 		return
 	_reach_report_at = current_time + REACH_REPORT_SECONDS
 	var n := float(maxi(_reach_ticks, 1))
-	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed | tables cached %d" % [
+	var ws: Dictionary = field.take_worker_stats()
+	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed | tables cached %d | worker %d batches %.1f ms, main blocked %.1f ms" % [
 		_reach_ticks, _reach_us / n / 1000.0, _reach_max_us / 1000.0,
 		_reach_resweeps / n, _reach_jobs / n,
 		_reach_sources[0] / n, _reach_sources[1] / n, _reach_sources[2] / n,
-		int(field.get_last_stats().get("tables_cached", 0))])
+		int(field.get_last_stats().get("tables_cached", 0)),
+		int(ws.batches), float(ws.worker_us) / 1000.0, float(ws.blocked_us) / 1000.0])
 	_reach_ticks = 0
 	_reach_us = 0.0
 	_reach_max_us = 0.0
 	_reach_resweeps = 0
 	_reach_jobs = 0
 	_reach_sources = [0, 0, 0]
+
+
+func _prebuild_reach_tables(field: ReachField, teams: Array) -> void:
+	var speeds := PackedFloat32Array()
+	var drags := PackedFloat32Array()
+	var heights := PackedFloat32Array()
+	var ranges := PackedFloat32Array()
+	for team in teams:
+		for ship in team:
+			var g: Dictionary = NavigationMapManager.reach_gun(ship)
+			if g.is_empty():
+				continue
+			speeds.append(g.speed)
+			drags.append(g.drag)
+			heights.append(g.gun_h)
+			ranges.append(g.range)
+	field.prebuild_tables(speeds, drags, heights, ranges, 0.0)
 
 
 ## What `team_id` believes about the enemy, one entry per hull it has any

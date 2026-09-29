@@ -31,6 +31,8 @@ var _score_us: float = 0.0
 var _claim_team: int = -1
 var _claim_ship: int = -1
 var _hull_key: int = 0
+var _pending_token: int = -1
+var _pending_opts: Dictionary = {}
 
 ## [gain, price_mode] for ReachField.plan_ship: a hull that trades on
 ## concealment prices detection at its router's gain, anyone else prices the
@@ -47,6 +49,7 @@ func reset() -> void:
 	_terms = {}
 	_refined = false
 	_last_ms = -100000
+	_pending_token = -1
 
 func station_position() -> Vector3:
 	return _station
@@ -115,8 +118,12 @@ func _claim_separation(_d: BotDoctrine, clearance: float) -> float:
 func _extra_opts(_ctx: SkillContext, _field: ReachField, _team_id: int, _g: Dictionary) -> Dictionary:
 	return {}
 
-func _search(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary) -> Dictionary:
+## Queues the search; the answer arrives through field.get_score(id, _score_kind()).
+func _search(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary) -> int:
 	return field.score_station(team_id, id, key, opts)
+
+func _score_kind() -> int:
+	return 0
 
 func _score_at(field: ReachField, team_id: int, id: int, key: int, opts: Dictionary, point: Vector2) -> Dictionary:
 	return field.station_score_at(team_id, id, key, opts, point)
@@ -147,12 +154,30 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if g.is_empty():
 		return null
 	var team_id: int = ship.team.team_id
+	var id: int = ship.get_instance_id()
 	var now: int = SimClock.now_ms()
-	if _has_station and now - _last_ms < RESCORE_MS:
-		_claim(team_id, ship.get_instance_id(), now)
-		return _intent(ctx, field, team_id, params)
-	_last_ms = now
+	# A field rebuild drops queued searches; do not wait on one forever.
+	if _pending_token >= 0 and now - _last_ms > 2 * RESCORE_MS:
+		_pending_token = -1
+	if _pending_token < 0:
+		if _has_station and now - _last_ms < RESCORE_MS:
+			_claim(team_id, id, now)
+			return _intent(ctx, field, team_id, params)
+		_last_ms = now
+		if not _submit(ctx, field, team_id, params, g):
+			return null
+	var sc: Dictionary = field.get_score(id, _score_kind())
+	if int(sc.get("token", -1)) < _pending_token:
+		if _has_station:
+			_claim(team_id, id, now)
+			return _intent(ctx, field, team_id, params)
+		return null
+	_pending_token = -1
+	return _consume(ctx, field, team_id, params, sc)
 
+func _submit(ctx: SkillContext, field: ReachField, team_id: int, params: Dictionary, g: Dictionary) -> bool:
+	var ship: Ship = ctx.ship
+	var now: int = SimClock.now_ms()
 	var d: BotDoctrine = ctx.behavior.doctrine()
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var radius: float = NavigationMapManager.reach_conceal_radius(ship)
@@ -162,9 +187,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var price: Array = price_for(d)
 	var st: Dictionary = field.plan_ship(team_id, ship.get_instance_id(), here, radius, price[0], clearance,
 		PLAN_BOX_M, price[1], danger)
-	if st.is_empty():
-		return null
-	_plan_us = float(st.get("us", 0.0)) if not bool(st.get("cached", false)) else 0.0
+	if not st.is_empty():
+		_plan_us = float(st.get("us", 0.0)) if not bool(st.get("cached", false)) else 0.0
 
 	var key: int = NavigationMapManager.reach_hull_key(g)
 	_hull_key = key
@@ -172,7 +196,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var band: Array = _range_band(ctx, d, params, here.distance_to(danger))
 	if float(band[1]) < float(band[0]):
 		_drop()
-		return null
+		return false
 	var opts := {
 		"weights": _weights(d),
 		"gun_range": gun_range,
@@ -195,7 +219,17 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		"w_flank": _flank_weight(d),
 	}
 	opts.merge(_extra_opts(ctx, field, team_id, g), true)
-	var sc: Dictionary = _search(field, team_id, ship.get_instance_id(), key, opts)
+	_pending_opts = opts
+	_pending_token = _search(field, team_id, ship.get_instance_id(), key, opts)
+	return true
+
+func _consume(ctx: SkillContext, field: ReachField, team_id: int, params: Dictionary, sc: Dictionary) -> NavIntent:
+	var ship: Ship = ctx.ship
+	var now: int = SimClock.now_ms()
+	var d: BotDoctrine = ctx.behavior.doctrine()
+	var clearance: float = ctx.behavior._get_ship_clearance()
+	var key: int = _hull_key
+	var opts: Dictionary = _pending_opts
 	_score_us = float(sc.get("us", 0.0))
 	var held_score: float = float(sc.get("held_score", -INF))
 	if not bool(sc.get("has_best", false)):
