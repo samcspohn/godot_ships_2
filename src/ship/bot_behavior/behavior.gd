@@ -93,6 +93,7 @@ var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_evade: SkillEvade = SkillEvade.new()
+var _skill_stance: SkillStance = SkillStance.new()
 
 ## The enemy's firing cycle as this ship observes it.  SkillEvade and
 ## SkillBroadside both steer off it and must not disagree, so there is exactly
@@ -2521,7 +2522,22 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
 		_skill_evade.reset()
+		_skill_stance.reset()
 		return null
+
+	var forced: bool = bool(sit.forced)
+	var threat: float = float(sit.threat)
+	# The clock says which of broadside and evade is right: broadside gets the
+	# reload gap after a splash, evade (and stance) everything else, so evade
+	# always wins while shells are in the air or guns are on us.
+	var evade_wins: bool = salvo_clock.under_fire and (
+		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
+	)
+	# Every arm: a retreating ship angles as much as a brawling one.
+	if evade_wins and not forced and _active_skill_name not in d.evade_exclude:
+		intent = _skill_stance.apply(intent, ctx)
+	else:
+		_skill_stance.reset()
 	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
 			and sit.arm != &"utility" and not d.post_process_idle_arms:
 		_skill_evade.reset()
@@ -2530,29 +2546,12 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_evade.reset()
 		return intent
 
-	var forced: bool = bool(sit.forced)
-
-	# --- Broadside vs. evade ---
-	# These two genuinely fight: broadside pulls toward a stable firing angle,
-	# evasion pulls away from any stable angle at all.  They are arbitrated by
-	# the salvo clock rather than by a priority number, because the clock already
-	# says which one is right.  Broadside gets the reload gap -- the window after
-	# a salvo splashes, when unmasking is free.  Evade gets everything else.
-	#
-	# Two consequences fall out for free.  Evade always wins while shells are
-	# actually in the air, and broadside can only ever engage after an enemy has
-	# shot at us, because the window opens on an observed splash and on nothing
-	# else.
-	var threat: float = float(sit.threat)
-	var evade_wins: bool = salvo_clock.under_fire and (
-		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
-	)
-
 	if d.use_broadside and not forced and _active_skill_name not in d.broadside_exclude \
 			and not evade_wins:
 		intent = _skill_broadside.apply(intent, ctx, d.broadside_params)
 	elif evade_wins and not forced and _active_skill_name not in d.evade_exclude:
 		intent = _skill_evade.apply(intent, ctx, d.evade_params)
+		intent.target_heading = _skill_stance.clamp_heading(intent.target_heading)
 	else:
 		_skill_evade.reset()
 

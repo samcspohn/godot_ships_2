@@ -45,6 +45,9 @@ const WINDOW_SAFETY_MARGIN: float = 2.0
 ## Fallback flight time when no ballistic solution is available.
 const DEFAULT_TOF: float = 6.0
 
+## An enemy whose aim point is this close is aiming at us (the 6th sense test).
+const AIM_RADIUS: float = 500.0
+
 var phase: int = Phase.QUIET
 
 ## The enemy whose gunnery currently sets our timing: the one whose shells hurt
@@ -77,6 +80,10 @@ var under_fire: bool = false
 ## Wall-clock second at which the last splash was observed.
 var last_splash: float = -INF
 
+## Enemies we can see with their guns on us, gathered only while we are
+## detected. A player sees no more than this without the 6th sense skill.
+var aimers: Array[Ship] = []
+
 var _tracked: Dictionary = {}
 var _solution_at: float = -INF
 
@@ -108,9 +115,11 @@ func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 			break
 	_tracked = current
 
+	_gather_aimers(ship, server)
 	_pick_dominant(ship, server, behavior, now)
 
-	under_fire = not shells.is_empty() or not behavior.active_shooters_at_me.is_empty()
+	under_fire = not shells.is_empty() or not behavior.active_shooters_at_me.is_empty() \
+		or not aimers.is_empty()
 
 	# --- Phase ---
 	if not shells.is_empty():
@@ -140,6 +149,19 @@ func broadside_window_open() -> bool:
 	return phase == Phase.WINDOW
 
 
+func _gather_aimers(ship: Ship, server: GameServer) -> void:
+	aimers.clear()
+	if server == null or not ship.is_detected():
+		return
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	for enemy in server.get_valid_targets(ship.team.team_id):
+		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive() or enemy.artillery_controller == null:
+			continue
+		var aim: Vector3 = enemy.artillery_controller.aim_point
+		if Vector2(aim.x, aim.z).distance_to(here) < AIM_RADIUS:
+			aimers.append(enemy)
+
+
 func _pick_dominant(ship: Ship, server: GameServer, behavior: BotBehavior, now: float) -> void:
 	if server == null:
 		return
@@ -164,6 +186,8 @@ func _pick_dominant(ship: Ship, server: GameServer, behavior: BotBehavior, now: 
 		w *= 1.0 - clampf(dist / maxf(gp._range, 1.0), 0.0, 1.0)
 		if behavior.active_shooters_at_me.has(enemy):
 			w *= 10.0
+		elif aimers.has(enemy):
+			w *= 5.0
 		if w > best_w:
 			best_w = w
 			best = enemy

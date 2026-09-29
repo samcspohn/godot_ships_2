@@ -442,6 +442,7 @@ func _update_nav_intent() -> void:
 		_last_intent.target_heading = new_intent.target_heading
 		_last_intent.target_position = new_intent.target_position
 		_last_intent.heading_weight = new_intent.heading_weight
+		_last_intent.force_reverse = new_intent.force_reverse
 		destination = _last_intent.target_position
 		return
 
