@@ -1839,6 +1839,22 @@ impl FieldCore {
     }
 }
 
+/// One hull's reach planes against a list of enemies, detached from the field.
+pub(crate) struct ReachLookup {
+    field: Arc<Field>,
+    planes: Vec<Option<Arc<Vec<u64>>>>,
+}
+
+impl ReachLookup {
+    /// Whether the hull at `p` can land shells on enemy `i` of the list.
+    pub(crate) fn hits(&self, i: usize, p: Vector2) -> bool {
+        match (self.planes.get(i), self.field.index(p.x, p.y)) {
+            (Some(Some(pl)), Some(idx)) => bit_at(pl, idx),
+            _ => false,
+        }
+    }
+}
+
 struct FieldWorker {
     tx: mpsc::Sender<Batch>,
     rx: mpsc::Receiver<Delivery>,
@@ -2041,6 +2057,12 @@ impl ReachField {
 
     pub(crate) fn cluster_exposure_vec(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> Vec<f32> {
         self.cluster_exposure_stats(team, radius, cluster_cells, ncx, ncz).0.as_ref().clone()
+    }
+
+    pub(crate) fn reach_lookup(&self, team: i32, hull_key: i64, ids: &[i64]) -> Option<ReachLookup> {
+        let (field, tl) = (self.snap.field.clone()?, self.team(team)?);
+        let planes = ids.iter().map(|id| tl.enemies.get(id).and_then(|e| e.reach.get(&hull_key).cloned())).collect();
+        Some(ReachLookup { field, planes })
     }
 
     fn plan_value(&self, id: i64, point: Vector2, safe: bool) -> f32 {

@@ -1,20 +1,29 @@
 class_name SkillSpot
 extends SkillStation
 
-## Refine budget halves per target already spotted: more to lose, less to gain.
+## One walk, two goals. SPOT: outside detection, seeing targets a friend can
+## shoot. COVER: out of every enemy's sight within our firing bloom, able to
+## land shells over the terrain on a spotted target.
+## Refine budget halves per target already held: more to lose, less to gain.
+
+enum Mode { SPOT, COVER }
 
 ## Kept for DDBehavior.engagement_range and _is_gunboat, which band on it.
 const SAFE_MARGIN := 1.15
 const FRIENDS := 4
 const REFINE_BUDGET_M := 8000.0
 
+var mode: int = Mode.SPOT
 var stealth_corridor: bool = true
 var _count: int = 0
 var _steps: int = 0
 var _trails: Array[PackedVector2Array] = []
 
+func _init(m: int = Mode.SPOT) -> void:
+	mode = m
+
 func _label() -> String:
-	return "Spot"
+	return "Cover" if mode == Mode.COVER else "Spot"
 
 func reset() -> void:
 	super()
@@ -27,8 +36,8 @@ func trails() -> Array[PackedVector2Array]:
 
 func debug_text() -> String:
 	if not _has_station:
-		return "Spot: none"
-	return "Spot %d | last walk %d cells" % [_count, _steps]
+		return "%s: none" % _label()
+	return "%s %d | last walk %d cells" % [_label(), _count, _steps]
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
@@ -40,7 +49,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var belief: Array[Dictionary] = ctx.server._team_belief(team_id)
 	if belief.is_empty():
 		return _decline()
-	if ship.is_detected() and ctx.behavior.get_threat_score(ctx) > ctx.behavior._doc().stealth_threat:
+	if mode == Mode.SPOT and ship.is_detected() \
+			and ctx.behavior.get_threat_score(ctx) > ctx.behavior._doc().stealth_threat:
 		return _decline()
 
 	var inp := _inputs(ctx, field, team_id, belief)
@@ -50,21 +60,31 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var flank := _flank_dir(ctx)
 	var clearance: float = ctx.behavior._get_ship_clearance()
 
+	var opts := {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot, "clearance": clearance,
+		"avoid": VisibilityGrid.AVOID_DET, "flank": flank}
+	if mode == Mode.COVER:
+		var g: Dictionary = NavigationMapManager.reach_gun(ship)
+		if g.is_empty():
+			return _decline()
+		opts.merge({"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_LOS, "los_r": inp.los,
+			"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
+			"ids": inp.ids}, true)
 	if _has_station:
-		var ev: Dictionary = vis.spot_eval(Vector2(_station.x, _station.z), inp.pos, inp.det, inp.spot, inp.shoot, clearance)
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, opts)
 		_count = int(ev.count) if bool(ev.free) else 0
 		if _count == 0:
 			_drop()
 	var r: Dictionary
 	if _has_station:
-		var budget: float = REFINE_BUDGET_M / pow(2.0, _count - 1)
-		r = vis.spot_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, inp.det, inp.spot, inp.shoot,
-			clearance, _count + 1, budget, flank)
+		opts.need = _count + 1
+		opts.budget_m = REFINE_BUDGET_M / pow(2.0, _count - 1)
+		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, opts)
 	else:
-		r = vis.spot_walk(danger, here, true, inp.pos, inp.det, inp.spot, inp.shoot, clearance, 1, 0.0, flank)
+		opts.need = 1
+		opts.budget_m = 0.0
+		r = vis.hold_walk(danger, here, true, inp.pos, opts)
 		if not bool(r.get("has_start", false)):
-			r = vis.spot_walk(_nearest(inp.pos, here), here, true, inp.pos, inp.det, inp.spot, inp.shoot,
-				clearance, 1, 0.0, flank)
+			r = vis.hold_walk(_nearest(inp.pos, here), here, true, inp.pos, opts)
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
 	if bool(r.get("found", false)):
@@ -83,6 +103,8 @@ func _decline() -> NavIntent:
 	return null
 
 func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary]) -> Dictionary:
+	if mode == Mode.COVER:
+		return _cover_inputs(ctx.ship, belief)
 	var ship: Ship = ctx.ship
 	var shootable_ids := {}
 	var ids: PackedInt64Array = field.get_team_enemy_ids(team_id)
@@ -104,6 +126,23 @@ func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[D
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
 		out.spot.append(cp.radius if cp != null else 0.0)
 		out.shoot.append(1 if shootable_ids.has(e.get_instance_id()) else 0)
+	return out
+
+## Radar and hydro still see through the rock; everything else needs sight
+## within the bloom our own guns give us. Only live contacts can be shot at.
+func _cover_inputs(ship: Ship, belief: Array[Dictionary]) -> Dictionary:
+	var g: Dictionary = NavigationMapManager.reach_gun(ship)
+	var bloom: float = maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0)))
+	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "spot": PackedFloat32Array(),
+		"los": PackedFloat32Array(), "shoot": PackedByteArray(), "ids": PackedInt64Array()}
+	for b in belief:
+		var spread: float = b.spread
+		out.pos.append(b.pos)
+		out.det.append(float(b.force_spot) + spread if float(b.force_spot) > 0.0 else 0.0)
+		out.los.append(maxf(bloom, float(b.force_spot)) + spread)
+		out.spot.append(0.0)
+		out.shoot.append(1 if int(b.source) == 0 else 0)
+		out.ids.append((b.ship as Ship).get_instance_id())
 	return out
 
 func _nearest_friends(ctx: SkillContext, team_id: int) -> Array[Ship]:

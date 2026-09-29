@@ -254,6 +254,54 @@ static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: fl
 		"ap_dps": ap_ev * total_rate, "he_dps": he_ev * total_rate}
 
 
+static var _model: DamageModel = null
+
+
+## The shared native copy of expected(), with `ship` registered as both a
+## shooter (main battery) and a hull. Re-register after upgrades change guns.
+static func damage_model(ship: Ship = null) -> DamageModel:
+	if _model == null:
+		_model = DamageModel.new()
+		_model.set_edges(_aspect_edges(), descent_edges())
+	if ship != null and is_instance_valid(ship) and not _model.has_hull(ship.get_instance_id()):
+		_register(ship)
+	return _model
+
+
+static func _register(ship: Ship) -> void:
+	var id := ship.get_instance_id()
+	var table = _table(ship)
+	var hp: float = ship.health_controller.max_hp
+	var fm = ship.fire_manager
+	var rp := fm.rparams.p() as ResistanceParams if fm != null and fm.rparams != null else null
+	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
+	_model.set_hull(id, table["ev"] if table != null and (table as Dictionary).has("ev") else {}, hp,
+		rp.max_buildup if rp != null else 0.0, fp.dmg_rate * hp if fp != null else 0.0)
+	var mounts := _batteries(ship, KIND_MAIN, 0.0)
+	if mounts.is_empty():
+		return
+	var m: Dictionary = mounts[0]
+	var top: float = ship.artillery_controller.get_params()._range
+	var curve := PackedFloat32Array()
+	var ammo := PackedFloat32Array()
+	var tables: Array = []
+	for k in 2:
+		var shell: ShellParams = m["shells"][k]
+		tables.append(_shell_table(shell) if shell != null else null)
+		ammo.append_array([shell.overmatch if shell != null else 0.0,
+			1.0 if shell != null and shell.type == ShellParams.ShellType.HE else 0.0,
+			shell.damage if shell != null else 0.0, shell.fire_buildup if shell != null else 0.0])
+	var r: float = SHELL_RANGE_STEP_M
+	while r <= top:
+		for t in tables:
+			var at: Array = _shell_at(t, r) if t != null else []
+			curve.append_array([at[0], at[2]] if not at.is_empty() else [NAN, NAN])
+		var hd := _half_disp(m, r)
+		curve.append_array([hd.x, hd.y])
+		r += SHELL_RANGE_STEP_M
+	_model.set_shooter(id, SHELL_RANGE_STEP_M, curve, float(m["rate"]), ammo)
+
+
 static func _raw_fire_chance(shell: ShellParams, target: Ship) -> float:
 	var fm = target.fire_manager
 	if shell.fire_buildup <= 0.0 or fm == null or fm.rparams == null:

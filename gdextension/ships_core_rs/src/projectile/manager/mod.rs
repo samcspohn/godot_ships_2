@@ -8,7 +8,7 @@ use crate::projectile::armor::RaycastCache;
 use crate::projectile::data::ProjectileData;
 
 mod armor_api;
-mod ev;
+pub(crate) mod ev;
 mod fire;
 mod lifecycle;
 mod survey;

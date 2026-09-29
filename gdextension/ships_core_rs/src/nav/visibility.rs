@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::nav::map::NavigationMap;
-use crate::nav::reach::{nav_pool, Terrain};
-use crate::nav::spot_walk::{Enemy, SpotInputs};
+use crate::nav::reach::{nav_pool, ReachField, Terrain};
+use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
+use crate::variant_cast::VariantCast;
 
 /// Matches the server's spotting ray, cast at y = 1 m on both ends.
 const EYE_H: f32 = 1.0;
@@ -194,6 +195,11 @@ impl VisibilityGrid {
 
 #[godot_api]
 impl VisibilityGrid {
+    #[constant]
+    const AVOID_DET: i32 = crate::nav::spot_walk::AVOID_DET as i32;
+    #[constant]
+    const AVOID_LOS: i32 = crate::nav::spot_walk::AVOID_LOS as i32;
+
     #[func]
     fn build(&mut self, nav_map: Option<Gd<NavigationMap>>, #[opt(default = 300.0)] cell_size: f32) {
         let t0 = Instant::now();
@@ -327,36 +333,50 @@ impl VisibilityGrid {
         }
     }
 
-    fn spot_inputs(&self, enemies: &PackedVector2Array, det_r: &PackedFloat32Array, spot_r: &PackedFloat32Array,
-        shootable: &PackedByteArray, clearance: f32) -> SpotInputs {
-        let (e, d, s, sh) = (enemies.as_slice(), det_r.as_slice(), spot_r.as_slice(), shootable.as_slice());
+    fn hold_inputs(&self, enemies: &PackedVector2Array, o: &VarDictionary) -> SpotInputs {
+        let f32s = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedFloat32Array>().ok()).unwrap_or_default();
+        let (det, spot, los) = (f32s("det_r"), f32s("spot_r"), f32s("los_r"));
+        let shoot = o.get("shootable").and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default();
+        let (d, s, l, sh) = (det.as_slice(), spot.as_slice(), los.as_slice(), shoot.as_slice());
         SpotInputs {
-            enemies: e.iter().enumerate().map(|(i, &pos)| Enemy {
+            enemies: enemies.as_slice().iter().enumerate().map(|(i, &pos)| Enemy {
                 pos,
                 cell: self.cell_of(pos),
                 det_r: d.get(i).copied().unwrap_or(0.0),
                 spot_r: s.get(i).copied().unwrap_or(0.0),
+                los_r: l.get(i).copied().unwrap_or(0.0),
                 shootable: sh.get(i).is_some_and(|&b| b != 0),
             }).collect(),
-            clearance,
+            clearance: o.get("clearance").map_or(0.0, |v| v.to_f32()),
+            avoid: o.get("avoid").map_or(AVOID_DET as i32, |v| v.to_i32()) as u8,
+            reach: o.get("reach_field").and_then(|v| v.try_to::<Gd<ReachField>>().ok()).and_then(|f| {
+                let ids = o.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).unwrap_or_default();
+                f.bind().reach_lookup(o.get("team").map_or(-1, |v| v.to_i32()),
+                    o.get("hull_key").map_or(0, |v| v.to_i64()), ids.as_slice())
+            }),
         }
     }
 
-    /// Perimeter search for a cell outside every `det_r` circle that sees at least
-    /// `need` shootable enemies within their `spot_r`. `outward` starts where the ray
-    /// from `from` through `toward` leaves blocked ground; otherwise at the last free
-    /// cell from `from` toward `toward`. `budget_m` <= 0 walks the whole perimeter.
+    /// Perimeter search for an allowed cell that sees at least `need` shootable
+    /// enemies within their `spot_r`. `outward` starts where the ray from `from`
+    /// through `toward` leaves forbidden ground; otherwise at the last free cell
+    /// from `from` toward `toward`. `opts`: det_r, spot_r, los_r (per enemy),
+    /// shootable, clearance, avoid (AVOID_* bits, default detection), need,
+    /// budget_m (<= 0 walks the whole perimeter), flank. With reach_field, team,
+    /// hull_key and ids (per enemy) the goal counts enemies the hull can hit
+    /// from the cell instead of enemies it sees.
     #[func]
-    #[allow(clippy::too_many_arguments)]
-    fn spot_walk(&self, from: Vector2, toward: Vector2, outward: bool, enemies: PackedVector2Array,
-        det_r: PackedFloat32Array, spot_r: PackedFloat32Array, shootable: PackedByteArray, clearance: f32,
-        need: i32, budget_m: f32, flank: Vector2) -> VarDictionary {
+    fn hold_walk(&self, from: Vector2, toward: Vector2, outward: bool, enemies: PackedVector2Array,
+        opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
         if !self.is_ready() {
             return d;
         }
-        let inp = self.spot_inputs(&enemies, &det_r, &spot_r, &shootable, clearance);
-        let r = self.spot_walk_impl(from, toward, outward, &inp, need.max(1) as u32, budget_m, flank);
+        let inp = self.hold_inputs(&enemies, &opts);
+        let need = opts.get("need").map_or(1, |v| v.to_i32()).max(1) as u32;
+        let budget = opts.get("budget_m").map_or(0.0, |v| v.to_f32());
+        let flank = opts.get("flank").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO);
+        let r = self.spot_walk_impl(from, toward, outward, &inp, need, budget, flank);
         d.set("found", r.found.is_some());
         d.set("has_start", r.start.is_some());
         d.set("start", r.start.unwrap_or(Vector2::INF));
@@ -371,11 +391,10 @@ impl VisibilityGrid {
         d
     }
 
-    /// {free, mask, count} for the cell holding `pos`.
+    /// {free, mask, count} for the cell holding `pos`, under the same `opts`.
     #[func]
-    fn spot_eval(&self, pos: Vector2, enemies: PackedVector2Array, det_r: PackedFloat32Array,
-        spot_r: PackedFloat32Array, shootable: PackedByteArray, clearance: f32) -> VarDictionary {
-        let inp = self.spot_inputs(&enemies, &det_r, &spot_r, &shootable, clearance);
+    fn hold_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let inp = self.hold_inputs(&enemies, &opts);
         let (free, mask) = if self.is_ready() { self.spot_eval_impl(pos, &inp) } else { (false, 0) };
         let mut d = VarDictionary::new();
         d.set("free", free);

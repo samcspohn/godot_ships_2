@@ -230,6 +230,9 @@ func _ev_test() -> void:
 	var ratios: Array = []
 	var shell_ratios: Array = []
 	var t_ev := 0
+	var t_nat := 0
+	var native_err := 0.0
+	var native_missing := 0
 	var n := 0
 	for i in 300:
 		var r := rng.randf_range(1500.0, 20000.0)
@@ -244,6 +247,17 @@ func _ev_test() -> void:
 		t_ev += Time.get_ticks_usec() - t0
 		if ex.is_empty():
 			continue
+		var model := BotGunnery.damage_model(_shooter)
+		BotGunnery.damage_model(_target)
+		var aspect := BotGunnery.aspect_from(_target, _shooter.global_position)
+		t0 = Time.get_ticks_usec()
+		var nat: Dictionary = model.get_expected(_shooter.get_instance_id(), _target.get_instance_id(), r, aspect)
+		t_nat += Time.get_ticks_usec() - t0
+		if not nat.is_empty():
+			native_err = maxf(native_err, absf(float(nat.he_dps) - float(ex.he_dps)) / maxf(float(ex.he_dps), 1.0))
+			native_err = maxf(native_err, absf(float(nat.ap_dps) - float(ex.ap_dps)) / maxf(float(ex.ap_dps), 1.0))
+		else:
+			native_missing += 1
 		var he: bool = int(sol.ammo) == 1
 		var live: float = float(sol.ev_shell)
 		var live_shell: float = live - float(sol.get("fire_ev", 0.0))
@@ -256,7 +270,8 @@ func _ev_test() -> void:
 			shell_ratios.append(baked_shell / live_shell)
 		if i < 12:
 			_say("  %6.0f m %5.1f deg %s  live %6.0f (shell %6.0f)  baked %6.0f (shell %6.0f)" % [r, a, "HE" if he else "AP", live, live_shell, baked, baked_shell])
-	_say("%d geometries, expected() %.1f us/call" % [n, float(t_ev) / maxi(n, 1)])
+	_say("%d geometries, expected() %.1f us/call, native %.2f us/call (get_expected incl. dict), native vs gd max rel diff %.4f, native missing %d" % [
+		n, float(t_ev) / maxi(n, 1), float(t_nat) / maxi(n, 1), native_err, native_missing])
 	_say("total  " + _ratio_stats(ratios))
 	_say("shell  " + _ratio_stats(shell_ratios))
 	_out.close()

@@ -89,6 +89,7 @@ var _skill_station: SkillStation = SkillStation.new()
 var _skill_utility: SkillUtility = SkillUtility.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
+var _skill_hold_cover: SkillSpot = SkillSpot.new(SkillSpot.Mode.COVER)
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
@@ -2238,6 +2239,7 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 		&"Utility":     intent = _skill_utility.execute(ctx, params)
 		&"Flank":       intent = _skill_flank.execute(ctx, params)
 		&"Spot":        intent = _skill_spot.execute(ctx, params)
+		&"Cover":       intent = _skill_hold_cover.execute(ctx, params)
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
 		&"SailForward": intent = _intent_sail_forward(ctx.ship)
 	if intent != null:
@@ -2506,6 +2508,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_utility.reset()
 	if prev_skill == &"Spot" and _active_skill_name != &"Spot":
 		_skill_spot.reset()
+	if prev_skill == &"Cover" and _active_skill_name != &"Cover":
+		_skill_hold_cover.reset()
 	if prev_skill == &"Push" and _active_skill_name != &"Push":
 		_skill_push.reset()
 	if prev_skill == &"Flank" and _active_skill_name != &"Flank":

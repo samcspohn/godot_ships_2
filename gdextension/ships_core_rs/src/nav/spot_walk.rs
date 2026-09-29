@@ -1,5 +1,6 @@
 use godot::prelude::*;
 
+use crate::nav::reach::ReachLookup;
 use crate::nav::visibility::VisibilityGrid;
 
 /// 4-connected, so a wall follower can never slip diagonally between two blocked cells.
@@ -12,12 +13,21 @@ pub(crate) struct Enemy {
     pub det_r: f32,
     /// Inside this, with line of sight, we see it.
     pub spot_r: f32,
+    /// Inside this, with line of sight, it can see us to shoot (AVOID_LOS).
+    pub los_r: f32,
     pub shootable: bool,
 }
+
+/// Forbidden ground a walk keeps out of, besides land and shallows.
+pub(crate) const AVOID_DET: u8 = 1;
+pub(crate) const AVOID_LOS: u8 = 2;
 
 pub(crate) struct SpotInputs {
     pub enemies: Vec<Enemy>,
     pub clearance: f32,
+    pub avoid: u8,
+    /// Goal is "my guns reach it" instead of "I see it".
+    pub reach: Option<ReachLookup>,
 }
 
 pub(crate) struct WalkResult {
@@ -53,24 +63,41 @@ impl VisibilityGrid {
 
     pub(crate) fn spot_free(&self, ix: i32, iz: i32, inp: &SpotInputs) -> Option<usize> {
         let k = self.water(ix, iz)?;
-        if self.sdf_c[k] < inp.clearance {
+        if self.sdf_c[k] < inp.clearance || self.in_zone((ix, iz), inp) {
             return None;
         }
-        let c = self.centres[k];
-        inp.enemies.iter().all(|e| c.distance_squared_to(e.pos) >= e.det_r * e.det_r).then_some(k)
+        Some(k)
     }
 
-    fn in_circle(&self, c: (i32, i32), inp: &SpotInputs) -> bool {
+    /// Forbidden by the enemies alone, land aside, so a walk start is placed
+    /// where the ray leaves the enemy's ground and not at the first island.
+    fn in_zone(&self, c: (i32, i32), inp: &SpotInputs) -> bool {
         let p = Vector2::new(self.min_x + (c.0 as f32 + 0.5) * self.cell, self.min_z + (c.1 as f32 + 0.5) * self.cell);
-        inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r)
+        if inp.avoid & AVOID_DET != 0 && inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r) {
+            return true;
+        }
+        if inp.avoid & AVOID_LOS != 0 {
+            if let Some(k) = self.water(c.0, c.1) {
+                return inp.enemies.iter().any(|e| {
+                    e.cell.is_some_and(|ec| p.distance_squared_to(e.pos) <= e.los_r * e.los_r && self.visible_idx(k, ec))
+                });
+            }
+        }
+        false
     }
 
     pub(crate) fn spotted_mask(&self, k: usize, inp: &SpotInputs) -> u64 {
         let c = self.centres[k];
         let mut mask = 0u64;
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
-            let Some(ec) = e.cell else { continue };
-            if e.shootable && c.distance_squared_to(e.pos) <= e.spot_r * e.spot_r && self.visible_idx(k, ec) {
+            if !e.shootable {
+                continue;
+            }
+            let hit = match &inp.reach {
+                Some(r) => r.hits(i, c),
+                None => e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.spot_r * e.spot_r && self.visible_idx(k, ec)),
+            };
+            if hit {
                 mask |= 1u64 << i;
             }
         }
@@ -108,19 +135,19 @@ impl VisibilityGrid {
     }
 
     /// The perimeter cell to start from and the direction of the wall beside it.
-    /// Outward: where the ray from `from` through `toward` leaves the detection circles.
+    /// Outward: where the ray from `from` through `toward` leaves forbidden ground.
     /// Inward: last free cell before blocked ground on the way from `from` toward `toward`.
     fn walk_start(&self, from: Vector2, toward: Vector2, outward: bool, inp: &SpotInputs) -> Option<(i32, i32, usize)> {
         let dir = (toward - from).try_normalized()?;
         let cells = self.ray_cells(from, dir);
         let dir_of = |a: (i32, i32), b: (i32, i32)| DIRS.iter().position(|&d| (a.0 + d.0, a.1 + d.1) == b);
         if outward {
-            // Last exit from the circles before `toward`, so a pocket between circles is skipped.
+            // Last exit from forbidden ground before `toward`, so a pocket inside it is skipped.
             let goal = self.grid_of(toward);
             let at_goal = cells.iter().position(|&c| c == goal).unwrap_or(cells.len());
             let mut pick = None;
             for i in 1..cells.len() {
-                if self.in_circle(cells[i - 1], inp) && !self.in_circle(cells[i], inp) {
+                if self.in_zone(cells[i - 1], inp) && !self.in_zone(cells[i], inp) {
                     pick = Some(i);
                     if i >= at_goal {
                         break;
@@ -170,7 +197,7 @@ impl VisibilityGrid {
     }
 
     /// Two wall followers leave the start in opposite directions along the edge of
-    /// blocked ground (detection circles, land, the map edge); the one heading
+    /// blocked ground (the `avoid` set, land, the map edge); the one heading
     /// toward `flank` takes two steps for each of the other's. Stops at the first
     /// cell that spots at least `need` shootable enemies.
     pub(crate) fn spot_walk_impl(
@@ -224,7 +251,7 @@ impl VisibilityGrid {
         res
     }
 
-    /// Whether `pos` is outside every detection circle, and what it spots.
+    /// Whether `pos` is allowed, and what it spots.
     pub(crate) fn spot_eval_impl(&self, pos: Vector2, inp: &SpotInputs) -> (bool, u64) {
         let (ix, iz) = self.grid_of(pos);
         match self.spot_free(ix, iz, inp) {
