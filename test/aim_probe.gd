@@ -95,7 +95,7 @@ var _t0: int = Time.get_ticks_msec()
 func _ms() -> int: return Time.get_ticks_msec() - _t0
 
 func _ready() -> void:
-	_out = FileAccess.open("res://_aim_probe_out.txt", FileAccess.WRITE)
+	_out = FileAccess.open(OS.get_environment("AIM_PROBE_OUT") if OS.has_environment("AIM_PROBE_OUT") else "res://_aim_probe_out.txt", FileAccess.WRITE)
 	var args := OS.get_cmdline_user_args()
 	var target_path := DEFAULT_TARGET
 	var shooter_path := DEFAULT_SHOOTER
@@ -126,6 +126,8 @@ func _physics_process(_delta: float) -> void:
 	_done = true
 	if OS.get_cmdline_user_args().has("--sec"):
 		_secondary_test()
+	elif OS.get_cmdline_user_args().has("--ev"):
+		_ev_test()
 	elif OS.get_cmdline_user_args().has("--table"):
 		_table_test()
 	elif OS.get_cmdline_user_args().has("--turret"):
@@ -158,8 +160,10 @@ func _place(range_m: float, aspect_deg: float) -> void:
 
 func _fmt_sol(sol: Dictionary) -> String:
 	var o: Vector3 = sol.get("offset", Vector3.ZERO)
-	return "%s  x=%6.1f y=%5.2f z=%6.1f  probed=%s" % [
-		"AP" if int(sol.get("ammo", 0)) == 0 else "HE", o.x, o.y, o.z, sol.get("probed", false)]
+	return "%s  x=%6.1f y=%5.2f z=%6.1f  probed=%s  ev/shell %.0f (fire %.0f) hit %.2f fire %.3f dps %.0f salvo %.0f reload %.1f" % [
+		"AP" if int(sol.get("ammo", 0)) == 0 else "HE", o.x, o.y, o.z, sol.get("probed", false),
+		float(sol.get("ev_shell", 0.0)), float(sol.get("fire_ev", 0.0)), float(sol.get("hit_frac", 0.0)), float(sol.get("fire_chance", 0.0)),
+		float(sol.get("dps", 0.0)), float(sol.get("salvo_ev", 0.0)), float(sol.get("reload", 0.0))]
 
 
 ## Secondary battery answers at a few geometries.
@@ -215,6 +219,58 @@ func _table_test() -> void:
 	_say("[%d ms] quitting" % _ms())
 	_out.close()
 	get_tree().quit()
+
+
+## Baked expected damage (BotGunnery.expected) against the live solver's
+## answer at random geometries, per the ammo the solver picked.
+func _ev_test() -> void:
+	var G = load("res://src/ship/bot_behavior/bot_gunnery.gd").new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var ratios: Array = []
+	var shell_ratios: Array = []
+	var t_ev := 0
+	var n := 0
+	for i in 300:
+		var r := rng.randf_range(1500.0, 20000.0)
+		var a := rng.randf_range(0.0, 180.0)
+		_place(r, a)
+		G.clear_all()
+		var sol: Dictionary = G.solve(_shooter, _target)
+		if not sol.has("ev_shell"):
+			continue
+		var t0 := Time.get_ticks_usec()
+		var ex: Dictionary = BotGunnery.expected(_shooter, _target, r, BotGunnery.aspect_from(_target, _shooter.global_position))
+		t_ev += Time.get_ticks_usec() - t0
+		if ex.is_empty():
+			continue
+		var he: bool = int(sol.ammo) == 1
+		var live: float = float(sol.ev_shell)
+		var live_shell: float = live - float(sol.get("fire_ev", 0.0))
+		var baked: float = float(ex.he_ev if he else ex.ap_ev)
+		var baked_shell: float = baked - (float(ex.he_fire_ev) if he else 0.0)
+		n += 1
+		if live > 1.0:
+			ratios.append(baked / live)
+		if live_shell > 1.0:
+			shell_ratios.append(baked_shell / live_shell)
+		if i < 12:
+			_say("  %6.0f m %5.1f deg %s  live %6.0f (shell %6.0f)  baked %6.0f (shell %6.0f)" % [r, a, "HE" if he else "AP", live, live_shell, baked, baked_shell])
+	_say("%d geometries, expected() %.1f us/call" % [n, float(t_ev) / maxi(n, 1)])
+	_say("total  " + _ratio_stats(ratios))
+	_say("shell  " + _ratio_stats(shell_ratios))
+	_out.close()
+	get_tree().quit()
+
+
+func _ratio_stats(xs: Array) -> String:
+	if xs.is_empty():
+		return "none"
+	xs.sort()
+	var within := func(tol: float) -> float:
+		return 100.0 * xs.filter(func(x): return absf(x - 1.0) <= tol).size() / xs.size()
+	return "baked/live median %.2f  p10 %.2f  p90 %.2f  within 10%% %.0f%%  within 25%% %.0f%%" % [
+		xs[xs.size() / 2], xs[xs.size() / 10], xs[xs.size() * 9 / 10], within.call(0.1), within.call(0.25)]
 
 
 const SECTION_NAME := ["module", "citadel", "casemate", "bow", "stern", "super"]

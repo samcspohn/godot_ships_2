@@ -275,6 +275,18 @@ static func merge() -> void:
 	print("bake: %s  %d hulls  %d bytes" % [GunneryDb.SHIPPED, entries.size(), n])
 
 
+## The expected-damage summary scores every shooter with one kernel.
+func _median_main_sigma() -> float:
+	var sig: Array = []
+	for h in _hulls:
+		for m in BotGunnery._batteries(h, BotGunnery.KIND_MAIN, 0.0):
+			sig.append(float(m.sigma))
+	if sig.is_empty():
+		return 1.8
+	sig.sort()
+	return sig[sig.size() / 2]
+
+
 func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max: float) -> void:
 	DirAccess.make_dir_recursive_absolute(STAGE_DIR)
 	var pm = ProjectileManager.get_raw()
@@ -304,6 +316,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 	var pt_off := PackedInt32Array([0])
 	var edges := PackedFloat32Array()
 	var edge_off := PackedInt32Array([0])
+	var ev_jobs := PackedByteArray()
 	for h in todo.size():
 		for ai in BotGunnery._aspect_edges().size():
 			for di in BotGunnery.descent_edges().size():
@@ -312,6 +325,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 					continue
 				job_hull.append(h)
 				job_bid.append(BotGunnery.bucket_id(ai, di))
+				ev_jobs.append(int(BotGunnery.ev_bucket_index(ai) == ai and BotGunnery.ev_bucket_index(di) == di))
 				job_dir.append(geo["dir"])
 				job_vref.append(v_ref[di])
 				job_nxny.append_array([geo["nx"], geo["ny"]])
@@ -321,9 +335,13 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 				edges.append_array(geo["edges"])
 				edge_off.append(edges.size())
 	var t_geo := Time.get_ticks_msec()
+	var ev_sigma := _median_main_sigma()
 	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
 		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
-		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt})
+		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt,
+		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_sigma": ev_sigma,
+		"ev_guarantee": BotGunnery.CITADEL_GUARANTEE_FRAC, "ev_ellipse": BotGunnery.CITADEL_ELLIPSE,
+		"ev_turret_cap": BotGunnery.DMG_TURRET})
 	var st: Dictionary = res.get("stats", {})
 	print("bake: %d buckets  geometry %.1f s  sweep %.1f s  threads %d  busy %.0f/%.0f/%.0f ms (min/mean/max)  steals %d (%d cross-node)" % [
 		job_hull.size(), (t_geo - t0) / 1000.0, float(st.get("wall_ms", 0.0)) / 1000.0,
@@ -331,6 +349,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 		float(st.get("busy_max_ms", 0.0)), int(st.get("steals", 0)), int(st.get("cross_node_steals", 0))])
 
 	var blobs: Array = res.get("blobs", [])
+	var evs: Array = res.get("evs", [])
 	var walks: PackedInt64Array = res.get("walks", PackedInt64Array())
 	var tables: Array = []
 	for h in todo.size():
@@ -345,6 +364,8 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 			"v_ref": v_ref,
 			"om_max": om_max,
 			"buckets": {},
+			"ev": {},
+			"ev_sigma": ev_sigma,
 			"walks": 0,
 		})
 	for j in blobs.size():
@@ -352,6 +373,8 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 			continue
 		var t: Dictionary = tables[job_hull[j]]
 		t["buckets"][job_bid[j]] = blobs[j]
+		if evs[j] != null and not (evs[j] as PackedByteArray).is_empty():
+			t["ev"][job_bid[j]] = evs[j]
 		t["walks"] += walks[j]
 	for t in tables:
 		var path := stage_path(t["hull"])

@@ -48,7 +48,7 @@ pub const MM_MISS: u16 = 0xFFFF;
 const BP_MAX: usize = 255;
 
 #[inline]
-fn rd_u16(b: &[u8], off: usize) -> u16 {
+pub(super) fn rd_u16(b: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([b[off], b[off + 1]])
 }
 
@@ -138,7 +138,7 @@ fn walk_span(aabb: Aabb, lp: Vector3, ld: Vector3) -> (f32, f32) {
     )
 }
 
-fn erf(x: f64) -> f64 {
+pub(super) fn erf(x: f64) -> f64 {
     const P: f64 = 0.3275911;
     const A1: f64 = 0.254829592;
     const A2: f64 = -0.284496736;
@@ -151,7 +151,7 @@ fn erf(x: f64) -> f64 {
 }
 
 /// CDF of N(0, 1/s^2) truncated to [-1, 1], in normalised offset units.
-fn trunc_gauss_cdf(x: f64, s: f64, erf_bound: f64) -> f64 {
+pub(super) fn trunc_gauss_cdf(x: f64, s: f64, erf_bound: f64) -> f64 {
     if x <= -1.0 {
         return 0.0;
     }
@@ -162,7 +162,7 @@ fn trunc_gauss_cdf(x: f64, s: f64, erf_bound: f64) -> f64 {
 }
 
 /// Kernel mass per cell along one axis, cells bounded by `edges` (n+1 of them).
-fn axis_weights(
+pub(super) fn axis_weights(
     edges: &[f64], aim: f64, half_disp: f64, s: f64, erf_bound: f64,
     guar_cdf: &dyn Fn(f64) -> f64,
 ) -> (Vec<f64>, Vec<f64>) {
@@ -460,6 +460,84 @@ pub(crate) fn sweep_bucket(
     Ok((blob, walks))
 }
 
+/// Result byte per cell for a shell with penetration `pen` (mm) and
+/// `overmatch` (mm). HE resolves off the first plate alone, as the walk does.
+/// AP reads the swept breakpoints, from the overmatched sweep when the shell
+/// overmatches the first plate.
+pub(crate) fn resolve_codes(b: &[u8], pen: f64, overmatch: f64, is_he: bool) -> Option<Vec<u8>> {
+    let h = blob_header(b)?;
+    let (np, ncell) = (h.np, h.nx * h.ny);
+    let mut out = vec![CELL_MISS; ncell];
+    if np == 0 {
+        return Some(out);
+    }
+    let a = h.prof;
+    let (fm_o, fl_o, cnt_o, cnt_om_o) = (a, a + 2 * np, a + 3 * np, a + 4 * np);
+    let bp_o = a + 5 * np;
+    let total: usize = b[cnt_o..cnt_o + np].iter().map(|&c| c as usize).sum();
+    let bp_om_o = bp_o + 3 * total;
+
+    // Per-profile breakpoint runs are stored as counts, so the offsets are a
+    // running sum taken alongside the resolve.
+    let mut off = bp_o;
+    let mut off_om = bp_om_o;
+    let mut codes: Vec<u8> = Vec::with_capacity(np);
+    for pi in 0..np {
+        let raw = rd_u16(b, fm_o + 2 * pi);
+        let n = b[cnt_o + pi] as usize;
+        let n_om = b[cnt_om_o + pi] as usize;
+        let (a_bp, a_om) = (off, off_om);
+        off += 3 * n;
+        off_om += 3 * n_om;
+        if raw == MM_MISS {
+            codes.push(CELL_MISS);
+            continue;
+        }
+        let fm = raw as f64;
+        let flags = b[fl_o + pi];
+        let turret = if flags & FLAG_TURRET != 0 { CELL_TURRET } else { 0 };
+        // HE resolves against the first plate alone, so its section is that
+        // plate's; an AP breakpoint already carries the section it ends in.
+        let section = flags & CELL_SECTION_MASK;
+        if is_he {
+            if flags & FLAG_WATER != 0 {
+                codes.push(CELL_MISS);
+                continue;
+            }
+            let c = if overmatch >= fm {
+                if flags & FLAG_CITADEL != 0 { hit_result::CITADEL } else { hit_result::PENETRATION }
+            } else {
+                hit_result::SHATTER
+            };
+            codes.push((c as u8) | turret | section);
+            continue;
+        }
+        let om = overmatch >= fm && n_om > 0;
+        let (start, count) = if om { (a_om, n_om) } else { (a_bp, n) };
+        if count == 0 || start + 3 * count > b.len() {
+            codes.push(CELL_MISS);
+            continue;
+        }
+        let mut code = b[start + 2];
+        for k in 0..count {
+            let e = start + 3 * k;
+            if rd_u16(b, e) as f64 <= pen {
+                code = b[e + 2];
+            } else {
+                break;
+            }
+        }
+        codes.push(code);
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        let pi = h.cell(b, i);
+        if pi < np {
+            *o = codes[pi];
+        }
+    }
+    Some(out)
+}
+
 impl ProjectileManager {
     /// The penetration the armour walk credits `shell` with at `velocity`:
     /// De Marre times `penetration_modifier`. Not `calculate_penetration_power`,
@@ -603,6 +681,18 @@ impl ProjectileManager {
         let copies: Vec<Vec<std::sync::OnceLock<ArmorMesh>>> =
             meshes.iter().map(|_| (0..nodes).map(|_| std::sync::OnceLock::new()).collect()).collect();
         let costs: Vec<f64> = (0..n).map(|j| (po[j + 1] - po[j]).max(0) as f64).collect();
+        let ev_payouts: PackedFloat64Array = opt("ev_payouts").try_to().unwrap_or_default();
+        let ellipse: Vector2 = opt("ev_ellipse").try_to().unwrap_or(Vector2::new(0.4, 0.1));
+        let ev_jobs: PackedByteArray = opt("ev_jobs").try_to().unwrap_or_default();
+        let ev_jobs = ev_jobs.as_slice();
+        let kernel = (!ev_payouts.is_empty()).then(|| super::ev::EvKernel {
+            sigma: opt("ev_sigma").to_f64(),
+            guarantee: opt("ev_guarantee").to_f64(),
+            ellipse: (ellipse.x as f64, ellipse.y as f64),
+            payouts: ev_payouts.as_slice().to_vec(),
+            turret_cap: opt("ev_turret_cap").to_f64(),
+            om_max,
+        });
 
         let (results, stats) = crate::sched::run_balanced(&costs, threads.max(0) as usize, smt, |j, w| {
             let h = hull_of[j] as usize;
@@ -610,22 +700,29 @@ impl ProjectileManager {
                 return Err(format!("hull {h} has no armour"));
             };
             let mesh = copies[h][w.node.min(nodes - 1)].get_or_init(|| src.clone());
-            sweep_bucket(
+            let (blob, walks) = sweep_bucket(
                 mesh, aabbs[h], &spec, dirs[j], vrefs[j] as f64,
                 &pts[po[j] as usize..po[j + 1] as usize],
                 nxny[2 * j], nxny[2 * j + 1], rects[j],
                 &eds[eo[j] as usize..eo[j + 1] as usize],
                 &pens, bisect_mm, om_max,
-            )
+            )?;
+            let ev = match &kernel {
+                Some(k) if ev_jobs.get(j).is_some_and(|&f| f != 0) => super::ev::ev_bucket(&blob, k),
+                _ => Vec::new(),
+            };
+            Ok((blob, ev, walks))
         });
 
         let mut blobs = VarArray::new();
+        let mut evs = VarArray::new();
         let mut walks = PackedInt64Array::new();
         let mut errors = 0;
         for (j, r) in results.into_iter().enumerate() {
             match r {
-                Ok((blob, w)) => {
+                Ok((blob, ev, w)) => {
                     blobs.push(&PackedByteArray::from(blob.as_slice()).to_variant());
+                    evs.push(&PackedByteArray::from(ev.as_slice()).to_variant());
                     walks.push(w);
                 }
                 Err(e) => {
@@ -634,6 +731,7 @@ impl ProjectileManager {
                     }
                     errors += 1;
                     blobs.push(&Variant::nil());
+                    evs.push(&Variant::nil());
                     walks.push(0);
                 }
             }
@@ -651,93 +749,17 @@ impl ProjectileManager {
         st.set("steals", stats.steals as i64);
         st.set("cross_node_steals", stats.cross_node_steals as i64);
         out.set("blobs", &blobs);
+        out.set("evs", &evs);
         out.set("walks", &walks);
         out.set("errors", errors as i64);
         out.set("stats", &st);
         out
     }
 
-    /// Result byte per cell for a shell with penetration `pen` (mm) and
-    /// `overmatch` (mm). HE resolves off the first plate alone, as the walk does.
-    /// AP reads the swept breakpoints, from the overmatched sweep when the shell
-    /// overmatches the first plate.
     pub(crate) fn lattice_resolve_impl(
         blob: &PackedByteArray, pen: f64, overmatch: f64, is_he: bool,
     ) -> PackedByteArray {
-        let b = blob.as_slice();
-        let mut out = PackedByteArray::new();
-        let Some(h) = blob_header(b) else { return out };
-        let (np, ncell) = (h.np, h.nx * h.ny);
-        out.resize(ncell);
-        out.fill(CELL_MISS);
-        if np == 0 {
-            return out;
-        }
-        let a = h.prof;
-        let (fm_o, fl_o, cnt_o, cnt_om_o) = (a, a + 2 * np, a + 3 * np, a + 4 * np);
-        let bp_o = a + 5 * np;
-        let total: usize = b[cnt_o..cnt_o + np].iter().map(|&c| c as usize).sum();
-        let bp_om_o = bp_o + 3 * total;
-
-        // Per-profile breakpoint runs are stored as counts, so the offsets are a
-        // running sum taken alongside the resolve.
-        let mut off = bp_o;
-        let mut off_om = bp_om_o;
-        let mut codes: Vec<u8> = Vec::with_capacity(np);
-        for pi in 0..np {
-            let raw = rd_u16(b, fm_o + 2 * pi);
-            let n = b[cnt_o + pi] as usize;
-            let n_om = b[cnt_om_o + pi] as usize;
-            let (a_bp, a_om) = (off, off_om);
-            off += 3 * n;
-            off_om += 3 * n_om;
-            if raw == MM_MISS {
-                codes.push(CELL_MISS);
-                continue;
-            }
-            let fm = raw as f64;
-            let flags = b[fl_o + pi];
-            let turret = if flags & FLAG_TURRET != 0 { CELL_TURRET } else { 0 };
-            // HE resolves against the first plate alone, so its section is that
-            // plate's; an AP breakpoint already carries the section it ends in.
-            let section = flags & CELL_SECTION_MASK;
-            if is_he {
-                if flags & FLAG_WATER != 0 {
-                    codes.push(CELL_MISS);
-                    continue;
-                }
-                let c = if overmatch >= fm {
-                    if flags & FLAG_CITADEL != 0 { hit_result::CITADEL } else { hit_result::PENETRATION }
-                } else {
-                    hit_result::SHATTER
-                };
-                codes.push((c as u8) | turret | section);
-                continue;
-            }
-            let om = overmatch >= fm && n_om > 0;
-            let (start, count) = if om { (a_om, n_om) } else { (a_bp, n) };
-            if count == 0 || start + 3 * count > b.len() {
-                codes.push(CELL_MISS);
-                continue;
-            }
-            let mut code = b[start + 2];
-            for k in 0..count {
-                let e = start + 3 * k;
-                if rd_u16(b, e) as f64 <= pen {
-                    code = b[e + 2];
-                } else {
-                    break;
-                }
-            }
-            codes.push(code);
-        }
-        for i in 0..ncell {
-            let pi = h.cell(b, i);
-            if pi < np {
-                out[i] = codes[pi];
-            }
-        }
-        out
+        resolve_codes(blob.as_slice(), pen, overmatch, is_he).map_or_else(PackedByteArray::new, |c| PackedByteArray::from(c.as_slice()))
     }
 
     /// Expected payout and arrival rate of one shell aimed at each of `aims`

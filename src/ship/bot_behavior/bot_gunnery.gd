@@ -20,7 +20,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_VALUE_PER_FIRE: float = 0.06
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 9
+const SOLVER_VERSION: int = 10
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -161,6 +161,13 @@ func _solve(shooter: Ship, target: Ship, kind: int) -> Dictionary:
 		"ammo": int(ans["ammo"]),
 		"probed": true,
 		"walked": true,
+		"ev_shell": ans["payout"],
+		"fire_ev": ans["fire_ev"],
+		"hit_frac": ans["landed"],
+		"fire_chance": ans["fire_chance"],
+		"dps": ans["dps"],
+		"salvo_ev": ans["salvo_ev"],
+		"reload": ans["reload"],
 	}
 
 
@@ -181,6 +188,92 @@ static func _base_payouts() -> PackedFloat64Array:
 		_payout_table[NativeArmorInteraction.PARTIAL_PEN] = DMG_PARTIAL_PEN
 		_payout_table[NativeArmorInteraction.OVERPENETRATION] = DMG_OVERPENETRATION
 	return _payout_table
+
+
+# ------------------------------------------------------- expected damage
+
+## The expected-damage summary is baked on every other aspect and descent bucket.
+static func ev_bucket_index(i: int) -> int:
+	return clampi(2 * roundi(i / 2.0), 0, 2 * ((mini(_aspect_edges().size(), descent_edges().size()) - 1) / 2))
+
+
+## Degrees off the target's bow of the bearing to `from`, as the buckets use it.
+static func aspect_from(target: Ship, from: Vector3) -> float:
+	var g := target.to_local(from)
+	return rad_to_deg(atan2(absf(g.x), -g.z))
+
+
+## Baked expected damage of `shooter`'s battery on `target`'s hull at `range_m`,
+## seen `aspect_deg` off its bow: {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps},
+## ev per shell fired in HP. Full pools, one dispersion kernel for every gun,
+## the nearest baked bucket; for what-if questions, not for aiming.
+static func expected(shooter: Ship, target: Ship, range_m: float, aspect_deg: float,
+		kind: int = KIND_MAIN) -> Dictionary:
+	var table = _table(target)
+	if table == null or not (table as Dictionary).has("ev"):
+		return {}
+	var ev: Dictionary = table["ev"]
+	var pm := _projectile_native()
+	var ai := ev_bucket_index(_aspect_index(aspect_deg))
+	var value := [0.0, 0.0]
+	var landed_he := 0.0
+	var fire := 0.0
+	var total_rate := 0.0
+	for m in _batteries(shooter, kind, range_m):
+		var rate: float = m["rate"]
+		total_rate += rate
+		var hd := _half_disp(m, range_m)
+		for ammo in 2:
+			var shell: ShellParams = m["shells"][ammo]
+			if shell == null:
+				continue
+			var s := _shell_at(_shell_table(shell), range_m)
+			if s.is_empty() or _descent_index(s[0]) < 0:
+				continue
+			var chunk = ev.get(bucket_id(ai, ev_bucket_index(_descent_index(s[0]))))
+			if chunk == null:
+				continue
+			var is_he: bool = shell.type == ShellParams.ShellType.HE
+			var r: Vector2 = pm.ev_lookup(chunk, s[2], shell.overmatch, is_he, hd)
+			if r.x < 0.0:
+				continue
+			value[ammo] += r.x * shell.damage * rate
+			if ammo == 1:
+				landed_he += r.y * rate
+				fire += _raw_fire_chance(shell, target) * r.y * rate
+	if total_rate <= 0.0:
+		return {}
+	var ap_ev: float = value[0] / total_rate
+	var fire_ev: float = fire / total_rate * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE
+	var fp := target.fire_manager.fparams.p() as DOTParams \
+		if target.fire_manager != null and target.fire_manager.fparams != null else null
+	if fp != null and ap_ev > 0.0:
+		fire_ev *= clampf(fp.dmg_rate * target.health_controller.max_hp / (ap_ev * total_rate), 0.0, 1.0)
+	var he_ev: float = value[1] / total_rate + fire_ev
+	return {"ap_ev": ap_ev, "he_ev": he_ev, "he_fire_ev": fire_ev, "he_landed": landed_he / total_rate,
+		"ap_dps": ap_ev * total_rate, "he_dps": he_ev * total_rate}
+
+
+static func _raw_fire_chance(shell: ShellParams, target: Ship) -> float:
+	var fm = target.fire_manager
+	if shell.fire_buildup <= 0.0 or fm == null or fm.rparams == null:
+		return 0.0
+	var rp := fm.rparams.p() as ResistanceParams
+	if rp == null or rp.max_buildup <= 0.0:
+		return 0.0
+	return clampf(shell.fire_buildup / rp.max_buildup, 0.0, 1.0)
+
+
+## _payouts with every pool full, for the baked expected-damage summary.
+static func full_payouts() -> PackedFloat64Array:
+	var base := _base_payouts()
+	var out := PackedFloat64Array()
+	out.resize(SECTION_COUNT * 16)
+	for section in SECTION_COUNT:
+		for code in base.size():
+			if base[code] > 0.0:
+				out[section * 16 + code] = SATURATED_FLOOR if section == SEC_MODULE else base[code]
+	return out
 
 
 ## True for the results HPManager treats as penetrations. Only these draw on a
@@ -265,6 +358,10 @@ static func _saturation_sig(target: Ship) -> int:
 			int(SATURATION_STEPS * part.current_pool1 / maxf(part.pool1, 1.0)), 0, SATURATION_STEPS)
 		sig = sig * (SATURATION_STEPS + 1) + clampi(
 			int(SATURATION_STEPS * part.current_pool2 / maxf(part.pool2, 1.0)), 0, SATURATION_STEPS)
+	var fm = target.fire_manager
+	if fm != null:
+		for f in fm.fires:
+			sig = sig * 2 + int(f != null and (f as Fire).lifetime > 0.0)
 	return sig
 
 
@@ -733,6 +830,8 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 	var value: Array = [_zeros(n), _zeros(n)]
 	var landed: Array = [_zeros(n), _zeros(n)]
 	var fire := _zeros(n)
+	var chance := _zeros(n)
+	var guns: float = 0.0
 
 	for m in mounts:
 		var rate: float = m["rate"]
@@ -790,20 +889,30 @@ static func _score(mounts: Array, shooter: Ship, target: Ship, table: Dictionary
 					vals[ci] += v * shell.damage * rate
 					lands[ci] += l * rate
 					if ammo == 1:
-						fire[ci] += _fire_value(shell, target, cands[ci]) * l * rate
+						var fc: float = _fire_chance(shell, target, cands[ci])
+						fire[ci] += fc * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE * l * rate
+						chance[ci] += fc * l * rate
 	for ammo in 2:
 		for ci in n:
 			value[ammo][ci] /= total_rate
 			landed[ammo][ci] /= total_rate
 	for ci in n:
 		fire[ci] /= total_rate
-	return _choose(cands, value, landed, fire, total_rate, target)
+		chance[ci] /= total_rate
+	for m in mounts:
+		guns += float((m as Dictionary)["guns"])
+	var ans := _choose(cands, value, landed, fire, chance, total_rate, target)
+	if not ans.is_empty():
+		ans["dps"] = float(ans["payout"]) * total_rate
+		ans["salvo_ev"] = float(ans["payout"]) * guns
+		ans["reload"] = guns / total_rate
+	return ans
 
 
 ## Shell by the landed-weighted mean over the plane (a magazine is committed for
 ## an engagement), aim point by best value with a mild pull toward the centre.
 static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
-		fire: PackedFloat64Array, total_rate: float, target: Ship) -> Dictionary:
+		fire: PackedFloat64Array, chance: PackedFloat64Array, total_rate: float, target: Ship) -> Dictionary:
 	var n := cands.size()
 	var ap_mean := _weighted_mean(value[0], landed[0], null, 0.0)
 	var fire_scale: float = 1.0
@@ -841,7 +950,9 @@ static func _choose(cands: PackedVector3Array, value: Array, landed: Array,
 			var v: float = value[ammo][best_ci]
 			if ammo == 1:
 				v += fire[best_ci] * fire_scale
-			return {"offset": cands[best_ci], "ammo": ammo, "payout": v}
+			var fire_ev: float = fire[best_ci] * fire_scale if ammo == 1 else 0.0
+			return {"offset": cands[best_ci], "ammo": ammo, "payout": v, "landed": landed[ammo][best_ci],
+				"fire_chance": chance[best_ci] if ammo == 1 else 0.0, "fire_ev": fire_ev}
 	return {}
 
 
@@ -936,6 +1047,7 @@ static func _battery(p: GunParams, base: GunParams, mod: TargetMod,
 		"spread": Vector2(mod.h_spread, mod.v_spread) if mod != null else Vector2.ONE,
 		"sigma": p.dispersion.sigma * (mod.grouping if mod != null else 1.0),
 		"rate": float(gun_count) / p.reload_time,
+		"guns": gun_count,
 		"guarantee": guarantee,
 	}
 
@@ -946,18 +1058,12 @@ static func _half_disp(m: Dictionary, range_m: float) -> Vector2:
 
 
 ## Zero when the nearest fire section is already alight.
-static func _fire_value(shell: ShellParams, target: Ship, local_aim: Vector3) -> float:
-	if shell.fire_buildup <= 0.0 or not is_instance_valid(target):
-		return 0.0
-	var fm = target.fire_manager
-	if fm == null or fm.rparams == null:
-		return 0.0
-	var rp := fm.rparams.p() as ResistanceParams
-	if rp == null or rp.max_buildup <= 0.0:
+static func _fire_chance(shell: ShellParams, target: Ship, local_aim: Vector3) -> float:
+	if not is_instance_valid(target) or target.fire_manager == null:
 		return 0.0
 	var nearest: Fire = null
 	var nearest_d: float = INF
-	for f in fm.fires:
+	for f in target.fire_manager.fires:
 		if f == null:
 			continue
 		var d: float = (f as Fire).position.distance_squared_to(local_aim)
@@ -966,5 +1072,4 @@ static func _fire_value(shell: ShellParams, target: Ship, local_aim: Vector3) ->
 			nearest = f
 	if nearest != null and nearest.lifetime > 0.0:
 		return 0.0
-	var chance: float = clampf(shell.fire_buildup / rp.max_buildup, 0.0, 1.0)
-	return chance * target.health_controller.max_hp * FIRE_VALUE_PER_FIRE
+	return _raw_fire_chance(shell, target)

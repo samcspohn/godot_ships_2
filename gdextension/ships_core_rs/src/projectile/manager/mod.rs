@@ -8,6 +8,7 @@ use crate::projectile::armor::RaycastCache;
 use crate::projectile::data::ProjectileData;
 
 mod armor_api;
+mod ev;
 mod fire;
 mod lifecycle;
 mod survey;
@@ -325,6 +326,14 @@ impl ProjectileManager {
             opts: VarDictionary) -> VarDictionary {
         self.survey_bake_impl(hulls, ref_shell, job_hull, job_dir, job_vref, job_nxny, job_rect,
             points, pt_off, edges, edge_off, opts)
+    }
+
+    /// (value per shell fired as a fraction of alpha, landed share) from a
+    /// baked expected-damage chunk; see `ev::ev_lookup`. (-1, -1) if malformed.
+    #[func] pub(crate) fn ev_lookup(chunk: PackedByteArray, pen: f64, overmatch: f64, is_he: bool,
+            half_disp: Vector2) -> Vector2 {
+        ev::ev_lookup(chunk.as_slice(), pen, overmatch, is_he, half_disp.x, half_disp.y)
+            .map_or(Vector2::new(-1.0, -1.0), |(v, l)| Vector2::new(v, l))
     }
 
     /// Penetration as the armour walk computes it; see `walk_penetration_impl`.
