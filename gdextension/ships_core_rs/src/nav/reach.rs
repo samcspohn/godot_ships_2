@@ -2065,6 +2065,13 @@ impl ReachField {
         Some(ReachLookup { field, planes })
     }
 
+    /// Where each listed enemy can land shells.
+    pub(crate) fn fire_lookup(&self, team: i32, ids: &[i64]) -> Option<ReachLookup> {
+        let (field, tl) = (self.snap.field.clone()?, self.team(team)?);
+        let planes = ids.iter().map(|id| tl.enemies.get(id).map(|e| e.fire.clone())).collect();
+        Some(ReachLookup { field, planes })
+    }
+
     fn plan_value(&self, id: i64, point: Vector2, safe: bool) -> f32 {
         let (Some(f), Some(p)) = (&self.snap.field, self.snap.plans.get(&id)) else { return f32::INFINITY };
         match f.index(point.x, point.y) {

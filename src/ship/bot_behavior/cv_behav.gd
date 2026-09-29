@@ -628,6 +628,10 @@ func _update_exposure(ship: Ship) -> bool:
 # NAVINTENT
 # ============================================================================
 
+func _owns_gun_policy() -> bool:
+	return true
+
+
 func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# A carrier is always sneaking: while wants_stealth is set the navigator
 	# routes around known enemy detection envelopes instead of straight through.

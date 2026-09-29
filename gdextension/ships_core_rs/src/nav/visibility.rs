@@ -199,6 +199,8 @@ impl VisibilityGrid {
     const AVOID_DET: i32 = crate::nav::spot_walk::AVOID_DET as i32;
     #[constant]
     const AVOID_LOS: i32 = crate::nav::spot_walk::AVOID_LOS as i32;
+    #[constant]
+    const AVOID_FIRE: i32 = crate::nav::spot_walk::AVOID_FIRE as i32;
 
     #[func]
     fn build(&mut self, nav_map: Option<Gd<NavigationMap>>, #[opt(default = 300.0)] cell_size: f32) {
@@ -336,8 +338,12 @@ impl VisibilityGrid {
     fn hold_inputs(&self, enemies: &PackedVector2Array, o: &VarDictionary) -> SpotInputs {
         let f32s = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedFloat32Array>().ok()).unwrap_or_default();
         let (det, spot, los) = (f32s("det_r"), f32s("spot_r"), f32s("los_r"));
-        let shoot = o.get("shootable").and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default();
-        let (d, s, l, sh) = (det.as_slice(), spot.as_slice(), los.as_slice(), shoot.as_slice());
+        let bytes = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default();
+        let (shoot, heavy) = (bytes("shootable"), bytes("heavy"));
+        let (d, s, l, sh, hv) = (det.as_slice(), spot.as_slice(), los.as_slice(), shoot.as_slice(), heavy.as_slice());
+        let field = o.get("reach_field").and_then(|v| v.try_to::<Gd<ReachField>>().ok());
+        let ids = o.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).unwrap_or_default();
+        let team = o.get("team").map_or(-1, |v| v.to_i32());
         SpotInputs {
             enemies: enemies.as_slice().iter().enumerate().map(|(i, &pos)| Enemy {
                 pos,
@@ -345,15 +351,14 @@ impl VisibilityGrid {
                 det_r: d.get(i).copied().unwrap_or(0.0),
                 spot_r: s.get(i).copied().unwrap_or(0.0),
                 los_r: l.get(i).copied().unwrap_or(0.0),
+                heavy: hv.get(i).is_some_and(|&b| b != 0),
                 shootable: sh.get(i).is_some_and(|&b| b != 0),
             }).collect(),
             clearance: o.get("clearance").map_or(0.0, |v| v.to_f32()),
             avoid: o.get("avoid").map_or(AVOID_DET as i32, |v| v.to_i32()) as u8,
-            reach: o.get("reach_field").and_then(|v| v.try_to::<Gd<ReachField>>().ok()).and_then(|f| {
-                let ids = o.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).unwrap_or_default();
-                f.bind().reach_lookup(o.get("team").map_or(-1, |v| v.to_i32()),
-                    o.get("hull_key").map_or(0, |v| v.to_i64()), ids.as_slice())
-            }),
+            los_margin: o.get("los_margin").map_or(0, |v| v.to_i32()),
+            reach: field.as_ref().and_then(|f| f.bind().reach_lookup(team, o.get("hull_key").map_or(0, |v| v.to_i64()), ids.as_slice())),
+            fire: field.as_ref().and_then(|f| f.bind().fire_lookup(team, ids.as_slice())),
         }
     }
 
@@ -361,7 +366,7 @@ impl VisibilityGrid {
     /// enemies within their `spot_r`. `outward` starts where the ray from `from`
     /// through `toward` leaves forbidden ground; otherwise at the last free cell
     /// from `from` toward `toward`. `opts`: det_r, spot_r, los_r (per enemy),
-    /// shootable, clearance, avoid (AVOID_* bits, default detection), need,
+    /// shootable, heavy (AVOID_FIRE), clearance, avoid (AVOID_* bits, default detection), los_margin, need,
     /// budget_m (<= 0 walks the whole perimeter), flank. With reach_field, team,
     /// hull_key and ids (per enemy) the goal counts enemies the hull can hit
     /// from the cell instead of enemies it sees.

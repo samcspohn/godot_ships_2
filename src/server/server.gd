@@ -140,8 +140,10 @@ var _reach_us: float = 0.0
 var _reach_max_us: float = 0.0
 var _reach_resweeps: int = 0
 var _reach_jobs: int = 0
-var _reach_sources: Array[int] = [0, 0, 0]
+var _reach_sources: Array[int] = [0, 0, 0, 0]
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
+## An inferred spotter's certainty runs out over this long.
+const INFERRED_DECAY_SECONDS: float = 30.0
 ## Fraction of a carried-but-inactive radar / hydro range that still gets
 ## stamped as a threat circle. Below 1.0 because the bubble is conditional -
 ## approaching one should cost a spotter something, but not as much as a
@@ -1826,10 +1828,10 @@ func _sweep_reach_fields() -> void:
 	_reach_report_at = current_time + REACH_REPORT_SECONDS
 	var n := float(maxi(_reach_ticks, 1))
 	var ws: Dictionary = field.take_worker_stats()
-	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed | tables cached %d | worker %d batches %.1f ms, main blocked %.1f ms" % [
+	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed, %.1f inferred | tables cached %d | worker %d batches %.1f ms, main blocked %.1f ms" % [
 		_reach_ticks, _reach_us / n / 1000.0, _reach_max_us / 1000.0,
 		_reach_resweeps / n, _reach_jobs / n,
-		_reach_sources[0] / n, _reach_sources[1] / n, _reach_sources[2] / n,
+		_reach_sources[0] / n, _reach_sources[1] / n, _reach_sources[2] / n, _reach_sources[3] / n,
 		int(field.get_last_stats().get("tables_cached", 0)),
 		int(ws.batches), float(ws.worker_us) / 1000.0, float(ws.blocked_us) / 1000.0])
 	_reach_ticks = 0
@@ -1837,7 +1839,7 @@ func _sweep_reach_fields() -> void:
 	_reach_max_us = 0.0
 	_reach_resweeps = 0
 	_reach_jobs = 0
-	_reach_sources = [0, 0, 0]
+	_reach_sources = [0, 0, 0, 0]
 
 
 func _prebuild_reach_tables(field: ReachField, teams: Array) -> void:
@@ -1859,7 +1861,7 @@ func _prebuild_reach_tables(field: ReachField, teams: Array) -> void:
 
 ## What `team_id` believes about the enemy, one entry per hull it has any
 ## opinion on: {ship, pos: Vector2, weight, spread, force_spot, source}.
-## source: 0 in sight, 1 last-known position, 2 presumption. Same tables and
+## source: 0 in sight, 1 last-known position, 2 presumption, 3 inferred spotter. Same tables and
 ## weights as _publish_team_threats.
 func _team_belief(team_id: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
@@ -1873,6 +1875,23 @@ func _team_belief(team_id: int) -> Array[Dictionary]:
 	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
 	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
 	var now: float = SimClock.now()
+	# A spotter deduced from being detected is newer evidence than an older
+	# sighting of the same ship, and says for certain that it has eyes on us.
+	var inferred: Dictionary = get_inferred_contacts(team_id)
+	for enemy_ship in inferred.keys():
+		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
+			continue
+		var inf: Dictionary = inferred[enemy_ship]
+		var t: float = float(inf.get("time", -INF))
+		if unspotted.has(enemy_ship) and float(unspotted_times.get(enemy_ship, -INF)) >= t:
+			continue
+		var certainty: float = 1.0 - clampf((now - t) / INFERRED_DECAY_SECONDS, 0.0, 1.0)
+		if certainty <= 0.0:
+			continue
+		published[enemy_ship] = true
+		var ip: Vector3 = inf.position
+		out.append({"ship": enemy_ship, "pos": Vector2(ip.x, ip.z), "weight": maxf(certainty, 0.05),
+			"spread": float(inf.get("radius", 0.0)), "force_spot": 0.0, "source": 3})
 	for enemy_ship in unspotted.keys():
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
 			continue

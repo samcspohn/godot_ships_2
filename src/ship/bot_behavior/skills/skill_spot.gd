@@ -3,7 +3,8 @@ extends SkillStation
 
 ## One walk, two goals. SPOT: outside detection, seeing targets a friend can
 ## shoot. COVER: out of every enemy's sight within our firing bloom, able to
-## land shells over the terrain on a spotted target.
+## land shells over the terrain on a spotted target; or, when that is missing
+## or much further while we are already seen, out of reach of heavy shells.
 ## Refine budget halves per target already held: more to lose, less to gain.
 
 enum Mode { SPOT, COVER }
@@ -12,8 +13,14 @@ enum Mode { SPOT, COVER }
 const SAFE_MARGIN := 1.15
 const FRIENDS := 4
 const REFINE_BUDGET_M := 8000.0
+## Matches the one-cell shadow margin the cover walk demands.
+const COVER_HOLD_M := 300.0
+## Concealed cover wins unless hard cover is this many times closer.
+const HARD_COVER_PREF := 1.5
 
 var mode: int = Mode.SPOT
+## The held COVER station hides us, rather than only shielding us from heavy fire.
+var _concealed: bool = true
 var stealth_corridor: bool = true
 var _count: int = 0
 var _steps: int = 0
@@ -30,6 +37,11 @@ func reset() -> void:
 	stealth_corridor = true
 	_count = 0
 	_trails = []
+	_concealed = true
+
+## Whether the posture this skill holds wants the ship unseen.
+func wants_concealment() -> bool:
+	return _has_station and (mode == Mode.SPOT or _concealed)
 
 func trails() -> Array[PackedVector2Array]:
 	return _trails
@@ -62,29 +74,36 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var opts := {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot, "clearance": clearance,
 		"avoid": VisibilityGrid.AVOID_DET, "flank": flank}
+	var hard := {}
 	if mode == Mode.COVER:
 		var g: Dictionary = NavigationMapManager.reach_gun(ship)
 		if g.is_empty():
 			return _decline()
-		opts.merge({"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_LOS, "los_r": inp.los,
+		opts.merge({"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_LOS, "los_r": inp.los, "los_margin": 1,
 			"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
-			"ids": inp.ids}, true)
+			"ids": inp.ids, "heavy": inp.heavy}, true)
+		hard = opts.merged({"avoid": VisibilityGrid.AVOID_FIRE}, true)
+	var held := opts if _concealed else hard
 	if _has_station:
-		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, opts)
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, held)
 		_count = int(ev.count) if bool(ev.free) else 0
-		if _count == 0:
+		# Hidden (or shielded) is the point of cover; losing the shot only starts a search.
+		if _count == 0 and not (mode == Mode.COVER and bool(ev.free)):
 			_drop()
 	var r: Dictionary
 	if _has_station:
-		opts.need = _count + 1
-		opts.budget_m = REFINE_BUDGET_M / pow(2.0, _count - 1)
-		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, opts)
+		held.need = _count + 1
+		held.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
+		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, held)
 	else:
-		opts.need = 1
-		opts.budget_m = 0.0
-		r = vis.hold_walk(danger, here, true, inp.pos, opts)
-		if not bool(r.get("has_start", false)):
-			r = vis.hold_walk(_nearest(inp.pos, here), here, true, inp.pos, opts)
+		r = _walk_out(vis, danger, here, inp.pos, opts)
+		_concealed = true
+		if mode == Mode.COVER and (ship.is_detected() or not bool(r.get("found", false))):
+			var rh := _walk_out(vis, danger, here, inp.pos, hard)
+			if bool(rh.get("found", false)) and (not bool(r.get("found", false))
+					or here.distance_to(r.pos) > HARD_COVER_PREF * here.distance_to(rh.pos)):
+				r = rh
+				_concealed = false
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
 	if bool(r.get("found", false)):
@@ -95,7 +114,18 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	stealth_corridor = true
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
+	if mode == Mode.COVER:
+		params = params.merged({"jitter_radius": COVER_HOLD_M})
 	return _intent(ctx, field, team_id, params)
+
+## Outward from the danger centre toward us, else from the nearest contact.
+func _walk_out(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array, opts: Dictionary) -> Dictionary:
+	opts.need = 1
+	opts.budget_m = 0.0
+	var r: Dictionary = vis.hold_walk(danger, here, true, pos, opts)
+	if not bool(r.get("has_start", false)):
+		r = vis.hold_walk(_nearest(pos, here), here, true, pos, opts)
+	return r
 
 func _decline() -> NavIntent:
 	_drop()
@@ -134,7 +164,7 @@ func _cover_inputs(ship: Ship, belief: Array[Dictionary]) -> Dictionary:
 	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	var bloom: float = maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0)))
 	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "spot": PackedFloat32Array(),
-		"los": PackedFloat32Array(), "shoot": PackedByteArray(), "ids": PackedInt64Array()}
+		"los": PackedFloat32Array(), "shoot": PackedByteArray(), "ids": PackedInt64Array(), "heavy": PackedByteArray()}
 	for b in belief:
 		var spread: float = b.spread
 		out.pos.append(b.pos)
@@ -143,6 +173,7 @@ func _cover_inputs(ship: Ship, belief: Array[Dictionary]) -> Dictionary:
 		out.spot.append(0.0)
 		out.shoot.append(1 if int(b.source) == 0 else 0)
 		out.ids.append((b.ship as Ship).get_instance_id())
+		out.heavy.append(1 if (b.ship as Ship).ship_class == Ship.ShipClass.BB else 0)
 	return out
 
 func _nearest_friends(ctx: SkillContext, team_id: int) -> Array[Ship]:

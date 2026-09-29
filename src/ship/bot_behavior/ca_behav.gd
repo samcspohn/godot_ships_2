@@ -115,19 +115,17 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 
 	var hold := _run_skill(&"Cover", ctx)
 	if hold != null:
+		wants_stealth = _skill_hold_cover.wants_concealment()
 		return hold
 
 	if sit.threat < d.station_max_threat:
 		var station := _run_skill(&"Station", ctx)
 		if station != null:
-			if not ctx.ship.is_detected():
-				_suppress_guns = _hold_fire_hidden(ctx, sit)
 			return station
 
 	if not ctx.ship.is_detected():
 		var hide := _run_skill(&"FindCover", ctx, cover_params)
 		if hide != null:
-			_suppress_guns = _hold_fire_hidden(ctx, sit)
 			return hide
 		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 

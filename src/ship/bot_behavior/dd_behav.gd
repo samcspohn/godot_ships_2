@@ -205,6 +205,9 @@ func _is_gunboat(ship: Ship) -> bool:
 	return torp_range * TORPEDO_ENGAGE_RATIO \
 		< conceal * SkillSpot.SAFE_MARGIN * GUNBOAT_BAND_RATIO
 
+func _owns_gun_policy() -> bool:
+	return true
+
 func doctrine() -> BotDoctrine:
 	return BotDoctrine.for_gunboat_destroyer() if _is_gunboat(_ship) \
 		else BotDoctrine.for_destroyer()

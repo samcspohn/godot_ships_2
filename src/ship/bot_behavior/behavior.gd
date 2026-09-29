@@ -117,6 +117,11 @@ var _fleet_frame: FleetFrame = null
 var _fleet_frame_frame: int = -1
 
 var _suppress_guns: bool = false
+## Stance's fire discipline, set every nav tick; engage_target aims but holds.
+var hold_fire: bool = false
+## Staying quiet would not keep or make us dark (radar, a close spotter, or a
+## salvo reveals nothing new), so a stealthy posture may as well shoot.
+var cant_go_dark: bool = false
 
 ## True while the cornered rule in _nav_core() has fired this tick. Set before
 ## the ladder runs, so a subclass _apply_gun_policy() can tell the concealment
@@ -216,6 +221,11 @@ func _may_change_ammo() -> bool:
 	return now - _ammo_changed_at >= reload
 
 
+## Hulls whose own gun policy decides when to open up (a gunboat fires lit on
+## purpose); stance's fire discipline stands aside for them.
+func _owns_gun_policy() -> bool:
+	return false
+
 func can_fire_guns() -> bool:
 	## Always allowed at the base level.
 	## Each ship class gates firing in its own engage_target override.
@@ -240,106 +250,49 @@ func _probe_concealment(server: GameServer) -> bool:
 			var reach: float = maxf(cp.radius, maxf(sp.spotting_range_override, sp.radar_spotting_range_override))
 			if spotter.global_position.distance_to(_ship.global_position) < reach:
 				return false
-			_infer_concealed_spotter(server)
 		return true
 	return _firing_lights_us(server)
 
 ## Unseen now: would a salvo's bloom (gun range) put us under someone's eyes?
-## The reach field folds in believed positions and their spread; without it,
-## sweep line of sight to every known contact inside that bloom.
+## Island line of sight from the static visibility lattice, to every enemy the
+## team believes in, within bloom plus its position error.
 func _firing_lights_us(server: GameServer) -> bool:
 	var ac = _ship.artillery_controller
 	var gun_range: float = ac.get_params()._range if ac != null and ac.get_params() != null else 0.0
 	var bloom: float = maxf(NavigationMapManager.reach_conceal_radius(_ship), gun_range)
 	if _ship.team == null:
 		return false
-	var my_team: int = _ship.team.team_id
-	var field: ReachField = NavigationMapManager.get_reach_field()
-	if field != null and field.is_built():
-		var here := Vector2(_ship.global_position.x, _ship.global_position.z)
-		return field.detect_dist_at(my_team, here) < bloom
-	var my_pos: Vector3 = _ship.global_position
-	for enemy in server.get_valid_targets(my_team):
-		if is_instance_valid(enemy) and enemy.health_controller.is_alive() \
-				and my_pos.distance_to(enemy.global_position) < bloom \
-				and not _is_los_blocked_with_clearance(my_pos, enemy.global_position):
-			return true
-	var unspotted: Dictionary = server.get_unspotted_enemies(my_team)
-	for enemy in unspotted:
-		var pos: Vector3 = unspotted[enemy]
-		if my_pos.distance_to(pos) < bloom and not _is_los_blocked_with_clearance(my_pos, pos):
+	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	for b in server._team_belief(_ship.team.team_id):
+		var p: Vector2 = b.pos
+		if here.distance_to(p) <= bloom + float(b.spread) and (vis == null or not vis.is_built() or vis.visible(here, p)):
 			return true
 	return false
 
+## A player only learns that someone has eyes on them. The bot is told who and
+## where, blurred by INFER_NOISE_M, so it can stop re-probing an enemy it cannot
+## see. Recorded as an inferred contact: positioning only, never a target.
+const INFER_NOISE_M: float = 1500.0
+## One blur per spotter, so the anchor does not jitter and force re-sweeps.
+var _infer_offsets: Dictionary = {}
 
 func _infer_concealed_spotter(server: GameServer) -> void:
-	## Bloom with nothing in sight means an unseen ship has LOS on us. That's a
-	## deduction, not a sighting, so it goes in the inferred-contact table, not
-	## the LKP tables — nothing that aims a gun reads it (see get_contact_solution).
-	##
-	## Bloom only bounds a maximum RANGE (our detection radius), not a bearing,
-	## so the bearing comes from the spotter's LKP if it still has LOS, else the
-	## presumption model's spawn-line guess.
-	##
-	## Never anchored on our own position: that would place an inferred enemy on
-	## top of a friendly and poison cover/standoff decisions around it (see
-	## GameServer._publish_team_threats). If no bearing exists, nothing is recorded.
-	var concealment_node = _ship.concealment
-	if concealment_node == null:
+	var cn: Concealment = _ship.concealment
+	if cn == null or _ship.team == null:
 		return
-	var spotter: Ship = concealment_node.spotted_by
-	if not is_instance_valid(spotter):
+	var spotter: Ship = cn.spotted_by
+	if not is_instance_valid(spotter) or not spotter.health_controller.is_alive():
 		return
-	if not spotter.health_controller.is_alive():
-		return
-	# Nothing to deduce about a ship we can already see.
 	var my_team: int = _ship.team.team_id
 	if spotter in server.get_valid_targets(my_team):
 		return
-
-	var detect_radius: float = (concealment_node.params.p() as ConcealmentParams).radius
-	var my_pos: Vector3 = _ship.global_position
-
-	# Prefer the spotter's LKP bearing if it still has LOS to us — a real
-	# observation beats a vaguer guess.
-	var unspotted: Dictionary = server.get_unspotted_enemies(my_team)
-	var bearing_from: Vector3 = Vector3.ZERO
-	var have_bearing: bool = false
-	if unspotted.has(spotter):
-		var last_known: Vector3 = unspotted[spotter]
-		if not NavigationMapManager.is_los_blocked(last_known, my_pos):
-			return
-		bearing_from = last_known
-		have_bearing = true
-	else:
-		# Never seen: fall back to the presumption model's spawn/clock-based flank guess.
-		for guess in get_presumed_contacts():
-			if guess.ship == spotter:
-				bearing_from = guess.position
-				have_bearing = true
-				break
-	if not have_bearing:
-		return
-
-	var to_contact: Vector3 = bearing_from - my_pos
-	to_contact.y = 0.0
-	var d: float = to_contact.length()
-	if d < 1.0:
-		# Degenerate bearing - the only anchor available would be on top of us.
-		return
-	# Keep the direction, give up the range: bloom says it is no further off than
-	# our detection radius, and says nothing at all about how much closer.
-	var anchor: Vector3 = my_pos + to_contact / d * minf(d, detect_radius)
-
-	server.record_inferred_contact(
-		my_team,
-		spotter,
-		anchor,
-		SimClock.now(),
-		detect_radius,
-		"bloom")
-
-# NAVIGATION UTILITIES
+	var id := spotter.get_instance_id()
+	if not _infer_offsets.has(id):
+		_infer_offsets[id] = Vector2.from_angle(randf() * TAU) * sqrt(randf()) * INFER_NOISE_M
+	var off: Vector2 = _infer_offsets[id]
+	server.record_inferred_contact(my_team, spotter, spotter.global_position + Vector3(off.x, 0.0, off.y),
+		SimClock.now(), INFER_NOISE_M, "detected")
 
 func _get_valid_nav_point(target: Vector3) -> Vector3:
 	# V4 path: use NavigationMapManager SDF + safe destination selection
@@ -2355,8 +2308,6 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		intent = _utility_arm(ctx, sit)
 		if intent != null:
 			sit["arm"] = &"utility"
-			if not ctx.ship.is_detected():
-				_suppress_guns = _hold_fire_hidden(ctx, sit)
 			_apply_gun_policy(ctx, sit)
 			return _finish_nav(intent, ctx, sit, prev_skill)
 
@@ -2522,7 +2473,11 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	# every frame regardless of which arm we are in, so a tick that skips the
 	# clock would leave the ship holding a stale evasive throttle indefinitely.
 	salvo_clock.tick(ctx.ship, ctx.server, self)
+	if ctx.ship.visible_to_enemy:
+		_infer_concealed_spotter(ctx.server)
 
+	cant_go_dark = not _probe_concealment(ctx.server)
+	hold_fire = not _owns_gun_policy() and wants_stealth and not cant_go_dark
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
 		_skill_evade.reset()
@@ -2828,7 +2783,7 @@ func engage_target(target: Ship):
 		#return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
-	if wants_to_be_concealed:
+	if wants_to_be_concealed or hold_fire:
 		_ship.artillery_controller.set_aim_input(adjusted_target_pos)
 		_ship.secondary_controller.enabled = false
 		return

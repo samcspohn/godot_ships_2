@@ -15,19 +15,27 @@ pub(crate) struct Enemy {
     pub spot_r: f32,
     /// Inside this, with line of sight, it can see us to shoot (AVOID_LOS).
     pub los_r: f32,
+    /// Its shells count for AVOID_FIRE.
+    pub heavy: bool,
     pub shootable: bool,
 }
 
 /// Forbidden ground a walk keeps out of, besides land and shallows.
 pub(crate) const AVOID_DET: u8 = 1;
 pub(crate) const AVOID_LOS: u8 = 2;
+pub(crate) const AVOID_FIRE: u8 = 4;
 
 pub(crate) struct SpotInputs {
     pub enemies: Vec<Enemy>,
     pub clearance: f32,
     pub avoid: u8,
+    /// AVOID_LOS also forbids cells within this many cells of a seen one: the
+    /// hull wanders inside its hold radius and the grid is least sure at coasts.
+    pub los_margin: i32,
     /// Goal is "my guns reach it" instead of "I see it".
     pub reach: Option<ReachLookup>,
+    /// Enemy fire planes, for AVOID_FIRE.
+    pub fire: Option<ReachLookup>,
 }
 
 pub(crate) struct WalkResult {
@@ -76,11 +84,25 @@ impl VisibilityGrid {
         if inp.avoid & AVOID_DET != 0 && inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r) {
             return true;
         }
-        if inp.avoid & AVOID_LOS != 0 {
-            if let Some(k) = self.water(c.0, c.1) {
-                return inp.enemies.iter().any(|e| {
-                    e.cell.is_some_and(|ec| p.distance_squared_to(e.pos) <= e.los_r * e.los_r && self.visible_idx(k, ec))
-                });
+        if inp.avoid & AVOID_FIRE != 0 {
+            if let Some(f) = &inp.fire {
+                if inp.enemies.iter().enumerate().any(|(i, e)| e.heavy && f.hits(i, p)) {
+                    return true;
+                }
+            }
+        }
+        if inp.avoid & AVOID_LOS != 0 && self.water(c.0, c.1).is_some() {
+            let m = inp.los_margin.max(0);
+            for dz in -m..=m {
+                for dx in -m..=m {
+                    let Some(k) = self.water(c.0 + dx, c.1 + dz) else { continue };
+                    let q = self.centres[k];
+                    if inp.enemies.iter().any(|e| {
+                        e.cell.is_some_and(|ec| q.distance_squared_to(e.pos) <= e.los_r * e.los_r && self.visible_idx(k, ec))
+                    }) {
+                        return true;
+                    }
+                }
             }
         }
         false
