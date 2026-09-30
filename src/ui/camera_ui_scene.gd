@@ -178,6 +178,9 @@ class Weapon:
 	var last_timer_text: String = ""
 	var last_angle_text: String = ""
 	var last_color: Color = Color(0, 0, 0, 0)
+	var last_pos: Vector2 = Vector2(INF, INF)
+	var last_fill: float = -1.0
+	var last_initial: float = -1.0
 
 # # Gun reload tracking
 # var gun_reload_bars: Array[ProgressBar] = []
@@ -1068,7 +1071,6 @@ func setup_ship_ui(ship):
 				"count": widget.get_node("Box/CountLabel") as Label,
 				"timer": widget.get_node("Box/TimerLabel") as Label,
 			})
-		status_indicator.set_meta("consumable_mode", "normal")
 
 	# Set the ship name
 	name_label.text = ship.name
@@ -1110,6 +1112,7 @@ func setup_ship_ui(ship):
 		# an identical string (and re-shaping the Label) every frame.
 		"hp_text_hp": ship.health_controller.current_hp,
 		"hp_text_max": ship.health_controller.max_hp,
+		"consumable_mode": "normal",
 	}
 
 func update_ship_ui(delta: float = 0.0):
@@ -1230,7 +1233,7 @@ func update_ship_ui(delta: float = 0.0):
 						bar.value = max(target, bar.value - DAMAGE_BAR_DROP_RATE * delta)
 
 			if ship.team.team_id == own_team_id: # friendly
-				var current_mode: String = ui.status.get_meta("consumable_mode", "")
+				var current_mode: String = ui.get("consumable_mode", "")
 				var normal_icons: Array = ui["normal_icons"]
 				var alt_widgets: Array = ui["alt_widgets"]
 				var alt_refs: Array  = ui["alt_refs"]
@@ -1238,7 +1241,7 @@ func update_ship_ui(delta: float = 0.0):
 
 				# --- Mode switch: flip which widget set is visible, update container height ---
 				if current_mode != desired_mode:
-					ui.status.set_meta("consumable_mode", desired_mode)
+					ui["consumable_mode"] = desired_mode
 					if desired_mode == "alt":
 						ui.status.offset_top    = -52.0
 						ui.status.offset_bottom = -2.0
@@ -1271,7 +1274,9 @@ func update_ship_ui(delta: float = 0.0):
 				var is_targeted = (ship == current_secondary_target)
 				if ui.target_indicator.visible != is_targeted:
 					ui.target_indicator.visible = is_targeted
-				ui.target_indicator.get_child(0).text = target_glyph
+				if ui.get("target_glyph", "") != target_glyph:
+					ui["target_glyph"] = target_glyph
+					ui.target_indicator.get_child(0).text = target_glyph
 
 			# # Add pulsing animation to target indicator if targeted
 			# if is_targeted:
@@ -1283,7 +1288,10 @@ func update_ship_ui(delta: float = 0.0):
 			# the top of the loop, along with the visibility test).
 			ui.container.visible = ship.health_controller.is_alive()
 			var container_size = Vector2(90, 40) # Use template size
-			ui.container.position = screen_pos - Vector2(container_size.x / 2, container_size.y)
+			var container_pos: Vector2 = screen_pos - Vector2(container_size.x / 2, container_size.y)
+			if ui.get("container_pos", Vector2.INF) != container_pos:
+				ui["container_pos"] = container_pos
+				ui.container.position = container_pos
 			# Show lock-on icon when this ship is the active locked target
 			ui.lock_icon.visible = target_lock_enabled and locked_target == ship
 		else:
@@ -1873,13 +1881,12 @@ func update_gun_reload_bars():
 			var angle_rad = aim_dir.signed_angle_to(gun_forw, Vector3.UP)
 			var angle = rad_to_deg(angle_rad)
 
-			indicator.visible = true
 			var angle_text := "%.0f°" % absf(angle) if absf(angle) > 0.9 else ""
 			if angle_text != t.last_angle_text:
 				t.last_angle_text = angle_text
 				t.angle_label.text = angle_text
 
-			indicator.global_position = gun_indicator_pos - Vector2(angle * 4.0, 0)
+			var indicator_pos: Vector2 = gun_indicator_pos - Vector2(angle * 4.0, 0)
 
 			var color_mod: float
 			var color: Color
@@ -1901,21 +1908,20 @@ func update_gun_reload_bars():
 				bar.self_modulate = color
 				progress_tex.tint_progress = color
 
+			# Was set true then false every tick for non-current weapons: two real visibility flips.
+			indicator.visible = is_current
 			if not is_current:
-				indicator.visible = false
 				continue
-
 
 			var closest: Weapon = null
 			# Avoid overlapping indicators
-			var indicator_pos: Vector2 = indicator.global_position
 			for other: Weapon in already_drawn:
-				if indicator_pos.distance_squared_to(other.indicator.global_position) < 36.0:
+				if indicator_pos.distance_squared_to(other.last_pos) < 36.0:
 					closest = other
 					break
 			if closest:
 				t.angle_label.visible = false
-				indicator.global_position = closest.indicator.global_position
+				indicator_pos = closest.last_pos
 				if overlapping.has(closest):
 					overlapping[closest].append(t)
 				else:
@@ -1927,19 +1933,25 @@ func update_gun_reload_bars():
 				var angle_idx = 0
 				var start = gap / 2.0
 				for k: Weapon in cluster:
-					var initial_angle: float = start + angle_idx * (step + gap)
-					k.under_tex.radial_fill_degrees = step
-					k.under_tex.radial_initial_angle = initial_angle
-					k.progress_tex.radial_fill_degrees = step
-					k.progress_tex.radial_initial_angle = initial_angle
+					_set_radial(k, step, start + angle_idx * (step + gap))
 					angle_idx += 1
 			else:
 				t.angle_label.visible = true
-				under_tex.radial_fill_degrees = 360
-				under_tex.radial_initial_angle = 0
-				progress_tex.radial_fill_degrees = 360
-				progress_tex.radial_initial_angle = 0
+				_set_radial(t, 360.0, 0.0)
+			if indicator_pos != t.last_pos:
+				t.last_pos = indicator_pos
+				indicator.global_position = indicator_pos
 			already_drawn.append(t)
+
+func _set_radial(w: Weapon, fill: float, initial: float) -> void:
+	if fill == w.last_fill and initial == w.last_initial:
+		return
+	w.last_fill = fill
+	w.last_initial = initial
+	w.under_tex.radial_fill_degrees = fill
+	w.under_tex.radial_initial_angle = initial
+	w.progress_tex.radial_fill_degrees = fill
+	w.progress_tex.radial_initial_angle = initial
 
 # Property setters to automatically update UI when values change
 func set_time_to_target(value: float):

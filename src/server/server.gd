@@ -1080,6 +1080,9 @@ func get_nearest_enemy_cluster(position: Vector3, team_id: int) -> Dictionary:
 
 
 func defer_sync_ship(friendly: int, player_name: String, ship_data: Variant):
+	if Ship.native_sync:
+		ShipSync.defer_sync_ship(players, friendly, player_name, ship_data)
+		return
 	if not players.has(player_name):
 		return
 	var ship: Ship = players[player_name][0]

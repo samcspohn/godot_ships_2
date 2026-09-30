@@ -6,6 +6,9 @@ class_name Ship
 # Map boundary constants (matching minimap.gd world_rect)
 const MAP_BOUNDARY: float = 17500.0
 
+# F7 A/B: Rust ShipSync vs the GDScript parsers below.
+static var native_sync: bool = false
+
 enum ShipClass {
 	BB,
 	CA,
@@ -450,6 +453,9 @@ func sync_ship_transform(include_waypoints: bool = true) -> PackedByteArray:
 	return pb
 
 func parse_ship_transform(b: PackedByteArray) -> void:
+	if native_sync:
+		ShipSync.parse_ship_transform(self, b)
+		return
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = b
 	# `global_position.x = ...` is a read-modify-write: it runs the getter, edits
@@ -461,11 +467,15 @@ func parse_ship_transform(b: PackedByteArray) -> void:
 	# server_rotation.y = reader.get_float()
 	var pos_x := reader.get_float()
 	var pos_z := reader.get_float()
-	rotation.y = rot_y
-	var gp := global_position
-	gp.x = pos_x
-	gp.z = pos_z
-	global_position = gp
+	var rot := rotation
+	rot.y = rot_y
+	var xf := Transform3D(Basis.from_euler(rot, rotation_order) * Basis.from_scale(scale), position)
+	var parent := get_parent_node_3d()
+	if parent:
+		xf = parent.global_transform * xf
+	xf.origin.x = pos_x
+	xf.origin.z = pos_z
+	global_transform = xf
 	# # global_position.y = 0
 	# health_controller.current_hp = reader.get_float()
 	# health_controller.max_hp = reader.get_float()
@@ -550,6 +560,9 @@ func sync_ship_data2(vs: bool, friendly: bool) -> PackedByteArray:
 
 @rpc("authority", "call_remote")
 func sync2(b: PackedByteArray, friendly: bool):
+	if native_sync:
+		ShipSync.sync2(self, b, friendly)
+		return
 	# print("here")
 	if !self.initialized:
 		return
@@ -565,8 +578,7 @@ func sync2(b: PackedByteArray, friendly: bool):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	global_basis = Basis.from_euler(euler)
-	global_position = reader.get_var()
+	global_transform = Transform3D(Basis.from_euler(euler), reader.get_var())
 	# server_rotation = Basis.from_euler(euler)
 	# server_position = reader.get_var()
 	# health_controller.current_hp = reader.get_float()
@@ -709,6 +721,9 @@ func sync_player_data() -> PackedByteArray:
 
 @rpc("authority", "call_remote", "unreliable_ordered", 1)
 func sync_player(b: PackedByteArray):
+	if native_sync:
+		ShipSync.sync_player(self, b)
+		return
 	if !self.initialized:
 		return
 
@@ -721,8 +736,7 @@ func sync_player(b: PackedByteArray):
 	linear_velocity = reader.get_var()
 	# global_basis = reader.get_var()
 	var euler: Vector3 = reader.get_var()
-	global_basis = Basis.from_euler(euler)
-	global_position = reader.get_var()
+	global_transform = Transform3D(Basis.from_euler(euler), reader.get_var())
 	# health_controller.current_hp = reader.get_float()
 	# health_controller.max_hp = reader.get_float()
 	health_controller.from_bytes(reader.get_var())

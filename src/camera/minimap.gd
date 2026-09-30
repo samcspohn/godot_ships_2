@@ -50,6 +50,10 @@ var tracked_orbits: Array = []  # {center, radius, color} - one per airborne squ
 ## flipping it off mid-match; nothing but the draw calls reads it.
 var draw_circles: bool = true
 
+# F10 A/B: Rust MinimapCanvas vs the GDScript draw path below.
+var use_native: bool = true
+var native_canvas: MinimapCanvas
+
 # Scaling factor between world coordinates and minimap coordinates
 var scale_factor: Vector2
 var aim_point: Vector3
@@ -96,6 +100,21 @@ func setup_minimap():
 	ship_markers_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ship_markers_canvas.clip_contents = true
 	add_child(ship_markers_canvas)
+
+	native_canvas = MinimapCanvas.new()
+	native_canvas.size = ship_markers_canvas.size
+	native_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	native_canvas.clip_contents = true
+	native_canvas.map_size = minimap_sizes[mm_idx]
+	native_canvas.max_size = minimap_sizes.back()
+	native_canvas.world_rect = world_rect
+	add_child(native_canvas)
+	if is_instance_valid(player_ship):
+		native_canvas.set_player_ship(player_ship)
+	for d in tracked_ships:
+		if is_instance_valid(d.ship):
+			native_canvas.register_ship(d.ship)
+	_apply_native_toggle()
 
 	# Calculate scale factor (ensure x and y scales are the same)
 	var minimap_scale = min(
@@ -198,12 +217,14 @@ func world_to_minimap_position(world_pos: Vector3) -> Vector2:
 
 func register_player_ship(ship: Node3D) -> void:
 	player_ship = ship
+	native_canvas.set_player_ship(ship)
 	print("Player ship registered at: ", ship.global_position) # Debug info
 
 func register_ship(ship: Node3D) -> void:
 	if tracked_ships.find_custom(func (a): return a.ship == ship) == -1:
 		var a = {"ship": ship, "init": null, "pos": ship.global_position, "rot": ship.rotation.y }
 		tracked_ships.append(a)
+		native_canvas.register_ship(ship)
 		# Connect to ship's tree_exiting signal to remove it when destroyed
 		if not ship.is_connected("tree_exiting", _on_ship_destroyed):
 			ship.connect("tree_exiting", _on_ship_destroyed.bind(ship))
@@ -215,8 +236,18 @@ func _on_ship_destroyed(ship: Node3D) -> void:
 func clear_ships() -> void:
 	tracked_ships.clear()
 	player_ship = null
+	native_canvas.clear_ships()
+
+func _apply_native_toggle() -> void:
+	native_canvas.visible = use_native
+	ship_markers_canvas.visible = not use_native
 
 func _physics_process(_delta: float) -> void:
+	if use_native:
+		native_canvas.aim_point = aim_point
+		native_canvas.draw_circles = draw_circles
+		native_canvas.tick()
+		return
 	# Clear previous drawing
 	ship_markers_canvas.queue_redraw()
 
@@ -309,6 +340,15 @@ func _input(_event: InputEvent) -> void:
 		print("[minimap] circle drawing: %s" % ("ON" if draw_circles else "OFF"))
 		if ship_markers_canvas:
 			ship_markers_canvas.queue_redraw()
+		return
+	if key != null and key.pressed and not key.echo and key.keycode == KEY_F7:
+		Ship.native_sync = not Ship.native_sync
+		print("[sync] parser: %s" % ("rust" if Ship.native_sync else "gdscript"))
+		return
+	if key != null and key.pressed and not key.echo and key.keycode == KEY_F10:
+		use_native = not use_native
+		print("[minimap] renderer: %s" % ("rust" if use_native else "gdscript"))
+		_apply_native_toggle()
 		return
 
 	var prev_mmidx = mm_idx
