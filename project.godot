@@ -164,10 +164,9 @@ set_waypoint={
 
 [physics]
 
-3d/run_on_separate_thread=true
 common/physics_ticks_per_second=16
 common/max_physics_steps_per_frame=1
-3d/physics_engine="Jolt Physics"
+3d/physics_engine="GodotPhysics3D"
 jolt_physics_3d/simulation/velocity_steps=2
 jolt_physics_3d/simulation/position_steps=1
 jolt_physics_3d/queries/enable_ray_cast_face_index=true

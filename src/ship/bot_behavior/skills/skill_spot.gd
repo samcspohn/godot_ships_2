@@ -17,6 +17,9 @@ const REFINE_BUDGET_M := 8000.0
 const COVER_HOLD_M := 300.0
 ## Concealed cover wins unless hard cover is this many times closer.
 const HARD_COVER_PREF := 1.5
+## Hard cover hides from shooters that would sink us inside this long even
+## bow- or stern-on, whatever the reason presentation fails.
+const HARD_COVER_TTK_S := 120.0
 
 var mode: int = Mode.SPOT
 ## The held COVER station hides us, rather than only shielding us from heavy fire.
@@ -173,8 +176,19 @@ func _cover_inputs(ship: Ship, belief: Array[Dictionary]) -> Dictionary:
 		out.spot.append(0.0)
 		out.shoot.append(1 if int(b.source) == 0 else 0)
 		out.ids.append((b.ship as Ship).get_instance_id())
-		out.heavy.append(1 if (b.ship as Ship).ship_class == Ship.ShipClass.BB else 0)
+		out.heavy.append(1 if _unangleable(ship, b.ship, _pos_dist(ship, b.pos)) else 0)
 	return out
+
+static func _pos_dist(ship: Ship, p: Vector2) -> float:
+	return Vector2(ship.global_position.x, ship.global_position.z).distance_to(p)
+
+## Bow- or stern-in, whichever the table says hurts less, is the only mitigation.
+func _unangleable(ship: Ship, enemy: Ship, range_m: float) -> bool:
+	var bow := SkillStance.dps_at(ship, enemy, range_m, 0.0)
+	var stern := SkillStance.dps_at(ship, enemy, range_m, 180.0)
+	if bow < 0.0 or stern < 0.0:
+		return false
+	return minf(bow, stern) * HARD_COVER_TTK_S >= ship.health_controller.max_hp
 
 func _nearest_friends(ctx: SkillContext, team_id: int) -> Array[Ship]:
 	var me: Vector3 = ctx.ship.global_position
