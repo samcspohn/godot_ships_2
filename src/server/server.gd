@@ -169,6 +169,8 @@ var all_players_spawned: bool = false
 # so a single debugged client leaving doesn't tear everything down.
 var _debug_keep_alive: bool = OS.has_feature("editor")
 var spectators: Dictionary[int, bool] = {}
+var _sync_queue: Dictionary[String, Array] = {}
+var _sync_per_frame: int = 1
 var bot_match: bool = CmdArgs.has("--botmatch")
 var _sunk_at: Dictionary[Ship, float] = {}
 const MATCHMAKER_HEARTBEAT_INTERVAL: float = 5.0  # seconds between registration pings
@@ -1107,19 +1109,28 @@ func sync_game_state(bytes: PackedByteArray):
 		return
 	var reader = StreamPeerBuffer.new()
 	reader.data_array = bytes
-	var frame_time = 1.0 / Engine.get_frames_per_second()
-	var phys_time = get_physics_process_delta_time()
-	var num_steps = phys_time / frame_time
-	var defer_time_step = frame_time / max(num_steps, 1)
-	var i := 0.0
 	while reader.get_available_bytes() > 0:
-		var friendly = reader.get_u8()
-		var player_name = reader.get_var()
+		var friendly: int = reader.get_u8()
+		var player_name: String = reader.get_var()
 		var ship_data = reader.get_var()
-		get_tree().create_timer(defer_time_step * i).timeout.connect(func ():
-			defer_sync_ship(friendly, player_name, ship_data)
-		)
-		# defer_sync_ship(friendly, player_name, ship_data)
+		# Aviation records share a packet with the hull's hide record; both must survive.
+		var key := player_name + "#a" if friendly == 3 else player_name
+		_sync_queue[key] = [friendly, player_name, ship_data]
+	var frames_per_tick := Engine.get_frames_per_second() / float(Engine.physics_ticks_per_second)
+	_sync_per_frame = maxi(1, ceili(_sync_queue.size() / maxf(frames_per_tick * 0.75, 1.0)))
+
+func _process(_delta: float) -> void:
+	if _sync_queue.is_empty():
+		return
+	var done: Array[String] = []
+	for key: String in _sync_queue:
+		if done.size() >= _sync_per_frame:
+			break
+		var r: Array = _sync_queue[key]
+		defer_sync_ship(r[0], r[1], r[2])
+		done.append(key)
+	for key in done:
+		_sync_queue.erase(key)
 
 @rpc("any_peer", "reliable", "call_remote", 1)
 func sync_game_state_reliable(bytes: PackedByteArray):

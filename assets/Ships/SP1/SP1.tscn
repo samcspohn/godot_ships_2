@@ -47,28 +47,28 @@ metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 
 [sub_resource type="Resource" id="Resource_uxi1d"]
 script = ExtResource("4_klw4b")
-pool1 = 7500.0
+pool1 = 75000.0
 pool2 = 75000.0
 
 [sub_resource type="Resource" id="Resource_vafbj"]
 script = ExtResource("4_klw4b")
-pool1 = 7500.0
-pool2 = 15000.0
+pool1 = 5625.0
+pool2 = 16875.0
 
 [sub_resource type="Resource" id="Resource_yrvno"]
 script = ExtResource("4_klw4b")
-pool1 = 2083.3333333333335
-pool2 = 4166.666666666667
+pool1 = 625.0
+pool2 = 1875.0
 
 [sub_resource type="Resource" id="Resource_js85v"]
 script = ExtResource("4_klw4b")
-pool1 = 2083.3333333333335
-pool2 = 4166.666666666667
+pool1 = 625.0
+pool2 = 1875.0
 
 [sub_resource type="Resource" id="Resource_a02lg"]
 script = ExtResource("4_klw4b")
-pool1 = 3333.3333333333335
-pool2 = 6666.666666666667
+pool1 = 2500.0
+pool2 = 7500.0
 
 [sub_resource type="Resource" id="Resource_3xcad"]
 script = ExtResource("3_rk6eg")
@@ -269,8 +269,6 @@ ship_model_glb_path = "uid://b6pesrya5x88t"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_cdljw")
 _max_hp = 25000.0
-bow_percent = 0.25
-stern_percent = 0.25
 superstructure_percent = 0.4
 casemate_percent = 0.9
 citadel = SubResource("Resource_uxi1d")

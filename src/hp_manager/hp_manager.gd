@@ -102,6 +102,9 @@ enum DAMAGE_LEVEL {
 	HEAVY,
 }
 
+const POOL1_RATIO: float = 0.25
+const POOL2_RATIO: float = 0.75
+
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():
 		return
@@ -116,20 +119,20 @@ func _generate_armor_parts():
 	citadel.pool2 = _max_hp * 3.0
 	if !casemate:
 		casemate = HpPartMod.new()
-	casemate.pool1 = _max_hp * casemate_percent / 3.0
-	casemate.pool2 = 2.0 * _max_hp * casemate_percent / 3.0
+	casemate.pool1 = _max_hp * casemate_percent * POOL1_RATIO
+	casemate.pool2 = _max_hp * casemate_percent * POOL2_RATIO
 	if !bow:
 		bow = HpPartMod.new()
-	bow.pool1 = _max_hp * bow_percent / 3.0
-	bow.pool2 = 2.0 * _max_hp * bow_percent / 3.0
+	bow.pool1 = _max_hp * bow_percent * POOL1_RATIO
+	bow.pool2 = _max_hp * bow_percent * POOL2_RATIO
 	if !stern:
 		stern = HpPartMod.new()
-	stern.pool1 = _max_hp * stern_percent / 3.0
-	stern.pool2 = 2.0 * _max_hp * stern_percent / 3.0
+	stern.pool1 = _max_hp * stern_percent * POOL1_RATIO
+	stern.pool2 = _max_hp * stern_percent * POOL2_RATIO
 	if !superstructure:
 		superstructure = HpPartMod.new()
-	superstructure.pool1 = _max_hp * superstructure_percent / 3.0
-	superstructure.pool2 = 2.0 * _max_hp * superstructure_percent / 3.0
+	superstructure.pool1 = _max_hp * superstructure_percent * POOL1_RATIO
+	superstructure.pool2 = _max_hp * superstructure_percent * POOL2_RATIO
 
 func _ready() -> void:
 	if Engine.is_editor_hint():

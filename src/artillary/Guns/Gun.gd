@@ -9,7 +9,6 @@ extends Turret
 
 @onready var barrel: Node3D = get_child(0).get_child(0)
 var dispersion_calculator: DispersionCalculator
-var sound: AudioStreamPlayer3D
 @export_category("Sound")
 @export var _sound: AudioStream
 @export var pitch: float = 1.0
@@ -131,33 +130,8 @@ func get_shell() -> ShellParams:
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
-	setup_audio.call_deferred()
 	update_barrels()
 	super._ready()
-
-func setup_audio():
-	if Engine.is_editor_hint():
-		return
-
-	if !_Utils.authority():
-		if sound == null:
-			sound = AudioStreamPlayer3D.new()
-			if _sound == null:
-				sound.stream = preload("res://assets/audio/explosion1.wav")
-			else:
-				sound.stream = _sound
-			sound.max_polyphony = 4
-			sound.unit_size = 100.0 * get_shell().caliber / 100.0 + 100.0
-			sound.max_db = linear_to_db(volume * (1.0 + variance))
-			var shell_params: ShellParams = get_shell()
-			if shell_params._secondary:
-				sound.bus = "Sec"
-			else:
-				sound.bus = "Main"
-				# pitch *= 2.0
-			add_child(sound)
-		# get_tree().root.add_child(sound)
-
 
 # Function to update barrels based on editor properties
 func update_barrels() -> void:
@@ -281,33 +255,6 @@ func fire(mod: TargetMod = null) -> void:
 					# print(aim)
 			_ship.concealment.bloom(get_params()._range)
 			reload = 0
-
-# @rpc("authority", "reliable")
-func fire_client(vel, pos, t, _id):
-	ProjectileManager.fireBulletClient(pos, vel, t, _id, get_shell(), _ship, true, barrel.global_basis)
-	# sound.global_position = pos
-	# var size_factor = get_shell().caliber * get_shell().caliber / 10000.0
-	# 380 -> 14.44
-	# 500 -> 25.0
-	# 150 -> 2.25
-	# 100 -> 1.0
-	# var pitch_scale = 7.0 / size_factor
-	# 6 / 25 = 0.24
-	# 6 / 14.44 = 0.415
-	# 6 / 2.25 = 2.66
-	# 6 / 1 = 6.0
-	# smaller shells need more variance than larger ones
-	# var dispersion
-	if get_viewport().get_audio_listener_3d().global_position.distance_to(global_position) < volume * 2000: # TODO, make unique to gun
-		sound.pitch_scale = pitch * randf_range(1.0 - variance, 1.0 + variance)
-		sound.volume_db = linear_to_db(volume * randf_range(1.0 - variance, 1.0 + variance))
-		sound.unit_size = 100.0 * sqrt(get_shell().caliber / 100.0) + 100.0
-		# if get_shell().caliber == 203:
-		# 	sound.unit_size = 0
-		sound.play()
-
-	var size := (get_shell().caliber / 100.0) ** 2 * 2.0
-	# WaveManager.add_muzzle_blast(Vector3(pos.x, 0.0, pos.z), size * 0.5)
 
 func sim_can_shoot_over_terrain(aim_point: Vector3) -> bool:
 

@@ -47,6 +47,7 @@ var _slot_cell: Array = []
 var _slot_active: Array = []
 var _free_slots: Array = []
 var _clear_queue: Array = []
+var _tiles_dirty := true
 
 var _ships: Array[Node3D] = []
 var _prev_pos: Dictionary = {}
@@ -140,6 +141,7 @@ func _alloc(cell: Vector2i) -> int:
 	if _free_slots.is_empty(): return -1
 	var slot: int = _free_slots.pop_back()
 	_cell_slot[cell] = slot; _slot_cell[slot] = cell; _clear_queue.append(slot)
+	_tiles_dirty = true
 	var ix := cell.x + GRID_ORIGIN; var iy := cell.y + GRID_ORIGIN
 	if ix >= 0 and ix < GRID and iy >= 0 and iy < GRID:
 		_index_img.set_pixel(ix, iy, Color(float(slot), 0, 0))
@@ -153,6 +155,7 @@ func _free(slot: int) -> void:
 			_index_img.set_pixel(ix, iy, Color(-1, 0, 0))
 		_cell_slot.erase(cell)
 	_slot_cell[slot] = null; _free_slots.append(slot)
+	_tiles_dirty = true
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -163,6 +166,8 @@ func _process(delta: float) -> void:
 		_sim_accum = 0.0
 	else:
 		_sim_accum -= substeps * SIM_DT
+	if substeps == 0:
+		return
 	for s in _ships:
 		if not is_instance_valid(s) or !s.is_inside_tree(): continue
 		var sc := _world_cell(s.global_position)
@@ -181,24 +186,10 @@ func _process(delta: float) -> void:
 	for slot in POOL:
 		if _slot_cell[slot] != null and _time - _slot_active[slot] > TILE_LIFETIME:
 			_free(slot)
-	for slot in POOL:
-		var base := slot * 32
-		var cell = _slot_cell[slot]
-		if cell == null:
-			_tiles_bytes.encode_float(base + 8, 0.0)
-			_tiles_bytes.encode_s32(base + 16, -1)
-			_tiles_bytes.encode_s32(base + 20, -1)
-			_tiles_bytes.encode_s32(base + 24, -1)
-			_tiles_bytes.encode_s32(base + 28, -1)
-			continue
-		_tiles_bytes.encode_float(base + 0,  cell.x * TILE_WORLD)
-		_tiles_bytes.encode_float(base + 4,  cell.y * TILE_WORLD)
-		_tiles_bytes.encode_float(base + 8,  1.0)
-		_tiles_bytes.encode_float(base + 12, 0.0)
-		_tiles_bytes.encode_s32(base + 16, _cell_slot.get(Vector2i(cell.x - 1, cell.y), -1))
-		_tiles_bytes.encode_s32(base + 20, _cell_slot.get(Vector2i(cell.x + 1, cell.y), -1))
-		_tiles_bytes.encode_s32(base + 24, _cell_slot.get(Vector2i(cell.x, cell.y - 1), -1))
-		_tiles_bytes.encode_s32(base + 28, _cell_slot.get(Vector2i(cell.x, cell.y + 1), -1))
+	var tiles := PackedByteArray()
+	if _tiles_dirty:
+		_rebuild_tiles()
+		tiles = _tiles_bytes.duplicate()
 	var ship_count := 0
 	for s in _ships:
 		if not is_instance_valid(s) or ship_count >= MAX_SHIPS or !s.is_inside_tree(): continue
@@ -247,7 +238,6 @@ func _process(delta: float) -> void:
 		if imp.n > 0:
 			next_impulses.append(imp)
 	_impulses = next_impulses
-	_index_tex.update(_index_img)
 	# Each sub-step flips the ping-pong pair, so the newest state after this
 	# frame lands in _tex[(parity + substeps) % 2].
 	var new_parity := (_parity + substeps) % 2
@@ -255,9 +245,31 @@ func _process(delta: float) -> void:
 		ocean_material.set_shader_parameter("wave_array", _wrap[new_parity])
 		ocean_material.set_shader_parameter("tiles_on", true)
 	RenderingServer.call_on_render_thread(
-		_render_update.bind(_parity, _tiles_bytes.duplicate(), _ships_bytes.duplicate(), ship_count, _clear_queue.duplicate(), _impulses_bytes.duplicate(), impulse_count, substeps))
+		_render_update.bind(_parity, tiles, _ships_bytes.duplicate(), ship_count, _clear_queue.duplicate(), _impulses_bytes.duplicate(), impulse_count, substeps))
 	_clear_queue.clear()
 	_parity = new_parity
+
+func _rebuild_tiles() -> void:
+	_tiles_dirty = false
+	for slot in POOL:
+		var base := slot * 32
+		var cell = _slot_cell[slot]
+		if cell == null:
+			_tiles_bytes.encode_float(base + 8, 0.0)
+			_tiles_bytes.encode_s32(base + 16, -1)
+			_tiles_bytes.encode_s32(base + 20, -1)
+			_tiles_bytes.encode_s32(base + 24, -1)
+			_tiles_bytes.encode_s32(base + 28, -1)
+			continue
+		_tiles_bytes.encode_float(base + 0,  cell.x * TILE_WORLD)
+		_tiles_bytes.encode_float(base + 4,  cell.y * TILE_WORLD)
+		_tiles_bytes.encode_float(base + 8,  1.0)
+		_tiles_bytes.encode_float(base + 12, 0.0)
+		_tiles_bytes.encode_s32(base + 16, _cell_slot.get(Vector2i(cell.x - 1, cell.y), -1))
+		_tiles_bytes.encode_s32(base + 20, _cell_slot.get(Vector2i(cell.x + 1, cell.y), -1))
+		_tiles_bytes.encode_s32(base + 24, _cell_slot.get(Vector2i(cell.x, cell.y - 1), -1))
+		_tiles_bytes.encode_s32(base + 28, _cell_slot.get(Vector2i(cell.x, cell.y + 1), -1))
+	_index_tex.update(_index_img)
 
 func _init_rd() -> void:
 	_rd = RenderingServer.get_rendering_device()
@@ -295,11 +307,10 @@ func _render_update(parity: int, tiles: PackedByteArray, ships: PackedByteArray,
 	for slot in clears:
 		_rd.texture_clear(_tex[0], Color(0,0,0,0), 0, 1, slot, 1)
 		_rd.texture_clear(_tex[1], Color(0,0,0,0), 0, 1, slot, 1)
-	_rd.buffer_update(_buf, 0, tiles.size(), tiles)
+	if not tiles.is_empty():
+		_rd.buffer_update(_buf, 0, tiles.size(), tiles)
 	_rd.buffer_update(_ships_buf, 0, ships.size(), ships)
 	_rd.buffer_update(_impulses_buf, 0, impulses.size(), impulses)
-	if substeps <= 0:
-		return
 	# Per sim step at SIM_HZ — not per rendered frame.
 	var pc := PackedByteArray(); pc.resize(48)
 	pc.encode_s32(0, TILE_RES)

@@ -28,6 +28,9 @@ pub(crate) struct SweepArgs {
     pub need: u32,
     /// Bit per enemy currently in sight; only these count as targets.
     pub live: u64,
+    /// Targets that stay lit (battleships); reaching one raises the gain by w_sticky.
+    pub sticky: u64,
+    pub w_sticky: f32,
     pub allow_hard: bool,
     pub w_gain: f32,
     pub w_risk: f32,
@@ -202,7 +205,7 @@ impl VisibilityGrid {
                 (top, top_range) = (v, range);
             }
         }
-        let gain = top * a.hold_s;
+        let gain = top * a.hold_s * if mask & a.sticky != 0 { 1.0 + a.w_sticky } else { 1.0 };
         let range_err = if a.pref_range > 0.0 && top > 0.0 { (top_range - a.pref_range).abs() / a.gun_range.max(1.0) } else { 0.0 };
         let score = a.w_gain * gain - cost - a.w_range * range_err - if hard { a.w_hard } else { 0.0 };
         Some(Pick { score, gain, mask, hard, ..here })
@@ -231,7 +234,7 @@ pub(crate) fn sweep_args(from: Vector2, o: &VarDictionary, dm: &mut DamageModel)
     let f32s = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedFloat32Array>().ok()).unwrap_or_default().to_vec();
     let ids = o.get("ids").and_then(|v| v.try_to::<PackedInt64Array>().ok()).unwrap_or_default().to_vec();
     let me = o.get("me").map_or(0, |v| v.to_i64());
-    let live = o.get("live").and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default().as_slice().iter()
+    let bits = |k: &str| o.get(k).and_then(|v| v.try_to::<PackedByteArray>().ok()).unwrap_or_default().as_slice().iter()
         .take(64).enumerate().fold(0u64, |m, (i, &b)| if b != 0 { m | 1 << i } else { m });
     for &id in &ids {
         dm.ensure_grid(id, me);
@@ -250,7 +253,9 @@ pub(crate) fn sweep_args(from: Vector2, o: &VarDictionary, dm: &mut DamageModel)
         gun_range: f("gun_range", 1.0),
         hold_s: f("hold_s", 60.0),
         need: o.get("need").map_or(1, |v| v.to_i32()).max(0) as u32,
-        live,
+        live: bits("live"),
+        sticky: bits("sticky"),
+        w_sticky: f("w_sticky", 0.0),
         allow_hard: o.get("allow_hard").is_some_and(|v| v.to::<bool>()),
         w_gain: f("w_gain", 1.0),
         w_risk: f("w_risk", 1.0),

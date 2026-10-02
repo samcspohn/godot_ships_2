@@ -14,14 +14,18 @@ const COVER_HOLD_M := 300.0
 const HOLD_S := 60.0
 ## A new station must beat the held one by this much, in score units.
 const SWITCH_MARGIN := 0.1
-## A hidden station with nothing to shoot is given up after this long.
+## A hidden station with nothing to shoot is given up after this long,
+## or SPOTTER_WAIT_S while the friend who lit our targets is still on them.
 const COVER_BLIND_S := 10.0
+const SPOTTER_WAIT_S := 30.0
+## The spotter counts as on a target within this many of its concealment radii.
+const SPOTTER_REACH := 1.3
 const RESWEEP_MS := 1000
 ## Heavy shooters sink us inside this long even bow- or stern-on.
 const HARD_COVER_TTK_S := 120.0
 
 const WEIGHTS := {
-	Mode.OFFENSE: {"need": 1, "w_gain": 1.0, "w_risk": 1.0, "w_time": 0.1, "w_range": 0.5, "w_hard": 0.5},
+	Mode.OFFENSE: {"need": 1, "w_sticky": 0.5, "w_gain": 1.0, "w_risk": 1.0, "w_time": 0.1, "w_range": 0.5, "w_hard": 0.5},
 	Mode.DEFENSE: {"need": 0, "w_gain": 0.3, "w_risk": 2.0, "w_time": 0.2, "w_range": 0.0, "w_hard": 0.3},
 }
 
@@ -34,6 +38,7 @@ var _dark: Dictionary = {}
 var _best: Dictionary = {}
 var _cells: int = 0
 var _us: int = 0
+var _spotted: Dictionary = {}  # target Ship -> friendly Ship that was lighting it
 
 func reset() -> void:
 	super()
@@ -42,6 +47,7 @@ func reset() -> void:
 	_swept_ms = -100000
 	_dark = {}
 	_best = {}
+	_spotted = {}
 
 ## Whether the held station hides us, rather than only shielding us from heavy fire.
 func wants_concealment() -> bool:
@@ -110,7 +116,8 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 			_score = float(held.score)
 			if int(held.count) > 0:
 				_target_at = now
-			elif mode == Mode.OFFENSE and now - _target_at >= COVER_BLIND_S:
+				_note_spotters(opts.ids, int(held.mask))
+			elif mode == Mode.OFFENSE and now - _target_at >= _blind_limit(belief):
 				_drop()
 	if _best.is_empty() or (_has_station and float(_best.score) <= _score + SWITCH_MARGIN):
 		return
@@ -119,6 +126,30 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 	_score = float(_best.score)
 	_hard = bool(_best.hard)
 	_target_at = now
+	_spotted = {}
+	_note_spotters(opts.ids, int(_best.mask))
+
+## Who is lighting each target this station shoots, so a dark spell can be waited out.
+func _note_spotters(ids: PackedInt64Array, mask: int) -> void:
+	_spotted = {}
+	for i in mini(ids.size(), 64):
+		if mask & (1 << i) == 0:
+			continue
+		var t := instance_from_id(ids[i]) as Ship
+		if t != null and t.concealment.spotted_by != null:
+			_spotted[t] = t.concealment.spotted_by
+
+func _blind_limit(belief: Array[Dictionary]) -> float:
+	for b in belief:
+		var t: Ship = b.ship
+		var spotter: Ship = _spotted.get(t)
+		if spotter == null or not is_instance_valid(spotter) or not spotter.is_alive():
+			continue
+		var reach: float = t.concealment.get_concealment() * SPOTTER_REACH
+		var at := Vector2(spotter.global_position.x, spotter.global_position.z)
+		if at.distance_squared_to(b.pos) <= reach * reach:
+			return SPOTTER_WAIT_S
+	return COVER_BLIND_S
 
 ## Per belief contact: where it is, what it sees and shoots, and what it is worth.
 func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_en_route: bool) -> Dictionary:
@@ -129,7 +160,7 @@ func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_e
 	var out := {"damage_model": model, "me": ship.get_instance_id(), "pos": PackedVector2Array(),
 		"det_r": PackedFloat32Array(), "spot_r": PackedFloat32Array(), "los_r": PackedFloat32Array(),
 		"seen_r": PackedFloat32Array(), "prio": PackedFloat32Array(), "shootable": PackedByteArray(),
-		"ids": PackedInt64Array(), "heavy": PackedByteArray(), "live": PackedByteArray()}
+		"ids": PackedInt64Array(), "heavy": PackedByteArray(), "live": PackedByteArray(), "sticky": PackedByteArray()}
 	for b in belief:
 		var e: Ship = b.ship
 		BotGunnery.damage_model(e)
@@ -145,6 +176,7 @@ func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_e
 			* float(b.get("weight", 1.0)))
 		out.shootable.append(1)
 		out.live.append(1 if live else 0)
+		out.sticky.append(1 if e.ship_class == Ship.ShipClass.BB else 0)
 		out.ids.append(e.get_instance_id())
 		out.heavy.append(1 if unangleable(ship, e, Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)) else 0)
 	return out

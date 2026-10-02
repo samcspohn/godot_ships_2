@@ -59,7 +59,7 @@ func heal(amount: float) -> float:
 	if amount <= 0.0 or healable_damage <= 0.0:
 		return 0.0
 
-	var heal2 = min(amount * 2.0 / 3.0, healable_pool2) # 2/3 goes to the larger pool
+	var heal2 = min(amount * HPManager.POOL2_RATIO, healable_pool2) # 2/3 goes to the larger pool
 	var heal1 = min(amount - heal2, healable_pool1) # remaining amount goes to smaller pool
 	var remaining = amount - heal1 - heal2
 
