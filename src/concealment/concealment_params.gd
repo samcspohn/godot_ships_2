@@ -19,7 +19,7 @@ var torpedo_detection_range_override: float = -1.0
 var spotting_range_override: float = -1.0
 ## When > 0, same as spotting_range_override but sourced from Radar
 ## (8 000 m default).  Checked alongside spotting_range_override in
-## handle_spot and the no-LOS radar detection pass.
+## SpotPass.
 var radar_spotting_range_override: float = -1.0
 ## When > 0, ships within this distance spot each other unconditionally
 ## regardless of terrain or smoke.  Uses the max of both ships' values.

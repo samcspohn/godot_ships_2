@@ -80,13 +80,13 @@ var team_0_radar_lkp_times: Dictionary = {}  # Ship -> float
 var team_1_radar_lkp_times: Dictionary = {}
 var team_0_radar_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
 var team_1_radar_in_range: Dictionary = {}
-# Air LKP system — mirrors the hydro/radar system but is fed by handle_air_spot
+# Air LKP system — mirrors the hydro/radar system but is fed by SpotPass air checks
 # (a plane with clear LOS to a ship within air_radius). Unlike hydro/radar,
 # refreshing is one-directional only (spotter's team -> spotted ship): there's
 # no physical reason a ship being watched by a distant carrier's aircraft
 # would learn that carrier's position the way active sonar/radar reveal the
-# pinger. Ship-to-ship LOS spotting (handle_spot) still takes priority - see
-# handle_air_spot's `not spotted.visible_to_enemy` guard.
+# pinger. Ship-to-ship LOS spotting (SpotPass) still takes priority - see
+# SpotPass's air check.
 var team_0_air_lkp: Dictionary = {}          # Ship -> Vector3
 var team_1_air_lkp: Dictionary = {}
 var team_0_air_lkp_times: Dictionary = {}    # Ship -> float
@@ -1171,38 +1171,6 @@ var current_time = 0.0
 const UNSPOTTED_TIME = 100.0
 
 var spotter_candidates = {}
-func handle_spot(spotter: Ship, spotted: Ship, dist: float):
-	# var dist = spotter.global_position.distance_to(spotted.global_position)
-	# Hydroacoustic Search (or any future consumable) can set a spotting_range_override
-	# on the spotter, forcing detection of any enemy within that radius regardless
-	# of the spotted ship's concealment radius.
-	var hydro_override: float = (spotter.concealment.params.p() as ConcealmentParams).spotting_range_override
-	var radar_override: float = (spotter.concealment.params.p() as ConcealmentParams).radar_spotting_range_override
-	var spotting_override: float = max(hydro_override, radar_override)
-	if max(spotted.concealment.get_concealment(), spotting_override) > dist:
-		spotted.visible_to_enemy = true
-		spotted.det_los = true
-		spotted.concealment.propose_spotter(spotter, Concealment.SpotSource.LOS, dist)
-
-## `plane_range` is the looking aircraft's own reach (AircraftParams.spotting_range).
-## BOTH sides of the sighting have to hold: the aircraft has to be able to see
-## that far, and the ship has to be visible from that far away. Neither one
-## carries the other - a squadron with a 8 km reach still sees nothing until it
-## is inside a 2.5 km air_radius, and a ship careless enough to be visible from
-## 10 km is still unseen by an aircraft that only looks 8 km.
-func handle_air_spot(spotter: Ship, spotted: Ship, dist: float, plane_range: float):
-	if minf((spotted.concealment.params.p() as ConcealmentParams).air_radius, plane_range) > dist:
-		spotted.det_air = true
-		# Aircraft have no stat line; the spot credits the carrier that put them
-		# up. Unconditional — a LOS spotter outranks AIR anyway.
-		spotted.concealment.propose_spotter(spotter, Concealment.SpotSource.AIR, dist)
-		# A clear-LOS air spot is LKP-style (frozen position, refreshed every
-		# HYDRO_LKP_INTERVAL) rather than a live reveal - mirrors hydro/radar.
-		# A ship already visible via ship-to-ship LOS/assured acquisition
-		# keeps its live position; air spotting never downgrades that.
-		if not spotted.visible_to_enemy:
-			_refresh_air_lkp(spotter.team.team_id, spotted)
-
 ## Publishes the spotting credit worked out over this frame's detection pass.
 ## Runs over every ship, not just the ones somebody found: a ship nobody holds
 ## any more must have its provider cleared, or damage taken long after the
@@ -1336,7 +1304,7 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> 
 func _notify_matchmaker_available():
 	"""Send UDP notification to the matchmaker that this server is available."""
 	var port = NetworkManager.server_port
-	if port == 0:
+	if port == 0 or bot_match:
 		return
 	var udp = PacketPeerUDP.new()
 	udp.connect_to_host(GameSettings.matchmaker_ip, 28961)
@@ -1481,13 +1449,6 @@ func _physics_process(_delta: float) -> void:
 
 	if !_Utils.authority():
 		return
-	var space_state = get_tree().root.get_world_3d().direct_space_state
-	var ray_query = PhysicsRayQueryParameters3D.new()
-	ray_query.collide_with_areas = true
-	ray_query.collide_with_bodies = true
-	ray_query.hit_from_inside = false
-	ray_query.collision_mask = 1 | (1 << 3) | (1 << 5) # terrain + smoke
-
 
 	visible_toggled.clear()
 	team_0_hydro_in_range.clear()
@@ -1513,13 +1474,13 @@ func _physics_process(_delta: float) -> void:
 		if ship.health_controller.is_alive():
 			alive_players.append(ship)
 
-	for i in alive_players.size():
-		var a: Ship = alive_players[i]
-		for j in range(i + 1, alive_players.size()):
-			var b: Ship = alive_players[j]
-			if a.team.team_id == b.team.team_id:
-				continue
-			_check_pair_detection(a, b, ray_query, space_state)
+	var lkps: Array = SpotPass.run(alive_players, get_tree().root.get_world_3d().direct_space_state,
+		1 | (1 << 3) | (1 << 5))
+	for k in range(0, lkps.size(), 3):
+		match lkps[k]:
+			0: _refresh_hydro_lkp(lkps[k + 1], lkps[k + 2])
+			1: _refresh_radar_lkp(lkps[k + 1], lkps[k + 2])
+			_: _refresh_air_lkp(lkps[k + 1], lkps[k + 2])
 
 	handle_spot_attribution()
 
@@ -1956,7 +1917,7 @@ func _publish_team_threats(team_id: int) -> void:
 		# own threat circle while everyone can see it.
 		#
 		# Several paths can leave an LKP on a ship that is currently visible - a
-		# sensor ping (see _check_sensor_range), a carrier launching aircraft, a
+		# sensor ping (see SpotPass), a carrier launching aircraft, a
 		# salvo flash recorded at its muzzle position. Each is legitimate intel in
 		# its own table; none of them is news about where the ship is, when the
 		# team is looking straight at it. This is the same rule EnemyPresumption
@@ -2139,7 +2100,7 @@ func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
 func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
 	"""Mark ship as air-spotted this frame and refresh its frozen LKP position
 	if first contact or HYDRO_LKP_INTERVAL seconds have elapsed. One-directional
-	only (see handle_air_spot) - team_id here is always the spotting plane's
+	only (see SpotPass) - team_id here is always the spotting plane's
 	owning team, never mirrored back onto the spotted ship's team."""
 	var active   := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
 	var lkp      := team_0_air_lkp        if team_id == 0 else team_1_air_lkp
@@ -2200,114 +2161,6 @@ func _apply_launch_reveals() -> void:
 			# and must know it — a bot carrier stops acting as though it were
 			# dark. No spotting provider: the launch gave it away, not an enemy.
 			ship.det_air = true
-
-
-func _check_pair_detection(a: Ship, b: Ship, ray_query: PhysicsRayQueryParameters3D, space_state: PhysicsDirectSpaceState3D) -> void:
-	var params_a := a.concealment.params.p() as ConcealmentParams
-	var params_b := b.concealment.params.p() as ConcealmentParams
-
-	# Assured acquisition — unconditional spot within range, bypasses terrain and smoke.
-	var assured_acq := maxf(params_a.assured_acquisition_range, params_b.assured_acquisition_range)
-	var dist: float = a.global_position.distance_to(b.global_position)
-	if assured_acq > 0.0 and dist < assured_acq:
-		handle_spot(a, b, dist)
-		handle_spot(b, a, dist)
-
-	# LOS raycast — only if not already spotted by assured acquisition.
-	if !a.visible_to_enemy or !b.visible_to_enemy:
-		ray_query.from = a.global_position
-		ray_query.to = b.global_position
-		ray_query.from.y = 1.0
-		ray_query.to.y = 1.0
-		var collision: Dictionary = space_state.intersect_ray(ray_query)
-		var has_los := collision.is_empty()
-		var smoke_blocked := !collision.is_empty() and (collision["collider"] as CollisionObject3D).collision_layer & (1 << 5) != 0
-
-		if has_los:
-			handle_spot(a, b, dist)
-			handle_spot(b, a, dist)
-
-		_check_sensor_range(a, b, params_a.spotting_range_override, true, smoke_blocked)
-		_check_sensor_range(b, a, params_b.spotting_range_override, true, smoke_blocked)
-		_check_sensor_range(a, b, params_a.radar_spotting_range_override, false, smoke_blocked)
-		_check_sensor_range(b, a, params_b.radar_spotting_range_override, false, smoke_blocked)
-
-		if a.aviation_controller != null:
-			for squadron_id in a.aviation_controller.active_squadrons.keys():
-				for plane in a.aviation_controller.squadrons[squadron_id].aircraft:
-					ray_query.from = plane.global_position
-					ray_query.to = b.global_position
-					ray_query.to.y = 1.0
-					dist = ray_query.from.distance_to(ray_query.to)
-					collision = space_state.intersect_ray(ray_query)
-					has_los = collision.is_empty()
-					if has_los:
-						handle_air_spot(a, b, dist, (plane.params.p() as AircraftParams).spotting_range)
-		if b.aviation_controller != null:
-			for squadron_id in b.aviation_controller.active_squadrons.keys():
-				for plane in b.aviation_controller.squadrons[squadron_id].aircraft:
-					ray_query.from = plane.global_position
-					ray_query.to = a.global_position
-					ray_query.to.y = 1.0
-					dist = ray_query.from.distance_to(ray_query.to)
-					collision = space_state.intersect_ray(ray_query)
-					has_los = collision.is_empty()
-					if has_los:
-						handle_air_spot(b, a, dist, (plane.params.p() as AircraftParams).spotting_range)
-
-
-func _check_sensor_range(detector: Ship, target: Ship, range: float, is_hydro: bool, smoke_blocked: bool) -> void:
-	if range <= 0.0:
-		return
-	var dist := detector.global_position.distance_to(target.global_position)
-	if dist >= range:
-		return
-
-	if is_hydro:
-		detector.det_hydro = true
-	else:
-		detector.det_radar = true
-
-	if smoke_blocked:
-		handle_spot(detector, target, dist)
-		return
-
-	if is_hydro:
-		target.det_hydro = true
-	else:
-		target.det_radar = true
-
-	# The ping lights the target and gives the pinger away in the same instant, so
-	# each side's provider is whoever is on the other end of it.
-	var src: Concealment.SpotSource = Concealment.SpotSource.HYDRO if is_hydro \
-		else Concealment.SpotSource.RADAR
-	target.concealment.propose_spotter(detector, src, dist)
-	detector.concealment.propose_spotter(target, src, dist)
-
-	# Each side's last-known-position is gated on ITS OWN visibility, not the
-	# other's. The ping tells the detector's team where the target is AND the
-	# target's team where the pinger is, but neither half is worth recording
-	# about a ship the receiving team is already holding in sight.
-	#
-	# Recording it anyway is not merely redundant, it is destructive. The only
-	# thing that clears an LKP is the visibility-transition sweep in
-	# _physics_process, which fires on a CHANGE - so an entry written for a ship
-	# that was already visible is never cleared, outlives the ping by minutes,
-	# and displaces the live contact in _publish_team_threats. A battleship whose
-	# own hydro ping wrote it into the enemy's LKP table ends up with its threat
-	# circle pinned to the water it pinged from, shrinking, while the ship itself
-	# steams clear of it - which is exactly a spotter's router deciding a
-	# battleship in plain sight is not there.
-	if not target.visible_to_enemy:
-		if is_hydro:
-			_refresh_hydro_lkp(detector.team.team_id, target)
-		else:
-			_refresh_radar_lkp(detector.team.team_id, target)
-	if not detector.visible_to_enemy:
-		if is_hydro:
-			_refresh_hydro_lkp(target.team.team_id, detector)
-		else:
-			_refresh_radar_lkp(target.team.team_id, detector)
 
 
 func _send_radar_syncs() -> void:

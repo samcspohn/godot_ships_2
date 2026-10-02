@@ -1,3 +1,4 @@
+pub mod cover_sweep;
 pub mod hpa;
 pub mod map;
 pub mod navigator;

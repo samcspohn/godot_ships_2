@@ -292,7 +292,9 @@ func _physics_process(delta: float) -> void:
 	if Engine.get_physics_frames() % 5 == _ship.id % 5:
 		_update_auto_target_cache(server, max_range, active)
 
-	var auto_active = _update_cached_auto_aim(delta)
+	var auto_active: bool = SecondaryAim.aim(sub_controllers, gun_targets, gun_can_shoot_over_terrain,
+		guns_shooting_at_aim_point, target, target_offset, ProjectileManager.get_shell_time_multiplier(),
+		_ship.global_position, delta)
 	if not auto_active and !active:
 		return
 	active = auto_active || active
@@ -442,38 +444,6 @@ func _update_auto_target_cache(server: GameServer, max_range: float, manual_acti
 			if not found_target:
 				gun_targets[g] = null
 				gun_can_shoot_over_terrain[g] = false
-
-func _update_cached_auto_aim(delta: float) -> bool:
-	var auto_active = false
-	for sc in sub_controllers:
-		for g in sc.guns:
-			if guns_shooting_at_aim_point.has(g):
-				continue
-			var e: Ship = gun_targets.get(g)
-			if e == null or not gun_can_shoot_over_terrain.get(g, false):
-				auto_active = g.return_to_base(delta) || auto_active
-				continue
-			if not is_instance_valid(e):
-				gun_targets[g] = null
-				gun_can_shoot_over_terrain[g] = false
-				auto_active = g.return_to_base(delta) || auto_active
-				continue
-			var pos = e.super_structure.global_position
-			if e == target:
-				pos = e.to_global(target_offset)
-			# var lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
-			# var lead_target = target_leads[sc].get(e, g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true))
-			var lead_target = target_leads[sc].get(e)
-			if not lead_target:
-				lead_target = g.get_leading_position(pos, e.linear_velocity / ProjectileManager.get_shell_time_multiplier(), true)
-				target_leads[sc][e] = lead_target
-			if lead_target and g.is_aimpoint_valid(pos):
-				g._aim(lead_target, delta, false)
-				auto_active = true
-			else:
-				gun_can_shoot_over_terrain[g] = false
-				auto_active = g.return_to_base(delta) || auto_active
-	return auto_active
 
 func _clear_auto_target_cache(clear_manual_state: bool) -> void:
 	targets_guns.clear()

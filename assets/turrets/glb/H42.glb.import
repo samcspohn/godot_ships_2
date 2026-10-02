@@ -3,19 +3,19 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://c0oyjkpm10q3d"
-path="res://.godot/imported/GER_450mm_2b_rf.glb-b3d001f591586898b7d016f746e6927d.scn"
+uid="uid://dd1g10lu2defi"
+path="res://.godot/imported/H42.glb-3216fff79beb53ebcdafde487bdcca19.scn"
 
 [deps]
 
-source_file="res://assets/turrets/glb/GER_450mm_2b_rf.glb"
-dest_files=["res://.godot/imported/GER_450mm_2b_rf.glb-b3d001f591586898b7d016f746e6927d.scn"]
+source_file="res://assets/turrets/glb/H42.glb"
+dest_files=["res://.godot/imported/H42.glb-3216fff79beb53ebcdafde487bdcca19.scn"]
 
 [params]
 
-nodes/root_type="res://src/artillary/Guns/Gun.gd"
+nodes/root_type=""
 nodes/root_name=""
-nodes/root_script=Resource("uid://xc16x5l6kqxq", "res://src/artillary/Guns/Gun.gd")
+nodes/root_script=null
 mesh_library/use_node_names_as_mesh_names=false
 array_mesh/deduplicate_surfaces=true
 nodes/apply_root_scale=true
@@ -42,4 +42,4 @@ materials/extract_path=""
 _subresources={}
 gltf/naming_version=2
 gltf/embedded_image_handling=1
-gltf/texture_map_mode=0
+gltf/texture_map_mode=1

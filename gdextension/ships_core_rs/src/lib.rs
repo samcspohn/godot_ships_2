@@ -1,6 +1,7 @@
 use godot::prelude::*;
 
 pub mod ballistics;
+pub mod combat;
 pub mod nav;
 pub(crate) mod names;
 pub mod panic_guard;

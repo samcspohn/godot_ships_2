@@ -672,31 +672,10 @@ pub(crate) fn fire_heading_bucket(dx: f32, dz: f32) -> usize {
     ((deg / 45.0).round() as usize) % 4
 }
 
-/// (shooter count, presentation-weighted count per FIRE_HEADINGS) at cell `idx`.
 /// (sin, cos) of each FIRE_HEADINGS entry, so a shooter's presentation on
 /// every heading is a cross product against its bearing unit vector.
 fn fire_heading_units() -> [(f32, f32); 4] {
     FIRE_HEADINGS.map(|h| h.to_radians().sin_cos())
-}
-
-fn fire_at(f: &Field, shooters: &[(&[u64], Vector2)], units: &[(f32, f32); 4], idx: usize) -> (f32, [f32; 4]) {
-    let c = f.centre(idx);
-    let mut n = 0.0f32;
-    let mut d = [0.0f32; 4];
-    for (plane, origin) in shooters {
-        if !bit_at(plane, idx) {
-            continue;
-        }
-        n += 1.0;
-        let (dx, dz) = (origin.x - c.x, origin.y - c.y);
-        let inv = 1.0 / (dx * dx + dz * dz).sqrt().max(1e-3);
-        let (bx, bz) = (dx * inv, dz * inv);
-        for (k, (sh, ch)) in units.iter().enumerate() {
-            let s = sh * bz - ch * bx;
-            d[k] += FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s;
-        }
-    }
-    (n, d)
 }
 
 fn dijkstra(
@@ -807,6 +786,36 @@ fn count_plane(plane: &[u64], counts: &mut [u8]) {
 
 fn bit_at(plane: &[u64], idx: usize) -> bool {
     plane[idx / 64] & (1u64 << (idx % 64)) != 0
+}
+
+fn for_each_bit(plane: &[u64], mut g: impl FnMut(usize)) {
+    for (w, &word) in plane.iter().enumerate() {
+        let mut m = word;
+        while m != 0 {
+            g(w * 64 + m.trailing_zeros() as usize);
+            m &= m - 1;
+        }
+    }
+}
+
+/// atan2 to ~1e-5 rad; the cone build calls it per cell per shooter.
+fn fast_atan2(y: f32, x: f32) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax == 0.0 && ay == 0.0 {
+        return 0.0;
+    }
+    let swap = ay > ax;
+    let t = if swap { ax / ay } else { ay / ax };
+    let t2 = t * t;
+    let mut r = t * (0.999_977_26 + t2 * (-0.332_623_47 + t2 * (0.193_543_46 + t2 * (-0.116_432_87 + t2 * (0.052_653_32 + t2 * -0.011_721_2)))));
+    if swap {
+        r = FRAC_PI_2 - r;
+    }
+    if x < 0.0 {
+        r = PI - r;
+    }
+    if y < 0.0 { -r } else { r }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -1074,10 +1083,25 @@ fn exposure_key(team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) 
     ((team, (radius / EXPOSURE_RADIUS_Q) as i32, cluster_cells, ncx, ncz), radius)
 }
 
-fn cluster_of(f: &Field, idx: usize, cluster_cells: i32, ncx: i32, ncz: i32) -> Option<usize> {
-    let cx = (idx as i32 % f.w) * f.mult / cluster_cells;
-    let cz = (idx as i32 / f.w) * f.mult / cluster_cells;
-    (cx >= 0 && cz >= 0 && cx < ncx && cz < ncz).then(|| (cz * ncx + cx) as usize)
+/// Every water cell inside the cluster grid with its cluster index, row by row.
+fn for_each_cluster_cell(f: &Field, cluster_cells: i32, ncx: i32, ncz: i32, mut g: impl FnMut(usize, usize)) {
+    let cx: Vec<i32> = (0..f.w).map(|ix| ix * f.mult / cluster_cells).collect();
+    for iz in 0..f.h {
+        let cz = iz * f.mult / cluster_cells;
+        if cz >= ncz {
+            break;
+        }
+        let row = (iz * f.w) as usize;
+        for ix in 0..f.w as usize {
+            let c = cx[ix];
+            if c >= ncx {
+                break;
+            }
+            if f.water[row + ix] != 0 {
+                g(row + ix, (cz * ncx + c) as usize);
+            }
+        }
+    }
 }
 
 /// Per node: max and mean shooter count over water cells, and the mean
@@ -1090,11 +1114,7 @@ fn build_fire_stats(f: &Field, tl: &TeamLayers, cluster_cells: i32, ncx: i32, nc
     let mut dir = vec![[0.0f32; 4]; n];
     if cluster_cells > 0 && tl.fire_cells.len() == f.water.len() {
         let mut count = vec![0u32; n];
-        for idx in 0..f.water.len() {
-            if f.water[idx] == 0 {
-                continue;
-            }
-            let Some(c) = cluster_of(f, idx, cluster_cells, ncx, ncz) else { continue };
+        for_each_cluster_cell(f, cluster_cells, ncx, ncz, |idx, c| {
             count[c] += 1;
             let (e, d) = tl.fire_cells[idx];
             mean[c] += e;
@@ -1104,7 +1124,7 @@ fn build_fire_stats(f: &Field, tl: &TeamLayers, cluster_cells: i32, ncx: i32, nc
             if e > max[c] {
                 max[c] = e;
             }
-        }
+        });
         for c in 0..n {
             if count[c] > 0 {
                 let inv = 1.0 / count[c] as f32;
@@ -1128,21 +1148,21 @@ fn build_exposure_stats(f: &Field, tl: &TeamLayers, radius: f32, cluster_cells: 
         return (max, mean);
     }
     let mut count = vec![0u32; n];
-    for (idx, &d) in tl.detect.iter().enumerate() {
-        if f.water[idx] == 0 {
-            continue;
-        }
-        let Some(c) = cluster_of(f, idx, cluster_cells, ncx, ncz) else { continue };
+    if tl.detect.len() != f.water.len() {
+        return (max, mean);
+    }
+    for_each_cluster_cell(f, cluster_cells, ncx, ncz, |idx, c| {
         count[c] += 1;
+        let d = tl.detect[idx];
         if d >= radius {
-            continue;
+            return;
         }
         let e = ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX);
         mean[c] += e;
         if e > max[c] {
             max[c] = e;
         }
-    }
+    });
     for c in 0..n {
         if count[c] > 0 {
             mean[c] /= count[c] as f32;
@@ -1267,24 +1287,35 @@ impl FieldCore {
         let eyes: Vec<(&[u64], Vector2, f32, f32)> = tl.enemies.values()
             .map(|e| (e.los.as_slice(), e.origin, 1.0 / e.weight.max(WEIGHT_FLOOR), e.force_spot))
             .collect();
-        for (idx, g) in grid.iter_mut().enumerate() {
-            let c = f.centre(idx);
-            for &(los, origin, inv_w, force_spot) in &eyes {
-                let d = c.distance_to(origin);
-                // Inside a radar/hydro reach the value runs NEGATIVE toward
-                // the emitter, so a ship already inside still sees which
-                // way is out; outside it is distance over certainty.
-                let eff = if d < force_spot {
-                    d - force_spot
-                } else if bit_at(los, idx) {
-                    d * inv_w
-                } else {
-                    continue;
-                };
-                if eff < *g {
-                    *g = eff;
+        let cells = grid.len();
+        for &(los, origin, inv_w, force_spot) in &eyes {
+            // Inside a radar/hydro reach the value runs NEGATIVE toward the
+            // emitter, so a ship already inside still sees which way is out;
+            // outside it is distance over certainty.
+            if force_spot > 0.0 {
+                let ix0 = (((origin.x - force_spot - f.min_x) / f.cell).floor() as i32).max(0);
+                let ix1 = (((origin.x + force_spot - f.min_x) / f.cell).floor() as i32).min(f.w - 1);
+                let iz0 = (((origin.y - force_spot - f.min_z) / f.cell).floor() as i32).max(0);
+                let iz1 = (((origin.y + force_spot - f.min_z) / f.cell).floor() as i32).min(f.h - 1);
+                for iz in iz0..=iz1 {
+                    for ix in ix0..=ix1 {
+                        let idx = (iz * f.w + ix) as usize;
+                        let d = f.centre(idx).distance_to(origin);
+                        if d < force_spot && d - force_spot < grid[idx] {
+                            grid[idx] = d - force_spot;
+                        }
+                    }
                 }
             }
+            for_each_bit(los, |idx| {
+                if idx >= cells {
+                    return;
+                }
+                let d = f.centre(idx).distance_to(origin);
+                if d >= force_spot && d * inv_w < grid[idx] {
+                    grid[idx] = d * inv_w;
+                }
+            });
         }
         tl.detect = Arc::new(grid);
         tl.detect_version = tl.version;
@@ -1296,11 +1327,26 @@ impl FieldCore {
         if tl.fire_cells_version == tl.version && tl.fire_cells.len() == f.water.len() {
             return;
         }
-        let shooters: Vec<(&[u64], Vector2)> = tl.enemies.values().map(|e| (e.fire.as_slice(), e.origin)).collect();
         let units = fire_heading_units();
-        let cells: Vec<(f32, [f32; 4])> = (0..f.water.len())
-            .map(|idx| if f.water[idx] == 0 { (0.0, [0.0; 4]) } else { fire_at(&f, &shooters, &units, idx) })
-            .collect();
+        let mut cells = vec![(0.0f32, [0.0f32; 4]); f.water.len()];
+        for e in tl.enemies.values() {
+            let origin = e.origin;
+            for_each_bit(e.fire.as_slice(), |idx| {
+                if idx >= cells.len() || f.water[idx] == 0 {
+                    return;
+                }
+                let c = f.centre(idx);
+                let (dx, dz) = (origin.x - c.x, origin.y - c.y);
+                let inv = 1.0 / (dx * dx + dz * dz).sqrt().max(1e-3);
+                let (bx, bz) = (dx * inv, dz * inv);
+                let cell = &mut cells[idx];
+                cell.0 += 1.0;
+                for (k, (sh, ch)) in units.iter().enumerate() {
+                    let s = sh * bz - ch * bx;
+                    cell.1[k] += FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s;
+                }
+            });
+        }
         tl.fire_cells = Arc::new(cells);
         tl.fire_cells_version = tl.version;
     }
@@ -1325,7 +1371,7 @@ impl FieldCore {
             let c = f.centre(idx);
             for (o, plane) in &enemies {
                 if bit_at(plane, idx) {
-                    b.push((o.x - c.x).atan2(o.y - c.y));
+                    b.push(fast_atan2(o.x - c.x, o.y - c.y));
                 }
             }
             if b.is_empty() {
@@ -1852,6 +1898,10 @@ impl ReachLookup {
             (Some(Some(pl)), Some(idx)) => bit_at(pl, idx),
             _ => false,
         }
+    }
+
+    pub(crate) fn known(&self, i: usize) -> bool {
+        matches!(self.planes.get(i), Some(Some(_)))
     }
 }
 
@@ -3198,6 +3248,28 @@ mod tests {
 
     fn yamato(mirrored: bool) -> RBlockTable {
         RBlockTable::build(805.0, 2e-5, 5.0, 0.0, 30000.0, mirrored)
+    }
+
+    #[test]
+    fn fast_atan2_matches() {
+        let mut worst = 0.0f32;
+        for i in 0..2000 {
+            for j in 0..50 {
+                let a = i as f32 * 0.00314;
+                let r = 1.0 + j as f32 * 300.0;
+                let (y, x) = (a.sin() * r, a.cos() * r);
+                worst = worst.max((fast_atan2(y, x) - y.atan2(x)).abs());
+            }
+        }
+        assert!(worst < 2e-5, "worst {worst}");
+    }
+
+    #[test]
+    fn bits_visited_once() {
+        let plane = [0b1011u64, 0, 1u64 << 63];
+        let mut seen = Vec::new();
+        for_each_bit(&plane, |i| seen.push(i));
+        assert_eq!(seen, vec![0, 1, 3, 191]);
     }
 
     #[test]

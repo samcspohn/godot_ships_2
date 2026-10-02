@@ -5,7 +5,9 @@ use std::time::Instant;
 
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
+use crate::nav::cover_sweep::{pick_dict, sweep_args};
 use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
+use crate::projectile::damage_model::DamageModel;
 use crate::variant_cast::VariantCast;
 
 /// Matches the server's spotting ray, cast at y = 1 m on both ends.
@@ -393,6 +395,31 @@ impl VisibilityGrid {
         d.set("steps", r.steps as i64);
         d.set("trail_a", &PackedVector2Array::from(r.trails[0].as_slice()));
         d.set("trail_b", &PackedVector2Array::from(r.trails[1].as_slice()));
+        d
+    }
+
+    /// Every water cell within `box_m` of `from`, reached by the cheapest path
+    /// priced by time and by lit enemies' fire at the aspect each step shows.
+    /// hold_walk's opts plus damage_model, me, prio and seen_r (per enemy), speed,
+    /// my_hp, box_m, pref_range, gun_range, hold_s, need, allow_hard, held and
+    /// weights w_gain, w_risk, w_time, w_range, w_hard.
+    /// {best, held, dark: {pos, score, gain, risk, time, mask, count, hard} or {}, cells, us}.
+    #[func]
+    fn cover_sweep(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        let Some(mut dm) = opts.get("damage_model").and_then(|v| v.try_to::<Gd<DamageModel>>().ok()) else { return d };
+        if !self.is_ready() {
+            return d;
+        }
+        let t0 = Instant::now();
+        let inp = self.hold_inputs(&enemies, &opts);
+        let args = sweep_args(from, &opts, &mut dm.bind_mut());
+        let r = self.cover_sweep_impl(&inp, &args, &dm.bind());
+        pick_dict(&mut d, "best", r.best, &self.centres);
+        pick_dict(&mut d, "held", r.held, &self.centres);
+        pick_dict(&mut d, "dark", r.dark, &self.centres);
+        d.set("cells", r.cells as i64);
+        d.set("us", t0.elapsed().as_micros() as i64);
         d
     }
 

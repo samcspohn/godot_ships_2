@@ -36,7 +36,6 @@
 
 [sub_resource type="Resource" id="Resource_b6c11"]
 script = ExtResource("3_uym8b")
-pen_repair = 0.6
 torpedo_protection = 0.35
 metadata/_custom_type_script = "uid://bhhhrilvw6s5b"
 

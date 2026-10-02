@@ -106,6 +106,37 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 # 	# if NavigationMapManager.get_distance(ctx.ship.global_position) < turn_radius * 4.0:
 # 	# 	intent.heading_weight = 1.0
 
+func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if _active_skill_name != &"Cover" or not _skill_hold_cover.has_station() \
+			or sit.threat < _doc().cover_release_threat:
+		return null
+	var hold := _run_skill(&"Cover", ctx, _hold_cover_params(_skill_hold_cover.mode, sit))
+	if hold != null:
+		sit["arm"] = &"engaged"
+		wants_stealth = wants_stealth or _skill_hold_cover.wants_concealment()
+	return hold
+
+func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
+	return {"mode": mode, "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
+		"fire_en_route": cant_go_dark}
+
+## Dive for cover when it beats going dark; else go dark while that is still
+## possible; else kite with the guns working.
+func _disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var dive := _run_skill(&"Cover", ctx, _hold_cover_params(SkillCover.Mode.DEFENSE, sit))
+	var dark: Dictionary = _skill_hold_cover.dark()
+	if dive != null and (cant_go_dark or dark.is_empty() or float(_skill_hold_cover.best().score) >= float(dark.score)):
+		wants_stealth = wants_stealth or _skill_hold_cover.wants_concealment()
+		return dive
+	_skill_hold_cover.reset()
+	if not cant_go_dark and not dark.is_empty():
+		var p: Vector2 = dark.pos
+		var to := Vector3(p.x, 0.0, p.y) - ctx.ship.global_position
+		_active_skill_name = &"Retreat"
+		wants_stealth = true
+		return NavIntent.create(Vector3(p.x, 0.0, p.y), atan2(to.x, to.z))
+	return _run_skill(&"Kite", ctx)
+
 ## The engaged arm: high enough threat to stop pushing, but nothing close aboard.
 ## The cruiser splits on its own detection state — unseen, it goes and hides;
 ## seen, it weighs hiding against kiting.
@@ -113,7 +144,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var d := _doc()
 	var cover_params := _cover_params()
 
-	var hold := _run_skill(&"Cover", ctx)
+	var hold := _run_skill(&"Cover", ctx, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
 	if hold != null:
 		wants_stealth = _skill_hold_cover.wants_concealment()
 		return hold

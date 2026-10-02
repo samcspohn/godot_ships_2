@@ -74,11 +74,7 @@ func to_dict() -> Dictionary:
 	}
 
 func return_to_base(delta: float) -> bool:
-	super.return_to_base(delta)
-	if abs(barrel.rotation.x) < 0.001:
-		barrel.rotation.x = lerp(barrel.rotation.x, 0.0, delta * 5.0)
-		return false
-	return true
+	return TurretCore.gun_home(self, delta, get_params().traverse_speed)
 
 func to_bytes(full: bool) -> PackedByteArray:
 	var writer = StreamPeerBuffer.new()
@@ -221,178 +217,17 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool:
 	return false
 
 func get_muzzles_position() -> Vector3:
-	var muzzles_pos: Vector3 = Vector3.ZERO
-	for m in muzzles:
-		muzzles_pos += m.global_position
-	muzzles_pos /= muzzles.size()
-	return muzzles_pos
+	return TurretCore.muzzles_position(self)
 
 # Implement on server
 func _aim(aim_point: Vector3, delta: float, _return_to_base: bool = false, clamp_aim: bool = false) -> float:
-	if disabled:
-		return INF
-	# Capture pre-rotation diagnostics so we can detect long-way-around slewing
-	# and dead-zone snaps after super._aim runs.
-	var _dbg_active: bool = debug_fire_log and (debug_fire_log_ship == "" or _ship.name == debug_fire_log_ship)
-	var _dbg_pre_rot_y: float = rotation.y
-	var _dbg_desired_pre: float = 0.0
-	var _dbg_max_delta: float = 0.0
-	var _dbg_adjusted: float = 0.0
-	var _dbg_blocked: bool = false
-	var _dbg_case: String = ""
-	var _dbg_arc: float = 0.0
-	var _dbg_off: float = 0.0
-	var _dbg_target_off: float = 0.0
-	if _dbg_active:
-		_dbg_desired_pre = get_angle_to_target(aim_point)
-		_dbg_max_delta = deg_to_rad(get_params().traverse_speed) * delta
-		var _dbg_a = apply_rotation_limits(rotation.y, _dbg_desired_pre)
-		_dbg_adjusted = _dbg_a[0]
-		_dbg_blocked = _dbg_a[1]
-		_dbg_case = _dbg_a[2]
-		_dbg_arc = wrapf(slew_max_angle - slew_min_angle, 0.0, TAU)
-		_dbg_off = wrapf(rotation.y - slew_min_angle, 0.0, TAU)
-		_dbg_target_off = wrapf(_dbg_off + _dbg_desired_pre, 0.0, TAU)
-
-	super._aim(aim_point, delta, _return_to_base) # rotate turret
-	# Recompute post-rotation azimuth error so the grace window is checked against
-	# the remaining error *after* this frame's movement, not before.
-	var desired_local_angle_delta := get_angle_to_target(aim_point)
-	# # Calculate elevation
-	var muzzles_pos = get_muzzles_position()
-
-	# Existing aiming logic for elevation
-	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, aim_point, get_shell())
-	if sol[0] != null and ((aim_point - _ship.global_position).length() < get_params()._range or !clamp_aim):
-		self._aim_point = aim_point
-	else:
-		var g = Vector3(global_position.x, 0, global_position.z)
-		self._aim_point = g + (Vector3(aim_point.x, 0, aim_point.z) - g).normalized() * (get_params()._range - 500)
-		sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(muzzles_pos, self._aim_point, get_shell())
-
-	# launch_vector = sol[0]
-	# flight_time = sol[1]
-
-	var turret_elev_speed_rad: float = deg_to_rad(get_params().elevation_speed)
-	var max_elev_angle: float = turret_elev_speed_rad * delta
-	var elevation_delta: float = max_elev_angle
-	var desired_elevation_delta: float = INF
-	# Pre-rotation copy of desired_elevation_delta. Used below to detect that the
-	# barrel was rate-limited toward the target this frame — i.e. it physically
-	# can't elevate fast enough to fully close the residual in one step.
-	var desired_elevation_delta_pre: float = INF
-	if _ship.name == "1":
-			pass
-	var desired_elevation: float = NAN
-	if sol[1] != -1:
-		var barrel_dir = sol[0]
-		desired_elevation = atan2(barrel_dir.y, Vector2(barrel_dir.x, barrel_dir.z).length())
-		var curr_elevation = atan2(-barrel.global_basis.z.y, Vector2(-barrel.global_basis.z.x, -barrel.global_basis.z.z).length())
-		desired_elevation_delta = desired_elevation - curr_elevation
-		desired_elevation_delta_pre = desired_elevation_delta
-		elevation_delta = clamp(desired_elevation_delta, -max_elev_angle, max_elev_angle)
-	if sol[0] == null:
-
-		elevation_delta = - max_elev_angle
-
-	if !is_nan(elevation_delta) and abs(elevation_delta) > 0.0001:
-		barrel.rotate(Vector3.RIGHT, elevation_delta)
-
-		# Clamp depression at the physical hard-stop only. Elevation is intentionally
-		# NOT capped: in-range targets always resolve to an elevation at or below the
-		# max-range angle (aim_point is clamped to within range above), so a separate
-		# max-elevation clamp is redundant. What matters at max range is whether the
-		# target is in range — not the visual barrel angle.
-		barrel.rotation.x = max(barrel.rotation.x, MIN_ELEVATION_ANGLE)
-
-	# Recompute elevation error against the barrel's post-rotation state so the
-	# grace window is checked against the remaining error after this frame's movement.
-	if not is_nan(desired_elevation):
-		var curr_elevation_after = atan2(-barrel.global_basis.z.y, Vector2(-barrel.global_basis.z.x, -barrel.global_basis.z.z).length())
-		desired_elevation_delta = desired_elevation - curr_elevation_after
-
-	# Elevation is "satisfied" when aimed closely enough, OR when the barrel is
-	# pinned at the min-depression hard-stop and still wants to depress further
-	# (a too-close target). The shell is launched from _aim_point and the launch
-	# vector is clamped to the depression limit in fire(), so fire anyway — the
-	# shot will simply go higher rather than be blocked.
-	var at_min_depression: bool = barrel.rotation.x <= MIN_ELEVATION_ANGLE + 0.001 and desired_elevation_delta < 0
-
-	# Ship roll/pitch during a turn rotates the barrel's world-frame elevation
-	# (curr_elevation is read from barrel.global_basis), but the barrel's local
-	# elevation only rotates at elevation_speed. When that rate can't keep up
-	# with world-frame roll, the residual settles into a non-zero steady-state
-	# lag that exceeds the 0.015 grace window — this stalls firing during turns,
-	# especially at longer ranges where the ballistic curve is steeper.
-	#
-	# The actual shell is launched from _aim_point via the dispersion calculator,
-	# not from the visual barrel direction (see fire()), so visual barrel lag
-	# does not affect shell accuracy. Allow firing when the barrel is rate-
-	# limited toward the target this frame, capped at a tolerable visual error.
-	var chasing_at_rate: bool = (
-		desired_elevation_delta_pre != INF
-		and abs(desired_elevation_delta_pre) > max_elev_angle
-		and sign(elevation_delta) == sign(desired_elevation_delta_pre)
-		and abs(desired_elevation_delta) < 0.05  # ~2.86° visual misalignment cap
-	)
-	var elevation_satisfied: bool = desired_elevation_delta != INF and (
-		abs(desired_elevation_delta) < 0.015
-		or at_min_depression
-		or chasing_at_rate
-	)
-
-	if elevation_satisfied and abs(desired_local_angle_delta) < 0.02 and _valid_target:
-		can_fire = true
-	else:
-		can_fire = false
-
-	if _dbg_active and reload >= 1.0 and not can_fire:
-		# Reload-complete guns that won't fire — this is exactly the symptom the
-		# user reports. Log every gate so we can see which one denied firing.
-		var _dbg_rot_delta_applied: float = wrapf(rotation.y - _dbg_pre_rot_y, -PI, PI)
-		var _dbg_long_way: bool = abs(_dbg_adjusted) > abs(_dbg_desired_pre) + 0.001 and sign(_dbg_adjusted) != sign(_dbg_desired_pre)
-		var _dbg_in_range: bool = (aim_point - _ship.global_position).length() < get_params()._range
-		print({
-			"ship": _ship.name,
-			"gun": name,
-			"traverse_dps": get_params().traverse_speed,
-			"ship_omega_y": _ship.angular_velocity.y if _ship is RigidBody3D else 0.0,
-			# Azimuth gates
-			"desired_pre": _dbg_desired_pre,
-			"desired_post": desired_local_angle_delta,
-			"azimuth_ok": abs(desired_local_angle_delta) < 0.02,
-			# Slew-limit forensics
-			"rotation_y": _dbg_pre_rot_y,
-			"slew_min": slew_min_angle,
-			"slew_max": slew_max_angle,
-			"arc": _dbg_arc,
-			"off": _dbg_off,
-			"target_off": _dbg_target_off,
-			"case": _dbg_case,
-			"max_delta": _dbg_max_delta,
-			"adjusted": _dbg_adjusted,
-			"blocked": _dbg_blocked,
-			"long_way": _dbg_long_way,
-			"applied": _dbg_rot_delta_applied,
-			# Fire arc / validity
-			"valid_target": _valid_target,
-			# Elevation gates
-			"elevation_ok": elevation_satisfied,
-			"chasing_at_rate": chasing_at_rate,
-			"desired_elev_delta_pre": desired_elevation_delta_pre,
-			"desired_elev_delta": desired_elevation_delta,
-			"max_elev_angle": max_elev_angle,
-			"at_min_depression": at_min_depression,
-			"barrel_x": barrel.rotation.x,
-			# Range / ballistic
-			"in_range": _dbg_in_range,
-			"sol_ok": sol[0] != null,
-		})
-	return desired_local_angle_delta
-
-
-	# # Ensure we stay within allowed elevation range
-	# barrel.rotation_degrees.x = clamp(barrel.rotation_degrees.x, -30, 10)
+	var err := TurretCore.gun_aim(self, aim_point, delta, _return_to_base, clamp_aim, _ship.global_position,
+		get_params(), get_shell())
+	if debug_fire_log and (debug_fire_log_ship == "" or _ship.name == debug_fire_log_ship) and reload >= 1.0 and not can_fire:
+		print({"ship": _ship.name, "gun": name, "azimuth_err": err, "valid_target": _valid_target,
+			"rotation_y": rotation.y, "slew_min": slew_min_angle, "slew_max": slew_max_angle,
+			"barrel_x": barrel.rotation.x, "in_range": (aim_point - _ship.global_position).length() < get_params()._range})
+	return err
 
 # Normalize angle to the range [-PI, PI]
 func normalize_angle(angle: float) -> float:

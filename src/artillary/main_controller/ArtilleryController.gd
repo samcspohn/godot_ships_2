@@ -384,9 +384,11 @@ func set_aim_input(target_point: Vector3) -> void:
 
 func _physics_process(delta: float) -> void:
 
-	# Aim all guns toward the target point
-	for g in guns:
-		g._aim(aim_point, delta)
+	if Gun.debug_fire_log:
+		for g in guns:
+			g._aim(aim_point, delta)
+	else:
+		TurretCore.aim_guns(guns, aim_point, delta, _ship.global_position, get_params(), get_shell_params())
 
 	if fire_held:
 		sequential_fire_timer += delta

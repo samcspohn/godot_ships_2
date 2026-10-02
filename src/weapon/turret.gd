@@ -170,171 +170,14 @@ func _ready() -> void:
 # 		if !disabled && reload < 1.0:
 # 			reload = min(reload + delta / get_params().reload_time, 1.0)
 
-# ---------------------------------------------------------------------------
-# Slew-limit math
-#
-# All checks are framed in offset-from-slew_min space:
-#
-#   offset(a) = wrapf(a - slew_min_angle, 0, TAU)   in [0, TAU)
-#   arc_width = wrapf(slew_max_angle - slew_min_angle, 0, TAU)
-#                                                   in [0, TAU)
-#
-# Valid arc is offset in [0, arc_width]; dead zone is (arc_width, TAU).
-# slew_min_angle == slew_max_angle is a degenerate empty arc (arc_width = 0,
-# nothing valid). For unrestricted 360 degree rotation set
-# slew_limits_enabled = false instead.
-# ---------------------------------------------------------------------------
-
-func _arc_width() -> float:
-	return wrapf(slew_max_angle - slew_min_angle, 0.0, TAU)
-
-func _offset_from_slew_min(angle: float) -> float:
-	#return wrapf(angle - slew_min_angle, 0.0, TAU)
-	var a = angle - slew_min_angle
-	var b = wrapf(a, 0.0, TAU)
-	return b
-
-## Tolerance band around slew boundaries (radians). Larger than typical
-## frame-to-frame Euler/quaternion round-trip drift (~1e-7 rad) but
-## visually negligible (~0.006°). Used to:
-##   1. Bias clamp_to_rotation_limits()'s snap inward so drift can't push the
-##      stored rotation back into the dead zone.
-##   2. Treat near-boundary `off` values as if they were exactly at the
-##      boundary in apply_rotation_limits(), preventing the Case A saturating
-##      correction from overshooting in response to sub-µrad drift.
-const SLEW_BOUNDARY_EPS: float = 1.0e-4
-
-## Returns [adjusted_delta, blocked, case_label].
-##   blocked == true  => requested target lies in the dead zone; delta points
-##                       to the nearest reachable boundary along the originally
-##                       requested direction.
-##   blocked == false => target reachable; delta may differ from input (long
-##                       way around) to avoid crossing the dead zone.
-## In Case A (current angle inside dead zone — should be unreachable but can
-## occur via floating-point drift past a boundary), the returned delta is
-## saturated (±TAU) in the chosen exit direction so the caller's per-frame
-## clamp to ±max_delta always produces a full-speed self-correcting step
-## rather than a sub-epsilon nudge that rounds to zero. Drift within
-## SLEW_BOUNDARY_EPS of either boundary is *not* treated as Case A; it
-## falls through to the normal B/C/D logic to avoid overshoot oscillation.
-func apply_rotation_limits(current_angle: float, desired_delta: float) -> Array:
-	# If rotation limits are not enabled, return the desired delta as is
-	if not slew_limits_enabled or desired_delta == 0.0:
-		return [desired_delta, false, "OFF"]
-
-	var arc: float = _arc_width()
-	var off: float = _offset_from_slew_min(current_angle)
-
-	# Case A: current angle is genuinely inside the dead zone (beyond tolerance).
-	# Near-boundary drift is absorbed into the valid arc so D_min / D_max can
-	# handle the "at boundary, target in dead zone" case without oscillation.
-	if off > arc:
-		if (off - arc) < SLEW_BOUNDARY_EPS:
-			off = arc  # treat as at slew_max boundary
-		elif (TAU - off) < SLEW_BOUNDARY_EPS:
-			off = 0.0  # treat as at slew_min boundary
-		else:
-			# Sub-case A1: target lies in the valid arc — slew toward whichever
-			# boundary produces the shorter total path (exit + traversal). Return
-			# saturated ±TAU in that direction so drift-induced sub-epsilon paths
-			# still produce a full-rate corrective step.
-			var target_off_w: float = wrapf(off + desired_delta, 0.0, TAU)
-			if target_off_w <= arc:
-				var path_via_min: float = (TAU - off) + target_off_w           # CCW: -> slew_min -> target
-				var path_via_max: float = (off - arc) + (arc - target_off_w)   # CW : -> slew_max -> target
-				var dir_a1: float = 1.0 if path_via_min <= path_via_max else -1.0
-				return [dir_a1 * TAU, false, "A1"]
-			# Sub-case A2: target also in the dead zone — exit via nearest boundary
-			# at full rate (caller clamps to max_delta).
-			var to_min: float = TAU - off       # CCW distance back to slew_min
-			var to_max: float = off - arc       # CW  distance back to slew_max
-			var dir_a2: float = 1.0 if to_min <= to_max else -1.0
-			return [dir_a2 * TAU, true, "A2"]
-
-	# Case B: current is valid. Try the desired delta as-is.
-	var target_off: float = off + desired_delta
-	if target_off >= 0.0 and target_off <= arc:
-		return [desired_delta, false, "B"]
-
-	# Case C: shortest path leaves the arc — try the long way around.
-	var alt_delta: float = desired_delta + (TAU if desired_delta < 0.0 else -TAU)
-	var alt_target: float = off + alt_delta
-	if alt_target >= 0.0 and alt_target <= arc:
-		return [alt_delta, false, "C"]
-
-	# Case D: target is genuinely in the dead zone. Slew toward whichever
-	# boundary (slew_min or slew_max) is angularly closer to the target.
-	var target_off_wrapped: float = wrapf(target_off, 0.0, TAU)  # in (arc, TAU)
-	var target_to_min: float = TAU - target_off_wrapped          # CCW: target -> 0
-	var target_to_max: float = target_off_wrapped - arc           # CW : target -> arc
-	if target_to_min <= target_to_max:
-		return [-off, true, "D_min"]                              # hit slew_min
-	else:
-		return [arc - off, true, "D_max"]                         # hit slew_max
-
-
-## Snap rotation.y to the nearest valid boundary if currently in the dead zone.
-## Snaps with an inward bias of SLEW_BOUNDARY_EPS so frame-to-frame
-## Euler/quaternion round-trip drift can't push the stored value back into
-## the dead zone.
-func clamp_to_rotation_limits() -> void:
-	if not slew_limits_enabled:
-		return
-	var arc: float = _arc_width()
-	var off: float = _offset_from_slew_min(rotation.y)
-	if off <= arc:
-		return
-	var to_min: float = TAU - off
-	var to_max: float = off - arc
-	if to_min <= to_max:
-		rotation.y = slew_min_angle + SLEW_BOUNDARY_EPS
-	else:
-		rotation.y = slew_max_angle - SLEW_BOUNDARY_EPS
-
-
-## Returns true if the given world-space yaw lies in any defined fire arc.
-## When fire_arcs is empty, falls back to the slew arc (preserving original
-## Gun behavior); when slew limits are also disabled, always returns true.
-func is_angle_in_fire_arcs(angle: float) -> bool:
-	if fire_arcs.is_empty():
-		if not slew_limits_enabled:
-			return true
-		return _offset_from_slew_min(angle) <= _arc_width()
-	for a in fire_arcs:
-		if a != null and a.contains(angle):
-			return true
-	return false
-
-# returns true if turning
 func return_to_base(delta: float) -> bool:
-	# a = apply_rotation_limits(rotation.y, base_rotation - rotation.y)
-	if disabled:
-		return false
-	can_fire = false
-	_valid_target = false
-	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
-	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
-	var adjusted_angle = base_rotation - rotation.y
-	if abs(adjusted_angle) > PI:
-		adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
-	var turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
+	return TurretCore.turret_home(self, delta, get_params().traverse_speed)
 
-	if abs(turret_angle_delta) < 0.001:
-		# can_fire = false
-		return false
-	# Apply rotation
-	rotate(Vector3.UP, turret_angle_delta)
-	# clamp_to_rotation_limits()
-	# can_fire = false
-	return true
+func is_angle_in_fire_arcs(angle: float) -> bool:
+	return TurretCore.in_fire_arcs(self, angle)
 
 func get_angle_to_target(target: Vector3) -> float:
-	var forward: Vector3 = - global_basis.z.normalized()
-	var forward_2d: Vector2 = Vector2(forward.x, forward.z).normalized()
-	var target_dir: Vector3 = (target - global_position).normalized()
-	var target_dir_2d: Vector2 = Vector2(target_dir.x, target_dir.z).normalized()
-	var desired_local_angle_delta: float = target_dir_2d.angle_to(forward_2d)
-	return desired_local_angle_delta
+	return TurretCore.angle_to_target(self, target)
 
 func valid_target(target: Vector3) -> bool: # virtual
 	return false
@@ -378,45 +221,7 @@ func valid_target_leading(target: Vector3, target_velocity: Vector3) -> bool: # 
 	# return false
 
 func _aim(aim_point: Vector3, delta: float, _return_to_base: bool) -> float:
-	if disabled:
-		return INF
-	if name == "GER_150mm_2b_gerat60_009" and _ship.name == "1":
-		pass
-	# Cache constants
-	# const TURRET_ROT_SPEED_DEG: float = 40.0
-
-	# Calculate turret rotation
-	var turret_rot_speed_rad: float = deg_to_rad(get_params().traverse_speed)
-	var max_turret_angle_delta: float = turret_rot_speed_rad * delta
-	# var local_target: Vector3 = to_local(aim_point)
-
-	# # Calculate desired rotation angle in the horizontal plane
-	# var desired_local_angle: float = -atan2(local_target.x, local_target.z)
-
-	var desired_local_angle_delta: float = get_angle_to_target(aim_point)
-
-	# Slew clamping: produces a delta the mount may legally rotate by.
-	var a = apply_rotation_limits(rotation.y, desired_local_angle_delta)
-	var adjusted_angle: float = a[0]
-	# Firing validity is a separate question: does the *target bearing* lie in
-	# any fire arc? (When fire_arcs is empty this falls back to slew arc, which
-	# is equivalent to the previous `not a[1]` behavior.)
-	_valid_target = is_angle_in_fire_arcs(rotation.y + desired_local_angle_delta)
-	var turret_angle_delta: float = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
-	if _return_to_base and not _valid_target:
-		adjusted_angle = base_rotation - rotation.y
-		if abs(adjusted_angle) > PI:
-			adjusted_angle = - sign(adjusted_angle) * (TAU - abs(adjusted_angle))
-		turret_angle_delta = clamp(adjusted_angle, -max_turret_angle_delta, max_turret_angle_delta)
-
-	# Apply rotation
-	if abs(turret_angle_delta) > 0.001:
-		rotate(Vector3.UP, turret_angle_delta)
-
-		# Ensure rotation is within limits
-		# if not _return_to_base:
-		clamp_to_rotation_limits()
-	return desired_local_angle_delta
+	return TurretCore.turret_aim(self, aim_point, delta, _return_to_base, get_params().traverse_speed)
 
 func initialize_armor_system() -> void:
 	"""Initialize the armor system by loading armor data from the GLB via ArmorRegistry."""

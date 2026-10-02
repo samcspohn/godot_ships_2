@@ -57,11 +57,11 @@ struct Walker {
 }
 
 impl VisibilityGrid {
-    fn grid_of(&self, p: Vector2) -> (i32, i32) {
+    pub(crate) fn grid_of(&self, p: Vector2) -> (i32, i32) {
         (((p.x - self.min_x) / self.cell).floor() as i32, ((p.y - self.min_z) / self.cell).floor() as i32)
     }
 
-    fn water(&self, ix: i32, iz: i32) -> Option<usize> {
+    pub(crate) fn water(&self, ix: i32, iz: i32) -> Option<usize> {
         if ix < 0 || iz < 0 || ix >= self.w || iz >= self.h {
             return None;
         }
@@ -80,18 +80,22 @@ impl VisibilityGrid {
     /// Forbidden by the enemies alone, land aside, so a walk start is placed
     /// where the ray leaves the enemy's ground and not at the first island.
     fn in_zone(&self, c: (i32, i32), inp: &SpotInputs) -> bool {
+        self.in_zone_of(c, inp, inp.avoid)
+    }
+
+    pub(crate) fn in_zone_of(&self, c: (i32, i32), inp: &SpotInputs, avoid: u8) -> bool {
         let p = Vector2::new(self.min_x + (c.0 as f32 + 0.5) * self.cell, self.min_z + (c.1 as f32 + 0.5) * self.cell);
-        if inp.avoid & AVOID_DET != 0 && inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r) {
+        if avoid & AVOID_DET != 0 && inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r) {
             return true;
         }
-        if inp.avoid & AVOID_FIRE != 0 {
+        if avoid & AVOID_FIRE != 0 {
             if let Some(f) = &inp.fire {
                 if inp.enemies.iter().enumerate().any(|(i, e)| e.heavy && f.hits(i, p)) {
                     return true;
                 }
             }
         }
-        if inp.avoid & AVOID_LOS != 0 && self.water(c.0, c.1).is_some() {
+        if avoid & AVOID_LOS != 0 && self.water(c.0, c.1).is_some() {
             let m = inp.los_margin.max(0);
             for dz in -m..=m {
                 for dx in -m..=m {

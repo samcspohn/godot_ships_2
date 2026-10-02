@@ -89,7 +89,7 @@ var _skill_station: SkillStation = SkillStation.new()
 var _skill_utility: SkillUtility = SkillUtility.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
-var _skill_hold_cover: SkillSpot = SkillSpot.new(SkillSpot.Mode.COVER)
+var _skill_hold_cover: SkillCover = SkillCover.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
@@ -521,7 +521,43 @@ func contact_aim_point(target: Ship) -> Variant:
 	var contact := get_contact_solution(target)
 	if not is_engageable_contact(contact):
 		return null
-	return contact.position + contact.basis * target_aim_offset(target)
+	return contact.position + contact.basis * (_cached_aim(target, contact).offset as Vector3)
+
+## Aim solutions are reused while the contact holds range, bearing, heading and
+## speed relative to us; leads are stored relative to the contact so they ride along.
+const AIM_CACHE_S := 1.0
+const AIM_CACHE_RANGE_FRAC := 0.01
+const AIM_CACHE_ANGLE := deg_to_rad(1.5)
+const AIM_CACHE_SPEED := 1.0
+var _aim_cache: Dictionary = {}  # Ship -> entry
+var _hit_cache: Dictionary = {}  # Ship -> entry
+
+func _aim_key(target: Ship, contact: Dictionary) -> Dictionary:
+	var rel: Vector3 = contact.position - _ship.global_position
+	return {"range": Vector2(rel.x, rel.z).length(), "bearing": atan2(rel.x, rel.z),
+		"heading": (contact.basis as Basis).get_euler().y, "vel": contact.velocity,
+		"shell": _ship.artillery_controller.shell_index, "at": SimClock.now()}
+
+func _aim_key_holds(old: Dictionary, now: Dictionary) -> bool:
+	return not old.is_empty() and now.at - old.at < AIM_CACHE_S and old.shell == now.shell \
+		and absf(now.range - old.range) <= old.range * AIM_CACHE_RANGE_FRAC \
+		and absf(angle_difference(now.bearing, old.bearing)) <= AIM_CACHE_ANGLE \
+		and absf(angle_difference(now.heading, old.heading)) <= AIM_CACHE_ANGLE \
+		and (now.vel as Vector3).distance_to(old.vel) <= AIM_CACHE_SPEED
+
+## {offset, ammo, lead_off}; lead_off is null when there is no firing solution.
+func _cached_aim(target: Ship, contact: Dictionary) -> Dictionary:
+	var key := _aim_key(target, contact)
+	var old: Dictionary = _aim_cache.get(target, {})
+	if _aim_key_holds(old, key):
+		return old
+	var offset := target_aim_offset(target)
+	var lead = aim_lead_point(target, contact, contact.position + contact.basis * offset)
+	key.offset = offset
+	key.ammo = pick_ammo(target)
+	key.lead_off = lead - contact.position if lead != null else null
+	_aim_cache[target] = key
+	return key
 
 var potential_target_weight_cache: Dictionary = {}  # Ship -> float
 func get_potential_target_weight(target: Ship) -> float:
@@ -947,15 +983,23 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 func can_hit_target(target: Ship) -> bool:
 	"""Check if we can actually hit the target (not blocked by terrain/islands).
 	Uses sim_can_shoot_over_terrain_static from ship center at deck height."""
+	var contact := get_contact_solution(target)
+	if not contact.get("valid", false):
+		return false
+	var key := _aim_key(target, contact)
+	var old: Dictionary = _hit_cache.get(target, {})
+	if _aim_key_holds(old, key):
+		return old.hit
+	key.hit = _can_hit_target(target, contact)
+	_hit_cache[target] = key
+	return key.hit
 
+func _can_hit_target(target: Ship, contact: Dictionary) -> bool:
 	var gun_params = _ship.artillery_controller.get_params()
 	if gun_params == null:
 		return false
 	# Check the shot the bot would actually take, which for an unspotted contact
 	# is at its dead-reckoned last-known position rather than where it really is
-	var contact := get_contact_solution(target)
-	if not contact.get("valid", false):
-		return false
 	var sol_pos: Vector3 = contact.position
 	if sol_pos.distance_to(_ship.global_position) > gun_params._range * 1.5:
 		# Quick early-out for very distant targets to avoid expensive sim checks
@@ -2311,6 +2355,11 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 			_apply_gun_policy(ctx, sit)
 			return _finish_nav(intent, ctx, sit, prev_skill)
 
+	intent = _committed_intent(ctx, sit)
+	if intent != null:
+		_apply_gun_policy(ctx, sit)
+		return _finish_nav(intent, ctx, sit, prev_skill)
+
 	if not sit.has_enemies:
 		sit["arm"] = &"idle"
 		intent = _run_chain(d.idle_chain, ctx, _cover_params())
@@ -2350,6 +2399,10 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
 
+## Per-class hook: a posture that keeps running whichever arm the ladder would pick.
+func _committed_intent(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return null
+
 ## Per-class hook: the single-objective arm. Base runs Utility on the
 ## doctrine's weights.
 func _utility_arm(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
@@ -2386,19 +2439,24 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if sit.threat < d.push_threat:
 		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
 	else:
-		# High threat. If concealing cover lies along the way, hide behind it;
-		# otherwise kite away with the guns still on the target.
-		if d.close_arm_uses_cover and _cover_allowed(ctx, sit):
-			intent = _try_cover_on_the_way(ctx, sit.nearest, _skill_cover, _cover_params())
-		if intent == null:
-			intent = _run_skill(&"Kite", ctx)
+		intent = _disengage(ctx, sit)
 	if intent != null:
 		_shape_close_intent(intent, ctx, sit)
 		if d.close_arm_reverse_align:
 			_apply_reverse_alignment(intent, sit.nearest_threat_dist, sit.ra_threshold)
 	# Do not let the post-processors steer a committed push or a committed kite.
-	if sit.threat < d.force_below or sit.threat >= d.force_above:
+	if (sit.threat < d.force_below or sit.threat >= d.force_above) and _active_skill_name not in [&"Cover", &"Retreat"]:
 		sit["forced"] = true
+	return intent
+
+## Per-class hook: the close arm at high threat. If concealing cover lies along
+## the way, hide behind it; otherwise kite away with the guns still on the target.
+func _disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var intent: NavIntent = null
+	if _doc().close_arm_uses_cover and _cover_allowed(ctx, sit):
+		intent = _try_cover_on_the_way(ctx, sit.nearest, _skill_cover, _cover_params())
+	if intent == null:
+		intent = _run_skill(&"Kite", ctx)
 	return intent
 
 ## Per-class hook: veto the close arm's cover.
@@ -2774,13 +2832,10 @@ func engage_target(target: Ship):
 	var contact := get_contact_solution(target)
 	if not is_engageable_contact(contact):
 		return
-	var adjusted_target_pos: Vector3 = contact.position + contact.basis * target_aim_offset(target)
+	var aim := _cached_aim(target, contact)
+	var adjusted_target_pos: Vector3 = contact.position + contact.basis * (aim.offset as Vector3)
 	if contact.position.distance_to(_ship.global_position) > _ship.artillery_controller.get_params()._range:
 		return
-
-	#if not can_fire_guns():
-		#_ship.artillery_controller.set_aim_input(adjusted_target_pos)
-		#return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
 	if wants_to_be_concealed or hold_fire:
@@ -2790,10 +2845,9 @@ func engage_target(target: Ship):
 	_ship.secondary_controller.enabled = true
 
 	# Arc-aware, and wrong in whatever way this bot's aptitude is wrong.
-	var target_lead = aim_lead_point(target, contact, adjusted_target_pos)
-
-	if target_lead == null:
+	if aim.lead_off == null:
 		return
+	var target_lead: Vector3 = contact.position + (aim.lead_off as Vector3)
 
 	# Always update aim toward the target so turrets rotate correctly
 	_ship.artillery_controller.set_aim_input(target_lead)
@@ -2801,43 +2855,30 @@ func engage_target(target: Ship):
 	# Only on a change, and only between salvos. select_shell() is an @rpc, so
 	# calling it re-broadcasts the selection to every client reliably, and
 	# engage_target() runs every tick for every bot that is shooting.
-	var ammo = pick_ammo(target)
-	if _ship.artillery_controller.shell_index != ammo and _may_change_ammo():
-		_ship.artillery_controller.select_shell(ammo)
+	if _ship.artillery_controller.shell_index != aim.ammo and _may_change_ammo():
+		_ship.artillery_controller.select_shell(aim.ammo)
 		_ammo_changed_at = SimClock.now()
 
-	# Only fire guns whose actual aim point is near the intended target AND
-	# whose shell arc clears terrain. This prevents two bugs:
-	#  1) Shooting at water/old aim — gun.can_fire is stale from previous
-	#     frame when the turret was aimed at the navigation destination.
-	#     We check that the gun's _aim_point is close to our target_lead
-	#     so we never fire until the turret has actually rotated on-target.
-	#  2) Shooting at targets behind cover — sim_can_shoot_over_terrain_static
-	#     traces the full shell arc and rejects shots blocked by terrain.
+	# Fire only a gun that is loaded, on the lead (its _aim_point can be stale from
+	# the nav fallback aim) and whose shell arc clears terrain.
+	for gun in _ship.artillery_controller.guns:
+		if gun.disabled or gun.reload < 1.0 or not gun.can_fire:
+			continue
+		if gun._aim_point.distance_to(target_lead) > 5.0:
+			continue
+		if not _arc_clear(target_lead):
+			return
+		gun.fire(_ship.artillery_controller.target_mod)
+		return
+
+func _arc_clear(target_lead: Vector3) -> bool:
 	var shell_params = _ship.artillery_controller.get_shell_params()
 	var fire_pos = _ship.global_position
 	fire_pos.y = _ship.movement_controller.ship_draft / 2.0
 	var sol = ProjectilePhysicsWithDragV2.calculate_launch_vector(fire_pos, target_lead, shell_params)
-	var arc_clear := false
-	if sol[0] != null:
-		var can_shoot = Gun.sim_can_shoot_over_terrain_static(fire_pos, sol[0], sol[1], shell_params, _ship)
-		arc_clear = can_shoot.can_shoot_over_terrain
-
-	for gun in _ship.artillery_controller.guns:
-		if gun.disabled or gun.reload < 1.0 or not gun.can_fire:
-			continue
-		# Verify the gun's actual aim point is reasonably close to our
-		# intended lead position. If not, the turret hasn't caught up yet
-		# and firing would send shells toward the old (wrong) aim point.
-		var aim_error = gun._aim_point.distance_to(target_lead)
-		if aim_error > 5.0:
-			continue
-		# Verify the shell arc actually clears terrain / islands
-		if not arc_clear:
-			continue
-		# This gun is aimed correctly and has a clear arc — fire it
-		gun.fire(_ship.artillery_controller.target_mod)
-		return
+	if sol[0] == null:
+		return false
+	return Gun.sim_can_shoot_over_terrain_static(fire_pos, sol[0], sol[1], shell_params, _ship).can_shoot_over_terrain
 
 
 # AVIATION (shared by all ship classes; driven directly via the Squadron API,
@@ -4325,7 +4366,7 @@ func _squadron_spot_radius(squad: Squadron) -> float:
 	return (squad.params.p() as AircraftParams).spotting_range
 
 # The range at which this squadron actually finds THIS ship. Both halves must
-# hold (see GameServer.handle_air_spot) — the tighter governs, so a long-sighted
+# hold (see SpotPass) — the tighter governs, so a long-sighted
 # spotter buys nothing against a ship that must be closed on. Falls back to the
 # squadron's own reach when concealment isn't readable.
 func _air_detect_radius(squad: Squadron, enemy: Ship) -> float:

@@ -1,58 +1,31 @@
 class_name SkillSpot
 extends SkillStation
 
-## One walk, two goals. SPOT: outside detection, seeing targets a friend can
-## shoot. COVER: out of every enemy's sight within our firing bloom, able to
-## land shells over the terrain on a spotted target; or, when that is missing
-## or much further while we are already seen, out of reach of heavy shells.
-## Refine budget halves per target already held: more to lose, less to gain.
-
-enum Mode { SPOT, COVER }
+## Outside detection, seeing targets a friend can shoot. Refine budget halves
+## per target already held: more to lose, less to gain.
 
 ## Kept for DDBehavior.engagement_range and _is_gunboat, which band on it.
 const SAFE_MARGIN := 1.15
 const FRIENDS := 4
 const REFINE_BUDGET_M := 8000.0
-## Matches the one-cell shadow margin the cover walk demands.
-const COVER_HOLD_M := 300.0
-## Concealed cover wins unless hard cover is this many times closer.
-const HARD_COVER_PREF := 1.5
-## Hard cover hides from shooters that would sink us inside this long even
-## bow- or stern-on, whatever the reason presentation fails.
-const HARD_COVER_TTK_S := 120.0
-
-var mode: int = Mode.SPOT
-## The held COVER station hides us, rather than only shielding us from heavy fire.
-var _concealed: bool = true
 var stealth_corridor: bool = true
 var _count: int = 0
 var _steps: int = 0
 var _trails: Array[PackedVector2Array] = []
-
-func _init(m: int = Mode.SPOT) -> void:
-	mode = m
-
-func _label() -> String:
-	return "Cover" if mode == Mode.COVER else "Spot"
 
 func reset() -> void:
 	super()
 	stealth_corridor = true
 	_count = 0
 	_trails = []
-	_concealed = true
-
-## Whether the posture this skill holds wants the ship unseen.
-func wants_concealment() -> bool:
-	return _has_station and (mode == Mode.SPOT or _concealed)
 
 func trails() -> Array[PackedVector2Array]:
 	return _trails
 
 func debug_text() -> String:
 	if not _has_station:
-		return "%s: none" % _label()
-	return "%s %d | last walk %d cells" % [_label(), _count, _steps]
+		return "Spot: none"
+	return "Spot %d | last walk %d cells" % [_count, _steps]
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
@@ -64,7 +37,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var belief: Array[Dictionary] = ctx.server._team_belief(team_id)
 	if belief.is_empty():
 		return _decline()
-	if mode == Mode.SPOT and ship.is_detected() \
+	if ship.is_detected() \
 			and ctx.behavior.get_threat_score(ctx) > ctx.behavior._doc().stealth_threat:
 		return _decline()
 
@@ -77,36 +50,18 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var opts := {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot, "clearance": clearance,
 		"avoid": VisibilityGrid.AVOID_DET, "flank": flank}
-	var hard := {}
-	if mode == Mode.COVER:
-		var g: Dictionary = NavigationMapManager.reach_gun(ship)
-		if g.is_empty():
-			return _decline()
-		opts.merge({"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_LOS, "los_r": inp.los, "los_margin": 1,
-			"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
-			"ids": inp.ids, "heavy": inp.heavy}, true)
-		hard = opts.merged({"avoid": VisibilityGrid.AVOID_FIRE}, true)
-	var held := opts if _concealed else hard
 	if _has_station:
-		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, held)
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, opts)
 		_count = int(ev.count) if bool(ev.free) else 0
-		# Hidden (or shielded) is the point of cover; losing the shot only starts a search.
-		if _count == 0 and not (mode == Mode.COVER and bool(ev.free)):
+		if _count == 0:
 			_drop()
 	var r: Dictionary
 	if _has_station:
-		held.need = _count + 1
-		held.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
-		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, held)
+		opts.need = _count + 1
+		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
+		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, opts)
 	else:
 		r = _walk_out(vis, danger, here, inp.pos, opts)
-		_concealed = true
-		if mode == Mode.COVER and (ship.is_detected() or not bool(r.get("found", false))):
-			var rh := _walk_out(vis, danger, here, inp.pos, hard)
-			if bool(rh.get("found", false)) and (not bool(r.get("found", false))
-					or here.distance_to(r.pos) > HARD_COVER_PREF * here.distance_to(rh.pos)):
-				r = rh
-				_concealed = false
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
 	if bool(r.get("found", false)):
@@ -117,8 +72,6 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	stealth_corridor = true
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
-	if mode == Mode.COVER:
-		params = params.merged({"jitter_radius": COVER_HOLD_M})
 	return _intent(ctx, field, team_id, params)
 
 ## Outward from the danger centre toward us, else from the nearest contact.
@@ -136,8 +89,6 @@ func _decline() -> NavIntent:
 	return null
 
 func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary]) -> Dictionary:
-	if mode == Mode.COVER:
-		return _cover_inputs(ctx.ship, belief)
 	var ship: Ship = ctx.ship
 	var shootable_ids := {}
 	var ids: PackedInt64Array = field.get_team_enemy_ids(team_id)
@@ -160,35 +111,6 @@ func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[D
 		out.spot.append(cp.radius if cp != null else 0.0)
 		out.shoot.append(1 if shootable_ids.has(e.get_instance_id()) else 0)
 	return out
-
-## Radar and hydro still see through the rock; everything else needs sight
-## within the bloom our own guns give us. Only live contacts can be shot at.
-func _cover_inputs(ship: Ship, belief: Array[Dictionary]) -> Dictionary:
-	var g: Dictionary = NavigationMapManager.reach_gun(ship)
-	var bloom: float = maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0)))
-	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "spot": PackedFloat32Array(),
-		"los": PackedFloat32Array(), "shoot": PackedByteArray(), "ids": PackedInt64Array(), "heavy": PackedByteArray()}
-	for b in belief:
-		var spread: float = b.spread
-		out.pos.append(b.pos)
-		out.det.append(float(b.force_spot) + spread if float(b.force_spot) > 0.0 else 0.0)
-		out.los.append(maxf(bloom, float(b.force_spot)) + spread)
-		out.spot.append(0.0)
-		out.shoot.append(1 if int(b.source) == 0 else 0)
-		out.ids.append((b.ship as Ship).get_instance_id())
-		out.heavy.append(1 if _unangleable(ship, b.ship, _pos_dist(ship, b.pos)) else 0)
-	return out
-
-static func _pos_dist(ship: Ship, p: Vector2) -> float:
-	return Vector2(ship.global_position.x, ship.global_position.z).distance_to(p)
-
-## Bow- or stern-in, whichever the table says hurts less, is the only mitigation.
-func _unangleable(ship: Ship, enemy: Ship, range_m: float) -> bool:
-	var bow := SkillStance.dps_at(ship, enemy, range_m, 0.0)
-	var stern := SkillStance.dps_at(ship, enemy, range_m, 180.0)
-	if bow < 0.0 or stern < 0.0:
-		return false
-	return minf(bow, stern) * HARD_COVER_TTK_S >= ship.health_controller.max_hp
 
 func _nearest_friends(ctx: SkillContext, team_id: int) -> Array[Ship]:
 	var me: Vector3 = ctx.ship.global_position

@@ -204,6 +204,8 @@ var flank_max_threat: float = 0.4
 var station_max_threat: float = 0.75
 var camp_max_threat: float = 0.6
 var cover_max_threat: float = 0.7
+## A held Cover station outranks every arm until threat drops below this.
+var cover_release_threat: float = 0.4
 
 ## Threat at which an open-water gun boat breaks off its push and kites, paired
 ## with push_threat above, which is where it turns back in. The gap between the

@@ -7,6 +7,9 @@ use crate::projectile::manager::ev::ev_lookup;
 const FIRE_VALUE_PER_FIRE: f32 = 0.06;
 /// Per range sample: descent and pen for each ammo, then half-dispersion h, v.
 const CURVE_STRIDE: usize = 6;
+const GRID_RANGE_STEP_M: f32 = 500.0;
+const GRID_ASPECT_STEP_DEG: f32 = 15.0;
+const GRID_ASPECTS: usize = 13;
 
 struct Ammo {
     overmatch: f32,
@@ -28,6 +31,27 @@ struct Hull {
     max_hp: f32,
     max_buildup: f32,
     fire_dps: f32,
+}
+
+/// dps of one shooter on one hull by range and aspect, sampled off expected().
+pub(crate) struct DpsGrid {
+    rows: usize,
+    dps: Vec<f32>,
+}
+
+impl DpsGrid {
+    /// 0 beyond the shooter's range; `aspect_deg` in [0, 180], 0 bow-on.
+    pub(crate) fn at(&self, range: f32, aspect_deg: f32) -> f32 {
+        let r = (range / GRID_RANGE_STEP_M).round() as usize;
+        if r >= self.rows {
+            return 0.0;
+        }
+        let a = (aspect_deg.clamp(0.0, 180.0) / GRID_ASPECT_STEP_DEG).min((GRID_ASPECTS - 1) as f32);
+        let (a0, f) = (a.floor() as usize, a.fract());
+        let a1 = (a0 + 1).min(GRID_ASPECTS - 1);
+        let row = &self.dps[r * GRID_ASPECTS..(r + 1) * GRID_ASPECTS];
+        row[a0] + (row[a1] - row[a0]) * f
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -56,6 +80,7 @@ pub struct DamageModel {
     bucket_stride: usize,
     shooters: HashMap<i64, Shooter>,
     hulls: HashMap<i64, Hull>,
+    grids: HashMap<(i64, i64), DpsGrid>,
 }
 
 fn upper(edges: &[f64], x: f64) -> usize {
@@ -68,6 +93,28 @@ fn even(i: usize, n: usize) -> usize {
 }
 
 impl DamageModel {
+    pub(crate) fn grid(&self, shooter: i64, hull: i64) -> Option<&DpsGrid> {
+        self.grids.get(&(shooter, hull))
+    }
+
+    /// Builds the pair's grid once; false when either side is unknown.
+    pub(crate) fn ensure_grid(&mut self, shooter: i64, hull: i64) -> bool {
+        if !self.grids.contains_key(&(shooter, hull)) {
+            let (Some(s), Some(_)) = (self.shooters.get(&shooter), self.hulls.get(&hull)) else { return false };
+            let top = s.step * (s.curve.len() / CURVE_STRIDE) as f32;
+            let rows = (top / GRID_RANGE_STEP_M) as usize + 1;
+            let mut dps = Vec::with_capacity(rows * GRID_ASPECTS);
+            for r in 0..rows {
+                for a in 0..GRID_ASPECTS {
+                    let e = self.expected(shooter, hull, (r as f32 * GRID_RANGE_STEP_M).max(s.step), a as f32 * GRID_ASPECT_STEP_DEG);
+                    dps.push(e.map_or(0.0, |e| e.dps()));
+                }
+            }
+            self.grids.insert((shooter, hull), DpsGrid { rows, dps });
+        }
+        true
+    }
+
     pub(crate) fn expected(&self, shooter: i64, hull: i64, range: f32, aspect_deg: f32) -> Option<Expected> {
         let (s, h) = (self.shooters.get(&shooter)?, self.hulls.get(&hull)?);
         let n_asp = self.aspect_edges.len();
@@ -136,6 +183,7 @@ impl DamageModel {
             let b = &a.get(4 * k..4 * k + 4)?;
             (b[2] > 0.0).then(|| Ammo { overmatch: b[0], is_he: b[1] != 0.0, damage: b[2], fire_buildup: b[3] })
         };
+        self.grids.retain(|k, _| k.0 != id);
         self.shooters.insert(id, Shooter { step, curve: curve.to_vec(), rate, ammo: [slot(0), slot(1)] });
     }
 
@@ -146,6 +194,7 @@ impl DamageModel {
             .iter_shared()
             .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()? as usize, v.try_to::<PackedByteArray>().ok()?.to_vec())))
             .collect();
+        self.grids.retain(|k, _| k.1 != id);
         self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps });
     }
 
@@ -163,6 +212,7 @@ impl DamageModel {
     fn forget(&mut self, id: i64) {
         self.shooters.remove(&id);
         self.hulls.remove(&id);
+        self.grids.retain(|k, _| k.0 != id && k.1 != id);
     }
 
     /// {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps}, or empty when either side is unknown.
