@@ -47,26 +47,26 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_qcn8p"]
 script = ExtResource("3_seiyl")
-pool1 = 8016.666666666667
-pool2 = 16033.333333333334
+pool1 = 6012.5
+pool2 = 18037.5
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_slang"]
 script = ExtResource("3_seiyl")
-pool1 = 1603.3333333333333
-pool2 = 3206.6666666666665
+pool1 = 1202.5
+pool2 = 3607.5
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_jbscf"]
 script = ExtResource("3_seiyl")
-pool1 = 1603.3333333333333
-pool2 = 3206.6666666666665
+pool1 = 1202.5
+pool2 = 3607.5
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kqusw"]
 script = ExtResource("3_seiyl")
-pool1 = 4810.0
-pool2 = 9620.0
+pool1 = 3607.5
+pool2 = 10822.5
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vpkcl"]
@@ -121,8 +121,8 @@ metadata/_custom_type_script = "uid://f5a1lbtgbbk7"
 [sub_resource type="Resource" id="Resource_mvdm"]
 script = ExtResource("29_movp")
 max_speed_knots = 33.0
-acceleration_time = 15.0
-deceleration_time = 15.0
+acceleration_time = 13.0
+deceleration_time = 13.0
 turning_circle_radius = 300.0
 turn_speed_loss = 0.1
 rudder_response_time = 5.0

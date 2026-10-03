@@ -361,6 +361,7 @@ impl VisibilityGrid {
             los_margin: o.get("los_margin").map_or(0, |v| v.to_i32()),
             reach: field.as_ref().and_then(|f| f.bind().reach_lookup(team, o.get("hull_key").map_or(0, |v| v.to_i64()), ids.as_slice())),
             fire: field.as_ref().and_then(|f| f.bind().fire_lookup(team, ids.as_slice())),
+            reach_needs_los: o.get("reach_needs_los").is_some_and(|v| v.to_bool()),
         }
     }
 

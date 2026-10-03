@@ -295,15 +295,20 @@ func _refine_to_shore(cell: Vector3, clearance: float) -> Vector3:
 ## the smaller turn; the angling skill's answer when nothing can reach here.
 func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Dictionary) -> NavIntent:
 	var ship: Ship = ctx.ship
-	var cone: Dictionary = field.cone_at(team_id, Vector2(_station.x, _station.z))
 	var heading: float
-	if float(cone.get("half", -1.0)) >= 0.0:
-		heading = float(cone.heading)
+	var away = params.get("away_from")
+	if away is Vector2 and Vector2(_station.x, _station.z).distance_to(away) > 1.0:
+		var out: Vector2 = Vector2(_station.x, _station.z) - away
+		heading = atan2(out.x, out.y)
 	else:
-		heading = SkillAngle.calc_heading(ctx, params)
-	var current: float = ctx.behavior._get_ship_heading()
-	if absf(angle_difference(current, heading)) > PI / 2.0:
-		heading = ctx.behavior._normalize_angle(heading + PI)
+		var cone: Dictionary = field.cone_at(team_id, Vector2(_station.x, _station.z))
+		if float(cone.get("half", -1.0)) >= 0.0:
+			heading = float(cone.heading)
+		else:
+			heading = SkillAngle.calc_heading(ctx, params)
+		var current: float = ctx.behavior._get_ship_heading()
+		if absf(angle_difference(current, heading)) > PI / 2.0:
+			heading = ctx.behavior._normalize_angle(heading + PI)
 	var hold: float = params.get("jitter_radius", ship.movement_controller._p().turning_circle_radius * 2.0)
 	var intent := NavIntent.create(_station, heading, hold)
 	intent.skip_threat_adjustment = true

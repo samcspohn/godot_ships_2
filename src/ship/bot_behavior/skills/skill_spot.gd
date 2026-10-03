@@ -35,23 +35,21 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	var team_id: int = ship.team.team_id
 	var belief: Array[Dictionary] = ctx.server._team_belief(team_id)
-	if belief.is_empty():
-		return _decline()
-	if ship.is_detected() \
-			and ctx.behavior.get_threat_score(ctx) > ctx.behavior._doc().stealth_threat:
+	if belief.is_empty() or _declines(ctx):
 		return _decline()
 
-	var inp := _inputs(ctx, field, team_id, belief)
+	var walk := _walk_inputs(ctx, field, team_id, belief)
+	if walk.is_empty():
+		return _decline()
+	var pos: PackedVector2Array = walk.pos
+	var opts: Dictionary = walk.opts
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var danger3: Vector3 = ctx.behavior._get_positioning_danger_center()
 	var danger := Vector2(danger3.x, danger3.z) if danger3 != Vector3.ZERO else field.get_team_danger_centre(team_id)
-	var flank := _flank_dir(ctx)
-	var clearance: float = ctx.behavior._get_ship_clearance()
-
-	var opts := {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot, "clearance": clearance,
-		"avoid": VisibilityGrid.AVOID_DET, "flank": flank}
+	opts.merge({"clearance": ctx.behavior._get_ship_clearance(), "avoid": VisibilityGrid.AVOID_DET,
+		"flank": _flank_dir(ctx)}, true)
 	if _has_station:
-		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), inp.pos, opts)
+		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), pos, opts)
 		_count = int(ev.count) if bool(ev.free) else 0
 		if _count == 0:
 			_drop()
@@ -59,9 +57,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	if _has_station:
 		opts.need = _count + 1
 		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
-		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, inp.pos, opts)
+		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
 	else:
-		r = _walk_out(vis, danger, here, inp.pos, opts)
+		r = _walk_out(vis, danger, here, pos, opts)
 	_steps = int(r.get("steps", 0))
 	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
 	if bool(r.get("found", false)):
@@ -72,7 +70,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return _decline()
 	stealth_corridor = true
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
-	return _intent(ctx, field, team_id, params)
+	# Bow out: lit, the boat sprints straight away; torpedoes from the threat meet its stern.
+	return _intent(ctx, field, team_id, params.merged({"away_from": danger}))
 
 ## Outward from the danger centre toward us, else from the nearest contact.
 func _walk_out(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array, opts: Dictionary) -> Dictionary:
@@ -87,6 +86,15 @@ func _decline() -> NavIntent:
 	_drop()
 	stealth_corridor = false
 	return null
+
+## Lit under real threat a spotter has nothing left to hide.
+func _declines(ctx: SkillContext) -> bool:
+	return ctx.ship.is_detected() and ctx.behavior.get_threat_score(ctx) > ctx.behavior._doc().stealth_threat
+
+## {pos, opts} for the walk: the zone to stay out of and the goal per contact.
+func _walk_inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary]) -> Dictionary:
+	var inp := _inputs(ctx, field, team_id, belief)
+	return {"pos": inp.pos, "opts": {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot}}
 
 func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary]) -> Dictionary:
 	var ship: Ship = ctx.ship

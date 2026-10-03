@@ -6,13 +6,13 @@ use super::{
     DODGE_COMMITMENT_DURATION, GRAZE_MIN_FACTOR, PARKED_SPEED_THRESHOLD, SHELL_TIME_TOLERANCE,
     SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER,
 };
-use crate::nav::types::{angle_difference, clamp_f, lerp_f, normalize_angle, ArcPoint};
+use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint, DynamicObstacle};
 
 impl ShipNavigator {
     /// Evaluate shell + torpedo threats along an arc. Returns separate scores so
     /// the caller can apply different budgets and suppress shells when the
     /// stuck override is active.
-    pub(crate) fn score_arc_shell_threat(&self, arc: &[ArcPoint]) -> ThreatEval {
+    pub(crate) fn score_arc_shell_threat(&self, arc: &[ArcPoint], end_speed: f32) -> ThreatEval {
         let mut result = ThreatEval::default();
         if arc.len() < 2 {
             return result;
@@ -121,102 +121,68 @@ impl ShipNavigator {
         }
 
         // =========================================================
-        // TORPEDOES - temporal point intersection
+        // TORPEDOES - swept test
         //
-        // For each torpedo, project its position forward to the time of each arc
-        // point and check if it falls within the ship's OBB (extended by the
-        // torpedo's radius).  Torpedoes always do full damage regardless of
-        // impact angle.  Accumulate the worst penalty across all arc points.
+        // Between consecutive samples the torpedo's path in the ship's frame is
+        // treated as a segment and clipped against the hull box grown by the
+        // torpedo's radius. Point samples seconds apart missed nearly every
+        // torpedo crossing the beam. Past the arc the ship runs on along its last
+        // heading while its speed ramps toward `end_speed`, so a throttle chop
+        // that lets a spread pass ahead is credited.
         // =========================================================
-        for obs in self.obstacles.values() {
-            if !obs.is_torpedo() {
-                continue;
-            }
-
-            let torp_speed = obs.velocity.length();
-            if torp_speed < 1.0 {
-                continue;
-            }
-
-            let cal_weight = (TORPEDO_VIRTUAL_CALIBER * TORPEDO_VIRTUAL_CALIBER) / (200.0 * 200.0);
-            let mut worst = 0.0f32;
-            let mut hit_time = f32::INFINITY;
-
-            for apt in arc {
-                // Project torpedo position to arc time
-                let torp_pos = obs.position + obs.velocity * apt.time;
-
-                // Ship local frame
-                let fx = apt.heading.sin();
-                let fz = apt.heading.cos();
-
-                let rel = torp_pos - apt.position;
-                let along_keel = rel.x * fx + rel.y * fz;
-                let along_beam = rel.x * fz - rel.y * fx;
-
-                // Clearance: hull half-extents + torpedo body radius
-                if along_keel.abs() > hsl + obs.radius {
-                    continue;
+        let torps: Vec<&DynamicObstacle> = self.obstacles.values().filter(|o| o.is_torpedo() && o.velocity.length() >= 1.0).collect();
+        if torps.is_empty() {
+            return result;
+        }
+        let cal_weight = (TORPEDO_VIRTUAL_CALIBER * TORPEDO_VIRTUAL_CALIBER) / (200.0 * 200.0);
+        const MAX_EXT_TIME: f32 = 90.0;
+        const EXT_DT: f32 = 0.5;
+        let last = *arc.last().unwrap();
+        let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
+        let mut track: Vec<(Vector2, f32, f32)> = arc.iter().map(|p| (p.position, p.heading, p.time)).collect();
+        let (fx, fz) = (last.heading.sin(), last.heading.cos());
+        let (mut pos, mut speed, mut t) = (last.position, last.speed, last.time);
+        while t < MAX_EXT_TIME {
+            speed = move_toward_f(speed, end_speed, EXT_DT * speed_rate);
+            pos += Vector2::new(fx, fz) * speed * EXT_DT;
+            t += EXT_DT;
+            track.push((pos, last.heading, t));
+        }
+        let local = |torp: &DynamicObstacle, (p, h, t): (Vector2, f32, f32)| -> Vector2 {
+            let rel = torp.position + torp.velocity * t - p;
+            let (fx, fz) = (h.sin(), h.cos());
+            Vector2::new(rel.x * fx + rel.y * fz, rel.x * fz - rel.y * fx)
+        };
+        for obs in torps {
+            let (hx, hy) = (hsl + obs.radius, hsb + obs.radius);
+            let mut prev = local(obs, track[0]);
+            for k in 1..track.len() {
+                let cur = local(obs, track[k]);
+                if let Some(f) = segment_enters_box(prev, cur, hx, hy) {
+                    let hit = track[k - 1].2 + f * (track[k].2 - track[k - 1].2);
+                    result.torpedo_score += cal_weight;
+                    result.torpedo_time = result.torpedo_time.min(hit);
+                    break;
                 }
-                if along_beam.abs() > hsb + obs.radius {
-                    continue;
-                }
-
-                // Torpedo hit - full damage, no angle discount
-                if cal_weight > worst {
-                    worst = cal_weight;
-                }
-                if apt.time < hit_time {
-                    hit_time = apt.time;
-                }
-            }
-
-            // Arc extrapolation: predict_arc_to_heading may terminate early when
-            // the bow aligns with the waypoint (the common case when heading
-            // straight toward a distant destination).  The resulting arc may cover
-            // only a few seconds while the torpedo arrives much later.  Extend the
-            // ship's last known position/heading/speed straight ahead up to 90 s
-            // total so distant-but-incoming torpedoes are not missed on the
-            // straight-ahead candidate - giving the dodge candidates a real
-            // threat advantage to beat.
-            if worst == 0.0 && !arc.is_empty() {
-                let last_pt = arc.last().unwrap();
-                let ext_fx = last_pt.heading.sin();
-                let ext_fz = last_pt.heading.cos();
-                let ext_speed = last_pt.speed.abs().max(1.0);
-                let step_dist = (hsl * 2.0).max(50.0);
-                let step_time = step_dist / ext_speed;
-                const MAX_EXT_TIME: f32 = 90.0;
-
-                let mut t = last_pt.time + step_time;
-                while t <= MAX_EXT_TIME {
-                    let dt_ext = t - last_pt.time;
-                    let ship_pos = Vector2::new(
-                        last_pt.position.x + ext_fx * ext_speed * dt_ext,
-                        last_pt.position.y + ext_fz * ext_speed * dt_ext,
-                    );
-                    let torp_pos_ext = obs.position + obs.velocity * t;
-                    let rel_ext = torp_pos_ext - ship_pos;
-                    let along_keel_ext = rel_ext.x * ext_fx + rel_ext.y * ext_fz;
-                    let along_beam_ext = rel_ext.x * ext_fz - rel_ext.y * ext_fx;
-                    if along_keel_ext.abs() <= hsl + obs.radius
-                        && along_beam_ext.abs() <= hsb + obs.radius
-                    {
-                        worst = cal_weight;
-                        hit_time = t;
-                        break;
-                    }
-                    t += step_time;
-                }
-            }
-
-            result.torpedo_score += worst;
-            if hit_time < result.torpedo_time {
-                result.torpedo_time = hit_time;
+                prev = cur;
             }
         }
 
         result
+    }
+
+    /// Mean travel direction of the torpedoes that will reach us, nearest weighted most.
+    fn torpedo_track(&self) -> Option<Vector2> {
+        let mut sum = Vector2::ZERO;
+        for o in self.obstacles.values().filter(|o| o.is_torpedo()) {
+            let speed = o.velocity.length();
+            let to_us = self.state.position - o.position;
+            if speed < 1.0 || o.velocity.dot(to_us) <= 0.0 {
+                continue;
+            }
+            sum += o.velocity / speed / (1.0 + to_us.length() / 1000.0);
+        }
+        (sum.length() > 1e-3).then(|| sum.normalized())
     }
 
     pub(crate) fn select_best_steering(
@@ -341,6 +307,8 @@ impl ShipNavigator {
         struct Candidate {
             rudder: f32,
             throttle: i32,
+            /// Hold the rudder until the bow bears on this point instead of the waypoint.
+            aim: Option<Vector2>,
         }
 
         // Any torpedo in the obstacle set puts the candidate list into override
@@ -353,16 +321,17 @@ impl ShipNavigator {
         // full-rudder turns to dodge torpedoes - previously only +-0.3 were tried.
         let mut candidates: Vec<Candidate> = Vec::new();
         {
-            let mut add_candidate = |r: f32, t: i32| {
+            let mut add = |r: f32, t: i32, aim: Option<Vector2>| {
                 let r = clamp_f(r, -1.0, 1.0);
                 if candidates
                     .iter()
-                    .any(|c| (c.rudder - r).abs() < 0.05 && c.throttle == t)
+                    .any(|c| (c.rudder - r).abs() < 0.05 && c.throttle == t && c.aim == aim)
                 {
                     return;
                 }
-                candidates.push(Candidate { rudder: r, throttle: t });
+                candidates.push(Candidate { rudder: r, throttle: t, aim });
             };
+            let mut add_candidate = |r: f32, t: i32| add(r, t, None);
 
             for &off in rudder_offsets.iter() {
                 add_candidate(desired_rudder + off, desired_throttle);
@@ -387,6 +356,26 @@ impl ShipNavigator {
             if torpedoes_present && desired_throttle < 4 {
                 for &off in rudder_offsets.iter() {
                     add_candidate(desired_rudder + off, 4);
+                }
+            }
+            if torpedoes_present {
+                // Letting a wall pass ahead, and combing a spread: turn onto its
+                // track (bow in or stern out) and hold, at speed or slowed.
+                for &t in &[0, 2] {
+                    for &r in &[desired_rudder, 0.0, 0.6, -0.6] {
+                        add_candidate(r, t);
+                    }
+                }
+                if let Some(track) = self.torpedo_track() {
+                    for dir in [track, -track] {
+                        let h = dir.x.atan2(dir.y);
+                        let turn = -angle_difference(self.state.heading, h).signum();
+                        let aim = Some(self.state.position + dir * 20000.0);
+                        for &t in &[desired_throttle.max(2), 4, 2] {
+                            add(turn, t, aim);
+                            add(turn * 0.6, t, aim);
+                        }
+                    }
                 }
             }
         }
@@ -438,7 +427,7 @@ impl ShipNavigator {
             threats: ThreatEval,
             any_obs_collision: bool,
         }
-        const MAX_PASS_ENTRIES: usize = 24;
+        const MAX_PASS_ENTRIES: usize = 48;
         let mut pass_data: Vec<PassEntry> = Vec::new();
         let mut any_collision = false;
 
@@ -454,7 +443,10 @@ impl ShipNavigator {
                 // predict_arc_internal gives a free-running arc not tied to a waypoint
                 // arrival condition, avoiding the symmetric-scoring tie that the old
                 // virtual-waypoint approach produced.
-                let arc = self.predict_arc_internal(cand_rudder, cand_throttle, sim_lookahead);
+                let arc = match candidates[i].aim {
+                    Some(aim) => self.predict_arc_to_heading(cand_rudder, cand_throttle, aim, sim_lookahead, sim_max_time, false),
+                    None => self.predict_arc_internal(cand_rudder, cand_throttle, sim_lookahead),
+                };
                 if arc.len() < 2 {
                     steering_short_arc_rejects += 1;
                     continue;
@@ -531,7 +523,7 @@ impl ShipNavigator {
                     }
                 }
 
-                let threats = self.score_arc_shell_threat(&arc);
+                let threats = self.score_arc_shell_threat(&arc, self.throttle_to_speed(cand_throttle));
 
                 // Soft terrain penalty: prefer arcs that stay outside soft_clearance
                 // when the ship is currently outside it.  When already inside
@@ -563,7 +555,7 @@ impl ShipNavigator {
                 let arc = self.predict_arc_to_heading(
                     cand_rudder,
                     cand_throttle,
-                    wp_target,
+                    candidates[i].aim.unwrap_or(wp_target),
                     sim_lookahead,
                     sim_max_time,
                     rev_align,
@@ -690,7 +682,7 @@ impl ShipNavigator {
                     }
                 }
 
-                let threats = self.score_arc_shell_threat(&arc);
+                let threats = self.score_arc_shell_threat(&arc, self.throttle_to_speed(cand_throttle));
 
                 // Soft terrain penalty: same logic as the wp_is_virtual branch.
                 if sdf_here >= soft_clearance && soft_min_sdf < soft_clearance {
@@ -933,5 +925,39 @@ impl ShipNavigator {
 
         // Target is behind - check if it's within 3.0 x turning circle radius
         dist < self.params.turning_circle_radius * 3.0
+    }
+}
+
+/// Fraction along a->b where it first enters the box |x| <= hx, |y| <= hy.
+fn segment_enters_box(a: Vector2, b: Vector2, hx: f32, hy: f32) -> Option<f32> {
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    let d = b - a;
+    for (p, dp, h) in [(a.x, d.x, hx), (a.y, d.y, hy)] {
+        if dp.abs() < 1e-6 {
+            if p.abs() > h {
+                return None;
+            }
+            continue;
+        }
+        let (t0, t1) = ((-h - p) / dp, (h - p) / dp);
+        lo = lo.max(t0.min(t1));
+        hi = hi.min(t0.max(t1));
+        if lo > hi {
+            return None;
+        }
+    }
+    Some(lo)
+}
+
+#[cfg(test)]
+mod torpedo_tests {
+    use super::*;
+
+    #[test]
+    fn crossing_between_samples_hits() {
+        assert!(segment_enters_box(Vector2::new(0.0, -80.0), Vector2::new(0.0, 80.0), 55.0, 6.0).is_some());
+        assert!(segment_enters_box(Vector2::new(70.0, -80.0), Vector2::new(70.0, 80.0), 55.0, 6.0).is_none());
+        let f = segment_enters_box(Vector2::new(-100.0, 0.0), Vector2::new(100.0, 0.0), 50.0, 6.0).unwrap();
+        assert!((f - 0.25).abs() < 1e-6);
     }
 }

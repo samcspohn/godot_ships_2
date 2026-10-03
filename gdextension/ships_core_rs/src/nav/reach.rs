@@ -2811,6 +2811,8 @@ struct StationArgs {
     /// Covered means nobody can land shells on the cell OR nobody can see
     /// it; a cell that is both seen and under fire is not a candidate.
     covered_only: bool,
+    /// Reach counts only enemies in sight now, not last-known or presumed ones.
+    reach_live_only: bool,
     /// Distance-to-`toward` band a candidate must lie in: a kite opens range
     /// with min_range above where the ship stands, a push closes with
     /// max_range below it.
@@ -2857,6 +2859,7 @@ impl StationArgs {
             max_exposed: opt(d, "max_exposed", f32::INFINITY),
             require_unseen: opt(d, "require_unseen", false),
             covered_only: opt(d, "covered_only", false),
+            reach_live_only: opt(d, "reach_live_only", false),
             min_range: opt(d, "min_range", 0.0f32),
             max_range: opt(d, "max_range", f32::INFINITY),
             flank_from: opt(d, "flank_from", Vector2::ZERO),
@@ -2864,6 +2867,9 @@ impl StationArgs {
         }
     }
 }
+
+/// Belief weight of a contact in sight; anything less is remembered or presumed.
+const LIVE_WEIGHT: f32 = 0.999;
 
 /// A shooter's threat share when it would see the hull only once the guns
 /// bloom, and when it could not see it at all (planes, radar, belief error).
@@ -3153,7 +3159,8 @@ fn station_enemies<'a>(tl: &'a TeamLayers, a: &StationArgs) -> (Vec<StationEnemy
         if e.shell.has_guns() {
             armed += cw;
         }
-        StationEnemy { reach: e.reach.get(&a.hull_key).map(|pl| pl.as_slice()), fire: &e.fire, w, cw }
+        let reach = e.reach.get(&a.hull_key).map(|pl| pl.as_slice()).filter(|_| !a.reach_live_only || e.weight >= LIVE_WEIGHT);
+        StationEnemy { reach, fire: &e.fire, w, cw }
     }).collect();
     (se, armed)
 }

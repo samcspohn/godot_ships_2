@@ -50,26 +50,26 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_mrsjx"]
 script = ExtResource("3_pxp4h")
-pool1 = 4530.0
-pool2 = 9060.0
+pool1 = 2265.0
+pool2 = 6795.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ldxem"]
 script = ExtResource("3_pxp4h")
-pool1 = 1258.3333333333333
-pool2 = 2516.6666666666665
+pool1 = 943.75
+pool2 = 2831.25
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_xci8g"]
 script = ExtResource("3_pxp4h")
-pool1 = 1258.3333333333333
-pool2 = 2516.6666666666665
+pool1 = 943.75
+pool2 = 2831.25
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vwm28"]
 script = ExtResource("3_pxp4h")
-pool1 = 2013.3333333333333
-pool2 = 4026.6666666666665
+pool1 = 1510.0
+pool2 = 4530.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e6iqp"]
@@ -78,6 +78,13 @@ radius = 3500.0
 air_radius = 1750.0
 bloom_duration = 12.0
 metadata/_custom_type_script = "uid://bmckcfm6ohb58"
+
+[sub_resource type="Resource" id="Resource_disp_xdnm8"]
+script = ExtResource("disp_script")
+sigma = 2.25
+h_disp = 194.737
+v_disp = 104.167
+metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_wm6vg"]
 script = ExtResource("6_nguxy")
@@ -103,14 +110,6 @@ fire_buildup = 14.0
 type = 0
 overmatch = 21
 metadata/_custom_type_script = "uid://d0r4vucnli08f"
-
-[sub_resource type="Resource" id="Resource_disp_xdnm8"]
-script = ExtResource("disp_script")
-sigma = 2.25
-reference_range = 20000.0
-h_disp = 194.737
-v_disp = 104.167
-metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_xdnm8"]
 script = ExtResource("5_o13ib")
@@ -214,7 +213,7 @@ _max_hp = 15100.0
 bow_percent = 0.25
 stern_percent = 0.25
 superstructure_percent = 0.4
-casemate_percent = 0.9
+casemate_percent = 0.6
 citadel = SubResource("Resource_4n5yk")
 casemate = SubResource("Resource_mrsjx")
 bow = SubResource("Resource_ldxem")

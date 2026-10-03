@@ -89,6 +89,7 @@ var _skill_station: SkillStation = SkillStation.new()
 var _skill_utility: SkillUtility = SkillUtility.new()
 var _skill_flank: SkillFlank = SkillFlank.new()
 var _skill_spot: SkillSpot = SkillSpot.new()
+var _skill_gunboat: SkillGunboat = SkillGunboat.new()
 var _skill_hold_cover: SkillCover = SkillCover.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
@@ -2236,6 +2237,7 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 		&"Utility":     intent = _skill_utility.execute(ctx, params)
 		&"Flank":       intent = _skill_flank.execute(ctx, params)
 		&"Spot":        intent = _skill_spot.execute(ctx, params)
+		&"Gunboat":     intent = _skill_gunboat.execute(ctx, params)
 		&"Cover":       intent = _skill_hold_cover.execute(ctx, params)
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
 		&"SailForward": intent = _intent_sail_forward(ctx.ship)
@@ -2517,6 +2519,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_utility.reset()
 	if prev_skill == &"Spot" and _active_skill_name != &"Spot":
 		_skill_spot.reset()
+	if prev_skill == &"Gunboat" and _active_skill_name != &"Gunboat":
+		_skill_gunboat.reset()
 	if prev_skill == &"Cover" and _active_skill_name != &"Cover":
 		_skill_hold_cover.reset()
 	if prev_skill == &"Push" and _active_skill_name != &"Push":
@@ -2653,6 +2657,9 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 		"w_path": d.utility_w_path,
 	}
 
+## Below this HP fraction threat climbs toward maximal whatever the contacts.
+const THREAT_LOW_HP: float = 0.35
+
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
 	## Each enemy within its own gun range contributes matchup × condition ×
@@ -2743,7 +2750,10 @@ func get_threat_score(ctx: SkillContext) -> float:
 		this_threat *= float(contact.certainty)
 		raw_threat *= (1.0 - this_threat)
 
-	var base_threat = clampf(1 - raw_threat, 0.0, 1.0)
+	# Low HP multiplies the pressure: 1 - (1 - t)^k scales the summed pressure by k,
+	# so no enemy stays no threat while one stray shell's worth reads as maximal.
+	var safety: float = maxf(smoothstep(0.0, THREAT_LOW_HP, hp_ratio), 0.02)
+	var base_threat = clampf(1.0 - pow(raw_threat, 1.0 / safety), 0.0, 1.0)
 
 	# As the match timer runs out, reduce threat so bots play more aggressively.
 	# Uses 1 - t^4: stays near 1.0 for most of the match, drops sharply near the end.

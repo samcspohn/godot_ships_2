@@ -1292,6 +1292,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> 
 		row["max_hp"] = hc.max_hp
 		row["hp_frac"] = maxf(hc.current_hp, 0.0) / hc.max_hp
 		row["damage_taken"] = taken.get(ship, 0.0)
+		row["torpedo_hits_taken"] = ship.stats.torpedo_hits_taken
+		row["torpedo_taken"] = ship.stats.torpedo_taken
 		row["survival_time"] = _sunk_at.get(ship, match_elapsed)
 		row["won"] = ship.team.team_id == winning_team
 		ships.append(row)

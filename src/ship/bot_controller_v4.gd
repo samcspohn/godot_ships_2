@@ -1306,12 +1306,13 @@ func _emit_debug_draws() -> void:
 			&"Flank": st_skill = behavior._skill_flank
 			&"Utility": st_skill = behavior._skill_utility
 			&"Spot": st_skill = behavior._skill_spot
+			&"Gunboat": st_skill = behavior._skill_gunboat
 		if behavior._active_skill_name == &"Kite" and behavior._skill_kite.has_ray():
 			var ke: Vector3 = behavior._skill_kite.ray_end()
 			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
 			Debug.draw_label(Vector3(ke.x, 60.0, ke.z), behavior._skill_kite.debug_text(), Color(1.0, 0.8, 1.0), 14)
-		if st_skill == behavior._skill_spot:
-			for trail in behavior._skill_spot.trails():
+		if st_skill is SkillSpot:
+			for trail in (st_skill as SkillSpot).trails():
 				for i in range(1, trail.size()):
 					Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
 						Color(0.4, 0.8, 1.0, 0.6))
@@ -1480,6 +1481,14 @@ func _emit_debug_draws() -> void:
 			if in_cover:
 				flags.append("COVER")
 			lines.append(" · ".join(flags))
+			if behavior != null:
+				var policy: PackedStringArray = PackedStringArray()
+				for f in [["STEALTH", behavior.wants_stealth], ["CONCEAL", behavior.wants_to_be_concealed],
+						["NO_DARK", behavior.cant_go_dark], ["HOLD_GUNS", behavior._suppress_guns],
+						["HOLD_FIRE", behavior.hold_fire], ["CORNERED", behavior._cornered]]:
+					if f[1]:
+						policy.append(f[0])
+				lines.append(" · ".join(policy) if not policy.is_empty() else "guns free · no stealth")
 
 			# Line 4 — torpedo reload (only for ships that have torpedoes)
 			if torp_reload >= 0.0:

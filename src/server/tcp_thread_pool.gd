@@ -1,6 +1,5 @@
 extends Node
 
-const PORT = 4242
 
 var server: TCPServer
 var client: StreamPeerTCP
@@ -115,12 +114,14 @@ func start_server():
 		print("Server already running")
 		return
 	server = TCPServer.new()
-	var err = server.listen(PORT, "*")
+	# Same number as the game's ENet (UDP) port, so servers on one host never share it.
+	var port := int(CmdArgs.value("--port", str(GameSettings.DEFAULT_SERVER_PORT)))
+	var err = server.listen(port, "*")
 	if err != OK:
 		print("Failed to start server: ", err)
 		return
 	server_running = true
-	print("Server listening on port ", PORT)
+	print("Server listening on port ", port)
 
 func _process(_delta: float) -> void:
 	if server_running:
@@ -265,7 +266,7 @@ func start_client():
 		print("Client already running")
 		return
 	client = StreamPeerTCP.new()
-	var err = client.connect_to_host("127.0.0.1", PORT)
+	var err = client.connect_to_host(NetworkManager._address, NetworkManager._port)
 	if err != OK:
 		print("Failed to connect: ", err)
 		return

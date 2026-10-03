@@ -79,8 +79,8 @@ metadata/_custom_type_script = "uid://bmckcfm6ohb58"
 [sub_resource type="Resource" id="Resource_disp_jppql"]
 script = ExtResource("disp_script")
 sigma = 2.0
-h_disp = 220.0
-v_disp = 110.0
+h_disp = 240.0
+v_disp = 120.0
 metadata/_custom_type_script = "uid://bt4mqhp2dxlvn"
 
 [sub_resource type="Resource" id="Resource_pue0t"]
@@ -243,7 +243,6 @@ metadata/_custom_type_script = "uid://kgwonrqfsvxk"
 [sub_resource type="Resource" id="Resource_plq54"]
 script = ExtResource("27_edgkl")
 hp = 3000.0
-_range = 8000.0
 speed = 200.0
 spotting_range = 8000.0
 altitude = 500.0

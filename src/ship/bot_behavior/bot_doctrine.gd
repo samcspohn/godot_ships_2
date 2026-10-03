@@ -220,15 +220,6 @@ var spot_w_reach: float = 0.2
 var spot_w_reveal: float = 1.5
 var spot_w_close: float = 0.5
 
-## Open-water gunboat: the utility search, guns and eyes alike.
-var gunboat_w_reach: float = 0.8
-var gunboat_w_reveal: float = 0.8
-var gunboat_w_close: float = 0.2
-
-## Past either edge a gun boat stops fighting in open water: guns only from a
-## cover station, otherwise spot and torpedo. Exit is back below push_threat.
-var gunboat_cover_threat: float = 0.8
-var gunboat_cover_hp: float = 0.2
 
 ## Minimum distance to the nearest non-DD threat before cover is preferred to
 ## kiting at high threat.
@@ -509,7 +500,8 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	# range, the close arm should be reached only when something has genuinely
 	# closed.
 	d.close_arm_range_gated = true
-	d.close_arm_uses_cover = true
+	# Threat opens the gunboat band instead; cover only hides it from its targets.
+	d.close_arm_uses_cover = false
 	# The engaged arm swings between push and kite on these two (see
 	# DDBehavior._open_water_kiting). push_threat comes from for_destroyer() and
 	# is the turn-back-in edge; this is the break-off edge.

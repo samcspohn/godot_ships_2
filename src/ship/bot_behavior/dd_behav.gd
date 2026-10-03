@@ -116,7 +116,10 @@ func pick_target(targets: Array[Ship], _last_target: Ship) -> Ship:
 		if contact.is_lkp:
 			priority *= LKP_TARGET_PRIORITY_MULT
 
-		var shootable = _ship.is_detected() and dist <= gun_range and can_hit_target(ship)
+		# A torpedo boat only counts guns once it is lit; a gunboat shoots from the start,
+		# so a live contact it can actually hit beats any it cannot.
+		var shootable = (_ship.is_detected() if is_torpedo_boat else not contact.is_lkp) \
+			and dist <= gun_range and can_hit_target(ship)
 		candidate_data.append({
 			ship = ship,
 			base_priority = priority,
@@ -209,8 +212,16 @@ func _owns_gun_policy() -> bool:
 	return true
 
 func doctrine() -> BotDoctrine:
-	return BotDoctrine.for_gunboat_destroyer() if _is_gunboat(_ship) \
-		else BotDoctrine.for_destroyer()
+	return BotDoctrine.for_gunboat_destroyer() if _gunboating() else BotDoctrine.for_destroyer()
+
+## Below this HP fraction a gun-armed hull fights as a torpedo boat.
+const GUNBOAT_TORPEDO_HP := 0.35
+
+func _gunboating() -> bool:
+	if not _is_gunboat(_ship):
+		return false
+	var hc := _ship.health_controller
+	return hc.current_hp >= hc.max_hp * GUNBOAT_TORPEDO_HP
 
 ## Which row _doc() is currently holding, so a flip can be noticed.
 var _doctrine_is_gunboat: bool = false
@@ -221,7 +232,7 @@ var _doctrine_is_gunboat: bool = false
 ## the classifier - two property reads - every call, and rebuild only when the
 ## answer actually changes.
 func _doc() -> BotDoctrine:
-	var gunboat := _is_gunboat(_ship)
+	var gunboat := _gunboating()
 	if _doctrine == null or gunboat != _doctrine_is_gunboat:
 		_doctrine_is_gunboat = gunboat
 		_doctrine = doctrine()
@@ -330,99 +341,28 @@ func _open_water_kiting(sit: Dictionary) -> bool:
 	return _ow_kiting
 
 
-## Minimum seconds a gunboat stays defensive before it may return to open water,
-## so cover breaking the shooters' LOS does not immediately send it back out.
-const GUNBOAT_DEFENSIVE_DWELL: float = 10.0
-
-var _gb_defensive: bool = false
-var _gb_defensive_since: float = 0.0
-## Defensive, or nothing spotted: spot and torpedo rather than gunboat.
+## Nothing spotted and the gunboat skill idle: spot and torpedo rather than gunboat.
 var _gb_stealth: bool = false
 
-func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	_update_gunboat_defensive(sit)
-	return super(ctx, sit)
-
-func _update_gunboat_defensive(sit: Dictionary) -> void:
-	var d := _doc()
-	if d.trades_on_concealment:
-		_gb_defensive = false
-		return
-	var now: float = SimClock.now()
-	var hurt: bool = sit.hp_ratio < d.gunboat_cover_hp
-	if _gb_defensive:
-		if not hurt and sit.threat <= d.push_threat \
-				and now - _gb_defensive_since >= GUNBOAT_DEFENSIVE_DWELL:
-			_gb_defensive = false
-	elif hurt or sit.threat >= d.gunboat_cover_threat:
-		_gb_defensive = true
-		_gb_defensive_since = now
-
-## A gunboat in cover sees nothing, so cover is only worth it while a teammate
-## holds a contact inside our guns.
-func _cover_allowed(ctx: SkillContext, sit: Dictionary) -> bool:
-	if _doc().trades_on_concealment:
-		return true
-	var ship := ctx.ship
-	for e in sit.spotted:
-		if not is_instance_valid(e) or e.concealment == null:
-			continue
-		var holder: Ship = e.concealment.spotted_by
-		if holder == null or holder == ship or not is_instance_valid(holder) \
-				or holder.team.team_id != ship.team.team_id:
-			continue
-		if ship.global_position.distance_to(e.global_position) <= sit.gun_range:
-			return true
-	return false
-
-func _gunboat_in_cover() -> bool:
-	return _active_skill_name == &"FindCover" and _skill_cover._arrived
+## A healthy gunboat's job in every arm: walk the engagement band, spot and shoot.
+## Its band opens with threat, which is the push/kite swing.
+func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	if _doc().trades_on_concealment or not sit.has_enemies:
+		return null
+	var intent := _run_skill(&"Gunboat", ctx)
+	if intent != null:
+		sit["arm"] = &"engaged"
+	return intent
 
 
-## The engaged arm for a boat that fights in the open with its guns.
-##
-## A gunboat has no dark water to shoot from, so it trades on manoeuvre instead
-## - and manoeuvre here means the range itself, worked back and forth. It pushes
-## in while nobody is shooting at it, and opens the range once somebody is, then
-## pushes again once that has cost the shooters their accuracy. That swing is
-## the playstyle: the boat is only ever gaining ground or spending it, and the
-## thing it spends it on is being hard to hit.
-##
-## This used to camp a locked firing position below camp_max_threat and hand the
-## navigator a jitter radius to dodge inside. A camp is a stationary answer to a
-## moving problem: the jitter radius is a couple of turning circles, which is
-## room to sidestep one salvo, not room to make a battery re-range. Sitting in
-## it also let the enemy hold a firing solution for as long as it pleased, which
-## is the one thing a boat with a destroyer's plating cannot afford.
-##
-## Cover is still tried first on the kite leg - terrain beats water whenever it
-## is going spare - and open water is simply the case where FindCover declines,
-## which is what makes Kite the answer here rather than a fallback.
-##
-## With nothing spotted the boat falls through to the same errand the torpedo
-## boat runs - go and make vision - because a destroyer that cannot see anything
-## still has the fleet's eyes whatever it is armed with.
+## The engaged arm for a gunboat whose band walk found nothing: the open-water
+## push/kite swing on threat, or with nothing lit, go and make vision.
 func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var d := _doc()
 	var intent: NavIntent = null
 
-	if _gb_defensive:
-		_ow_kiting = false
-		if _cover_allowed(ctx, sit):
-			intent = _run_skill(&"FindCover", ctx, _cover_params())
-	if intent == null and not _gb_defensive:
-		# Open water on the utility search: cells that shoot and see under the
-		# cap, pulled to the fighting range. The swing below is the fallback.
-		_ow_kiting = false
-		intent = _run_skill(&"Utility", ctx, _gunboat_utility_params())
-	if intent != null:
-		pass
-	elif sit.has_spotted:
+	if sit.has_spotted:
 		if _open_water_kiting(sit):
-			if _cover_allowed(ctx, sit):
-				intent = _run_skill(&"FindCover", ctx, _cover_params())
-			if intent == null:
-				intent = _run_skill(&"Kite", ctx)
+			intent = _run_skill(&"Kite", ctx)
 		else:
 			# Push stops closing at the engagement range, so this is not a
 			# charge - it is the boat taking back the water it gave up on the
@@ -453,16 +393,12 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 	return intent
 
 
-func _gunboat_utility_params() -> Dictionary:
-	var d := _doc()
-	return {"w_reach": d.gunboat_w_reach, "w_reveal": d.gunboat_w_reveal, "w_close": d.gunboat_w_close}
-
 ## A destroyer lives on the search alone: a torpedo boat spots from its
 ## launch band, a gunboat fights in the open on its own weights.
 func _utility_arm(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if _doc().trades_on_concealment:
 		return _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ctx.ship)})
-	return _run_skill(&"Utility", ctx, _gunboat_utility_params())
+	return _run_skill(&"Gunboat", ctx)
 
 ## The distance this destroyer wants to fight at.
 ##
@@ -530,17 +466,19 @@ func _stealth_corridor() -> bool:
 ## costs it gun time, and it has no dark water to spend that time reaching.
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	var d := _doc()
-	_gb_stealth = not d.trades_on_concealment and (_gb_defensive or not sit.has_spotted)
+	if not d.trades_on_concealment and _active_skill_name == &"Gunboat":
+		# Overrides the cornered rule too: the band opening is this boat's way out,
+		# and a quiet bait spots nothing.
+		_gb_stealth = false
+		wants_stealth = false
+		wants_to_be_concealed = false
+		_suppress_guns = false
+		return
+	_gb_stealth = not d.trades_on_concealment and not sit.has_spotted
 	if _gb_stealth:
-		if _gunboat_in_cover():
-			if not _cornered:
-				wants_stealth = false
-				wants_to_be_concealed = false
-			_suppress_guns = false
-		else:
-			wants_stealth = _stealth_corridor()
-			_suppress_guns = _hold_fire_hidden(ctx, sit)
-			wants_to_be_concealed = _suppress_guns
+		wants_stealth = _stealth_corridor()
+		_suppress_guns = _hold_fire_hidden(ctx, sit)
+		wants_to_be_concealed = _suppress_guns
 		return
 	if not d.trades_on_concealment:
 		# One exception, and it is not this arm's to make: the cornered rule in
@@ -564,10 +502,11 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 		# how a destroyer ends up circling the map instead of spotting.
 		wants_stealth = _stealth_corridor()
 	# Never opens up from the dark: the guns join once something has us lit.
-	_suppress_guns = true
+	# A push is the exception; it is the aggressive leg and shoots its way in.
+	_suppress_guns = _active_skill_name != &"Push"
 	# Suppress guns when detected with bloom up and the nearest enemy far enough
 	# that going dark would actually drop us. DDs always take that chance.
-	wants_to_be_concealed = _probe_concealment(ctx.server)
+	wants_to_be_concealed = _suppress_guns and _probe_concealment(ctx.server)
 
 # ============================================================================
 # COMBAT - DD-specific engagement with torpedo logic

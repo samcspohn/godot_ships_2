@@ -6,6 +6,7 @@
 [resource]
 script = ExtResource("2_pnh0b")
 hp = 3000.0
+_range = 4000.0
 speed = 200.0
 spotting_range = 8000.0
 altitude = 500.0

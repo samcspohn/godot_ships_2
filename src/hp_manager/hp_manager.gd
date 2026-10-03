@@ -30,8 +30,8 @@ var current_hp:
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 @export var bow_percent: float = 0.1
 @export var stern_percent: float = 0.1
-@export var superstructure_percent: float = 0.5
-@export var casemate_percent: float = 0.8
+@export var superstructure_percent: float = 0.4
+@export var casemate_percent: float = 0.6
 
 @export var citadel: HpPartMod
 @export var casemate: HpPartMod

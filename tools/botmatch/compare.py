@@ -9,7 +9,7 @@ import glob, json, math, os, re, sys
 from collections import defaultdict
 
 FIELDS = ["total_damage", "damage_taken", "spotting_damage", "potential_damage",
-          "frags", "survival_time", "hp_frac"]
+          "frags", "survival_time", "hp_frac", "torpedo_hits_taken", "torpedo_taken"]
 BLOCK = re.compile(r"main blocked ([\d.]+) ms")
 
 
@@ -70,7 +70,7 @@ for field in FIELDS:
     for c in classes:
         cells = []
         for label, _ in builds:
-            xs = [float(r[field]) for r in data[label][1] if r["ship_class"] == c]
+            xs = [float(r.get(field, 0.0)) for r in data[label][1] if r["ship_class"] == c]
             m, h = ci(xs)
             cells.append(f"{m:>11.2f}±{h:<8.2f}")
         print(f"{c:>6} " + " ".join(cells))

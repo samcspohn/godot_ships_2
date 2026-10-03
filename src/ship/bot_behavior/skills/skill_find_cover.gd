@@ -50,6 +50,10 @@ func _max_exposed(d: BotDoctrine) -> float:
 func _require_unseen(d: BotDoctrine) -> bool:
 	return d.cover_require_unseen
 
+## Cover is worth holding for what it can shoot now, not for a contact nobody sees.
+func _extra_opts(_ctx: SkillContext, _field: ReachField, _team_id: int, _g: Dictionary) -> Dictionary:
+	return {"reach_live_only": true}
+
 func execute(ctx: SkillContext, params: Dictionary, prioritize_cover: bool = false) -> NavIntent:
 	var p := params
 	if prioritize_cover and not params.get("prioritize_cover", false):

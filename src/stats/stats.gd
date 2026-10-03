@@ -35,6 +35,8 @@ var _ships_damaged: Dictionary[Ship, float] = {}
 
 var torpedo_count: int = 0
 var torpedo_damage: float = 0
+var torpedo_hits_taken: int = 0
+var torpedo_taken: float = 0
 
 var fire_count: int = 0
 var fire_damage: float = 0

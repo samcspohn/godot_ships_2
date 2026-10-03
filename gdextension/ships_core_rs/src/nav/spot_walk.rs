@@ -34,6 +34,8 @@ pub(crate) struct SpotInputs {
     pub los_margin: i32,
     /// Goal is "my guns reach it" instead of "I see it".
     pub reach: Option<ReachLookup>,
+    /// With `reach`, the cell must also see the enemy: no lobbing over islands.
+    pub reach_needs_los: bool,
     /// Enemy fire planes, for AVOID_FIRE.
     pub fire: Option<ReachLookup>,
 }
@@ -120,7 +122,7 @@ impl VisibilityGrid {
                 continue;
             }
             let hit = match &inp.reach {
-                Some(r) => r.hits(i, c),
+                Some(r) => r.hits(i, c) && (!inp.reach_needs_los || e.cell.is_some_and(|ec| self.visible_idx(k, ec))),
                 None => e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.spot_r * e.spot_r && self.visible_idx(k, ec)),
             };
             if hit {
