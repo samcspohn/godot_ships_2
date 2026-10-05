@@ -354,6 +354,9 @@ impl ShipNavigator {
     /// Pull this ship's circle list up to date with the registry. Cheap and
     /// idempotent: a version compare, and O(enemies) only when it moved.
     pub(crate) fn refresh_threats(&self) {
+        if self.manual_threats.is_some() {
+            return;
+        }
         if self.threat_registry.is_none() || self.threat_team < 0 || self.threat_radius <= 0.0 {
             if !self.threats.borrow().is_empty() {
                 self.threats.borrow_mut().clear();

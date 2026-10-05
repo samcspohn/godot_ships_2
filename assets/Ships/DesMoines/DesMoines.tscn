@@ -47,26 +47,26 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_qcn8p"]
 script = ExtResource("3_seiyl")
-pool1 = 6012.5
-pool2 = 18037.5
+pool1 = 4810.0
+pool2 = 19240.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_slang"]
 script = ExtResource("3_seiyl")
-pool1 = 1202.5
-pool2 = 3607.5
+pool1 = 962.0
+pool2 = 3848.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_jbscf"]
 script = ExtResource("3_seiyl")
-pool1 = 1202.5
-pool2 = 3607.5
+pool1 = 962.0
+pool2 = 3848.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_kqusw"]
 script = ExtResource("3_seiyl")
-pool1 = 3607.5
-pool2 = 10822.5
+pool1 = 2886.0
+pool2 = 11544.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vpkcl"]

@@ -51,6 +51,10 @@ var directional: bool = false
 ## Intermediate values blend the two scoring modes proportionally.
 var heading_weight: float = 0.0
 
+## Circles the route must stay out of (centre, radius); empty leaves routing to the controller.
+var avoid_origins: PackedVector2Array = PackedVector2Array()
+var avoid_radii: PackedFloat32Array = PackedFloat32Array()
+
 
 ## Create a navigation intent
 static func create(pos: Vector3, heading: float, radius: float = 0.0, tol: float = 0.2618, hw: float = 0.0) -> NavIntent:

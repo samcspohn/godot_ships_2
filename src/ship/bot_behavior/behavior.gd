@@ -2626,7 +2626,7 @@ func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dicti
 	for f in friends:
 		if f != _ship and is_instance_valid(f) and f.health_controller != null and f.health_controller.is_alive():
 			friend_pos.append(Vector2(f.global_position.x, f.global_position.z))
-	var claims: Array = SkillStation._other_claims_keyed(team_id, _ship.get_instance_id(), SimClock.now_ms())
+	var claims: Array = SkillPosition._other_claims_keyed(team_id, _ship.get_instance_id(), SimClock.now_ms())
 	for id in field.get_team_enemy_ids(team_id):
 		var e = instance_from_id(id)
 		if not (e is Ship) or not is_instance_valid(e):

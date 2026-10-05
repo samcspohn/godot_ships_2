@@ -1,104 +1,113 @@
 class_name SkillStance
 extends BotSkill
 
-## Bow or stern at the dominant shooter while its salvo is due: whichever of
-## the four (end, gear) choices keeps the route moving at the least incoming
-## damage, backing up when the route runs away from the bow, unless simply
-## following the route is worth the damage it shows. Each end's cone is
-## read off the damage table: a few degrees off the bow can already let raking
-## AP through, so no fixed angle is safe. SkillEvade weaves inside the cone.
+## The heading and gear that show every gun on us the least, weighted by what
+## each one does to this hull at each aspect (the damage table), traded
+## against route progress and turning. At a station the hold creeps along the
+## heading, so closing on the shooters is charged instead of progress.
+## SkillEvade weaves inside the cone of headings nearly as cheap.
 
-## Choice index for holding the route's own heading, whatever it shows the shooter.
-const FREE: int = 4
+## Choice index for following the route's own heading, whatever it shows.
+const FREE: int = -2
 
-## Presentation offsets off each end sampled from the damage table, degrees.
-const OFFSETS: Array[float] = [0.0, 5.0, 10.0, 15.0, 20.0, 30.0]
-## An end's cone is the widest offset costing no more than this over its best.
+const STEP: float = deg_to_rad(5.0)
+const HEADINGS: int = 72
+const ASPECT_STEP_DEG: float = 5.0
+const ASPECTS: int = 37
+const RANGE_BUCKET_M: float = 250.0
+## Headings costing no more than this over the chosen one are its cone.
 const CONE_TOL: float = 0.25
-const DEFAULT_CONE: float = deg_to_rad(10.0)
-const MIN_CONE: float = deg_to_rad(2.0)
-## Weight of an end's incoming damage, as a share of broadside's, against progress.
+const MIN_CONE: float = deg_to_rad(5.0)
+const MAX_CONE: float = deg_to_rad(45.0)
+## Weight of incoming damage, as a share of all-broadside, against progress.
 const DAMAGE_COST: float = 1.0
 ## Cost of a second spent en route, in the same units as broadside damage.
 const TIME_COST: float = 0.5
-## Progress below this is treated as this, so a heading going nowhere scores finite.
 const MIN_PROGRESS: float = 0.05
-
-## Progress made going astern is worth this much of the same progress ahead.
 const REVERSE_FACTOR: float = 0.5
 ## Cost of a half-circle of turning, in units of full progress.
 const TURN_COST: float = 0.5
-## A new choice must beat the held one by this much before the ship commits to it.
+## Held at a station: sitting astern, and creeping straight at the guns.
+const ASTERN_COST: float = 1.0
+const CLOSING_COST: float = 0.5
 const SWITCH_MARGIN: float = 0.25
+## Taking the helm from the route must buy at least this much.
+const FREE_MARGIN: float = 0.15
+## The held heading follows the geometry one STEP a tick, for at least this gain:
+## several shooters close together make a flat optimum it would otherwise wander.
+const TRACK_GAIN: float = 0.02
 
-var _choice: int = -1
+var _heading: float = 0.0
+var _astern_held: bool = false
+var _has_choice: bool = false
 var _hold_until: float = -INF
-var _centre: float = 0.0
 var _active: bool = false
-## Per end (bow, stern): cone half-width, and best damage over broadside's.
-var _cones: Array[float] = [DEFAULT_CONE, DEFAULT_CONE]
-var _cost: Array[float] = [0.0, 0.0]
-var _broadside: float = -1.0
+var _cone: float = MIN_CONE
+## Shooter instance id -> [range bucket, PackedFloat32Array dps per aspect step].
+var _tables: Dictionary = {}
+
+var _bearings: PackedFloat32Array = PackedFloat32Array()
+var _rows: Array[PackedFloat32Array] = []
+var _broadside: float = 0.0
 
 
 func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	var clock: SalvoClock = ctx.behavior.salvo_clock
-	if intent == null or clock == null or clock.dominant == null or not is_instance_valid(clock.dominant):
+	if intent == null or clock == null or not _survey(ctx):
 		reset()
 		return intent
-	var threat: float = clock.dominant_bearing
 	var here: float = ctx.behavior._get_ship_heading()
 	var route: float = _route_bearing(intent, ctx)
-	_survey(ctx.ship, clock.dominant)
-	var scores: Array[float] = []
-	var headings: Array[float] = []
-	var best: int = 0
-	for c in 4:
-		var h: float = _heading(threat, c, route if is_finite(route) else here, _cones[_end_index(c)])
-		var s: float = -TURN_COST * absf(angle_difference(here, h)) / PI
-		if is_finite(route):
-			var progress: float = cos(angle_difference(h, route))
-			s -= _trip_cost(_cost[_end_index(c)], -progress * REVERSE_FACTOR if _astern(c) else progress)
-		else:
-			s -= DAMAGE_COST * _cost[_end_index(c)] + (1.0 if _astern(c) else 0.0)
-		scores.append(s)
-		headings.append(h)
-		if s > scores[best]:
-			best = c
-	if is_finite(route):
-		scores.append(-TURN_COST * absf(angle_difference(here, route)) / PI
-			- _trip_cost(_aspect_cost(ctx.ship, clock.dominant, absf(angle_difference(threat, route))), 1.0))
-		headings.append(route)
-		if scores[FREE] > scores[best]:
-			best = FREE
+	var best_h: float = 0.0
+	var best_astern: bool = false
+	var best: float = -INF
+	for i in HEADINGS:
+		var h: float = wrapf(-PI + i * STEP, -PI, PI)
+		for astern in [false, true]:
+			var s: float = _score(h, astern, here, route)
+			if s > best:
+				best = s
+				best_h = h
+				best_astern = astern
+	var free: float = _score(route, false, here, route) + FREE_MARGIN if is_finite(route) else -INF
 	var now: float = SimClock.now()
+	if _has_choice and _heading != FREE:
+		_track_held(here, route)
+	var held: float = -INF
+	if _has_choice:
+		held = free if _heading == FREE else _score(_heading, _astern_held, here, route)
+	var top: float = maxf(best, free)
 	# Held for a flight time: flipping ends mid-salvo shows the side the angle was hiding.
-	if _choice < 0 or _choice >= scores.size() or (now >= _hold_until and scores[best] > scores[_choice] + SWITCH_MARGIN):
-		_choice = best
+	if not _has_choice or not is_finite(held) or (now >= _hold_until and top > held + SWITCH_MARGIN):
+		_has_choice = true
 		_hold_until = now + maxf(clock.dominant_tof, 1.0)
-	if _choice == FREE:
+		if free >= best:
+			_heading = FREE
+		else:
+			_heading = best_h
+			_astern_held = best_astern
+	if _heading == FREE:
 		_active = false
 		return intent
-	_centre = _end(threat, _choice)
 	_active = true
-	intent.target_heading = headings[_choice]
+	_cone = _cone_at(_heading)
+	intent.target_heading = _heading
 	intent.heading_weight = 1.0
-	intent.force_reverse = _astern(_choice)
+	intent.force_reverse = _astern_held
 	return intent
 
 
 func reset() -> void:
-	_choice = -1
+	_has_choice = false
 	_hold_until = -INF
 	_active = false
 
 
-## `h` pulled back inside the cone this tick's stance chose; unchanged when idle.
+## `h` pulled back inside the held heading's cone; unchanged when idle.
 func clamp_heading(h: float) -> float:
 	if not _active:
 		return h
-	var cone: float = _cones[_end_index(_choice)]
-	return wrapf(_centre + clampf(angle_difference(_centre, h), -cone, cone), -PI, PI)
+	return wrapf(_heading + clampf(angle_difference(_heading, h), -_cone, _cone), -PI, PI)
 
 
 ## Incoming damage per second from `shooter` at `aspect_deg` off our bow, -1 unknown.
@@ -109,58 +118,98 @@ static func dps_at(ship: Ship, shooter: Ship, range_m: float, aspect_deg: float)
 	return maxf(float(e.ap_dps), float(e.he_dps)) if not e.is_empty() else -1.0
 
 
-func _survey(ship: Ship, shooter: Ship) -> void:
-	var range_m: float = ship.global_position.distance_to(shooter.global_position)
-	var broadside: float = dps_at(ship, shooter, range_m, 90.0)
-	_broadside = broadside
-	for end in 2:
-		var dps: Array[float] = []
-		for off in OFFSETS:
-			dps.append(dps_at(ship, shooter, range_m, off if end == 0 else 180.0 - off))
-		var floor_dps: float = dps.min()
-		if floor_dps < 0.0 or broadside <= 0.0:
-			_cones[end] = DEFAULT_CONE
-			_cost[end] = 0.0
+## Bearings and per-aspect dps rows of every gun on us; false when none is known.
+func _survey(ctx: SkillContext) -> bool:
+	var ship: Ship = ctx.ship
+	var clock: SalvoClock = ctx.behavior.salvo_clock
+	var seen := {}
+	var shooters: Array[Ship] = []
+	var pool: Array = clock.aimers.duplicate()
+	pool.append_array(ctx.behavior.active_shooters_at_me.keys())
+	pool.append(clock.dominant)
+	for s in pool:
+		if s is Ship and is_instance_valid(s) and s.is_alive() and not seen.has(s):
+			seen[s] = true
+			shooters.append(s)
+	_bearings = PackedFloat32Array()
+	_rows = []
+	_broadside = 0.0
+	for s in shooters:
+		var to: Vector3 = s.global_position - ship.global_position
+		var row := _table(ship, s, Vector2(to.x, to.z).length())
+		if row.is_empty():
 			continue
-		var cone: float = 0.0
-		for i in OFFSETS.size():
-			if dps[i] > floor_dps * (1.0 + CONE_TOL):
-				break
-			cone = OFFSETS[i]
-		_cones[end] = maxf(deg_to_rad(cone), MIN_CONE)
-		_cost[end] = floor_dps / broadside
+		_bearings.append(atan2(to.x, to.z))
+		_rows.append(row)
+		_broadside += row[ASPECTS / 2]
+	return _broadside > 0.0
 
 
-## Damage plus time to cover one unit of route at `progress` of full speed.
-static func _trip_cost(damage: float, progress: float) -> float:
-	return (DAMAGE_COST * damage + TIME_COST) / maxf(progress, MIN_PROGRESS)
-
-## Incoming damage at `aspect` radians off the bow, as a share of broadside's; 1 unknown.
-func _aspect_cost(ship: Ship, shooter: Ship, aspect: float) -> float:
-	if _broadside <= 0.0:
-		return 1.0
-	var dps: float = dps_at(ship, shooter, ship.global_position.distance_to(shooter.global_position), rad_to_deg(aspect))
-	return dps / _broadside if dps >= 0.0 else 1.0
-
-## 0 bow ahead, 1 bow astern, 2 stern ahead, 3 stern astern.
-static func _end(threat: float, c: int) -> float:
-	return threat if c < 2 else wrapf(threat + PI, -PI, PI)
-
-
-static func _end_index(c: int) -> int:
-	return 0 if c < 2 else 1
+func _table(ship: Ship, shooter: Ship, range_m: float) -> PackedFloat32Array:
+	var id := shooter.get_instance_id()
+	var bucket := int(range_m / RANGE_BUCKET_M)
+	var cached: Array = _tables.get(id, [])
+	if not cached.is_empty() and int(cached[0]) == bucket:
+		return cached[1]
+	var row := PackedFloat32Array()
+	for i in ASPECTS:
+		var d := dps_at(ship, shooter, range_m, i * ASPECT_STEP_DEG)
+		if d < 0.0:
+			row = PackedFloat32Array()
+			break
+		row.append(d)
+	_tables[id] = [bucket, row]
+	return row
 
 
-## Heading inside the chosen end's cone nearest the way the hull must point to
-## make `route` progress in that gear.
-static func _heading(threat: float, c: int, route: float, cone: float) -> float:
-	var centre := _end(threat, c)
-	var want: float = wrapf(route + PI, -PI, PI) if _astern(c) else route
-	return wrapf(centre + clampf(angle_difference(centre, want), -cone, cone), -PI, PI)
+## Incoming damage at heading `h`, as a share of every shooter seeing our beam.
+func _cost(h: float) -> float:
+	var total: float = 0.0
+	for k in _rows.size():
+		var aspect: float = rad_to_deg(absf(angle_difference(h, _bearings[k])))
+		total += _rows[k][clampi(roundi(aspect / ASPECT_STEP_DEG), 0, ASPECTS - 1)]
+	return total / _broadside
 
 
-static func _astern(c: int) -> bool:
-	return c % 2 == 1
+## Mean cosine between `motion` and the shooters, weighted by their broadside dps.
+func _closing(motion: float) -> float:
+	var total: float = 0.0
+	for k in _rows.size():
+		total += _rows[k][ASPECTS / 2] * cos(angle_difference(motion, _bearings[k]))
+	return total / _broadside
+
+
+func _score(h: float, astern: bool, here: float, route: float) -> float:
+	var s: float = -TURN_COST * absf(angle_difference(here, h)) / PI
+	var motion: float = wrapf(h + PI, -PI, PI) if astern else h
+	if is_finite(route):
+		var progress: float = cos(angle_difference(motion, route)) * (REVERSE_FACTOR if astern else 1.0)
+		return s - (DAMAGE_COST * _cost(h) + TIME_COST) / maxf(progress, MIN_PROGRESS)
+	return s - DAMAGE_COST * _cost(h) - (ASTERN_COST if astern else 0.0) - CLOSING_COST * _closing(motion)
+
+
+## Slides the held heading onto a better neighbour, as the shooters move.
+func _track_held(here: float, route: float) -> void:
+	var best: float = _score(_heading, _astern_held, here, route) + TRACK_GAIN
+	var pick: float = _heading
+	for k in [-1, 1]:
+		var h: float = wrapf(_heading + k * STEP, -PI, PI)
+		var s: float = _score(h, _astern_held, here, route)
+		if s > best:
+			best = s
+			pick = h
+	_heading = pick
+
+
+func _cone_at(h: float) -> float:
+	var limit: float = _cost(h) * (1.0 + CONE_TOL)
+	var half: float = 0.0
+	while half + STEP <= MAX_CONE:
+		var next: float = half + STEP
+		if _cost(h + next) > limit or _cost(h - next) > limit:
+			break
+		half = next
+	return maxf(half, MIN_CONE)
 
 
 ## Bearing the route runs toward, INF once there.
@@ -173,3 +222,4 @@ static func _route_bearing(intent: NavIntent, ctx: SkillContext) -> float:
 		to = intent.target_position - ctx.ship.global_position
 		to.y = 0.0
 	return atan2(to.x, to.z) if to.length_squared() >= 1.0 else INF
+

@@ -2,13 +2,14 @@
 """usage: compare.py label=dir [label=dir ...]
 
 Per build: match health from match_*.log / match_*.json, then per ship class
-the mean and 95% interval of each metric. Self-play: both teams run the same
+the mean and 95% interval of each metric, split by hull where a class has
+several (a gunboat and a torpedo boat average into nonsense). Self-play: both teams run the same
 build, so this shows how behaviour changed, not which build is stronger.
 """
 import glob, json, math, os, re, sys
 from collections import defaultdict
 
-FIELDS = ["total_damage", "damage_taken", "spotting_damage", "potential_damage",
+FIELDS = ["total_damage", "main_damage", "torpedo_damage", "damage_taken", "spotting_damage", "potential_damage",
           "frags", "survival_time", "hp_frac", "torpedo_hits_taken", "torpedo_taken"]
 BLOCK = re.compile(r"main blocked ([\d.]+) ms")
 
@@ -64,13 +65,21 @@ for label, (h, _) in data.items():
         print(f"  {label}: {n}x {k}")
 
 classes = sorted({r["ship_class"] for _, (_, rows) in data.items() for r in rows})
+groups = []
+for c in classes:
+    groups.append((c, lambda r, c=c: r["ship_class"] == c))
+    hulls = sorted({r["ship_name"] for _, (_, rows) in data.items() for r in rows if r["ship_class"] == c})
+    if len(hulls) > 1:
+        for hull in hulls:
+            groups.append((f"{c}/{hull}", lambda r, c=c, hull=hull: r["ship_class"] == c and r["ship_name"] == hull))
+width = max(6, max(len(g) for g, _ in groups))
 for field in FIELDS:
     print(f"\n== {field}")
-    print(f'{"class":>6} ' + " ".join(f"{label:>20}" for label, _ in builds))
-    for c in classes:
+    print(f'{"group":>{width}} ' + " ".join(f"{label:>20}" for label, _ in builds))
+    for name, keep in groups:
         cells = []
         for label, _ in builds:
-            xs = [float(r.get(field, 0.0)) for r in data[label][1] if r["ship_class"] == c]
+            xs = [float(r.get(field, 0.0)) for r in data[label][1] if keep(r)]
             m, h = ci(xs)
             cells.append(f"{m:>11.2f}±{h:<8.2f}")
-        print(f"{c:>6} " + " ".join(cells))
+        print(f"{name:>{width}} " + " ".join(cells))

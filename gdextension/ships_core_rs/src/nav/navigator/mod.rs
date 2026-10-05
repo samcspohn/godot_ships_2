@@ -264,6 +264,8 @@ pub struct ShipNavigator {
     pub(crate) threats: RefCell<Vec<ThreatCircle>>,
     /// 0 = never synced.
     pub(crate) threat_synced_version: Cell<u64>,
+    /// Circles a skill routes around; replace the registry and the field while set.
+    pub(crate) manual_threats: Option<Vec<ThreatCircle>>,
     /// Detection field subscription: routes are priced by the team's
     /// detection distance against this ship's concealment radius.
     pub(crate) detect_field: Option<Gd<ReachField>>,
@@ -373,6 +375,7 @@ impl IRefCounted for ShipNavigator {
             threat_radius: 0.0,
             threats: RefCell::new(Vec::new()),
             threat_synced_version: Cell::new(0),
+            manual_threats: None,
             detect_field: None,
             detect_team: -1,
             detect_radius: 0.0,
@@ -684,6 +687,27 @@ impl ShipNavigator {
     #[func]
     fn clear_threat_source(&mut self) {
         self.clear_threat_source_impl();
+    }
+
+    /// Walls the route out of these circles (with line of sight to their
+    /// centre) until cleared; the registry and field sources stand aside.
+    #[func]
+    fn set_threat_circles(&mut self, origins: PackedVector2Array, radii: PackedFloat32Array) {
+        let circles: Vec<ThreatCircle> = origins.as_slice().iter().zip(radii.as_slice())
+            .filter(|(_, &r)| r > 0.0)
+            .enumerate()
+            .map(|(i, (&o, &r))| ThreatCircle::new(i as i32, o, r))
+            .collect();
+        *self.threats.borrow_mut() = circles.clone();
+        self.manual_threats = Some(circles);
+    }
+
+    #[func]
+    fn clear_threat_circles(&mut self) {
+        if self.manual_threats.take().is_some() {
+            self.threats.borrow_mut().clear();
+            self.threat_synced_version.set(0);
+        }
     }
 
     /// Route against `field`'s detection grid for `team_id`, spotted below

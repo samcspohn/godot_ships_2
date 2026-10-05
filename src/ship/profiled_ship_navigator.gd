@@ -137,6 +137,14 @@ func set_threat_source(threat_registry: Variant, team_id: int, effective_radius:
 func clear_threat_source() -> void:
 	_impl.clear_threat_source()
 
+
+func set_threat_circles(origins: PackedVector2Array, radii: PackedFloat32Array) -> void:
+	_impl.set_threat_circles(origins, radii)
+
+
+func clear_threat_circles() -> void:
+	_impl.clear_threat_circles()
+
 func set_detection_source(field: Variant, team_id: int, radius: float, gain: float) -> void:
 	_impl.set_detection_source(field, team_id, radius, gain)
 

@@ -881,7 +881,10 @@ impl ShipNavigator {
         if planner_ready {
             self.refresh_threats();
 
-            if self.stamp_detection_field() {
+            if self.manual_threats.as_ref().is_some_and(|m| !m.is_empty()) {
+                let circles = self.threats.borrow().clone();
+                self.hpa_graph.as_mut().unwrap().bind_mut().stamp_threats(&circles);
+            } else if self.stamp_detection_field() {
                 // stamped from the detection field
             } else if !self.threats.borrow().is_empty() {
                 let circles = self.threats.borrow().clone();

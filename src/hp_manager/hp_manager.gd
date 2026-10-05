@@ -30,8 +30,12 @@ var current_hp:
 @export_tool_button("Generate_parts") var generate_parts_button: Callable = _generate_armor_parts
 @export var bow_percent: float = 0.1
 @export var stern_percent: float = 0.1
-@export var superstructure_percent: float = 0.4
-@export var casemate_percent: float = 0.6
+@export var superstructure_percent: float = 0.5
+@export var casemate_percent: float = 0.8
+
+const POOL1_RATIO: float = 0.2
+const POOL2_RATIO: float = 1.0 - POOL1_RATIO
+
 
 @export var citadel: HpPartMod
 @export var casemate: HpPartMod
@@ -101,9 +105,6 @@ enum DAMAGE_LEVEL {
 	MEDIUM,
 	HEAVY,
 }
-
-const POOL1_RATIO: float = 0.25
-const POOL2_RATIO: float = 0.75
 
 func _generate_armor_parts():
 	if !Engine.is_editor_hint():

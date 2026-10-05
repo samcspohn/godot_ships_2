@@ -24,6 +24,9 @@ func debug_text() -> String:
 func _declines(_ctx: SkillContext) -> bool:
 	return false
 
+func _routes_around() -> bool:
+	return true
+
 func _walk_inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary]) -> Dictionary:
 	var g: Dictionary = NavigationMapManager.reach_gun(ctx.ship)
 	if g.is_empty():

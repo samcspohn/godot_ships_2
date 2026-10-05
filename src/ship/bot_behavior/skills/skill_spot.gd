@@ -1,5 +1,5 @@
 class_name SkillSpot
-extends SkillStation
+extends SkillPosition
 
 ## Outside detection, seeing targets a friend can shoot. Refine budget halves
 ## per target already held: more to lose, less to gain.
@@ -7,25 +7,18 @@ extends SkillStation
 ## Kept for DDBehavior.engagement_range and _is_gunboat, which band on it.
 const SAFE_MARGIN := 1.15
 const FRIENDS := 4
-const REFINE_BUDGET_M := 8000.0
+const BELIEF_SCALE_M := 10000.0
+const EXIT_STEP_M := 200.0
+const EXIT_MAX_STEPS := 100
+const EXIT_MARGIN_M := 300.0
 var stealth_corridor: bool = true
-var _count: int = 0
-var _steps: int = 0
-var _trails: Array[PackedVector2Array] = []
 
 func reset() -> void:
 	super()
 	stealth_corridor = true
-	_count = 0
-	_trails = []
 
-func trails() -> Array[PackedVector2Array]:
-	return _trails
-
-func debug_text() -> String:
-	if not _has_station:
-		return "Spot: none"
-	return "Spot %d | last walk %d cells" % [_count, _steps]
+func _label() -> String:
+	return "Spot"
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
@@ -44,48 +37,70 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var pos: PackedVector2Array = walk.pos
 	var opts: Dictionary = walk.opts
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
-	var danger3: Vector3 = ctx.behavior._get_positioning_danger_center()
-	var danger := Vector2(danger3.x, danger3.z) if danger3 != Vector3.ZERO else field.get_team_danger_centre(team_id)
+	var danger := _belief_centre(ctx, belief, here)
 	opts.merge({"clearance": ctx.behavior._get_ship_clearance(), "avoid": VisibilityGrid.AVOID_DET,
 		"flank": _flank_dir(ctx)}, true)
-	if _has_station:
-		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), pos, opts)
-		_count = int(ev.count) if bool(ev.free) else 0
-		if _count == 0:
-			_drop()
-	var r: Dictionary
-	if _has_station:
-		opts.need = _count + 1
-		opts.budget_m = REFINE_BUDGET_M / pow(2.0, maxi(_count - 1, 0))
-		r = vis.hold_walk(Vector2(_station.x, _station.z), danger, false, pos, opts)
-	else:
-		r = _walk_out(vis, danger, here, pos, opts)
-	_steps = int(r.get("steps", 0))
-	_trails = [r.get("trail_a", PackedVector2Array()), r.get("trail_b", PackedVector2Array())]
-	if bool(r.get("found", false)):
-		var p: Vector2 = r.pos
-		_count = int(r.count)
-		_adopt(Vector3(p.x, 0.0, p.y), _count, {})
+	_walk_station(vis, danger, here, pos, opts)
 	if not _has_station:
 		return _decline()
 	stealth_corridor = true
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
 	# Bow out: lit, the boat sprints straight away; torpedoes from the threat meet its stern.
-	return _intent(ctx, field, team_id, params.merged({"away_from": danger}))
-
-## Outward from the danger centre toward us, else from the nearest contact.
-func _walk_out(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: PackedVector2Array, opts: Dictionary) -> Dictionary:
-	opts.need = 1
-	opts.budget_m = 0.0
-	var r: Dictionary = vis.hold_walk(danger, here, true, pos, opts)
-	if not bool(r.get("has_start", false)):
-		r = vis.hold_walk(_nearest(pos, here), here, true, pos, opts)
-	return r
+	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}))
+	if _routes_around():
+		var out := _exit_point(here, pos, opts.det_r)
+		if out != here:
+			intent.target_position = Vector3(out.x, 0.0, out.y)
+			intent.target_heading = atan2(out.x - here.x, out.y - here.y)
+		intent.avoid_origins = pos
+		intent.avoid_radii = opts.det_r
+	return intent
 
 func _decline() -> NavIntent:
 	_drop()
 	stealth_corridor = false
 	return null
+
+## Every contact, presumed ones included, by certainty and nearness: the
+## spotted centre alone drags the walk to whichever flank happens to be lit.
+func _belief_centre(ctx: SkillContext, belief: Array[Dictionary], here: Vector2) -> Vector2:
+	var g: Dictionary = NavigationMapManager.reach_gun(ctx.ship)
+	var scale: float = float(g.range) if not g.is_empty() else BELIEF_SCALE_M
+	var sum := Vector2.ZERO
+	var total := 0.0
+	for b in belief:
+		var p: Vector2 = b.pos
+		var w: float = float(b.weight) * exp(-p.distance_to(here) / scale)
+		sum += p * w
+		total += w
+	return sum / total if total > 0.0 else _nearest(PackedVector2Array(belief.map(func(b): return b.pos)), here)
+
+## Inside the zones a route cannot be walled, so the way out comes first:
+## along the depth-weighted push of every zone holding us, to clear water.
+func _exit_point(here: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:
+	var push := Vector2.ZERO
+	for i in centres.size():
+		var d: float = here.distance_to(centres[i])
+		if radii[i] > 0.0 and d < radii[i]:
+			push += (here - centres[i]).normalized() * (radii[i] - d) if d > 1.0 else Vector2.RIGHT * radii[i]
+	if push == Vector2.ZERO:
+		return here
+	var dir := push.normalized()
+	var p := here
+	for _step in EXIT_MAX_STEPS:
+		p += dir * EXIT_STEP_M
+		var clear := true
+		for i in centres.size():
+			if radii[i] > 0.0 and p.distance_to(centres[i]) < radii[i]:
+				clear = false
+				break
+		if clear:
+			return p + dir * EXIT_MARGIN_M
+	return p
+
+## Whether the route itself keeps out of the zones the walk keeps out of.
+func _routes_around() -> bool:
+	return false
 
 ## Lit under real threat a spotter has nothing left to hide.
 func _declines(ctx: SkillContext) -> bool:
@@ -137,12 +152,3 @@ func _flank_dir(ctx: SkillContext) -> Vector2:
 	if absf(side) < FleetFrame.SIDE_DEADBAND:
 		return Vector2.ZERO
 	return Vector2(ff.right.x, ff.right.z).normalized() * signf(side)
-
-static func _nearest(points: PackedVector2Array, to: Vector2) -> Vector2:
-	var best := to
-	var best_d := INF
-	for p in points:
-		if p.distance_squared_to(to) < best_d:
-			best_d = p.distance_squared_to(to)
-			best = p
-	return best

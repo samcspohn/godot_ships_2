@@ -1,5 +1,5 @@
 class_name SkillCover
-extends SkillStation
+extends SkillPosition
 
 ## Island cover from one Rust sweep (VisibilityGrid.cover_sweep): every cell
 ## reachable within SWEEP_BOX_M, paid for in time and in the damage lit enemies

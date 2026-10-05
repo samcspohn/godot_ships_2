@@ -50,26 +50,26 @@ metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_mrsjx"]
 script = ExtResource("3_pxp4h")
-pool1 = 2265.0
-pool2 = 6795.0
+pool1 = 1812.0
+pool2 = 7248.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_ldxem"]
 script = ExtResource("3_pxp4h")
-pool1 = 943.75
-pool2 = 2831.25
+pool1 = 755.0
+pool2 = 3020.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_xci8g"]
 script = ExtResource("3_pxp4h")
-pool1 = 943.75
-pool2 = 2831.25
+pool1 = 755.0
+pool2 = 3020.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_vwm28"]
 script = ExtResource("3_pxp4h")
-pool1 = 1510.0
-pool2 = 4530.0
+pool1 = 1208.0
+pool2 = 4832.0
 metadata/_custom_type_script = "uid://8hn5uv3uclbk"
 
 [sub_resource type="Resource" id="Resource_e6iqp"]
@@ -212,8 +212,6 @@ params = SubResource("Resource_v7rh5")
 _max_hp = 15100.0
 bow_percent = 0.25
 stern_percent = 0.25
-superstructure_percent = 0.4
-casemate_percent = 0.6
 citadel = SubResource("Resource_4n5yk")
 casemate = SubResource("Resource_mrsjx")
 bow = SubResource("Resource_ldxem")

@@ -50,23 +50,23 @@ pool2 = 297300.0
 
 [sub_resource type="Resource" id="Resource_u3en7"]
 script = ExtResource("5_p50sc")
-pool1 = 14865.0
-pool2 = 44595.0
+pool1 = 15856.0
+pool2 = 63424.0
 
 [sub_resource type="Resource" id="Resource_kv3r5"]
 script = ExtResource("5_p50sc")
-pool1 = 2477.5
-pool2 = 7432.5
+pool1 = 1982.0
+pool2 = 7928.0
 
 [sub_resource type="Resource" id="Resource_euctv"]
 script = ExtResource("5_p50sc")
-pool1 = 2477.5
-pool2 = 7432.5
+pool1 = 1982.0
+pool2 = 7928.0
 
 [sub_resource type="Resource" id="Resource_hcnip"]
 script = ExtResource("5_p50sc")
-pool1 = 9910.0
-pool2 = 29730.0
+pool1 = 7928.0
+pool2 = 31712.0
 
 [sub_resource type="Resource" id="Resource_eppy3"]
 script = ExtResource("6_p50sc")
@@ -272,8 +272,6 @@ ship_model_glb_path = "uid://cuxnkbgacr6mr"
 [node name="HPManager" parent="Modules" index="0" unique_id=1137121331]
 params = SubResource("Resource_y3atb")
 _max_hp = 99100.0
-superstructure_percent = 0.4
-casemate_percent = 0.6
 citadel = SubResource("Resource_wckrl")
 casemate = SubResource("Resource_u3en7")
 bow = SubResource("Resource_kv3r5")

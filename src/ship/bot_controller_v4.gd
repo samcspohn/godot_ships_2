@@ -176,6 +176,7 @@ var _threat_effective_radius: float = 0.0
 ## What the navigator is routing against: 0 nothing, 1 the fire price
 ## (shooter count, any hull), 2 the stealth layer (registry + detection).
 var _route_price: int = 0
+var _manual_circles: bool = false
 
 
 # ===========================================================================
@@ -443,6 +444,8 @@ func _update_nav_intent() -> void:
 		_last_intent.target_position = new_intent.target_position
 		_last_intent.heading_weight = new_intent.heading_weight
 		_last_intent.force_reverse = new_intent.force_reverse
+		_last_intent.avoid_origins = new_intent.avoid_origins
+		_last_intent.avoid_radii = new_intent.avoid_radii
 		destination = _last_intent.target_position
 		return
 
@@ -472,6 +475,12 @@ func _update_nav_intent() -> void:
 
 
 func _execute_nav_intent() -> void:
+	if _last_intent != null and not _last_intent.avoid_origins.is_empty():
+		navigator.set_threat_circles(_last_intent.avoid_origins, _last_intent.avoid_radii)
+		_manual_circles = true
+	elif _manual_circles:
+		navigator.clear_threat_circles()
+		_manual_circles = false
 	if _last_intent == null:
 		navigator.navigate_to(Vector3(destination.x, 0.0, destination.z), get_ship_heading(), 0.0)
 		return
@@ -1298,7 +1307,7 @@ func _emit_debug_draws() -> void:
 
 	# --- m2) Station / Cover: the held cell and its score breakdown ---
 	if behavior != null:
-		var st_skill: SkillStation = null
+		var st_skill: SkillPosition = null
 		match behavior._active_skill_name:
 			&"Station": st_skill = behavior._skill_station
 			&"FindCover": st_skill = behavior._skill_cover
@@ -1311,8 +1320,8 @@ func _emit_debug_draws() -> void:
 			var ke: Vector3 = behavior._skill_kite.ray_end()
 			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
 			Debug.draw_label(Vector3(ke.x, 60.0, ke.z), behavior._skill_kite.debug_text(), Color(1.0, 0.8, 1.0), 14)
-		if st_skill is SkillSpot:
-			for trail in (st_skill as SkillSpot).trails():
+		if st_skill != null:
+			for trail in st_skill.trails():
 				for i in range(1, trail.size()):
 					Debug.draw_line(Vector3(trail[i - 1].x, 10.0, trail[i - 1].y), Vector3(trail[i].x, 10.0, trail[i].y),
 						Color(0.4, 0.8, 1.0, 0.6))

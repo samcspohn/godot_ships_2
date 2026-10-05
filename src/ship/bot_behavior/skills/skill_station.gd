@@ -1,5 +1,5 @@
 class_name SkillStation
-extends BotSkill
+extends SkillPosition
 
 ## Holds the field cell that scores best on the team's reach, fire, cone,
 ## detection and route layers (ReachField.score_station), refined to the
@@ -9,28 +9,9 @@ extends BotSkill
 
 const RESCORE_MS: int = 2000
 const PLAN_BOX_M: float = 8000.0
-## Shore refinement is only tried this close to an island's bounding radius.
-const SHORE_REACH_CLEARANCES: float = 3.0
-## A shore point may lose this much score against the cell it refines.
-const SHORE_SCORE_SLACK: float = 0.05
-const CLAIM_TTL_MS: int = 6000
-## Team-mates' stations are kept this many clearances apart.
-const CLAIM_SEPARATION_CLEARANCES: float = 3.0
-
-## team_id -> ship instance id -> {pos: Vector2, ms: int}
-static var _claims: Dictionary = {}
-
-var _station: Vector3 = Vector3.ZERO
-var _has_station: bool = false
-var _station_score: float = -INF
-var _terms: Dictionary = {}
-var _refined: bool = false
 var _last_ms: int = -100000
 var _plan_us: float = 0.0
 var _score_us: float = 0.0
-var _claim_team: int = -1
-var _claim_ship: int = -1
-var _hull_key: int = 0
 var _pending_token: int = -1
 var _pending_opts: Dictionary = {}
 
@@ -43,25 +24,9 @@ static func price_for(d: BotDoctrine) -> Array:
 	return [d.fire_cost_gain, 1]
 
 func reset() -> void:
-	release_claim()
-	_has_station = false
-	_station_score = -INF
-	_terms = {}
-	_refined = false
+	super()
 	_last_ms = -100000
 	_pending_token = -1
-
-func station_position() -> Vector3:
-	return _station
-
-func has_station() -> bool:
-	return _has_station
-
-func score() -> float:
-	return _station_score
-
-func terms() -> Dictionary:
-	return _terms
 
 func debug_text() -> String:
 	if not _has_station:
@@ -264,86 +229,3 @@ func _consume(ctx: SkillContext, field: ReachField, team_id: int, params: Dictio
 	_adopt(dest, best_score, best_terms)
 	_claim(team_id, ship.get_instance_id(), now)
 	return _intent(ctx, field, team_id, params)
-
-func _adopt(dest: Vector3, best_score: float, best_terms: Dictionary) -> void:
-	_station = dest
-	_has_station = true
-	_station_score = best_score
-	_terms = best_terms
-
-func _drop() -> void:
-	release_claim()
-	_has_station = false
-	_station_score = -INF
-
-## Walks the best cell out to the shoreline of the island it leans on, so the
-## hull sits against the rock instead of at a cell centre 50 m off it.
-func _refine_to_shore(cell: Vector3, clearance: float) -> Vector3:
-	var isl: Dictionary = NavigationMapManager.get_nearest_island(cell)
-	if not bool(isl.get("valid", false)):
-		return Vector3.ZERO
-	var c2: Vector2 = isl.center
-	var centre := Vector3(c2.x, 0.0, c2.y)
-	var isl_radius: float = isl.radius
-	var away: Vector3 = cell - centre
-	away.y = 0.0
-	if away.length() > isl_radius + clearance * SHORE_REACH_CLEARANCES or away.length_squared() < 1.0:
-		return Vector3.ZERO
-	return NavigationMapManager.reach_shore_point(centre, away.normalized(), isl_radius, clearance)
-
-## Heading: bow or stern into the centre of the shooters' cone, whichever is
-## the smaller turn; the angling skill's answer when nothing can reach here.
-func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Dictionary) -> NavIntent:
-	var ship: Ship = ctx.ship
-	var heading: float
-	var away = params.get("away_from")
-	if away is Vector2 and Vector2(_station.x, _station.z).distance_to(away) > 1.0:
-		var out: Vector2 = Vector2(_station.x, _station.z) - away
-		heading = atan2(out.x, out.y)
-	else:
-		var cone: Dictionary = field.cone_at(team_id, Vector2(_station.x, _station.z))
-		if float(cone.get("half", -1.0)) >= 0.0:
-			heading = float(cone.heading)
-		else:
-			heading = SkillAngle.calc_heading(ctx, params)
-		var current: float = ctx.behavior._get_ship_heading()
-		if absf(angle_difference(current, heading)) > PI / 2.0:
-			heading = ctx.behavior._normalize_angle(heading + PI)
-	var hold: float = params.get("jitter_radius", ship.movement_controller._p().turning_circle_radius * 2.0)
-	var intent := NavIntent.create(_station, heading, hold)
-	intent.skip_threat_adjustment = true
-	intent.near_terrain = _refined
-	return intent
-
-# --- team claims -------------------------------------------------------------
-
-func _claim(team_id: int, ship_id: int, now: int) -> void:
-	if not _claims.has(team_id):
-		_claims[team_id] = {}
-	_claims[team_id][ship_id] = {"pos": Vector2(_station.x, _station.z), "ms": now, "key": _hull_key}
-	_claim_team = team_id
-	_claim_ship = ship_id
-
-func release_claim() -> void:
-	if _claim_team >= 0 and _claims.has(_claim_team):
-		_claims[_claim_team].erase(_claim_ship)
-	_claim_team = -1
-	_claim_ship = -1
-
-static func _other_claims(team_id: int, ship_id: int, now: int) -> PackedVector2Array:
-	return _other_claims_keyed(team_id, ship_id, now)[0]
-
-## [positions, hull keys] of team-mates' live claims.
-static func _other_claims_keyed(team_id: int, ship_id: int, now: int) -> Array:
-	var pos := PackedVector2Array()
-	var keys := PackedInt64Array()
-	if not _claims.has(team_id):
-		return [pos, keys]
-	var team: Dictionary = _claims[team_id]
-	for sid in team.keys():
-		if now - int(team[sid].ms) > CLAIM_TTL_MS:
-			team.erase(sid)
-		elif sid != ship_id:
-			pos.append(team[sid].pos as Vector2)
-			keys.append(int(team[sid].get("key", 0)))
-	return [pos, keys]

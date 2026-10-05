@@ -770,6 +770,40 @@ fn origins_for(origin: Vector2, spread: f32) -> Vec<Vector2> {
         .collect()
 }
 
+/// (half, centre bearing) of the narrowest arc holding every shooter whose
+/// fire plane covers water cell `idx`.
+fn cone_cell(f: &Field, enemies: &[(Vector2, &[u64])], idx: usize, b: &mut Vec<f32>) -> Option<(f32, f32)> {
+    if f.water.get(idx).is_none_or(|&w| w == 0) {
+        return None;
+    }
+    b.clear();
+    let c = f.centre(idx);
+    for (o, plane) in enemies {
+        if bit_at(plane, idx) {
+            b.push(fast_atan2(o.x - c.x, o.y - c.y));
+        }
+    }
+    if b.is_empty() {
+        return None;
+    }
+    b.sort_by(|p, q| p.total_cmp(q));
+    let n = b.len();
+    let mut gap = b[0] + std::f32::consts::TAU - b[n - 1];
+    let mut start = b[0];
+    for i in 0..n - 1 {
+        if b[i + 1] - b[i] > gap {
+            gap = b[i + 1] - b[i];
+            start = b[i + 1];
+        }
+    }
+    let cone = std::f32::consts::TAU - gap;
+    let mut mid = start + 0.5 * cone;
+    if mid > std::f32::consts::PI {
+        mid -= std::f32::consts::TAU;
+    }
+    Some((0.5 * cone, mid))
+}
+
 fn count_plane(plane: &[u64], counts: &mut [u8]) {
     for (w, &word) in plane.iter().enumerate() {
         let mut bits = word;
@@ -1364,36 +1398,10 @@ impl FieldCore {
         let mut dir = vec![0.0f32; cells];
         let mut b: Vec<f32> = Vec::with_capacity(enemies.len());
         for idx in 0..cells {
-            if f.water[idx] == 0 {
-                continue;
+            if let Some((h, m)) = cone_cell(&f, &enemies, idx, &mut b) {
+                half[idx] = h;
+                dir[idx] = m;
             }
-            b.clear();
-            let c = f.centre(idx);
-            for (o, plane) in &enemies {
-                if bit_at(plane, idx) {
-                    b.push(fast_atan2(o.x - c.x, o.y - c.y));
-                }
-            }
-            if b.is_empty() {
-                continue;
-            }
-            b.sort_by(|p, q| p.total_cmp(q));
-            let n = b.len();
-            let mut gap = b[0] + std::f32::consts::TAU - b[n - 1];
-            let mut start = b[0];
-            for i in 0..n - 1 {
-                if b[i + 1] - b[i] > gap {
-                    gap = b[i + 1] - b[i];
-                    start = b[i + 1];
-                }
-            }
-            let cone = std::f32::consts::TAU - gap;
-            half[idx] = 0.5 * cone;
-            let mut mid = start + 0.5 * cone;
-            if mid > std::f32::consts::PI {
-                mid -= std::f32::consts::TAU;
-            }
-            dir[idx] = mid;
         }
         tl.cone_half = Arc::new(half);
         tl.cone_dir = Arc::new(dir);
@@ -2582,13 +2590,15 @@ impl ReachField {
         d.set("half", -1.0f32);
         d.set("heading", 0.0f32);
         d.set("count", 0i64);
-        let Some(idx) = self.snap.field.as_ref().and_then(|f| f.index(point.x, point.y)) else { return d };
+        let Some(f) = self.snap.field.as_ref() else { return d };
+        let Some(idx) = f.index(point.x, point.y) else { return d };
         let Some(tl) = self.team(team) else { return d };
-        if tl.cone_half.len() <= idx {
-            return d;
+        let enemies: Vec<(Vector2, &[u64])> =
+            tl.order.iter().map(|id| (tl.enemies[id].origin, tl.enemies[id].fire.as_slice())).collect();
+        if let Some((h, m)) = cone_cell(f, &enemies, idx, &mut Vec::new()) {
+            d.set("half", h);
+            d.set("heading", m);
         }
-        d.set("half", tl.cone_half[idx]);
-        d.set("heading", tl.cone_dir[idx]);
         d.set("count", tl.enemies.values().filter(|e| bit_at(&e.fire, idx)).count() as i64);
         d
     }
