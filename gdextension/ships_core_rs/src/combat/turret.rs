@@ -155,7 +155,7 @@ impl Turret {
         wrapf(angle - self.slew().min, 0.0, TAU)
     }
 
-    fn rot_y(&self) -> f64 {
+    pub(crate) fn rot_y(&self) -> f64 {
         self.node.get_rotation().y as f64
     }
 
@@ -166,6 +166,10 @@ impl Turret {
         let td = (target - xf.origin).normalized_or_zero();
         let t2 = Vector2::new(td.x, td.z).normalized_or_zero();
         t2.cross(f2).atan2(t2.dot(f2)) as f64
+    }
+
+    pub(crate) fn is_disabled(&self) -> bool {
+        self.disabled
     }
 
     pub(crate) fn in_fire_arcs(&self, angle: f64) -> bool {
@@ -199,7 +203,7 @@ impl Turret {
     }
 
     /// The delta the mount may legally rotate by toward `desired_delta`.
-    fn apply_rotation_limits(&self, current: f64, desired_delta: f64) -> f64 {
+    pub(crate) fn apply_rotation_limits(&self, current: f64, desired_delta: f64) -> f64 {
         if !self.slew().on || desired_delta == 0.0 {
             return desired_delta;
         }

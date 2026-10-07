@@ -99,7 +99,8 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
 		"box_m": SWEEP_BOX_M, "speed": ship.movement_controller.max_speed, "my_hp": ship.health_controller.current_hp,
-		"gun_range": float(g.get("range", 0.0)), "pref_range": float(params.get("pref_range", 0.0)), "hold_s": HOLD_S,
+		"gun_range": float(g.get("range", 0.0)), "pref_range": float(params.get("pref_range", 0.0)),
+		"max_range": float(params.get("max_range", 0.0)), "hold_s": HOLD_S,
 		"held": Vector2(_station.x, _station.z) if _has_station else Vector2.INF}, true)
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var r: Dictionary = vis.cover_sweep(here, opts.pos, opts)
@@ -108,7 +109,17 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 	_dark = r.get("dark", {})
 	_best = r.get("best", {})
 	var held: Dictionary = r.get("held", {})
+	var cur: Dictionary = r.get("here", {})
 	var now: float = SimClock.now()
+	# Already hidden with a target in range: this is the station.
+	if mode == Mode.OFFENSE and not cur.is_empty() and int(cur.count) > 0 and not bool(cur.hard):
+		var at: Vector2 = cur.pos
+		if not _has_station or at.distance_to(Vector2(_station.x, _station.z)) > COVER_HOLD_M:
+			_adopt(Vector3(at.x, 0.0, at.y), float(cur.score), {})
+			_hard = false
+			_spotted = {}
+			_note_spotters(opts.ids, int(cur.mask))
+		held = cur
 	if _has_station:
 		if held.is_empty():
 			_drop()

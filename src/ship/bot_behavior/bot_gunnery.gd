@@ -20,7 +20,7 @@ const DMG_TURRET: float = DMG_CITADEL * 0.1
 const FIRE_VALUE_PER_FIRE: float = 0.06
 
 ## Bump when lattice geometry, cell encoding, bucket edges or the walk change.
-const SOLVER_VERSION: int = 10
+const SOLVER_VERSION: int = 11
 
 const CELL_MISS: int = 0xFF
 const CELL_UNWALKED: int = 0xFE
@@ -110,7 +110,12 @@ const CITADEL_ELLIPSE := Vector2(0.4, 0.1)
 ## scene path -> table Dictionary, or null when missing or stale.
 static var _tables: Dictionary = {}
 ## gunnery.db head, read once.
+const BAKE_SCENE := "res://tools/bake_gunnery.tscn"
+const BAKE_LOCK := "user://gunnery_bake.lock"
+const BAKE_LOCK_STALE_MS := 120000
 static var _index: Dictionary = {}
+## Hull scene paths (or "" for the whole db) this process already tried to bake.
+static var _bake_tried: Dictionary = {}
 ## shell instance id -> {"r","desc","v","pen"} PackedFloat32Arrays over range.
 static var _shell_tables: Dictionary = {}
 ## answer key -> {"frame", "ans"}
@@ -277,6 +282,9 @@ static func _register(ship: Ship) -> void:
 	var fp := fm.fparams.p() as DOTParams if fm != null and fm.fparams != null else null
 	_model.set_hull(id, table["ev"] if table != null and (table as Dictionary).has("ev") else {}, hp,
 		rp.max_buildup if rp != null else 0.0, fp.dmg_rate * hp if fp != null else 0.0)
+	var hpp := ship.health_controller.params.p() as HPParams if ship.health_controller.params != null else null
+	if hpp != null:
+		_model.set_repair(id, hpp.light_repair, hpp.pen_repair, hpp.citadel_repair)
 	var mounts := _batteries(ship, KIND_MAIN, 0.0)
 	if mounts.is_empty():
 		return
@@ -313,6 +321,21 @@ static func _raw_fire_chance(shell: ShellParams, target: Ship) -> float:
 
 
 ## _payouts with every pool full, for the baked expected-damage summary.
+## HPManager.DAMAGE_LEVEL of each payout: what ProjectileManager passes with the
+## hit, light for modules, which HPManager repairs as light.
+static func full_levels() -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(SECTION_COUNT * 16)
+	for section in SECTION_COUNT:
+		if section == SEC_MODULE:
+			continue
+		for code in [NativeArmorInteraction.PENETRATION, NativeArmorInteraction.PARTIAL_PEN]:
+			out[section * 16 + code] = HPManager.DAMAGE_LEVEL.MEDIUM
+		for code in [NativeArmorInteraction.CITADEL, NativeArmorInteraction.CITADEL_OVERPEN]:
+			out[section * 16 + code] = HPManager.DAMAGE_LEVEL.HEAVY
+	return out
+
+
 static func full_payouts() -> PackedFloat64Array:
 	var base := _base_payouts()
 	var out := PackedFloat64Array()
@@ -688,20 +711,58 @@ static func _table(target: Ship) -> Variant:
 	var path := target.scene_file_path
 	if _tables.has(path):
 		return _tables[path]
-	var t = null
-	var idx := _db_index()
-	if int(idx.get("version", -1)) != SOLVER_VERSION:
-		if not idx.is_empty():
-			push_warning("BotGunnery: gunnery.db is version %s, want %d; run `make bake`"
-				% [idx.get("version", -1), SOLVER_VERSION])
-	else:
-		var d = GunneryDb.read_hull(path, idx)
-		if d is Dictionary and String(d.get("glb_md5", "")) == hull_md5(target):
-			t = d
-		else:
-			push_warning("BotGunnery: stale gunnery table for %s, run `make bake`" % path)
+	var t = _fresh_table(target)
+	if t == null and _rebake(path if int(_db_index().get("version", -1)) == SOLVER_VERSION else "", hull_md5(target)):
+		t = _fresh_table(target)
+	if t == null:
+		push_warning("BotGunnery: no current gunnery table for %s, run `make bake`" % path)
 	_tables[path] = t
 	return t
+
+
+static func _fresh_table(target: Ship) -> Variant:
+	var idx := _db_index()
+	if int(idx.get("version", -1)) != SOLVER_VERSION:
+		return null
+	var d = GunneryDb.read_hull(target.scene_file_path, idx)
+	return d if d is Dictionary and String(d.get("glb_md5", "")) == hull_md5(target) else null
+
+
+## Bakes `path` (every stale hull when empty) with the bake tool, blocking.
+## One process bakes at a time; the rest wait on the lock, then reread.
+static func _rebake(path: String, md5: String) -> bool:
+	if _bake_tried.has(path) or not ResourceLoader.exists(BAKE_SCENE):
+		return false
+	_bake_tried[path] = true
+	var lock := ProjectSettings.globalize_path(BAKE_LOCK)
+	var t0 := Time.get_ticks_msec()
+	while DirAccess.make_dir_absolute(lock) != OK:
+		if Time.get_ticks_msec() - t0 > BAKE_LOCK_STALE_MS:
+			DirAccess.remove_absolute(lock)
+			t0 = Time.get_ticks_msec()
+		OS.delay_msec(200)
+	_index = {}
+	if _baked_meanwhile(path, md5):
+		DirAccess.remove_absolute(lock)
+		return true
+	var args := ["--headless", "--path", ProjectSettings.globalize_path("res://"), BAKE_SCENE, "--"]
+	if not path.is_empty():
+		args.append(path)
+	print("BotGunnery: baking %s" % (path if not path.is_empty() else "every stale hull"))
+	var out: Array = []
+	var code := OS.execute(OS.get_executable_path(), args, out, true)
+	DirAccess.remove_absolute(lock)
+	_index = {}
+	print("BotGunnery: bake exit %d in %.1f s" % [code, (Time.get_ticks_msec() - t0) / 1000.0])
+	return code == 0
+
+
+static func _baked_meanwhile(path: String, md5: String) -> bool:
+	var idx := GunneryDb.read_index(SOLVER_VERSION)
+	if idx.is_empty() or path.is_empty():
+		return not idx.is_empty()
+	var d = GunneryDb.read_hull(path, idx)
+	return d is Dictionary and String(d.get("glb_md5", "")) == md5
 
 
 ## Descent angle, striking speed and penetration of `shell` over range.

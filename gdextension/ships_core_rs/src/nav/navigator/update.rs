@@ -282,7 +282,7 @@ impl ShipNavigator {
 
         // Determine desired direction: BACKWARD if the steering target is behind
         // the ship and within 3.5 × turning circle radius
-        if self.is_target_behind_within_reverse_zone(steer_target) {
+        if !self.target.forbid_reverse && self.is_target_behind_within_reverse_zone(steer_target) {
             direction = DesiredDirection::Backward;
         }
 

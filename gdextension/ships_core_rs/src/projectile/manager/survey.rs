@@ -692,6 +692,7 @@ impl ProjectileManager {
             payouts: ev_payouts.as_slice().to_vec(),
             turret_cap: opt("ev_turret_cap").to_f64(),
             om_max,
+            levels: opt("ev_levels").try_to::<PackedByteArray>().map(|l| l.to_vec()).unwrap_or_default(),
         });
 
         let (results, stats) = crate::sched::run_balanced(&costs, threads.max(0) as usize, smt, |j, w| {

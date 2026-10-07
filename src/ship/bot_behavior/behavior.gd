@@ -2200,10 +2200,16 @@ func _doc() -> BotDoctrine:
 ##
 ## `threat` is this tick's threat score; above the doctrine's yield point,
 ## secondaries stop being an argument for closing a fight already going badly.
+## The furthest engagement_range gets: where it sits once threat is high.
+func max_engagement_range(ship: Ship) -> float:
+	return ship.artillery_controller.get_params()._range * _doc().gun_engage_ratio
+
 func engagement_range(ship: Ship, threat: float) -> float:
 	var d := _doc()
 	var gun_range: float = ship.artillery_controller.get_params()._range
 	var gun_dist: float = gun_range * d.gun_engage_ratio
+	if d.push_equalize_threat > 0.0:
+		gun_dist *= clampf(threat / d.push_equalize_threat, clampf(d.push_equalize_floor, 0.0, 1.0), 1.0)
 	if threat >= d.secondary_yield_threat:
 		return gun_dist
 	if not is_instance_valid(ship.secondary_controller):
@@ -2444,8 +2450,6 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		intent = _disengage(ctx, sit)
 	if intent != null:
 		_shape_close_intent(intent, ctx, sit)
-		if d.close_arm_reverse_align:
-			_apply_reverse_alignment(intent, sit.nearest_threat_dist, sit.ra_threshold)
 	# Do not let the post-processors steer a committed push or a committed kite.
 	if (sit.threat < d.force_below or sit.threat >= d.force_above) and _active_skill_name not in [&"Cover", &"Retreat"]:
 		sit["forced"] = true
@@ -2554,21 +2558,20 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	var evade_wins: bool = salvo_clock.under_fire and (
 		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
 	)
-	# Every arm: a retreating ship angles as much as a brawling one.
-	if evade_wins and not forced and _active_skill_name not in d.evade_exclude:
+	var post_ok: bool = (sit.arm in [&"engaged", &"close", &"low_threat", &"utility"] or d.post_process_idle_arms) \
+		and _post_process_allowed(ctx, intent)
+	var broadside_now: bool = post_ok and d.use_broadside and not forced \
+		and _active_skill_name not in d.broadside_exclude and not evade_wins
+	# Every arm, committed ones too: skills choose where, stance how the hull gets there.
+	if not broadside_now and _active_skill_name not in d.evade_exclude:
 		intent = _skill_stance.apply(intent, ctx)
 	else:
 		_skill_stance.reset()
-	if sit.arm != &"engaged" and sit.arm != &"close" and sit.arm != &"low_threat" \
-			and sit.arm != &"utility" and not d.post_process_idle_arms:
-		_skill_evade.reset()
-		return intent
-	if not _post_process_allowed(ctx, intent):
+	if not post_ok:
 		_skill_evade.reset()
 		return intent
 
-	if d.use_broadside and not forced and _active_skill_name not in d.broadside_exclude \
-			and not evade_wins:
+	if broadside_now:
 		intent = _skill_broadside.apply(intent, ctx, d.broadside_params)
 	elif evade_wins and not forced and _active_skill_name not in d.evade_exclude:
 		intent = _skill_evade.apply(intent, ctx, d.evade_params)
@@ -4431,10 +4434,6 @@ func _spot_squadron(index: int, squad: Squadron, server: GameServer,
 
 # UTILITIES
 
-# Heading error (radians) within which the hull is considered aligned with the
-# bidirectional desired-heading line, allowing the ship to engage reverse.
-const REVERSE_ALIGN_TOL: float = deg_to_rad(40.0)
-
 func _get_ship_heading() -> float:
 	"""Get ship's current heading. 0 = +Z, PI/2 = +X, etc."""
 	var forward = -_ship.global_transform.basis.z
@@ -4458,22 +4457,6 @@ func _has_active_bb_shooter() -> bool:
 		if is_instance_valid(shooter) and shooter.ship_class == Ship.ShipClass.BB:
 			return true
 	return false
-
-## Align hull with the bidirectional desired-heading line before engaging reverse,
-## preventing broadside exposure during a turn-around.  Call after a skill sets
-## intent.target_heading.  nearest_threat_dist gates activation against threshold.
-func _apply_reverse_alignment(intent: NavIntent, nearest_threat_dist: float, threshold: float) -> NavIntent:
-	if nearest_threat_dist >= threshold:
-		return intent
-	var ship_heading := _get_ship_heading()
-	if absf(angle_difference(intent.target_heading, ship_heading)) > PI * 0.65:
-		var rev_heading := wrapf(intent.target_heading + PI, -PI, PI)
-		intent.target_heading = rev_heading
-		if absf(angle_difference(rev_heading, ship_heading)) < REVERSE_ALIGN_TOL:
-			intent.force_reverse = true
-		else:
-			intent.heading_weight = 1.0
-	return intent
 
 func _normalize_angle(angle: float) -> float:
 	while angle > PI:

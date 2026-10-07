@@ -59,6 +59,7 @@ impl ShipNavigator {
         heading_tolerance: f32,
         heading_weight: f32,
         prefer_reverse: bool,
+        forbid_reverse: bool,
     ) {
         let new_pos = Vector2::new(target.x, target.z);
         self.target.position = new_pos;
@@ -67,6 +68,7 @@ impl ShipNavigator {
         self.target.heading_tolerance = heading_tolerance;
         self.target.heading_weight = clamp_f(heading_weight, 0.0, 1.0);
         self.target.prefer_reverse = prefer_reverse;
+        self.target.forbid_reverse = forbid_reverse && !prefer_reverse;
 
         // navigate_to() is the synchronous planning trigger.
         self.run_plan_sync();

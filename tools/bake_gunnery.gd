@@ -339,7 +339,7 @@ func _bake_all(hulls: Array, ref: ShellParams, v_ref: PackedFloat32Array, om_max
 	var res: Dictionary = pm.survey_bake(todo, ref, job_hull, job_dir, job_vref, job_nxny, job_rect,
 		points, pt_off, edges, edge_off, {"coarse_pens": PackedFloat32Array(COARSE_PENS),
 		"bisect_mm": BISECT_MM, "om_max": om_max, "threads": _threads, "smt": _smt,
-		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_sigma": ev_sigma,
+		"ev_jobs": ev_jobs, "ev_payouts": BotGunnery.full_payouts(), "ev_levels": BotGunnery.full_levels(), "ev_sigma": ev_sigma,
 		"ev_guarantee": BotGunnery.CITADEL_GUARANTEE_FRAC, "ev_ellipse": BotGunnery.CITADEL_ELLIPSE,
 		"ev_turret_cap": BotGunnery.DMG_TURRET})
 	var st: Dictionary = res.get("stats", {})

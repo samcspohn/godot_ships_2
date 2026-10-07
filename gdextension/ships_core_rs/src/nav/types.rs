@@ -338,6 +338,8 @@ pub struct NavTarget {
     pub heading_tolerance: f32, // radians
     pub heading_weight: f32,    // 0 = normal nav, 1 = purely pursue this heading
     pub prefer_reverse: bool,
+    /// Ahead only, bar collision and torpedo escapes.
+    pub forbid_reverse: bool,
 }
 
 impl Default for NavTarget {
@@ -349,6 +351,7 @@ impl Default for NavTarget {
             heading_tolerance: 0.2618,
             heading_weight: 0.0,
             prefer_reverse: false,
+            forbid_reverse: false,
         }
     }
 }

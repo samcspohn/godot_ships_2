@@ -44,11 +44,6 @@ var close_arm_range_gated: bool = true
 ## Whether the close-quarters kite path first looks for cover along the way.
 var close_arm_uses_cover: bool = true
 
-## Whether the close arm aligns the hull with the desired-heading line before
-## engaging reverse. Keeps a slow ship from swinging its broadside through a
-## turn; a destroyer would rather just leave.
-var close_arm_reverse_align: bool = true
-
 ## Whether a low threat score short-circuits the ladder before the distance
 ## check. CA decides on odds first: a cruiser that likes its chances pushes
 ## whether or not the enemy is close aboard. BB and DD check distance first.
@@ -264,8 +259,8 @@ var secondary_engage_ratio: float = 0.9
 ## gun is how a brawler dies.
 var secondary_yield_threat: float = 0.6
 
-## Threat at which a push holds the FULL engagement range, and the fraction of
-## it a push at zero threat closes to.
+## Threat at which the engagement range (BotBehavior.engagement_range) reaches
+## its full gun_engage_ratio, and the fraction of it it closes to at zero threat.
 ##
 ## The engagement range is a ceiling, not a station. A push that always stopped
 ## on it fought every engagement at the same distance whether it was winning or
@@ -339,7 +334,9 @@ static func for_battleship() -> BotDoctrine:
 	d.camp_max_threat = 0.6
 	d.cover_max_threat = 0.7
 	d.cover_min_threat_dist = 10000.0
-	d.gun_engage_ratio = 0.60
+	d.gun_engage_ratio = 0.75
+	d.push_equalize_floor = 0.7
+	d.station_range_ratio = 0.75
 	# A battleship stations on what it can shoot and how many can shoot back;
 	# being seen costs it nothing it was not already paying.
 	d.station_w_reach = 1.0
@@ -371,7 +368,9 @@ static func for_cruiser() -> BotDoctrine:
 	d.dark_chain = [&"Chase", &"Hunt", &"SailForward"]
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
-	d.gun_engage_ratio = 0.70
+	# Out at the edge of its own range: a cruiser trades in volume, not by closing.
+	d.gun_engage_ratio = 0.90
+	d.push_equalize_floor = 0.8
 	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 11000.0
 	# The CA's broadside post-process is deliberately off: its engaged arm sets
@@ -428,7 +427,6 @@ static func for_destroyer() -> BotDoctrine:
 	d.dark_chain = []
 	d.close_arm_range_gated = false
 	d.close_arm_uses_cover = false
-	d.close_arm_reverse_align = false
 	d.push_threat = 0.5
 	# A destroyer that is shooting rather than launching is already committed,
 	# so it fights near the edge of its guns instead of holding a standoff.

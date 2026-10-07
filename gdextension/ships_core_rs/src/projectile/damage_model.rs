@@ -1,8 +1,10 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use crate::projectile::manager::ev::ev_lookup;
+use crate::projectile::manager::ev::{ev_levels, ev_lookup};
 
+/// HpParams defaults: light, pen, citadel repair.
+const DEFAULT_REPAIR: [f32; 3] = [0.95, 0.5, 0.15];
 /// Matches BotGunnery.FIRE_VALUE_PER_FIRE.
 const FIRE_VALUE_PER_FIRE: f32 = 0.06;
 /// Per range sample: descent and pen for each ammo, then half-dispersion h, v.
@@ -31,6 +33,8 @@ struct Hull {
     max_hp: f32,
     max_buildup: f32,
     fire_dps: f32,
+    /// Repairable share of light, medium and heavy damage (HpParams).
+    repair: [f32; 3],
 }
 
 /// dps of one shooter on one hull by range and aspect, sampled off expected().
@@ -61,6 +65,9 @@ pub(crate) struct Expected {
     pub he_fire_ev: f32,
     pub ap_dps: f32,
     pub he_dps: f32,
+    /// Shares of ap_dps / he_dps a repair party can win back.
+    pub ap_heal: f32,
+    pub he_heal: f32,
 }
 
 impl Expected {
@@ -134,6 +141,7 @@ impl DamageModel {
         let ai = even(upper(&self.aspect_edges, aspect_deg as f64), n_asp);
         let (hd_h, hd_v) = (at(4), at(5));
         let mut value = [0.0f32; 2];
+        let mut heal = [h.repair[1]; 2];
         let mut landed_he = 0.0f32;
         for (k, ammo) in s.ammo.iter().enumerate() {
             let Some(a) = ammo else { continue };
@@ -145,6 +153,10 @@ impl DamageModel {
             let Some(chunk) = h.chunks.get(&(ai * self.bucket_stride + di)) else { continue };
             let Some((v, l)) = ev_lookup(chunk, pen as f64, a.overmatch as f64, a.is_he, hd_h, hd_v) else { continue };
             value[k] = v * a.damage;
+            if let Some((heavy, medium)) = ev_levels(chunk, pen as f64, a.overmatch as f64, a.is_he, hd_h, hd_v) {
+                let light = (1.0 - heavy - medium).max(0.0);
+                heal[k] = light * h.repair[0] + medium * h.repair[1] + heavy * h.repair[2];
+            }
             if k == 1 {
                 landed_he = l;
             }
@@ -158,7 +170,9 @@ impl DamageModel {
             fire_ev *= (h.fire_dps / (ap_ev * s.rate)).clamp(0.0, 1.0);
         }
         let he_ev = value[1] + fire_ev;
-        Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate })
+        let he_heal = if he_ev > 0.0 { (value[1] * heal[1] + fire_ev * h.repair[0]) / he_ev } else { heal[1] };
+        Some(Expected { ap_ev, he_ev, he_fire_ev: fire_ev, ap_dps: ap_ev * s.rate, he_dps: he_ev * s.rate,
+            ap_heal: heal[0], he_heal })
     }
 }
 
@@ -195,7 +209,16 @@ impl DamageModel {
             .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()? as usize, v.try_to::<PackedByteArray>().ok()?.to_vec())))
             .collect();
         self.grids.retain(|k, _| k.1 != id);
-        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps });
+        let repair = self.hulls.get(&id).map_or(DEFAULT_REPAIR, |h| h.repair);
+        self.hulls.insert(id, Hull { chunks, max_hp, max_buildup, fire_dps, repair });
+    }
+
+    /// Repairable shares of light, medium and heavy damage on hull `id` (HpParams).
+    #[func]
+    fn set_repair(&mut self, id: i64, light: f32, medium: f32, heavy: f32) {
+        if let Some(h) = self.hulls.get_mut(&id) {
+            h.repair = [light, medium, heavy];
+        }
     }
 
     #[func]
@@ -215,7 +238,7 @@ impl DamageModel {
         self.grids.retain(|k, _| k.0 != id && k.1 != id);
     }
 
-    /// {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps}, or empty when either side is unknown.
+    /// {ap_ev, he_ev, he_fire_ev, ap_dps, he_dps, ap_heal, he_heal}, or empty when either side is unknown.
     #[func]
     fn get_expected(&self, shooter: i64, hull: i64, range: f32, aspect_deg: f32) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -225,6 +248,8 @@ impl DamageModel {
             d.set("he_fire_ev", e.he_fire_ev);
             d.set("ap_dps", e.ap_dps);
             d.set("he_dps", e.he_dps);
+            d.set("ap_heal", e.ap_heal);
+            d.set("he_heal", e.he_heal);
         }
         d
     }

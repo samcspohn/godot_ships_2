@@ -24,6 +24,9 @@ var throttle_override: int = -1
 ## maneuver/arrived zones is unaffected and governed by the navigator.
 var force_reverse: bool = false
 
+## Ahead gear only, bar collision and torpedo escapes: stance chose to turn rather than back.
+var forbid_reverse: bool = false
+
 ## Heading tolerance: acceptable heading error to consider settled (radians, default ~15°)
 var heading_tolerance: float = 0.2618
 

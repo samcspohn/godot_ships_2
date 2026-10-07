@@ -605,6 +605,7 @@ impl ShipNavigator {
         #[opt(default = 0.2618)] heading_tolerance: f32,
         #[opt(default = 0.0)] heading_weight: f32,
         #[opt(default = false)] prefer_reverse: bool,
+        #[opt(default = false)] forbid_reverse: bool,
     ) {
         self.navigate_to_impl(
             target,
@@ -613,6 +614,7 @@ impl ShipNavigator {
             heading_tolerance,
             heading_weight,
             prefer_reverse,
+            forbid_reverse,
         );
     }
 

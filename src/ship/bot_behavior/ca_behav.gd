@@ -118,6 +118,7 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 
 func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
 	return {"mode": mode, "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
+		"max_range": max_engagement_range(_ship) if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"fire_en_route": cant_go_dark}
 
 ## Dive for cover when it beats going dark; else go dark while that is still

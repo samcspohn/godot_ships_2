@@ -23,6 +23,8 @@ pub(crate) struct SweepArgs {
     /// Inside this, with line of sight, an enemy lights us for its team.
     pub seen_r: Vec<f32>,
     pub pref_range: f32,
+    /// Targets beyond this do not count.
+    pub max_range: f32,
     pub gun_range: f32,
     pub hold_s: f32,
     pub need: u32,
@@ -55,6 +57,8 @@ pub(crate) struct Pick {
 pub(crate) struct SweepResult {
     pub best: Option<Pick>,
     pub held: Option<Pick>,
+    /// The cell the ship is in.
+    pub here: Option<Pick>,
     /// Cheapest cell no enemy lights.
     pub dark: Option<Pick>,
     pub cells: u32,
@@ -127,6 +131,9 @@ impl VisibilityGrid {
                 if held_k == Some(k) {
                     res.held = Some(p);
                 }
+                if k == start {
+                    res.here = Some(p);
+                }
                 if p.mask.count_ones() >= a.need && res.best.is_none_or(|b| p.score > b.score) {
                     res.best = Some(p);
                 }
@@ -192,7 +199,10 @@ impl VisibilityGrid {
         if !concealed && !hard {
             return None;
         }
-        let mask = self.spotted_mask(here.k, inp) & a.live;
+        let in_range = inp.enemies.iter().enumerate().take(64)
+            .filter(|(_, e)| a.max_range <= 0.0 || c.distance_to(e.pos) <= a.max_range)
+            .fold(0u64, |m, (i, _)| m | 1 << i);
+        let mask = self.spotted_mask(here.k, inp) & a.live & in_range;
         // One battery, one target: a cell is worth its best target, not the crowd it can see.
         let (mut top, mut top_range) = (0.0, 0.0);
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
@@ -250,6 +260,7 @@ pub(crate) fn sweep_args(from: Vector2, o: &VarDictionary, dm: &mut DamageModel)
         prio: f32s("prio"),
         seen_r: f32s("seen_r"),
         pref_range: f("pref_range", 0.0),
+        max_range: f("max_range", 0.0),
         gun_range: f("gun_range", 1.0),
         hold_s: f("hold_s", 60.0),
         need: o.get("need").map_or(1, |v| v.to_i32()).max(0) as u32,

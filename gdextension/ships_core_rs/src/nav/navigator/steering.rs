@@ -8,6 +8,9 @@ use super::{
 };
 use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint, DynamicObstacle};
 
+/// Seconds added to a reverse arc the behaviour forbade: still a way out when every ahead arc is blocked.
+const FORBID_REVERSE_PENALTY_S: f32 = 120.0;
+
 impl ShipNavigator {
     /// Evaluate shell + torpedo threats along an arc. Returns separate scores so
     /// the caller can apply different budgets and suppress shells when the
@@ -139,7 +142,17 @@ impl ShipNavigator {
         const EXT_DT: f32 = 0.5;
         let last = *arc.last().unwrap();
         let speed_rate = self.params.max_speed / self.params.acceleration_time.max(0.1);
-        let mut track: Vec<(Vector2, f32, f32)> = arc.iter().map(|p| (p.position, p.heading, p.time)).collect();
+        // Arc points are seconds apart; one segment in the turning frame sweeps a receding torpedo back across the hull.
+        let mut track: Vec<(Vector2, f32, f32)> = vec![(arc[0].position, arc[0].heading, arc[0].time)];
+        for w in arc.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let n = ((b.time - a.time) / EXT_DT).ceil().max(1.0) as usize;
+            let dh = angle_difference(a.heading, b.heading);
+            for j in 1..=n {
+                let s = j as f32 / n as f32;
+                track.push((a.position.lerp(b.position, s), normalize_angle(a.heading + dh * s), lerp_f(a.time, b.time, s)));
+            }
+        }
         let (fx, fz) = (last.heading.sin(), last.heading.cos());
         let (mut pos, mut speed, mut t) = (last.position, last.speed, last.time);
         while t < MAX_EXT_TIME {
@@ -156,6 +169,9 @@ impl ShipNavigator {
         for obs in torps {
             let (hx, hy) = (hsl + obs.radius, hsb + obs.radius);
             let mut prev = local(obs, track[0]);
+            if prev.x.abs() <= hx && prev.y.abs() <= hy {
+                continue;
+            }
             for k in 1..track.len() {
                 let cur = local(obs, track[k]);
                 if let Some(f) = segment_enters_box(prev, cur, hx, hy) {
@@ -638,6 +654,9 @@ impl ShipNavigator {
                         }
                     }
                     nav_score = lerp_f(nav_score, heading_align_time, self.target.heading_weight);
+                }
+                if self.target.forbid_reverse && cand_throttle < 0 && !torpedoes_present {
+                    nav_score += FORBID_REVERSE_PENALTY_S;
                 }
 
                 // Exit-heading penalty

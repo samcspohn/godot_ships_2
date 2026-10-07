@@ -2,24 +2,23 @@ class_name SkillPush
 extends SkillStation
 
 ## The station search with a must-close band: cells nearer the danger centre
-## than the hull stands, never inside the threat-equalised engagement range.
-## Without a field it runs straight down the bearing instead.
+## than the hull stands, never inside the engagement range (which already
+## scales with threat, BotBehavior.engagement_range). Without a field it runs
+## straight down the bearing instead.
 ##
-## Params: desired_range (the standoff), equalize_threat / equalize_floor
-## (override the doctrine's push_equalize_*), line_of_fire (refuse a cell
-## the guns cannot reach anything from).
+## Params: desired_range (the standoff), line_of_fire (refuse a cell the guns
+## cannot reach anything from).
 
-## Standoff smoothing: threat steps, the destination should not.
 const EQUALIZE_TAU: float = 2.0
 const EQUALIZE_RESUME_GAP: float = 3.0
 
-var _range_ratio: float = 1.0
-var _ratio_time: float = -1.0
+var _smoothed: float = 0.0
+var _smoothed_time: float = -1.0
 var _desired: float = 0.0
 
 func reset() -> void:
 	super.reset()
-	_ratio_time = -1.0
+	_smoothed_time = -1.0
 
 func _label() -> String:
 	return "Push"
@@ -35,7 +34,7 @@ func _max_exposed(d: BotDoctrine) -> float:
 	return d.push_max_exposed
 
 func _range_band(ctx: SkillContext, d: BotDoctrine, params: Dictionary, here_dist: float) -> Array:
-	_desired = _equalized_range(ctx, params, float(params.get("desired_range", 0.0)))
+	_desired = _smooth(float(params.get("desired_range", 0.0)))
 	if here_dist <= _desired:
 		return [0.0, here_dist]
 	var step: float = ctx.ship.movement_controller._p().turning_circle_radius * d.push_step_turns
@@ -50,25 +49,19 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		return intent
 	return _geometric(ctx, params)
 
-## Standoff scaled by threat over push_equalize_threat, floored, and lagged
-## by EQUALIZE_TAU; snapped after EQUALIZE_RESUME_GAP away from the skill.
-func _equalized_range(ctx: SkillContext, params: Dictionary, desired_range: float) -> float:
+## The standoff lagged by EQUALIZE_TAU, snapped after EQUALIZE_RESUME_GAP away
+## from the skill: threat steps, the destination should not.
+func _smooth(desired_range: float) -> float:
 	if desired_range <= 0.0:
+		_smoothed_time = -1.0
 		return desired_range
-	var d: BotDoctrine = ctx.behavior._doc()
-	var equalize: float = float(params.get("equalize_threat", d.push_equalize_threat))
-	if equalize <= 0.0:
-		_ratio_time = -1.0
-		return desired_range
-	var floor_ratio: float = clampf(float(params.get("equalize_floor", d.push_equalize_floor)), 0.0, 1.0)
-	var wanted: float = clampf(ctx.behavior.get_threat_score(ctx) / equalize, floor_ratio, 1.0)
 	var now: float = SimClock.now()
-	if _ratio_time < 0.0 or now - _ratio_time > EQUALIZE_RESUME_GAP:
-		_range_ratio = wanted
+	if _smoothed_time < 0.0 or now - _smoothed_time > EQUALIZE_RESUME_GAP:
+		_smoothed = desired_range
 	else:
-		_range_ratio = lerpf(_range_ratio, wanted, clampf((now - _ratio_time) / EQUALIZE_TAU, 0.0, 1.0))
-	_ratio_time = now
-	return desired_range * _range_ratio
+		_smoothed = lerpf(_smoothed, desired_range, clampf((now - _smoothed_time) / EQUALIZE_TAU, 0.0, 1.0))
+	_smoothed_time = now
+	return _smoothed
 
 ## Field-free push: down the bearing to the danger centre, stopping at the
 ## standoff from it and from whatever contact the run would reach first.
@@ -88,7 +81,7 @@ func _geometric(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var heading := bearing
 	if confirmed:
 		heading = lerp_angle(bearing, SkillAngle.calc_heading(ctx, params), 0.2)
-	var desired: float = _equalized_range(ctx, params, float(params.get("desired_range", 0.0)))
+	var desired: float = _smooth(float(params.get("desired_range", 0.0)))
 	var center_dist: float = to_enemy.length()
 	var close_dist: float = maxf(center_dist - desired, 0.0)
 	var dir: Vector3 = to_enemy / center_dist

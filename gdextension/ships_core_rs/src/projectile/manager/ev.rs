@@ -34,6 +34,8 @@ pub(crate) struct EvKernel {
     pub payouts: Vec<f64>,
     pub turret_cap: f64,
     pub om_max: f64,
+    /// Section-major like `payouts`: 0 light, 1 medium, 2 heavy (HPManager.DAMAGE_LEVEL).
+    pub levels: Vec<u8>,
 }
 
 impl EvKernel {
@@ -44,6 +46,14 @@ impl EvKernel {
         let idx = (((c & CELL_SECTION_MASK) >> CELL_SECTION_SHIFT) as usize) * 16 + (c & CELL_CODE_MASK) as usize;
         let v = self.payouts.get(idx).copied().unwrap_or(0.0);
         if c & CELL_TURRET != 0 { v.min(self.turret_cap) } else { v }
+    }
+
+    fn level(&self, c: u8) -> u8 {
+        if c == CELL_MISS {
+            return 0;
+        }
+        let idx = (((c & CELL_SECTION_MASK) >> CELL_SECTION_SHIFT) as usize) * 16 + (c & CELL_CODE_MASK) as usize;
+        self.levels.get(idx).copied().unwrap_or(1)
     }
 }
 
@@ -107,8 +117,8 @@ fn lattice(b: &[u8], h: &BlobHdr, k: &EvKernel) -> Lattice {
 
 /// Best-aim (value per shell, landed share) for every dispersion. The kernel
 /// is separable, so rows are summed once per aim column, not once per aim.
-fn score(l: &Lattice, pay: &[f64], hit: &[f64]) -> [(f32, f32); ND] {
-    let mut out = [(0.0f32, 0.0f32); ND];
+fn score(l: &Lattice, pay: &[f64], hit: &[f64], heavy: &[f64], medium: &[f64]) -> [Cell; ND] {
+    let mut out = [Cell::default(); ND];
     let (nx, ny) = (l.nx, l.ny);
     let row_sums = |w: &[f64], m: &[f64], out: &mut Vec<f64>| {
         out.clear();
@@ -136,16 +146,31 @@ fn score(l: &Lattice, pay: &[f64], hit: &[f64]) -> [(f32, f32); ND] {
             continue;
         }
         let (_, iu, iv) = best;
-        row_sums(&w.wh[iu], hit, &mut rw);
-        row_sums(&w.qh[iu], hit, &mut rq);
-        let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
-        let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
-        out[d] = (best.0 as f32, ((1.0 - l.g) * a + l.g * b) as f32);
+        let mut at_aim = |m: &[f64]| -> f32 {
+            row_sums(&w.wh[iu], m, &mut rw);
+            row_sums(&w.qh[iu], m, &mut rq);
+            let a: f64 = w.wv[iv].iter().zip(&rw).map(|(x, y)| x * y).sum();
+            let b: f64 = w.qv[iv].iter().zip(&rq).map(|(x, y)| x * y).sum();
+            ((1.0 - l.g) * a + l.g * b) as f32
+        };
+        let value = best.0 as f32;
+        let share = |x: f32| if value > 0.0 { (x / value).clamp(0.0, 1.0) } else { 0.0 };
+        out[d] = Cell { value, landed: at_aim(hit), heavy: share(at_aim(heavy)), medium: share(at_aim(medium)) };
     }
     out
 }
 
-type Row = [(f32, f32); ND];
+/// At the best aim: value per shell, landed share, and the shares of the value
+/// that are heavy (citadel) and medium (penetration) damage.
+#[derive(Clone, Copy, Default)]
+struct Cell {
+    value: f32,
+    landed: f32,
+    heavy: f32,
+    medium: f32,
+}
+
+type Row = [Cell; ND];
 
 fn close(a: f32, b: f32) -> bool {
     (a - b).abs() <= STEP_ABS.max(STEP_REL * a.abs().max(b.abs()))
@@ -180,10 +205,12 @@ fn thresholds(b: &[u8], h: &BlobHdr, om_max: f64) -> Vec<u16> {
 /// u8 n_thr | u16 thr[n_thr]    AP overmatch class = count of thr <= overmatch
 /// AP, per class 0..=n_thr:     u8 value[NP][ND] on the AP pen grid
 /// HE:                          u8 value[NP][ND] | u8 landed[NP][ND] on the HE pen grid
+/// LEVELS, per AP class then HE: u8 heavy[NP][ND] | u8 medium[NP][ND]
 /// ```
 /// value = expected payout per shell fired (fraction of alpha) at the best
-/// aim, landed = share of shells on the hull there, both sqrt-coded. Classes
-/// that score alike are merged.
+/// aim, landed = share of shells on the hull there, heavy / medium = shares
+/// of the value landing as citadel / penetration damage, all sqrt-coded.
+/// Classes that score alike are merged.
 pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
     let mut out = Vec::new();
     let Some(h) = blob_header(b) else { return out };
@@ -197,9 +224,12 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
             Some(codes) if codes.len() == ncell => {
                 let pay: Vec<f64> = codes.iter().map(|&c| k.payout(c)).collect();
                 let hit: Vec<f64> = codes.iter().map(|&c| if c == CELL_MISS { 0.0 } else { 1.0 }).collect();
-                score(&lat, &pay, &hit)
+                let at_level = |lv: u8| -> Vec<f64> {
+                    codes.iter().zip(&pay).map(|(&c, &p)| if k.level(c) == lv { p } else { 0.0 }).collect()
+                };
+                score(&lat, &pay, &hit, &at_level(2), &at_level(1))
             }
-            _ => [(0.0, 0.0); ND],
+            _ => [Cell::default(); ND],
         }
     };
     let thr = thresholds(b, &h, k.om_max);
@@ -208,7 +238,7 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
         let om = if class == 0 { 0.0 } else { thr[class - 1] as f64 };
         let rows: Vec<Row> = (0..NP).map(|i| eval(grid_pen(i, AP_PEN0, AP_PEN1), om, false)).collect();
         if classes.last().is_some_and(|(_, prev)| {
-            prev.iter().zip(&rows).all(|(p, q)| (0..ND).all(|d| close(p[d].0, q[d].0)))
+            prev.iter().zip(&rows).all(|(p, q)| (0..ND).all(|d| close(p[d].value, q[d].value)))
         }) {
             continue;
         }
@@ -221,15 +251,23 @@ pub(crate) fn ev_bucket(b: &[u8], k: &EvKernel) -> Vec<u8> {
     }
     for (_, rows) in &classes {
         for row in rows {
-            out.extend(row.iter().map(|r| enc(r.0)));
+            out.extend(row.iter().map(|r| enc(r.value)));
         }
     }
-    let rows: Vec<Row> = (0..NP).map(|i| eval(0.0, grid_pen(i, HE_PEN0, HE_PEN1), true)).collect();
-    for row in &rows {
-        out.extend(row.iter().map(|r| enc(r.0)));
+    let he: Vec<Row> = (0..NP).map(|i| eval(0.0, grid_pen(i, HE_PEN0, HE_PEN1), true)).collect();
+    for row in &he {
+        out.extend(row.iter().map(|r| enc(r.value)));
     }
-    for row in &rows {
-        out.extend(row.iter().map(|r| enc(r.1)));
+    for row in &he {
+        out.extend(row.iter().map(|r| enc(r.landed)));
+    }
+    for rows in classes.iter().map(|(_, r)| r).chain(std::iter::once(&he)) {
+        for row in rows {
+            out.extend(row.iter().map(|r| enc(r.heavy)));
+        }
+        for row in rows {
+            out.extend(row.iter().map(|r| enc(r.medium)));
+        }
     }
     out
 }
@@ -243,33 +281,72 @@ fn grid_pos(x: f32, x0: f32, ratio: f32, n: usize) -> (usize, f32) {
 /// (value per shell fired as a fraction of alpha, landed share) for one shell
 /// against one bucket chunk: lerped in log pen and log half-dispersion.
 pub(crate) fn ev_lookup(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<(f32, f32)> {
-    let n_thr = *b.first()? as usize;
-    let block = NP * ND;
-    let head = 1 + 2 * n_thr;
-    if b.len() < head + (n_thr + 1) * block + 2 * block {
+    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v)?;
+    let vals = if is_he { c.head + (c.n_thr + 1) * c.block } else { c.head + c.class * c.block };
+    // Below the grid's first pen the value fades to zero rather than holding.
+    let fade = if c.x < c.lo { (c.x / c.lo) as f32 } else { 1.0 };
+    Some((c.tri(b, vals) * fade, if is_he { c.tri(b, vals + c.block) * fade } else { 0.0 }))
+}
+
+/// (heavy, medium) shares of `ev_lookup`'s value; None for chunks baked without them.
+pub(crate) fn ev_levels(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<(f32, f32)> {
+    let c = Chunk::of(b, pen, overmatch, is_he, half_h, half_v)?;
+    let levels = c.head + (c.n_thr + 1) * c.block + 2 * c.block;
+    if b.len() < levels + (c.n_thr + 2) * 2 * c.block {
         return None;
     }
-    let (vals, lands, x, lo, hi) = if is_he {
-        let v = head + (n_thr + 1) * block;
-        (v, Some(v + block), overmatch, HE_PEN0, HE_PEN1)
-    } else {
-        let class = (0..n_thr).filter(|&i| rd_u16(b, 1 + 2 * i) as f64 <= overmatch).count();
-        (head + class * block, None, pen, AP_PEN0, AP_PEN1)
-    };
-    let (ip, fp) = grid_pos(x.max(1e-3) as f32, lo as f32, (hi / lo).powf(1.0 / (NP - 1) as f64) as f32, NP);
-    let (ih, fh) = grid_pos(half_h, EV_H0, EV_H_RATIO, EV_NH);
-    let (iv, fv) = grid_pos(half_v, EV_V0, EV_V_RATIO, EV_NV);
-    let at = |base: usize, p: usize, a: usize, c: usize| dec(b[base + p * ND + a * EV_NV + c]);
-    let tri = |base: usize| -> f32 {
+    let base = levels + if is_he { c.n_thr + 1 } else { c.class } * 2 * c.block;
+    Some((c.tri(b, base), c.tri(b, base + c.block)))
+}
+
+struct Chunk {
+    n_thr: usize,
+    block: usize,
+    head: usize,
+    class: usize,
+    x: f64,
+    lo: f64,
+    p: (usize, f32),
+    h: (usize, f32),
+    v: (usize, f32),
+}
+
+impl Chunk {
+    fn of(b: &[u8], pen: f64, overmatch: f64, is_he: bool, half_h: f32, half_v: f32) -> Option<Self> {
+        let n_thr = *b.first()? as usize;
+        let block = NP * ND;
+        let head = 1 + 2 * n_thr;
+        if b.len() < head + (n_thr + 1) * block + 2 * block {
+            return None;
+        }
+        let (class, x, lo, hi) = if is_he {
+            (0, overmatch, HE_PEN0, HE_PEN1)
+        } else {
+            ((0..n_thr).filter(|&i| rd_u16(b, 1 + 2 * i) as f64 <= overmatch).count(), pen, AP_PEN0, AP_PEN1)
+        };
+        Some(Self {
+            n_thr,
+            block,
+            head,
+            class,
+            x,
+            lo,
+            p: grid_pos(x.max(1e-3) as f32, lo as f32, (hi / lo).powf(1.0 / (NP - 1) as f64) as f32, NP),
+            h: grid_pos(half_h, EV_H0, EV_H_RATIO, EV_NH),
+            v: grid_pos(half_v, EV_V0, EV_V_RATIO, EV_NV),
+        })
+    }
+
+    /// Trilinear in log pen x log half-dispersion of the block at `base`.
+    fn tri(&self, b: &[u8], base: usize) -> f32 {
+        let ((ip, fp), (ih, fh), (iv, fv)) = (self.p, self.h, self.v);
+        let at = |p: usize, a: usize, c: usize| dec(b[base + p * ND + a * EV_NV + c]);
         let lerp = |p: f32, q: f32, t: f32| p + (q - p) * t;
         let plane = |p: usize| {
-            let lo = lerp(at(base, p, ih, iv), at(base, p, ih, iv + 1), fv);
-            let hi = lerp(at(base, p, ih + 1, iv), at(base, p, ih + 1, iv + 1), fv);
+            let lo = lerp(at(p, ih, iv), at(p, ih, iv + 1), fv);
+            let hi = lerp(at(p, ih + 1, iv), at(p, ih + 1, iv + 1), fv);
             lerp(lo, hi, fh)
         };
         lerp(plane(ip), plane(ip + 1), fp)
-    };
-    // Below the grid's first pen the value fades to zero rather than holding.
-    let fade = if x < lo { (x / lo) as f32 } else { 1.0 };
-    Some((tri(vals) * fade, lands.map_or(0.0, |l| tri(l) * fade)))
+    }
 }

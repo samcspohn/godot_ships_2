@@ -8,9 +8,6 @@ extends SkillPosition
 const SAFE_MARGIN := 1.15
 const FRIENDS := 4
 const BELIEF_SCALE_M := 10000.0
-const EXIT_STEP_M := 200.0
-const EXIT_MAX_STEPS := 100
-const EXIT_MARGIN_M := 300.0
 var stealth_corridor: bool = true
 
 func reset() -> void:
@@ -47,13 +44,7 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_claim(team_id, ship.get_instance_id(), SimClock.now_ms())
 	# Bow out: lit, the boat sprints straight away; torpedoes from the threat meet its stern.
 	var intent := _intent(ctx, field, team_id, params.merged({"away_from": danger}))
-	if _routes_around():
-		var out := _exit_point(here, pos, opts.det_r)
-		if out != here:
-			intent.target_position = Vector3(out.x, 0.0, out.y)
-			intent.target_heading = atan2(out.x - here.x, out.y - here.y)
-		intent.avoid_origins = pos
-		intent.avoid_radii = opts.det_r
+	_shape(intent, ctx, vis, here, pos, opts)
 	return intent
 
 func _decline() -> NavIntent:
@@ -75,32 +66,10 @@ func _belief_centre(ctx: SkillContext, belief: Array[Dictionary], here: Vector2)
 		total += w
 	return sum / total if total > 0.0 else _nearest(PackedVector2Array(belief.map(func(b): return b.pos)), here)
 
-## Inside the zones a route cannot be walled, so the way out comes first:
-## along the depth-weighted push of every zone holding us, to clear water.
-func _exit_point(here: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:
-	var push := Vector2.ZERO
-	for i in centres.size():
-		var d: float = here.distance_to(centres[i])
-		if radii[i] > 0.0 and d < radii[i]:
-			push += (here - centres[i]).normalized() * (radii[i] - d) if d > 1.0 else Vector2.RIGHT * radii[i]
-	if push == Vector2.ZERO:
-		return here
-	var dir := push.normalized()
-	var p := here
-	for _step in EXIT_MAX_STEPS:
-		p += dir * EXIT_STEP_M
-		var clear := true
-		for i in centres.size():
-			if radii[i] > 0.0 and p.distance_to(centres[i]) < radii[i]:
-				clear = false
-				break
-		if clear:
-			return p + dir * EXIT_MARGIN_M
-	return p
-
-## Whether the route itself keeps out of the zones the walk keeps out of.
-func _routes_around() -> bool:
-	return false
+## Last say over the intent once the station is held.
+func _shape(_intent: NavIntent, _ctx: SkillContext, _vis: VisibilityGrid, _here: Vector2,
+		_pos: PackedVector2Array, _opts: Dictionary) -> void:
+	pass
 
 ## Lit under real threat a spotter has nothing left to hide.
 func _declines(ctx: SkillContext) -> bool:

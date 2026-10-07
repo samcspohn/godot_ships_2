@@ -77,8 +77,8 @@ const OBSTACLE_REGISTER_RANGE: float = 2000.0
 
 ## Maximum distance to register a torpedo as an obstacle
 @export var torpedo_track_range: float = 3000.0
-## Torpedo detonation/avoidance radius (m) — roughly the magnetic fuze trigger zone
-const TORPEDO_HIT_RADIUS: float = 20.0
+## Avoidance margin (m) around the hull; torpedoes hit by raycast, so this only absorbs arc prediction error
+const TORPEDO_HIT_RADIUS: float = 5.0
 ## ID namespace base for torpedo obstacles (negative, never collides with ship instance IDs)
 const TORPEDO_ID_OFFSET: int = -100000
 ## Number of armed, visible, enemy torpedoes currently within torpedo_track_range.
@@ -444,6 +444,7 @@ func _update_nav_intent() -> void:
 		_last_intent.target_position = new_intent.target_position
 		_last_intent.heading_weight = new_intent.heading_weight
 		_last_intent.force_reverse = new_intent.force_reverse
+		_last_intent.forbid_reverse = new_intent.forbid_reverse
 		_last_intent.avoid_origins = new_intent.avoid_origins
 		_last_intent.avoid_radii = new_intent.avoid_radii
 		destination = _last_intent.target_position
@@ -502,7 +503,8 @@ func _execute_nav_intent() -> void:
 		_last_intent.hold_radius,
 		_last_intent.heading_tolerance,
 		_last_intent.heading_weight,
-		_last_intent.force_reverse
+		_last_intent.force_reverse,
+		_last_intent.forbid_reverse
 	)
 
 ## Get the current NavIntent mode as a human-readable string (for debug overlay)

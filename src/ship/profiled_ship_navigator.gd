@@ -84,7 +84,8 @@ func navigate_to(
 	hold_radius: float = 0.0,
 	heading_tolerance: float = 0.0,
 	heading_weight: float = 0.0,
-	force_reverse: bool = false
+	force_reverse: bool = false,
+	forbid_reverse: bool = false
 ) -> void:
 	_impl.navigate_to(
 		target_position,
@@ -92,7 +93,8 @@ func navigate_to(
 		hold_radius,
 		heading_tolerance,
 		heading_weight,
-		force_reverse
+		force_reverse,
+		forbid_reverse
 	)
 
 

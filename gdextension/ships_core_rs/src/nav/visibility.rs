@@ -402,9 +402,9 @@ impl VisibilityGrid {
     /// Every water cell within `box_m` of `from`, reached by the cheapest path
     /// priced by time and by lit enemies' fire at the aspect each step shows.
     /// hold_walk's opts plus damage_model, me, prio and seen_r (per enemy), speed,
-    /// my_hp, box_m, pref_range, gun_range, hold_s, need, allow_hard, held and
+    /// my_hp, box_m, pref_range, max_range, gun_range, hold_s, need, allow_hard, held and
     /// weights w_gain, w_risk, w_time, w_range, w_hard.
-    /// {best, held, dark: {pos, score, gain, risk, time, mask, count, hard} or {}, cells, us}.
+    /// {best, held, here, dark: {pos, score, gain, risk, time, mask, count, hard} or {}, cells, us}.
     #[func]
     fn cover_sweep(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
         let mut d = VarDictionary::new();
@@ -418,6 +418,7 @@ impl VisibilityGrid {
         let r = self.cover_sweep_impl(&inp, &args, &dm.bind());
         pick_dict(&mut d, "best", r.best, &self.centres);
         pick_dict(&mut d, "held", r.held, &self.centres);
+        pick_dict(&mut d, "here", r.here, &self.centres);
         pick_dict(&mut d, "dark", r.dark, &self.centres);
         d.set("cells", r.cells as i64);
         d.set("us", t0.elapsed().as_micros() as i64);
