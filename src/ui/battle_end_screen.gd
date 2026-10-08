@@ -61,6 +61,7 @@ func _ready() -> void:
 	var leaderboard: Array = result.get("leaderboard", [])
 
 	var is_victory := winning_team == friendly_team_id
+	var is_draw := winning_team == -1
 
 	# -- Screenshot background --
 	if screenshot:
@@ -99,9 +100,9 @@ func _ready() -> void:
 
 	# -- Title --
 	var title_label := _make_label(
-		"VICTORY" if is_victory else "DEFEAT",
+		"DRAW" if is_draw else "VICTORY" if is_victory else "DEFEAT",
 		56,
-		GOLD if is_victory else DEFEAT_RED,
+		SUBTITLE_WHITE if is_draw else GOLD if is_victory else DEFEAT_RED,
 		HORIZONTAL_ALIGNMENT_CENTER,
 	)
 	vbox.add_child(title_label)
@@ -133,7 +134,7 @@ func _ready() -> void:
 	vbox.add_child(_tab_container)
 
 	# -- Personal Stats tab --
-	var personal_tab := _build_personal_stats_tab(stats)
+	var personal_tab := _build_personal_stats_tab(stats, _find_local_entry(leaderboard, ship_name))
 	personal_tab.name = "Personal Stats"
 	_tab_container.add_child(personal_tab)
 
@@ -157,7 +158,13 @@ func _ready() -> void:
 # ===========================================================================
 #  Personal Stats tab
 # ===========================================================================
-func _build_personal_stats_tab(stats: Dictionary) -> Control:
+func _find_local_entry(leaderboard: Array, local_ship_name: String) -> Dictionary:
+	for entry: Dictionary in leaderboard:
+		if entry.get("ship_name", "") == local_ship_name and not entry.get("is_bot", true):
+			return entry
+	return {}
+
+func _build_personal_stats_tab(stats: Dictionary, entry: Dictionary) -> Control:
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -197,6 +204,16 @@ func _build_personal_stats_tab(stats: Dictionary) -> Control:
 	_add_stat_row(stats_grid, "Spotting Damage", "%d" % stats.get("spotting_damage", 0.0))
 	_add_stat_row(stats_grid, "Potential Damage", "%d" % stats.get("potential_damage", 0.0))
 
+	if entry.has("xp"):
+		stats_wrapper.add_child(_make_label("Experience", 20, LABEL_GRAY, HORIZONTAL_ALIGNMENT_CENTER))
+		var xp_grid := _make_stats_grid()
+		stats_wrapper.add_child(xp_grid)
+		_add_stat_row(xp_grid, "Damage", str(entry.get("xp_damage", 0)))
+		_add_stat_row(xp_grid, "Kills", str(entry.get("xp_kills", 0)))
+		_add_stat_row(xp_grid, "Spotting", str(entry.get("xp_spot", 0)))
+		_add_stat_row(xp_grid, "Potential Damage", str(entry.get("xp_potential", 0)))
+		_add_stat_row(xp_grid, "Total XP", str(entry.get("xp", 0)))
+
 	# Ships damaged section
 	var ships_damaged: Dictionary = stats.get("ships_damaged", {})
 	if not ships_damaged.is_empty():
@@ -217,15 +234,7 @@ func _build_personal_stats_tab(stats: Dictionary) -> Control:
 
 
 func sort_leaderboard(a, b):
-	var a_dmg = a.get("total_damage", 0)
-	var b_dmg = b.get("total_damage", 0)
-	var a_spotting = a.get("spotting_damage", 0)
-	var b_spotting = b.get("spotting_damage", 0)
-	var a_kills = a.get("frags", 0)
-	var b_kills = b.get("frags", 0)
-	var a_score = a_dmg + a_spotting * 0.5 + a_kills * 10000
-	var b_score = b_dmg + b_spotting * 0.5 + b_kills * 10000
-	return a_score > b_score # Sort descending by score
+	return a.get("xp", 0) > b.get("xp", 0)
 
 # ===========================================================================
 #  Leaderboard tab
@@ -243,7 +252,7 @@ func _build_leaderboard_tab(leaderboard: Array, friendly_team_id: int, local_shi
 	hbox.add_theme_constant_override("separation", 24)
 	scroll.add_child(hbox)
 
-	# Sort by damage descending within each team
+	# Sort by XP descending within each team
 	var friendly_entries: Array = []
 	var enemy_entries: Array = []
 	for entry in leaderboard:
@@ -290,7 +299,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 
 	# Header row
 	var header_row := _make_leaderboard_row(
-		"Ship", "Apt", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot",
+		"Ship", "Apt", "XP", "Damage", "Kills", "Main", "Sec", "Torp", "Fire", "Spot",
 		LABEL_GRAY, false, 14
 	)
 	vbox.add_child(header_row)
@@ -326,6 +335,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 		var row := _make_leaderboard_row(
 			display_name,
 			APTITUDE_ABBREV.get(apt_name, ""),
+			str(entry.get("xp", 0)),
 			"%d" % entry.get("total_damage", 0.0),
 			str(entry.get("frags", 0)),
 			str(entry.get("main_hits", 0)),
@@ -357,7 +367,7 @@ func _build_team_table(entries: Array, local_ship_name: String, is_friendly: boo
 
 
 func _make_leaderboard_row(
-	col_name: String, col_apt: String, col_dmg: String, col_kills: String,
+	col_name: String, col_apt: String, col_xp: String, col_dmg: String, col_kills: String,
 	col_main: String, col_sec: String, col_torp: String, col_fire: String,
 	col_spot: String,
 	text_color: Color, highlight: bool, font_size: int = 15,
@@ -392,6 +402,7 @@ func _make_leaderboard_row(
 	var columns := [
 		[col_name, 220, HORIZONTAL_ALIGNMENT_LEFT],
 		[col_apt, 44, HORIZONTAL_ALIGNMENT_LEFT],
+		[col_xp, 60, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_dmg, 80, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_kills, 50, HORIZONTAL_ALIGNMENT_RIGHT],
 		[col_main, 50, HORIZONTAL_ALIGNMENT_RIGHT],

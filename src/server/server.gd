@@ -12,94 +12,18 @@ var team_info = null
 var team_file_path = ""
 var team = {}
 var players_spawned_bots = false  # Track if bots have been spawned for single player
-var team_0_valid_targets: Array[Ship] = []
-var team_1_valid_targets: Array[Ship] = []
-var team_0_ships: Array[Ship] = []
-var team_1_ships: Array[Ship] = []
-# Unspotted enemies with their last known positions (Ship -> Vector3)
-var team_0_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 0 (i.e., team 1 ships that went dark)
-var team_1_unspotted_enemies: Dictionary = {}  # Unspotted enemies of team 1 (i.e., team 0 ships that went dark)
-# Timestamps (seconds, SimClock.now()) of when each ship went unspotted
-var team_0_unspotted_times: Dictionary = {}  # Ship -> float
-var team_1_unspotted_times: Dictionary = {}  # Ship -> float
-# Motion frozen at the instant of last observation, parallel to the position and
-# time tables above. A contact nobody can see cannot be watched accelerating or
-# turning, so its velocity and heading are captured together with its position
-# and read back from here - reading them live off the Ship instead would hand
-# out exactly the information concealment is supposed to withhold.
-var team_0_unspotted_vels: Dictionary = {}   # Ship -> Vector3 (linear velocity when last seen)
-var team_1_unspotted_vels: Dictionary = {}
-var team_0_unspotted_rots: Dictionary = {}   # Ship -> float (rotation.y when last seen)
-var team_1_unspotted_rots: Dictionary = {}
-# What kind of intel each LKP came from, parallel to the four tables above.
-# Every contact in them is a real observation, but they are not all the same
-# kind of observation, and a gun should not treat them as if they were: a hydro,
-# radar or air contact is a ship being watched right now through a sensor that
-# also paints a 3-D marker for the humans on that team, whereas a muzzle flash
-# is one instant of one salvo from a ship nobody can otherwise find. Behavior
-# reads this to decide how long, and for which bots, a contact stays shootable.
-var team_0_unspotted_sources: Dictionary = {}   # Ship -> String, one of LKP_SOURCE_*
-var team_1_unspotted_sources: Dictionary = {}
+var teams: Array[TeamState] = [TeamState.new(0), TeamState.new(1)]
 ## A ship that was, or is being, directly observed - it went dark in front of
 ## someone, or a sensor is holding it. This is the normal case.
 const LKP_SOURCE_OBSERVED: String = "observed"
 ## A ship located only by the flash of a salvo it fired from concealment. Real
 ## intel, but a single frozen instant rather than a track.
 const LKP_SOURCE_GUNFIRE: String = "gunfire"
-# Inferred contacts: where a team has DEDUCED an enemy is without anyone having
-# seen it. Bloom with nothing in sight means somebody has line of sight to us;
-# a torpedo wake means somebody was on that bearing when it was launched. Both
-# are real information and both belong in the picture - but neither is an
-# observation, and the difference matters enough to keep them out of the four
-# tables above entirely rather than trusting every reader to check a flag.
-# Nothing here can ever reach a gun: Behavior.get_contact_solution() only reads
-# the LKP tables, so an inference is structurally incapable of producing an aim
-# point. EnemyPresumption folds these in as anchors, which is what they are for.
-# Ship -> {position: Vector3, time: float, radius: float, source: String}
-var team_0_inferred_contacts: Dictionary = {}
-var team_1_inferred_contacts: Dictionary = {}
-# Hydro LKP system.
-# hydro_lkp      – frozen last-known position per ship (updated every HYDRO_LKP_INTERVAL s).
-# hydro_lkp_times– server time of the last position refresh.
-# hydro_in_range – ships that were in hydro range THIS physics frame (cleared each frame).
-var team_0_hydro_lkp: Dictionary = {}        # Ship -> Vector3
-var team_1_hydro_lkp: Dictionary = {}
-var team_0_hydro_lkp_times: Dictionary = {}  # Ship -> float
-var team_1_hydro_lkp_times: Dictionary = {}
-var team_0_hydro_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
-var team_1_hydro_in_range: Dictionary = {}
 const HYDRO_LKP_INTERVAL: float = 4.0       # Seconds between frozen-position refreshes
 # How long a carrier stays revealed after putting aircraft in the air. Deliberately
 # equal to HYDRO_LKP_INTERVAL so the contact reads as exactly one LKP refresh -
 # it appears, holds frozen for one interval, and goes out, rather than tracking.
 const AIRCRAFT_LAUNCH_REVEAL_TIME: float = 4.0
-# Radar LKP system — mirrors the hydro system but uses radar_spotting_range_override.
-var team_0_radar_lkp: Dictionary = {}        # Ship -> Vector3
-var team_1_radar_lkp: Dictionary = {}
-var team_0_radar_lkp_times: Dictionary = {}  # Ship -> float
-var team_1_radar_lkp_times: Dictionary = {}
-var team_0_radar_in_range: Dictionary = {}   # Ship -> bool  (cleared each frame)
-var team_1_radar_in_range: Dictionary = {}
-# Air LKP system — mirrors the hydro/radar system but is fed by SpotPass air checks
-# (a plane with clear LOS to a ship within air_radius). Unlike hydro/radar,
-# refreshing is one-directional only (spotter's team -> spotted ship): there's
-# no physical reason a ship being watched by a distant carrier's aircraft
-# would learn that carrier's position the way active sonar/radar reveal the
-# pinger. Ship-to-ship LOS spotting (SpotPass) still takes priority - see
-# SpotPass's air check.
-var team_0_air_lkp: Dictionary = {}          # Ship -> Vector3
-var team_1_air_lkp: Dictionary = {}
-var team_0_air_lkp_times: Dictionary = {}    # Ship -> float
-var team_1_air_lkp_times: Dictionary = {}
-var team_0_air_in_range: Dictionary = {}     # Ship -> bool  (cleared each frame)
-var team_1_air_in_range: Dictionary = {}
-# Carriers currently given away by having put aircraft up, keyed by the team that
-# gets to see them -> the time the reveal lapses. See report_aircraft_launch().
-var team_0_launch_reveals: Dictionary = {}   # Ship -> float (expiry, current_time units)
-var team_1_launch_reveals: Dictionary = {}
-# Known enemy clusters (spotted + last known positions of unspotted)
-var team_0_known_enemy_clusters: Array[Dictionary] = []
-var team_1_known_enemy_clusters: Array[Dictionary] = []
 const CLUSTER_DISTANCE: float = 4000.0
 var players_size = 0
 var team_spawn_counts = {}  # Track how many players have spawned per team for even distribution
@@ -114,12 +38,6 @@ var map: Map = null
 # (team_id, effective_radius); the global tick below republishes enemy
 # positions once per THREAT_UPDATE_INTERVAL frames.
 var threat_registry: ThreatRegistry = ThreatRegistry.new()
-# One per team, so each side's threat picture includes the enemies it has not
-# seen as well as the ones it has (see _publish_team_threats). Deterministic
-# from the spawns, the clock and the team lists - the same model the bots
-# themselves reason with (see EnemyPresumption).
-var _team_presumption: Array[EnemyPresumption] = [
-	EnemyPresumption.new(), EnemyPresumption.new()]
 ## Weight ceiling and floor for a presumed contact in the threat picture. A
 ## guess never pushes a route as hard as a ship somebody is actually looking at,
 ## and never stops counting entirely either - the ship is out there whether or
@@ -163,6 +81,20 @@ const MATCH_DURATION: float = 20.0 * 60.0  # 20 minutes
 var match_elapsed: float = 0.0
 var _match_timer_sync_timer: float = 0.0
 const MATCH_TIMER_SYNC_INTERVAL: float = 5.0
+const POINTS_WIN: int = 1000
+# WoWS Random/Co-op values. CV is unsourced; uses BB.
+const KILL_POINTS_GAINED: Dictionary = {
+	Ship.ShipClass.BB: 40,
+	Ship.ShipClass.CA: 35,
+	Ship.ShipClass.DD: 30,
+	Ship.ShipClass.CV: 40,
+}
+const KILL_POINTS_LOST: Dictionary = {
+	Ship.ShipClass.BB: 60,
+	Ship.ShipClass.CA: 50,
+	Ship.ShipClass.DD: 45,
+	Ship.ShipClass.CV: 60,
+}
 
 var all_players_spawned: bool = false
 # When running the server from the editor, don't end/reset the match on disconnect
@@ -763,17 +695,7 @@ func _get_enemy_ships(team_id: int) -> Array:
 	return enemies
 
 func get_team_ships(team_id: int) -> Array[Ship]:
-	# var team_ships: Array = []
-	# for p_name in players:
-	# 	# print("Checking player ID: ", p, " current HP: ", (players[p][0] as Ship).health_controller.current_hp)
-	# 	var ship: Ship = players[p_name][0]
-	# 	if is_instance_valid(ship) and ship.team.team_id == team_id:
-	# 		team_ships.append(ship)
-	# return team_ships
-	if team_id == 0:
-		return team_0_ships
-	else:
-		return team_1_ships
+	return teams[team_id].ships
 
 func _get_team_ships(team_id: int) -> Array[Ship]:
 	var team_ships: Array[Ship] = []
@@ -800,52 +722,27 @@ func _get_valid_targets(team_id: int) -> Array[Ship]:
 	return targets
 
 func get_valid_targets(team_id: int) -> Array[Ship]:
-	if team_id == 0:
-		return team_0_valid_targets
-	else:
-		return team_1_valid_targets
+	return teams[team_id].valid_targets
 
+## Ship -> Vector3 last known position.
 func get_unspotted_enemies(team_id: int) -> Dictionary:
-	"""Returns a dictionary of unspotted enemy ships and their last known positions.
-	Key: Ship, Value: Vector3 (last known position)"""
-	if team_id == 0:
-		return team_0_unspotted_enemies
-	else:
-		return team_1_unspotted_enemies
+	return teams[team_id].contact_positions()
 
+## Ship -> float SimClock time of last observation.
 func get_unspotted_enemy_times(team_id: int) -> Dictionary:
-	"""Returns a dictionary mapping unspotted enemy ships to the timestamp (seconds)
-	when they were last spotted. Key: Ship, Value: float (SimClock.now_ms()/1000)."""
-	if team_id == 0:
-		return team_0_unspotted_times
-	else:
-		return team_1_unspotted_times
+	return teams[team_id].contact_times()
 
+## Ship -> Vector3 velocity at last observation.
 func get_unspotted_enemy_velocities(team_id: int) -> Dictionary:
-	"""Returns a dictionary mapping unspotted enemy ships to the linear velocity they
-	had when last observed. Key: Ship, Value: Vector3. Pair this with
-	get_unspotted_enemy_times() to dead-reckon a last-known position forward."""
-	if team_id == 0:
-		return team_0_unspotted_vels
-	else:
-		return team_1_unspotted_vels
+	return teams[team_id].contact_velocities()
 
+## Ship -> float rotation.y at last observation.
 func get_unspotted_enemy_rotations(team_id: int) -> Dictionary:
-	"""Returns a dictionary mapping unspotted enemy ships to the heading (rotation.y)
-	they had when last observed. Key: Ship, Value: float."""
-	if team_id == 0:
-		return team_0_unspotted_rots
-	else:
-		return team_1_unspotted_rots
+	return teams[team_id].contact_rotations()
 
+## Ship -> String, one of LKP_SOURCE_*.
 func get_unspotted_enemy_sources(team_id: int) -> Dictionary:
-	"""Returns a dictionary mapping unspotted enemy ships to the kind of intel their
-	last-known position came from. Key: Ship, Value: String (one of LKP_SOURCE_*).
-	Absent means the contact predates source tracking; treat it as OBSERVED."""
-	if team_id == 0:
-		return team_0_unspotted_sources
-	else:
-		return team_1_unspotted_sources
+	return teams[team_id].contact_sources()
 
 ## Records one complete last-known-contact record in `team_id`'s picture: where
 ## the ship was, when that was observed, and the velocity and heading it had at
@@ -853,16 +750,8 @@ func get_unspotted_enemy_sources(team_id: int) -> Dictionary:
 ## tables can never drift out of step - a position from one observation paired
 ## with a velocity from another would dead-reckon to nonsense.
 func _write_unspotted_lkp(team_id: int, ship: Ship, observed_time: float) -> void:
-	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
-	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
-	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
-	unspotted[ship] = ship.global_position
-	times[ship]     = observed_time
-	vels[ship]      = ship.linear_velocity
-	rots[ship]      = ship.rotation.y
-	sources[ship]   = LKP_SOURCE_OBSERVED
+	teams[team_id].write_contact(ship, ship.global_position, observed_time,
+		ship.linear_velocity, ship.rotation.y, LKP_SOURCE_OBSERVED)
 
 ## Records a last-known contact at an explicitly observed position rather than at
 ## the ship's live one - for intel that pins a ship somewhere it may no longer
@@ -878,16 +767,10 @@ func record_observed_contact_at(team_id: int, ship: Ship, position: Vector3, obs
 		source: String = LKP_SOURCE_GUNFIRE) -> void:
 	if not is_instance_valid(ship) or not ship.is_alive():
 		return
-	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
-	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
-	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
-	unspotted[ship] = Vector3(position.x, 0.0, position.z)
-	times[ship]     = observed_time
-	vels[ship]      = Vector3.ZERO
-	rots[ship]      = float(rots.get(ship, 0.0))
-	sources[ship]   = source
+	var t := teams[team_id]
+	var prev: TeamState.Contact = t.contacts.get(ship)
+	t.write_contact(ship, Vector3(position.x, 0.0, position.z), observed_time,
+		Vector3.ZERO, prev.rot if prev != null else 0.0, source)
 
 ## How long a deduction stays in the picture. Generous - an inference is already
 ## weighted by its own uncertainty radius, so an old one fades rather than
@@ -908,7 +791,7 @@ func _prune_inferred_contacts(inferred: Dictionary) -> void:
 ## Key: Ship, Value: {position, time, radius, source}. See the table declaration
 ## for why these are kept apart from the LKP tables.
 func get_inferred_contacts(team_id: int) -> Dictionary:
-	return team_0_inferred_contacts if team_id == 0 else team_1_inferred_contacts
+	return teams[team_id].inferred_contacts
 
 ## Records what `team_id` has worked out about where `ship` is without observing
 ## it. `radius` is how wrong the position might be, and is the whole reason this
@@ -921,7 +804,7 @@ func get_inferred_contacts(team_id: int) -> Dictionary:
 func record_inferred_contact(team_id: int, ship: Ship, position: Vector3, observed_time: float, radius: float, source: String) -> void:
 	if not is_instance_valid(ship) or not ship.is_alive():
 		return
-	var inferred := team_0_inferred_contacts if team_id == 0 else team_1_inferred_contacts
+	var inferred := teams[team_id].inferred_contacts
 	if ship.visible_to_enemy:
 		inferred.erase(ship)
 		return
@@ -939,16 +822,7 @@ func record_inferred_contact(team_id: int, ship: Ship, position: Vector3, observ
 
 ## Drops every trace of a ship from `team_id`'s last-known-contact tables.
 func _erase_unspotted_lkp(team_id: int, ship: Ship) -> void:
-	var unspotted := team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var times     := team_0_unspotted_times   if team_id == 0 else team_1_unspotted_times
-	var vels      := team_0_unspotted_vels    if team_id == 0 else team_1_unspotted_vels
-	var rots      := team_0_unspotted_rots    if team_id == 0 else team_1_unspotted_rots
-	var sources   := team_0_unspotted_sources if team_id == 0 else team_1_unspotted_sources
-	unspotted.erase(ship)
-	times.erase(ship)
-	vels.erase(ship)
-	rots.erase(ship)
-	sources.erase(ship)
+	teams[team_id].erase_contact(ship)
 
 ## Heading to report with an LKP marker. While the ship is genuinely visible the
 ## normal sync governs its heading anyway, so the live value is correct. While it
@@ -958,8 +832,8 @@ func _erase_unspotted_lkp(team_id: int, ship: Ship) -> void:
 func _lkp_marker_rotation(team_id: int, ship: Ship) -> float:
 	if ship.visible_to_enemy:
 		return ship.rotation.y
-	var rots := team_0_unspotted_rots if team_id == 0 else team_1_unspotted_rots
-	return float(rots.get(ship, ship.rotation.y))
+	var c: TeamState.Contact = teams[team_id].contacts.get(ship)
+	return c.rot if c != null else ship.rotation.y
 
 func get_all_ships() -> Array:
 	var all_ships: Array = []
@@ -971,8 +845,8 @@ func get_all_ships() -> Array:
 
 
 func _update_team_clusters():
-	team_0_known_enemy_clusters = _compute_known_enemy_clusters(0)
-	team_1_known_enemy_clusters = _compute_known_enemy_clusters(1)
+	for t in teams:
+		t.known_enemy_clusters = _compute_known_enemy_clusters(t.id)
 
 
 
@@ -983,15 +857,13 @@ func _compute_known_enemy_clusters(team_id: int) -> Array[Dictionary]:
 	var positions: Array[Dictionary] = []  # Array of {position: Vector3, ship: Ship or null}
 
 	# Add currently spotted enemies (valid targets)
-	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
-	for ship in valid_targets:
+	for ship in teams[team_id].valid_targets:
 		positions.append({position = ship.global_position, ship = ship})
 
 	# Add last known positions of unspotted enemies
-	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	for ship in unspotted.keys():
-		var last_pos: Vector3 = unspotted[ship]
-		positions.append({position = last_pos, ship = ship})
+	var contacts := teams[team_id].contacts
+	for ship in contacts:
+		positions.append({position = contacts[ship].pos, ship = ship})
 
 	if positions.size() == 0:
 		return []
@@ -1051,7 +923,7 @@ func get_team_spawn_position(team_id: int) -> Vector3:
 
 
 func get_nearest_enemy_cluster(position: Vector3, team_id: int) -> Dictionary:
-	var enemy_clusters = team_0_known_enemy_clusters if team_id == 0 else team_1_known_enemy_clusters
+	var enemy_clusters = teams[team_id].known_enemy_clusters
 	if enemy_clusters.size() == 0:
 		return {}
 
@@ -1206,20 +1078,17 @@ func _broadcast_match_end():
 	"""Send match end notification with leaderboard data to all clients."""
 	var t0 = _get_team(0)
 	var t1 = _get_team(1)
-	var winning_team: int
+	var winning_team: int = -1
+	var win_reason: String = "tie"
 	if t0.size() == 0 and t1.size() > 0:
 		winning_team = 1
+		win_reason = "elimination"
 	elif t1.size() == 0 and t0.size() > 0:
 		winning_team = 0
-	else:
-		# Time limit — determine winner by total HP remaining
-		var hp0: float = 0.0
-		var hp1: float = 0.0
-		for ship in t0:
-			hp0 += ship.health_controller.current_hp
-		for ship in t1:
-			hp1 += ship.health_controller.current_hp
-		winning_team = 0 if hp0 >= hp1 else 1
+		win_reason = "elimination"
+	elif teams[0].points != teams[1].points:
+		winning_team = 0 if teams[0].points > teams[1].points else 1
+		win_reason = "points"
 
 	# Gather leaderboard data from all players (including bots)
 	var leaderboard: Array[Dictionary] = []
@@ -1257,7 +1126,9 @@ func _broadcast_match_end():
 			"flood_damage": stats.flood_damage,
 			"spotting_damage": stats.spotting_damage,
 			"potential_damage": stats.potential_damage,
+			"xp": stats.xp(),
 		}
+		entry.merge(stats.xp_breakdown())
 		leaderboard.append(entry)
 
 	for p_name in players:
@@ -1268,7 +1139,7 @@ func _broadcast_match_end():
 			notify_match_end.rpc_id(peer_id, winning_team, leaderboard)
 
 	if bot_match or CmdArgs.has("--metrics"):
-		_write_match_metrics(winning_team, leaderboard)
+		_write_match_metrics(winning_team, leaderboard, win_reason)
 
 	# Finalize the replay file server-side.
 	# _Utils.match_ended is only emitted inside notify_match_end (client RPC),
@@ -1276,9 +1147,9 @@ func _broadcast_match_end():
 	if _Utils.authority():
 		var _rr = get_node_or_null("/root/ReplayRecorder")
 		if _rr != null and _rr._match_active:
-			_rr.end_match(winning_team)
+			_rr.end_match(winning_team if winning_team >= 0 else 255)
 
-func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> void:
+func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary], win_reason: String) -> void:
 	var taken: Dictionary[Ship, float] = {}
 	for p_name in players:
 		var attacker: Ship = players[p_name][0]
@@ -1304,6 +1175,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> 
 		"winning_team": winning_team,
 		"duration": match_elapsed,
 		"time_limit": match_elapsed >= MATCH_DURATION,
+		"points": [teams[0].points, teams[1].points],
+		"win_reason": win_reason,
 		"lineup": CmdArgs.value("--botmatch", team_file_path),
 		"seed": CmdArgs.value("--seed"),
 		"ships": ships,
@@ -1353,6 +1226,20 @@ func notify_match_end(winning_team: int, leaderboard: Array):
 		_Utils.match_result = {}
 	_Utils.match_result["leaderboard"] = leaderboard
 	_Utils.match_ended.emit(winning_team)
+
+## Every sink goes through here (HPManager.sink), so frags and points cannot drift apart.
+func credit_kill(killer: Ship, victim: Ship) -> void:
+	var victim_team: int = victim.team.team_id
+	if killer != null and killer.team.team_id != victim_team:
+		killer.stats.frags += 1
+	teams[victim_team].points -= KILL_POINTS_LOST[victim.ship_class]
+	teams[1 - victim_team].points += KILL_POINTS_GAINED[victim.ship_class]
+	_sync_points.rpc(teams[0].points, teams[1].points)
+
+@rpc("authority", "call_remote", "reliable")
+func _sync_points(team_0_points: int, team_1_points: int) -> void:
+	teams[0].points = team_0_points
+	teams[1].points = team_1_points
 
 @rpc("authority", "call_local", "unreliable_ordered")
 func _sync_match_timer(elapsed: float) -> void:
@@ -1422,8 +1309,8 @@ func _physics_process(_delta: float) -> void:
 			matchmaker_heartbeat_timer = MATCHMAKER_HEARTBEAT_INTERVAL
 
 	current_time = SimClock.now()
-	team_0_ships = _get_team(0)
-	team_1_ships = _get_team(1)
+	for t in teams:
+		t.ships = _get_team(t.id)
 
 	# Update clusters and average positions
 	_update_team_clusters()
@@ -1435,10 +1322,11 @@ func _physics_process(_delta: float) -> void:
 		if _match_timer_sync_timer <= 0.0:
 			_match_timer_sync_timer = MATCH_TIMER_SYNC_INTERVAL
 			_sync_match_timer.rpc(match_elapsed)
+			_sync_points.rpc(teams[0].points, teams[1].points)
 		if match_elapsed >= MATCH_DURATION:
 			match_ended = true
 			match_end_timer = MATCH_END_DELAY
-			print("Match ended! Time limit reached — draw!")
+			print("Match ended! Time limit reached — points ", teams[0].points, ":", teams[1].points)
 
 	# Match end detection (server-side)
 	if _Utils.authority() and match_active and not match_ended:
@@ -1446,11 +1334,15 @@ func _physics_process(_delta: float) -> void:
 		var team_1_all = _get_team_ships(1)
 		# Only check if both teams have been populated
 		if team_0_all.size() > 0 and team_1_all.size() > 0:
-			if team_0_ships.size() == 0 or team_1_ships.size() == 0:
+			if teams[0].ships.size() == 0 or teams[1].ships.size() == 0:
 				match_ended = true
-				var winning_team = 1 if team_0_ships.size() == 0 else 0
+				var winning_team = 1 if teams[0].ships.size() == 0 else 0
 				match_end_timer = MATCH_END_DELAY
 				print("Match ended! Team ", winning_team, " wins!")
+			elif teams.any(func(t: TeamState): return t.points <= 0 or t.points >= POINTS_WIN):
+				match_ended = true
+				match_end_timer = MATCH_END_DELAY
+				print("Match ended! Points ", teams[0].points, ":", teams[1].points)
 
 	# Match end delay timer (authority only — clients transition via the end screen)
 	if _Utils.authority() and match_ended and match_end_timer > 0:
@@ -1467,12 +1359,8 @@ func _physics_process(_delta: float) -> void:
 		return
 
 	visible_toggled.clear()
-	team_0_hydro_in_range.clear()
-	team_1_hydro_in_range.clear()
-	team_0_radar_in_range.clear()
-	team_1_radar_in_range.clear()
-	team_0_air_in_range.clear()
-	team_1_air_in_range.clear()
+	for t in teams:
+		t.clear_in_range()
 
 	var alive_players: Array[Ship] = []
 	for p in players.values():
@@ -1515,12 +1403,10 @@ func _physics_process(_delta: float) -> void:
 		else:
 			# Visibility changed - update unspotted enemy lists
 			var enemy_team_id = 1 if p.team.team_id == 0 else 0
-			var unspotted_dict = team_0_unspotted_enemies if enemy_team_id == 0 else team_1_unspotted_enemies
 
 			if p.visible_to_enemy:
 				# Ship became spotted - remove from unspotted list
-				if unspotted_dict.has(p):
-					_erase_unspotted_lkp(enemy_team_id, p)
+				_erase_unspotted_lkp(enemy_team_id, p)
 				# A sighting settles whatever was being deduced about it.
 				get_inferred_contacts(enemy_team_id).erase(p)
 			else:
@@ -1531,46 +1417,17 @@ func _physics_process(_delta: float) -> void:
 				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
 					_write_unspotted_lkp(enemy_team_id, p, SimClock.now())
 
-	# Clean up dead ships from unspotted lists
-	for ship in team_0_unspotted_enemies.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			_erase_unspotted_lkp(0, ship)
-	for ship in team_1_unspotted_enemies.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			_erase_unspotted_lkp(1, ship)
-	# Clean up the inferred-contact tables: dead ships, and deductions old enough
-	# that the evidence behind them has stopped meaning anything. Without the
-	# expiry a one-off bloom would keep overriding the spawn-line estimate for
-	# the rest of the match, long after the ship it was about had steamed off.
-	_prune_inferred_contacts(team_0_inferred_contacts)
-	_prune_inferred_contacts(team_1_inferred_contacts)
-	# Clean up dead ships from hydro LKP tables
-	for ship in team_0_hydro_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_0_hydro_lkp.erase(ship)
-			team_0_hydro_lkp_times.erase(ship)
-	for ship in team_1_hydro_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_1_hydro_lkp.erase(ship)
-			team_1_hydro_lkp_times.erase(ship)
-	# Clean up dead ships from radar LKP tables
-	for ship in team_0_radar_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_0_radar_lkp.erase(ship)
-			team_0_radar_lkp_times.erase(ship)
-	for ship in team_1_radar_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_1_radar_lkp.erase(ship)
-			team_1_radar_lkp_times.erase(ship)
-	# Clean up dead ships from air LKP tables
-	for ship in team_0_air_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_0_air_lkp.erase(ship)
-			team_0_air_lkp_times.erase(ship)
-	for ship in team_1_air_lkp.keys():
-		if not is_instance_valid(ship) or ship.health_controller.is_dead():
-			team_1_air_lkp.erase(ship)
-			team_1_air_lkp_times.erase(ship)
+	for t in teams:
+		for ship in t.contacts.keys():
+			if not is_instance_valid(ship) or ship.health_controller.is_dead():
+				t.erase_contact(ship)
+		# Without expiry a one-off bloom would override the spawn-line estimate
+		# for the rest of the match.
+		_prune_inferred_contacts(t.inferred_contacts)
+		for fixes in [t.hydro, t.radar, t.air]:
+			for ship in fixes.keys():
+				if not is_instance_valid(ship) or ship.health_controller.is_dead():
+					fixes.erase(ship)
 
 	_apply_launch_reveals()
 
@@ -1723,8 +1580,8 @@ func _physics_process(_delta: float) -> void:
 		p.sync_player.rpc_id(p_id, d)
 
 
-	team_0_valid_targets = _get_valid_targets(0)
-	team_1_valid_targets = _get_valid_targets(1)
+	for t in teams:
+		t.valid_targets = _get_valid_targets(t.id)
 
 	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
 		_update_threat_registry()
@@ -1739,13 +1596,13 @@ func _sweep_reach_fields() -> void:
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	if field == null or not field.is_built():
 		return
-	var teams := [team_0_ships, team_1_ships]
+	var team_ships := [teams[0].ships, teams[1].ships]
 	var us := 0.0
 	var resweeps := 0
 	var jobs := 0
 	if not _reach_prebuilt:
 		_reach_prebuilt = true
-		_prebuild_reach_tables(field, teams)
+		_prebuild_reach_tables(field, team_ships)
 	var smoke: Dictionary = SmokeManager.get_smoke_discs()
 	field.set_smoke(smoke.centres, smoke.radii)
 	for team_id in range(2):
@@ -1756,7 +1613,7 @@ func _sweep_reach_fields() -> void:
 		var hull_heights := PackedFloat32Array()
 		var seen: Dictionary = {}
 		var los_range := 0.0
-		for ship in teams[team_id]:
+		for ship in team_ships[team_id]:
 			los_range = maxf(los_range, NavigationMapManager.reach_conceal_radius(ship))
 			var g: Dictionary = NavigationMapManager.reach_gun(ship)
 			if g.is_empty():
@@ -1822,12 +1679,12 @@ func _sweep_reach_fields() -> void:
 	_reach_sources = [0, 0, 0, 0]
 
 
-func _prebuild_reach_tables(field: ReachField, teams: Array) -> void:
+func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:
 	var speeds := PackedFloat32Array()
 	var drags := PackedFloat32Array()
 	var heights := PackedFloat32Array()
 	var ranges := PackedFloat32Array()
-	for team in teams:
+	for team in team_ships:
 		for ship in team:
 			var g: Dictionary = NavigationMapManager.reach_gun(ship)
 			if g.is_empty():
@@ -1846,14 +1703,13 @@ func _prebuild_reach_tables(field: ReachField, teams: Array) -> void:
 func _team_belief(team_id: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var published: Dictionary = {}
-	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
-	for enemy in valid_targets:
+	var t := teams[team_id]
+	for enemy in t.valid_targets:
 		if is_instance_valid(enemy) and enemy.is_alive():
 			published[enemy] = true
 			out.append({"ship": enemy, "pos": Vector2(enemy.global_position.x, enemy.global_position.z),
 				"weight": 1.0, "spread": 0.0, "force_spot": _force_spot_reach(enemy), "source": 0})
-	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
+	var contacts := t.contacts
 	var now: float = SimClock.now()
 	# A spotter deduced from being detected is newer evidence than an older
 	# sighting of the same ship, and says for certain that it has eyes on us.
@@ -1862,30 +1718,31 @@ func _team_belief(team_id: int) -> Array[Dictionary]:
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
 			continue
 		var inf: Dictionary = inferred[enemy_ship]
-		var t: float = float(inf.get("time", -INF))
-		if unspotted.has(enemy_ship) and float(unspotted_times.get(enemy_ship, -INF)) >= t:
+		var inf_t: float = float(inf.get("time", -INF))
+		if contacts.has(enemy_ship) and contacts[enemy_ship].time >= inf_t:
 			continue
-		var certainty: float = 1.0 - clampf((now - t) / INFERRED_DECAY_SECONDS, 0.0, 1.0)
+		var certainty: float = 1.0 - clampf((now - inf_t) / INFERRED_DECAY_SECONDS, 0.0, 1.0)
 		if certainty <= 0.0:
 			continue
 		published[enemy_ship] = true
 		var ip: Vector3 = inf.position
 		out.append({"ship": enemy_ship, "pos": Vector2(ip.x, ip.z), "weight": maxf(certainty, 0.05),
 			"spread": float(inf.get("radius", 0.0)), "force_spot": 0.0, "source": 3})
-	for enemy_ship in unspotted.keys():
+	for enemy_ship in contacts:
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive() or published.has(enemy_ship):
 			continue
-		var age: float = now - float(unspotted_times.get(enemy_ship, now))
+		var c: TeamState.Contact = contacts[enemy_ship]
+		var age: float = now - c.time
 		var decay: float = 1.0 - clampf(age / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
 		var force_spot: float = _force_spot_reach(enemy_ship) \
 			* lerpf(1.0, RADAR_DECAY_FLOOR, clampf(age / RADAR_DECAY_SECONDS, 0.0, 1.0))
 		if decay <= 0.0 and force_spot <= 0.0:
 			continue
 		published[enemy_ship] = true
-		var lp: Vector3 = unspotted[enemy_ship]
+		var lp: Vector3 = c.pos
 		out.append({"ship": enemy_ship, "pos": Vector2(lp.x, lp.z), "weight": maxf(decay, 0.05),
 			"spread": EnemyPresumption.lead_spread(age), "force_spot": force_spot, "source": 1})
-	for guess in _team_presumption[team_id].contacts(team_id, self):
+	for guess in teams[team_id].presumption.contacts(team_id, self):
 		var enemy_ship: Ship = guess.ship
 		if not is_instance_valid(enemy_ship) or published.has(enemy_ship):
 			continue
@@ -1912,18 +1769,16 @@ func _publish_team_threats(team_id: int) -> void:
 	var data := PackedVector3Array()
 	var force_spots := PackedFloat32Array()
 	var published: Dictionary = {}
-	var valid_targets = team_0_valid_targets if team_id == 0 else team_1_valid_targets
-	for enemy in valid_targets:
+	var contacts := teams[team_id].contacts
+	for enemy in teams[team_id].valid_targets:
 		if is_instance_valid(enemy) and enemy.is_alive():
 			published[enemy] = true
 			ids.append(int(enemy.get_instance_id()))
 			data.append(Vector3(enemy.global_position.x, enemy.global_position.z, 1.0))
 			force_spots.append(_force_spot_reach(enemy))
 
-	var unspotted = team_0_unspotted_enemies if team_id == 0 else team_1_unspotted_enemies
-	var unspotted_times = team_0_unspotted_times if team_id == 0 else team_1_unspotted_times
 	var now: float = SimClock.now()
-	for enemy_ship in unspotted.keys():
+	for enemy_ship in contacts:
 		if not is_instance_valid(enemy_ship) or not enemy_ship.is_alive():
 			continue
 		# A last-known position may never displace a live sighting. The registry
@@ -1940,15 +1795,15 @@ func _publish_team_threats(team_id: int) -> void:
 		# already applies to guesses, applied to observations that have aged.
 		if published.has(enemy_ship):
 			continue
-		var last_time: float = unspotted_times.get(enemy_ship, now)
-		var age: float = now - last_time
+		var c: TeamState.Contact = contacts[enemy_ship]
+		var age: float = now - c.time
 		var decay: float = 1.0 - clamp(age / THREAT_STALE_DECAY_SECONDS, 0.0, 1.0)
 		var force_spot: float = _force_spot_reach(enemy_ship) \
 			* lerpf(1.0, RADAR_DECAY_FLOOR, clampf(age / RADAR_DECAY_SECONDS, 0.0, 1.0))
 		if decay <= 0.0 and force_spot <= 0.0:
 			continue
 		published[enemy_ship] = true
-		var lp: Vector3 = unspotted[enemy_ship]
+		var lp: Vector3 = c.pos
 		ids.append(int(enemy_ship.get_instance_id()))
 		data.append(Vector3(lp.x, lp.z, decay))
 		force_spots.append(force_spot)
@@ -1959,7 +1814,7 @@ func _publish_team_threats(team_id: int) -> void:
 	# rest of the fleet - the whole point of moving unseen is to stay clear of
 	# where the enemy IS, not of where they have been observed to be. Weighted
 	# by how well the guess is pinned down, and never as strongly as a sighting.
-	for guess in _team_presumption[team_id].contacts(team_id, self):
+	for guess in teams[team_id].presumption.contacts(team_id, self):
 		var enemy_ship: Ship = guess.ship
 		if published.has(enemy_ship):
 			continue
@@ -2040,93 +1895,18 @@ func _latent_force_spot_reach(enemy: Ship) -> float:
 
 
 func _refresh_hydro_lkp(team_id: int, ship: Ship) -> void:
-	"""Mark ship as in hydro range this frame and refresh its frozen LKP position
-	when first contacted or every HYDRO_LKP_INTERVAL seconds thereafter."""
-	var active    := team_0_hydro_in_range   if team_id == 0 else team_1_hydro_in_range
-	var lkp       := team_0_hydro_lkp        if team_id == 0 else team_1_hydro_lkp
-	var lkp_times := team_0_hydro_lkp_times  if team_id == 0 else team_1_hydro_lkp_times
-
-	active[ship] = true  # Visible this frame
-
-	if not lkp.has(ship) or current_time - lkp_times.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
-		lkp[ship]       = ship.global_position
-		lkp_times[ship] = current_time
-		# Keep bot-AI unspotted tables fresh on the same cadence
+	if TeamState.refresh_fix(teams[team_id].hydro, ship, current_time, HYDRO_LKP_INTERVAL):
 		_write_unspotted_lkp(team_id, ship, current_time)
-
-
-func _send_hydro_syncs() -> void:
-	"""Send per-frame hydro pings and one-shot clear packets to human players.
-	- Ships in hydro_in_range: send sync_unspotted(frozen_pos, true) every frame.
-	- Ships in hydro_lkp but not in_range: send sync_unspotted(last_pos, false) once,
-	  then erase from the LKP table."""
-	for team_id in [0, 1]:
-		var active    := team_0_hydro_in_range   if team_id == 0 else team_1_hydro_in_range
-		var lkp       := team_0_hydro_lkp        if team_id == 0 else team_1_hydro_lkp
-		var lkp_times := team_0_hydro_lkp_times  if team_id == 0 else team_1_hydro_lkp_times
-
-		# Active pings — ship is currently in hydro range
-		for ship in active.keys():
-			if not is_instance_valid(ship):
-				continue
-			# If the ship is also LOS-visible, use its real position so the hydro
-			# ping doesn't conflict with the normal LOS sync and cause flickering.
-			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 1)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
-
-		# Clear packets — ship just left hydro range (present in lkp, absent from active)
-		for ship in lkp.keys():
-			if active.has(ship):
-				continue
-			if not is_instance_valid(ship) or ship.health_controller.is_dead():
-				lkp.erase(ship)
-				lkp_times.erase(ship)
-				continue
-			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 1)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
-			lkp.erase(ship)
-			lkp_times.erase(ship)
 
 
 func _refresh_radar_lkp(team_id: int, ship: Ship) -> void:
-	"""Mark ship as in radar range this frame and refresh its frozen LKP position
-	if first contact or HYDRO_LKP_INTERVAL seconds have elapsed."""
-	var active   := team_0_radar_in_range   if team_id == 0 else team_1_radar_in_range
-	var lkp      := team_0_radar_lkp        if team_id == 0 else team_1_radar_lkp
-	var lkp_t    := team_0_radar_lkp_times  if team_id == 0 else team_1_radar_lkp_times
-
-	active[ship] = true
-
-	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
-		lkp[ship]  = ship.global_position
-		lkp_t[ship] = current_time
+	if TeamState.refresh_fix(teams[team_id].radar, ship, current_time, HYDRO_LKP_INTERVAL):
 		_write_unspotted_lkp(team_id, ship, current_time)
 
 
+## One-directional: team_id is always the spotting plane's team.
 func _refresh_air_lkp(team_id: int, ship: Ship) -> void:
-	"""Mark ship as air-spotted this frame and refresh its frozen LKP position
-	if first contact or HYDRO_LKP_INTERVAL seconds have elapsed. One-directional
-	only (see SpotPass) - team_id here is always the spotting plane's
-	owning team, never mirrored back onto the spotted ship's team."""
-	var active   := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
-	var lkp      := team_0_air_lkp        if team_id == 0 else team_1_air_lkp
-	var lkp_t    := team_0_air_lkp_times  if team_id == 0 else team_1_air_lkp_times
-
-	active[ship] = true
-
-	if not lkp.has(ship) or current_time - lkp_t.get(ship, -INF) >= HYDRO_LKP_INTERVAL:
-		lkp[ship]  = ship.global_position
-		lkp_t[ship] = current_time
+	if TeamState.refresh_fix(teams[team_id].air, ship, current_time, HYDRO_LKP_INTERVAL):
 		_write_unspotted_lkp(team_id, ship, current_time)
 
 
@@ -2145,107 +1925,81 @@ func report_aircraft_launch(ship: Ship) -> void:
 	if ship.health_controller == null or not ship.health_controller.is_alive():
 		return
 	var enemy_team_id: int = 1 if ship.team.team_id == 0 else 0
-	var lkp     := team_0_air_lkp        if enemy_team_id == 0 else team_1_air_lkp
-	var lkp_t   := team_0_air_lkp_times  if enemy_team_id == 0 else team_1_air_lkp_times
-	var reveals := team_0_launch_reveals if enemy_team_id == 0 else team_1_launch_reveals
+	var t := teams[enemy_team_id]
 	# Written once here and never refreshed for the life of the reveal - that is
 	# what makes it a single ping rather than a live track. A carrier that keeps
 	# launching keeps re-reporting itself, which is the intent.
-	lkp[ship]     = ship.global_position
-	lkp_t[ship]   = current_time
-	reveals[ship] = current_time + AIRCRAFT_LAUNCH_REVEAL_TIME
+	var fix: TeamState.SensorFix = t.air.get(ship)
+	if fix == null:
+		fix = TeamState.SensorFix.new()
+		t.air[ship] = fix
+	fix.pos = ship.global_position
+	fix.time = current_time
+	t.launch_reveals[ship] = current_time + AIRCRAFT_LAUNCH_REVEAL_TIME
 	_write_unspotted_lkp(enemy_team_id, ship, current_time)
 
 
 ## Re-asserts still-live launch reveals into this frame's air-contact set.
-## team_*_air_in_range is wiped at the top of every detection pass and refilled
+## SensorFix.in_range is wiped at the top of every detection pass and refilled
 ## only by aircraft that actually hold line of sight, so a reveal has to be put
 ## back each frame until it lapses. Letting it fall out on expiry is precisely
 ## what makes _send_air_syncs() emit the clear packet and retire the contact -
 ## no separate teardown needed.
 func _apply_launch_reveals() -> void:
-	for team_id in [0, 1]:
-		var reveals := team_0_launch_reveals if team_id == 0 else team_1_launch_reveals
-		var active  := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
+	for t in teams:
+		var reveals := t.launch_reveals
 		for ship in reveals.keys():
 			if not is_instance_valid(ship) or ship.health_controller.is_dead() \
 					or current_time >= reveals[ship]:
 				reveals.erase(ship)
 				continue
-			active[ship] = true
+			var fix: TeamState.SensorFix = t.air.get(ship)
+			if fix != null:
+				fix.in_range = true
 			# Reported to the enemy as an air contact, so the carrier is detected
 			# and must know it — a bot carrier stops acting as though it were
 			# dark. No spotting provider: the launch gave it away, not an enemy.
 			ship.det_air = true
 
 
+func _send_hydro_syncs() -> void:
+	for t in teams:
+		_send_sensor_syncs(t.id, t.hydro, 1)
+
+
 func _send_radar_syncs() -> void:
-	"""Mirror of _send_hydro_syncs but uses source = 2 (Radar)."""
-	for team_id in [0, 1]:
-		var active := team_0_radar_in_range   if team_id == 0 else team_1_radar_in_range
-		var lkp    := team_0_radar_lkp        if team_id == 0 else team_1_radar_lkp
-		var lkp_t  := team_0_radar_lkp_times  if team_id == 0 else team_1_radar_lkp_times
-
-		for ship in active.keys():
-			if not is_instance_valid(ship):
-				continue
-			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 2)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
-
-		for ship in lkp.keys():
-			if active.has(ship):
-				continue
-			if not is_instance_valid(ship) or ship.health_controller.is_dead():
-				lkp.erase(ship)
-				lkp_t.erase(ship)
-				continue
-			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 2)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
-			lkp.erase(ship)
-			lkp_t.erase(ship)
+	for t in teams:
+		_send_sensor_syncs(t.id, t.radar, 2)
 
 
 func _send_air_syncs() -> void:
-	"""Mirror of _send_hydro_syncs but uses source = 3 (Air)."""
-	for team_id in [0, 1]:
-		var active := team_0_air_in_range   if team_id == 0 else team_1_air_in_range
-		var lkp    := team_0_air_lkp        if team_id == 0 else team_1_air_lkp
-		var lkp_t  := team_0_air_lkp_times  if team_id == 0 else team_1_air_lkp_times
+	for t in teams:
+		_send_sensor_syncs(t.id, t.air, 3)
 
-		for ship in active.keys():
-			if not is_instance_valid(ship):
-				continue
-			var pos: Vector3 = ship.global_position if ship.visible_to_enemy else lkp.get(ship, ship.global_position)
-			var ping_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, 3)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], ping_bytes)
 
-		for ship in lkp.keys():
-			if active.has(ship):
-				continue
-			if not is_instance_valid(ship) or ship.health_controller.is_dead():
-				lkp.erase(ship)
-				lkp_t.erase(ship)
-				continue
-			var pos: Vector3 = lkp[ship]
-			var clear_bytes: PackedByteArray = ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), false, 3)
-			for p_name in players:
-				var p_entry = players[p_name]
-				var p_ship: Ship = p_entry[0]
-				if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
-					ship.sync_unspotted.rpc_id(p_entry[2], clear_bytes)
-			lkp.erase(ship)
-			lkp_t.erase(ship)
+## Pings every in-range fix to the team's humans each frame; a fix that left
+## range gets one clear packet and is dropped.
+func _send_sensor_syncs(team_id: int, fixes: Dictionary[Ship, TeamState.SensorFix], source: int) -> void:
+	for ship in fixes:
+		var fix: TeamState.SensorFix = fixes[ship]
+		if not fix.in_range or not is_instance_valid(ship):
+			continue
+		# A LOS-visible ship uses its real position so the ping does not fight the normal sync.
+		var pos: Vector3 = ship.global_position if ship.visible_to_enemy else fix.pos
+		_send_unspotted_to_team(team_id, ship, ship.sync_ship_lkp(pos, _lkp_marker_rotation(team_id, ship), true, source))
+
+	for ship in fixes.keys():
+		var fix: TeamState.SensorFix = fixes[ship]
+		if fix.in_range:
+			continue
+		if is_instance_valid(ship) and not ship.health_controller.is_dead():
+			_send_unspotted_to_team(team_id, ship, ship.sync_ship_lkp(fix.pos, _lkp_marker_rotation(team_id, ship), false, source))
+		fixes.erase(ship)
+
+
+func _send_unspotted_to_team(team_id: int, ship: Ship, bytes: PackedByteArray) -> void:
+	for p_name in players:
+		var p_entry = players[p_name]
+		var p_ship: Ship = p_entry[0]
+		if p_ship.team.team_id == team_id and not p_ship.team.is_bot:
+			ship.sync_unspotted.rpc_id(p_entry[2], bytes)

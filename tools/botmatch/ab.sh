@@ -16,7 +16,7 @@ resolve() {
 	if [ "$1" != WORKTREE ]; then git rev-parse --verify "$1^{commit}"; return; fi
 	local idx; idx=$(mktemp)
 	cp "$(git rev-parse --git-path index)" "$idx"
-	GIT_INDEX_FILE=$idx git add -A -- . ':!build'
+	GIT_INDEX_FILE=$idx git add -A
 	local tree; tree=$(GIT_INDEX_FILE=$idx git write-tree)
 	rm -f "$idx"
 	git commit-tree "$tree" -p HEAD -m "ab snapshot"

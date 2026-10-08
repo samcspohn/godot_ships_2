@@ -45,8 +45,16 @@ var flood_damage: float = 0
 
 var spotting_count: int = 0
 var spotting_damage: float = 0
+## Spotting damage in victim HP shares, for xp().
+var spotting_share: float = 0
 
 var potential_damage: float = 0
+
+const XP_SCALE: float = 1000.0
+const XP_DAMAGE: float = 0.5
+const XP_KILL: float = 0.25
+const XP_SPOT: float = 0.25
+const XP_POTENTIAL: float = 0.025
 
 # Hit type to counter name mapping (matches NativeArmorInteraction's result codes,
 # which is what ProjectileManager passes to record_hit)
@@ -103,9 +111,8 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		var full_name := ("sec_" + counter_name) if is_secondary else counter_name
 		set(full_name, get(full_name) + 1)
 
-	# Track frag
+	# Frags are credited in GameServer.credit_kill.
 	if sunk:
-		frags += 1
 		damage_events.append({
 			"type": "sunk"
 		})
@@ -135,6 +142,30 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		var spotter = damaged_ship.concealment.spotted_by
 		if spotter and spotter != _ship:
 			spotter.stats.spotting_damage += damage
+			spotter.stats.spotting_share += damage / damaged_ship.health_controller.max_hp
+
+## Enemy hulls' worth of damage dealt.
+func damage_share() -> float:
+	var share := 0.0
+	for victim in _ships_damaged:
+		if is_instance_valid(victim) and victim.team.team_id != _ship.team.team_id:
+			share += _ships_damaged[victim] / victim.health_controller.max_hp
+	return share
+
+## Server-side only: _ships_damaged and spotting_share are not synced.
+func xp_breakdown() -> Dictionary:
+	return {
+		"xp_damage": roundi(XP_SCALE * XP_DAMAGE * damage_share()),
+		"xp_kills": roundi(XP_SCALE * XP_KILL * frags),
+		"xp_spot": roundi(XP_SCALE * XP_SPOT * spotting_share),
+		"xp_potential": roundi(XP_SCALE * XP_POTENTIAL * potential_damage / _ship.health_controller.max_hp),
+	}
+
+func xp() -> int:
+	var total := 0
+	for part: int in xp_breakdown().values():
+		total += part
+	return total
 
 func record_potential_damage(damage: float, position: Vector3, caliber: float):
 	var server: GameServer = _ship.get_tree().root.get_node_or_null("/root/Server")

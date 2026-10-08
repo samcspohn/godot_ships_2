@@ -305,6 +305,9 @@ func sink(damage_type: DAMAGE_TYPE, sinker: Ship):
 		sinking_time = SimClock.now()
 		ship.freeze = true
 		ship.linear_velocity = Vector3.ZERO
+		var server: GameServer = ship.get_node_or_null("/root/Server")
+		if server != null:
+			server.credit_kill(sinker, ship)
 		sink_c.rpc(sinking_basis, damage_type, sinker.name, sinker.team.team_id, sinker.ship_name, ship.ship_name, ship.team.team_id, ship.name)
 		_Utils.kill_feed_event.emit(sinker.ship_name, sinker.name, sinker.team.team_id, damage_type, ship.ship_name, ship.name, ship.team.team_id)
 

@@ -227,6 +227,8 @@ var _options_menu: Control = null
 var _local_time_remaining: float = -1.0  # -1 = not yet initialized
 var _last_seen_match_elapsed: float = -1.0  # last server elapsed we acted on
 const MATCH_TIMER_SYNC_THRESHOLD: float = 1.5  # seconds of drift before snapping
+var _friendly_points_label: Label
+var _enemy_points_label: Label
 
 # Floating damage accumulator (damage dealt, anchored to hit world position)
 const DAMAGE_ACCUM_WINDOW: float = 0.25
@@ -388,6 +390,8 @@ func _ready():
 		# _set_up_skill_indicators.call_deferred()
 
 	setup_team_tracker()
+	_friendly_points_label = _make_points_label(-130.0, Color(0.4, 0.8, 1.0), HORIZONTAL_ALIGNMENT_RIGHT)
+	_enemy_points_label = _make_points_label(50.0, Color(1.0, 0.5, 0.4), HORIZONTAL_ALIGNMENT_LEFT)
 
 	# Setup kill feed
 	_setup_kill_feed()
@@ -417,9 +421,30 @@ func _unhandled_input(event: InputEvent) -> void:
 				_show_options_menu()
 			get_viewport().set_input_as_handled()
 
+func _make_points_label(offset_left: float, color: Color, align: HorizontalAlignment) -> Label:
+	var label := Label.new()
+	label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	label.offset_left = offset_left
+	label.offset_right = offset_left + 80.0
+	label.offset_top = match_timer_label.offset_top
+	label.offset_bottom = match_timer_label.offset_bottom
+	label.horizontal_alignment = align
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", color)
+	top_center_panel.add_child(label)
+	return label
+
+func _update_match_points() -> void:
+	var my_team: int = 0
+	if camera_controller and camera_controller._ship:
+		my_team = camera_controller._ship.team.team_id
+	_friendly_points_label.text = str(server.teams[my_team].points)
+	_enemy_points_label.text = str(server.teams[1 - my_team].points)
+
 func _update_match_timer(delta: float) -> void:
 	if not server:
 		return
+	_update_match_points()
 
 	var server_remaining: float = server.get_match_time_remaining()
 

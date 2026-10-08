@@ -365,10 +365,6 @@ func _physics_process(_delta: float) -> void:
 						# 	armor_part = ship.citadel
 					# var dmg_sunk = hp.apply_damage(damage, p.params.damage, armor_part, true, 1)
 
-					if dmg_sunk[1]:
-						# Ship sunk
-						if p.owner:
-							p.owner.stats.frags += 1
 					# Track torpedo damage dealt
 					track_torpedo_damage_dealt(p.owner, dmg_sunk[0], collision.position)
 					p.owner.stats.damage_ship(ship, dmg_sunk[0])

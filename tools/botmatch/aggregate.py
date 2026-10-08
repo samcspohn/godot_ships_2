@@ -3,7 +3,7 @@
 import csv, glob, json, os, sys
 from collections import defaultdict
 
-FIELDS = ["total_damage", "damage_taken", "spotting_damage", "potential_damage",
+FIELDS = ["xp", "total_damage", "damage_taken", "spotting_damage", "potential_damage",
           "frags", "survival_time", "won", "hp_frac"]
 
 out_dir = sys.argv[1]
@@ -27,7 +27,7 @@ def table(key_fn, name):
         w.writerow(["key", "n"] + FIELDS)
         for k in sorted(groups):
             g = groups[k]
-            w.writerow([k, len(g)] + [round(sum(float(r[c]) for r in g) / len(g), 3) for c in FIELDS])
+            w.writerow([k, len(g)] + [round(sum(float(r.get(c, 0.0)) for r in g) / len(g), 3) for c in FIELDS])
     return path, groups
 
 def region(r):
@@ -47,4 +47,4 @@ for key_fn, name in [(lambda r: f'{r["player_name"]}:{r["ship_name"]}:{r["aptitu
     print(f'{"key":36} {"n":>3} ' + " ".join(f"{c[:9]:>9}" for c in FIELDS))
     for k in sorted(groups):
         g = groups[k]
-        print(f"{k:36} {len(g):>3} " + " ".join(f"{sum(float(r[c]) for r in g) / len(g):>9.2f}" for c in FIELDS))
+        print(f"{k:36} {len(g):>3} " + " ".join(f"{sum(float(r.get(c, 0.0)) for r in g) / len(g):>9.2f}" for c in FIELDS))

@@ -91,8 +91,6 @@ func damage(delta):
 		_owner.stats.total_damage += dmg_sunk[0]
 		_ship.stats.potential_damage += dmg_sunk[0]
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
-		if dmg_sunk[1]:
-			_owner.stats.frags += 1
 		# --- replay hook (v4): record the actual damage applied this tick so
 		# the replay HUD can rebuild flood_damage / total_damage bidirectionally.
 		if _Utils.authority() and dmg_sunk[0] > 0.0:

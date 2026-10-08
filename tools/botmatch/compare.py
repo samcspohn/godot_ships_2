@@ -9,7 +9,7 @@ build, so this shows how behaviour changed, not which build is stronger.
 import glob, json, math, os, re, sys
 from collections import defaultdict
 
-FIELDS = ["total_damage", "main_damage", "torpedo_damage", "damage_taken", "spotting_damage", "potential_damage",
+FIELDS = ["xp", "total_damage", "main_damage", "torpedo_damage", "damage_taken", "spotting_damage", "potential_damage",
           "frags", "survival_time", "hp_frac", "torpedo_hits_taken", "torpedo_taken"]
 BLOCK = re.compile(r"main blocked ([\d.]+) ms")
 
@@ -28,7 +28,8 @@ def ci(xs):
 def load(d):
     logs = sorted(glob.glob(os.path.join(d, "match_*.log")))
     health = {"matches": len(logs), "metrics": 0, "errors": 0, "matches_with_errors": 0,
-              "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int)}
+              "draws": 0, "duration": [], "blocked_ms": [], "error_kinds": defaultdict(int),
+              "reasons": defaultdict(int), "margin": []}
     rows = []
     for log in logs:
         text = open(log, errors="replace").read()
@@ -45,6 +46,9 @@ def load(d):
         health["metrics"] += 1
         health["draws"] += bool(m.get("time_limit"))
         health["duration"].append(m["duration"])
+        health["reasons"][m.get("win_reason", "?")] += 1
+        if "points" in m:
+            health["margin"].append(abs(m["points"][0] - m["points"][1]))
         for s in m["ships"]:
             rows.append(s)
     return health, rows
@@ -60,6 +64,10 @@ for label, (h, _) in data.items():
     bm, _ = ci(h["blocked_ms"])
     print(f'{label:>12} {h["matches"]:>8} {h["metrics"]:>8} {h["errors"]:>7} {h["matches_with_errors"]:>6} '
           f'{h["draws"]:>6} {dm:>7.0f}±{dc:<5.0f} {bm:>14.1f}')
+for label, (h, _) in data.items():
+    pm, pc = ci(h["margin"])
+    reasons = " ".join(f"{k}={v}" for k, v in sorted(h["reasons"].items()))
+    print(f"  {label}: win reasons {reasons}; points margin {pm:.1f}±{pc:.1f}")
 for label, (h, _) in data.items():
     for k, n in sorted(h["error_kinds"].items(), key=lambda kv: -kv[1])[:5]:
         print(f"  {label}: {n}x {k}")
@@ -86,7 +94,7 @@ for field in FIELDS:
             cells.append(f"{m:>11.2f}±{h:<8.2f}")
         print(f"{name:>{width}} " + " ".join(cells))
 
-SPAWN_FIELDS = ["total_damage", "damage_taken", "survival_time", "won"]
+SPAWN_FIELDS = ["xp", "total_damage", "damage_taken", "survival_time", "won"]
 
 
 def region(r):
