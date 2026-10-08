@@ -111,8 +111,8 @@ var stealth_threat: float = 0.5
 ## threat 1, and at threat 0.5. In between and below it follows
 ## far * threat^p (p fitted through the two), so an unopposed bot closes to
 ## point blank and opens out as the fight turns against it.
-var engage_far_ratio: float = 0.95
-var engage_mid_ratio: float = 0.7
+var engage_far_ratio: float = 0.99
+var engage_mid_ratio: float = 0.8
 
 ## How far the secondaries must reach, as a fraction of main-battery range,
 ## before they justify giving up standoff to use them. Below this the hull is a
