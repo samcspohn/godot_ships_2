@@ -89,7 +89,7 @@ func damage(delta):
 		var dmg_sunk = hp.apply_damage(dmg * delta, dmg * delta, null, false, HPManager.DAMAGE_TYPE.FLOOD, HPManager.DAMAGE_LEVEL.LIGHT, _owner)
 		_owner.stats.flood_damage += dmg_sunk[0]
 		_owner.stats.total_damage += dmg_sunk[0]
-		_ship.stats.potential_damage += dmg_sunk[0]
+		_ship.stats.add_potential(dmg_sunk[0], _owner)
 		_owner.stats.damage_ship(_ship, dmg_sunk[0])
 		# --- replay hook (v4): record the actual damage applied this tick so
 		# the replay HUD can rebuild flood_damage / total_damage bidirectionally.

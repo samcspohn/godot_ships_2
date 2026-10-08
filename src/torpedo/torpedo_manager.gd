@@ -328,7 +328,7 @@ func _physics_process(_delta: float) -> void:
 				continue
 			if hit_ship.team.team_id == p.owner.team.team_id:
 				continue
-			hit_ship.stats.potential_damage += p.params.damage
+			hit_ship.stats.add_potential(p.params.damage, p.owner)
 			p.ships_passed.append(hit_ship)
 
 		# Perform the raycast

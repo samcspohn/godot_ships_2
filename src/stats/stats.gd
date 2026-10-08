@@ -45,16 +45,20 @@ var flood_damage: float = 0
 
 var spotting_count: int = 0
 var spotting_damage: float = 0
-## Spotting damage in victim HP shares, for xp().
-var spotting_share: float = 0
 
 var potential_damage: float = 0
 
 const XP_SCALE: float = 1000.0
-const XP_DAMAGE: float = 0.5
+const XP_DAMAGE: float = 5.0
+const XP_DAMAGE_TIER_STEP: float = 1.2
 const XP_KILL: float = 0.25
-const XP_SPOT: float = 0.25
-const XP_POTENTIAL: float = 0.025
+const XP_SPOT: float = 0.5
+const XP_POTENTIAL: float = 0.0025
+const XP_POTENTIAL_TIER_STEP: float = 1.1
+# Accumulated per event so each one uses the tiers involved at that moment.
+var xp_damage: float = 0
+var xp_spot: float = 0
+var xp_potential: float = 0
 
 # Hit type to counter name mapping (matches NativeArmorInteraction's result codes,
 # which is what ProjectileManager passes to record_hit)
@@ -74,6 +78,17 @@ func damage_ship(ship: Ship, damage: float) -> void:
 		var ship_damage = _ships_damaged.get(ship, 0.0)
 		ships_damaged[ship_name] = ship_damage + damage
 		_ships_damaged[ship] = ship_damage + damage
+		if ship.team.team_id != _ship.team.team_id:
+			xp_damage += _damage_xp(ship, damage)
+
+func _damage_xp(victim: Ship, damage: float) -> float:
+	return XP_SCALE * damage / victim.health_controller.max_hp \
+		* XP_DAMAGE / _ship.tier * pow(XP_DAMAGE_TIER_STEP, victim.tier - _ship.tier)
+
+func add_potential(damage: float, source: Ship) -> void:
+	potential_damage += damage
+	var tier_gap: int = source.tier - _ship.tier if source != null else 0
+	xp_potential += damage * XP_POTENTIAL / _ship.tier * pow(XP_POTENTIAL_TIER_STEP, tier_gap)
 
 ## Records a hit event and updates all relevant stats.
 ## Called from C++ ProjectileManager to consolidate all stat tracking.
@@ -142,23 +157,15 @@ func record_hit(hit_type: int, damage: float, is_secondary: bool, position: Vect
 		var spotter = damaged_ship.concealment.spotted_by
 		if spotter and spotter != _ship:
 			spotter.stats.spotting_damage += damage
-			spotter.stats.spotting_share += damage / damaged_ship.health_controller.max_hp
+			spotter.stats.xp_spot += XP_SPOT * spotter.stats._damage_xp(damaged_ship, damage)
 
-## Enemy hulls' worth of damage dealt.
-func damage_share() -> float:
-	var share := 0.0
-	for victim in _ships_damaged:
-		if is_instance_valid(victim) and victim.team.team_id != _ship.team.team_id:
-			share += _ships_damaged[victim] / victim.health_controller.max_hp
-	return share
-
-## Server-side only: _ships_damaged and spotting_share are not synced.
+## Server-side only: the XP accumulators are not synced.
 func xp_breakdown() -> Dictionary:
 	return {
-		"xp_damage": roundi(XP_SCALE * XP_DAMAGE * damage_share()),
+		"xp_damage": roundi(xp_damage),
 		"xp_kills": roundi(XP_SCALE * XP_KILL * frags),
-		"xp_spot": roundi(XP_SCALE * XP_SPOT * spotting_share),
-		"xp_potential": roundi(XP_SCALE * XP_POTENTIAL * potential_damage / _ship.health_controller.max_hp),
+		"xp_spot": roundi(xp_spot),
+		"xp_potential": roundi(xp_potential),
 	}
 
 func xp() -> int:
@@ -176,7 +183,7 @@ func record_potential_damage(damage: float, position: Vector3, caliber: float):
 			# var radius_mod = caliber / HPManager.SHELL_DAMAGE_RADIUS_MOD
 			# var dmg_mod = clamp(ship.beam / radius_mod, 0.0, 1.0)
 			# damage *= dmg_mod
-			ship.stats.potential_damage += damage
+			ship.stats.add_potential(damage, _ship)
 			ship.stats.damage_events.append({
 				"type": "potential",
 				"damage": damage,
