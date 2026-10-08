@@ -362,6 +362,8 @@ impl VisibilityGrid {
             reach: field.as_ref().and_then(|f| f.bind().reach_lookup(team, o.get("hull_key").map_or(0, |v| v.to_i64()), ids.as_slice())),
             fire: field.as_ref().and_then(|f| f.bind().fire_lookup(team, ids.as_slice())),
             reach_needs_los: o.get("reach_needs_los").is_some_and(|v| v.to_bool()),
+            value: f32s("value").to_vec(),
+            harm: f32s("harm").to_vec(),
         }
     }
 
@@ -422,6 +424,57 @@ impl VisibilityGrid {
         pick_dict(&mut d, "dark", r.dark, &self.centres);
         d.set("cells", r.cells as i64);
         d.set("us", t0.elapsed().as_micros() as i64);
+        d
+    }
+
+    /// hold_walk scored instead of stopped: the whole budget walked from the
+    /// same start, keeping the cell with the best engagement score. opts as
+    /// hold_walk plus `value` and `harm` per enemy (the fire planes come from
+    /// reach_field/team/ids). {found, pos, target (enemy index), score, steps,
+    /// trail_a, trail_b, has_start}.
+    #[func]
+    fn engage_walk(&self, from: Vector2, toward: Vector2, outward: bool, enemies: PackedVector2Array,
+        opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        if !self.is_ready() {
+            return d;
+        }
+        let inp = self.hold_inputs(&enemies, &opts);
+        let budget = opts.get("budget_m").map_or(0.0, |v| v.to_f32());
+        let flank = opts.get("flank").and_then(|v| v.try_to::<Vector2>().ok()).unwrap_or(Vector2::ZERO);
+        let (r, score) = self.engage_walk_impl(from, toward, outward, &inp, budget, flank);
+        d.set("found", r.found.is_some());
+        d.set("has_start", r.start.is_some());
+        if let Some((k, mask)) = r.found {
+            d.set("pos", self.centres[k]);
+            d.set("target", mask.trailing_zeros() as i64);
+            d.set("score", score);
+        }
+        d.set("steps", r.steps as i64);
+        d.set("trail_a", &PackedVector2Array::from(r.trails[0].as_slice()));
+        d.set("trail_b", &PackedVector2Array::from(r.trails[1].as_slice()));
+        d
+    }
+
+    /// {free, score, target} of the engagement score at `pos`; score -INF where
+    /// the cell is forbidden or reaches no spotted target.
+    #[func]
+    fn engage_eval(&self, pos: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("free", false);
+        d.set("score", f32::NEG_INFINITY);
+        d.set("target", -1i64);
+        if !self.is_ready() {
+            return d;
+        }
+        let inp = self.hold_inputs(&enemies, &opts);
+        let (ix, iz) = self.grid_of(pos);
+        let Some(k) = self.spot_free(ix, iz, &inp) else { return d };
+        d.set("free", true);
+        if let Some((t, score)) = self.engage_score(k, &inp) {
+            d.set("score", score);
+            d.set("target", t as i64);
+        }
         d
     }
 

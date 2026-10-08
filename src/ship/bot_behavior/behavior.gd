@@ -81,16 +81,10 @@ var active_shooters_at_me: Dictionary = {}  # Ship -> float expiry_sec
 # dispatches by name without ending up with unused per-class duplicates.
 var _skill_hunt: SkillHunt = SkillHunt.new()
 var _skill_chase: SkillChase = SkillChase.new()
-var _skill_cover: SkillFindCover = SkillFindCover.new()
-var _skill_kite: SkillKite = SkillKite.new()
-var _skill_push: SkillPush = SkillPush.new()
 var _skill_camp: SkillCamp = SkillCamp.new()
-var _skill_station: SkillStation = SkillStation.new()
-var _skill_utility: SkillUtility = SkillUtility.new()
-var _skill_flank: SkillFlank = SkillFlank.new()
-var _skill_spot: SkillSpot = SkillSpot.new()
-var _skill_gunboat: SkillGunboat = SkillGunboat.new()
-var _skill_hold_cover: SkillCover = SkillCover.new()
+var _skill_engage: SkillEngage = SkillEngage.new()
+var _skill_disengage: SkillDisengage = SkillDisengage.new()
+var _skill_hold: SkillHold = SkillHold.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
@@ -1793,7 +1787,7 @@ func _is_masked_from_threat(pos: Vector3, threat: Dictionary) -> bool:
 		and _is_los_blocked_with_clearance(pos, threat_pos - lateral)
 
 ## Hold fire only when quiet guns keep us dark, someone can hit this cell,
-## and the bot does not fancy the trade (duel_threat, as in the station search).
+## and the bot does not fancy the trade (duel_threat).
 func _hold_fire_hidden(ctx: SkillContext, sit: Dictionary) -> bool:
 	if not _probe_concealment(ctx.server):
 		return false
@@ -2190,6 +2184,10 @@ func _doc() -> BotDoctrine:
 		_doctrine = doctrine()
 	return _doctrine
 
+## The furthest engagement_range gets: where it sits at threat 1.
+func max_engagement_range(ship: Ship) -> float:
+	return ship.artillery_controller.get_params()._range * _doc().engage_far_ratio
+
 ## How close this bot wants to fight, in metres, read off the ship it is driving.
 ##
 ## Replaces threat-mod, which asked a human to hand-score each hull's appetite
@@ -2200,16 +2198,11 @@ func _doc() -> BotDoctrine:
 ##
 ## `threat` is this tick's threat score; above the doctrine's yield point,
 ## secondaries stop being an argument for closing a fight already going badly.
-## The furthest engagement_range gets: where it sits once threat is high.
-func max_engagement_range(ship: Ship) -> float:
-	return ship.artillery_controller.get_params()._range * _doc().gun_engage_ratio
-
 func engagement_range(ship: Ship, threat: float) -> float:
 	var d := _doc()
 	var gun_range: float = ship.artillery_controller.get_params()._range
-	var gun_dist: float = gun_range * d.gun_engage_ratio
-	if d.push_equalize_threat > 0.0:
-		gun_dist *= clampf(threat / d.push_equalize_threat, clampf(d.push_equalize_floor, 0.0, 1.0), 1.0)
+	var p: float = log(d.engage_mid_ratio / d.engage_far_ratio) / log(0.5)
+	var gun_dist: float = maxf(POINT_BLANK_M, gun_range * d.engage_far_ratio * pow(clampf(threat, 0.0, 1.0), p))
 	if threat >= d.secondary_yield_threat:
 		return gun_dist
 	if not is_instance_valid(ship.secondary_controller):
@@ -2222,12 +2215,6 @@ func engagement_range(ship: Ship, threat: float) -> float:
 	# close for, and this must not push it back out to arm's length.
 	return minf(sec_range * d.secondary_engage_ratio, gun_dist)
 
-## Extra params handed to SkillFindCover. No behaviour overrides this today, so
-## every hull takes the skill's own defaults; the hook stays because a per-bot
-## cover standoff ("max_range") is the obvious thing to drive from doctrine.
-func _cover_params() -> Dictionary:
-	return {}
-
 ## Dispatch a skill by name and record it as active. Returns null when the skill
 ## declines the situation, so callers can walk a fallback chain.
 func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
@@ -2235,16 +2222,13 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 	match skill_name:
 		&"Hunt":        intent = _skill_hunt.execute(ctx, params)
 		&"Chase":       intent = _skill_chase.execute(ctx, params)
-		&"FindCover":   intent = _skill_cover.execute(ctx, params, bool(params.get("prioritize_cover", false)))
-		&"Kite":        intent = _skill_kite.execute(ctx, params)
-		&"Push":        intent = _skill_push.execute(ctx, params)
 		&"Camp":        intent = _skill_camp.execute(ctx, params)
-		&"Station":     intent = _skill_station.execute(ctx, params)
-		&"Utility":     intent = _skill_utility.execute(ctx, params)
-		&"Flank":       intent = _skill_flank.execute(ctx, params)
-		&"Spot":        intent = _skill_spot.execute(ctx, params)
-		&"Gunboat":     intent = _skill_gunboat.execute(ctx, params)
-		&"Cover":       intent = _skill_hold_cover.execute(ctx, params)
+		&"Engage":      intent = _skill_engage.execute(ctx, params)
+		&"Disengage":   intent = _skill_disengage.execute(ctx, params.merged({"cant_go_dark": cant_go_dark}))
+		&"Hold":        intent = _skill_hold.execute(ctx, params)
+		&"Spot":
+			intent = _skill_hold.execute(ctx, params.merged({"hold": SkillHold.Mode.SPOT}))
+			skill_name = &"Hold"
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
 		&"SailForward": intent = _intent_sail_forward(ctx.ship)
 	if intent != null:
@@ -2323,10 +2307,10 @@ func _build_situation(ctx: SkillContext) -> Dictionary:
 ## skill claims a spot on every execute() (including camp/kite probes), and an
 ## unused claim pushes team-mates onto islands further away.
 func _finish_intent(intent: NavIntent, previous_skill: StringName) -> NavIntent:
-	if _active_skill_name != &"FindCover":
-		_skill_cover.release_claim()
-		if previous_skill == &"FindCover":
-			_skill_cover.reset()
+	if _active_skill_name != &"Disengage":
+		_skill_disengage.cover().release_claim()
+		if previous_skill == &"Disengage":
+			_skill_disengage.reset()
 	return intent
 
 ## Threat above which concealment stops being a playstyle and becomes the only
@@ -2354,15 +2338,6 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		wants_stealth = true
 		wants_to_be_concealed = true
 
-	# The single objective first: when it finds a cell under the threat
-	# tolerance the ladder below is not consulted.
-	if d.utility_first and sit.has_enemies:
-		intent = _utility_arm(ctx, sit)
-		if intent != null:
-			sit["arm"] = &"utility"
-			_apply_gun_policy(ctx, sit)
-			return _finish_nav(intent, ctx, sit, prev_skill)
-
 	intent = _committed_intent(ctx, sit)
 	if intent != null:
 		_apply_gun_policy(ctx, sit)
@@ -2370,7 +2345,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 
 	if not sit.has_enemies:
 		sit["arm"] = &"idle"
-		intent = _run_chain(d.idle_chain, ctx, _cover_params())
+		intent = _run_chain(d.idle_chain, ctx)
 	elif not sit.has_spotted and not d.dark_chain.is_empty():
 		sit["arm"] = &"dark"
 		# Everything has gone dark. Running down the last-known position at flank
@@ -2378,9 +2353,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		# cover instead. prioritize_cover: with nothing spotted there's nothing to
 		# shoot at, so cover must not be rejected for being unshootable.
 		if d.dark_takes_cover and sit.threat >= get_chase_max_threat():
-			var cp := _cover_params()
-			cp["prioritize_cover"] = true
-			intent = _run_skill(&"FindCover", ctx, cp)
+			intent = _run_skill(&"Disengage", ctx)
 		if intent == null:
 			intent = _run_chain(d.dark_chain, ctx)
 	elif d.chase_when_unshootable and not _has_shootable_contact(ctx):
@@ -2411,11 +2384,6 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 func _committed_intent(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 	return null
 
-## Per-class hook: the single-objective arm. Base runs Utility on the
-## doctrine's weights.
-func _utility_arm(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Utility", ctx)
-
 ## Whether this ship currently has anything it can actually put a shell into.
 ##
 ## Asks the gunnery rather than re-deriving it: ctx.target is pick_target()'s
@@ -2445,38 +2413,42 @@ func _select_nav_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	sit["arm"] = &"close"
 	var intent: NavIntent = null
 	if sit.threat < d.push_threat:
-		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+		intent = _fight(ctx)
 	else:
 		intent = _disengage(ctx, sit)
 	if intent != null:
 		_shape_close_intent(intent, ctx, sit)
 	# Do not let the post-processors steer a committed push or a committed kite.
-	if (sit.threat < d.force_below or sit.threat >= d.force_above) and _active_skill_name not in [&"Cover", &"Retreat"]:
+	if (sit.threat < d.force_below or sit.threat >= d.force_above) and not _holding(SkillHold.Mode.COVER) and _active_skill_name != &"Disengage":
 		sit["forced"] = true
 	return intent
 
-## Per-class hook: the close arm at high threat. If concealing cover lies along
-## the way, hide behind it; otherwise kite away with the guns still on the target.
-func _disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var intent: NavIntent = null
-	if _doc().close_arm_uses_cover and _cover_allowed(ctx, sit):
-		intent = _try_cover_on_the_way(ctx, sit.nearest, _skill_cover, _cover_params())
-	if intent == null:
-		intent = _run_skill(&"Kite", ctx)
+## Per-class hook: the close arm at high threat.
+func _disengage(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	var intent := _run_skill(&"Disengage", ctx)
+	wants_stealth = wants_stealth or _skill_disengage.wants_concealment()
 	return intent
-
-## Per-class hook: veto the close arm's cover.
-func _cover_allowed(_ctx: SkillContext, _sit: Dictionary) -> bool:
-	return true
 
 ## What to do when the odds look good. Base pushes; CA prefers to run down a
 ## closer unseen contact rather than cross the map to a distant visible one.
-func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+func _select_low_threat_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _fight(ctx)
 
 ## Per-class hook: the engaged arm. Base falls back to pushing.
-func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return _fight(ctx)
+
+## Hold the firing station; with none to be had, push in to the band.
+func _fight(ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
+	var intent := _hold(ctx, SkillHold.Mode.FIGHT, params)
+	return intent if intent != null else _run_skill(&"Engage", ctx, params)
+
+func _hold(ctx: SkillContext, mode: int, params: Dictionary = {}) -> NavIntent:
+	return _run_skill(&"Hold", ctx, params.merged({"hold": mode}))
+
+## Whether the active posture is Hold in `mode`.
+func _holding(mode: int) -> bool:
+	return _active_skill_name == &"Hold" and _skill_hold.mode == mode
 
 ## Per-class hook: adjust an intent produced by the close arm. CA uses it to
 ## hand heading authority to the navigator near terrain.
@@ -2517,22 +2489,8 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	# activation reuses a stale spot.
 	if prev_skill == &"Camp" and _active_skill_name != &"Camp":
 		_skill_camp.reset()
-	if prev_skill == &"Station" and _active_skill_name != &"Station":
-		_skill_station.reset()
-	if prev_skill == &"Utility" and _active_skill_name != &"Utility":
-		_skill_utility.reset()
-	if prev_skill == &"Spot" and _active_skill_name != &"Spot":
-		_skill_spot.reset()
-	if prev_skill == &"Gunboat" and _active_skill_name != &"Gunboat":
-		_skill_gunboat.reset()
-	if prev_skill == &"Cover" and _active_skill_name != &"Cover":
-		_skill_hold_cover.reset()
-	if prev_skill == &"Push" and _active_skill_name != &"Push":
-		_skill_push.reset()
-	if prev_skill == &"Flank" and _active_skill_name != &"Flank":
-		_skill_flank.reset()
-	if prev_skill == &"Kite" and _active_skill_name != &"Kite":
-		_skill_kite.reset()
+	if prev_skill == &"Hold" and _active_skill_name != &"Hold":
+		_skill_hold.reset()
 
 	# One shared reading of the enemy's firing cycle, taken before anything that
 	# steers off it and before any early return -- get_speed_multiplier() is read
@@ -2608,60 +2566,11 @@ const THREAT_SATURATION: float = log(2.0)                        # one unit of p
 func _threat_sat(x: float, falloff: float) -> float:
 	return (1.0 - exp(-falloff * x)) / (1.0 - exp(-falloff))
 
-## Inputs for ReachField.score_utility as this hull reads the fight: per
-## enemy the matchup x condition x class weight get_threat_score would use,
-## its concealment radius for the reveal term, and its worth as a target:
-## the damage it has been doing to me and my team lately, how hurt it is,
-## and a reveal bonus while nobody has it lit.
-func reach_utility_opts(field: ReachField, team_id: int, g: Dictionary) -> Dictionary:
-	var d := _doc()
-	var server: GameServer = _ship.get_node_or_null("/root/Server")
-	var max_hp: float = maxf(_ship.health_controller.max_hp, 1.0)
-	var hp_ratio: float = _ship.health_controller.current_hp / max_hp
-	var condition: float = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
-	var friends: Array = server.get_team_ships(team_id) if server != null else []
-	var lit: Array = server.get_valid_targets(team_id) if server != null else []
-	var danger := {}
-	var spot := {}
-	var value := {}
-	var reveal := {}
-	var friend_pos := PackedVector2Array()
-	for f in friends:
-		if f != _ship and is_instance_valid(f) and f.health_controller != null and f.health_controller.is_alive():
-			friend_pos.append(Vector2(f.global_position.x, f.global_position.z))
-	var claims: Array = SkillPosition._other_claims_keyed(team_id, _ship.get_instance_id(), SimClock.now_ms())
-	for id in field.get_team_enemy_ids(team_id):
-		var e = instance_from_id(id)
-		if not (e is Ship) or not is_instance_valid(e):
-			continue
-		var e_max: float = maxf(e.health_controller.max_hp, 1.0)
-		var matchup: float = _threat_sat(e.health_controller.current_hp / max_hp, THREAT_HP_FALLOFF)
-		danger[id] = matchup * condition * get_threat_class_weight(e.ship_class)
-		if e.concealment != null and e.concealment.params != null:
-			spot[id] = (e.concealment.params.p() as ConcealmentParams).radius
-		var dmg: float = 2.0 * _ship.health_controller.recent_damage_from(e) / max_hp
-		for f in friends:
-			if f != _ship and is_instance_valid(f) and f.health_controller != null:
-				dmg += f.health_controller.recent_damage_from(e) / maxf(f.health_controller.max_hp, 1.0)
-		var hurt: float = clampf(1.0 - e.health_controller.current_hp / e_max, 0.0, 1.0)
-		value[id] = (1.0 + d.utility_target_damage * dmg) * (1.0 + d.utility_target_hurt * hurt)
-		reveal[id] = 1.0 if lit.has(e) else 1.0 + d.utility_target_unlit
-	var radius: float = NavigationMapManager.reach_conceal_radius(_ship)
-	var gun_range: float = float(g.get("range", 0.0))
-	return {
-		"enemy_danger": danger, "enemy_spot": spot, "enemy_value": value, "enemy_reveal": reveal,
-		"target_near": d.utility_target_near, "target_alone": d.utility_target_alone,
-		"friends": friend_pos, "focus_split": d.utility_focus_split,
-		"claims": claims[0], "claim_keys": claims[1], "cover_split": d.utility_cover_split,
-		"threat_sat": THREAT_SATURATION,
-		"gun_range": maxf(gun_range, 1.0), "fire_radius": maxf(radius, gun_range),
-		"w_reach": d.utility_w_reach, "w_reveal": d.utility_w_reveal, "w_close": d.utility_w_close,
-		"w_threat": d.utility_w_threat, "aversion": 1.0 + d.utility_hp_aversion * clampf(1.0 - hp_ratio, 0.0, 1.0),
-		"w_path": d.utility_w_path,
-	}
-
 ## Below this HP fraction threat climbs toward maximal whatever the contacts.
 const THREAT_LOW_HP: float = 0.35
+
+## Where an unopposed engagement closes to.
+const POINT_BLANK_M: float = 100.0
 
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
@@ -4442,16 +4351,6 @@ func _get_ship_heading() -> float:
 ## When shootable cover is reachable and lies along the engagement path to
 ## `nearest`, returns a FindCover intent and sets _active_skill_name.  Returns
 ## null otherwise so the caller can fall back to kite/push.
-func _try_cover_on_the_way(ctx: SkillContext, nearest: Ship, cover_skill: SkillFindCover, cover_params: Dictionary) -> NavIntent:
-	if nearest == null:
-		return null
-	var cover_intent := cover_skill.execute(ctx,
-		cover_params.merged({"prefer_on_the_way": true}, true), false)
-	if cover_intent != null and cover_skill.is_cover_on_the_way(ctx):
-		_active_skill_name = &"FindCover"
-		return cover_intent
-	return null
-
 func _has_active_bb_shooter() -> bool:
 	for shooter in active_shooters_at_me:
 		if is_instance_valid(shooter) and shooter.ship_class == Ship.ShipClass.BB:

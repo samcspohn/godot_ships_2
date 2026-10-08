@@ -35,7 +35,7 @@ const PROGRESS_W: float = 0.1
 const DEAL_RATIO: float = 3.0
 const DEAL_WEIGHT: float = 1.0 / DEAL_RATIO
 const CLOSING_W: float = 0.05
-## In range of us while we are seen, but not shown to be aiming here.
+## In range of us, but not shown to be aiming here.
 const BYSTANDER_WEIGHT: float = 0.5
 ## Hysteresis, in shares of remaining HP over the horizon.
 const SWITCH_MARGIN: float = 0.02
@@ -65,10 +65,13 @@ var _toward: PackedFloat32Array = PackedFloat32Array()
 
 func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	var clock: SalvoClock = ctx.behavior.salvo_clock
-	if intent == null or clock == null or not _survey(ctx):
+	if intent == null or clock == null:
 		reset()
 		return intent
 	var route: float = _route_bearing(intent, ctx)
+	if not _survey(ctx) and not _quiet(ctx):
+		reset()
+		return intent
 	var opts := _sim_opts(ctx, route)
 	var hs := PackedFloat32Array()
 	var gears := PackedByteArray()
@@ -192,18 +195,25 @@ static func repair_spare(ship: Ship, horizon: float) -> float:
 	return maxf(spare - hc.healable_damage, 0.0)
 
 
-## Every gun on us, weighted by how sure we are it is on us, tabulated per heading.
-## False when none is known.
+## Every gun that can reach us, weighted by how sure we are it is on us, tabulated
+## per heading. False while unseen or while nothing shoots or aims here.
 func _survey(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
 	var clock: SalvoClock = ctx.behavior.salvo_clock
+	if not ship.is_detected() or ship.team == null or ctx.server == null:
+		return false
 	var weight := {}
 	for s in ctx.behavior.active_shooters_at_me.keys():
 		weight[s] = 1.0
 	for s in clock.aimers:
 		weight[s] = 1.0
-	if ship.is_detected() and clock.dominant != null and not weight.has(clock.dominant):
-		weight[clock.dominant] = BYSTANDER_WEIGHT
+	if weight.is_empty():
+		return false
+	for e in ctx.server.get_valid_targets(ship.team.team_id):
+		if weight.has(e) or not is_instance_valid(e) or e.artillery_controller == null:
+			continue
+		if ship.global_position.distance_to(e.global_position) <= e.artillery_controller.get_params()._range:
+			weight[e] = BYSTANDER_WEIGHT
 	_bearings = PackedFloat32Array()
 	_weights = PackedFloat32Array()
 	_rows = []
@@ -239,6 +249,20 @@ func _survey(ctx: SkillContext) -> bool:
 		_dps[i] = dps
 		_heal[i] = heal
 		_toward[i] = toward / total_w
+	return true
+
+
+## No gun on us: zero tables, true while there is a target to bring the turrets to.
+func _quiet(ctx: SkillContext) -> bool:
+	if ctx.target == null or not is_instance_valid(ctx.target) or not ctx.target.is_alive():
+		return false
+	_rows = []
+	_dps.resize(HEADINGS)
+	_dps.fill(0.0)
+	_heal.resize(HEADINGS)
+	_heal.fill(0.0)
+	_toward.resize(HEADINGS)
+	_toward.fill(0.0)
 	return true
 
 

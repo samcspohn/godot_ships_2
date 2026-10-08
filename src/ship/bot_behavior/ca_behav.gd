@@ -2,12 +2,6 @@ extends BotBehavior
 class_name CABehavior
 
 
-# Cover-zone mirror. Written by _sync_cover_debug() from the cover skill's own
-# state, read by BotControllerV4's debug drawing — nothing else uses it.
-var _cover_zone_valid: bool = false
-var _cover_zone_radius: float = 200.0
-var _cover_island_center: Vector3 = Vector3.ZERO
-var _cover_island_radius: float = 0.0
 
 # ============================================================================
 # WEIGHT CONFIGURATION
@@ -54,16 +48,11 @@ func engage_target(target: Ship) -> void:
 
 
 
-## Mirror the cover skill's internal state onto the fields debug.gd draws from.
-## Shared with CVBehavior, which runs its own decision tree over the same skill.
-func _sync_cover_debug(ctx: SkillContext) -> void:
-	is_in_cover = _skill_cover.is_complete(ctx)
-	if _skill_cover._nav_destination_valid:
-		_cover_zone_valid = true
-		_cover_island_center = _skill_cover._target_island_pos
-		_cover_island_radius = _skill_cover._target_island_radius
-	else:
-		_cover_zone_valid = false
+## Whether the hull sits on the cover station it is holding. Shared with
+## CVBehavior, which runs its own decision tree over the same skills.
+func _sync_cover_debug(_ctx: SkillContext) -> void:
+	var c: SkillCover = _skill_hold.cover if _holding(SkillHold.Mode.COVER) else _skill_disengage.cover()
+	is_in_cover = c.has_station() and _ship.global_position.distance_to(c.station_position()) <= SkillCover.COVER_HOLD_M
 
 # ============================================================================
 # NAVINTENT — decision arms specific to the cruiser
@@ -91,7 +80,7 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 		var chase := _run_skill(&"Chase", ctx)
 		if chase != null:
 			return chase
-	return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+	return _fight(ctx)
 
 # ## Cover navigates to a hide position, so its heading belongs to the navigator.
 # ## Every other close-arm skill wants a say in where the hull points, and near
@@ -107,13 +96,13 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 # 	# 	intent.heading_weight = 1.0
 
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if _active_skill_name != &"Cover" or not _skill_hold_cover.has_station() \
+	if not _holding(SkillHold.Mode.COVER) or not _skill_hold.cover.has_station() \
 			or sit.threat < _doc().cover_release_threat:
 		return null
-	var hold := _run_skill(&"Cover", ctx, _hold_cover_params(_skill_hold_cover.mode, sit))
+	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(_skill_hold.cover.mode, sit))
 	if hold != null:
 		sit["arm"] = &"engaged"
-		wants_stealth = wants_stealth or _skill_hold_cover.wants_concealment()
+		wants_stealth = wants_stealth or _skill_hold.cover.wants_concealment()
 	return hold
 
 func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
@@ -121,67 +110,18 @@ func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
 		"max_range": max_engagement_range(_ship) if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"fire_en_route": cant_go_dark}
 
-## Dive for cover when it beats going dark; else go dark while that is still
-## possible; else kite with the guns working.
-func _disengage(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var dive := _run_skill(&"Cover", ctx, _hold_cover_params(SkillCover.Mode.DEFENSE, sit))
-	var dark: Dictionary = _skill_hold_cover.dark()
-	if dive != null and (cant_go_dark or dark.is_empty() or float(_skill_hold_cover.best().score) >= float(dark.score)):
-		wants_stealth = wants_stealth or _skill_hold_cover.wants_concealment()
-		return dive
-	_skill_hold_cover.reset()
-	if not cant_go_dark and not dark.is_empty():
-		var p: Vector2 = dark.pos
-		var to := Vector3(p.x, 0.0, p.y) - ctx.ship.global_position
-		_active_skill_name = &"Retreat"
-		wants_stealth = true
-		return NavIntent.create(Vector3(p.x, 0.0, p.y), atan2(to.x, to.z))
-	return _run_skill(&"Kite", ctx)
-
-## The engaged arm: high enough threat to stop pushing, but nothing close aboard.
-## The cruiser splits on its own detection state — unseen, it goes and hides;
-## seen, it weighs hiding against kiting.
+## The engaged arm: hold hidden island cover with a target in reach; without
+## one, engage from the band while the odds allow, then get out.
 func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	var d := _doc()
-	var cover_params := _cover_params()
-
-	var hold := _run_skill(&"Cover", ctx, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
+	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
 	if hold != null:
-		wants_stealth = _skill_hold_cover.wants_concealment()
+		wants_stealth = _skill_hold.cover.wants_concealment()
 		return hold
-
-	if sit.threat < d.station_max_threat:
-		var station := _run_skill(&"Station", ctx)
-		if station != null:
-			return station
-
-	if not ctx.ship.is_detected():
-		var hide := _run_skill(&"FindCover", ctx, cover_params)
-		if hide != null:
-			return hide
-		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
-
-	var cover_intent := _skill_cover.execute(ctx,
-		cover_params.merged({"prefer_on_the_way": true}, true), false)
-	if cover_intent == null:
-		return _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
-
-	var off_path: bool = sit.nearest != null \
-		and sit.threat > d.cover_abandon_threat \
-		and not _skill_cover.is_cover_on_the_way(ctx) \
-		and active_shooters_at_me.size() > 0
-	if not off_path:
-		_active_skill_name = &"FindCover"
-		return cover_intent
-
-	# Cover is too far off the engagement path and we are being shot at — kite,
-	# but lean the destination slightly toward the island we gave up on.
-	var intent := _run_skill(&"Kite", ctx)
-	if intent == null:
-		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
-	if intent != null:
-		intent.target_position = intent.target_position.lerp(cover_intent.target_position, 0.1)
-	return intent
+	if sit.threat < _doc().engage_max_threat:
+		var engage := _fight(ctx)
+		if engage != null:
+			return engage
+	return _disengage(ctx, sit)
 
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	# Only when something is actually spotted, matching the arms this used to sit

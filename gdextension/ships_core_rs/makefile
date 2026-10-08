@@ -16,14 +16,14 @@ e d r: release
 release:
 	cargo build --release
 	@mkdir -p ../../bin
-	cp target/release/libships_core_rs.so $(OUT)
+	cp target/release/libships_core_rs.so $(OUT).tmp && mv -f $(OUT).tmp $(OUT)
 	@echo "-> $(OUT)"
 
 # Unoptimized build with debug assertions, same output path.
 dev:
 	cargo build
 	@mkdir -p ../../bin
-	cp target/debug/libships_core_rs.so $(OUT)
+	cp target/debug/libships_core_rs.so $(OUT).tmp && mv -f $(OUT).tmp $(OUT)
 	@echo "-> $(OUT) (debug)"
 
 clean:

@@ -72,6 +72,8 @@ for c in classes:
     if len(hulls) > 1:
         for hull in hulls:
             groups.append((f"{c}/{hull}", lambda r, c=c, hull=hull: r["ship_class"] == c and r["ship_name"] == hull))
+if not groups:
+    sys.exit("no metrics")
 width = max(6, max(len(g) for g, _ in groups))
 for field in FIELDS:
     print(f"\n== {field}")
@@ -83,3 +85,27 @@ for field in FIELDS:
             m, h = ci(xs)
             cells.append(f"{m:>11.2f}±{h:<8.2f}")
         print(f"{name:>{width}} " + " ".join(cells))
+
+SPAWN_FIELDS = ["total_damage", "damage_taken", "survival_time", "won"]
+
+
+def region(r):
+    n, s = int(r.get("team_size", 0)), int(r.get("spawn_position", -1))
+    if n < 2 or s < 0:
+        return None
+    off = abs(2.0 * s / (n - 1) - 1.0)
+    return "centre" if off < 1 / 3 else "mid" if off < 2 / 3 else "edge"
+
+
+if any(region(r) for _, (_, rows) in data.items() for r in rows):
+    for field in SPAWN_FIELDS:
+        print(f"\n== {field} by spawn")
+        print(f'{"group":>{width}} ' + " ".join(f"{label:>20}" for label, _ in builds))
+        for c in classes:
+            for reg in ["edge", "mid", "centre"]:
+                cells = []
+                for label, _ in builds:
+                    xs = [float(r.get(field, 0.0)) for r in data[label][1] if r["ship_class"] == c and region(r) == reg]
+                    m, h = ci(xs)
+                    cells.append(f"{m:>11.2f}±{h:<8.2f}")
+                print(f"{c + '/' + reg:>{width}} " + " ".join(cells))

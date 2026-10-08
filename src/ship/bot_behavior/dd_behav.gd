@@ -216,6 +216,14 @@ func doctrine() -> BotDoctrine:
 
 ## Below this HP fraction a gun-armed hull fights as a torpedo boat.
 const GUNBOAT_TORPEDO_HP := 0.35
+const GUNBOAT_FRAC_PUSH := 0.5
+const GUNBOAT_FRAC_HOLD := 0.7
+const GUNBOAT_FRAC_MAX := 0.99
+const GUNBOAT_HOLD_THREAT := 0.5
+## Above GUNBOAT_HOLD_THREAT the band stays near GUNBOAT_FRAC_HOLD until threat is extreme.
+const GUNBOAT_FRAC_POW := 8.0
+## How far along the band a gunboat rides either way of its station: speed is its armour.
+const GUNBOAT_PATROL_M := 2500.0
 
 func _gunboating() -> bool:
 	if not _is_gunboat(_ship):
@@ -264,7 +272,7 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# further would just walk it into gun range for nothing.
 	if sit.threat < d.push_threat and sit.has_spotted and ctx.target != null \
 			and not _has_better_unspotted_torp_target(ship, ctx.target, ctx.server):
-		intent = _run_skill(&"Push", ctx, {"desired_range": sit.engagement_range})
+		intent = _fight(ctx, {"desired_range": sit.engagement_range})
 		if intent != null:
 			wants_stealth = false
 			wants_to_be_concealed = false
@@ -282,16 +290,12 @@ func _select_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	# the contact can be SEEN from, which is the same errand done in a way the
 	# boat survives, and launch_range prefers a station the tubes reach from.
 	if intent == null:
-		intent = _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ship)})
-	# With contacts lit and nothing to spot from, a dark cell with the guns on
-	# something beats running: Station is priced on detection for this hull.
-	if intent == null and sit.has_spotted and sit.threat < d.station_max_threat:
-		intent = _run_skill(&"Station", ctx)
+		intent = _hold(ctx, SkillHold.Mode.SPOT, {"launch_range": _torpedo_reach(ship)})
 	# Chase is a way of finding an enemy, not of fighting one. With contacts lit
 	# and the push arm above declined on threat, the boat is already inside the
 	# band it launches from: break off rather than run at them.
 	if intent == null:
-		intent = _run_skill(&"Kite" if sit.has_spotted else &"Chase", ctx)
+		intent = _run_skill(&"Disengage" if sit.has_spotted else &"Chase", ctx)
 	if intent == null:
 		intent = _run_skill(&"Hunt", ctx)
 
@@ -349,34 +353,35 @@ var _gb_stealth: bool = false
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	if _doc().trades_on_concealment or not sit.has_enemies:
 		return null
-	var intent := _run_skill(&"Gunboat", ctx)
+	var intent := _hold(ctx, SkillHold.Mode.FIGHT, _gunboat_params(ctx))
 	if intent != null:
 		sit["arm"] = &"engaged"
 	return intent
 
+## Hold FIGHT as a gunboat: its own band curve, a station that sees its
+## target, the band ridden within GUNBOAT_PATROL_M of it, and the bow away from the danger.
+func _gunboat_params(ctx: SkillContext) -> Dictionary:
+	var gun_range: float = ctx.ship.artillery_controller.get_params()._range
+	return {"band_m": gun_range * gunboat_band_frac(clampf(get_threat_score(ctx), 0.0, 1.0)),
+		"needs_los": true, "radius": GUNBOAT_PATROL_M, "away": true}
 
-## The engaged arm for a gunboat whose band walk found nothing: the open-water
-## push/kite swing on threat, or with nothing lit, go and make vision.
+## Below 0.5 threat a gunboat closes in; above, it holds near 70% of gun range,
+## since threat ignores how hard a destroyer is to hit, and only opens out near the top.
+static func gunboat_band_frac(threat: float) -> float:
+	if threat < GUNBOAT_HOLD_THREAT:
+		return lerpf(GUNBOAT_FRAC_PUSH, GUNBOAT_FRAC_HOLD, threat / GUNBOAT_HOLD_THREAT)
+	var u := clampf((threat - GUNBOAT_HOLD_THREAT) / (1.0 - GUNBOAT_HOLD_THREAT), 0.0, 1.0)
+	return GUNBOAT_FRAC_HOLD + (GUNBOAT_FRAC_MAX - GUNBOAT_FRAC_HOLD) * pow(u, GUNBOAT_FRAC_POW)
+
+
+## The engaged arm for a gunboat whose band walk found no cell that sees a
+## target: kite off when threat says the swing has turned, else make vision.
 func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	var intent: NavIntent = null
 
 	if sit.has_spotted:
 		if _open_water_kiting(sit):
-			intent = _run_skill(&"Kite", ctx)
-		else:
-			# Push stops closing at the engagement range, so this is not a
-			# charge - it is the boat taking back the water it gave up on the
-			# last kite leg and no more.
-			#
-			# line_of_fire because that stop is the whole point of the leg. A
-			# gunboat that pushes back in and parks behind an island has spent
-			# the water and bought nothing: it is not shooting, and the next
-			# kite leg will spend the same water again. Camp never had to ask
-			# because it held a position it was already shooting from.
-			intent = _run_skill(&"Push", ctx, {
-				"desired_range": sit.engagement_range,
-				"line_of_fire": true,
-			})
+			intent = _run_skill(&"Disengage", ctx)
 	else:
 		# Nothing lit: the swing has nothing to swing against, and a leg left
 		# latched here would decide the first tick of the next engagement on a
@@ -384,7 +389,7 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 		_ow_kiting = false
 
 	if intent == null:
-		intent = _run_skill(&"Spot", ctx)
+		intent = _hold(ctx, SkillHold.Mode.SPOT)
 	if intent == null:
 		intent = _run_skill(&"Chase", ctx)
 	if intent == null:
@@ -392,13 +397,6 @@ func _select_gunboat_engaged_skill(ctx: SkillContext, sit: Dictionary) -> NavInt
 
 	return intent
 
-
-## A destroyer lives on the search alone: a torpedo boat spots from its
-## launch band, a gunboat fights in the open on its own weights.
-func _utility_arm(ctx: SkillContext, sit: Dictionary) -> NavIntent:
-	if _doc().trades_on_concealment:
-		return _run_skill(&"Spot", ctx, {"launch_range": _torpedo_reach(ctx.ship)})
-	return _run_skill(&"Gunboat", ctx)
 
 ## The distance this destroyer wants to fight at.
 ##
@@ -455,10 +453,7 @@ func engagement_range(ship: Ship, threat: float) -> float:
 
 ## Whether the active station skill found a cell the router can reach dark.
 func _stealth_corridor() -> bool:
-	match _active_skill_name:
-		&"Spot": return _skill_spot.stealth_corridor
-		&"Utility": return _skill_utility.has_station()
-	return _skill_spot.stealth_corridor
+	return _skill_hold.spot.stealth_corridor
 
 ## A torpedo boat routes stealth-aware: undetected it keeps out of enemy
 ## detection zones in transit, detected it routes back toward cover so it sheds
@@ -466,7 +461,7 @@ func _stealth_corridor() -> bool:
 ## costs it gun time, and it has no dark water to spend that time reaching.
 func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 	var d := _doc()
-	if not d.trades_on_concealment and _active_skill_name == &"Gunboat":
+	if not d.trades_on_concealment and _holding(SkillHold.Mode.FIGHT):
 		# Overrides the cornered rule too: the band opening is this boat's way out,
 		# and a quiet bait spots nothing.
 		_gb_stealth = false
@@ -502,8 +497,8 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 		# how a destroyer ends up circling the map instead of spotting.
 		wants_stealth = _stealth_corridor()
 	# Never opens up from the dark: the guns join once something has us lit.
-	# A push is the exception; it is the aggressive leg and shoots its way in.
-	_suppress_guns = _active_skill_name != &"Push"
+	# Engaging is the exception; it is the aggressive leg and shoots its way in.
+	_suppress_guns = _active_skill_name != &"Engage" and not _holding(SkillHold.Mode.FIGHT)
 	# Suppress guns when detected with bloom up and the nearest enemy far enough
 	# that going dark would actually drop us. DDs always take that chance.
 	wants_to_be_concealed = _suppress_guns and _probe_concealment(ctx.server)

@@ -828,7 +828,7 @@ impl ShipNavigator {
             let g = self.hpa_graph.as_ref().unwrap().bind();
             (g.cluster_size, g.ncx, g.ncz, g.sub_size, g.nsubx, g.nsubz)
         };
-        let version = field.bind().get_team_version(self.detect_team);
+        let version = field.bind().layer_version(self.detect_team, fire) as i64;
         if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
             let mut f = field.bind_mut();
             if fire {

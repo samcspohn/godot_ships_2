@@ -1,7 +1,6 @@
 use godot::prelude::*;
 use rayon::prelude::*;
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Instant;
 
@@ -274,8 +273,6 @@ struct Field {
     mult: i32,
     /// 1 where the cell centre is water; averages ignore land cells.
     water: Vec<u8>,
-    /// SDF at the cell centre; passable for a hull when >= its clearance.
-    sdf: Vec<f32>,
 }
 
 impl Field {
@@ -546,6 +543,12 @@ impl Shell {
 #[derive(Clone)]
 struct EnemyState {
     origin: Vector2,
+    /// Where the planes were last swept from, and with what error bar: the
+    /// resweep test, since `origin` follows the contact every update.
+    swept: Vector2,
+    swept_spread: f32,
+    /// The reach planes' own origin: they tolerate REACH_MOVE_M of drift.
+    swept_reach: Vector2,
     shell: Shell,
     /// Lateral error bar of the believed position; wide ones sweep 3 origins.
     spread: f32,
@@ -572,16 +575,16 @@ struct TeamLayers {
     los_range: f32,
     /// Smoke discs added or removed since this team's last update_team.
     smoke_pending: Vec<Disc>,
-    /// Bumped whenever any plane changes; consumers cache off it.
+    /// Bumped whenever any plane, weight or force-spot changes.
     version: u64,
-    /// Min effective distance per cell, INFINITY where no enemy sees it.
+    /// Bumped when what the line-of-sight layer means changes (planes, enemy
+    /// set, weights, force-spots) and when the fire planes or enemy set change:
+    /// the router's detection and fire stats rebuild off these, not off reach.
+    los_version: u64,
+    fire_version: u64,
+    /// detect_grid at detect_version (a los_version), built when a router asks.
     detect: Arc<Vec<f32>>,
     detect_version: u64,
-    /// Half-width of the narrowest bearing cone holding every enemy that can
-    /// hit the cell (-1 where none can) and that cone's centre bearing.
-    cone_half: Arc<Vec<f32>>,
-    cone_dir: Arc<Vec<f32>>,
-    cone_version: u64,
     /// fire_at per cell: shooter count and presentation-weighted count per heading.
     fire_cells: Arc<Vec<(f32, [f32; 4])>>,
     fire_cells_version: u64,
@@ -592,69 +595,6 @@ pub(crate) struct FireStats {
     pub(crate) max: Arc<Vec<f32>>,
     pub(crate) mean: Arc<Vec<f32>>,
     pub(crate) dir: Arc<Vec<[f32; 4]>>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-struct PlanKey {
-    team: i32,
-    cell: usize,
-    radius_q: i32,
-    gain_bits: u32,
-    clearance_q: i32,
-    box_cells: i32,
-    mode: i32,
-    version: u64,
-}
-
-/// One ship's two Dijkstra layers over the field: priced cost to reach each
-/// cell from where it stands, and plain distance from each cell to the
-/// nearest cell nobody prices.
-struct ShipPlan {
-    key: PlanKey,
-    bx: BoxR,
-    safe: Vec<f32>,
-    escape: Vec<f32>,
-    /// Price integrated along the safe path to each cell (metres x price).
-    risk: Vec<f32>,
-    price: Vec<f32>,
-    pass: Vec<bool>,
-    walls_muted: bool,
-    max_safe: f32,
-    max_escape: f32,
-    max_risk: f32,
-    us: f32,
-}
-
-/// NaN where the cell was rejected.
-struct UtilityLayer {
-    threat: Vec<f32>,
-    utility: Vec<f32>,
-    range: (f32, f32),
-}
-
-#[derive(Clone, Copy)]
-struct BoxR {
-    x0: i32,
-    z0: i32,
-    x1: i32,
-    z1: i32,
-}
-
-#[derive(PartialEq)]
-struct QItem {
-    cost: f32,
-    idx: u32,
-}
-impl Eq for QItem {}
-impl PartialOrd for QItem {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-impl Ord for QItem {
-    fn cmp(&self, o: &Self) -> Ordering {
-        o.cost.total_cmp(&self.cost).then_with(|| o.idx.cmp(&self.idx))
-    }
 }
 
 /// 8-connected Dijkstra inside `bx`; a step costs its length times
@@ -678,76 +618,6 @@ fn fire_heading_units() -> [(f32, f32); 4] {
     FIRE_HEADINGS.map(|h| h.to_radians().sin_cos())
 }
 
-fn dijkstra(
-    f: &Field,
-    bx: BoxR,
-    pass: &[bool],
-    price: &[f32],
-    dir_price: Option<&[[f32; 4]]>,
-    gain: f32,
-    sources: &[usize],
-    out: &mut [f32],
-    mut risk: Option<&mut [f32]>,
-) {
-    let mut heap = BinaryHeap::new();
-    for &s in sources {
-        out[s] = 0.0;
-        if let Some(r) = risk.as_deref_mut() {
-            r[s] = 0.0;
-        }
-        heap.push(QItem { cost: 0.0, idx: s as u32 });
-    }
-    let w = f.w;
-    let diag = f.cell * std::f32::consts::SQRT_2;
-    let bucket: [usize; 9] = std::array::from_fn(|k| fire_heading_bucket((k % 3) as f32 - 1.0, (k / 3) as f32 - 1.0));
-    while let Some(QItem { cost, idx }) = heap.pop() {
-        let idx = idx as usize;
-        if cost > out[idx] {
-            continue;
-        }
-        let (ix, iz) = (idx as i32 % w, idx as i32 / w);
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                if dx == 0 && dz == 0 {
-                    continue;
-                }
-                let (nx, nz) = (ix + dx, iz + dz);
-                if nx < bx.x0 || nx > bx.x1 || nz < bx.z0 || nz > bx.z1 {
-                    continue;
-                }
-                let n = (nz * w + nx) as usize;
-                if !pass[n] {
-                    continue;
-                }
-                let len = if dx != 0 && dz != 0 {
-                    if !pass[(iz * w + nx) as usize] || !pass[(nz * w + ix) as usize] {
-                        continue;
-                    }
-                    diag
-                } else {
-                    f.cell
-                };
-                let (pa, pb) = match dir_price {
-                    Some(dp) => {
-                        let k = bucket[((dz + 1) * 3 + dx + 1) as usize];
-                        (dp[idx][k], dp[n][k])
-                    }
-                    None => (price[idx], price[n]),
-                };
-                let step_risk = len * 0.5 * (pa + pb);
-                let c = cost + len + gain * step_risk;
-                if c < out[n] {
-                    out[n] = c;
-                    if let Some(r) = risk.as_deref_mut() {
-                        r[n] = r[idx] + step_risk;
-                    }
-                    heap.push(QItem { cost: c, idx: n as u32 });
-                }
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Layer {
     Fire,
@@ -756,6 +626,9 @@ enum Layer {
 }
 
 const SPREAD_MIN: f32 = 150.0;
+/// A reach plane is resweeped once its enemy has moved this far, not at the
+/// fire and sight planes' threshold: it decides stations, not who can see us.
+const REACH_MOVE_M: f32 = 250.0;
 const WEIGHT_FLOOR: f32 = 0.05;
 
 fn origins_for(origin: Vector2, spread: f32) -> Vec<Vector2> {
@@ -897,97 +770,6 @@ struct UpdateStats {
     hulls: u32,
 }
 
-#[derive(Clone, Copy)]
-struct PlanStats {
-    cached: bool,
-    us: f32,
-    walls_muted: bool,
-    escape_here: f32,
-    max_safe: f32,
-    max_escape: f32,
-    max_risk: f32,
-    marker: Option<(Vector2, f32)>,
-}
-
-impl PlanStats {
-    fn to_dict(self) -> VarDictionary {
-        let mut d = VarDictionary::new();
-        d.set("cached", self.cached);
-        d.set("us", self.us);
-        d.set("walls_muted", self.walls_muted);
-        d.set("escape_here", self.escape_here);
-        d.set("max_safe", self.max_safe);
-        d.set("max_escape", self.max_escape);
-        d.set("max_risk", self.max_risk);
-        d.set("has_marker", self.marker.is_some());
-        d.set("marker", self.marker.map_or(Vector2::ZERO, |m| m.0));
-        d.set("marker_cost", self.marker.map_or(f32::INFINITY, |m| m.1));
-        d
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Terms {
-    Utility(UtilityTerms),
-    Station(StationTerms),
-}
-
-impl Terms {
-    fn score(&self) -> f32 {
-        match self {
-            Terms::Utility(t) => t.utility,
-            Terms::Station(t) => t.score,
-        }
-    }
-
-    fn to_dict(&self) -> VarDictionary {
-        match self {
-            Terms::Utility(t) => t.to_dict(),
-            Terms::Station(t) => t.to_dict(),
-        }
-    }
-}
-
-const KIND_STATION: u8 = 0;
-const KIND_UTILITY: u8 = 1;
-
-#[derive(Clone)]
-struct ScoreResult {
-    token: i64,
-    best: Option<(Vector2, Terms)>,
-    here: Option<Terms>,
-    held: Option<Terms>,
-    cells: u32,
-    us: f32,
-}
-
-impl ScoreResult {
-    fn new(token: i64) -> Self {
-        Self { token, best: None, here: None, held: None, cells: 0, us: 0.0 }
-    }
-
-    fn to_dict(&self) -> VarDictionary {
-        let mut d = VarDictionary::new();
-        d.set("token", self.token);
-        d.set("has_best", self.best.is_some());
-        if let Some((p, t)) = &self.best {
-            d.set("best", *p);
-            d.set("best_score", t.score());
-            d.set("best_terms", &t.to_dict());
-        }
-        if let Some(t) = &self.here {
-            d.set("here_terms", &t.to_dict());
-        }
-        d.set("held_score", self.held.map_or(f32::NEG_INFINITY, |t| t.score()));
-        if let Some(t) = &self.held {
-            d.set("held_terms", &t.to_dict());
-        }
-        d.set("cells", self.cells as i64);
-        d.set("us", self.us);
-        d
-    }
-}
-
 type ExposureKey = (i32, i32, i32, i32, i32);
 type FireKey = (i32, i32, i32, i32);
 type ExposureStats = (u64, Arc<Vec<f32>>, Arc<Vec<f32>>);
@@ -998,17 +780,6 @@ struct UpdateReq {
     los_range: f32,
     target_h: f32,
     move_threshold: f32,
-}
-
-struct PlanReq {
-    team: i32,
-    pos: Vector2,
-    radius: f32,
-    gain: f32,
-    clearance: f32,
-    box_radius: f32,
-    mode: i32,
-    toward: Vector2,
 }
 
 enum Op {
@@ -1026,22 +797,13 @@ enum Op {
 }
 
 #[derive(Default)]
-struct ShipReqs {
-    plan: Option<PlanReq>,
-    utility: Option<(i64, i32, i64, UtilityArgs)>,
-    station: Option<(i64, i32, i64, StationArgs)>,
-}
-
-/// Ships run plan before scores, so a score sees the plan queued with it.
-#[derive(Default)]
 struct Batch {
     ops: Vec<Op>,
-    ships: Vec<(i64, ShipReqs)>,
 }
 
 impl Batch {
     fn is_empty(&self) -> bool {
-        self.ops.is_empty() && self.ships.is_empty()
+        self.ops.is_empty()
     }
 }
 
@@ -1051,9 +813,6 @@ struct Snapshot {
     field: Option<Arc<Field>>,
     teams: HashMap<i32, Arc<TeamLayers>>,
     ships: HashMap<i64, Arc<Vec<u64>>>,
-    plans: HashMap<i64, Arc<ShipPlan>>,
-    plan_stats: HashMap<i64, PlanStats>,
-    utility: HashMap<i64, Arc<UtilityLayer>>,
     exposure: HashMap<ExposureKey, ExposureStats>,
     fire: HashMap<FireKey, (u64, FireStats)>,
     last: Stats,
@@ -1064,7 +823,6 @@ struct Snapshot {
 struct Delivery {
     snap: Snapshot,
     team_stats: Vec<(i32, UpdateStats)>,
-    scores: Vec<(i64, u8, ScoreResult)>,
     busy_us: f32,
 }
 
@@ -1100,9 +858,6 @@ struct FieldCore {
     fire_cache: HashMap<FireKey, (u64, FireStats)>,
     exposure_watch: BTreeSet<ExposureKey>,
     fire_watch: BTreeSet<FireKey>,
-    plans: HashMap<i64, Arc<ShipPlan>>,
-    plan_stats: HashMap<i64, PlanStats>,
-    utility: HashMap<i64, Arc<UtilityLayer>>,
     last: Stats,
 }
 
@@ -1174,7 +929,44 @@ fn build_fire_stats(f: &Field, tl: &TeamLayers, cluster_cells: i32, ncx: i32, nc
 
 /// Per node of `cluster_cells` SDF cells: (max, mean over water cells) of
 /// exposure, 0 outside detection to 1 at effective distance zero.
-fn build_exposure_stats(f: &Field, tl: &TeamLayers, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
+/// Min effective distance per cell from every enemy's line-of-sight plane,
+/// distance over certainty, INFINITY where no enemy sees it. Inside a
+/// radar/hydro reach it runs NEGATIVE toward the emitter, so a ship already
+/// inside still sees which way is out.
+fn detect_grid(f: &Field, tl: &TeamLayers) -> Vec<f32> {
+    let mut grid = vec![f32::INFINITY; (f.w * f.h) as usize];
+    let cells = grid.len();
+    for e in tl.enemies.values() {
+        let (origin, inv_w, force_spot) = (e.origin, 1.0 / e.weight.max(WEIGHT_FLOOR), e.force_spot);
+        if force_spot > 0.0 {
+            let ix0 = (((origin.x - force_spot - f.min_x) / f.cell).floor() as i32).max(0);
+            let ix1 = (((origin.x + force_spot - f.min_x) / f.cell).floor() as i32).min(f.w - 1);
+            let iz0 = (((origin.y - force_spot - f.min_z) / f.cell).floor() as i32).max(0);
+            let iz1 = (((origin.y + force_spot - f.min_z) / f.cell).floor() as i32).min(f.h - 1);
+            for iz in iz0..=iz1 {
+                for ix in ix0..=ix1 {
+                    let idx = (iz * f.w + ix) as usize;
+                    let d = f.centre(idx).distance_to(origin);
+                    if d < force_spot && d - force_spot < grid[idx] {
+                        grid[idx] = d - force_spot;
+                    }
+                }
+            }
+        }
+        for_each_bit(&e.los, |idx| {
+            if idx >= cells {
+                return;
+            }
+            let d = f.centre(idx).distance_to(origin);
+            if d >= force_spot && d * inv_w < grid[idx] {
+                grid[idx] = d * inv_w;
+            }
+        });
+    }
+    grid
+}
+
+fn build_exposure_stats(f: &Field, detect: &[f32], radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Vec<f32>, Vec<f32>) {
     let n = (ncx.max(0) * ncz.max(0)) as usize;
     let mut max = vec![0.0f32; n];
     let mut mean = vec![0.0f32; n];
@@ -1182,12 +974,12 @@ fn build_exposure_stats(f: &Field, tl: &TeamLayers, radius: f32, cluster_cells: 
         return (max, mean);
     }
     let mut count = vec![0u32; n];
-    if tl.detect.len() != f.water.len() {
+    if detect.len() != f.water.len() {
         return (max, mean);
     }
     for_each_cluster_cell(f, cluster_cells, ncx, ncz, |idx, c| {
         count[c] += 1;
-        let d = tl.detect[idx];
+        let d = detect[idx];
         if d >= radius {
             return;
         }
@@ -1216,7 +1008,6 @@ impl FieldCore {
         let (fw, fh) = ((m.grid_width + mult - 1) / mult, (m.grid_height + mult - 1) / mult);
         let fcell = m.cell_size * mult as f32;
         let mut water = vec![0u8; (fw * fh) as usize];
-        let mut sdf = vec![f32::NEG_INFINITY; (fw * fh) as usize];
         for iz in 0..fh {
             for ix in 0..fw {
                 let x = m.min_x + (ix as f32 + 0.5) * fcell;
@@ -1224,15 +1015,13 @@ impl FieldCore {
                 if !terrain.in_bounds(x, z) {
                     continue;
                 }
-                let d = terrain.bilinear(&terrain.sdf, x, z);
-                sdf[(iz * fw + ix) as usize] = d;
-                if d > 0.0 {
+                if terrain.bilinear(&terrain.sdf, x, z) > 0.0 {
                     water[(iz * fw + ix) as usize] = 1;
                 }
             }
         }
         Self {
-            field: Some(Arc::new(Field { w: fw, h: fh, cell: fcell, min_x: m.min_x, min_z: m.min_z, mult, water, sdf })),
+            field: Some(Arc::new(Field { w: fw, h: fh, cell: fcell, min_x: m.min_x, min_z: m.min_z, mult, water })),
             terrain: Some(Arc::new(terrain)),
             ..Default::default()
         }
@@ -1311,54 +1100,10 @@ impl FieldCore {
         self.field.as_ref().map_or(0, |f| (f.w * f.h) as usize)
     }
 
-    fn ensure_detect(&mut self, team: i32) {
-        let Some(f) = self.field.clone() else { return };
-        let Some(tl) = self.teams.get_mut(&team) else { return };
-        if tl.detect_version == tl.version && tl.detect.len() == (f.w * f.h) as usize {
-            return;
-        }
-        let mut grid = vec![f32::INFINITY; (f.w * f.h) as usize];
-        let eyes: Vec<(&[u64], Vector2, f32, f32)> = tl.enemies.values()
-            .map(|e| (e.los.as_slice(), e.origin, 1.0 / e.weight.max(WEIGHT_FLOOR), e.force_spot))
-            .collect();
-        let cells = grid.len();
-        for &(los, origin, inv_w, force_spot) in &eyes {
-            // Inside a radar/hydro reach the value runs NEGATIVE toward the
-            // emitter, so a ship already inside still sees which way is out;
-            // outside it is distance over certainty.
-            if force_spot > 0.0 {
-                let ix0 = (((origin.x - force_spot - f.min_x) / f.cell).floor() as i32).max(0);
-                let ix1 = (((origin.x + force_spot - f.min_x) / f.cell).floor() as i32).min(f.w - 1);
-                let iz0 = (((origin.y - force_spot - f.min_z) / f.cell).floor() as i32).max(0);
-                let iz1 = (((origin.y + force_spot - f.min_z) / f.cell).floor() as i32).min(f.h - 1);
-                for iz in iz0..=iz1 {
-                    for ix in ix0..=ix1 {
-                        let idx = (iz * f.w + ix) as usize;
-                        let d = f.centre(idx).distance_to(origin);
-                        if d < force_spot && d - force_spot < grid[idx] {
-                            grid[idx] = d - force_spot;
-                        }
-                    }
-                }
-            }
-            for_each_bit(los, |idx| {
-                if idx >= cells {
-                    return;
-                }
-                let d = f.centre(idx).distance_to(origin);
-                if d >= force_spot && d * inv_w < grid[idx] {
-                    grid[idx] = d * inv_w;
-                }
-            });
-        }
-        tl.detect = Arc::new(grid);
-        tl.detect_version = tl.version;
-    }
-
     fn ensure_fire_cells(&mut self, team: i32) {
         let Some(f) = self.field.clone() else { return };
         let Some(tl) = self.teams.get_mut(&team) else { return };
-        if tl.fire_cells_version == tl.version && tl.fire_cells.len() == f.water.len() {
+        if tl.fire_cells_version == tl.fire_version && tl.fire_cells.len() == f.water.len() {
             return;
         }
         let units = fire_heading_units();
@@ -1382,46 +1127,26 @@ impl FieldCore {
             });
         }
         tl.fire_cells = Arc::new(cells);
-        tl.fire_cells_version = tl.version;
-    }
-
-    fn ensure_cone(&mut self, team: i32) {
-        let Some(f) = self.field.clone() else { return };
-        let cells = (f.w * f.h) as usize;
-        let Some(tl) = self.teams.get_mut(&team) else { return };
-        if tl.cone_version == tl.version && tl.cone_half.len() == cells {
-            return;
-        }
-        let enemies: Vec<(Vector2, &[u64])> =
-            tl.order.iter().map(|id| (tl.enemies[id].origin, tl.enemies[id].fire.as_slice())).collect();
-        let mut half = vec![-1.0f32; cells];
-        let mut dir = vec![0.0f32; cells];
-        let mut b: Vec<f32> = Vec::with_capacity(enemies.len());
-        for idx in 0..cells {
-            if let Some((h, m)) = cone_cell(&f, &enemies, idx, &mut b) {
-                half[idx] = h;
-                dir[idx] = m;
-            }
-        }
-        tl.cone_half = Arc::new(half);
-        tl.cone_dir = Arc::new(dir);
-        tl.cone_version = tl.version;
+        tl.fire_cells_version = tl.fire_version;
     }
 
     fn cluster_exposure_stats(&mut self, key: ExposureKey) {
-        let version = self.teams.get(&key.0).map_or(0, |tl| tl.version);
+        let version = self.teams.get(&key.0).map_or(0, |tl| tl.los_version);
         if self.exposure_cache.get(&key).is_some_and(|c| c.0 == version) {
             return;
         }
-        self.ensure_detect(key.0);
-        let (Some(f), Some(tl)) = (self.field.as_ref(), self.teams.get(&key.0)) else { return };
+        let (Some(f), Some(tl)) = (self.field.clone(), self.teams.get_mut(&key.0)) else { return };
+        if tl.detect_version != tl.los_version || tl.detect.len() != f.water.len() {
+            tl.detect = Arc::new(detect_grid(&f, tl));
+            tl.detect_version = tl.los_version;
+        }
         let radius = key.1 as f32 * EXPOSURE_RADIUS_Q;
-        let (max, mean) = build_exposure_stats(f, tl, radius, key.2, key.3, key.4);
+        let (max, mean) = build_exposure_stats(&f, &tl.detect, radius, key.2, key.3, key.4);
         self.exposure_cache.insert(key, (version, Arc::new(max), Arc::new(mean)));
     }
 
     fn cluster_fire_stats(&mut self, key: FireKey) {
-        let version = self.teams.get(&key.0).map_or(0, |tl| tl.version);
+        let version = self.teams.get(&key.0).map_or(0, |tl| tl.fire_version);
         if self.fire_cache.get(&key).is_some_and(|c| c.0 == version) {
             return;
         }
@@ -1475,24 +1200,37 @@ impl FieldCore {
             tl.enemies.retain(|id, _| live.contains(id));
             if tl.enemies.len() != before {
                 tl.version += 1;
+                tl.los_version += 1;
+                tl.fire_version += 1;
             }
             for &(id, origin, shell, spread, weight, force_spot) in &r.rows {
                 let spread = spread.max(0.0);
-                let full = match tl.enemies.get_mut(&id) {
+                let (full, reach_due) = match tl.enemies.get_mut(&id) {
                     Some(e) => {
-                        let moved = e.origin.distance_to(origin) > move_threshold;
-                        let changed = e.shell != shell || (e.spread - spread).abs() > move_threshold;
+                        let changed = e.shell != shell || (e.swept_spread - spread).abs() > move_threshold;
+                        let full = changed || e.swept.distance_to(origin) > move_threshold;
+                        let reach_due = changed || e.swept_reach.distance_to(origin) > move_threshold.max(REACH_MOVE_M);
                         detect_stale |= e.weight != weight || e.force_spot != force_spot;
                         e.origin = origin;
                         e.shell = shell;
                         e.spread = spread;
                         e.weight = weight;
                         e.force_spot = force_spot;
-                        moved || changed
+                        if full {
+                            e.swept = origin;
+                            e.swept_spread = spread;
+                        }
+                        if reach_due {
+                            e.swept_reach = origin;
+                        }
+                        (full, reach_due)
                     }
                     None => {
                         tl.enemies.insert(id, EnemyState {
                             origin,
+                            swept: origin,
+                            swept_spread: spread,
+                            swept_reach: origin,
                             shell,
                             spread,
                             weight,
@@ -1501,7 +1239,7 @@ impl FieldCore {
                             los: Arc::new(vec![0u64; words]),
                             reach: HashMap::new(),
                         });
-                        true
+                        (true, true)
                     }
                 };
                 let e = &tl.enemies[&id];
@@ -1524,7 +1262,7 @@ impl FieldCore {
                     let mut keys: Vec<(&i64, &Shell)> = tl.hulls.iter().collect();
                     keys.sort_by_key(|(k, _)| **k);
                     for (&hk, hull) in keys {
-                        if full || !e.reach.contains_key(&hk) {
+                        if reach_due || !e.reach.contains_key(&hk) {
                             for &o in &origins {
                                 plan.push((id, Layer::Reach(hk), *hull, o));
                             }
@@ -1536,7 +1274,8 @@ impl FieldCore {
             // Detection depends on weight and force_spot even when nothing is
             // re-swept.
             if detect_stale {
-                tl.detect_version = u64::MAX;
+                tl.version += 1;
+                tl.los_version += 1;
             }
         }
         let tl = &self.teams[&team];
@@ -1588,6 +1327,11 @@ impl FieldCore {
                 for o in outs {
                     let job = &jobs[o.id as usize];
                     let Some(e) = tl.enemies.get_mut(&job.id) else { continue };
+                    match job.layer {
+                        Layer::Fire => tl.fire_version += 1,
+                        Layer::Los => tl.los_version += 1,
+                        Layer::Reach(_) => {}
+                    }
                     let arc = match job.layer {
                         Layer::Fire => &mut e.fire,
                         Layer::Los => &mut e.los,
@@ -1614,214 +1358,18 @@ impl FieldCore {
 
     fn forget(&mut self, id: i64) {
         self.ships.remove(&id);
-        self.plans.remove(&id);
-        self.plan_stats.remove(&id);
-        self.utility.remove(&id);
     }
 
     fn clear(&mut self) {
         self.ships.clear();
         self.teams.clear();
         self.backlog.clear();
-        self.plans.clear();
-        self.plan_stats.clear();
-        self.utility.clear();
         self.exposure_cache.clear();
         self.fire_cache.clear();
     }
 
-    fn plan_ship(&mut self, id: i64, r: PlanReq) {
-        let Some(f) = self.field.clone() else { return };
-        let Some(cell) = f.index(r.pos.x, r.pos.y) else { return };
-        if r.mode == 0 {
-            self.ensure_detect(r.team);
-        } else {
-            self.ensure_fire_cells(r.team);
-        }
-        let version = self.teams.get(&r.team).map_or(0, |t| t.version);
-        let key = PlanKey {
-            team: r.team,
-            cell,
-            radius_q: r.radius.round() as i32,
-            gain_bits: r.gain.to_bits(),
-            clearance_q: r.clearance.round() as i32,
-            box_cells: (r.box_radius / f.cell).ceil().max(1.0) as i32,
-            mode: r.mode,
-            version,
-        };
-        let cached = self.plans.get(&id).is_some_and(|p| p.key == key);
-        if !cached {
-            let plan = self.build_plan(&f, key, r.radius, r.gain, r.clearance);
-            self.plans.insert(id, Arc::new(plan));
-            self.utility.remove(&id);
-        }
-        let p = &self.plans[&id];
-        let mut best: Option<(f32, usize)> = None;
-        for iz in p.bx.z0..=p.bx.z1 {
-            for ix in p.bx.x0..=p.bx.x1 {
-                let i = (iz * f.w + ix) as usize;
-                if !p.pass[i] || p.price[i] > 0.0 || !p.safe[i].is_finite() {
-                    continue;
-                }
-                let dist = f.centre(i).distance_squared_to(r.toward);
-                if best.is_none_or(|(b, _)| dist < b) {
-                    best = Some((dist, i));
-                }
-            }
-        }
-        let st = PlanStats {
-            cached,
-            us: p.us,
-            walls_muted: p.walls_muted,
-            escape_here: p.escape[cell],
-            max_safe: p.max_safe,
-            max_escape: p.max_escape,
-            max_risk: p.max_risk,
-            marker: best.map(|(_, i)| (f.centre(i), p.safe[i])),
-        };
-        self.plan_stats.insert(id, st);
-    }
-
-    fn score_utility(&mut self, id: i64, token: i64, team: i32, hull_key: i64, a: &UtilityArgs) -> ScoreResult {
-        let t0 = Instant::now();
-        let mut r = ScoreResult::new(token);
-        self.ensure_cone(team);
-        let (Some(f), Some(tl), Some(p)) = (self.field.clone(), self.teams.get(&team), self.plans.get(&id).cloned()) else {
-            return r;
-        };
-        let (ev, norm) = enemy_evals(&f, tl, hull_key, a, f.centre(p.key.cell));
-        let cells = p.pass.len();
-        let mut threat = vec![f32::NAN; cells];
-        let mut utility = vec![f32::NAN; cells];
-        let mut best: Option<(usize, UtilityTerms)> = None;
-        let mut range = (f32::INFINITY, f32::NEG_INFINITY);
-        for iz in p.bx.z0..=p.bx.z1 {
-            for ix in p.bx.x0..=p.bx.x1 {
-                let idx = (iz * f.w + ix) as usize;
-                let Some(t) = utility_terms(&f, tl, &p, a, &ev, norm, idx) else { continue };
-                r.cells += 1;
-                threat[idx] = t.threat;
-                utility[idx] = t.utility;
-                range.0 = range.0.min(t.utility);
-                range.1 = range.1.max(t.utility);
-                if best.is_none_or(|(_, b)| t.utility > b.utility) {
-                    best = Some((idx, t));
-                }
-            }
-        }
-        r.best = best.map(|(idx, t)| (f.centre(idx), Terms::Utility(t)));
-        r.here = utility_terms(&f, tl, &p, a, &ev, norm, p.key.cell).map(Terms::Utility);
-        r.held = f.index(a.held.x, a.held.y).and_then(|i| utility_terms(&f, tl, &p, a, &ev, norm, i)).map(Terms::Utility);
-        r.us = t0.elapsed().as_secs_f32() * 1e6;
-        self.utility.insert(id, Arc::new(UtilityLayer { threat, utility, range }));
-        r
-    }
-
-    fn score_station(&mut self, id: i64, token: i64, team: i32, a: &StationArgs) -> ScoreResult {
-        let t0 = Instant::now();
-        let mut r = ScoreResult::new(token);
-        self.ensure_cone(team);
-        self.ensure_detect(team);
-        let (Some(f), Some(tl), Some(p)) = (self.field.as_ref(), self.teams.get(&team), self.plans.get(&id)) else {
-            return r;
-        };
-        let (se, armed) = station_enemies(tl, a);
-        let mut best: Option<(usize, StationTerms)> = None;
-        for iz in p.bx.z0..=p.bx.z1 {
-            for ix in p.bx.x0..=p.bx.x1 {
-                let idx = (iz * f.w + ix) as usize;
-                let Some(t) = station_terms(f, tl, p, a, &se, armed, idx) else { continue };
-                r.cells += 1;
-                if best.is_none_or(|(_, b)| t.score > b.score) {
-                    best = Some((idx, t));
-                }
-            }
-        }
-        r.best = best.map(|(idx, t)| (f.centre(idx), Terms::Station(t)));
-        r.held = f.index(a.held.x, a.held.y).and_then(|i| station_terms(f, tl, p, a, &se, armed, i)).map(Terms::Station);
-        r.us = t0.elapsed().as_secs_f32() * 1e6;
-        r
-    }
-
-    fn build_plan(&self, f: &Arc<Field>, key: PlanKey, radius: f32, gain: f32, clearance: f32) -> ShipPlan {
-        let t0 = Instant::now();
-        let cells = (f.w * f.h) as usize;
-        let (ix0, iz0) = (key.cell as i32 % f.w, key.cell as i32 / f.w);
-        let b = key.box_cells;
-        let bx = BoxR {
-            x0: (ix0 - b).max(0),
-            z0: (iz0 - b).max(0),
-            x1: (ix0 + b).min(f.w - 1),
-            z1: (iz0 + b).min(f.h - 1),
-        };
-        let cost_mode = gain.is_finite() && gain > 0.0;
-        let wall_at = if cost_mode { crate::nav::hpa::threats::COST_MODE_WALL_EXPOSURE } else { 0.0 };
-        let mut price = vec![0.0f32; cells];
-        let mut price_dir: Vec<[f32; 4]> = if key.mode == 0 { Vec::new() } else { vec![[0.0; 4]; cells] };
-        let mut terrain_ok = vec![false; cells];
-        if let Some(tl) = self.teams.get(&key.team) {
-            for iz in bx.z0..=bx.z1 {
-                for ix in bx.x0..=bx.x1 {
-                    let i = (iz * f.w + ix) as usize;
-                    if f.water[i] == 0 || f.sdf[i] < clearance {
-                        continue;
-                    }
-                    terrain_ok[i] = true;
-                    price[i] = match key.mode {
-                        0 => {
-                            let d = tl.detect.get(i).copied().unwrap_or(f32::INFINITY);
-                            if radius > 0.0 && d < radius { ((radius - d) / radius).clamp(0.0, EXPOSURE_MAX) } else { 0.0 }
-                        }
-                        _ => {
-                            let (e, d) = tl.fire_cells.get(i).copied().unwrap_or((0.0, [0.0; 4]));
-                            price_dir[i] = d;
-                            e
-                        }
-                    };
-                }
-            }
-        }
-        // Fire counts have no wall threshold in cost mode: three shooters
-        // is a price, not a barrier.
-        let wall = |i: usize| -> bool {
-            if !cost_mode { price[i] > 0.0 } else if key.mode == 0 { price[i] > wall_at } else { false }
-        };
-        let walls_muted = wall(key.cell);
-        let pass: Vec<bool> = (0..cells).map(|i| terrain_ok[i] && (walls_muted || !wall(i))).collect();
-        let mut safe = vec![f32::INFINITY; cells];
-        let mut risk = vec![f32::INFINITY; cells];
-        let g = if cost_mode { gain } else { 0.0 };
-        let dir_price = if price_dir.is_empty() { None } else { Some(price_dir.as_slice()) };
-        let dark: Vec<usize> = (0..cells).filter(|&i| terrain_ok[i] && price[i] <= 0.0).collect();
-        let mut escape = vec![f32::INFINITY; cells];
-        if pass[key.cell] {
-            dijkstra(f, bx, &pass, &price, dir_price, g, &[key.cell], &mut safe, Some(&mut risk));
-        }
-        dijkstra(f, bx, &terrain_ok, &price, None, 0.0, &dark, &mut escape, None);
-        let max_of = |v: &[f32]| v.iter().copied().filter(|c| c.is_finite()).fold(0.0f32, f32::max);
-        ShipPlan {
-            key,
-            bx,
-            max_safe: max_of(&safe),
-            max_escape: max_of(&escape),
-            max_risk: max_of(&risk),
-            safe,
-            escape,
-            risk,
-            price,
-            pass,
-            walls_muted,
-            us: t0.elapsed().as_secs_f32() * 1e6,
-        }
-    }
-
+    /// Router layers a navigator subscribed to; nothing else is rebuilt per batch.
     fn finalize(&mut self) {
-        let teams: Vec<i32> = self.teams.keys().copied().collect();
-        for team in teams {
-            self.ensure_detect(team);
-            self.ensure_fire_cells(team);
-            self.ensure_cone(team);
-        }
         for key in self.exposure_watch.clone() {
             self.cluster_exposure_stats(key);
         }
@@ -1836,9 +1384,6 @@ impl FieldCore {
             field: self.field.clone(),
             teams: self.teams.iter().map(|(&k, tl)| (k, Arc::new(tl.clone()))).collect(),
             ships: self.ships.clone(),
-            plans: self.plans.clone(),
-            plan_stats: self.plan_stats.clone(),
-            utility: self.utility.clone(),
             exposure: self.exposure_cache.clone(),
             fire: self.fire_cache.clone(),
             last: self.last,
@@ -1850,7 +1395,6 @@ impl FieldCore {
     fn apply(&mut self, batch: Batch) -> Delivery {
         let t0 = Instant::now();
         let mut team_stats = Vec::new();
-        let mut scores = Vec::new();
         for op in batch.ops {
             match op {
                 Op::Smoke(discs) => self.set_smoke(discs),
@@ -1871,17 +1415,6 @@ impl FieldCore {
                 Op::Prebuild(guns) => self.prebuild_tables(&guns),
             }
         }
-        for (id, rq) in batch.ships {
-            if let Some(p) = rq.plan {
-                self.plan_ship(id, p);
-            }
-            if let Some((token, team, hull_key, a)) = rq.utility {
-                scores.push((id, KIND_UTILITY, self.score_utility(id, token, team, hull_key, &a)));
-            }
-            if let Some((token, team, _, a)) = rq.station {
-                scores.push((id, KIND_STATION, self.score_station(id, token, team, &a)));
-            }
-        }
         for (team, st) in self.drain() {
             match team_stats.iter_mut().find(|(t, _)| *t == team) {
                 Some((_, u)) => u.stats.add(&st),
@@ -1889,7 +1422,7 @@ impl FieldCore {
             }
         }
         self.finalize();
-        Delivery { snap: self.snapshot(), team_stats, scores, busy_us: t0.elapsed().as_secs_f32() * 1e6 }
+        Delivery { snap: self.snapshot(), team_stats, busy_us: t0.elapsed().as_secs_f32() * 1e6 }
     }
 }
 
@@ -1931,13 +1464,10 @@ pub struct ReachField {
     worker: Option<FieldWorker>,
     snap: Snapshot,
     pending: Batch,
-    pending_ships: HashMap<i64, usize>,
     ticks: u64,
     lag: u64,
     job_budget: usize,
     due: Option<u64>,
-    next_token: i64,
-    scores: HashMap<(i64, u8), ScoreResult>,
     team_stats: HashMap<i32, UpdateStats>,
     exposure_local: HashMap<ExposureKey, ExposureStats>,
     fire_local: HashMap<FireKey, (u64, FireStats)>,
@@ -1958,13 +1488,10 @@ impl IRefCounted for ReachField {
             worker: None,
             snap: Snapshot::default(),
             pending: Batch::default(),
-            pending_ships: HashMap::new(),
             ticks: 0,
             lag: 1,
             job_budget: 12,
             due: None,
-            next_token: 0,
-            scores: HashMap::new(),
             team_stats: HashMap::new(),
             exposure_local: HashMap::new(),
             fire_local: HashMap::new(),
@@ -1993,16 +1520,7 @@ impl ReachField {
         self.flush_sync();
     }
 
-    fn ship_reqs(&mut self, id: i64) -> &mut ShipReqs {
-        let i = *self.pending_ships.entry(id).or_insert_with(|| {
-            self.pending.ships.push((id, ShipReqs::default()));
-            self.pending.ships.len() - 1
-        });
-        &mut self.pending.ships[i].1
-    }
-
     fn take_pending(&mut self) -> Batch {
-        self.pending_ships.clear();
         std::mem::take(&mut self.pending)
     }
 
@@ -2027,9 +1545,6 @@ impl ReachField {
                 acc.enemies = st.enemies;
                 acc.hulls = st.hulls;
             }
-        }
-        for (id, kind, r) in d.scores {
-            self.scores.insert((id, kind), r);
         }
         self.exposure_local.clear();
         self.fire_local.clear();
@@ -2064,9 +1579,14 @@ impl ReachField {
         self.team(team).map_or(0, |tl| tl.version)
     }
 
+    /// The version the router's fire (or detection) stats for `team` follow.
+    pub(crate) fn layer_version(&self, team: i32, fire: bool) -> u64 {
+        self.team(team).map_or(0, |tl| if fire { tl.fire_version } else { tl.los_version })
+    }
+
     pub(crate) fn cluster_exposure_stats(&mut self, team: i32, radius: f32, cluster_cells: i32, ncx: i32, ncz: i32) -> (Arc<Vec<f32>>, Arc<Vec<f32>>) {
         let (key, radius) = exposure_key(team, radius, cluster_cells, ncx, ncz);
-        let version = self.team_version(team);
+        let version = self.layer_version(team, false);
         for cache in [&self.snap.exposure, &self.exposure_local] {
             if let Some((v, max, mean)) = cache.get(&key) {
                 if *v == version {
@@ -2075,7 +1595,9 @@ impl ReachField {
             }
         }
         let (max, mean) = match (self.snap.field.as_ref(), self.team(team)) {
-            (Some(f), Some(tl)) => build_exposure_stats(f, tl, radius, cluster_cells, ncx, ncz),
+            (Some(f), Some(tl)) if tl.detect_version == tl.los_version && tl.detect.len() == f.water.len() =>
+                build_exposure_stats(f, &tl.detect, radius, cluster_cells, ncx, ncz),
+            (Some(f), Some(tl)) => build_exposure_stats(f, &detect_grid(f, tl), radius, cluster_cells, ncx, ncz),
             _ => {
                 let n = (ncx.max(0) * ncz.max(0)) as usize;
                 (vec![0.0; n], vec![0.0; n])
@@ -2091,7 +1613,7 @@ impl ReachField {
 
     pub(crate) fn cluster_fire_stats(&mut self, team: i32, cluster_cells: i32, ncx: i32, ncz: i32) -> FireStats {
         let key = (team, cluster_cells, ncx, ncz);
-        let version = self.team_version(team);
+        let version = self.layer_version(team, true);
         for cache in [&self.snap.fire, &self.fire_local] {
             if let Some((v, st)) = cache.get(&key) {
                 if *v == version {
@@ -2130,33 +1652,6 @@ impl ReachField {
         Some(ReachLookup { field, planes })
     }
 
-    fn plan_value(&self, id: i64, point: Vector2, safe: bool) -> f32 {
-        let (Some(f), Some(p)) = (&self.snap.field, self.snap.plans.get(&id)) else { return f32::INFINITY };
-        match f.index(point.x, point.y) {
-            Some(i) => if safe { p.safe[i] } else { p.escape[i] },
-            None => f32::INFINITY,
-        }
-    }
-
-    fn plan_bytes(&self, id: i64, pick: impl Fn(&ShipPlan) -> (&[f32], f32), zero_is_one: bool) -> PackedByteArray {
-        let mut out = vec![0u8; self.cell_count()];
-        if let Some(p) = self.snap.plans.get(&id) {
-            let (vals, max) = pick(p);
-            let scale = max.max(1.0);
-            for (o, &c) in out.iter_mut().zip(vals.iter()) {
-                if c.is_finite() {
-                    *o = if zero_is_one && c <= 0.0 {
-                        1
-                    } else if zero_is_one {
-                        2 + (253.0 * (c / scale).clamp(0.0, 1.0)).round() as u8
-                    } else {
-                        1 + (254.0 * (c / scale).clamp(0.0, 1.0)).round() as u8
-                    };
-                }
-            }
-        }
-        PackedByteArray::from(out.as_slice())
-    }
 }
 
 #[godot_api]
@@ -2178,8 +1673,6 @@ impl ReachField {
         self.stop_worker();
         self.core = Some(Box::new(core));
         self.pending = Batch::default();
-        self.pending_ships.clear();
-        self.scores.clear();
         self.team_stats.clear();
         self.exposure_watched.clear();
         self.fire_watched.clear();
@@ -2497,41 +1990,6 @@ impl ReachField {
         m
     }
 
-    /// Effective distance to the nearest enemy with line of sight to `point`:
-    /// zero inside a radar or hydro reach, distance over certainty otherwise,
-    /// INFINITY when nobody can see it. Spotted here iff below the ship's
-    /// own concealment radius.
-    #[func]
-    fn detect_dist_at(&self, team: i32, point: Vector2) -> f32 {
-        let (Some(f), Some(tl)) = (&self.snap.field, self.team(team)) else { return f32::INFINITY };
-        f.index(point.x, point.y).and_then(|i| tl.detect.get(i).copied()).unwrap_or(f32::INFINITY)
-    }
-
-    #[func]
-    fn get_detect_grid(&self, team: i32) -> PackedFloat32Array {
-        match self.team(team) {
-            Some(tl) => PackedFloat32Array::from(tl.detect.as_slice()),
-            None => PackedFloat32Array::new(),
-        }
-    }
-
-    /// Per cell for a ship of concealment `radius`: 0 unseen, else 1..255
-    /// rising as the effective distance closes to zero.
-    #[func]
-    fn get_detect_bytes(&self, team: i32, radius: f32) -> PackedByteArray {
-        let mut out = vec![0u8; self.cell_count()];
-        if let Some(tl) = self.team(team) {
-            if radius > 0.0 {
-                for (o, &d) in out.iter_mut().zip(tl.detect.iter()) {
-                    if d < radius {
-                        *o = 1 + (254.0 * (1.0 - d / radius).clamp(0.0, 1.0)).round() as u8;
-                    }
-                }
-            }
-        }
-        PackedByteArray::from(out.as_slice())
-    }
-
     /// Per HPA cluster (`cluster_cells` SDF cells wide, `ncx` by `ncz`): the
     /// deepest exposure of any field cell in it, 0 outside detection to 1 at
     /// effective distance zero, for a ship of concealment `radius`.
@@ -2542,43 +2000,12 @@ impl ReachField {
 
     #[func]
     fn forget(&mut self, id: i64) {
-        self.scores.retain(|k, _| k.0 != id);
         self.push_op(Op::Forget(id));
     }
 
     #[func]
     fn clear(&mut self) {
-        self.scores.clear();
         self.push_op(Op::Clear);
-    }
-
-    /// Certainty-weighted mean of where `team` believes its enemies are.
-    #[func]
-    fn get_team_danger_centre(&self, team: i32) -> Vector2 {
-        let Some(tl) = self.team(team) else { return Vector2::ZERO };
-        let (mut sum, mut wsum) = (Vector2::ZERO, 0.0f32);
-        for e in tl.enemies.values() {
-            let w = e.weight.max(WEIGHT_FLOOR);
-            sum += e.origin * w;
-            wsum += w;
-        }
-        if wsum > 0.0 { sum / wsum } else { Vector2::ZERO }
-    }
-
-    /// Per cell: 0 where no enemy can hit it, else 1..255 rising with the
-    /// half-width of the bearing cone all shooters fit in (255 = they
-    /// surround the cell).
-    #[func]
-    fn get_cone_bytes(&self, team: i32) -> PackedByteArray {
-        let mut out = vec![0u8; self.cell_count()];
-        if let Some(tl) = self.team(team) {
-            for (o, &h) in out.iter_mut().zip(tl.cone_half.iter()) {
-                if h >= 0.0 {
-                    *o = 1 + (254.0 * (h / std::f32::consts::PI).clamp(0.0, 1.0)).round() as u8;
-                }
-            }
-        }
-        PackedByteArray::from(out.as_slice())
     }
 
     /// {half, heading, count} at `point`: the bearing that keeps every
@@ -2603,651 +2030,6 @@ impl ReachField {
         d
     }
 
-    /// Queues (re)building the safe-cost and escape layers for ship `id` of
-    /// concealment `radius` standing at `pos`, priced like its router:
-    /// `price_mode` 0 = detection exposure, 1 = number of enemies that can
-    /// land shells; `gain` 0/INF makes any price a wall. Layers cover a box
-    /// of `box_radius` around the ship. Returns the stats of the ship's last
-    /// applied plan (empty before the first), with `marker`: the unpriced
-    /// cell reachable at finite cost that lies nearest `toward`.
-    #[func]
-    fn plan_ship(
-        &mut self,
-        team: i32,
-        id: i64,
-        pos: Vector2,
-        radius: f32,
-        gain: f32,
-        clearance: f32,
-        box_radius: f32,
-        price_mode: i32,
-        toward: Vector2,
-    ) -> VarDictionary {
-        self.ship_reqs(id).plan = Some(PlanReq { team, pos, radius, gain, clearance, box_radius, mode: price_mode, toward });
-        self.flush_sync();
-        self.snap.plan_stats.get(&id).map_or_else(VarDictionary::new, |s| s.to_dict())
-    }
-
-    /// Queues the single positioning objective over ship `id`'s plan: per
-    /// cell, the ladder's threat score as it would read standing there
-    /// (shooters whose fire plane covers the cell, by range pressure and
-    /// presentation against the cone heading, halved where nobody could see
-    /// the hull), value from reach and reveal, and the transit's risk
-    /// integral. utility = value - w_threat x pressure - w_path x risk /
-    /// gun_range, maximised over every reachable cell. Returns a token;
-    /// `get_score(id, 1)` answers it once its `token` is at least this one.
-    #[func]
-    fn score_utility(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary) -> i64 {
-        self.next_token += 1;
-        let token = self.next_token;
-        self.ship_reqs(id).utility = Some((token, team, hull_key, UtilityArgs::from_dict(&opts)));
-        self.flush_sync();
-        token
-    }
-
-    /// Queues the argmax of the station score over the cells of ship `id`'s
-    /// plan (see plan_ship). `opts`: weights [reach, exposed, cone, detect,
-    /// travel, range, escape], gun_range, pref_range, radius, toward, held
-    /// (scored too, for hysteresis), avoid + avoid_radius (team-mates'
-    /// claims, cells inside are skipped), axis_from + w_detour (penalty for
-    /// cells off the line from axis_from through toward). Returns a token for
-    /// `get_score(id, 0)`.
-    #[func]
-    fn score_station(&mut self, team: i32, id: i64, hull_key: i64, opts: VarDictionary) -> i64 {
-        self.next_token += 1;
-        let token = self.next_token;
-        self.ship_reqs(id).station = Some((token, team, hull_key, StationArgs::from_dict(hull_key, &opts)));
-        self.flush_sync();
-        token
-    }
-
-    /// Latest applied score for ship `id`, `kind` 0 station or 1 utility:
-    /// has_best, best, best_score, best_terms, here_terms, held_score,
-    /// held_terms, cells, us, token. Empty before the first.
-    #[func]
-    fn get_score(&self, id: i64, kind: i32) -> VarDictionary {
-        self.scores.get(&(id, kind as u8)).map_or_else(VarDictionary::new, |r| r.to_dict())
-    }
-
-    /// One point under the same `opts`, or an empty dictionary when it is
-    /// outside the plan, unreachable or claimed.
-    #[func]
-    fn utility_score_at(&self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, point: Vector2) -> VarDictionary {
-        let (Some(f), Some(tl), Some(p)) = (self.snap.field.as_ref(), self.team(team), self.snap.plans.get(&id)) else {
-            return VarDictionary::new();
-        };
-        let a = UtilityArgs::from_dict(&opts);
-        let (ev, norm) = enemy_evals(f, tl, hull_key, &a, f.centre(p.key.cell));
-        match f.index(point.x, point.y).and_then(|i| utility_terms(f, tl, p, &a, &ev, norm, i)) {
-            Some(t) => t.to_dict(),
-            None => VarDictionary::new(),
-        }
-    }
-
-    /// 0 outside the plan, else 1..255 by threat 0..1.
-    #[func]
-    fn get_threat_bytes(&self, id: i64) -> PackedByteArray {
-        let mut out = vec![0u8; self.cell_count()];
-        if let Some(u) = self.snap.utility.get(&id) {
-            for (o, &t) in out.iter_mut().zip(u.threat.iter()) {
-                if t.is_finite() {
-                    *o = 1 + (254.0 * t.clamp(0.0, 1.0)).round() as u8;
-                }
-            }
-        }
-        PackedByteArray::from(out.as_slice())
-    }
-
-    /// 0 outside the plan, else 2..255 from the worst to the best utility
-    /// scored.
-    #[func]
-    fn get_utility_bytes(&self, id: i64) -> PackedByteArray {
-        let mut out = vec![0u8; self.cell_count()];
-        if let Some(u) = self.snap.utility.get(&id) {
-            let (lo, hi) = u.range;
-            let span = (hi - lo).max(1e-6);
-            for (i, o) in out.iter_mut().enumerate() {
-                let t = u.threat.get(i).copied().unwrap_or(f32::NAN);
-                if !t.is_finite() {
-                    continue;
-                }
-                let v = u.utility.get(i).copied().unwrap_or(f32::NAN);
-                *o = if v.is_finite() { 2 + (253.0 * ((v - lo) / span).clamp(0.0, 1.0)).round() as u8 } else { 1 };
-            }
-        }
-        PackedByteArray::from(out.as_slice())
-    }
-
-    /// 0 outside the plan, else 1..255 by the risk integral of the safe path.
-    #[func]
-    fn get_path_risk_bytes(&self, id: i64) -> PackedByteArray {
-        self.plan_bytes(id, |p| (p.risk.as_slice(), p.max_risk), false)
-    }
-
-    /// 0 outside the plan or unreachable, else 1..255 by cost over the
-    /// costliest reachable cell.
-    #[func]
-    fn get_safe_cost_bytes(&self, id: i64) -> PackedByteArray {
-        self.plan_bytes(id, |p| (p.safe.as_slice(), p.max_safe), false)
-    }
-
-    /// 0 outside the plan, 1 where nobody prices the cell, else 2..255 by
-    /// distance to the nearest such cell.
-    #[func]
-    fn get_escape_bytes(&self, id: i64) -> PackedByteArray {
-        self.plan_bytes(id, |p| (p.escape.as_slice(), p.max_escape), true)
-    }
-
-    /// The station score of one point under the same `opts`, or an empty
-    /// dictionary when it is outside the plan, unreachable or claimed.
-    #[func]
-    fn station_score_at(&self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, point: Vector2) -> VarDictionary {
-        let (Some(f), Some(tl), Some(p)) = (self.snap.field.as_ref(), self.team(team), self.snap.plans.get(&id)) else {
-            return VarDictionary::new();
-        };
-        let a = StationArgs::from_dict(hull_key, &opts);
-        let (se, armed) = station_enemies(tl, &a);
-        match f.index(point.x, point.y).and_then(|i| station_terms(f, tl, p, &a, &se, armed, i)) {
-            Some(t) => t.to_dict(),
-            None => VarDictionary::new(),
-        }
-    }
-
-    /// Mean station score along each ray from `origin` (bearing = atan2(x, z),
-    /// `length` metres) under `opts`, over ship `id`'s plan. A ray that runs
-    /// into land or out of the plan is padded with the worst score for the
-    /// samples it lost, so a short ray never beats a long clean one. `ends`
-    /// is each ray's last open sample.
-    #[func]
-    fn score_rays(&self, team: i32, id: i64, hull_key: i64, opts: VarDictionary, origin: Vector2, bearings: PackedFloat32Array, length: f32) -> VarDictionary {
-        let mut d = VarDictionary::new();
-        let mut scores = PackedFloat32Array::new();
-        let mut ends = PackedVector2Array::new();
-        if let (Some(f), Some(tl), Some(p)) = (self.snap.field.as_ref(), self.team(team), self.snap.plans.get(&id)) {
-            let a = StationArgs::from_dict(hull_key, &opts);
-            let (se, armed) = station_enemies(tl, &a);
-            let steps = (length / f.cell).ceil().max(1.0) as i32;
-            for &b in bearings.as_slice() {
-                let dir = Vector2::new(b.sin(), b.cos());
-                let (mut sum, mut n, mut end) = (0.0f32, 0i32, origin);
-                for k in 1..=steps {
-                    let pt = origin + dir * (k as f32 * f.cell);
-                    let Some(t) = f.index(pt.x, pt.y).and_then(|i| station_terms(f, tl, p, &a, &se, armed, i)) else { break };
-                    sum += t.score;
-                    n += 1;
-                    end = pt;
-                }
-                scores.push(if n == 0 { f32::NEG_INFINITY } else { (sum - (steps - n) as f32) / steps as f32 });
-                ends.push(end);
-            }
-        }
-        d.set("scores", &scores);
-        d.set("ends", &ends);
-        d
-    }
-
-    #[func]
-    fn safe_cost_at(&self, id: i64, point: Vector2) -> f32 {
-        self.plan_value(id, point, true)
-    }
-
-    #[func]
-    fn escape_dist_at(&self, id: i64, point: Vector2) -> f32 {
-        self.plan_value(id, point, false)
-    }
-}
-
-struct StationArgs {
-    hull_key: i64,
-    w: [f32; 7],
-    gun_range: f32,
-    pref_range: f32,
-    radius: f32,
-    /// Detection radius once the guns fire (bloom): judged at any cell with
-    /// something in reach, since the ship will shoot from there.
-    fire_radius: f32,
-    toward: Vector2,
-    held: Vector2,
-    avoid: Vec<Vector2>,
-    avoid_r2: f32,
-    axis_from: Vector2,
-    w_detour: f32,
-    /// Per enemy id, how dangerous its class is to this hull (1 default).
-    enemy_weights: HashMap<i64, f32>,
-    /// Hard gates: cells whose class-and-certainty weighted exposure exceeds
-    /// max_exposed, or that are seen when require_unseen, are not candidates.
-    max_exposed: f32,
-    require_unseen: bool,
-    /// Covered means nobody can land shells on the cell OR nobody can see
-    /// it; a cell that is both seen and under fire is not a candidate.
-    covered_only: bool,
-    /// Reach counts only enemies in sight now, not last-known or presumed ones.
-    reach_live_only: bool,
-    /// Distance-to-`toward` band a candidate must lie in: a kite opens range
-    /// with min_range above where the ship stands, a push closes with
-    /// max_range below it.
-    min_range: f32,
-    max_range: f32,
-    /// Flank: penalise cells on the friendly side of `toward`, along the
-    /// axis from `toward` to `flank_from`.
-    flank_from: Vector2,
-    w_flank: f32,
-}
-
-fn opt<T: FromGodot>(d: &VarDictionary, key: &str, default: T) -> T {
-    d.get(key).and_then(|v| v.try_to::<T>().ok()).unwrap_or(default)
-}
-
-impl StationArgs {
-    fn from_dict(hull_key: i64, d: &VarDictionary) -> Self {
-        let weights = opt(d, "weights", PackedFloat32Array::new());
-        let mut w = [0.0f32; 7];
-        for (i, v) in w.iter_mut().enumerate() {
-            if i < weights.len() {
-                *v = weights[i];
-            }
-        }
-        let avoid_radius = opt(d, "avoid_radius", 0.0f32);
-        let radius = opt(d, "radius", 0.0f32);
-        Self {
-            hull_key,
-            w,
-            gun_range: opt(d, "gun_range", 1.0f32),
-            pref_range: opt(d, "pref_range", 0.0f32),
-            radius,
-            fire_radius: opt(d, "fire_radius", radius).max(radius),
-            toward: opt(d, "toward", Vector2::ZERO),
-            held: opt(d, "held", Vector2::new(f32::INFINITY, f32::INFINITY)),
-            avoid: opt(d, "avoid", PackedVector2Array::new()).to_vec(),
-            avoid_r2: avoid_radius * avoid_radius,
-            axis_from: opt(d, "axis_from", Vector2::ZERO),
-            w_detour: opt(d, "w_detour", 0.0f32),
-            enemy_weights: opt(d, "enemy_weights", VarDictionary::new())
-                .iter_shared()
-                .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()?, v.try_to::<f32>().ok()?)))
-                .collect(),
-            max_exposed: opt(d, "max_exposed", f32::INFINITY),
-            require_unseen: opt(d, "require_unseen", false),
-            covered_only: opt(d, "covered_only", false),
-            reach_live_only: opt(d, "reach_live_only", false),
-            min_range: opt(d, "min_range", 0.0f32),
-            max_range: opt(d, "max_range", f32::INFINITY),
-            flank_from: opt(d, "flank_from", Vector2::ZERO),
-            w_flank: opt(d, "w_flank", 0.0f32),
-        }
-    }
-}
-
-/// Belief weight of a contact in sight; anything less is remembered or presumed.
-const LIVE_WEIGHT: f32 = 0.999;
-
-/// A shooter's threat share when it would see the hull only once the guns
-/// bloom, and when it could not see it at all (planes, radar, belief error).
-const UNSEEN_FIRING_FACTOR: f32 = 0.5;
-const UNSEEN_FACTOR: f32 = 0.15;
-
-struct UtilityArgs {
-    /// Per enemy id: matchup x condition x class weight, as get_threat_score
-    /// computes them for the hull asking.
-    danger: HashMap<i64, f32>,
-    /// Per enemy id: its concealment radius, for the reveal term.
-    spot: HashMap<i64, f32>,
-    /// Per enemy id: how much it matters to the team (damage it is doing,
-    /// how hurt it is), and a reveal multiplier (more when nobody has it lit).
-    value: HashMap<i64, f32>,
-    reveal: HashMap<i64, f32>,
-    target_near: f32,
-    target_alone: f32,
-    /// Team-mates' positions: an enemy that can already shoot `n` of them
-    /// splits its fire, so its danger reads 1 / (1 + focus_split x n).
-    friends: Vec<Vector2>,
-    focus_split: f32,
-    /// Team-mates' claimed stations and their hull keys: an enemy already
-    /// reached (or lit) from `n` of them is worth 1 / (1 + cover_split x n).
-    claims: Vec<Vector2>,
-    claim_keys: Vec<i64>,
-    cover_split: f32,
-    threat_sat: f32,
-    gun_range: f32,
-    /// Where the close term saturates: gun_range unless the caller wants a
-    /// launch band or a preferred fighting range instead.
-    close_range: f32,
-    /// Own concealment radius, and the radius the guns bloom it to.
-    radius: f32,
-    fire_radius: f32,
-    w_reach: f32,
-    w_reveal: f32,
-    w_close: f32,
-    w_threat: f32,
-    /// Multiplies the threat cost: 1 at full health, rising with damage.
-    aversion: f32,
-    w_path: f32,
-    held: Vector2,
-    avoid: Vec<Vector2>,
-    avoid_r2: f32,
-}
-
-impl UtilityArgs {
-    fn from_dict(d: &VarDictionary) -> Self {
-        let gun_range = opt(d, "gun_range", 1.0f32).max(1.0);
-        let map = |key: &str| -> HashMap<i64, f32> {
-            opt(d, key, VarDictionary::new())
-                .iter_shared()
-                .filter_map(|(k, v)| Some((k.try_to::<i64>().ok()?, v.try_to::<f32>().ok()?)))
-                .collect()
-        };
-        Self {
-            danger: map("enemy_danger"),
-            spot: map("enemy_spot"),
-            value: map("enemy_value"),
-            reveal: map("enemy_reveal"),
-            target_near: opt(d, "target_near", 0.0f32),
-            target_alone: opt(d, "target_alone", 0.0f32),
-            friends: opt(d, "friends", PackedVector2Array::new()).to_vec(),
-            focus_split: opt(d, "focus_split", 0.0f32),
-            claims: opt(d, "claims", PackedVector2Array::new()).to_vec(),
-            claim_keys: opt(d, "claim_keys", PackedInt64Array::new()).to_vec(),
-            cover_split: opt(d, "cover_split", 0.0f32),
-            threat_sat: opt(d, "threat_sat", std::f32::consts::LN_2),
-            gun_range,
-            close_range: opt(d, "close_range", gun_range).max(1.0),
-            radius: opt(d, "radius", 0.0f32),
-            fire_radius: opt(d, "fire_radius", 0.0f32),
-            w_reach: opt(d, "w_reach", 1.0f32),
-            w_reveal: opt(d, "w_reveal", 0.5f32),
-            w_close: opt(d, "w_close", 0.0f32),
-            w_threat: opt(d, "w_threat", 1.0f32),
-            aversion: opt(d, "aversion", 1.0f32),
-            w_path: opt(d, "w_path", 0.5f32),
-            held: opt(d, "held", Vector2::new(f32::INFINITY, f32::INFINITY)),
-            avoid: opt(d, "avoid", PackedVector2Array::new()).to_vec(),
-            avoid_r2: opt(d, "avoid_radius", 0.0f32).powi(2),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct UtilityTerms {
-    threat: f32,
-    /// Threat as units of pressure (-log2(1 - threat)): linear in what is
-    /// pointed at the cell where threat itself saturates, so the cost of a
-    /// bad cell keeps growing past anything the value column can pay.
-    pressure: f32,
-    shooters: f32,
-    reach: f32,
-    reveal: f32,
-    close: f32,
-    value: f32,
-    risk: f32,
-    utility: f32,
-}
-
-impl UtilityTerms {
-    fn to_dict(&self) -> VarDictionary {
-        let mut d = VarDictionary::new();
-        d.set("threat", self.threat);
-        d.set("pressure", self.pressure);
-        d.set("shooters", self.shooters);
-        d.set("reach", self.reach);
-        d.set("reveal", self.reveal);
-        d.set("close", self.close);
-        d.set("value", self.value);
-        d.set("risk", self.risk);
-        d.set("utility", self.utility);
-        d.set("score", self.utility);
-        d
-    }
-}
-
-/// One enemy as the value column sees it for this call: its worth `w`
-/// (belief certainty x value x nearness x isolation), the reveal weight,
-/// and the threat inputs looked up once instead of per cell.
-struct EnemyEval<'a> {
-    e: &'a EnemyState,
-    reach: Option<&'a [u64]>,
-    w: f32,
-    reach_w: f32,
-    reveal: f32,
-    danger: f32,
-    spot: f32,
-}
-
-/// Evaluates every believed enemy from `here`, and the value normaliser:
-/// the three heaviest worths, so covering the targets that matter most
-/// scores 1 whatever the team size.
-fn enemy_evals<'a>(f: &Field, tl: &'a TeamLayers, hull_key: i64, a: &UtilityArgs, here: Vector2) -> (Vec<EnemyEval<'a>>, f32) {
-    let mut out = Vec::with_capacity(tl.enemies.len());
-    let friend_cells: Vec<usize> = a.friends.iter().filter_map(|q| f.index(q.x, q.y)).collect();
-    let claim_cells: Vec<(usize, i64)> = a.claims.iter().zip(&a.claim_keys)
-        .filter_map(|(q, &k)| f.index(q.x, q.y).map(|i| (i, k)))
-        .collect();
-    for (id, e) in &tl.enemies {
-        let near = 1.0 - (here.distance_to(e.origin) / (2.0 * a.gun_range)).clamp(0.0, 1.0);
-        let alone = !tl.enemies.iter().any(|(j, o)| j != id && o.origin.distance_to(e.origin) <= a.gun_range);
-        let w = e.weight.max(WEIGHT_FLOOR)
-            * a.value.get(id).copied().unwrap_or(1.0)
-            * (1.0 + a.target_near * near)
-            * (1.0 + if alone { a.target_alone } else { 0.0 });
-        let spot = a.spot.get(id).copied().unwrap_or(0.0);
-        let focused = friend_cells.iter().filter(|&&i| bit_at(&e.fire, i)).count() as f32;
-        let reached = claim_cells.iter()
-            .filter(|(i, k)| e.reach.get(k).is_some_and(|pl| bit_at(pl, *i)))
-            .count() as f32;
-        let lit = claim_cells.iter()
-            .filter(|(i, _)| bit_at(&e.los, *i) && f.centre(*i).distance_to(e.origin) <= spot)
-            .count() as f32;
-        out.push(EnemyEval {
-            e,
-            reach: e.reach.get(&hull_key).map(|pl| pl.as_slice()),
-            w,
-            reach_w: w / (1.0 + a.cover_split * reached),
-            reveal: w * a.reveal.get(id).copied().unwrap_or(1.0) / (1.0 + a.cover_split * lit),
-            danger: a.danger.get(id).copied().unwrap_or(1.0) / (1.0 + a.focus_split * focused),
-            spot,
-        });
-    }
-    let mut ws: Vec<f32> = out.iter().map(|v| v.w).collect();
-    ws.sort_by(|x, y| y.total_cmp(x));
-    let norm = ws.iter().take(STATION_COUNT_CAP as usize).sum::<f32>().max(1e-3);
-    (out, norm)
-}
-
-fn utility_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &UtilityArgs, ev: &[EnemyEval], norm: f32, idx: usize) -> Option<UtilityTerms> {
-    if idx >= p.pass.len() || !p.pass[idx] || !p.safe[idx].is_finite() {
-        return None;
-    }
-    let c = f.centre(idx);
-    if a.avoid_r2 > 0.0 && a.avoid.iter().any(|q| q.distance_squared_to(c) < a.avoid_r2) {
-        return None;
-    }
-    let (sh, ch) = tl.cone_dir.get(idx).copied().unwrap_or(0.0).sin_cos();
-    let mut t = UtilityTerms::default();
-    let mut safe = 1.0f32;
-    for v in ev {
-        let e = v.e;
-        let w = e.weight.max(WEIGHT_FLOOR);
-        if v.reach.is_some_and(|pl| bit_at(pl, idx)) {
-            t.reach += v.reach_w;
-        }
-        let (dx, dz) = (e.origin.x - c.x, e.origin.y - c.y);
-        let dist = (dx * dx + dz * dz).sqrt();
-        if bit_at(&e.los, idx) && dist <= v.spot {
-            t.reveal += v.reveal;
-        }
-        // Progress toward gun range on this one: full inside it, nothing
-        // past twice it, so nothing pulls a hull past where it can shoot.
-        t.close += v.reach_w * (1.0 - ((dist - a.close_range) / a.close_range).clamp(0.0, 1.0));
-        if !bit_at(&e.fire, idx) || e.shell.range <= 0.0 {
-            continue;
-        }
-        t.shooters += 1.0;
-        let pressure = (1.0 - (dist / e.shell.range).powi(3)).clamp(0.0, 1.0);
-        // sin(heading - bearing) as a cross product with the bearing unit.
-        let s = (sh * dz - ch * dx) / dist.max(1e-3);
-        // Normalised to a mean of 1 over headings, so a cell reads the
-        // ladder's threat on average: bow-on about half, beam-on 1.5x.
-        let presentation = (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * s * s) / (FIRE_BOW_FACTOR + (1.0 - FIRE_BOW_FACTOR) * 0.5);
-        // Shells need eyes: this shooter's own line of sight and true
-        // distance, not the team grid, whose certainty division inflates a
-        // vague contact's bubble.
-        let eyes = bit_at(&e.los, idx) || dist <= e.force_spot;
-        let seen = if eyes && dist <= a.radius.max(e.force_spot) {
-            1.0
-        } else if eyes && dist <= a.fire_radius {
-            UNSEEN_FIRING_FACTOR
-        } else {
-            UNSEEN_FACTOR
-        };
-        let raw = v.danger * pressure * presentation * seen;
-        let this = (1.0 - (-a.threat_sat * raw).exp()) * w;
-        safe *= 1.0 - this;
-    }
-    t.threat = (1.0 - safe).clamp(0.0, 1.0);
-    t.pressure = -(1.0 - t.threat).max(1e-3).ln() / a.threat_sat;
-    t.value = (a.w_reach * t.reach + a.w_reveal * t.reveal + a.w_close * t.close) / norm;
-    t.risk = p.risk.get(idx).copied().unwrap_or(f32::INFINITY);
-    if !t.risk.is_finite() {
-        return None;
-    }
-    t.utility = t.value - a.w_threat * a.aversion * t.pressure - a.w_path * t.risk / a.gun_range;
-    Some(t)
-}
-
-const STATION_COUNT_CAP: f32 = 3.0;
-
-#[derive(Clone, Copy, Default)]
-struct StationTerms {
-    reach: f32,
-    exposed: f32,
-    cone: f32,
-    detect: f32,
-    travel: f32,
-    range_err: f32,
-    escape: f32,
-    detour: f32,
-    flank: f32,
-    score: f32,
-}
-
-impl StationTerms {
-    fn to_dict(&self) -> VarDictionary {
-        let mut d = VarDictionary::new();
-        d.set("reach", self.reach);
-        d.set("exposed", self.exposed);
-        d.set("cone_deg", self.cone * 180.0);
-        d.set("detect", self.detect);
-        d.set("travel", self.travel);
-        d.set("range_err", self.range_err);
-        d.set("escape", self.escape);
-        d.set("detour", self.detour);
-        d.set("flank", self.flank);
-        d.set("score", self.score);
-        d
-    }
-}
-
-/// Every term is normalised to about 0..1 before its weight. Enemy counts
-/// are summed over belief certainty, so a presumed contact counts for a
-/// fraction of a live one: reach over STATION_COUNT_CAP (a ship shoots one
-/// target at a time), exposure as the fraction of the armed enemy team, cone
-/// half-width over pi, distances over gun range or the concealment radius.
-/// Per enemy for one station call: this hull's reach plane, fire plane,
-/// certainty and class-weighted certainty.
-struct StationEnemy<'a> {
-    reach: Option<&'a [u64]>,
-    fire: &'a [u64],
-    w: f32,
-    cw: f32,
-}
-
-/// The enemies and the class-weighted armed total.
-fn station_enemies<'a>(tl: &'a TeamLayers, a: &StationArgs) -> (Vec<StationEnemy<'a>>, f32) {
-    let mut armed = 0.0f32;
-    let se = tl.enemies.iter().map(|(id, e)| {
-        let w = e.weight.max(WEIGHT_FLOOR);
-        let cw = w * a.enemy_weights.get(id).copied().unwrap_or(1.0);
-        if e.shell.has_guns() {
-            armed += cw;
-        }
-        let reach = e.reach.get(&a.hull_key).map(|pl| pl.as_slice()).filter(|_| !a.reach_live_only || e.weight >= LIVE_WEIGHT);
-        StationEnemy { reach, fire: &e.fire, w, cw }
-    }).collect();
-    (se, armed)
-}
-
-fn station_terms(f: &Field, tl: &TeamLayers, p: &ShipPlan, a: &StationArgs, se: &[StationEnemy], armed: f32, idx: usize) -> Option<StationTerms> {
-    if idx >= p.pass.len() || !p.pass[idx] || !p.safe[idx].is_finite() {
-        return None;
-    }
-    let c = f.centre(idx);
-    if a.avoid_r2 > 0.0 && a.avoid.iter().any(|q| q.distance_squared_to(c) < a.avoid_r2) {
-        return None;
-    }
-    let range = c.distance_to(a.toward);
-    if range < a.min_range || range > a.max_range {
-        return None;
-    }
-    let mut t = StationTerms::default();
-    for e in se {
-        if e.reach.is_some_and(|pl| bit_at(pl, idx)) {
-            t.reach += e.w;
-        }
-        if bit_at(e.fire, idx) {
-            t.exposed += e.cw;
-        }
-    }
-    if t.exposed > a.max_exposed {
-        return None;
-    }
-    let exposed_frac = if armed > 0.0 { t.exposed / armed } else { 0.0 };
-    t.cone = tl.cone_half.get(idx).copied().unwrap_or(-1.0).max(0.0) / std::f32::consts::PI;
-    // Once the guns bloom, seen is seen: no distance ramp for a firing cell.
-    let d = tl.detect.get(idx).copied().unwrap_or(f32::INFINITY);
-    t.detect = if t.reach > 0.0 {
-        if d < a.fire_radius { 1.0 } else { 0.0 }
-    } else if a.radius > 0.0 && d < a.radius {
-        ((a.radius - d) / a.radius).clamp(0.0, EXPOSURE_MAX)
-    } else {
-        0.0
-    };
-    if a.require_unseen && t.detect > 0.0 {
-        return None;
-    }
-    if a.covered_only && t.exposed > 0.0 && t.detect > 0.0 {
-        return None;
-    }
-    let gr = a.gun_range.max(1.0);
-    t.travel = p.safe[idx] / gr;
-    t.range_err = (range - a.pref_range).abs() / gr;
-    let esc = p.escape[idx];
-    t.escape = if a.radius > 0.0 && esc.is_finite() { 1.0 - (esc / a.radius).min(1.0) } else { 0.0 };
-    if a.w_detour > 0.0 {
-        let axis = a.toward - a.axis_from;
-        let to_cell = c - a.axis_from;
-        if axis.length_squared() > 1.0 && to_cell.length_squared() > 1.0 {
-            t.detour = 1.0 - axis.normalized().dot(to_cell.normalized()).abs();
-        }
-    }
-    if a.w_flank > 0.0 {
-        let axis = a.flank_from - a.toward;
-        let to_cell = c - a.toward;
-        if axis.length_squared() > 1.0 && to_cell.length_squared() > 1.0 {
-            // Angle, not cosine: cosine is flat near the axis, where the slide starts.
-            let dot = axis.normalized().dot(to_cell.normalized()).clamp(-1.0, 1.0);
-            t.flank = (1.0 - dot.acos() / std::f32::consts::FRAC_PI_2).max(0.0);
-        }
-    }
-    let w = a.w;
-    t.score = w[0] * (t.reach.min(STATION_COUNT_CAP) / STATION_COUNT_CAP)
-        - w[1] * exposed_frac
-        - w[2] * t.cone
-        - w[3] * t.detect.min(1.0)
-        - w[4] * t.travel
-        - w[5] * t.range_err
-        + w[6] * t.escape
-        - a.w_detour * t.detour
-        - a.w_flank * t.flank;
-    Some(t)
 }
 
 impl Field {

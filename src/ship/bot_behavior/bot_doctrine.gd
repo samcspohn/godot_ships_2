@@ -41,9 +41,6 @@ var chase_when_unshootable: bool = true
 ## (BB/CA) or fires on detection alone (DD).
 var close_arm_range_gated: bool = true
 
-## Whether the close-quarters kite path first looks for cover along the way.
-var close_arm_uses_cover: bool = true
-
 ## Whether a low threat score short-circuits the ladder before the distance
 ## check. CA decides on odds first: a cruiser that likes its chances pushes
 ## whether or not the enemy is close aboard. BB and DD check distance first.
@@ -60,126 +57,12 @@ var universal_sail_forward_fallback: bool = false
 var detection_cost_gain: float = 4.0
 
 ## Extra HPA step cost per enemy able to land shells on the node, for any
-## hull not routing under wants_stealth. Also prices Station transit. 0 = off.
+## hull not routing under wants_stealth. 0 = off.
 var fire_cost_gain: float = 0.25
 
 ## Whether the idle and dark arms get the broadside/spread post-processors. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true
-
-# ---------------------------------------------------------------------------
-# Station — how SkillStation scores a cell of the reach field. Each term is
-# normalised to about 0..1 (shooter counts cap at 3, cone half-width over
-# 180 deg, distances over gun range or concealment radius) before its weight.
-# ---------------------------------------------------------------------------
-
-var station_w_reach: float = 1.0
-var station_w_exposed: float = 0.4
-var station_w_cone: float = 0.5
-var station_w_detect: float = 0.0
-var station_w_travel: float = 0.5
-var station_w_range: float = 0.4
-var station_w_escape: float = 0.0
-## Preferred distance to the danger centre, as a fraction of gun range.
-var station_range_ratio: float = 0.65
-## A new best cell must beat the held station by this much before it is taken.
-var station_switch_margin: float = 0.15
-## Hard gates, not weights. Exposure is the sum over enemies able to land
-## shells on the cell of belief certainty times get_threat_class_weight(), so
-## 1.0 for a cruiser reads "one cruiser, or a few destroyers, never a
-## battleship". require_unseen rejects any cell an enemy has line of sight to
-## at the radius the guns bloom to.
-var station_max_exposed: float = 3.0
-var station_require_unseen: bool = false
-var cover_max_exposed: float = 2.0
-var cover_require_unseen: bool = false
-## Covered: nobody can land shells on the cell OR nobody can see it. Looser
-## than require_unseen, stricter than the cap alone (seen and under fire by
-## one is out).
-var station_covered_only: bool = false
-var cover_covered_only: bool = false
-## Below this threat the bot reads the fight as its own and the covered rule
-## is waived: it will hold a cell that up to the exposure cap can hit (a
-## 1-v-x, x being the cap in class-weighted enemies). Threat already folds in
-## hull points on both sides, so a hurt ship stops taking the trade first.
-var duel_threat: float = 0.5
-
-## Kite scores headings, not cells: each ray in the angled away-fan is the
-## station terms integrated over the next RAY_LENGTH_M, with these weights.
-var kite_w_reach: float = 0.6
-var kite_w_exposed: float = 1.0
-var kite_w_cone: float = 0.6
-var kite_w_detect: float = 0.2
-var kite_w_escape: float = 0.2
-
-## Push is the station search with a must-close band: only cells nearer the
-## danger centre than the hull stands, never inside the engagement range.
-var push_w_reach: float = 1.0
-var push_w_exposed: float = 0.5
-var push_w_cone: float = 0.5
-var push_w_detect: float = 0.0
-var push_w_travel: float = 0.5
-var push_w_range: float = 0.6
-var push_w_escape: float = 0.0
-var push_max_exposed: float = INF
-## Closing step per rescore, in turning circles: the band's far edge sits
-## this much nearer the danger centre than the hull.
-var push_step_turns: float = 2.0
-
-## Flank is the band at the engagement range (out to where the hull stands)
-## plus a penalty for sitting on the axis from the enemy to the friendly
-## centre, so it slides round to a bearing the line is not facing.
-var flank_w_reach: float = 0.8
-var flank_w_exposed: float = 0.7
-var flank_w_cone: float = 0.7
-var flank_w_detect: float = 0.0
-var flank_w_travel: float = 0.2
-var flank_w_range: float = 0.3
-var flank_w_escape: float = 0.0
-var flank_w_axis: float = 1.0
-var flank_max_exposed: float = INF
-var flank_band_ratio: float = 1.15
-
-## Prototype single objective (ReachField.score_utility, Ctrl+R THREAT /
-## UTILITY / PATH_RISK): value from reach and reveal against the cell's
-## threat score and the transit's risk integral. Not yet driving any skill.
-var utility_first: bool = false
-var utility_w_reach: float = 1.0
-var utility_w_reveal: float = 0.5
-## Progress toward gun range on each enemy, by its worth, so a hull with
-## nothing in reach keeps coming until threat or transit risk outweighs it.
-var utility_w_close: float = 0.3
-## An enemy's worth as a target: 1 + damage x its recent damage to me
-## (twice) and my team in hull fractions, x 1 + hurt x its missing hp,
-## x 1 + near x closeness to me, x 1 + alone when no enemy is within gun
-## range of it. Reveal pays 1 + unlit extra while nobody has it lit.
-var utility_target_damage: float = 2.0
-var utility_target_hurt: float = 0.5
-var utility_target_near: float = 0.5
-var utility_target_alone: float = 0.5
-var utility_target_unlit: float = 1.0
-## An enemy that can already shoot n team-mates splits its fire: danger / (1 + split x n).
-var utility_focus_split: float = 0.0
-## An enemy already reached or lit from n claimed stations: worth / (1 + split x n).
-var utility_cover_split: float = 0.0
-var utility_claim_separation: float = 1500.0
-## Per unit of pressure at the cell (threat 0.5 = 1 unit, 0.9 = 3.3, 0.97 = 5),
-## times 1 + utility_hp_aversion x damage fraction: a hurt hull buys safety.
-var utility_w_threat: float = 1.0
-var utility_hp_aversion: float = 2.0
-var utility_w_path: float = 0.2
-
-## The same search as FindCover: exposure and (for hulls that hide) detection
-## dominate, reach is a tie-breaker, and a cover asked for "on the way" pays
-## for every degree off the line to the enemy.
-var cover_w_reach: float = 0.5
-var cover_w_exposed: float = 1.0
-var cover_w_cone: float = 0.3
-var cover_w_detect: float = 0.3
-var cover_w_travel: float = 0.5
-var cover_w_range: float = 0.3
-var cover_w_escape: float = 0.2
-var cover_w_detour: float = 0.6
 
 # ---------------------------------------------------------------------------
 # Threat thresholds — where the ladder switches between skills
@@ -193,12 +76,12 @@ var push_threat: float = 0.5
 var force_below: float = 0.25
 var force_above: float = 0.75
 
-## Engaged-ladder thresholds. Only read by behaviours whose engaged arm uses
-## them (BB); CA and DD override _select_engaged_skill entirely.
-var flank_max_threat: float = 0.4
-var station_max_threat: float = 0.75
-var camp_max_threat: float = 0.6
-var cover_max_threat: float = 0.7
+## Above this threat the engaged arm stops engaging and disengages.
+var engage_max_threat: float = 0.75
+
+## Below this threat the bot reads the fight as its own: a hidden station may
+## open fire (BotBehavior._hold_fire_hidden).
+var duel_threat: float = 0.5
 ## A held Cover station outranks every arm until threat drops below this.
 var cover_release_threat: float = 0.4
 
@@ -208,21 +91,6 @@ var cover_release_threat: float = 0.4
 ## chatter: one threshold would leave the boat alternating destinations every
 ## tick while threat sat on it. See DDBehavior._open_water_kiting().
 var kite_threat: float = 0.6
-
-## Spot: the utility search with eyes first; close pulls toward the launch
-## band when the hull has one.
-var spot_w_reach: float = 0.2
-var spot_w_reveal: float = 1.5
-var spot_w_close: float = 0.5
-
-
-## Minimum distance to the nearest non-DD threat before cover is preferred to
-## kiting at high threat.
-var cover_min_threat_dist: float = 10000.0
-
-## Threat above which a cruiser stops accepting cover that is off the
-## engagement path and kites instead.
-var cover_abandon_threat: float = 0.85
 
 ## Whether this bot's escape route is concealment rather than manoeuvre. Set for
 ## a hull that can actually go dark and gain something by it: it stops shooting
@@ -239,9 +107,12 @@ var stealth_threat: float = 0.5
 # Engagement range — how close this bot wants to fight, read off its build
 # ---------------------------------------------------------------------------
 
-## Fraction of main-battery range the bot fights at when the main battery is the
-## only thing it has to bring to bear.
-var gun_engage_ratio: float = 0.60
+## Main-battery range fractions the engagement range passes through: at
+## threat 1, and at threat 0.5. In between and below it follows
+## far * threat^p (p fitted through the two), so an unopposed bot closes to
+## point blank and opens out as the fight turns against it.
+var engage_far_ratio: float = 0.95
+var engage_mid_ratio: float = 0.7
 
 ## How far the secondaries must reach, as a fraction of main-battery range,
 ## before they justify giving up standoff to use them. Below this the hull is a
@@ -258,28 +129,6 @@ var secondary_engage_ratio: float = 0.9
 ## reverts to main-battery range. Closing into a losing fight to use a shorter
 ## gun is how a brawler dies.
 var secondary_yield_threat: float = 0.6
-
-## Threat at which the engagement range (BotBehavior.engagement_range) reaches
-## its full gun_engage_ratio, and the fraction of it it closes to at zero threat.
-##
-## The engagement range is a ceiling, not a station. A push that always stopped
-## on it fought every engagement at the same distance whether it was winning or
-## losing, and the only thing that ever moved the ship back out was the ladder
-## above swapping the skill for a kite - one step, at one threshold. Scaling the
-## standoff with threat instead makes the range itself the negotiation: with
-## nothing shooting, the bot keeps coming; as closing raises the threat it is
-## closing into, the standoff opens back out and the approach stalls of its own
-## accord. The ship settles where threat sits at push_equalize_threat, and the
-## push/kite pair swings around that point rather than around a fixed circle.
-##
-## Set to the threat where this bot stops pushing at all, so the standoff has
-## reached the full engagement range exactly as the ladder takes the push away.
-## 0 disables the scaling and the push stops on the flat engagement range.
-var push_equalize_threat: float = 0.5
-
-## Floor on the above, as a fraction of the engagement range, so an unopposed
-## push closes hard without driving onto the enemy's hull.
-var push_equalize_floor: float = 0.5
 
 # ---------------------------------------------------------------------------
 # Reverse-alignment band — how close a threat must be before the bot will back
@@ -309,13 +158,12 @@ var evade_override_threat: float = 0.75
 var evade_exclude: Array[StringName] = [&"SailForward"]
 var evade_params: Dictionary = {}
 
-var spread_exclude: Array[StringName] = [&"FindCover", &"Push", &"Kite", &"Utility", &"Spot", &"Cover"]
+var spread_exclude: Array[StringName] = [&"Engage", &"Disengage", &"Hold"]
 var spread_distance: float = 1000.0
 var spread_multiplier: float = 1.0
 
 ## Skills that get their own spread tuning instead of the defaults above.
 var spread_overrides: Dictionary = {}
-
 
 # ---------------------------------------------------------------------------
 # THE TABLE
@@ -323,96 +171,49 @@ var spread_overrides: Dictionary = {}
 
 static func for_battleship() -> BotDoctrine:
 	var d := BotDoctrine.new()
-	d.idle_chain = [&"Flank"]
 	d.dark_chain = [&"Chase"]
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
 	d.force_below = 0.25
 	d.force_above = 0.75
-	d.flank_max_threat = 0.4
-	d.station_max_threat = 0.75
-	d.camp_max_threat = 0.6
-	d.cover_max_threat = 0.7
-	d.cover_min_threat_dist = 10000.0
-	d.gun_engage_ratio = 0.75
-	d.push_equalize_floor = 0.7
-	d.station_range_ratio = 0.75
 	# A battleship stations on what it can shoot and how many can shoot back;
 	# being seen costs it nothing it was not already paying.
-	d.station_w_reach = 1.0
-	d.station_w_exposed = 0.5
-	d.station_w_cone = 0.6
-	d.station_w_travel = 0.5
-	d.station_w_range = 0.4
-	d.cover_w_detect = 0.1
-	d.utility_w_threat = 0.6
-	d.utility_w_close = 0.5
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
-	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 13000.0
 	d.use_broadside = true
 	d.broadside_exclude = [&"Hunt", &"SailForward"]
 	d.broadside_params = {"oscillation_bias": 0.5}
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Camp", &"Station", &"Utility", &"Spot", &"Cover"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Camp", &"Hold"]
 	# A battleship's evasion IS its angling, so it is never worth suppressing:
 	# the presentation weave costs it nothing it was going to use anyway.
 	d.evade_override_threat = 0.6
 	d.post_process_idle_arms = true
 	return d
 
-
 static func for_cruiser() -> BotDoctrine:
 	var d := BotDoctrine.new()
-	d.idle_chain = [&"FindCover", &"Flank", &"Hunt", &"SailForward"]
 	d.dark_chain = [&"Chase", &"Hunt", &"SailForward"]
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
-	# Out at the edge of its own range: a cruiser trades in volume, not by closing.
-	d.gun_engage_ratio = 0.90
-	d.push_equalize_floor = 0.8
-	d.push_equalize_threat = d.push_threat
 	d.ra_bb_shooter_hurt = 11000.0
 	# The CA's broadside post-process is deliberately off: its engaged arm sets
 	# heading_weight itself and a second opinion on heading fights it.  Evade is
 	# not in the same position -- with broadside off there is nothing for it to
 	# contend with, and a cruiser under fire has the rudder to make weaving pay.
 	d.use_broadside = false
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Utility", &"Spot", &"Cover"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Hold"]
 	d.low_threat_arm_first = true
 	# CA forces the post-processors off for its whole high-threat close arm,
 	# rather than only at the extremes the way BB does.
 	d.force_below = -1.0
 	d.force_above = 0.5
-	d.cover_abandon_threat = 0.85
 	# The idle and dark arms returned before the post-processors ran.
 	d.post_process_idle_arms = false
-	# A cruiser stations where it is unseen and unanswered; being spotted is
-	# what turns its engaged arm into a kite.
-	d.station_max_threat = 0.75
-	d.station_w_reach = 0.8
-	d.station_w_exposed = 0.7
-	d.station_w_cone = 0.4
-	d.station_w_detect = 0.6
-	d.station_w_travel = 0.5
-	d.station_w_range = 0.3
-	d.station_w_escape = 0.2
-	d.cover_w_detect = 0.8
-	d.push_w_detect = 0.3
-	d.flank_w_detect = 0.3
-	d.utility_w_threat = 1.2
-	d.push_max_exposed = 2.0
-	d.flank_max_exposed = 2.0
 	# A cruiser's position is covered or it is not held: nobody can shoot it,
 	# or nobody can see it. The 1.0 cap on top keeps a battleship out of even
 	# the unseen case until the 1-v-x rule reads threat and hull points.
-	d.station_max_exposed = 1.0
-	d.station_covered_only = true
-	d.cover_max_exposed = 1.0
-	d.cover_require_unseen = false
-	d.cover_covered_only = true
 	return d
-
 
 static func for_destroyer() -> BotDoctrine:
 	var d := BotDoctrine.new()
@@ -426,20 +227,10 @@ static func for_destroyer() -> BotDoctrine:
 	# vision for the team), so it goes straight to the engaged ladder.
 	d.dark_chain = []
 	d.close_arm_range_gated = false
-	d.close_arm_uses_cover = false
 	d.push_threat = 0.5
-	# A destroyer that is shooting rather than launching is already committed,
-	# so it fights near the edge of its guns instead of holding a standoff.
-	d.gun_engage_ratio = 0.85
-	# No range negotiation for a torpedo boat: its engagement range is the
-	# closest standoff that keeps it dark (DDBehavior.engagement_range), and
-	# water given up for a quiet approach is not water low threat should be
-	# spending. Inside it the boat is seen, which is the one thing the whole
-	# approach was buying.
-	d.push_equalize_threat = 0.0
 	d.use_broadside = true
-	d.broadside_exclude = [&"Retreat", &"Spot"]
-	d.spread_exclude = [&"FindCover", &"Push", &"Kite", &"Retreat", &"Utility", &"Spot", &"Cover"]
+	d.broadside_exclude = [&"Retreat", &"Hold"]
+	d.spread_exclude = [&"Engage", &"Disengage", &"Retreat", &"Hold"]
 	# The DD never marks an intent forced, so nothing is ever skipped for it.
 	d.force_below = -1.0
 	d.force_above = INF
@@ -450,32 +241,8 @@ static func for_destroyer() -> BotDoctrine:
 	d.chase_when_unshootable = false
 	d.trades_on_concealment = true
 	d.stealth_threat = 0.5
-	# A torpedo boat's station is dark first and everything else second; the
-	# guns are a tie-breaker and the way back into the dark counts.
-	d.station_max_threat = 0.75
-	d.station_w_reach = 0.4
-	d.station_w_exposed = 0.6
-	d.station_w_cone = 0.2
-	d.station_w_detect = 1.0
-	d.station_w_travel = 0.5
-	d.station_w_range = 0.3
-	d.station_w_escape = 0.5
-	d.cover_w_detect = 1.0
-	d.cover_w_escape = 0.5
-	d.utility_w_reach = 0.4
-	d.utility_w_reveal = 1.0
-	d.utility_w_close = 0.2
 	# A torpedo boat pushes to its launch band in the dark.
-	d.push_w_detect = 1.0
-	d.push_w_reach = 0.3
-	d.push_max_exposed = 1.0
-	d.flank_w_detect = 1.0
-	d.station_max_exposed = 0.0
-	d.station_require_unseen = true
-	d.cover_max_exposed = 0.0
-	d.cover_require_unseen = true
 	return d
-
 
 ## The open-water gunboat destroyer, for a hull with no undetected launch band -
 ## tubes that do not reach meaningfully past its own detection radius, or no
@@ -499,23 +266,9 @@ static func for_gunboat_destroyer() -> BotDoctrine:
 	# closed.
 	d.close_arm_range_gated = true
 	# Threat opens the gunboat band instead; cover only hides it from its targets.
-	d.close_arm_uses_cover = false
 	# The engaged arm swings between push and kite on these two (see
 	# DDBehavior._open_water_kiting). push_threat comes from for_destroyer() and
 	# is the turn-back-in edge; this is the break-off edge.
 	d.kite_threat = 0.6
-	# The push leg gets the range back gradually rather than all at once: this
-	# boat's push and kite are the two halves of one swing, so the standoff it
-	# is pushing to should be full only where the next kite leg breaks off.
-	d.push_equalize_threat = d.kite_threat
 	# The gunboat fights lit; it still takes no more than a 1v1 on a station.
-	d.station_max_exposed = 1.0
-	d.station_require_unseen = false
-	d.cover_max_exposed = 1.0
-	d.cover_require_unseen = false
-	d.push_w_detect = 0.0
-	d.push_w_reach = 1.0
-	d.push_max_exposed = 2.0
-	d.utility_w_reach = 0.8
-	d.utility_w_reveal = 0.8
 	return d

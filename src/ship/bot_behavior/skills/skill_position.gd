@@ -12,6 +12,7 @@ const CLAIM_TTL_MS: int = 6000
 ## Team-mates' stations are kept this many clearances apart.
 const CLAIM_SEPARATION_CLEARANCES: float = 3.0
 const REFINE_BUDGET_M := 8000.0
+const BELIEF_SCALE_M := 10000.0
 
 ## team_id -> ship instance id -> {pos: Vector2, ms: int, key: int}
 static var _claims: Dictionary = {}
@@ -136,6 +137,28 @@ func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Diction
 	intent.skip_threat_adjustment = true
 	intent.near_terrain = _refined
 	return intent
+
+## Every contact, presumed ones included, by certainty and nearness: the
+## spotted centre alone drags a walk to whichever flank happens to be lit.
+static func _belief_centre(ctx: SkillContext, belief: Array[Dictionary], here: Vector2) -> Vector2:
+	var g: Dictionary = NavigationMapManager.reach_gun(ctx.ship)
+	var scale: float = float(g.range) if not g.is_empty() else BELIEF_SCALE_M
+	var sum := Vector2.ZERO
+	var total := 0.0
+	for b in belief:
+		var p: Vector2 = b.pos
+		var w: float = float(b.weight) * exp(-p.distance_to(here) / scale)
+		sum += p * w
+		total += w
+	return sum / total if total > 0.0 else _nearest(PackedVector2Array(belief.map(func(b): return b.pos)), here)
+
+## Unit vector out along our side of the fleet line; zero inside the centreline deadband.
+func _flank_dir(ctx: SkillContext) -> Vector2:
+	var ff: FleetFrame = ctx.behavior.fleet_frame()
+	var side: float = ff.side_of(ctx.ship.global_position)
+	if absf(side) < FleetFrame.SIDE_DEADBAND:
+		return Vector2.ZERO
+	return Vector2(ff.right.x, ff.right.z).normalized() * signf(side)
 
 static func _nearest(points: PackedVector2Array, to: Vector2) -> Vector2:
 	var best := to

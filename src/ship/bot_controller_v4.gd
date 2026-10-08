@@ -1262,66 +1262,14 @@ func _emit_debug_draws() -> void:
 				Debug.draw_circle(Vector3(landing_x, 5.0, landing_z), 60.0, color)
 				Debug.draw_im_sphere(Vector3(landing_x, 15.0, landing_z), 6.0, color)
 
-	# --- m) Cover debug (circles + LOS lines) — only for CA behavior ---
-	if behavior is CABehavior:
-		var ca: CABehavior = behavior as CABehavior
-		if ca._cover_zone_valid and ca._cover_island_radius > 0.0:
-			var island_pos = ca._cover_island_center
-			var draw_y = 6.0
-
-			# Island radius circle (orange)
-			Debug.draw_circle(Vector3(island_pos.x, draw_y, island_pos.z), ca._cover_island_radius, Color(1.0, 0.5, 0.0, 0.3), 64)
-
-			# Safe distance circle (red) — ship clearance + buffer
-			var ship_clearance: float = movement.ship_beam * 0.5 + 50.0
-			var safe_dist = ship_clearance + 50.0
-			Debug.draw_circle(Vector3(island_pos.x, draw_y + 1.0, island_pos.z), safe_dist, Color(1.0, 0.15, 0.15, 0.7), 64)
-
-			# Cover zone circle (color depends on state)
-			var zone_color: Color
-			var spotted_in_cover = ca.is_in_cover and _ship.is_detected()
-			if spotted_in_cover:
-				zone_color = Color(1.0, 0.0, 0.0, 0.8)
-			elif ca.is_in_cover:
-				zone_color = Color(0.0, 1.0, 0.0, 0.8)
-			else:
-				zone_color = Color(0.0, 0.7, 1.0, 0.6)
-
-			# var dest = _last_intent.target_position if _last_intent else Vector3.ZERO
-
-			Debug.draw_circle(Vector3(dest.x, draw_y + 2.0, dest.z), ca._cover_zone_radius, zone_color, 48)
-			Debug.draw_im_sphere(Vector3(dest.x, 30.0, dest.z), 20.0, zone_color)
-
-			# LOS lines from ship to each threat
-			var threats: Array = behavior._gather_threat_positions(_ship)
-			var ship_los_pos = _ship.global_position
-			for threat in threats:
-				var threat_pos: Vector3 = threat.position
-				var blocked = NavigationMapManager.is_los_blocked(ship_los_pos, threat_pos)
-				var los_color = Color(0.0, 1.0, 0.0, 0.6) if blocked else Color(1.0, 0.0, 0.0, 0.8)
-				Debug.draw_line(Vector3(ship_los_pos.x, 25.0, ship_los_pos.z), Vector3(threat_pos.x, 25.0, threat_pos.z), los_color)
-				# The spread the cover search actually tests against - how far sideways
-				# this contact could be from where the picture puts it.
-				var spread: float = float(threat.get("spread", 0.0))
-				if spread >= behavior.THREAT_SPREAD_MIN_PROBE:
-					Debug.draw_circle(Vector3(threat_pos.x, 25.0, threat_pos.z), spread,
-						Color(1.0, 0.6, 0.0, 0.35), 24)
-
 	# --- m2) Station / Cover: the held cell and its score breakdown ---
 	if behavior != null:
 		var st_skill: SkillPosition = null
 		match behavior._active_skill_name:
-			&"Station": st_skill = behavior._skill_station
-			&"FindCover": st_skill = behavior._skill_cover
-			&"Push": st_skill = behavior._skill_push
-			&"Flank": st_skill = behavior._skill_flank
-			&"Utility": st_skill = behavior._skill_utility
-			&"Spot": st_skill = behavior._skill_spot
-			&"Gunboat": st_skill = behavior._skill_gunboat
-		if behavior._active_skill_name == &"Kite" and behavior._skill_kite.has_ray():
-			var ke: Vector3 = behavior._skill_kite.ray_end()
-			Debug.draw_line(Vector3(ship_pos.x, 12.0, ship_pos.z), Vector3(ke.x, 12.0, ke.z), Color(1.0, 0.2, 1.0, 0.8))
-			Debug.draw_label(Vector3(ke.x, 60.0, ke.z), behavior._skill_kite.debug_text(), Color(1.0, 0.8, 1.0), 14)
+			&"Hold": st_skill = behavior._skill_hold.current()
+			&"Disengage": st_skill = behavior._skill_disengage.cover()
+		if behavior._active_skill_name == &"Disengage":
+			Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), behavior._skill_disengage.debug_text(), Color(1.0, 0.8, 1.0), 14)
 		if st_skill != null:
 			for trail in st_skill.trails():
 				for i in range(1, trail.size()):
@@ -1330,15 +1278,11 @@ func _emit_debug_draws() -> void:
 		if st_skill != null and st_skill.has_station():
 			var st_pos: Vector3 = st_skill.station_position()
 			var st_col := Color(0.2, 1.0, 0.9)
-			if st_skill == behavior._skill_cover:
+			if st_skill is SkillCover:
 				st_col = Color(0.3, 1.0, 0.3)
-			elif st_skill == behavior._skill_push:
+			elif st_skill is SkillFight:
 				st_col = Color(1.0, 0.5, 0.1)
-			elif st_skill == behavior._skill_flank:
-				st_col = Color(1.0, 0.9, 0.2)
-			elif st_skill == behavior._skill_utility:
-				st_col = Color(0.9, 0.5, 1.0)
-			elif st_skill == behavior._skill_spot:
+			elif st_skill is SkillSpot:
 				st_col = Color(0.4, 0.8, 1.0)
 			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
 			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)

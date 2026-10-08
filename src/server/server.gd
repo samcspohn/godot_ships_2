@@ -252,9 +252,10 @@ func _start_bot_match() -> void:
 		print("botmatch: spawn %s %s %s team %d slot %d" % [p_name, p.ship_name, Ship.ShipClass.keys()[p.ship_class],
 			p.team.team_id, team_info["team"][p_name].get("spawn_position", -1)])
 
-## Same deal as matchmaker.create_balanced_single_player_teams: shuffle within
-## each class, shuffle the class order, then deal round-robin. One seed for both
-## teams so a mirrored lineup spawns mirrored.
+## The matchmaker's deal (classes shuffled, each class shuffled), but every
+## class is spread evenly down the line with a random phase, so unequal class
+## counts do not bunch the leftovers at one end. One seed for both teams so a
+## mirrored lineup spawns mirrored.
 func _assign_matchmaker_spawns(roster: Dictionary) -> void:
 	var by_team: Dictionary = {}
 	for p_name in roster:
@@ -268,15 +269,15 @@ func _assign_matchmaker_spawns(roster: Dictionary) -> void:
 		var classes: Array = [[], [], [], []]
 		for p_name in by_team[t]:
 			classes[_scene_ship_class(roster[p_name]["ship"])].append(p_name)
+		var keyed: Array = []
 		for c in classes:
 			_rng_shuffle(c, rng)
-		_rng_shuffle(classes, rng)
-		var slot := 0
-		for i in range(by_team[t].size()):
-			for c in classes:
-				if i < c.size():
-					roster[c[i]]["spawn_position"] = slot
-					slot += 1
+			var phase := rng.randf()
+			for k in c.size():
+				keyed.append([(k + phase) / c.size(), rng.randf(), c[k]])
+		keyed.sort()
+		for slot in keyed.size():
+			roster[keyed[slot][2]]["spawn_position"] = slot
 
 static func _rng_shuffle(a: Array, rng: RandomNumberGenerator) -> void:
 	for i in range(a.size() - 1, 0, -1):
@@ -1296,6 +1297,8 @@ func _write_match_metrics(winning_team: int, leaderboard: Array[Dictionary]) -> 
 		row["torpedo_taken"] = ship.stats.torpedo_taken
 		row["survival_time"] = _sunk_at.get(ship, match_elapsed)
 		row["won"] = ship.team.team_id == winning_team
+		row["spawn_position"] = team_info["team"].get(entry["player_name"], {}).get("spawn_position", -1)
+		row["team_size"] = team_info["team"].values().filter(func(v): return int(v["team"]) == ship.team.team_id).size()
 		ships.append(row)
 	var out := {
 		"winning_team": winning_team,

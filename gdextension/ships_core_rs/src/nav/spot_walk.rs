@@ -36,8 +36,12 @@ pub(crate) struct SpotInputs {
     pub reach: Option<ReachLookup>,
     /// With `reach`, the cell must also see the enemy: no lobbing over islands.
     pub reach_needs_los: bool,
-    /// Enemy fire planes, for AVOID_FIRE.
+    /// Enemy fire planes, for AVOID_FIRE and the engagement score.
     pub fire: Option<ReachLookup>,
+    /// Engagement score per enemy: what holding it as the target is worth, and
+    /// what it costs us while its fire plane covers the cell (same units).
+    pub value: Vec<f32>,
+    pub harm: Vec<f32>,
 }
 
 pub(crate) struct WalkResult {
@@ -238,13 +242,58 @@ impl VisibilityGrid {
         budget_m: f32,
         flank: Vector2,
     ) -> WalkResult {
+        self.walk_edge(from, toward, outward, inp, budget_m, flank, |k| {
+            let m = self.spotted_mask(k, inp);
+            (m.count_ones() >= need).then_some((m, 0.0))
+        })
+    }
+
+    /// The same walk over its whole budget, keeping the cell with the best
+    /// engagement score (`engage_score`); `found` carries that score's target bit.
+    pub(crate) fn engage_walk_impl(&self, from: Vector2, toward: Vector2, outward: bool, inp: &SpotInputs,
+        budget_m: f32, flank: Vector2) -> (WalkResult, f32) {
+        let mut best: Option<(usize, u64, f32)> = None;
+        let mut res = self.walk_edge(from, toward, outward, inp, budget_m, flank, |k| {
+            if let Some((t, score)) = self.engage_score(k, inp) {
+                if best.is_none_or(|b| score > b.2) {
+                    best = Some((k, 1u64 << t, score));
+                }
+            }
+            None
+        });
+        res.found = best.map(|b| (b.0, b.1));
+        (res, best.map_or(f32::NEG_INFINITY, |b| b.2))
+    }
+
+    /// Best (target, value - harm) at cell `k`: the most valuable spotted target
+    /// it reaches, less the harm of every enemy whose fire covers it.
+    pub(crate) fn engage_score(&self, k: usize, inp: &SpotInputs) -> Option<(usize, f32)> {
+        let mask = self.spotted_mask(k, inp);
+        if mask == 0 {
+            return None;
+        }
+        let c = self.centres[k];
+        let harm: f32 = (0..inp.enemies.len())
+            .filter(|&i| inp.fire.as_ref().is_some_and(|f| f.hits(i, c)))
+            .map(|i| inp.harm.get(i).copied().unwrap_or(0.0))
+            .sum();
+        let (t, v) = (0..inp.enemies.len().min(64))
+            .filter(|&i| mask & (1 << i) != 0)
+            .map(|i| (i, inp.value.get(i).copied().unwrap_or(0.0)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))?;
+        Some((t, v - harm))
+    }
+
+    /// Two wall followers along the edge of blocked ground, as spot_walk_impl;
+    /// `visit` sees every cell stepped on and ends the walk with Some(mask).
+    fn walk_edge(&self, from: Vector2, toward: Vector2, outward: bool, inp: &SpotInputs, budget_m: f32, flank: Vector2,
+        mut visit: impl FnMut(usize) -> Option<(u64, f32)>) -> WalkResult {
         let mut res = WalkResult { start: None, found: None, steps: 0, trails: [Vec::new(), Vec::new()] };
         let Some((sx, sz, wall)) = self.walk_start(from, toward, outward, inp) else { return res };
         let k0 = self.spot_free(sx, sz, inp).unwrap();
         res.start = Some(self.centres[k0]);
-        let m0 = self.spotted_mask(k0, inp);
-        if m0.count_ones() >= need {
-            res.found = Some((k0, m0));
+        if let Some((m, _)) = visit(k0) {
+            res.found = Some((k0, m));
             return res;
         }
         let mk = |left: bool| {
@@ -270,8 +319,7 @@ impl VisibilityGrid {
             let Some(k) = self.step(&mut w[i], inp) else { continue };
             res.steps += 1;
             res.trails[i].push(self.centres[k]);
-            let m = self.spotted_mask(k, inp);
-            if m.count_ones() >= need {
+            if let Some((m, _)) = visit(k) {
                 res.found = Some((k, m));
                 return res;
             }

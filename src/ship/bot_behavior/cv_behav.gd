@@ -666,10 +666,6 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var screen: Dictionary = _screen_report(server, screen_ref, float(band.close_dist))
 	var collapsing: bool = _update_screen(screen)
 
-	# Cover is wanted purely for concealment, never as a firing position, so the
-	# search runs with prioritize_cover and is allowed to consider islands right
-	# out to the edge of gun range rather than the 0.7 default.
-	var cover_params: Dictionary = {"max_range": 1.0}
 	# Passed to every station decision below: whatever else a position is chosen
 	# for, it is not worth standing on if something can see us from it.
 	var station_opts: Dictionary = {avoid = contacts, keepout = keepout}
@@ -684,17 +680,13 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	var breakaway: Dictionary = _break_trigger(anchor, band, breach, keepout)
 	if not breakaway.is_empty():
 		return _finish_intent(
-			_break_away(ctx, cover_params, breakaway, station_opts), previous_skill)
+			_break_away(ctx, breakaway, station_opts), previous_skill)
 
 	# ── Nothing worth stationing against ────────────────────────────────────
 	# No contact, or only contacts too stale to be believed. Sit in cover with
 	# the line and let the spotters do the finding.
 	if not bool(anchor.get("valid", false)):
-		intent = _take_cover(ctx, cover_params)
-		if intent == null:
-			intent = _skill_flank.execute(ctx, {})
-			if intent != null:
-				_active_skill_name = &"Flank"
+		intent = _take_cover(ctx)
 		if intent == null:
 			intent = _intent_sail_forward(ship)
 			_active_skill_name = &"SailForward"
@@ -745,7 +737,7 @@ func get_nav_intent(target: Ship, ship: Ship, server: GameServer) -> NavIntent:
 	# be when reaching it means sitting alone on the flank that just emptied.
 	if regroup:
 		cover_band["rally"] = screen.rally
-	intent = _take_cover(ctx, cover_params, cover_band)
+	intent = _take_cover(ctx, cover_band)
 	if intent == null:
 		# Working onto the beam is only ever done while unseen and screened, and
 		# only against a contact somebody is actually watching. Once we are
@@ -833,15 +825,14 @@ func _break_trigger(anchor: Dictionary, band: Dictionary, breach: Dictionary,
 	return {}
 
 
-func _break_away(ctx: SkillContext, cover_params: Dictionary, plan: Dictionary,
+func _break_away(ctx: SkillContext, plan: Dictionary,
 		station_opts: Dictionary = {}) -> NavIntent:
 	## Open the range from plan.position by whatever means is to hand: cover
 	## already far enough out, else a straight run away from the nearest enemy,
 	## else a station on the far side of the ring. Nothing here weighs the air
 	## group — that trade was made by whatever decided to break.
 	var from_pos: Vector3 = plan.position
-	var intent: NavIntent = _take_cover(ctx, cover_params,
-		{anchor = from_pos, min = float(plan.cover_min)})
+	var intent: NavIntent = _take_cover(ctx, {anchor = from_pos, min = float(plan.cover_min)})
 	if intent == null and not _get_nearest_enemy().is_empty():
 		intent = _skill_retreat.execute(ctx, {})
 		if intent != null:
@@ -854,13 +845,13 @@ func _break_away(ctx: SkillContext, cover_params: Dictionary, plan: Dictionary,
 	return intent
 
 
-func _take_cover(ctx: SkillContext, cover_params: Dictionary, band: Dictionary = {}) -> NavIntent:
+func _take_cover(ctx: SkillContext, band: Dictionary = {}) -> NavIntent:
 	## Cover, accepted only when it also happens to be a place a carrier should
 	## be standing. Passing no band takes whatever cover is nearest; passing one
 	## rejects an island that would drag the hull inside the floor, out past
 	## where its squadrons still reach, or further from the mates it is trying to
 	## get back behind. `band` keys: anchor, min, max, rally — all optional.
-	var cover: NavIntent = _skill_cover.execute(ctx, cover_params, true)
+	var cover: NavIntent = _skill_disengage.cover().execute(ctx, {"mode": SkillCover.Mode.DEFENSE})
 	if cover == null:
 		return null
 	if not band.is_empty():
@@ -880,7 +871,7 @@ func _take_cover(ctx: SkillContext, cover_params: Dictionary, band: Dictionary =
 	# it must not be pushed back out of a detection arc it is already screened
 	# from. See NavIntent.skip_threat_adjustment.
 	cover.skip_threat_adjustment = true
-	_active_skill_name = &"FindCover"
+	_active_skill_name = &"Disengage"
 	return cover
 
 
