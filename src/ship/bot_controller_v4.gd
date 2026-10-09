@@ -1270,6 +1270,7 @@ func _emit_debug_draws() -> void:
 			&"Disengage": st_skill = behavior._skill_disengage.cover()
 		if behavior._active_skill_name == &"Disengage":
 			Debug.draw_label(ship_pos + Vector3(0.0, 120.0, 0.0), behavior._skill_disengage.debug_text(), Color(1.0, 0.8, 1.0), 14)
+		Debug.draw_label(ship_pos + Vector3(0.0, 160.0, 0.0), behavior._skill_stance.debug_text(), Color(1.0, 1.0, 0.6), 14)
 		if st_skill != null:
 			for trail in st_skill.trails():
 				for i in range(1, trail.size()):

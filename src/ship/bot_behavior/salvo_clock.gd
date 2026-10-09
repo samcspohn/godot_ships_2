@@ -1,14 +1,8 @@
 class_name SalvoClock
 extends RefCounted
 
-## The enemy's firing cycle, as this ship can observe it.
-##
-## Two post-processing skills need the same clock and must not disagree about
-## it.  SkillBroadside wants to know when it is safe to unmask -- the reload gap
-## after a salvo splashes -- and SkillEvade wants to know when it is under fire
-## and how long the enemy's shells spend in the air.  Those are the same
-## question asked from two sides, so they read one shared answer here rather
-## than each running their own shell query and drifting apart.
+## The enemy's firing cycle, as this ship can observe it: when each shooter's
+## next salvo lands (stance) and whether one is in the air (evade).
 ##
 ## The cycle a competent player runs:
 ##
@@ -86,6 +80,13 @@ var aimers: Array[Ship] = []
 
 var _tracked: Dictionary = {}
 var _solution_at: float = -INF
+## Ship -> seconds until its earliest shell in the air lands.
+var _in_air: Dictionary = {}
+## Ship -> when its latest observed salvo lands (SimClock seconds).
+var _landed: Dictionary = {}
+
+## A shell is credited to the visible enemy within this of the bearing it comes from.
+const SOURCE_MATCH: float = deg_to_rad(10.0)
 
 
 func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
@@ -114,6 +115,7 @@ func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 			last_splash = now
 			break
 	_tracked = current
+	_attribute(ship, server, shells, now)
 
 	_gather_aimers(ship, server)
 	_pick_dominant(ship, server, behavior, now)
@@ -133,6 +135,44 @@ func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 		phase = Phase.INCOMING
 	else:
 		phase = Phase.QUIET
+
+
+## Seconds until `shooter`'s next salvo lands here: the one in the air, else a
+## reload after the last; INF when it has not been seen firing at us lately.
+func next_landing(shooter: Ship, now: float) -> float:
+	if _in_air.has(shooter):
+		return _in_air[shooter]
+	if not _landed.has(shooter) or shooter.artillery_controller == null:
+		return INF
+	var reload: float = shooter.artillery_controller.get_params().reload_time
+	var due: float = float(_landed[shooter]) + reload - now
+	return maxf(due, 0.0) if due > -reload else INF
+
+
+func _attribute(ship: Ship, server: GameServer, shells: Array, now: float) -> void:
+	_in_air.clear()
+	if shells.is_empty() or server == null:
+		return
+	var enemies: Array[Ship] = server.get_valid_targets(ship.team.team_id)
+	var bearings := PackedFloat32Array()
+	for e in enemies:
+		var to: Vector3 = e.global_position - ship.global_position
+		bearings.append(atan2(to.x, to.z))
+	for s in shells:
+		var from: float = atan2(-float(s["landing_vx"]), -float(s["landing_vz"]))
+		var best := -1
+		var best_d: float = SOURCE_MATCH
+		for i in enemies.size():
+			var d: float = absf(angle_difference(from, bearings[i]))
+			if d < best_d:
+				best_d = d
+				best = i
+		if best < 0:
+			continue
+		var e: Ship = enemies[best]
+		var t: float = s["time_remaining"]
+		_in_air[e] = minf(_in_air.get(e, INF), t)
+		_landed[e] = maxf(_landed.get(e, -INF), now + t)
 
 
 ## How long the broadside window stays open after a splash: the enemy's reload,

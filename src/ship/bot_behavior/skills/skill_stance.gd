@@ -3,11 +3,13 @@ extends BotSkill
 
 ## Owns heading and gear while guns can reach us. Each (heading, gear) option
 ## is sailed (StanceSim) at the hull's spool and turn rate for a minute past
-## the time a half turn takes, with every gun on us hitting at the aspect it
-## sees and our turrets slewing to stay on the target. Score = HP lost for
-## good (repair capacity counted), less a third of the HP dealt, plus progress; at a station,
-## closing on the guns stands in for progress. A turn that shows the citadel
-## is paid for, and so is sitting where only one turret bears.
+## the time a half turn takes, every enemy's salvos landing on its own clock at
+## the aspect we show then, our turrets slewing and firing on their reloads.
+## Score = HP lost for good (repair capacity counted), less a third of the HP
+## dealt, plus progress; at a station, closing on the guns stands in for progress.
+## The steady pick holds; a lead leg (another heading for one flight time, then
+## back to the steady one) is taken when it pays, which is how the side is shown
+## in a reload gap or the tubes are brought to bear.
 ## SkillEvade weaves inside the cone of headings nearly as cheap.
 
 ## Choice index for following the route's own heading, whatever it shows.
@@ -43,6 +45,9 @@ const SWITCH_MARGIN: float = 0.02
 const ROUTE_CONE: float = deg_to_rad(90.0)
 const FREE_MARGIN: float = 0.01
 const TRACK_GAIN: float = 0.002
+const LEG_MIN_S: float = 6.0
+## Share of a loaded tube's torpedoes expected to hit.
+const TORP_HIT_SHARE: float = 0.1
 
 var _heading: float = 0.0
 var _astern_held: bool = false
@@ -53,14 +58,14 @@ var _cone: float = MIN_CONE
 ## Shooter instance id -> [range bucket, dps per aspect step then their repairable parts].
 var _tables: Dictionary = {}
 
-var _bearings: PackedFloat32Array = PackedFloat32Array()
-var _weights: PackedFloat32Array = PackedFloat32Array()
-var _rows: Array[PackedFloat32Array] = []
-## Per heading index: weighted incoming dps, and weighted mean cosine to the guns.
+var _leg_heading: float = 0.0
+var _leg_astern: bool = false
+var _leg_until: float = -INF
+
+## StanceSim shooter entries: bearing, rows, weight, reload, next.
+var _shooters: Array[Dictionary] = []
+## Per heading index: weighted incoming dps, for the cone.
 var _dps: PackedFloat32Array = PackedFloat32Array()
-## Per heading index: the part of _dps a repair party can win back.
-var _heal: PackedFloat32Array = PackedFloat32Array()
-var _toward: PackedFloat32Array = PackedFloat32Array()
 
 
 func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
@@ -73,13 +78,41 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		reset()
 		return intent
 	var opts := _sim_opts(ctx, route)
+	var now: float = SimClock.now()
+	var leading: bool = now < _leg_until and _follows(_leg_heading, _leg_astern, route)
+	if not leading:
+		_steady(opts, route, clock, now)
+		leading = _lead(opts, route, clock, now)
+	var h: float = _leg_heading if leading else _heading
+	var astern: bool = _leg_astern if leading else _astern_held
+	if not leading and _heading == FREE:
+		_active = false
+		intent.forbid_reverse = true
+		return intent
+	_active = true
+	_cone = _cone_at(h)
+	intent.target_heading = h
+	intent.heading_weight = 1.0
+	intent.force_reverse = astern
+	intent.forbid_reverse = not astern
+	return intent
+
+
+func debug_text() -> String:
+	if not _active:
+		return "Stance: route"
+	var left: float = _leg_until - SimClock.now()
+	var h: float = _leg_heading if left > 0.0 else _heading
+	var gear: String = "astern" if (_leg_astern if left > 0.0 else _astern_held) else "ahead"
+	var what: String = "lead %.0fs" % left if left > 0.0 else "steady"
+	return "Stance %s %.0f° %s | %d guns on us" % [what, rad_to_deg(h), gear, _shooters.size()]
+
+
+## The heading worth holding, with hysteresis: _heading (FREE follows the route).
+func _steady(opts: Dictionary, route: float, clock: SalvoClock, now: float) -> void:
 	var hs := PackedFloat32Array()
 	var gears := PackedByteArray()
-	for i in range(0, HEADINGS, CANDIDATE_STRIDE):
-		for astern in [0, 1]:
-			if _follows(_heading_of(i), astern == 1, route):
-				hs.append(_heading_of(i))
-				gears.append(astern)
+	_candidates(hs, gears, route)
 	var grid: int = hs.size()
 	if is_finite(route):
 		hs.append(route)
@@ -109,7 +142,6 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 				_heading = hs[base + k]
 	elif _has_choice and _heading == FREE:
 		held = free
-	var now: float = SimClock.now()
 	var top: float = maxf(best, free)
 	# Held for a flight time: flipping ends mid-salvo shows the side the angle was hiding.
 	if not _has_choice or not is_finite(held) or (now >= _hold_until and top > held + SWITCH_MARGIN):
@@ -120,20 +152,43 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 		else:
 			_heading = best_h
 			_astern_held = best_astern
-	if _heading == FREE:
-		_active = false
-		intent.forbid_reverse = true
-		return intent
-	_active = true
-	_cone = _cone_at(_heading)
-	intent.target_heading = _heading
-	intent.heading_weight = 1.0
-	intent.force_reverse = _astern_held
-	intent.forbid_reverse = not _astern_held
-	return intent
+
+
+## Whether some other heading for one flight time, then back to the steady one, beats holding it.
+func _lead(opts: Dictionary, route: float, clock: SalvoClock, now: float) -> bool:
+	_leg_until = -INF
+	var base_h: float = route if _heading == FREE else _heading
+	if not is_finite(base_h):
+		return false
+	var base_astern: bool = _heading != FREE and _astern_held
+	var leg: float = maxf(clock.dominant_tof, LEG_MIN_S)
+	var o := opts.merged({"then_heading": base_h, "then_astern": 1.0 if base_astern else 0.0, "then_at": leg})
+	var hs := PackedFloat32Array([base_h])
+	var gears := PackedByteArray([1 if base_astern else 0])
+	_candidates(hs, gears, route)
+	var scores: PackedFloat32Array = StanceSim.evaluate(o, hs, gears)
+	var best: int = 0
+	for k in range(1, hs.size()):
+		if scores[k] > scores[best]:
+			best = k
+	if best == 0 or scores[best] <= scores[0] + SWITCH_MARGIN:
+		return false
+	_leg_heading = hs[best]
+	_leg_astern = gears[best] == 1
+	_leg_until = now + leg
+	return true
+
+
+func _candidates(hs: PackedFloat32Array, gears: PackedByteArray, route: float) -> void:
+	for i in range(0, HEADINGS, CANDIDATE_STRIDE):
+		for astern in [0, 1]:
+			if _follows(_heading_of(i), astern == 1, route):
+				hs.append(_heading_of(i))
+				gears.append(astern)
 
 
 func reset() -> void:
+	_leg_until = -INF
 	_has_choice = false
 	_hold_until = -INF
 	_active = false
@@ -195,11 +250,12 @@ static func repair_spare(ship: Ship, horizon: float) -> float:
 	return maxf(spare - hc.healable_damage, 0.0)
 
 
-## Every gun that can reach us, weighted by how sure we are it is on us, tabulated
-## per heading. False while unseen or while nothing shoots or aims here.
+## Every gun that can reach us, weighted by how sure we are it is on us, with
+## its salvo clock. False while unseen or while nothing shoots or aims here.
 func _survey(ctx: SkillContext) -> bool:
 	var ship: Ship = ctx.ship
 	var clock: SalvoClock = ctx.behavior.salvo_clock
+	_shooters = []
 	if not ship.is_detected() or ship.team == null or ctx.server == null:
 		return false
 	var weight := {}
@@ -214,9 +270,7 @@ func _survey(ctx: SkillContext) -> bool:
 			continue
 		if ship.global_position.distance_to(e.global_position) <= e.artillery_controller.get_params()._range:
 			weight[e] = BYSTANDER_WEIGHT
-	_bearings = PackedFloat32Array()
-	_weights = PackedFloat32Array()
-	_rows = []
+	var now: float = SimClock.now()
 	for s in weight.keys():
 		if not (s is Ship) or not is_instance_valid(s) or not s.is_alive():
 			continue
@@ -224,45 +278,27 @@ func _survey(ctx: SkillContext) -> bool:
 		var row := _table(ship, s, Vector2(to.x, to.z).length())
 		if row.is_empty():
 			continue
-		_bearings.append(atan2(to.x, to.z))
-		_weights.append(float(weight[s]))
-		_rows.append(row)
-	if _rows.is_empty():
+		_shooters.append({"bearing": atan2(to.x, to.z), "rows": row, "weight": float(weight[s]),
+			"reload": s.artillery_controller.get_params().reload_time, "next": clock.next_landing(s, now)})
+	if _shooters.is_empty():
 		return false
 	_dps.resize(HEADINGS)
-	_heal.resize(HEADINGS)
-	_toward.resize(HEADINGS)
-	var total_w: float = 0.0
-	for k in _rows.size():
-		total_w += _weights[k]
 	for i in HEADINGS:
-		var h: float = _heading_of(i)
 		var dps: float = 0.0
-		var heal: float = 0.0
-		var toward: float = 0.0
-		for k in _rows.size():
-			var d: float = angle_difference(h, _bearings[k])
-			var a: int = clampi(roundi(rad_to_deg(absf(d)) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
-			dps += _weights[k] * _rows[k][a]
-			heal += _weights[k] * _rows[k][ASPECTS + a]
-			toward += _weights[k] * cos(d)
+		for sh in _shooters:
+			var a: int = clampi(roundi(rad_to_deg(absf(angle_difference(_heading_of(i), sh.bearing))) / ASPECT_STEP_DEG), 0, ASPECTS - 1)
+			dps += float(sh.weight) * sh.rows[a]
 		_dps[i] = dps
-		_heal[i] = heal
-		_toward[i] = toward / total_w
 	return true
 
 
-## No gun on us: zero tables, true while there is a target to bring the turrets to.
+## No gun on us: true while there is a target to bring the turrets or tubes to.
 func _quiet(ctx: SkillContext) -> bool:
 	if ctx.target == null or not is_instance_valid(ctx.target) or not ctx.target.is_alive():
 		return false
-	_rows = []
+	_shooters = []
 	_dps.resize(HEADINGS)
 	_dps.fill(0.0)
-	_heal.resize(HEADINGS)
-	_heal.fill(0.0)
-	_toward.resize(HEADINGS)
-	_toward.fill(0.0)
 	return true
 
 
@@ -325,13 +361,14 @@ func _sim_opts(ctx: SkillContext, route: float) -> Dictionary:
 	var opts := {"heading": heading, "v": ship.linear_velocity.dot(Vector3(sin(heading), 0.0, cos(heading))),
 		"vmax": vmax, "radius": radius, "tighten": p.slow_speed_turn_tightening, "spool": p.acceleration_time,
 		"reverse": p.reverse_speed_ratio, "hp": ship.health_controller.current_hp, "pos": here,
-		"in_dps": _dps, "in_heal": _heal, "toward": _toward, "route": route if is_finite(route) else INF,
+		"shooters": _shooters, "aspect_step": ASPECT_STEP_DEG, "route": route if is_finite(route) else INF,
 		"horizon": horizon, "spare": repair_spare(ship, horizon), "dt": SIM_DT,
-		"w_progress": PROGRESS_W, "w_closing": CLOSING_W}
+		"w_progress": PROGRESS_W, "w_closing": CLOSING_W, "w_deal": DEAL_WEIGHT}
 	var target: Ship = ctx.target
 	var arty = ship.artillery_controller
 	if target == null or not is_instance_valid(target) or not target.is_alive() or arty == null:
 		return opts
+	_add_tubes(opts, ctx, target)
 	var to_me: Vector3 = ship.global_position - target.global_position
 	var range_m: float = Vector2(to_me.x, to_me.z).length()
 	var gp: GunParams = arty.get_params()
@@ -342,9 +379,33 @@ func _sim_opts(ctx: SkillContext, route: float) -> Dictionary:
 	var out := _expected(target, ship, range_m, aspect)
 	if out.x < 0.0:
 		return opts
+	var ready := PackedFloat32Array()
+	for g in arty.guns:
+		ready.append((1.0 - clampf(g.reload, 0.0, 1.0)) * gp.reload_time)
 	opts.merge({"target": Vector2(target.global_position.x, target.global_position.z), "guns": arty.guns,
-		"traverse": gp.traverse_speed, "out_dps": out.x, "w_deal": DEAL_WEIGHT})
+		"gun_ready": ready, "reload_s": gp.reload_time, "traverse": gp.traverse_speed, "out_dps": out.x})
 	return opts
+
+
+## Loaded tubes, the torpedo lead and what a launch is worth, when the target is in reach.
+func _add_tubes(opts: Dictionary, ctx: SkillContext, target: Ship) -> void:
+	var tc = ctx.ship.torpedo_controller
+	if tc == null or tc.get_params() == null:
+		return
+	var tp: TorpedoLauncherParams = tc.get_params()
+	if ctx.ship.global_position.distance_to(target.global_position) > tp._range:
+		return
+	var loaded: Array = []
+	var muzzles: int = 0
+	for l: TorpedoLauncher in tc.launchers:
+		if is_instance_valid(l) and l.reload >= 1.0:
+			loaded.append(l)
+			muzzles += l.muzzles.size()
+	if loaded.is_empty():
+		return
+	var aim: Vector3 = ctx.behavior.torpedo_target_position if ctx.behavior.has_valid_torpedo_solution else target.global_position
+	opts.merge({"tubes": loaded, "tube_target": Vector2(aim.x, aim.z),
+		"tube_value": float(muzzles) / loaded.size() * tc.get_torp_params().damage * TORP_HIT_SHARE})
 
 
 ## Bearing the route runs toward, INF once there.

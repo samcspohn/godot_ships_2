@@ -86,7 +86,6 @@ var _skill_engage: SkillEngage = SkillEngage.new()
 var _skill_disengage: SkillDisengage = SkillDisengage.new()
 var _skill_hold: SkillHold = SkillHold.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
-var _skill_broadside: SkillBroadside = SkillBroadside.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
 var _skill_evade: SkillEvade = SkillEvade.new()
 var _skill_stance: SkillStance = SkillStance.new()
@@ -2463,7 +2462,7 @@ func _apply_gun_policy(_ctx: SkillContext, _sit: Dictionary) -> void:
 ## post-processors are shaping a heading the navigator is about to abandon.
 const POST_PROCESS_MAX_WAYPOINT_OFFSET: float = deg_to_rad(60.0)
 
-## Whether broadside/evade/spread may touch this intent.
+## Whether evade/spread may touch this intent.
 ##
 ## Reads the waypoint the same way SkillBroadside does -- live path waypoint,
 ## only while the navigator is still following the path and the intent has not
@@ -2510,18 +2509,14 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 
 	var forced: bool = bool(sit.forced)
 	var threat: float = float(sit.threat)
-	# The clock says which of broadside and evade is right: broadside gets the
-	# reload gap after a splash, evade (and stance) everything else, so evade
-	# always wins while shells are in the air or guns are on us.
+	# Stance shows the side in the reload gap itself; evade weaves only while a salvo is due.
 	var evade_wins: bool = salvo_clock.under_fire and (
 		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
 	)
 	var post_ok: bool = (sit.arm in [&"engaged", &"close", &"low_threat", &"utility"] or d.post_process_idle_arms) \
 		and _post_process_allowed(ctx, intent)
-	var broadside_now: bool = post_ok and d.use_broadside and not forced \
-		and _active_skill_name not in d.broadside_exclude and not evade_wins
 	# Every arm, committed ones too: skills choose where, stance how the hull gets there.
-	if not broadside_now and _active_skill_name not in d.evade_exclude:
+	if _active_skill_name not in d.evade_exclude:
 		intent = _skill_stance.apply(intent, ctx)
 	else:
 		_skill_stance.reset()
@@ -2529,9 +2524,7 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 		_skill_evade.reset()
 		return intent
 
-	if broadside_now:
-		intent = _skill_broadside.apply(intent, ctx, d.broadside_params)
-	elif evade_wins and not forced and _active_skill_name not in d.evade_exclude:
+	if evade_wins and not forced and _active_skill_name not in d.evade_exclude:
 		intent = _skill_evade.apply(intent, ctx, d.evade_params)
 		intent.target_heading = _skill_stance.clamp_heading(intent.target_heading)
 	else:

@@ -60,7 +60,7 @@ var detection_cost_gain: float = 4.0
 ## hull not routing under wants_stealth. 0 = off.
 var fire_cost_gain: float = 0.25
 
-## Whether the idle and dark arms get the broadside/spread post-processors. CA
+## Whether the idle and dark arms get the evade/spread post-processors. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true
 
@@ -144,16 +144,7 @@ var ra_hurt_hp_ratio: float = 0.5
 # Post-processing
 # ---------------------------------------------------------------------------
 
-## Apply the broadside post-process at all, and the skills it is skipped for.
-var use_broadside: bool = true
-var broadside_exclude: Array[StringName] = [&"Hunt", &"SailForward"]
-var broadside_params: Dictionary = {}
-
-## Evasion post-process.  Evade and broadside contend for heading, arbitrated by
-## the salvo clock: broadside owns the reload gap, evade owns the rest.  This
-## threshold is the one case where threat overrides that -- above it the ship
-## stays evasive even in the reload gap, because the window it would be trading
-## the angle for is not worth what is pointed at it.
+## Evasion post-process, off in the reload gap (stance's to use) unless threat is past this.
 var evade_override_threat: float = 0.75
 var evade_exclude: Array[StringName] = [&"SailForward"]
 var evade_params: Dictionary = {}
@@ -181,9 +172,6 @@ static func for_battleship() -> BotDoctrine:
 	# The close arm pushes below push_threat and kites above it, so that is where
 	# the standoff has to have finished opening back out.
 	d.ra_bb_shooter_hurt = 13000.0
-	d.use_broadside = true
-	d.broadside_exclude = [&"Hunt", &"SailForward"]
-	d.broadside_params = {"oscillation_bias": 0.5}
 	d.spread_exclude = [&"Engage", &"Disengage", &"Camp", &"Hold"]
 	# A battleship's evasion IS its angling, so it is never worth suppressing:
 	# the presentation weave costs it nothing it was going to use anyway.
@@ -197,11 +185,6 @@ static func for_cruiser() -> BotDoctrine:
 	d.dark_takes_cover = true
 	d.push_threat = 0.5
 	d.ra_bb_shooter_hurt = 11000.0
-	# The CA's broadside post-process is deliberately off: its engaged arm sets
-	# heading_weight itself and a second opinion on heading fights it.  Evade is
-	# not in the same position -- with broadside off there is nothing for it to
-	# contend with, and a cruiser under fire has the rudder to make weaving pay.
-	d.use_broadside = false
 	d.spread_exclude = [&"Engage", &"Disengage", &"Hold"]
 	d.low_threat_arm_first = true
 	# CA forces the post-processors off for its whole high-threat close arm,
@@ -228,8 +211,6 @@ static func for_destroyer() -> BotDoctrine:
 	d.dark_chain = []
 	d.close_arm_range_gated = false
 	d.push_threat = 0.5
-	d.use_broadside = true
-	d.broadside_exclude = [&"Retreat", &"Hold"]
 	d.spread_exclude = [&"Engage", &"Disengage", &"Retreat", &"Hold"]
 	# The DD never marks an intent forced, so nothing is ever skipped for it.
 	d.force_below = -1.0
