@@ -11,6 +11,7 @@ func _init() -> void:
 	tier = 3
 	cost = 3
 	flavor_text = "Heavier AP shells with improved penetrating charge deal greater damage on impact."
+	allowed_classes = [Ship.ShipClass.DD, Ship.ShipClass.CA]
 	tooltip_stats = [
 		{"stat": "AP Shell Damage", "value": fmt_mult_pct(DAMAGE_MOD), "positive": true},
 	]
