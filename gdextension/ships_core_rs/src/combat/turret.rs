@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
 
 use godot::builtin::AnyArray;
@@ -16,6 +18,17 @@ names!(
 thread_local! {
     // Dropping StringNames after engine shutdown panics.
     static NAMES: std::mem::ManuallyDrop<Names> = std::mem::ManuallyDrop::new(Names::new());
+    static GOALS: RefCell<HashMap<InstanceId, Goal>> = RefCell::new(HashMap::new());
+}
+
+/// What a gun's last solve wanted; frames between solves only rotate toward it.
+struct Goal {
+    dir: Vector2,
+    elev: f64,
+    slew: Slew,
+    barrel: Gd<Node3D>,
+    can_fire: bool,
+    valid: bool,
 }
 
 const SLEW_BOUNDARY_EPS: f64 = 1.0e-4;
@@ -60,6 +73,27 @@ fn elevation_of(b: &Basis) -> f64 {
     (-z.y as f64).atan2(Vector2::new(-z.x, -z.z).length() as f64)
 }
 
+/// Steps the barrel toward `desired` (NaN: down); whether it is laid, or as laid as it can be.
+fn elevate(barrel: &Gd<Node3D>, desired: f64, max_elev: f64) -> bool {
+    let mut barrel = barrel.clone();
+    let err_pre = if desired.is_nan() { f64::INFINITY } else { desired - elevation_of(&barrel.get_global_transform().basis) };
+    let step = if desired.is_nan() { -max_elev } else { err_pre.clamp(-max_elev, max_elev) };
+    if step.abs() > 0.0001 {
+        barrel.rotate(Vector3::RIGHT, step as f32);
+        let mut r = barrel.get_rotation();
+        r.x = (r.x as f64).max(MIN_ELEVATION_ANGLE) as f32;
+        barrel.set_rotation(r);
+    }
+    if desired.is_nan() {
+        return false;
+    }
+    let err = desired - elevation_of(&barrel.get_global_transform().basis);
+    let at_min_depression = (barrel.get_rotation().x as f64) <= MIN_ELEVATION_ANGLE + 0.001 && err < 0.0;
+    // Ship roll outruns elevation speed in turns; the shell launches from _aim_point, not the barrel.
+    let chasing_at_rate = err_pre.abs() > max_elev && sgn(step) == sgn(err_pre) && err.abs() < 0.05;
+    err.abs() < 0.015 || at_min_depression || chasing_at_rate
+}
+
 fn launch(from: Vector3, to: Vector3, shell: &Gd<Resource>) -> Option<Vector3> {
     let sol = Drag::calculate_launch_vector_impl(from, to, shell);
     sol.at(0).try_to::<Vector3>().ok()
@@ -81,6 +115,7 @@ impl GunStats {
     }
 }
 
+#[derive(Clone)]
 struct Slew {
     on: bool,
     min: f64,
@@ -289,6 +324,7 @@ impl Turret {
 
     /// Gun.return_to_base: true once the barrel is off the level stop, matching the old script.
     pub(crate) fn gun_home(&mut self, delta: f64, traverse_speed: f64) -> bool {
+        GOALS.with(|g| g.borrow_mut().remove(&self.node.instance_id()));
         self.turret_home(delta, traverse_speed);
         let Some(mut barrel) = self.barrel() else { return true };
         let mut r = barrel.get_rotation();
@@ -303,6 +339,7 @@ impl Turret {
     pub(crate) fn gun_aim(&mut self, aim_point: Vector3, delta: f64, return_to_base: bool, clamp_aim: bool, ship_pos: Vector3,
             stats: &GunStats, shell: &Gd<Resource>) -> f64 {
         if self.disabled {
+            GOALS.with(|g| g.borrow_mut().remove(&self.node.instance_id()));
             return f64::INFINITY;
         }
         self.turret_aim(aim_point, delta, return_to_base, stats.traverse);
@@ -321,38 +358,52 @@ impl Turret {
         };
         self.aim_point = Some(aim);
 
-        let Some(mut barrel) = self.barrel() else {
+        let Some(barrel) = self.barrel() else {
             self.can_fire = false;
             return desired;
         };
-        let max_elev = stats.elev_speed.to_radians() * delta;
-        let mut desired_elev = f64::NAN;
-        let mut err = f64::INFINITY;
-        let mut err_pre = f64::INFINITY;
-        let step = match sol {
-            Some(v) => {
-                desired_elev = (v.y as f64).atan2(Vector2::new(v.x, v.z).length() as f64);
-                err = desired_elev - elevation_of(&barrel.get_global_transform().basis);
-                err_pre = err;
-                err.clamp(-max_elev, max_elev)
-            }
-            None => -max_elev,
-        };
-        if !step.is_nan() && step.abs() > 0.0001 {
-            barrel.rotate(Vector3::RIGHT, step as f32);
-            let mut r = barrel.get_rotation();
-            r.x = (r.x as f64).max(MIN_ELEVATION_ANGLE) as f32;
-            barrel.set_rotation(r);
-        }
-        if !desired_elev.is_nan() {
-            err = desired_elev - elevation_of(&barrel.get_global_transform().basis);
-        }
-        let at_min_depression = (barrel.get_rotation().x as f64) <= MIN_ELEVATION_ANGLE + 0.001 && err < 0.0;
-        // Ship roll outruns elevation speed in turns; the shell launches from _aim_point, not the barrel.
-        let chasing_at_rate = err_pre != f64::INFINITY && err_pre.abs() > max_elev && sgn(step) == sgn(err_pre) && err.abs() < 0.05;
-        let elevated = err != f64::INFINITY && (err.abs() < 0.015 || at_min_depression || chasing_at_rate);
+        let desired_elev = sol.map_or(f64::NAN, |v| (v.y as f64).atan2(Vector2::new(v.x, v.z).length() as f64));
+        let elevated = elevate(&barrel, desired_elev, stats.elev_speed.to_radians() * delta);
         self.can_fire = elevated && desired.abs() < 0.02 && self.valid;
+        let to = self.node.get_global_position();
+        let dir = Vector2::new(aim_point.x - to.x, aim_point.z - to.z).normalized_or_zero();
+        let goal = Goal { dir, elev: desired_elev, slew: self.slew().clone(), barrel, can_fire: self.can_fire, valid: self.valid };
+        GOALS.with(|g| g.borrow_mut().insert(self.node.instance_id(), goal));
         desired
+    }
+
+    /// Rotates toward the last solve's goal; false when there is none to follow.
+    pub(crate) fn gun_track(node: &Gd<Node3D>, delta: f64, stats: &GunStats) -> bool {
+        GOALS.with(|g| {
+            let mut goals = g.borrow_mut();
+            let Some(goal) = goals.get_mut(&node.instance_id()) else { return false };
+            let fwd = -node.get_global_transform().basis.col_c();
+            let f2 = Vector2::new(fwd.x, fwd.z).normalized_or_zero();
+            let desired = goal.dir.cross(f2).atan2(goal.dir.dot(f2)) as f64;
+            let mut t = Turret {
+                node: node.clone(),
+                slew: std::cell::OnceCell::from(goal.slew.clone()),
+                disabled: false,
+                base_rotation: 0.0,
+                can_fire: goal.can_fire,
+                valid: false,
+                loaded: (goal.can_fire, goal.valid),
+                aim_point: None,
+            };
+            let rot_y = t.rot_y();
+            let max_delta = stats.traverse.to_radians() * delta;
+            t.valid = t.in_fire_arcs(rot_y + desired);
+            let step = t.apply_rotation_limits(rot_y, desired).clamp(-max_delta, max_delta);
+            if step.abs() > 0.001 {
+                t.node.rotate(Vector3::UP, step as f32);
+                t.clamp_to_rotation_limits();
+            }
+            let elevated = elevate(&goal.barrel, goal.elev, stats.elev_speed.to_radians() * delta);
+            t.can_fire = elevated && desired.abs() < 0.02 && t.valid;
+            (goal.can_fire, goal.valid) = (t.can_fire, t.valid);
+            t.store();
+            true
+        })
     }
 }
 
@@ -414,12 +465,17 @@ impl TurretCore {
         err
     }
 
-    /// ArtilleryController's per-tick loop: every gun of one battery at one point.
+    /// ArtilleryController's per-tick loop: every gun of one battery at one point;
+    /// without `solve` guns with a goal only rotate toward it.
     #[func]
-    fn aim_guns(guns: AnyArray, aim_point: Vector3, delta: f64, ship_pos: Vector3, params: Gd<Resource>, shell: Gd<Resource>) {
+    fn aim_guns(guns: AnyArray, aim_point: Vector3, delta: f64, ship_pos: Vector3, params: Gd<Resource>, shell: Gd<Resource>,
+            solve: bool) {
         let stats = GunStats::of(&params);
         for v in guns.iter_shared() {
             if let Ok(g) = v.try_to::<Gd<Node3D>>() {
+                if !solve && Turret::gun_track(&g, delta, &stats) {
+                    continue;
+                }
                 let mut t = Turret::load(g);
                 t.gun_aim(aim_point, delta, false, false, ship_pos, &stats, &shell);
                 t.store();

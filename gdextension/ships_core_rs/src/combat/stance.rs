@@ -127,7 +127,7 @@ struct Setup {
     goal: f64,
     goal_w: f64,
     w_deal: f64,
-    then: (f64, bool, f64),
+    then: (f64, f64),
 }
 
 impl Setup {
@@ -173,7 +173,7 @@ impl Setup {
             goal,
             goal_w,
             w_deal: get_f(o, "w_deal", 1.0 / 3.0),
-            then: (get_f(o, "then_heading", 0.0), get_f(o, "then_astern", 0.0) != 0.0, get_f(o, "then_at", f64::INFINITY)),
+            then: (get_f(o, "then_heading", 0.0), get_f(o, "then_at", f64::INFINITY)),
         }
     }
 
@@ -196,8 +196,7 @@ impl Setup {
         let (mut taken, mut healable, mut dealt, mut gain) = (0.0, 0.0, 0.0, 0.0);
         let mut t = 0.0;
         while t < self.horizon {
-            let (want, back) = if t >= self.then.2 { (self.then.0, self.then.1) } else { (heading, astern) };
-            self.step(&mut hull, want, back);
+            self.step(&mut hull, if t >= self.then.1 { self.then.0 } else { heading }, astern);
             for s in &self.shooters {
                 let (d, h) = s.landing(t, self.dt, hull.hdg, self.step_deg);
                 taken += d;
@@ -216,8 +215,8 @@ impl Setup {
 }
 
 /// SkillStance's look-ahead: sails each candidate (heading, gear) for a
-/// horizon at the hull's spool and turn rate, switching to then_heading at
-/// then_at, with each enemy's salvos landing on its own clock at the aspect
+/// horizon at the hull's spool and turn rate, turning to then_heading (same
+/// gear) at then_at, with each enemy's salvos landing on its own clock at the aspect
 /// shown then, and our guns and loaded tubes firing when they bear and are ready.
 #[derive(GodotClass)]
 #[class(base = RefCounted, init)]
@@ -230,8 +229,7 @@ impl StanceSim {
     /// opts: heading, v, vmax, radius, tighten, spool, reverse, hp, spare, pos,
     /// shooters ([{bearing, rows, weight, reload, next}], rows = dps then
     /// repairable dps per aspect_step degrees off the bow), route (INF none),
-    /// horizon, dt, w_progress, w_closing, w_deal; then_heading, then_astern,
-    /// then_at; target, guns, gun_ready, reload_s, traverse, out_dps; tubes,
+    /// horizon, dt, w_progress, w_closing, w_deal; then_heading, then_at; target, guns, gun_ready, reload_s, traverse, out_dps; tubes,
     /// tube_target, tube_value. Returns one score per (headings[i], astern[i]).
     #[func]
     fn evaluate(opts: VarDictionary, headings: PackedFloat32Array, astern: PackedByteArray) -> PackedFloat32Array {

@@ -13,6 +13,12 @@ var dispersion_calculator: DispersionCalculator = DispersionCalculator.new()
 var fire_held: bool = false
 var sequential_fire_timer: float = 0.0
 var sequential_fire_delay: float = 0.2 # Delay between sequential gun fires
+## Ballistic solves per second; frames between only rotate toward the last one.
+const AIM_SOLVE_INTERVAL: float = 1.0 / 6.0
+## An aim point moved this far since the last solve is solved at once (a player's mouse).
+const AIM_JUMP_M: float = 20.0
+var _aim_solve_t: float = randf() * AIM_SOLVE_INTERVAL
+var _aim_solved_at: Vector3 = Vector3.INF
 
 # func _init():
 # 	button_names = ["AP", "HE"]
@@ -388,7 +394,12 @@ func _physics_process(delta: float) -> void:
 		for g in guns:
 			g._aim(aim_point, delta)
 	else:
-		TurretCore.aim_guns(guns, aim_point, delta, _ship.global_position, get_params(), get_shell_params())
+		_aim_solve_t += delta
+		var solve: bool = _aim_solve_t >= AIM_SOLVE_INTERVAL or aim_point.distance_to(_aim_solved_at) > AIM_JUMP_M
+		if solve:
+			_aim_solve_t = 0.0
+			_aim_solved_at = aim_point
+		TurretCore.aim_guns(guns, aim_point, delta, _ship.global_position, get_params(), get_shell_params(), solve)
 
 	if fire_held:
 		sequential_fire_timer += delta

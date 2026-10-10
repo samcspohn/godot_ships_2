@@ -3852,7 +3852,7 @@ func _select_air_target(av: AviationController, server: GameServer, gun_target: 
 # a search front centred on the enemy's expected position.
 func aviation_engage(target: Ship, server: GameServer) -> void:
 	var av: AviationController = _ship.aviation_controller
-	if av == null:
+	if av == null or av.squadrons.is_empty():
 		return
 	# Watch for planes being hurt where they are not supposed to be, before any
 	# tasking decision is made off the result (see _sample_loiter_damage).

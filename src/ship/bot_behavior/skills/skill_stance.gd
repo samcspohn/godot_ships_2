@@ -1,23 +1,19 @@
 class_name SkillStance
 extends BotSkill
 
-## Owns heading and gear while guns can reach us. Each (heading, gear) option
-## is sailed (StanceSim) at the hull's spool and turn rate for a minute past
-## the time a half turn takes, every enemy's salvos landing on its own clock at
-## the aspect we show then, our turrets slewing and firing on their reloads.
-## Score = HP lost for good (repair capacity counted), less a third of the HP
-## dealt, plus progress; at a station, closing on the guns stands in for progress.
-## The steady pick holds; a lead leg (another heading for one flight time, then
-## back to the steady one) is taken when it pays, which is how the side is shown
-## in a reload gap or the tubes are brought to bear.
+## Owns heading and gear while guns can reach us. Once per enemy flight time
+## it commits to a plan: hold heading H (ahead or astern) for that flight time,
+## then the tail (the route, or the heading taking least fire) for the rest of a
+## horizon a minute past a half turn. Each plan is sailed (StanceSim) with every
+## enemy's salvos landing on its own clock at the aspect shown then, and our guns
+## and loaded tubes firing when they bear. Score = HP lost for good (repair
+## counted), less a third of the HP dealt, plus progress. Showing the side in a
+## reload gap and turning the tubes on are plans that win.
 ## SkillEvade weaves inside the cone of headings nearly as cheap.
-
-## Choice index for following the route's own heading, whatever it shows.
-const FREE: int = -2
 
 const STEP: float = deg_to_rad(5.0)
 const HEADINGS: int = 72
-## Candidates are every CANDIDATE_STRIDE-th heading; the held one is refined by STEP.
+## Candidates are every CANDIDATE_STRIDE-th heading.
 const CANDIDATE_STRIDE: int = 3
 const ASPECT_STEP_DEG: float = 5.0
 const ASPECTS: int = 37
@@ -39,28 +35,23 @@ const DEAL_WEIGHT: float = 1.0 / DEAL_RATIO
 const CLOSING_W: float = 0.05
 ## In range of us, but not shown to be aiming here.
 const BYSTANDER_WEIGHT: float = 0.5
-## Hysteresis, in shares of remaining HP over the horizon.
+## The plan held now wins by this, in shares of remaining HP over the horizon.
 const SWITCH_MARGIN: float = 0.02
 ## Stance picks how to follow the skill's route, never whether: motion stays within this of it.
 const ROUTE_CONE: float = deg_to_rad(90.0)
-const FREE_MARGIN: float = 0.01
-const TRACK_GAIN: float = 0.002
 const LEG_MIN_S: float = 6.0
 ## Share of a loaded tube's torpedoes expected to hit.
 const TORP_HIT_SHARE: float = 0.1
 
 var _heading: float = 0.0
-var _astern_held: bool = false
-var _has_choice: bool = false
-var _hold_until: float = -INF
+var _astern: bool = false
+## The plan is the route's own heading, whatever it shows.
+var _on_route: bool = false
+var _until: float = -INF
 var _active: bool = false
 var _cone: float = MIN_CONE
 ## Shooter instance id -> [range bucket, dps per aspect step then their repairable parts].
 var _tables: Dictionary = {}
-
-var _leg_heading: float = 0.0
-var _leg_astern: bool = false
-var _leg_until: float = -INF
 
 ## StanceSim shooter entries: bearing, rows, weight, reload, next.
 var _shooters: Array[Dictionary] = []
@@ -77,120 +68,84 @@ func apply(intent: NavIntent, ctx: SkillContext) -> NavIntent:
 	if not _survey(ctx) and not _quiet(ctx):
 		reset()
 		return intent
-	var opts := _sim_opts(ctx, route)
 	var now: float = SimClock.now()
-	var leading: bool = now < _leg_until and _follows(_leg_heading, _leg_astern, route)
-	if not leading:
-		_steady(opts, route, clock, now)
-		leading = _lead(opts, route, clock, now)
-	var h: float = _leg_heading if leading else _heading
-	var astern: bool = _leg_astern if leading else _astern_held
-	if not leading and _heading == FREE:
+	var stale: bool = (_on_route and not is_finite(route)) or not _follows(_heading, _astern, route)
+	if now >= _until or stale:
+		_plan(ctx, route, clock, now)
+	if _on_route:
 		_active = false
 		intent.forbid_reverse = true
 		return intent
 	_active = true
-	_cone = _cone_at(h)
-	intent.target_heading = h
+	_cone = _cone_at(_heading)
+	intent.target_heading = _heading
 	intent.heading_weight = 1.0
-	intent.force_reverse = astern
-	intent.forbid_reverse = not astern
+	intent.force_reverse = _astern
+	intent.forbid_reverse = not _astern
 	return intent
 
 
 func debug_text() -> String:
 	if not _active:
 		return "Stance: route"
-	var left: float = _leg_until - SimClock.now()
-	var h: float = _leg_heading if left > 0.0 else _heading
-	var gear: String = "astern" if (_leg_astern if left > 0.0 else _astern_held) else "ahead"
-	var what: String = "lead %.0fs" % left if left > 0.0 else "steady"
-	return "Stance %s %.0f° %s | %d guns on us" % [what, rad_to_deg(h), gear, _shooters.size()]
+	return "Stance %.0f° %s %.0fs | %d guns on us" % [rad_to_deg(_heading), "astern" if _astern else "ahead",
+		_until - SimClock.now(), _shooters.size()]
 
 
-## The heading worth holding, with hysteresis: _heading (FREE follows the route).
-func _steady(opts: Dictionary, route: float, clock: SalvoClock, now: float) -> void:
-	var hs := PackedFloat32Array()
-	var gears := PackedByteArray()
-	_candidates(hs, gears, route)
-	var grid: int = hs.size()
-	if is_finite(route):
-		hs.append(route)
-		gears.append(0)
-	var tracked: bool = _has_choice and _heading != FREE and _follows(_heading, _astern_held, route)
-	if tracked:
-		for k in [0, -1, 1]:
-			hs.append(wrapf(_heading + k * STEP, -PI, PI))
-			gears.append(1 if _astern_held else 0)
-	var scores: PackedFloat32Array = StanceSim.evaluate(opts, hs, gears)
+func _plan(ctx: SkillContext, route: float, clock: SalvoClock, now: float) -> void:
+	var opts := _sim_opts(ctx, route)
+	var leg: float = clock.dominant_tof if not _shooters.is_empty() else ctx.ship.artillery_controller.get_params().reload_time
+	leg = maxf(leg, LEG_MIN_S)
+	# A plan cut short (route turned away) or long expired is not one to favour.
+	var held: bool = _until > -INF and now - _until < leg and _follows(_heading, _astern, route)
 	var best: float = -INF
-	var best_h: float = 0.0
-	var best_astern: bool = false
-	for k in grid:
-		if scores[k] > best:
-			best = scores[k]
-			best_h = hs[k]
-			best_astern = gears[k] == 1
-	var free: float = scores[grid] + FREE_MARGIN if is_finite(route) else -INF
-	var held: float = -INF
-	if tracked:
-		var base: int = grid + (1 if is_finite(route) else 0)
-		held = scores[base]
-		for k in [1, 2]:
-			if scores[base + k] > held + TRACK_GAIN:
-				held = scores[base + k]
-				_heading = hs[base + k]
-	elif _has_choice and _heading == FREE:
-		held = free
-	var top: float = maxf(best, free)
-	# Held for a flight time: flipping ends mid-salvo shows the side the angle was hiding.
-	if not _has_choice or not is_finite(held) or (now >= _hold_until and top > held + SWITCH_MARGIN):
-		_has_choice = true
-		_hold_until = now + maxf(clock.dominant_tof, 1.0)
-		if free >= best:
-			_heading = FREE
-		else:
-			_heading = best_h
-			_astern_held = best_astern
-
-
-## Whether some other heading for one flight time, then back to the steady one, beats holding it.
-func _lead(opts: Dictionary, route: float, clock: SalvoClock, now: float) -> bool:
-	_leg_until = -INF
-	var base_h: float = route if _heading == FREE else _heading
-	if not is_finite(base_h):
-		return false
-	var base_astern: bool = _heading != FREE and _astern_held
-	var leg: float = maxf(clock.dominant_tof, LEG_MIN_S)
-	var o := opts.merged({"then_heading": base_h, "then_astern": 1.0 if base_astern else 0.0, "then_at": leg})
-	var hs := PackedFloat32Array([base_h])
-	var gears := PackedByteArray([1 if base_astern else 0])
-	_candidates(hs, gears, route)
-	var scores: PackedFloat32Array = StanceSim.evaluate(o, hs, gears)
-	var best: int = 0
-	for k in range(1, hs.size()):
-		if scores[k] > scores[best]:
-			best = k
-	if best == 0 or scores[best] <= scores[0] + SWITCH_MARGIN:
-		return false
-	_leg_heading = hs[best]
-	_leg_astern = gears[best] == 1
-	_leg_until = now + leg
-	return true
-
-
-func _candidates(hs: PackedFloat32Array, gears: PackedByteArray, route: float) -> void:
-	for i in range(0, HEADINGS, CANDIDATE_STRIDE):
-		for astern in [0, 1]:
-			if _follows(_heading_of(i), astern == 1, route):
+	for astern in [false, true]:
+		var hs := PackedFloat32Array()
+		var kinds := PackedByteArray()
+		if is_finite(route) and not astern:
+			hs.append(route)
+			kinds.append(1)
+		if held and not _on_route and _astern == astern:
+			hs.append(_heading)
+			kinds.append(2)
+		for i in range(0, HEADINGS, CANDIDATE_STRIDE):
+			if _follows(_heading_of(i), astern, route):
 				hs.append(_heading_of(i))
-				gears.append(astern)
+				kinds.append(0)
+		if hs.is_empty():
+			continue
+		var gears := PackedByteArray()
+		gears.resize(hs.size())
+		gears.fill(1 if astern else 0)
+		var scores: PackedFloat32Array = StanceSim.evaluate(
+			opts.merged({"then_heading": _tail(ctx, route, astern), "then_at": leg}), hs, gears)
+		for k in hs.size():
+			var keep: bool = held and (kinds[k] == 2 or (kinds[k] == 1 and _on_route))
+			var sc: float = scores[k] + (SWITCH_MARGIN if keep else 0.0)
+			if sc > best:
+				best = sc
+				_heading = hs[k]
+				_astern = astern
+				_on_route = kinds[k] == 1
+	_until = now + leg
+
+
+## What a plan settles on after its first flight time.
+func _tail(ctx: SkillContext, route: float, astern: bool) -> float:
+	if is_finite(route):
+		return wrapf(route + PI, -PI, PI) if astern else route
+	if _shooters.is_empty():
+		return ctx.behavior._get_ship_heading()
+	var best: int = 0
+	for i in HEADINGS:
+		if _dps[i] < _dps[best]:
+			best = i
+	return _heading_of(best)
 
 
 func reset() -> void:
-	_leg_until = -INF
-	_has_choice = false
-	_hold_until = -INF
+	_until = -INF
+	_on_route = false
 	_active = false
 
 

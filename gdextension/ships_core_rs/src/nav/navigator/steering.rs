@@ -268,12 +268,19 @@ impl ShipNavigator {
             // Torpedoes can be fast and far - use 90 s of torpedo travel as the
             // engagement horizon so the ship begins dodging well before impact.
             // Ship obstacles use the normal lookahead-based range.
-            let check_range = if obs.is_torpedo() {
-                obs.velocity.length() * 90.0 + self.params.ship_length
+            let rel = obs.position - self.state.position;
+            let near = if obs.is_torpedo() {
+                rel.length() < obs.velocity.length() * 90.0 + self.params.ship_length
             } else {
-                engagement_range
+                // Closest approach on both current tracks, padded by a turning circle
+                // since our arc can bend toward it.
+                let rv = obs.velocity - self.state.velocity;
+                let horizon = engagement_range / self.params.max_speed.max(1.0);
+                let t = if rv.length_squared() > 1e-6 { (-rel.dot(rv) / rv.length_squared()).clamp(0.0, horizon) } else { 0.0 };
+                let miss = (self.params.ship_length + obs.length) * 0.5 + hard_clearance + self.params.turning_circle_radius;
+                rel.length() < engagement_range && (rel + rv * t).length() < miss
             };
-            if self.state.position.distance_to(obs.position) < check_range {
+            if near {
                 obstacles_safe = false;
                 break;
             }

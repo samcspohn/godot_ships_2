@@ -76,6 +76,8 @@ const RADAR_DECAY_FLOOR: float = 0.6
 var match_active: bool = false
 var match_ended: bool = false
 var match_end_timer: float = 0.0
+## Spotting runs on every Nth physics frame; visibility holds in between.
+const SPOT_EVERY_FRAMES: int = 2
 const MATCH_END_DELAY: float = 5.0  # Seconds to wait after last kill before showing end screen
 const MATCH_DURATION: float = 20.0 * 60.0  # 20 minutes
 var match_elapsed: float = 0.0
@@ -1359,6 +1361,41 @@ func _physics_process(_delta: float) -> void:
 		return
 
 	visible_toggled.clear()
+	if Engine.get_physics_frames() % SPOT_EVERY_FRAMES == 0:
+		_spot_pass()
+
+	for t in teams:
+		for ship in t.contacts.keys():
+			if not is_instance_valid(ship) or ship.health_controller.is_dead():
+				t.erase_contact(ship)
+		# Without expiry a one-off bloom would override the spawn-line estimate
+		# for the rest of the match.
+		_prune_inferred_contacts(t.inferred_contacts)
+		for fixes in [t.hydro, t.radar, t.air]:
+			for ship in fixes.keys():
+				if not is_instance_valid(ship) or ship.health_controller.is_dead():
+					fixes.erase(ship)
+
+	_apply_launch_reveals()
+
+	if multiplayer.get_peers().is_empty():
+		consumable_toggled.clear()
+		sunk_toggled.clear()
+	else:
+		_sync_clients()
+
+
+	for t in teams:
+		t.valid_targets = _get_valid_targets(t.id)
+
+	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
+		_update_threat_registry()
+	if Engine.get_physics_frames() % REACH_SWEEP_INTERVAL == 0:
+		_sweep_reach_fields()
+
+
+## Who sees whom this frame, and the contacts that appear or go dark with it.
+func _spot_pass() -> void:
 	for t in teams:
 		t.clear_in_range()
 
@@ -1417,20 +1454,9 @@ func _physics_process(_delta: float) -> void:
 				if p.health_controller.is_alive() and p.concealment.last_spotted_time > 0:
 					_write_unspotted_lkp(enemy_team_id, p, SimClock.now())
 
-	for t in teams:
-		for ship in t.contacts.keys():
-			if not is_instance_valid(ship) or ship.health_controller.is_dead():
-				t.erase_contact(ship)
-		# Without expiry a one-off bloom would override the spawn-line estimate
-		# for the rest of the match.
-		_prune_inferred_contacts(t.inferred_contacts)
-		for fixes in [t.hydro, t.radar, t.air]:
-			for ship in fixes.keys():
-				if not is_instance_valid(ship) or ship.health_controller.is_dead():
-					fixes.erase(ship)
 
-	_apply_launch_reveals()
-
+## Ship state to every connected player and spectator, each seeing only what its team has spotted.
+func _sync_clients() -> void:
 	_send_hydro_syncs()
 	_send_radar_syncs()
 	_send_air_syncs()
@@ -1578,15 +1604,6 @@ func _physics_process(_delta: float) -> void:
 			continue
 		var d = p.sync_player_data()
 		p.sync_player.rpc_id(p_id, d)
-
-
-	for t in teams:
-		t.valid_targets = _get_valid_targets(t.id)
-
-	if Engine.get_physics_frames() % THREAT_UPDATE_INTERVAL == 0:
-		_update_threat_registry()
-	if Engine.get_physics_frames() % REACH_SWEEP_INTERVAL == 0:
-		_sweep_reach_fields()
 
 
 ## Per-team fire, line-of-sight and reach planes, built from what each team

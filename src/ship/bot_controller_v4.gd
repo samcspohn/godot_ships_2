@@ -893,6 +893,10 @@ func _acquire_target(last_target: Ship) -> void:
 	target = behavior.pick_target(server_node.get_valid_targets(_ship.team.team_id), last_target)
 
 
+## Air tasking per second; squadrons fly their orders in between.
+const AVIATION_INTERVAL: float = 0.25
+var _aviation_t: float = randf() * AVIATION_INTERVAL
+
 func _engage_target() -> void:
 	if target != null and target.is_alive() \
 			and (target.visible_to_enemy or behavior.is_engageable_contact(behavior.get_contact_solution(target))):
@@ -901,7 +905,10 @@ func _engage_target() -> void:
 		# No valid target — aim at destination as fallback
 		_ship.artillery_controller.set_aim_input(behavior._get_spotted_danger_center())
 	# Aviation runs regardless of gun target: spotters need orders even when nothing is in gun range
-	behavior.aviation_engage(target, server_node)
+	_aviation_t += get_physics_process_delta_time()
+	if _aviation_t >= AVIATION_INTERVAL:
+		_aviation_t = 0.0
+		behavior.aviation_engage(target, server_node)
 
 
 # ===========================================================================

@@ -257,6 +257,7 @@ func set_fire_held(held: bool) -> void:
 					fire_held = held
 
 var num_guns = 0
+var _aim_solve_t: float = randf() * ArtilleryController.AIM_SOLVE_INTERVAL
 func _physics_process(delta: float) -> void:
 	# return
 	priority_target_dispersion._citadel_guarantee_enabled = false
@@ -292,9 +293,13 @@ func _physics_process(delta: float) -> void:
 	if Engine.get_physics_frames() % 5 == _ship.id % 5:
 		_update_auto_target_cache(server, max_range, active)
 
+	_aim_solve_t += delta
+	var solve: bool = _aim_solve_t >= ArtilleryController.AIM_SOLVE_INTERVAL
+	if solve:
+		_aim_solve_t = 0.0
 	var auto_active: bool = SecondaryAim.aim(sub_controllers, gun_targets, gun_can_shoot_over_terrain,
 		guns_shooting_at_aim_point, target, target_offset, ProjectileManager.get_shell_time_multiplier(),
-		_ship.global_position, delta)
+		_ship.global_position, delta, solve)
 	if not auto_active and !active:
 		return
 	active = auto_active || active

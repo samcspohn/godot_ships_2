@@ -171,6 +171,10 @@ jolt_physics_3d/simulation/velocity_steps=2
 jolt_physics_3d/simulation/position_steps=1
 jolt_physics_3d/queries/enable_ray_cast_face_index=true
 
+[threading]
+
+worker_pool/max_threads=4
+
 [rendering]
 
 lights_and_shadows/directional_shadow/size=8192

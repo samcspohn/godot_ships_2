@@ -36,10 +36,11 @@ pub struct SecondaryAim {
 
 #[godot_api]
 impl SecondaryAim {
-    /// Aims every auto-targeted secondary at its cached target's lead; returns whether any gun is active.
+    /// Aims every auto-targeted secondary at its cached target's lead (without `solve`, guns
+    /// with a goal only rotate toward it); returns whether any gun is active.
     #[func]
     fn aim(sub_controllers: AnyArray, gun_targets: AnyDictionary, can_shoot: AnyDictionary, manual: AnyDictionary,
-            priority: Variant, target_offset: Vector3, time_mult: f32, ship_pos: Vector3, delta: f64) -> bool {
+            priority: Variant, target_offset: Vector3, time_mult: f32, ship_pos: Vector3, delta: f64, solve: bool) -> bool {
         NAMES.with(|n| {
             let priority = priority.try_to::<Gd<Object>>().ok().map(|o| o.instance_id());
             let mut active = false;
@@ -54,8 +55,13 @@ impl SecondaryAim {
                     if manual.contains_key(&gv) {
                         continue;
                     }
-                    let mut g = Turret::load(node.clone());
                     let tv = gun_targets.get(&gv).unwrap_or_default();
+                    let aiming = !tv.is_nil() && can_shoot.get(&gv).is_some_and(|v| v.to_bool());
+                    if !solve && aiming && Turret::gun_track(&node, delta, &stats) {
+                        active = true;
+                        continue;
+                    }
+                    let mut g = Turret::load(node.clone());
                     if tv.is_nil() || !can_shoot.get(&gv).is_some_and(|v| v.to_bool()) {
                         active |= g.gun_home(delta, stats.traverse);
                         g.store();
