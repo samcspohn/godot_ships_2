@@ -54,11 +54,12 @@ pub(crate) const FILE_LOADED: u8 = 1;
 pub(crate) const FILE_NONE: u8 = 2;
 pub(crate) const FILE_SAVED: u8 = 3;
 
-/// Where tables are cached and whether completed ones are written; reading always happens.
+/// Where tables are cached, whether saved ones are read, and whether completed ones are written.
 #[derive(Clone)]
 pub(crate) struct CacheCfg {
     pub dir: PathBuf,
     pub map: i64,
+    pub load: bool,
     pub save: bool,
 }
 
@@ -224,7 +225,7 @@ impl GunMatrix {
         let Some(cfg) = cfg else { return };
         match self.file.load(Acquire) {
             FILE_UNTRIED => {
-                let state = if self.read(cfg) { FILE_LOADED } else { FILE_NONE };
+                let state = if cfg.load && self.read(cfg) { FILE_LOADED } else { FILE_NONE };
                 self.file.store(state, Release);
             }
             FILE_NONE if cfg.save && self.complete() && !cfg.path(self.key).exists() => {

@@ -107,6 +107,8 @@ var _precision_registered: bool = false
 
 ## Set to true to re-apply all mods from the templates once a second (dev only). PERFORMANCE EXPENSIVE
 const DEBUG_LIVE_MOD_RECALC: bool = true
+## Sims run the editor binary, a debug build; --no-live-mods keeps them off the per-second rebuild.
+static var _live_mod_recalc: bool = DEBUG_LIVE_MOD_RECALC and OS.is_debug_build() and not CmdArgs.has("--no-live-mods")
 var _debug_recalc_timer: float = 0.0
 
 var super_structure: Node3D = null
@@ -369,7 +371,7 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if !(_Utils.authority()):
 		return
-	if DEBUG_LIVE_MOD_RECALC and OS.is_debug_build():
+	if _live_mod_recalc:
 		# Dev-only hot reload: rebuilds every Moddable from its template so edits
 		# to .tres stat files show up without a restart. Costs a full static +
 		# dynamic mod rebuild for the whole ship, so it stays off by default —

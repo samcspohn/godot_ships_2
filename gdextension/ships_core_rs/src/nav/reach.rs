@@ -1314,11 +1314,11 @@ impl ReachField {
         out
     }
 
-    /// Cache gun tables in `dir` (an OS path) for map `map`: always read, written only with `save`.
+    /// Cache gun tables in `dir` (an OS path) for map `map`: read with `load`, written with `save`.
     #[func]
-    fn set_gun_matrix_cache(&self, dir: GString, map: i64, save: bool) {
+    fn set_gun_matrix_cache(&self, dir: GString, map: i64, load: bool, save: bool) {
         if let Some(w) = &self.matrix {
-            *w.cache.lock().unwrap() = Some(crate::nav::gun_matrix::CacheCfg { dir: dir.to_string().into(), map, save });
+            *w.cache.lock().unwrap() = Some(crate::nav::gun_matrix::CacheCfg { dir: dir.to_string().into(), map, load, save });
         }
     }
 
