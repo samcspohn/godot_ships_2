@@ -24,6 +24,11 @@ pub(crate) struct Enemy {
 pub(crate) const AVOID_DET: u8 = 1;
 pub(crate) const AVOID_LOS: u8 = 2;
 pub(crate) const AVOID_FIRE: u8 = 4;
+/// AVOID_DET inside los_r (radar, hydro), beyond it only where that enemy has
+/// line of sight: behind an island is closer than det_r.
+pub(crate) const AVOID_DET_SEEN: u8 = 8;
+/// AVOID_DET only where that enemy's shells land.
+pub(crate) const AVOID_DET_SHOT: u8 = 16;
 
 pub(crate) struct SpotInputs {
     pub enemies: Vec<Enemy>,
@@ -91,8 +96,17 @@ impl VisibilityGrid {
 
     pub(crate) fn in_zone_of(&self, c: (i32, i32), inp: &SpotInputs, avoid: u8) -> bool {
         let p = Vector2::new(self.min_x + (c.0 as f32 + 0.5) * self.cell, self.min_z + (c.1 as f32 + 0.5) * self.cell);
-        if avoid & AVOID_DET != 0 && inp.enemies.iter().any(|e| p.distance_squared_to(e.pos) < e.det_r * e.det_r) {
-            return true;
+        if avoid & AVOID_DET != 0 {
+            let k = self.water(c.0, c.1);
+            if inp.enemies.iter().enumerate().any(|(i, e)| {
+                let d2 = p.distance_squared_to(e.pos);
+                d2 < e.det_r * e.det_r
+                    && ((avoid & AVOID_DET_SEEN != 0 && d2 < e.los_r * e.los_r)
+                        || ((avoid & AVOID_DET_SEEN == 0 || k.zip(e.cell).is_none_or(|(k, ec)| self.visible_idx(k, ec)))
+                            && (avoid & AVOID_DET_SHOT == 0 || inp.fire.as_ref().is_none_or(|f| !f.known(i) || f.hits(i, p)))))
+            }) {
+                return true;
+            }
         }
         if avoid & AVOID_FIRE != 0 {
             if let Some(f) = &inp.fire {
@@ -120,13 +134,14 @@ impl VisibilityGrid {
 
     pub(crate) fn spotted_mask(&self, k: usize, inp: &SpotInputs) -> u64 {
         let c = self.centres[k];
+        let reach = inp.reach.as_ref().map_or(0, |r| r.mask(c));
         let mut mask = 0u64;
         for (i, e) in inp.enemies.iter().enumerate().take(64) {
             if !e.shootable {
                 continue;
             }
             let hit = match &inp.reach {
-                Some(r) => r.hits(i, c) && (!inp.reach_needs_los || e.cell.is_some_and(|ec| self.visible_idx(k, ec))),
+                Some(_) => reach & (1 << i) != 0 && (!inp.reach_needs_los || e.cell.is_some_and(|ec| self.visible_idx(k, ec))),
                 None => e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.spot_r * e.spot_r && self.visible_idx(k, ec)),
             };
             if hit {

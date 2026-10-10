@@ -1,8 +1,8 @@
 class_name SkillSpot
 extends SkillPosition
 
-## Outside detection, seeing targets a friend can shoot. Refine budget halves
-## per target already held: more to lose, less to gain.
+## Outside detection (an island's shadow counts), seeing targets a friend can
+## shoot. Refine budget halves per target already held: more to lose, less to gain.
 
 ## Kept for DDBehavior.engagement_range and _is_gunboat, which band on it.
 const SAFE_MARGIN := 1.15
@@ -29,10 +29,11 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 
 	var inp := _inputs(ctx, field, team_id, belief)
 	var pos: PackedVector2Array = inp.pos
-	var opts := {"det_r": inp.det, "spot_r": inp.spot, "shootable": inp.shoot}
+	var opts := {"det_r": inp.det, "los_r": inp.always, "spot_r": inp.spot, "shootable": inp.shoot}
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
 	var danger := _belief_centre(ctx, belief, here)
-	opts.merge({"clearance": ctx.behavior._get_ship_clearance(), "avoid": VisibilityGrid.AVOID_DET,
+	opts.merge({"clearance": ctx.behavior._get_ship_clearance(),
+		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SEEN,
 		"flank": _flank_dir(ctx)}, true)
 	_walk_station(vis, danger, here, pos, opts)
 	if not _has_station:
@@ -65,11 +66,14 @@ func _inputs(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[D
 			if mask & (1 << i):
 				shootable_ids[ids[i]] = true
 	var conceal: float = NavigationMapManager.reach_conceal_radius(ship)
-	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "spot": PackedFloat32Array(), "shoot": PackedByteArray()}
+	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "always": PackedFloat32Array(),
+		"spot": PackedFloat32Array(), "shoot": PackedByteArray()}
 	for b in belief:
 		var e: Ship = b.ship
 		out.pos.append(b.pos)
 		out.det.append(maxf(conceal, float(b.force_spot)) + float(b.spread))
+		# Radar and hydro see through islands.
+		out.always.append(float(b.force_spot) + float(b.spread) if float(b.force_spot) > 0.0 else 0.0)
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
 		out.spot.append(cp.radius if cp != null else 0.0)
 		out.shoot.append(1 if shootable_ids.has(e.get_instance_id()) else 0)

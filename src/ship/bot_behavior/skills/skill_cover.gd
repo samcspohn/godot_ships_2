@@ -38,6 +38,13 @@ var _dark: Dictionary = {}
 var _best: Dictionary = {}
 var _cells: int = 0
 var _us: int = 0
+
+## Sweep diagnostics: every sweep slower than SWEEP_LOG_SLOW_MS, and every
+## SWEEP_LOG_EVERY-th as a baseline. On in the editor or with --cover-log.
+const SWEEP_LOG_SLOW_MS := 10.0
+const SWEEP_LOG_EVERY := 50
+static var sweep_log: bool = OS.has_feature("editor") or CmdArgs.has("--cover-log")
+static var _sweep_count: int = 0
 var _spotted: Dictionary = {}  # target Ship -> friendly Ship that was lighting it
 
 func reset() -> void:
@@ -91,10 +98,26 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_claim(team_id, ship.get_instance_id(), now_ms)
 	return _intent(ctx, field, team_id, params.merged({"jitter_radius": COVER_HOLD_M}))
 
+func _log_sweep(ship: Ship, total_us: int, gd_inputs_us: int, r: Dictionary) -> void:
+	_sweep_count += 1
+	if total_us < SWEEP_LOG_SLOW_MS * 1000.0 and _sweep_count % SWEEP_LOG_EVERY != 0:
+		return
+	var st: Dictionary = r.get("stats", {})
+	print("[CoverSweep] %s %s %.2f ms | gd inputs %.2f, rust inputs %.2f (new planes %d, %.2f ms), args %.2f, walk %.2f (rays %.2f) | cells %d, masks %d, misses %d: out of range %d, los %d, rays %d | ray dist avg %.0f max %.0f m, steps %d, land %d | matrix %d | enemies %d" % [
+		"SLOW" if total_us >= SWEEP_LOG_SLOW_MS * 1000.0 else "base", ship.ship_name, total_us / 1000.0,
+		gd_inputs_us / 1000.0, int(st.get("inputs_us", 0)) / 1000.0, int(st.get("planes_new", 0)),
+		int(st.get("planes_us", 0)) / 1000.0, int(st.get("args_us", 0)) / 1000.0, int(st.get("walk_us", 0)) / 1000.0,
+		int(st.get("ray_us", 0)) / 1000.0, int(r.get("cells", 0)), int(st.get("masks", 0)), int(st.get("misses", 0)),
+		int(st.get("out_of_range", 0)), int(st.get("los", 0)), int(st.get("rays", 0)),
+		float(st.get("ray_dist_avg", 0.0)), float(st.get("ray_dist_max", 0.0)), int(st.get("steps", 0)),
+		int(st.get("land", 0)), int(st.get("matrix", 0)), int(st.get("enemies", 0))])
+
 func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: int, belief: Array[Dictionary],
 		g: Dictionary, params: Dictionary) -> void:
 	var ship: Ship = ctx.ship
+	var t0 := Time.get_ticks_usec()
 	var opts := _inputs(ctx, belief, g, params.get("fire_en_route", mode == Mode.OFFENSE))
+	var t_inputs := Time.get_ticks_usec() - t0
 	opts.merge(WEIGHTS[mode], true)
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
@@ -106,6 +129,8 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 	var r: Dictionary = vis.cover_sweep(here, opts.pos, opts)
 	_cells = int(r.get("cells", 0))
 	_us = int(r.get("us", 0))
+	if sweep_log:
+		_log_sweep(ship, Time.get_ticks_usec() - t0, t_inputs, r)
 	_dark = r.get("dark", {})
 	_best = r.get("best", {})
 	var held: Dictionary = r.get("held", {})

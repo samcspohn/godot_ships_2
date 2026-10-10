@@ -171,10 +171,6 @@ jolt_physics_3d/simulation/velocity_steps=2
 jolt_physics_3d/simulation/position_steps=1
 jolt_physics_3d/queries/enable_ray_cast_face_index=true
 
-[threading]
-
-worker_pool/max_threads=4
-
 [rendering]
 
 lights_and_shadows/directional_shadow/size=8192
@@ -182,3 +178,7 @@ lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality.mobile=2
 lights_and_shadows/directional_shadow/16_bits=false
 anti_aliasing/quality/screen_space_aa=1
+
+[threading]
+
+worker_pool/max_threads=4

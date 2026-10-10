@@ -273,6 +273,28 @@ static func damage_model(ship: Ship = null) -> DamageModel:
 	return _model
 
 
+## Loads every hull and shell table the match will use, so the first sighting
+## does not stall a frame decompressing them.
+static func warm(ships: Array) -> void:
+	for ship in ships:
+		if not (ship is Ship) or not is_instance_valid(ship):
+			continue
+		damage_model(ship)
+		_warmed[ship.get_instance_id()] = true
+		for kind in [KIND_MAIN, KIND_SECONDARY]:
+			for m in _batteries(ship, kind, 0.0):
+				for shell in m["shells"]:
+					if shell != null:
+						_shell_table(shell)
+	for id in _warmed.keys():
+		if not is_instance_id_valid(id):
+			_warmed.erase(id)
+	damage_model().warm_grids(PackedInt64Array(_warmed.keys()))
+
+## Ship instance id -> true, for every ship warm() has seen.
+static var _warmed: Dictionary = {}
+
+
 static func _register(ship: Ship) -> void:
 	var id := ship.get_instance_id()
 	var table = _table(ship)
@@ -457,6 +479,7 @@ func forget_dead() -> void:
 ## Between matches: drop everything keyed on instances. Tables are per hull
 ## file and stay loaded.
 static func clear_all() -> void:
+	_warmed.clear()
 	_answers.clear()
 	_shell_tables.clear()
 	_resolved.clear()

@@ -32,8 +32,8 @@ pub struct VisibilityGrid {
     pub(crate) centres: Vec<Vector2>,
     /// SDF at each water cell's centre, for hull clearance.
     pub(crate) sdf_c: Vec<f32>,
-    stride: usize,
-    bits: Vec<u64>,
+    pub(crate) stride: usize,
+    pub(crate) bits: Vec<u64>,
     build_ms: f64,
     terrain: Option<Arc<Terrain>>,
 }
@@ -203,6 +203,10 @@ impl VisibilityGrid {
     const AVOID_LOS: i32 = crate::nav::spot_walk::AVOID_LOS as i32;
     #[constant]
     const AVOID_FIRE: i32 = crate::nav::spot_walk::AVOID_FIRE as i32;
+    #[constant]
+    const AVOID_DET_SEEN: i32 = crate::nav::spot_walk::AVOID_DET_SEEN as i32;
+    #[constant]
+    const AVOID_DET_SHOT: i32 = crate::nav::spot_walk::AVOID_DET_SHOT as i32;
 
     #[func]
     fn build(&mut self, nav_map: Option<Gd<NavigationMap>>, #[opt(default = 300.0)] cell_size: f32) {
@@ -415,15 +419,39 @@ impl VisibilityGrid {
             return d;
         }
         let t0 = Instant::now();
+        crate::nav::reach::probe_take();
         let inp = self.hold_inputs(&enemies, &opts);
+        let t_inputs = t0.elapsed();
         let args = sweep_args(from, &opts, &mut dm.bind_mut());
+        let t_args = t0.elapsed();
         let r = self.cover_sweep_impl(&inp, &args, &dm.bind());
+        let t_walk = t0.elapsed();
         pick_dict(&mut d, "best", r.best, &self.centres);
         pick_dict(&mut d, "held", r.held, &self.centres);
         pick_dict(&mut d, "here", r.here, &self.centres);
         pick_dict(&mut d, "dark", r.dark, &self.centres);
         d.set("cells", r.cells as i64);
-        d.set("us", t0.elapsed().as_micros() as i64);
+        d.set("us", t_walk.as_micros() as i64);
+        let p = crate::nav::reach::probe_take();
+        let mut st = VarDictionary::new();
+        st.set("inputs_us", t_inputs.as_micros() as i64);
+        st.set("args_us", (t_args - t_inputs).as_micros() as i64);
+        st.set("walk_us", (t_walk - t_args).as_micros() as i64);
+        st.set("ray_us", (p.ray_ns / 1000) as i64);
+        st.set("planes_new", p.planes_new as i64);
+        st.set("planes_us", (p.planes_ns / 1000) as i64);
+        st.set("masks", p.masks as i64);
+        st.set("misses", p.misses as i64);
+        st.set("out_of_range", p.out_of_range as i64);
+        st.set("los", p.los as i64);
+        st.set("rays", p.rays as i64);
+        st.set("ray_dist_avg", if p.rays > 0 { (p.ray_dist / p.rays as f64) as f32 } else { 0.0 });
+        st.set("ray_dist_max", p.ray_dist_max);
+        st.set("steps", p.steps as i64);
+        st.set("land", p.land as i64);
+        st.set("matrix", p.matrix as i64);
+        st.set("enemies", inp.enemies.len() as i64);
+        d.set("stats", &st);
         d
     }
 

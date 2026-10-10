@@ -141,12 +141,19 @@ func get_visibility() -> VisibilityGrid:
 	return _visibility
 
 ## Loads the cached grid for this map, or builds and caches it (~2 s).
+## The visibility grid's cache signature: map geometry and cell size.
+var _visibility_signature: int = 0
+
+func get_visibility_signature() -> int:
+	return _visibility_signature
+
 func build_visibility() -> void:
 	if not is_map_ready():
 		return
 	var t0 := Time.get_ticks_msec()
 	var vis := VisibilityGrid.new()
-	var path := "%s/%016x.bin" % [VISIBILITY_CACHE_DIR, vis.signature(_map, VISIBILITY_CELL_M)]
+	_visibility_signature = vis.signature(_map, VISIBILITY_CELL_M)
+	var path := "%s/%016x.bin" % [VISIBILITY_CACHE_DIR, _visibility_signature]
 	var f := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	var loaded := f != null and vis.from_bytes(_map, VISIBILITY_CELL_M, f.get_buffer(f.get_length()))
 	if not loaded:
@@ -156,12 +163,14 @@ func build_visibility() -> void:
 		if w != null:
 			w.store_buffer(vis.to_bytes())
 	_visibility = vis
+	if _reach_field != null:
+		_reach_field.set_visibility(vis)
 	var info := vis.get_info()
 	print("[NavigationMapManager] Visibility %s in %d ms: %d cells, %.1f MB" % [
 		"loaded" if loaded else "built", Time.get_ticks_msec() - t0, info.cells, info.bytes / 1048576.0])
 
-## One key per distinct shell/range/gun-height combination; the reach field
-## keeps one plane per key per enemy, so ships sharing a gun share the work.
+## One key per distinct shell/range/gun-height combination, so ships sharing a
+## gun share the reach field's ballistic table and cached answers.
 static func reach_hull_key(g: Dictionary) -> int:
 	return hash([snappedf(g.speed, 0.01), snappedf(g.drag, 1e-8), snappedf(g.range, 1.0), g.gun_h])
 

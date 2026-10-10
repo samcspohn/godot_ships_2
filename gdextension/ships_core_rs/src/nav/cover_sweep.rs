@@ -88,6 +88,13 @@ impl VisibilityGrid {
         let (mut cost, mut risk, mut time) = (vec![f32::INFINITY; n], vec![0f32; n], vec![0f32; n]);
         let mut lit = vec![-1i8; n];
         let mut done = vec![false; n];
+        // Enemies whose shells land on each local cell, asked once per sweep.
+        let mut fire: Vec<Option<u64>> = vec![None; n];
+        let all = if inp.enemies.len() >= 64 { u64::MAX } else { (1u64 << inp.enemies.len()) - 1 };
+        let mut fire_at = |l: usize, c: Vector2| -> u64 {
+            *fire[l].get_or_insert_with(|| inp.fire.as_ref().map_or(all, |f| f.mask(c)))
+        };
+        let known = inp.fire.as_ref().map_or(0, |f| f.known_mask());
         let dps_in: Vec<Option<&DpsGrid>> = a.ids.iter().map(|&id| dm.grid(id, a.me)).collect();
         let dps_out: Vec<Option<&DpsGrid>> = a.ids.iter().map(|&id| dm.grid(a.me, id)).collect();
         let speed = a.speed.max(1.0);
@@ -125,8 +132,10 @@ impl VisibilityGrid {
             if res.dark.is_none() && lit[l] == 0 {
                 res.dark = Some(Pick { score: -cost[l], ..here });
             }
-            let hold = if lit[l] == 1 { self.hold_dps(inp, &dps_in, k) * a.hold_s / hp } else { 0.0 };
-            if let Some(p) = self.score_cell(inp, a, &dps_out, (gx, gz), here, cost[l] + a.w_risk * hold) {
+            let shot = if lit[l] == 1 || a.allow_hard { fire_at(l, self.centres[k]) } else { all };
+            let hold = if lit[l] == 1 { self.hold_dps(inp, &dps_in, k, shot) * a.hold_s / hp } else { 0.0 };
+            let hard = inp.fire.is_some() && known & all == all && shot & all == 0;
+            if let Some(p) = self.score_cell(inp, a, &dps_out, (gx, gz), here, cost[l] + a.w_risk * hold, hard) {
                 // The held station outlives a target ducking out of sight; SkillCover times it out.
                 if held_k == Some(k) {
                     res.held = Some(p);
@@ -156,9 +165,10 @@ impl VisibilityGrid {
                 let mut dps = 0.0;
                 if lit[lq] == 1 {
                     let c = self.centres[q];
-                    for (i, e) in inp.enemies.iter().enumerate() {
+                    let shot = fire_at(lq, c);
+                    for (i, e) in inp.enemies.iter().enumerate().take(64) {
                         let Some(g) = dps_in[i] else { continue };
-                        if inp.fire.as_ref().is_some_and(|f| !f.hits(i, c)) {
+                        if shot & (1 << i) == 0 {
                             continue;
                         }
                         dps += g.at(c.distance_to(e.pos), aspect_deg(step, e.pos - c));
@@ -178,11 +188,11 @@ impl VisibilityGrid {
     }
 
     /// Incoming dps at cell `k` presenting the better end to each shooter that can land shells there.
-    fn hold_dps(&self, inp: &SpotInputs, dps_in: &[Option<&DpsGrid>], k: usize) -> f32 {
+    fn hold_dps(&self, inp: &SpotInputs, dps_in: &[Option<&DpsGrid>], k: usize, shot: u64) -> f32 {
         let c = self.centres[k];
-        inp.enemies.iter().enumerate().filter_map(|(i, e)| {
+        inp.enemies.iter().enumerate().take(64).filter_map(|(i, e)| {
             let g = dps_in[i]?;
-            if inp.fire.as_ref().is_some_and(|f| !f.hits(i, c)) {
+            if shot & (1 << i) == 0 {
                 return None;
             }
             let r = c.distance_to(e.pos);
@@ -190,12 +200,13 @@ impl VisibilityGrid {
         }).sum()
     }
 
-    fn score_cell(&self, inp: &SpotInputs, a: &SweepArgs, dps_out: &[Option<&DpsGrid>], g: (i32, i32), here: Pick, cost: f32) -> Option<Pick> {
+    /// `out_of_fire`: every enemy's guns are known and none lands here.
+    fn score_cell(&self, inp: &SpotInputs, a: &SweepArgs, dps_out: &[Option<&DpsGrid>], g: (i32, i32), here: Pick, cost: f32,
+            out_of_fire: bool) -> Option<Pick> {
         let concealed = !self.in_zone_of(g, inp, AVOID_DET | AVOID_LOS);
         let c = self.centres[here.k];
         // Spotting's AVOID_FIRE counts heavy shooters only; cover must be out of every gun.
-        let hard = !concealed && a.allow_hard
-            && inp.fire.as_ref().is_some_and(|f| (0..inp.enemies.len()).all(|i| f.known(i) && !f.hits(i, c)));
+        let hard = !concealed && a.allow_hard && out_of_fire;
         if !concealed && !hard {
             return None;
         }

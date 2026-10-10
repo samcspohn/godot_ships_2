@@ -1,4 +1,5 @@
 pub mod cover_sweep;
+pub mod gun_matrix;
 pub mod hpa;
 pub mod map;
 pub mod navigator;

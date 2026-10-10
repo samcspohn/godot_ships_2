@@ -170,16 +170,15 @@ impl HpaGraph {
         }
         let n = ((len / (node_w * 0.5)).ceil() as usize).clamp(1, 4096);
         let ds = len / n as f32;
-        let hb = crate::nav::reach::fire_heading_bucket(b.x - a.x, b.y - a.y);
         let mut total = 0.0f32;
         for k in 0..n {
             let p = a.lerp(b, (k as f32 + 0.5) / n as f32);
             let gx = self.world_to_gx(p.x);
             let gz = self.world_to_gz(p.y);
             let cost = if sub {
-                self.sub_threat_cost_at(self.sub_id(self.cell_scx(gx), self.cell_scz(gz)), hb)
+                self.sub_threat_cost_at(self.sub_id(self.cell_scx(gx), self.cell_scz(gz)))
             } else {
-                self.threat_cost(self.cluster_id(self.cell_cx(gx), self.cell_cz(gz)), hb)
+                self.threat_cost(self.cluster_id(self.cell_cx(gx), self.cell_cz(gz)))
             };
             total += cost * ds;
         }

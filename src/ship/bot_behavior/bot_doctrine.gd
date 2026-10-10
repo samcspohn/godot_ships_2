@@ -56,10 +56,6 @@ var universal_sail_forward_fallback: bool = false
 ## crosses it when the detour would cost more. 0 or INF restores the wall.
 var detection_cost_gain: float = 4.0
 
-## Extra HPA step cost per enemy able to land shells on the node, for any
-## hull not routing under wants_stealth. 0 = off.
-var fire_cost_gain: float = 0.25
-
 ## Whether the idle and dark arms get the evade/spread post-processors. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true

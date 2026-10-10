@@ -231,6 +231,19 @@ impl DamageModel {
         self.hulls.contains_key(&id)
     }
 
+    /// Builds every pair's dps grid among `ids` (shooter != hull) now, so the
+    /// first engagement does not stall a frame building them.
+    #[func]
+    fn warm_grids(&mut self, ids: PackedInt64Array) {
+        for &a in ids.as_slice() {
+            for &b in ids.as_slice() {
+                if a != b {
+                    self.ensure_grid(a, b);
+                }
+            }
+        }
+    }
+
     #[func]
     fn forget(&mut self, id: i64) {
         self.shooters.remove(&id);

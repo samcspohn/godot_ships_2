@@ -46,19 +46,9 @@ const PRESUMED_THREAT_WEIGHT_MAX: float = 0.6
 const PRESUMED_THREAT_WEIGHT_MIN: float = 0.15
 const THREAT_UPDATE_INTERVAL: int = 4
 const REACH_SWEEP_INTERVAL: int = 12
-## Ticks between handing the field worker a batch and reading its result.
-const REACH_FIELD_LAG_TICKS: int = 2
-const REACH_REPORT_SECONDS: float = 5.0
-## An enemy is re-swept once it has moved this far: one field cell.
+## The detection grid is redone once an enemy has moved this far: one field cell.
 const REACH_MOVE_THRESHOLD_M: float = 100.0
-var _reach_report_at: float = 0.0
 var _reach_prebuilt: bool = false
-var _reach_ticks: int = 0
-var _reach_us: float = 0.0
-var _reach_max_us: float = 0.0
-var _reach_resweeps: int = 0
-var _reach_jobs: int = 0
-var _reach_sources: Array[int] = [0, 0, 0, 0]
 const THREAT_STALE_DECAY_SECONDS: float = 100.0
 ## An inferred spotter's certainty runs out over this long.
 const INFERRED_DECAY_SECONDS: float = 30.0
@@ -131,9 +121,6 @@ func _ready():
 		)
 		if _Utils.authority():
 			NavigationMapManager.build_visibility()
-			var field: ReachField = NavigationMapManager.get_reach_field()
-			if field != null and not CmdArgs.has("--field-sync"):
-				field.start_worker(int(CmdArgs.value("--field-lag", str(REACH_FIELD_LAG_TICKS))))
 	else:
 		push_warning("Server: No islands found on map — NavigationMap not built")
 
@@ -158,6 +145,28 @@ func _ready():
 
 	if bot_match and _Utils.authority():
 		_start_bot_match.call_deferred()
+
+var _warm_pending: Array[Ship] = []
+
+## Queues `ship` for the start-of-life loads (gunnery tables, damage grids, ray
+## tables, gun-table registration) so none of them lands on the first sighting.
+func _queue_warm(ship: Ship) -> void:
+	_warm_pending.append(ship)
+	if _warm_pending.size() == 1:
+		_warm_gunnery()
+
+func _warm_gunnery() -> void:
+	# Upgrades and skills reach the ship's stats as static mods on its next physics frame.
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var ships := _warm_pending.duplicate()
+	_warm_pending.clear()
+	var t0 := Time.get_ticks_msec()
+	BotGunnery.warm(ships)
+	for t in teams:
+		t.ships = _get_team(t.id)
+	_sweep_reach_fields()
+	print("Warmed %d ships' gunnery and reach tables in %d ms" % [ships.size(), Time.get_ticks_msec() - t0])
 
 func _start_bot_match() -> void:
 	var path := CmdArgs.value("--botmatch", "user://team_info.json")
@@ -468,6 +477,8 @@ func spawn_player(id, player_name):
 	var spawn_pos = right_of_spawn * spawn_offset + team_spawn_point
 	spawn_pos.y = 0
 	spawn_point.add_child(player)
+	if _Utils.authority():
+		_queue_warm(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
 	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
@@ -1299,9 +1310,6 @@ var _players_quit: Array = []  # Player names who explicitly quit or disconnecte
 func _physics_process(_delta: float) -> void:
 	if match_complete:
 		return
-	var reach_field: ReachField = NavigationMapManager.get_reach_field()
-	if reach_field != null:
-		reach_field.tick()
 
 	# Periodically re-register with matchmaker while idle (no match running)
 	if not match_active and not match_ended:
@@ -1606,17 +1614,32 @@ func _sync_clients() -> void:
 		p.sync_player.rpc_id(p_id, d)
 
 
-## Per-team fire, line-of-sight and reach planes, built from what each team
-## BELIEVES: live contacts, decayed last-known positions, presumed contacts.
-## Only enemies that moved a cell since their last sweep are redone.
+## Gun tables (ReachField) cached per map and gun kind by the table thread
+## itself: read whenever a file exists, written only with --gun-matrix-cache
+## (sims), never in production. This only reports progress.
+const GUN_MATRIX_DIR := "user://gun_matrix"
+var _gun_matrix_cache_set: bool = false
+var _gun_matrix_reported: Dictionary = {}
+
+func _sync_gun_matrices(field: ReachField) -> void:
+	if not _gun_matrix_cache_set:
+		_gun_matrix_cache_set = true
+		field.set_gun_matrix_cache(ProjectSettings.globalize_path(GUN_MATRIX_DIR),
+			NavigationMapManager.get_visibility_signature(), CmdArgs.has("--gun-matrix-cache"))
+	for st in field.gun_matrix_status():
+		var state := "loaded" if int(st.file) == 1 else "saved" if int(st.file) == 3 \
+			else "complete" if int(st.done) == int(st.rows) else ""
+		if state != "" and _gun_matrix_reported.get(st.key, "") != state:
+			_gun_matrix_reported[st.key] = state
+			print("[GunMatrix] %016x %s at %.0f s" % [int(st.key), state, match_elapsed])
+
+## What each team BELIEVES about the enemy (live contacts, decayed last-known
+## positions, presumed contacts), for the reach field's on-demand queries.
 func _sweep_reach_fields() -> void:
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	if field == null or not field.is_built():
 		return
 	var team_ships := [teams[0].ships, teams[1].ships]
-	var us := 0.0
-	var resweeps := 0
-	var jobs := 0
 	if not _reach_prebuilt:
 		_reach_prebuilt = true
 		_prebuild_reach_tables(field, team_ships)
@@ -1666,34 +1689,9 @@ func _sweep_reach_fields() -> void:
 			spreads.append(c.spread)
 			weights.append(c.weight)
 			force_spots.append(c.force_spot)
-			_reach_sources[c.source] += 1
-		var st: Dictionary = field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
+		field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
 			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)
-		us += float(st.get("total_us", 0.0))
-		resweeps += int(st.get("resweeps", 0))
-		jobs += int(st.get("jobs", 0))
-	_reach_ticks += 1
-	_reach_us += us
-	_reach_max_us = maxf(_reach_max_us, us)
-	_reach_resweeps += resweeps
-	_reach_jobs += jobs
-	if current_time < _reach_report_at:
-		return
-	_reach_report_at = current_time + REACH_REPORT_SECONDS
-	var n := float(maxi(_reach_ticks, 1))
-	var ws: Dictionary = field.take_worker_stats()
-	print("[ReachField] %d ticks | %.2f ms avg, %.2f ms max | %.1f enemy resweeps/tick, %.1f sweep jobs/tick | contacts/tick: %.1f live, %.1f lkp, %.1f presumed, %.1f inferred | tables cached %d | worker %d batches %.1f ms, main blocked %.1f ms" % [
-		_reach_ticks, _reach_us / n / 1000.0, _reach_max_us / 1000.0,
-		_reach_resweeps / n, _reach_jobs / n,
-		_reach_sources[0] / n, _reach_sources[1] / n, _reach_sources[2] / n, _reach_sources[3] / n,
-		int(field.get_last_stats().get("tables_cached", 0)),
-		int(ws.batches), float(ws.worker_us) / 1000.0, float(ws.blocked_us) / 1000.0])
-	_reach_ticks = 0
-	_reach_us = 0.0
-	_reach_max_us = 0.0
-	_reach_resweeps = 0
-	_reach_jobs = 0
-	_reach_sources = [0, 0, 0, 0]
+	_sync_gun_matrices(field)
 
 
 func _prebuild_reach_tables(field: ReachField, team_ships: Array) -> void:

@@ -253,10 +253,6 @@ pub struct HpaGraph {
     /// field stamp. When `sub_layer_active`, the refinement search and the
     /// string-puller read these instead of the parent cluster.
     pub(crate) sub_threat_cost: Vec<f32>,
-    /// Per-heading prices (reach::FIRE_HEADINGS); empty unless the fire
-    /// stamp is in force, when they replace the scalar for a directed step.
-    pub(crate) cluster_threat_dir: Vec<[f32; 4]>,
-    pub(crate) sub_threat_dir: Vec<[f32; 4]>,
     pub(crate) sub_threat_blocked: Vec<u8>,
     pub(crate) threat_blocked_sids: Vec<i32>,
     pub(crate) sub_layer_active: Cell<bool>,
@@ -311,8 +307,6 @@ impl IRefCounted for HpaGraph {
             cluster_threat_cost: Vec::new(),
             threat_cost_mode: Cell::new(false),
             sub_threat_cost: Vec::new(),
-            cluster_threat_dir: Vec::new(),
-            sub_threat_dir: Vec::new(),
             sub_threat_blocked: Vec::new(),
             threat_blocked_sids: Vec::new(),
             sub_layer_active: Cell::new(false),
@@ -366,29 +360,25 @@ impl HpaGraph {
 
     /// Step-cost multiplier for a node, from how much of it is actually water.
     /// Always >= 1, so the Euclidean heuristic stays a lower bound.
-    /// `k` is the step's reach::FIRE_HEADINGS bucket.
-    pub(crate) fn cluster_cost_mul(&self, cid: i32, k: usize) -> f32 {
-        1.0 + CONGESTION_GAIN * (1.0 - self.clusters[cid as usize].nav_frac) + self.threat_cost(cid, k)
+    pub(crate) fn cluster_cost_mul(&self, cid: i32) -> f32 {
+        1.0 + CONGESTION_GAIN * (1.0 - self.clusters[cid as usize].nav_frac) + self.threat_cost(cid)
     }
 
-    pub(crate) fn sub_cost_mul(&self, sid: i32, k: usize) -> f32 {
+    pub(crate) fn sub_cost_mul(&self, sid: i32) -> f32 {
         let sub = &self.sub_clusters[sid as usize];
         let threat = if self.sub_layer_active.get() {
-            self.sub_threat_cost_at(sid, k)
+            self.sub_threat_cost_at(sid)
         } else {
-            self.threat_cost(sub.parent_cid, k)
+            self.threat_cost(sub.parent_cid)
         };
         1.0 + CONGESTION_GAIN * (1.0 - sub.nav_frac) + threat
     }
 
-    pub(crate) fn sub_threat_cost_at(&self, sid: i32, k: usize) -> f32 {
+    pub(crate) fn sub_threat_cost_at(&self, sid: i32) -> f32 {
         if self.threats_muted.get() || sid < 0 || sid as usize >= self.sub_threat_cost.len() {
             return 0.0;
         }
-        match self.sub_threat_dir.get(sid as usize) {
-            Some(d) => d[k],
-            None => self.sub_threat_cost[sid as usize],
-        }
+        self.sub_threat_cost[sid as usize]
     }
 
     /// Sub-level wall test: the parent's obstacles, plus the threat flag at
@@ -413,14 +403,11 @@ impl HpaGraph {
         }
     }
 
-    pub(crate) fn threat_cost(&self, cid: i32, k: usize) -> f32 {
+    pub(crate) fn threat_cost(&self, cid: i32) -> f32 {
         if self.threats_muted.get() || cid < 0 || cid as usize >= self.cluster_threat_cost.len() {
             return 0.0;
         }
-        match self.cluster_threat_dir.get(cid as usize) {
-            Some(d) => d[k],
-            None => self.cluster_threat_cost[cid as usize],
-        }
+        self.cluster_threat_cost[cid as usize]
     }
 
     /// A wall for the search: an obstacle, or a threat wall flag. The flag
@@ -492,20 +479,9 @@ impl HpaGraph {
     #[func]
     fn debug_stamp_detection(&mut self, field: Option<Gd<ReachField>>, team_id: i32, radius: f32, gain: f32) {
         let Some(mut field) = field else { return };
-        let (max, mean) = field.bind_mut().cluster_exposure_stats(team_id, radius, self.cluster_size, self.ncx, self.ncz);
-        let sub = field.bind_mut().cluster_exposure_stats(team_id, radius, self.sub_size, self.nsubx, self.nsubz).0;
+        let (max, mean) = field.bind_mut().cluster_exposure_stats(team_id, radius, self.cluster_size, self.ncx, self.ncz, true);
+        let sub = field.bind_mut().cluster_exposure_stats(team_id, radius, self.sub_size, self.nsubx, self.nsubz, false).0;
         self.stamp_threat_costs(&max, &mean, &sub, gain, true);
-    }
-
-    /// Debug: stamp the fire price (shooter count per node) as a navigator
-    /// subscribed with set_fire_source would.
-    #[func]
-    fn debug_stamp_fire(&mut self, field: Option<Gd<ReachField>>, team_id: i32, gain: f32) {
-        let Some(mut field) = field else { return };
-        let st = field.bind_mut().cluster_fire_stats(team_id, self.cluster_size, self.ncx, self.ncz);
-        let sub = field.bind_mut().cluster_fire_stats(team_id, self.sub_size, self.nsubx, self.nsubz);
-        self.stamp_threat_costs(&st.max, &st.mean, &sub.max, gain, false);
-        self.stamp_threat_dirs(&st.dir, &sub.dir, gain);
     }
 
     #[func]

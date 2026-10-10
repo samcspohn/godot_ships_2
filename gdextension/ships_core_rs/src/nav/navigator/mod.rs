@@ -272,14 +272,9 @@ pub struct ShipNavigator {
     pub(crate) detect_team: i32,
     pub(crate) detect_radius: f32,
     pub(crate) detect_gain: f32,
-    /// 0 detection exposure (walled past COST_MODE_WALL_EXPOSURE), 1 shooter
-    /// count (price only).
-    pub(crate) detect_mode: i32,
     pub(crate) detect_exposure: std::sync::Arc<Vec<f32>>,
     pub(crate) detect_exposure_mean: std::sync::Arc<Vec<f32>>,
     pub(crate) detect_sub_exposure: std::sync::Arc<Vec<f32>>,
-    pub(crate) detect_dir: std::sync::Arc<Vec<[f32; 4]>>,
-    pub(crate) detect_sub_dir: std::sync::Arc<Vec<[f32; 4]>>,
     pub(crate) detect_synced_version: i64,
 
     // --- Path stickiness instrumentation ---
@@ -380,12 +375,9 @@ impl IRefCounted for ShipNavigator {
             detect_team: -1,
             detect_radius: 0.0,
             detect_gain: 0.0,
-            detect_mode: 0,
             detect_exposure: std::sync::Arc::new(Vec::new()),
             detect_exposure_mean: std::sync::Arc::new(Vec::new()),
             detect_sub_exposure: std::sync::Arc::new(Vec::new()),
-            detect_dir: std::sync::Arc::new(Vec::new()),
-            detect_sub_dir: std::sync::Arc::new(Vec::new()),
             detect_synced_version: -1,
             path_switch_count: 0,
             path_switch_rejected: 0,
@@ -720,19 +712,6 @@ impl ShipNavigator {
         self.detect_team = team_id;
         self.detect_radius = radius;
         self.detect_gain = gain;
-        self.detect_mode = 0;
-        self.detect_synced_version = -1;
-    }
-
-    /// Route against the number of enemies able to land shells on each
-    /// node, `gain` per shooter per step. Never walls; any hull may use it.
-    #[func]
-    fn set_fire_source(&mut self, field: Option<Gd<ReachField>>, team_id: i32, gain: f32) {
-        self.detect_field = field;
-        self.detect_team = team_id;
-        self.detect_radius = 0.0;
-        self.detect_gain = gain;
-        self.detect_mode = 1;
         self.detect_synced_version = -1;
     }
 
@@ -740,13 +719,10 @@ impl ShipNavigator {
     fn clear_detection_source(&mut self) {
         self.detect_field = None;
         self.detect_team = -1;
-        self.detect_mode = 0;
         self.detect_synced_version = -1;
         self.detect_exposure = std::sync::Arc::new(Vec::new());
         self.detect_exposure_mean = std::sync::Arc::new(Vec::new());
         self.detect_sub_exposure = std::sync::Arc::new(Vec::new());
-        self.detect_dir = std::sync::Arc::new(Vec::new());
-        self.detect_sub_dir = std::sync::Arc::new(Vec::new());
     }
 
     #[func]

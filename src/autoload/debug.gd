@@ -1482,9 +1482,9 @@ func _reach_server_tick() -> void:
 		ReachMode.REACH:
 			if g.is_empty():
 				return
-			var us: float = field.sweep(ship.get_instance_id(), here, g.gun_h, 0.0, g.speed, g.drag, g.range)
-			bytes = field.get_reach_bytes(ship.get_instance_id())
-			note = "sweep %.2f ms, gun height %.0f m" % [us / 1000.0, g.gun_h]
+			var t0 := Time.get_ticks_usec()
+			bytes = field.get_reach_bytes_from(here, g.gun_h, g.speed, g.drag, g.range)
+			note = "%.2f ms, gun height %.0f m" % [(Time.get_ticks_usec() - t0) / 1000.0, g.gun_h]
 		ReachMode.EXPOSURE:
 			bytes = field.get_exposure_count_bytes(team_id)
 			note = "%d believed enemies, here exposed by %d" % [

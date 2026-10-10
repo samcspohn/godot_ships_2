@@ -2,7 +2,8 @@ class_name SkillFight
 extends SkillPosition
 
 ## SkillHold's FIGHT mode: the firing station on the edge of the bands round
-## every enemy that shoots, at the cell that wins the best single fight: the
+## every enemy that shoots (pulled in where an island blocks that enemy's
+## shells), at the cell that wins the best single fight: the
 ## spotted target it reaches that dies fastest (our fire plus the friends
 ## already on it, over its HP), less what every enemy whose fire covers the
 ## cell does to us (over our HP). A 1v1 or a target the team already has under
@@ -16,6 +17,8 @@ extends SkillPosition
 const EXIT_STEP_M := 200.0
 const EXIT_MAX_STEPS := 100
 const EXIT_MARGIN_M := 300.0
+## A station in an island's shadow pulls that enemy's route wall in to this short of it.
+const SHADOW_MARGIN_M := 200.0
 ## Patrol leg along the band edge, at least, and in turning circles.
 const PATROL_STEP_M := 1500.0
 const PATROL_STEP_TURNS := 3.0
@@ -87,7 +90,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	_hull_key = NavigationMapManager.reach_hull_key(g)
 	var opts := {"det_r": band, "spot_r": reach, "shootable": live, "reach_field": field, "team": team_id,
 		"hull_key": _hull_key, "ids": ids, "reach_needs_los": bool(params.get("needs_los", false)),
-		"clearance": ctx.behavior._get_ship_clearance(), "avoid": VisibilityGrid.AVOID_DET, "flank": _flank_dir(ctx),
+		"clearance": ctx.behavior._get_ship_clearance(), "flank": _flank_dir(ctx),
+		"avoid": VisibilityGrid.AVOID_DET | VisibilityGrid.AVOID_DET_SHOT,
 		"value": value, "harm": harm, "budget_m": WALK_BUDGET_M}
 	_walk_engage(vis, danger, here, pos, opts, belief)
 	if not _has_station:
@@ -160,7 +164,7 @@ static func threatens(e: Ship) -> bool:
 ## rides the band edge, turning back at the radius, instead of parking.
 func _shape(intent: NavIntent, ctx: SkillContext, vis: VisibilityGrid, here: Vector2,
 		pos: PackedVector2Array, opts: Dictionary) -> void:
-	var radii: PackedFloat32Array = opts.det_r
+	var radii := _walls(opts.det_r, pos)
 	intent.avoid_origins = pos
 	intent.avoid_radii = radii
 	var out := _exit_point(here, pos, radii)
@@ -185,6 +189,16 @@ func _shape(intent: NavIntent, ctx: SkillContext, vis: VisibilityGrid, here: Vec
 			_point(intent, here, next)
 			return
 		_patrol_sign = -_patrol_sign
+
+## The bands as route walls, each pulled in short of a station inside it (an island's shadow).
+func _walls(bands: PackedFloat32Array, pos: PackedVector2Array) -> PackedFloat32Array:
+	var out := bands.duplicate()
+	if not _has_station:
+		return out
+	var st := Vector2(_station.x, _station.z)
+	for i in out.size():
+		out[i] = minf(out[i], maxf(st.distance_to(pos[i]) - SHADOW_MARGIN_M, 0.0))
+	return out
 
 static func _point(intent: NavIntent, here: Vector2, to: Vector2) -> void:
 	intent.target_position = Vector3(to.x, 0.0, to.y)

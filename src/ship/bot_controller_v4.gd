@@ -173,9 +173,8 @@ var should_query_behavior: bool = false
 ## shared bin. Constant for the ship's lifetime once ship + concealment are
 ## ready; 0 means "not yet computable, retry lazily".
 var _threat_effective_radius: float = 0.0
-## What the navigator is routing against: 0 nothing, 1 the fire price
-## (shooter count, any hull), 2 the stealth layer (registry + detection).
-var _route_price: int = 0
+## Whether the navigator routes against the stealth layer (registry + detection).
+var _stealth_routing: bool = false
 var _manual_circles: bool = false
 
 
@@ -798,25 +797,17 @@ func _adjust_destination_for_threats(intent: NavIntent) -> void:
 ## transitions (spotted <-> hidden) flip subscription at most once per
 ## OBSTACLE_UPDATE_INTERVAL.  Effective radius is computed once and cached.
 func _sync_threat_subscription() -> void:
-	var want := 0
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	var field_ok: bool = field != null and field.is_built()
-	if behavior != null and server_node != null:
-		if behavior.wants_stealth and server_node.threat_registry != null:
-			want = 2
-		elif field_ok and behavior.doctrine().fire_cost_gain > 0.0:
-			want = 1
-	if want == _route_price:
+	var want: bool = behavior != null and server_node != null and behavior.wants_stealth \
+		and server_node.threat_registry != null
+	if want == _stealth_routing:
 		return
-	if _route_price != 0:
+	if _stealth_routing:
 		navigator.clear_threat_source()
 		navigator.clear_detection_source()
-		_route_price = 0
-	if want == 0:
-		return
-	if want == 1:
-		navigator.set_fire_source(field, _ship.team.team_id, behavior.doctrine().fire_cost_gain)
-		_route_price = 1
+		_stealth_routing = false
+	if not want:
 		return
 	if _threat_effective_radius <= 0.0:
 		# Retry lazily: concealment params may not be initialized at _ready.
@@ -827,7 +818,7 @@ func _sync_threat_subscription() -> void:
 	if field_ok:
 		navigator.set_detection_source(field, _ship.team.team_id, _threat_effective_radius,
 			behavior.doctrine().detection_cost_gain)
-	_route_price = 2
+	_stealth_routing = true
 
 
 func _compute_threat_effective_radius() -> float:

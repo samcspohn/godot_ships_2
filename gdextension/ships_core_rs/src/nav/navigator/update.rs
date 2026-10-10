@@ -820,40 +820,24 @@ impl ShipNavigator {
     /// there is no subscription, so the circle stamp runs instead.
     fn stamp_detection_field(&mut self) -> bool {
         let Some(mut field) = self.detect_field.clone() else { return false };
-        let fire = self.detect_mode == 1;
-        if self.detect_team < 0 || (!fire && self.detect_radius <= 0.0) {
+        if self.detect_team < 0 || self.detect_radius <= 0.0 {
             return false;
         }
         let (cluster_size, ncx, ncz, sub_size, nsubx, nsubz) = {
             let g = self.hpa_graph.as_ref().unwrap().bind();
             (g.cluster_size, g.ncx, g.ncz, g.sub_size, g.nsubx, g.nsubz)
         };
-        let version = field.bind().layer_version(self.detect_team, fire) as i64;
+        let version = field.bind().detect_version(self.detect_team) as i64;
         if version != self.detect_synced_version || self.detect_exposure.len() != (ncx * ncz) as usize {
             let mut f = field.bind_mut();
-            if fire {
-                let st = f.cluster_fire_stats(self.detect_team, cluster_size, ncx, ncz);
-                let sub = f.cluster_fire_stats(self.detect_team, sub_size, nsubx, nsubz);
-                self.detect_exposure = st.max;
-                self.detect_exposure_mean = st.mean;
-                self.detect_sub_exposure = sub.max;
-                self.detect_dir = st.dir;
-                self.detect_sub_dir = sub.dir;
-            } else {
-                let (max, mean) = f.cluster_exposure_stats(self.detect_team, self.detect_radius, cluster_size, ncx, ncz);
-                self.detect_exposure = max;
-                self.detect_exposure_mean = mean;
-                self.detect_sub_exposure = f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz).0;
-                self.detect_dir = std::sync::Arc::new(Vec::new());
-                self.detect_sub_dir = std::sync::Arc::new(Vec::new());
-            }
+            let (max, mean) = f.cluster_exposure_stats(self.detect_team, self.detect_radius, cluster_size, ncx, ncz, true);
+            self.detect_exposure = max;
+            self.detect_exposure_mean = mean;
+            self.detect_sub_exposure = f.cluster_exposure_stats(self.detect_team, self.detect_radius, sub_size, nsubx, nsubz, false).0;
             self.detect_synced_version = version;
         }
         let mut g = self.hpa_graph.as_mut().unwrap().bind_mut();
-        g.stamp_threat_costs(&self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain, !fire);
-        if fire {
-            g.stamp_threat_dirs(&self.detect_dir, &self.detect_sub_dir, self.detect_gain);
-        }
+        g.stamp_threat_costs(&self.detect_exposure, &self.detect_exposure_mean, &self.detect_sub_exposure, self.detect_gain, true);
         true
     }
 
