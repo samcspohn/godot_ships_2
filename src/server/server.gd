@@ -1615,11 +1615,9 @@ func _sync_clients() -> void:
 
 
 ## Gun tables (ReachField) cached per map and gun kind by the table thread
-## itself: read when GUN_MATRIX_LOAD and a file exists, written only with
-## --gun-matrix-cache (sims), never in production. This only reports progress.
+## itself: read and written only with --gun-matrix-cache (sims); without it,
+## as in production and editor play, every match builds them at runtime.
 const GUN_MATRIX_DIR := "user://gun_matrix"
-## Off: every match builds its tables at runtime, as production does.
-const GUN_MATRIX_LOAD := false
 var _gun_matrix_cache_set: bool = false
 var _gun_matrix_reported: Dictionary = {}
 
@@ -1627,7 +1625,7 @@ func _sync_gun_matrices(field: ReachField) -> void:
 	if not _gun_matrix_cache_set:
 		_gun_matrix_cache_set = true
 		field.set_gun_matrix_cache(ProjectSettings.globalize_path(GUN_MATRIX_DIR),
-			NavigationMapManager.get_visibility_signature(), GUN_MATRIX_LOAD, CmdArgs.has("--gun-matrix-cache"))
+			NavigationMapManager.get_visibility_signature(), CmdArgs.has("--gun-matrix-cache"), CmdArgs.has("--gun-matrix-cache"))
 	for st in field.gun_matrix_status():
 		var state := "loaded" if int(st.file) == 1 else "saved" if int(st.file) == 3 \
 			else "complete" if int(st.done) == int(st.rows) else ""
