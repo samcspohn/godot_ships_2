@@ -221,7 +221,8 @@ impl VisibilityGrid {
                 continue;
             }
             let range = c.distance_to(e.pos);
-            let v = a.prio.get(i).copied().unwrap_or(0.0) * dps_out[i].map_or(0.0, |d| d.at(range, OUT_ASPECT_DEG));
+            // No table: an anonymous reference, worth its prio alone.
+            let v = a.prio.get(i).copied().unwrap_or(0.0) * dps_out[i].map_or(1.0, |d| d.at(range, OUT_ASPECT_DEG));
             if v > top {
                 (top, top_range) = (v, range);
             }

@@ -98,20 +98,6 @@ impl ShipNavigator {
     ) {
         self.obstacles
             .insert(id, DynamicObstacle::new(id, position, velocity, radius, length));
-        // Forward circular obstacle to HPA* for cluster-level blocking.
-        // Use only ship_beam as the padding margin (not full ship clearance) since
-        // HPA* is a high-level planner and fine-grained avoidance is handled by
-        // the arc simulation.  Over-inflating the radius here causes ships to route
-        // excessively far around other ships.
-        let built = self.hpa_graph.as_ref().map_or(false, |g| g.bind().built);
-        if built {
-            let effective_radius = radius.max(length * 0.5) + self.params.ship_beam;
-            self.hpa_graph
-                .as_mut()
-                .unwrap()
-                .bind_mut()
-                .add_obstacle_impl(id, position, effective_radius);
-        }
     }
 
     pub(crate) fn update_obstacle_impl(&mut self, id: i32, position: Vector2, velocity: Vector2) {
@@ -141,18 +127,10 @@ impl ShipNavigator {
 
     pub(crate) fn remove_obstacle_impl(&mut self, id: i32) {
         self.obstacles.remove(&id);
-        let built = self.hpa_graph.as_ref().map_or(false, |g| g.bind().built);
-        if built {
-            self.hpa_graph.as_mut().unwrap().bind_mut().remove_obstacle_impl(id);
-        }
     }
 
     pub(crate) fn clear_obstacles_impl(&mut self) {
         self.obstacles.clear();
-        let built = self.hpa_graph.as_ref().map_or(false, |g| g.bind().built);
-        if built {
-            self.hpa_graph.as_mut().unwrap().bind_mut().clear_obstacles_impl();
-        }
     }
 
     pub(crate) fn set_threat_source_impl(

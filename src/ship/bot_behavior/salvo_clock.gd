@@ -2,39 +2,13 @@ class_name SalvoClock
 extends RefCounted
 
 ## The enemy's firing cycle, as this ship can observe it: when each shooter's
-## next salvo lands (stance) and whether one is in the air (evade).
-##
-## The cycle a competent player runs:
-##
-##   enemy fires ──flight──> shells land ──────reload gap──────> enemy fires
-##                 INCOMING              WINDOW          INCOMING
-##                 (angle, evade)        (unmask, fire)  (angle again)
-##
-## `phase` names which of those we are in.  QUIET means nobody observable is
-## shooting at us, which is neither an invitation to show broadside (we may
-## simply not have seen the salvo) nor a reason to evade.
+## next salvo lands, who aims here, and the main shooter's flight time.
 
-enum Phase {
-	## No tracked shells and no live shooter: nothing to time against.
-	QUIET,
-	## Enemy shells are in the air toward us.
-	INCOMING,
-	## A salvo has splashed and the next one is not yet airborne.
-	WINDOW,
-}
-
-## How far out to look for shells aimed at us.  Wider than BotControllerV4's
-## navigator feed (which only wants shells that can actually hit) because a
-## salvo that misses by 800 m still means we are being shot at, and a bot that
-## dodges well would otherwise conclude nobody was shooting.
+## How far out to look for shells aimed at us.
 const QUERY_RADIUS: float = 1200.0
 
 ## Stop trusting a measured flight time older than this.
 const SOLUTION_MAX_AGE: float = 5.0
-
-## Close the broadside window this long before the next salvo is due, to leave
-## time to swing back to an angled heading.
-const WINDOW_SAFETY_MARGIN: float = 2.0
 
 ## Fallback flight time when no ballistic solution is available.
 const DEFAULT_TOF: float = 6.0
@@ -42,43 +16,18 @@ const DEFAULT_TOF: float = 6.0
 ## An enemy whose aim point is this close is aiming at us (the 6th sense test).
 const AIM_RADIUS: float = 500.0
 
-var phase: int = Phase.QUIET
-
 ## The enemy whose gunnery currently sets our timing: the one whose shells hurt
 ## most, soonest.  May be null.
 var dominant: Ship = null
 
-## Dominant shooter's full reload cycle, seconds.
-var dominant_reload: float = 20.0
-
-## Measured time of flight from the dominant shooter to us, seconds.  This is
-## the ship's single most important number for evasion: it is how long the
-## enemy's firing solution stays committed, and therefore how long any evasive
-## state change has to survive to be worth making.
+## Measured time of flight from the dominant shooter to us, seconds: how long
+## its firing solution stays committed.
 var dominant_tof: float = DEFAULT_TOF
-
-## Horizontal dispersion of the dominant shooter's salvo at our range, metres.
-## An evasive manoeuvre that displaces us less than this is not a dodge.
-var dominant_dispersion: float = 200.0
-
-## Bearing from us to the dominant shooter, radians.
-var dominant_bearing: float = 0.0
-
-## Seconds until the earliest tracked shell lands; INF when none are tracked.
-var next_impact: float = INF
-
-## True when anything is shooting at us -- tracked shells OR a live entry in
-## active_shooters_at_me.  Survives the reload gap, unlike `next_impact`.
-var under_fire: bool = false
-
-## Wall-clock second at which the last splash was observed.
-var last_splash: float = -INF
 
 ## Enemies we can see with their guns on us, gathered only while we are
 ## detected. A player sees no more than this without the 6th sense skill.
 var aimers: Array[Ship] = []
 
-var _tracked: Dictionary = {}
 var _solution_at: float = -INF
 ## Ship -> seconds until its earliest shell in the air lands.
 var _in_air: Dictionary = {}
@@ -95,46 +44,12 @@ func tick(ship: Ship, server: GameServer, behavior: BotBehavior) -> void:
 	var now: float = SimClock.now()
 	var my_team: int = ship.team.team_id if ship.team else -1
 
-	# --- Track shells aimed near us, and notice when they stop existing ---
 	var shells: Array = ProjectileManager.get_shells_near_position(
 		Vector2(ship.global_position.x, ship.global_position.z), QUERY_RADIUS, my_team
 	)
-	var current: Dictionary = {}
-	next_impact = INF
-	for s in shells:
-		current[s["shell_id"]] = true
-		var t: float = s["time_remaining"]
-		if t < next_impact:
-			next_impact = t
-
-	# A shell id that was in the list and no longer is has either landed or
-	# expired.  Either way the salvo it belonged to is no longer a reason to
-	# stay angled.
-	for old_id in _tracked:
-		if not current.has(old_id):
-			last_splash = now
-			break
-	_tracked = current
 	_attribute(ship, server, shells, now)
-
 	_gather_aimers(ship, server)
 	_pick_dominant(ship, server, behavior, now)
-
-	under_fire = not shells.is_empty() or not behavior.active_shooters_at_me.is_empty() \
-		or not aimers.is_empty()
-
-	# --- Phase ---
-	if not shells.is_empty():
-		phase = Phase.INCOMING
-	elif under_fire and now - last_splash <= window_duration():
-		phase = Phase.WINDOW
-	elif under_fire:
-		# Under fire, no shells tracked, window expired: the next salvo is due
-		# and we have no splash to time from.  Treat as INCOMING -- assuming we
-		# are about to be shot at is the cheap mistake.
-		phase = Phase.INCOMING
-	else:
-		phase = Phase.QUIET
 
 
 ## Seconds until `shooter`'s next salvo lands here: the one in the air, else a
@@ -173,20 +88,6 @@ func _attribute(ship: Ship, server: GameServer, shells: Array, now: float) -> vo
 		var t: float = s["time_remaining"]
 		_in_air[e] = minf(_in_air.get(e, INF), t)
 		_landed[e] = maxf(_landed.get(e, -INF), now + t)
-
-
-## How long the broadside window stays open after a splash: the enemy's reload,
-## less the flight time of the salvo we must be angled for again, less a margin
-## to swing back.  Goes to zero at knife range -- correct, since there is no
-## safe moment to show broadside to a ship that can hit you before you finish
-## turning.
-func window_duration() -> float:
-	return maxf(dominant_reload - dominant_tof - WINDOW_SAFETY_MARGIN, 0.0)
-
-
-## Whether it is safe to unmask right now.
-func broadside_window_open() -> bool:
-	return phase == Phase.WINDOW
 
 
 func _gather_aimers(ship: Ship, server: GameServer) -> void:
@@ -238,10 +139,6 @@ func _pick_dominant(ship: Ship, server: GameServer, behavior: BotBehavior, now: 
 
 	var changed: bool = best != dominant
 	dominant = best
-	dominant_reload = best.artillery_controller.get_params().reload_time
-
-	var to_enemy: Vector3 = best.global_position - ship.global_position
-	dominant_bearing = atan2(to_enemy.x, to_enemy.z)
 
 	# The ballistic solve is the expensive part, so it is refreshed on a timer
 	# rather than every tick -- range changes slowly compared to how fast this
@@ -258,9 +155,3 @@ func _refresh_solution(ship: Ship, enemy: Ship) -> void:
 	)
 	var tof: float = solution[1] if solution.size() > 1 else -1.0
 	dominant_tof = tof if tof > 0.0 else DEFAULT_TOF
-
-	# Dispersion at this range, in metres of ellipse width, sampled off the same
-	# params the shooter's own gunnery uses.
-	var dist: float = ship.global_position.distance_to(enemy.global_position)
-	if gp.dispersion != null:
-		dominant_dispersion = gp.dispersion.h_at(dist, gp._range)

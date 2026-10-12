@@ -106,7 +106,7 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	return hold
 
 func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
-	return {"mode": mode, "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
+	return {"mode": mode, "refs": opening_refs() if mode == SkillCover.Mode.OFFENSE else PackedVector2Array(), "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"max_range": max_engagement_range(_ship) if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"fire_en_route": cant_go_dark}
 
@@ -132,3 +132,10 @@ func _apply_gun_policy(ctx: SkillContext, sit: Dictionary) -> void:
 
 func try_use_consumable():
 	super.try_use_consumable()
+
+## Opening: hidden cover with the priority's spawn reference in reach.
+func _opening(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(SkillCover.Mode.OFFENSE, sit))
+	if hold != null:
+		wants_stealth = _skill_hold.cover.wants_concealment()
+	return hold

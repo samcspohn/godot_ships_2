@@ -4,12 +4,11 @@ use std::time::Instant;
 use godot::prelude::*;
 
 use super::{
-    path_fail_reason, DesiredDirection, ShipNavigator, ALIGN_BOUNCE_RADIUS_DEFAULT,
-    HUG_CLEARANCE_BUFFER, PATH_FAIL_WARN_INTERVAL, PERF_SPIKE_PHASE_COUNT, STUCK_MIN_SECS,
-    STUCK_OVERRIDE_FACTOR, STUCK_OVERRIDE_MIN, STUCK_TCR_FACTOR,
+    path_fail_reason, DesiredDirection, ShipNavigator,
+    HUG_CLEARANCE_BUFFER, PATH_FAIL_WARN_INTERVAL, PERF_SPIKE_PHASE_COUNT,
 };
 use crate::nav::types::{
-    angle_difference, clamp_f, lerp_f, normalize_angle, waypoint_flags, NavState, PathResult,
+    clamp_f, lerp_f, normalize_angle, waypoint_flags, NavState, PathResult,
 };
 
 impl ShipNavigator {
@@ -251,14 +250,6 @@ impl ShipNavigator {
         // floor of ship_beam so the ship can actually reach the point.
         let arrived_radius = self.target.hold_radius.max(self.params.ship_beam * 2.0);
 
-        // maneuver_radius: zone around the destination where the ship is allowed
-        // to overshoot and perform multi-point turns to align heading.  The ship
-        // may oscillate forward/reverse within this zone while aligning.
-        // Always extends at least one TCR beyond arrived_radius so the intermediate
-        // moderate-speed zone exists even when hold_radius is large.
-        let maneuver_radius =
-            arrived_radius + self.params.turning_circle_radius.max(self.get_stopping_distance());
-
         // approach_radius: outer zone where deceleration begins.
         // Set to TCR so the ship drives straight at the destination and only
         // begins alignment once it's within one turning circle.
@@ -293,123 +284,19 @@ impl ShipNavigator {
             direction = DesiredDirection::Backward;
         }
 
-        // Heading error to desired heading at destination
-        let heading_error = angle_difference(self.state.heading, self.target.heading).abs();
-        let heading_aligned = heading_error < self.target.heading_tolerance;
-
+        // No arrival heading: the ship sails to the point, astern when it lies
+        // behind, and stops inside the hold radius. Stance owns the angle there.
         if (path_exhausted || on_final_segment) && dist_to_dest < approach_radius_inner {
-            // Approaching / maneuvering at destination.
-            // Triggered on the final waypoint segment OR after path is consumed.
-            //
-            // Three zones (inside → outside):
-            //   1. arrived_radius:   close enough AND heading aligned → stop
-            //   2. maneuver_radius:  multi-point turn zone — overshoot allowed,
-            //                        oscillate fwd/rev to align heading
-            //   3. approach_radius:  decelerate toward destination
-
-            if dist_to_dest < arrived_radius && heading_aligned {
-                // Arrived AND aligned: stop
-                desired_rudder = self.compute_rudder_to_heading(self.target.heading, false);
+            if dist_to_dest < arrived_radius {
                 desired_magnitude = 0;
                 direction = DesiredDirection::Forward;
-                self.align_commit_active = false;
-            } else if dist_to_dest < maneuver_radius {
-                // Inside the maneuver zone — multi-point turn.
-                // Priority: align heading.  Use position only to prevent
-                // drifting too far from the destination.
-                //
-                // Strategy:
-                //   - Always steer toward the desired heading
-                //   - Creep forward/backward to give the rudder water flow
-                //   - If destination is behind, reverse toward it (which also
-                //     turns the ship); if ahead, go forward
-                //   - The ship naturally oscillates: overshoot forward → reverse
-                //     back → overshoot reverse → forward again, each pass
-                //     closing the heading error.
-
-                // Determine which direction moves us back toward the destination
-                let to_dest = self.target.position - self.state.position;
-                let fwd_x = self.state.heading.sin();
-                let fwd_z = self.state.heading.cos();
-                let dest_along = to_dest.x * fwd_x + to_dest.y * fwd_z;
-                let dest_ahead = dest_along >= 0.0;
-
-                if dist_to_dest < arrived_radius {
-                    // Inside arrived zone but heading not aligned — scale throttle to
-                    // heading error so the rudder has enough authority to turn quickly.
-                    // Large misalignment demands more speed; near-aligned ships creep.
-                    if heading_error > (PI / 4.0) as f32 {
-                        desired_magnitude = 3; // >45°: aggressive turn
-                    } else if heading_error > (PI / 8.0) as f32 {
-                        desired_magnitude = 2; // >22.5°: moderate turn
-                    } else {
-                        desired_magnitude = 1; // close to aligned: creep
-                    }
-
-                    // Option A: pick the direction that gives full rudder authority for
-                    // the needed heading correction, ignoring dest_along.  At tiny
-                    // distances dest_along is noise and flipping it inverts the rudder,
-                    // cancelling the turn every frame.
-                    let rudder_fwd = self.compute_rudder_to_heading(self.target.heading, false);
-                    let rudder_rev = self.compute_rudder_to_heading(self.target.heading, true);
-                    let best_dir = if rudder_fwd.abs() >= rudder_rev.abs() {
-                        DesiredDirection::Forward
-                    } else {
-                        DesiredDirection::Backward
-                    };
-
-                    // Option B: commit to that direction until the ship has traveled
-                    // one bounce radius from where the direction was chosen.  Each
-                    // stroke of the multi-point turn completes naturally before the
-                    // direction is reconsidered; sizing to ship_beam gives a distance
-                    // that scales with the vessel.
-                    let bounce_radius =
-                        self.params.turning_circle_radius.max(ALIGN_BOUNCE_RADIUS_DEFAULT);
-                    if !self.align_commit_active
-                        || self.state.position.distance_to(self.align_commit_pos) >= bounce_radius
-                    {
-                        self.align_committed_dir = best_dir;
-                        self.align_commit_pos = self.state.position;
-                        self.align_commit_active = true;
-                    }
-                    direction = self.align_committed_dir;
-                } else {
-                    // Drifted within maneuver zone — head back toward destination
-                    // at moderate speed while turning.  dest_along is reliable here
-                    // (ship is meaningfully displaced from the destination).
-                    desired_magnitude = 2;
-                    direction = if dest_ahead {
-                        DesiredDirection::Forward
-                    } else {
-                        DesiredDirection::Backward
-                    };
-                    self.align_commit_active = false; // reset alignment commit when outside arrived zone
-                }
-
-                let reversing = direction == DesiredDirection::Backward;
-                if dist_to_dest < arrived_radius {
-                    // Inside arrived zone but heading wrong: pure heading alignment.
-                    desired_rudder = self.compute_rudder_to_heading(self.target.heading, reversing);
-                } else {
-                    // Outside arrived zone: steer toward the destination position so a
-                    // perpendicular or lateral offset is corrected.  Heading alignment
-                    // happens naturally once the ship is within arrived_radius.
-                    desired_rudder = self.compute_rudder_to_position(self.target.position, reversing);
-                }
             } else {
-                // Approach zone: decelerate toward destination.
-                // Steer toward the destination position (not just the arrival heading)
-                // so the ship doesn't sail past a destination that is perpendicular
-                // to its current heading.
-                let reversing_approach = self.target.prefer_reverse;
-                desired_rudder =
-                    self.compute_rudder_to_position(self.target.position, reversing_approach);
+                let to_dest = self.target.position - self.state.position;
+                let along = to_dest.x * self.state.heading.sin() + to_dest.y * self.state.heading.cos();
+                let astern = self.target.prefer_reverse || (along < 0.0 && !self.target.forbid_reverse);
+                desired_rudder = self.compute_rudder_to_position(self.target.position, astern);
                 desired_magnitude = self.compute_magnitude_for_approach(dist_to_dest);
-                direction = if reversing_approach {
-                    DesiredDirection::Backward
-                } else {
-                    DesiredDirection::Forward
-                };
+                direction = if astern { DesiredDirection::Backward } else { DesiredDirection::Forward };
             }
         } else if !path_exhausted {
             if direction == DesiredDirection::Backward {
@@ -450,7 +337,7 @@ impl ShipNavigator {
                 // Full heading pursuit — keep ship moving so the rudder has authority.
                 if desired_magnitude < 2 {
                     desired_magnitude = 2;
-                    direction = DesiredDirection::Forward;
+                    direction = if self.target.prefer_reverse { DesiredDirection::Backward } else { DesiredDirection::Forward };
                 }
                 desired_throttle = self.resolve_throttle(direction, desired_magnitude);
             }
@@ -466,55 +353,6 @@ impl ShipNavigator {
 
         self.timing_avoidance_us = avoid_t0.elapsed().as_secs_f64() as f32 * 1.0e6;
         self.timing_steering_us = self.timing_avoidance_us;
-
-        // --- 4.1. Stuck / bow-in detection ---
-        // Detect when the navigator wants to reverse (destination is directly behind)
-        // but incoming shell threats keep overriding to forward candidates, keeping
-        // the ship bow-in toward the target it can't reach.
-        //
-        // Key insight: a forward turn-around does NOT trigger this — during a u-turn
-        // desired_throttle is forward, so nav and steering AGREE.  The conflict only
-        // accumulates when nav explicitly wants reverse AND threats keep choosing forward.
-        //
-        // Once the conflict persists long enough (scaled by the ship's turnaround time),
-        // stuck_override_active_ is set: shell threat budget is zeroed so the ship can
-        // push through the incoming fire to execute the reverse maneuver.  Torpedo
-        // threats still apply — the ship accepts shell risk, not torpedo risk.
-        {
-            let nav_wants_reverse = desired_throttle < 0;
-            let threat_overrode_forward = choice.throttle >= 0 && nav_wants_reverse;
-
-            // Scale threshold and override duration by the ship's turnaround time
-            let turnaround_time =
-                (PI as f32) * self.params.turning_circle_radius / self.params.max_speed.max(1.0);
-            let stuck_threshold = STUCK_MIN_SECS.max(turnaround_time * STUCK_TCR_FACTOR);
-            let override_dur = STUCK_OVERRIDE_MIN.max(turnaround_time * STUCK_OVERRIDE_FACTOR);
-
-            // Tick down active override
-            if self.stuck_override_timer > 0.0 {
-                self.stuck_override_timer -= delta;
-                if self.stuck_override_timer <= 0.0 {
-                    self.stuck_override_timer = 0.0;
-                    self.stuck_override_active = false;
-                }
-            }
-
-            if threat_overrode_forward && !self.stuck_override_active {
-                self.direction_conflict_timer += delta;
-                if self.direction_conflict_timer >= stuck_threshold {
-                    self.direction_conflict_timer = 0.0;
-                    self.stuck_override_active = true;
-                    self.stuck_override_timer = override_dur;
-                    // Clear dodge commitment — we're breaking through, not dodging
-                    self.dodge_committed_rudder = 0.0;
-                    self.dodge_commitment_timer = 0.0;
-                }
-            } else if !threat_overrode_forward {
-                // Progress being made: decay conflict timer at 2× rate
-                self.direction_conflict_timer =
-                    (self.direction_conflict_timer - delta * 2.0).max(0.0);
-            }
-        }
 
         let final_rudder = choice.rudder;
         let mut final_throttle = choice.throttle;
@@ -760,14 +598,11 @@ impl ShipNavigator {
             }
         }
 
-        // --- Exit condition: at destination with heading aligned — no need to escape ---
+        // --- Exit condition: at destination — no need to escape ---
         {
             let dist_to_dest_em = self.state.position.distance_to(self.target.position);
             let arrived_radius_em = self.target.hold_radius.max(self.params.ship_beam * 2.0);
-            let heading_error_em =
-                angle_difference(self.state.heading, self.target.heading).abs();
-            if dist_to_dest_em < arrived_radius_em && heading_error_em < self.target.heading_tolerance
-            {
+            if dist_to_dest_em < arrived_radius_em {
                 self.nav_state = NavState::Normal;
                 self.emergency_initialized = false;
                 return;

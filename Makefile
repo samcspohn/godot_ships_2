@@ -43,14 +43,15 @@ ab:
 
 # One all-bot match in real time with a windowed spectator client; closing the
 # window stops the server. Server log in build/watch_server.log.
-# make watch WATCH_LINEUP=res://tools/botmatch/lineup_3v3.json SEED=2 PORT=30500
+# make watch WATCH_LINEUP=res://tools/botmatch/lineup_3v3.json SEED=2 PORT=30500 WATCH_SPEED=2
 WATCH_LINEUP ?= res://tools/botmatch/lineup_12v12_t10.json
+WATCH_SPEED ?= 1
 SEED ?= 1
 PORT ?= 30500
 watch:
 	@mkdir -p build
-	@$(GODOT) --headless --path . --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) --no-replay \
+	@$(GODOT) --headless --path . --time-scale $(WATCH_SPEED) --server --port $(PORT) --botmatch "$(WATCH_LINEUP)" --seed $(SEED) --no-replay \
 		> build/watch_server.log 2>&1 & srv=$$!; \
 	trap 'kill $$srv 2>/dev/null' EXIT INT TERM; \
 	until ss -ltn | grep -q ":$(PORT) "; do kill -0 $$srv 2>/dev/null || { echo "watch: server exited, see build/watch_server.log"; exit 1; }; sleep 0.5; done; \
-	$(GODOT) --path . --spectate 127.0.0.1:$(PORT)
+	$(GODOT) --path . --time-scale $(WATCH_SPEED) --spectate 127.0.0.1:$(PORT)

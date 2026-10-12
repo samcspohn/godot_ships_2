@@ -233,6 +233,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func _physics_process(_delta: float) -> void:
 	if _Utils.authority():
 		_reach_server_tick()
+		_reach_server_draw()
 		_server_flush()
 
 # ============================================================================
@@ -1387,9 +1388,16 @@ func _attach_oneshot_lifetime(node: Node3D, duration: float) -> void:
 #   REACH          where that ship's shells can land
 #   EXPOSURE       per cell, how many believed enemies can land shells there
 #   REACH_ENEMIES  per cell, how many enemies that ship's guns could hit from there
+#   COVER          that ship's last cover sweep, per 300 m cell: red seen, dark red
+#                  seen through the shadow margin, orange radar/hydro, blue hidden,
+#                  green hidden with a target in reach, yellow hard cover; plus each
+#                  enemy's sight ring and the best / held / dark cells
+#   DETECT         the stealth router's per-cell exposure for that ship's concealment
+#   SHADOW         what the priority (else nearest contact) sees within our bloom
+#                  range: pale in sight, blue island shadow
 # ============================================================================
 
-enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES }
+enum ReachMode { OFF, REACH, EXPOSURE, REACH_ENEMIES, COVER, DETECT, SHADOW }
 
 const REACH_REFRESH_SECONDS: float = 0.5
 const REACH_DRAW_Y: float = 2.5
@@ -1408,8 +1416,15 @@ void fragment() {
 		col = vec3(0.15, 1.0, 0.45);
 	} else if (mode == 2) {
 		col = c == 1 ? vec3(1.0, 0.9, 0.2) : (c == 2 ? vec3(1.0, 0.5, 0.1) : vec3(1.0, 0.1, 0.1));
-	} else {
+	} else if (mode == 3) {
 		col = c == 1 ? vec3(0.3, 0.9, 1.0) : (c == 2 ? vec3(0.3, 0.4, 1.0) : vec3(0.9, 0.3, 1.0));
+	} else if (mode == 4) {
+		col = c == 1 ? vec3(1.0, 0.15, 0.1) : c == 2 ? vec3(0.5, 0.05, 0.05) : c == 3 ? vec3(1.0, 0.55, 0.0)
+			: c == 4 ? vec3(0.2, 0.35, 1.0) : c == 5 ? vec3(0.1, 1.0, 0.3) : vec3(1.0, 0.95, 0.2);
+	} else if (mode == 5) {
+		col = mix(vec3(1.0, 0.95, 0.3), vec3(1.0, 0.05, 0.05), float(c) / 255.0);
+	} else {
+		col = c == 1 ? vec3(1.0, 1.0, 0.65) : vec3(0.15, 0.2, 0.7);
 	}
 	ALBEDO = col;
 	ALPHA = 0.35;
@@ -1427,6 +1442,10 @@ var _reach_peer_id: int = 0
 var _reach_srv_mode: int = ReachMode.OFF
 var _reach_srv_ship: Ship = null
 var _reach_srv_next: float = 0.0
+## Grid the overlay mesh was built for; a mode on another grid rebuilds it.
+var _reach_grid_key: String = ""
+## Server: rings, markers and cones redrawn every frame for COVER / SHADOW.
+var _reach_srv_draws: Dictionary = {}
 
 func _reach_target_ship() -> Ship:
 	if battle_camera == null or not is_instance_valid(battle_camera):
@@ -1452,6 +1471,7 @@ func _set_reach_overlay(mode: int, ship_path: NodePath) -> void:
 	_reach_srv_mode = mode
 	_reach_srv_ship = get_node_or_null(ship_path) as Ship if ship_path != NodePath("") else null
 	_reach_srv_next = 0.0
+	_reach_srv_draws = {}
 
 func _reach_server_tick() -> void:
 	if _reach_srv_mode == ReachMode.OFF or _reach_peer_id <= 0:
@@ -1478,7 +1498,42 @@ func _reach_server_tick() -> void:
 	var g: Dictionary = NavigationMapManager.reach_gun(ship)
 	var bytes := PackedByteArray()
 	var note := ""
+	var info: Dictionary = field.get_field_info()
+	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
+	var vis_info: Dictionary = {}
+	if vis != null:
+		var vi: Dictionary = vis.get_info()
+		vis_info = {"w": int(vi.width), "h": int(vi.height), "cell": float(vi.cell), "min_x": float(vi.min_x), "min_z": float(vi.min_z)}
+	_reach_srv_draws = {}
 	match _reach_srv_mode:
+		ReachMode.COVER:
+			var cov := _cover_snapshot(ship)
+			if cov.is_empty() or vis == null:
+				return
+			var opts: Dictionary = cov.sweep.opts
+			bytes = vis.cover_debug_bytes(cov.sweep.here, opts.pos, opts)
+			info = vis_info
+			var counts := PackedInt32Array([0, 0, 0, 0, 0, 0, 0])
+			for b in bytes:
+				counts[b] += 1
+			note = "%s sweep %.1fs old | seen %d, margin %d, radar %d, hidden %d, station %d, hard %d" % [cov.name,
+				(Time.get_ticks_msec() - int(cov.sweep.ms)) / 1000.0, counts[1], counts[2], counts[3], counts[4], counts[5], counts[6]]
+			_reach_srv_draws = {"opts": opts, "cover": cov.skill, "team": team_id}
+		ReachMode.DETECT:
+			var radius: float = NavigationMapManager.reach_conceal_radius(ship)
+			bytes = field.get_detect_bytes(team_id, radius)
+			note = "concealment %.0f m" % radius
+		ReachMode.SHADOW:
+			if vis == null:
+				return
+			var eye := _shadow_eye(ship)
+			if not eye.is_finite():
+				return
+			var sight: float = maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0)))
+			bytes = vis.shadow_bytes(Vector2(eye.x, eye.z), sight)
+			info = vis_info
+			note = "eye at %s, range %.0f m" % [str(Vector2(eye.x, eye.z).round()), sight]
+			_reach_srv_draws = {"eye": eye, "sight": sight}
 		ReachMode.REACH:
 			if g.is_empty():
 				return
@@ -1498,7 +1553,6 @@ func _reach_server_tick() -> void:
 				_popcount(field.reach_mask(team_id, key, here)), field.get_team_enemy_ids(team_id).size()]
 	if bytes.is_empty():
 		return
-	var info: Dictionary = field.get_field_info()
 	var payload := {
 		"mode": _reach_srv_mode, "w": int(info.w), "h": int(info.h), "cell": float(info.cell),
 		"min_x": float(info.min_x), "min_z": float(info.min_z), "raw": bytes.size(),
@@ -1516,7 +1570,9 @@ func _receive_reach_field(payload: Dictionary) -> void:
 	if bytes.size() != w * h:
 		return
 	var img := Image.create_from_data(w, h, false, Image.FORMAT_L8, bytes)
-	if _reach_texture == null or _reach_texture.get_width() != w or _reach_texture.get_height() != h:
+	var grid_key := "%d,%d,%.1f,%.1f,%.1f" % [w, h, float(payload.cell), float(payload.min_x), float(payload.min_z)]
+	if _reach_texture == null or grid_key != _reach_grid_key:
+		_reach_grid_key = grid_key
 		_reach_texture = ImageTexture.create_from_image(img)
 		if _reach_mesh != null and is_instance_valid(_reach_mesh):
 			_reach_mesh.queue_free()
@@ -1530,6 +1586,83 @@ func _receive_reach_field(payload: Dictionary) -> void:
 	_reach_refreshes += 1
 	if _reach_refreshes % 10 == 1:
 		print("[ReachOverlay] %s: %s" % [ReachMode.keys()[reach_mode], payload.note])
+
+## The cover search to show for `ship`: its freshest sweep (hold or disengage).
+func _cover_snapshot(ship: Ship) -> Dictionary:
+	var bc = ship.get_node_or_null("Modules/BotController")
+	if bc == null or bc.behavior == null:
+		return {}
+	var b: BotBehavior = bc.behavior
+	var best: Dictionary = {}
+	for pair in [["hold", b._skill_hold.cover], ["disengage", b._skill_disengage.cover()]]:
+		var sk: SkillCover = pair[1]
+		if sk != null and not sk.last_sweep.is_empty() and (best.is_empty() or int(sk.last_sweep.ms) > int(best.sweep.ms)):
+			best = {"name": pair[0], "skill": sk, "sweep": sk.last_sweep}
+	return best
+
+## Whose sight SHADOW shows: the priority, else the nearest believed enemy.
+func _shadow_eye(ship: Ship) -> Vector3:
+	var bc = ship.get_node_or_null("Modules/BotController")
+	if bc != null and bc.behavior != null:
+		var p: Vector3 = bc.behavior.priority_point()
+		if p.is_finite():
+			return p
+	var server: GameServer = get_node_or_null("/root/Server")
+	if server == null or ship.team == null:
+		return Vector3.INF
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var best := Vector3.INF
+	for e in server._team_belief(ship.team.team_id):
+		var at: Vector2 = e.pos
+		if not best.is_finite() or here.distance_to(at) < Vector2(best.x, best.z).distance_to(here):
+			best = Vector3(at.x, 0.0, at.y)
+	return best
+
+## Every frame while COVER or SHADOW is on: rings and markers to read the cells by.
+func _reach_server_draw() -> void:
+	if _reach_srv_draws.is_empty() or _reach_srv_ship == null or not is_instance_valid(_reach_srv_ship):
+		return
+	if _reach_srv_draws.has("eye"):
+		var eye: Vector3 = _reach_srv_draws.eye
+		draw_im_sphere(eye + Vector3(0, 30, 0), 60.0, Color(1.0, 1.0, 0.6))
+		draw_circle(eye + Vector3(0, 6, 0), float(_reach_srv_draws.sight), Color(1.0, 1.0, 0.6, 0.9), 96)
+		return
+	var opts: Dictionary = _reach_srv_draws.opts
+	var pos: PackedVector2Array = opts.pos
+	for i in pos.size():
+		var at := Vector3(pos[i].x, 6.0, pos[i].y)
+		draw_im_sphere(at + Vector3(0, 24, 0), 40.0, Color(1.0, 0.2, 0.2))
+		draw_circle(at, float(opts.los_r[i]), Color(1.0, 0.2, 0.2, 0.8), 96)
+		if float(opts.det_r[i]) > 0.0:
+			draw_circle(at, float(opts.det_r[i]), Color(1.0, 0.55, 0.0, 0.9), 64)
+	var cov: SkillCover = _reach_srv_draws.cover
+	var field: ReachField = NavigationMapManager.get_reach_field()
+	for mark in [["best", cov.best(), Color(0.1, 1.0, 0.3)], ["dark", cov.dark(), Color(0.3, 0.6, 1.0)]]:
+		var d: Dictionary = mark[1]
+		if d.is_empty():
+			continue
+		var p: Vector2 = d.pos
+		var at := Vector3(p.x, 0.0, p.y)
+		draw_circle(at + Vector3(0, 8, 0), 220.0, mark[2], 32)
+		draw_label(at + Vector3(0, 140, 0), "%s %.2f%s" % [mark[0], float(d.score), " hard" if bool(d.get("hard", false)) else ""], mark[2], 14)
+		_draw_fire_cone(field, int(_reach_srv_draws.team), p, mark[2])
+	if cov.has_station():
+		var st: Vector3 = cov.station_position()
+		_draw_fire_cone(field, int(_reach_srv_draws.team), Vector2(st.x, st.z), Color(1.0, 1.0, 1.0))
+
+## The arc of bearings enemy shells land at `p` from (ReachField.cone_at), 3 km out.
+func _draw_fire_cone(field: ReachField, team_id: int, p: Vector2, color: Color) -> void:
+	if field == null:
+		return
+	var cone: Dictionary = field.cone_at(team_id, p)
+	var half: float = float(cone.get("half", -1.0))
+	if half < 0.0:
+		return
+	var mid: float = float(cone.heading)
+	var at := Vector3(p.x, 10.0, p.y)
+	for a in [mid - half, mid, mid + half]:
+		draw_line(at, at + Vector3(sin(a), 0.0, cos(a)) * 3000.0, Color(color, 0.9 if a == mid else 0.5))
+	draw_label(at + Vector3(0, 200, 0), "fire cone %d guns, %.0f°" % [int(cone.count), rad_to_deg(2.0 * half)], color, 13)
 
 static func _popcount(mask: int) -> int:
 	var n := 0
@@ -1577,4 +1710,5 @@ func _clear_reach_overlay() -> void:
 	_reach_mesh = null
 	_reach_material = null
 	_reach_texture = null
+	_reach_grid_key = ""
 	_reach_sent_path = NodePath("")

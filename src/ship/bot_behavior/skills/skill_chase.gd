@@ -34,6 +34,11 @@ func execute(ctx: SkillContext, _params: Dictionary) -> NavIntent:
 		if d < best_dist:
 			best_dist = d
 			best_pos = pos
+	# The flank's own enemy first: running down whatever is lit across the map abandons it.
+	var pp: Vector3 = ctx.behavior.priority_point()
+	if pp.is_finite():
+		best_pos = pp
+		best_dist = pp.distance_to(ship.global_position)
 	if best_dist == INF:
 		return null
 

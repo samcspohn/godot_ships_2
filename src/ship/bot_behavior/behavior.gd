@@ -87,12 +87,12 @@ var _skill_disengage: SkillDisengage = SkillDisengage.new()
 var _skill_hold: SkillHold = SkillHold.new()
 var _skill_retreat: SkillRetreat = SkillRetreat.new()
 var _skill_spread: SkillSpread = SkillSpread.new()
-var _skill_evade: SkillEvade = SkillEvade.new()
 var _skill_stance: SkillStance = SkillStance.new()
 
-## The enemy's firing cycle as this ship observes it.  SkillEvade and
-## SkillBroadside both steer off it and must not disagree, so there is exactly
-## one per bot and both read it rather than each running their own shell query.
+## The skill's heading at its destination, before stance takes the helm (debug).
+var dest_heading: float = 0.0
+
+## The enemy's firing cycle as this ship observes it, for stance.
 var salvo_clock: SalvoClock = SalvoClock.new()
 
 ## Shell and aim-point solver. One per bot, because it caches per-target
@@ -592,6 +592,57 @@ func get_potential_target_weight(target: Ship) -> float:
 	potential_target_weight_cache[target] = weight
 	return weight
 
+## A newcomer takes over the priority only when this much nearer than the held one.
+const PRIORITY_SWITCH: float = 0.75
+
+## The enemy this bot answers for, held while dark: {ship, pos}, ship null for an
+## anonymous spawn reference. First pass: the nearest identified enemy or reference.
+var priority: Dictionary = {}
+
+func update_priorities(server: GameServer) -> void:
+	if server == null or _ship.team == null:
+		return
+	var team_id: int = _ship.team.team_id
+	var here := Vector2(_ship.global_position.x, _ship.global_position.z)
+	var cands: Array[Dictionary] = []
+	for b in server._team_belief(team_id):
+		# A presumption about a ship never seen carries what it is; the reference stands in for it.
+		if int(b.source) == 2 and not server.is_identified(team_id, b.ship):
+			continue
+		cands.append({"ship": b.ship, "pos": b.pos})
+	for r in server.anonymous_refs(team_id):
+		cands.append({"ship": null, "pos": r})
+	var best: Dictionary = {}
+	var best_d: float = INF
+	var held_d: float = INF
+	var held_c: Dictionary = {}
+	for c in cands:
+		var d: float = here.distance_to(c.pos)
+		if d < best_d:
+			best_d = d
+			best = c
+		if not priority.is_empty() and c.ship == priority.ship and (c.ship != null or c.pos == priority.pos):
+			held_d = d
+			held_c = c
+	priority = held_c if is_finite(held_d) and best_d > held_d * PRIORITY_SWITCH else best
+
+func priority_target() -> Ship:
+	var p = priority.get("ship")
+	return p if p != null and is_instance_valid(p) and p.is_alive() else null
+
+## Where the priority is believed to be, at sea level; INF with none.
+func priority_point() -> Vector3:
+	if priority.is_empty():
+		return Vector3.INF
+	return Vector3(priority.pos.x, 0.0, priority.pos.y)
+
+## The priority when the guns can engage it now, else null.
+func shootable_priority() -> Ship:
+	var p := priority_target()
+	if p != null and is_engageable_contact(get_contact_solution(p)) and can_hit_target(p):
+		return p
+	return null
+
 func pick_target(targets: Array[Ship], last_target: Ship) -> Ship:
 	potential_target_weight_cache.clear()
 	# LKP-held ships are candidates too, at reduced priority (see
@@ -648,13 +699,9 @@ func target_aim_offset(target: Ship) -> Vector3:
 	return solution.get("offset", Vector3.ZERO) as Vector3
 
 
-# EVASION
-
-## Speed scalar applied to the navigator's chosen throttle every frame
-## (BotControllerV4 step 6).  Read every frame while SkillEvade only runs on the
-## intent cadence, so the skill holds a wall-clock phase and answers from it.
-func get_speed_multiplier() -> float:
-	return _skill_evade.speed_multiplier()
+## Stance's throttle ceiling, applied by BotControllerV4 every frame.
+func get_throttle_cap() -> int:
+	return _skill_stance.throttle_cap()
 
 # THREAT ANALYSIS
 
@@ -940,7 +987,7 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 
 	var unspotted_enemies = server_node.get_unspotted_enemies(_ship.team.team_id)
 
-	if unspotted_enemies.is_empty():
+	if unspotted_enemies.is_empty() and not priority_point().is_finite():
 		return current_destination
 
 	# Find closest unspotted enemy
@@ -953,6 +1000,12 @@ func _get_hunting_position(server_node: GameServer, friendly: Array[Ship], curre
 		if dist < closest_dist:
 			closest_dist = dist
 			closest_pos = last_known_pos
+
+	# The flank's own enemy, not the nearest contact anywhere.
+	var pp := priority_point()
+	if pp.is_finite():
+		closest_pos = pp
+		closest_dist = _ship.global_position.distance_to(pp)
 
 	if closest_pos == Vector3.ZERO:
 		return current_destination
@@ -2230,6 +2283,8 @@ func _run_skill(skill_name: StringName, ctx: SkillContext, params: Dictionary = 
 			skill_name = &"Hold"
 		&"Retreat":     intent = _skill_retreat.execute(ctx, params)
 		&"SailForward": intent = _intent_sail_forward(ctx.ship)
+		&"Stand":       intent = _intent_stand(ctx)
+		&"Flank":       intent = _intent_flank(ctx)
 	if intent != null:
 		_active_skill_name = skill_name
 	return intent
@@ -2319,6 +2374,7 @@ const CORNERED_THREAT: float = 0.9
 ## The ladder. Subclasses call this from get_nav_intent() after setting up ctx.
 func _nav_core(ctx: SkillContext) -> NavIntent:
 	var d := _doc()
+	update_priorities(ctx.server)
 	var sit := _build_situation(ctx)
 	var prev_skill := _active_skill_name
 	var intent: NavIntent = null
@@ -2344,7 +2400,10 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 
 	if not sit.has_enemies:
 		sit["arm"] = &"idle"
-		intent = _run_chain(d.idle_chain, ctx)
+		if never_spotted():
+			intent = _opening(ctx, sit)
+		if intent == null:
+			intent = _run_chain(d.idle_chain, ctx)
 	elif not sit.has_spotted and not d.dark_chain.is_empty():
 		sit["arm"] = &"dark"
 		# Everything has gone dark. Running down the last-known position at flank
@@ -2364,7 +2423,7 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 		# sliding along an arc every point of which is just as far out.  Close,
 		# and let the ladder have the fight back once there is a shot in it.
 		sit["arm"] = &"chase"
-		intent = _run_skill(&"Chase", ctx)
+		intent = _run_skill(&"Chase", ctx) if sit.threat < PUSH_MAX_THREAT else _run_skill(&"Stand", ctx)
 		if intent == null:
 			# Hand the arm back before falling through, or _finish_nav would
 			# post-process whatever ran below as though it were the chase.
@@ -2378,6 +2437,39 @@ func _nav_core(ctx: SkillContext) -> NavIntent:
 
 	_apply_gun_policy(ctx, sit)
 	return _finish_nav(intent, ctx, sit, prev_skill)
+
+## The team has yet to see a single enemy.
+func never_spotted() -> bool:
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
+	return server != null and _ship.team != null and (server.identified.get(_ship.team.team_id, {}) as Dictionary).is_empty()
+
+## The priority as a cover target while nothing has been seen: [its reference], else empty.
+func opening_refs() -> PackedVector2Array:
+	if not never_spotted() or priority.is_empty() or priority.ship != null:
+		return PackedVector2Array()
+	return PackedVector2Array([priority.pos])
+
+## Per-class hook: the opening, before any enemy has been seen. Base: the idle chain.
+func _opening(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
+	return null
+
+## Short of the priority along the fleet axis and out to our own side of the
+## fleet: a fixed lane, not a point sliding as we move.
+func _intent_flank(ctx: SkillContext) -> NavIntent:
+	var p := priority_point()
+	if not p.is_finite():
+		return null
+	var ref := Vector2(p.x, p.z)
+	var ff: FleetFrame = fleet_frame()
+	var side: float = ff.side_of(ctx.ship.global_position)
+	var out := Vector2(ff.right.x, ff.right.z).normalized() * signf(side) if absf(side) >= FleetFrame.SIDE_DEADBAND else Vector2.ZERO
+	# Threat-scaled range is ~0 before contact (close in); a flank is run off gun range.
+	var r: float = max_engagement_range(ctx.ship)
+	var at := ref - Vector2(ff.forward.x, ff.forward.z).normalized() * r * FLANK_DEPTH + out * r * FLANK_SWING
+	var to := ref - at
+	var intent := NavIntent.create(_get_valid_nav_point(Vector3(at.x, 0.0, at.y)), atan2(to.x, to.y))
+	intent.throttle_override = 4
+	return intent
 
 ## Per-class hook: a posture that keeps running whichever arm the ladder would pick.
 func _committed_intent(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
@@ -2437,10 +2529,30 @@ func _select_low_threat_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 func _select_engaged_skill(ctx: SkillContext, _sit: Dictionary) -> NavIntent:
 	return _fight(ctx)
 
-## Hold the firing station; with none to be had, push in to the band.
+## The flank point, in long engagement ranges: this far short of the priority along
+## the fleet axis, and this far out to our side; from the spawn line about 45° forward and out.
+const FLANK_DEPTH: float = 0.6
+const FLANK_SWING: float = 0.4
+
+## Pushing stops here: past it a ship with no firing station stands its ground.
+const PUSH_MAX_THREAT: float = 0.6
+
+## Hold the firing station; with none to be had, push in to the band, or under threat stand.
 func _fight(ctx: SkillContext, params: Dictionary = {}) -> NavIntent:
 	var intent := _hold(ctx, SkillHold.Mode.FIGHT, params)
-	return intent if intent != null else _run_skill(&"Engage", ctx, params)
+	if intent != null:
+		return intent
+	if get_threat_score(ctx) < PUSH_MAX_THREAT:
+		intent = _run_skill(&"Engage", ctx, params)
+	return intent if intent != null else _run_skill(&"Stand", ctx)
+
+## Where we are, bow on the priority; stance angles. The flank is held, not crossed.
+func _intent_stand(ctx: SkillContext) -> NavIntent:
+	var at: Vector3 = ctx.ship.global_position
+	var p := priority_point()
+	var to: Vector3 = (p - at) if p.is_finite() else (_get_spotted_danger_center() - at)
+	var intent := NavIntent.create(Vector3(at.x, 0.0, at.z), atan2(to.x, to.z), ctx.ship.movement_controller.ship_length)
+	return intent
 
 func _hold(ctx: SkillContext, mode: int, params: Dictionary = {}) -> NavIntent:
 	return _run_skill(&"Hold", ctx, params.merged({"hold": mode}))
@@ -2462,11 +2574,8 @@ func _apply_gun_policy(_ctx: SkillContext, _sit: Dictionary) -> void:
 ## post-processors are shaping a heading the navigator is about to abandon.
 const POST_PROCESS_MAX_WAYPOINT_OFFSET: float = deg_to_rad(60.0)
 
-## Whether evade/spread may touch this intent.
-##
-## Reads the waypoint the same way SkillBroadside does -- live path waypoint,
-## only while the navigator is still following the path and the intent has not
-## already handed heading authority to a skill (heading_weight > 0).
+## Whether spread may touch this intent: only while the navigator follows the
+## path and no skill has taken the heading (heading_weight > 0).
 func _post_process_allowed(ctx: SkillContext, intent: NavIntent) -> bool:
 	if ctx.navigator == null or ctx.navigator.is_arrived():
 		return true
@@ -2491,10 +2600,6 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	if prev_skill == &"Hold" and _active_skill_name != &"Hold":
 		_skill_hold.reset()
 
-	# One shared reading of the enemy's firing cycle, taken before anything that
-	# steers off it and before any early return -- get_speed_multiplier() is read
-	# every frame regardless of which arm we are in, so a tick that skips the
-	# clock would leave the ship holding a stale evasive throttle indefinitely.
 	salvo_clock.tick(ctx.ship, ctx.server, self)
 	if ctx.ship.visible_to_enemy:
 		_infer_concealed_spotter(ctx.server)
@@ -2503,32 +2608,20 @@ func _finish_nav(intent: NavIntent, ctx: SkillContext, sit: Dictionary, prev_ski
 	hold_fire = not _owns_gun_policy() and wants_stealth and not cant_go_dark
 	intent = _finish_intent(intent, prev_skill)
 	if intent == null:
-		_skill_evade.reset()
 		_skill_stance.reset()
 		return null
 
 	var forced: bool = bool(sit.forced)
-	var threat: float = float(sit.threat)
-	# Stance shows the side in the reload gap itself; evade weaves only while a salvo is due.
-	var evade_wins: bool = salvo_clock.under_fire and (
-		not salvo_clock.broadside_window_open() or threat >= d.evade_override_threat
-	)
 	var post_ok: bool = (sit.arm in [&"engaged", &"close", &"low_threat", &"utility"] or d.post_process_idle_arms) \
 		and _post_process_allowed(ctx, intent)
+	dest_heading = intent.target_heading
 	# Every arm, committed ones too: skills choose where, stance how the hull gets there.
-	if _active_skill_name not in d.evade_exclude:
+	if _active_skill_name not in d.stance_exclude:
 		intent = _skill_stance.apply(intent, ctx)
 	else:
 		_skill_stance.reset()
 	if not post_ok:
-		_skill_evade.reset()
 		return intent
-
-	if evade_wins and not forced and _active_skill_name not in d.evade_exclude:
-		intent = _skill_evade.apply(intent, ctx, d.evade_params)
-		intent.target_heading = _skill_stance.clamp_heading(intent.target_heading)
-	else:
-		_skill_evade.reset()
 
 	if not forced and _active_skill_name not in d.spread_exclude:
 		var sp: Dictionary = d.spread_overrides.get(_active_skill_name, {

@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::{nav_pool, ReachField, Terrain};
 use crate::nav::cover_sweep::{pick_dict, sweep_args};
-use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET};
+use crate::nav::spot_walk::{Enemy, SpotInputs, AVOID_DET, AVOID_LOS};
 use crate::projectile::damage_model::DamageModel;
 use crate::variant_cast::VariantCast;
 
@@ -304,6 +304,8 @@ impl VisibilityGrid {
     fn get_info(&self) -> VarDictionary {
         let mut d = VarDictionary::new();
         d.set("cell", self.cell);
+        d.set("min_x", self.min_x);
+        d.set("min_z", self.min_z);
         d.set("width", self.w);
         d.set("height", self.h);
         d.set("cells", self.centres.len() as i64);
@@ -453,6 +455,73 @@ impl VisibilityGrid {
         st.set("enemies", inp.enemies.len() as i64);
         d.set("stats", &st);
         d
+    }
+
+    /// Debug: cover_sweep's view of every cell in its box, one byte per grid cell
+    /// row-major by z. 0 outside the box, land or too shallow; 1 seen (LOS within
+    /// los_r), 2 seen only through the los_margin, 3 radar/hydro (det_r), 4 hidden
+    /// with no target in reach, 5 hidden with one (a candidate station), 6 seen
+    /// but out of every gun (hard cover). Same opts as cover_sweep.
+    #[func]
+    fn cover_debug_bytes(&self, from: Vector2, enemies: PackedVector2Array, opts: VarDictionary) -> PackedByteArray {
+        let n = (self.w.max(0) * self.h.max(0)) as usize;
+        let mut out = vec![0u8; n];
+        let Some(mut dm) = opts.get("damage_model").and_then(|v| v.try_to::<Gd<DamageModel>>().ok()) else { return PackedByteArray::new() };
+        if !self.is_ready() {
+            return PackedByteArray::new();
+        }
+        let inp = self.hold_inputs(&enemies, &opts);
+        let a = sweep_args(from, &opts, &mut dm.bind_mut());
+        let all = if inp.enemies.len() >= 64 { u64::MAX } else { (1u64 << inp.enemies.len()) - 1 };
+        let known = inp.fire.as_ref().map_or(0, |f| f.known_mask());
+        let half = a.box_m;
+        for iz in 0..self.h {
+            for ix in 0..self.w {
+                let Some(k) = self.water(ix, iz) else { continue };
+                let c = self.centres[k];
+                if (c.x - from.x).abs() > half || (c.y - from.y).abs() > half || self.sdf_c[k] < inp.clearance {
+                    continue;
+                }
+                let det = self.in_zone_of((ix, iz), &inp, AVOID_DET);
+                let seen = self.in_zone_of((ix, iz), &inp, AVOID_LOS);
+                let direct = inp.enemies.iter().any(|e| e.cell.is_some_and(|ec| c.distance_squared_to(e.pos) <= e.los_r * e.los_r && self.visible_idx(k, ec)));
+                let out_of_fire = inp.fire.as_ref().is_some_and(|f| known == all && f.mask(c) == 0);
+                let in_range = inp.enemies.iter().enumerate().take(64)
+                    .filter(|(_, e)| a.max_range <= 0.0 || c.distance_to(e.pos) <= a.max_range)
+                    .fold(0u64, |m, (i, _)| m | 1 << i);
+                out[(iz * self.w + ix) as usize] = if !det && !seen {
+                    if self.spotted_mask(k, &inp) & a.live & in_range != 0 { 5 } else { 4 }
+                } else if out_of_fire {
+                    6
+                } else if det {
+                    3
+                } else if direct {
+                    1
+                } else {
+                    2
+                };
+            }
+        }
+        PackedByteArray::from(out.as_slice())
+    }
+
+    /// Debug: what an eye at `from` sees within `range`, one byte per grid cell
+    /// row-major by z: 0 out of range or land, 1 in sight, 2 in an island's shadow.
+    #[func]
+    fn shadow_bytes(&self, from: Vector2, range: f32) -> PackedByteArray {
+        let n = (self.w.max(0) * self.h.max(0)) as usize;
+        let mut out = vec![0u8; n];
+        let Some(ec) = self.cell_of(from) else { return PackedByteArray::from(out.as_slice()) };
+        for iz in 0..self.h {
+            for ix in 0..self.w {
+                let Some(k) = self.water(ix, iz) else { continue };
+                if self.centres[k].distance_to(from) > range {
+                    continue;
+                }
+                out[(iz * self.w + ix) as usize] = if self.visible_idx(k, ec) { 1 } else { 2 };
+            }
+        }
+        PackedByteArray::from(out.as_slice())
     }
 
     /// hold_walk scored instead of stopped: the whole budget walked from the

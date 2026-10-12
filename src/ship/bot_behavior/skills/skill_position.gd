@@ -26,6 +26,8 @@ var _claim_team: int = -1
 var _claim_ship: int = -1
 var _hull_key: int = 0
 var _count: int = 0
+## Belief entries the held station sees, as hold_walk's bitmask.
+var _mask: int = 0
 var _steps: int = 0
 var _trails: Array[PackedVector2Array] = []
 
@@ -78,6 +80,7 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 	if _has_station:
 		var ev: Dictionary = vis.hold_eval(Vector2(_station.x, _station.z), pos, opts)
 		_count = int(ev.count) if bool(ev.free) else 0
+		_mask = int(ev.mask) if bool(ev.free) else 0
 		if _count == 0:
 			_drop()
 	var r: Dictionary
@@ -96,6 +99,7 @@ func _walk_station(vis: VisibilityGrid, danger: Vector2, here: Vector2, pos: Pac
 	if bool(r.get("found", false)):
 		var p: Vector2 = r.pos
 		_count = int(r.count)
+		_mask = int(r.get("mask", 0))
 		_adopt(Vector3(p.x, 0.0, p.y), _count, {})
 
 ## Walks the best cell out to the shoreline of the island it leans on, so the
@@ -132,7 +136,8 @@ func _intent(ctx: SkillContext, field: ReachField, team_id: int, params: Diction
 		var current: float = ctx.behavior._get_ship_heading()
 		if absf(angle_difference(current, heading)) > PI / 2.0:
 			heading = ctx.behavior._normalize_angle(heading + PI)
-	var hold: float = params.get("jitter_radius", ship.movement_controller._p().turning_circle_radius * 2.0)
+	# A station is picked for a precise line of fire: hold it to a ship length.
+	var hold: float = params.get("jitter_radius", ship.movement_controller.ship_length)
 	var intent := NavIntent.create(_station, heading, hold)
 	intent.skip_threat_adjustment = true
 	intent.near_terrain = _refined

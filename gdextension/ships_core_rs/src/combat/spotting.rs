@@ -9,7 +9,7 @@ names!(
     team, team_id, visible_to_enemy, det_los, det_hydro, det_radar, det_air, concealment, params, p,
     bloom_radius, assured_acquisition_range, spotting_range_override, radar_spotting_range_override,
     air_radius, aviation_controller, active_squadrons, squadrons, aircraft, spotting_range,
-    _pending_spotter, _pending_source, _pending_dist, collider, collision_layer;
+    _pending_spotter, _pending_source, _pending_dist, spotters, collider, collision_layer;
 );
 
 thread_local! {
@@ -57,6 +57,8 @@ struct Ship {
     vis: bool,
     flags: [bool; 4],
     pending: Option<(usize, Source, f32)>,
+    /// Every enemy holding us this frame, by any means.
+    spotters: Vec<usize>,
 }
 
 impl Ship {
@@ -93,6 +95,7 @@ impl Ship {
             vis: o.get(&n.visible_to_enemy).to_bool(),
             flags: [false; 4],
             pending: None,
+            spotters: Vec::new(),
             obj,
         })
     }
@@ -112,6 +115,9 @@ struct Pass {
 
 impl Pass {
     fn propose(&mut self, t: usize, s: usize, src: Source, dist: f32) {
+        if !self.ships[t].spotters.contains(&s) {
+            self.ships[t].spotters.push(s);
+        }
         let p = &mut self.ships[t].pending;
         let (pr, pd) = p.map_or((0, f32::INFINITY), |(_, ps, pd)| (rank(ps), pd));
         if rank(src) < pr || (rank(src) == pr && dist >= pd) {
@@ -196,9 +202,7 @@ impl Pass {
             self.spot(b, a, dist);
         }
         let (sa, sb) = (&self.ships[a], &self.ships[b]);
-        if sa.vis && sb.vis {
-            return;
-        }
+        // No early out when both are already seen: every spotter is wanted (who spots whom).
         // The ray only matters if a spot or a sensor reaches this far.
         let needs_ray = sb.conceal.max(sa.hydro.max(sa.radar)) > dist
             || sa.conceal.max(sb.hydro.max(sb.radar)) > dist
@@ -235,6 +239,8 @@ impl Pass {
             }
             let Some((spotter, src, dist)) = s.pending else { continue };
             let Ok(mut conc) = o.get(&n.concealment).try_to::<Gd<Object>>() else { continue };
+            let spotters: VarArray = s.spotters.iter().map(|&k| self.ships[k].obj.to_variant()).collect();
+            conc.set(&n.spotters, &spotters.to_variant());
             conc.set(&n._pending_spotter, &self.ships[spotter].obj.to_variant());
             conc.set(&n._pending_source, &(src as i32).to_variant());
             conc.set(&n._pending_dist, &(dist as f64).to_variant());

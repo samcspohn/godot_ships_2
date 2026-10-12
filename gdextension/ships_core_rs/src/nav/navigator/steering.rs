@@ -2,9 +2,9 @@ use godot::prelude::*;
 use std::f64::consts::PI;
 
 use super::{
-    ShipNavigator, SteeringChoice, ThreatEval, BOW_STERN_CLIP_START, DODGE_COMMITMENT_BIAS,
-    DODGE_COMMITMENT_DURATION, GRAZE_MIN_FACTOR, PARKED_SPEED_THRESHOLD, SHELL_TIME_TOLERANCE,
-    SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER,
+    ShipNavigator, SteeringChoice, ThreatEval, DODGE_COMMITMENT_BIAS, DODGE_COMMITMENT_DURATION,
+    PARKED_SPEED_THRESHOLD, SOFT_TERRAIN_PENALTY, TORPEDO_VIRTUAL_CALIBER, TURN_LATCH_MIN,
+    TURN_LATCH_PENALTY_S, TURN_LATCH_RELEASE,
 };
 use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normalize_angle, ArcPoint, DynamicObstacle};
 
@@ -12,10 +12,8 @@ use crate::nav::types::{angle_difference, clamp_f, lerp_f, move_toward_f, normal
 const FORBID_REVERSE_PENALTY_S: f32 = 120.0;
 
 impl ShipNavigator {
-    /// Evaluate shell + torpedo threats along an arc. Returns separate scores so
-    /// the caller can apply different budgets and suppress shells when the
-    /// stuck override is active.
-    pub(crate) fn score_arc_shell_threat(&self, arc: &[ArcPoint], end_speed: f32) -> ThreatEval {
+    /// Torpedo hits along an arc; shells are stance's business.
+    pub(crate) fn score_arc_torpedo_threat(&self, arc: &[ArcPoint], end_speed: f32) -> ThreatEval {
         let mut result = ThreatEval::default();
         if arc.len() < 2 {
             return result;
@@ -24,104 +22,6 @@ impl ShipNavigator {
         // Ship half-extents for OBB test
         let hsl = self.params.ship_length * 0.5; // half-length (bow/stern)
         let hsb = self.params.ship_beam * 0.5; // half-beam (port/starboard)
-
-        // --- Adaptive time tolerance ---
-        // eff_tol is the maximum acceptable gap between a shell's impact time and
-        // the nearest arc sample.  It is driven purely by the arc's own sampling
-        // density (1.5x the mean inter-point interval) so that shells are only
-        // tested when the arc actually covers the relevant time window.  A 2-second
-        // floor handles instantaneous arcs (single point, arc_dt_mean == 0).
-        let arc_duration = arc.last().unwrap().time - arc.first().unwrap().time;
-        let arc_dt_mean = if arc.len() > 1 {
-            arc_duration / (arc.len() - 1) as f32
-        } else {
-            0.0
-        };
-        let eff_tol = SHELL_TIME_TOLERANCE.max(arc_dt_mean * 1.5);
-
-        // =========================================================
-        // SHELLS - temporal point intersection
-        //
-        // For each shell, find the arc point whose simulation time is closest to
-        // shell.time_remaining.  If the gap is within the adaptive tolerance,
-        // project the shell's landing point into the ship's OBB at that arc
-        // point's position/heading.
-        // Penalty factor:
-        //   - end-on (bow or stern toward incoming shell) -> GRAZE_MIN_FACTOR (autobounce)
-        //   - broadside                                   -> 1.0 (maximum damage)
-        //   - bow/stern hull-tip clips                    -> further reduced
-        // =========================================================
-        for shell in &self.incoming_shells {
-            if shell.time_remaining < 0.5 {
-                continue; // about to land, no time to dodge
-            }
-
-            // Skip shells whose impact time is beyond the arc's simulated range.
-            // Without this check, shells landing well after the arc ends could be
-            // tested against the arc's endpoint position, which may be far from
-            // where the ship would actually be at the shell's impact time.
-            if shell.time_remaining > arc.last().unwrap().time + eff_tol {
-                continue;
-            }
-
-            let cal_weight = (shell.caliber * shell.caliber) / (200.0 * 200.0);
-
-            // Find arc point nearest in time to shell impact
-            let mut best_apt: Option<&ArcPoint> = None;
-            let mut best_dt = f32::INFINITY;
-            for apt in arc {
-                let dt = (apt.time - shell.time_remaining).abs();
-                if dt < best_dt {
-                    best_dt = dt;
-                    best_apt = Some(apt);
-                }
-            }
-            let best_apt = match best_apt {
-                Some(apt) if best_dt <= eff_tol => apt,
-                _ => continue,
-            };
-
-            // Ship local frame at this arc point
-            let fx = best_apt.heading.sin();
-            let fz = best_apt.heading.cos();
-
-            // Shell landing point relative to ship center, in ship local frame
-            // along_keel > 0 = toward bow; along_beam > 0 = toward starboard
-            let rel = shell.landing_pos - best_apt.position;
-            let along_keel = rel.x * fx + rel.y * fz;
-            let along_beam = rel.x * fz - rel.y * fx;
-
-            // OBB check - use exact hull dimensions only.
-            // An arc scores a shell hit only when the shell's predicted landing
-            // position falls within the ship's actual bounding box at the matched
-            // arc point.  No extra keel or beam margin is added: proximity is not
-            // a hit.  This prevents dodging shells that would miss the ship.
-            if along_keel.abs() > hsl {
-                continue;
-            }
-            if along_beam.abs() > hsb {
-                continue;
-            }
-
-            // Angle factor: shell arriving end-on is partially autobounced.
-            //   cos_keel = |cos(angle between shell travel dir and ship keel)|:
-            //     1 = bow/stern approach (autobounce) -> GRAZE_MIN_FACTOR
-            //     0 = broadside hit                   -> 1.0
-            let cos_keel = (shell.landing_dir.x * fx + shell.landing_dir.y * fz).abs();
-            let sin_keel = (1.0 - cos_keel * cos_keel).max(0.0).sqrt();
-            let angle_factor = GRAZE_MIN_FACTOR + (1.0 - GRAZE_MIN_FACTOR) * sin_keel;
-
-            // Bow/stern hard cutoff: shells landing in the extreme forward/aft section
-            // (beyond BOW_STERN_CLIP_START fraction of the half-length) are rejected
-            // entirely.  Angled bow/stern armour bounces these shells regardless of
-            // calibre - no gradual falloff.
-            let fwd_frac = along_keel.abs() / hsl.max(0.01);
-            if fwd_frac > BOW_STERN_CLIP_START {
-                continue;
-            }
-
-            result.shell_score += cal_weight * angle_factor;
-        }
 
         // =========================================================
         // TORPEDOES - swept test
@@ -206,6 +106,11 @@ impl ShipNavigator {
         desired_rudder: f32,
         desired_throttle: i32,
     ) -> SteeringChoice {
+        let turn_err = self.turn_error(desired_throttle);
+        if turn_err < TURN_LATCH_RELEASE {
+            self.turn_latch = 0.0;
+        }
+        let desired_rudder = if self.turn_latch * desired_rudder < 0.0 { -desired_rudder } else { desired_rudder };
         let mut result = SteeringChoice {
             rudder: desired_rudder,
             throttle: desired_throttle,
@@ -250,6 +155,7 @@ impl ShipNavigator {
         // --- Parked-ship filter ---
         self.skip_ship_obstacles =
             self.state.current_speed.abs() < PARKED_SPEED_THRESHOLD && desired_throttle <= 0;
+        self.refresh_ships();
 
         // --- Fast early-exit: skip when clearly safe and no threats at all ---
         // Threshold: sdf > lookahead + hard_clearance means no arc of length
@@ -259,38 +165,21 @@ impl ShipNavigator {
         // open water hundreds of metres from land.)
         let terrain_safe = sdf_here > lookahead + hard_clearance;
 
-        let mut obstacles_safe = true;
-        let engagement_range = lookahead + self.params.max_speed * 10.0;
-        for obs in self.obstacles.values() {
-            if self.skip_ship_obstacles && !obs.is_torpedo() {
-                continue;
-            }
-            // Torpedoes can be fast and far - use 90 s of torpedo travel as the
-            // engagement horizon so the ship begins dodging well before impact.
-            // Ship obstacles use the normal lookahead-based range.
-            let rel = obs.position - self.state.position;
-            let near = if obs.is_torpedo() {
-                rel.length() < obs.velocity.length() * 90.0 + self.params.ship_length
-            } else {
-                // Closest approach on both current tracks, padded by a turning circle
-                // since our arc can bend toward it.
-                let rv = obs.velocity - self.state.velocity;
-                let horizon = engagement_range / self.params.max_speed.max(1.0);
-                let t = if rv.length_squared() > 1e-6 { (-rel.dot(rv) / rv.length_squared()).clamp(0.0, horizon) } else { 0.0 };
-                let miss = (self.params.ship_length + obs.length) * 0.5 + hard_clearance + self.params.turning_circle_radius;
-                rel.length() < engagement_range && (rel + rv * t).length() < miss
-            };
-            if near {
-                obstacles_safe = false;
-                break;
+        // Torpedoes only: ships come from the registry (steer_around_ships).
+        // 90 s of torpedo travel so the ship begins dodging well before impact.
+        let torpedo_near = self.obstacles.values().any(|o| {
+            o.is_torpedo() && (o.position - self.state.position).length() < o.velocity.length() * 90.0 + self.params.ship_length
+        });
+
+        if !torpedo_near {
+            if let Some(choice) = self.steer_around_ships(desired_throttle, hard_clearance) {
+                self.winning_arc = self.predict_arc_internal(choice.rudder, choice.throttle, lookahead);
+                self.arm_turn_latch(&choice, turn_err);
+                return choice;
             }
         }
 
-        // Shells deliberately do NOT gate the fast path any more.  They only
-        // break ties inside the torpedo override, which cannot be reached when
-        // obstacles_safe holds -- so a ship in open water under gunfire takes the
-        // one-arc fast path, and SkillEvade does the dodging.
-        if terrain_safe && obstacles_safe {
+        if terrain_safe && !torpedo_near {
             let fast_path_lookahead = self.params.turning_circle_radius * 1.5;
             self.winning_arc =
                 self.predict_arc_internal(desired_rudder, desired_throttle, fast_path_lookahead);
@@ -299,6 +188,7 @@ impl ShipNavigator {
             self.perf_last_steering_terrain_rejects = 0;
             self.perf_last_steering_short_arc_rejects = 0;
             self.perf_last_steering_arc_points_simulated = self.winning_arc.len() as i32;
+            self.arm_turn_latch(&result, turn_err);
             return result;
         }
 
@@ -439,9 +329,7 @@ impl ShipNavigator {
         // =========================================================
         // Two-pass scoring storage
         //   nav_score = pure navigation cost (no threat penalty)
-        //   threats   = shell + torpedo hit scores (dimensionless)
-        // Selection: find best_nav; filter to best_nav + budget;
-        //            pick the candidate with the lowest effective threat.
+        //   threats   = torpedo hits (dimensionless)
         // =========================================================
         struct PassEntry {
             rudder: f32,
@@ -516,10 +404,12 @@ impl ShipNavigator {
                 // Nav score: time until bow (forward) or stern (reverse) aligns with target.heading.
                 // For reverse candidates the effective heading is bow + pi - the direction
                 // the ship will present when it switches back to forward drive.
+                // At the point only stance's heading counts; without it, hold the bow.
+                let hold_h = if has_heading_weight { self.target.heading } else { self.state.heading };
                 let effective_target_h = if cand_throttle < 0 {
-                    normalize_angle(self.target.heading + (PI as f32))
+                    normalize_angle(hold_h + (PI as f32))
                 } else {
-                    self.target.heading
+                    hold_h
                 };
                 let mut nav_score = f32::INFINITY;
                 for pt in &arc {
@@ -546,7 +436,7 @@ impl ShipNavigator {
                     }
                 }
 
-                let threats = self.score_arc_shell_threat(&arc, self.throttle_to_speed(cand_throttle));
+                let threats = self.score_arc_torpedo_threat(&arc, self.throttle_to_speed(cand_throttle));
 
                 // Soft terrain penalty: prefer arcs that stay outside soft_clearance
                 // when the ship is currently outside it.  When already inside
@@ -708,7 +598,7 @@ impl ShipNavigator {
                     }
                 }
 
-                let threats = self.score_arc_shell_threat(&arc, self.throttle_to_speed(cand_throttle));
+                let threats = self.score_arc_torpedo_threat(&arc, self.throttle_to_speed(cand_throttle));
 
                 // Soft terrain penalty: same logic as the wp_is_virtual branch.
                 if sdf_here >= soft_clearance && soft_min_sdf < soft_clearance {
@@ -778,34 +668,23 @@ impl ShipNavigator {
         // =========================================================
         // Selection
         // =========================================================
-        // Shell evasion no longer lives here.  A steering optimiser that scores
-        // "time to waypoint, subject to not being hit" has a degenerate optimum
-        // -- stop -- and the enemy's fire control closes the loop around it: the
-        // bot slows, the next salvo lands short, and the locally-optimal answer
-        // to a short salvo is to keep the speed change.  That converged on zero
-        // speed, which is the easiest possible thing to hit.  SkillEvade owns
-        // shell evasion now, at the behaviour layer, where it can commit to a
-        // pattern across salvos instead of re-deciding every frame.
-        //
-        // Two regimes remain:
-        //   * the arc navigation would have taken eats no torpedo -> pure
-        //     navigation, and SkillEvade keeps working the guns problem.
-        //   * it eats one -> torpedo avoidance HARD OVERRIDES navigation,
-        //     ranked lexicographically.
-        //
-        // Navigation's own answer is computed first because it is also the gate.
-        // Entering the override off "any candidate is hit" armed it for torpedoes
-        // the ship was never going to steer into -- every torpedo inside the
-        // envelope put the ship in dodge mode and stood SkillEvade down, whether
-        // or not the route was ever in the water.
+        // Shells are stance's (behaviour layer). Pure navigation, unless the arc
+        // navigation would take eats a torpedo: then torpedo avoidance hard-
+        // overrides, ranked lexicographically. Gated on navigation's own arc,
+        // not "any candidate is hit", so torpedoes the ship would never steer
+        // into do not arm it.
         let mut nav_best_idx: usize = 0;
         let mut best_nav = f32::INFINITY;
         for i in 0..pass_data.len() {
             if pass_data[i].any_obs_collision {
                 any_collision = true;
             }
-            if pass_data[i].nav_score < best_nav {
-                best_nav = pass_data[i].nav_score;
+            let mut score = pass_data[i].nav_score;
+            if self.turn_latch * pass_data[i].rudder < -0.01 && pass_data[i].throttle >= 0 {
+                score += TURN_LATCH_PENALTY_S;
+            }
+            if score < best_nav {
+                best_nav = score;
                 nav_best_idx = i;
             }
         }
@@ -826,11 +705,8 @@ impl ShipNavigator {
             // before it ties, so navigation cannot buy its way past a torpedo.
             //   1. fewest torpedo hits          (torpedo_score is 100 per hit)
             //   2. latest first impact          (buys another decision cycle)
-            //   3. lowest shell threat          (vary speed/heading against guns
-            //                                    while dodging -- the arcs here
-            //                                    already differ in throttle)
-            //   4. lowest nav score             (get on with the mission)
-            let mut best: Option<(f32, f32, f32, f32)> = None;
+            //   3. lowest nav score             (get on with the mission)
+            let mut best: Option<(f32, f32, f32)> = None;
             for i in 0..pass_data.len() {
                 let p = &pass_data[i];
 
@@ -847,16 +723,14 @@ impl ShipNavigator {
 
                 // Negated so that "larger is worse" holds for every key and the
                 // whole tuple can be compared with a single <.
-                let key = (torp, -p.threats.torpedo_time, p.threats.shell_score, p.nav_score);
+                let key = (torp, -p.threats.torpedo_time, p.nav_score);
                 let better = match best {
                     None => true,
                     Some(b) => {
                         key.0 < b.0 - 1e-4
                             || ((key.0 - b.0).abs() <= 1e-4
                                 && (key.1 < b.1 - 1e-4
-                                    || ((key.1 - b.1).abs() <= 1e-4
-                                        && (key.2 < b.2 - 1e-4
-                                            || ((key.2 - b.2).abs() <= 1e-4 && key.3 < b.3)))))
+                                    || ((key.1 - b.1).abs() <= 1e-4 && key.2 < b.2)))
                     }
                 };
                 if better {
@@ -896,8 +770,25 @@ impl ShipNavigator {
             self.dodge_committed_rudder = 0.0;
             self.dodge_commitment_timer = 0.0;
         }
+        self.arm_turn_latch(&result, turn_err);
 
         result
+    }
+
+    /// Bow's error from where it is steering to; 0 while backing.
+    fn turn_error(&self, throttle: i32) -> f32 {
+        if throttle < 0 {
+            return 0.0;
+        }
+        angle_difference(self.state.heading, self.steer_goal()).abs()
+    }
+
+    /// A big turn keeps its side until near done: from far off, port and
+    /// starboard score alike and small changes flip the ship between them.
+    fn arm_turn_latch(&mut self, choice: &SteeringChoice, turn_err: f32) {
+        if self.turn_latch == 0.0 && turn_err > TURN_LATCH_MIN && choice.throttle >= 0 && choice.rudder.abs() >= 0.3 {
+            self.turn_latch = choice.rudder.signum();
+        }
     }
 
     // ============================================================================

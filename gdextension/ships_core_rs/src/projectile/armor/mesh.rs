@@ -251,6 +251,41 @@ impl PartMesh {
         best
     }
 
+    pub fn local_bounds(&self) -> Option<(V3, V3)> {
+        self.nodes.first().map(|n| (n.min, n.max))
+    }
+
+    /// All triangles crossed, not just the closest.
+    pub fn crossings(&self, from: V3, to: V3) -> u32 {
+        if self.nodes.is_empty() {
+            return 0;
+        }
+        let dir = to.sub(from);
+        let inv_dir = V3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
+        let mut n_hits = 0;
+        let mut stack = [0u32; 64];
+        let mut sp: usize = 1;
+        while sp > 0 {
+            sp -= 1;
+            let n = &self.nodes[stack[sp] as usize];
+            if !Self::segment_hits_box(from, inv_dir, 1.0, n.min, n.max) {
+                continue;
+            }
+            if n.count > 0 {
+                for k in n.first..n.first + n.count {
+                    if Self::hit_tri(&self.tris[self.order[k as usize] as usize], from, dir).is_some() {
+                        n_hits += 1;
+                    }
+                }
+            } else if sp + 2 <= stack.len() {
+                stack[sp] = n.right;
+                stack[sp + 1] = n.first;
+                sp += 2;
+            }
+        }
+        n_hits
+    }
+
     fn any_hit_local(&self, from: V3, to: V3) -> bool {
         self.raycast_local(from, to).is_some()
     }

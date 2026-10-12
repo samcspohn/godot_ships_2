@@ -1,7 +1,7 @@
 class_name SkillEngage
 extends BotSkill
 
-## Pushing forward: straight in on the danger bearing to the band edge of the
+## Pushing forward: straight in on the priority (else the danger bearing) to the band edge of the
 ## engagement range, routed round every enemy's band and out of any band
 ## holding us first. What SkillHold's FIGHT runs when it finds no station.
 ## Params as SkillFight's band: band_m, else desired_range, else the engagement range.
@@ -20,7 +20,8 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		pos.append(b.pos)
 		radii.append(band_m + float(b.spread) if SkillFight.threatens(b.ship) else 0.0)
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
-	var danger := SkillPosition._belief_centre(ctx, belief, here)
+	var pp: Vector3 = ctx.behavior.priority_point()
+	var danger := Vector2(pp.x, pp.z) if pp.is_finite() else SkillPosition._belief_centre(ctx, belief, here)
 	var off := here - danger
 	if off.length() <= band_m or off.length_squared() < 1.0:
 		return null

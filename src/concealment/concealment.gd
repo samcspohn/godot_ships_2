@@ -34,6 +34,9 @@ var spot_source: SpotSource = SpotSource.NONE
 ## bloom rules key on LOS.
 var last_detected_time: float = -101.0
 
+## Every enemy ship holding us this detection frame, by any means.
+var spotters: Array = []
+
 var _pending_spotter: Ship = null
 var _pending_source: SpotSource = SpotSource.NONE
 var _pending_dist: float = INF
@@ -90,6 +93,7 @@ func _physics_process(delta: float) -> void:
 
 ## Called by the server alongside the det_* flag reset.
 func begin_spot_frame() -> void:
+	spotters = []
 	_pending_spotter = null
 	_pending_source = SpotSource.NONE
 	_pending_dist = INF

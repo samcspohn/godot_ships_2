@@ -1342,6 +1342,29 @@ impl ReachField {
         Self::mask(self.reach_lookup(team, hull_key, ids.as_slice()), ids.len(), point)
     }
 
+    /// Debug: the stealth router's per-cell exposure for a hull concealed at
+    /// `radius`, before cluster averaging: 0 unexposed or land, else 1..255
+    /// rising to effective distance zero (inside radar or hydro).
+    #[func]
+    fn get_detect_bytes(&mut self, team: i32, radius: f32) -> PackedByteArray {
+        let version = self.detect_version(team);
+        let Some(t) = self.teams.get(&team) else { return PackedByteArray::new() };
+        if t.detect_built != version || t.detect.is_empty() {
+            self.refresh_seen(team);
+            let grid = Arc::new(self.detect_grid(&self.teams[&team]));
+            let t = self.teams.get_mut(&team).unwrap();
+            t.detect = grid;
+            t.detect_built = version;
+        }
+        let (Some(f), detect) = (self.field.as_ref(), &self.teams[&team].detect) else { return PackedByteArray::new() };
+        let r = radius.max(1.0);
+        let out: Vec<u8> = (0..f.water.len()).map(|i| {
+            let d = detect.get(i).copied().unwrap_or(f32::INFINITY);
+            if f.water[i] == 0 || d >= r { 0 } else { 1 + (((r - d) / r).clamp(0.0, 1.0) * 254.0) as u8 }
+        }).collect();
+        PackedByteArray::from(out.as_slice())
+    }
+
     /// Per cell, how many enemies can land shells there (debug overlay).
     #[func]
     fn get_exposure_count_bytes(&self, team: i32) -> PackedByteArray {

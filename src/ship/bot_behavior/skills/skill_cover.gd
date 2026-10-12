@@ -14,13 +14,14 @@ const COVER_HOLD_M := 300.0
 const HOLD_S := 60.0
 ## A new station must beat the held one by this much, in score units.
 const SWITCH_MARGIN := 0.1
-## A hidden station with nothing to shoot is given up after this long,
-## or SPOTTER_WAIT_S while the friend who lit our targets is still on them.
+## A hidden station with nothing to shoot is given up after this long, unless a
+## friend can spot for it: one on its targets, or a spotter that has claimed one.
 const COVER_BLIND_S := 10.0
-const SPOTTER_WAIT_S := 30.0
-## The spotter counts as on a target within this many of its concealment radii.
+## A friend counts as on a target within this many of its concealment radii.
 const SPOTTER_REACH := 1.3
 const RESWEEP_MS := 1000
+## A reference's worth as a target, in prio units (it has no damage table).
+const REF_PRIO := 1.0
 ## Heavy shooters sink us inside this long even bow- or stern-on.
 const HARD_COVER_TTK_S := 120.0
 
@@ -45,7 +46,9 @@ const SWEEP_LOG_SLOW_MS := 10.0
 const SWEEP_LOG_EVERY := 50
 static var sweep_log: bool = OS.has_feature("editor") or CmdArgs.has("--cover-log")
 static var _sweep_count: int = 0
-var _spotted: Dictionary = {}  # target Ship -> friendly Ship that was lighting it
+var _targets: Dictionary = {}  # Ship -> true: what the held station shoots
+## The last sweep's {here, opts, ms}, for the debug overlay.
+var last_sweep: Dictionary = {}
 
 func reset() -> void:
 	super()
@@ -54,7 +57,7 @@ func reset() -> void:
 	_swept_ms = -100000
 	_dark = {}
 	_best = {}
-	_spotted = {}
+	_targets = {}
 
 ## Whether the held station hides us, rather than only shielding us from heavy fire.
 func wants_concealment() -> bool:
@@ -116,16 +119,10 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 		g: Dictionary, params: Dictionary) -> void:
 	var ship: Ship = ctx.ship
 	var t0 := Time.get_ticks_usec()
-	var opts := _inputs(ctx, belief, g, params.get("fire_en_route", mode == Mode.OFFENSE))
+	var opts := sweep_opts(ctx, field, team_id, belief, g, params)
 	var t_inputs := Time.get_ticks_usec() - t0
-	opts.merge(WEIGHTS[mode], true)
-	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
-		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
-		"box_m": SWEEP_BOX_M, "speed": ship.movement_controller.max_speed, "my_hp": ship.health_controller.current_hp,
-		"gun_range": float(g.get("range", 0.0)), "pref_range": float(params.get("pref_range", 0.0)),
-		"max_range": float(params.get("max_range", 0.0)), "hold_s": HOLD_S,
-		"held": Vector2(_station.x, _station.z) if _has_station else Vector2.INF}, true)
 	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	last_sweep = {"here": here, "opts": opts, "ms": Time.get_ticks_msec()}
 	var r: Dictionary = vis.cover_sweep(here, opts.pos, opts)
 	_cells = int(r.get("cells", 0))
 	_us = int(r.get("us", 0))
@@ -142,8 +139,8 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 		if not _has_station or at.distance_to(Vector2(_station.x, _station.z)) > COVER_HOLD_M:
 			_adopt(Vector3(at.x, 0.0, at.y), float(cur.score), {})
 			_hard = false
-			_spotted = {}
-			_note_spotters(opts.ids, int(cur.mask))
+			_targets = {}
+			_note_targets(opts.ids, int(cur.mask))
 		held = cur
 	if _has_station:
 		if held.is_empty():
@@ -152,8 +149,8 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 			_score = float(held.score)
 			if int(held.count) > 0:
 				_target_at = now
-				_note_spotters(opts.ids, int(held.mask))
-			elif mode == Mode.OFFENSE and now - _target_at >= _blind_limit(belief):
+				_note_targets(opts.ids, int(held.mask))
+			elif mode == Mode.OFFENSE and now - _target_at >= COVER_BLIND_S and not _spotted_for(ctx, team_id, belief):
 				_drop()
 	if _best.is_empty() or (_has_station and float(_best.score) <= _score + SWITCH_MARGIN):
 		return
@@ -162,30 +159,48 @@ func _sweep(ctx: SkillContext, vis: VisibilityGrid, field: ReachField, team_id: 
 	_score = float(_best.score)
 	_hard = bool(_best.hard)
 	_target_at = now
-	_spotted = {}
-	_note_spotters(opts.ids, int(_best.mask))
+	_targets = {}
+	_note_targets(opts.ids, int(_best.mask))
 
-## Who is lighting each target this station shoots, so a dark spell can be waited out.
-func _note_spotters(ids: PackedInt64Array, mask: int) -> void:
-	_spotted = {}
+## cover_sweep's opts for this ship now: per-contact inputs, weights and args.
+func sweep_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Array[Dictionary], g: Dictionary,
+		params: Dictionary) -> Dictionary:
+	var ship: Ship = ctx.ship
+	var opts := _inputs(ctx, belief, g, params.get("fire_en_route", mode == Mode.OFFENSE))
+	_add_refs(opts, params.get("refs", PackedVector2Array()), maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0))))
+	opts.merge(WEIGHTS[mode], true)
+	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
+		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
+		"box_m": SWEEP_BOX_M, "speed": ship.movement_controller.max_speed, "my_hp": ship.health_controller.current_hp,
+		"gun_range": float(g.get("range", 0.0)), "pref_range": float(params.get("pref_range", 0.0)),
+		"max_range": float(params.get("max_range", 0.0)), "hold_s": HOLD_S,
+		"held": Vector2(_station.x, _station.z) if _has_station else Vector2.INF}, true)
+	return opts
+
+## What this station shoots, so a dark spell can be waited out while a friend can spot it.
+func _note_targets(ids: PackedInt64Array, mask: int) -> void:
 	for i in mini(ids.size(), 64):
-		if mask & (1 << i) == 0:
-			continue
-		var t := instance_from_id(ids[i]) as Ship
-		if t != null and t.concealment.spotted_by != null:
-			_spotted[t] = t.concealment.spotted_by
+		if mask & (1 << i) != 0:
+			var t := instance_from_id(ids[i]) as Ship
+			if t != null:
+				_targets[t] = true
 
-func _blind_limit(belief: Array[Dictionary]) -> float:
+func _spotted_for(ctx: SkillContext, team_id: int, belief: Array[Dictionary]) -> bool:
+	var now: int = SimClock.now_ms()
+	var friends: Array = ctx.server.get_team_ships(team_id)
 	for b in belief:
 		var t: Ship = b.ship
-		var spotter: Ship = _spotted.get(t)
-		if spotter == null or not is_instance_valid(spotter) or not spotter.is_alive():
+		if not _targets.has(t) or not is_instance_valid(t):
 			continue
+		var claimer := SkillSpot.spot_claimer(team_id, t, now)
+		if claimer != null and claimer != ctx.ship:
+			return true
 		var reach: float = t.concealment.get_concealment() * SPOTTER_REACH
-		var at := Vector2(spotter.global_position.x, spotter.global_position.z)
-		if at.distance_squared_to(b.pos) <= reach * reach:
-			return SPOTTER_WAIT_S
-	return COVER_BLIND_S
+		for f: Ship in friends:
+			if f != ctx.ship and is_instance_valid(f) and f.is_alive() \
+					and Vector2(f.global_position.x, f.global_position.z).distance_squared_to(b.pos) <= reach * reach:
+				return true
+	return false
 
 ## Per belief contact: where it is, what it sees and shoots, and what it is worth.
 func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_en_route: bool) -> Dictionary:
@@ -216,6 +231,21 @@ func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_e
 		out.ids.append(e.get_instance_id())
 		out.heavy.append(1 if unangleable(ship, e, Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)) else 0)
 	return out
+
+## Anonymous references (nothing ever seen): targets to reach from hiding, with no guns.
+func _add_refs(out: Dictionary, refs: PackedVector2Array, bloom: float) -> void:
+	for r in refs:
+		out.pos.append(r)
+		out.det_r.append(0.0)
+		out.spot_r.append(0.0)
+		out.los_r.append(bloom)
+		out.seen_r.append(bloom)
+		out.prio.append(REF_PRIO)
+		out.shootable.append(1)
+		out.live.append(1)
+		out.sticky.append(0)
+		out.ids.append(GameServer.ref_id(r))
+		out.heavy.append(0)
 
 ## Bow- or stern-in, whichever the table says hurts less, is the only mitigation.
 static func unangleable(ship: Ship, enemy: Ship, range_m: float) -> bool:

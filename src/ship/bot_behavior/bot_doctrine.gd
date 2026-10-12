@@ -56,7 +56,7 @@ var universal_sail_forward_fallback: bool = false
 ## crosses it when the detour would cost more. 0 or INF restores the wall.
 var detection_cost_gain: float = 4.0
 
-## Whether the idle and dark arms get the evade/spread post-processors. CA
+## Whether the idle and dark arms get the spread post-processor. CA
 ## returned early from those arms and so never did.
 var post_process_idle_arms: bool = true
 
@@ -140,10 +140,7 @@ var ra_hurt_hp_ratio: float = 0.5
 # Post-processing
 # ---------------------------------------------------------------------------
 
-## Evasion post-process, off in the reload gap (stance's to use) unless threat is past this.
-var evade_override_threat: float = 0.75
-var evade_exclude: Array[StringName] = [&"SailForward"]
-var evade_params: Dictionary = {}
+var stance_exclude: Array[StringName] = [&"SailForward"]
 
 var spread_exclude: Array[StringName] = [&"Engage", &"Disengage", &"Hold"]
 var spread_distance: float = 1000.0
@@ -169,9 +166,6 @@ static func for_battleship() -> BotDoctrine:
 	# the standoff has to have finished opening back out.
 	d.ra_bb_shooter_hurt = 13000.0
 	d.spread_exclude = [&"Engage", &"Disengage", &"Camp", &"Hold"]
-	# A battleship's evasion IS its angling, so it is never worth suppressing:
-	# the presentation weave costs it nothing it was going to use anyway.
-	d.evade_override_threat = 0.6
 	d.post_process_idle_arms = true
 	return d
 

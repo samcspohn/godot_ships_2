@@ -17,6 +17,7 @@ extends SkillPosition
 const EXIT_STEP_M := 200.0
 const EXIT_MAX_STEPS := 100
 const EXIT_MARGIN_M := 300.0
+const EXIT_DIRECTIONS := 36
 ## A station in an island's shadow pulls that enemy's route wall in to this short of it.
 const SHADOW_MARGIN_M := 200.0
 ## Patrol leg along the band edge, at least, and in turning circles.
@@ -35,10 +36,16 @@ var _target: Ship = null
 var _radius: float = 0.0
 ## The station the search chose; riding the band moves _station, not this.
 var _anchor: Vector2 = Vector2.ZERO
+## Where the route leaves the bands; INF while outside them.
+var _escape: Vector2 = Vector2.INF
 
 func reset() -> void:
 	super()
 	_patrol_sign = 0.0
+	_escape = Vector2.INF
+
+func escape_point() -> Vector2:
+	return _escape
 
 func _label() -> String:
 	return "Fight"
@@ -46,8 +53,9 @@ func _label() -> String:
 func debug_text() -> String:
 	if not _has_station:
 		return "%s: none | band %.0f m" % [_label(), band_m]
-	return "%s on %s %.4f | band %.0f m | last walk %d cells" % [_label(),
-		_target.ship_name if is_instance_valid(_target) else "?", _station_score, band_m, _steps]
+	return "%s on %s %.4f | band %.0f m | last walk %d cells%s" % [_label(),
+		_target.ship_name if is_instance_valid(_target) else "?", _station_score, band_m, _steps,
+		" | exiting" if _escape != Vector2.INF else ""]
 
 func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var vis: VisibilityGrid = NavigationMapManager.get_visibility()
@@ -72,6 +80,9 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 	var harm := PackedFloat32Array()
 	var friends: Array = ctx.server.get_team_ships(team_id)
 	var hp: float = maxf(ship.health_controller.current_hp, 1.0)
+	var here := Vector2(ship.global_position.x, ship.global_position.z)
+	var pp: Vector3 = ctx.behavior.priority_point()
+	var flank := Vector2(pp.x, pp.z) if pp.is_finite() else here
 	for b in belief:
 		var e: Ship = b.ship
 		pos.append(b.pos)
@@ -79,14 +90,14 @@ func execute(ctx: SkillContext, params: Dictionary) -> NavIntent:
 		reach.append(gun_range)
 		# A remembered or presumed contact has nothing to shoot at: it is
 		# kept out of, never stationed on.
-		var is_live: bool = int(b.source) == 0
+		# Lit across the map is someone else's: only this flank's enemies make a station.
+		var is_live: bool = int(b.source) == 0 and (b.pos.distance_to(flank) <= gun_range or b.pos.distance_to(here) <= gun_range)
 		live.append(1 if is_live else 0)
 		ids.append(e.get_instance_id())
 		var r: float = Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)
 		harm.append(maxf(SkillStance._expected(ship, e, r, TYPICAL_ASPECT_DEG).x, 0.0) / hp * float(b.weight))
 		value.append(_kill_rate(ship, e, friends) if is_live else 0.0)
-	var here := Vector2(ship.global_position.x, ship.global_position.z)
-	var danger := _belief_centre(ctx, belief, here)
+	var danger := flank if pp.is_finite() else _belief_centre(ctx, belief, here)
 	_hull_key = NavigationMapManager.reach_hull_key(g)
 	var opts := {"det_r": band, "spot_r": reach, "shootable": live, "reach_field": field, "team": team_id,
 		"hull_key": _hull_key, "ids": ids, "reach_needs_los": bool(params.get("needs_los", false)),
@@ -167,10 +178,13 @@ func _shape(intent: NavIntent, ctx: SkillContext, vis: VisibilityGrid, here: Vec
 	var radii := _walls(opts.det_r, pos)
 	intent.avoid_origins = pos
 	intent.avoid_radii = radii
-	var out := _exit_point(here, pos, radii)
-	if out != here:
-		_point(intent, here, out)
-		return
+	_escape = Vector2.INF
+	if _has_station:
+		var out := _exit_toward(here, Vector2(_station.x, _station.z), pos, radii)
+		if out != here:
+			_escape = out
+			_point(intent, here, out)
+			return
 	if _radius <= 0.0 or not _has_station:
 		return
 	var tcr: float = ctx.ship.movement_controller._p().turning_circle_radius
@@ -220,6 +234,49 @@ static func _patrol_point(here: Vector2, centres: PackedVector2Array, radii: Pac
 	var c: Vector2 = centres[best]
 	var r: float = maxf(radii[best], here.distance_to(c))
 	return c + (here - c).normalized().rotated(arc / r) * r
+
+## From inside the bands: `here` when outside or when the straight run to the
+## station never goes deeper into any band (it is on an edge), else the clear
+## point that makes the trip to the station shortest.
+static func _exit_toward(here: Vector2, station: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:
+	var depth := PackedFloat32Array()
+	var inside := false
+	for i in centres.size():
+		depth.append(maxf(radii[i] - here.distance_to(centres[i]), 0.0) if radii[i] > 0.0 else 0.0)
+		inside = inside or depth[i] > 0.0
+	if not inside or _never_deeper(here, station, centres, radii, depth):
+		return here
+	var best := _exit_point(here, centres, radii)
+	var best_cost: float = here.distance_to(best) + best.distance_to(station)
+	for k in EXIT_DIRECTIONS:
+		var dir := Vector2.RIGHT.rotated(TAU * k / EXIT_DIRECTIONS)
+		var p := here
+		for _step in EXIT_MAX_STEPS:
+			p += dir * EXIT_STEP_M
+			if _clear(p, centres, radii):
+				p += dir * EXIT_MARGIN_M
+				var cost: float = here.distance_to(p) + p.distance_to(station)
+				if cost < best_cost:
+					best_cost = cost
+					best = p
+				break
+	return best
+
+static func _never_deeper(a: Vector2, b: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array,
+		depth: PackedFloat32Array) -> bool:
+	var n: int = maxi(ceili(a.distance_to(b) / EXIT_STEP_M), 1)
+	for s in range(1, n + 1):
+		var p := a.lerp(b, float(s) / n)
+		for i in centres.size():
+			if radii[i] > 0.0 and radii[i] - p.distance_to(centres[i]) > depth[i] + 1.0:
+				return false
+	return true
+
+static func _clear(p: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> bool:
+	for i in centres.size():
+		if radii[i] > 0.0 and p.distance_to(centres[i]) < radii[i]:
+			return false
+	return true
 
 ## Along the depth-weighted push of every band holding us, to clear water.
 static func _exit_point(here: Vector2, centres: PackedVector2Array, radii: PackedFloat32Array) -> Vector2:

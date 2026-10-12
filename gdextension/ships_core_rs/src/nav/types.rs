@@ -284,43 +284,6 @@ impl Default for ObstacleCollisionInfo {
     }
 }
 
-/// Incoming shell threat data (for shell dodging/angling).
-#[derive(Clone, Copy, Debug)]
-pub struct IncomingShell {
-    pub id: i32,
-    pub landing_pos: Vector2,   // predicted XZ impact point
-    pub landing_dir: Vector2,   // normalized XZ travel direction at impact
-    pub threat_half_len: f32,   // steeper = shorter
-    pub time_remaining: f32,    // real seconds until impact
-    pub caliber: f32,           // mm, for damage-weight prioritisation
-}
-
-impl Default for IncomingShell {
-    fn default() -> Self {
-        Self {
-            id: -1,
-            landing_pos: Vector2::ZERO,
-            landing_dir: Vector2::new(1.0, 0.0),
-            threat_half_len: 15.0,
-            time_remaining: 0.0,
-            caliber: 0.0,
-        }
-    }
-}
-
-impl IncomingShell {
-    pub fn new(
-        id: i32,
-        landing_pos: Vector2,
-        time_remaining: f32,
-        caliber: f32,
-        landing_dir: Vector2,
-        threat_half_len: f32,
-    ) -> Self {
-        Self { id, landing_pos, landing_dir, threat_half_len, time_remaining, caliber }
-    }
-}
-
 /// Navigation state machine — simplified two-state design.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]

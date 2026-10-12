@@ -72,8 +72,6 @@ var target_scan_timer: float = 0.0
 
 ## How often to update obstacle positions (frames)
 const OBSTACLE_UPDATE_INTERVAL: int = 12
-## Maximum distance to register a ship as an obstacle
-const OBSTACLE_REGISTER_RANGE: float = 2000.0
 
 ## Maximum distance to register a torpedo as an obstacle
 @export var torpedo_track_range: float = 3000.0
@@ -206,6 +204,8 @@ func _ready() -> void:
 		navigator.set_hpa_graph(hpa_graph)
 	else:
 		push_warning("[BotControllerV4] HpaGraph not yet built — navigator will fall back to straight-line paths")
+	if server_node != null and _ship.team != null:
+		navigator.set_ship_registry(server_node.ship_registry, _ship.get_instance_id(), _ship.team.team_id)
 
 	# Set ship kinematic parameters from the movement controller
 	# These match ShipMovementV4's exported properties
@@ -294,7 +294,7 @@ func _physics_process(delta: float) -> void:
 			var hp_frac: float = _ship.health_controller.current_hp / maxf(_ship.health_controller.max_hp, 1.0)
 			navigator.set_health_fraction(hp_frac)
 
-		_update_shell_threats()
+		_track_shooters()
 
 	if not in_update_slot:
 		# _update_obstacles() (called below in the slot) already ends with
@@ -393,10 +393,9 @@ func _physics_process(delta: float) -> void:
 	if throttle_override_allowed:
 		throttle = maxi(throttle, _last_intent.throttle_override)
 
-	# --- 6. Apply behavior speed modifier (DD evasion speed variation etc.) ---
-	var speed_mult: float = behavior.get_speed_multiplier()
-	if speed_mult != 1.0:
-		throttle = clampi(int(throttle * speed_mult), -1, 4)
+	# --- 6. Stance's throttle ceiling; a dodge or emergency keeps the navigator's ---
+	if not is_emergency and not navigator.is_torpedo_override_active():
+		throttle = mini(throttle, behavior.get_throttle_cap())
 
 	# --- 7. Send to movement controller ---
 	movement.set_movement_input([throttle, rudder])
@@ -433,8 +432,8 @@ func _update_nav_intent() -> void:
 	#
 	# heading_weight travels with the heading.  _is_intent_similar() compares
 	# position and hold_radius only, so a post-processor that varies heading
-	# WITHOUT moving the destination -- which is exactly what SkillEvade's
-	# serpentine does, deliberately, to avoid forcing a replan -- stays on this
+	# WITHOUT moving the destination -- which is exactly what stance does,
+	# deliberately, to avoid forcing a replan -- stays on this
 	# branch indefinitely.  Without copying the weight, the heading it writes is
 	# below the navigator's 0.001 threshold and is silently ignored.
 	if new_intent != null and _last_raw_intent != null and _is_intent_similar(_last_raw_intent, new_intent):
@@ -516,32 +515,8 @@ func get_nav_mode_string() -> String:
 # ===========================================================================
 
 func _update_obstacles() -> void:
-	# return
-	# Clear and re-register all nearby ships as dynamic obstacles
+	# Ships come from the server's ShipRegistry; only torpedoes are registered here.
 	navigator.clear_obstacles()
-
-	var all_ships = server_node.get_all_ships()
-	for ship in all_ships:
-		if ship == _ship:
-			continue
-		if not is_instance_valid(ship) or not ship.is_alive():
-			continue
-
-		var dist = _ship.global_position.distance_to(ship.global_position)
-		if dist > OBSTACLE_REGISTER_RANGE:
-			continue
-
-		var ship_id = ship.get_instance_id()
-		var pos_2d = Vector2(ship.global_position.x, ship.global_position.z)
-		var vel_2d = Vector2(ship.linear_velocity.x, ship.linear_velocity.z)
-		var ship_length = ship.movement_controller.ship_length if ship.movement_controller else 200.0
-		var ship_beam = ship.movement_controller.ship_beam if ship.movement_controller else 20.0
-		var radius = ship_beam * 0.5  # half-beam — used for OBB half-beam in navigator
-		# print("[Obstacle %s] Registering ship %s as obstacle at dist=%.0f" % [_ship.name, ship.name, dist])
-		navigator.register_obstacle(ship_id, pos_2d, vel_2d, radius, ship_length)
-
-	# Re-register torpedo obstacles so they are always current alongside ship obstacles.
-	# Torpedoes use negative IDs and are added on top of the freshly-cleared obstacle map.
 	_register_torpedo_obstacles()
 
 
@@ -604,8 +579,8 @@ func _register_torpedo_obstacles() -> void:
 
 
 
-func _update_shell_threats() -> void:
-	navigator.clear_incoming_shells()
+## Who is shooting at us and from where, from the shells on their way here.
+func _track_shooters() -> void:
 	var my_team_id: int = _ship.team.team_id if _ship.team else -1
 	var my_pos_2d := Vector2(_ship.global_position.x, _ship.global_position.z)
 
@@ -640,19 +615,6 @@ func _update_shell_threats() -> void:
 				# so treating its launch point as the owning carrier's position
 				# plants a phantom enemy contact right on top of a friendly.
 				_update_lkp_from_shooter(pdata.get_owner(), pdata.get_start_position(), pdata.get_start_time())
-
-		var vx: float = s["landing_vx"]
-		var vz: float = s["landing_vz"]
-		var spd: float = sqrt(vx * vx + vz * vz)
-		var landing_dir := Vector2(vx, vz) / maxf(spd, 1e-10)
-		navigator.add_incoming_shell(
-			s["shell_id"],
-			Vector2(s["landing_x"], s["landing_z"]),
-			s["time_remaining"],
-			s["caliber"],
-			landing_dir,
-			s["threat_half_len"]
-		)
 
 
 ## How wrong a torpedo-derived position might be: where the error bar starts, and
@@ -856,6 +818,9 @@ func _tick_behavior(delta: float) -> void:
 		# position instead.
 		if target_scan_timer >= 2.0:
 			needs_rescan = true
+	elif target_scan_timer - _priority_checked >= PRIORITY_CHECK_S and target != behavior.priority_target():
+		_priority_checked = target_scan_timer
+		needs_rescan = behavior.shootable_priority() != null
 	elif target is Ship and not behavior.can_hit_target(target):
 		# Target is visible but terrain-blocked — rescan after a short grace
 		# period so we switch to a shootable enemy instead of sailing toward
@@ -866,6 +831,7 @@ func _tick_behavior(delta: float) -> void:
 	if needs_rescan:
 		var old_target = target
 		target_scan_timer = 0.0
+		_priority_checked = 0.0
 		_acquire_target(target)
 		# If target actually changed identity, force an intent update next frame
 		if target != old_target and _event_cooldown <= 0.0:
@@ -880,8 +846,13 @@ func _tick_behavior(delta: float) -> void:
 	behavior.try_use_consumable()
 
 
+## Seconds between checks for a priority that has become shootable.
+const PRIORITY_CHECK_S: float = 1.0
+var _priority_checked: float = 0.0
+
 func _acquire_target(last_target: Ship) -> void:
-	target = behavior.pick_target(server_node.get_valid_targets(_ship.team.team_id), last_target)
+	var p: Ship = behavior.shootable_priority()
+	target = p if p != null else behavior.pick_target(server_node.get_valid_targets(_ship.team.team_id), last_target)
 
 
 ## Air tasking per second; squadrons fly their orders in between.
@@ -893,8 +864,9 @@ func _engage_target() -> void:
 			and (target.visible_to_enemy or behavior.is_engageable_contact(behavior.get_contact_solution(target))):
 		behavior.engage_target(target)
 	else:
-		# No valid target — aim at destination as fallback
-		_ship.artillery_controller.set_aim_input(behavior._get_spotted_danger_center())
+		# No gun target: pre-aim where the priority is believed to be.
+		var pre: Vector3 = behavior.priority_point()
+		_ship.artillery_controller.set_aim_input(pre if pre.is_finite() else behavior._get_spotted_danger_center())
 	# Aviation runs regardless of gun target: spotters need orders even when nothing is in gun range
 	_aviation_t += get_physics_process_delta_time()
 	if _aviation_t >= AVIATION_INTERVAL:
@@ -1106,9 +1078,15 @@ func _emit_debug_draws() -> void:
 	# --- a) Desired heading arrow (GREEN, above ship) ---
 	var heading_pos = ship_pos
 	heading_pos.y += 100.0
-	var desired_heading = _last_intent.target_heading if _last_intent else 0.0
+	var desired_heading: float = behavior.dest_heading if behavior != null else (_last_intent.target_heading if _last_intent else 0.0)
 	var desired_heading_vec = Vector3(sin(desired_heading), 0.0, cos(desired_heading)).normalized()
 	Debug.draw_arrow(heading_pos, desired_heading_vec, 200.0, Color.GREEN, 10.0)
+
+	# --- a2) Stance's held heading (LIGHT ORANGE, length = throttle) ---
+	if behavior != null:
+		var st: Vector2 = behavior._skill_stance.debug_heading()
+		if is_finite(st.x):
+			Debug.draw_arrow(ship_pos + Vector3(0.0, 150.0, 0.0), Vector3(sin(st.x), 0.0, cos(st.x)), 200.0 * st.y, Color(1.0, 0.6, 0.0), 10.0)
 
 	# --- b) Heading + rudder arrow (CYAN) ---
 	if _debug_heading_rudder_vector.length() > 0.1:
@@ -1286,6 +1264,12 @@ func _emit_debug_draws() -> void:
 			Debug.draw_circle(Vector3(st_pos.x, 8.0, st_pos.z), 150.0, Color(st_col, 0.8), 32)
 			Debug.draw_im_sphere(Vector3(st_pos.x, 30.0, st_pos.z), 20.0, st_col)
 			Debug.draw_label(Vector3(st_pos.x, 90.0, st_pos.z), st_skill.debug_text(), Color(0.85, 1.0, 0.9), 14)
+		if st_skill is SkillFight and (st_skill as SkillFight).escape_point() != Vector2.INF:
+			var esc: Vector2 = (st_skill as SkillFight).escape_point()
+			var esc_col := Color(1.0, 0.2, 0.6)
+			Debug.draw_circle(Vector3(esc.x, 8.0, esc.y), 150.0, Color(esc_col, 0.8), 32)
+			Debug.draw_im_sphere(Vector3(esc.x, 30.0, esc.y), 20.0, esc_col)
+			Debug.draw_label(Vector3(esc.x, 90.0, esc.y), "Escape", Color(1.0, 0.7, 0.85), 14)
 
 	# --- n) Individual enemy positions: spotted (red) + last-known-unspotted (yellow) ---
 	if server_node != null:
@@ -1426,6 +1410,12 @@ func _emit_debug_draws() -> void:
 				var dist_m := int(_ship.global_position.distance_to(target.global_position))
 				var dist_str := "%.1fk" % (dist_m / 1000.0) if dist_m >= 1000 else "%dm" % dist_m
 				lines.append("→ %s %s  ·  %s" % [cls, target.name, dist_str])
+			var pp: Vector3 = behavior.priority_point() if behavior != null else Vector3.INF
+			if pp.is_finite():
+				var pt: Ship = behavior.priority_target()
+				var pd := int(_ship.global_position.distance_to(pp))
+				lines.append("P: %s  ·  %.1fk%s" % [pt.name if pt != null else "unknown", pd / 1000.0,
+					"" if pt != null and pt.visible_to_enemy else " (dark)"])
 
 			# Line 3 — status flags
 			var flags: PackedStringArray = PackedStringArray()

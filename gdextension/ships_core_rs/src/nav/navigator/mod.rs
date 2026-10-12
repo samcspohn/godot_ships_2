@@ -5,15 +5,17 @@ use std::collections::BTreeMap;
 use crate::nav::hpa::HpaGraph;
 use crate::nav::map::NavigationMap;
 use crate::nav::reach::ReachField;
+use crate::nav::ships::{ShipList, ShipRegistry, ShipSnap};
 use crate::nav::threat::ThreatRegistry;
 use crate::nav::types::{
-    ArcPoint, DynamicObstacle, IncomingShell, NavState, NavTarget, PathResult, ShipParams,
+    ArcPoint, DynamicObstacle, NavState, NavTarget, PathResult, ShipParams,
     ShipState, ThreatCircle,
 };
 
 mod api;
 mod arc;
 mod path;
+mod ships_avoid;
 mod steering;
 mod update;
 
@@ -29,13 +31,11 @@ pub const PATH_FAIL_WARN_INTERVAL: f32 = 5.0;
 pub const DODGE_COMMITMENT_DURATION: f32 = 0.5;
 pub const DODGE_COMMITMENT_BIAS: f32 = 150.0;
 
-// The shared nav-second budget these two constants used to define is gone.
-// SHELL_NAV_BUDGET (50 s) let a bot throw away a kilometre of travel per salvo,
-// and TORPEDO_NAV_BUDGET (500 s) was added to it whenever ANY torpedo existed
-// anywhere -- harmless or not -- which inflated the shell budget elevenfold and
-// left the optimiser effectively unconstrained.  Torpedoes now hard-override
-// instead of outbidding, so neither budget has a meaning.
-pub const SHELL_TIME_TOLERANCE: f32 = 2.0;
+pub const TURN_LATCH_MIN: f32 = std::f32::consts::FRAC_PI_2;
+pub const TURN_LATCH_RELEASE: f32 = std::f32::consts::PI / 6.0;
+/// Seconds charged to a candidate turning against the latched side.
+pub const TURN_LATCH_PENALTY_S: f32 = 20.0;
+
 pub const SOFT_TERRAIN_PENALTY: f32 = 15.0;
 
 /// Preferred stand-off on top of hull clearance. The corridor is searched at
@@ -56,18 +56,9 @@ pub const SWITCH_FORK_TCR: f32 = 2.0;
 pub const SWITCH_COMMIT_TCR: f32 = 10.0;
 pub const PATH_CLEAR_MAX_SEGMENTS: i32 = 32;
 
-// --- Stuck / bow-in detection ---
-pub const STUCK_TCR_FACTOR: f32 = 0.25;
-pub const STUCK_MIN_SECS: f32 = 5.0;
-pub const STUCK_OVERRIDE_FACTOR: f32 = 0.20;
-pub const STUCK_OVERRIDE_MIN: f32 = 4.0;
-
-pub const ALIGN_BOUNCE_RADIUS_DEFAULT: f32 = 30.0;
 pub const PARKED_SPEED_THRESHOLD: f32 = 10.0;
 
 pub const TORPEDO_VIRTUAL_CALIBER: f32 = 2000.0;
-pub const GRAZE_MIN_FACTOR: f32 = 0.15;
-pub const BOW_STERN_CLIP_START: f32 = 0.80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
@@ -99,15 +90,9 @@ pub struct SteeringChoice {
     pub collision_imminent: bool,
 }
 
-/// Threat score returned by score_arc_shell_threat. Shell and torpedo scores
-/// stay separate because they are now consumed by different mechanisms: the
-/// torpedo score drives a hard override of navigation, while the shell score is
-/// only a tiebreak WITHIN that override (SkillEvade owns shell evasion the rest
-/// of the time).
+/// Torpedo hits along an arc, from score_arc_torpedo_threat; they hard-override navigation.
 #[derive(Clone, Copy, Debug)]
 pub struct ThreatEval {
-    /// Dimensionless: sum of cal_weight * angle_factor for hitting shells.
-    pub shell_score: f32,
     /// Dimensionless: cal_weight for any torpedo intersection.
     pub torpedo_score: f32,
     /// Arc time of the EARLIEST torpedo intersection, `INFINITY` when none.
@@ -119,7 +104,7 @@ pub struct ThreatEval {
 
 impl Default for ThreatEval {
     fn default() -> Self {
-        Self { shell_score: 0.0, torpedo_score: 0.0, torpedo_time: f32::INFINITY }
+        Self { torpedo_score: 0.0, torpedo_time: f32::INFINITY }
     }
 }
 
@@ -220,7 +205,7 @@ pub struct ShipNavigator {
     pub(crate) winning_arc: Vec<ArcPoint>,
 
     /// BTreeMap, not HashMap: three call sites iterate this and are order-sensitive
-    /// (the torpedo-score float sum in score_arc_shell_threat, the strict `<`
+    /// (the torpedo-score float sum in score_arc_torpedo_threat, the strict `<`
     /// first-wins tie-break in check_arc_obstacles_detailed, and the output order
     /// of get_debug_torpedo_threat_points). Rust's HashMap randomises iteration
     /// order per process, which would make those non-reproducible run to run;
@@ -231,28 +216,26 @@ pub struct ShipNavigator {
     /// when the ship is effectively stationary: a parked ship holding position
     /// should not dodge approaching friendlies — the moving ship gives way.
     pub(crate) skip_ship_obstacles: bool,
+    pub(crate) ship_source: Option<ShipList>,
+    pub(crate) own_ship_id: i64,
+    pub(crate) own_team: i32,
+    /// Ships near and visible this frame (refresh_ships).
+    pub(crate) ships: Vec<ShipSnap>,
 
     /// 0.0 = dead, 1.0 = full HP.
     pub(crate) health_fraction: f32,
 
     pub(crate) dodge_committed_rudder: f32,
     pub(crate) dodge_commitment_timer: f32,
+    /// Rudder side of a big turn in progress, 0 none.
+    pub(crate) turn_latch: f32,
     /// True on the last `select_best_steering` when a torpedo threatened at
-    /// least one candidate arc, i.e. navigation was hard-overridden.  Read by
-    /// SkillEvade, which stands its speed scalar down while it holds -- the
-    /// navigator has planned a specific arc and scaling its throttle behind its
-    /// back would invalidate the very dodge it just solved for.
+    /// least one candidate arc, i.e. navigation was hard-overridden; stance's
+    /// throttle cap stands down so it cannot spoil the dodge.
     pub(crate) torpedo_override_active: bool,
 
-    pub(crate) direction_conflict_timer: f32,
-    pub(crate) stuck_override_active: bool,
-    pub(crate) stuck_override_timer: f32,
 
-    pub(crate) align_committed_dir: DesiredDirection,
-    pub(crate) align_commit_pos: Vector2,
-    pub(crate) align_commit_active: bool,
 
-    pub(crate) incoming_shells: Vec<IncomingShell>,
 
     // --- Enemy threat circles (for stealth pathfinding) ---
     pub(crate) threat_registry: Option<Gd<ThreatRegistry>>,
@@ -354,17 +337,15 @@ impl IRefCounted for ShipNavigator {
             winning_arc: Vec::new(),
             obstacles: BTreeMap::new(),
             skip_ship_obstacles: false,
+            ship_source: None,
+            own_ship_id: 0,
+            own_team: -1,
+            ships: Vec::new(),
             health_fraction: 1.0,
             dodge_committed_rudder: 0.0,
             dodge_commitment_timer: 0.0,
+            turn_latch: 0.0,
             torpedo_override_active: false,
-            direction_conflict_timer: 0.0,
-            stuck_override_active: false,
-            stuck_override_timer: 0.0,
-            align_committed_dir: DesiredDirection::Forward,
-            align_commit_pos: Vector2::ZERO,
-            align_commit_active: false,
-            incoming_shells: Vec::new(),
             threat_registry: None,
             threat_team: -1,
             threat_radius: 0.0,
@@ -648,29 +629,12 @@ impl ShipNavigator {
         self.clear_obstacles_impl();
     }
 
+    /// Every ship in the match; this navigator avoids those near it, friendly or spotted.
     #[func]
-    fn clear_incoming_shells(&mut self) {
-        self.incoming_shells.clear();
-    }
-
-    #[func]
-    fn add_incoming_shell(
-        &mut self,
-        id: i64,
-        landing_pos: Vector2,
-        time_remaining: f32,
-        caliber: f32,
-        landing_dir: Vector2,
-        threat_half_len: f32,
-    ) {
-        self.incoming_shells.push(IncomingShell::new(
-            id as i32,
-            landing_pos,
-            time_remaining,
-            caliber,
-            landing_dir,
-            threat_half_len,
-        ));
+    fn set_ship_registry(&mut self, registry: Option<Gd<ShipRegistry>>, own_id: i64, team: i32) {
+        self.ship_source = registry.map(|r| r.bind().ships.clone());
+        self.own_ship_id = own_id;
+        self.own_team = team;
     }
 
     #[func]

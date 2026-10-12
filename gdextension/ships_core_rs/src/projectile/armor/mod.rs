@@ -28,6 +28,7 @@ fn variant_array_to_rid_array(values: &VarArray) -> Array<Rid> {
     out
 }
 
+pub mod closure;
 pub mod mesh;
 pub mod registry;
 pub mod walk;

@@ -38,6 +38,13 @@ var map: Map = null
 # (team_id, effective_radius); the global tick below republishes enemy
 # positions once per THREAT_UPDATE_INTERVAL frames.
 var threat_registry: ThreatRegistry = ThreatRegistry.new()
+## Every live ship once a frame, for the bots' navigators to avoid.
+var ship_registry: ShipRegistry = ShipRegistry.new()
+## team_id -> spawn slots of that team's ships the other team has not yet seen:
+## anonymous references, a direction to expect enemies from and nothing more.
+var spawn_refs: Dictionary = {}
+## team_id -> {enemy Ship: true}: every enemy that team has seen.
+var identified: Dictionary = {}
 ## Weight ceiling and floor for a presumed contact in the threat picture. A
 ## guess never pushes a route as hard as a ship somebody is actually looking at,
 ## and never stops counting entirely either - the ship is out there whether or
@@ -481,6 +488,9 @@ func spawn_player(id, player_name):
 		_queue_warm(player)
 	player.position = spawn_pos
 	spawn_pos = player.global_position
+	var refs: PackedVector2Array = spawn_refs.get(team_id, PackedVector2Array())
+	refs.append(Vector2(spawn_pos.x, spawn_pos.z))
+	spawn_refs[team_id] = refs
 	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	var rot_y = atan2(-team_spawn_point.x, team_spawn_point.z)
 	player.rotation.y = rot_y
@@ -847,6 +857,64 @@ func _lkp_marker_rotation(team_id: int, ship: Ship) -> float:
 		return ship.rotation.y
 	var c: TeamState.Contact = teams[team_id].contacts.get(ship)
 	return c.rot if c != null else ship.rotation.y
+
+func _update_ship_registry() -> void:
+	var ids := PackedInt64Array()
+	var team_ids := PackedInt32Array()
+	var pos := PackedVector2Array()
+	var heading := PackedFloat32Array()
+	var speed := PackedFloat32Array()
+	var yaw := PackedFloat32Array()
+	var length := PackedFloat32Array()
+	var beam := PackedFloat32Array()
+	var seen := PackedByteArray()
+	for ship: Ship in get_all_ships():
+		if not ship.is_alive() or ship.team == null:
+			continue
+		var fwd: Vector3 = -ship.global_transform.basis.z
+		var mv = ship.movement_controller
+		ids.append(ship.get_instance_id())
+		team_ids.append(ship.team.team_id)
+		pos.append(Vector2(ship.global_position.x, ship.global_position.z))
+		heading.append(atan2(fwd.x, fwd.z))
+		speed.append(ship.linear_velocity.dot(fwd))
+		yaw.append(ship.angular_velocity.y)
+		length.append(mv.ship_length if mv else 200.0)
+		beam.append(mv.ship_beam if mv else 20.0)
+		seen.append(1 if ship.visible_to_enemy else 0)
+	ship_registry.update(ids, team_ids, pos, heading, speed, yaw, length, beam, seen)
+
+
+## First sighting of `enemy` by `team_id` retires the anonymous reference nearest it.
+func _identify(team_id: int, enemy: Ship) -> void:
+	var seen: Dictionary = identified.get_or_add(team_id, {})
+	if seen.has(enemy) or enemy.team == null:
+		return
+	seen[enemy] = true
+	var refs: PackedVector2Array = spawn_refs.get(enemy.team.team_id, PackedVector2Array())
+	if refs.is_empty():
+		return
+	var at := Vector2(enemy.global_position.x, enemy.global_position.z)
+	var best := 0
+	for i in refs.size():
+		if refs[i].distance_squared_to(at) < refs[best].distance_squared_to(at):
+			best = i
+	refs.remove_at(best)
+	spawn_refs[enemy.team.team_id] = refs
+
+func is_identified(team_id: int, enemy: Ship) -> bool:
+	return (identified.get(team_id, {}) as Dictionary).has(enemy)
+
+const REF_WEIGHT: float = 0.2
+
+## Stable ReachField id for the reference at `p`; negative, never an instance id.
+static func ref_id(p: Vector2) -> int:
+	return -1 - (hash(Vector2i(p)) & 0x3fffffff)
+
+## Anonymous references to the enemies `team_id` has never seen.
+func anonymous_refs(team_id: int) -> PackedVector2Array:
+	return spawn_refs.get(1 - team_id, PackedVector2Array())
+
 
 func get_all_ships() -> Array:
 	var all_ships: Array = []
@@ -1324,6 +1392,8 @@ func _physics_process(_delta: float) -> void:
 
 	# Update clusters and average positions
 	_update_team_clusters()
+	if _Utils.authority():
+		_update_ship_registry()
 
 	# Tick match timer (server advances elapsed time and broadcasts it)
 	if _Utils.authority() and match_active and not match_ended:
@@ -1376,6 +1446,11 @@ func _physics_process(_delta: float) -> void:
 		for ship in t.contacts.keys():
 			if not is_instance_valid(ship) or ship.health_controller.is_dead():
 				t.erase_contact(ship)
+		# A kill nobody saw still accounts for one of the unseen.
+		for p_name in players:
+			var dead: Ship = players[p_name][0]
+			if dead.team != null and dead.team.team_id != t.id and dead.health_controller.is_dead():
+				_identify(t.id, dead)
 		# Without expiry a one-off bloom would override the spawn-line estimate
 		# for the rest of the match.
 		_prune_inferred_contacts(t.inferred_contacts)
@@ -1450,6 +1525,7 @@ func _spot_pass() -> void:
 			var enemy_team_id = 1 if p.team.team_id == 0 else 0
 
 			if p.visible_to_enemy:
+				_identify(enemy_team_id, p)
 				# Ship became spotted - remove from unspotted list
 				_erase_unspotted_lkp(enemy_team_id, p)
 				# A sighting settles whatever was being deduced about it.
@@ -1689,6 +1765,17 @@ func _sweep_reach_fields() -> void:
 			spreads.append(c.spread)
 			weights.append(c.weight)
 			force_spots.append(c.force_spot)
+		# Gunless: a reference is somewhere to reach, never a gun on us.
+		for r in anonymous_refs(team_id):
+			ids.append(ref_id(r))
+			origins.append(r)
+			speeds.append(0.0)
+			drags.append(0.0)
+			ranges.append(0.0)
+			heights.append(0.0)
+			spreads.append(0.0)
+			force_spots.append(0.0)
+			weights.append(REF_WEIGHT)
 		field.update_team(team_id, ids, origins, speeds, drags, ranges, heights,
 			spreads, weights, force_spots, maxf(los_range, 2000.0), 0.0, REACH_MOVE_THRESHOLD_M)
 	_sync_gun_matrices(field)

@@ -20,6 +20,10 @@ func set_hpa_graph(hpa_graph: Variant) -> void:
 	_impl.set_hpa_graph(hpa_graph)
 
 
+func set_ship_registry(registry: ShipRegistry, own_id: int, team_id: int) -> void:
+	_impl.set_ship_registry(registry, own_id, team_id)
+
+
 func set_ship_params(
 	turning_circle_radius: float,
 	rudder_response_time: float,
@@ -104,28 +108,6 @@ func clear_obstacles() -> void:
 
 func register_obstacle(id: int, pos_2d: Vector2, vel_2d: Vector2, radius: float, length: float) -> void:
 	_impl.register_obstacle(id, pos_2d, vel_2d, radius, length)
-
-
-func clear_incoming_shells() -> void:
-	_impl.clear_incoming_shells()
-
-
-func add_incoming_shell(
-	shell_id: int,
-	landing_pos: Vector2,
-	time_remaining: float,
-	caliber: float,
-	landing_dir: Vector2,
-	threat_half_len: float
-) -> void:
-	_impl.add_incoming_shell(
-		shell_id,
-		landing_pos,
-		time_remaining,
-		caliber,
-		landing_dir,
-		threat_half_len
-	)
 
 
 func adjust_destination_for_threats(ship_pos: Vector2, destination: Vector2) -> Dictionary:

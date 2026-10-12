@@ -2,6 +2,7 @@ use godot::prelude::*;
 use godot::classes::{Engine, Node3D};
 
 use super::ProjectileManager;
+use crate::projectile::armor::closure;
 use crate::projectile::armor::mesh::V3;
 
 impl ProjectileManager {
@@ -18,7 +19,12 @@ impl ProjectileManager {
         faces: PackedVector3Array, thickness: PackedFloat32Array, armor_type: i32, dynamic: bool,
     ) -> i32 {
         let id = ship.instance_id().to_i64();
-        self.armor.add_part(id, part, local_xform, &faces, &thickness, armor_type, dynamic)
+        let label = format!("{}:{}", ship.get_scene_file_path(), part.get("armor_path"));
+        let idx = self.armor.add_part(id, part, local_xform, &faces, &thickness, armor_type, dynamic);
+        if let Some(pm) = self.armor.get(id).and_then(|sa| sa.mesh.parts.get(idx as usize)) {
+            closure::check(pm, &label);
+        }
+        idx
     }
 
     pub(crate) fn armor_part_count_impl(&self, ship: Gd<Node3D>) -> i32 {

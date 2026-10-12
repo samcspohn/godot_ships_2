@@ -605,7 +605,7 @@ impl ShipNavigator {
 // perpendicular to it.  Returns true when the boxes overlap (collision).
 // ---------------------------------------------------------------------------
 #[allow(clippy::too_many_arguments)]
-fn obb_obb_overlap_2d(
+pub(crate) fn obb_obb_overlap_2d(
     a_pos: Vector2,
     a_heading: f32,
     a_hl: f32,
