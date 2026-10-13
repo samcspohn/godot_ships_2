@@ -10,19 +10,27 @@ render_mode blend_mix, depth_draw_always, specular_schlick_ggx;
 // =====================================================================
 
 uniform sampler2DArray fft_displacement : repeat_enable, filter_linear_mipmap;
-uniform sampler2DArray fft_derivatives  : repeat_enable, filter_linear_mipmap;
-uniform sampler2DArray fft_foam         : repeat_enable, filter_linear;
+uniform sampler2DArray fft_derivatives  : repeat_enable, filter_linear_mipmap_anisotropic;
+uniform sampler2DArray fft_foam         : repeat_enable, filter_linear_mipmap;
 
-uniform int   cascade_count   = 3;
+uniform int   cascade_count   = 4;
 uniform float cascade_scales[4];
 uniform float cascade_strength[4];
+uniform float fft_size        = 256.0;
+
+// Cumulative slope variance above k (log2 k axis); adds roughness for sub-pixel waves.
+uniform sampler2D slope_var_tex : filter_linear, repeat_disable;
+uniform vec2  slope_var_range   = vec2(-8.0, 5.0);
+
+uniform float ring_half   = 128.0;  // level half-width in cells
+uniform float morph_cells = 16.0;
 
 uniform float choppiness     = 1.0;
 uniform float chop_fade_near = 150.0;
 uniform float chop_fade_far  = 1200.0;
 uniform float foam_roughness    = 0.9;
 uniform float water_roughness   = 0.06;  // floor roughness; raise to soften specular lobe
-uniform float water_specular    = 0.4;   // fresnel F0 (reflectivity at normal incidence)
+uniform float water_specular    = 0.02;  // Fresnel F0 of water
 uniform float specular_max      = 0.8;   // hard per-light specular cap — keeps ocean below bloom threshold
 
 // --- windless calm patches (Perlin noise wave flattening) ---
@@ -31,13 +39,16 @@ uniform float calm_coverage   = 0.45;    // fraction of ocean that is calm [0..1
 uniform float calm_sharpness  = 0.12;    // edge transition softness
 uniform float calm_drift      = 0.0003;  // patch drift speed (world m/s)
 uniform float calm_roughness  = 0.03;    // roughness in glassy calm zones
+uniform float calm_floor      = 0.35;    // wave scale left inside calm zones
 
-// --- domain warp (breaks macro-scale tiling at distance) ---
-// A smooth, large-scale noise offset is added to every cascade UV before
-// sampling.  The same offset is used for all cascades so geometry and
-// normals stay consistent.
-uniform float warp_scale    = 1500.0; // world metres per warp cycle (larger = smoother)
-uniform float warp_strength = 1.5;   // UV-space magnitude (0.35 = shifts ±35% of one tile)
+// --- per-cascade amplitude modulation (breaks tiling without moving UVs) ---
+uniform float mod_scale    = 2300.0;
+uniform float mod_strength = 0.45;
+
+// Whitecaps where the combined horizontal-displacement Jacobian folds below these.
+uniform float whitecap_j_low  = 0.45;
+uniform float whitecap_j_high = 0.75;
+uniform float whitecap_max_lod = 2.0;
 
 // --- foam texture (animated Texture2DArray) ---
 // RGB = foam colour, A = coverage mask.  Adjacent frames are cross-faded
@@ -74,8 +85,7 @@ varying vec2  v_wave_velocity;
 varying float v_calm_factor;  // 0 = flat/windless, 1 = full waves
 
 // =====================================================================
-// Gradient noise (IQ quintic) — must be defined before the sample
-// functions so domain_warp() is in scope when they are compiled.
+// Gradient noise (IQ quintic)
 // =====================================================================
 
 vec2 _nhash2(vec2 p) {
@@ -99,14 +109,13 @@ vec3 gnoise(vec2 p) {
 	return vec3(v, g);
 }
 
-// Large-scale UV-space domain warp.  The same offset is applied to every
-// cascade so displacement and normals stay in agreement.
-// Using two decorrelated noise samples for the x and z components.
-vec2 domain_warp(vec2 wxz) {
-	vec2 p = wxz / warp_scale;
-	float wx = gnoise(p).x;
-	float wz = gnoise(p + vec2(3.17, 1.59)).x;
-	return vec2(wx, wz) * warp_strength;
+vec4 cascade_mods(vec2 wxz) {
+	vec4 m;
+	for (int i = 0; i < 4; i++) {
+		vec2 p = wxz / (mod_scale * (1.0 + 0.37 * float(i))) + vec2(5.3, 9.1) * float(i);
+		m[i] = max(1.0 + mod_strength * 1.4 * gnoise(p).x, 0.0);
+	}
+	return m;
 }
 
 // Returns 0 in calm (windless/flat) zones, 1 in full-wave zones.
@@ -117,7 +126,7 @@ float calm_mask(vec2 wxz) {
 	        + gnoise(p * 2.3 + vec2(1.7, 0.30)).x  * 0.30
 	        + gnoise(p * 5.1 + vec2(3.2,  1.8)).x  * 0.10;
 	n = n * 0.5 + 0.5;
-	return smoothstep(calm_coverage - calm_sharpness, calm_coverage + calm_sharpness, n);
+	return mix(calm_floor, 1.0, smoothstep(calm_coverage - calm_sharpness, calm_coverage + calm_sharpness, n));
 }
 
 // =====================================================================
@@ -158,29 +167,42 @@ const vec2 CASCADE_OFFSETS[4] = vec2[4](
 );
 
 // =====================================================================
-// FFT cascade sampling — domain warp applied inside both functions so
-// geometry (vertex) and normals (fragment) use identical UV coordinates.
+// FFT cascade sampling
 // =====================================================================
 
-vec3 sample_ocean_disp(vec2 wxz, float chop) {
-	vec2 warp = domain_warp(wxz);
+vec3 sample_ocean_disp(vec2 wxz, float chop, float footprint) {
+	vec4 cm = cascade_mods(wxz);
 	vec3 disp = vec3(0.0);
 	for (int i = 0; i < cascade_count; i++) {
-		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i] + warp;
-		vec3 d  = texture(fft_displacement, vec3(uv, float(i))).xyz;
-		disp += vec3(-d.x * chop, d.y, -d.z * chop) * cascade_strength[i];
+		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		float lod = max(log2(footprint * fft_size / cascade_scales[i]), 0.0);
+		vec3 d  = textureLod(fft_displacement, vec3(uv, float(i)), lod).xyz;
+		disp += vec3(-d.x * chop, d.y, -d.z * chop) * cascade_strength[i] * cm[i];
 	}
 	return disp;
 }
 
-vec2 sample_ocean_slope(vec2 wxz) {
-	vec2 warp  = domain_warp(wxz);
-	vec2 slope = vec2(0.0);
+// (slope.xz, Jxx, Jzz) summed over cascades.
+vec4 sample_ocean_derivs(vec2 wxz, vec4 cm) {
+	vec4 d = vec4(0.0);
 	for (int i = 0; i < cascade_count; i++) {
-		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i] + warp;
-		slope += texture(fft_derivatives, vec3(uv, float(i))).rg * cascade_strength[i];
+		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		d += texture(fft_derivatives, vec3(uv, float(i))) * cascade_strength[i] * cm[i];
 	}
-	return slope;
+	return d;
+}
+
+// Mip-capped so distant crests are not averaged away; full chop so the
+// distance fade on vertex chop does not erase them.
+float whitecap_jacobian(vec2 wxz, vec4 cm, float footprint) {
+	vec2 j = vec2(0.0);
+	for (int i = 0; i < cascade_count; i++) {
+		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
+		float lod = clamp(log2(footprint * fft_size / cascade_scales[i]), 0.0, whitecap_max_lod);
+		j += textureLod(fft_derivatives, vec3(uv, float(i)), lod).ba * cascade_strength[i] * cm[i];
+	}
+	j *= choppiness * v_calm_factor;
+	return (1.0 + j.x) * (1.0 + j.y);
 }
 
 // The foam texture's alpha is used as a cutoff rather than a plain opacity
@@ -216,38 +238,44 @@ float foam_alpha_cutoff(float sim_value, float tex_alpha) {
 // =====================================================================
 
 void vertex() {
-	float morph_w = UV.x;
-	float cell    = UV.y;
-	float coarse  = cell * 2.0;
+	// VERTEX is in level-cell units relative to the level centre; the instance
+	// transform is scale(cell) + floor-snapped centre (see ocean.gd).
+	float cell   = MODEL_MATRIX[0].x;
+	vec2  center = MODEL_MATRIX[3].xz;
+	vec2  local  = VERTEX.xz;
 
-	vec3 m_origin = MODEL_MATRIX[3].xyz;
-	vec3 world    = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float cheb = max(abs(local.x), abs(local.y));
+	float w    = clamp((cheb - (ring_half - morph_cells)) / morph_cells, 0.0, 1.0);
+	vec2  g    = center + local * cell;
+	vec2  gc   = floor(g / (2.0 * cell)) * (2.0 * cell);
+	vec2  s_xz = mix(g, gc, w);
+	float footprint = cell * (1.0 + w);
 
-	vec2 fine_xz   = round(world.xz / cell)   * cell;
-	vec2 coarse_xz = round(world.xz / coarse) * coarse;
-	vec2 s_xz      = mix(fine_xz, coarse_xz, morph_w);
-
-	float dist = length(CAMERA_POSITION_WORLD - world);
+	float dist = length(CAMERA_POSITION_WORLD.xz - s_xz);
 	float chop = choppiness * (1.0 - smoothstep(chop_fade_near, chop_fade_far, dist));
 
 	v_calm_factor = calm_mask(s_xz);
-	vec3 disp = sample_ocean_disp(s_xz, chop) * v_calm_factor;
-	// Box-filter tile height over the current cell footprint.
-	// Spread scales with cell size so wide wakes are preserved at distance
-	// while sub-cell spikes average toward zero instead of mounding.
-	float spread = cell * 0.5;
-	float tile_h = sample_tile(s_xz).r
-	             + sample_tile(s_xz + vec2(-spread, -spread)).r
-	             + sample_tile(s_xz + vec2( spread, -spread)).r
-	             + sample_tile(s_xz + vec2(-spread,  spread)).r
-	             + sample_tile(s_xz + vec2( spread,  spread)).r;
-	disp.y += (tile_h * 0.2) * wave_height_scale;
+	vec3 disp = sample_ocean_disp(s_xz, chop, footprint) * v_calm_factor;
+
+	// Wake/splash heights are only a few sim cells wide; on quads much larger
+	// than that they only lift whole quads, so they fade to normal-only detail.
+	float sim_cell = tile_world / 128.0;
+	float tile_fade = 1.0 - smoothstep(sim_cell * 1.5, sim_cell * 3.0, footprint);
+	if (tile_fade > 0.0) {
+		float spread = footprint * 0.5;
+		float tile_h = sample_tile(s_xz).r
+		             + sample_tile(s_xz + vec2(-spread, -spread)).r
+		             + sample_tile(s_xz + vec2( spread, -spread)).r
+		             + sample_tile(s_xz + vec2(-spread,  spread)).r
+		             + sample_tile(s_xz + vec2( spread,  spread)).r;
+		disp.y += tile_h * 0.2 * wave_height_scale * tile_fade;
+	}
 
 	v_wave_height = disp.y;
 	v_world_xz    = s_xz;
 
-	vec3 final_world = vec3(s_xz.x, VERTEX.y, s_xz.y) + disp;
-	VERTEX = final_world - m_origin;
+	vec3 world = vec3(s_xz.x, 0.0, s_xz.y) + disp;
+	VERTEX = vec3((world.x - center.x) / cell, world.y, (world.z - center.y) / cell);
 	NORMAL = vec3(0.0, 1.0, 0.0);
 }
 
@@ -257,7 +285,16 @@ void vertex() {
 
 void fragment() {
 	// ---- Per-pixel normal from FFT slopes + wake tile gradient ----
-	vec2 slope = sample_ocean_slope(v_world_xz) * v_calm_factor;
+	vec4 cm = cascade_mods(v_world_xz);
+	vec4 derivs = sample_ocean_derivs(v_world_xz, cm) * v_calm_factor;
+	vec2 slope = derivs.xy;
+
+	vec2  fx = dFdx(v_world_xz), fy = dFdy(v_world_xz);
+	float footprint = sqrt(max(length(fx) * length(fy), 1e-8));
+	float jacobian = whitecap_jacobian(v_world_xz, cm, footprint);
+	float lk = log2(PI / footprint);
+	float lost_u = clamp((lk - slope_var_range.x) / (slope_var_range.y - slope_var_range.x), 0.0, 1.0);
+	float lost_var = texture(slope_var_tex, vec2(lost_u, 0.5)).r * v_calm_factor * v_calm_factor;
 
 	const float ne = 4.0;
 	float hx = (sample_tile_smooth(v_world_xz + vec2(ne, 0.0)).x
@@ -324,19 +361,15 @@ void fragment() {
  //    }
 
 	// ---- Whitecap foam ----
-	vec2 warp = domain_warp(v_world_xz);
-	float wc = 0.0;
-	for (int i = 0; i < cascade_count; i++) {
-		vec2 uv = v_world_xz / cascade_scales[i] + CASCADE_OFFSETS[i] + warp;
-		wc += texture(fft_foam, vec3(uv, float(i))).r * cascade_strength[i];
-	}
-	wc = clamp(wc, 0.0, 1.0) * v_calm_factor * foam_amount;
-	float _wc = wc;
+	float wc = (1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian)) * foam_amount;
 	wc = mix(wc, foam_alpha_cutoff(wc, foam_samp.a), foam_tex_strength);
 	ALBEDO = mix(ALBEDO, foam_color, wc);
 
 	METALLIC  = 0.0;
-	ROUGHNESS = mix(calm_roughness, mix(water_roughness, foam_roughness, wc), v_calm_factor);
+	float base_rough = mix(calm_roughness, mix(water_roughness, foam_roughness, wc), v_calm_factor);
+	// GGX alpha = roughness^2; Beckmann-equivalent alpha^2 ≈ total slope variance.
+	float alpha = sqrt(pow(base_rough, 4.0) + lost_var);
+	ROUGHNESS = sqrt(alpha);
 
 	if (debug_foam_alpha) {
 		// Red (hue 0°) -> purple (hue 300°) across the cutoff alpha's 0..1 range.

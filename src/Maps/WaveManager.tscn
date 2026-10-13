@@ -7,23 +7,23 @@
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_uhea1"]
 render_priority = 0
 shader = ExtResource("2_b66nd")
-shader_parameter/cascade_count = 3
+shader_parameter/cascade_count = 4
 shader_parameter/cascade_scales = PackedFloat32Array(0, 0, 0, 0)
 shader_parameter/cascade_strength = PackedFloat32Array(0, 0, 0, 0)
-shader_parameter/choppiness = 1.0
+shader_parameter/choppiness = 1.3
 shader_parameter/chop_fade_near = 150.0
 shader_parameter/chop_fade_far = 1200.0
 shader_parameter/foam_roughness = 0.9
 shader_parameter/water_roughness = 0.06
-shader_parameter/water_specular = 0.4
+shader_parameter/water_specular = 0.02
 shader_parameter/specular_max = 0.8
 shader_parameter/calm_scale = 1500.0
 shader_parameter/calm_coverage = 0.45
 shader_parameter/calm_sharpness = 0.12
 shader_parameter/calm_drift = 0.0003
 shader_parameter/calm_roughness = 0.03
-shader_parameter/warp_scale = 1500.0
-shader_parameter/warp_strength = 1.5
+shader_parameter/mod_scale = 2300.0
+shader_parameter/mod_strength = 0.45
 shader_parameter/foam_tex_scale = 8.0
 shader_parameter/foam_tex_strength = 0.8
 shader_parameter/foam_amount = 0.5
@@ -48,10 +48,6 @@ ocean_material = SubResource("ShaderMaterial_uhea1")
 
 [node name="OceanFFT" type="Node" parent="." unique_id=1754264585]
 script = ExtResource("3_uhea1")
-wind = Vector2(4, 4)
-amplitude = 0.6
-disp_scale = 2.0
-slope_scale = 2.0
 foam_bias = 1.1
 foam_decay = 0.996
 metadata/_custom_type_script = "uid://c2annbqth63wg"

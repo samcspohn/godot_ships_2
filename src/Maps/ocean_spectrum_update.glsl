@@ -23,6 +23,13 @@ layout(set = 0, binding = 0, std140) uniform OceanParams {
     float depth;
     float amplitude;
     float suppress;
+    float wind_spread;
+    vec2 swell;
+    float swell_fetch;
+    float swell_amount;
+    float swell_spread;
+    float wind_norm;
+    float swell_norm;
     float _pad0;
     uint seed;
     int n;

@@ -3,10 +3,14 @@
 [ext_resource type="PackedScene" uid="uid://mrcj2wrwni75" path="res://src/camera/orbit_camera.tscn" id="1_orbit_cam"]
 [ext_resource type="Material" uid="uid://b4tx8h1wn1e81" path="res://green.tres" id="2_bqqt6"]
 [ext_resource type="PackedScene" uid="uid://cpgfkfvip0xch" path="res://src/Maps/Ocean.tscn" id="3_14x8f"]
+[ext_resource type="Environment" path="res://src/camera/battle_environment.tres" id="4_benv"]
 
 [node name="MainMenu3D" type="Node3D" unique_id=1782029762]
 
 [node name="OrbitCam" parent="." unique_id=2097764039 instance=ExtResource("1_orbit_cam")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1293847561]
+environment = ExtResource("4_benv")
 
 [node name="Port" type="Node3D" parent="." unique_id=666339644]
 
@@ -71,7 +75,38 @@ size = Vector3(100, 100, 100)
 material = ExtResource("2_bqqt6")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="Port" unique_id=912985917]
-transform = Transform3D(0.0106649, 0.202565, 0.979211, 0.00220607, -0.979269, 0.202553, 0.999941, 0, -0.0108907, 47.8757, 163.892, 0)
+transform = Transform3D(0.6184084, 0.45074898, -0.64373636, 0, 0.819152, 0.5735765, 0.7858569, -0.35470447, 0.5065706, 0, 0, 0)
+light_color = Color(0.82994324, 0.83919644, 0.8149098, 1)
+light_energy = 1.1
+light_indirect_energy = 0.0
+shadow_enabled = true
+shadow_bias = 0.01
+shadow_reverse_cull_face = true
+shadow_blur = 1.284
+directional_shadow_split_1 = 0.008
+directional_shadow_split_2 = 0.04
+directional_shadow_split_3 = 0.3
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 1.0
+directional_shadow_max_distance = 30000.0
+directional_shadow_pancake_size = 0.4
+
+[node name="DirectionalLight3D2" type="DirectionalLight3D" parent="Port" unique_id=1739204418]
+transform = Transform3D(-0.17536224, 0.72377145, 0.6673852, -0.16375385, -0.6898901, 0.7051498, 0.97078973, 0.014369724, 0.23950101, 0, 0, 0)
+light_color = Color(0.82994324, 0.83919644, 0.8149098, 1)
+light_energy = 0.1
+light_indirect_energy = 0.0
+shadow_bias = 0.01
+shadow_reverse_cull_face = true
+shadow_blur = 1.284
+directional_shadow_mode = 0
+directional_shadow_split_1 = 0.008
+directional_shadow_split_2 = 0.04
+directional_shadow_split_3 = 0.3
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 1.0
+directional_shadow_max_distance = 796.9
+directional_shadow_pancake_size = 0.4
 
 [node name="Ocean" parent="Port" unique_id=689554270 node_paths=PackedStringArray("camera") instance=ExtResource("3_14x8f")]
 camera = NodePath("../../OrbitCam/Pitch/Camera3D")
