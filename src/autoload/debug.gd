@@ -1486,6 +1486,8 @@ func _reach_server_tick() -> void:
 	_reach_srv_next = now + REACH_REFRESH_SECONDS
 	var ship := _reach_srv_ship
 	if ship == null or not is_instance_valid(ship) or not ship.is_alive() or ship.team == null:
+		_reach_srv_draws = {}
+		_clear_reach_client.rpc_id(_reach_peer_id)
 		return
 	if NavigationMapManager == null or not NavigationMapManager.is_map_ready():
 		return
@@ -1509,6 +1511,7 @@ func _reach_server_tick() -> void:
 		ReachMode.COVER:
 			var cov := _cover_snapshot(ship)
 			if cov.is_empty() or vis == null:
+				_clear_reach_client.rpc_id(_reach_peer_id)
 				return
 			var opts: Dictionary = cov.sweep.opts
 			bytes = vis.cover_debug_bytes(cov.sweep.here, opts.pos, opts)
@@ -1518,7 +1521,7 @@ func _reach_server_tick() -> void:
 				counts[b] += 1
 			note = "%s sweep %.1fs old | seen %d, margin %d, radar %d, hidden %d, station %d, hard %d" % [cov.name,
 				(Time.get_ticks_msec() - int(cov.sweep.ms)) / 1000.0, counts[1], counts[2], counts[3], counts[4], counts[5], counts[6]]
-			_reach_srv_draws = {"opts": opts, "cover": cov.skill, "team": team_id}
+			_reach_srv_draws = {"opts": opts, "cover": cov.skill, "team": team_id, "ms": int(cov.sweep.ms), "ship": ship}
 		ReachMode.DETECT:
 			var radius: float = NavigationMapManager.reach_conceal_radius(ship)
 			bytes = field.get_detect_bytes(team_id, radius)
@@ -1587,6 +1590,12 @@ func _receive_reach_field(payload: Dictionary) -> void:
 	if _reach_refreshes % 10 == 1:
 		print("[ReachOverlay] %s: %s" % [ReachMode.keys()[reach_mode], payload.note])
 
+@rpc("authority", "call_remote", "reliable")
+func _clear_reach_client() -> void:
+	var path := _reach_sent_path
+	_clear_reach_overlay()
+	_reach_sent_path = path
+
 ## The cover search to show for `ship`: its freshest sweep (hold or disengage).
 func _cover_snapshot(ship: Ship) -> Dictionary:
 	var bc = ship.get_node_or_null("Modules/BotController")
@@ -1618,6 +1627,9 @@ func _shadow_eye(ship: Ship) -> Vector3:
 			best = Vector3(at.x, 0.0, at.y)
 	return best
 
+## Sweeps run once a second only while a cover search is active; older is a frozen picture.
+const COVER_STALE_S: float = 2.0
+
 ## Every frame while COVER or SHADOW is on: rings and markers to read the cells by.
 func _reach_server_draw() -> void:
 	if _reach_srv_draws.is_empty() or _reach_srv_ship == null or not is_instance_valid(_reach_srv_ship):
@@ -1629,12 +1641,18 @@ func _reach_server_draw() -> void:
 		return
 	var opts: Dictionary = _reach_srv_draws.opts
 	var pos: PackedVector2Array = opts.pos
+	var age: float = (Time.get_ticks_msec() - int(_reach_srv_draws.ms)) / 1000.0
+	var stale: bool = age > COVER_STALE_S
+	var a: float = 0.3 if stale else 1.0
 	for i in pos.size():
 		var at := Vector3(pos[i].x, 6.0, pos[i].y)
-		draw_im_sphere(at + Vector3(0, 24, 0), 40.0, Color(1.0, 0.2, 0.2))
-		draw_circle(at, float(opts.los_r[i]), Color(1.0, 0.2, 0.2, 0.8), 96)
+		draw_im_sphere(at + Vector3(0, 24, 0), 40.0, Color(1.0, 0.2, 0.2, a))
+		draw_circle(at, float(opts.los_r[i]), Color(1.0, 0.2, 0.2, 0.8 * a), 96)
 		if float(opts.det_r[i]) > 0.0:
-			draw_circle(at, float(opts.det_r[i]), Color(1.0, 0.55, 0.0, 0.9), 64)
+			draw_circle(at, float(opts.det_r[i]), Color(1.0, 0.55, 0.0, 0.9 * a), 64)
+	if stale:
+		var sh: Ship = _reach_srv_draws.ship
+		draw_label(sh.global_position + Vector3(0, 260, 0), "cover sweep %.0fs old" % age, Color(1.0, 0.55, 0.0), 16)
 	var cov: SkillCover = _reach_srv_draws.cover
 	var field: ReachField = NavigationMapManager.get_reach_field()
 	for mark in [["best", cov.best(), Color(0.1, 1.0, 0.3)], ["dark", cov.dark(), Color(0.3, 0.6, 1.0)]]:

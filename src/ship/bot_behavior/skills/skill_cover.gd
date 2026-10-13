@@ -180,7 +180,7 @@ func sweep_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arra
 ## What this station shoots, so a dark spell can be waited out while a friend can spot it.
 func _note_targets(ids: PackedInt64Array, mask: int) -> void:
 	for i in mini(ids.size(), 64):
-		if mask & (1 << i) != 0:
+		if mask & (1 << i) != 0 and ids[i] > 0:
 			var t := instance_from_id(ids[i]) as Ship
 			if t != null:
 				_targets[t] = true

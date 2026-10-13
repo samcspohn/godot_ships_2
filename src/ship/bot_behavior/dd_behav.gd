@@ -335,11 +335,13 @@ var _ow_leg_started: float = 0.0
 func _open_water_kiting(sit: Dictionary) -> bool:
 	var d := _doc()
 	var now: float = SimClock.now()
+	# Kiting opens range under fire; dark, there is no fire to open range from.
+	var lit: bool = _ship.is_detected()
 	if _ow_kiting:
-		if sit.threat <= d.push_threat and now - _ow_leg_started >= OPEN_WATER_KITE_DWELL:
+		if (sit.threat <= d.push_threat or not lit) and now - _ow_leg_started >= OPEN_WATER_KITE_DWELL:
 			_ow_kiting = false
 			_ow_leg_started = now
-	elif sit.threat >= d.kite_threat:
+	elif lit and sit.threat >= d.kite_threat:
 		_ow_kiting = true
 		_ow_leg_started = now
 	return _ow_kiting
