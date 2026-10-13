@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b4lwlxxge235c"
+path="res://.godot/imported/wake_stamp.glsl-d40a1390a42e84bbf86df91d9f7c7793.res"
+
+[deps]
+
+source_file="res://src/Maps/wake_stamp.glsl"
+dest_files=["res://.godot/imported/wake_stamp.glsl-d40a1390a42e84bbf86df91d9f7c7793.res"]
+
+[params]
+

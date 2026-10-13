@@ -1,265 +1,224 @@
 #[compute]
 #version 450
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+// iWave: h' = A h - B h_prev - C K*(h + occ). K ≈ sqrt(-laplacian), least-squares
+// fitted on a 13x13 stencil (|k| within ~10% for 0.3..2.5 rad/cell). Hull
+// occupancy enters as surface pressure, so the water's rest state under a hull is
+// -occ and a moving hull radiates Kelvin waves without injecting net volume.
 
-layout(set = 0, binding = 0, rgba16f) uniform restrict readonly image2DArray src;
-layout(set = 0, binding = 1, rgba16f) uniform restrict writeonly image2DArray dst;
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-// std430: 32 bytes
+layout(set = 0, binding = 0, rg16f) uniform restrict readonly image2DArray src;
+layout(set = 0, binding = 1, rg16f) uniform restrict writeonly image2DArray dst;
+
 struct Tile {
     vec2 origin;
-    float _active;
+    float used;
     float _pad;
-    int n_xn;
-    int n_xp;
-    int n_zn;
-    int n_zp;
+    int nb[9];      // (dy + 1) * 3 + (dx + 1), centre = self
+    int _pad1[3];
 };
 
-// std430: 3×vec2 + 6×float = 48 bytes (one float pad for 8-byte stride alignment)
 struct Ship {
-    vec2 world_xz;
-    vec2 prev_world_xz;
-    vec2 forward;
+    vec2 pos;
+    vec2 prev_pos;
+    vec2 fwd;
+    vec2 prev_fwd;
     float half_len;
-    float radius;
-    float strength;
-    float prev_fwd_x; // previous frame forward.x (was: speed)
-    float prev_fwd_y; // previous frame forward.y (was: draft)
+    float half_beam;
+    float depth;    // draft * hull gain
     float _pad;
 };
 
-layout(set = 0, binding = 2, std430) restrict readonly buffer Tiles {
-    Tile tiles[];
-};
-
-layout(set = 0, binding = 3, std430) restrict readonly buffer Ships {
-    Ship ships[];
-};
-
-// std430: 32 bytes
-struct PointImpulse {
-    vec2 world_xz; // world position
-    float radius; // gaussian sigma in world units
-    float strength; // positive = upward splash, negative = depression
-    float foam; // foam amount [0..1]
-    float _pad0;
+struct Impulse {
+    vec2 pos;
+    float sigma;
+    float depth;
+    float foam;
+    float foam_sigma;
     float _pad1;
     float _pad2;
 };
 
-layout(set = 0, binding = 4, std430) restrict readonly buffer Impulses {
-    PointImpulse impulses[];
-};
-
+layout(set = 0, binding = 2, std430) restrict readonly buffer Tiles { Tile tiles[]; };
+layout(set = 0, binding = 3, std430) restrict readonly buffer Ships { Ship ships[]; };
+layout(set = 0, binding = 4, std430) restrict readonly buffer Impulses { Impulse impulses[]; };
 // Per slot: x = ship bits, y/z = impulse bits 0-31/32-63 overlapping the tile.
-layout(set = 0, binding = 5, std430) restrict readonly buffer Masks {
-    uvec4 masks[];
-};
-
-layout(set = 0, binding = 6, std430) restrict readonly buffer Active {
-    int active_slots[];
-};
+layout(set = 0, binding = 5, std430) restrict readonly buffer Masks { uvec4 masks[]; };
+layout(set = 0, binding = 6, std430) restrict readonly buffer Active { int active_slots[]; };
+layout(set = 0, binding = 7, std430) restrict buffer Energy { uint energy[]; };
+layout(set = 0, binding = 8, r16f) uniform restrict writeonly image2DArray lod;
+layout(set = 0, binding = 9, std430) restrict readonly buffer WakeIndex { int wake_index[]; };
+layout(set = 0, binding = 10, rg32f) uniform restrict image2DArray wake;
 
 layout(push_constant, std430) uniform Params {
     int res;
-    float c2;
-    float damp;
-    float foam_decay;
-    int ship_count;
-    float tile_world;
-    float foam_diffuse;
-    int impulse_count;
-    // Sub-step window within the current frame, as fractions of the frame's
-    // ship motion.  The sim runs at a fixed rate and may execute several
-    // sub-steps per rendered frame; each one advances the hull stamp over
-    // [sub_t0, sub_t1] so the injected wake does not depend on framerate.
+    float dx;
+    float A;
+    float B;
+    float C;
     float sub_t0;
     float sub_t1;
-    float _pad0;
-    float _pad1;
+    int apply_impulses;
+    float tile_world;
+    float time;
+    float wake_life;
+    float frame_dt;
+    float sim_dt;
+    float _pad2b;
+    float _pad3;
+    float _pad4;
+    float wake_world;
+    int wake_grid;
+    int wake_origin;
+    float sponge_cells;
 } P;
 
-float load_h(ivec2 c, int layer, Tile t) {
-    if (c.x < 0) return (t.n_xn < 0) ? 0.0 : imageLoad(src, ivec3(P.res - 1, c.y, t.n_xn)).r;
-    if (c.x >= P.res) return (t.n_xp < 0) ? 0.0 : imageLoad(src, ivec3(0, c.y, t.n_xp)).r;
-    if (c.y < 0) return (t.n_zn < 0) ? 0.0 : imageLoad(src, ivec3(c.x, P.res - 1, t.n_zn)).r;
-    if (c.y >= P.res) return (t.n_zp < 0) ? 0.0 : imageLoad(src, ivec3(c.x, 0, t.n_zp)).r;
-    return imageLoad(src, ivec3(c, layer)).r;
+const int R = 6;
+const int S = 16 + 2 * R;
+const float KW[49] = float[49](
+    1.9734197, -0.2028053, -0.0505527, 0.0099391, -0.0081186, 0.0058762, -0.0093465,
+    -0.2028053, -0.1517307, -0.0054458, -0.0024949, -0.0031931, 0.0027954, -0.0057423,
+    -0.0505527, -0.0054458, 0.0004486, -0.0002305, -0.0040312, 0.0049912, -0.0160450,
+    0.0099391, -0.0024949, -0.0002305, -0.0070593, 0.0022692, -0.0004189, 0.0000000,
+    -0.0081186, -0.0031931, -0.0040312, 0.0022692, 0.0068159, -0.0158649, 0.0000000,
+    0.0058762, 0.0027954, 0.0049912, -0.0004189, -0.0158649, 0.0000000, 0.0000000,
+    -0.0093465, -0.0057423, -0.0160450, 0.0000000, 0.0000000, 0.0000000, 0.0000000
+);
+
+shared float sh[S * S];   // h + occ
+shared float so[S * S];   // occ
+shared float red[256];
+shared uint group_max;
+
+float load_h(ivec2 c, Tile t) {
+    ivec2 d = ivec2(c.x < 0 ? -1 : (c.x >= P.res ? 1 : 0), c.y < 0 ? -1 : (c.y >= P.res ? 1 : 0));
+    int slot = t.nb[(d.y + 1) * 3 + d.x + 1];
+    if (slot < 0) return 0.0;
+    return imageLoad(src, ivec3(c - d * P.res, slot)).r;
 }
 
-float load_foam(ivec2 c, int layer, Tile t) {
-    if (c.x < 0) return (t.n_xn < 0) ? 0.0 : imageLoad(src, ivec3(P.res - 1, c.y, t.n_xn)).b;
-    if (c.x >= P.res) return (t.n_xp < 0) ? 0.0 : imageLoad(src, ivec3(0, c.y, t.n_xp)).b;
-    if (c.y < 0) return (t.n_zn < 0) ? 0.0 : imageLoad(src, ivec3(c.x, P.res - 1, t.n_zn)).b;
-    if (c.y >= P.res) return (t.n_zp < 0) ? 0.0 : imageLoad(src, ivec3(c.x, 0, t.n_zp)).b;
-    return imageLoad(src, ivec3(c, layer)).b;
-}
-
-float hull_profile(float nx, float ny) {
-    return max(0.0, 1.0 - nx * nx - ny * ny);
-}
-
-// Interpolate a heading between two frames without ever returning a zero
-// vector (mix() collapses when the ship reverses heading in one frame).
 vec2 lerp_dir(vec2 a, vec2 b, float t) {
     vec2 d = mix(a, b, t);
     float l = length(d);
     return (l > 1e-5) ? d / l : b;
 }
 
+float hull_occ(vec2 world, uint bits, float tm) {
+    float occ = 0.0;
+    while (bits != 0u) {
+        int si = findLSB(bits);
+        bits &= bits - 1u;
+        Ship s = ships[si];
+        vec2 fwd = lerp_dir(s.prev_fwd, s.fwd, tm);
+        vec2 r = world - mix(s.prev_pos, s.pos, tm);
+        vec2 u = vec2(dot(r, fwd), dot(r, vec2(-fwd.y, fwd.x))) / vec2(s.half_len, s.half_beam);
+        if (abs(u.x) >= 1.0 || abs(u.y) >= 1.0) continue;
+        // Parallel midbody with entry/run over the outer 40%.
+        float t = clamp((abs(u.x) - 0.6) / 0.4, 0.0, 1.0);
+        float fy = 1.0 - u.y * u.y;
+        occ += s.depth * (1.0 - t * t * (3.0 - 2.0 * t)) * fy * fy;
+    }
+    return occ;
+}
+
+// Negative strength marks short-lived splash foam (SPLASH_LIFE_FRAC of wake_life).
+const float SPLASH_LIFE_FRAC = 0.2;
+
+float wake_fade(vec2 v) {
+    float life = P.wake_life * (v.y < 0.0 ? SPLASH_LIFE_FRAC : 1.0);
+    return abs(v.y) * pow(clamp(1.0 - (P.time - v.x) / life, 0.0, 1.0), 1.5);
+}
+
+void stamp_wake(vec2 world, float foam) {
+    ivec2 cell = ivec2(floor(world / P.wake_world)) + P.wake_origin;
+    if (any(lessThan(cell, ivec2(0))) || any(greaterThanEqual(cell, ivec2(P.wake_grid)))) return;
+    int slot = wake_index[cell.y * P.wake_grid + cell.x];
+    if (slot < 0) return;
+    ivec3 tc = ivec3(ivec2(fract(world / P.wake_world) * float(P.res)), slot);
+    if (foam > wake_fade(imageLoad(wake, tc).rg)) imageStore(wake, tc, vec4(P.time, -foam, 0.0, 0.0));
+}
+
 void main() {
-    int layer = active_slots[gl_GlobalInvocationID.z];
-    ivec2 c = ivec2(gl_GlobalInvocationID.xy);
-    if (c.x >= P.res || c.y >= P.res) return;
-
+    int layer = active_slots[gl_WorkGroupID.z];
     Tile t = tiles[layer];
-    if (t._active < 0.5) return;
+    ivec2 base = ivec2(gl_WorkGroupID.xy) * 16;
+    ivec2 lid = ivec2(gl_LocalInvocationID.xy);
+    uint li = gl_LocalInvocationIndex;
 
-    vec4 s = imageLoad(src, ivec3(c, layer));
-    float h = s.r;
-    float v = s.g;
-    float foam = s.b;
-
-    float lap = load_h(c + ivec2(-1, 0), layer, t) + load_h(c + ivec2(1, 0), layer, t)
-            + load_h(c + ivec2(0, -1), layer, t) + load_h(c + ivec2(0, 1), layer, t)
-            - 4.0 * h;
-    v = (v + P.c2 * lap) * P.damp;
-    h = h + v;
-
-    vec2 uv = (vec2(c) + 0.5) / float(P.res);
-    float edge = ((t.n_xn < 0) ? smoothstep(0.0, 0.05, uv.x) : 1.0)
-            * ((t.n_xp < 0) ? smoothstep(0.0, 0.05, 1.0 - uv.x) : 1.0)
-            * ((t.n_zn < 0) ? smoothstep(0.0, 0.05, uv.y) : 1.0)
-            * ((t.n_zp < 0) ? smoothstep(0.0, 0.05, 1.0 - uv.y) : 1.0);
-    h *= edge;
-    v *= edge;
-
-    float foam_lap = load_foam(c + ivec2(-1, 0), layer, t) + load_foam(c + ivec2(1, 0), layer, t)
-            + load_foam(c + ivec2(0, -1), layer, t) + load_foam(c + ivec2(0, 1), layer, t)
-            - 4.0 * foam;
-    foam = clamp(foam + P.foam_diffuse * foam_lap, 0.0, 1.0);
-
-    vec2 world_pos = t.origin + uv * P.tile_world;
-
+    if (li == 0u) group_max = 0u;
     uvec4 mask = masks[layer];
-    uint ship_bits = mask.x;
-    while (ship_bits != 0u) {
-        int i = findLSB(ship_bits);
-        ship_bits &= ship_bits - 1u;
-        Ship ship = ships[i];
-        vec2 frame_prev_forward = vec2(ship.prev_fwd_x, ship.prev_fwd_y);
+    float tm = 0.5 * (P.sub_t0 + P.sub_t1);
+    for (uint i = li; i < uint(S * S); i += 256u) {
+        ivec2 o = base + ivec2(int(i) % S, int(i) / S) - R;
+        float occ = mask.x != 0u ? hull_occ(t.origin + (vec2(o) + 0.5) * P.dx, mask.x, tm) : 0.0;
+        so[i] = occ;
+        sh[i] = load_h(o, t) + occ;
+    }
+    barrier();
 
-        // Slice the frame's motion down to this sub-step so the hull sweeps the
-        // same world distance per unit of simulated time at any framerate.
-        vec2 pos = mix(ship.prev_world_xz, ship.world_xz, P.sub_t1);
-        vec2 prev_pos = mix(ship.prev_world_xz, ship.world_xz, P.sub_t0);
-        vec2 forward = lerp_dir(frame_prev_forward, ship.forward, P.sub_t1);
-        vec2 prev_forward = lerp_dir(frame_prev_forward, ship.forward, P.sub_t0);
+    ivec2 c = base + lid;
+    int ci = (lid.y + R) * S + lid.x + R;
+    float occ_c = so[ci];
+    float h = sh[ci] - occ_c;
+    float hp = imageLoad(src, ivec3(c, layer)).g;
 
-        vec2 perp = vec2(-forward.y, forward.x);
-        vec2 prev_perp = vec2(-prev_forward.y, prev_forward.x);
-
-        vec2 d = world_pos - pos;
-        vec2 d_prev = world_pos - prev_pos;
-
-        float lx = dot(d, forward) / ship.half_len;
-        float ly = dot(d, perp) / ship.radius;
-        float lx_prev = dot(d_prev, prev_forward) / ship.half_len;
-        float ly_prev = dot(d_prev, prev_perp) / ship.radius;
-
-        // Scale dc injection by forward vs lateral velocity fraction.
-        // Lateral drift sweeps the full hull side, inflating |dc| across many cells.
-        // Reduce lateral contribution to ~25% of forward contribution.
-        vec2 vel = pos - prev_pos;
-        float vel_len = length(vel);
-        float dir_scale = 1.0;
-        if (vel_len > 0.0001) {
-            float fwd_frac = abs(dot(vel, forward)) / vel_len;
-            float lat_frac = abs(dot(vel, perp)) / vel_len;
-            dir_scale = fwd_frac + lat_frac * 0.2;
+    float conv = 0.0;
+    for (int j = -R; j <= R; j++) {
+        for (int i = -R; i <= R; i++) {
+            float w = KW[abs(j) * 7 + abs(i)];
+            if (w != 0.0) conv += w * sh[ci + j * S + i];
         }
+    }
+    float hn = P.A * h - P.B * hp - P.C * conv;
 
-        // 5-tap box blur of the hull profile in hull-space coordinates,
-        // spanning one sim cell in each axis. This converts the staircase
-        // ellipse boundary (hard per-cell step) into a smooth gradient so
-        // that dc = hn - hp changes continuously rather than firing as a
-        // single-cell impulse each time the bow enters a new grid cell.
-        float s_fwd = P.tile_world / float(P.res) / ship.half_len;
-        float s_lat = P.tile_world / float(P.res) / ship.radius;
-        float hn = (hull_profile(lx, ly) * 2.0
-                + hull_profile(lx + s_fwd, ly) + hull_profile(lx - s_fwd, ly)
-                + hull_profile(lx, ly + s_lat) + hull_profile(lx, ly - s_lat)) / 6.0;
-        float hp = (hull_profile(lx_prev, ly_prev) * 2.0
-                + hull_profile(lx_prev + s_fwd, ly_prev) + hull_profile(lx_prev - s_fwd, ly_prev)
-                + hull_profile(lx_prev, ly_prev + s_lat) + hull_profile(lx_prev, ly_prev - s_lat)) / 6.0;
+    vec2 world = t.origin + (vec2(c) + 0.5) * P.dx;
+    float foam = 0.0;
+    bool inside_hull = occ_c > 0.0;
+    float shift = 0.0;
 
-        // Only the bow (positive) component of dc is injected as a wave source.
-        // Stern recovery is handled naturally: the wave equation's Laplacian at
-        // cells just released from h=0 reads positive h from the surrounding bow
-        // waves, producing positive v that fills the wake void from the sides.
-        // Injecting negative v at the stern would actively drive h downward,
-        // creating a deep trough that takes far longer to recover than the ship
-        // wake region physically should.
-        float crossing = 1.0 - smoothstep(0.0, 0.1, min(hn, hp));
-        float dc = hn - hp;
-        if (dc < 0.0) {
-            dc *= 0.15; // weaker stern effect to avoid long-lasting troughs
+    if (P.apply_impulses != 0) {
+        uvec2 imp_bits = mask.yz;
+        while (imp_bits != uvec2(0u)) {
+            int ii = imp_bits.x != 0u ? findLSB(imp_bits.x) : 32 + findLSB(imp_bits.y);
+            if (imp_bits.x != 0u) imp_bits.x &= imp_bits.x - 1u; else imp_bits.y &= imp_bits.y - 1u;
+            Impulse imp = impulses[ii];
+            vec2 d = world - imp.pos;
+            float rho2 = dot(d, d) / (imp.sigma * imp.sigma);
+            float g = exp(-rho2);
+            // Crater with raised rim: zero net volume, so no lingering hole.
+            shift -= imp.depth * (1.0 - rho2) * g;
+            foam = max(foam, imp.foam * exp(-dot(d, d) / (imp.foam_sigma * imp.foam_sigma)));
         }
-        v += dc * ship.strength * crossing * dir_scale;
-        if (dc < 0.0) {
-            dc *= 10.0;
-        }
-        foam = max(foam, h * 0.03 + abs(dc) * 20.0 * dir_scale);
-
-        // // // Drive the water surface to the ship's displacement depth inside the
-        // // // hull.  The target is -draft at the keel, tapering to 0 at the
-        // // // waterline edge via the hull profile.
-        // // // The stored velocity mirrors the displacement depth: positive (upward)
-        // // // and proportional to the local draft, so the water is spring-loaded
-        // // // when the stern clears and rushes in immediately rather than waiting
-        // // // for the Laplacian to build up from the boundary.
-        float inside = smoothstep(0.0, 0.9, hn);
-        h = mix(h, 0.0, inside);
-        v = mix(v, 0.0, inside);
-
-        // float speed_t = clamp(ship.speed * 6.0, 0.0, 1.0);
-
-        // // Bow cutwater: Gaussian at the bow tip.
-        // vec2 bow_world = ship.world_xz + ship.forward * ship.half_len;
-        // float bow_g = exp(-dot(world_pos - bow_world, world_pos - bow_world)
-        //             / (ship.radius * ship.radius));
-
-        // // Hull waterline: narrow foam strip along the hull boundary ellipse.
-        // // Uses normalised-coordinate radius so the strip follows the actual
-        // // waterline perimeter rather than filling the interior (which produced
-        // // the aura / false bow extension).  side_bias fades the strip to zero
-        // // at the bow and stern tips to avoid a closed foam ring.
-        // float r = length(vec2(lx, ly));
-        // float edge = exp(-(r - 1.0) * (r - 1.0) / 0.01);
-        // float side_bias = smoothstep(0.0, 0.3, abs(ly));
-
-        // // foam = max(foam, clamp(edge * side_bias * speed_t * 0.7, 0.0, 1.0));
-        // foam = max(foam, hn > 0.0 ? 1.0 : 0.0);
     }
 
-    uvec2 imp_bits = mask.yz;
-    while (imp_bits != uvec2(0u)) {
-        int i = imp_bits.x != 0u ? findLSB(imp_bits.x) : 32 + findLSB(imp_bits.y);
-        if (imp_bits.x != 0u) imp_bits.x &= imp_bits.x - 1u; else imp_bits.y &= imp_bits.y - 1u;
-        PointImpulse imp = impulses[i];
-        vec2 d = world_pos - imp.world_xz;
-        float g = exp(-dot(d, d) / (imp.radius * imp.radius));
-        float g2 = exp(-dot(d, d) / max(pow(imp.radius * 0.05, 2.0), 1.0)); // foam radius is always 1 sim unit, independent of impulse radius
-        float impulse = imp.strength * g2;
-        if (impulse > 0.001) {
-            v = imp.strength;
-        }
-        foam = max(foam, imp.foam * g);
+    // Impulses displace the surface without imparting velocity: shifting only the
+    // new height would read as a kick that keeps accelerating every later step.
+    hn += shift;
+    h += shift;
+
+    // Absorb at edges with no neighbour tile instead of reflecting.
+    float edge_d = 1e6;
+    if (t.nb[3] < 0) edge_d = min(edge_d, float(c.x));
+    if (t.nb[5] < 0) edge_d = min(edge_d, float(P.res - 1 - c.x));
+    if (t.nb[1] < 0) edge_d = min(edge_d, float(c.y));
+    if (t.nb[7] < 0) edge_d = min(edge_d, float(P.res - 1 - c.y));
+    float sponge = mix(0.9, 1.0, smoothstep(0.0, P.sponge_cells, edge_d));
+    hn *= sponge;
+    h *= sponge;
+
+    imageStore(dst, ivec3(c, layer), vec4(hn, h, 0.0, 0.0));
+    if (foam > 0.02 && !inside_hull) stamp_wake(world, foam);
+
+    red[li] = hn;
+    atomicMax(group_max, floatBitsToUint(abs(hn)));
+    barrier();
+    if (lid.x % 4 == 0 && lid.y % 4 == 0) {
+        float sum = 0.0;
+        for (int j = 0; j < 4; j++)
+            for (int i = 0; i < 4; i++)
+                sum += red[(lid.y + j) * 16 + lid.x + i];
+        imageStore(lod, ivec3(c / 4, layer), vec4(sum / 16.0));
     }
-
-    foam *= P.foam_decay;
-
-    imageStore(dst, ivec3(c, layer), vec4(h, v, foam, 1.0));
+    if (li == 0u) atomicMax(energy[layer], group_max);
 }
