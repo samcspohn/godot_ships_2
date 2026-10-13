@@ -65,7 +65,7 @@ layout(push_constant, std430) uniform Params {
     float wake_life;
     float frame_dt;
     float sim_dt;
-    float _pad2b;
+    float bow_gain;
     float _pad3;
     float _pad4;
     float wake_world;
@@ -113,11 +113,19 @@ float hull_occ(vec2 world, uint bits, float tm) {
         vec2 fwd = lerp_dir(s.prev_fwd, s.fwd, tm);
         vec2 r = world - mix(s.prev_pos, s.pos, tm);
         vec2 u = vec2(dot(r, fwd), dot(r, vec2(-fwd.y, fwd.x))) / vec2(s.half_len, s.half_beam);
-        if (abs(u.x) >= 1.0 || abs(u.y) >= 1.0) continue;
-        // Parallel midbody with entry/run over the outer 40%.
-        float t = clamp((abs(u.x) - 0.6) / 0.4, 0.0, 1.0);
-        float fy = 1.0 - u.y * u.y;
-        occ += s.depth * (1.0 - t * t * (3.0 - 2.0 * t)) * fy * fy;
+        if (abs(u.x) >= 1.2 || abs(u.y) >= 1.6) continue;
+        if (abs(u.x) < 1.0 && abs(u.y) < 1.0) {
+            // Parallel midbody; sharp bow entry (outer 20%), fuller run aft (outer 40%).
+            float t = u.x > 0.0 ? clamp((u.x - 0.8) / 0.2, 0.0, 1.0) : clamp((-u.x - 0.6) / 0.4, 0.0, 1.0);
+            float fy = 1.0 - u.y * u.y;
+            occ += s.depth * (1.0 - t * t * (3.0 - 2.0 * t)) * fy * fy;
+        }
+        // Stagnation hump at the stem: negative occupancy raises the rest surface,
+        // the sharp crest that launches the diverging bow waves.
+        float speed = length(s.pos - s.prev_pos) / P.frame_dt;
+        float hump = min(speed * speed / (2.0 * 9.81), s.depth * 2.0) * P.bow_gain;
+        vec2 b = vec2((u.x - 1.0) * s.half_len / (s.half_beam * 1.2), u.y / 1.2);
+        occ -= hump * exp(-dot(b, b));
     }
     return occ;
 }

@@ -18,6 +18,7 @@ var grid: int
 var origin: int
 var damping: float
 var hard_lifetime: float
+var bow_gain := 0.0
 
 var _index_img: Image
 var index_tex: ImageTexture
@@ -258,6 +259,7 @@ func dispatch(cl: int, pipeline: RID, pc: PackedByteArray, f: Dictionary, parity
 	if f.active.is_empty(): return
 	var a := 1.0 + damping * sim_dt
 	pc.encode_float(4, dx)
+	pc.encode_float(52, bow_gain)
 	pc.encode_float(8, (2.0 - damping * sim_dt) / a)
 	pc.encode_float(12, 1.0 / a)
 	pc.encode_float(16, gravity * sim_dt * sim_dt / dx / a)

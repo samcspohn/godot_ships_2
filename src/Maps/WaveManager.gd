@@ -29,7 +29,8 @@ const SIM_HZ := 30.0
 const SIM_DT := 1.0 / SIM_HZ
 const MAX_SUBSTEPS := 2
 const GRAVITY := 9.81
-const HULL_GAIN := 0.6           # hull pressure as metres of head, per metre of draft
+const BOW_GAIN := 0.3            # stem hump as a fraction of U^2/2g
+const HULL_GAIN := 0.65           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
 const MAX_SHIPS := 32            # ship mask is one uint
@@ -97,7 +98,7 @@ func unregister_ship(s: Node3D) -> void:
 func add_shell_splash(pos: Vector3, radius: float) -> void:
 	var sigma := radius * 0.85
 	# foam grows faster than the wave so big shells get a proportionally bigger patch
-	_add_impulse(pos, sigma, radius * 0.1275, 0.7, sigma * sqrt(maxf(radius, 1.0) / 5.0))
+	_add_impulse(pos, sigma, radius * 0.255, 0.7, sigma * sqrt(maxf(radius, 1.0) / 5.0))
 
 func add_muzzle_blast(pos: Vector3, radius: float) -> void:
 	_add_impulse(pos, clampf(radius * 1.5, 6.0, 40.0), 0.1, 0.0)
@@ -116,6 +117,7 @@ func _ready() -> void:
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
 		queue_free(); return
+	_coarse.bow_gain = BOW_GAIN
 
 	_w_slot_cell.resize(WAKE_POOL)
 	_w_used.resize(WAKE_POOL)
