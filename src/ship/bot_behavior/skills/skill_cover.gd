@@ -20,8 +20,6 @@ const COVER_BLIND_S := 10.0
 ## A friend counts as on a target within this many of its concealment radii.
 const SPOTTER_REACH := 1.3
 const RESWEEP_MS := 1000
-## A reference's worth as a target, in prio units (it has no damage table).
-const REF_PRIO := 1.0
 ## Heavy shooters sink us inside this long even bow- or stern-on.
 const HARD_COVER_TTK_S := 120.0
 
@@ -167,7 +165,9 @@ func sweep_opts(ctx: SkillContext, field: ReachField, team_id: int, belief: Arra
 		params: Dictionary) -> Dictionary:
 	var ship: Ship = ctx.ship
 	var opts := _inputs(ctx, belief, g, params.get("fire_en_route", mode == Mode.OFFENSE))
-	_add_refs(opts, params.get("refs", PackedVector2Array()), maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0))))
+	var pref: float = float(params.get("pref_range", 0.0))
+	_add_refs(opts, params.get("refs", []), maxf(NavigationMapManager.reach_conceal_radius(ship), float(g.get("range", 0.0))),
+		ctx.behavior.unknown_target_value(pref if pref > 0.0 else float(g.get("range", 0.0)) * 0.7))
 	opts.merge(WEIGHTS[mode], true)
 	opts.merge({"reach_field": field, "team": team_id, "hull_key": NavigationMapManager.reach_hull_key(g),
 		"clearance": ctx.behavior._get_ship_clearance(), "los_margin": 1, "allow_hard": ship.is_detected(),
@@ -232,19 +232,20 @@ func _inputs(ctx: SkillContext, belief: Array[Dictionary], g: Dictionary, fire_e
 		out.heavy.append(1 if unangleable(ship, e, Vector2(ship.global_position.x, ship.global_position.z).distance_to(b.pos)) else 0)
 	return out
 
-## Anonymous references (nothing ever seen): targets to reach from hiding, with no guns.
-func _add_refs(out: Dictionary, refs: PackedVector2Array, bloom: float) -> void:
+## Anonymous references (the priority still unseen): targets to reach from hiding, with no guns.
+## `value`: what the reference is worth (prio, with cover's missing-table dps of 1).
+func _add_refs(out: Dictionary, refs: Array, bloom: float, value: float) -> void:
 	for r in refs:
-		out.pos.append(r)
+		out.pos.append(r.pos)
 		out.det_r.append(0.0)
 		out.spot_r.append(0.0)
 		out.los_r.append(bloom)
 		out.seen_r.append(bloom)
-		out.prio.append(REF_PRIO)
+		out.prio.append(value)
 		out.shootable.append(1)
 		out.live.append(1)
 		out.sticky.append(0)
-		out.ids.append(GameServer.ref_id(r))
+		out.ids.append(int(r.id))
 		out.heavy.append(0)
 
 ## Bow- or stern-in, whichever the table says hurts less, is the only mitigation.

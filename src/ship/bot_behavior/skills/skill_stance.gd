@@ -347,9 +347,7 @@ func _quiet(ctx: SkillContext) -> bool:
 	var d: float = ctx.ship.global_position.distance_to(target.global_position)
 	var arty = ctx.ship.artillery_controller
 	var guns: bool = _guns_free(ctx) and arty != null and d <= arty.get_params()._range
-	var tc = ctx.ship.torpedo_controller
-	var tubes: bool = tc != null and tc.get_params() != null and d <= tc.get_params()._range \
-		and tc.launchers.any(func(l): return is_instance_valid(l) and l.reload >= 1.0)
+	var tubes: bool = ctx.behavior.would_fire_torpedoes() and not _loaded_tubes(ctx).is_empty()
 	if not guns and not tubes:
 		return false
 	_shooters = []
@@ -358,9 +356,8 @@ func _quiet(ctx: SkillContext) -> bool:
 	return true
 
 
-## Guns we would fire: not held for stealth, and a DD (own gun policy) only once seen.
 static func _guns_free(ctx: SkillContext) -> bool:
-	return not ctx.behavior.hold_fire and (ctx.ship.is_detected() or not ctx.behavior._owns_gun_policy())
+	return ctx.behavior.would_fire_guns()
 
 
 ## [range bucket, dps rows, flight time, spread of the fall of shot (across, along)].
@@ -445,26 +442,26 @@ func _sim_opts(ctx: SkillContext, route: float) -> Dictionary:
 	return opts
 
 
-## Loaded tubes, the torpedo lead and what a launch is worth, when the target is in reach.
-func _add_tubes(opts: Dictionary, ctx: SkillContext, target: Ship) -> void:
+## Loaded tubes, the torpedo lead and what a launch is worth, when the launcher would fire:
+## a solved lead, which is also the launcher's own range gate.
+func _add_tubes(opts: Dictionary, ctx: SkillContext, _target: Ship) -> void:
 	var tc = ctx.ship.torpedo_controller
-	if tc == null or tc.get_params() == null:
+	var loaded := _loaded_tubes(ctx)
+	if loaded.is_empty() or not ctx.behavior.would_fire_torpedoes():
 		return
-	var tp: TorpedoLauncherParams = tc.get_params()
-	if ctx.ship.global_position.distance_to(target.global_position) > tp._range:
-		return
-	var loaded: Array = []
 	var muzzles: int = 0
-	for l: TorpedoLauncher in tc.launchers:
-		if is_instance_valid(l) and l.reload >= 1.0:
-			loaded.append(l)
-			muzzles += l.muzzles.size()
-	if loaded.is_empty():
-		return
-	var aim: Vector3 = ctx.behavior.torpedo_target_position if ctx.behavior.has_valid_torpedo_solution else target.global_position
+	for l: TorpedoLauncher in loaded:
+		muzzles += l.muzzles.size()
+	var aim: Vector3 = ctx.behavior.torpedo_target_position
 	opts.merge({"tubes": loaded, "tube_target": Vector2(aim.x, aim.z),
 		"tube_value": float(muzzles) / loaded.size() * tc.get_torp_params().damage * TORP_HIT_SHARE})
 
+
+static func _loaded_tubes(ctx: SkillContext) -> Array:
+	var tc = ctx.ship.torpedo_controller
+	if tc == null or tc.get_params() == null:
+		return []
+	return tc.launchers.filter(func(l): return is_instance_valid(l) and l.reload >= 1.0 and not l.disabled)
 
 ## Bearing the route runs toward, INF once there.
 static func _route_bearing(intent: NavIntent, ctx: SkillContext) -> float:

@@ -225,6 +225,15 @@ func can_fire_guns() -> bool:
 	## Each ship class gates firing in its own engage_target override.
 	return true
 
+## The one rule for opening fire with the main guns now. The guns fire by it and
+## stance credits shots by it, so neither keeps its own copy. Hulls add their gates.
+func would_fire_guns() -> bool:
+	return not (wants_to_be_concealed or hold_fire)
+
+## The one rule for launching torpedoes now: a solved lead, which also holds the range gate.
+func would_fire_torpedoes() -> bool:
+	return has_valid_torpedo_solution
+
 ## True when quiet guns would let us go, or stay, dark. Radar, hydro and
 ## aircraft do not read bloom, and neither does a spotter already inside our
 ## base radius: against those there is nothing to protect, so shoot.
@@ -611,7 +620,7 @@ func update_priorities(server: GameServer) -> void:
 			continue
 		cands.append({"ship": b.ship, "pos": b.pos})
 	for r in server.anonymous_refs(team_id):
-		cands.append({"ship": null, "pos": r})
+		cands.append({"ship": null, "pos": r.pos, "ref": r.id})
 	var best: Dictionary = {}
 	var best_d: float = INF
 	var held_d: float = INF
@@ -621,7 +630,7 @@ func update_priorities(server: GameServer) -> void:
 		if d < best_d:
 			best_d = d
 			best = c
-		if not priority.is_empty() and c.ship == priority.ship and (c.ship != null or c.pos == priority.pos):
+		if not priority.is_empty() and c.ship == priority.ship and (c.ship != null or c.ref == priority.ref):
 			held_d = d
 			held_c = c
 	priority = held_c if is_finite(held_d) and best_d > held_d * PRIORITY_SWITCH else best
@@ -1159,7 +1168,7 @@ func update_torpedo_aim(target_ship: Ship):
 
 func try_fire_torpedoes(_target_ship: Ship):
 	"""Attempt to fire torpedoes at current solution."""
-	if !has_valid_torpedo_solution:
+	if not would_fire_torpedoes():
 		salvo_spread_index = 0
 		return
 
@@ -2443,11 +2452,31 @@ func never_spotted() -> bool:
 	var server: GameServer = _ship.get_node_or_null("/root/Server")
 	return server != null and _ship.team != null and (server.identified.get(_ship.team.team_id, {}) as Dictionary).is_empty()
 
-## The priority as a cover target while nothing has been seen: [its reference], else empty.
-func opening_refs() -> PackedVector2Array:
-	if not never_spotted() or priority.is_empty() or priority.ship != null:
-		return PackedVector2Array()
-	return PackedVector2Array([priority.pos])
+## The priority as a cover target while it is still an anonymous reference: [{id, pos}], else empty.
+func cover_refs() -> Array[Dictionary]:
+	if priority.is_empty() or priority.ship != null:
+		return []
+	return [{"id": priority.ref, "pos": priority.pos}]
+
+## The priority is unknown or out of sight.
+func priority_dark() -> bool:
+	if priority.is_empty():
+		return false
+	var p := priority_target()
+	return p == null or not p.visible_to_enemy
+
+## What an unseen enemy is worth as a target, in cover's prio × dps units:
+## our fleet's average hull, our own fire on a hull like ours, halved for not knowing.
+func unknown_target_value(range_m: float) -> float:
+	var server: GameServer = _ship.get_node_or_null("/root/Server")
+	if server == null:
+		return 0.0
+	var f := _fleet_profile(server)
+	if f.is_empty():
+		return 0.0
+	var avg: Dictionary = f.all
+	var dps: float = maxf(SkillStance._expected(_ship, _ship, range_m, 45.0).x, 0.0)
+	return 0.5 * float(avg.class_w) / maxf(float(avg.hp), 1.0) * dps
 
 ## Per-class hook: the opening, before any enemy has been seen. Base: the idle chain.
 func _opening(_ctx: SkillContext, _sit: Dictionary) -> NavIntent:
@@ -2658,6 +2687,48 @@ const THREAT_LOW_HP: float = 0.35
 ## Where an unopposed engagement closes to.
 const POINT_BLANK_M: float = 100.0
 
+## How sure an unseen enemy is to be at its marching reference.
+const UNKNOWN_CERTAINTY: float = 0.55
+
+## Per class of ours: {range, hp, class_w} averaged; and the fleet's classes in order.
+## The fleets are mirrored by class, so an unseen enemy is one of ours by type.
+var _unknown_cache: Dictionary = {}
+func _fleet_profile(server: GameServer) -> Dictionary:
+	if not _unknown_cache.is_empty():
+		return _unknown_cache
+	var by_class: Dictionary = {}
+	var classes: Array[int] = []
+	for s: Ship in server.get_team_ships(_ship.team.team_id):
+		if not is_instance_valid(s) or s.artillery_controller == null:
+			continue
+		var c: Dictionary = by_class.get_or_add(s.ship_class, {"range": 0.0, "hp": 0.0, "class_w": 0.0, "n": 0})
+		c.range += s.artillery_controller.get_params()._range
+		c.hp += s.health_controller.max_hp
+		c.class_w += get_threat_class_weight(s.ship_class)
+		c.n += 1
+		classes.append(s.ship_class)
+	if classes.is_empty():
+		return {}
+	var all := {"range": 0.0, "hp": 0.0, "class_w": 0.0}
+	for c in by_class.values():
+		for k in all:
+			all[k] += float(c[k])
+		for k in ["range", "hp", "class_w"]:
+			c[k] /= float(c.n)
+	for k in all:
+		all[k] /= float(classes.size())
+	classes.sort()
+	_unknown_cache = {"by_class": by_class, "classes": classes, "all": all}
+	return _unknown_cache
+
+## The class an unseen enemy is taken for, fixed per reference: {range, hp, class_w}.
+func _unknown_class(server: GameServer, ref: int) -> Dictionary:
+	var f := _fleet_profile(server)
+	if f.is_empty():
+		return {"range": 15000.0, "hp": 60000.0, "class_w": 1.0}
+	var classes: Array = f.classes
+	return f.by_class[classes[posmod(ref, classes.size())]]
+
 func get_threat_score(ctx: SkillContext) -> float:
 	## Returns a normalized 0–1 threat score (0 = safe, 1 = maximum threat).
 	## Each enemy within its own gun range contributes matchup × condition ×
@@ -2683,12 +2754,18 @@ func get_threat_score(ctx: SkillContext) -> float:
 	for enemy in server.get_valid_targets(_ship.team.team_id):
 		contacts.append({ship = enemy, position = enemy.global_position, certainty = 1.0})
 	for guess in get_presumed_contacts():
+		# A ship never seen is the anonymous references' to stand for, not its own.
+		if not server.is_identified(_ship.team.team_id, guess.ship):
+			continue
 		contacts.append({
 			ship = guess.ship,
 			position = guess.position,
 			certainty = lerpf(PRESUMED_CERTAINTY_MIN, PRESUMED_CERTAINTY_MAX,
 				EnemyPresumption.certainty(guess)),
 		})
+	for r in server.anonymous_refs(_ship.team.team_id):
+		contacts.append({ship = null, position = Vector3(r.pos.x, 0.0, r.pos.y), certainty = UNKNOWN_CERTAINTY,
+			stats = _unknown_class(server, int(r.id))})
 	if contacts.is_empty():
 		_threat_score_cache = my_hp_pressure * 0.3
 		_threat_score_frame = frame
@@ -2701,14 +2778,15 @@ func get_threat_score(ctx: SkillContext) -> float:
 
 	for contact in contacts:
 		var enemy: Ship = contact.ship
-		if not is_instance_valid(enemy) or not enemy.health_controller.is_alive():
-			continue
-		if enemy.artillery_controller == null:
+		var stats: Dictionary = contact.get("stats", {})
+		if stats.is_empty() and (not is_instance_valid(enemy) or not enemy.health_controller.is_alive() \
+				or enemy.artillery_controller == null):
 			continue
 		var believed: Vector3 = contact.position
 		var dist        = believed.distance_to(_ship.global_position)
-		var enemy_range = enemy.artillery_controller.get_params()._range
-		var enemy_hp    = enemy.health_controller.current_hp
+		var unknown: bool = not stats.is_empty()
+		var enemy_range = float(stats.range) if unknown else enemy.artillery_controller.get_params()._range
+		var enemy_hp    = float(stats.hp) if unknown else enemy.health_controller.current_hp
 		# Only count enemies whose guns can plausibly reach us
 		if enemy_range <= 0.0 or dist > enemy_range:
 			continue
@@ -2717,7 +2795,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		# horizon, so the closer a bot got the safer it believed itself to be.
 		var range_pressure = clampf(1.0 - pow(dist / enemy_range, 3.0), 0.0, 1.0)
 		# Class weight: each ship class has a different threat weight per subclass
-		var class_w = get_threat_class_weight(enemy.ship_class)
+		var class_w = float(stats.class_w) if unknown else get_threat_class_weight(enemy.ship_class)
 		# How much ship is pointed at me, measured against my FULL bar rather than
 		# against what is left of it: parity is exactly 1.0, an enemy down to half
 		# its HP is 0.59, and no enemy however healthy is worth more than ~1.99 of
@@ -2736,7 +2814,7 @@ func get_threat_score(ctx: SkillContext) -> float:
 		# calibration is unchanged and the own-damage axis comes back to life.
 		var condition = _threat_sat(1.0 / maxf(hp_ratio, 0.01), THREAT_HP_CONDITION_FALLOFF)
 		var raw_val = matchup * condition * range_pressure * class_w
-		if !ctx.behavior.active_shooters_at_me.has(enemy):
+		if unknown or !ctx.behavior.active_shooters_at_me.has(enemy):
 			raw_val *= 0.5
 		raw_val *= threat_scale
 		var this_threat = 1.0 - exp(-THREAT_SATURATION * raw_val)
@@ -2846,7 +2924,7 @@ func engage_target(target: Ship):
 		return
 
 	# Concealment probe: aim turrets but hold fire to let bloom decay
-	if wants_to_be_concealed or hold_fire:
+	if not would_fire_guns():
 		_ship.artillery_controller.set_aim_input(adjusted_target_pos)
 		_ship.secondary_controller.enabled = false
 		return

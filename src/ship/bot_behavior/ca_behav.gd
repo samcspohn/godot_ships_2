@@ -38,13 +38,13 @@ func engage_target(target: Ship) -> void:
 	var aim_pos = contact_aim_point(target)
 	if aim_pos == null:
 		return
-	if not can_fire_guns():
-		_ship.artillery_controller.set_aim_input(aim_pos)
-		return
-	if _suppress_guns:
+	if not would_fire_guns():
 		_ship.artillery_controller.set_aim_input(aim_pos)
 		return
 	super.engage_target(target)
+
+func would_fire_guns() -> bool:
+	return can_fire_guns() and not _suppress_guns and super()
 
 
 
@@ -96,8 +96,9 @@ func _select_low_threat_skill(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 # 	# 	intent.heading_weight = 1.0
 
 func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
+	# Good odds release the cover, unless what it faces has yet to be seen: then wait for it.
 	if not _holding(SkillHold.Mode.COVER) or not _skill_hold.cover.has_station() \
-			or sit.threat < _doc().cover_release_threat:
+			or (sit.threat < _doc().cover_release_threat and not priority_dark()):
 		return null
 	var hold := _hold(ctx, SkillHold.Mode.COVER, _hold_cover_params(_skill_hold.cover.mode, sit))
 	if hold != null:
@@ -106,7 +107,7 @@ func _committed_intent(ctx: SkillContext, sit: Dictionary) -> NavIntent:
 	return hold
 
 func _hold_cover_params(mode: int, sit: Dictionary) -> Dictionary:
-	return {"mode": mode, "refs": opening_refs() if mode == SkillCover.Mode.OFFENSE else PackedVector2Array(), "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
+	return {"mode": mode, "refs": cover_refs() if mode == SkillCover.Mode.OFFENSE else [], "pref_range": sit.engagement_range if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"max_range": max_engagement_range(_ship) if mode == SkillCover.Mode.OFFENSE else 0.0,
 		"fire_en_route": cant_go_dark}
 

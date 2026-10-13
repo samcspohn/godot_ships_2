@@ -533,11 +533,15 @@ func _has_better_unspotted_torp_target(ship: Ship, current_target: Ship, server:
 			return true
 	return false
 
+## Guns only when already spotted (revealing position is already done), including
+## on a ping or by aircraft, not just LOS; or when not suppressing; never in a stealth gunboat hold.
+func would_fire_guns() -> bool:
+	if _gb_stealth and _suppress_guns:
+		return false
+	return (_ship.is_detected() or (not _suppress_guns and can_fire_guns())) and super()
+
 func engage_target(target: Ship):
-	# Guns only when already spotted (revealing position is already done),
-	# including on a ping or by aircraft, not just LOS.
-	var gunboat_hold: bool = _gb_stealth and _suppress_guns
-	if not gunboat_hold and (_ship.is_detected() or (not _suppress_guns and can_fire_guns())):
+	if would_fire_guns():
 		super.engage_target(target)
 		_ship.secondary_controller.enabled = not wants_to_be_concealed
 	else:

@@ -891,16 +891,17 @@ func _identify(team_id: int, enemy: Ship) -> void:
 	if seen.has(enemy) or enemy.team == null:
 		return
 	seen[enemy] = true
-	var refs: PackedVector2Array = spawn_refs.get(enemy.team.team_id, PackedVector2Array())
+	var their: int = enemy.team.team_id
+	var refs: PackedVector2Array = spawn_refs.get(their, PackedVector2Array())
 	if refs.is_empty():
 		return
 	var at := Vector2(enemy.global_position.x, enemy.global_position.z)
 	var best := 0
 	for i in refs.size():
-		if refs[i].distance_squared_to(at) < refs[best].distance_squared_to(at):
+		if _ref_pos(their, refs[i]).distance_squared_to(at) < _ref_pos(their, refs[best]).distance_squared_to(at):
 			best = i
 	refs.remove_at(best)
-	spawn_refs[enemy.team.team_id] = refs
+	spawn_refs[their] = refs
 
 func is_identified(team_id: int, enemy: Ship) -> bool:
 	return (identified.get(team_id, {}) as Dictionary).has(enemy)
@@ -911,9 +912,40 @@ const REF_WEIGHT: float = 0.2
 static func ref_id(p: Vector2) -> int:
 	return -1 - (hash(Vector2i(p)) & 0x3fffffff)
 
-## Anonymous references to the enemies `team_id` has never seen.
-func anonymous_refs(team_id: int) -> PackedVector2Array:
-	return spawn_refs.get(1 - team_id, PackedVector2Array())
+## The unseen march as a fleet does: down their own lane at the presumed advance
+## speed, halting at the first land in it or this short of the middle.
+const REF_STOP_SHORT_M: float = 6000.0
+const REF_STEP_M: float = 250.0
+const REF_CLEARANCE_M: float = 300.0
+## Spawn slot -> {dir, stop}: the lane a reference marches down and how far.
+var _ref_lanes: Dictionary = {}
+
+func _ref_pos(team_id: int, spawn: Vector2) -> Vector2:
+	var lane: Dictionary = _ref_lanes.get(spawn, {})
+	if lane.is_empty():
+		var own := get_team_spawn_position(team_id)
+		var other := get_team_spawn_position(1 - team_id)
+		var mid := Vector2(own.x + other.x, own.z + other.z) * 0.5
+		var dir := (mid - Vector2(own.x, own.z)).normalized()
+		var stop: float = maxf((mid - spawn).dot(dir) - REF_STOP_SHORT_M, 0.0)
+		if NavigationMapManager.is_map_ready():
+			var d := 0.0
+			while d < stop:
+				var p := spawn + dir * (d + REF_STEP_M)
+				if NavigationMapManager.get_distance(Vector3(p.x, 0.0, p.y)) < REF_CLEARANCE_M:
+					stop = d
+					break
+				d += REF_STEP_M
+		lane = {"dir": dir, "stop": stop}
+		_ref_lanes[spawn] = lane
+	return spawn + (lane.dir as Vector2) * minf(match_elapsed * EnemyPresumption.ADVANCE_SPEED, float(lane.stop))
+
+## Anonymous references to the enemies `team_id` has never seen: [{id, pos}], marching.
+func anonymous_refs(team_id: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for spawn in spawn_refs.get(1 - team_id, PackedVector2Array()):
+		out.append({"id": ref_id(spawn), "pos": _ref_pos(1 - team_id, spawn)})
+	return out
 
 
 func get_all_ships() -> Array:
@@ -1767,8 +1799,8 @@ func _sweep_reach_fields() -> void:
 			force_spots.append(c.force_spot)
 		# Gunless: a reference is somewhere to reach, never a gun on us.
 		for r in anonymous_refs(team_id):
-			ids.append(ref_id(r))
-			origins.append(r)
+			ids.append(int(r.id))
+			origins.append(r.pos)
 			speeds.append(0.0)
 			drags.append(0.0)
 			ranges.append(0.0)

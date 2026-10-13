@@ -8,6 +8,8 @@ extends SkillPosition
 ## Kept for DDBehavior.engagement_range and _is_gunboat, which band on it.
 const SAFE_MARGIN := 1.15
 const SPOT_CLAIM_TTL_MS := 6000
+## At zero HP the detection and radar/hydro zones a spotter keeps out of are this much wider.
+const HURT_MARGIN := 0.5
 ## team_id -> enemy instance id -> [spotter instance id, ms].
 static var _spot_claims: Dictionary = {}
 var stealth_corridor: bool = true
@@ -60,15 +62,18 @@ func _inputs(ctx: SkillContext, team_id: int, belief: Array[Dictionary]) -> Dict
 	var ship: Ship = ctx.ship
 	var now: int = SimClock.now_ms()
 	var conceal: float = NavigationMapManager.reach_conceal_radius(ship)
+	# Hurt, the spotter keeps further out: one more detection is worth less than the hull.
+	var hp_frac: float = clampf(ship.health_controller.current_hp / maxf(ship.health_controller.max_hp, 1.0), 0.0, 1.0)
+	var margin: float = 1.0 + HURT_MARGIN * (1.0 - hp_frac)
 	var out := {"pos": PackedVector2Array(), "det": PackedFloat32Array(), "always": PackedFloat32Array(),
 		"spot": PackedFloat32Array(), "shoot": PackedByteArray()}
 	var any_wanted := false
 	for b in belief:
 		var e: Ship = b.ship
 		out.pos.append(b.pos)
-		out.det.append(maxf(conceal, float(b.force_spot)) + float(b.spread))
+		out.det.append(maxf(conceal, float(b.force_spot)) * margin + float(b.spread))
 		# Radar and hydro see through islands.
-		out.always.append(float(b.force_spot) + float(b.spread) if float(b.force_spot) > 0.0 else 0.0)
+		out.always.append(float(b.force_spot) * margin + float(b.spread) if float(b.force_spot) > 0.0 else 0.0)
 		var cp: ConcealmentParams = e.concealment.params.p() if e.concealment != null and e.concealment.params != null else null
 		out.spot.append(cp.radius if cp != null else 0.0)
 		var claimer := spot_claimer(team_id, e, now)
