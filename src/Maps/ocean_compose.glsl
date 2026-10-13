@@ -3,8 +3,7 @@
 
 // ocean_compose.glsl
 // Unpacks IFFT result (set A) into the two textures the spatial shader samples.
-// Applies fftshift (-1)^(x+y), fills derivatives.ba with Jacobian diagonals,
-// and accumulates whitecap foam into fft_foam.
+// Applies fftshift (-1)^(x+y) and fills derivatives.ba with Jacobian diagonals.
 //
 //   buf0 -> (Dy, Dx)              displacement.rgb = (Dx, Dy, Dz)
 //   buf1 -> (Dz, dDy/dx)         derivatives.rg   = (dDy/dx, dDy/dz)  slopes
@@ -21,19 +20,12 @@ layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2DArray buf2;
 layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray displacement;
 layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2DArray derivatives;
 layout(set = 0, binding = 5, rg32f) uniform restrict readonly image2DArray buf3;
-layout(set = 0, binding = 6, r32f) uniform restrict image2DArray fft_foam;
 
 layout(push_constant, std430) uniform Push {
     float disp_scale;
     float slope_scale;
-    float foam_bias;
-    // Both rates are supplied already exponentiated by the frame's delta on the
-    // CPU, so foam fades and builds at the same wall-clock rate at any framerate.
-    float foam_decay;
-    float foam_rise;
     float _pad0;
     float _pad1;
-    float _pad2;
 } pc;
 
 void main() {
@@ -59,20 +51,4 @@ void main() {
             Jxx,
             Jzz
         ));
-
-    // Whitecap foam: generate where J = (1+Jxx)(1+Jzz) < foam_bias.
-    // Accumulates over time and decays; in-place update (one texel per invocation).
-    float J = (1.0 + Jxx) * (1.0 + Jzz);
-    // Smooth gradient: full foam at J<=0, zero at J>=foam_bias.
-    float foam_gen = 1.0 - smoothstep(0.0, pc.foam_bias, J);
-    float old_foam = imageLoad(fft_foam, id).r;
-    // Blended rise: foam always decays; wave crests add to it rather than
-    // holding it at a fixed level.  max(…, 0) prevents pulling foam down
-    // when foam_gen is weaker than the current decayed value.  The rise rate
-    // reaches 90% of the target in ~50 ms — fast enough to look immediate
-    // while eliminating the hard 'held vs decaying' boundary that caused
-    // periodic stripes during dissipation.
-    float a = old_foam * pc.foam_decay;
-    float new_foam = a + max(foam_gen - a, 0.0) * pc.foam_rise;
-    imageStore(fft_foam, id, vec4(new_foam, 0.0, 0.0, 0.0));
 }

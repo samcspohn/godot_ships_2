@@ -7,8 +7,6 @@ layout(set = 0, binding = 0, rgba32f) uniform restrict readonly image2D disp_src
 layout(set = 0, binding = 1, rgba32f) uniform restrict writeonly image2D disp_dst;
 layout(set = 0, binding = 2, rgba32f) uniform restrict readonly image2D deriv_src;
 layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2D deriv_dst;
-layout(set = 0, binding = 4, r32f) uniform restrict readonly image2D foam_src;
-layout(set = 0, binding = 5, r32f) uniform restrict writeonly image2D foam_dst;
 
 layout(push_constant, std430) uniform Push {
     int size;
@@ -23,7 +21,6 @@ void main() {
     if (pc.copy != 0) {
         imageStore(disp_dst, d, imageLoad(disp_src, d));
         imageStore(deriv_dst, d, imageLoad(deriv_src, d));
-        imageStore(foam_dst, d, imageLoad(foam_src, d));
         return;
     }
     ivec2 s = d * 2;
@@ -32,6 +29,4 @@ void main() {
             + imageLoad(disp_src, s + y) + imageLoad(disp_src, s + x + y)));
     imageStore(deriv_dst, d, 0.25 * (imageLoad(deriv_src, s) + imageLoad(deriv_src, s + x)
             + imageLoad(deriv_src, s + y) + imageLoad(deriv_src, s + x + y)));
-    imageStore(foam_dst, d, 0.25 * (imageLoad(foam_src, s) + imageLoad(foam_src, s + x)
-            + imageLoad(foam_src, s + y) + imageLoad(foam_src, s + x + y)));
 }

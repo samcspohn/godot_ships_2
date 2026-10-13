@@ -6,7 +6,6 @@ const SHADER_SPEC_INITIAL      := preload("res://src/Maps/ocean_spectrum_initial
 const SHADER_SPEC_UPDATE       := preload("res://src/Maps/ocean_spectrum_update.glsl")
 const SHADER_FFT_BUTTERFLY     := preload("res://src/Maps/ocean_fft_butterfly.glsl")
 const SHADER_COMPOSE           := preload("res://src/Maps/ocean_compose.glsl")
-const SHADER_FOAM_BLUR         := preload("res://src/Maps/ocean_foam_blur.glsl")
 const SHADER_MIP               := preload("res://src/Maps/ocean_mip.glsl")
 
 const GRAVITY  := 9.81
@@ -43,11 +42,6 @@ const SLOPE_TABLE := 256
 @export_group("Output Tuning")
 @export var disp_scale: float = 1.0
 @export var slope_scale: float = 1.0
-@export var foam_bias: float = 1.0
-@export var foam_decay: float = 0.985
-const FOAM_RISE := 0.5
-const FOAM_RATE_HZ := 60.0
-const FOAM_MAX_DELTA := 0.1
 
 var _initialized    := false
 var _material_bound := false
@@ -66,7 +60,6 @@ var _pip_spec_initial:      RID
 var _pip_spec_update:       RID
 var _pip_fft:               RID
 var _pip_compose:           RID
-var _pip_foam_blur:         RID
 var _pip_mip:               RID
 
 var _h0:           RID
@@ -77,12 +70,8 @@ var _b3:           RID
 var _butterfly:    RID
 var _displacement: RID
 var _derivatives:  RID
-var _foam:         RID
-var _foam_temp:    RID
-var _foam_scratch: RID
 var _disp_mipped:  RID
 var _deriv_mipped: RID
-var _foam_mipped:  RID
 
 var _ubo: RID
 
@@ -90,13 +79,10 @@ var _uset_spec_initial: RID
 var _uset_spec_update:  RID
 var _uset_fft:          RID
 var _uset_compose:      RID
-var _uset_foam_blur_h:  RID
-var _uset_foam_blur_v:  RID
 var _uset_mip: Array[RID] = []   # index = mip * _c + layer
 
 var _disp_wrap:  Texture2DArrayRD
 var _deriv_wrap: Texture2DArrayRD
-var _foam_wrap:  Texture2DArrayRD
 var _slope_tex:  ImageTexture
 
 
@@ -113,7 +99,6 @@ func _process(delta: float) -> void:
 	if _initialized and ocean_material != null and not _material_bound:
 		ocean_material.set_shader_parameter("fft_displacement", _disp_wrap)
 		ocean_material.set_shader_parameter("fft_derivatives",  _deriv_wrap)
-		ocean_material.set_shader_parameter("fft_foam",         _foam_wrap)
 		_material_bound = true
 
 	var ubo_bytes := PackedByteArray()
@@ -123,12 +108,8 @@ func _process(delta: float) -> void:
 		_spectrum_dirty = false
 		_push_material_params()
 
-	var steps := minf(delta, FOAM_MAX_DELTA) * FOAM_RATE_HZ
-	var decay := pow(foam_decay, steps)
-	var rise := 1.0 - pow(1.0 - FOAM_RISE, steps)
-
 	RenderingServer.call_on_render_thread(
-		_render_update.bind(_time, ubo_bytes, do_spec, disp_scale, slope_scale, foam_bias, decay, rise))
+		_render_update.bind(_time, ubo_bytes, do_spec, disp_scale, slope_scale))
 
 
 func _push_material_params() -> void:
@@ -285,19 +266,16 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	var sh_su := _rd.shader_create_from_spirv(SHADER_SPEC_UPDATE.get_spirv())
 	var sh_fb := _rd.shader_create_from_spirv(SHADER_FFT_BUTTERFLY.get_spirv())
 	var sh_co := _rd.shader_create_from_spirv(SHADER_COMPOSE.get_spirv())
-	var sh_fbl := _rd.shader_create_from_spirv(SHADER_FOAM_BLUR.get_spirv())
 	var sh_mip := _rd.shader_create_from_spirv(SHADER_MIP.get_spirv())
 	_pip_butterfly_precomp = _rd.compute_pipeline_create(sh_bp)
 	_pip_spec_initial      = _rd.compute_pipeline_create(sh_si)
 	_pip_spec_update       = _rd.compute_pipeline_create(sh_su)
 	_pip_fft               = _rd.compute_pipeline_create(sh_fb)
 	_pip_compose           = _rd.compute_pipeline_create(sh_co)
-	_pip_foam_blur         = _rd.compute_pipeline_create(sh_fbl)
 	_pip_mip               = _rd.compute_pipeline_create(sh_mip)
 
 	var RGBA32F := RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	var RG32F   := RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
-	var R32F    := RenderingDevice.DATA_FORMAT_R32_SFLOAT
 
 	_h0        = _tex_array(RGBA32F, _c, _n)
 	_butterfly = _tex_2d(RGBA32F, _log2n, _n)
@@ -308,14 +286,10 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_b3 = _tex_array(RG32F, _c, _n)
 	_displacement = _tex_array(RGBA32F, _c, _n)
 	_derivatives  = _tex_array(RGBA32F, _c, _n)
-	_foam         = _tex_array(R32F, _c, _n)
-	_foam_temp    = _tex_array(R32F, _c, _n)
-	_foam_scratch = _tex_array(R32F, _c, _n)
 	# Compute writes go to the unmipped textures; the mip pass copies level 0 and
 	# downsamples into these, so storage views never span more than one mip.
 	_disp_mipped  = _tex_array(RGBA32F, _c, _n, _mips)
 	_deriv_mipped = _tex_array(RGBA32F, _c, _n, _mips)
-	_foam_mipped  = _tex_array(R32F, _c, _n, _mips)
 
 	_ubo = _rd.uniform_buffer_create(UBO_SIZE, ubo_bytes)
 
@@ -355,30 +329,18 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 		_make_uni(IM, 3, _displacement),
 		_make_uni(IM, 4, _derivatives),
 		_make_uni(IM, 5, _a3),
-		_make_uni(IM, 6, _foam),
 	], sh_co, 0)
-
-	_uset_foam_blur_h = _rd.uniform_set_create([
-		_make_uni(IM, 0, _foam),
-		_make_uni(IM, 1, _foam_temp),
-	], sh_fbl, 0)
-	_uset_foam_blur_v = _rd.uniform_set_create([
-		_make_uni(IM, 0, _foam_temp),
-		_make_uni(IM, 1, _foam_scratch),
-	], sh_fbl, 0)
 
 	_uset_mip.clear()
 	for m in _mips:
 		for l in _c:
-			var srcs := [_slice(_displacement, l, 0), _slice(_derivatives, l, 0), _slice(_foam_scratch, l, 0)] if m == 0 \
-				else [_slice(_disp_mipped, l, m - 1), _slice(_deriv_mipped, l, m - 1), _slice(_foam_mipped, l, m - 1)]
+			var srcs := [_slice(_displacement, l, 0), _slice(_derivatives, l, 0)] if m == 0 \
+				else [_slice(_disp_mipped, l, m - 1), _slice(_deriv_mipped, l, m - 1)]
 			_uset_mip.append(_rd.uniform_set_create([
 				_make_uni(IM, 0, srcs[0]),
 				_make_uni(IM, 1, _slice(_disp_mipped, l, m)),
 				_make_uni(IM, 2, srcs[1]),
 				_make_uni(IM, 3, _slice(_deriv_mipped, l, m)),
-				_make_uni(IM, 4, srcs[2]),
-				_make_uni(IM, 5, _slice(_foam_mipped, l, m)),
 			], sh_mip, 0))
 
 	var uset_bp := _rd.uniform_set_create([
@@ -397,14 +359,12 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_disp_wrap.texture_rd_rid = _disp_mipped
 	_deriv_wrap = Texture2DArrayRD.new()
 	_deriv_wrap.texture_rd_rid = _deriv_mipped
-	_foam_wrap = Texture2DArrayRD.new()
-	_foam_wrap.texture_rd_rid = _foam_mipped
 
 	_initialized = true
 
 
 func _render_update(time: float, ubo_bytes: PackedByteArray,
-		do_spec: bool, ds: float, ss: float, fb: float, fd: float, fr: float) -> void:
+		do_spec: bool, ds: float, ss: float) -> void:
 	if not _initialized:
 		_init_rd(ubo_bytes)
 		ubo_bytes = PackedByteArray()
@@ -441,26 +401,11 @@ func _render_update(time: float, ubo_bytes: PackedByteArray,
 		_rd.compute_list_dispatch(cl, g, g, _c)
 		_rd.compute_list_add_barrier(cl)
 
-	var pc_co := PackedByteArray(); pc_co.resize(32)
+	var pc_co := PackedByteArray(); pc_co.resize(16)
 	pc_co.encode_float(0, ds);  pc_co.encode_float(4, ss)
-	pc_co.encode_float(8, fb);  pc_co.encode_float(12, fd)
-	pc_co.encode_float(16, fr)
 	_rd.compute_list_bind_compute_pipeline(cl, _pip_compose)
 	_rd.compute_list_bind_uniform_set(cl, _uset_compose, 0)
-	_rd.compute_list_set_push_constant(cl, pc_co, 32)
-	_rd.compute_list_dispatch(cl, g, g, _c)
-	_rd.compute_list_add_barrier(cl)
-
-	var pc_blur := PackedByteArray(); pc_blur.resize(16)
-	pc_blur.encode_s32(0, _n)
-	_rd.compute_list_bind_compute_pipeline(cl, _pip_foam_blur)
-	_rd.compute_list_bind_uniform_set(cl, _uset_foam_blur_h, 0)
-	_rd.compute_list_set_push_constant(cl, pc_blur, 16)
-	_rd.compute_list_dispatch(cl, g, g, _c)
-	_rd.compute_list_add_barrier(cl)
-	pc_blur.encode_s32(4, 1)
-	_rd.compute_list_bind_uniform_set(cl, _uset_foam_blur_v, 0)
-	_rd.compute_list_set_push_constant(cl, pc_blur, 16)
+	_rd.compute_list_set_push_constant(cl, pc_co, 16)
 	_rd.compute_list_dispatch(cl, g, g, _c)
 	_rd.compute_list_add_barrier(cl)
 

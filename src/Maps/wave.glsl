@@ -53,6 +53,15 @@ layout(set = 0, binding = 4, std430) restrict readonly buffer Impulses {
     PointImpulse impulses[];
 };
 
+// Per slot: x = ship bits, y/z = impulse bits 0-31/32-63 overlapping the tile.
+layout(set = 0, binding = 5, std430) restrict readonly buffer Masks {
+    uvec4 masks[];
+};
+
+layout(set = 0, binding = 6, std430) restrict readonly buffer Active {
+    int active_slots[];
+};
+
 layout(push_constant, std430) uniform Params {
     int res;
     float c2;
@@ -101,7 +110,7 @@ vec2 lerp_dir(vec2 a, vec2 b, float t) {
 }
 
 void main() {
-    int layer = int(gl_GlobalInvocationID.z);
+    int layer = active_slots[gl_GlobalInvocationID.z];
     ivec2 c = ivec2(gl_GlobalInvocationID.xy);
     if (c.x >= P.res || c.y >= P.res) return;
 
@@ -134,7 +143,11 @@ void main() {
 
     vec2 world_pos = t.origin + uv * P.tile_world;
 
-    for (int i = 0; i < P.ship_count; i++) {
+    uvec4 mask = masks[layer];
+    uint ship_bits = mask.x;
+    while (ship_bits != 0u) {
+        int i = findLSB(ship_bits);
+        ship_bits &= ship_bits - 1u;
         Ship ship = ships[i];
         vec2 frame_prev_forward = vec2(ship.prev_fwd_x, ship.prev_fwd_y);
 
@@ -231,7 +244,10 @@ void main() {
         // foam = max(foam, hn > 0.0 ? 1.0 : 0.0);
     }
 
-    for (int i = 0; i < P.impulse_count; i++) {
+    uvec2 imp_bits = mask.yz;
+    while (imp_bits != uvec2(0u)) {
+        int i = imp_bits.x != 0u ? findLSB(imp_bits.x) : 32 + findLSB(imp_bits.y);
+        if (imp_bits.x != 0u) imp_bits.x &= imp_bits.x - 1u; else imp_bits.y &= imp_bits.y - 1u;
         PointImpulse imp = impulses[i];
         vec2 d = world_pos - imp.world_xz;
         float g = exp(-dot(d, d) / (imp.radius * imp.radius));

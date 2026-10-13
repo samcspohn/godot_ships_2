@@ -11,7 +11,6 @@ render_mode blend_mix, depth_draw_always, specular_schlick_ggx;
 
 uniform sampler2DArray fft_displacement : repeat_enable, filter_linear_mipmap;
 uniform sampler2DArray fft_derivatives  : repeat_enable, filter_linear_mipmap_anisotropic;
-uniform sampler2DArray fft_foam         : repeat_enable, filter_linear_mipmap;
 
 uniform int   cascade_count   = 4;
 uniform float cascade_scales[4];
@@ -28,10 +27,20 @@ uniform float morph_cells = 16.0;
 uniform float choppiness     = 1.0;
 uniform float chop_fade_near = 150.0;
 uniform float chop_fade_far  = 1200.0;
-uniform float foam_roughness    = 0.9;
-uniform float water_roughness   = 0.06;  // floor roughness; raise to soften specular lobe
+uniform float water_roughness   = 0.06;
 uniform float water_specular    = 0.02;  // Fresnel F0 of water
-uniform float specular_max      = 0.8;   // hard per-light specular cap — keeps ocean below bloom threshold
+uniform float specular_max      = 0.8;   // per-light cap, keeps the sun glint below bloom
+uniform float sun_glint         = 0.35;  // gameplay dimming of the sun path, applied before the cap
+
+// --- water body ---
+uniform vec3  deep          : source_color = vec3(0.025, 0.07, 0.13);
+uniform vec3  shallow       : source_color = vec3(0.06, 0.25, 0.30);
+uniform vec3  scatter_color : source_color = vec3(0.04, 0.30, 0.34);
+uniform float crest_height  = 2.0;   // displacement (m) treated as a fully lit crest
+uniform float crest_ambient = 0.35;  // crest lightening independent of sun direction
+uniform float sss_strength  = 1.6;   // sun shining through crests toward the camera
+uniform float sss_facing    = 0.25;
+uniform float crest_view_falloff = 1.5;  // crest lighting fades as the view turns straight down
 
 // --- windless calm patches (Perlin noise wave flattening) ---
 uniform float calm_scale      = 4000.0;  // world metres per calm patch cycle
@@ -50,24 +59,20 @@ uniform float whitecap_j_low  = 0.45;
 uniform float whitecap_j_high = 0.75;
 uniform float whitecap_max_lod = 2.0;
 
-// --- foam texture (animated Texture2DArray) ---
-// RGB = foam colour, A = coverage mask.  Adjacent frames are cross-faded
-// using TIME so the foam streamers visibly morph in a seamless loop.
-uniform sampler2DArray foam_tex          : repeat_enable, filter_linear_mipmap;
-uniform float          foam_tex_scale    = 8.0;  // world metres per foam tile
-uniform float          foam_tex_strength = 0.8;  // 0 = ignore mask, 1 = full carve-out
-uniform float          foam_amount       = 0.5;  // scales simulated foam intensity before the cutoff test; lower = less foam
-uniform bool           foam_animate      = true; // disable to freeze on a single static frame
-uniform float          foam_fps          = 8.0;  // animation playback speed
-uniform int            foam_frame_count  = 16;
-uniform float          foam_reveal_low   = 0.00; // sim values at/below this show no foam (suppresses noise floor)
-uniform float          foam_reveal_high  = 0.10; // sim values at/above this fully reveal the foam texture
-uniform bool           debug_foam_alpha  = true; // visualize foam_samp.a as hue (red = 0, purple = 1)
-
-// --- depth shading / shoreline foam ---
+// --- foam ---
+// foam_tex.r = reveal order (equalised), .g = bubble brightness; see gen_foam.py.
+uniform sampler2D foam_tex : repeat_enable, filter_linear_mipmap_anisotropic;
+uniform vec3  foam_color       : source_color = vec3(0.86, 0.9, 0.92);
+uniform vec3  bubble_color     : source_color = vec3(0.04, 0.16, 0.19);
+uniform float foam_amount      = 1.0;
+uniform float foam_tex_scale   = 9.0;    // metres per lace tile
+uniform float foam_detail_scale = 2.3;
+uniform float foam_edge        = 0.06;
+uniform float foam_drift       = 0.3;    // m/s along the wind
+uniform vec2  wind_dir         = vec2(0.94, 0.35);
+uniform float foam_roughness   = 0.8;
+uniform float whitecap_residual = 0.85;  // looser Jacobian bound for thin lace around crests
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
-uniform vec3  shallow    : source_color = vec3(0.10, 0.30, 0.50);
-uniform vec3  deep       : source_color = vec3(0.05, 0.08, 0.15);
 uniform float depth_fade = 8.0;
 uniform float foam_band  = 0.5;
 
@@ -81,8 +86,9 @@ uniform float wave_height_scale = 0.5;
 
 varying vec2  v_world_xz;
 varying float v_wave_height;
-varying vec2  v_wave_velocity;
 varying float v_calm_factor;  // 0 = flat/windless, 1 = full waves
+varying float f_crest;
+varying float f_foam;
 
 // =====================================================================
 // Gradient noise (IQ quintic)
@@ -205,32 +211,18 @@ float whitecap_jacobian(vec2 wxz, vec4 cm, float footprint) {
 	return (1.0 + j.x) * (1.0 + j.y);
 }
 
-// The foam texture's alpha is used as a cutoff rather than a plain opacity
-// multiply: a foam layer only shows where the texture alpha reaches the
-// simulation's foam value, then snaps to fully opaque. This lets the
-// simulation intensity "reveal" progressively more of the texture's
-// streamers instead of just dimming a uniform coat of foam.
-vec3 hsv2rgb(vec3 c) {
-	vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-	vec3 p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
-	return c.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), c.y);
+// Equalised reveal order -> opacity; c = 0 shows nothing, c = 1 covers all.
+float foam_cover(float c, float order, float edge) {
+	float t = 1.0 + edge - c * (1.0 + 2.0 * edge);
+	return smoothstep(t - edge, t + edge, order);
 }
 
-float foam_alpha_cutoff(float sim_value, float tex_alpha) {
-	// Invert: higher sim_value lowers the required alpha, so zero simulated
-	// foam requires (near-)impossible full-opacity texture (renders nothing),
-	// while full-intensity foam requires none (renders everywhere).
-	// Dead-zone + ramp instead of a plain linear or power-law map: a pure
-	// power curve can't both suppress the near-zero simulation noise floor
-	// (which is rarely ever exactly 0) and still meaningfully ramp up by
-	// mid-range values, since it rises steeply from zero either way. This
-	// clamps everything below foam_reveal_low to "no foam" and only starts
-	// revealing texture once the simulation value is genuinely elevated.
-	float revealed  = smoothstep(foam_reveal_low, foam_reveal_high, clamp(sim_value, 0.0, 1.0));
-	float threshold = 1.0 - revealed;
-	float aa = max(fwidth(tex_alpha), 0.001);
-	return smoothstep(threshold - aa, threshold + aa, tex_alpha);
-
+float tile_foam_raw(vec2 wxz) {
+	float r = tile_world / 128.0 * 1.5;
+	float v = (sample_tile(wxz).z * 2.0
+		+ sample_tile(wxz + vec2( r, 0.0)).z + sample_tile(wxz + vec2(-r, 0.0)).z
+		+ sample_tile(wxz + vec2(0.0,  r)).z + sample_tile(wxz + vec2(0.0, -r)).z) / 6.0;
+	return 0.7 * sqrt(max(v, 0.0));
 }
 
 // =====================================================================
@@ -284,7 +276,6 @@ void vertex() {
 // =====================================================================
 
 void fragment() {
-	// ---- Per-pixel normal from FFT slopes + wake tile gradient ----
 	vec4 cm = cascade_mods(v_world_xz);
 	vec4 derivs = sample_ocean_derivs(v_world_xz, cm) * v_calm_factor;
 	vec2 slope = derivs.xy;
@@ -306,100 +297,78 @@ void fragment() {
 	vec3 world_n = normalize(vec3(-slope.x, 1.0, -slope.y));
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_n, 0.0)).xyz);
 
-	// ---- Animated foam texture: cross-fade adjacent frames with TIME ----
-	float foam_t    = foam_animate ? mod(TIME * foam_fps, float(foam_frame_count)) : 0.0;
-	int   frame_a   = int(foam_t);
-	int   frame_b   = foam_animate ? (frame_a + 1) % foam_frame_count : frame_a;
-	vec2  foam_uv   = v_world_xz / foam_tex_scale;
-	vec4  foam_samp = mix(
-		texture(foam_tex, vec3(foam_uv, float(frame_a))),
-		texture(foam_tex, vec3(foam_uv, float(frame_b))),
-		fract(foam_t)
-	);
-	vec3  foam_color = foam_samp.rgb;
-
-	// ---- Depth-based color + shoreline foam ----
+	// ---- coverage sources ----
 	float d = texture(depth_tex, SCREEN_UV).r;
-	vec4  v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, d, 1.0);
-	float scene_z     = -(v.z / v.w);
-	float water_depth = scene_z - (-VERTEX.z);
+	vec4  vp = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, d, 1.0);
+	float water_depth = -(vp.z / vp.w) + VERTEX.z;
+	float shore_c = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
 
-	float blend    = clamp(water_depth / depth_fade, 0.0, 1.0);
-	float foam_raw = (1.0 - clamp(water_depth / foam_band, 0.0, 1.0)) * foam_amount;
-	float foam     = mix(foam_raw, foam_alpha_cutoff(foam_raw, foam_samp.a), foam_tex_strength);
-	ALBEDO = mix(mix(shallow, deep, blend), foam_color, foam);
+	float wc_core = 1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian);
+	float wc_lace = 1.0 - smoothstep(whitecap_j_high, whitecap_residual, jacobian);
+	float tile_raw = tile_foam_raw(v_world_xz);
+	float cover = max(max(wc_core, wc_lace * 0.3), max(smoothstep(0.15, 0.75, tile_raw), shore_c));
+	cover = clamp(cover * foam_amount, 0.0, 1.0);
+	float sub = clamp(max(wc_lace * wc_lace, smoothstep(0.02, 0.35, tile_raw)) * foam_amount, 0.0, 1.0);
 
-	// // ---- Wake-tile foam ----
-	float _fs = tile_world / 128.0 * 1.5;
-	// lines 211-215 — change .y → .z (5 occurrences)
-    float foam_val = (sample_tile(v_world_xz).z * 2.0
-        + sample_tile(v_world_xz + vec2( _fs, 0.0)).z
-        + sample_tile(v_world_xz + vec2(-_fs, 0.0)).z
-        + sample_tile(v_world_xz + vec2(0.0,  _fs)).z
-        + sample_tile(v_world_xz + vec2(0.0, -_fs)).z) / 6.0;
-    foam_val = pow(foam_val, 0.5);
-    // foam_val = min(foam_val, 0.35);
-    foam_val *= 0.7;
-	float tile_foam_raw = smoothstep(0.15, 0.75, foam_val) * foam_amount;
-	float tile_foam     = mix(tile_foam_raw, foam_alpha_cutoff(tile_foam_raw, foam_samp.a), foam_tex_strength);
-	ALBEDO = mix(ALBEDO, foam_color, tile_foam);
-	ROUGHNESS = mix(ROUGHNESS, foam_roughness, tile_foam);
-	// vec2 vel = sample_tile(v_world_xz).rg;
-	// vec2 veln = sample_tile(v_world_xz + vec2(_fs, 0.0)).rg;
-	// float dvel = length(vel - veln);
-	// vec2 veln2 = sample_tile(v_world_xz + vec2(0.0, _fs)).rg;
- //    dvel + length(vel - veln2);
- //    vec2 veln3 = sample_tile(v_world_xz + vec2(-_fs, 0.0)).rg;
- //    dvel + length(vel - veln3);
- //    vec2 veln4 = sample_tile(v_world_xz + vec2(0.0, -_fs)).rg;
- //    dvel + length(vel - veln4);
- //    float speed = length(dvel);
- //    if (speed > 0.5) {
- //        float tile_foam = smoothstep(0.0, 0.75, (speed - 0.5) / 1.0);
- //        ALBEDO = mix(ALBEDO, vec3(1.0), tile_foam);
- //        ROUGHNESS = mix(ROUGHNESS, foam_roughness, tile_foam);
- //    }
+	// ---- foam texture; widen the edge as the lace drops below a pixel so far foam reads as coverage ----
+	vec2 drift = wind_dir * TIME * foam_drift;
+	vec2 uv_a = (v_world_xz - drift) / foam_tex_scale;
+	vec2 uv_b = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * (v_world_xz - drift * 1.3) / foam_detail_scale;
+	vec2 fa = texture(foam_tex, uv_a).rg;
+	vec2 fb = texture(foam_tex, uv_b).rg;
+	float order = clamp(fa.r + (fb.r - 0.5) * 0.35, 0.0, 1.0);
+	float tex_lod = log2(footprint * float(textureSize(foam_tex, 0).x) / foam_detail_scale);
+	float edge = mix(foam_edge, 0.5, clamp(tex_lod / 5.0, 0.0, 1.0));
+	float foam = foam_cover(cover, order, edge);
 
-	// ---- Whitecap foam ----
-	float wc = (1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian)) * foam_amount;
-	wc = mix(wc, foam_alpha_cutoff(wc, foam_samp.a), foam_tex_strength);
-	ALBEDO = mix(ALBEDO, foam_color, wc);
+	// ---- water body: crests lighter than troughs, bubbles tint below the surface ----
+	float view_up = clamp((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).y, 0.0, 1.0);
+	float crest = clamp(v_wave_height / crest_height, 0.0, 1.0) * v_calm_factor
+			* pow(1.0 - view_up, crest_view_falloff);
+	float depth_blend = clamp(water_depth / depth_fade, 0.0, 1.0);
+	vec3 water = mix(shallow, deep, depth_blend);
+	water = mix(water, scatter_color, crest * crest * crest_ambient);
+	water = mix(water, bubble_color, sub * (1.0 - foam) * 0.5);
 
-	METALLIC  = 0.0;
-	float base_rough = mix(calm_roughness, mix(water_roughness, foam_roughness, wc), v_calm_factor);
-	// GGX alpha = roughness^2; Beckmann-equivalent alpha^2 ≈ total slope variance.
+	ALBEDO = mix(water, foam_color * (0.8 + 0.2 * fb.g), foam);
+	METALLIC = 0.0;
+	// F0(specular) = 0.16 * specular^2 in Godot's IBL; match water_specular.
+	SPECULAR = mix(sqrt(water_specular / 0.16), 0.5, foam);
+	float base_rough = mix(mix(calm_roughness, water_roughness, v_calm_factor), foam_roughness, foam);
 	float alpha = sqrt(pow(base_rough, 4.0) + lost_var);
 	ROUGHNESS = sqrt(alpha);
-
-	if (debug_foam_alpha) {
-		// Red (hue 0°) -> purple (hue 300°) across the cutoff alpha's 0..1 range.
-		ALBEDO = hsv2rgb(vec3(foam_samp.a * (300.0 / 360.0), 1.0, 1.0));
-	}
+	f_crest = crest;
+	f_foam = foam;
 }
 
+// Godot multiplies DIFFUSE_LIGHT by ALBEDO afterwards; SPECULAR_LIGHT is not,
+// so the crest scatter goes there to keep its own colour.
 void light() {
 	float NdotL = max(dot(NORMAL, LIGHT), 0.0);
-	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * ATTENUATION * NdotL;
+	vec3  sun   = LIGHT_COLOR * ATTENUATION;
+	float water = 1.0 - f_foam;
+	DIFFUSE_LIGHT += sun * mix(0.4 + 0.6 * NdotL, NdotL, f_foam);
+
+	float NdotV = max(dot(NORMAL, VIEW), 1e-4);
+	float sss = sss_strength * f_crest * pow(max(dot(LIGHT, -VIEW), 0.0), 4.0)
+			* pow(0.5 - 0.5 * dot(LIGHT, NORMAL), 3.0)
+			+ sss_facing * f_crest * NdotV * NdotV;
+	float fresnel_v = water_specular + (1.0 - water_specular) * pow(1.0 - NdotV, 5.0);
+	SPECULAR_LIGHT += sun * scatter_color * sss * (1.0 - fresnel_v) * water;
 
 	if (NdotL > 0.0) {
 		vec3  H     = normalize(VIEW + LIGHT);
 		float NdotH = max(dot(NORMAL, H), 0.0);
-		float NdotV = max(dot(NORMAL, VIEW), 1e-4);
-		float VdotH = max(dot(VIEW,   H), 0.0);
-
+		float VdotH = max(dot(VIEW, H), 0.0);
 		float alpha  = max(ROUGHNESS * ROUGHNESS, 1e-4);
 		float alpha2 = alpha * alpha;
 		float denom  = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
 		float D      = alpha2 / (PI * denom * denom);
-
-		float F0 = water_specular;
-		float F  = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
-
+		float F  = water_specular + (1.0 - water_specular) * pow(1.0 - VdotH, 5.0);
 		float k  = alpha * 0.5;
 		float Gv = NdotV / (NdotV * (1.0 - k) + k);
 		float Gl = NdotL / (NdotL * (1.0 - k) + k);
-
 		float spec = D * F * Gv * Gl / (4.0 * NdotV);
-		SPECULAR_LIGHT += clamp(LIGHT_COLOR * ATTENUATION * spec, vec3(0.0), vec3(specular_max));
+		SPECULAR_LIGHT += clamp(sun * spec * sun_glint, vec3(0.0), vec3(specular_max)) * water;
 	}
 }
