@@ -55,7 +55,7 @@ const MAX_IMPULSES := 64         # impulse mask is two uints
 
 const SHIP_FLOATS := 12
 const IMPULSE_FLOATS := 8
-const STAMP_FLOATS := 16
+const STAMP_FLOATS := 8
 const MAX_TRAILS := 128
 const WAKE_DECAL_SPACING := 0.9  # stern decal spacing, in half-beams
 const WAKE_FADE_IN := 1.0
@@ -168,9 +168,8 @@ func add_muzzle_blast(pos: Vector3, radius: float) -> void:
 	_rings.append(ring)
 	_ring_hulls.append(hull)
 	_rings_dirty = true
-	var r1 := ring.w
-	_decals.add(Vector2(pos.x, pos.z), 0.0, r1, r1 / RING_SPEED, ring.w / RING_SPEED * _ring_foam_mult(),
-		_time, _mat_param("ring_foam_cover"), 0.0, 1.0, sqrt(maxf(1.0, r1 / RING_TILE_REACH)), 0.0, hull, 3, false, RING_FOAM_OPACITY, 0.0, RING_SPEED)
+	_decals.add(Vector2(pos.x, pos.z), 0.0, ring.w, 0.0, ring.w / RING_SPEED * _ring_foam_mult(),
+		_time, _mat_param("ring_foam_cover"), 0.0, 1.0, sqrt(maxf(1.0, ring.w / RING_TILE_REACH)), 0.0, hull, true, RING_FOAM_OPACITY, 0.0, RING_SPEED)
 
 func _ring_end(r: Vector4, mult: float) -> float:
 	return r.z + r.w / RING_SPEED * mult
@@ -226,7 +225,7 @@ func _ready() -> void:
 	_w_index_tex = ImageTexture.create_from_image(_w_index_img)
 
 	_ship_f.resize(MAX_SHIPS * SHIP_FLOATS)
-	_stamp_f.resize((MAX_SHIPS + MAX_TRAILS) * STAMP_FLOATS)
+	_stamp_f.resize(MAX_TRAILS * STAMP_FLOATS)
 	_impulse_f.resize(MAX_IMPULSES * IMPULSE_FLOATS)
 	if ocean_material:
 		# Loaded here rather than as an ext_resource so the headless server never pays for it.
@@ -424,15 +423,13 @@ func _process(delta: float) -> void:
 		seg[0] = b
 		if a == b: continue
 		_w_touch_rect(b, 2.0 * TRAIL_HALF_WIDTH, SPLASH_FOAM_LIFE)
-		var g := (MAX_SHIPS + trail_count) * STAMP_FLOATS
+		var g := trail_count * STAMP_FLOATS
 		var mid := (a + b) * 0.5
 		_stamp_f[g] = mid.x;      _stamp_f[g + 1] = mid.y
-		_stamp_f[g + 4] = b.x;    _stamp_f[g + 5] = b.y
-		_stamp_f[g + 6] = a.x;    _stamp_f[g + 7] = a.y
-		_stamp_f[g + 8] = 1.0;    _stamp_f[g + 9] = 1.0
-		_stamp_f[g + 10] = -TRAIL_STRENGTH
-		_stamp_f[g + 11] = 0.0
-		_stamp_f[g + 12] = TRAIL_HALF_WIDTH
+		_stamp_f[g + 2] = b.x;    _stamp_f[g + 3] = b.y
+		_stamp_f[g + 4] = a.x;    _stamp_f[g + 5] = a.y
+		_stamp_f[g + 6] = -TRAIL_STRENGTH
+		_stamp_f[g + 7] = TRAIL_HALF_WIDTH
 		trail_count += 1
 
 	var impulse_count := 0
@@ -469,7 +466,7 @@ func _process(delta: float) -> void:
 			_tiles_on = true
 	RenderingServer.call_on_render_thread(_render_update.bind(
 		_parity, substeps, cf, ff, wake_index, _w_clear_queue.duplicate(),
-		_ship_f.to_byte_array(), _stamp_f.to_byte_array(), ship_count, trail_count,
+		_ship_f.to_byte_array(), _stamp_f.slice(0, trail_count * STAMP_FLOATS).to_byte_array(), ship_count, trail_count,
 		_impulse_f.to_byte_array(), impulse_count, _time, span))
 	_w_clear_queue.clear()
 	_parity = new_parity
@@ -491,7 +488,7 @@ func _emit_wake(s: Node3D, stern: Vector2, prev_stern: Vector2, fwd: Vector2, hu
 	for at in _drop_points([s, 0], prev_stern, stern, maxf(hull.y * WAKE_DECAL_SPACING, 4.0)):
 		at += side * randf_range(-0.15, 0.15) * hull.y
 		_decals.add(at, hull.y * 1.38, hull.y * 3.12, 25.0, WAKE_LIFE, _time,
-			0.85 * speed01, 0.6 * speed01, 3.0, 0.0, DECAL_GROW_TILE, Vector4.ZERO, 0, false, 1.0, WAKE_FADE_IN)
+			0.85 * speed01, 0.6 * speed01, 3.0, 0.0, DECAL_GROW_TILE, Vector4.ZERO, false, 1.0, WAKE_FADE_IN)
 
 # Bow wave: one emitter on the stem; each decal is wider than the hull and spreads as the ship sails on.
 func _emit_spray(s: Node3D, p2: Vector2, q2: Vector2, fwd: Vector2, prev_fwd: Vector2, hull: Vector3, speed01: float) -> void:
@@ -502,7 +499,7 @@ func _emit_spray(s: Node3D, p2: Vector2, q2: Vector2, fwd: Vector2, prev_fwd: Ve
 	var b := p2 + fwd * hull.x * SPRAY_AT
 	for at in _drop_points([s, 1], a, b, maxf(r0 * 0.25, 1.5)):
 		_decals.add(at, r0, r1, 3.0, WAKE_LIFE, _time,
-			SPRAY_STRENGTH * speed01, 0.6 * speed01, 3.0, 0.0, DECAL_GROW_TILE, Vector4.ZERO, 0, false, 1.0, WAKE_FADE_IN)
+			SPRAY_STRENGTH * speed01, 0.6 * speed01, 3.0, 0.0, DECAL_GROW_TILE, Vector4.ZERO, false, 1.0, WAKE_FADE_IN)
 
 func _update_decals() -> void:
 	_decals.place(get_viewport().get_camera_3d())
@@ -533,7 +530,7 @@ func _init_rd() -> void:
 		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
 	_wake_tex = WaveSim.array_tex(_rd, WAKE_RES, WAKE_POOL, RenderingDevice.DATA_FORMAT_R32G32_SFLOAT, usage)
 	_ships_buf = _rd.storage_buffer_create(MAX_SHIPS * SHIP_FLOATS * 4)
-	_stamps_buf = _rd.storage_buffer_create((MAX_SHIPS + MAX_TRAILS) * STAMP_FLOATS * 4)
+	_stamps_buf = _rd.storage_buffer_create(MAX_TRAILS * STAMP_FLOATS * 4)
 	_impulses_buf = _rd.storage_buffer_create(MAX_IMPULSES * IMPULSE_FLOATS * 4)
 	_wake_index_buf = _rd.storage_buffer_create(WAKE_GRID * WAKE_GRID * 4, _w_index.to_byte_array())
 	_coarse.init_rd(_rd, sim_shader, _ships_buf, _impulses_buf, _wake_index_buf, _wake_tex)
@@ -561,7 +558,7 @@ func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,
 	if not wake_index.is_empty():
 		_rd.buffer_update(_wake_index_buf, 0, wake_index.size(), wake_index)
 	_rd.buffer_update(_ships_buf, 0, ships.size(), ships)
-	_rd.buffer_update(_stamps_buf, 0, stamps.size(), stamps)
+	if not stamps.is_empty(): _rd.buffer_update(_stamps_buf, 0, stamps.size(), stamps)
 	_rd.buffer_update(_impulses_buf, 0, impulses.size(), impulses)
 	_coarse.upload(cf)
 	_fine.upload(ff)
@@ -590,7 +587,6 @@ func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,
 		spc.encode_float(20, WAKE_LIFE)
 		_rd.compute_list_bind_compute_pipeline(cl, _stamp_pipeline)
 		_rd.compute_list_bind_uniform_set(cl, _stamp_uset, 0)
-		spc.encode_s32(24, MAX_SHIPS); spc.encode_s32(28, 8)
 		_rd.compute_list_set_push_constant(cl, spc, spc.size())
 		_rd.compute_list_dispatch(cl, 2, 2, trail_count)
 	_rd.compute_list_end()

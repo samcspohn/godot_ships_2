@@ -465,9 +465,9 @@ void fragment() {
 	vec2 drift = wind_dir * TIME * foam_drift;
 	vec2 uv_a = (v_world_xz - drift) / foam_tex_scale;
 	vec2 uv_b = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * (v_world_xz - drift * 1.3) / foam_detail_scale;
-	vec2 fa = texture(foam_tex, uv_a).rg;
+	float fa = texture(foam_tex, uv_a).r;
 	vec3 fb = texture(foam_tex, uv_b).rgb;
-	float order = clamp(fa.r + (fb.r - 0.5) * 0.35, 0.0, 1.0);
+	float order = clamp(fa + (fb.r - 0.5) * 0.35, 0.0, 1.0);
 	float tex_lod = log2(footprint * float(textureSize(foam_tex, 0).x) / foam_detail_scale);
 	float edge = mix(foam_edge, 0.5, clamp(tex_lod / 5.0, 0.0, 1.0));
 	float foam = foam_cover(cover, order, edge);

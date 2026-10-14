@@ -7,17 +7,10 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 struct Stamp {
     vec2 pos;
-    vec2 fwd;
     vec2 stern;
     vec2 prev_stern;
-    float half_len;
-    float half_beam;
     float strength;     // < 0 marks short-lived (splash-class) foam
-    float speed01;
     float ribbon_hw;
-    float _pad0;
-    float _pad1;
-    float _pad2;
 };
 
 layout(set = 0, binding = 0, std430) restrict readonly buffer Stamps { Stamp stamps[]; };
@@ -31,12 +24,13 @@ layout(push_constant, std430) uniform Params {
     int res;
     float time;
     float wake_life;
-    int base;           // first stamp of this dispatch
-    int half_window;    // window half-size in texels
+    float _pad0;
+    float _pad1;
 } P;
 
 // Negative strength marks short-lived splash foam (SPLASH_LIFE_FRAC of wake_life).
 const float SPLASH_LIFE_FRAC = 0.2;
+const int HALF_WINDOW = 8;   // texels; dispatch is 2x2 groups of 8
 
 float wake_fade(vec2 v) {
     float life = P.wake_life * (v.y < 0.0 ? SPLASH_LIFE_FRAC : 1.0);
@@ -44,10 +38,10 @@ float wake_fade(vec2 v) {
 }
 
 void main() {
-    Stamp s = stamps[P.base + int(gl_GlobalInvocationID.z)];
+    Stamp s = stamps[gl_GlobalInvocationID.z];
     float texel = P.wake_world / float(P.res);
     vec2 snapped = (floor(s.pos / texel) + 0.5) * texel;
-    vec2 world = snapped + (vec2(gl_GlobalInvocationID.xy) - float(P.half_window)) * texel;
+    vec2 world = snapped + (vec2(gl_GlobalInvocationID.xy) - float(HALF_WINDOW)) * texel;
 
     vec2 seg = s.stern - s.prev_stern;
     float k = clamp(dot(world - s.prev_stern, seg) / max(dot(seg, seg), 1e-6), 0.0, 1.0);

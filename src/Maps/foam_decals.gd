@@ -35,7 +35,7 @@ func _init() -> void:
 	_mirror.resize(CAPACITY * FLOATS)
 
 func add(pos: Vector2, r0: float, r1: float, grow: float, life: float, birth: float,
-		strength: float, bubbles: float, fade_pow: float, tile_a: float, tile_b: float, hull := Vector4.ZERO, blotch := 0, whorl := false, opacity := 1.0, fade_in := 0.0, speed := 0.0) -> void:
+		strength: float, bubbles: float, fade_pow: float, tile_a: float, tile_b: float, hull := Vector4.ZERO, blast := false, opacity := 1.0, fade_in := 0.0, speed := 0.0) -> void:
 	var slot := _head
 	_head = (_head + 1) % CAPACITY
 	_written = mini(_written + 1, CAPACITY)
@@ -49,8 +49,7 @@ func add(pos: Vector2, r0: float, r1: float, grow: float, life: float, birth: fl
 	_mirror[f + 12] = hull.x;    _mirror[f + 13] = hull.y
 	_mirror[f + 14] = hull.z;    _mirror[f + 15] = hull.w
 	_mirror[f + 16] = tile_a;    _mirror[f + 17] = tile_b
-	_mirror[f + 18] = blotch
-	_mirror[f + 19] = 1.0 if whorl else 0.0
+	_mirror[f + 18] = 1.0 if blast else 0.0
 	_mirror[f + 20] = opacity
 	_mirror[f + 21] = fade_in;   _mirror[f + 22] = speed
 	if _dirty_n == 0: _dirty_lo = slot
