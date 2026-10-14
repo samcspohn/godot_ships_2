@@ -1,8 +1,8 @@
 #[compute]
 #version 450
 
-// Per ship, a 128x128 texel window around the hull: turbulent stern ribbon plus
-// the spray sheet just outside the forward hull.
+// One window per stamp: ships get the stern ribbon plus the spray sheet just
+// outside the forward hull; torpedo trails are ribbons only (speed01 = 0).
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -13,8 +13,12 @@ struct Stamp {
     vec2 prev_stern;
     float half_len;
     float half_beam;
-    float strength;
+    float strength;     // < 0 marks short-lived (splash-class) foam
     float speed01;
+    float ribbon_hw;
+    float _pad0;
+    float _pad1;
+    float _pad2;
 };
 
 layout(set = 0, binding = 0, std430) restrict readonly buffer Stamps { Stamp stamps[]; };
@@ -28,8 +32,8 @@ layout(push_constant, std430) uniform Params {
     int res;
     float time;
     float wake_life;
-    float _pad0;
-    float _pad1;
+    int base;           // first stamp of this dispatch
+    int half_window;    // window half-size in texels
 } P;
 
 // Negative strength marks short-lived splash foam (SPLASH_LIFE_FRAC of wake_life).
@@ -41,16 +45,16 @@ float wake_fade(vec2 v) {
 }
 
 void main() {
-    Stamp s = stamps[gl_GlobalInvocationID.z];
+    Stamp s = stamps[P.base + int(gl_GlobalInvocationID.z)];
     float texel = P.wake_world / float(P.res);
     vec2 snapped = (floor(s.pos / texel) + 0.5) * texel;
-    vec2 world = snapped + (vec2(gl_GlobalInvocationID.xy) - 64.0) * texel;
+    vec2 world = snapped + (vec2(gl_GlobalInvocationID.xy) - float(P.half_window)) * texel;
 
     vec2 seg = s.stern - s.prev_stern;
     float k = clamp(dot(world - s.prev_stern, seg) / max(dot(seg, seg), 1e-6), 0.0, 1.0);
     float d = length(world - (s.prev_stern + seg * k));
-    float hw = s.half_beam * 1.7;
-    float foam = (1.0 - smoothstep(0.0, hw, d)) * s.strength;
+    // Falloff never narrower than the 4 m texel, or thin trails miss texel centres and dash.
+    float foam = (1.0 - smoothstep(0.0, max(s.ribbon_hw, 0.75 * texel), d)) * abs(s.strength);
 
     vec2 r = world - s.pos;
     vec2 u = vec2(dot(r, s.fwd), dot(r, vec2(-s.fwd.y, s.fwd.x))) / vec2(s.half_len, s.half_beam);
@@ -64,5 +68,5 @@ void main() {
     int slot = wake_index[cell.y * P.wake_grid + cell.x];
     if (slot < 0) return;
     ivec3 tc = ivec3(ivec2(fract(world / P.wake_world) * float(P.res)), slot);
-    if (foam > wake_fade(imageLoad(wake, tc).rg)) imageStore(wake, tc, vec4(P.time, foam, 0.0, 0.0));
+    if (foam > wake_fade(imageLoad(wake, tc).rg)) imageStore(wake, tc, vec4(P.time, s.strength < 0.0 ? -foam : foam, 0.0, 0.0));
 }

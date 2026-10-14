@@ -260,6 +260,7 @@ func dispatch(cl: int, pipeline: RID, pc: PackedByteArray, f: Dictionary, parity
 	var a := 1.0 + damping * sim_dt
 	pc.encode_float(4, dx)
 	pc.encode_float(52, bow_gain)
+	pc.encode_float(56, gravity)
 	pc.encode_float(8, (2.0 - damping * sim_dt) / a)
 	pc.encode_float(12, 1.0 / a)
 	pc.encode_float(16, gravity * sim_dt * sim_dt / dx / a)

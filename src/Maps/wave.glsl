@@ -66,7 +66,7 @@ layout(push_constant, std430) uniform Params {
     float frame_dt;
     float sim_dt;
     float bow_gain;
-    float _pad3;
+    float gravity;
     float _pad4;
     float wake_world;
     int wake_grid;
@@ -104,6 +104,9 @@ vec2 lerp_dir(vec2 a, vec2 b, float t) {
     return (l > 1e-5) ? d / l : b;
 }
 
+const float BOW_ENTRY = 0.3;   // entry length as a fraction of half-length
+const float BOW_FLARE = 1.5;   // larger = finer stem, faster flare near the shoulder
+
 float hull_occ(vec2 world, uint bits, float tm) {
     float occ = 0.0;
     while (bits != 0u) {
@@ -112,19 +115,30 @@ float hull_occ(vec2 world, uint bits, float tm) {
         Ship s = ships[si];
         vec2 fwd = lerp_dir(s.prev_fwd, s.fwd, tm);
         vec2 r = world - mix(s.prev_pos, s.pos, tm);
-        vec2 u = vec2(dot(r, fwd), dot(r, vec2(-fwd.y, fwd.x))) / vec2(s.half_len, s.half_beam);
-        if (abs(u.x) >= 1.2 || abs(u.y) >= 1.6) continue;
-        if (abs(u.x) < 1.0 && abs(u.y) < 1.0) {
-            // Parallel midbody; sharp bow entry (outer 20%), fuller run aft (outer 40%).
-            float t = u.x > 0.0 ? clamp((u.x - 0.8) / 0.2, 0.0, 1.0) : clamp((-u.x - 0.6) / 0.4, 0.0, 1.0);
-            float fy = 1.0 - u.y * u.y;
-            occ += s.depth * (1.0 - t * t * (3.0 - 2.0 * t)) * fy * fy;
+        float ax = dot(r, fwd);
+        float ay = dot(r, vec2(-fwd.y, fwd.x));
+        float sig = max(s.half_beam * 0.45, 6.0);
+        if (abs(ax) > s.half_len + 3.0 * sig || abs(ay) > s.half_beam + 3.0 * sig) continue;
+        vec2 u = vec2(ax / s.half_len, ay / s.half_beam);
+        if (abs(u.x) < 1.0) {
+            // Waterline planform: hollow (concave) entry over the forward 40%, needle
+            // fine at the stem and flaring exponentially into the midbody, Iowa/Yamato
+            // style; run narrows to a 60% transom. Divergent waves come off the entry
+            // flanks, so the beam profile follows the local half-width.
+            float de = clamp((1.0 - u.x) / BOW_ENTRY, 0.0, 1.0);
+            float wb = u.x > 1.0 - BOW_ENTRY ? (exp(BOW_FLARE * de) - 1.0) / (exp(BOW_FLARE) - 1.0)
+                    : (u.x < -0.5 ? 1.0 - 0.8 * (-u.x - 0.5) : 1.0);
+            float yy = u.y / max(wb, 0.05);
+            if (abs(yy) < 1.0) {
+                float fy = 1.0 - yy * yy;
+                occ += s.depth * fy * fy * smoothstep(-1.0, -0.85, u.x);
+            }
         }
-        // Stagnation hump at the stem: negative occupancy raises the rest surface,
-        // the sharp crest that launches the diverging bow waves.
+        // Stagnation peak just ahead of the stem: a narrow raise that does not
+        // overlap (and cancel) the entry depression behind it.
         float speed = length(s.pos - s.prev_pos) / P.frame_dt;
-        float hump = min(speed * speed / (2.0 * 9.81), s.depth * 2.0) * P.bow_gain;
-        vec2 b = vec2((u.x - 1.0) * s.half_len / (s.half_beam * 1.2), u.y / 1.2);
+        float hump = min(speed * speed / (2.0 * P.gravity), s.depth * 2.0) * P.bow_gain;
+        vec2 b = vec2(ax - s.half_len, ay) / sig;
         occ -= hump * exp(-dot(b, b));
     }
     return occ;

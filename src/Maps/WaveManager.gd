@@ -8,7 +8,7 @@ const PLAY_HALF := 17500.0
 # inside the kernel's dispersive band. Fine grid carries splashes only.
 const COARSE_DX := 6.0
 const COARSE_POOL := 176
-const COARSE_DAMPING := 0.05
+const COARSE_DAMPING := 0.01
 const COARSE_MARGIN := 450.0     # water simulated beyond the hull so the wake has room to spread
 const FINE_DX := 2.0
 const FINE_POOL := 64
@@ -33,15 +33,16 @@ const SIM_HZ := 30.0
 const SIM_DT := 1.0 / SIM_HZ
 const MAX_SUBSTEPS := 2
 const GRAVITY := 9.81
-const BOW_GAIN := 0.3            # stem hump as a fraction of U^2/2g
-const HULL_GAIN := 0.5           # hull pressure as metres of head, per metre of draft
+# Ships run at 2x real speed; 4x gravity keeps U^2/g, so wake wavelengths and the
+# Kelvin angle match real speed (and the wave pattern keeps pace with the ship).
+const WAKE_GRAVITY := GRAVITY * 4.0
+const BOW_GAIN := 0.1            # stem hump as a fraction of U^2/2g
+const HULL_GAIN := 0.25           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
 const MAX_RINGS := 32
 const RING_SPEED := 343.0
 const RING_BARREL_REACH := 30.0  # muzzle can sit this far outboard of the hull side
-const RING_FILL_LIFE := 2.5     # keep in sync with ring_fill_life in ocean.gdshader
-const RING_FOAM_LINGER := 2.0   # keep in sync with ring_foam_linger in ocean.gdshader
 const RING_REACH := 6.4          # blast radius -> max shock ring radius
 
 const MAX_SHIPS := 32            # ship mask is one uint
@@ -49,7 +50,10 @@ const MAX_IMPULSES := 64         # impulse mask is two uints
 
 const SHIP_FLOATS := 12
 const IMPULSE_FLOATS := 8
-const STAMP_FLOATS := 12
+const STAMP_FLOATS := 16
+const MAX_TRAILS := 128
+const TRAIL_HALF_WIDTH := 2.0
+const TRAIL_STRENGTH := 1.0
 
 @export var ocean_material: ShaderMaterial
 const SIM_SHADER := preload("res://src/Maps/wave.glsl")
@@ -96,6 +100,7 @@ var _stamp_f := PackedFloat32Array()
 var _impulses: Array = []
 var _impulse_f := PackedFloat32Array()
 var _tiles_on := false
+var _trails := {}                     # key -> [last stamped point, current point]
 var _rings: Array[Vector4] = []
 var _ring_hulls: Array[Vector4] = []  # firing ship centerline (stern xz, bow xz)
 var _rings_dirty := false
@@ -110,6 +115,17 @@ func unregister_ship(s: Node3D) -> void:
 	_prev_pos.erase(s)
 	_prev_fwd.erase(s)
 	_ship_hulls.erase(s)
+
+# Bubble track behind a torpedo; call every frame while it runs, end_trail when it dies.
+func trail_point(key: Object, pos: Vector3) -> void:
+	var p := Vector2(pos.x, pos.z)
+	if not _trails.has(key):
+		_trails[key] = [p, p]
+	else:
+		_trails[key][1] = p
+
+func end_trail(key: Object) -> void:
+	_trails.erase(key)
 
 func add_shell_splash(pos: Vector3, radius: float) -> void:
 	var sigma := radius * 0.85
@@ -175,7 +191,7 @@ func _ready() -> void:
 	_w_index_tex = ImageTexture.create_from_image(_w_index_img)
 
 	_ship_f.resize(MAX_SHIPS * SHIP_FLOATS)
-	_stamp_f.resize(MAX_SHIPS * STAMP_FLOATS)
+	_stamp_f.resize((MAX_SHIPS + MAX_TRAILS) * STAMP_FLOATS)
 	_impulse_f.resize(MAX_IMPULSES * IMPULSE_FLOATS)
 	if ocean_material:
 		# Loaded here rather than as an ext_resource so the headless server never pays for it.
@@ -277,9 +293,20 @@ func _expire_wake() -> void:
 
 # ---------------------------------------------------------------- frame
 
+# Ring lifetime lives on the material (ring_fill_life x ring_foam_linger) so
+# expiry can never cut the shader's fade short.
+func _ring_life_mult() -> float:
+	return _mat_param("ring_fill_life") * _mat_param("ring_foam_linger")
+
+func _mat_param(p: String) -> float:
+	var v = ocean_material.get_shader_parameter(p)
+	if v == null:
+		v = RenderingServer.shader_get_parameter_default(ocean_material.shader.get_rid(), p)
+	return float(v)
+
 func _update_rings() -> void:
 	for i in range(_rings.size() - 1, -1, -1):
-		if _time - _rings[i].z >= _rings[i].w / RING_SPEED * RING_FILL_LIFE * RING_FOAM_LINGER:
+		if _time - _rings[i].z >= _rings[i].w / RING_SPEED * _ring_life_mult():
 			_rings.remove_at(i)
 			_ring_hulls.remove_at(i)
 			_rings_dirty = true
@@ -348,7 +375,28 @@ func _process(delta: float) -> void:
 		_stamp_f[g + 8] = hull.x;        _stamp_f[g + 9] = hull.y
 		_stamp_f[g + 10] = 0.55 * speed01
 		_stamp_f[g + 11] = speed01
+		_stamp_f[g + 12] = hull.y * 1.7
 		ship_count += 1
+
+	var trail_count := 0
+	for key in _trails.keys():
+		if trail_count >= MAX_TRAILS: break
+		var seg: Array = _trails[key]
+		var a: Vector2 = seg[0]
+		var b: Vector2 = seg[1]
+		seg[0] = b
+		if a == b: continue
+		_w_touch_rect(b, 2.0 * TRAIL_HALF_WIDTH, SPLASH_FOAM_LIFE)
+		var g := (MAX_SHIPS + trail_count) * STAMP_FLOATS
+		var mid := (a + b) * 0.5
+		_stamp_f[g] = mid.x;      _stamp_f[g + 1] = mid.y
+		_stamp_f[g + 4] = b.x;    _stamp_f[g + 5] = b.y
+		_stamp_f[g + 6] = a.x;    _stamp_f[g + 7] = a.y
+		_stamp_f[g + 8] = 1.0;    _stamp_f[g + 9] = 1.0
+		_stamp_f[g + 10] = -TRAIL_STRENGTH
+		_stamp_f[g + 11] = 0.0
+		_stamp_f[g + 12] = TRAIL_HALF_WIDTH
+		trail_count += 1
 
 	var impulse_count := 0
 	for imp in _impulses:
@@ -384,7 +432,7 @@ func _process(delta: float) -> void:
 			_tiles_on = true
 	RenderingServer.call_on_render_thread(_render_update.bind(
 		_parity, substeps, cf, ff, wake_index, _w_clear_queue.duplicate(),
-		_ship_f.to_byte_array(), _stamp_f.to_byte_array(), ship_count,
+		_ship_f.to_byte_array(), _stamp_f.to_byte_array(), ship_count, trail_count,
 		_impulse_f.to_byte_array(), impulse_count, _time, span))
 	_w_clear_queue.clear()
 	_parity = new_parity
@@ -406,7 +454,7 @@ func _init_rd() -> void:
 		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
 	_wake_tex = WaveSim.array_tex(_rd, WAKE_RES, WAKE_POOL, RenderingDevice.DATA_FORMAT_R32G32_SFLOAT, usage)
 	_ships_buf = _rd.storage_buffer_create(MAX_SHIPS * SHIP_FLOATS * 4)
-	_stamps_buf = _rd.storage_buffer_create(MAX_SHIPS * STAMP_FLOATS * 4)
+	_stamps_buf = _rd.storage_buffer_create((MAX_SHIPS + MAX_TRAILS) * STAMP_FLOATS * 4)
 	_impulses_buf = _rd.storage_buffer_create(MAX_IMPULSES * IMPULSE_FLOATS * 4)
 	_wake_index_buf = _rd.storage_buffer_create(WAKE_GRID * WAKE_GRID * 4, _w_index.to_byte_array())
 	_coarse.init_rd(_rd, sim_shader, _ships_buf, _impulses_buf, _wake_index_buf, _wake_tex)
@@ -424,7 +472,7 @@ func _init_rd() -> void:
 
 func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,
 		wake_index: PackedByteArray, wake_clears: PackedInt32Array,
-		ships: PackedByteArray, stamps: PackedByteArray, ship_count: int,
+		ships: PackedByteArray, stamps: PackedByteArray, ship_count: int, trail_count: int,
 		impulses: PackedByteArray, impulse_count: int, time: float, span: float) -> void:
 	if not _initialized: _init_rd()
 	for slot in wake_clears:
@@ -449,9 +497,9 @@ func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,
 	pc.encode_float(76, SPONGE_CELLS)
 
 	var cl := _rd.compute_list_begin()
-	_coarse.dispatch(cl, _sim_pipeline, pc, cf, parity, substeps, SIM_DT, GRAVITY, false)
+	_coarse.dispatch(cl, _sim_pipeline, pc, cf, parity, substeps, SIM_DT, WAKE_GRAVITY, false)
 	_fine.dispatch(cl, _sim_pipeline, pc, ff, parity, substeps, SIM_DT, GRAVITY, impulse_count > 0)
-	if ship_count > 0:
+	if ship_count > 0 or trail_count > 0:
 		var spc := PackedByteArray(); spc.resize(32)
 		spc.encode_float(0, WAKE_WORLD)
 		spc.encode_s32(4, WAKE_GRID)
@@ -461,6 +509,12 @@ func _render_update(parity: int, substeps: int, cf: Dictionary, ff: Dictionary,
 		spc.encode_float(20, WAKE_LIFE)
 		_rd.compute_list_bind_compute_pipeline(cl, _stamp_pipeline)
 		_rd.compute_list_bind_uniform_set(cl, _stamp_uset, 0)
-		_rd.compute_list_set_push_constant(cl, spc, spc.size())
-		_rd.compute_list_dispatch(cl, 16, 16, ship_count)
+		if ship_count > 0:
+			spc.encode_s32(24, 0); spc.encode_s32(28, 64)
+			_rd.compute_list_set_push_constant(cl, spc, spc.size())
+			_rd.compute_list_dispatch(cl, 16, 16, ship_count)
+		if trail_count > 0:
+			spc.encode_s32(24, MAX_SHIPS); spc.encode_s32(28, 8)
+			_rd.compute_list_set_push_constant(cl, spc, spc.size())
+			_rd.compute_list_dispatch(cl, 2, 2, trail_count)
 	_rd.compute_list_end()
