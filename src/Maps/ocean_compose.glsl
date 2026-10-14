@@ -17,8 +17,8 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 layout(set = 0, binding = 0, rg32f) uniform restrict readonly image2DArray buf0;
 layout(set = 0, binding = 1, rg32f) uniform restrict readonly image2DArray buf1;
 layout(set = 0, binding = 2, rg32f) uniform restrict readonly image2DArray buf2;
-layout(set = 0, binding = 3, rgba32f) uniform restrict writeonly image2DArray displacement;
-layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2DArray derivatives;
+layout(set = 0, binding = 3, rgba16f) uniform restrict writeonly image2DArray displacement;
+layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2DArray derivatives;
 layout(set = 0, binding = 5, rg32f) uniform restrict readonly image2DArray buf3;
 
 layout(push_constant, std430) uniform Push {

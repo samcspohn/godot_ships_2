@@ -275,6 +275,7 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 	_pip_mip               = _rd.compute_pipeline_create(sh_mip)
 
 	var RGBA32F := RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
+	var RGBA16F := RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
 	var RG32F   := RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
 
 	_h0        = _tex_array(RGBA32F, _c, _n)
@@ -284,12 +285,12 @@ func _init_rd(ubo_bytes: PackedByteArray) -> void:
 		_b[i] = _tex_array(RG32F, _c, _n)
 	_a3 = _tex_array(RG32F, _c, _n)
 	_b3 = _tex_array(RG32F, _c, _n)
-	_displacement = _tex_array(RGBA32F, _c, _n)
-	_derivatives  = _tex_array(RGBA32F, _c, _n)
+	_displacement = _tex_array(RGBA16F, _c, _n)
+	_derivatives  = _tex_array(RGBA16F, _c, _n)
 	# Compute writes go to the unmipped textures; the mip pass copies level 0 and
 	# downsamples into these, so storage views never span more than one mip.
-	_disp_mipped  = _tex_array(RGBA32F, _c, _n, _mips)
-	_deriv_mipped = _tex_array(RGBA32F, _c, _n, _mips)
+	_disp_mipped  = _tex_array(RGBA16F, _c, _n, _mips)
+	_deriv_mipped = _tex_array(RGBA16F, _c, _n, _mips)
 
 	_ubo = _rd.uniform_buffer_create(UBO_SIZE, ubo_bytes)
 

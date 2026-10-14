@@ -33,6 +33,13 @@ const BOW_GAIN := 0.3            # stem hump as a fraction of U^2/2g
 const HULL_GAIN := 0.65           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
+const MAX_RINGS := 32
+const RING_SPEED := 343.0
+const RING_BARREL_REACH := 30.0  # muzzle can sit this far outboard of the hull side
+const RING_FILL_LIFE := 2.5     # keep in sync with ring_fill_life in ocean.gdshader
+const RING_FOAM_LINGER := 2.0   # keep in sync with ring_foam_linger in ocean.gdshader
+const RING_REACH := 6.4          # blast radius -> max shock ring radius
+
 const MAX_SHIPS := 32            # ship mask is one uint
 const MAX_IMPULSES := 64         # impulse mask is two uints
 
@@ -83,6 +90,9 @@ var _stamp_f := PackedFloat32Array()
 var _impulses: Array = []
 var _impulse_f := PackedFloat32Array()
 var _tiles_on := false
+var _rings: Array[Vector4] = []
+var _ring_hulls: Array[Vector4] = []  # firing ship centerline (stern xz, bow xz)
+var _rings_dirty := false
 
 
 func register_ship(s: Node3D, half_length: float, half_beam: float, draft: float) -> void:
@@ -101,7 +111,34 @@ func add_shell_splash(pos: Vector3, radius: float) -> void:
 	_add_impulse(pos, sigma, radius * 0.255, 0.7, sigma * sqrt(maxf(radius, 1.0) / 5.0))
 
 func add_muzzle_blast(pos: Vector3, radius: float) -> void:
-	_add_impulse(pos, clampf(radius * 1.5, 6.0, 40.0), 0.1, 0.0)
+	if _rings.size() >= MAX_RINGS:
+		_rings.pop_front()
+		_ring_hulls.pop_front()
+	_rings.append(Vector4(pos.x, pos.z, _time, maxf(radius * RING_REACH, 8.0)))
+	_ring_hulls.append(_hull_under(Vector2(pos.x, pos.z)))
+	_rings_dirty = true
+
+# Centerline (stern xz, bow xz) of the ship whose deck the muzzle is over; zero = none.
+func _hull_under(p: Vector2) -> Vector4:
+	var best := Vector4.ZERO
+	var best_d := INF
+	for s in _ships:
+		if not is_instance_valid(s) or not s.is_inside_tree(): continue
+		var xf := s.global_transform
+		var c := Vector2(xf.origin.x, xf.origin.z)
+		var fwd := Vector2(-xf.basis.z.x, -xf.basis.z.z).normalized()
+		var hull: Vector3 = _ship_hulls[s]
+		var r := p - c
+		var along := absf(r.dot(fwd))
+		var side := absf(r.dot(Vector2(-fwd.y, fwd.x)))
+		if along > hull.x * 1.2 or side > hull.y + RING_BARREL_REACH: continue
+		var d := along / hull.x + side / (hull.y + RING_BARREL_REACH)
+		if d < best_d:
+			best_d = d
+			var a := c - fwd * hull.x * 1.05
+			var b := c + fwd * hull.x * 1.05
+			best = Vector4(a.x, a.y, b.x, b.y)
+	return best
 
 func _add_impulse(pos: Vector3, sigma: float, depth: float, foam: float, foam_sigma := 0.0) -> void:
 	if _impulses.size() >= MAX_IMPULSES:
@@ -214,11 +251,30 @@ func _expire_wake() -> void:
 
 # ---------------------------------------------------------------- frame
 
+func _update_rings() -> void:
+	for i in range(_rings.size() - 1, -1, -1):
+		if _time - _rings[i].z >= _rings[i].w / RING_SPEED * RING_FILL_LIFE * RING_FOAM_LINGER:
+			_rings.remove_at(i)
+			_ring_hulls.remove_at(i)
+			_rings_dirty = true
+	if not _rings_dirty: return
+	_rings_dirty = false
+	var packed := PackedVector4Array(_rings)
+	packed.resize(MAX_RINGS)
+	var hulls := PackedVector4Array(_ring_hulls)
+	hulls.resize(MAX_RINGS)
+	ocean_material.set_shader_parameter("rings", packed)
+	ocean_material.set_shader_parameter("ring_hulls", hulls)
+	ocean_material.set_shader_parameter("ring_count", _rings.size())
+	ocean_material.set_shader_parameter("ring_speed", RING_SPEED)
+
+
 func _process(delta: float) -> void:
 	_time += delta
 	_since_step += delta
 	if _initialized and ocean_material:
 		ocean_material.set_shader_parameter("wake_time", _time)
+		_update_rings()
 	_sim_accum += delta
 	var substeps := int(_sim_accum / SIM_DT)
 	if substeps > MAX_SUBSTEPS:

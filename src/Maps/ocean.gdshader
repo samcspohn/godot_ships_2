@@ -100,9 +100,24 @@ uniform int   wake_origin = 36;
 uniform float wake_time   = 0.0;
 uniform float wake_life   = 60.0;
 
+// --- blast shock rings: (x, z, start time on wake_time clock, max radius) ---
+uniform vec4  rings[32];
+uniform vec4  ring_hulls[32];         // firing ship centerline (stern xz, bow xz); zero = unoccluded
+uniform int   ring_count    = 0;
+uniform float ring_speed    = 120.0;  // m/s; well below sound so the front reads
+uniform float ring_depress  = 0.15;   // centre depression, metres per metre of band width
+uniform float ring_foam_linger = 2.0; // foam lifetime as a multiple of the fill's
+uniform float ring_foam_cover = 0.75; // peak blotchy foam coverage at the blast centre
+uniform float ring_flatten  = 0.48;   // calming of the band at the front
+uniform float ring_darken   = 0.36;   // albedo drop in the band at the front
+uniform float ring_foam     = 0.24;   // whitening at the blast centre, fading outward
+uniform float ring_fill_life = 2.5;   // total visible life as a multiple of the front's travel time
+uniform float ring_fill_spread = 0.5; // growth after the front's nominal stop, as a fraction of max radius
+
 varying vec2  v_world_xz;
 varying float v_wave_height;
 varying float v_calm_factor;  // 0 = flat/windless, 1 = full waves
+varying vec4  v_cm;           // cascade_mods: varies over km, so per-vertex is exact enough
 varying float f_crest;
 varying float f_foam;
 
@@ -178,6 +193,8 @@ float coarse_h(vec2 p, bool c) { return sim_h(wave_array_c, wave_lod_c, index_te
 float sim_vertex_h(vec2 p, float footprint, float cell, bool is_coarse) {
 	float fade = 1.0 - smoothstep(cell * 8.0, cell * 16.0, footprint);
 	if (fade <= 0.0) return 0.0;
+	float slot = is_coarse ? tile_slot(index_tex_c, tile_world_c, grid_origin_c, p) : tile_slot(index_tex, tile_world, grid_origin, p);
+	if (slot < -0.5) return 0.0;
 	float lod_w = smoothstep(cell, cell * 3.0, footprint);
 	float h = 0.0;
 	if (lod_w < 1.0) {
@@ -192,9 +209,86 @@ float sim_vertex_h(vec2 p, float footprint, float cell, bool is_coarse) {
 	return h * fade;
 }
 
+// 1 where the firing ship's hull lies between the muzzle and p.
+float hull_shadow(vec2 o, vec2 p, vec4 hull) {
+	vec2 a = hull.xy;
+	vec2 ab = hull.zw - a;
+	vec2 op = p - o;
+	float denom = op.x * ab.y - op.y * ab.x;
+	if (dot(ab, ab) < 1.0 || abs(denom) < 1e-4) return 0.0;
+	vec2 ao = a - o;
+	float t = (ao.x * ab.y - ao.y * ab.x) / denom;
+	float s = (ao.x * op.y - ao.y * op.x) / denom;
+	if (t <= 0.0 || t >= 1.0) return 0.0;
+	return smoothstep(-0.05, 0.05, s) * (1.0 - smoothstep(0.95, 1.05, s));
+}
+
+// (ridge slope xz, front calming 0..1, interior fill 0..1) over live rings.
+// Shared ring geometry: radius R, band width w, life 0..1, hull visibility.
+bool ring_eval(int i, vec2 p, out vec2 d, out float r, out float R, out float w, out float life, out float vis) {
+	vec4 e = rings[i];
+	float age = wake_time - e.z;
+	float dur = e.w / ring_speed;
+	if (age < 0.0 || age > dur * ring_fill_life * ring_foam_linger) return false;
+	d = p - e.xy;
+	r = length(d);
+	w = max(e.w * 0.05, 3.0);
+	// Constant speed to e.w, then decelerating toward e.w * (1 + ring_fill_spread).
+	float tau = dur * ring_fill_spread;
+	R = age < dur ? age * ring_speed : e.w + ring_speed * tau * (1.0 - exp(-(age - dur) / tau));
+	if (r > R + 3.0 * w) return false;
+	vis = 1.0 - hull_shadow(e.xy, p, ring_hulls[i]);
+	life = age / (dur * ring_fill_life);   // > 1 while only the foam lingers
+	return true;
+}
+
+// Depth under the fill gradient over life: pressed down, rebounds past level, settles.
+float ring_bounce(float life) {
+	return -cos(PI * 1.5 * life) * (1.0 - life);
+}
+
+float shock_depress(vec2 p) {
+	float h = 0.0;
+	for (int i = 0; i < ring_count; i++) {
+		vec2 d; float r, R, w, life, vis;
+		if (!ring_eval(i, p, d, r, R, w, life, vis)) continue;
+		float q = clamp(r / max(R, 1e-3), 0.0, 1.0);
+		if (life >= 1.0) continue;
+		h += ring_depress * w * ring_bounce(life) * (1.0 - q) * (1.0 - q) * vis;
+	}
+	return h;
+}
+
+// (depression slope xz, front calming 0..1, interior fill 0..1); foam = splotchy fill coverage.
+vec4 shock_rings(vec2 p, out float foam) {
+	vec4 acc = vec4(0.0);
+	foam = 0.0;
+	for (int i = 0; i < ring_count; i++) {
+		vec2 d; float r, R, w, life, vis;
+		if (!ring_eval(i, p, d, r, R, w, life, vis)) continue;
+		float q = clamp(r / max(R, 1e-3), 0.0, 1.0);
+		float foam_life = life / ring_foam_linger;
+		float foam_fill = (1.0 - q) * (1.0 - q) * (1.0 - foam_life * foam_life) * vis;
+		if (life < 1.0) {
+			float fade = (1.0 - life) * (1.0 - life) * vis;
+			acc.w = max(acc.w, (1.0 - q) * (1.0 - q) * (1.0 - life * life) * vis);
+			acc.xy += d / max(r, 1e-3) * (-2.0 * ring_depress * w * ring_bounce(life) * (1.0 - q) / max(R, 1e-3)) * vis;
+			float band = smoothstep(R + w, R, r) * (1.0 - smoothstep(R - w, R - 3.0 * w, r));
+			acc.z = max(acc.z, band * fade);
+		}
+		// Non-tiling blotches so low coverage never resolves into the foam texture's tile grid.
+		vec2 o = rings[i].xy * 0.013;
+		float n = gnoise(p / 18.0 + o).x + 0.5 * gnoise(p / 7.0 + o + 3.1).x;
+		foam = max(foam, sqrt(foam_fill) * smoothstep(-0.35, 0.45, n));
+	}
+	return acc;
+}
+
 vec2 sim_frag_slope(vec2 p, float footprint, float cell, bool is_coarse) {
 	float fade = 1.0 - smoothstep(cell * 16.0, cell * 32.0, footprint);
 	if (fade <= 0.0) return vec2(0.0);
+	float slot = is_coarse ? tile_slot(index_tex_c, tile_world_c, grid_origin_c, p) : tile_slot(index_tex, tile_world, grid_origin, p);
+	if (slot < -0.5) return vec2(0.0);
 	bool lod = footprint > cell * 2.0;
 	float e = lod ? cell * 4.0 : cell;
 	vec2 dxv = vec2(e, 0.0), dzv = vec2(0.0, e);
@@ -244,8 +338,7 @@ const vec2 CASCADE_OFFSETS[4] = vec2[4](
 // FFT cascade sampling
 // =====================================================================
 
-vec3 sample_ocean_disp(vec2 wxz, float chop, float footprint) {
-	vec4 cm = cascade_mods(wxz);
+vec3 sample_ocean_disp(vec2 wxz, float chop, float footprint, vec4 cm) {
 	vec3 disp = vec3(0.0);
 	for (int i = 0; i < cascade_count; i++) {
 		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
@@ -256,27 +349,21 @@ vec3 sample_ocean_disp(vec2 wxz, float chop, float footprint) {
 	return disp;
 }
 
-// (slope.xz, Jxx, Jzz) summed over cascades.
-vec4 sample_ocean_derivs(vec2 wxz, vec4 cm) {
+// (slope.xz, Jxx, Jzz) summed over cascades; wc_j = Jacobian terms for whitecaps,
+// mip-capped so distant crests are not averaged away. Cascades already sampled at
+// or below the cap reuse that sample.
+vec4 sample_ocean_derivs(vec2 wxz, vec4 cm, float footprint, out vec2 wc_j) {
 	vec4 d = vec4(0.0);
+	wc_j = vec2(0.0);
 	for (int i = 0; i < cascade_count; i++) {
-		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
-		d += texture(fft_derivatives, vec3(uv, float(i))) * cascade_strength[i] * cm[i];
+		vec3 uvw = vec3(wxz / cascade_scales[i] + CASCADE_OFFSETS[i], float(i));
+		float k = cascade_strength[i] * cm[i];
+		vec4 t = texture(fft_derivatives, uvw);
+		d += t * k;
+		float lod = log2(footprint * fft_size / cascade_scales[i]);
+		wc_j += (lod <= whitecap_max_lod ? t.ba : textureLod(fft_derivatives, uvw, whitecap_max_lod).ba) * k;
 	}
 	return d;
-}
-
-// Mip-capped so distant crests are not averaged away; full chop so the
-// distance fade on vertex chop does not erase them.
-float whitecap_jacobian(vec2 wxz, vec4 cm, float footprint) {
-	vec2 j = vec2(0.0);
-	for (int i = 0; i < cascade_count; i++) {
-		vec2 uv = wxz / cascade_scales[i] + CASCADE_OFFSETS[i];
-		float lod = clamp(log2(footprint * fft_size / cascade_scales[i]), 0.0, whitecap_max_lod);
-		j += textureLod(fft_derivatives, vec3(uv, float(i)), lod).ba * cascade_strength[i] * cm[i];
-	}
-	j *= choppiness * v_calm_factor;
-	return (1.0 + j.x) * (1.0 + j.y);
 }
 
 // Equalised reveal order -> opacity; c = 0 shows nothing, c = 1 covers all.
@@ -307,8 +394,10 @@ void vertex() {
 	float chop = choppiness * (1.0 - smoothstep(chop_fade_near, chop_fade_far, dist));
 
 	v_calm_factor = calm_mask(s_xz);
-	vec3 disp = sample_ocean_disp(s_xz, chop, footprint) * v_calm_factor;
+	v_cm = cascade_mods(s_xz);
+	vec3 disp = sample_ocean_disp(s_xz, chop, footprint, v_cm) * v_calm_factor;
 
+	disp.y += ring_count > 0 ? shock_depress(s_xz) : 0.0;
 	disp.y += (sim_vertex_h(s_xz, footprint, tile_world_c / 128.0, true)
 			+ sim_vertex_h(s_xz, footprint, tile_world / 128.0, false)) * wave_height_scale;
 
@@ -325,16 +414,21 @@ void vertex() {
 // =====================================================================
 
 void fragment() {
-	vec4 cm = cascade_mods(v_world_xz);
-	vec4 derivs = sample_ocean_derivs(v_world_xz, cm) * v_calm_factor;
-	vec2 slope = derivs.xy;
-
+	vec4 cm = v_cm;
 	vec2  fx = dFdx(v_world_xz), fy = dFdy(v_world_xz);
 	float footprint = sqrt(max(length(fx) * length(fy), 1e-8));
-	float jacobian = whitecap_jacobian(v_world_xz, cm, footprint);
+	vec2 wc_j;
+	vec4 derivs = sample_ocean_derivs(v_world_xz, cm, footprint, wc_j) * v_calm_factor;
+	wc_j *= choppiness * v_calm_factor;
+	float jacobian = (1.0 + wc_j.x) * (1.0 + wc_j.y);
+	float shock_foam;
+	vec4 shock = shock_rings(v_world_xz, shock_foam);
+	float calm_k = 1.0 - ring_flatten * shock.z;
+	vec2 slope = derivs.xy * calm_k + shock.xy;
+
 	float lk = log2(PI / footprint);
 	float lost_u = clamp((lk - slope_var_range.x) / (slope_var_range.y - slope_var_range.x), 0.0, 1.0);
-	float lost_var = texture(slope_var_tex, vec2(lost_u, 0.5)).r * v_calm_factor * v_calm_factor;
+	float lost_var = texture(slope_var_tex, vec2(lost_u, 0.5)).r * v_calm_factor * v_calm_factor * calm_k * calm_k;
 
 	slope += (sim_frag_slope(v_world_xz, footprint, tile_world_c / 128.0, true)
 			+ sim_frag_slope(v_world_xz, footprint, tile_world / 128.0, false)) * wave_height_scale;
@@ -348,12 +442,12 @@ void fragment() {
 	float water_depth = -(vp.z / vp.w) + VERTEX.z;
 	float shore_c = 1.0 - clamp(water_depth / foam_band, 0.0, 1.0);
 
-	float wc_core = 1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian);
-	float wc_lace = 1.0 - smoothstep(whitecap_j_high, whitecap_residual, jacobian);
+	float wc_core = (1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian)) * calm_k;
+	float wc_lace = (1.0 - smoothstep(whitecap_j_high, whitecap_residual, jacobian)) * calm_k;
 	vec2 wake = sample_wake(v_world_xz);
-	float cover = max(max(wc_core, wc_lace * 0.3), max(wake.x, shore_c));
+	float cover = max(max(max(wc_core, wc_lace * 0.3), max(wake.x, shore_c)), shock_foam * ring_foam_cover);
 	cover = clamp(cover * foam_amount, 0.0, 1.0);
-	float sub = clamp(max(wc_lace * wc_lace, wake.y) * foam_amount, 0.0, 1.0);
+	float sub = clamp(max(max(wc_lace * wc_lace, wake.y), shock.w * 0.5) * foam_amount, 0.0, 1.0);
 
 	// ---- foam texture; widen the edge as the lace drops below a pixel so far foam reads as coverage ----
 	vec2 drift = wind_dir * TIME * foam_drift;
@@ -375,6 +469,9 @@ void fragment() {
 	water = mix(water, scatter_color, crest * crest * crest_ambient);
 	water = mix(water, bubble_color, sub * (1.0 - foam) * 0.5);
 
+	// Blast disk: smooth frosted whitening, no lace (uniform low lace coverage reads as a dot grid).
+	water *= 1.0 - ring_darken * shock.z;
+	water = mix(water, foam_color, shock.w * ring_foam * (1.0 - foam));
 	ALBEDO = mix(water, foam_color * (0.8 + 0.2 * fb.g), foam);
 	METALLIC = 0.0;
 	// F0(specular) = 0.16 * specular^2 in Godot's IBL; match water_specular.
