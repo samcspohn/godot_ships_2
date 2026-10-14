@@ -130,6 +130,7 @@ void main() {
     float c = clamp(d.strength * profile * pow(1.0 - t, d.fade_pow) * vis, 0.0, 1.0);
     if (d.fade_in > 0.0) c *= smoothstep(0.0, d.fade_in, P.time - d.birth);
     float cs = cos(d.rot), sn = sin(d.rot);
+    float blast_order = 1.0;
     if (d.blotch > 0.0) {
         bool world = d.blotch > 1.5 && d.blotch < 2.5;
         vec2 bp = world ? v_world : mat2(vec2(cs, sn), vec2(-sn, cs)) * v_local + d.seed * 997.0;
@@ -143,7 +144,8 @@ void main() {
             vec2 bs = mat2(vec2(-0.6, 0.8), vec2(-0.8, -0.6)) * bp / (BLOTCH_TILE * 0.525) + 0.57;
             n = n * 0.8 + (texture(foam_tex, bs).a - 0.5) * 2.0 * 0.6;
         }
-        c = d.blotch > 2.5 ? sqrt(c) * smoothstep(-0.45, 0.55, n) : sqrt(c) * smoothstep(-0.35, 0.45, n);
+        if (d.blotch > 2.5) blast_order = smoothstep(-0.45, 0.55, n);
+        else c = sqrt(c) * smoothstep(-0.35, 0.45, n);
     }
     float bub = d.bubbles * sqrt(profile * (1.0 - t)) * vis;
 
@@ -156,7 +158,7 @@ void main() {
     vec4 ft = texture(foam_tex, uv);
     float order = d.whorl > 0.5 ? ft.g : 1.0 - ft.b;
     float margin = c > 0.0 ? order - (1.0 + P.churn_edge - c * (1.0 + 2.0 * P.churn_edge)) : -1.0;
-    // Blotch-only: no threshold, so the ocean shader's opacity tracks c and fades continuously.
-    if (d.blotch > 2.5) margin = c > 0.0 ? P.churn_edge * (2.0 * c - 1.0) : -1.0;
+    // Blotch-only: the blotch noise is the reveal order, so splotches shrink as c fades.
+    if (d.blotch > 2.5) margin = c > 0.0 ? blast_order - (1.0 + P.churn_edge - c * (1.0 + 2.0 * P.churn_edge)) : -1.0;
     frag = vec4(margin * 0.5 + 0.5, bub, c > 0.0 ? (d.opacity - 1.0) * 0.5 : 0.0, 0.0);
 }
