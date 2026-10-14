@@ -100,8 +100,8 @@ uniform float wake_time   = 0.0;
 uniform float wake_life   = 60.0;
 
 // --- blast shock rings: (x, z, start time on wake_time clock, max radius) ---
-uniform vec4  rings[32];
-uniform vec4  ring_hulls[32];         // firing ship centerline (stern xz, bow xz); zero = unoccluded
+uniform vec4  rings[64];
+uniform vec4  ring_hulls[64];         // firing ship centerline (stern xz, bow xz); zero = unoccluded
 uniform int   ring_count    = 0;
 uniform float ring_speed    = 120.0;  // m/s; well below sound so the front reads
 uniform float ring_depress  = 0.15;   // centre depression, metres per metre of band width

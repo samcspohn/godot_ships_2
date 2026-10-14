@@ -40,7 +40,7 @@ const BOW_GAIN := 0.1            # stem hump as a fraction of U^2/2g
 const HULL_GAIN := 0.25           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
 
-const MAX_RINGS := 32
+const MAX_RINGS := 64           # keep in sync with rings[] / ring_hulls[] in ocean.gdshader
 const RING_SPEED := 343.0
 const RING_BARREL_REACH := 30.0  # muzzle can sit this far outboard of the hull side
 const RING_REACH := 6.4          # blast radius -> max shock ring radius
@@ -133,12 +133,27 @@ func add_shell_splash(pos: Vector3, radius: float) -> void:
 	_add_impulse(pos, sigma, radius * 0.255, 0.7, sigma * sqrt(maxf(radius, 1.0) / 5.0))
 
 func add_muzzle_blast(pos: Vector3, radius: float) -> void:
+	var ring := Vector4(pos.x, pos.z, _time, maxf(radius * RING_REACH, 8.0))
 	if _rings.size() >= MAX_RINGS:
-		_rings.pop_front()
-		_ring_hulls.pop_front()
-	_rings.append(Vector4(pos.x, pos.z, _time, maxf(radius * RING_REACH, 8.0)))
+		# Drop whichever ring ends soonest, so rapid small blasts never cut a big
+		# blast's long fade short; the new ring itself may be the one dropped.
+		var mult := _ring_life_mult()
+		var victim := -1
+		var soonest := _ring_end(ring, mult)
+		for i in _rings.size():
+			var e := _ring_end(_rings[i], mult)
+			if e < soonest:
+				soonest = e
+				victim = i
+		if victim < 0: return
+		_rings.remove_at(victim)
+		_ring_hulls.remove_at(victim)
+	_rings.append(ring)
 	_ring_hulls.append(_hull_under(Vector2(pos.x, pos.z)))
 	_rings_dirty = true
+
+func _ring_end(r: Vector4, mult: float) -> float:
+	return r.z + r.w / RING_SPEED * mult
 
 # Centerline (stern xz, bow xz) of the ship whose deck the muzzle is over; zero = none.
 func _hull_under(p: Vector2) -> Vector4:
@@ -305,8 +320,9 @@ func _mat_param(p: String) -> float:
 	return float(v)
 
 func _update_rings() -> void:
+	var mult := _ring_life_mult()
 	for i in range(_rings.size() - 1, -1, -1):
-		if _time - _rings[i].z >= _rings[i].w / RING_SPEED * _ring_life_mult():
+		if _time >= _ring_end(_rings[i], mult):
 			_rings.remove_at(i)
 			_ring_hulls.remove_at(i)
 			_rings_dirty = true
