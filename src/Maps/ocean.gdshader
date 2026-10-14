@@ -60,7 +60,7 @@ uniform float whitecap_j_high = 0.75;
 uniform float whitecap_max_lod = 2.0;
 
 // --- foam ---
-// foam_tex.r = reveal order (equalised), .g = bubble brightness; see gen_foam.py.
+// foam_tex.r = lace reveal order, .g = bubble brightness, .b = churn reveal order; see gen_foam.py.
 uniform sampler2D foam_tex : repeat_enable, filter_linear_mipmap_anisotropic;
 uniform vec3  foam_color       : source_color = vec3(0.86, 0.9, 0.92);
 uniform vec3  bubble_color     : source_color = vec3(0.04, 0.16, 0.19);
@@ -68,6 +68,8 @@ uniform float foam_amount      = 1.0;
 uniform float foam_tex_scale   = 9.0;    // metres per lace tile
 uniform float foam_detail_scale = 2.3;
 uniform float foam_edge        = 0.06;
+uniform float churn_tex_scale  = 80.0;   // metres per churn tile (wakes, blasts)
+uniform float churn_edge       = 0.14;
 uniform float foam_drift       = 0.3;    // m/s along the wind
 uniform vec2  wind_dir         = vec2(0.94, 0.35);
 uniform float foam_roughness   = 0.8;
@@ -444,8 +446,8 @@ void fragment() {
 	float wc_core = (1.0 - smoothstep(whitecap_j_low, whitecap_j_high, jacobian)) * calm_k;
 	float wc_lace = (1.0 - smoothstep(whitecap_j_high, whitecap_residual, jacobian)) * calm_k;
 	vec2 wake = sample_wake(v_world_xz);
-	float cover = max(max(max(wc_core, wc_lace * 0.3), max(wake.x, shore_c)), shock_foam * ring_foam_cover);
-	cover = clamp(cover * foam_amount, 0.0, 1.0);
+	float cover = clamp(max(max(wc_core, wc_lace * 0.3), shore_c) * foam_amount, 0.0, 1.0);
+	float churn_c = clamp(max(wake.x, shock_foam * ring_foam_cover) * foam_amount, 0.0, 1.0);
 	float sub = clamp(max(max(wc_lace * wc_lace, wake.y), shock.w * 0.5) * foam_amount, 0.0, 1.0);
 
 	// ---- foam texture; widen the edge as the lace drops below a pixel so far foam reads as coverage ----
@@ -453,11 +455,18 @@ void fragment() {
 	vec2 uv_a = (v_world_xz - drift) / foam_tex_scale;
 	vec2 uv_b = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * (v_world_xz - drift * 1.3) / foam_detail_scale;
 	vec2 fa = texture(foam_tex, uv_a).rg;
-	vec2 fb = texture(foam_tex, uv_b).rg;
+	vec3 fb = texture(foam_tex, uv_b).rgb;
 	float order = clamp(fa.r + (fb.r - 0.5) * 0.35, 0.0, 1.0);
 	float tex_lod = log2(footprint * float(textureSize(foam_tex, 0).x) / foam_detail_scale);
 	float edge = mix(foam_edge, 0.5, clamp(tex_lod / 5.0, 0.0, 1.0));
 	float foam = foam_cover(cover, order, edge);
+	vec2 uv_c = mat2(vec2(0.6, -0.8), vec2(0.8, 0.6)) * (v_world_xz - drift) / churn_tex_scale;
+	float churn = clamp(texture(foam_tex, uv_c).b + (fb.b - 0.5) * 0.1, 0.0, 1.0);
+	float churn_lod = log2(footprint * float(textureSize(foam_tex, 0).x) / churn_tex_scale);
+	float churn_foam = foam_cover(churn_c, churn, mix(churn_edge, 0.5, clamp(churn_lod / 5.0, 0.0, 1.0)));
+	// Thin churn edges stay translucent so clumps read as piled-up froth.
+	float thick = smoothstep(0.0, 0.35, churn - (1.0 - churn_c));
+	foam = max(foam, churn_foam * mix(0.7, 1.0, thick));
 
 	// ---- water body: crests lighter than troughs, bubbles tint below the surface ----
 	float view_up = clamp((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).y, 0.0, 1.0);

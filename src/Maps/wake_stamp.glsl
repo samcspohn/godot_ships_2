@@ -38,6 +38,7 @@ layout(push_constant, std430) uniform Params {
 
 // Negative strength marks short-lived splash foam (SPLASH_LIFE_FRAC of wake_life).
 const float SPLASH_LIFE_FRAC = 0.2;
+const float SPRAY_SETBACK = 0.4;   // fraction of half-length
 
 float wake_fade(vec2 v) {
     float life = P.wake_life * (v.y < 0.0 ? SPLASH_LIFE_FRAC : 1.0);
@@ -54,13 +55,15 @@ void main() {
     float k = clamp(dot(world - s.prev_stern, seg) / max(dot(seg, seg), 1e-6), 0.0, 1.0);
     float d = length(world - (s.prev_stern + seg * k));
     // Falloff never narrower than the 4 m texel, or thin trails miss texel centres and dash.
-    float foam = (1.0 - smoothstep(0.0, max(s.ribbon_hw, 0.75 * texel), d)) * abs(s.strength);
+    float hw = max(s.ribbon_hw, 0.75 * texel);
+    float foam = (1.0 - smoothstep(0.4 * hw, hw, d)) * abs(s.strength);
 
-    vec2 r = world - s.pos;
+    // Spray ellipse sits aft of the hull so it emerges from the sides behind the stem.
+    vec2 r = world - (s.pos - s.fwd * s.half_len * SPRAY_SETBACK);
     vec2 u = vec2(dot(r, s.fwd), dot(r, vec2(-s.fwd.y, s.fwd.x))) / vec2(s.half_len, s.half_beam);
     float rq = length(u);
-    float spray = smoothstep(1.0, 1.04, rq) * (1.0 - smoothstep(1.04, 1.2, rq));
-    foam = max(foam, spray * smoothstep(0.0, 0.5, u.x) * s.speed01 * 0.45);
+    float spray = smoothstep(1.0, 1.04, rq) * (1.0 - smoothstep(1.06, mix(1.12, 1.6, s.speed01), rq));
+    foam = max(foam, spray * smoothstep(-0.2, 0.4, u.x) * s.speed01 * s.speed01 * 0.3);
     if (foam < 0.02) return;
 
     ivec2 cell = ivec2(floor(world / P.wake_world)) + P.wake_origin;

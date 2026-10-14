@@ -36,6 +36,9 @@ const GRAVITY := 9.81
 # Ships run at 2x real speed; 4x gravity keeps U^2/g, so wake wavelengths and the
 # Kelvin angle match real speed (and the wave pattern keeps pace with the ship).
 const WAKE_GRAVITY := GRAVITY * 4.0
+const STERN_FOAM_AT := 0.7       # stern ribbon origin aft of centre, in half-lengths
+const FULL_FOAM_SPEED := 28.0    # m/s (~27 kn at 2x speed)
+const TELEPORT_SPEED := 150.0    # m/s; faster frame-to-frame motion is a reposition, not sailing
 const BOW_GAIN := 0.1            # stem hump as a fraction of U^2/2g
 const HULL_GAIN := 0.25           # hull pressure as metres of head, per metre of draft
 const SPONGE_CELLS := 10.0
@@ -369,6 +372,10 @@ func _process(delta: float) -> void:
 		var fwd := Vector2(-xf.basis.z.x, -xf.basis.z.z).normalized()
 		var prev_fwd: Vector2 = _prev_fwd.get(s, fwd)
 		_prev_fwd[s] = fwd
+		# Spawn placement and re-spotting snap ships across the map; never sweep a wake along the jump.
+		if p2.distance_to(q2) > TELEPORT_SPEED * span:
+			q2 = p2
+			prev_fwd = fwd
 		var hull: Vector3 = _ship_hulls[s]
 		_coarse.touch_rect(q2, p2, hull.x + COARSE_MARGIN, _time, ship_count)
 		_w_touch_rect(p2, hull.x * WAKE_REACH, WAKE_LIFE)
@@ -380,18 +387,18 @@ func _process(delta: float) -> void:
 		_ship_f[f + 8] = hull.x;     _ship_f[f + 9] = hull.y
 		_ship_f[f + 10] = hull.z * HULL_GAIN
 
-		var speed01 := clampf((p2 - q2).length() / (span * 8.0), 0.0, 1.0)
-		var stern := p2 - fwd * hull.x * 0.95
-		var prev_stern := q2 - prev_fwd * hull.x * 0.95
+		var speed01 := clampf((p2 - q2).length() / (span * FULL_FOAM_SPEED), 0.0, 1.0)
+		var stern := p2 - fwd * hull.x * STERN_FOAM_AT
+		var prev_stern := q2 - prev_fwd * hull.x * STERN_FOAM_AT
 		var g := ship_count * STAMP_FLOATS
 		_stamp_f[g] = p2.x;              _stamp_f[g + 1] = p2.y
 		_stamp_f[g + 2] = fwd.x;         _stamp_f[g + 3] = fwd.y
 		_stamp_f[g + 4] = stern.x;       _stamp_f[g + 5] = stern.y
 		_stamp_f[g + 6] = prev_stern.x;  _stamp_f[g + 7] = prev_stern.y
 		_stamp_f[g + 8] = hull.x;        _stamp_f[g + 9] = hull.y
-		_stamp_f[g + 10] = 0.55 * speed01
+		_stamp_f[g + 10] = 0.85 * speed01
 		_stamp_f[g + 11] = speed01
-		_stamp_f[g + 12] = hull.y * 1.7
+		_stamp_f[g + 12] = hull.y * 1.15
 		ship_count += 1
 
 	var trail_count := 0
