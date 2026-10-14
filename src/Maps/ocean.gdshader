@@ -60,7 +60,7 @@ uniform float whitecap_j_high = 0.75;
 uniform float whitecap_max_lod = 2.0;
 
 // --- foam ---
-// foam_tex.r = lace reveal order, .g = bubble brightness, .b = churn reveal order; see gen_foam.py.
+// foam_tex.r = lace reveal order, .g = whorl order, .b = churn reveal order, .a = blotches; see gen_foam.py.
 uniform sampler2D foam_tex : repeat_enable, filter_linear_mipmap_anisotropic;
 uniform vec3  foam_color       : source_color = vec3(0.86, 0.9, 0.92);
 uniform vec3  bubble_color     : source_color = vec3(0.04, 0.16, 0.19);
@@ -101,14 +101,18 @@ uniform int   wake_origin = 36;
 uniform float wake_time   = 0.0;
 uniform float wake_life   = 60.0;
 
+// --- foam decal cascades (see foam_decals.gd): r = reveal margin * 0.5 + 0.5, g = bubbles, b = (opacity gain - 1) / 2 ---
+uniform sampler2DArray foam_decals : repeat_disable, filter_linear;
+uniform vec4 decal_cascades[3];   // (origin xz, extent, texel) per level, finest first
+
 // --- blast shock rings: (x, z, start time on wake_time clock, max radius) ---
 uniform vec4  rings[64];
 uniform vec4  ring_hulls[64];         // firing ship centerline (stern xz, bow xz); zero = unoccluded
 uniform int   ring_count    = 0;
 uniform float ring_speed    = 120.0;  // m/s; well below sound so the front reads
 uniform float ring_depress  = 0.15;   // centre depression, metres per metre of band width
-uniform float ring_foam_linger = 2.0; // foam lifetime as a multiple of the fill's
-uniform float ring_foam_cover = 0.75; // peak blotchy foam coverage at the blast centre
+uniform float ring_foam_linger = 2.0; // foam decal lifetime as a multiple of the fill's (read by WaveManager)
+uniform float ring_foam_cover = 0.75; // peak foam decal coverage at the blast centre (read by WaveManager)
 uniform float ring_flatten  = 0.48;   // calming of the band at the front
 uniform float ring_darken   = 0.36;   // albedo drop in the band at the front
 uniform float ring_foam     = 0.24;   // whitening at the blast centre, fading outward
@@ -230,7 +234,7 @@ bool ring_eval(int i, vec2 p, out vec2 d, out float r, out float R, out float w,
 	vec4 e = rings[i];
 	float age = wake_time - e.z;
 	float dur = e.w / ring_speed;
-	if (age < 0.0 || age > dur * ring_fill_life * ring_foam_linger) return false;
+	if (age < 0.0 || age > dur * ring_fill_life) return false;
 	d = p - e.xy;
 	r = length(d);
 	w = max(e.w * 0.05, 3.0);
@@ -239,7 +243,7 @@ bool ring_eval(int i, vec2 p, out vec2 d, out float r, out float R, out float w,
 	R = age < dur ? age * ring_speed : e.w + ring_speed * tau * (1.0 - exp(-(age - dur) / tau));
 	if (r > R + 3.0 * w) return false;
 	vis = 1.0 - hull_shadow(e.xy, p, ring_hulls[i]);
-	life = age / (dur * ring_fill_life);   // > 1 while only the foam lingers
+	life = age / (dur * ring_fill_life);
 	return true;
 }
 
@@ -254,33 +258,40 @@ float shock_depress(vec2 p) {
 		vec2 d; float r, R, w, life, vis;
 		if (!ring_eval(i, p, d, r, R, w, life, vis)) continue;
 		float q = clamp(r / max(R, 1e-3), 0.0, 1.0);
-		if (life >= 1.0) continue;
 		h += ring_depress * w * ring_bounce(life) * (1.0 - q) * (1.0 - q) * vis;
 	}
 	return h;
 }
 
-// (depression slope xz, front calming 0..1, interior fill 0..1); foam = splotchy fill coverage.
-vec4 shock_rings(vec2 p, out float foam) {
+// (depression slope xz, front calming 0..1, interior fill 0..1); blast foam is a decal.
+vec4 shock_rings(vec2 p) {
 	vec4 acc = vec4(0.0);
-	foam = 0.0;
 	for (int i = 0; i < ring_count; i++) {
 		vec2 d; float r, R, w, life, vis;
 		if (!ring_eval(i, p, d, r, R, w, life, vis)) continue;
 		float q = clamp(r / max(R, 1e-3), 0.0, 1.0);
-		float foam_life = life / ring_foam_linger;
-		float foam_fill = (1.0 - q) * (1.0 - q) * (1.0 - foam_life * foam_life) * vis;
-		if (life < 1.0) {
-			float fade = (1.0 - life) * (1.0 - life) * vis;
-			acc.w = max(acc.w, (1.0 - q) * (1.0 - q) * (1.0 - life * life) * vis);
-			acc.xy += d / max(r, 1e-3) * (-2.0 * ring_depress * w * ring_bounce(life) * (1.0 - q) / max(R, 1e-3)) * vis;
-			float band = smoothstep(R + w, R, r) * (1.0 - smoothstep(R - w, R - 3.0 * w, r));
-			acc.z = max(acc.z, band * fade);
-		}
-		// Non-tiling blotches so low coverage never resolves into the foam texture's tile grid.
-		vec2 o = rings[i].xy * 0.013;
-		float n = gnoise(p / 18.0 + o).x + 0.5 * gnoise(p / 7.0 + o + 3.1).x;
-		foam = max(foam, sqrt(foam_fill) * smoothstep(-0.35, 0.45, n));
+		float fade = (1.0 - life) * (1.0 - life) * vis;
+		acc.w = max(acc.w, (1.0 - q) * (1.0 - q) * (1.0 - life * life) * vis);
+		acc.xy += d / max(r, 1e-3) * (-2.0 * ring_depress * w * ring_bounce(life) * (1.0 - q) / max(R, 1e-3)) * vis;
+		float band = smoothstep(R + w, R, r) * (1.0 - smoothstep(R - w, R - 3.0 * w, r));
+		acc.z = max(acc.z, band * fade);
+	}
+	return acc;
+}
+
+// Finest cascade that covers p without minifying, blended into the next at window edges.
+vec3 sample_decals(vec2 p, float footprint) {
+	vec3 acc = vec3(0.0);
+	for (int i = 2; i >= 0; i--) {
+		vec4 c = decal_cascades[i];
+		if (c.z <= 0.0) continue;
+		vec2 uv = (p - c.xy) / c.z;
+		vec2 m = min(uv, 1.0 - uv);
+		float w = smoothstep(0.0, 0.05, min(m.x, m.y));
+		if (i < 2) w *= 1.0 - smoothstep(c.w * 1.5, c.w * 3.0, footprint);
+		if (w <= 0.0) continue;
+		vec4 t = textureLod(foam_decals, vec3(uv, float(i)), 0.0);
+		acc = mix(acc, t.rgb, w);
 	}
 	return acc;
 }
@@ -422,8 +433,7 @@ void fragment() {
 	vec4 derivs = sample_ocean_derivs(v_world_xz, cm, footprint, wc_j) * v_calm_factor;
 	wc_j *= choppiness * v_calm_factor;
 	float jacobian = (1.0 + wc_j.x) * (1.0 + wc_j.y);
-	float shock_foam;
-	vec4 shock = shock_rings(v_world_xz, shock_foam);
+	vec4 shock = shock_rings(v_world_xz);
 	float calm_k = 1.0 - ring_flatten * shock.z;
 	vec2 slope = derivs.xy * calm_k + shock.xy;
 
@@ -447,8 +457,9 @@ void fragment() {
 	float wc_lace = (1.0 - smoothstep(whitecap_j_high, whitecap_residual, jacobian)) * calm_k;
 	vec2 wake = sample_wake(v_world_xz);
 	float cover = clamp(max(max(wc_core, wc_lace * 0.3), shore_c) * foam_amount, 0.0, 1.0);
-	float churn_c = clamp(max(wake.x, shock_foam * ring_foam_cover) * foam_amount, 0.0, 1.0);
-	float sub = clamp(max(max(wc_lace * wc_lace, wake.y), shock.w * 0.5) * foam_amount, 0.0, 1.0);
+	float churn_c = clamp(wake.x * foam_amount, 0.0, 1.0);
+	vec3 decal = sample_decals(v_world_xz, footprint);
+	float sub = clamp(max(max(wc_lace * wc_lace, max(wake.y, decal.y)), shock.w * 0.5) * foam_amount, 0.0, 1.0);
 
 	// ---- foam texture; widen the edge as the lace drops below a pixel so far foam reads as coverage ----
 	vec2 drift = wind_dir * TIME * foam_drift;
@@ -463,10 +474,18 @@ void fragment() {
 	vec2 uv_c = mat2(vec2(0.6, -0.8), vec2(0.8, 0.6)) * (v_world_xz - drift) / churn_tex_scale;
 	float churn = clamp(texture(foam_tex, uv_c).b + (fb.b - 0.5) * 0.1, 0.0, 1.0);
 	float churn_lod = log2(footprint * float(textureSize(foam_tex, 0).x) / churn_tex_scale);
-	float churn_foam = foam_cover(churn_c, churn, mix(churn_edge, 0.5, clamp(churn_lod / 5.0, 0.0, 1.0)));
+	float edge_c = mix(churn_edge, 0.5, clamp(churn_lod / 5.0, 0.0, 1.0));
+	float churn_foam = foam_cover(churn_c, churn, edge_c);
 	// Thin churn edges stay translucent so clumps read as piled-up froth.
 	float thick = smoothstep(0.0, 0.35, churn - (1.0 - churn_c));
 	foam = max(foam, churn_foam * mix(0.7, 1.0, thick));
+	float margin = decal.x * 2.0 - 1.0 - (1.0 - foam_amount);
+	// Zero coverage sits at margin <= -churn_edge, so widening the edge never lifts empty decal rims.
+	float decal_foam = smoothstep(0.0, 2.0 * edge_c, margin + churn_edge) * mix(0.7, 1.0, smoothstep(0.0, 0.35, margin));
+	decal_foam = min(decal_foam * (1.0 + 2.0 * decal.z), 1.0);
+	// 2.3 m detail tint suits lace only; decal foam stays flat.
+	float detail = mix(1.0, 0.8 + 0.2 * fb.b, smoothstep(-0.1, 0.1, foam - decal_foam));
+	foam = max(foam, decal_foam);
 
 	// ---- water body: crests lighter than troughs, bubbles tint below the surface ----
 	float view_up = clamp((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).y, 0.0, 1.0);
@@ -480,7 +499,7 @@ void fragment() {
 	// Blast disk: smooth frosted whitening, no lace (uniform low lace coverage reads as a dot grid).
 	water *= 1.0 - ring_darken * shock.z;
 	water = mix(water, foam_color, shock.w * ring_foam * (1.0 - foam));
-	ALBEDO = mix(water, foam_color * (0.8 + 0.2 * fb.g), foam);
+	ALBEDO = mix(water, foam_color * detail, foam);
 	METALLIC = 0.0;
 	// F0(specular) = 0.16 * specular^2 in Godot's IBL; match water_specular.
 	SPECULAR = mix(sqrt(water_specular / 0.16), 0.5, foam);

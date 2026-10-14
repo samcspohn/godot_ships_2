@@ -2,8 +2,9 @@
 """Tiling foam texture for ocean.gdshader -> ocean_foam.png.
 
 R: reveal order, histogram-equalised so coverage c reveals fraction c of the tile.
-G: bubble brightness detail.
+G: whorl reveal order (churn advected through a curl field) for wakes, splashes and spray.
 B: churn reveal order for wakes and blasts, equalised like R.
+A: soft blotch noise (signed, 0.5 = 0) that breaks wake and splash coverage into patches.
 """
 
 import os
@@ -67,6 +68,12 @@ def blur(a, r):
     return a
 
 
+def blur_fft(a, sigma):
+    f = np.fft.fftfreq(RES)
+    k = np.exp(-2.0 * (np.pi * sigma) ** 2 * (f[:, None] ** 2 + f[None, :] ** 2))
+    return np.real(np.fft.ifft2(np.fft.fft2(a) * k))
+
+
 def sample_wrap(a, x, y):
     x = x % RES
     y = y % RES
@@ -78,38 +85,66 @@ def sample_wrap(a, x, y):
     return top * (1 - fy) + bot * fy
 
 
-def churn(rng):
+def churn(rng, raw=False):
     billow = np.zeros((RES, RES))
     amp, total = 1.0, 0.0
     for o in range(5):
         billow += amp * np.abs(2.0 * value_fbm(12 << o, 1, rng) - 1.0)
         total += amp
         amp *= 0.6
-    billow = 1.0 - billow / total
+    billow = billow / total
     y, x = np.mgrid[0:RES, 0:RES].astype(float)
     wx = value_fbm(6, 3, rng) - 0.5
     wy = value_fbm(6, 3, rng) - 0.5
     warped = sample_wrap(billow, x + wx * RES * 0.12, y + wy * RES * 0.12)
-    return equalise(blur(0.8 * warped + 0.2 * value_fbm(4, 2, rng), 1.0))
+    mixed = 0.8 * warped + 0.2 * value_fbm(4, 2, rng)
+    return mixed if raw else equalise(blur(mixed, 1.0))
+
+
+def whorls(base, rng):
+    psi = blur_fft(rng.standard_normal((RES, RES)), RES / 14) + 0.5 * blur_fft(rng.standard_normal((RES, RES)), RES / 40)
+    psi /= psi.std()
+    vx = (np.roll(psi, -1, 0) - np.roll(psi, 1, 0)) * 0.5
+    vy = -(np.roll(psi, -1, 1) - np.roll(psi, 1, 1)) * 0.5
+    step = 6.0 / np.abs(np.stack([vx, vy])).max()
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    for _ in range(24):
+        u = sample_wrap(vx, x, y)
+        v = sample_wrap(vy, x, y)
+        x, y = x - u * step, y - v * step
+    return equalise(blur(sample_wrap(base, x, y), 1.0))
+
+
+def blotches(rng):
+    # Blurred white noise is isotropic; lattice noise lines blotches up in rows.
+    n = np.zeros((RES, RES))
+    for sigma, amp in ((RES / 30, 1.0), (RES / 75, 0.5), (RES / 180, 0.3)):
+        layer = blur_fft(rng.standard_normal((RES, RES)), sigma)
+        n += amp * layer / layer.std()
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    wx = value_fbm(8, 3, rng) - 0.5
+    wy = value_fbm(8, 3, rng) - 0.5
+    n = sample_wrap(n, x + wx * RES * 0.06, y + wy * RES * 0.06)
+    n = (n - n.mean()) / n.std() * 0.32
+    return np.clip(0.5 + 0.5 * n, 1 / 255, 1.0)
 
 
 def main():
     rng = np.random.default_rng(SEED)
     f1a, f2a = worley(10, rng)
     f1b, f2b = worley(26, rng)
-    f1c, _ = worley(90, rng)
+    worley(90, rng)  # keeps the later channels on their original random streams
     lace_a = np.exp(-(f2a - f1a) / 0.10)
     lace_b = np.exp(-(f2b - f1b) / 0.12)
     blobs = value_fbm(4, 4, rng)
     order = 0.45 * lace_a + 0.25 * lace_b + 0.30 * blobs
     order = equalise(blur(order, 1.5))
-    bubbles = 1.0 - np.clip(f1c / 0.7, 0, 1) ** 2
-    detail = 0.55 + 0.45 * equalise(blur(bubbles + 0.3 * lace_b, 1.0))
     img = np.zeros((RES, RES, 4), np.uint8)
     img[..., 0] = np.round(order * 255)
-    img[..., 1] = np.round(detail * 255)
-    img[..., 2] = np.round(churn(rng) * 255)
-    img[..., 3] = 255
+    churn_raw = churn(rng, raw=True)
+    img[..., 1] = np.round(whorls(churn_raw, np.random.default_rng(SEED + 1)) * 255)
+    img[..., 2] = np.round(equalise(blur(churn_raw, 1.0)) * 255)
+    img[..., 3] = np.round(blotches(rng) * 255)
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ocean_foam.png")
     Image.fromarray(img, "RGBA").save(out)
     print("wrote", out)

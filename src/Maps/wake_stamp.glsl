@@ -1,8 +1,7 @@
 #[compute]
 #version 450
 
-// One window per stamp: ships get the stern ribbon plus the spray sheet just
-// outside the forward hull; torpedo trails are ribbons only (speed01 = 0).
+// One window per torpedo trail segment; ship foam is drawn as decals (foam_decals.gd).
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -38,7 +37,6 @@ layout(push_constant, std430) uniform Params {
 
 // Negative strength marks short-lived splash foam (SPLASH_LIFE_FRAC of wake_life).
 const float SPLASH_LIFE_FRAC = 0.2;
-const float SPRAY_SETBACK = 0.4;   // fraction of half-length
 
 float wake_fade(vec2 v) {
     float life = P.wake_life * (v.y < 0.0 ? SPLASH_LIFE_FRAC : 1.0);
@@ -58,12 +56,6 @@ void main() {
     float hw = max(s.ribbon_hw, 0.75 * texel);
     float foam = (1.0 - smoothstep(0.4 * hw, hw, d)) * abs(s.strength);
 
-    // Spray ellipse sits aft of the hull so it emerges from the sides behind the stem.
-    vec2 r = world - (s.pos - s.fwd * s.half_len * SPRAY_SETBACK);
-    vec2 u = vec2(dot(r, s.fwd), dot(r, vec2(-s.fwd.y, s.fwd.x))) / vec2(s.half_len, s.half_beam);
-    float rq = length(u);
-    float spray = smoothstep(1.0, 1.04, rq) * (1.0 - smoothstep(1.06, mix(1.12, 1.6, s.speed01), rq));
-    foam = max(foam, spray * smoothstep(-0.2, 0.4, u.x) * s.speed01 * s.speed01 * 0.3);
     if (foam < 0.02) return;
 
     ivec2 cell = ivec2(floor(world / P.wake_world)) + P.wake_origin;
